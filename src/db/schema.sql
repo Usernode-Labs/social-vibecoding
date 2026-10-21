@@ -773,13 +773,14 @@ ALTER TABLE apps ADD COLUMN IF NOT EXISTS manifest_snapshot JSONB;
 -- the app's creator / collaborators / admins — see routes/apps.js.
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS last_failure JSONB;
 
--- Who is setting a project up. A project's making is the app-creation
--- machine's (src/workflow/app-creation/): `creating_owner = 'workflow'`
--- says so, and an insert that names it starts its making (the
+-- Who was setting a project up. A project's making is the app-creation
+-- machine's (src/workflow/app-creation/): its insert starts its making (the
 -- apps_wf_enrol_creation trigger). Before it, an owner token of the process
--- driving the row with its heartbeat (`creating_heartbeat_at`): read now
--- only to wait for a row an older build is still making during a rollout.
--- To drop once no older build runs. Its redrives, read by nothing, are gone.
+-- driving the row (`creating_owner`, 'workflow' once the machine took it)
+-- with its heartbeat (`creating_heartbeat_at`): written and read by nothing
+-- in this release, but read by the app-creation machine of the release before
+-- roadmap item 3.2 (its facts). Drop them once no process of that release
+-- (22ac79e7a) is live. Its redrives, read by nothing, are gone.
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS creating_owner TEXT;
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS creating_heartbeat_at TIMESTAMPTZ;
 ALTER TABLE apps DROP COLUMN IF EXISTS creating_redrives;
@@ -13671,10 +13672,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_bench_trials_side_build
 -- charged for all of them.
 ALTER TABLE bench_trials ADD COLUMN IF NOT EXISTS build_key TEXT;
 ALTER TABLE bench_trials ADD COLUMN IF NOT EXISTS session_ids INTEGER[] NOT NULL DEFAULT '{}';
--- A trial is claimed by the lane's machine only. An older build's lane,
--- still running during a rollout, counts only its own process's claims, so
--- its claims could pass the limits and the caps the machine keeps: they are
--- refused, and its passes start nothing.
+-- A trial is claimed by the lane's machine only, which keeps the limits and
+-- the caps under its own lock: a claim written anywhere else is refused.
 CREATE OR REPLACE FUNCTION wf_guard_bench_claim() RETURNS TRIGGER AS $$
 BEGIN
   IF current_setting('app.wf_writer', true) IS DISTINCT FROM 'transition' THEN
@@ -14464,24 +14463,13 @@ CREATE TRIGGER chat_sessions_wf_enrol_proposal
 -- (src/workflow/app-creation/): its row's insert appends Started, keyed as
 -- one, in the inserting transaction, so its setup starts once everything the
 -- route wrote with it has committed. Every door inserts it so: Make it, an
--- import, a ready-made app, a remix, the bench studio's host, naming the
--- workflow as its maker (creating_owner = 'workflow'). A row an older build
--- inserts during a rollout (no such owner yet) appends Adopted instead: the
--- machine waits for that build's own process to let it go, and makes it
--- only if it was left unfinished.
+-- import, a ready-made app, a remix, the bench studio's host.
 CREATE OR REPLACE FUNCTION wf_enrol_app_creation() RETURNS TRIGGER AS $$
 BEGIN
-  IF NEW.creating_owner IS NOT DISTINCT FROM 'workflow' THEN
-    INSERT INTO wf_events (machine, key, app_id, type, payload, source, request_key)
-    VALUES ('app-creation', 'app:' || NEW.id, NEW.id, 'Started',
-            jsonb_build_object('appId', NEW.id), '{"kind": "system", "name": "create"}'::jsonb,
-            'start:' || NEW.id);
-  ELSE
-    INSERT INTO wf_events (machine, key, app_id, type, payload, source, request_key)
-    VALUES ('app-creation', 'app:' || NEW.id, NEW.id, 'Adopted',
-            jsonb_build_object('appId', NEW.id), '{"kind": "system", "name": "older-build"}'::jsonb,
-            'adopt:' || NEW.id);
-  END IF;
+  INSERT INTO wf_events (machine, key, app_id, type, payload, source, request_key)
+  VALUES ('app-creation', 'app:' || NEW.id, NEW.id, 'Started',
+          jsonb_build_object('appId', NEW.id), '{"kind": "system", "name": "create"}'::jsonb,
+          'start:' || NEW.id);
   PERFORM pg_notify('wf_events', 'app-creation');
   RETURN NULL;
 END;
@@ -15092,10 +15080,9 @@ ALTER TABLE shots_eval_trials ADD COLUMN IF NOT EXISTS proxy_cents NUMERIC(12,4)
 -- and its end written. Emptied when the trial is put back.
 ALTER TABLE shots_eval_trials ADD COLUMN IF NOT EXISTS stopping_at TIMESTAMPTZ;
 -- A trial is claimed (planned to provisioning) and put back (to planned)
--- by the shots-eval machine only (src/workflow/shots-eval/). An older
--- build's runner, still running during a rollout, counts only its own
--- process's trials: its claims and its recovery are refused, and the
--- trials it already runs finish there.
+-- by the shots-eval machine only (src/workflow/shots-eval/), which keeps
+-- the concurrency and the caps under its own lock: a write anywhere else is
+-- refused.
 CREATE OR REPLACE FUNCTION wf_guard_eval_claim() RETURNS TRIGGER AS $$
 BEGIN
   IF current_setting('app.wf_writer', true) IS DISTINCT FROM 'transition' THEN

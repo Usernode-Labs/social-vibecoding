@@ -501,9 +501,8 @@ does both.
   `SERVER_KEEPALIVE`), and an idle-in-transaction timeout of 30 seconds (`deadPeerOptions`
   in platform.ts).
 - **What a release owes what an older one left** (open governance rows, sessions the
-  proposal machine does not hold, claims with no clock, merge queues, deferred DM answers,
-  main checks mid-run, the bot's queue rows, the platform's own faults, the bot lane's clock,
-  projects an older build was making, first requests it left open) is the `release` machine's: `release:<GIT_SHA>`, one
+  proposal machine does not hold, claims with no clock, merge queues, the platform's own
+  faults, the bot lane's clock) is the `release` machine's: `release:<GIT_SHA>`, one
   `release.adopt` work item per release, run by whichever process of that release claims it
   (never an older build's), each adoption a step. So is what the cluster runs for every app as
   this build says (the shared hosted-asset backend) and the bench suites from this build's
@@ -669,7 +668,7 @@ release (`docs/kubernetes-operations.md`).
 | `tests/workflow-process-state.test.js` | The list of what the machines still depend on only shrinks. |
 | `tests/workflow-boundary.test.js` | The boundary check's rules, on a small source tree of its own. |
 | `tests/workflow-bot-replies-postgres.test.js` | The Homeroom bot's reply machines (`bot-voice`, `bot-dm`), one subtest per rule, with their work faked. |
-| `tests/workflow-main-check-postgres.test.js` | The main-check machine, one subtest per rule (a provisional first red, flakes, a confirmed red, rechecks, Resume, a superseded run, a run carried on after a crash, adopting an older release's row). |
+| `tests/workflow-main-check-postgres.test.js` | The main-check machine, one subtest per rule (a provisional first red, flakes, a confirmed red, rechecks, Resume, a superseded run, a run carried on after a crash, a pause no instance holds lifted by Resume). |
 | `tests/app-teardown-mark-postgres.test.js` | An app's teardown is marked on its row, which a deploy in any process reads. |
 | `tests/workflow-processes-postgres.test.js` | Each machine's flows with every decision and work item in a child process, the test process being the web side (no pipeline slot, as a web Pod); the same flows with the child killed (SIGKILL) mid-item, restarted, and compared with an uninterrupted run; and two children at once. The child is server.js itself, booted as a conductor (`tests/lib/workflow-child.js`), so its bus, its process row and its listener are production's. Only outside services are faked (`tests/fixtures/workflow-outside-fakes.js`); the harness is `tests/lib/workflow-processes.js`. |
 | `tests/workflow-release-postgres.test.js` | The release machine: a release's adoptions run once between its processes, a failed step is tried again without the done ones, adoptions that keep failing are shown. |
@@ -717,7 +716,7 @@ A new machine brings the same two layers:
 | `bot-voice` | `place:<appId>:<type>:<ref>`, for each place in a project people speak to the Homeroom bot in | `quiet` ⇄ `settling` → `answering` | On everywhere; its old paths are deleted |
 | `bot-dm` | `person:<userId>`, for each person's DM with the Homeroom bot | `idle` ⇄ `answering` ⇄ `trying_later` | On everywhere; its old paths are deleted |
 | `main-check` | `app:<id>`, for each app whose main was checked after a merge or a new commit | `idle` → `running` (→ `confirming`) → `idle`; `idle` ⇄ `rechecking` while paused | On everywhere; its old paths are deleted |
-| `bot-request` | `request:<appId>:<issue>`, for each request the Homeroom bot is owed a look at | `idle` → `queued` → `reading` / `following_up` → `idle`; `building`; `older_turn` | On everywhere; its old paths are deleted |
+| `bot-request` | `request:<appId>:<issue>`, for each request the Homeroom bot is owed a look at | `idle` → `queued` → `reading` / `following_up` → `idle`; `building` | On everywhere; its old paths are deleted |
 | `bot-lane` | `bot`, one for the Homeroom bot | `open` | On everywhere; its old paths are deleted |
 | `bench-lane` | `lane`, one for the App bench | `open` | Grants benchmark trials (each a `bot-build`); the leader's lane loop is deleted |
 | `shots-eval` | `evals`, one for the shots evals | `open` | Grants eval trials and runs each one's phases; the leader's eval runner is deleted |
@@ -861,9 +860,6 @@ projection, guarded so only its transitions write a row it holds.
   refresh drops the debt it rode on.
 - **Its request merged** (`RequestMerged`, from bot-change's `bot.stopRequestWork`):
   debts owed before the merge are dropped, a look begun before stops, its build is stopped.
-- **During a rollout** a queue row an older release wrote is adopted (at boot and on the
-  minute's adoption sweep): unclaimed it is owed; claimed it waits (`older_turn`, a minute's
-  clock) until that release's turn is over, then is read again.
 
 ### bot-lane
 
@@ -941,9 +937,8 @@ trial running at what it has spent or its estimate, the larger, plus the next on
   done. Each phase has its own deadline; past it the trial fails and is cleaned up. A
   trial that ends while its copies are built waits for them to stop (its row's
   `stopping_at` stops them at their next step) before its cleanup, as the shots machine
-  does. No trial starts on a proposal with a turn under way. The rows of the trials it
-  runs beat every two minutes, so an older release's runner never takes one for its own
-  lost one; a row ended elsewhere (an older release's write) ends its trial here too.
+  does. No trial starts on a proposal with a turn under way. A row ended elsewhere ends
+  its trial here too.
 - **Its end** is written once its cleanup is done, and settles its attempt's cost
   (`shots_eval_attempt_costs`, `workflow/shots-eval/costs.ts`): what the proxy billed and
   what Claude Code reported, each a running total for the attempt, and the larger charged to
@@ -956,10 +951,8 @@ trial running at what it has spent or its estimate, the larger, plus the next on
   memory, and
   never the session alone (the proposal's own shots rerun is its author's).
 - **Cancel** (`EvalCancelled`): the eval and its trials not ended read cancelled at once;
-  what runs is stopped (its work cancelled, its turn stopped) and cleaned up, an older
-  release's runner's trials of it included. A trial an
-  older build's runner left (its heartbeat quiet five minutes) is cleaned up and queued
-  again once, then failed. A trigger refuses a claim or a re-queue outside a transition.
+  what runs is stopped (its work cancelled, its turn stopped) and cleaned up. A trigger
+  refuses a claim or a re-queue outside a transition.
 
 ### governance-proposal
 
@@ -1066,11 +1059,9 @@ What a merged pull request still has to do once GitHub has merged it
   with the requests just closed hidden from it. A merge and its close work publish an
   `issues_closed` push, which every web process applies to its own copy (`ws.js`); no
   browser receives it.
-- **Work from before.** An older release's `preview.teardown` and `main.check` items only
-  report, and their results send the message this release sends at the merge. These two
-  handlers go once no such item can be left. (A follow-up of a kind no handler runs any
-  more, in an old instance's record, is not retried; an old `app.deliver` one is asked
-  again through Retry delivery.)
+- **Follow-ups from before.** A follow-up of a kind no handler runs any more, in an old
+  instance's record (`app.deliver`, `main.check`, `preview.teardown`), is not retried; a
+  merge whose own deploy failed is asked again through Retry delivery.
 
 ### app-delivery
 
@@ -1141,16 +1132,12 @@ page, `Unreachable`).
 A new project's making (`src/workflow/app-creation/`), whichever door it came through:
 Make it, an import, a ready-made app, a remix, the bench studio's host.
 
-- **Enrolled by its insert.** A row inserted `creating` with `creating_owner = 'workflow'`
-  appends `Started` in the insert's own transaction (`wf_enrol_app_creation`, a trigger on
+- **Enrolled by its insert.** A row inserted `creating` appends `Started` in the insert's
+  own transaction (`wf_enrol_app_creation`, a trigger on
   `apps`), so its setup starts once everything the route wrote with it has committed (the
   create route writes the row, its rule, its description, its starter, the card it owes
   and the first request it owes in one transaction; the card and the first request are
-  savepoints, so neither failing loses the project). Any other insert is an older build's,
-  during a rollout: it appends `Adopted` (below).
-- **The row is the workflow's.** Its setup claims it with `creating_owner = 'workflow'` and a
-  heartbeat of `infinity`, so an older build's sweep or Retry, still running during a
-  rollout, never takes it (they take an owned row whose heartbeat is missing or old).
+  savepoints, so neither failing loses the project).
 - **Its setup** is one resumable work item (`app.setup`, `services/app-creator.js setUp`):
   the database (and the card, then the repository, side by side with it), each a step a
   restart carries on from, never done twice. The card (`app-sketch.drawFor`) is made before
@@ -1170,10 +1157,8 @@ Make it, an import, a ready-made app, a remix, the bench studio's host.
   first deploy (`app.firstRequest`, `homeroom-bot-dm.fileFirstRequest`): the GitHub issue a
   step, a resumed try finding its own by the marker in its body, its rows in one write, its
   announcement a step of its own; three tries, the last failure told to its maker. It is
-  claimed from `waiting`, or from `filing` once nothing else can be filing it (no process of
-  another build is alive, or the row is older than the 30 minutes an older build's sweep
-  allowed one); until then the work waits. A first request an older build left open on a
-  made project is adopted by the release (`firstRequests`: `FirstRequestOwed`).
+  claimed from `waiting`, or from `filing` (a try of its own that stopped before it kept
+  its claim): the work item is its only filer.
 - **A first version's plan** at Make it is claimed with `PlanOwed` (from
   `first-version-plan.startEarlyPlan`, its row claimed in the same statement): `app.plan`
   drafts it (`runEarlyPlan`), then `app.earlyLook` draws its first look, each work a
@@ -1192,12 +1177,6 @@ Make it, an import, a ready-made app, a remix, the bench studio's host.
   (`services/app-creation-phase.js`: its setup's steps, or its first deploy).
 - **Where its time went** is one `app_creation_timed` event from both halves
   (`app-creation/timing.ts`).
-- **A row an older build is still making** during a rollout (its insert's `Adopted`, or the
-  release's `appCreations` for one made before this machine) is waited for (`Recheck`, every
-  30 seconds) while its owner's heartbeat lives, or, with no owner yet, for the 10 minutes
-  that build allows between its insert and its owner's first write. Then it is set up here,
-  or, if that build finished it, the instance lands where its row is (`running`,
-  `awaiting_secrets`, `failed`).
 
 ### preview
 
@@ -1541,9 +1520,6 @@ projections, and its guard refuses them to anyone else.
   change under way is not cancelled: its work reads the stop before the AI's every call,
   before the push and before the pull request, and a change that already opened its
   pull request goes up for a vote like the opened ones, which stay).
-- **The lease columns** (`runner_id`, `lease_until` on `maintenance_campaigns`, `runner_id` on its
-  app rows) are no longer written; they go in a later release (an older Pod read them during
-  this one's rollout).
 
 ### bot-change
 
@@ -1668,9 +1644,6 @@ bot owes them there. One instance per person (`person:<userId>`).
   reached them: `MailOwed`, appended with the message (`sendDm`'s write), and `dm.mail`
   sends it (`activity-mail.emailIfNoPush`, which waits for the send and throws when it
   cannot decide, so the work retries). It was a send after the commit, lost to a restart.
-- **During a rollout** the later tries an older release promised (its turn rows say so)
-  are adopted by the release machine, for people with no instance yet (`adoptDeferredDms`). DM keys and wording are
-  unchanged, so an older leader and this machine asking the same message send one answer.
 
 ### main-check
 
@@ -1702,10 +1675,6 @@ board's banner read them.
   lifts the pause for that commit and asks the queue to go on.
 - **A newer commit** while a run is under way starts its own first run; the older run's
   verdict is recorded as superseded and changes nothing.
-- **During a rollout** a row an older release left running, confirming or paused is
-  adopted by the release machine (`adoptMainChecks`, reading that release's own run's Jobs
-  when it was admitted), and an older release's `main.check` item hands the merge over
-  (merge-followups).
 - **Rolling back past it.** The guard stays on (its `enabled:main-check` row and the
   instances outlive the release), so an older release's writes to `main_check_*` are
   refused, a pause included: an app paused then stays paused. Delete the

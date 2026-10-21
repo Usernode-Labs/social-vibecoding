@@ -43,18 +43,12 @@ const MIN = 60 * SEC;
 // How long a project may take from its setup's start to its first deploy's
 // answer before it reads failed (Retry is free).
 export const TIME_LIMIT_MS = 15 * MIN;
-// A row an older build is still making: looked at again this often, until
-// its owner's heartbeat has lapsed.
-export const RECHECK_MS = 30 * SEC;
 // A first deploy app delivery does not hold (an older build's app delivery
 // refused the ask during a rollout) is asked again this often, within the
 // time limit.
 export const REASK_MS = 2 * MIN;
-// The owner column's value that says the workflow makes it: an older build's
-// sweep never takes such a row.
-export const WORKFLOW_OWNER = 'workflow';
 
-type Name = 'waiting' | 'setting_up' | 'deploying' | 'running' | 'awaiting_secrets' | 'failed';
+type Name = 'setting_up' | 'deploying' | 'running' | 'awaiting_secrets' | 'failed';
 export interface Data {
   appId: number;
   appSlug: string;
@@ -81,22 +75,15 @@ const appOnly = (p: any) => ({ appId: int(p?.appId, 'appId') });
 const EVENTS = {
   // The row was inserted (the trigger).
   Started: appOnly,
-  // A row an older build was making when this release started (the
-  // release's adoption): made here once its owner has let it go.
-  Adopted: appOnly,
   // A person asks again for a project whose making failed (the route,
   // after its permission and count checks). `counted`: it counts toward
   // the retry limit (an interrupted one does not).
   Retry: (p: any) => ({ appId: int(p?.appId, 'appId'), counted: p?.counted !== false }),
-  // A first request the project is owed that nothing files (an older
-  // build left it open: the release's adoption).
-  FirstRequestOwed: appOnly,
   // Its first version's plan was claimed (services/first-version-plan.js
   // startEarlyPlan, in the claim's own statement).
   PlanOwed: appOnly,
-  // Its time limit, and the recheck of a row an older build makes.
+  // Its time limit.
   TimedOut: () => ({}),
-  Recheck: () => ({}),
   // app delivery's answer to its first deploy.
   Delivered: (p: any) => ({ sha: typeof p?.sha === 'string' ? p.sha : null, url: typeof p?.url === 'string' ? p.url : null,
     timing: (p?.timing && typeof p.timing === 'object' ? p.timing : null) as Json }),
@@ -109,14 +96,14 @@ const EVENTS = {
 const timer = (at: Date, type: string) => ({ at, event: { type } });
 
 // A setup, from where the row is: a new attempt of the work, under the time
-// limit. The row is the workflow's from here (its owner column says so).
+// limit.
 function setUp(d: Data, ctx: TransitionContext, writes: any[] = []): Outcome<CState> {
   const attempt = d.attempt + 1;
   const deadline = new Date(ctx.now.getTime() + TIME_LIMIT_MS);
   const work: WorkRequest[] = [{ kind: WORK.setup, key: `setup:${attempt}`, input: { appId: d.appId, attempt } }];
   return {
     next: { name: 'setting_up', data: { ...d, attempt, startedAt: ctx.now.toISOString(), deadline: deadline.toISOString(), sha: null, timing: null, timedOut: false } },
-    work, writes: [{ type: 'claim', appId: d.appId }, ...writes], timer: timer(deadline, 'TimedOut'),
+    work, writes, timer: timer(deadline, 'TimedOut'),
     push: [creationPhase({ appId: d.appId, appSlug: d.appSlug, phase: 'database' })],
   };
 }
@@ -224,18 +211,6 @@ function timedOut(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext): Out
   return failedWith({ ...d, timedOut: true }, failure, reason, ctx, { cancel: s.name === 'setting_up' });
 }
 
-// A row an older build makes: waited for until its owner lets it go (its
-// heartbeat lapsed), then set up from where it is.
-function recheck(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<CState> {
-  // The older build finished it (or it is gone): what the row says.
-  if (!f.app || f.app.status !== 'creating') {
-    const done: Name = f.app?.status === 'running' ? 'running' : f.app?.status === 'awaiting_secrets' ? 'awaiting_secrets' : 'failed';
-    return { next: { name: done, data: s.data }, timer: null };
-  }
-  if (f.ownedElsewhere) return { next: s, timer: timer(new Date(ctx.now.getTime() + RECHECK_MS), 'Recheck') };
-  return setUp(s.data, ctx);
-}
-
 // ── The machine ─────────────────────────────────────────────────────────
 
 export function appCreation(): Machine<CState, Facts> {
@@ -252,11 +227,7 @@ export function appCreation(): Machine<CState, Facts> {
     },
     to: (s: any, e: Event<any>, f: Facts, ctx: TransitionContext) => setUp(fresh(f), ctx),
   };
-  const adopted = {
-    guard: started.guard,
-    to: (s: any, e: Event<any>, f: Facts, ctx: TransitionContext) => recheck({ name: 'waiting', data: fresh(f) }, e, f, ctx),
-  };
-  // Again, from failed (or a row an older build failed, no instance yet).
+  // Again, from failed (or a failed row no instance holds).
   const retry = {
     guard: (s: any, e: Event<any>, f: Facts, ctx: TransitionContext): Check => {
       const k = keyed(e, ctx);
@@ -295,23 +266,6 @@ export function appCreation(): Machine<CState, Facts> {
   };
   const late = { to: (s: any) => ({ next: s }) };
   const made = workResult(late);
-  // A first request an older build left open: filed by this machine's work
-  // (once: its key), whatever state the project is in once it has a
-  // repository. A project with no instance yet gets one in the state its
-  // row is in.
-  const owed = {
-    guard: (s: any, e: Event<any>, f: Facts, ctx: TransitionContext): Check => {
-      const k = keyed(e, ctx);
-      if (k !== true) return k;
-      if (!f.app) return reject('no_app');
-      if (s.name === NONE && !['running', 'awaiting_secrets'].includes(f.app.status)) return reject('not_made');
-      return f.firstRequestOwed ? ok() : reject('not_owed');
-    },
-    to: (s: any, e: Event<any>, f: Facts): Outcome<CState> => ({
-      next: s.name === NONE ? { name: f.app!.status as Name, data: fresh(f) } : s,
-      work: [{ kind: WORK.firstRequest, key: 'first-request', input: { appId: f.app!.id } }],
-    }),
-  };
   const fromDelivery = (e: Event<any>): Check =>
     (e.source.kind === 'message' && e.source.from.machine === DELIVERY ? ok() : reject('delivery_only'));
 
@@ -322,32 +276,21 @@ export function appCreation(): Machine<CState, Facts> {
     // result unread.
     version: 2,
     events: EVENTS,
-    create: ['Started', 'Adopted', 'Retry', 'FirstRequestOwed'],
+    create: ['Started', 'Retry'],
     decode: (row) => (row.state === NONE ? { name: NONE, data: null } : { name: row.state as Name, data: row.data as Data }),
     facts: (tx, state, event) => readFacts(tx, state.name === NONE ? event.payload.appId : (state as Live).data.appId,
-      { firstRequest: event.type === 'WorkSucceeded' || event.type === 'FirstRequestOwed',
+      { firstRequest: event.type === 'WorkSucceeded',
         delivery: event.type === 'TimedOut' || event.type === 'Retry' }),
     authorize: {
       Started: (e) => (e.source.kind === 'system' ? ok() : reject('system_only')),
-      Adopted: (e) => (e.source.kind === 'system' ? ok() : reject('system_only')),
       Retry: (e) => (e.source.kind === 'system' || e.source.kind === 'admin' ? ok() : reject('system_only')),
-      FirstRequestOwed: (e) => (e.source.kind === 'system' ? ok() : reject('system_only')),
       PlanOwed: (e) => (e.source.kind === 'system' ? ok() : reject('system_only')),
       TimedOut: (e) => (e.source.kind === 'timer' ? ok() : reject('timer_only')),
-      Recheck: (e) => (e.source.kind === 'timer' ? ok() : reject('timer_only')),
       Delivered: fromDelivery,
       DeliveryFailed: fromDelivery,
     },
     transitions: {
-      [NONE]: { Started: started, Adopted: adopted, Retry: retry, FirstRequestOwed: owed },
-      waiting: {
-        Recheck: { to: (s: any, e: Event<any>, f: Facts, ctx: TransitionContext) => recheck(s, e, f, ctx) },
-        PlanOwed: planOwed,
-        WorkSucceeded: made,
-        WorkFailed: made,
-        WorkExhausted: made,
-        '*': { ignore: 'waiting' },
-      },
+      [NONE]: { Started: started, Retry: retry },
       setting_up: {
         PlanOwed: planOwed,
         WorkSucceeded: workResult(setupResult),
@@ -360,7 +303,6 @@ export function appCreation(): Machine<CState, Facts> {
         Delivered: { to: (s: any, e: Event<any>, f: Facts, ctx: TransitionContext) => delivered(s, e, f, ctx) },
         DeliveryFailed: { to: (s: any, e: Event<any>, f: Facts, ctx: TransitionContext) => deliveryFailed(s, e, f, ctx) },
         TimedOut: { to: (s: any, e: Event<any>, f: Facts, ctx: TransitionContext) => timedOut(s, e, f, ctx) },
-        FirstRequestOwed: owed,
         PlanOwed: planOwed,
         WorkSucceeded: made,
         WorkFailed: made,
@@ -377,17 +319,10 @@ export function appCreation(): Machine<CState, Facts> {
         WorkExhausted: made,
         '*': { ignore: 'failed' },
       },
-      running: { FirstRequestOwed: owed, PlanOwed: planOwed, WorkSucceeded: made, WorkFailed: made, WorkExhausted: made, '*': { ignore: 'running' } },
-      awaiting_secrets: { FirstRequestOwed: owed, PlanOwed: planOwed, WorkSucceeded: made, WorkFailed: made, WorkExhausted: made, '*': { ignore: 'awaiting_secrets' } },
+      running: { PlanOwed: planOwed, WorkSucceeded: made, WorkFailed: made, WorkExhausted: made, '*': { ignore: 'running' } },
+      awaiting_secrets: { PlanOwed: planOwed, WorkSucceeded: made, WorkFailed: made, WorkExhausted: made, '*': { ignore: 'awaiting_secrets' } },
     },
     writes: {
-      // The row is the workflow's. Its heartbeat never lapses, so an older
-      // build's sweep and Retry, still running during a rollout, never take
-      // it (they take an owned row whose heartbeat is missing or old).
-      claim: async (tx, w) => {
-        await tx.query(
-          `UPDATE apps SET creating_owner = $2, creating_heartbeat_at = 'infinity' WHERE id = $1`, [w.appId, WORKFLOW_OWNER]);
-      },
       retrying: async (tx, w) => {
         await tx.query(
           `UPDATE apps SET status = 'creating', last_failure = NULL,

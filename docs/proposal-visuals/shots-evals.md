@@ -90,9 +90,7 @@ is reached are allowed to finish. Builds and database copies are the
 platform's own and are not counted.
 
 A cancel stops what runs (its work cancelled, its agent's turn stopped) and
-cleans the trial up. A trial an older build's runner left during a release
-(its heartbeat quiet for five minutes) is cleaned up and queued once more
-under a fresh attempt id; after that it fails with `shots_eval_interrupted`. The GC's orphan sweeps
+cleans the trial up. The GC's orphan sweeps
 (checkouts and runtimes) and the preview database server's drain count a
 running trial the way they count a running shots run.
 

@@ -132,9 +132,6 @@ const EVENTS = {
   Resume: (p: any) => ({ appId: int(p?.appId, 'appId'), by: typeof p?.by === 'string' ? p.by.slice(0, 80) : null }),
   // The instance's deadline: a paused red is asked again.
   RecheckDue: () => ({}),
-  // A row an older release left in the middle of a run, or paused (the
-  // leader's boot backfill): taken from the row.
-  Adopted: (p: any) => ({ appId: int(p?.appId, 'appId'), runId: typeof p?.runId === 'string' ? p.runId.slice(0, 64) : null }),
 };
 
 // ── The rules (services/main-watch.js tells why each is so) ──────────────
@@ -219,9 +216,9 @@ const kick = (d: Data, why: string): MessageRequest =>
 // only while main is not paused: a confirmation asks whether a red is real,
 // a recheck whether a paused red still stands, and a merge on a paused main
 // is the one that re-tests it. Each of those runs the suite.
-const suiteWork = (d: Data, run: Run, resumeRunId: string | null = null): WorkRequest =>
+const suiteWork = (d: Data, run: Run): WorkRequest =>
   ({ kind: WORK.suite, key: run.key, input: { appId: d.appId, sha: run.sha, phase: run.phase,
-    reuse: run.phase === 'first' && !run.wasPaused, ...(resumeRunId ? { resumeRunId } : {}) } });
+    reuse: run.phase === 'first' && !run.wasPaused } });
 
 // When a paused red is asked again, or null when it is not.
 // A paused red with rechecks left.
@@ -389,33 +386,11 @@ function fromRow(appId: number, r: Row): Data {
     pausedSha: r.pausedSha, resumedSha: r.resumedSha, n: 0, run: null, older: [] };
 }
 
-// A row an older release left: a first run is run again, a confirmation
-// resumes at its re-run with the first red carried over, and a paused red
-// waits for its recheck.
-// `runId`: the older release's own run of the row's commit, whose Jobs the
-// first attempt reads rather than run the suite again.
-function adopt(d: Data, ctx: TransitionContext, deps: Deps, runId: string | null = null): Outcome<MCState> {
-  const detail = obj(d.detail);
-  if (d.state === 'running' && d.sha) {
-    const out = claim({ ...d, state: 'error' }, { sha: d.sha, sessionId: detail.sessionId ?? null, prNumber: detail.prNumber ?? null }, ctx);
-    const run = (out.next as Live).data.run!;
-    return { ...out, work: [suiteWork((out.next as Live).data, run, runId)] };
-  }
-  if (d.state === 'confirming' && d.sha) {
-    const run: Run = { key: 'suite:1', sha: d.sha, phase: 'confirm', prNumber: detail.prNumber ?? null, sessionId: detail.sessionId ?? null,
-      wasPaused: true, firstRun: redOf(detail) as Json, firstExcerpts: [] };
-    const d1 = { ...d, n: 1, run };
-    return step('confirming', d1, { work: [suiteWork(d1, run, runId)] });
-  }
-  return step('idle', d, { timer: recheckTimer(d, deps, ctx.now) });
-}
-
 // ── The machine ─────────────────────────────────────────────────────────
 
 const producer = (e: Event<any>): Check => (['route', 'system', 'message'].includes(e.source.kind) ? ok() : reject('not_a_producer'));
 const adminOnly = (e: Event<any>): Check => (e.source.kind === 'admin' || e.source.kind === 'route' ? ok() : reject('admin_only'));
 const timerOnly = (e: Event<any>): Check => (e.source.kind === 'timer' ? ok() : reject('timer_only'));
-const systemOnly = (e: Event<any>): Check => (e.source.kind === 'system' ? ok() : reject('internal_only'));
 
 export function mainCheck(given: Partial<Deps> = {}): Machine<MCState, Facts> {
   const deps: Deps = { ...DEFAULTS, ...given };
@@ -444,14 +419,8 @@ export function mainCheck(given: Partial<Deps> = {}): Machine<MCState, Facts> {
     },
     to: (s: MCState, e: Event<any>, f: Facts, ctx: TransitionContext) => {
       if (s.name !== NONE) return resume(s as Live, e);
-      // A row an older release left in the middle of a run: the pause lifts,
-      // and its run is carried on, as the boot's adoption would have.
-      const lifted = resume({ name: 'idle', data: fromRow(e.payload.appId, f.row!) }, e);
-      const d = (lifted.next as Live).data;
-      if (!deps.enabled || (d.state !== 'running' && d.state !== 'confirming')) return lifted;
-      const carried = adopt(d, ctx, deps);
-      return { ...carried, writes: [...(lifted.writes || []), ...(carried.writes || [])],
-        messages: [...(lifted.messages || []), ...(carried.messages || [])], timer: null };
+      // A paused row no instance holds: the pause lifts.
+      return resume({ name: 'idle', data: fromRow(e.payload.appId, f.row!) }, e);
     },
   };
   const results = {
@@ -471,14 +440,13 @@ export function mainCheck(given: Partial<Deps> = {}): Machine<MCState, Facts> {
     RecheckDue: name === 'idle'
       ? { guard: (s: MCState) => (!deps.enabled ? reject('off') : recheckable((s as Live).data, deps) ? ok() : reject('not_due')), to: live((s, e, f, ctx) => recheck(s, ctx)) }
       : { ignore: 'under_way' },
-    Adopted: { ignore: 'held' },
     ...resultsOf(name),
   });
   return defineMachine<MCState, Facts>({
     name: MACHINE,
     version: 1,
     events: EVENTS,
-    create: ['CheckRequested', 'Resume', 'Adopted'],
+    create: ['CheckRequested', 'Resume'],
     terminal: [],
     decode: (row) => ({ name: row.state, data: row.data } as MCState),
     facts: (tx: Tx, state: MCState, event: Event<any>) => {
@@ -486,23 +454,11 @@ export function mainCheck(given: Partial<Deps> = {}): Machine<MCState, Facts> {
       if (!Number.isInteger(appId) || appId <= 0) return Promise.resolve(NO_FACTS);
       return readFacts(tx, appId, { flakes: WORK_RESULTS.has(event.type) });
     },
-    authorize: { CheckRequested: producer, Resume: adminOnly, RecheckDue: timerOnly, Adopted: systemOnly },
+    authorize: { CheckRequested: producer, Resume: adminOnly, RecheckDue: timerOnly },
     transitions: {
       [NONE]: {
         CheckRequested: requested,
         Resume: resumeEntry,
-        Adopted: {
-          guard: (s: MCState, e: Event<any>, f: Facts, ctx: TransitionContext): Check => {
-            if (!deps.enabled) return reject('off');
-            const k = keyOf(e, ctx);
-            if (k !== true) return k;
-            const r = f.row;
-            if (!r || !parseRepo(r.repoUrl)) return reject('no_app');
-            const paused = r.state === 'failing' && !!r.sha && lower(r.pausedSha) === lower(r.sha);
-            return r.state === 'running' || r.state === 'confirming' || paused ? ok() : reject('nothing_to_adopt');
-          },
-          to: (s: MCState, e: Event<any>, f: Facts, ctx: TransitionContext) => adopt(fromRow(e.payload.appId, f.row!), ctx, deps, e.payload.runId),
-        },
       },
       idle: table('idle'),
       running: table('running'),

@@ -1384,13 +1384,13 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         await db.query('BEGIN');
         // The CTE makes app row + creator membership atomic — the creator
         // must always have a member row (it's what makes a collab-private
-        // app reachable by anyone at all). `creating_owner = 'workflow'`: the
-        // workflow makes it (an older build's sweep never takes it).
+        // app reachable by anyone at all). Its insert starts its making
+        // (src/workflow/app-creation/).
         const { rows } = await db.query(
           `WITH new_app AS (
              INSERT INTO apps (name, slug, repo_url, created_by, status,
-                               collab_visibility, view_visibility, creating_owner, creating_heartbeat_at)
-             VALUES ($1, $2, $3, $4, 'creating', $5, $6, 'workflow', 'infinity')
+                               collab_visibility, view_visibility)
+             VALUES ($1, $2, $3, $4, 'creating', $5, $6)
              RETURNING *
            ), membership AS (
              INSERT INTO app_collaborators (app_id, user_id, status, accepted_at)
@@ -1713,8 +1713,8 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       const { rows } = await pool.query(
         `WITH new_app AS (
            INSERT INTO apps (name, slug, created_by, status,
-                             collab_visibility, view_visibility, forked_from, creating_owner, creating_heartbeat_at)
-           VALUES ($1, $2, $3, 'creating', 'private', 'private', $4::jsonb, 'workflow', 'infinity')
+                             collab_visibility, view_visibility, forked_from)
+           VALUES ($1, $2, $3, 'creating', 'private', 'private', $4::jsonb)
            RETURNING *
          ), membership AS (
            INSERT INTO app_collaborators (app_id, user_id, status, accepted_at)

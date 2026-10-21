@@ -223,7 +223,7 @@ test('test accounts against the full PostgreSQL schema', { timeout: 180000 }, as
       assert.equal(a.name, pick.title);
       assert.equal(a.template, pick.id);
       // Being made by the app-creation machine, as a create's insert starts it.
-      assert.deepEqual([a.status, a.creating_owner], ['creating', 'workflow']);
+      assert.equal(a.status, 'creating');
       assert.deepEqual([a.collab_visibility, a.view_visibility], ['private', 'private'], 'Just you');
       assert.equal(a.icon_emoji, appTemplates.isReadyMade(pick.id) ? pick.icon : null);
       assert.ok(a.community_id, 'its community, made by the insert\'s trigger');

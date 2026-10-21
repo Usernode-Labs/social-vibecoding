@@ -188,15 +188,12 @@ test('only the bot\'s own active sessions are handed to it; a person\'s, and the
     'a follow-up on the bot\'s proposal: updating its PR and staging is the right end');
 });
 
-// An older release's follow-up on the bot's change up for a vote (its record
-// marked homeroomBotFollowUp, no work item owning it): a person's tail would
-// publish its answer as the change's spec, with no clock (#4533). It is the
-// bot's: stopped, its record released, and its request read again.
-test('an older release\'s follow-up on the bot\'s change up for a vote is the bot\'s; a look\'s own turn is its item\'s', () => {
+// A mark only a release from before the bot's looks were workflow work put
+// on a follow-up's turn record makes nothing the bot's: a look's turn is its
+// item's, and a change up for a vote keeps its own end.
+test('a turn record marked homeroomBotFollowUp on the bot\'s change up for a vote is not handed to the bot', () => {
   const mark = { followUp: 'reply', appId: 9, issueNumber: 3, deadlineAt: '2026-10-17T12:00:00Z' };
-  assert.equal(bot.isRecoveredBotSession(botSession({ status: 'promoted', active_turn: { turnId: 't', homeroomBotFollowUp: mark } })), true);
-  assert.equal(bot.isRecoveredBotSession(botSession({ status: 'promoted',
-    active_turn: { turnId: 't', homeroomBotFollowUp: mark, owner: { machine: 'bot-request', key: 'request:9:3' } } })), false);
+  assert.equal(bot.isRecoveredBotSession(botSession({ status: 'promoted', active_turn: { turnId: 't', homeroomBotFollowUp: mark } })), false);
 });
 
 // ── A bot session found paused under a turn (#1006) ──────────────────────

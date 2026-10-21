@@ -48,8 +48,7 @@ still work, so nothing outside this repository breaks on the rename:
   `visibleChanges` (`visible-changes.declaredChanges`).
 - `/api/apps/:slug/proposals/:sessionId/evidence…` is answered by the
   `/shots…` routes, for a tab still running the previous shell
-  (`routes/shots.js`), and the worker's old
-  `/api/internal/sessions/:id/visual-evidence-intent` by `/visible-changes`.
+  (`routes/shots.js`).
 - Each `SHOTS_*` setting falls back to its `VISUAL_EVIDENCE_*` name
   (`VISUAL_EVIDENCE_V2_ENABLED` for `SHOTS_ENABLED`); the deploy workflow
   reads either repository variable. The Helm value is now

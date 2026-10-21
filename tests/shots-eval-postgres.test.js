@@ -13,8 +13,7 @@
 //     against its eval's cap, charged once when its cleanup is done;
 //   - two finished arms of one proposal make a blind pair, whose pick and
 //     marks feed each arm's numbers;
-//   - a trial an older build's runner left is cleaned up and queued again
-//     under a fresh attempt id, once; the cap stops an eval; a cancel stops
+//   - the cap stops an eval; a cancel stops
 //     a trial that runs and cleans it up; the GC knows trials; an eval's
 //     model calls are billed by the turn's owner.
 // The builds, copies and the shots agent itself are fakes on the modules the
@@ -389,42 +388,20 @@ test('shots evals, end to end (PostgreSQL)', { timeout: 180_000 }, async (t) => 
     assert.deepEqual(rows.map((r) => r.state), ['cancelled']);
   });
 
-  await t.test('a trial an older build\'s runner left is cleaned up and queued again under a fresh attempt id, once', async () => {
+  await t.test('an active trial the machine does not hold is left as it is: no runner from before the machine is waited out or taken over', async () => {
     const launched = await evals.launch(pool, CONFIG, { sessionIds: [MERGED_TWO], capUsd: 10 });
     const { rows: [trial] } = await pool.query('SELECT id, attempt_id FROM shots_eval_trials WHERE eval_run_id = $1', [launched.eval.id]);
-    // Its runner claimed it and went quiet with its process.
     await asTransition(pool, `UPDATE shots_eval_trials SET state = 'exploring', attempts = 1, updated_at = NOW() - interval '10 minutes' WHERE id = $1`, [trial.id]);
     world.removed.length = 0;
-    const held = rt; void held;
-    // Its copies removed by its old names, and then it runs again.
-    world.restore();
-    const blocked = [];
-    world = fakeOutsideWorld({ dispatched, hold: async () => { blocked.push(1); throw new Error('stop here'); } });
     await lookNow();
-    await rt.drain();
-    await rt.runServices(); // its cleanup
-    await rt.drain();
-    assert.ok(world.removed.includes(trial.attempt_id), 'its copies removed by its old names');
-    const { rows: [requeued] } = await pool.query('SELECT state, attempt_id FROM shots_eval_trials WHERE id = $1', [trial.id]);
-    assert.ok(['planned', 'provisioning'].includes(requeued.state), requeued.state);
-    assert.notEqual(requeued.attempt_id, trial.attempt_id);
-
-    // Left again on its second attempt: failed.
-    await pool.query(`UPDATE shots_eval_runs SET status = 'cancelled' WHERE id = $1`, [launched.eval.id]);
     await settle();
-    const launched2 = await evals.launch(pool, CONFIG, { sessionIds: [MERGED_TWO], capUsd: 10 });
-    const { rows: [t2] } = await pool.query('SELECT id FROM shots_eval_trials WHERE eval_run_id = $1', [launched2.eval.id]);
-    await asTransition(pool, `UPDATE shots_eval_trials SET state = 'provisioning', attempts = 2, updated_at = NOW() - interval '10 minutes' WHERE id = $1`, [t2.id]);
-    await lookNow();
-    await rt.drain();
-    await rt.runServices();
-    await rt.drain();
-    const { rows: [failed] } = await pool.query('SELECT state, failure_code FROM shots_eval_trials WHERE id = $1', [t2.id]);
-    assert.deepEqual(failed, { state: 'failed', failure_code: 'shots_eval_interrupted' });
-    await pool.query(`UPDATE shots_eval_runs SET status = 'done' WHERE id = $1`, [launched2.eval.id]);
-    world.restore();
-    world = fakeOutsideWorld({ dispatched });
+    const { rows: [row] } = await pool.query('SELECT state, attempt_id FROM shots_eval_trials WHERE id = $1', [trial.id]);
+    assert.deepEqual([row.state, row.attempt_id], ['exploring', trial.attempt_id], 'not put back');
+    assert.deepEqual(world.removed, [], 'nothing of it cleaned up');
+    await pool.query(`UPDATE shots_eval_trials SET state = 'cancelled' WHERE id = $1`, [trial.id]);
+    await pool.query(`UPDATE shots_eval_runs SET status = 'done' WHERE id = $1`, [launched.eval.id]);
   });
+
 
   await t.test('the cap stops an eval before a trial it cannot pay for', async () => {
     const launched = await evals.launch(pool, CONFIG, { sessionIds: [MERGED_TWO], configIds: [configId], capUsd: 5 });
@@ -662,7 +639,7 @@ test('shots evals, end to end (PostgreSQL)', { timeout: 180_000 }, async (t) => 
     assert.ok(ev.spent <= ev.cap, `spent ${ev.spent} of ${ev.cap}`);
   });
 
-  await t.test('E2: the rows of the trials it runs beat, so an older release\'s runner never takes one for its own lost one', async () => {
+  await t.test('E2: the rows of the trials it runs are not beaten: nothing reads their age', async () => {
     await closeEvals();
     const launched = await evals.launch(pool, CONFIG, { sessionIds: [MERGED_TWO], capUsd: 10 });
     await lookNow();
@@ -671,12 +648,12 @@ test('shots evals, end to end (PostgreSQL)', { timeout: 180_000 }, async (t) => 
     assert.equal(trial.state, 'provisioning');
     await pool.query("UPDATE shots_eval_trials SET updated_at = NOW() - interval '10 minutes' WHERE id = $1", [trial.id]);
     await tick();
-    const { rows: [row] } = await pool.query('SELECT updated_at > NOW() - interval \'1 minute\' AS fresh FROM shots_eval_trials WHERE id = $1', [trial.id]);
-    assert.equal(row.fresh, true);
-    const { rows: [inst] } = await pool.query("SELECT deadline_at FROM wf_instances WHERE machine = 'shots-eval'");
-    assert.ok(Date.parse(inst.deadline_at) - Date.now() <= evalMachine.BEAT_MS, 'it beats again within two minutes');
+    const { rows: [row] } = await pool.query('SELECT updated_at < NOW() - interval \'5 minutes\' AS old FROM shots_eval_trials WHERE id = $1', [trial.id]);
+    assert.equal(row.old, true);
+    assert.equal(evalMachine.BEAT_MS, undefined);
     await closeEvals();
   });
+
 
   const costOf = async (attemptId) => (await pool.query(
     `SELECT proxy_cents::float8 AS proxy, reported_cents::float8 AS reported, charged_cents::float8 AS charged, settled_at IS NOT NULL AS settled
@@ -766,7 +743,7 @@ test('shots evals, end to end (PostgreSQL)', { timeout: 180_000 }, async (t) => 
     assert.ok(inMs > 5 * 60 * 1000 && inMs <= evalMachine.IDLE_LOOK_MS, String(inMs));
   });
 
-  await t.test('E5: a trial whose row was ended elsewhere is stopped and cleaned up; a cancel stops an older runner\'s trials too', async () => {
+  await t.test('E5: a trial whose row was ended elsewhere is stopped and cleaned up', async () => {
     await closeEvals();
     const launched = await evals.launch(pool, CONFIG, { sessionIds: [MERGED_TWO], capUsd: 10 });
     world.restore();
@@ -780,7 +757,7 @@ test('shots evals, end to end (PostgreSQL)', { timeout: 180_000 }, async (t) => 
       assert.equal(trial.state, 'exploring');
       void rt.runServices(); // its agent, which never returns
       await new Promise((r) => setTimeout(r, 100));
-      // An older release's cancel writes the row and nothing else.
+      // A write of the row and nothing else.
       await pool.query(`UPDATE shots_eval_trials SET state = 'cancelled' WHERE id = $1`, [trial.id]);
       await tick();
       const { rows: [w] } = await pool.query(
@@ -792,13 +769,6 @@ test('shots evals, end to end (PostgreSQL)', { timeout: 180_000 }, async (t) => 
       assert.equal(ended.state, 'cancelled');
     } finally { world.restore(); world = fakeOutsideWorld({ dispatched }); }
 
-    // An older release's runner's trial (not this machine's), its eval cancelled here.
-    const other = await evals.launch(pool, CONFIG, { sessionIds: [MERGED], capUsd: 10 });
-    const [theirs] = await trialsOf(other.eval.id);
-    await asTransition(pool, `UPDATE shots_eval_trials SET state = 'exploring', updated_at = NOW() WHERE id = $1`, [theirs.id]);
-    assert.equal((await evals.cancelRun(pool, other.eval.id, { platform: platformHere })).ok, true);
-    await settle();
-    assert.ok(world.removed.includes(theirs.attempt_id), 'its copies removed and its turn stopped here');
     await closeEvals();
   });
 

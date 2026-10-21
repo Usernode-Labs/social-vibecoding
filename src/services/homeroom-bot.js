@@ -4392,20 +4392,13 @@ async function recordBuildSnapshot(pool, {
 // A read, a reply or a fix is its look's work item's (bot-request's
 // bot.look): the item follows its turn through a restart, and recovery
 // leaves a turn whose record names a work item still under way alone. What
-// is left here is a bot turn no work item owns: one an older release ran
-// (before its looks were workflow work), stopped, its record released, and
-// its request read again (the request's instance adopted it, older_turn).
-
-// The mark an older release put on its follow-up's turn record (on a change
-// up for a vote: `promoted`, never active or paused).
-const OLDER_FOLLOW_UP_MARK = 'homeroomBotFollowUp';
+// is left here is a bot turn no work item owns (one a release from before
+// its looks were workflow work ran): stopped, and its record released.
 
 /**
  * True when restart recovery should hand this session to the bot rather than
  * to a person's dev-chat tail: the bot's own session, while `active`, or
- * `paused` with a turn record on it, or one whose record an older release's
- * follow-up marked (a person's tail would publish its answer as the
- * change's spec, with no clock, #4533). A session a durable build owns
+ * `paused` with a turn record on it. A session a durable build owns
  * (`workflow_owner`) is that build's, and server.js leaves it alone before
  * it asks this.
  */
@@ -4413,9 +4406,7 @@ function isRecoveredBotSession(session) {
   return !!session
     && session.username === live.BOT_USERNAME
     && session.user_is_synthetic === true
-    && (session.status === 'active' || (session.status === 'paused' && !!session.active_turn)
-      || !!(session.active_turn && typeof session.active_turn === 'object'
-        && session.active_turn[OLDER_FOLLOW_UP_MARK] && !session.active_turn.owner));
+    && (session.status === 'active' || (session.status === 'paused' && !!session.active_turn));
 }
 
 // What a restart may cost a turn that runs on through it (durable-turn.js).
