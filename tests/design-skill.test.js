@@ -233,10 +233,17 @@ function repoWith(files) {
   };
 }
 
-test('a later build of a repository with the skill gets the nudge alone, at its spec and its build', async () => {
+// The build prompt's TIME line reads `Date.now()`, so two runs a moment
+// apart can straddle a minute boundary and differ there too. Freeze the
+// clock for this test so both runs state the same start minute.
+const FIXED_MS = Date.UTC(2026, 9, 21, 12, 34, 0);
+
+test('a later build of a repository with the skill gets the nudge alone, at its spec and its build', async (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: FIXED_MS });
   const github = repoWith({ [SKILL_PATH]: designSkill.skillFiles()[1].content });
   const later = await run({ github });
   assert.deepEqual(github.reads, [['o', 'r', SKILL_PATH, 'b5001']], 'read once, at the branch its turns run on');
+  assert.ok(later.build.includes('TIME. This build started at 12:34 UTC.'), 'the build prompt states the pinned start minute');
   for (const p of [later.spec, later.build]) {
     assert.ok(p.includes(live.guidanceLines(NUDGE).join('\n')));
     assert.equal(count(p, NUDGE), 1);
