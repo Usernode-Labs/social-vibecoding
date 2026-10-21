@@ -136,6 +136,10 @@ function shape(r, me) {
 }
 
 function routes(app, pool) {
+  // What the group would share with a Homeroom-wide tier list if it ever
+  // votes to (usernode-rankings.js, off as it comes): counts, never who.
+  require('./usernode-rankings').mount(app, pool);
+
   // Every item, with the group's tier, how many people ranked it and how
   // many want to, and the viewer's own place. Oldest first, so the list
   // does not reshuffle under somebody who is sorting it.

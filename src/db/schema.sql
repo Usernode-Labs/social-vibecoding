@@ -13477,6 +13477,14 @@ END $$;
 -- failed create writes the same starter the creator picked.
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS template VARCHAR(40);
 
+-- Which revision of that starter the project's first commit carried
+-- (services/app-templates.js versionOf: a short SHA-256 of the starter's own
+-- files), written by app-creator beside repo_url. A later change to every
+-- copy of one starter reads it to tell which copies already carry what the
+-- starter has since gained. NULL for `empty`, an import, a fork, a project
+-- made without GitHub, and every project made before it was kept.
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS template_version VARCHAR(64);
+
 -- "Suggest this back" (services/suggest-back.js): a proposal opened on an
 -- original from one of its remixes records the copy it came from. NULL for
 -- every other proposal. The partial unique index is what keeps one copy to

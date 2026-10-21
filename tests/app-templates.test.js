@@ -217,6 +217,28 @@ test('each ready-made app is a directory of its own files; the four tier lists s
   }
 });
 
+// Which revision of its starter a project began from (apps.template_version),
+// for a later change to every copy of one starter: the starter's own files,
+// unfilled, so the four tier lists of one revision share it.
+test('a project records which revision of its starter its first commit carried', () => {
+  assert.equal(appTemplates.versionOf('empty'), null);
+  for (const id of DELETED) assert.equal(appTemplates.versionOf(id), null, id);
+  const versions = new Map();
+  for (const id of [...READY, ...GAMES]) {
+    const v = appTemplates.versionOf(id);
+    assert.match(v, /^[0-9a-f]{12}$/, id);
+    assert.equal(appTemplates.versionOf(id), v, `${id} is the same each time`);
+    const dir = appTemplates.dirOf(id);
+    if (versions.has(dir)) assert.equal(versions.get(dir), v, `${id} shares its directory's revision`);
+    versions.set(dir, v);
+  }
+  assert.equal(new Set(versions.values()).size, versions.size, 'each starter directory has its own revision');
+  // Written with the first commit, beside the repository.
+  const creator = fs.readFileSync(path.join(ROOT, 'src/services/app-creator.js'), 'utf8');
+  assert.match(creator, /'UPDATE apps SET repo_url = \$1, template_version = \$3 WHERE id = \$2',\s*\[repoUrl, row\.id, appTemplates\.versionOf\(template\)\]/);
+  assert.match(fs.readFileSync(path.join(ROOT, 'src/db/schema.sql'), 'utf8'), /^ALTER TABLE apps ADD COLUMN IF NOT EXISTS template_version VARCHAR\(64\);$/m);
+});
+
 test('a tier list ranks what its entry says, escaped where it lands, and its script reads none of it', () => {
   const hikes = generate('tier-list-hikes');
   const html = file(hikes, 'public/index.html');
