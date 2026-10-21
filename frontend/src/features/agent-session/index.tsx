@@ -292,14 +292,19 @@ function SessionBar({ session, about, embedded, action }: {
   const active = session?.activeChange || null;
   const count = session?.changes?.length || 0;
   const target = openAppTarget(active, about);
-  // It wraps on both surfaces (#3016). On a phone its five controls are wider
-  // than the screen, and a bar that cannot wrap made the whole conversation
-  // that wide: the right edge of every message and the Send button were off
-  // screen. Changes and the ⋯ sit at the end of whichever row they land on;
-  // from `sm` up everything fits on one, as before. (The Build picker that
-  // started the second row is the composer's "Build with" now, #3078.)
+  // Below `sm` the bar stays on one line (#3577): the four controls a phone
+  // shows — the app, the change's status, Changes and the ⋯ — do not fit at
+  // 390px, so the change pill drops its "· PR #n" and the app pill gives up
+  // width (its `min-w-0` and `truncate` cut the name) instead of a control
+  // moving to a second row. That used to be the #3016 failure's shape: a bar
+  // that could not wrap. The panel's own `min-w-0` is what keeps it from
+  // coming back, since the app pill is the only item allowed to shrink.
+  // From `sm` up the bar wraps as before, so the embedded Messages pane's
+  // title block keeps its own row and everything fits on one. (The Build
+  // picker that started the second row is the composer's "Build with" now,
+  // #3078.)
   return (
-    <div className="flex flex-wrap items-center gap-x-2 gap-y-2 border-b border-zinc-200 px-4 py-2 dark:border-zinc-800" data-agent-session-bar>
+    <div className="flex flex-nowrap items-center gap-x-2 gap-y-2 border-b border-zinc-200 px-4 py-2 dark:border-zinc-800 sm:flex-wrap" data-agent-session-bar>
       {embedded ? (
         <div className="mr-auto min-w-0 basis-full sm:basis-auto">
           <h2 className="truncate text-base font-semibold text-zinc-900 dark:text-zinc-100">{session?.title || 'New session'}</h2>
@@ -326,8 +331,14 @@ function SessionBar({ session, about, embedded, action }: {
       <span
         data-agent-session-change-pill
         className={`inline-flex shrink-0 items-center whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-semibold ${statusTone(active?.status)}`}
+        title={active ? `${changeStatusLabel(active.status, building)}${active.prNumber ? ` · PR #${active.prNumber}` : ''}` : undefined}
       >
-        {active ? `${changeStatusLabel(active.status, building)}${active.prNumber ? ` · PR #${active.prNumber}` : ''}` : 'No change yet'}
+        {active ? (
+          <>
+            {changeStatusLabel(active.status, building)}
+            {active.prNumber ? <span className="hidden sm:inline">{` · PR #${active.prNumber}`}</span> : null}
+          </>
+        ) : 'No change yet'}
       </span>
       {/* Siblings of the pills, not a group of their own: a declared check
           reads the bar as focus ~ change pill ~ Changes. Where the work is

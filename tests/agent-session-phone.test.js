@@ -3,12 +3,13 @@
 // Agent sessions on a phone (#3016), and what the green dot on the Homeroom
 // mark means (#3015).
 //
-// #3016: at 390px the session bar's five controls (focus, change, Build,
+// #3016: at 390px the session bar's then-five controls (focus, change, Build,
 // Changes, ⋯) came to 537px, and a bar that could not wrap made the whole
 // conversation that wide. The screen clips its overflow, so the right edge of
-// every message and the Send button were simply gone. The bar wraps now, the
-// panel may shrink below its content, and an empty message box is as tall as
-// its hint, which wraps on a phone and was cut off mid-line.
+// every message and the Send button were simply gone. The panel may shrink
+// below its content, the bar wraps from `sm` up, and an empty message box is
+// as tall as its hint, which wraps on a phone and was cut off mid-line. Below
+// `sm` the bar now fits one line instead (#3577, below).
 //
 // #3559: the same failure from inside the transcript. A row holding one
 // unbroken run of text (a pasted link, a path) made the conversation wider
@@ -29,10 +30,10 @@ const { loadTsx, createElement, renderToHtml } = require('./lib/render-tsx');
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 const panel = read('frontend/src/features/agent-session/index.tsx');
 
-test('#3016: the session bar wraps on every surface, and the panel cannot outgrow the screen', () => {
+test('#3016: the panel cannot outgrow the screen, and the bar wraps from `sm` up', () => {
   const bar = panel.slice(panel.indexOf('function SessionBar('), panel.indexOf('function SessionMenu('));
-  assert.match(bar, /<div className="flex flex-wrap items-center gap-x-2 gap-y-2 [^"]*" data-agent-session-bar>/,
-    'wrapping is not the embedded variant\'s alone any more');
+  assert.match(bar, /<div className="flex flex-nowrap items-center gap-x-2 gap-y-2 [^"]* sm:flex-wrap" data-agent-session-bar>/,
+    'one line on a phone, still wrapping from `sm` up');
   assert.doesNotMatch(bar, /embedded \? 'flex-wrap' : ''/);
   assert.match(bar, /data-agent-session-change-pill\s+className=\{`inline-flex shrink-0 items-center whitespace-nowrap /,
     'the change pill stays one line');
@@ -45,6 +46,38 @@ test('#3016: the session bar wraps on every surface, and the panel cannot outgro
   assert.match(panel, /<div ref=\{root\} className=\{`relative flex min-h-0 min-w-0 flex-1 /,
     'the panel shrinks below its content, so nothing inside can widen the screen');
   assert.match(panel, /className="relative flex min-h-0 min-w-0 flex-1 flex-col" data-agent-session-chat/);
+});
+
+// #3577: at 390px the app pill, the change's status, Changes and the ⋯ came
+// to more than the screen and fell onto two rows. The bar no longer wraps
+// below `sm`; the app pill is the only item that gives up width, and the
+// change pill leaves out "· PR #n" on a phone (the change's card and the
+// Changes drawer still name it), the full label staying in its `title`.
+test('#3577: the session bar fits one line on a phone, and only the app pill shrinks', () => {
+  const bar = panel.slice(panel.indexOf('function SessionBar('), panel.indexOf('function SessionMenu('));
+
+  assert.match(bar, /data-agent-session-focus\s+className="inline-flex min-w-0 max-w-\[10rem\][^"]*"/,
+    'the focus pill can shrink below its label');
+  assert.match(bar, /<span className="truncate">\{about\?\.focusApp\?\.name \|\| 'Any app'\}<\/span>/,
+    'and cuts the name with an ellipsis rather than widening the row');
+
+  // Every control but the focus pill holds its width: one squeezable item is
+  // enough to absorb the shortfall, and a second would start shrinking pills
+  // that must stay legible.
+  const controls = (bar.match(/data-agent-session-change-pill[\s\S]*?<\/span>[\s\S]*?<SessionMenu session=\{session\} \/>/) || [])[0];
+  assert.ok(controls, 'the change pill, Changes and the ⋯ are found in order');
+  assert.match(controls, /data-agent-session-change-pill\s+className=\{`inline-flex shrink-0 /);
+  assert.match(controls, /data-agent-session-changes-button\s+className="ml-auto inline-flex shrink-0 /);
+  assert.match(controls, /<SessionMenu session=\{session\} \/>/);
+  assert.match(panel, /data-agent-session-menu\s+className="inline-flex h-7 w-7 shrink-0 /);
+
+  // "· PR #n" is the one thing the phone leaves out.
+  assert.match(bar, /<span className="hidden sm:inline">\{` · PR #\$\{active\.prNumber\}`\}<\/span>/,
+    'the PR suffix is shown from `sm` up');
+  assert.match(bar, /title=\{active \? `\$\{changeStatusLabel\(active\.status, building\)\}\$\{active\.prNumber \? ` · PR #\$\{active\.prNumber\}` : ''\}` : undefined\}/,
+    'the whole label is still there on hover, and on a phone');
+  assert.doesNotMatch(bar, /`\$\{changeStatusLabel\(active\.status, building\)\}\$\{active\.prNumber \? ` · PR #\$\{active\.prNumber\}` : ''\}`\s*}/,
+    'the pill\'s text is no longer one unbreakable string with the PR number');
 });
 
 test('#3016: an empty message box is sized to its hint, measured without an input event', () => {
