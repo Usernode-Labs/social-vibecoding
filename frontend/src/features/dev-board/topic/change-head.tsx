@@ -311,15 +311,22 @@ export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSave
     const off = onVotesAsked(show);
     return () => { off(); release?.(); };
   }, [id]);
-  // #5725: the Votes card repeated after the last reply, so a long page does
-  // not send people back up to find where the vote stands. It is drawn in the
-  // thread's foot host and HIDDEN while the card at the top is on screen, so
-  // a page short enough to show both still shows one. It is in the DOM from
-  // the first paint (hidden), so a reader who scrolled before this mounted
-  // still gets it.
+  // #5725: the Votes card repeated in the thread's pin host, at the top of
+  // the scroller, so a long page keeps where the vote stands and its button
+  // on screen however far down the reader is (evan asked for it to stick as
+  // you scroll rather than only sit at the bottom). The pin host is a child
+  // of the scroller and `position: sticky` (app.css): the reading area's top
+  // edge is its offset, with the scroller's own 4px top padding pulled in so
+  // no reply shows in the slit above the card, and the replies scroll under
+  // it. Nothing else pins inside this scroller, so nothing is overlapped.
+  //
+  // It is HIDDEN while the card under the description is on screen, so a
+  // page short enough to show both still shows one card. It is in the DOM
+  // from the first paint (hidden), so a reader who scrolled before this
+  // mounted still gets it.
   //
   // BOTH ends are found from the card itself, never by a document-wide id:
-  // the foot host through the scroller that holds the card, and "on screen"
+  // the pin host through the scroller that holds the card, and "on screen"
   // through an observer with no root. A second thread — the Workshop's panel,
   // another pane — can hold a host of the same id, and a document-wide
   // `#gc-thread-scroll` can be that thread's box (#4640), which clamps nothing
@@ -331,12 +338,12 @@ export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSave
   // the page, a restored scroll position on reload, or a reflow of the words
   // above it. A `scroll` listener only hears the scroller it was attached to,
   // and the card stayed hidden when that was not the box that moved.
-  const [foot, setFoot] = useState<Element | null>(null);
+  const [pin, setPin] = useState<Element | null>(null);
   const [topInView, setTopInView] = useState(true);
   useEffect(() => {
     const card = pair.current?.querySelector<HTMLElement>('[data-change-gate="votes"]');
     const scroller = card ? card.closest<HTMLElement>('#gc-thread-scroll') : null;
-    setFoot(scroller ? scroller.querySelector('#gc-thread-foot') : null);
+    setPin(scroller ? scroller.querySelector('#gc-thread-pin') : null);
     if (!card) { setTopInView(true); return; }
     if (typeof IntersectionObserver === 'function') {
       const io = new IntersectionObserver((entries) => {
@@ -375,11 +382,11 @@ export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSave
     <>
       {back ? createPortal(<TopicBack />, back) : null}
       {bar ? createPortal(<ChangeBar v={v} menuKey={card.rail?.menuKey || ''} detailsId={id && body.changeId ? id : null} />, bar) : null}
-      {foot ? createPortal(
+      {pin ? createPortal(
         <div className="dev-change-gate-repeat" hidden={topInView}>
           <GateCard which="votes" g={v.votes} action={voteAction} id={id} repeat />
         </div>,
-        foot,
+        pin,
       ) : null}
       {images.viewer}
       <article className="messages-message dev-request-root dev-change-root" data-change-root={id ?? ''}>
