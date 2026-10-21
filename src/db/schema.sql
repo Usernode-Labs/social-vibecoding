@@ -14989,6 +14989,13 @@ CREATE TABLE IF NOT EXISTS platform_processes (
   CONSTRAINT platform_processes_state_check CHECK (state IN ('serving', 'draining'))
 );
 CREATE INDEX IF NOT EXISTS idx_platform_processes_heartbeat ON platform_processes (heartbeat_at);
+-- The connection budget (item 4): how many connections a draining process
+-- still holds above its drain sizes (the ones checked out when it shrank).
+-- A process marked draining starts at 1, not yet shrunk, until its drain
+-- reports. A process starting waits until no older one of the roles it
+-- replaces holds any (services/processes.js waitForRoom). A release from
+-- before it writes none: 0.
+ALTER TABLE platform_processes ADD COLUMN IF NOT EXISTS above_drain INT NOT NULL DEFAULT 0;
 COMMENT ON TABLE platform_processes IS 'staging:private';
 
 -- ROLLOUT-ONLY: what a process holds, `kind` (a session's turn, a sync, ...)

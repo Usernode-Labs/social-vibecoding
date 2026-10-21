@@ -73,6 +73,9 @@ let started = false;
 let role = 'all';
 let heartbeatTimer = null;
 let draining = null; // { since, deadline } once shutdown has begun
+// Connections held above the drain sizes (the roster's above_drain): 1 from
+// the moment it is marked draining until its drain reports what it holds.
+let aboveDrain = 0;
 
 // key -> count, for this process. key = `${kind}\u0000${ref}`
 const local = new Map();
@@ -217,12 +220,13 @@ function localSnapshot(limit = 50) {
 // reaped while this process was stalled comes back.
 function writeRow(db) {
   return q(db,
-    `INSERT INTO platform_processes (id, release, role, host, ip, state, drain_started_at, drain_deadline_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+    `INSERT INTO platform_processes (id, release, role, host, ip, state, drain_started_at, drain_deadline_at, above_drain)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
      ON CONFLICT (id) DO UPDATE SET heartbeat_at = NOW(), state = EXCLUDED.state,
-       drain_started_at = EXCLUDED.drain_started_at, drain_deadline_at = EXCLUDED.drain_deadline_at`,
+       drain_started_at = EXCLUDED.drain_started_at, drain_deadline_at = EXCLUDED.drain_deadline_at,
+       above_drain = EXCLUDED.above_drain`,
     [ID, process.env.GIT_SHA || null, role, os.hostname(), process.env.POD_IP || null,
-      draining ? 'draining' : 'serving', draining?.since || null, draining?.deadline || null]);
+      draining ? 'draining' : 'serving', draining?.since || null, draining?.deadline || null, aboveDrain]);
 }
 
 async function beat() {
@@ -274,10 +278,11 @@ async function start({ pool: db, role: r = 'all' } = {}) {
 /** Shutdown has begun: refuse new work, finish this, by `deadline`. */
 async function markDraining(deadline) {
   draining = { since: new Date(), deadline: deadline ? new Date(deadline) : null };
+  aboveDrain = 1;
   if (!started || !pool) return;
   await q(pool,
     `UPDATE platform_processes SET state = 'draining', drain_started_at = $2, drain_deadline_at = $3,
-            heartbeat_at = NOW() WHERE id = $1`, [ID, draining.since, draining.deadline]);
+            above_drain = $4, heartbeat_at = NOW() WHERE id = $1`, [ID, draining.since, draining.deadline, aboveDrain]);
 }
 
 /**
@@ -338,6 +343,59 @@ async function startedSinceDrain() {
   return row?.n || 0;
 }
 
+/**
+ * A draining process says how many connections it still holds above its
+ * drain sizes (server.js drainUntilIdle), at once when that changes.
+ */
+async function setAboveDrain(n) {
+  const value = Math.max(0, Math.floor(Number(n) || 0));
+  if (!draining || value === aboveDrain) return;
+  aboveDrain = value;
+  if (!started || !pool) return;
+  await q(pool, 'UPDATE platform_processes SET above_drain = $2 WHERE id = $1', [ID, value]);
+}
+
+// The roles a process of `r` replaces (successorRoles read the other way).
+function replacedRoles(r) {
+  return ['all', 'web', 'conductor'].filter((x) => successorRoles(x).includes(r));
+}
+
+/**
+ * Admission for the connection budget (item 4). The chart counts a draining
+ * process at its drain sizes and a rollout's next Pod at its full ones. A
+ * draining process can still hold more (the connections checked out when it
+ * shrank): it hands its work over once a process of its role starts
+ * (startedSinceDrain), and this process, starting, does not start its work
+ * until every older one it replaces holds nothing above them, or is gone. It
+ * waits on its lock connection (q), holding no pool. A roster it cannot read
+ * is logged and does not keep it from starting.
+ */
+async function waitForRoom({ pollMs = 1000, reportEveryMs = 10000, sleep = (ms) => new Promise((r) => setTimeout(r, ms)) } = {}) {
+  if (!started || !pool) return { waitedMs: 0 };
+  const began = Date.now();
+  let reported = began;
+  for (;;) {
+    let above;
+    try {
+      ({ rows: [above] } = await q(pool,
+        `SELECT count(*)::int AS processes, COALESCE(sum(above_drain), 0)::int AS connections FROM platform_processes p
+          WHERE p.id <> $1 AND p.role = ANY($2::text[]) AND p.state = 'draining' AND p.above_drain > 0
+            AND p.heartbeat_at > NOW() - make_interval(secs => $3)
+            AND p.started_at < COALESCE((SELECT started_at FROM platform_processes WHERE id = $1), 'infinity'::timestamptz)`,
+        [ID, replacedRoles(role), LIVE_SECONDS]));
+    } catch (err) {
+      log.warn('processes', 'Could not read whether older processes still hold connections; starting', { err: err.message });
+      return { waitedMs: Date.now() - began };
+    }
+    if (!above || above.processes === 0) return { waitedMs: Date.now() - began };
+    if (Date.now() - reported >= reportEveryMs) {
+      reported = Date.now();
+      log.info('processes', 'Waiting for older processes to give back connections above their drain sizes', above);
+    }
+    await sleep(pollMs);
+  }
+}
+
 /** The process-reap clock: delete the rows of processes long gone. */
 async function reap(db = pool) {
   if (!db) return 0;
@@ -380,6 +438,7 @@ function _reset() {
   pool = null;
   role = 'all';
   draining = null;
+  aboveDrain = 0;
   local.clear();
   writes = Promise.resolve();
   writeQueued = false;
@@ -401,6 +460,8 @@ module.exports = {
   markDraining,
   newerDraining,
   startedSinceDrain,
+  setAboveDrain,
+  waitForRoom,
   servingOthers,
   reap,
   list,

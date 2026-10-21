@@ -420,8 +420,9 @@ rollout's surge at their full pools (`config.dbPoolMax`, `config.wfPoolMax`,
 connections per process outside the pools; a database operation counts twice
 (it can hold two connections, `pg_dump` beside `pg_restore`). A replaced Pod
 keeps the connections it had checked out when it shrank until they are given
-back; while it still holds more than its drain sizes it takes the surge slot,
-and it hands its work over as soon as another Pod of its role starts. The migration Job adds
+back. While it still holds more than its drain sizes, a new Pod of its role
+waits before starting its work, and the old one hands its work over as soon as
+the new one appears, so the two share the surge slot. The migration Job adds
 `migration.dbPoolMax` plus two. `0` checks nothing.
 
 Both Pods may serve independent requests during the brief overlap, and a

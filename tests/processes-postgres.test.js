@@ -205,6 +205,47 @@ test('processes and the roster, against the full schema', { timeout: 120000 }, a
     assert.equal((await pool.query('SELECT state FROM platform_processes WHERE id = $1', [processes.ID])).rows[0].state, 'draining');
   });
 
+  await t.test('a starting process waits until no older process it replaces holds connections above its drain sizes', async () => {
+    const mine = async () => (await pool.query('SELECT above_drain FROM platform_processes WHERE id = $1', [processes.ID])).rows[0].above_drain;
+    // Marked draining, it counts as not yet shrunk until its drain reports.
+    assert.equal(await mine(), 1);
+    await processes.setAboveDrain(3);
+    assert.equal(await mine(), 3);
+    await processes.setAboveDrain(0);
+    assert.equal(await mine(), 0);
+    await processes.beat();
+    assert.equal(await mine(), 0, 'a beat writes what it holds');
+
+    // Played the other way round: this process starting, older ones draining.
+    await pool.query('DELETE FROM platform_processes WHERE id <> $1', [processes.ID]);
+    assert.equal((await processes.waitForRoom({ pollMs: 20 })).waitedMs < 1000, true, 'nothing older above: at once');
+    const older = (id, { state = 'draining', above = 2, ageSeconds = 0, startedAgo = '1 hour' } = {}) => pool.query(
+      `INSERT INTO platform_processes (id, state, above_drain, started_at, heartbeat_at, drain_started_at)
+       VALUES ($1, $2, $3, NOW() - $4::interval, NOW() - make_interval(secs => $5), NOW())`, [id, state, above, startedAgo, ageSeconds]);
+    await older('older-shrunk', { above: 0 });
+    await older('older-serving', { state: 'serving' });
+    await older('older-gone', { ageSeconds: 600 });
+    await pool.query(`INSERT INTO platform_processes (id, state, above_drain, started_at, drain_started_at)
+                      VALUES ('newer-above', 'draining', 4, NOW() + interval '1 minute', NOW())`);
+    assert.ok((await processes.waitForRoom({ pollMs: 20 })).waitedMs < 1000, 'shrunk, serving, gone or newer: none keeps it');
+
+    await older('older-above');
+    let done = false;
+    const waiting = processes.waitForRoom({ pollMs: 20 }).then((r) => { done = true; return r; });
+    await new Promise((r) => setTimeout(r, 200));
+    assert.equal(done, false, 'waits while an older one holds more');
+    await pool.query(`UPDATE platform_processes SET above_drain = 0 WHERE id = 'older-above'`);
+    assert.ok((await waiting).waitedMs >= 200);
+
+    await older('older-handing-over', { above: 5 });
+    done = false;
+    const again = processes.waitForRoom({ pollMs: 20 }).then((r) => { done = true; return r; });
+    await new Promise((r) => setTimeout(r, 100));
+    assert.equal(done, false);
+    await pool.query(`DELETE FROM platform_processes WHERE id = 'older-handing-over'`);
+    await again;
+  });
+
   await t.test('the process-reap clock deletes long-gone rows; live ones are listed', async () => {
     await other('pod-ancient', { ageSeconds: processes.REAP_AFTER_SECONDS + 60 });
     await other('pod-dead', { ageSeconds: processes.LIVE_SECONDS + 30 });

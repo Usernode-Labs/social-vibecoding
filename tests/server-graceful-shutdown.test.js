@@ -373,6 +373,20 @@ test('a draining process shrinks its pools as its drain begins: main, workflow, 
   // one such process per role, in the surge slot).
   const handover = drain.indexOf("if (retainedAboveDrain(workflowPlatform) > 0 && (await processes.startedSinceDrain()) > 0) { why = 'retained'; return true; }");
   assert.ok(handover > waits && handover < drain.indexOf('processes.newerDraining()'), 'asked in superseded, before the others');
+  // It says what it still holds above its drain sizes once it shrank, and
+  // as that changes, until its wait ends.
+  const reported = drain.indexOf('await report();');
+  assert.ok(reported > drain.indexOf('shrinkPoolsForDrain(workflowPlatform)') && reported < waits);
+  assert.ok(drain.indexOf('clearInterval(reporting);') > waits);
+  assert.match(drain, /const report = \(\) => processes\.setAboveDrain\(retainedAboveDrain\(workflowPlatform\)\)/);
+  // Starting, a process waits until no older one it replaces holds more,
+  // after it registered (which is what makes them hand over) and before any
+  // of its work or its listener.
+  const boot = src.indexOf('await processes.start({ pool: getPool(config), role: ownRole });');
+  const gate = src.indexOf('const room = await processes.waitForRoom();');
+  assert.ok(boot > 0 && gate > boot, 'after registering');
+  assert.ok(gate < src.indexOf("startWorkflowClients(config)") && gate < src.indexOf("startWorkflow(config, { loops: false })")
+    && gate < src.indexOf('const server = app.listen(config.port'), 'before its work and its listener');
   const retained = src.slice(src.indexOf('function retainedAboveDrain('), src.indexOf('async function drainUntilIdle('));
   for (const part of ["require('./src/db/pool').drainExcess()", 'workflowPlatform.drainExcess()', "require('./src/services/db-manager').drainExcess()"]) {
     assert.ok(retained.includes(part), part);

@@ -1135,6 +1135,12 @@ async function start() {
   // (docs/plans/draining-releases.md): before anything here can start work.
   // Never fatal: holds stay this process's own until the database takes them.
   await processes.start({ pool: getPool(config), role: ownRole });
+  // The connection budget (item 4): nothing here starts work while an older
+  // process this one replaces still holds connections above its drain sizes.
+  // Registered above, this process is what makes it hand over; it waits
+  // holding no pool connection (processes.js waitForRoom).
+  const room = await processes.waitForRoom();
+  if (room.waitedMs > 0) log.info('server', 'Older processes gave back their connections; starting', room);
   // The limiters that gate a send, a bill or a guess count in Postgres: one
   // budget for every process, kept across a deploy (services/rate-limit-store.js).
   require('./src/services/rate-limit-store').setPool(getPool(config));
@@ -1695,6 +1701,14 @@ async function drainUntilIdle({ deadline, announced }) {
   await announced;
   const closed = ws.closeAllForRelease();
   const pools = shrinkPoolsForDrain(workflowPlatform);
+  // What it still holds above its drain sizes, in the roster, at once and as
+  // it changes: a process starting waits until it is none (processes.js
+  // waitForRoom).
+  const report = () => processes.setAboveDrain(retainedAboveDrain(workflowPlatform))
+    .catch((err) => log.warn('server', 'Could not report the connections above the drain sizes', { err: err.message }));
+  await report();
+  const reporting = setInterval(report, 1000);
+  reporting.unref?.();
   const busy = () => ({
     holds: processes.localSnapshot(20),
     background: inflightWork.snapshot().slice(0, 20),
@@ -1725,6 +1739,7 @@ async function drainUntilIdle({ deadline, announced }) {
     },
     describe: busy,
   });
+  clearInterval(reporting);
   if (outcome.reason === 'idle') {
     log.info('server', 'Finished this process\'s work', { waitedMs: outcome.waitedMs });
   } else {
