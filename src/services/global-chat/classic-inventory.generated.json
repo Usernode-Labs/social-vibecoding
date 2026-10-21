@@ -8483,6 +8483,22 @@
     },
     {
       "source": "src/routes/internal.js",
+      "method": "GET",
+      "path": "/api/internal/shots/:runId/closeups",
+      "expression": null,
+      "status": "exempt",
+      "reason": "platform-to-worker/internal service protocol"
+    },
+    {
+      "source": "src/routes/internal.js",
+      "method": "POST",
+      "path": "/api/internal/shots/:runId/closeup",
+      "expression": null,
+      "status": "exempt",
+      "reason": "platform-to-worker/internal service protocol"
+    },
+    {
+      "source": "src/routes/internal.js",
       "method": "POST",
       "path": "/api/internal/shots/:runId/skip",
       "expression": null,

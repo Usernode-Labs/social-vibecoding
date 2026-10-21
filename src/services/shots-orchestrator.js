@@ -760,7 +760,7 @@ const AGENT_DIAGNOSTIC_KINDS = new Set([
   'browser_call_start', 'browser_call_pending', 'browser_call_end', 'browser_server_exit',
   'auth_bootstrap', 'hosted_app_catalog', 'hosted_app_allowlist', 'demo_data',
   'document_request', 'document_response', 'controlled_failure_set', 'controlled_failure_hit',
-  'sample_upload',
+  'sample_upload', 'closeup',
   'platform_asset', 'home_tile', 'legacy_tailwind_cdn', 'egress_blocked', 'worker_memory',
   'provider_request_start', 'provider_request_pending', 'provider_response_headers',
   'provider_response_first_byte', 'provider_request_end',

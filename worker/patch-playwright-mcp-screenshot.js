@@ -22,6 +22,18 @@
 //   one included, and every shots run while the experiment is off) the tool
 //   does exactly what it did: one capture at CSS scale.
 //
+// - with a `closeup` argument (the shots tools' own, through the browser
+//   observer: shots-browser-observer.js startControl), it saves one region
+//   of the visible screen at `closeup.scale` device pixels per CSS pixel,
+//   through Chrome's own Page.captureScreenshot clip.scale. Measured
+//   2026-10-21: the result is pixel for pixel what a page drawn at that
+//   density gives, in about 55 ms, and the page never sees its density
+//   change. The region is in the screen still's coordinates (the visual
+//   viewport, in screen points); Chrome's clip is the document's, so the
+//   scroll offset is added and, on a phone page drawn zoomed out (no
+//   viewport meta: laid out wider than the screen), the zoom divided out.
+//   Such a call answers with no image: nobody but the shots tools reads it.
+//
 // Each edit must match exactly once, so a pin bump that moves the code fails
 // the image build here; verify-shots-browser-mcp.js then proves the result
 // in a real browser (saved width = answered width x the browser's density).
@@ -32,7 +44,35 @@ const path = require('node:path');
 
 const MCP_DIR = '/usr/local/lib/node_modules/@playwright/mcp';
 
+const CLOSEUP_SCHEMA = '  closeup: import_bundle.z.object({'
+  + ' x: import_bundle.z.number().min(0), y: import_bundle.z.number().min(0),'
+  + ' width: import_bundle.z.number().positive(), height: import_bundle.z.number().positive(),'
+  + ' scale: import_bundle.z.number().min(1).max(16) }).optional()'
+  + '.describe("For the before/after shots tools only; leave it out.")\n';
+
+const CLOSEUP_HANDLER = '    if (params.closeup) {\n'
+  + '      const c = params.closeup;\n'
+  + '      const fileName = await tab.context.outputFile(params.filename ?? (0, import_utils.dateAsFileName)("png"), { origin: "llm", reason: "Saving screenshot" });\n'
+  + '      const at = await tab.page.evaluate(() => (window.visualViewport'
+  + ' ? { x: window.visualViewport.pageLeft, y: window.visualViewport.pageTop, k: window.visualViewport.scale || 1 }'
+  + ' : { x: window.scrollX, y: window.scrollY, k: 1 }));\n'
+  + '      const cdp = await tab.page.context().newCDPSession(tab.page);\n'
+  + '      try {\n'
+  + '        const shot = await cdp.send("Page.captureScreenshot", { format: "png",'
+  + ' clip: { x: at.x + c.x / at.k, y: at.y + c.y / at.k, width: c.width / at.k, height: c.height / at.k, scale: c.scale * at.k } });\n'
+  + '        await require("fs").promises.writeFile(fileName, Buffer.from(shot.data, "base64"));\n'
+  + '      } finally {\n'
+  + '        await cdp.detach().catch(() => {});\n'
+  + '      }\n'
+  + '      response.addResult(`Took the close-up screenshot and saved it as ${fileName}`);\n'
+  + '      return;\n'
+  + '    }\n';
+
 const EDITS = [
+  ['Cannot be used with element screenshots.")\n})',
+    `Cannot be used with element screenshots."),\n${CLOSEUP_SCHEMA}})`],
+  ['  handle: async (tab, params, response) => {\n',
+    `  handle: async (tab, params, response) => {\n${CLOSEUP_HANDLER}`],
   ['      scale: "css",\n      path: fileName,',
     '      scale: process.env.SHOTS_SCREENSHOT_SCALE === "device" ? "device" : "css",\n      path: fileName,'],
   ['        data: buffer\n',
@@ -73,4 +113,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { EDITS, patchSource, screenshotToolPath };
+module.exports = { EDITS, CLOSEUP_HANDLER, patchSource, screenshotToolPath };

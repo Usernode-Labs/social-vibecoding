@@ -592,3 +592,44 @@ test('a dense run keeps each still the worker says is dense twice: as its 1x cop
   // An element the worker says is 2x is judged at 2x, whatever its screen shot's 1x copy says.
   assert.doesNotThrow(() => dense.saveShot({ ...before, kind: 'element', density: '2' }, fixtures.png({ width: 2400, height: 60 })));
 });
+
+test('a close-up is kept only in a dense run, when wanted, at the size asked for, and of the after screen there', () => {
+  const { PNG } = require('pngjs');
+  const flat = (w, h, fill) => { const p = new PNG({ width: w, height: h }); for (let i = 0; i < p.data.length; i += 4) p.data.set([...fill, 255], i); return PNG.sync.write(p); };
+  const after = flat(1280, 800, [240, 240, 244]);
+  const ask = { change: 'invite-suggestions', screen: 'desktop', part: 1, rect: { x: 100, y: 120, w: 60, h: 40 }, scale: 6.5 };
+  const shot = flat(390, 260, [240, 240, 244]);
+  const raw = { change: ask.change, screen: ask.screen, part: 1 };
+  assert.throws(() => control().saveCloseup(raw, shot, { asked: [ask], afterStill: after }), { code: 'closeup_not_needed' });
+  const dense = control();
+  dense.agent = { deviceDensity: true };
+  assert.throws(() => dense.saveCloseup({ ...raw, part: 2 }, shot, { asked: [ask], afterStill: after }), { code: 'closeup_not_wanted' });
+  assert.throws(() => dense.saveCloseup(raw, flat(300, 200, [240, 240, 244]), { asked: [ask], afterStill: after }), { code: 'closeup_wrong_size' });
+  assert.throws(() => dense.saveCloseup(raw, flat(390, 260, [10, 120, 10]), { asked: [ask], afterStill: after }),
+    { code: 'closeup_not_the_after_screen', status: 409 });
+  assert.equal(dense.saved.size, 0);
+  assert.deepEqual(dense.saveCloseup(raw, shot, { asked: [ask], afterStill: after }),
+    { saved: true, change: ask.change, screen: 'desktop', part: 1, scale: 6.5 });
+  const [file] = [...dense.saved.values()];
+  assert.deepEqual([file.variant, file.side, file.part, file.scale, file.focusRect, file.width],
+    ['closeup', 'head', 1, 6.5, ask.rect, 390]);
+  assert.equal(controlPlane.dbSlot(file), 'invite-suggestions/desktop/head/closeup/1');
+  assert.deepEqual(dense.savedCloseups(), [{ change: ask.change, screen: 'desktop', part: 1 }]);
+});
+
+test('a ready change publishes its close-ups beside its stills; they are never what makes it ready', () => {
+  const dense = control();
+  dense.agent = { deviceDensity: true };
+  const story = dense.intent.stories.find((s) => s.id === 'invite-suggestions');
+  const closeup = shotsFiles.storedCloseup({ storyId: story.id, viewport: 'desktop', part: 1, rect: { x: 0, y: 0, w: 10, h: 10 }, scale: 5 },
+    Buffer.from('x'), { width: 50, height: 50, bytes: 1, sha256: 'c'.repeat(64) });
+  dense.saved.set(shotsFiles.slotKey(closeup), closeup);
+  const notReady = shotsFiles.summarize(dense.intent, dense.saved);
+  assert.equal(notReady.files.some((f) => f.variant === 'closeup'), false, 'a change without its stills publishes nothing');
+  dense.saveShot({ change: story.id, screen: 'desktop', side: 'before' }, fixtures.png({ width: 1280, height: 800, shade: 1 }));
+  dense.saveShot({ change: story.id, screen: 'desktop', side: 'after' }, fixtures.png({ width: 1280, height: 800, shade: 2 }));
+  const ready = shotsFiles.summarize(dense.intent, dense.saved);
+  assert.equal(ready.files.filter((f) => f.variant === 'closeup').length, 1);
+  const without = new Map([...dense.saved].filter(([, f]) => f.variant !== 'closeup'));
+  assert.notEqual(shotsFiles.summarize(dense.intent, without).manifestHash, ready.manifestHash, 'the manifest names it');
+});
