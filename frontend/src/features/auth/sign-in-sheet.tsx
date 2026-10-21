@@ -716,6 +716,13 @@ export type SignInSheetProps = {
   /** An invite's Join: a phone number first, since a private member signs up with one. */
   phone?: boolean;
   /**
+   * Phone sign-in is offered, but not first: the first step's "Use a phone
+   * number instead" leads to the phone step, as "New to Homeroom? Join with
+   * your phone" does under an invite's. The signed-out front page's sheets
+   * (./landing.tsx).
+   */
+  phoneLink?: boolean;
+  /**
    * The phone step asks "Your name" (a private group's invite: the name makes
    * a provisional handle only that group sees). A public community's invite
    * passes false: the server asks for a username after the code instead.
@@ -787,7 +794,7 @@ function rememberInviteJoin() {
 }
 
 export function SignInSheet({
-  open, title, intro = '', followInvite = false, providers = [], native = false, phone = false, askName = true, from = 'signin',
+  open, title, intro = '', followInvite = false, providers = [], native = false, phone = false, phoneLink = false, askName = true, from = 'signin',
   returnTo = '/', resume = null, releaseToken = null, releaseSignIn = null, onSigningIn, held = false, linkUsed = false, onAccount,
   beforeFinish, onClose, primaryClass,
 }: SignInSheetProps) {
@@ -1614,8 +1621,8 @@ export function SignInSheet({
                 {busy ? t('auth:signInSheet.email.sending') : t('auth:signInSheet.continueWithEmail')}
               </button>
             </form>
-            {phone ? (
-              <button type="button" data-sign-in-sheet-to-phone="" className={QUIET} onClick={() => { setError(null); setStep('phone'); }}>{t('auth:signInSheet.toPhone')}</button>
+            {phone || phoneLink ? (
+              <button type="button" data-sign-in-sheet-to-phone="" className={QUIET} onClick={() => { setError(null); setStep('phone'); }}>{phone ? t('auth:signInSheet.toPhone') : t('auth:signInSheet.toPhoneLink')}</button>
             ) : null}
             {passwordLink}
           </div>
@@ -1634,8 +1641,8 @@ export function SignInSheet({
             {providers.length ? (
               <button type="button" className={QUIET} onClick={() => { setError(null); setStep('choose'); }}>{t('auth:signInSheet.email.otherWays')}</button>
             ) : null}
-            {phone ? (
-              <button type="button" data-sign-in-sheet-to-phone="" className={QUIET} onClick={() => { setError(null); setStep('phone'); }}>{t('auth:signInSheet.toPhone')}</button>
+            {phone || phoneLink ? (
+              <button type="button" data-sign-in-sheet-to-phone="" className={QUIET} onClick={() => { setError(null); setStep('phone'); }}>{phone ? t('auth:signInSheet.toPhone') : t('auth:signInSheet.toPhoneLink')}</button>
             ) : null}
           </form>
         ) : null}

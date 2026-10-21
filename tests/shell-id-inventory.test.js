@@ -417,7 +417,7 @@ const ADDED_IDS = {
   'feedback-attach-menu': '#4127: the paperclip\'s popover, in the vote popover\'s frame. Opened and closed by ./feedback-controller (outside click, Escape, a choice).',
   'report-modal': '#2721 shared reporting dialog',
   // ── B8: Suggest an improvement answered by Homeroom bot ─────────────────
-  'feedback-sent-line': 'B8: the line under the filed-request confirmation\'s heading, worded by the controller: "Your idea is on the board now. Find it on your profile…", or, where Homeroom bot builds it, "Homeroom bot is building it now, usually about 8 minutes…" (#3971).',
+  'feedback-sent-line': 'B8: the line under the filed-request confirmation\'s heading, worded by the controller: "Your idea is on the board now.", or, where Homeroom bot builds it, "Homeroom bot is building it now, usually about 8 minutes…" (#3971).',
   'feedback-sent-chat': 'B8: Open chat, the secondary button under Done when Homeroom bot builds the request: the chat where its card is.',
   'feedback-sent-fix': 'B8: the confirmation\'s small "Build it now with a coding agent" link, for somebody who could start a change there.',
   // ── #3971: a first request Homeroom bot builds is a first request ───────
@@ -648,7 +648,7 @@ const ADDED_IDS = {
   'feedback-sent': 'Every other filed report\'s confirmation (#3186). It was the status line, and the dialog closed itself 1.5 s later, which read as the report vanishing and was too short to reach a link in; it is a section of its own now, drawn like #feedback-first-success, and stays until Done.',
   'feedback-sent-title': 'Accessible heading of the sent confirmation (#3186).',
   'feedback-sent-notice': 'The "Thanks! Filed against …" line and any bounty outcome, carried into the sent confirmation (#3186).',
-  'feedback-sent-mine': 'Opens the Me screen\'s "Your feedback" list (#profile?feedback) from the sent confirmation (#3186).',
+  'feedback-sent-mine': 'Opens the Me screen\'s "Your requests" list (#profile/your-requests) from the sent confirmation (#3186). A quiet link under the buttons, beside Edit (#feedback-sent-edit).',
   'feedback-sent-done': 'Dismisses the sent confirmation (#3186).',
   // ── #4680: the form and the list point at each other ─────────────────
   'feedback-form-mine': '#4680: the form\'s small "See your requests" link, under the intro line — the same route the two confirmations\' links open (#profile/your-requests), so what is already asked for is one tap away before writing a new one. Not hidden in the prerender, so the server render and the client render agree. Worded by React (t()); the click is ./feedback-controller\'s openMine, the same split as #feedback-sent-mine.',

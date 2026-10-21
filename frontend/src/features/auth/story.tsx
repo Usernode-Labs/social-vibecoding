@@ -40,6 +40,9 @@ import { FRONT } from '../first-session/examples';
 import { useMessages } from '../../lib/i18n/react';
 import { TierChart } from '../first-session/tier-chart';
 
+// The foot's links: Sign in inside the email line, and Look around first.
+const STORY_LINK = 'font-semibold text-violet-700 dark:text-violet-400 hover:underline un-touch-target';
+
 // Also the dead invite link's welcome (./invite-card.tsx DeadInvite).
 export const SMALL_CAPS = 'text-[12px] leading-4 font-bold uppercase tracking-[0.06em] text-zinc-500 dark:text-zinc-400';
 
@@ -99,13 +102,34 @@ export function nextStep(fit: number, footBottom: number, screenBottom: number):
   return fit + 1;
 }
 
-export function Story({ primaryClass, welcomeEmail = null, onStart, onSignIn }: {
+export function Story({ primaryClass, welcomeEmail = null, onStart, onSignIn, compact = false, lookAround = false }: {
   primaryClass: string;
   /** The address a "You're in" mail's link names, greeted under the welcome. */
   welcomeEmail?: string | null;
   onStart: () => void;
   /** The foot line's "Sign in": the sheet in its Sign in mode. Continue's when absent. */
   onSignIn?: () => void;
+  /**
+   * THE SHORT STORY, over the guest Discover (features/guest/guest-discover.tsx):
+   * the welcome, the headline and one line that says the apps below can be
+   * looked around, and nothing to press: the page's bar carries the one
+   * Sign in and the one Sign up, whose sheet has every way in (Apple,
+   * Google, email, a phone). From the 21 Oct 2026 review: two Sign ins,
+   * then two Sign ups, on one screen read as a mistake, and four "Continue
+   * with" buttons made the top of the page tall. No examples (the real apps follow it)
+   * and, on a phone, no picture, so the first apps are near the first
+   * screen; nothing to fit, so no steps.
+   */
+  compact?: boolean;
+  /**
+   * Inside the Homeroom app the full story is still the front door
+   * (landing.tsx `storyFront`), and this adds "Look around first" under its
+   * foot: a link in the Sign in line's blue, on a line of its own, to
+   * Discover's public projects (#apps), for somebody who wants to see what
+   * is here before making an account. It is part of the foot, so the fit
+   * steps make room for it.
+   */
+  lookAround?: boolean;
 }) {
   const t = useMessages('auth');
   const storyRef = useRef<HTMLDivElement>(null);
@@ -122,6 +146,7 @@ export function Story({ primaryClass, welcomeEmail = null, onStart, onSignIn }: 
     const story = storyRef.current;
     const foot = footRef.current;
     if (!story || !foot || !story.offsetHeight) return;
+    if (compact) return;
     // The address arrives after the story is drawn, a line more to fit:
     // start again from full size.
     if (fittedFor.current !== welcomeEmail) {
@@ -138,13 +163,13 @@ export function Story({ primaryClass, welcomeEmail = null, onStart, onSignIn }: 
     const next = nextStep(fit, foot.getBoundingClientRect().bottom + scrolled, screenFoot());
     if (next === null) f.settled = true;
     else setFit(next);
-  }, [fit, measure, welcomeEmail]);
+  }, [fit, measure, welcomeEmail, compact]);
   // A new screen (a turned phone, a resized window) starts again from full
   // size. A story first laid out while its screen was hidden is measured
   // once it shows.
   useEffect(() => {
     const story = storyRef.current;
-    if (!story) return undefined;
+    if (!story || compact) return undefined;
     const onResize = () => {
       const f = fitting.current;
       if (!f) return;
@@ -158,11 +183,80 @@ export function Story({ primaryClass, welcomeEmail = null, onStart, onSignIn }: 
       ? new ResizeObserver(() => { if (!fitting.current && story.offsetHeight) setMeasure((n) => n + 1); })
       : null;
     shown?.observe(story);
+    // The first fit can run before the typeface has loaded, while the
+    // fallback face sets the headline a line shorter: the fit settled a step
+    // early and the foot ended below the screen once the face arrived. So it
+    // fits again, from full size, when the fonts are in.
+    let live = true;
+    document.fonts?.ready.then(() => {
+      if (!live || !fitting.current?.settled) return;
+      fitting.current = null;
+      setFit(0);
+      setMeasure((n) => n + 1);
+    });
     return () => {
+      live = false;
       window.removeEventListener('resize', onResize);
       shown?.disconnect();
     };
-  }, []);
+  }, [compact]);
+  const foot = (
+    <>
+      <a href="#signup" data-landing-story-start="" className={primaryClass} onClick={(e) => { e.preventDefault(); onStart(); }}>
+        {t('auth:story.continue')}
+      </a>
+      {/* Polish N10: the line read like a second way in but was plain
+          text. Its "Sign in" is one now, the same sheet titled Sign in
+          (landing.tsx's 'signin'), for somebody who has an account. */}
+      <p data-landing-story-how="" className="mt-1 text-[15px] leading-5 text-zinc-500 dark:text-zinc-400 text-balance">
+        <RichMessage
+          id="auth:story.email"
+          components={[
+            <a
+              href="#login"
+              data-landing-story-signin=""
+              className={STORY_LINK}
+              onClick={(e) => { e.preventDefault(); (onSignIn || onStart)(); }}
+            />,
+          ]}
+        />
+      </p>
+      {lookAround ? (
+        <p className="text-[15px] leading-5">
+          <a href="#apps" data-landing-story-look="" className={STORY_LINK}>
+            {t('auth:story.lookAround')}
+          </a>
+        </p>
+      ) : null}
+    </>
+  );
+  if (compact) {
+    // On the page itself, as the story always was, and short: the welcome,
+    // the headline and one line, with a small picture beside them from md.
+    // The ways in are the bar's, so the apps start high.
+    return (
+      <div ref={storyRef} data-landing-story="" data-landing-story-compact="" className="px-4 pt-5 md:pt-8 flex items-center gap-10">
+        <div className="flex min-w-0 flex-1 flex-col items-start text-left">
+          <div className={SMALL_CAPS}>{t('auth:story.welcome')}</div>
+          {welcomeEmail ? (
+            <div data-landing-story-email="" className="mt-1 max-w-full text-[15px] leading-5 font-semibold text-zinc-700 dark:text-zinc-300 [overflow-wrap:anywhere]">{welcomeEmail}</div>
+          ) : null}
+          <h1 className="mt-2 text-[26px] leading-[31px] md:text-[34px] md:leading-[40px] font-extrabold text-balance">
+            {t('auth:story.headline')}
+          </h1>
+          <p className="mt-2 text-base leading-[22px] text-zinc-500 dark:text-zinc-400 text-balance">{t('auth:guest.hero.line')}</p>
+        </div>
+        <img
+          src="/brand/people.png"
+          alt=""
+          width={816}
+          height={612}
+          draggable={false}
+          className="hidden md:block h-auto w-[200px] shrink-0"
+        />
+      </div>
+    );
+  }
   const s = fitStyle(fit);
   return (
     <div ref={storyRef} data-landing-story="" className="px-4 flex grow flex-col text-center">
@@ -206,25 +300,7 @@ export function Story({ primaryClass, welcomeEmail = null, onStart, onSignIn }: 
         </div>
       </div>
       <div ref={footRef} className={`w-full max-w-sm md:max-w-lg mx-auto md:mb-auto flex flex-col gap-3 ${s.foot} pb-3`}>
-        <a href="#signup" data-landing-story-start="" className={primaryClass} onClick={(e) => { e.preventDefault(); onStart(); }}>
-          {t('auth:story.continue')}
-        </a>
-        {/* Polish N10: the line read like a second way in but was plain
-            text. Its "Sign in" is one now, the same sheet titled Sign in
-            (landing.tsx's 'signin'), for somebody who has an account. */}
-        <p data-landing-story-how="" className="mt-1 text-[15px] leading-5 text-zinc-500 dark:text-zinc-400 text-balance">
-          <RichMessage
-            id="auth:story.email"
-            components={[
-              <a
-                href="#login"
-                data-landing-story-signin=""
-                className="font-semibold text-violet-700 dark:text-violet-400 hover:underline un-touch-target"
-                onClick={(e) => { e.preventDefault(); (onSignIn || onStart)(); }}
-              />,
-            ]}
-          />
-        </p>
+        {foot}
       </div>
     </div>
   );

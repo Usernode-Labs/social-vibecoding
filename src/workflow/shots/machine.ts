@@ -567,8 +567,18 @@ const uiUndeclared: Handler = (s, e, f, ctx) => {
 // The proposal left review: the run under way ends, and every copy goes.
 // Shots that settled stand as they are (no automatic retry while it is out
 // of review); a declaration waiting for its preview waits on.
+//
+// Unless it merged: then the run under way goes on and publishes. It shoots
+// the head that merged, which nothing moves any more, on copies of its own;
+// its worker is kept until it ends (merge-followups' retire waits for a
+// live run). The merge does not wait for it (session-work.ts
+// NOT_MOVING_TURN_MODES), so a merged change keeps its pictures instead of
+// "The proposal left review before its shots were taken". Its copies go
+// when it ends, as any run's, and no automatic retry follows (retryOf: the
+// proposal is out of review).
 const closed: Handler = (s, e, f, ctx) => {
   if (!live(s)) return step(s, { timer: null });
+  if (e.payload.reason === 'merged') return step(s);
   const r = s.data.run!;
   const { d, cancel, work } = endRun(s, f);
   return step({ name: 'closed', data: d }, {
@@ -1008,11 +1018,11 @@ const WRITES = {
       `INSERT INTO shot_artifacts (id, run_id, story_id, viewport, side, variant, media, theme, content_type,
                                    data, width, height, bytes, sha256,
                                    density, dense_data, dense_width, dense_height, dense_bytes, dense_sha256,
-                                   part, scale, focus_rect)
+                                   part, scale, focus_rect, public_safe)
        SELECT md5(f.run_id || ':' || f.slot), f.run_id, f.story_id, f.viewport, f.side, f.variant, f.media, f.theme,
               f.content_type, f.data, f.width, f.height, f.bytes, f.sha256,
               f.density, f.dense_data, f.dense_width, f.dense_height, f.dense_bytes, f.dense_sha256,
-              f.part, f.scale, f.focus_rect
+              f.part, f.scale, f.focus_rect, f.public_safe
          FROM shot_run_files f WHERE f.run_id = $1 AND f.slot = ANY($2::text[])
        ON CONFLICT DO NOTHING`, [w.runId, w.slots]);
     await moveRun(tx, w.runId, 'verified', { hardVerdict: w.verdict, planHash: w.planHash });
