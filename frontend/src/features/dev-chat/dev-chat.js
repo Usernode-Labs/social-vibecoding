@@ -8079,6 +8079,9 @@ const DevChat = {
             : DevChat.renderMarkdown(content))
           : `<span style="color:var(--text-muted);font-style:italic">${PlatformI18n.htmlText('devchat:transcript.noVisibleReply')}</span>`,
         ...(msgIdx === liveIdx ? { live: true } : null),
+        // #5728: the project the reply is about, so its `#N` / `PR#N` chips
+        // open that board. Only the AI's written reply carries one.
+        ...(isUser ? null : { appSlug: DevChat._appSlug() || null }),
         ...(isUser ? { attachments: DevChat._attachmentRows(msg) } : null),
         // For any assistant message that carried a [CHAT_ONLY] tag, surface
         // the raw output so nothing is ever invisibly swallowed.

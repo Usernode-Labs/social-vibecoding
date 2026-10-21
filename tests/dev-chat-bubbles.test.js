@@ -198,3 +198,27 @@ test('nothing in the transcript reads the raw surface tokens any more', () => {
   assert.deepEqual(offenders, [],
     'a .dc- surface must take the ladder, not the raw token');
 });
+
+test('#5728: an AI reply that names its project links its #N and PR#N; a user row, and a reply with no project, do not', () => {
+  const { Row } = loadTsx('frontend/src/features/dev-chat/transcript.tsx');
+  const { makeHtmlDocument } = require('./lib/html-dom');
+  globalThis.document = makeHtmlDocument();
+  globalThis.window = { App: { user: { username: 'ada' } } };
+  try {
+    const render = (extra) => renderToHtml(createElement(Row, {
+      r: { t: 'msg', key: 'k', who: 'ai', model: '', stamp: '#1', contentHtml: '<p>see #7 and PR#8</p>', ...extra },
+    }));
+    const ai = render({ appSlug: 'notes-ab12' });
+    assert.match(ai, /<a href="#app\/notes-ab12\/dev\/issues\/7" class="gc-ref gc-ref-issue"[^>]*>#7<\/a>/,
+      'the request number opens that request\'s page');
+    assert.match(ai, /<a href="#app\/notes-ab12\/dev\/changes\/8" class="gc-ref gc-ref-pr"[^>]*>PR#8<\/a>/,
+      'the PR opens its proposal page');
+    assert.doesNotMatch(render({}), /<a href="#app\//, 'a reply with no project keeps its numbers as text');
+    assert.match(read('frontend/src/features/dev-chat/dev-chat.js'),
+      /\.\.\.\(isUser \? null : \{ appSlug: DevChat\._appSlug\(\) \|\| null \}\),/,
+      'only the AI\'s written reply is given a project; a user row and a Claude Code row are not');
+  } finally {
+    delete globalThis.document;
+    delete globalThis.window;
+  }
+});

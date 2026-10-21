@@ -156,6 +156,7 @@ import { draftRequest, draftSeed, type DraftRequest } from './request-seed';
 import { CreditsCard, HandoffPanel } from './handoff';
 import { UserMessage } from './user-message';
 import { JumpToLatest } from '../messages/jump-to-latest';
+import { linkRefsInHtml } from '../messages/channels';
 
 // Agent sessions (#2779, docs/agent-sessions.md "UI surfaces"): one
 // conversation with the Mayor that works on any app. Drawn on two surfaces,
@@ -185,8 +186,13 @@ function markdown(text: string, breaks = true): string | null {
   try { return render(text, { breaks }); } catch { return null; }
 }
 
-const MayorText = memo(function MayorText({ text }: { text: string }) {
-  const html = useMemo(() => markdown(text), [text]);
+export const MayorText = memo(function MayorText({ text, appSlug }: { text: string; appSlug?: string | null }) {
+  // #5728: `#N` and `PR#N` in a reply are the chips Messages and the project
+  // chat already draw, opening the request's page and the proposal's.
+  const html = useMemo(() => {
+    const rendered = markdown(text);
+    return rendered ? linkRefsInHtml(rendered, appSlug) : null;
+  }, [text, appSlug]);
   const inner = useInnerHtml(html || '');
   if (html) {
     // renderMarkdown is the dev chat's sanitizer (marked + DOMPurify).
@@ -592,7 +598,12 @@ function Card({ card, live = false }: { card: CardView; live?: boolean }) {
  * item objects until the messages or actions change, so a row whose item is
  * unchanged skips its render (and its markdown) when the panel re-renders.
  */
-const Item = memo(function Item({ item, sessionId = null }: { item: TranscriptItem; sessionId?: number | null }) {
+const Item = memo(function Item({ item, sessionId = null, appSlug = null }: {
+  item: TranscriptItem;
+  sessionId?: number | null;
+  /** #5728: the project the conversation is about, for its reply's refs. */
+  appSlug?: string | null;
+}) {
   const t = useMessages('agent');
   switch (item.kind) {
     case 'user':
@@ -615,7 +626,7 @@ const Item = memo(function Item({ item, sessionId = null }: { item: TranscriptIt
               />
             ) : t('agent:session.reply.agent')}
           </p>
-          {item.text ? <MayorText text={item.text} /> : null}
+          {item.text ? <MayorText text={item.text} appSlug={appSlug} /> : null}
           {item.cards.map((card) => <Card key={card.id} card={card} />)}
         </article>
       );
@@ -1403,7 +1414,7 @@ function OutboxRows() {
   );
 }
 
-function LiveTurn({ runShown }: { runShown: boolean }) {
+function LiveTurn({ runShown, appSlug }: { runShown: boolean; appSlug?: string | null }) {
   const t = useMessages('agent');
   // The one reader of the streamed text on this screen (with FollowOutput):
   // it re-renders once per frame of a reply, and nothing around it does.
@@ -1439,7 +1450,7 @@ function LiveTurn({ runShown }: { runShown: boolean }) {
       {said || working ? (
         <article data-agent-session-live>
           <p className="mb-1 text-xs font-semibold text-emerald-700 dark:text-emerald-400">{t('agent:session.reply.agent')}</p>
-          {turn.streamText ? <MayorText text={turn.streamText} /> : null}
+          {turn.streamText ? <MayorText text={turn.streamText} appSlug={appSlug} /> : null}
           {cards.map((card) => <Card key={card.id} card={card} live />)}
           {working ? (
             <div
@@ -2449,6 +2460,10 @@ export function AgentSessionPanel({ embedded = false, headerAction = null }: { e
   const replies = latestReplies(items);
   const empty = snapshot.phase === 'ready' && !items.length && !snapshot.running && !snapshot.outbox;
   const about: About = snapshot.session || snapshot.draft;
+  // #5728: the project a reply's `#N` / `PR#N` chips open, the one "Open app"
+  // opens (without its self-hosted exclusion: Homeroom's own board is a page
+  // like any other).
+  const refSlug = snapshot.session?.activeChange?.appSlug || about?.focusApp?.slug || null;
   const request = snapshot.draft ? draftRequest(snapshot.draft.hint) : null;
 
   // ── Nothing in the transcript is wider than the transcript (#3559) ──
@@ -2500,9 +2515,9 @@ export function AgentSessionPanel({ embedded = false, headerAction = null }: { e
             <div className="flex items-center gap-2 text-sm text-zinc-500"><SpinnerArcIcon className="h-5 w-5 animate-spin" aria-hidden="true" />{` ${t('core:common.loading')}`}</div>
           ) : null}
           {empty ? <EmptyState about={about} request={request} /> : null}
-          {items.map((item) => <Item key={item.key} item={item} sessionId={snapshot.id} />)}
+          {items.map((item) => <Item key={item.key} item={item} sessionId={snapshot.id} appSlug={refSlug} />)}
           <OutboxRows />
-          <LiveTurn runShown={runShown} />
+          <LiveTurn runShown={runShown} appSlug={refSlug} />
           {fixOffer ? <FixChecksCard key={fixOffer.key} offer={fixOffer} /> : null}
           <FollowOutput scroll={scroll} stick={stick} count={items.length + (fixOffer ? 1 : 0)} />
           {snapshot.session?.activeChange?.previewCapture ? <PreviewCapture change={snapshot.session.activeChange} /> : null}

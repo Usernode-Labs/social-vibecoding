@@ -241,7 +241,7 @@ test('the session read shapes the failing checks it is handed, and reads them on
 test('the panel decides with the pure rule, from what it already reads', () => {
   const panel = read('frontend/src/features/agent-session/index.tsx');
   assert.match(panel, /fixChecksOffer\(\{\s*change: snapshot\.session\?\.activeChange,\s*busy: snapshot\.running \|\| !!snapshot\.session\?\.busy,\s*messages: snapshot\.messages,\s*unsent: snapshot\.outbox,\s*\}\)/);
-  assert.match(panel, /<LiveTurn runShown=\{runShown\} \/>\s*\{fixOffer \? <FixChecksCard key=\{fixOffer\.key\} offer=\{fixOffer\} \/> : null\}/,
+  assert.match(panel, /<LiveTurn runShown=\{runShown\} appSlug=\{refSlug\} \/>\s*\{fixOffer \? <FixChecksCard key=\{fixOffer\.key\} offer=\{fixOffer\} \/> : null\}/,
     'at the conversation\'s end, one card per run');
   assert.match(panel, /count=\{items\.length \+ \(fixOffer \? 1 : 0\)\}/, 'a reader at the bottom stays there when it appears');
   assert.match(panel, /void sendAgentMessage\(fixChecksMessage\(offer\)\);/, 'nothing starts without the tap');
