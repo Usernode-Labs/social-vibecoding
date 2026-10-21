@@ -282,6 +282,58 @@ test('the steps of a shots run against the full PostgreSQL schema', { timeout: 1
     assert.equal((await shotsControl.read(pool, id)).agent.deviceDensity, true, 'the run keeps its own choice');
   });
 
+  // Close-ups (services/shots-closeups.js): a small change on a dense run's
+  // screen is wanted, checked against the after still and kept.
+  await t.test('a small change in a dense run wants a close-up, kept only when it is the after screen there', async () => {
+    const { PNG } = require('pngjs');
+    // A 1280 x 800 desktop screen at 2x, with a 30 x 20 badge that is new on the after side.
+    const scene = (k, { badge, ox = 0, oy = 0, w = 1280, h = 800 }) => {
+      const png = new PNG({ width: Math.round(w * k), height: Math.round(h * k) });
+      for (let y = 0; y < png.height; y += 1) {
+        for (let x = 0; x < png.width; x += 1) {
+          const cx = ox + x / k; const cy = oy + y / k;
+          const on = badge && cx >= 600 && cx < 630 && cy >= 300 && cy < 320;
+          png.data.set(on ? [220, 38, 38, 255] : [246, 246, 248, 255], (y * png.width + x) * 4);
+        }
+      }
+      return PNG.sync.write(png);
+    };
+    const s = await proposal();
+    const id = await prepared(s, { deviceDensity: true });
+    let asked = null;
+    let kept = null;
+    const control = (fn) => shotsControl.withControl(other, { runId: id, sessionId: s.id }, fn);
+    const { deps } = agentDeps(async () => {
+      await control((c) => c.saveShot({ change: 'invite-suggestions', screen: 'desktop', side: 'before', density: '2' }, scene(2, {})));
+      await control((c) => c.saveShot({ change: 'invite-suggestions', screen: 'desktop', side: 'after', density: '2' }, scene(2, { badge: true })));
+      asked = await control((c, db) => shotsControl.wantedCloseups(db, c));
+      const [ask] = asked;
+      const save = (image) => control(async (c, db) => c.saveCloseup({ change: ask.change, screen: ask.screen, part: ask.part }, image, {
+        asked: await shotsControl.wantedCloseups(db, c),
+        ...(await shotsControl.stillsFor(db, c, { change: ask.change, screen: ask.screen })),
+      }));
+      // Of the before side (no badge there): refused.
+      await assert.rejects(save(scene(ask.scale, { ox: ask.rect.x, oy: ask.rect.y, w: ask.rect.w, h: ask.rect.h })),
+        { code: 'closeup_not_the_after_screen' });
+      kept = await save(scene(ask.scale, { badge: true, ox: ask.rect.x, oy: ask.rect.y, w: ask.rect.w, h: ask.rect.h }));
+      return { backend: 'claude_code', model: 'claude-sonnet-5-5', result: { exitCode: 0 } };
+    });
+    const out = await agent(s, id, deps);
+    assert.equal(asked.length, 1);
+    const [ask] = asked;
+    assert.deepEqual([ask.change, ask.screen, ask.part, ask.saved], ['invite-suggestions', 'desktop', 1, false]);
+    assert.ok(ask.rect.x <= 600 && ask.rect.x + ask.rect.w >= 630 && ask.scale > 2, JSON.stringify(ask));
+    assert.equal(kept.saved, true);
+    const { rows: [file] } = await pool.query(
+      `SELECT slot, variant, side, part, scale::float AS scale, focus_rect, width
+         FROM shot_run_files WHERE run_id = $1 AND variant = 'closeup'`, [id]);
+    assert.deepEqual(file, { slot: 'invite-suggestions/desktop/head/closeup/1', variant: 'closeup', side: 'head', part: 1,
+      scale: ask.scale, focus_rect: ask.rect, width: Math.round(ask.rect.w * ask.scale) });
+    assert.ok(out.slots.includes('invite-suggestions/desktop/head/closeup/1'), 'published with the change');
+    const again = await control((c, db) => shotsControl.wantedCloseups(db, c));
+    assert.equal(again[0].saved, true);
+  });
+
   await t.test('a skipped change, a broken one, and nothing saved: each says why, for the machine to fail on', async () => {
     const s = await proposal();
     const skipped = await prepared(s);

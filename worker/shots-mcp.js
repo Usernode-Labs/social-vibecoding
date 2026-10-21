@@ -229,6 +229,40 @@ function browserControl(browser, message, timeoutMs = 45_000) {
   });
 }
 
+// Close-ups (src/services/shots-closeups.js): the small changes the card
+// zooms past its still's density, each taken again at the density it needs
+// by the browser that shot that change's screen, through its observer
+// (shots-browser-observer.js `closeup`), and kept by Homeroom only when it
+// is that after screen at that place. Only the platform's wanted close-ups
+// of `changes`, those not saved yet, one at a time.
+async function takeCloseups(changes, pair) {
+  const wanted = ((await request('/closeups', { timeoutMs: 30_000 })).result?.closeups || [])
+    .filter((ask) => !ask.saved && changes.includes(ask.change));
+  if (!wanted.length) return [];
+  const context = (await request('/context', { timeoutMs: 30_000 })).context;
+  const origins = pair || await pairOrigins();
+  const out = [];
+  for (const ask of wanted) {
+    const entry = { change: ask.change, screen: ask.screen, part: ask.part, scale: ask.scale };
+    try {
+      const browser = browserDir(context, declaredChangeIn(context, ask.change), ask.screen);
+      const answer = await browserControl(`browser_${browser}`, { action: 'closeup', rect: ask.rect, scale: ask.scale });
+      if (!answer?.ok || !/^closeup-[0-9a-f]{16}\.png$/.test(String(answer.file || ''))) {
+        throw refused(answer?.code || 'closeup_failed', 'The browser could not take the close-up.');
+      }
+      const dir = path.join(shotsDir, browser);
+      const image = fs.readFileSync(path.join(dir, answer.file));
+      requireOnApp('after', [boundary.screenshotOrigin(dir, answer.file, image)], origins);
+      const query = new URLSearchParams({ change: ask.change, screen: ask.screen, part: String(ask.part) });
+      await request(`/closeup?${query}`, { method: 'POST', binary: image });
+      out.push({ ...entry, saved: true });
+    } catch (error) {
+      out.push({ ...entry, saved: false, code: String(error?.code || 'closeup_failed') });
+    }
+  }
+  return out;
+}
+
 const annotations = { readOnlyHint: false, destructiveHint: false, openWorldHint: false };
 const server = new McpServer(
   { name: 'usernode-before-after-shots', version: '2.0.0' },
@@ -287,7 +321,22 @@ server.registerTool('save_shot', {
     }
   }
   const saved = results.filter((entry) => entry.saved).length;
-  const content = resultContent({ saved, refused: results.length - saved, results });
+  // In a run taken at device density, the close-ups the platform wants of
+  // the changes just saved, taken while their screens most likely still
+  // show (takeCloseups).
+  let closeups = [];
+  if (deviceDensity && saved) {
+    try { closeups = await takeCloseups(results.filter((entry) => entry.saved).map((entry) => entry.change), pair); }
+    catch { closeups = []; }
+  }
+  const missed = closeups.filter((entry) => !entry.saved);
+  const content = resultContent({
+    saved, refused: results.length - saved, results,
+    ...(closeups.length ? { closeups } : {}),
+    ...(missed.length ? { closeupHint: 'Some close-ups could not be taken because the browser no longer shows that '
+      + 'change\'s after screen. Open its after state again, take the after screen shot again and save it: the '
+      + 'close-ups are taken again with it. Leave them if that is not possible.' } : {}),
+  });
   return saved ? content : { ...content, isError: true };
 });
 

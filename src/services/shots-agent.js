@@ -115,7 +115,11 @@ start path again, and shoot a smaller element. When it warns that a before
 and an after are the same image, the two sides were not shot in the states
 the claim compares: check the steps, the data and the scroll position on
 each side and shoot again, or, if these copies cannot show the change, call
-note_change or skip_change as described below.
+note_change or skip_change as described below. When it answers a
+closeupHint, a small change's close-up could not be taken because the page
+had moved on: open that after state again, take its screen shot again and
+save it, which takes the close-up with it. Save each change's before side
+before its after side, so the after screen is still showing when it saves.
 
 Every tool call costs time, so make calls that do not depend on each other
 in the same turn (for example the screen and element screenshots of one

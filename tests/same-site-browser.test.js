@@ -223,6 +223,7 @@ const EXEMPT = new Map([
   ['global-chat.js POST /api/global-chat/threads/:id/inline-actions', JSON_FIELD],
   ['global-chat.js POST /api/global-chat/actions/:token/confirm', JSON_FIELD],
   ['internal.js POST /api/internal/shots/:runId/shot', TOKEN],
+  ['internal.js POST /api/internal/shots/:runId/closeup', TOKEN],
   ['internal.js POST /api/internal/shots/:runId/skip', TOKEN],
   ['internal.js POST /api/internal/shots/:runId/note', TOKEN],
   ['internal.js POST /api/internal/shots/:runId/problem', TOKEN],
