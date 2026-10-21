@@ -13552,6 +13552,18 @@ button.dev-badge { cursor: pointer; }
   text-overflow: ellipsis;
   max-width: 11ch;
 }
+/* A chip's own words, where the chip itself is the thing that gives way
+   (#5755). The category chip's label used to be a bare text child of the
+   chip's flex box, and bare text cannot ellipsise: in a row that clips its
+   one line, the chip was sliced through at the card's edge. In this span the
+   label ends in "…" and the pill keeps its rounded end. No font-size and no
+   max-width — only the row the chip sits in limits it. */
+.dev-badge-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
 
 /* NOTE the property here is `font-family`, NOT the `font` shorthand. The
    shorthand resets font-size / font-weight / line-height to their initial
@@ -14899,6 +14911,9 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
 }
 :is(.dev-card-dense, .dev-card-topic) .dev-card-meta > .dev-badge {
   height: 19px; font-size: 11.5px; vertical-align: middle; margin-left: 4px;
+  /* The meta line wraps, but a chip wider than the line itself would still
+     run past the card's edge: it stops at the card and ellipsises (#5755). */
+  max-width: calc(100% - 4px);
 }
 /* Tabbed in under the title, as the folded row's meta line is: the row keeps
    its icon in a column of its own and the title and meta share the next, so
@@ -15208,6 +15223,16 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
   box-shadow: 0 0 0 1px var(--border) inset;
 }
 :is(.dev-card-dense, .dev-card-topic) :is(.dev-card-status, .dev-card-facts) > .dev-badge .attr-avatar { width: 14px; height: 14px; }
+/* These two bands are one row, clipped (above), so a chip that does not fit
+   used to be sliced at the card's right edge (#5755). It now shrinks into
+   what is left and ends in a whole rounded pill; only its words give way,
+   through the chip's own `.dev-badge-label`. */
+:is(.dev-card-dense, .dev-card-topic) :is(.dev-card-status, .dev-card-facts) > .dev-badge {
+  flex-shrink: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+:is(.dev-card-dense, .dev-card-topic) :is(.dev-card-status, .dev-card-facts) > .dev-badge > :not(.dev-badge-label):not(.dev-badge-name) { flex-shrink: 0; }
 
 /* ── The action band: one line, folding into ⋯ ──
    28px pills at the second type size and the labelled Preview pill at the
@@ -21658,7 +21683,11 @@ span.dev-ws-dash-cell[data-ws-dash-open]:focus-visible { outline: 2px solid var(
    .dev-card-meta > .dev-badge), so "In review" and "@maya" are the same chip
    at both sizes. Without this they fell back to the base .dev-badge —
    10.5px on a 20px chip against the card's 11.5px on 19px. */
-.dev-ws-row-band > .dev-badge { flex: none; height: 19px; font-size: 11.5px; }
+/* `0 1 auto`, not `none`: the band clips its one line, so a chip that does
+   not fit used to be cut through at the row's edge (#5755). It shrinks now,
+   and its words ellipsise inside a whole pill. */
+.dev-ws-row-band > .dev-badge { flex: 0 1 auto; min-width: 0; overflow: hidden; height: 19px; font-size: 11.5px; }
+.dev-ws-row-band > .dev-badge > :not(.dev-badge-label):not(.dev-badge-name) { flex-shrink: 0; }
 /* The composite pill, wearing the tone it has always carried. Tones are
    `statusPillState`'s vocabulary (neutral / ok / attention / blocked /
    progress), not the merge badge's colour names — an unknown one falls
@@ -24738,6 +24767,13 @@ html.in-side-panel body {
 }
 .dev-ws-lrow .dev-ws-wrow-status::-webkit-scrollbar { display: none; }
 .dev-ws-lrow .dev-ws-wrow-status > * { flex: none; }
+/* The category chip is the one thing on this line that gives way (#5755):
+   it took the line's last room, so it was faded by the mask and cut at the
+   edge. It shrinks into what is left and its label ends in "…". */
+.dev-ws-lrow .dev-ws-wrow-status > .attr-chip { flex: 0 1 auto; min-width: 0; overflow: hidden; }
+/* The line ends 20px before its mask does, so a chip that FITS is never
+   faded by the mask. */
+.dev-ws-lrow .dev-ws-wrow-status { padding-right: 20px; }
 .dev-ws-lrow .dev-ws-wrow-sub { overflow: visible; }
 .dev-ws-lrow > .dev-ws-wrow-menu { margin-top: 1px; }
 @container (max-width: 520px) {
