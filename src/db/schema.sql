@@ -1694,11 +1694,9 @@ END $$;
 -- before this existed have no waiter id and are never taken over.
 ALTER TABLE local_agent_turns ADD COLUMN IF NOT EXISTS waiter_id UUID;
 -- Retired: when the waiter last said it was waiting, which only the deleted
--- stale-waiter scan read. Nothing in this release writes or reads it; the
--- release before it (f3b2246ef) still writes it while it drains. Drop it
--- once no process of that release is live.
-ALTER TABLE local_agent_turns ADD COLUMN IF NOT EXISTS waiter_seen_at TIMESTAMPTZ;
+-- stale-waiter scan read, and its index.
 DROP INDEX IF EXISTS local_agent_turns_waiting_idx;
+ALTER TABLE local_agent_turns DROP COLUMN IF EXISTS waiter_seen_at;
 ALTER TABLE local_agent_turns ADD COLUMN IF NOT EXISTS tail_claimed_at TIMESTAMPTZ;
 ALTER TABLE local_agent_turns ADD COLUMN IF NOT EXISTS tail_finished_at TIMESTAMPTZ;
 -- The work item whose turn dispatched it (src/workflow/turn/: its

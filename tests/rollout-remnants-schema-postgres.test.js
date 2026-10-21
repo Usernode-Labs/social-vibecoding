@@ -4,9 +4,8 @@
 // schema, applied over a deployment that kept the old names and leases,
 // leaves none of them. What 3.2 kept one release for the release before it
 // (process_holds, shots_eval_trials.proxy_cents, apps.creating_owner /
-// creating_heartbeat_at, starter_images.owner / heartbeat_at) is gone too;
-// local_agent_turns.waiter_seen_at stays one release more, written by 3.2's
-// own release while it drains, its index gone.
+// creating_heartbeat_at, starter_images.owner / heartbeat_at) is gone too,
+// and local_agent_turns.waiter_seen_at, a release after them, with its index.
 //
 // Skipped when no server is reachable, required when TEST_DATABASE_URL is set.
 // Run with: TEST_DATABASE_URL=postgres://... node --test tests/rollout-remnants-schema-postgres.test.js
@@ -20,7 +19,7 @@ const { Pool } = require('pg');
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
 const SCHEMA = fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8');
 
-test('the schema drops the rollout-only remnants of a deployment that has them, and keeps what the previous release writes', { timeout: 120000 }, async (t) => {
+test('the schema drops the rollout-only remnants of a deployment that has them', { timeout: 120000 }, async (t) => {
   const admin = new Pool({ connectionString: DSN, connectionTimeoutMillis: 2000 });
   try { await admin.query('SELECT 1'); } catch (err) {
     await admin.end();
@@ -64,6 +63,7 @@ test('the schema drops the rollout-only remnants of a deployment that has them, 
     ALTER TABLE shots_eval_trials ADD COLUMN proxy_cents NUMERIC(12,4) NOT NULL DEFAULT 0;
     ALTER TABLE apps ADD COLUMN creating_owner TEXT DEFAULT 'workflow', ADD COLUMN creating_heartbeat_at TIMESTAMPTZ;
     ALTER TABLE starter_images ADD COLUMN owner TEXT, ADD COLUMN heartbeat_at TIMESTAMPTZ;
+    ALTER TABLE local_agent_turns ADD COLUMN waiter_seen_at TIMESTAMPTZ;
     CREATE INDEX local_agent_turns_waiting_idx ON local_agent_turns (waiter_seen_at)
       WHERE waiter_id IS NOT NULL AND tail_claimed_at IS NULL;
   `);
@@ -95,9 +95,7 @@ test('the schema drops the rollout-only remnants of a deployment that has them, 
   assert.equal((await pool.query(`SELECT to_regclass('process_holds') AS t`)).rows[0].t, null);
   assert.equal((await columns('shots_eval_trials')).includes('proxy_cents'), false);
   assert.deepEqual((await columns('starter_images')).filter((c) => ['owner', 'heartbeat_at'].includes(c)), []);
-  // 3.2's own release still writes waiter_seen_at while it drains: the
-  // column stays one release more; its index (read by nothing) goes.
-  assert.ok((await columns('local_agent_turns')).includes('waiter_seen_at'));
+  assert.equal((await columns('local_agent_turns')).includes('waiter_seen_at'), false);
   assert.equal((await pool.query(`SELECT to_regclass('local_agent_turns_waiting_idx') AS t`)).rows[0].t, null);
 
   // A project's insert starts its making.
