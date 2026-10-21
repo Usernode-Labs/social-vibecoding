@@ -78,6 +78,9 @@ let draining = null; // { since, deadline } once shutdown has begun
 // { release } while held, from markDraining until it holds nothing above its
 // drain sizes (setAboveDrain(0)).
 let claim = null;
+// What a process does when it cannot keep its claim while it still holds more
+// than its drain sizes (start's onClaimLost): it exits, which closes them.
+let onClaimLost = null;
 
 // key -> count, for this process. key = `${kind}\u0000${ref}`
 const local = new Map();
@@ -250,10 +253,11 @@ function every(ms, fn, label) {
  * first beat is done; a database that will not take it is logged and
  * retried by the timer, never thrown.
  */
-async function start({ pool: db, role: r = 'all' } = {}) {
+async function start({ pool: db, role: r = 'all', onClaimLost: lost = () => process.exit(1) } = {}) {
   if (started) return;
   pool = db;
   role = r;
+  onClaimLost = lost;
   // In a Kubernetes Pod the host is the Pod's name, and a Pod runs one
   // platform process: a row of the same host is this container's
   // predecessor, which died (an OOM kill, a failed liveness probe) and must
@@ -350,17 +354,29 @@ function claimKey(r = role) {
 }
 
 // Takes the capacity claim on the lock connection; it stays held until
-// released or the connection closes. A claim that cannot be taken is logged:
-// a process starting then does not wait on this one.
+// released or the connection closes. Fails closed: a claim that cannot be
+// taken, or that goes with its connection while it still stands for
+// connections above the drain sizes, leaves a process starting nothing to
+// wait on, so this one ends (onClaimLost: it exits, closing them all), as a
+// process that loses its presence lock does.
 async function takeClaim() {
   if (claim) return;
   let held;
   const acquired = new Promise((resolve) => { held = resolve; });
-  const entry = { release: null };
-  const released = new Promise((resolve) => { entry.release = resolve; });
+  const entry = { release: null, released: false };
+  const released = new Promise((resolve) => { entry.release = () => { entry.released = true; resolve(); }; });
   claim = entry;
-  require('../db/session-locks').withSessionLock(pool, claimKey(), () => { held(true); return released; })
-    .catch((err) => { log.warn('processes', 'Could not take the capacity claim', { err: err.message }); held(false); })
+  const fail = (what, err) => {
+    if (entry.released) return;
+    log.error('processes', what, { err: err?.message || null });
+    // Settled and forgotten: a claim taken after this is a new one.
+    if (claim === entry) claim = null;
+    entry.release();
+    onClaimLost?.();
+  };
+  require('../db/session-locks').withSessionLock(pool, claimKey(), () => { held(true); return released; },
+    { onLost: (err) => fail('The capacity claim went with its connection while it still held more than its drain sizes; exiting', err) })
+    .catch((err) => { held(false); fail('Could not take the capacity claim; exiting rather than drain unclaimed', err); })
     .finally(() => { if (claim === entry) claim = null; });
   await acquired;
 }
@@ -379,8 +395,11 @@ function replacedRoles(r) {
   return ['all', 'web', 'conductor'].filter((x) => successorRoles(x).includes(r));
 }
 
+// Claims in the platform's own database only: pg_locks is the server's, and
+// an app's role may take the same key in its own.
 const CLAIMS_SQL = `SELECT count(*)::int AS processes FROM pg_locks
   WHERE locktype = 'advisory' AND granted AND objsubid = 2 AND classid = ANY($1::int[]::oid[])
+    AND database = (SELECT oid FROM pg_database WHERE datname = current_database())
     AND pid <> pg_backend_pid()`;
 
 /**
@@ -461,6 +480,7 @@ function _reset() {
   draining = null;
   if (claim) claim.release();
   claim = null;
+  onClaimLost = null;
   local.clear();
   writes = Promise.resolve();
   writeQueued = false;

@@ -120,7 +120,9 @@ function createSessionLocks({ makeClient = (connectionString) => new Client({
       return entry;
     }
     // users: holders and waiters on it; held: locks it holds.
-    entry = { users: 0, held: 0, dead: false, ready: null, client: null, queue: Promise.resolve(), idle: null, lost: null };
+    // onLost: the callbacks of holders that must hear when their lock goes
+    // with the connection (withSessionLock's `onLost`).
+    entry = { users: 0, held: 0, dead: false, ready: null, client: null, queue: Promise.resolve(), idle: null, lost: null, onLost: new Set() };
     byDatabase.set(connectionString, entry);
     const client = makeClient(connectionString);
     entry.client = client;
@@ -129,6 +131,10 @@ function createSessionLocks({ makeClient = (connectionString) => new Client({
       entry.dead = true;
       if (byDatabase.get(connectionString) === entry) byDatabase.delete(connectionString);
       if (entry.held) log.warn('session-locks', 'The lock connection ended while locks were held', { held: entry.held, err: err?.message || null });
+      for (const tell of entry.onLost) {
+        try { tell(err || new Error('The lock connection ended')); } catch { /* the holder's own */ }
+      }
+      entry.onLost.clear();
     };
     entry.lost = lost;
     client.on('error', lost);
@@ -186,7 +192,10 @@ function createSessionLocks({ makeClient = (connectionString) => new Client({
 
   // Take `key` and run `fn` under it. `wait`: false answers BUSY at once when
   // another holds it (here or in another process).
-  async function run(pool, key, fn, { wait, unlockedOnError = false }) {
+  // `onLost`: told if the connection ends while this lock is held (most
+  // holders run on unprotected, as they always did; one that may not, a
+  // draining process's capacity claim, acts on it).
+  async function run(pool, key, fn, { wait, unlockedOnError = false, onLost = null }) {
     const connectionString = pool && pool.options && pool.options.connectionString;
     if (!connectionString || typeof pool.connect !== 'function') return fn();
     const k = keySql(key);
@@ -228,12 +237,18 @@ function createSessionLocks({ makeClient = (connectionString) => new Client({
             log.warn('session-locks', 'Lock unavailable, running unlocked', { key: k.id, err: err.message });
             break;
           }
-          if (r && r.got) { held = true; entry.held += 1; break; }
+          if (r && r.got) {
+            held = true;
+            entry.held += 1;
+            if (onLost) entry.onLost.add(onLost);
+            break;
+          }
           if (!wait) return BUSY;
           await new Promise((resolve) => setTimeout(resolve, delay));
         }
         return await fn();
       } finally {
+        if (onLost) entry.onLost.delete(onLost);
         if (held) await release(connectionString, entry, k);
         else {
           entry.users -= 1;

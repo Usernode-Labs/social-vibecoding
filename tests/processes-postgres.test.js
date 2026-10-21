@@ -41,6 +41,8 @@ test('processes and the roster, against the full schema', { timeout: 120000 }, a
   const pool = new Pool({ connectionString: String(url), max: 6 });
   await pool.query(fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8'));
   const processes = require('../src/services/processes');
+  // How often the process would have exited for a capacity claim it lost.
+  let claimLost = 0;
   t.after(async () => {
     processes._reset();
     await pool.end();
@@ -85,7 +87,7 @@ test('processes and the roster, against the full schema', { timeout: 120000 }, a
     process.env.KUBERNETES_SERVICE_HOST = '10.0.0.1';
     const early = processes.hold('session', 11);
     try {
-      await processes.start({ pool, role: 'all' });
+      await processes.start({ pool, role: 'all', onClaimLost: () => { claimLost += 1; } });
     } finally {
       if (kube === undefined) delete process.env.KUBERNETES_SERVICE_HOST; else process.env.KUBERNETES_SERVICE_HOST = kube;
     }
@@ -243,6 +245,36 @@ test('processes and the roster, against the full schema', { timeout: 120000 }, a
       await other.end().catch(() => {});
     }
 
+    // A claim in another database is an app's, not a process's.
+    const elsewhere = new Client({ connectionString: DSN });
+    await elsewhere.connect();
+    try {
+      await elsewhere.query('SELECT pg_advisory_lock(991022, 9)');
+      assert.ok((await processes.waitForRoom({ pollMs: 20 })).waitedMs < 1000, 'another database\'s lock is no claim');
+    } finally {
+      await elsewhere.end();
+    }
+
+    // Fails closed: a claim that goes with its connection while it still
+    // stands for connections above the drain sizes ends the process.
+    const claimBackend = `SELECT pg_terminate_backend(pid) FROM pg_locks WHERE locktype = 'advisory' AND granted
+      AND classid = 991021::oid AND database = (SELECT oid FROM pg_database WHERE datname = current_database())`;
+    await processes.markDraining(new Date(Date.now() + 60_000));
+    assert.equal(await claims(991021), 1);
+    processes.setAboveDrain(2);
+    await pool.query(claimBackend);
+    await until(() => claimLost === 1, { label: 'the claim lost' });
+    // A claim already given back is nothing to lose.
+    await until(async () => (await claims(991021)) === 0, { label: 'the old claim gone' });
+    await processes.markDraining(new Date(Date.now() + 60_000));
+    await until(async () => (await claims(991021)) === 1, { label: 'a new claim' });
+    processes.setAboveDrain(0);
+    await until(async () => (await claims(991021)) === 0, { label: 'given back' });
+    await pool.query(`SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE application_name LIKE 'homeroom-%-locks'
+      AND datname = current_database() AND pid <> pg_backend_pid()`);
+    await new Promise((r) => setTimeout(r, 200));
+    assert.equal(claimLost, 1, 'nothing held, nothing lost');
+
     // A read that fails is tried again, never taken for room.
     let reads = 0;
     const out = await processes.waitForRoom({
@@ -278,4 +310,21 @@ test('processes and the roster, against the full schema', { timeout: 120000 }, a
     assert.equal((await pool.query('SELECT 1 FROM process_holds WHERE process_id = $1', [processes.ID])).rows.length, 0);
     await until(() => true);
   });
+});
+
+test('a claim that cannot be taken ends the process rather than drain unclaimed', { timeout: 30000 }, async () => {
+  delete require.cache[require.resolve('../src/services/processes')];
+  const processes = require('../src/services/processes');
+  let lost = 0;
+  const nowhere = new Pool({ connectionString: 'postgres://nobody:x@127.0.0.1:1/none', connectionTimeoutMillis: 500 });
+  try {
+    await processes.start({ pool: nowhere, role: 'web', onClaimLost: () => { lost += 1; } });
+    await processes.markDraining(new Date(Date.now() + 60_000)).catch(() => {});
+    for (let i = 0; i < 100 && !lost; i++) await new Promise((r) => setTimeout(r, 20));
+    assert.equal(lost, 1);
+  } finally {
+    processes._reset();
+    await nowhere.end().catch(() => {});
+    delete require.cache[require.resolve('../src/services/processes')];
+  }
 });

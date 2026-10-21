@@ -112,7 +112,7 @@ test('session locks on a lock connection of their own', { timeout: 60000 }, asyn
     const waiting = b.withSessionLock(pool, key, async () => { bRanBesideA = aIn; return 'b'; }, { unlockedOnError: true });
     await sleep(150);
     // End only the waiter's lock connection (the one holding no lock).
-    await other.query(`SELECT pg_terminate_backend(a.pid) FROM pg_stat_activity a WHERE a.application_name LIKE 'homeroom-%-locks'
+    await other.query(`SELECT pg_terminate_backend(a.pid) FROM pg_stat_activity a WHERE a.application_name LIKE 'homeroom-%-locks' AND a.datname = current_database()
       AND NOT EXISTS (SELECT 1 FROM pg_locks l WHERE l.pid = a.pid AND l.locktype = 'advisory' AND l.granted)`);
     await sleep(1500);
     assert.equal(bRanBesideA, null, 'still waiting while the other holds it');
@@ -129,7 +129,7 @@ test('session locks on a lock connection of their own', { timeout: 60000 }, asyn
     const held = a.withSessionLock(pool, key, async () => { await gate; return 'held'; });
     await sleep(100);
     assert.equal(a.openConnections(), 1);
-    await other.query(`SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE application_name LIKE 'homeroom-%-locks' AND pid <> pg_backend_pid()`);
+    await other.query(`SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE application_name LIKE 'homeroom-%-locks' AND datname = current_database() AND pid <> pg_backend_pid()`);
     await sleep(100);
     release();
     assert.equal(await held, 'held', 'the holder ran on');
