@@ -148,12 +148,55 @@ test('the shell draws a change page as the request page’s sheet, with Messages
     fill: true, withHeader: true, readOnly: false, notice: '', placeholder: 'Reply…', maxLength: 4000, change: true,
   });
   assert.match(html, /^<div class="dev-request dev-change platform-kb-column"><div id="gc-thread-back" class="dev-request-back"><\/div><section class="dev-request-sheet dc-lift dc-lift-session" aria-label="Change"><div id="gc-thread-bar" class="dev-request-bar"><\/div>/);
-  assert.match(html, /<div id="gc-thread-head"><\/div><div id="gc-thread-messages"><\/div>/);
+  assert.match(html, /<div id="gc-thread-head"><\/div><div id="gc-thread-messages"><\/div><div id="gc-thread-foot"><\/div>/);
   assert.match(html, /class="messages-composer messages-composer-thread platform-safe-bar"/);
   const request = renderComponent(SHELL, 'ThreadShell', {
     fill: true, withHeader: true, readOnly: false, notice: '', placeholder: 'Reply…', maxLength: 4000, request: true,
   });
   assert.match(request, /^<div class="dev-request platform-kb-column">[\s\S]*aria-label="Request"/, 'the request page is unchanged');
+  assert.doesNotMatch(request, /gc-thread-foot/, 'a request page has no foot to repeat a card into');
+});
+
+// #5725: on a long change page the Votes card sits far above the replies.
+// A second copy of the same card is portalled after the transcript, and
+// shows only while the top card is out of view.
+const HEAD = 'frontend/src/features/dev-board/topic/change-head.tsx';
+const gate = (patch = {}) => ({
+  name: 'Votes', figure: '1 of 2 yes', tone: 'ask', done: false,
+  label: '1 of 2 yes', note: [], segments: [{ weight: 1, state: 'done', pct: 50 }], ...patch,
+});
+
+test('the repeated Votes card is the same card, marked so it is not a second gate', () => {
+  const normal = renderComponent(HEAD, 'GateCard', { which: 'votes', g: gate(), action: null, id: 81 });
+  assert.match(normal, /^<div class="dev-change-gate" data-change-gate="votes" data-done="false" data-tone="ask"/);
+  assert.match(normal, /<span class="dev-change-gate-name">Votes<\/span><span class="dev-change-gate-figure">1 of 2 yes<\/span>/);
+  const repeat = renderComponent(HEAD, 'GateCard', { which: 'votes', g: gate(), action: null, id: 81, repeat: true });
+  assert.match(repeat, /^<div class="dev-change-gate" data-change-gate-repeat="votes" data-done="false" data-tone="ask"/);
+  assert.doesNotMatch(repeat, /data-change-gate="/, 'declared checks and votes-in-view still find exactly one Votes gate');
+  assert.match(repeat, /<span class="dev-change-gate-name">Votes<\/span><span class="dev-change-gate-figure">1 of 2 yes<\/span>/,
+    'the same name and figure, with no new words');
+  // Drawn in every state, including after the viewer has voted: the action
+  // is null then, and the card is still the one at the top.
+  const voted = renderComponent(HEAD, 'GateCard', {
+    which: 'votes', g: gate({ done: true, tone: 'done', figure: 'Voted in', label: 'Voted in', note: ['You said yes. It’s going live.'] }),
+    action: null, id: 81, repeat: true,
+  });
+  assert.match(voted, /data-change-gate-repeat="votes" data-done="true" data-tone="done"/);
+  assert.match(voted, /<span class="dev-change-gate-figure">Voted in<\/span>/);
+  assert.match(voted, /<p class="dev-change-gate-note">You said yes\. It’s going live\.<\/p>/);
+});
+
+test('the head portals the repeat into the thread foot while the top card is out of view', () => {
+  const src = read(HEAD);
+  assert.match(src, /const foot = host\('gc-thread-foot'\);/);
+  assert.match(src, /const \[topInView, setTopInView\] = useState\(true\);/, 'it starts hidden, so it never flashes before the observer reports');
+  assert.match(src, /const card = pair\.current\?\.querySelector<HTMLElement>\('\[data-change-gate="votes"\]'\);/);
+  assert.match(src, /typeof IntersectionObserver !== 'function'/, 'without an observer the repeat stays hidden');
+  assert.match(src, /new IntersectionObserver\(\(\[entry\]\) => setTopInView\(!!entry\?\.isIntersecting\), \{\n\s+root: document\.getElementById\('gc-thread-scroll'\),\n\s+threshold: 0,\n\s+\}\);/);
+  assert.match(src, /io\.observe\(card\);[\s\S]*?return \(\) => io\.disconnect\(\);/);
+  assert.match(src, /\{foot && !topInView \? createPortal\(\n\s+<div className="dev-change-gate-repeat">\n\s+<GateCard which="votes" g=\{v\.votes\} action=\{voteAction\} id=\{id\} repeat \/>/);
+  const css = read('public/css/app.css');
+  assert.match(css, /\.dev-change-gate-repeat \{ padding: 8px 16px 12px; \}/);
 });
 
 test('group-chat.js carries the change language from the mount to the shell and the transcript', () => {

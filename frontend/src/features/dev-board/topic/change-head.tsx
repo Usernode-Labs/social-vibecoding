@@ -107,7 +107,14 @@ export function ChangeBar({ v, menuKey, detailsId = null }: { v: ChangeThreadVie
  * one is full and green, with a green check and figure (AGENTS.md: a
  * finished progress bar may be green).
  */
-function GateCard({ which, g, action, id }: { which: 'votes' | 'testing'; g: ChangeGateView; action: ReactNode; id: number | null }): ReactNode {
+export function GateCard({ which, g, action, id, repeat = false }: {
+  which: 'votes' | 'testing';
+  g: ChangeGateView;
+  action: ReactNode;
+  id: number | null;
+  /** The copy under the transcript: same card, a different attribute. */
+  repeat?: boolean;
+}): ReactNode {
   const t = useMessages('project');
   const open = () => (window as any).AppView?.openTechnicalDetails?.(id, 'checks');
   // A merge of Homeroom itself: when its release comes, counted down here
@@ -119,7 +126,14 @@ function GateCard({ which, g, action, id }: { which: 'votes' | 'testing'; g: Cha
   const note = sentences(release ? [...g.note, t('project:topic.change.gate.release', { release })] : g.note);
   const door = <button type="button" className="dev-change-gate-link" onClick={open} />;
   return (
-    <div className="dev-change-gate" data-change-gate={which} data-done={g.done ? 'true' : 'false'} data-tone={g.tone} role="group" aria-label={g.name}>
+    <div
+      className="dev-change-gate"
+      {...(repeat ? { 'data-change-gate-repeat': which } : { 'data-change-gate': which })}
+      data-done={g.done ? 'true' : 'false'}
+      data-tone={g.tone}
+      role="group"
+      aria-label={g.name}
+    >
       <div className="dev-change-gate-main">
         <div className="dev-change-gate-head">
           <span className="dev-change-gate-name">
@@ -211,10 +225,25 @@ export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSave
   const issues = body.issues || [];
   const back = host('gc-thread-back');
   const bar = host('gc-thread-bar');
+  const foot = host('gc-thread-foot');
   // Run four (13 Oct 2026): a door that sends someone to vote on this change
   // ("See the change", a vote's notification) opens it at the Votes card,
   // below the header, rather than at its title (./votes-in-view.ts).
   const pair = useRef<HTMLDivElement>(null);
+  // The card at the top is where the vote stands, but on a long page it is
+  // far above the last reply. Its copy at the foot appears only while the
+  // top card is out of view, so a short page never shows two.
+  const [topInView, setTopInView] = useState(true);
+  useEffect(() => {
+    const card = pair.current?.querySelector<HTMLElement>('[data-change-gate="votes"]');
+    if (!card || typeof IntersectionObserver !== 'function') return;
+    const io = new IntersectionObserver(([entry]) => setTopInView(!!entry?.isIntersecting), {
+      root: document.getElementById('gc-thread-scroll'),
+      threshold: 0,
+    });
+    io.observe(card);
+    return () => io.disconnect();
+  }, [id]);
   useEffect(() => {
     let release: (() => void) | null = null;
     const show = () => {
@@ -231,6 +260,12 @@ export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSave
     <>
       {back ? createPortal(<TopicBack />, back) : null}
       {bar ? createPortal(<ChangeBar v={v} menuKey={card.rail?.menuKey || ''} detailsId={id && body.changeId ? id : null} />, bar) : null}
+      {foot && !topInView ? createPortal(
+        <div className="dev-change-gate-repeat">
+          <GateCard which="votes" g={v.votes} action={voteAction} id={id} repeat />
+        </div>,
+        foot,
+      ) : null}
       {images.viewer}
       <article className="messages-message dev-request-root dev-change-root" data-change-root={id ?? ''}>
         <Avatar shape="square" size="sm" color={swatchFor(v.author)} aria-hidden="true">

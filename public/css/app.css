@@ -17092,6 +17092,9 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 
 /* Votes, then Testing: two cards in the Messages surface. */
 .dev-change-pair { margin-top: 12px; display: grid; gap: 8px; }
+/* The Votes card repeated after the last reply: the transcript's own side
+   padding, so it sits in the same column as the messages above it. */
+.dev-change-gate-repeat { padding: 8px 16px 12px; }
 .dev-change-gate {
   min-width: 0;
   display: grid;
