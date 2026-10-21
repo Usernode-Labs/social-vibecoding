@@ -315,9 +315,11 @@
       panel.appendChild(scroller);
       // A welcome first: this is a new account's first screen after its
       // name and the terms, so it says what the place is before it asks.
+      // It says how the place works too: communities build the apps they
+      // use together, and members ask for changes and vote on them.
       scroller.appendChild(el('div', 'text-xl font-bold pt-3', 'Welcome to Homeroom!'));
       scroller.appendChild(el('p', 'text-sm text-zinc-600 dark:text-zinc-300 mt-1',
-        'Homeroom is a place where communities build the apps they use together.'));
+        'Homeroom is made of communities. Each one builds the apps it uses together: members ask for changes, vote on them, and a change that passes goes into the app.'));
       scroller.appendChild(el('div',
         'text-[0.9375rem] font-[650] leading-5 text-zinc-900 dark:text-zinc-100 mt-5 mb-2',
         'What communities do you want to join?'));
