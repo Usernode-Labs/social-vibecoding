@@ -28,7 +28,7 @@ import type { GovernedGate } from '../rules/governance-gate.ts';
 import { appMetaFromRow, governanceFromRow } from '../rules/governance-gate.ts';
 import { electorate, getApproverSet } from '../rules/electorate.ts';
 import { parseGithubUrl } from '../rules/github-url.ts';
-import { NOT_MOVING_KINDS, botLookingSql, buildHoldSql, operationsLiveSql, shotsRunningSql, syncWorkingSql } from '../session-work.ts';
+import { NOT_MOVING_KINDS, botLookingSql, buildHoldSql, movingTurnSql, operationsLiveSql, shotsRunningSql, syncWorkingSql } from '../session-work.ts';
 
 export interface Row {
   id: number;
@@ -77,11 +77,13 @@ export interface Row {
   // on its author's own machine or an old flow's recorded operation other
   // than the caller's own (workedOn), its shots run (shotsRunning).
   // `moving`: what may still move its branch under a promote or an
-  // unpromote: its coding turn, a turn on its author's machine, an old
-  // flow's operation (a sync, an upload) other than the caller's own, a
-  // worker's turn record (whose end is recorded after the turn, and is
-  // read as its journal instead) and a hand-off's pipeline (which checks
-  // the very commit being proposed, as [main] let it).
+  // unpromote, or a merge (the queue's ask is declined `busy` meanwhile):
+  // its coding turn other than the shots agent's (which only takes
+  // pictures of its head, session-work.ts NOT_MOVING_TURN_MODES), a turn on
+  // its author's machine, an old flow's operation (a sync, an upload) other
+  // than the caller's own, a worker's turn record (whose end is recorded
+  // after the turn, and is read as its journal instead) and a hand-off's
+  // pipeline (which checks the very commit being proposed, as [main] let it).
   activeTurn: boolean;
   workedOn: boolean;
   moving: boolean;
@@ -160,6 +162,7 @@ async function readRow(tx: Tx, sessionId: number, ownOperation: string | null): 
             (cs.shots_state IS NOT NULL OR cs.shots_detail IS NOT NULL
               OR EXISTS (SELECT 1 FROM wf_instances sh WHERE sh.machine = 'shots' AND sh.key = 'session:' || cs.id)) AS shots,
             cs.active_turn IS NOT NULL AS active_turn,
+            ${movingTurnSql('cs')} AS moving_turn,
             EXISTS (SELECT 1 FROM local_agent_turns t
                      WHERE t.session_id = cs.id AND t.status IN ('queued', 'offered', 'accepted', 'running')) AS local_turn,
             -- A sync and the Homeroom bot's look are their machines' own work
@@ -196,7 +199,7 @@ async function readRow(tx: Tx, sessionId: number, ownOperation: string | null): 
     mergeAttemptAt: iso(r.merge_attempt_at), shots: !!r.shots,
     fixture: String(r.branch_name || '').startsWith('staging-fixture/'),
     activeTurn: !!r.active_turn, workedOn: !!r.local_turn || !!r.operations,
-    moving: !!r.active_turn || !!r.local_turn || !!r.moving_operations, shotsRunning: !!r.shots_running,
+    moving: !!r.moving_turn || !!r.local_turn || !!r.moving_operations, shotsRunning: !!r.shots_running,
     buildHold: !!r.build_hold, pendingSecret: !!r.pending_secret,
     checkState: r.check_state ?? null, checksCommitSha: sha(r.checks_commit_sha),
     bootFailureSyncHead: sha(r.boot_failure_sync_head), fixedCheckSyncHead: sha(r.fixed_check_sync_head),

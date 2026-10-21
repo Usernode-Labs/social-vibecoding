@@ -567,8 +567,18 @@ const uiUndeclared: Handler = (s, e, f, ctx) => {
 // The proposal left review: the run under way ends, and every copy goes.
 // Shots that settled stand as they are (no automatic retry while it is out
 // of review); a declaration waiting for its preview waits on.
+//
+// Unless it merged: then the run under way goes on and publishes. It shoots
+// the head that merged, which nothing moves any more, on copies of its own;
+// its worker is kept until it ends (merge-followups' retire waits for a
+// live run). The merge does not wait for it (session-work.ts
+// NOT_MOVING_TURN_MODES), so a merged change keeps its pictures instead of
+// "The proposal left review before its shots were taken". Its copies go
+// when it ends, as any run's, and no automatic retry follows (retryOf: the
+// proposal is out of review).
 const closed: Handler = (s, e, f, ctx) => {
   if (!live(s)) return step(s, { timer: null });
+  if (e.payload.reason === 'merged') return step(s);
   const r = s.data.run!;
   const { d, cancel, work } = endRun(s, f);
   return step({ name: 'closed', data: d }, {

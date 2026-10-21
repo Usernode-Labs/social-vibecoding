@@ -945,6 +945,30 @@ test('the merge against the full PostgreSQL schema', { timeout: 240000 }, async 
     }
   });
 
+  // 21 Oct 2026: PR 5787 had its checks and its vote at 17:40:47, and the
+  // queue's asks were declined busy twice while its before & after shots
+  // were taken; it merged on an unrelated ask at 17:44:40.
+  await t.test('M30 the shots agent\'s turn does not keep a proposal moving: a verdict\'s ask merges while shots are taken; any other turn is busy', async () => {
+    defaults();
+    const owner = await user();
+    const a = await app(owner);
+    const shooting = await proposalRow({ appRow: a, owner });
+    await vote(shooting, await user(), 'yes');
+    await pool.query(`UPDATE chat_sessions SET active_turn = '{"turnId":"m30","mode":"shots","phase":"executing"}'::jsonb WHERE id = $1`, [shooting.id]);
+    await want(a, { sessionId: shooting.id, reason: 'checks' });
+    await settle();
+    assert.equal(calls(WORK.attempt).length, 1, 'merged while its shots are taken');
+    const building = await proposalRow({ appRow: a, owner });
+    await vote(building, await user(), 'yes');
+    await pool.query(`UPDATE chat_sessions SET active_turn = '{"turnId":"m30b","mode":"build","phase":"executing"}'::jsonb WHERE id = $1`, [building.id]);
+    await want(a, { sessionId: building.id, reason: 'checks' });
+    await settle();
+    const ended = (await sentTo(QUEUE, appKey(a.id))).filter((e) => e.type === 'AttemptEnded' && e.payload.sessionId === building.id)
+      .map((e) => [e.payload.outcome, e.payload.reason ?? null]);
+    assert.deepEqual(ended, [['declined', 'busy']], 'a coding turn may still move the branch');
+    assert.equal(calls(WORK.attempt).length, 1);
+  });
+
   await t.test('M29 an ask that names a proposal this pass declined tries it again, though a resolution holds the pass', async () => {
     defaults();
     const owner = await user();

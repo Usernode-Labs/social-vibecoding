@@ -55,6 +55,25 @@ export function previewWorkingSql(sessionId: string): string {
 // end is what asks the merge queue again (preview/machine.ts opEnded).
 export const NOT_MOVING_KINDS: readonly string[] = Object.freeze(['turn', 'handoff-pipeline']);
 
+// The coding turns that do not move a proposal's branch either: the before
+// & after shots agent's (the worker's `shots` mode, recorded on
+// active_turn.mode like every turn's). It takes pictures of the proposal's
+// exact head on copies of its own and writes nothing to the branch. Counted
+// as moving, it made the proposal answer the merge queue `busy` for as long
+// as it ran, and nothing asked again when it ended: on 21 Oct 2026 PR 5787
+// had its checks and its vote at 17:40:47 and merged at 17:44:40, on an
+// unrelated ask 47 s after its shots were published. Still a turn for
+// everything else (activeTurn): a sync with main waits for it.
+export const NOT_MOVING_TURN_MODES: readonly string[] = Object.freeze(['shots']);
+
+// True while the session row `alias` has a coding turn that may move its
+// branch (an SQL expression): any turn but those NOT_MOVING_TURN_MODES names.
+export function movingTurnSql(alias: string): string {
+  if (!/^[a-z_][a-z0-9_]*$/.test(alias)) throw new Error(`bad alias ${alias}`);
+  return `(${alias}.active_turn IS NOT NULL
+             AND COALESCE(${alias}.active_turn->>'mode', '') NOT IN (${NOT_MOVING_TURN_MODES.map((m) => `'${m}'`).join(', ')}))`;
+}
+
 // True while an operation recorded on that instance is held by a live
 // process. `exceptParam`: an SQL value naming one operation not to count (a
 // caller's own record, read by a decision it asks for while it holds it);

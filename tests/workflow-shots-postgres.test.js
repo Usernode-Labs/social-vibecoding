@@ -500,7 +500,7 @@ test('shots machine against the full PostgreSQL schema', { timeout: 180000 }, as
     defaults();
     const s = await proposal({ ready: true, source: 'imported' });
     work.answer.set(WORK.copies, async () => {
-      await send(s, 'Closed', { reason: 'merged' }, fromPreview);
+      await send(s, 'Closed', { reason: 'archived' }, fromPreview);
       return { fixtureFingerprint: 'fp', baseImageDigest: 'b', headImageDigest: 'h' };
     });
     await declare(s);
@@ -511,6 +511,23 @@ test('shots machine against the full PostgreSQL schema', { timeout: 180000 }, as
     const cleanup = calls(WORK.cleanup).find((c) => c.input.runId === run.id);
     assert.equal(cleanup.input.worker, true, 'an imported proposal\'s temporary worker goes');
     assert.equal(calls(WORK.agent).length, 0);
+  });
+
+  // 21 Oct 2026: a merge no longer waits for the shots (PR 5787 waited for
+  // them, declined busy), so a proposal may merge while they are taken.
+  await t.test('S10b the proposal merges while its shots are taken: the run goes on and publishes, then its copies go', async () => {
+    defaults();
+    const s = await proposal({ ready: true });
+    work.answer.set(WORK.agent, async (input) => {
+      await send(s, 'Closed', { reason: 'merged' }, fromPreview);
+      return passed(input);
+    });
+    await declare(s);
+    await settle();
+    assert.equal((await instance(s)).state, 'published', 'the merged head\'s pictures stand');
+    const [run] = await runs(s);
+    assert.equal(run.failure_code, null);
+    assert.ok(calls(WORK.cleanup).some((c) => c.input.runId === run.id), 'its copies go once it ends');
   });
 
   await t.test('S11 the platform\'s refusals are said on the slot: a revision GitHub cannot compare', async () => {
