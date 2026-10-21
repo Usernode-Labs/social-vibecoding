@@ -298,14 +298,15 @@ function stored(target, buffer, info, dense = null) {
 
 // Device pixels per CSS pixel of a screen shot: its width over the declared
 // screen's. A run taken at device density (services/shots-density.js) saves
-// at the browser's (3 on a phone, 2 on a desktop: worker/write-shots-mcp-
+// at the browser's (3 on a phone and on a desktop: worker/write-shots-mcp-
 // config.js); every other run saves at 1. Only a whole multiple counts; any other width is a
 // screen shot taken at the wrong size, read as 1, the way it always was.
 const DENSITIES = Object.freeze([1, 2, 3, 4]);
 // The density the browser that shoots a screen saves at: a phone screen's
-// phone browser 3, a desktop browser 2.
+// phone browser 3, a desktop browser 3 as well (2 until the close-up
+// capture design, 2026-10-21).
 const PHONE_DENSITY = 3;
-const DESKTOP_DENSITY = 2;
+const DESKTOP_DENSITY = 3;
 const browserDensity = (viewport) => (planContract.phoneScreen(viewport) ? PHONE_DENSITY : DESKTOP_DENSITY);
 function densityFor(imageWidth, screenWidth) {
   const ratio = Number(imageWidth) / Number(screenWidth);
