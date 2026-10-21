@@ -41,6 +41,8 @@ export type ReviewScreen = {
   width: number;
   /** Image pixels per CSS pixel the stills were saved at (1 before density was recorded). */
   density?: number;
+  /** Denser stills of parts of the after side, `rect` in CSS px of this screen. */
+  closeups?: Closeup[];
   before: { url: string; height: number };
   after: { url: string; height: number };
   regions: Region[];
@@ -461,10 +463,13 @@ export function nextIndex(items: ReviewItem[], index: number, votes: Record<stri
  *   a thin strip (a strip gets real context above and below it), and never
  *   taller than the card can show (it is cut to a window from its top).
  * - Never pixelated: no piece is shown larger than the pixels captured for
- *   it (`density`, the still's pixels per point; 1 today).
+ *   it (`density`, the still's pixels per point, over the display's). A
+ *   piece inside a close-up (a denser still of that part of the after side)
+ *   draws from the close-up, so a small change can be shown big and sharp.
  */
 
 export type TitlePiece = { screen: ReviewScreen; box: Box };
+export type Closeup = { url: string; rect: Box; density: number };
 export type TitlePlate = {
   x: number; y: number; w: number; h: number; r: number;
   /** The still, placed so the piece shows inside the plate; null for a deck's back plate. */
@@ -533,6 +538,18 @@ export function densityOf(screen: ReviewScreen, display = typeof window === 'und
   return Math.max(1, saved / display);
 }
 
+/** The close-up a piece's plate can draw from: one on its screen that holds the whole plate. */
+export function closeupFor(p: TitlePiece, b: Box): Closeup | null {
+  const fits = (r: Box) => r.x <= b.x + 1 && r.y <= b.y + 1 && r.x + r.w >= b.x + b.w - 1 && r.y + r.h >= b.y + b.h - 1;
+  return (p.screen.closeups || []).find((c) => c.density > 1 && fits(c.rect)) || null;
+}
+
+/** How large a plate may be shown: its close-up's pixels when it has one, else the screen's. */
+export function pieceDensity(p: TitlePiece, b: Box, display = typeof window === 'undefined' ? 1 : window.devicePixelRatio || 1): number {
+  const c = closeupFor(p, b);
+  return Math.max(densityOf(p.screen, display), c ? c.density / display : 1);
+}
+
 function padded(p: TitlePiece): Box {
   const pad = COVER.pad; const { box, screen } = p;
   const x = Math.max(0, box.x - pad); const y = Math.max(0, box.y - pad);
@@ -547,9 +564,12 @@ function cut(b: Box, cap: number): Box {
 function plateFor(p: TitlePiece, b: Box, s: number, cx: number, cy: number, z: number): TitlePlate {
   const w = b.w * s; const h = b.h * s;
   const x = cx - w / 2; const y = cy - h / 2;
+  const c = closeupFor(p, b);
   return {
     x, y, w, h, r: Math.min(COVER.radius, h / 2), z,
-    img: { url: p.screen.after.url, left: -b.x * s, top: -b.y * s, width: p.screen.width * s, height: p.screen.after.height * s },
+    img: c
+      ? { url: c.url, left: (c.rect.x - b.x) * s, top: (c.rect.y - b.y) * s, width: c.rect.w * s, height: c.rect.h * s }
+      : { url: p.screen.after.url, left: -b.x * s, top: -b.y * s, width: p.screen.width * s, height: p.screen.after.height * s },
   };
 }
 
@@ -600,7 +620,7 @@ export function composeTitle(pieces: TitlePiece[], card: { w: number; h: number 
   const cy = card.h * COVER.centre;
   const one = (p: TitlePiece, maxS?: number) => {
     const b = cut(padded(p), (COVER.wide * card.h) / 0.75);
-    const s = singleScale(b, card, densityOf(p.screen), maxS);
+    const s = singleScale(b, card, pieceDensity(p, b), maxS);
     return { b, s };
   };
   if (pieces.length === 1) {
@@ -617,7 +637,7 @@ export function composeTitle(pieces: TitlePiece[], card: { w: number; h: number 
       const framed = Math.min((COVER.share * card.w - f0.W) / aw, (COVER.share * card.h - f0.H) / ah);
       const real = Math.min(1, (COVER.wide * card.w - f0.W) / aw, (COVER.wide * card.h - f0.H) / ah);
       const fits = Math.min((COVER.wide * card.w - f0.W) / aw, (COVER.wide * card.h - f0.H) / ah);
-      const dens = Math.min(...pieces.map((p) => densityOf(p.screen)));
+      const dens = Math.min(...pieces.map((p, i) => pieceDensity(p, boxes[i])));
       const s = Math.min(Math.max(framed, real), fits, dens);
       if (!best || s > best.s + 1e-6) best = { s, lay };
     }
@@ -644,7 +664,7 @@ export function composeTitle(pieces: TitlePiece[], card: { w: number; h: number 
   const n = Math.min(4, pieces.length);
   const lead = pieces[0];
   const lb = cut(padded(lead), (COVER.wide * card.h - (n - 1) * COVER.peek) / 0.75);
-  const s = singleScale(lb, card, densityOf(lead.screen), (COVER.wide * card.h - (n - 1) * COVER.peek) / lb.h);
+  const s = singleScale(lb, card, pieceDensity(lead, lb), (COVER.wide * card.h - (n - 1) * COVER.peek) / lb.h);
   const H = lb.h * s; const W = Math.max(lb.w * s, 0.66 * card.w);
   const top = cy - (H + (n - 1) * COVER.peek) / 2;
   const front = plateFor(lead, lb, s, card.w / 2, top + H / 2, 10);

@@ -601,6 +601,32 @@ test('on a wide window the feed is one column as wide as the page, and the cards
   assert.match(src, /<div className="rf-feed rf-loading" data-review-flow=""/);
 });
 
+test('a small change inside a close-up is drawn from it, big and sharp; without one it keeps the still\'s size', () => {
+  const small = { ...SCREEN, regions: [{ n: 1, b: [100, 300, 50, 20], a: [100, 300, 50, 20] }] };
+  const card = { w: 358, h: 358 };
+  const plain = model.composeTitle(model.piecesOf([small]), card, '#ffffff').plates[0];
+  assert.equal(plain.img.url, small.after.url);
+  assert.ok(Math.abs(plain.w / 82 - 1) < 1e-6, 'a 1x still is never shown larger than itself');
+  const closeup = { url: `/api/apps/a/proposals/1/shots/${'c'.repeat(32)}?density=device`, rect: { x: 80, y: 260, w: 100, h: 100 }, density: 8.2 };
+  const sharp = model.composeTitle(model.piecesOf([{ ...small, closeups: [closeup] }]), card, '#ffffff').plates[0];
+  assert.equal(sharp.img.url, closeup.url);
+  const s = sharp.w / 82;
+  assert.ok(s > 2.4 && s < 2.6, `the piece takes its 62% of the card (${s})`);
+  assert.equal(Math.round(sharp.img.width), Math.round(100 * s), 'the close-up is laid out at the plate\'s scale');
+  assert.equal(Math.round(sharp.img.left), Math.round((80 - 84) * s));
+  // On a 3x display the same close-up allows 8.2 / 3 = 2.7x.
+  assert.ok(model.pieceDensity({ screen: { ...small, closeups: [closeup] }, box: { x: 100, y: 282, w: 50, h: 56 } }, { x: 84, y: 266, w: 82, h: 88 }, 3) > 2.7);
+  // A close-up that does not hold the whole plate is not used.
+  const elsewhere = { ...closeup, rect: { x: 200, y: 260, w: 100, h: 100 } };
+  assert.equal(model.composeTitle(model.piecesOf([{ ...small, closeups: [elsewhere] }]), card, '#ffffff').plates[0].img.url, small.after.url);
+});
+
+test('_workshopVisuals passes a screen\'s close-ups through, and only valid ones', () => {
+  const src = read('public/js/app-view.js');
+  assert.match(src, /a\.variant === 'closeup' && a\.side === 'head' && a\.media === 'png'\s*&& a\.storyId === screen\.shot && a\.viewport === screen\.viewport && urlOk\(a\.url\)/);
+  assert.match(src, /Number\(a\.density\) > 1/);
+});
+
 test('from 768px the change page is a panel under the header, its vote sheet at its foot, the pane dimmed behind it', () => {
   const src = read('frontend/src/features/review-flow/review-flow.tsx');
   const css = read('public/css/app.css');
