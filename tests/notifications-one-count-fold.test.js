@@ -219,9 +219,11 @@ test('opening a folded row opens the newest and reads them all', async () => {
   N.openGroupRow(30, [30, 20, 10]);
   await new Promise((resolve) => setImmediate(resolve));
   assert.deepEqual(opened, [30], 'the row opens the one it is drawn as');
-  const marked = calls.filter((c) => c[0] === 'fetch').map((c) => c[2].id).sort();
-  assert.deepEqual(marked, [10, 20], 'the rest are read with it');
-  assert.ok(N.items.filter((n) => n.id !== 30).every((n) => n.readAt));
+  // 21 Oct 2026: the opened one and the rest in one request, so no second
+  // request can race it for the count.
+  const posts = calls.filter((c) => c[0] === 'fetch').map((c) => c[2]);
+  assert.deepEqual(posts, [{ ids: [30, 20, 10] }], 'all of them read in one request');
+  assert.ok(N.items.every((n) => n.readAt));
 });
 
 test('clearing a folded row clears every member', async () => {
@@ -233,8 +235,8 @@ test('clearing a folded row clears every member', async () => {
   ];
   N.unread = 3;
   assert.equal(await N.clearNotification(30, [30, 20]), true);
-  const marked = calls.filter((c) => c[0] === 'fetch').map((c) => c[2].id).sort();
-  assert.deepEqual(marked, [20, 30], 'each member once, and nothing else');
+  const posts = calls.filter((c) => c[0] === 'fetch').map((c) => c[2]);
+  assert.deepEqual(posts, [{ ids: [30, 20] }], 'each member once, in one request, and nothing else');
   assert.equal(N.items.find((n) => n.id === 25).readAt, null);
 });
 

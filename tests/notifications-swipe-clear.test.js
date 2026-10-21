@@ -146,9 +146,11 @@ test('a collapsed conversation row clears every notification it stands for', asy
   // Clearing only the newest would split the run and leave an unread row
   // for the older message exactly where the cleared one was.
   assert.deepEqual(rows(), ['12x2', '10*', '9'], 'the run is read as a whole, and still one row');
-  const ids = calls.filter((c) => c[0] === 'fetch').map((c) => c[2].id).sort();
-  assert.deepEqual(ids, [11, 12], 'one single-id request per member');
-  assert.equal(N.unread, 1);
+  // 21 Oct 2026: ONE request for the whole run. One per member raced, and the
+  // slower answer's count (taken before the other had committed) won.
+  const posts = calls.filter((c) => c[0] === 'fetch');
+  assert.deepEqual(posts, [['fetch', '/api/notifications/read', { ids: [12, 11] }]]);
+  assert.equal(N.unread, 1, 'the one answer\'s count, the count after both');
 });
 
 test('a refused clear is put back, the count goes back up, and a toast says so', async () => {
@@ -215,6 +217,9 @@ test('the row click keeps its path, and the path now says whether it worked', ()
   assert.match(body, /body: JSON\.stringify\(\{ id \}\)/);
   assert.match(body, /if \(!res\.ok\) return false;/);
   assert.match(body, /return true;\n/);
+  // A notification already read here asks nothing: whatever read it told the
+  // server, and a second request would race it for the count.
+  assert.match(body, /if \(item && item\.readAt\) return true;/);
   const clear = CONTROLLER_SRC.slice(CONTROLLER_SRC.indexOf('  async clearNotification(id, groupIds) {'),
     CONTROLLER_SRC.indexOf('  _rowMembers(id) {'));
   assert.ok(clear.length > 0, 'clearNotification found');
@@ -222,8 +227,11 @@ test('the row click keeps its path, and the path now says whether it worked', ()
   // own row members are cleared with it, once each.
   assert.match(clear, /const ids = \[id, \.\.\.\(Array\.isArray\(groupIds\) \? groupIds : \[\]\)\];/);
   assert.match(clear, /ids\.flatMap\(\(rowId\) => Notifications\._rowMembers\(rowId\)\)/);
-  assert.match(clear, /members\.map\(\(n\) => Notifications\._markOneRead\(n\.id\)\)/,
-    'the clear reuses the click\'s request and reconcile instead of a second copy');
+  assert.match(clear, /await Notifications\._markIdsRead\(members\.map\(\(n\) => n\.id\)\)/,
+    'the whole clear is one request');
+  const marks = CONTROLLER_SRC.slice(CONTROLLER_SRC.indexOf('  async _markIdsRead(ids) {'));
+  assert.match(marks, /body: JSON\.stringify\(ids\.length === 1 \? \{ id: ids\[0\] \} : \{ ids \}\)/,
+    'one notification keeps the row click\'s `{ id }`; several go as `{ ids }`');
   assert.match(CONTROLLER_SRC, /_rowMembers\(id\) \{[\s\S]{0,300}collapseConversationRuns\(items\.slice\(at\)\)/,
     'and finds what a row stands for with the rule the sheet drew it with');
 });

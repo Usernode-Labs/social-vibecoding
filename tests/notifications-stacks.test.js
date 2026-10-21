@@ -294,3 +294,28 @@ test('the catalog holds the new entries, each with a description', () => {
     assert.ok(entryOf.description, `${id} has a description`);
   }
 });
+
+// 21 Oct 2026, on an iPhone: opening a card's history grew it for
+// "Loading…", snapped back up when the history landed, grew again, then
+// jumped down to its real height; folding it stopped 8px short and jumped.
+test('a history box resizes from where it is to exactly its content, and folds to nothing', () => {
+  const resize = STACKS_SRC.slice(STACKS_SRC.indexOf('function resizeBox('), STACKS_SRC.indexOf('export function CardHistory('));
+  assert.ok(resize.length > 0, 'resizeBox found');
+  // Where it is on screen is read BEFORE the running resize is cancelled, so
+  // the next one starts there instead of from a height read earlier.
+  const read = resize.indexOf('box.getBoundingClientRect().height');
+  const cancel = resize.indexOf('run.cancel()');
+  const measure = resize.indexOf('box.scrollHeight');
+  assert.ok(read > 0 && cancel > read && measure > cancel, 'read where it is, cancel, then measure the content');
+  // A grow lets go at the content's own height (no fill), a fold holds at 0.
+  assert.match(resize, /fill: to === 0 \? 'forwards' : 'none'/);
+  // A resize cut short by the next one runs none of its endings.
+  assert.match(resize, /\}, \(\) => \{ \/\* cut short by the next resize, which owns the box now \*\/ \}\);/);
+  // The history landing goes on from where the opening has it.
+  assert.match(STACKS_SRC, /if \(!box \|\| !open \|\| stillMotion\(\) \|\| !loaded \|\| loaded\.state === 'loading'\) return;\s*resizeBox\(box, null, 'content', 280\);/);
+  assert.match(STACKS_SRC, /resizeBox\(box, running\(box\) \? null : 0, 'content', 360\);/);
+  assert.match(STACKS_SRC, /resizeBox\(box, null, 0, 300, \(\) => setShown\(false\)\);/);
+  assert.doesNotMatch(STACKS_SRC, /lastHeight/, 'no height remembered from an earlier render');
+  // The padding is the inner box's, so the outer one is 0 tall at 0.
+  assert.match(STACKS_SRC, /<div ref=\{boxRef\} data-notif-history-list=\{view\.id\} className="col-start-1 row-start-2">\s*\{\/\*[\s\S]*?\*\/\}\s*<div className="pl-\[4\.75rem\] pr-4 pb-2">/);
+});

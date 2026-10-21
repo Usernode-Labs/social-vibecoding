@@ -2082,7 +2082,20 @@ async function markReadForConversation(pool, userId, conversationId) {
 // Single-id and mark-all clears. Returns rows actually cleared (like the
 // scoped helpers above) so the route can decide whether to fan out a
 // cross-tab `notifications_changed` refresh.
-async function markRead(pool, userId, { id, all = false, kinds = null, excludeKinds = null } = {}) {
+async function markRead(pool, userId, { id, ids = null, all = false, kinds = null, excludeKinds = null } = {}) {
+  // One clear that is several notifications (a story card, a folded row, a
+  // conversation run): one statement, so the count the route reads back
+  // after it is the count after all of them. One request per member raced:
+  // each answer counted before the others had committed, and the last to
+  // land put a higher count back on the bell after the clear (21 Oct 2026).
+  if (Array.isArray(ids) && ids.length) {
+    const { rowCount } = await pool.query(
+      `UPDATE notifications SET read_at = NOW()
+        WHERE user_id = $1 AND id = ANY($2::int[]) AND read_at IS NULL`,
+      [userId, ids]
+    );
+    return rowCount || 0;
+  }
   if (all) {
     // Optional kind scoping for the split drawers: the header cog's
     // "Mark all read" sends kinds=[the session-related set] so it only
