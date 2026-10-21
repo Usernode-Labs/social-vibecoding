@@ -17188,6 +17188,23 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 
 /* Votes, then Testing: two cards in the Messages surface. */
 .dev-change-pair { margin-top: 12px; display: grid; gap: 8px; }
+/* #5725: the Votes card repeated at the top of a change's thread, in the
+   scroller's pin host (#gc-thread-pin, group-chat/thread-shell.tsx). The
+   host is a child of the scroller, so sticky gives the card the whole
+   transcript to travel: it pins to the reading area's top edge while the
+   replies pass under it, and where the vote stands and its button stay on
+   screen at any scroll position (evan asked for it to stick as you scroll,
+   not only sit at the bottom). `--dc-sheet-solid` is the plane colour for a
+   surface content passes behind, so nothing shows through the card's
+   padding. It sits in the transcript's column, with a message's own side
+   padding, and is hidden while the card under the description is on screen,
+   so a short page shows one card and not two. */
+/* `-4px` is `.messages-thread-scroll`'s own top padding: at `top: 0` the
+   card stopped 4px below the reading area's edge, and the sliver of the
+   reply scrolling behind it showed through. */
+#gc-thread-pin { position: sticky; top: -4px; z-index: 10; }
+.dev-change-gate-repeat { padding: 8px 16px 12px; background-color: var(--dc-sheet-solid); }
+.dev-change-gate-repeat[hidden] { display: none; }
 .dev-change-gate {
   min-width: 0;
   display: grid;
