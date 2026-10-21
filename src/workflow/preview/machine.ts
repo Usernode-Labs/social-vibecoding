@@ -31,6 +31,7 @@ import * as store from '../rules/check-store.ts';
 import * as rowStore from './check-store.ts';
 import { createCheckFailedNotification } from '../rules/change-notifications.ts';
 import { toBotChange, writeBotChange } from '../rules/bot-notes.ts';
+import { withinAutoRetries } from '../rules/check-retries.ts';
 import { OPEN, readFacts } from './facts.ts';
 import type { Facts } from './facts.ts';
 import { NOT_MOVING_KINDS } from '../session-work.ts';
@@ -253,7 +254,7 @@ const recheckTrigger = (reason: string, trigger: string | null) =>
 // ── Outcomes ────────────────────────────────────────────────────────────
 
 export interface Deps {
-  maxRetries: number;        // staging-recovery.checkMaxAutoRetries(), read at boot
+  maxRetries: number;        // rules/check-retries.checkMaxAutoRetries(), read at boot
   retireAfterMs: number;     // a cancelled prepare has stopped by then (its lease)
   // A preview nobody has used for this long is given back (config
   // stagingIdleTeardownMs; 0 or absent: never).
@@ -338,9 +339,6 @@ function checksReady(d: Data, ctx: TransitionContext, head: string, state: strin
 
 // The backoff of the error lane: 2 min doubling to 30 (storeChecks' own).
 const retryDelayMs = (streakBefore: number) => Math.min(120 * 2 ** Math.min(streakBefore, 10), 1800) * 1000;
-// A platform fault keeps retrying for a day past the cap
-// (staging-recovery.PLATFORM_FAULT_RETRY_MS).
-const PLATFORM_FAULT_RETRY_MS = 24 * 60 * 60 * 1000;
 
 // What a newer step makes obsolete: the attempt being prepared (retired
 // once its handler has stopped) and the checks run.
@@ -444,13 +442,10 @@ function startRun(s: Live, trigger: string | null, ctx: TransitionContext,
 
 // The error lane: an 'error' on this head runs again on its own, from a
 // row in its scope, while the streak is under the cap (or, for the
-// platform's own fault, for a day).
+// platform's own fault, for a day: rules/check-retries.ts).
 function errorTimer(d: Data, f: Facts, deps: Deps, ctx: TransitionContext, streakBefore: number): TimerRequest | null {
   if (!f.session?.retryScope) return null;
-  const underCap = d.streak < deps.maxRetries;
-  const platformDay = d.platformFault && d.firstFailureAt
-    && ctx.now.getTime() - Date.parse(d.firstFailureAt) < PLATFORM_FAULT_RETRY_MS;
-  if (!underCap && !platformDay) return null;
+  if (!withinAutoRetries(d, deps.maxRetries, ctx.now.getTime())) return null;
   return { at: new Date(ctx.now.getTime() + retryDelayMs(streakBefore)), event: { type: 'RetryDue' } };
 }
 
@@ -471,8 +466,10 @@ const underReview = (f: Facts) => !!f.session && (f.session.status === 'promoted
 
 // The head the row's checks are owed for, when they are: one a person asked
 // to have checked fresh, or, in the error lane's scope, one whose stored
-// verdict is pending or missing while nothing builds or runs it.
-function owedChecks(s: Live, f: Facts): { head: string; fresh: boolean } | null {
+// verdict is pending or missing while nothing builds or runs it. `answered`:
+// a head whose fresh request the transition's own settlement clears (its
+// `answersFresh`), which the facts, read before it, still show owed.
+function owedChecks(s: Live, f: Facts, answered: string | null = null): { head: string; fresh: boolean } | null {
   const x = f.session;
   if (!x || !OPEN.has(x.status) || s.data.previewOnly) return null;
   if (s.name !== 'settled' && s.name !== 'idle') return null;
@@ -483,7 +480,7 @@ function owedChecks(s: Live, f: Facts): { head: string; fresh: boolean } | null 
   // run that errors before the unit suite starts leaves the request owed,
   // and running it again here would never stop.
   if (holds === 'error') return null;
-  if (x.unitFreshSha && x.unitFreshSha === head) return { head, fresh: true };
+  if (x.unitFreshSha && x.unitFreshSha === head && head !== answered) return { head, fresh: true };
   if (!x.retryScope) return null;
   // A verdict this machine holds for the head stands.
   if (holds !== null) return null;
@@ -491,12 +488,12 @@ function owedChecks(s: Live, f: Facts): { head: string; fresh: boolean } | null 
   return st === 'pending' || st == null ? { head, fresh: false } : null;
 }
 
-function restTimer(next: PState, f: Facts, ctx: TransitionContext, deps: Deps): TimerRequest | null {
+function restTimer(next: PState, f: Facts, ctx: TransitionContext, deps: Deps, answered: string | null = null): TimerRequest | null {
   if (next.name === NONE || next.name === 'retired') return null;
   const s = next as Live;
   const now = ctx.now.getTime();
   const due: TimerRequest[] = [];
-  if (owedChecks(s, f)) due.push({ at: new Date(now + CHECKS_DUE_MS), event: { type: 'ChecksDue' } });
+  if (owedChecks(s, f, answered)) due.push({ at: new Date(now + CHECKS_DUE_MS), event: { type: 'ChecksDue' } });
   const idleMs = deps.idleMs ?? 0;
   if (idleMs > 0 && s.data.serving && SERVES.has(s.name) && f.session) {
     const last = f.session.lastActivityAt ? Date.parse(f.session.lastActivityAt) : now;
@@ -520,9 +517,12 @@ const ownDeadline = (e: Event<any>) => e.source.kind === 'timer' || (e.type !== 
 // leaves none (`timer: null`).
 function withRest(entry: Entry, type: string, deps: Deps): Entry {
   // The outcome, its rest deadline where it left none, and that deadline
-  // recorded as the instance's own (`due`).
+  // recorded as the instance's own (`due`). The rest is the state the
+  // outcome leaves: a settlement that answers a person's fresh request
+  // clears it in the same transaction, so it is not owed any more.
   const rested = (o: Outcome<PState>, f: Facts, ctx: TransitionContext): Outcome<PState> => {
-    const out = o.timer === null ? { ...o, timer: restTimer(o.next, f, ctx, deps) } : o;
+    const answered = (o.writes || []).find((w) => w.type === 'settled' && w.answersFresh === true);
+    const out = o.timer === null ? { ...o, timer: restTimer(o.next, f, ctx, deps, (answered?.head as string) ?? null) } : o;
     if (out.timer === undefined || out.next.name === NONE) return out;
     const due = out.timer ? { type: out.timer.event.type, at: out.timer.at.toISOString(), v: ctx.version + 1 } : null;
     return { ...out, next: { name: out.next.name, data: { ...(out.next as Live).data, due } } as PState };
@@ -1448,6 +1448,10 @@ function ran(s: Live, e: Event<any>, outcome: string, f: Facts, ctx: TransitionC
   // nothing off.
   const stores = !refused && !!f.session && OPEN.has(f.session.status) && f.session.checks.commitSha === run.head;
   const recorded = state !== 'error' && !blocked;
+  // A verdict stored for a head a person asked to have checked fresh clears
+  // their request with it (check-store's storeChecks: the suite ran), so the
+  // rest this outcome is given does not owe it again (withRest).
+  const answersFresh = owed && stores && state !== 'error';
   const settle = {
     type: 'settled', ...base, state, detail, platformFault,
     results: results as Json, console: blocked ? null : (r!.console ?? null),
@@ -1456,6 +1460,7 @@ function ran(s: Live, e: Event<any>, outcome: string, f: Facts, ctx: TransitionC
     ...(unitSuiteAbsent ? { unitSuiteAbsent: true } : {}),
     ...(recorded && r!.unitEarned ? { unitEarned: r!.unitEarned } : {}),
     ...(recorded && r!.unitObserved ? { unitObserved: r!.unitObserved } : {}),
+    ...(answersFresh ? { answersFresh: true } : {}),
   };
   if (refused && d0.trigger !== 'manual-recheck' && d0.serving && d0.serving.head === run.head) {
     return startRun({ name: 'checking', data: { ...d0, run: null } }, 'manual-recheck', ctx, { writes: [settle] });

@@ -81,41 +81,21 @@ function isStuckCheckRecoveryScope(session) {
 }
 
 // #237: how many 'error' verdicts in a row the error lane above re-runs on
-// its own. storeChecks bumps consecutive_check_failures on every 'error'
-// (and schedules check_next_retry_at, 2m → 4m → … → 30m); past this count
-// the row is left 'error' until a new commit or a person re-runs it, unless
-// the error is the platform's own (PLATFORM_FAULT_RETRY_MS below).
-// Tunable via CHECK_MAX_AUTO_RETRIES.
-const DEFAULT_CHECK_MAX_AUTO_RETRIES = 6;
-
-function checkMaxAutoRetries() {
-  const configured = Number.parseInt(
-    process.env.CHECK_MAX_AUTO_RETRIES || String(DEFAULT_CHECK_MAX_AUTO_RETRIES),
-    10
-  );
-  return Number.isFinite(configured) ? configured : DEFAULT_CHECK_MAX_AUTO_RETRIES;
-}
-
-// A platform fault (chat_sessions.check_error_platform: the unit suite's Job
-// refused or lost before any of the proposal's code ran) is not held to
-// that cap. On 10 Oct 2026 every split unit suite failed to start for three
-// hours (two shards' input Secrets took the same name, fixed by #4720); six
-// approved proposals spent their six retries on it by 20:08 and waited for
-// a person after the fix shipped. Nothing about the proposal decides when
-// such a fault clears, so the lane keeps retrying it, 30 minutes apart once
-// the backoff tops out, for this long after the streak's first failure.
-const PLATFORM_FAULT_RETRY_MS = 24 * 60 * 60 * 1000;
+// its own, and the day a platform fault is retried past it, are
+// rules/check-retries.ts: one reader of CHECK_MAX_AUTO_RETRIES, one rule.
+const { checkMaxAutoRetries, withinAutoRetries } = require('../workflow/rules/check-retries.ts');
 
 // Does the error lane still run this stored 'error' again on its own, as far
-// as the streak goes? Under the cap, or a platform fault inside its day: the
-// same rule as the preview machine's errorTimer. The connector reads it to say
-// whether a re-run is coming (mcp-tools.erroredRunWillRetry).
+// as the streak goes? The preview machine's errorTimer rule, read off the
+// row. The connector reads it to say whether a re-run is coming
+// (mcp-tools.erroredRunWillRetry).
 function errorWithinAutoRetries(session, { maxAutoRetries = checkMaxAutoRetries(), now = Date.now() } = {}) {
   if (!session) return false;
-  if ((Number(session.consecutive_check_failures) || 0) < maxAutoRetries) return true;
-  if (session.check_error_platform !== true) return false;
-  const first = session.first_check_failure_at ? new Date(session.first_check_failure_at).getTime() : NaN;
-  return Number.isFinite(first) && first > now - PLATFORM_FAULT_RETRY_MS;
+  return withinAutoRetries({
+    streak: Number(session.consecutive_check_failures) || 0,
+    platformFault: session.check_error_platform === true,
+    firstFailureAt: session.first_check_failure_at || null,
+  }, maxAutoRetries, now);
 }
 
 // What a red run that overlapped a platform rollout used to record instead
@@ -656,9 +636,6 @@ module.exports = {
   checksStaleMs,
   checkRunOverdue,
   isStuckCheckRecoveryScope,
-  DEFAULT_CHECK_MAX_AUTO_RETRIES,
-  checkMaxAutoRetries,
-  PLATFORM_FAULT_RETRY_MS,
   errorWithinAutoRetries,
   ROLLOUT_RETRY_DETAIL,
   stagingNeedsRebuild,

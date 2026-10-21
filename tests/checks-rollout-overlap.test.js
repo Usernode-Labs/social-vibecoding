@@ -174,23 +174,30 @@ test('no run writes the rollout reason, and nothing stamps or reads a boot windo
   assert.equal(stagingRecovery.errorVerdictWillRetry, undefined, 'its only reader went with it');
 });
 
-test('the auto-retry cap is read the same way by the connector and by the preview machine', (t) => {
-  const saved = process.env.CHECK_MAX_AUTO_RETRIES;
-  t.after(() => {
-    if (saved === undefined) delete process.env.CHECK_MAX_AUTO_RETRIES;
-    else process.env.CHECK_MAX_AUTO_RETRIES = saved;
-  });
-  delete process.env.CHECK_MAX_AUTO_RETRIES;
-  assert.equal(stagingRecovery.checkMaxAutoRetries(), 6);
-  process.env.CHECK_MAX_AUTO_RETRIES = '3';
-  assert.equal(stagingRecovery.checkMaxAutoRetries(), 3);
-  process.env.CHECK_MAX_AUTO_RETRIES = 'not a number';
-  assert.equal(stagingRecovery.checkMaxAutoRetries(), 6);
-  // The machine's error lane takes it from the config, read once at boot
-  // with the same default; the leader's stuck-checks reconcile that read it
-  // in server.js is gone.
-  const config = stripComments(read('src/config.js'));
-  assert.match(config, /checkMaxAutoRetries: \(\(\) => \{\s+const n = Number\.parseInt\(process\.env\.CHECK_MAX_AUTO_RETRIES \|\| '6', 10\);\s+return Number\.isFinite\(n\) \? n : 6;/);
+test('the auto-retry cap has one reader, and the platform fault\'s day one definition', () => {
+  // rules/check-retries.ts reads CHECK_MAX_AUTO_RETRIES: the config (the
+  // preview machine's cap, read once at boot) and the connector's
+  // errorWithinAutoRetries both take it from there.
+  const { checkMaxAutoRetries } = require('../src/workflow/rules/check-retries.ts');
+  assert.equal(checkMaxAutoRetries({}), 6, 'unset');
+  assert.equal(checkMaxAutoRetries({ CHECK_MAX_AUTO_RETRIES: '3' }), 3);
+  assert.equal(checkMaxAutoRetries({ CHECK_MAX_AUTO_RETRIES: 'not a number' }), 6, 'junk');
+  // No second parse, default or constant to drift from it: each is in one
+  // file under src/ (comments aside).
+  const files = [];
+  const walk = (dir) => {
+    for (const e of fs.readdirSync(path.join(ROOT, dir), { withFileTypes: true })) {
+      const rel = path.join(dir, e.name);
+      if (e.isDirectory()) walk(rel);
+      else if (/\.(c|m)?[jt]sx?$/.test(e.name)) files.push(rel);
+    }
+  };
+  walk('src');
+  const holding = (re) => files.filter((f) => re.test(stripComments(read(f)))).sort();
+  assert.deepEqual(holding(/\bCHECK_MAX_AUTO_RETRIES\b/), ['src/workflow/rules/check-retries.ts']);
+  assert.deepEqual(holding(/\bPLATFORM_FAULT_RETRY_MS\s*=(?!=)/), ['src/workflow/rules/check-retries.ts']);
+  assert.match(stripComments(read('src/config.js')),
+    /checkMaxAutoRetries: require\('\.\/workflow\/rules\/check-retries\.ts'\)\.checkMaxAutoRetries\(\),/);
   assert.match(stripComments(read('src/workflow/platform.ts')), /maxRetries: config\.checkMaxAutoRetries \?\? 6,/);
   assert.doesNotMatch(stripComments(read('server.js')), /CHECK_MAX_AUTO_RETRIES/);
 });
