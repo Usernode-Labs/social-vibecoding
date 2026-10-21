@@ -19693,7 +19693,10 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header {
     padding: 2px 8px; border-radius: 999px;
     background: var(--brand-tint); color: var(--brand-ink);
     font-size: 12px; font-weight: 600; line-height: 16px;
-  }
+  }  /* The Needs you run's tag is a community's name, longer than a place's,
+     beside a title that never changes: it may take the rest of the row. */
+  #platform-header .header-place-name[data-run-place] { max-width: none; flex-shrink: 1; }
+
 }
 
 /* THE TRAY (places-tray.tsx): the list, slid in from the left over a
@@ -25084,11 +25087,12 @@ html.in-side-panel body {
    ═══════════════════════════════════════════════════════════════════
 
    frontend/src/features/review-flow/, behind Settings › Experimental
-   ("New Needs you", kept on the device). The feed of title shots, the
-   change page that expands out of a card, its before/after slider and its
-   vote sheet. Drawn for the phone first; a wide window shows the same
-   column centred. Colours are the shell's own tokens, light and dark. */
-.rf-feed, .rf-page-wrap {
+   ("New Needs you", kept on the device). One run through the changes
+   waiting on you: each change's page with its sheet of screens, a screen
+   opened in place as a before/after slider, the strip of screens under it
+   and the vote sheet. Drawn for the phone first; a wide window shows the
+   same column centred. Colours are the shell's own tokens, light and dark. */
+.rf-run, .rf-page-wrap {
   --rf-page: var(--bg-primary);
   --rf-sheet: var(--bg-secondary);
   --rf-fill: var(--bg-tertiary);
@@ -25098,64 +25102,74 @@ html.in-side-panel body {
   --rf-black: #1b1b1d;
   --rf-cream: #fffeea;
 }
-.dark .rf-feed, .dark .rf-page-wrap { --rf-page: #0b0d1b; --rf-sheet: #1c1c1e; --rf-fill: #2c2c2e; }
+.dark .rf-run, .dark .rf-page-wrap { --rf-page: #0b0d1b; --rf-sheet: #1c1c1e; --rf-fill: #2c2c2e; }
 
-/* The feed: a title shot and a title, nothing else. One column, never wider
-   than the change page (520px, gutters included), centred in the pane: a
-   wide window keeps the phone's cards instead of stretching one picture
-   across the screen. review-flow.tsx composes the cards at the same cap
-   (COLUMN), so the pictures and this column agree. A phone is narrower than
-   the cap, so nothing changes there. */
-.rf-feed, .rf-feed-note { box-sizing: border-box; width: 100%; max-width: 520px; margin-left: auto; margin-right: auto; }
-.rf-feed { display: flex; flex-direction: column; gap: 28px; padding: 4px 16px 32px; transform-origin: 50% 30%; }
+/* The pane under the run: empty while the page is up, the end once it is
+   done. One column, never wider than the change page (520px, gutters
+   included), centred in the pane. */
+.rf-run, .rf-feed-note { box-sizing: border-box; width: 100%; max-width: 520px; margin-left: auto; margin-right: auto; }
+.rf-run { padding: 4px 16px 32px; }
 .rf-loading { min-height: 50vh; }
-.rf-card { display: flex; flex-direction: column; gap: 12px; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; -webkit-tap-highlight-color: transparent; }
-.rf-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 20px; }
-.rf-cover { position: relative; display: grid; place-items: center; overflow: hidden; border-radius: 20px; isolation: isolate; }
-.rf-plate { position: relative; overflow: hidden; border-radius: 12px; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.08), 0 8px 24px rgba(0,0,0,.10); }
-.rf-plate img { position: absolute; left: 0; top: 0; max-width: none; transform-origin: 0 0; }
-.rf-plate-whole img { position: static; width: 100%; height: 100%; object-fit: cover; object-position: top; }
-.rf-quiet-card, .rf-hero-quiet { display: flex; flex-direction: column; justify-content: center; gap: 10px; box-sizing: border-box; padding: 24px 28px; color: #1b1b1d; text-align: left; }
-.rf-quiet-card { width: 100%; height: 100%; }
-.rf-quiet-over { font: 600 11px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .08em; text-transform: uppercase; color: rgba(27,27,29,.62); }
-.rf-quiet-text { font-size: 17px; font-weight: 600; line-height: 23px; display: -webkit-box; -webkit-line-clamp: 6; -webkit-box-orient: vertical; overflow: hidden; }
-.rf-card-title { padding: 0 4px; font-size: 17px; font-weight: 600; line-height: 22px; color: var(--rf-ink); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .rf-end { display: flex; flex-direction: column; align-items: center; padding: 28px 8px 8px; text-align: center; }
 .rf-end-mark { width: 48px; height: 48px; border-radius: 999px; background: var(--lit-tint); color: var(--lit-ink); display: grid; place-items: center; }
 .rf-end-line { margin: 14px 0 20px; font-size: 15px; line-height: 21px; color: var(--rf-muted); }
+.rf-end-skipped { margin: -14px 0 20px; font-size: 13px; line-height: 18px; color: var(--rf-muted); }
 .rf-end-btn { align-self: stretch; height: 48px; border: 0; border-radius: 999px; background: var(--rf-fill); color: var(--rf-ink); font: inherit; font-size: 15px; font-weight: 600; cursor: pointer; }
 .rf-capped { margin: -12px 0 0; font-size: 12px; color: var(--rf-muted); text-align: center; }
 /* Everything had your vote: the end alone, centred where the list was. */
 .rf-end-alone { min-height: 56vh; justify-content: center; padding: 0 24px 48px; }
 
-/* The change page: fixed above the tab bar, which stays. From 768px it
-   starts after the sidebar (--platform-rail-w, 0 on a phone and while the
-   rail is folded), so it centres over the feed's column and a card grows
-   straight up into it. */
-.rf-page-wrap { position: fixed; left: var(--platform-rail-w, 0px); right: 0; top: 0; bottom: var(--platform-tabs-h, 0px); z-index: 35; pointer-events: none; }
+/* The change page: between the shell's header, which says where you are
+   (features/header/review-run-store.js), and the tab bar, which stays. From
+   768px it starts after the sidebar (--platform-rail-w, 0 on a phone and
+   while the rail is folded), so it centres over the pane's column. */
+.rf-page-wrap { position: fixed; left: var(--platform-rail-w, 0px); right: 0; top: calc(var(--browser-banner-h, 0px) + var(--platform-header-h) + var(--platform-safe-top, 0px)); bottom: var(--platform-tabs-h, 0px); z-index: 35; pointer-events: none; }
 .rf-page { position: absolute; top: 0; bottom: 0; left: max(0px, calc(50% - 260px)); width: min(100%, 520px); display: flex; flex-direction: column; overflow: hidden; background: var(--rf-page); color: var(--rf-ink); pointer-events: auto; -webkit-font-smoothing: antialiased; }
-.rf-band { position: absolute; left: 0; right: 0; top: 0; height: 0; z-index: 3; pointer-events: none; }
-.rf-head { position: relative; z-index: 4; flex: none; display: flex; align-items: center; gap: 4px; padding: env(safe-area-inset-top, 0px) 4px 4px; min-height: 52px; background: var(--rf-page); }
-.rf-head-btn { width: 44px; height: 44px; flex: none; display: grid; place-items: center; border: 0; background: none; color: inherit; cursor: pointer; }
-.rf-head-title { flex: 1; min-width: 0; margin: 0; text-align: center; font-size: 16px; font-weight: 600; line-height: 22px; }
-.rf-head-title span { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.rf-fly { position: fixed; z-index: 36; margin: 0; overflow: hidden; -webkit-box-orient: vertical; transform-origin: 0 0; pointer-events: none; will-change: transform, opacity; }
-.rf-ghost-cover { position: fixed; z-index: 35; margin: 0; transform-origin: 0 0; pointer-events: none; visibility: visible; will-change: transform, opacity; }
 .rf-stage { position: relative; flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; }
 .rf-stage-layer { background: var(--rf-page); }
 .rf-stage-leaving { position: absolute; left: 0; right: 0; top: 0; z-index: 0; }
 .rf-stage-arriving { position: relative; z-index: 1; }
-.rf-page-body { padding-bottom: 16px; }
-/* The shot and its thumbnails read as one object, set apart from the page. */
-.rf-preview { margin: 12px 12px 0; border-radius: 24px; overflow: hidden; background: var(--rf-sheet); box-shadow: 0 0 0 1px var(--rf-line); }
-.rf-claim { margin: 0; padding: 20px 16px 0 20px; font-size: 17px; font-weight: 600; line-height: 23px; text-wrap: pretty; }
-.rf-thumbs { display: flex; gap: 8px; padding: 10px 14px 4px; overflow-x: auto; scrollbar-width: none; }
-.rf-thumbs::-webkit-scrollbar { display: none; }
-.rf-thumb { position: relative; flex: none; width: 52px; height: 52px; margin: 4px; padding: 0; border: 0; border-radius: 12px; overflow: hidden; display: grid; place-items: center; box-shadow: inset 0 0 0 1px var(--rf-line); cursor: pointer; }
-.rf-thumb[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--rf-page), 0 0 0 4px var(--lit-ink); }
-.rf-preview .rf-thumb[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--rf-sheet), 0 0 0 4px var(--lit-ink); }
-.rf-thumb-in { position: relative; overflow: hidden; border-radius: 4px; background: #fff; }
-.rf-thumb-in img { position: absolute; left: 0; top: 0; max-width: none; transform-origin: 0 0; }
+.rf-page-body { padding-bottom: 0; }
+/* The picture: the change's sheet on its ground, and a screen opened in
+   place over it. One hairline, the one the strip's tiles wear. */
+.rf-picture { position: relative; margin: 0 12px; border-radius: 32px; overflow: hidden; isolation: isolate; }
+.rf-picture::after { content: ''; position: absolute; inset: 0; z-index: 4; border-radius: inherit; box-shadow: inset 0 0 0 1px var(--rf-line); pointer-events: none; }
+.rf-plates { position: absolute; inset: 0; z-index: 1; }
+.rf-plate-btn { position: absolute; padding: 0; border: 0; overflow: hidden; background: #fff; cursor: pointer; box-shadow: 0 1px 2px rgba(40,20,10,.10), 0 10px 24px -10px rgba(40,20,10,.30); -webkit-tap-highlight-color: transparent; transition: scale .16s ease-out; }
+.rf-plate-btn::after { content: ''; position: absolute; inset: 0; border-radius: inherit; box-shadow: inset 0 0 0 1px rgba(0,0,0,.08); pointer-events: none; }
+.rf-plate-btn:active { scale: .96; }
+.rf-plate-btn:focus-visible { outline: 2px solid var(--rf-black); outline-offset: 3px; }
+.rf-plate-btn img { position: absolute; display: block; max-width: none; pointer-events: none; }
+@keyframes rf-deal { from { opacity: 0; transform: translateY(10px) scale(.985); } }
+.rf-open { position: absolute; inset: 0; }
+/* The landing dim: one hard-edged hole round the change, the rest of the
+   screen veiled. It sits on each side's own picture (compare.tsx), so it
+   rides every move; it comes on at once and fades out. */
+.rf-veil-box { position: absolute; left: 0; top: 0; overflow: hidden; pointer-events: none; transition: opacity .5s cubic-bezier(0.22,1,0.36,1); }
+.rf-veil { position: absolute; box-shadow: 0 0 0 4000px rgba(6,6,8,.5); }
+/* The strip: its own row under the picture, on its left edge. Radii step in
+   by 12 as the elements do: picture 32, tile 20. The first tile is the
+   sheet's glyph in the page's ink; each screen's tile unfolds from its bar
+   in the glyph when a change arrives. */
+.rf-strip { position: relative; flex: none; height: 64px; margin: 12px 12px 0; }
+.rf-strip-all, .rf-tile { position: absolute; padding: 0; border: 0; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+.rf-strip-all { z-index: 1; left: 0; top: 0; width: 64px; height: 64px; border-radius: 20px; background: var(--rf-page); box-shadow: inset 0 0 0 1px var(--rf-line); transition: scale .15s ease-out; }
+.rf-strip-all:active, .rf-tile:active { scale: .95; }
+.rf-strip-all:focus-visible, .rf-tile:focus-visible { outline: 2px solid var(--rf-ink); outline-offset: 3px; }
+.rf-gbox { position: absolute; left: 13px; top: 13px; width: 38px; height: 38px; box-sizing: border-box; border: 1.5px solid var(--rf-ink); border-radius: 12px; pointer-events: none; }
+.rf-gbar { position: absolute; border-radius: 2px; background: var(--rf-ink); transition: opacity .38s cubic-bezier(0.22,1,0.36,1); }
+.rf-tile { z-index: 2; overflow: hidden; transition: left .38s cubic-bezier(0.22,1,0.36,1), top .38s cubic-bezier(0.22,1,0.36,1), width .38s cubic-bezier(0.22,1,0.36,1), height .38s cubic-bezier(0.22,1,0.36,1), border-radius .38s cubic-bezier(0.22,1,0.36,1), background-color .16s cubic-bezier(0.22,1,0.36,1), scale .15s ease-out; }
+.rf-tile::after { content: ''; position: absolute; inset: 0; border-radius: inherit; box-shadow: inset 0 0 0 1px var(--rf-line); pointer-events: none; }
+.rf-tile-in { position: absolute; left: 50%; top: 50%; width: 64px; height: 64px; margin: -32px 0 0 -32px; overflow: hidden; pointer-events: none; transition: opacity .2s cubic-bezier(0.22,1,0.36,1) 40ms; }
+.rf-tile[data-folded] .rf-tile-in { opacity: 0; }
+.rf-tile-in img { position: absolute; left: 0; top: 0; max-width: none; transform-origin: 0 0; }
+/* Where you are, inside the tile so its edge stays on the hairline: a ring of lit ink in a page-coloured mat. */
+.rf-lit { position: absolute; z-index: 3; top: 0; width: 64px; height: 64px; border-radius: 20px; box-shadow: inset 0 0 0 2px var(--lit-ink), inset 0 0 0 4px var(--rf-page); pointer-events: none; transition: left .38s cubic-bezier(0.22,1,0.36,1); }
+/* The page leads with what the change does, or what the open screen shows:
+   two lines at most, on the header's 16pt edge. The gap under it is a
+   margin, not padding, so the clamp never lets a third line show. */
+.rf-claim { flex: none; margin: 0 0 14px; padding: 18px 16px 0; min-height: 46px; font-size: 17px; font-weight: 600; line-height: 23px; text-wrap: pretty; animation: rf-claim-in .36s cubic-bezier(0.22,1,0.36,1); }
+@keyframes rf-claim-in { from { opacity: 0; transform: translateY(4px); } }
 .rf-hero-quiet { width: 100%; }
 .rf-scrim { position: absolute; inset: 0; z-index: 5; background: rgba(0,0,0,.62); opacity: 0; pointer-events: none; transition: opacity .22s cubic-bezier(0.22,1,0.36,1); }
 .rf-scrim-on { opacity: 1; pointer-events: auto; }
@@ -25168,15 +25182,16 @@ html.in-side-panel body {
 .rf-layer-clip { inset: 0; }
 .rf-shot-img { display: block; max-width: none; }
 .rf-shot-whole { width: 100%; height: auto; }
+.rf-closeup { position: absolute; display: block; max-width: none; pointer-events: none; }
 .rf-seam { position: absolute; top: 0; bottom: 0; left: 0; width: 2px; margin-left: -1px; background: var(--rf-black); z-index: 3; pointer-events: none; transition: opacity .18s cubic-bezier(0.22,1,0.36,1), width .15s ease-out; }
 .rf-dragging .rf-seam { width: 1px; opacity: .5 !important; }
 /* Each side's caption is printed on its own picture, under a short shade
    that keeps it legible on any shot, and the seam wipes it with the picture. */
-.rf-cap { position: absolute; left: 0; right: 0; top: 0; height: 70px; background: linear-gradient(rgba(12,12,14,.5), rgba(12,12,14,0)); pointer-events: none; transition: opacity .3s cubic-bezier(0.22,1,0.36,1); }
-.rf-cap-line { position: absolute; top: 18px; display: flex; align-items: center; gap: 6px; font: 600 11px/1 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .14em; text-transform: uppercase; color: var(--rf-cream); white-space: nowrap; }
-.rf-cap-after .rf-cap-line { right: 20px; }
-.rf-cap-before .rf-cap-line { left: 20px; }
-.rf-cap-dim { opacity: .62; }
+.rf-cap { position: absolute; left: 0; right: 0; top: 0; height: 84px; background: linear-gradient(rgba(12,12,14,.62) 0%, rgba(12,12,14,.55) 18%, rgba(12,12,14,.45) 33%, rgba(12,12,14,.35) 46%, rgba(12,12,14,.26) 57%, rgba(12,12,14,.18) 67%, rgba(12,12,14,.11) 76%, rgba(12,12,14,.06) 84%, rgba(12,12,14,.025) 91%, rgba(12,12,14,0) 100%); pointer-events: none; transition: opacity .3s cubic-bezier(0.22,1,0.36,1); }
+.rf-cap-line { position: absolute; top: 18px; display: flex; align-items: center; gap: 6px; font: 600 11px/1 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .14em; text-transform: uppercase; color: var(--rf-cream); text-shadow: 0 1px 2px rgba(12,12,14,.35); white-space: nowrap; }
+.rf-cap-after .rf-cap-line { right: 22px; }
+.rf-cap-before .rf-cap-line { left: 22px; }
+.rf-cap-dim { opacity: .72; }
 /* The switch: Before on its left, After on its right, its knob on the side
    most of the window shows, carrying that side's mark. Flat and inked, like
    the captions it names. */
@@ -25238,7 +25253,20 @@ html.in-side-panel body {
 .rf-pair-div { position: relative; flex: none; align-self: center; width: 1px; height: 22px; background: var(--rf-muted); opacity: .4; transition: opacity .15s; }
 .rf-pair[data-rf-voted] .rf-pair-div { opacity: 0; }
 .rf-morph { position: relative; flex: none; width: 52px; height: 52px; padding: 0; border: 0; border-radius: 26px; overflow: hidden; background: var(--rf-fill); color: var(--rf-ink); cursor: pointer; transition: width .38s cubic-bezier(.34,1.2,.64,1), background .25s, color .25s; }
-.rf-morph[data-rf-morph="next"] { width: 158px; background: var(--accent); color: #fff; }
+.rf-morph[data-rf-morph="next"] { width: 128px; background: var(--accent); color: #fff; }
+/* Next's number in its ring (vote-sheet.tsx CountRing): always a 22pt circle
+   that fills clockwise from twelve with the share of the run decided; the
+   figure shrinks to fit it. */
+.rf-ring { position: relative; flex: none; display: inline-grid; place-items: center; width: 22px; height: 22px; margin-left: 4px; }
+/* The ProgressRing primitive drawn at 22pt: its 38-unit board, so a 3-unit
+   stroke is the ring's 1.75pt. Element + two classes, to outrank the
+   primitive's own stroke utilities, its dark: ones included. */
+.rf-ring svg { position: absolute; inset: 0; }
+.rf-ring circle.rf-ring-track { stroke: rgba(255,255,255,.28); stroke-width: 3px; }
+.rf-ring circle.rf-ring-arc { stroke: #fff; stroke-width: 3px; transition: stroke-dasharray .6s cubic-bezier(0.22,1,0.36,1); }
+.rf-ring-n { position: relative; font-size: 13px; font-weight: 600; line-height: 1; letter-spacing: 0; font-variant-numeric: tabular-nums; }
+.rf-ring[data-digits="2"] .rf-ring-n { font-size: 11px; letter-spacing: -.03em; }
+.rf-ring[data-digits="3"] .rf-ring-n { font-size: 8.5px; letter-spacing: -.03em; }
 .dark .rf-morph[data-rf-morph="next"] { background: #0a6ee0; }
 .rf-morph:active { scale: .97; }
 .rf-morph:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
@@ -25256,9 +25284,7 @@ html.in-side-panel body {
 .rf-row-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .rf-row-text b { font-size: 15px; font-weight: 650; line-height: 20px; }
 .rf-row-text i { font-style: normal; font-size: 13px; line-height: 18px; color: var(--rf-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.rf-menu .rf-menu-row { min-height: 52px; padding: 0 4px; font-size: 17px; font-weight: 500; }
-.rf-menu .rf-menu-row::after { left: 4px; }
-.rf-menu-cancel { color: var(--rf-muted); }
+.rf-skip { flex: none; display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; height: 50px; margin-top: 10px; border: 0; border-radius: 999px; background: var(--rf-fill); color: var(--rf-ink); font-size: 17px; font-weight: 600; cursor: pointer; }
 .rf-sub { flex: none; display: flex; align-items: center; gap: 2px; margin: 10px 0 2px -12px; }
 .rf-sub button { width: 44px; height: 44px; flex: none; display: grid; place-items: center; border: 0; background: none; color: var(--rf-ink); cursor: pointer; }
 .rf-sub h2 { margin: 0; font-size: 17px; font-weight: 600; line-height: 22px; }
@@ -25287,8 +25313,9 @@ html.in-side-panel body {
 .rf-go-wide { align-self: stretch; height: 48px; }
 .rf-thread { min-height: 200px; }
 @media (prefers-reduced-motion: reduce) {
-  .rf-sheet, .rf-scrim, .rf-seam, .rf-cap, .rf-switch, .rf-knob, .rf-knob-icon, .rf-pair-thumb, .rf-pair-mark, .rf-morph, .rf-morph-in, .rf-why { transition: none; }
+  .rf-sheet, .rf-scrim, .rf-seam, .rf-cap, .rf-switch, .rf-knob, .rf-knob-icon, .rf-pair-thumb, .rf-pair-mark, .rf-morph, .rf-morph-in, .rf-why, .rf-tile, .rf-tile-in, .rf-gbar, .rf-lit, .rf-veil-box, .rf-ring circle.rf-ring-arc { transition: none; }
   .rf-lens { animation: none; }
+  .rf-claim { animation: none; }
 }
 
 /* From 768px the change page is a panel, not a phone page on a desktop.
@@ -25309,18 +25336,16 @@ html.in-side-panel body {
   .rf-page-dim { display: block; position: absolute; inset: 0; background: rgba(0,0,0,.32); pointer-events: auto; }
   .dark .rf-page-dim { background: rgba(0,0,0,.56); }
   .rf-page { top: 16px; bottom: auto; max-height: var(--rf-room); border-radius: 20px; box-shadow: 0 0 0 1px var(--rf-line), 0 24px 64px rgba(0,0,0,.18); }
-  .rf-head { padding-top: 4px; }
   .rf-stage { flex: 0 1 auto; }
   .rf-sheet { max-height: calc(var(--rf-room) - 52px); border-radius: 0; box-shadow: inset 0 1px 0 var(--rf-line); }
 }
 
 /* New Needs you (an experiment), pictures for every card: a drawn picture
    fills its card or hero; the shots run's own crop sits on a plate. */
-.rf-cover-drawn, .rf-hero-drawn { display: block; position: relative; overflow: hidden; }
-.rf-cover-drawn { border-radius: 20px; }
+.rf-hero-drawn { display: block; position: relative; overflow: hidden; }
 .rf-plate-fill { position: static !important; display: block; width: 100%; height: 100%; object-fit: cover; object-position: center; transform: none !important; }
 .rf-plate-strip { object-fit: contain; }
-.rf-claim { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.rf-claim { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 
 /* ── Review flow: drawn pictures (features/review-flow/illustrations.tsx) ──
    One outlined object per benefit or group decision, on the ground the caller

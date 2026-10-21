@@ -92,6 +92,7 @@ import { Wordmark } from '@/components/ui/wordmark';
 import { useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
 import { headerTitleStore } from './header-title-store.js';
+import { reviewRunStore } from './review-run-store.js';
 import { improveStore } from '../improve/improve-store.js';
 import { navStore } from '../nav/nav-store.js';
 import { sessionHeaderStore } from '../dev-chat/session-header-store';
@@ -126,6 +127,9 @@ export function HeaderTitle({ titleRef }: { titleRef: RefObject<HTMLHeadingEleme
   // "Messages" or the conversation over who it is with. Off until a drawer
   // has settled that it applies, after hydration.
   const drawerOn = useDrawerMode() !== null;
+  // The Needs you run (./review-run-store.js): the screen's name and, as its
+  // place tag, the community of the change on screen.
+  const run = useStoreState(reviewRunStore);
 
   const onSession = tab === 'dev' && subTab === 'sessions';
   const sessionPill = onSession && life ? <MergeStatusPill life={life} /> : null;
@@ -189,8 +193,15 @@ export function HeaderTitle({ titleRef }: { titleRef: RefObject<HTMLHeadingEleme
     >
       {drawerOn ? <DrawerTitles /> : (
       <span className="inline-flex items-center gap-2 max-w-full align-middle">
-        {appSwitch ? null : tile}
-        {allAppsSwitcher ? (
+        {appSwitch || run.on ? null : tile}
+        {run.on ? (
+          /* THE NEEDS YOU RUN: no switcher while it is open, only where you
+             are, with the change's community as the place tag. */
+          <>
+            <span id="header-title-name" className="min-w-0 truncate">{run.title}</span>
+            {run.place ? <span className="header-place-name" data-run-place="" aria-hidden="true">{run.place}</span> : null}
+          </>
+        ) : allAppsSwitcher ? (
           /* THE COMMUNITIES SWITCHER, in the bar (#3271, at every width
              since #852): the grid, "Communities" and the ⌄, opening Your
              communities. */

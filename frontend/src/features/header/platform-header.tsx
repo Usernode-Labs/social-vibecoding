@@ -42,6 +42,7 @@ import { useHiddenClass, useIsomorphicLayoutEffect } from '../../lib/legacy-dom'
 import { useVisibility } from '../../lib/visibility-store';
 import { useStoreState } from '../../lib/use-store-state';
 import { backButtonStore } from './back-button-store.js';
+import { reviewRunStore } from './review-run-store.js';
 import { ChromelessPill } from './chromeless-pill';
 import { useCommunityHeaderTint } from './community-tint';
 import { HeaderTitle } from './header-title';
@@ -238,7 +239,11 @@ export function PlatformHeader() {
     slug: backSlug, tab: backTab, subTab: backSubTab,
     sessionOrigin, boardView, topicOrigin, name: appName,
   } = useStoreState(improveStore);
-  const routeUp = appRouteUpHref(backSlug, backTab, backSubTab, sessionOrigin);
+  // The Needs you run (./review-run-store.js) has a level above it too, the
+  // Communities screen it opened from; leaving it is the run's own action.
+  const run = useStoreState(reviewRunStore);
+  const routeUp = run.on ? '#communities'
+    : appRouteUpHref(backSlug, backTab, backSubTab, sessionOrigin);
   // #2916: on a Workshop topic the back control is the "‹ Workshop" chip at
   // the top of the pane, so this bar draws NONE there, whatever the last
   // setBackIcon() published. Forced from the same function the chip renders
@@ -516,6 +521,7 @@ export function PlatformHeader() {
             className={BACK_BTN_CLASS + (mode === 'none' ? ' hidden' : '')}
             aria-label={backArrow ? t('core:header.back') : backClose ? t('core:header.closeApp') : t('core:header.home')}
             {...(resolvedBackHref ? { href: resolvedBackHref } : {})}
+            onClick={run.on && run.back ? (e) => { e.preventDefault(); run.back?.(); } : undefined}
           >
             {/*
                 BOTH GLYPHS SHIP, exactly one is shown. Rendering only the

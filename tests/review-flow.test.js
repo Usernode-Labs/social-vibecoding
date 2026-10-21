@@ -13,10 +13,13 @@
 //      changed; the slider places BOTH sides with one placement, so a seam
 //      never moves what it compares; the seam resists past an edge and
 //      settles softly on the edges of what changed.
-//   3. THE VOTE. Votes go through the platform's castVote with the epoch;
-//      a No counts in one tap and may carry a line after; your own answer
-//      again goes through retractVote; Next change moves to the next change
-//      without a vote, and Done on the last one closes onto the feed's end.
+//   3. THE RUN AND THE VOTE. No feed: the page opens on the first change,
+//      under the shell's own header, which names "Needs you" and the
+//      change's community. Votes go through the platform's castVote with the
+//      epoch; a No counts in one tap and may carry a line after; your own
+//      answer again goes through retractVote; Next moves to the next change
+//      without a vote and carries how many still wait, in a ring that fills
+//      as the run is decided; Done on the last one shows the run's end.
 //   4. THE COPY. Every message the flow asks for exists in English.
 
 const test = require('node:test');
@@ -245,7 +248,9 @@ test('each side carries its own caption, and the seam wipes it with its picture'
   // The After caption lies over the after picture; the Before caption is
   // inside the clip with the before picture, so the seam cuts both alike.
   assert.match(src, /<div className="rf-cap rf-cap-after"[\s\S]*?<div className="rf-layer-clip"/);
-  assert.match(src, /<div className="rf-layer-clip"[^>]*>\s*<div className="rf-layer"[^>]*>\{img\(before, 'before'\)\}<\/div>\s*<div className="rf-cap rf-cap-before"/);
+  assert.match(src, /<div className="rf-layer-clip"[^>]*>\s*<div className="rf-layer"[^>]*>\{img\(before, 'before'\)\}\{veilAt\}<\/div>\s*<div className="rf-cap rf-cap-before"/);
+  // The landing dim rides each side's own picture, so the seam wipes it too.
+  assert.match(src, /data-rf-cam="">\{img\(after \|\| before, after \? 'after' : 'before'\)\}\{closeups\(after \? 'after' : 'before'\)\}\{veilAt\}<\/div>/);
   assert.match(src, /RichMessage id="communities:review\.compare\.captionAfter"/);
   assert.match(src, /RichMessage id="communities:review\.compare\.captionBefore"/);
   assert.equal(message('communities:review.compare.captionBefore'), 'Before <0>· Today</0>');
@@ -268,41 +273,34 @@ test('the switch flips the view and its knob says which side, a press leans the 
   assert.match(css, /\.rf-knob \{ position: absolute; top: 2\.5px; left: 34\.5px;/, 'After on the right');
 });
 
-test('the hero takes the page\'s free height, never shorter than 4:3 or taller than 3:2', () => {
+test('the picture takes the page\'s free height, up to 3:2, and gives way to 2:1 before the line does', () => {
   const flow = loadTsx('frontend/src/features/review-flow/review-flow.tsx');
-  assert.equal(flow.heroHeight(351, 704, false), 704 - 292, 'a phone: what the page leaves');
-  assert.equal(flow.heroHeight(351, 400, false), Math.round(351 * 0.75), 'a short window keeps 4:3');
+  // The page holds the line it leads with (18 + 46 + 14) and the vote at rest (120).
+  assert.equal(flow.heroHeight(351, 704, false), 704 - 198, 'a phone: what the page leaves');
+  assert.equal(flow.heroHeight(351, 300, false), Math.round(351 * 0.5), 'a short window: 2:1 at least');
   assert.equal(flow.heroHeight(351, 2000, false), Math.round(351 * 1.5), 'a tall one stops at 3:2');
-  assert.equal(flow.heroHeight(351, 704, true), 704 - 292 - 76, 'thumbnails take their row');
+  assert.equal(flow.heroHeight(351, 704, true), 704 - 198 - 76, 'the strip takes its row');
 });
-
 // ── 2b. The preview card ────────────────────────────────────────────────
 
-test('the change page sets its picture and thumbnails apart in an inset card', () => {
+test('the page leads with what the change does, then its picture, then the strip', () => {
   const src = read('frontend/src/features/review-flow/review-flow.tsx');
-  assert.match(src, /const PREVIEW_INSET = 12;/);
-  // The hero is drawn the card's inner width, one inset off each page edge.
-  assert.match(src, /const inner = Math\.max\(0, width - PREVIEW_INSET \* 2\);/);
-  assert.match(src, /width=\{inner\} height=\{height\}/, 'the slider is drawn at the card\'s inner width');
-  assert.match(src, /<div className="rf-preview">\s*\{visual \? \(/, 'the hero is inside the card');
-  assert.match(
-    src,
-    /<div className="rf-thumbs"[\s\S]*?<\/div>\s*\) : null\}\s*<\/div>\s*\{item\.line \? <p className="rf-claim">/,
-    'the thumbnails are inside the card and the claim follows it',
-  );
+  assert.match(src, /const INSET = 12;/);
+  assert.match(src, /const inner = Math\.max\(0, width - INSET \* 2\);/);
+  const body = src.slice(src.indexOf('<div className="rf-page-body"'), src.indexOf('/* ── The run'));
+  const claim = body.indexOf('<p className="rf-claim"');
+  const picture = body.indexOf('className="rf-picture"');
+  const strip = body.indexOf('<Strip');
+  assert.ok(claim > 0 && claim < picture && picture < strip, 'the line, the picture, the strip');
+  // The change's title is not drawn on the page: it names the page.
+  assert.match(src, /className="rf-page" role="dialog" aria-modal="false" aria-label=\{item\.title\}/);
+  assert.doesNotMatch(src, /rf-head|rf-preview|rf-thumbs|planTitleFlight|coverGhost/, 'no bar of its own, no feed card, no flight');
   const css = read('public/css/app.css');
-  const rule = css.match(/\n\.rf-preview \{[^}]*\}/)[0];
-  assert.match(rule, /margin: 12px 12px 0;/);
-  assert.match(rule, /border-radius: 24px;/);
-  assert.match(rule, /background: var\(--rf-sheet\);/);
-  assert.match(rule, /box-shadow: 0 0 0 1px var\(--rf-line\);/);
-  assert.match(css, /\.rf-preview \.rf-thumb\[aria-pressed="true"\] \{ box-shadow: 0 0 0 2px var\(--rf-sheet\), 0 0 0 4px var\(--lit-ink\); \}/);
-  assert.match(css, /\.rf-claim \{ margin: 0; padding: 20px 16px 0 20px;/, 'the description starts further below the card');
-  // The opening ghost lands on the inset card, edges rounded like it.
-  assert.match(src, /const k = \(page\.width - PREVIEW_INSET \* 2\) \/ card\.width;/);
-  assert.equal((src.match(/heroTransform\(cr, pr, headH\), borderRadius: '24px'/g) || []).length, 2);
+  assert.match(css, /\.rf-claim \{ flex: none; margin: 0 0 14px; padding: 18px 16px 0; min-height: 46px; font-size: 17px; font-weight: 600; line-height: 23px;/, 'on the header\'s 16pt edge, the gap a margin so the clamp never shows a third line');
+  assert.match(css, /\.rf-claim \{ display: -webkit-box; -webkit-line-clamp: 2;/);
+  assert.match(css, /\.rf-picture \{ position: relative; margin: 0 12px; border-radius: 32px; overflow: hidden; isolation: isolate; \}/);
+  assert.match(css, /\.rf-strip \{ position: relative; flex: none; height: 64px; margin: 12px 12px 0; \}/);
 });
-
 // ── 3. The vote ──────────────────────────────────────────────────────────
 
 test('votes go through castVote with the epoch, a No may carry a line, a vote taken back goes through retractVote', () => {
@@ -315,10 +313,35 @@ test('votes go through castVote with the epoch, a No may carry a line, a vote ta
   assert.equal(sheet.NO_LINE_MAX, 280, 'the server\'s VOTE_REASON_MAX');
 });
 
-test('going anywhere else takes the page down at once', () => {
+test('going anywhere else takes the page down at once, and it comes back with the pane', () => {
   const src = read('frontend/src/features/review-flow/review-flow.tsx');
-  assert.match(src, /window\.addEventListener\('hashchange', away\)/);
-  assert.match(src, /window\.addEventListener\('popstate', away\)/);
+  assert.match(src, /window\.addEventListener\('hashchange', route\)/);
+  assert.match(src, /window\.addEventListener\('popstate', route\)/);
+  assert.match(src, /setShown\(!!anchorRef\.current && anchorRef\.current\.getClientRects\(\)\.length > 0\)/);
+});
+
+test('the shell\'s header says where you are: Needs you, the change\'s community, and a way back', () => {
+  const src = read('frontend/src/features/review-flow/review-flow.tsx');
+  assert.match(src, /setReviewRunHeader\(\{ title: t\('communities:needsYou\.title'\), place, back: onDone \}\);\s*return \(\) => setReviewRunHeader\(null\);/);
+  assert.match(src, /if \(!open \|\| header !== 'communities'\) return undefined;/, 'a project\'s own header already names it');
+  assert.match(src, /header="project"/);
+  const store = loadTsx('frontend/src/features/header/review-run-store.js');
+  const back = () => {};
+  store.setReviewRunHeader({ title: 'Needs you', place: 'Game Corner', back });
+  assert.deepEqual(store.reviewRunStore.get(), { on: true, title: 'Needs you', place: 'Game Corner', back });
+  store.setReviewRunHeader(null);
+  assert.equal(store.reviewRunStore.get().on, false, 'taken down, the header is what it was');
+  const title = read('frontend/src/features/header/header-title.tsx');
+  assert.match(title, /\{appSwitch \|\| run\.on \? null : tile\}\s*\{run\.on \? \([\s\S]*?<span id="header-title-name" className="min-w-0 truncate">\{run\.title\}<\/span>\s*\{run\.place \? <span className="header-place-name" data-run-place="" aria-hidden="true">\{run\.place\}<\/span> : null\}/,
+    'no switcher while the run is open: the screen\'s name and the change\'s community');
+  const header = read('frontend/src/features/header/platform-header.tsx');
+  assert.match(header, /const routeUp = run\.on \? '#communities'\n\s+: appRouteUpHref\(/,
+    'the run has a level above it, so the bar draws the arrow, pointing there');
+  assert.match(header, /onClick=\{run\.on && run\.back \? \(e\) => \{ e\.preventDefault\(\); run\.back\?\.\(\); \} : undefined\}/);
+  const css = read('public/css/app.css');
+  assert.match(css, /#platform-header \.header-place-name\[data-run-place\] \{ max-width: none; flex-shrink: 1; \}/, 'a community\'s name may take the row');
+  // The page starts under the header on a phone too, and the tab bar stays under it.
+  assert.match(css, /\n\.rf-page-wrap \{ position: fixed; left: var\(--platform-rail-w, 0px\); right: 0; top: calc\(var\(--browser-banner-h, 0px\) \+ var\(--platform-header-h\) \+ var\(--platform-safe-top, 0px\)\); bottom: var\(--platform-tabs-h, 0px\);/);
 });
 
 test('Next change goes to the next change with no vote, wraps to an earlier one, and skips what you voted on', () => {
@@ -336,7 +359,7 @@ test('Next change goes to the next change with no vote, wraps to an earlier one,
 
 test('the sheet covers the page only while its help or menu is open', () => {
   for (const s of ['ask', 'voted', 'reason']) assert.equal(sheet.sheetOpen(s), false, s);
-  for (const s of ['unsure', 'askq', 'talk', 'try', 'about', 'more']) assert.equal(sheet.sheetOpen(s), true, s);
+  for (const s of ['unsure', 'askq', 'talk', 'try', 'about']) assert.equal(sheet.sheetOpen(s), true, s);
 });
 
 function sheetHtml(props) {
@@ -347,20 +370,17 @@ function sheetHtml(props) {
   }));
 }
 
-test('Next change passes the votes, and Done on the last one closes onto the feed\'s end', () => {
+test('Next passes the votes and the skips, and Done on the last one shows the run\'s end', () => {
   const src = read('frontend/src/features/review-flow/review-flow.tsx');
-  assert.match(src, /nextIndex\(list, open\.index, votes\)/);
+  assert.match(src, /const next = item \? nextIndex\(run, index, passed\) : -1;/);
   assert.match(src, /if \(n < 0\) \{ finishAll\(\); return; \}/);
-  const at = src.indexOf('const finishAll = ');
-  const finish = src.slice(at, src.indexOf('};', at));
-  assert.match(finish, /takeDown\(\)/);
-  assert.match(finish, /\[data-rf-end\]/, 'the feed\'s own end comes into view');
-  assert.doesNotMatch(finish, /onDone\(\)/, 'Done no longer leaves the feed');
-  // A list your votes emptied shows the end, centred, not the empty line.
-  assert.match(src, /if \(!list\.length && Object\.keys\(votes\)\.length\) \{[\s\S]*?rf-end rf-end-alone/);
+  assert.match(src, /const finishAll = \(\) => \{ stop\(\); setDone\(true\); \};/);
+  // Skip for now moves on without a vote; the end counts what was skipped.
+  assert.match(src, /goTo\(nextIndex\(run, index, now\)\);/);
+  assert.match(src, /if \(done \|\| \(list && !item && Object\.keys\(votes\)\.length\)\) \{[\s\S]*?rf-end rf-end-alone/);
+  assert.match(src, /t\('communities:review\.end\.skipped', \{ count: skippedCount \}\)/);
   assert.match(read('public/css/app.css'), /\.rf-end-alone \{ min-height: 56vh; justify-content: center;/);
 });
-
 test('at rest the vote is part of the page: Yes | No and ⋯, no sheet', () => {
   const html = sheetHtml({});
   assert.match(html, /class="rf-sheet rf-sheet-rest"/);
@@ -378,20 +398,32 @@ test('⋯ opens the four help rows in a sheet', () => {
   for (const to of ['askq', 'talk', 'try', 'about']) assert.match(html, new RegExp(`data-rf-help="${to}"`));
 });
 
-test('after a vote the row stays: the pair shows the choice, ⋯ becomes Next change', () => {
-  const html = sheetHtml({ vote: 'yes', state: 'voted' });
+test('after a vote the row stays: the pair shows the choice, ⋯ becomes Next with its count in a ring', () => {
+  const html = sheetHtml({ vote: 'yes', state: 'voted', left: 2, decided: 1 / 3 });
   assert.match(html, /data-rf-voted="yes"/);
   assert.match(html, /aria-checked="true"[^>]*data-rf-vote="yes"/);
   assert.match(html, /data-rf-morph="next"[^>]*data-rf-next=""/);
-  assert.ok(html.includes(message('communities:review.said.next')));
+  assert.ok(html.includes(`>${message('communities:review.said.nextShort')}</span>`), 'the word, with no glyph and no chevron');
+  assert.ok(html.includes(`aria-label="${message('communities:review.said.nextLeft_other').replace('{{count}}', '2')}"`));
+  assert.match(html, /<span class="rf-ring" data-digits="1" data-rf-ring="" aria-hidden="true">/);
+  assert.match(html, /<span class="rf-ring-n">2<\/span>/);
+  assert.ok(html.includes(`stroke-dasharray="${(33 / 100) * 94.25} 94.25"`), 'a third of the ring for a third decided');
+  assert.match(read('frontend/src/features/review-flow/vote-sheet.tsx'), /<ProgressRing\s+pct=\{Math\.round\(/,
+    'the ring is the ProgressRing primitive, drawn at 22pt');
   assert.ok(html.includes(message('communities:review.said.yes')), 'said for a screen reader');
   assert.doesNotMatch(html, /data-rf-undo/, 'your own answer again takes it back');
+  // Two digits shrink to fit the circle; past 99 it says 99+.
+  assert.match(sheetHtml({ vote: 'yes', state: 'voted', left: 29, decided: 0.03 }), /data-digits="2"[^]*?<span class="rf-ring-n">29<\/span>/);
+  assert.match(sheetHtml({ vote: 'yes', state: 'voted', left: 140, decided: 0.01 }), /<span class="rf-ring-n">99\+<\/span>/);
+  const css = read('public/css/app.css');
+  assert.match(css, /\.rf-morph\[data-rf-morph="next"\] \{ width: 128px;/);
+  assert.match(css, /\.rf-ring\[data-digits="2"\] \.rf-ring-n \{ font-size: 11px;/);
   const last = sheetHtml({ vote: 'yes', state: 'voted', hasNext: false });
   assert.ok(last.includes(message('communities:review.said.done')));
+  assert.doesNotMatch(last, /rf-ring/, 'Done is the word alone');
   const src = read('frontend/src/features/review-flow/vote-sheet.tsx');
   assert.match(src, /if \(vote === v\) \{ void undo\(\); return; \}/);
 });
-
 test('a No counts in one tap; a reason is offered after, held to the server\'s limit', () => {
   const src = read('frontend/src/features/review-flow/vote-sheet.tsx');
   assert.match(src, /void cast\(v\);/, 'the tap casts, nothing is asked first');
@@ -563,44 +595,99 @@ test('a still is never shown larger than its saved pixels allow on the display',
   assert.match(view, /const density = Number\(screen\.density\) >= 1 \? Number\(screen\.density\) : 1;/);
 });
 
-test('the title flies between its two ends measured at rest, and transitions end on their last frame', () => {
+test('transitions end on their last frame, with a timer only as rescue', () => {
   const src = read('frontend/src/features/review-flow/review-flow.tsx');
-  const open = src.slice(src.indexOf("open.phase !== 'opening'"), src.indexOf('/* ── Collapse'));
-  assert.ok(open.indexOf('planTitleFlight(') < open.indexOf('page.animate('), 'measured before the page moves');
-  assert.match(src, /whenDone\(moving, done, OPEN_MS\)/);
-  assert.match(src, /whenDone\(moving, finish, OPEN_MS \* 0\.85\)/);
-  assert.match(src, /whenDone\(sliding, settle, PUSH_MS\)/);
+  assert.match(src, /whenDone\(opening, \(\) => settle\(k\), OPEN_MS\)/, 'a screen opening from its plate');
+  assert.match(src, /whenDone\(closing, done, CLOSE_MS\)/, 'and back onto it');
+  assert.match(src, /whenDone\(sliding, end, OPEN_MS\)/, 'from tile to tile');
+  assert.match(src, /whenDone\(sliding, settle, PUSH_MS\)/, 'Next\'s push');
+  assert.match(src, /later\(once, ms \+ 1500\)/);
+});
+// ── 6b. The sheet, the strip and an opened screen ───────────────────────
+
+const sheetScreen = (regions, extra = {}) => ({
+  viewport: 'phone', width: 390, density: 1,
+  before: { url: 'b.png', height: 844 }, after: { url: 'a.png', height: 844 },
+  regions, ...extra,
+});
+
+test('a row the change only pushed along is not what it changed; a removed part keeps its place', () => {
+  const moved = { n: 1, b: [16, 212, 357, 17], a: [16, 239, 357, 18] };
+  const line = { n: 1, b: null, a: [111, 180, 170, 18], bMark: [111, 180, 170] };
+  assert.equal(model.onlyMoved(moved), true, 'the same size, somewhere else');
+  assert.equal(model.onlyMoved(line), false, 'new on the after side');
+  assert.equal(model.onlyMoved({ n: 1, b: [10, 10, 50, 20], a: [10, 10, 50, 20] }), false, 'changed in place');
+  assert.deepEqual(model.changedRegions(sheetScreen([moved, line])), [line]);
+  // A part the change took away keeps only a mark line after; its box is where it was.
+  const removed = { n: 1, b: [29, 378, 332, 212], a: null, aMark: [37, 521, 65] };
+  assert.deepEqual(model.afterBox(removed), { x: 29, y: 378, w: 332, h: 212 });
+  // The title piece is built from the same rule, so it never frames a row that only moved.
+  const [piece] = model.piecesOf([sheetScreen([moved, line])]);
+  assert.equal(piece.box.x, 111);
+});
+
+test('the sheet has one plate per screen at one scale, stacked or two to a row, never a deck', () => {
+  const wide = sheetScreen([{ n: 1, a: [16, 300, 358, 60], b: [16, 300, 358, 60] }]);
+  const three = model.composeSheet([wide, wide, wide], { w: 351, h: 368 });
+  assert.equal(three.length, 3, 'every screen can be tapped');
+  assert.deepEqual(three.map((p) => p.screen), [0, 1, 2]);
+  assert.ok(three.every((p) => Math.abs(p.s - three[0].s) < 1e-9), 'one scale');
+  assert.ok(three[1].y > three[0].y + three[0].h - 1, 'stacked, in order');
+  assert.ok(three.every((p) => p.x >= 0 && p.x + p.w <= 351 + 1e-6 && p.y >= 0 && p.y + p.h <= 368 + 1e-6), 'inside the picture');
+  assert.ok(three.every((p) => p.s <= 1 + 1e-9), 'a 1x still is never drawn larger than itself');
+  // Tall, narrow changes would be cut to slivers in a stack: they sit two to a row, whole.
+  const narrow = sheetScreen([{ n: 1, a: [20, 300, 120, 200], b: [20, 300, 120, 200] }], { density: 3 });
+  const pairs = model.composeSheet([narrow, narrow, narrow], { w: 351, h: 368 }, 3);
+  assert.ok(pairs[1].x > pairs[0].x, 'two to a row');
+  assert.ok(pairs.every((p) => p.box.y <= 300 && p.box.y + p.box.h >= 500), 'each change whole in its plate');
+});
+
+test('crops end on blank rows, and never cut into the change', () => {
+  // A still read at one sample per point: a flat ground with text rows at 100-110 and 140-150.
+  const w = 390; const h = 844;
+  const lum = new Uint8Array(w * h).fill(240);
+  const text = (y0, y1) => { for (let y = y0; y < y1; y++) for (let x = 20; x < 300; x += 3) lum[y * w + x] = 20; };
+  text(100, 110); text(140, 150);
+  const ink = { w, h, lum };
+  const snapped = model.snapRows({ x: 0, y: 105, w: 390, h: 60 }, ink, { x: 20, y: 140, w: 280, h: 10 }, 120);
+  assert.ok(snapped.y <= 100 || (snapped.y >= 110 && snapped.y <= 140), 'the top is on a blank row');
+  assert.ok(snapped.y <= 140 && snapped.y + snapped.h >= 150, 'the change stays whole');
+  assert.deepEqual(model.snapRows({ x: 0, y: 105, w: 390, h: 60 }, null, null, 120), { x: 0, y: 105, w: 390, h: 60 }, 'without the still, as computed');
+});
+
+test('an opened screen is framed on its declared change, at real size at most', () => {
+  const s = sheetScreen([
+    { n: 1, b: null, a: [111, 180, 170, 18], bMark: [111, 180, 170] },
+    { n: 0, b: [16, 212, 357, 17], a: [16, 239, 357, 18] },
+    { n: 0, b: [35, 700, 321, 47], a: [35, 727, 321, 47] },
+  ], { density: 3 });
+  const { place, cut } = model.openPlace(s, { w: 351, h: 360 }, 3);
+  assert.equal(place.scale, 1, 'a 3x still on a 3x screen: real size, not the whole screen shrunk');
+  assert.ok(cut && cut.y >= 175 && cut.y <= 185, 'the dim\'s hole is the declared change');
+  // A tile is a square round where that change starts.
+  const tile = model.tileCrop(s, 64, 3);
+  assert.ok(tile.scale > 0 && tile.scale <= 1);
+  assert.ok(-tile.ty / tile.scale <= 180 && -tile.ty / tile.scale + 64 / tile.scale >= 198, 'the change is inside the tile');
 });
 
 // ── 7. A wide window ─────────────────────────────────────────────────────
 
-test('on a wide window the feed is one column as wide as the page, and the cards are composed at that cap', () => {
+test('on a wide window the run is one column as wide as the page', () => {
   const src = read('frontend/src/features/review-flow/review-flow.tsx');
   const css = read('public/css/app.css');
   const cap = Number((src.match(/^const COLUMN = (\d+);$/m) || [])[1]);
   assert.equal(cap, 520, 'the change page\'s own width');
-  assert.match(src, /^const GUTTERS = 32;$/m, 'the feed\'s 16px gutters, both sides');
-  // The measured width is capped, so the composition never draws past the column.
-  assert.match(src, /setWidth\(Math\.max\(0, Math\.min\(el\.clientWidth, COLUMN\) - GUTTERS\)\)/);
-  assert.match(src, /setPageWidth\(Math\.min\(COLUMN, pr\.width\)\)/);
-  assert.match(src, /const pw = pageWidth \|\| Math\.min\(COLUMN, width \+ GUTTERS\);/);
+  assert.match(src, /setSize\(\{ w: Math\.min\(COLUMN, pr\.width\), h \}\)/);
   assert.doesNotMatch(src, /Math\.min\(520\b/, 'one number, not two copies of it');
-  // The CSS column is the same cap, gutters included, centred.
-  const col = css.match(/\.rf-feed, \.rf-feed-note \{([^}]*)\}/);
-  assert.ok(col, 'the feed and its notes share one column rule');
-  assert.match(col[1], /box-sizing: border-box;/);
+  const col = css.match(/\.rf-run, \.rf-feed-note \{([^}]*)\}/);
+  assert.ok(col, 'the run\'s pane and its notes share one column rule');
   assert.match(col[1], new RegExp(`max-width: ${cap}px;`));
   assert.match(col[1], /margin-left: auto; margin-right: auto;/);
-  assert.match(css, /\.rf-feed \{[^}]*padding: 4px 16px 32px;/, 'the gutters GUTTERS counts');
   assert.match(css, new RegExp(`\\.rf-page \\{[^}]*left: max\\(0px, calc\\(50% - ${cap / 2}px\\)\\); width: min\\(100%, ${cap}px\\);`));
-  // The page centres over the pane, past the sidebar, so a card grows straight up into it.
-  assert.match(css, /\.rf-page-wrap \{ position: fixed; left: var\(--platform-rail-w, 0px\); right: 0;/);
-  // Every state of the feed sits in the column: cards and the end inside .rf-feed, the notes beside it.
   assert.match(src, /<p className="rf-feed-note [^"]*" data-needs-error="">/);
-  assert.match(src, /<p className="rf-feed-note [^"]*" data-needs-empty="" data-review-flow="">/);
-  assert.match(src, /<div className="rf-feed rf-loading" data-review-flow=""/);
+  assert.match(src, /data-needs-empty="" data-review-flow="">/);
+  assert.match(src, /<div ref=\{anchorRef\} className="rf-run rf-loading" data-review-flow=""/);
 });
-
 test('a small change inside a close-up is drawn from it, big and sharp; without one it keeps the still\'s size', () => {
   const small = { ...SCREEN, regions: [{ n: 1, b: [100, 300, 50, 20], a: [100, 300, 50, 20] }] };
   const card = { w: 358, h: 358 };
@@ -646,10 +733,6 @@ test('from 768px the change page is a panel under the header, its vote sheet at 
   assert.match(block, /\.rf-sheet \{ max-height: calc\(var\(--rf-room\) - 52px\); border-radius: 0; box-shadow: inset 0 1px 0 var\(--rf-line\); \}/);
   // The pane behind is dimmed, and a click on it is Back.
   assert.match(block, /\.rf-page-dim \{ display: block; position: absolute; inset: 0; [^}]*pointer-events: auto; \}/);
-  assert.match(src, /<div ref=\{dimRef\} className="rf-page-dim" onClick=\{close\} aria-hidden="true" \/>\s*<div ref=\{pageRef\} className="rf-page"/);
-  assert.match(src, /dimRef\.current\?\.animate\(\[\{ opacity: 0 \}, \{ opacity: 1 \}\], opts\)/, 'the dim fades in as the card opens');
-  assert.match(src, /dimRef\.current\?\.animate\(\[\{ opacity: 1 \}, \{ opacity: 0 \}\], opts\)/, 'and out as it closes');
-  // The card opens onto the panel's own corners and closes from them; a phone's are none.
-  assert.equal((src.match(/clipPath: `inset\(0px 0px 0px 0px round \$\{restRadius\(page\)\}\)`/g) || []).length, 2);
-  assert.match(src, /function restRadius\(page: HTMLElement\): string \{\s*return getComputedStyle\(page\)\.borderTopLeftRadius \|\| '0px';/);
+  assert.match(src, /<div ref=\{dimRef\} className="rf-page-dim" onClick=\{onDone\} aria-hidden="true" \/>\s*<div ref=\{pageRef\} className="rf-page"/);
+  assert.match(src, /dimRef\.current\?\.animate\(\[\{ opacity: 0 \}, \{ opacity: 1 \}\], \{ duration: OPEN_MS, easing: EASE \}\)/, 'the dim fades in as the run comes up');
 });
