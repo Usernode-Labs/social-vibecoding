@@ -39,6 +39,11 @@
 const log = require('./logger');
 const mirror = require('./repo-mirror');
 
+// The preview machine's instance of a session (preview/machine.ts MACHINE,
+// sessionKey), which a measurement tells when a deferred head merges cleanly.
+const PREVIEW_MACHINE = 'preview';
+const PREVIEW_KEY_PREFIX = 'session:';
+
 const SHA_RE = /^[0-9a-f]{40}$/;
 
 // How long a measurement is good enough on a read path a voter is waiting on.
@@ -308,6 +313,16 @@ async function measure({ pool, session }, options = {}) {
   // What the row said before this write, read in the same statement so the
   // comparison is against the STORED answer rather than the caller's copy of
   // the session, which may be minutes and several measurements old.
+  //
+  // The one transition that starts work rides the same statement: a head
+  // that conflicted and now merges cleanly is a head whose checks were held
+  // back (check-admission) and can run, so the preview machine is told
+  // (`ConflictResolved`, preview/machine.ts) in the write that records it.
+  // Same head only: a NEW head that measures clean gets its checks from the
+  // build its push started. The machine runs the checks only while that
+  // head is deferred; a session it does not hold has nothing deferred. Told
+  // after the commit instead, a restart in between lost it for good, as the
+  // row already said clean.
   let wasClean = null;
   let wasHead = null;
   let storedReasons = null;
@@ -316,7 +331,17 @@ async function measure({ pool, session }, options = {}) {
       `WITH prev AS (
          SELECT integration_merges_clean AS was_clean, integration_head_sha AS was_head
            FROM chat_sessions WHERE id = $1
-       )
+       ),
+       resolved AS (
+         INSERT INTO wf_events (machine, key, app_id, type, payload, source, actor, request_key, caused_by)
+         SELECT wi.machine, wi.key, wi.app_id, 'ConflictResolved', jsonb_build_object('head', $2::text),
+                '{"kind":"system","name":"conflict-resolved"}'::jsonb, NULL,
+                'clean:' || $2 || ':v' || wi.version, NULL
+           FROM prev JOIN wf_instances wi ON wi.machine = '${PREVIEW_MACHINE}' AND wi.key = '${PREVIEW_KEY_PREFIX}' || $1::int
+          WHERE prev.was_clean = FALSE AND $7::boolean IS TRUE AND lower(prev.was_head) = lower($2::text)
+         RETURNING id
+       ),
+       u AS (
        UPDATE chat_sessions
           SET integration_measured_at = NOW(),
               integration_head_sha = $2,
@@ -333,7 +358,10 @@ async function measure({ pool, session }, options = {}) {
         WHERE id = $1
     RETURNING (SELECT was_clean FROM prev) AS was_clean,
               (SELECT was_head FROM prev) AS was_head,
-              integration_block_reasons AS block_reasons`,
+              integration_block_reasons AS block_reasons
+       )
+       SELECT u.*, (SELECT pg_notify('wf_events', '${PREVIEW_MACHINE}') FROM resolved LIMIT 1) IS NOT NULL AS resolved
+         FROM u`,
       [
         s.id, next.headSha, next.mainSha, next.baseSha,
         next.behindBy, next.aheadBy, next.mergesClean,
@@ -344,29 +372,12 @@ async function measure({ pool, session }, options = {}) {
     wasClean = rows[0] ? rows[0].was_clean : null;
     wasHead = rows[0] ? rows[0].was_head : null;
     storedReasons = rows[0] && Array.isArray(rows[0].block_reasons) ? rows[0].block_reasons : null;
+    if (rows[0] && rows[0].resolved) {
+      log.info('integration', 'proposal now merges cleanly with main', { sessionId: s.id, headSha: next.headSha });
+    }
   } catch (err) {
     log.warn('integration', 'write failed', { sessionId: s.id, err: err.message });
     return { ...answer, error: err.message };
-  }
-
-  // The one transition that starts work: a head that conflicted and now
-  // merges cleanly is a head whose checks were held back (check-admission)
-  // and can run. Same head only — a NEW head that measures clean gets its
-  // checks from the build its push started, and a hook here would run them
-  // twice. The hook is registered at boot, since this module has no config
-  // of its own; unregistered, the transition is simply logged.
-  if (wasClean === false && next.mergesClean === true
-      && wasHead && normalizeSha(wasHead) === normalizeSha(next.headSha)) {
-    log.info('integration', 'proposal now merges cleanly with main', {
-      sessionId: s.id, headSha: next.headSha,
-    });
-    if (typeof _onBecameClean === 'function') {
-      Promise.resolve()
-        .then(() => _onBecameClean({ ...s, integration_head_sha: next.headSha }))
-        .catch((err) => log.warn('integration', 'became-clean hook failed', {
-          sessionId: s.id, err: err && err.message,
-        }));
-    }
   }
 
   const written = readIntegration({
@@ -469,13 +480,6 @@ async function clearApprovals(pool, sessionId, reason) {
   return epoch;
 }
 
-// Registered once at boot (server.js) with the platform config in scope; see
-// measure() for the one transition that calls it.
-let _onBecameClean = null;
-function onBecameClean(fn) {
-  _onBecameClean = typeof fn === 'function' ? fn : null;
-}
-
 // The SQL predicate for "this vote still counts" is owned by
 // services/pr-vote-revision.js — the module named for exactly that concern,
 // and the one all eighteen call sites already import. Re-exported here so a
@@ -491,7 +495,6 @@ module.exports = {
   setBlockReasons,
   classifyHeadMove,
   clearApprovals,
-  onBecameClean,
   currentVotePredicateSql,
   MEASURE_TTL_MS,
   _normalizeSha: normalizeSha,

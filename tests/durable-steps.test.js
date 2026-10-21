@@ -36,6 +36,35 @@ test('a step runs once: the next attempt takes what it saved and does not run it
   assert.equal(runs, 1);
 });
 
+// A step nobody waits on (a build's last look) runs beside the others: it
+// is saved only once it is done, and the handler's flush waits for it, so a
+// restart before it ended runs it again rather than losing it.
+test('a step beside the others is saved once done, waited for by flush, run once', async () => {
+  const w = item();
+  const steps = durableSteps.durable({ checkpoint: w.checkpoint });
+  let release;
+  let runs = 0;
+  const look = () => { runs += 1; return new Promise((r) => { release = () => r({ fixed: 1 }); }); };
+  steps.beside('look', look);
+  steps.beside('look', look);
+  assert.equal(await steps.once('next', async () => 'went on'), 'went on', 'the steps after it do not wait');
+  assert.equal(steps.has('look'), false, 'not saved before it is done');
+  const flushed = steps.flush();
+  release();
+  await flushed;
+  assert.deepEqual(w.last().look, { fixed: 1 });
+  assert.equal(runs, 1, 'asked again while it runs, it is not run twice');
+  const next = durableSteps.durable({ resumeFrom: w.last(), checkpoint: w.checkpoint });
+  next.beside('look', look);
+  await next.flush();
+  assert.equal(runs, 1, 'nor once it is saved');
+  // One that fails is not saved: a later ask runs it again.
+  const failing = durableSteps.durable({ checkpoint: w.checkpoint });
+  failing.beside('look', async () => { throw new Error('no reviewer'); });
+  await failing.flush();
+  assert.equal(failing.has('look'), false);
+});
+
 test('a step that throws saves nothing, so the next attempt runs it', async () => {
   const w = item();
   const first = durableSteps.durable({ checkpoint: w.checkpoint });

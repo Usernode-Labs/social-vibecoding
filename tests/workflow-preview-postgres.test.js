@@ -340,6 +340,48 @@ test('preview machine against the full PostgreSQL schema', { timeout: 120000 }, 
     assert.equal((await row(s.id)).check_state, 'failing');
   });
 
+  // The measurement that finds a deferred head clean tells the machine in its
+  // own statement (services/integration.js measure): no hook after the
+  // commit, which a restart in between lost while the row already said clean.
+  await t.test('P6b a measurement flipping the deferred head to clean resumes its checks; another head does not', async () => {
+    const mirror = require('../src/services/repo-mirror');
+    const integration = require('../src/services/integration');
+    let measuredHead = SHA('9');
+    const fns = {
+      ensureMirror: async () => '/tmp/not-a-real-mirror', defaultBranchSha: async () => SHA('b'),
+      resolveBranch: async () => measuredHead, mergeBase: async () => SHA('c'), behindBy: async () => 1, aheadBy: async () => 1,
+      mergeTree: async () => ({ clean: true, conflicts: [], tree: SHA('e') }), hasCommit: async () => true, isAncestor: async () => true,
+    };
+    const real = new Map(Object.keys(fns).map((k) => [k, mirror[k]]));
+    Object.assign(mirror, fns);
+    try {
+      const s = await proposal(await app(), { pin: SHA('d') });
+      work.answer.set(WORK.run, { outcome: 'deferred', capture: { state: 'console_only', detail: { deferred: true } } });
+      await submit(s, SHA('d'));
+      await settle();
+      work.answer.set(WORK.run, verdict('passing'));
+      assert.equal((await instance(s)).state, 'deferred');
+      const measure = async (head, wasHead) => {
+        measuredHead = head;
+        await pool.query(`UPDATE chat_sessions SET integration_merges_clean = FALSE, integration_head_sha = $2 WHERE id = $1`, [s.id, wasHead]);
+        await integration.measure({ pool, session: { ...(await row(s.id)), repo_url: s.app.repo_url } }, { force: true });
+        await settle();
+      };
+      await measure(SHA('9'), SHA('9'));
+      assert.equal((await instance(s)).state, 'deferred', 'another head flipping clean is not the deferred one');
+      await measure(SHA('d'), SHA('8'));
+      assert.equal((await instance(s)).state, 'deferred', 'a new head measuring clean is not a flip');
+      await measure(SHA('d'), SHA('d'));
+      assert.equal((await instance(s)).state, 'settled');
+      assert.equal((await row(s.id)).check_state, 'passing');
+      const told = (await pool.query(`SELECT payload, request_key FROM wf_events WHERE machine = $1 AND key = $2 AND type = 'ConflictResolved'`,
+        [MACHINE, sessionKey(s.id)])).rows;
+      assert.deepEqual(told.map((e) => e.payload.head), [SHA('9'), SHA('d')]);
+    } finally {
+      for (const [k, v] of real) mirror[k] = v;
+    }
+  });
+
   await t.test('P7 retirement: an exit is terminal and clears the row; an idle one keeps the newest revision', async () => {
     const s = await proposal(await app(), { status: 'active' });
     await submit(s, SHA('1'));

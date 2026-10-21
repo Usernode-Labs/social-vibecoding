@@ -6,8 +6,9 @@
 //   - submit_work's `diagram` (services/mcp-tools.js): the author's own
 //     description already carries the text block, so only the row is written.
 //   - a hosted build's `declare_diagram` (worker/visible-changes-mcp.js →
-//     POST /api/internal/sessions/:id/diagram): the row, then the pull
-//     request body's block when the change has one (pr-metadata.js also
+//     POST /api/internal/sessions/:id/diagram): the row, and with it the
+//     proposal machine's `pr.diagram`, which writes the pull request body's
+//     block when the change has one (storeDeclared; pr-metadata.js also
 //     writes it on every regeneration, beside the shots block).
 //
 // An update replaces the stored diagram; one is kept until its author sends
@@ -37,9 +38,39 @@ async function store(pool, sessionId, record, source = 'author') {
 }
 
 /**
+ * A hosted build's declared diagram: the row, and in the same transaction the
+ * proposal machine's DiagramStored, which owes the pull request's body its
+ * block (`pr.diagram`, syncPrBlock). Written after the commit instead, a
+ * restart in between lost the block for good. Resolves true when a row took
+ * it; throws when it could not be stored.
+ */
+async function storeDeclared(pool, sessionId, record) {
+  const id = Number(sessionId);
+  const value = diagram.storedDiagram(record);
+  if (!pool || !Number.isInteger(id) || id <= 0 || !value) return false;
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows } = await client.query(
+      `UPDATE chat_sessions SET pr_diagram = $2::jsonb, pr_diagram_source = 'author' WHERE id = $1 RETURNING app_id`,
+      [id, JSON.stringify(value)]
+    );
+    if (rows[0]) await require('../workflow/platform.ts').diagramStored(client, { sessionId: id, appId: rows[0].app_id });
+    await client.query('COMMIT');
+    return rows.length > 0;
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+/**
  * Write the diagram's block into the change's pull request body, when it has
- * one Homeroom wrote (an imported pull request's body is its author's).
- * Best-effort: resolves { updated, reason }.
+ * one Homeroom wrote (an imported pull request's body is its author's): the
+ * proposal machine's `pr.diagram`. Resolves { updated, reason }; throws when
+ * GitHub refused, so the work tries again.
  */
 async function syncPrBlock(pool, sessionId, deps = {}) {
   const id = Number(sessionId);
@@ -64,4 +95,4 @@ async function syncPrBlock(pool, sessionId, deps = {}) {
   return { updated: true };
 }
 
-module.exports = { store, syncPrBlock, SOURCES };
+module.exports = { store, storeDeclared, syncPrBlock, SOURCES };

@@ -137,7 +137,7 @@ async function runAgent(ctx, { config, pool }, input) {
     endUnstarted({ agentSessionId, turnId: input.turnId, error: (mayor && mayor.error) || 'The agent could not start this turn.' });
     return { ended: 'no_payer' };
   }
-  await agentTurn.runAgentTurn({
+  const ran = await agentTurn.runAgentTurn({
     pool,
     config,
     user,
@@ -156,7 +156,9 @@ async function runAgent(ctx, { config, pool }, input) {
   // A run this item dispatched and still holds after the turn returned (its
   // dispatch failed part way): carried to its end here, as a restart would.
   await carryOn(ctx, { config, pool });
-  return { ended: 'done' };
+  // A turn that failed on a change owes "Session stopped before finishing"
+  // (its machine's turn.stalled: tellStalled).
+  return { ended: 'done', ...(ran && ran.stalled ? { stalled: ran.stalled } : {}) };
 }
 
 async function resumeAgent(ctx, { config, pool }, input) {
@@ -521,4 +523,16 @@ async function run(ctx, deps) {
   }
 }
 
-module.exports = { run, ownedChange, RECOVERY_RETRY, STOP_POLL, CLAIM_RENEW, LOST_LEASE, NO_RESPONSE };
+// "Session stopped before finishing" (#4729), owed by an agent turn that
+// failed on change `sessionId` (the turn machine's turn.stalled): belled
+// unless somebody is watching the conversation now, on any process. Throws
+// when it could not be belled, so the work tries again.
+async function tellStalled({ pool }, { sessionId, agentSessionId }) {
+  const bus = require('./session-bus');
+  const watchers = await bus.subscriberCount(require('./mayor/agent-turn').busKey(Number(agentSessionId)));
+  if (watchers > 0) return { watched: true };
+  await require('../routes/sessions').notifySessionStalled(pool, Number(sessionId), { strict: true });
+  return { told: true };
+}
+
+module.exports = { run, tellStalled, ownedChange, RECOVERY_RETRY, STOP_POLL, CLAIM_RENEW, LOST_LEASE, NO_RESPONSE };

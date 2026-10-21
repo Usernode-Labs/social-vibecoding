@@ -359,6 +359,18 @@ export const JOBS: readonly Job[] = Object.freeze([
     run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/welcome-dm').sweep(pool),
   },
   {
+    // An invite moment's email, when no phone could take its push: each
+    // notice that owes one (its `mailed_at` NULL, written with it) a target,
+    // sent once and marked (services/invite-activity.js).
+    name: 'invite-mail', everyMs: MIN,
+    run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/invite-activity').mailTargets(pool, { limit: MAX_ITEMS }),
+    item: {
+      concurrency: 2,
+      maxAttempts: 5,
+      run: (ctx: WorkContext, { pool }: JobDeps) => legacy('services/invite-activity').mailOne(pool, Number(ctx.input.input?.notificationId), ctx.steps()),
+    },
+  },
+  {
     // "Your agent is waiting on you", once its delay has passed.
     name: 'connector-input-waits', everyMs: MIN,
     run: async (_ctx: WorkContext, { pool }: JobDeps) => ({ sent: await legacy('services/connector-input-waits').sweepDue(pool) }),

@@ -13133,6 +13133,17 @@ CREATE INDEX IF NOT EXISTS idx_community_invite_opens_notice
   ON community_invite_opens (notification_id) WHERE notification_id IS NOT NULL;
 COMMENT ON TABLE community_invite_opens IS 'staging:private';
 
+-- WP-E: the email that stands in for an invite moment's push the maker
+-- cannot get (services/invite-activity.js), owed by the notice that rang
+-- (a day's first "Joined through your invite" or "said hi") and sent by the
+-- invite-mail clock, which sets this once it has handled it. NULL is owed:
+-- only those inserts write it, so every other row, and every row before it,
+-- reads as settled. Sent after the commit before, a restart in between lost
+-- the email for good.
+ALTER TABLE notifications ADD COLUMN IF NOT EXISTS mailed_at TIMESTAMPTZ DEFAULT NOW();
+CREATE INDEX IF NOT EXISTS idx_notifications_mail_owed
+  ON notifications (id) WHERE mailed_at IS NULL;
+
 -- ── Platform limit alerts ──────────────────────────────────────────────
 --
 -- The last level each server-wide cap reached (services/platform-limit-

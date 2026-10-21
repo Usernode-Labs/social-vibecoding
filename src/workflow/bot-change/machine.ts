@@ -38,6 +38,7 @@ export const WORK = Object.freeze({
   merged: 'bot.stopRequestWork',
   liveDm: 'bot.tellLive',
   livePost: 'bot.commentLive',
+  approved: 'bot.tellApproved',
 });
 // How often a change being merged is looked at again (a merge GitHub does
 // not confirm puts it back up for its vote).
@@ -104,6 +105,15 @@ const EVENTS = {
   Live: session,
   Closed: (p: any) => ({ ...session(p), reason: text(p?.reason, 64) }),
   Look: () => ({}),
+  // A vote on the change, appended in the vote's own statement
+  // (routes/votes.js recordVote, retractVote): `vote` 'retracted' for one
+  // taken back. `epoch`: the approval epoch it was cast at.
+  Voted: (p: any) => {
+    if (!['yes', 'no', 'retracted'].includes(p?.vote)) throw new Error('vote must be yes, no or retracted');
+    const epoch = Number(p?.epoch);
+    return { ...session(p), voterId: int(p?.voterId, 'voterId'), voter: text(p?.voter, 100), vote: p.vote as string,
+      epoch: Number.isInteger(epoch) && epoch >= 0 ? epoch : 0 };
+  },
   RetryFollowup: (p: any) => {
     if (typeof p?.workKey !== 'string' || !p.workKey) throw new Error('workKey is required');
     return { workKey: p.workKey as string };
@@ -279,6 +289,19 @@ function wentLive(s: BState, e: Event<any>, f: Facts): Outcome<BState> {
   return step('live', asked(stop.d, work), { work: [...work, ...stop.work], timer: null });
 }
 
+// A vote: whoever asked for the change reads its tray again (it names who
+// it still waits on), and a yes is a quiet line in the request's thread
+// ("ada approved it."), once per voter and epoch. Said after the vote's
+// commit before, a restart in between lost it.
+function voted(s: BState, e: Event<any>, f: Facts): Outcome<BState> {
+  const live = s as Live;
+  const key = `approved:${e.payload.voterId}:${e.payload.epoch}`;
+  const work: WorkRequest[] = e.payload.vote === 'yes' && !live.data.notes[key]
+    ? [{ kind: WORK.approved, key, input: { sessionId: live.data.sessionId, voterId: e.payload.voterId, voter: e.payload.voter, epoch: e.payload.epoch } }]
+    : [];
+  return step(live.name as Name, asked(live.data, work), { work, push: tray(f) });
+}
+
 function closed(s: Live): Outcome<BState> {
   return step('closed', s.data, { timer: null });
 }
@@ -353,13 +376,14 @@ export function botChange(): Machine<BState, Facts> {
     Merged: { to: merged },
     Live: { to: wentLive },
     Closed: { to: closed as any },
+    Voted: { to: voted },
     RetryFollowup: retryFollowup,
     ...works,
   };
   const ended = {
     Proposed: { ignore: 'ended' }, Verdict: { ignore: 'ended' }, ShotsSettled: { ignore: 'ended' }, FixRoundEnded: { ignore: 'ended' }, FixRefused: { ignore: 'ended' },
     Look: { ignore: 'ended' }, PreviewStopped: { ignore: 'ended' }, Merged: { ignore: 'ended' }, Live: { ignore: 'ended' },
-    Closed: { ignore: 'ended' }, RetryFollowup: retryFollowup, ...works,
+    Closed: { ignore: 'ended' }, Voted: { ignore: 'ended' }, RetryFollowup: retryFollowup, ...works,
   };
   // Once merged only its Merged (when a look saw the merge first) and its
   // Live move it on.
@@ -382,7 +406,9 @@ export function botChange(): Machine<BState, Facts> {
   });
   return defineMachine<BState, Facts>({
     name: MACHINE,
-    version: 1,
+    // 2: a vote on the change (Voted, bot.tellApproved): an older Pod would
+    // refuse its event and leave its work's result unread.
+    version: 2,
     events: EVENTS,
     create: CREATE,
     terminal: [...FINAL],
@@ -405,6 +431,7 @@ export function botChange(): Machine<BState, Facts> {
       Live: fromMachine('merge-followups'),
       Closed: fromMachine('proposal'),
       Look: timer,
+      Voted: (e: Event<any>): Check => (e.source.kind === 'route' || e.source.kind === 'system' ? ok() : reject('not_a_producer')),
       RetryFollowup: admin,
     },
     transitions: {

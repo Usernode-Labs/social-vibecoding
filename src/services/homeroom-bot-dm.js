@@ -629,26 +629,47 @@ async function sendDm(pool, {
   let greeted = false;
   const helloStored = hello?.metadata
     ? storyMetadata(hello.metadata, { moment: story, threadRootId: root }) : null;
-  const helloHooks = hello?.kind ? {
-    prepare: async (db) => {
-      const { rows: claimed } = await db.query(CLAIM_HELLO_SQL, [Number(userId), Number(bot.id), String(hello.kind)]);
-      greeted = claimed[0]?.kind === hello.kind;
-      if (!greeted) return hello.content ? null : { refuse: true };
-      return hello.content
-        ? { content: clip(hello.content, conversations.MAX_MESSAGE_LENGTH || 8000), metadata: helloStored ? { [META]: helloStored } : null }
-        : null;
-    },
-    afterInsert: async (db, { messageId: id }) => {
-      if (greeted) await db.query('UPDATE homeroom_bot_hellos SET message_id = $2 WHERE user_id = $1', [Number(userId), id]);
-    },
-  } : {};
+  // WP-E: the email that stands in for the push when no phone can take it,
+  // for "ready to try", or a first version's LIVE, the moment its maker was
+  // promised. A first version goes live without a vote a minute or two after
+  // it is ready to try (D1), and two emails that close together would be one
+  // too many (mail/rate-limit.js holds build mail five minutes apart), so its
+  // ready sends none; its live is worded as its push is, from the detail.
+  // Owed in the message's own transaction (the bot-dm machine's `dm.mail`):
+  // sent after the commit, a restart in between lost it for good.
+  const mailFor = metadata?.firstVersion ? 'live' : 'ready';
+  const mail = !muted && story === mailFor ? {
+    kind: 'build_ready', appName: metadata?.appName || null, appSlug: metadata?.appSlug || null,
+    conversationId: opened.conversationId, threadRootId: root || null,
+    ...(story === 'live' ? { detail } : {}),
+    // Built, but part of it failed when Homeroom tried it: not "ready to try".
+    ...(Array.isArray(metadata?.ready?.broken) && metadata.ready.broken.length ? { notWorking: true } : {}),
+  } : null;
+  const hooks = {
+    ...(hello?.kind ? {
+      prepare: async (db) => {
+        const { rows: claimed } = await db.query(CLAIM_HELLO_SQL, [Number(userId), Number(bot.id), String(hello.kind)]);
+        greeted = claimed[0]?.kind === hello.kind;
+        if (!greeted) return hello.content ? null : { refuse: true };
+        return hello.content
+          ? { content: clip(hello.content, conversations.MAX_MESSAGE_LENGTH || 8000), metadata: helloStored ? { [META]: helloStored } : null }
+          : null;
+      },
+    } : {}),
+    ...(hello?.kind || mail ? {
+      afterInsert: async (db, { messageId: id }) => {
+        if (greeted) await db.query('UPDATE homeroom_bot_hellos SET message_id = $2 WHERE user_id = $1', [Number(userId), id]);
+        if (mail) await require('../workflow/platform.ts').dmMailOwed(db, { userId: Number(userId), messageId: id, mail });
+      },
+    } : {}),
+  };
   const send = (withCards) => conversations.sendMessage(pool, { id: bot.id }, opened.conversationId,
     withCards.length
       ? { ...input, objects: withCards }
       : { ...input, ...(cards.length && withoutCards ? { content: clip(withoutCards, conversations.MAX_MESSAGE_LENGTH || 8000) } : {}) },
     {
       metadata: stored ? { [META]: stored } : null, notify: !!story && !muted, notificationDetail: detail,
-      notificationKind: (story && BUILD_KINDS[story]) || null, notificationAppId, ...helloHooks,
+      notificationKind: (story && BUILD_KINDS[story]) || null, notificationAppId, ...hooks,
     });
   let result = await send(cards);
   if (!result && cards.length) {
@@ -660,29 +681,6 @@ async function sendDm(pool, {
     return null;
   }
   const messageId = result.messageId ?? result.message?.id ?? null;
-  if (!result.duplicate && !muted && story === 'ready' && !metadata?.firstVersion) {
-    // WP-E: "ready to try" by email when no phone can take the push.
-    void require('./activity-mail').emailIfNoPush(pool, {
-      userId, kind: 'build_ready', appName: metadata?.appName || null, appSlug: metadata?.appSlug || null,
-      conversationId: opened.conversationId,
-      // Its button opens the request's thread (contract 2.2).
-      messageId, threadRootId: root,
-      ...(stored?.requestTitle ? { requestTitle: stored.requestTitle } : {}),
-      // Built, but part of it failed when Homeroom tried it: not "ready to try".
-      ...(Array.isArray(metadata?.ready?.broken) && metadata.ready.broken.length ? { notWorking: true } : {}),
-    });
-  }
-  if (!result.duplicate && !muted && story === 'live' && metadata?.firstVersion) {
-    // Run six: a first version's email is its LIVE, the moment its maker
-    // was promised. It goes live without a vote a minute or two after it is
-    // ready to try (D1), and two emails that close together would be one
-    // too many (mail/rate-limit.js holds build mail five minutes apart), so
-    // its ready sends none. Worded as its push is, from the detail.
-    void require('./activity-mail').emailIfNoPush(pool, {
-      userId, kind: 'build_ready', appName: metadata?.appName || null, appSlug: metadata?.appSlug || null,
-      conversationId: opened.conversationId, messageId, threadRootId: root, detail,
-    });
-  }
   if (!result.duplicate) {
     await retireSuggestions(pool, {
       botId: bot.id, conversationId: opened.conversationId, keepMessageId: messageId, userId,
@@ -1959,7 +1957,7 @@ async function stepLine(pool, {
  * (homeroom-bot-activity.js, noteApproved). Resolves what sendDm did, or
  * null. Never throws.
  */
-async function noteStep(pool, { bot = null, userId, app, issueNumber, content, step, key = null, actions = null }) {
+async function noteStep(pool, { bot = null, userId, app, issueNumber, content, step, key = null, actions = null, strict = false }) {
   try {
     const sender = bot || await botAccount(pool);
     if (!sender?.id || !userId || !app?.id) return null;
@@ -1975,6 +1973,8 @@ async function noteStep(pool, { bot = null, userId, app, issueNumber, content, s
       },
     });
   } catch (err) {
+    // Strict (a workflow machine's work): thrown, so the item tries again.
+    if (strict) throw err;
     log.warn('homeroom-bot-dm', 'Could not note a step', { app: app?.slug, issueNumber, step, err: err.message });
     return null;
   }
@@ -3041,7 +3041,7 @@ async function closeOlderReadyCards(pool, { userId, appId, issueNumber, keepMess
 // DM reads its activity cards (homeroom-bot-activity.js cardsFor), on the
 // same events: the bot's news landing in the DM (its "It's live now." is
 // one), the loop's work changing (a merge or a close announces it,
-// the change machine's tray push), and a vote on the change (noteVoted). What is read
+// the change machine's tray push), and a vote on the change (the same push). What is read
 // is where the change stands now and, while it is up for approval, who it
 // still waits on and what happens next once the reader has said Yes.
 // Nothing is written: the message keeps its words for the inbox and the push.
@@ -3209,45 +3209,33 @@ async function readyStates(pool, { user }) {
 }
 
 /**
- * Somebody voted on a change (routes/votes.js). When it is one of the
- * bot's, whoever asked for it has their DM read again, so their ready card
- * says who it still waits on as it stands now (readyStates): it used to keep
- * the names it was sent with until the change went live. One indexed read
- * for any other change. Resolves the requester's id, or null. Never throws.
+ * A yes on one of the bot's changes (the bot-change machine's
+ * `bot.tellApproved`, from the vote's own statement): a quiet line in the
+ * request's thread, "ada approved it." (or "You approved it." for its
+ * requester), once per voter and approval epoch. Throws when it could not be
+ * said, so the work tries again. Resolves what was sent, or null.
  */
-async function noteVoted(pool, sessionId, deps = {}) {
+async function sayApproved(pool, sessionId, { voterId, voter = null, epoch = 0 } = {}) {
   const id = Number(sessionId);
-  if (!Number.isInteger(id) || id <= 0) return null;
-  try {
-    const { rows } = await pool.query(
-      `SELECT q.user_id, r.issue_number, a.id AS app_id, a.slug, a.name, cs.approval_epoch
-         FROM homeroom_bot_runs r
-         JOIN homeroom_bot_requesters q ON q.app_id = r.app_id AND q.issue_number = r.issue_number
-         JOIN apps a ON a.id = r.app_id
-         LEFT JOIN chat_sessions cs ON cs.id = r.proposal_session_id
-        WHERE r.proposal_session_id = $1
-        ORDER BY r.id DESC LIMIT 1`,
-      [id],
-    );
-    if (!rows.length) return null;
-    require('./homeroom-bot-tray').noteWorkChanged(rows[0].user_id, deps);
-    // One story: a yes is a quiet line in the request's thread ("ada
-    // approved it."), once per voter and version of the change.
-    const voter = deps.voter;
-    if (deps.vote === 'yes' && voter?.id) {
-      const row = rows[0];
-      const mine = Number(voter.id) === Number(row.user_id);
-      await noteStep(pool, {
-        userId: Number(row.user_id), app: { id: row.app_id, slug: row.slug, name: row.name }, issueNumber: Number(row.issue_number),
-        step: 'approved', content: mine ? 'You approved it.' : `@${voter.username} approved it.`,
-        key: `hrbot-step-approved-${id}-${Number(voter.id)}-${Number(row.approval_epoch) || 0}`,
-      });
-    }
-    return Number(rows[0].user_id);
-  } catch (err) {
-    log.warn('homeroom-bot-dm', 'Could not announce a vote on the bot\'s change', { sessionId: id, err: err.message });
-    return null;
-  }
+  if (!Number.isInteger(id) || id <= 0 || !Number(voterId)) return null;
+  const { rows } = await pool.query(
+    `SELECT q.user_id, r.issue_number, a.id AS app_id, a.slug, a.name
+       FROM homeroom_bot_runs r
+       JOIN homeroom_bot_requesters q ON q.app_id = r.app_id AND q.issue_number = r.issue_number
+       JOIN apps a ON a.id = r.app_id
+      WHERE r.proposal_session_id = $1
+      ORDER BY r.id DESC LIMIT 1`,
+    [id],
+  );
+  const row = rows[0];
+  if (!row) return null;
+  const mine = Number(voterId) === Number(row.user_id);
+  if (!mine && !voter) return null;
+  return noteStep(pool, {
+    userId: Number(row.user_id), app: { id: row.app_id, slug: row.slug, name: row.name }, issueNumber: Number(row.issue_number),
+    step: 'approved', content: mine ? 'You approved it.' : `@${voter} approved it.`,
+    key: `hrbot-step-approved-${id}-${Number(voterId)}-${Number(epoch) || 0}`, strict: true,
+  });
 }
 
 /**
@@ -5779,7 +5767,7 @@ module.exports = {
   MAX_READY_APPROVALS,
   readyStateOf,
   readyStates,
-  noteVoted,
+  sayApproved,
   openAppAction,
   firstLiveActions,
   // B6: a first version's plan.

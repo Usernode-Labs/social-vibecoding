@@ -2,34 +2,28 @@
 
 // Live session-state notifier (#1038).
 //
-// "Is a turn in flight for session N" is in-process memory only — see
-// services/active-workers.js (`activeWorkers`, `activeSessionOperations`,
-// and worker.js's warm-registry `inFlight` flag). Nothing about a turn's
-// start or end used to be broadcast, so every client surface that shows
-// working state (the header cog, the Dev board's session cards, the
-// kanban issue cards' auto-run state) had to guess on a timer.
-//
-// This module is the single choke point that turns those in-memory
-// mutations into ONE scoped `session_state` WebSocket event per real
-// transition:
+// Every client surface that shows working state (the header cog, the Dev
+// board's session cards, the kanban issue cards' auto-run state) hears a
+// scoped `session_state` WebSocket event when a session's working state may
+// have changed, instead of guessing on a timer:
 //
 //   activeWorkers.add(id)  ─┐
-//   beginSessionOperation() ├─→ touch(id) ─→ coalesce ─→ recompute ─→
-//   worker inFlight change  │                            publish-on-change
+//   beginSessionOperation() ├─→ touch(id) ─→ coalesce ─→ recompute ─→ publish
+//   worker inFlight change  │
 //   headless_status write  ─┘
 //
-// Why coalescing: a turn start fires `activeWorkers.add()` and then
-// `_registryUpsert({inFlight:true})` back to back, and the two would
-// otherwise produce two identical events. A short per-session timer plus
-// a "did the observable state actually change" comparison collapses them.
+// A change's own turn starting and ending is told by the turn machine's
+// transition (src/workflow/turn/machine.ts, pushes.ts sessionState), from
+// whichever process runs it.
 //
-// Why NOT a DB column: `chat_sessions.active_turn` is a durable turn
-// record for restart recovery, not a live busy flag — production carries
-// non-NULL values on archived rows months old. The in-memory registries
-// are authoritative, and Caddy points at exactly one platform color at a
-// time (scripts/platform-rollout.sh), so they are globally consistent for
-// every connected client. A color cutover drops every socket, which takes
-// the client's reconnect → reconcile path.
+// Busy is what every process can see: this process's memory, then the
+// workflow's records (active-workers.js isSessionBusyAnywhere, session-
+// work.ts workedOnSql). Whether to tell is never this process's memory of
+// what it told last: a session one process said was busy is said idle by
+// another, which never said busy, once the work ends there. So every
+// recompute publishes; coalescing keeps a turn's edges to one event (a turn
+// start fires `activeWorkers.add()` and then `_registryUpsert({inFlight:
+// true})` back to back).
 
 const log = require('./logger');
 
@@ -38,16 +32,8 @@ const log = require('./logger');
 // the cog still reads as instant.
 const COALESCE_MS = 150;
 
-// sessionId -> stateKey last published. An absent entry means "idle" (see
-// IDLE_KEY), so a never-seen session that computes idle publishes nothing.
-const lastPublished = new Map();
 // sessionId -> pending coalesce timer.
 const pending = new Map();
-
-// The observable state of a session nobody is working on. Sessions that
-// settle here publish one final event and then drop out of the map, so it
-// can never grow with the session table.
-const IDLE_KEY = 'idle';
 
 // Injected by routes/sessions.js at router construction (it owns the pool
 // and the module-local stopRegistry). Left unset in unit tests, where the
@@ -95,20 +81,6 @@ function isIdleState(state) {
   if (state.busy || state.stopping) return false;
   if (state.headless && state.headless.status === 'generating') return false;
   return true;
-}
-
-function stateKey(state) {
-  if (isIdleState(state)) return IDLE_KEY;
-  const hl = state.headless
-    ? `${state.headless.status || ''}:${state.headless.outcome || ''}`
-    : '';
-  return [
-    state.busy ? '1' : '0',
-    state.phase || '',
-    state.stopping ? '1' : '0',
-    state.status || '',
-    hl,
-  ].join('|');
 }
 
 // The live in-memory facts about a session, with no database involved.
@@ -181,12 +153,11 @@ function buildPayload(sessionId, row, live) {
   };
 }
 
-// sessionId -> the recompute currently awaiting its row lookup. Recomputes
-// for one session MUST NOT overlap: each reads `lastPublished`, and two
-// interleaved ones can publish out of order under a slow database, leaving
-// a client showing `busy` for a turn that already ended (until the next
-// reconcile tick). Serializing per session is enough — different sessions
-// are independent.
+// sessionId -> the recompute currently awaiting its reads. Recomputes for
+// one session MUST NOT overlap: two interleaved ones can publish out of
+// order under a slow database, leaving a client showing `busy` for a turn
+// that already ended (until the next reconcile tick). Serializing per
+// session is enough — different sessions are independent.
 const inFlight = new Map();
 
 function recompute(sessionId) {
@@ -205,20 +176,18 @@ async function recomputeOnce(id) {
   // Read the live registries AFTER the queue clears, not before it — a
   // recompute queued behind another must reflect the state as of its turn.
   const live = liveState(id);
+  if (!live.busy && _pool) {
+    live.busy = await require('./active-workers').isSessionBusyAnywhere(id, { pool: _pool });
+  }
   const row = await loadRow(id);
   const payload = buildPayload(id, row, live);
-  const key = stateKey(payload);
-  const prev = lastPublished.get(id) || IDLE_KEY;
-  if (key === prev) return null;
-  if (key === IDLE_KEY) lastPublished.delete(id);
-  else lastPublished.set(id, key);
   publish(payload);
   return payload;
 }
 
 // Coalescing entry point. Every in-memory mutation that could change a
 // session's observable state funnels through here; at most one recompute
-// runs per session per COALESCE_MS window.
+// (and one event) runs per session per COALESCE_MS window.
 function touch(sessionId) {
   const id = Number(sessionId);
   if (!Number.isFinite(id) || id <= 0) return;
@@ -235,12 +204,11 @@ function touch(sessionId) {
   pending.set(id, t);
 }
 
-// Test helper — drop all memory of what was published.
+// Test helper — drop every pending recompute.
 function _reset() {
   for (const t of pending.values()) clearTimeout(t);
   pending.clear();
   inFlight.clear();
-  lastPublished.clear();
 }
 
 module.exports = {

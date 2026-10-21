@@ -506,6 +506,9 @@ async function runAgentTurn({
   let compactionPlan = null;
   let summary = { text: null, throughId: 0 };
   let failed = false;
+  // The change a failed turn was on, owed "Session stopped before
+  // finishing" when nobody watches (#4729): what the turn hands its machine.
+  let stalled = null;
   const cards = [];
   const toolLog = [];
 
@@ -1022,15 +1025,13 @@ async function runAgentTurn({
         event: 'turn_failed',
         metadata: { agentTurnId: turnId, retryable: true },
       }).catch(() => {});
-      // The bell's other line (#4729): a turn that died mid-work bell
+      // The bell's other line (#4729): a turn that died mid-work bells
       // "Session stopped before finishing" against the change it was on,
-      // when nobody was watching — a stop or an interruption was answered
-      // where it happened, so those stay out of the bell. Off this catch's
-      // critical path: the turn is already recorded as failed.
-      if (session && session.activeChange) {
-        const changeId = session.activeChange.id;
-        void watching().then((seen) => (seen ? null : d.notifyStalled(pool, changeId))).catch(() => {});
-      }
+      // when nobody is watching — a stop or an interruption was answered
+      // where it happened, so those stay out of the bell. Owed by the
+      // turn's end, as its machine's work (turn.stalled, which looks who
+      // watches then): sent after this catch instead, a restart lost it.
+      if (session && session.activeChange) stalled = Number(session.activeChange.id);
     }
   } finally {
     clearInterval(stopPoll);
@@ -1060,6 +1061,7 @@ async function runAgentTurn({
   if (compactionPlan && !failed) {
     await compactHistory({ pool, config, user, agentSessionId, mayor, summary, plan: compactionPlan, d });
   }
+  return stalled ? { stalled } : {};
 }
 
 async function compactHistory({ pool, config, user, agentSessionId, mayor, summary, plan, d }) {

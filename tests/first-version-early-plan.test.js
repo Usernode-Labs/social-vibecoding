@@ -155,31 +155,63 @@ test('the plan is asked of the configuration\'s triage model through the helper 
 });
 
 test('started once, only for a first version the bot builds, and never without a model', async () => {
+  // The claim owes its project's app-creation work (app.plan) in its own
+  // statement: claimed and then asked in the background before, a restart in
+  // between left it pending until its readers gave up.
   const sql = [];
-  let claim = [{ app_id: 3 }];
+  let claim = [{ app_id: 3, owed: true }];
   const pool = { async query(text, params) { sql.push({ text, params }); return { rows: /SET early_plan_status = 'pending'/.test(text) ? claim : [] }; } };
-  const deps = {
-    llm: { isEnabled: () => true, estimateCostCents: () => 0, async generateFirstVersionPlan() { return { text: JSON.stringify(REPLY) }; } },
-    limits: { async recordSpend() {} },
-    bot: { projectMembers: async () => null, starterOfApp: async () => null },
-    botConfigs: { async currentVersion() { return null; } },
-  };
+  const deps = { llm: { isEnabled: () => true } };
   assert.equal(await fvPlan.startEarlyPlan(pool, { app: { id: 3, name: 'Club Votes' }, user: { id: 7 }, brief: 'Polls' }, deps), true);
+  assert.equal(sql.length, 1, 'one statement');
   assert.match(sql[0].text, /WHERE app_id = \$1 AND user_id = \$2 AND bot_builds = TRUE AND early_plan_status IS NULL/);
-  await fvPlan._pendingForTests.get(3);
-  const saved = sql.find((q) => /SET early_plan_status = \$2, early_plan = \$3::jsonb/.test(q.text));
-  assert.equal(saved.params[1], 'ready');
-  assert.deepEqual(JSON.parse(saved.params[2]).bullets.length, 3);
+  assert.match(sql[0].text, /INSERT INTO wf_events[\s\S]*SELECT 'app-creation', 'app:' \|\| c\.app_id, c\.app_id, 'PlanOwed'/);
+  const { MACHINE, creationKey } = require('../src/workflow/app-creation/machine.ts');
+  assert.deepEqual([MACHINE, creationKey(3)], ['app-creation', 'app:3']);
   claim = [];
   assert.equal(await fvPlan.startEarlyPlan(pool, { app: { id: 3 }, user: { id: 7 }, brief: 'Polls' }, deps), false, 'claimed already');
-  assert.equal(await fvPlan.startEarlyPlan(pool, { app: { id: 3 }, user: { id: 7 }, brief: 'Polls' }, { ...deps, llm: { isEnabled: () => false } }), false, 'no model');
+  assert.equal(await fvPlan.startEarlyPlan(pool, { app: { id: 3 }, user: { id: 7 }, brief: 'Polls' }, { llm: { isEnabled: () => false } }), false, 'no model');
   // From the made screen's doors only (routes/apps.js MAKE_ORIGINS).
   const route = read('src/routes/apps.js');
   assert.match(route, /homeroomBotDm\.startFirstVersion\(pool, config, \{\s+app: appRow, user: req\.user, brief: req\.body\.brief,[\s\S]*?earlyPlan: MAKE_ORIGINS\.has\(req\.body\.from\),/);
   assert.match(read('src/services/homeroom-bot-dm.js'),
-    // And, since newcomer run six, the server's config and the bot, for the
-    // early first look drawn from the plan (tests/first-version-early-look.test.js).
     /if \(bot && earlyPlan\) await require\('\.\/first-version-plan'\)\.startEarlyPlan\(pool, \{ app, user, brief: text, config, bot \}\);/);
+});
+
+test('the plan a claim owes is asked once, saved while its readers still wait, and says whether a look is owed', async () => {
+  const sql = [];
+  let row = { user_id: 7, brief: 'Polls', early_plan_status: 'pending', id: 3, name: 'Club Votes', slug: 'club-votes' };
+  let saved = 1;
+  const pool = {
+    async query(text, params) {
+      sql.push({ text, params });
+      if (/FROM homeroom_bot_first_versions f JOIN apps a/.test(text)) return { rows: row ? [row] : [] };
+      if (/SET early_plan_status = \$2, early_plan = \$3::jsonb/.test(text)) return { rows: [], rowCount: saved };
+      return { rows: [] };
+    },
+  };
+  let asked = 0;
+  const deps = {
+    llm: { isEnabled: () => true, estimateCostCents: () => 0, async generateFirstVersionPlan() { asked += 1; return { text: JSON.stringify(REPLY) }; } },
+    limits: { async recordSpend() {} },
+    bot: { projectMembers: async () => null, starterOfApp: async () => null },
+    botConfigs: { async currentVersion() { return null; } },
+    timeline: { async record() {} },
+  };
+  const kept = new Map();
+  const steps = { once: async (k, fn) => (kept.has(k) ? kept.get(k) : kept.set(k, await fn()).get(k)) };
+  assert.deepEqual(await fvPlan.runEarlyPlan(pool, { appId: 3, steps }, deps), { planned: true });
+  const write = sql.find((q) => /SET early_plan_status = \$2, early_plan = \$3::jsonb/.test(q.text));
+  assert.equal(write.params[1], 'ready');
+  assert.deepEqual(JSON.parse(write.params[2]).bullets.length, 3);
+  assert.match(write.text, /created_at > NOW\(\) - make_interval\(secs => \$6::int\)/, 'not once its readers went on');
+  // A try again after the reply came asks the model no second time.
+  assert.deepEqual(await fvPlan.runEarlyPlan(pool, { appId: 3, steps }, deps), { planned: true });
+  assert.equal(asked, 1);
+  saved = 0;
+  assert.deepEqual(await fvPlan.runEarlyPlan(pool, { appId: 3, steps }, deps), { planned: false, skipped: 'too_late' });
+  row = { ...row, early_plan_status: 'ready' };
+  assert.deepEqual(await fvPlan.runEarlyPlan(pool, { appId: 3 }, deps), { planned: false, skipped: 'settled' });
 });
 
 test('a plan\'s state: pending until written (a stopped process\'s reads failed), decided once answered or when it asks nothing', () => {

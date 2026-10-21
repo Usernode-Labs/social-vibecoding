@@ -9,6 +9,10 @@
 // (src/workflow/app-delivery/), which runs every production deploy, one at a
 // time per app: there is one deploy path. Its first request, when it was made
 // with a description, is filed beside that deploy (app.firstRequest), once.
+// A first version the Homeroom bot builds, made from a door that lands on the
+// made screen, has its plan written meanwhile (PlanOwed → app.plan, appended
+// with its claim) and then its early first look drawn (app.earlyLook), each
+// once, whatever state the project is in.
 //
 // Every status a person sees while it is made is written here, under the
 // instance: creating (a Retry), running, awaiting_secrets, error. A late
@@ -30,7 +34,9 @@ import type { Facts } from './facts.ts';
 
 export const MACHINE = 'app-creation';
 export const creationKey = (appId: number) => `app:${appId}`;
-export const WORK = Object.freeze({ setup: 'app.setup', firstRequest: 'app.firstRequest' });
+export const WORK = Object.freeze({ setup: 'app.setup', firstRequest: 'app.firstRequest', plan: 'app.plan', earlyLook: 'app.earlyLook' });
+// The first version's plan and early look: work beside the making, in any state.
+const PLAN_WORK: ReadonlySet<string> = new Set([WORK.plan, WORK.earlyLook]);
 
 const SEC = 1000;
 const MIN = 60 * SEC;
@@ -85,6 +91,9 @@ const EVENTS = {
   // A first request the project is owed that nothing files (an older
   // build left it open: the release's adoption).
   FirstRequestOwed: appOnly,
+  // Its first version's plan was claimed (services/first-version-plan.js
+  // startEarlyPlan, in the claim's own statement).
+  PlanOwed: appOnly,
   // Its time limit, and the recheck of a row an older build makes.
   TimedOut: () => ({}),
   Recheck: () => ({}),
@@ -267,16 +276,25 @@ export function appCreation(): Machine<CState, Facts> {
   const ofSetup = (s: any, e: Event<WorkResultPayload>): Check =>
     (e.payload.kind === WORK.setup && e.payload.workKey === `setup:${s.data.attempt}` ? ok() : reject('stale_result'));
   const setupResult = { guard: ofSetup, to: (s: any, e: Event<any>, f: Facts, ctx: TransitionContext) => setUpEnded(s, e, f, ctx) };
-  // The first request's work reports here; what it did is its own (the
-  // first-version row).
-  const filed = { ignore: 'first_request' };
+  // The first request's work reports here, and the plan's: what each did is
+  // its own (the first-version row). A plan written owes its early first
+  // look.
+  const planDone = (s: any, e: Event<WorkResultPayload>): Outcome<CState> =>
+    (e.type === 'WorkSucceeded' && e.payload.kind === WORK.plan && (e.payload.result as any)?.planned
+      ? { next: s, work: [{ kind: WORK.earlyLook, key: 'early-look', input: { appId: s.data.appId } }] }
+      : { next: s });
   const workResult = (setup: any) => ({
     guard: (s: any, e: Event<WorkResultPayload>, f: Facts, ctx: TransitionContext): Check =>
-      (e.payload.kind === WORK.firstRequest ? ok() : setup.guard ? setup.guard(s, e, f, ctx) : ok()),
+      (e.payload.kind === WORK.firstRequest || PLAN_WORK.has(e.payload.kind) ? ok() : setup.guard ? setup.guard(s, e, f, ctx) : ok()),
     to: (s: any, e: Event<any>, f: Facts, ctx: TransitionContext) =>
-      (e.payload.kind === WORK.firstRequest ? { next: s } : setup.to(s, e, f, ctx)),
+      (PLAN_WORK.has(e.payload.kind) ? planDone(s, e) : e.payload.kind === WORK.firstRequest ? { next: s } : setup.to(s, e, f, ctx)),
   });
+  const planOwed = {
+    guard: (s: any, e: Event<any>, f: Facts, ctx: TransitionContext): Check => keyed(e, ctx),
+    to: (s: any): Outcome<CState> => ({ next: s, work: [{ kind: WORK.plan, key: 'plan', input: { appId: s.data.appId } }] }),
+  };
   const late = { to: (s: any) => ({ next: s }) };
+  const made = workResult(late);
   // A first request an older build left open: filed by this machine's work
   // (once: its key), whatever state the project is in once it has a
   // repository. A project with no instance yet gets one in the state its
@@ -299,7 +317,10 @@ export function appCreation(): Machine<CState, Facts> {
 
   return defineMachine<CState, Facts>({
     name: MACHINE,
-    version: 1,
+    // 2: its first version's plan and early look (PlanOwed, app.plan,
+    // app.earlyLook): an older Pod refuses the event and leaves the plan's
+    // result unread.
+    version: 2,
     events: EVENTS,
     create: ['Started', 'Adopted', 'Retry', 'FirstRequestOwed'],
     decode: (row) => (row.state === NONE ? { name: NONE, data: null } : { name: row.state as Name, data: row.data as Data }),
@@ -311,6 +332,7 @@ export function appCreation(): Machine<CState, Facts> {
       Adopted: (e) => (e.source.kind === 'system' ? ok() : reject('system_only')),
       Retry: (e) => (e.source.kind === 'system' || e.source.kind === 'admin' ? ok() : reject('system_only')),
       FirstRequestOwed: (e) => (e.source.kind === 'system' ? ok() : reject('system_only')),
+      PlanOwed: (e) => (e.source.kind === 'system' ? ok() : reject('system_only')),
       TimedOut: (e) => (e.source.kind === 'timer' ? ok() : reject('timer_only')),
       Recheck: (e) => (e.source.kind === 'timer' ? ok() : reject('timer_only')),
       Delivered: fromDelivery,
@@ -320,9 +342,14 @@ export function appCreation(): Machine<CState, Facts> {
       [NONE]: { Started: started, Adopted: adopted, Retry: retry, FirstRequestOwed: owed },
       waiting: {
         Recheck: { to: (s: any, e: Event<any>, f: Facts, ctx: TransitionContext) => recheck(s, e, f, ctx) },
+        PlanOwed: planOwed,
+        WorkSucceeded: made,
+        WorkFailed: made,
+        WorkExhausted: made,
         '*': { ignore: 'waiting' },
       },
       setting_up: {
+        PlanOwed: planOwed,
         WorkSucceeded: workResult(setupResult),
         WorkFailed: workResult(setupResult),
         WorkExhausted: workResult(setupResult),
@@ -334,22 +361,24 @@ export function appCreation(): Machine<CState, Facts> {
         DeliveryFailed: { to: (s: any, e: Event<any>, f: Facts, ctx: TransitionContext) => deliveryFailed(s, e, f, ctx) },
         TimedOut: { to: (s: any, e: Event<any>, f: Facts, ctx: TransitionContext) => timedOut(s, e, f, ctx) },
         FirstRequestOwed: owed,
-        WorkSucceeded: workResult(late),
-        WorkFailed: workResult(late),
-        WorkExhausted: workResult(late),
+        PlanOwed: planOwed,
+        WorkSucceeded: made,
+        WorkFailed: made,
+        WorkExhausted: made,
         '*': { ignore: 'deploying' },
       },
       failed: {
         Retry: retry,
         // The first deploy of one that timed out came after all: it runs.
         Delivered: { to: (s: any, e: Event<any>, f: Facts, ctx: TransitionContext) => delivered(s, e, f, ctx) },
-        WorkSucceeded: workResult(late),
-        WorkFailed: workResult(late),
-        WorkExhausted: workResult(late),
+        PlanOwed: planOwed,
+        WorkSucceeded: made,
+        WorkFailed: made,
+        WorkExhausted: made,
         '*': { ignore: 'failed' },
       },
-      running: { FirstRequestOwed: owed, WorkSucceeded: filed, WorkFailed: filed, WorkExhausted: filed, '*': { ignore: 'running' } },
-      awaiting_secrets: { FirstRequestOwed: owed, WorkSucceeded: filed, WorkFailed: filed, WorkExhausted: filed, '*': { ignore: 'awaiting_secrets' } },
+      running: { FirstRequestOwed: owed, PlanOwed: planOwed, WorkSucceeded: made, WorkFailed: made, WorkExhausted: made, '*': { ignore: 'running' } },
+      awaiting_secrets: { FirstRequestOwed: owed, PlanOwed: planOwed, WorkSucceeded: made, WorkFailed: made, WorkExhausted: made, '*': { ignore: 'awaiting_secrets' } },
     },
     writes: {
       // The row is the workflow's. Its heartbeat never lapses, so an older

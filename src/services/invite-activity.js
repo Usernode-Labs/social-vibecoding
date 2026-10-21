@@ -39,13 +39,19 @@
 // or joins: nothing can tell them apart before then.
 //
 // Everything here is best-effort and never throws: a join, a page view or a
-// message must not fail because telling somebody about it did.
+// message must not fail because telling somebody about it did. The email is
+// the exception: it is owed by the notice that rang, and sent as work that
+// tries again (mailTargets, mailOne).
 
 const crypto = require('crypto');
 const events = require('./events');
 const log = require('./logger');
 
 const KINDS = Object.freeze(['invite_opened', 'member_joined', 'first_message']);
+// The moments whose day's first is emailed when no phone could take its push
+// (mailTargets), and for how long that is still news.
+const MAIL_KINDS = new Set(['member_joined', 'first_message']);
+const MAIL_WITHIN_HOURS = 24;
 // A first message counts as a hello for this long after joining. Past it, the
 // maker has long since heard they joined, and "said hi" would be news about
 // somebody who has been around for weeks.
@@ -121,11 +127,13 @@ async function ring(pool, { userId, appId, kind, sourceUserId = null, chatMessag
     let row = bumped[0] || null;
     const fresh = !row;
     if (!row) {
+      // The day's first owes its email (MAIL_KINDS): `mailed_at` NULL, which
+      // the invite-mail clock sends (mailTargets, mailOne).
       const { rows } = await client.query(
-        `INSERT INTO notifications (user_id, app_id, chat_message_id, source_user_id, kind)
-         VALUES ($1, $2, $3, $4, $5)
+        `INSERT INTO notifications (user_id, app_id, chat_message_id, source_user_id, kind, mailed_at)
+         VALUES ($1, $2, $3, $4, $5, CASE WHEN $6 THEN NULL ELSE NOW() END)
          RETURNING id, user_id, app_id, chat_message_id, source_user_id, kind, detail, created_at`,
-        [userId, appId, chatMessageId, sourceUserId, kind],
+        [userId, appId, chatMessageId, sourceUserId, kind, MAIL_KINDS.has(kind)],
       );
       row = rows[0];
     }
@@ -143,13 +151,52 @@ async function ring(pool, { userId, appId, kind, sourceUserId = null, chatMessag
 
 /**
  * The email that stands in for a push the maker cannot get
- * (services/activity-mail.js). Only for the first moment of the day.
+ * (services/activity-mail.js): only for the first moment of a day, and not
+ * for an open. Owed by the notice that rang, in its own insert (ring), and
+ * sent by the invite-mail clock (src/workflow/clock/services.ts): each owed
+ * notice a target (mailTargets), whose item sends it and marks it handled
+ * (mailOne). Past a day it is not news any more, and is not sent.
  */
-function mailFor(pool, result, { appName, appSlug, line }) {
-  if (!result?.fresh) return;
-  void require('./activity-mail').emailIfNoPush(pool, {
-    userId: result.row.user_id, kind: 'invite_activity', appName, appSlug, line,
-  });
+
+async function mailTargets(pool, { limit = 200 } = {}) {
+  const { rows } = await pool.query(
+    `SELECT id FROM notifications
+      WHERE mailed_at IS NULL AND kind = ANY($1::text[])
+        AND created_at > NOW() - make_interval(hours => $2::int)
+      ORDER BY id LIMIT $3`,
+    [[...MAIL_KINDS], MAIL_WITHIN_HOURS, limit],
+  );
+  return { owed: rows.length, items: rows.map((r) => ({ target: `notification:${r.id}`, input: { notificationId: r.id } })) };
+}
+
+// The line each one says, worded from the notice: who and where.
+function mailLine(row) {
+  if (row.kind === 'first_message') return `@${row.username} said hi in ${row.app_name}.`;
+  return `${row.username ? `@${row.username}` : 'Someone'} joined ${row.app_name} through your invite.`;
+}
+
+/**
+ * Send notice `notificationId`'s email when no phone could take its push,
+ * then mark it handled. `steps` (the item's, kernel/steps.ts) keeps the send
+ * to once across tries; a send cut off before it was kept may be sent again.
+ * Resolves what activity mail said, or why nothing was sent.
+ */
+async function mailOne(pool, notificationId, steps) {
+  const { rows: [row] } = await pool.query(
+    `SELECT n.id, n.user_id, n.kind, n.mailed_at, n.created_at > NOW() - make_interval(hours => $2::int) AS recent,
+            a.slug AS app_slug, a.name AS app_name, u.username
+       FROM notifications n
+       JOIN apps a ON a.id = n.app_id
+       LEFT JOIN users u ON u.id = n.source_user_id
+      WHERE n.id = $1`,
+    [notificationId, MAIL_WITHIN_HOURS],
+  );
+  if (!row || row.mailed_at || !MAIL_KINDS.has(row.kind)) return { said: 'settled' };
+  const said = !row.recent ? 'stale' : await steps.once('sent', () => require('./activity-mail').emailIfNoPush(pool, {
+    userId: row.user_id, kind: 'invite_activity', appName: row.app_name, appSlug: row.app_slug, line: mailLine(row),
+  }));
+  await pool.query('UPDATE notifications SET mailed_at = NOW() WHERE id = $1 AND mailed_at IS NULL', [row.id]);
+  return { said };
 }
 
 /**
@@ -171,12 +218,7 @@ async function noteJoined(pool, { inviteId, user, browser = null }) {
     const invite = rows[0];
     if (!invite || invite.created_by == null || !user?.id || Number(invite.created_by) === Number(user.id)) return null;
     await settleOpen(pool, { makerId: invite.created_by, appId: invite.app_id, userId: user.id, browser });
-    const result = await ring(pool, { userId: invite.created_by, appId: invite.app_id, kind: 'member_joined', sourceUserId: user.id });
-    mailFor(pool, result, {
-      appName: invite.name, appSlug: invite.slug,
-      line: `${invite.username ? `@${invite.username}` : 'Someone'} joined ${invite.name} through your invite.`,
-    });
-    return result;
+    return await ring(pool, { userId: invite.created_by, appId: invite.app_id, kind: 'member_joined', sourceUserId: user.id });
   } catch (err) {
     log.warn('invite-activity', 'Could not tell a link\'s maker about a join', { inviteId, err: err.message });
     return null;
@@ -481,14 +523,9 @@ async function noteFirstMessage(pool, { appId, userId, chatMessageId }) {
     );
     const hello = rows[0];
     if (!hello) return null;
-    const result = await ring(pool, {
+    return await ring(pool, {
       userId: hello.created_by, appId, kind: 'first_message', sourceUserId: userId, chatMessageId,
     });
-    mailFor(pool, result, {
-      appName: hello.name, appSlug: hello.slug,
-      line: `@${hello.username} said hi in ${hello.name}.`,
-    });
-    return result;
   } catch (err) {
     log.warn('invite-activity', 'Could not tell a link\'s maker about a first message', { appId, err: err.message });
     return null;
@@ -508,4 +545,6 @@ module.exports = {
   noteOpened,
   settleOpen,
   noteFirstMessage,
+  mailTargets,
+  mailOne,
 };

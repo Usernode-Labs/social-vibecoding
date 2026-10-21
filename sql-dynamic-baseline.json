@@ -894,6 +894,13 @@
     {
       "source": "src/routes/votes.js",
       "kind": "structural-template",
+      "fingerprint": "bb763ad7b1a9ef54a309",
+      "count": 1,
+      "preview": "`WITH told AS (${botChangeVotedSql({ sessionId: '$1::int', voterId: '$2::int', voter: 'NULL::text', vote: \"'retracted'\", epoch: '$3::int' })}) SELECT (SELECT pg"
+    },
+    {
+      "source": "src/routes/votes.js",
+      "kind": "structural-template",
       "fingerprint": "d4cf0cf4e15e7f7d6ad5",
       "count": 1,
       "preview": "`SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_title_fallback, cs.status, cs.created_at, cs.promoted_at, cs.merge_conflict_state, cs.behind_main, cs"
@@ -904,6 +911,13 @@
       "fingerprint": "e334054feeba350dbb69",
       "count": 1,
       "preview": "`SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_title_fallback, cs.pr_summary_md, cs.pr_summary_stale, cs.pr_body, cs.staging_url, cs.testing_md, cs."
+    },
+    {
+      "source": "src/routes/votes.js",
+      "kind": "structural-template",
+      "fingerprint": "ed2a6965e24f99bc2d8f",
+      "count": 1,
+      "preview": "`WITH current_session AS ( SELECT id, approval_epoch FROM chat_sessions WHERE id = $1 AND status IN ('promoted', 'merging') FOR UPDATE ), v AS ( INSERT INTO pr_"
     },
     {
       "source": "src/routes/workshop-overview.js",
@@ -2073,6 +2087,13 @@
       "fingerprint": "67a25f6c533ca0d9c435",
       "count": 1,
       "preview": "`UPDATE shot_runs SET ${sets.join(', ')} WHERE id = $1`"
+    },
+    {
+      "source": "src/workflow/turn/machine.ts",
+      "kind": "structural-template",
+      "fingerprint": "9d44871cf656aeabb6da",
+      "count": 1,
+      "preview": "`SELECT cs.id, cs.app_id, cs.user_id, cs.status, (cs.shared_at IS NOT NULL) AS shared, cs.is_headless, cs.headless_status, cs.headless_outcome, cs.headless_issu"
     }
   ]
 }

@@ -68,6 +68,18 @@ export function botChangeServices({ pool }: Deps): Record<string, WorkHandler> {
       },
     },
 
+    // A yes: a quiet line in the request's thread, under its key per voter
+    // and epoch.
+    [WORK.approved]: {
+      maxAttempts: 5,
+      backoffMs: backoff,
+      async run({ input }): Promise<Json> {
+        const sent = await legacy('services/homeroom-bot-dm').sayApproved(pool, Number(input.sessionId),
+          { voterId: Number(input.voterId), voter: input.voter ?? null, epoch: Number(input.epoch) || 0 });
+        return { said: !!sent };
+      },
+    },
+
     // Live: whoever the bot built it for hears it, in their DM.
     [WORK.liveDm]: {
       maxAttempts: 5,

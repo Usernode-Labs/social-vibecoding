@@ -10,7 +10,7 @@
 //      ready card's change stands (homeroom-bot-dm.js readyStates): live
 //      (with a button that opens the app), going live, closed, or up for
 //      approval with who it waits on as it is now. A vote on the change
-//      reads the requester's DM again (noteVoted).
+//      reads the requester's DM again (the bot's change machine's Voted).
 //   2. "IT'S LIVE NOW." HAS A WAY IN. Its app card was refused (a group the
 //      bot is not in), and the message went out as plain words. It carries
 //      its own Open button now (openAppAction), which opens the app the way
@@ -319,11 +319,15 @@ test('the client keeps a ready card\'s state only as one it knows, and only the 
 });
 
 test('a vote on one of the bot\'s changes reads its requester\'s DM again', () => {
+  // Told to the bot's change machine in the vote's own statement (its tray
+  // push, and a yes's line in the request's thread: bot.tellApproved), so a
+  // restart after the commit loses nothing.
   const votes = read('src/routes/votes.js');
-  const route = votes.slice(votes.indexOf('const goesLive = vote === \'yes\''), votes.indexOf('const voteLabel = session.pr_title'));
-  assert.ok(route.indexOf('if (reasonOnly) {') < route.indexOf('noteVoted(pool, session.id'), 'after a real change of vote only');
-  // One story: with who voted and how, so a yes is a quiet line in the request's thread.
-  assert.match(route, /void require\('\.\.\/services\/homeroom-bot-dm'\)\.noteVoted\(pool, session\.id, \{ voter: req\.user, vote \}\);/);
+  const record = votes.slice(votes.indexOf('async function recordVote('), votes.indexOf('async function retractVote('));
+  assert.match(record, /told AS \(\$\{botChangeVotedSql\(\{ from: 'v', sessionId: 'v\.session_id', voterId: '\$2::int', voter: '\$7::text', vote: '\$3::text', epoch: 'v\.approval_epoch' \}\)\}\)/);
+  assert.doesNotMatch(votes, /noteVoted/);
+  const machine = read('src/workflow/bot-change/machine.ts');
+  assert.match(machine, /return step\(live\.name as Name, asked\(live\.data, work\), \{ work, push: tray\(f\) \}\);/);
   const store = read('frontend/src/features/messages/bot-activity-store.ts');
   assert.match(store, /ready: new Map\(ready\.map\(\(entry\) => \[entry\.messageId, entry\]\)\),/);
 });
@@ -441,14 +445,12 @@ test('Page Turners, read as it stands: the ready card after each Yes and after t
       assert.equal(mine.approval.approved, true);
       assert.equal(mine.approval.missing, 0);
       assert.deepEqual(mine.goesLive, { soon: true });
-      // Priya says Yes elsewhere: Alex's DM is told to read again.
-      pushedTo.length = 0;
+      // Priya says Yes elsewhere: Alex's DM is told to read again (the
+      // bot's change machine's tray push, tests/workflow-bot-notes-postgres).
       await yes(priya);
-      assert.equal(await dm.noteVoted(pool, first.id), alex.id, 'whoever asked for it');
-      assert.deepEqual(pushedTo, [[alex.id, 'homeroom_bot_work_changed']]);
       const [after] = await ready();
       assert.deepEqual([after.approval.missing, after.approval.waitingOn], [0, []]);
-      assert.equal(await dm.noteVoted(pool, 999999), null, 'one indexed read for a change that is not the bot\'s');
+      assert.equal(await dm.sayApproved(pool, 999999, { voterId: priya.id, voter: 'priya' }), null, 'one indexed read for a change that is not the bot\'s');
     });
 
     await t.test('merged: the card says it is live, with no button of its own (#4228)', async () => {

@@ -24,5 +24,23 @@ export function turnServices({ config, pool }: Deps): Record<string, WorkHandler
       concurrency: 256,
       run: (ctx) => legacy('services/turns').run(ctx, { config, pool }),
     },
+    // A conversation opened on a request, named after it (#3752). A request
+    // that cannot be read leaves the first message's name.
+    [WORK.name]: {
+      maxAttempts: 3,
+      backoffMs: (n) => 15 * 1000 * n,
+      run: async ({ input }) => ({
+        title: await legacy('services/agent-sessions').nameFromRequest(pool, {
+          agentSessionId: Number(input.agentSessionId), userId: Number(input.userId),
+        }),
+      }),
+    },
+    // A failed turn's "Session stopped before finishing", once per turn,
+    // unless somebody watches the conversation when it runs.
+    [WORK.stalled]: {
+      maxAttempts: 5,
+      backoffMs: (n) => Math.min(5 * 60 * 1000, 15 * 1000 * 2 ** (n - 1)),
+      run: ({ input }) => legacy('services/turns').tellStalled({ pool }, input),
+    },
   };
 }

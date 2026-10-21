@@ -22,7 +22,9 @@
 import { NONE, defineMachine, ok, reject } from '../kernel/index.ts';
 import type { Event, Json, Outcome, State, TransitionContext, Tx, WorkRequest, WorkResultPayload } from '../kernel/index.ts';
 import { isTurnStop, turnStop } from '../rules/turn-stop.ts';
-import { BUS_CHANNEL, WORKFLOW_SENDER } from '../pushes.ts';
+import { BUS_CHANNEL, WORKFLOW_SENDER, sessionState } from '../pushes.ts';
+import type { SessionStateRow } from '../pushes.ts';
+import { workedOnSql } from '../session-work.ts';
 
 // The stream a turn's events go to (services/session-bus.js): the
 // conversation's own key, or a change's id.
@@ -40,7 +42,7 @@ export function turnEndEvent(key: string, turnId: string): Record<string, unknow
 }
 
 export const MACHINE = 'turn';
-export const WORK = Object.freeze({ run: 'turn.run' });
+export const WORK = Object.freeze({ run: 'turn.run', stalled: 'turn.stalled', name: 'turn.name' });
 export const KINDS = Object.freeze(['agent', 'classic', 'headless', 'recover'] as const);
 export type Kind = typeof KINDS[number];
 
@@ -78,24 +80,60 @@ const decodeStop = (payload: unknown) => {
   return { by: typeof p?.by === 'string' && p.by.trim() ? p.by.trim().slice(0, 100) : null };
 };
 
-// The change whose coding turn this instance's running item owns, for a Stop.
-interface Facts { ownedSessionId: number | null }
+// The change whose coding turn this instance's running item owns, for a
+// Stop. For a change's own turn (`session:<id>`), as a turn starts or ends:
+// its row, for the `session_state` its boards and header read, and whether
+// anything else works on it (session-work.ts workedOnSql, this machine's
+// turns aside).
+interface Facts { ownedSessionId: number | null; change: (SessionStateRow & { other_work: boolean }) | null }
+const NO_CHANGE = { change: null };
+async function readChange(tx: Tx, key: string): Promise<Facts['change']> {
+  const m = /^session:(\d+)$/.exec(key);
+  if (!m) return null;
+  const { rows: [change] } = await tx.query(
+    `SELECT cs.id, cs.app_id, cs.user_id, cs.status, (cs.shared_at IS NOT NULL) AS shared, cs.is_headless,
+            cs.headless_status, cs.headless_outcome, cs.headless_issue_number, a.slug AS app_slug,
+            ${workedOnSql({ turns: false })} AS other_work
+       FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1`, [Number(m[1])]);
+  return change || null;
+}
 async function readFacts(tx: Tx, e: Event<any>, key: string): Promise<Facts> {
-  if (e.type !== 'StopRequested' && e.type !== 'Tick') return { ownedSessionId: null };
+  if (e.type === 'Asked' || e.type.startsWith('Work')) return { ownedSessionId: null, change: await readChange(tx, key) };
+  if (e.type !== 'StopRequested' && e.type !== 'Tick') return { ownedSessionId: null, ...NO_CHANGE };
   const { rows: [r] } = await tx.query(
     `SELECT id FROM chat_sessions
       WHERE active_turn->'owner'->>'machine' = $1 AND active_turn->'owner'->>'key' = $2
       ORDER BY id DESC LIMIT 1`, [MACHINE, key]);
-  return { ownedSessionId: r ? Number(r.id) : null };
+  return { ownedSessionId: r ? Number(r.id) : null, change: e.type === 'Tick' ? await readChange(tx, key) : null };
+}
+
+// A change's turn starting or ending is a change of its working state,
+// told by the transition that decides it: from whichever process ran it,
+// and never left to a process's memory of what it last published
+// (services/session-state.js).
+function withState(out: Outcome<S>, f: Facts, ctx: TransitionContext): Outcome<S> {
+  if (!f.change) return out;
+  const was = out.next as S;
+  const busy = was.name === 'running' || !!f.change.other_work;
+  return { ...out, push: [...(out.push || []), sessionState(f.change, busy, ctx.now)] };
 }
 
 const runWork = (key: string, t: Turn): WorkRequest =>
   ({ kind: WORK.run, key: `run:${t.turnId}`, input: { ...(t.input as object), turnId: t.turnId, kind: t.kind, instanceKey: key } as Json });
 
+// A conversation opened on a request is named after it (#3752), beside the
+// turn that asked for it (agent-sessions.js nameFromRequest): never waited on.
+function nameWork(key: string, t: Turn): WorkRequest[] {
+  const m = /^agent:(\d+)$/.exec(key);
+  const input = t.input as any;
+  if (!m || input?.nameFromRequest !== true) return [];
+  return [{ kind: WORK.name, key: `name:${t.turnId}`, input: { agentSessionId: Number(m[1]), userId: Number(input.userId) } }];
+}
+
 function start(key: string, t: Turn, waiting: Turn[], ctx: TransitionContext): Outcome<S> {
   return {
     next: { name: 'running', data: { running: { ...t, startedAt: ctx.now.toISOString() }, waiting } },
-    work: [runWork(key, t)],
+    work: [runWork(key, t), ...nameWork(key, t)],
     timer: { at: new Date(ctx.now.getTime() + MAX_TURN_MS), event: { type: 'Tick' } },
   };
 }
@@ -117,21 +155,34 @@ const runResult = (s: S, e: Event<any>) => {
   return p.kind === WORK.run && p.workKey === `run:${cur(s).turnId}`;
 };
 
+// A turn that failed on a change (its result's `stalled`) owes its owner
+// "Session stopped before finishing" when nobody watches (#4729):
+// services/turns.js tellStalled, once per turn.
+function stalledWork(s: S, e: Event<any>, key: string): WorkRequest[] {
+  const sessionId = Number(((e.payload as WorkResultPayload).result as any)?.stalled);
+  const m = /^agent:(\d+)$/.exec(key);
+  if (!m || !Number.isInteger(sessionId) || sessionId <= 0) return [];
+  return [{ kind: WORK.stalled, key: `stalled:${cur(s).turnId}`, input: { sessionId, agentSessionId: Number(m[1]) } }];
+}
+
 export function turnMachine() {
   const asked = {
     guard: (_s: S, _e: Event<any>, _f: Facts, ctx: TransitionContext) => (KEY.test(ctx.key) ? ok() : reject('bad_key')),
-    to: (s: S, e: Event<any>, _f: Facts, ctx: TransitionContext): Outcome<S> => {
+    to: (s: S, e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<S> => {
       const t = e.payload as Turn;
       if (s.name === 'running') {
         if (cur(s).turnId === t.turnId || s.data.waiting.some((w) => w.turnId === t.turnId)) return { next: s };
         return { next: { ...s, data: { ...s.data, waiting: [...s.data.waiting, t] } } };
       }
-      return start(ctx.key, t, [], ctx);
+      return withState(start(ctx.key, t, [], ctx), f, ctx);
     },
   };
   return defineMachine<S, Facts>({
     name: MACHINE,
-    version: 1,
+    // 2: a failed turn's "stopped before finishing" (turn.stalled), and a
+    // conversation named after its request (turn.name): an older Pod would
+    // end its turn without them.
+    version: 2,
     events: { Asked: decodeAsked, StopRequested: decodeStop, Tick: () => ({}) },
     create: ['Asked'],
     decode: (row) => ({ name: row.state, data: row.data as Data }),
@@ -183,20 +234,23 @@ export function turnMachine() {
               work.push(turnStop({ sessionId: f.ownedSessionId, machine: MACHINE, key: ctx.key, kinds: [WORK.run],
                 workKey: `run:${cur(s).turnId}`, by: null, release: true }, `timeout-${cur(s).turnId}`));
             }
-            return { ...out, work, cancel: [{ kind: WORK.run, key: `run:${cur(s).turnId}` }] };
+            return withState({ ...out, work, cancel: [{ kind: WORK.run, key: `run:${cur(s).turnId}` }] }, f, ctx);
           },
         },
         WorkSucceeded: {
-          to: (s: S, e: Event<any>, _f: Facts, ctx: TransitionContext): Outcome<S> =>
-            (runResult(s, e) ? ended(s, ctx.key, ctx, 'done') : { next: s }),
+          to: (s: S, e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<S> => {
+            if (!runResult(s, e)) return { next: s };
+            const out = ended(s, ctx.key, ctx, 'done');
+            return withState({ ...out, work: [...(out.work || []), ...stalledWork(s, e, ctx.key)] }, f, ctx);
+          },
         },
         WorkFailed: {
-          to: (s: S, e: Event<any>, _f: Facts, ctx: TransitionContext): Outcome<S> =>
-            (runResult(s, e) ? ended(s, ctx.key, ctx, 'failed') : { next: s }),
+          to: (s: S, e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<S> =>
+            (runResult(s, e) ? withState(ended(s, ctx.key, ctx, 'failed'), f, ctx) : { next: s }),
         },
         WorkExhausted: {
-          to: (s: S, e: Event<any>, _f: Facts, ctx: TransitionContext): Outcome<S> =>
-            (runResult(s, e) ? ended(s, ctx.key, ctx, 'lost') : { next: s }),
+          to: (s: S, e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<S> =>
+            (runResult(s, e) ? withState(ended(s, ctx.key, ctx, 'lost'), f, ctx) : { next: s }),
         },
       },
     } as any,

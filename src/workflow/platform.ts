@@ -841,6 +841,15 @@ export async function dmWritten(db: Queryable, p: { userId: number; conversation
     { requestKey: `wrote:${p.messageId}${p.attempt ? `:d${p.attempt}` : ''}`, source: { kind: 'route', name: 'dm' } });
 }
 
+// A message of the bot's that rang `userId` owes them its email when no
+// phone could take the push (homeroom-bot-dm.js sendDm, in the message's own
+// transaction, `db`): `mail` is activity-mail.js emailIfNoPush's input.
+export async function dmMailOwed(db: Queryable, p: { userId: number; messageId: number; mail: Record<string, Json> }): Promise<void> {
+  await appendEvent(db, BOT_DM, dmKey(Number(p.userId)),
+    { type: 'MailOwed', payload: { userId: Number(p.userId), messageId: Number(p.messageId), mail: p.mail } },
+    { requestKey: `mail:${Number(p.messageId)}`, source: { kind: 'system', name: 'mail' } });
+}
+
 // A hello of `kind` is owed to a person (joining by an invite, the tour's
 // end, the first session's answer, a ready-made app made: `maker` with its
 // appId): in the caller's transaction when it has one, so it commits with
@@ -1772,6 +1781,13 @@ export async function proposalAdopted(o: { sessionId: number; appId?: number | n
   }
   await runtime!.append(proposalMachine(), proposalKey(o.sessionId), { type: 'Adopted', payload: { sessionId: o.sessionId } },
     { requestKey: `adopt:${o.sessionId}`, source: sys('adopt'), appId: o.appId ?? undefined });
+}
+
+// A hosted build's diagram was stored (services/proposal-diagram.js
+// storeDeclared, in the write's own transaction, `db`): its pull request's
+// body is owed the block.
+export async function diagramStored(db: Queryable, p: { sessionId: number; appId: number | null }): Promise<void> {
+  await proposalEvent('DiagramStored', {}, { sessionId: p.sessionId, appId: p.appId, db, source: sys('diagram') });
 }
 
 // The promote's answers, by the machine's rejection or review.open's code.

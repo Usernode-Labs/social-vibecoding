@@ -1035,11 +1035,13 @@ async function notifySessionDone(pool, sessionId) {
 // chat handler's done hook picks this one when the turn persisted a failure
 // row (turnError) and nobody pressed stop; the restart recovery, the
 // stale-turn watchdog and a system pause call it directly.
-async function notifySessionStalled(pool, sessionId) {
-  return notifySessionTurnEnd(pool, sessionId, 'session_stalled');
+// `strict` (a workflow machine's work): a failure is thrown, so it is tried
+// again.
+async function notifySessionStalled(pool, sessionId, { strict = false } = {}) {
+  return notifySessionTurnEnd(pool, sessionId, 'session_stalled', { strict });
 }
 
-async function notifySessionTurnEnd(pool, sessionId, kind) {
+async function notifySessionTurnEnd(pool, sessionId, kind, { strict = false } = {}) {
   try {
     const { rows } = await pool.query(
       `UPDATE chat_sessions SET notify_on_done = FALSE
@@ -1056,6 +1058,7 @@ async function notifySessionTurnEnd(pool, sessionId, kind) {
     });
     if (created.length) await notifications.hydrateAndPush(pool, created[0]);
   } catch (err) {
+    if (strict) throw err;
     log.warn('sessions', `${kind} notify failed`, { sessionId, err: err.message });
   }
 }

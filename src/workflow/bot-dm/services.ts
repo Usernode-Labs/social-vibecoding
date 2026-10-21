@@ -1,11 +1,12 @@
 // The bot-dm machine's I/O: the Homeroom bot's answer to one message in a
 // person's DM with it, the line it says when it could not answer at all, a
-// tap's act under one of its offers, and a hello. Each runs strict (a
-// failure throws, so the item is retried) and is keyed so a retry after a
-// restart says and does nothing twice: an answer by its idempotency key
-// (found before anything is done again), the words it passes on by their
-// mark, an offer's act by its claim, a hello by the row written in its
-// send's own transaction (services/homeroom-bot-dm.js, homeroom-bot-mayor.js).
+// tap's act under one of its offers, a hello, and the email that stands in
+// for a push. Each runs strict (a failure throws, so the item is retried)
+// and is keyed so a retry after a restart says and does nothing twice: an
+// answer by its idempotency key (found before anything is done again), the
+// words it passes on by their mark, an offer's act by its claim, a hello by
+// the row written in its send's own transaction (services/homeroom-bot-dm.js,
+// homeroom-bot-mayor.js). An email has no such row: see its handler.
 
 import type { Json, Pool, WorkHandler } from '../kernel/index.ts';
 import { legacy } from '../legacy.ts';
@@ -70,6 +71,18 @@ export function botDmServices({ config, pool }: Deps): Record<string, WorkHandle
           answers: Array.isArray(input.answers) ? input.answers : [], key: String(input.key), gaveUp: !!input.gaveUp,
         });
         return (out || null) as Json;
+      },
+    },
+
+    // The email a message that rang them stands in for, when no phone could
+    // take its push (decided now, when it is sent). A retry after a send
+    // that was cut off may send it twice; a lost one is never sent.
+    [WORK.mail]: {
+      maxAttempts: 5,
+      backoffMs: backoff,
+      async run({ input }): Promise<Json> {
+        const said = await legacy('services/activity-mail').emailIfNoPush(pool, input);
+        return { said };
       },
     },
 

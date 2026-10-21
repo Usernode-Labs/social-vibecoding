@@ -18,6 +18,7 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const { Pool } = require('pg');
 const { createRuntime } = require('../src/workflow/kernel/index.ts');
+const platform = require('../src/workflow/platform.ts');
 const { proposal, sessionKey, MACHINE, WORK } = require('../src/workflow/proposal/machine.ts');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
@@ -978,5 +979,53 @@ test('proposal machine against the full PostgreSQL schema', { timeout: 180000 },
     await settle();
     assert.equal((await outcome(reopen)).result, 'accepted');
     assert.equal((await row(c)).cc_purged, true, 'a reopened session says its memory went');
+  });
+
+  // A hosted build's diagram reaches the pull request as a GitHub move of the
+  // proposal's (pr.diagram), owed by the write that stored it: it was a call
+  // nobody waited for after the response, lost to a restart.
+  await t.test('P34 a stored diagram owes its pull request the block, one GitHub move at a time, the newest waiting', async () => {
+    defaults();
+    const store = (s) => pool.connect().then(async (c) => {
+      try {
+        await c.query('BEGIN');
+        await c.query(`UPDATE chat_sessions SET pr_diagram = '{"kind":"rename"}'::jsonb WHERE id = $1`, [s.id]);
+        await platform.diagramStored(c, { sessionId: s.id, appId: s.app_id });
+        await c.query('COMMIT');
+      } finally { c.release(); }
+    });
+    const s = await session({ status: 'promoted' });
+    await store(s);
+    await settle();
+    assert.deepEqual(calls(WORK.diagram).map((c) => c.input.sessionId), [s.id]);
+    // While a GitHub move runs, diagrams wait behind it, and a newer one
+    // replaces one still waiting.
+    let release;
+    work.gate.set(WORK.diagram, new Promise((r) => { release = r; }));
+    await store(s);
+    await rt.drain();
+    const running = rt.runServices();
+    await untilCalled(WORK.diagram, 2);
+    try {
+      await store(s);
+      await store(s);
+      await rt.drain();
+      assert.equal((await instance(s)).data.pr.next.filter((w) => w.kind === WORK.diagram).length, 1, 'the newest waits, once');
+    } finally {
+      release();
+      await running;
+    }
+    work.gate.clear();
+    await settle();
+    assert.equal(calls(WORK.diagram).length, 3);
+    assert.equal((await instance(s)).data.pr.running, null);
+    // None for an imported proposal (its body is its author's), or one with
+    // no pull request yet (its open writes the block).
+    const imported = await session({ status: 'promoted', source: 'imported' });
+    const bare = await session({ pr: false });
+    await store(imported);
+    await store(bare);
+    await settle();
+    assert.equal(calls(WORK.diagram).length, 3);
   });
 });

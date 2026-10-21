@@ -13,6 +13,10 @@
 //
 //   once(key, fn)   a step that has run returns what it saved, and is not run
 //                   again; one that has not runs, and what it resolves is saved
+//   beside(key, fn) a step run beside the ones after it, nobody waiting on
+//                   it (a build's last look): started now, saved once it is
+//                   done, and waited for by `flush`, the handler's last act,
+//                   so the item does not end before it does
 //   get / set       state a step keeps as it goes (a review's loop state)
 //   scope(prefix)   a child context whose keys are its own (a second try)
 //   fence()         throws once the work is no longer this process's
@@ -87,6 +91,7 @@ export interface Steps {
   set(key: string, value: unknown): Promise<void>;
   merge(key: string, patch: Record<string, unknown> | null | undefined): Promise<void>;
   once<T>(key: string, fn: () => Promise<T> | T): Promise<any>;
+  beside(key: string, fn: () => Promise<unknown> | unknown): void;
   fence(): void;
   race<T>(promise: Promise<T> | T): Promise<T>;
   scope(child: string): Steps;
@@ -102,6 +107,8 @@ export function steps({
   const state: Record<string, any> = resumeFrom && typeof resumeFrom === 'object' && !Array.isArray(resumeFrom) ? { ...resumeFrom } : {};
   let stopped = !!signal?.aborted;
   let writes: Promise<unknown> = Promise.resolve();
+  // The steps run beside the others, by key, until they are saved.
+  const besides = new Map<string, Promise<void>>();
   const listeners: ((event: any) => unknown)[] = [];
   signal?.addEventListener('abort', () => { stopped = true; }, { once: true });
 
@@ -177,6 +184,17 @@ export function steps({
         fence();
         return ctx.get(key);
       },
+      beside(key, fn) {
+        fence();
+        if (has(key) || besides.has(k(key))) return;
+        const run = (async () => {
+          const value = await fn();
+          await ctx.set(key, value === undefined ? null : value);
+        })();
+        besides.set(k(key), run);
+        run.catch((err) => log?.warn('durable', 'A step beside the others failed', { owner, key: k(key), err: (err as Error).message }))
+          .finally(() => besides.delete(k(key)));
+      },
       fence,
       race(promise) {
         if (!signal) return Promise.resolve(promise);
@@ -193,8 +211,12 @@ export function steps({
         });
       },
       scope(child) { return make(k(child)); },
-      // Every write made so far is saved (the handler's last act).
-      async flush() { await writes; },
+      // Every step beside the others has ended (or the work stopped), and
+      // every write made so far is saved (the handler's last act).
+      async flush() {
+        await Promise.allSettled([...besides.values()].map((p) => ctx.race(p)));
+        await writes;
+      },
       listen(fn) { if (typeof fn === 'function') listeners.push(fn); },
       // A watcher that throws is logged; a stop it causes is the next step's.
       async tell(event = {}) {

@@ -38,6 +38,7 @@ function none() {
     set: async () => {},
     merge: async () => {},
     once: async (key, fn) => fn(),
+    beside: (key, fn) => { void Promise.resolve().then(fn).catch(() => {}); },
     fence: () => {},
     race: (promise) => Promise.resolve(promise),
     scope: () => ctx,

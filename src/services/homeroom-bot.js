@@ -6650,7 +6650,7 @@ async function awaitGo(pool, { runId, app, issueNumber, parsed, bot, deps = {} }
     return 'failed';
   }
   // The triage wrote it just now; a plan from Make it was recorded when it
-  // was written (first-version-plan.js startEarlyPlan).
+  // was written (first-version-plan.js runEarlyPlan).
   if (!parsed?.fromMakeIt) {
     void timeline.record(pool, { runId, stage: 'plan_written', detail: { source: 'triage', questions: plan.questions.length } });
   }

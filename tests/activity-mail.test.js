@@ -17,7 +17,7 @@ const rateLimit = require('../src/services/mail/rate-limit');
 
 const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
 
-// A pool that answers the two reads emailIfNoPush makes.
+// A pool that answers the reads emailIfNoPush makes.
 function fakePool({ user = null, phones = 0 } = {}) {
   const queries = [];
   return {
@@ -26,6 +26,7 @@ function fakePool({ user = null, phones = 0 } = {}) {
       queries.push({ sql, params });
       if (/FROM users WHERE id/.test(sql)) return { rows: user ? [user] : [] };
       if (/FROM mobile_push_registrations/.test(sql)) return { rows: phones ? [{ '?column?': 1 }] : [] };
+      if (/FROM notifications n/.test(sql)) return { rows: [] };
       if (/UPDATE users SET activity_email = FALSE/.test(sql)) return { rowCount: 1, rows: [] };
       throw new Error(`unexpected query: ${sql}`);
     },

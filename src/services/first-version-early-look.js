@@ -9,7 +9,8 @@
  * so the tour's last card and the invite ask had no picture. Asking the spec
  * to save its main screen first (#4994) did not bring it forward in practice.
  * So the first look is now drawn on its own, from the plan, the moment the
- * plan at Make it is written (first-version-plan.js startEarlyPlan):
+ * plan at Make it is written (first-version-plan.js runEarlyPlan, as the
+ * project's app-creation work: app.plan, then app.earlyLook):
  *
  *   THE DRAWING  one short model call (LOOK_MODEL at LOOK_EFFORT, through
  *                llm.js generateFirstLook, so its llm_invocation telemetry
@@ -452,35 +453,39 @@ async function drawEarlyLook(pool, { app, user, brief, plan, config, bot }, deps
   return { ok: true, error: null };
 }
 
-const pending = new Map();
-
 /**
- * Start a first version's early first look, once, from its plan at Make it
- * (first-version-plan.js startEarlyPlan, the moment the plan is written):
- * claims its row (pending) and draws it in the background. Resolves whether
- * it was started. Not without the switch, a model, a plan or the bot (whose
- * session's worker draws the picture). Never throws.
+ * A first version's early first look, from its plan at Make it: the
+ * app-creation machine's app.earlyLook, owed once its plan is written
+ * (first-version-plan.js runEarlyPlan). Claims its row (pending) and draws
+ * it, in the worker of the bot's session for the app (`config` is the
+ * process's). Not without the switch, a model, a plan or the bot. A claim an
+ * earlier try of the same work made (`steps`, the item's) is drawn again.
+ * Resolves { ok, error } or { skipped }.
  */
-async function startEarlyLook(pool, { app, user, brief, plan, config = null, bot = null }, deps = {}) {
-  try {
-    if (!enabled(deps.env || process.env)) return false;
-    if (!app?.id || !user?.id || !plan || !Array.isArray(plan.bullets) || !bot?.id) return false;
-    const llm = deps.llm || require('./llm');
-    if (typeof llm.isEnabled === 'function' && !llm.isEnabled()) return false;
-    if (!(await claim(pool, app.id))) return false;
-    const work = drawEarlyLook(pool, { app, user, brief, plan, config, bot }, deps)
-      .catch(async (err) => {
-        log.warn('first-version-early-look', 'The early first look failed', { appId: app.id, err: err.message });
-        await saveFailed(pool, app.id, 'failed').catch(() => null);
-        return { ok: false, error: 'failed' };
-      });
-    pending.set(app.id, work);
-    work.finally(() => pending.delete(app.id));
-    return true;
-  } catch (err) {
-    log.warn('first-version-early-look', 'The early first look was not started', { appId: app?.id, err: err.message });
-    return false;
-  }
+async function runEarlyLook(pool, { appId, config = null, steps = null }, deps = {}) {
+  if (!enabled(deps.env || process.env)) return { skipped: 'off' };
+  const llm = deps.llm || require('./llm');
+  if (typeof llm.isEnabled === 'function' && !llm.isEnabled()) return { skipped: 'no_model' };
+  const fvPlan = require('./first-version-plan');
+  const { rows: [row] } = await pool.query(
+    `SELECT f.user_id, f.brief, f.early_plan, f.early_plan_status, a.id, a.name, a.slug
+       FROM homeroom_bot_first_versions f JOIN apps a ON a.id = f.app_id
+      WHERE f.app_id = $1`,
+    [Number(appId)],
+  );
+  const plan = row && row.early_plan_status === 'ready' ? fvPlan.planOf(row) : null;
+  if (!plan) return { skipped: 'no_plan' };
+  const bot = deps.botUser || await require('./homeroom-bot').ensureBotUser(pool, config || {});
+  if (!bot?.id) return { skipped: 'no_bot' };
+  const claimOnce = () => claim(pool, row.id);
+  if (!(steps ? await steps.once('claim', claimOnce) : await claimOnce())) return { skipped: 'claimed' };
+  const app = { id: row.id, name: row.name, slug: row.slug };
+  return drawEarlyLook(pool, { app, user: { id: row.user_id }, brief: row.brief, plan, config, bot }, deps)
+    .catch(async (err) => {
+      log.warn('first-version-early-look', 'The early first look failed', { appId: app.id, err: err.message });
+      await saveFailed(pool, app.id, 'failed');
+      return { ok: false, error: 'failed' };
+    });
 }
 
 // ── Reading it ───────────────────────────────────────────────────────────
@@ -608,11 +613,10 @@ module.exports = {
   drawScreen,
   prepareWorker,
   drawEarlyLook,
-  startEarlyLook,
+  runEarlyLook,
   forRun,
   shownFor,
   pictureFor,
   screenFor,
   forSpec,
-  _pendingForTests: pending,
 };

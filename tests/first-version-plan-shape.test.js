@@ -89,8 +89,15 @@ test('makePlan hands back the shape with `unusable_reply`, from what the call sa
 
 test('savePlan keeps the shape only for a plan it could not use', async () => {
   const sql = [];
-  let claim = [{ app_id: 3 }];
-  const pool = { async query(text, params) { sql.push({ text, params }); return { rows: /SET early_plan_status = 'pending'/.test(text) ? claim : [] }; } };
+  let appRow = { id: 3, name: 'Club Votes', slug: 'club-votes' };
+  const pool = {
+    async query(text, params) {
+      sql.push({ text, params });
+      if (/FROM homeroom_bot_first_versions f JOIN apps a/.test(text)) return { rows: [{ user_id: 7, brief: 'Polls', early_plan_status: 'pending', ...appRow }] };
+      if (/early_plan_reply = \$5::jsonb/.test(text)) return { rows: [], rowCount: 1 };
+      return { rows: [] };
+    },
+  };
   const stages = [];
   const deps = (text) => ({
     llm: { isEnabled: () => true, estimateCostCents: () => 0, async generateFirstVersionPlan() { return { text, reply: { finishReason: 'stop', toolCallCount: 0, textChars: 4 } }; } },
@@ -99,8 +106,7 @@ test('savePlan keeps the shape only for a plan it could not use', async () => {
     botConfigs: { async currentVersion() { return null; } },
     timeline: { async record(_pool, args) { stages.push(args); return true; } },
   });
-  await fvPlan.startEarlyPlan(pool, { app: { id: 3, name: 'Club Votes' }, user: { id: 7 }, brief: 'Polls' }, deps('nope'));
-  await fvPlan._pendingForTests.get(3);
+  assert.deepEqual(await fvPlan.runEarlyPlan(pool, { appId: 3 }, deps('nope')), { planned: false });
   const failed = sql.find((q) => /early_plan_reply = \$5::jsonb/.test(q.text));
   assert.equal(failed.params[1], 'failed');
   assert.equal(failed.params[3], 'unusable_reply');
@@ -110,10 +116,9 @@ test('savePlan keeps the shape only for a plan it could not use', async () => {
   assert.deepEqual(stages, [], 'no plan: no stage');
 
   sql.length = 0;
-  claim = [{ app_id: 4 }];
+  appRow = { id: 4, name: 'Book Swap', slug: 'book-swap' };
   const ok = JSON.stringify({ plan: ['One', 'Two', 'Three'], choices: [{ question: 'Who?', answers: ['a', 'b'] }], build_note: 'A note', assumptions: [] });
-  await fvPlan.startEarlyPlan(pool, { app: { id: 4, name: 'Book Swap' }, user: { id: 7 }, brief: 'Books' }, deps(ok));
-  await fvPlan._pendingForTests.get(4);
+  assert.deepEqual(await fvPlan.runEarlyPlan(pool, { appId: 4 }, deps(ok)), { planned: true });
   const ready = sql.find((q) => /early_plan_reply = \$5::jsonb/.test(q.text));
   assert.equal(ready.params[1], 'ready');
   assert.equal(ready.params[4], null);
