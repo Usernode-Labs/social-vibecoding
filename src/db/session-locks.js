@@ -23,8 +23,8 @@
 //     hashtext(text) or hashtextextended(text, 0)), so an older release
 //     beside this one excludes the same: a session lock and a transaction
 //     lock on one key exclude each other across sessions.
-//   - The connection is opened when a lock is first taken and closed when the
-//     process holds none. If it ends while locks are held (a failover), the
+//   - The connection is opened when a lock is first taken and closed once the
+//     process has held none for IDLE_MS. If it ends while locks are held (a failover), the
 //     holders run on unprotected, as they did when a pooled connection
 //     holding their lock dropped; the next lock opens a new connection.
 //
@@ -37,6 +37,10 @@ const log = require('../services/logger');
 const { connectionName, connectionOptions } = require('./connection-options');
 
 const RETRY_MIN_MS = 50;
+// How long the lock connection stays open with no lock held: a lock taken
+// again soon (each revision of a proposal, each first turn) does not wait for
+// a new connection.
+const IDLE_MS = 30000;
 const RETRY_MAX_MS = 1000;
 const BUSY = Symbol('session-lock-busy');
 
@@ -51,17 +55,39 @@ function keySql(key) {
 
 function createSessionLocks({ makeClient = (connectionString) => new Client({
   connectionString, ...connectionOptions(null, { name: connectionName('locks'), idleInTransactionMs: 0 }),
-}) } = {}) {
+}), idleMs = IDLE_MS } = {}) {
   // One lock connection per database, opened while any lock is held there.
   const byDatabase = new Map();
   // This process's holders, one at a time per key (session locks are
   // reentrant: two of them would both "take" it).
   const tails = new Map();
 
+  // The lock connection belongs with its pool: ending the pool (a process
+  // stopping, a test's database going) closes it, held or idle.
+  const hooked = new WeakSet();
+  function closeWithPool(pool, connectionString) {
+    if (hooked.has(pool) || typeof pool.end !== 'function') return;
+    hooked.add(pool);
+    const end = pool.end.bind(pool);
+    pool.end = async (...args) => {
+      const entry = byDatabase.get(connectionString);
+      if (entry && !entry.dead) {
+        entry.dead = true;
+        if (entry.idle) clearTimeout(entry.idle);
+        byDatabase.delete(connectionString);
+        await entry.queue.then(() => entry.client.end()).catch(() => {});
+      }
+      return end(...args);
+    };
+  }
+
   function connectionFor(connectionString) {
     let entry = byDatabase.get(connectionString);
-    if (entry && !entry.dead) return entry;
-    entry = { users: 0, dead: false, ready: null, client: null, queue: Promise.resolve() };
+    if (entry && !entry.dead) {
+      if (entry.idle) { clearTimeout(entry.idle); entry.idle = null; }
+      return entry;
+    }
+    entry = { users: 0, dead: false, ready: null, client: null, queue: Promise.resolve(), idle: null };
     byDatabase.set(connectionString, entry);
     const client = makeClient(connectionString);
     entry.client = client;
@@ -88,6 +114,20 @@ function createSessionLocks({ makeClient = (connectionString) => new Client({
     return run;
   }
 
+  // No lock held on it: closed after idleMs unless one is taken meanwhile.
+  function unused(connectionString, entry) {
+    if (entry.users || entry.dead) return;
+    const close = () => {
+      if (entry.users || entry.dead) return;
+      entry.dead = true;
+      if (byDatabase.get(connectionString) === entry) byDatabase.delete(connectionString);
+      entry.queue.then(() => entry.client.end()).catch(() => {});
+    };
+    if (!idleMs) { close(); return; }
+    entry.idle = setTimeout(close, idleMs);
+    if (entry.idle.unref) entry.idle.unref();
+  }
+
   async function release(connectionString, entry, k) {
     try {
       if (!entry.dead) await onConnection(entry, `SELECT pg_advisory_unlock(${k.sql})`, k.params);
@@ -95,11 +135,7 @@ function createSessionLocks({ makeClient = (connectionString) => new Client({
       log.warn('session-locks', 'Could not give back a lock', { key: k.id, err: err.message });
     } finally {
       entry.users -= 1;
-      if (!entry.users && !entry.dead) {
-        entry.dead = true;
-        if (byDatabase.get(connectionString) === entry) byDatabase.delete(connectionString);
-        entry.queue.then(() => entry.client.end()).catch(() => {});
-      }
+      unused(connectionString, entry);
     }
   }
 
@@ -118,6 +154,7 @@ function createSessionLocks({ makeClient = (connectionString) => new Client({
     tails.set(local, tail);
     try {
       await prior;
+      closeWithPool(pool, connectionString);
       const entry = connectionFor(connectionString);
       entry.users += 1;
       let held = false;
@@ -143,11 +180,7 @@ function createSessionLocks({ makeClient = (connectionString) => new Client({
         if (held) await release(connectionString, entry, k);
         else {
           entry.users -= 1;
-          if (!entry.users && !entry.dead) {
-            entry.dead = true;
-            if (byDatabase.get(connectionString) === entry) byDatabase.delete(connectionString);
-            entry.queue.then(() => entry.client.end()).catch(() => {});
-          }
+          unused(connectionString, entry);
         }
       }
     } finally {

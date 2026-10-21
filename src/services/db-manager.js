@@ -168,6 +168,35 @@ const PRIMARY_SERVER = 'primary';
 const PREVIEW_SERVER = 'preview';
 const PREVIEW_ADMIN_URL_ENV = 'STAGING_DB_ADMIN_URL';
 
+// The connections this module opens outside the pools (a Client per clone
+// pass, psql, pg_dump | pg_restore) to the MAIN server, at most
+// DB_ADMIN_CONNECTIONS_MAX operations at a time per process (item 4: the
+// connection budget, workflow-foundation design-item4-connections.md); the
+// rest wait their turn. An operation that holds a turn opens its nested
+// connections in it (a clone's psql, pg_restore beside pg_dump) without
+// taking another, so nesting cannot wait on itself and an operation opens at
+// most two at once: the budget counts twice the cap. The preview server's
+// connections are its own server's budget and are not counted here.
+const { AsyncLocalStorage } = require('node:async_hooks');
+const MAIN_SERVER_OPERATIONS = Math.max(1, parseInt(process.env.DB_ADMIN_CONNECTIONS_MAX || '4', 10) || 4);
+const inMainOperation = new AsyncLocalStorage();
+const mainOperations = { running: 0, waiting: [] };
+async function onMainServer(server, fn) {
+  if ((server || PRIMARY_SERVER) !== PRIMARY_SERVER || inMainOperation.getStore()) return fn();
+  if (mainOperations.running >= MAIN_SERVER_OPERATIONS) {
+    await new Promise((resolve) => { mainOperations.waiting.push(resolve); });
+  } else {
+    mainOperations.running += 1;
+  }
+  try {
+    return await inMainOperation.run(true, fn);
+  } finally {
+    const next = mainOperations.waiting.shift();
+    // A turn given back goes straight to the next in line (running stays).
+    if (next) next(); else mainOperations.running -= 1;
+  }
+}
+
 function parseAdminUrl(value, label) {
   let parsed;
   // Never echo the value: it carries the server's password.
@@ -2010,7 +2039,11 @@ async function assertPreviewServerReachable(server) {
 // connection within one clone phase. Other administration keeps its existing
 // one-shot behavior. SQL stays in autocommit: CREATE/DROP DATABASE cannot run
 // inside a transaction, and a failed redaction must not abort later attempts.
-async function withDatabaseConnection(dbName, fn, { queryTimeoutMs = 30_000, server = PRIMARY_SERVER, as = null } = {}) {
+async function withDatabaseConnection(dbName, fn, opts = {}) {
+  return onMainServer(opts.server, () => withDatabaseConnectionNow(dbName, fn, opts));
+}
+
+async function withDatabaseConnectionNow(dbName, fn, { queryTimeoutMs = 30_000, server = PRIMARY_SERVER, as = null } = {}) {
   if (!SAFE_IDENT.test(dbName)) throw new Error(`Unsafe connection database: ${dbName}`);
   const timeoutMs = Math.max(30_000, Math.min(120_000, Number(queryTimeoutMs) || 30_000));
   let url;
@@ -2113,6 +2146,10 @@ function fromPreviewServer(err, server) {
 // psql process and so its own connection: nothing that must share a session
 // with another statement goes through here (see withDatabaseConnection).
 async function execInTarget(dbName, sql, opts = {}) {
+  return onMainServer(opts.server, () => execInTargetNow(dbName, sql, opts));
+}
+
+async function execInTargetNow(dbName, sql, opts = {}) {
   if (!SAFE_IDENT.test(dbName)) throw new Error(`execInTarget: unsafe dbName ${JSON.stringify(dbName)}`);
   const args = ['-X', '-v', 'ON_ERROR_STOP=1'];
   if (opts.tuplesOnly) {
@@ -2337,7 +2374,12 @@ async function extensionsOnlyAnAdminCanCreate(sourceDb, targetServer = PRIMARY_S
 // so nothing needs the administrator's rights. pg_dump's emitted SQL is
 // schema-qualified by construction, so the unprivileged session cannot
 // redirect it; the dump side stays administrative and reads only.
-async function dumpRestore(sourceDb, targetDb, excludeData = [], { targetServer = PRIMARY_SERVER, as = null } = {}) {
+// pg_dump reads the main server: one operation's turn, pg_restore beside it.
+async function dumpRestore(sourceDb, targetDb, excludeData = [], opts = {}) {
+  return onMainServer(PRIMARY_SERVER, () => dumpRestoreNow(sourceDb, targetDb, excludeData, opts));
+}
+
+async function dumpRestoreNow(sourceDb, targetDb, excludeData = [], { targetServer = PRIMARY_SERVER, as = null } = {}) {
   if (!SAFE_IDENT.test(sourceDb) || !SAFE_IDENT.test(targetDb)) {
     throw new Error(`dumpRestore: unsafe identifiers ${sourceDb}/${targetDb}`);
   }
@@ -3678,6 +3720,9 @@ async function retireStrayTemplates({ limit = 50 } = {}) {
 }
 
 module.exports = {
+  MAIN_SERVER_OPERATIONS,
+  _mainOperations: mainOperations,
+  _onMainServer: onMainServer,
   appDbName,
   stagingDbName,
   shotsDbName,

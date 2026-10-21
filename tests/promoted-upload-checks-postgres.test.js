@@ -318,7 +318,14 @@ test('a promoted CLI upload reaches its checks', { timeout: 120000 }, async (t) 
     assert.equal(res.body.error, 'session_state_changed');
     const r = await row(s);
     assert.equal(r.handoff_head_sha, H1, 'nothing was adopted');
-    assert.equal((await machine(s)).data.head, H1, 'nothing was handed to the machine');
+    // None of the refused submits handed H2 over. (The machine may check the
+    // uploaded head on its own once nobody works on the session: the upload
+    // cleared its verdict, and checks are owed on it. That is not a submit's.)
+    const { rows: handed } = await pool.query(
+      `SELECT type FROM wf_events WHERE machine = 'preview' AND key = $1
+          AND type IN ('RevisionSubmitted', 'RecheckRequested') AND payload->>'head' = $2`,
+      [`session:${s.id}`, H2]);
+    assert.deepEqual(handed, [], 'nothing was handed to the machine');
     await quiet();
   });
 });

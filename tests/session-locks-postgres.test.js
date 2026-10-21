@@ -26,8 +26,8 @@ test('session locks on a lock connection of their own', { timeout: 60000 }, asyn
   }
   const other = new Pool({ connectionString: DSN, max: 2 });
   t.after(async () => { await pool.end(); await other.end(); });
-  const a = createSessionLocks();
-  const b = createSessionLocks();
+  const a = createSessionLocks({ idleMs: 0 });
+  const b = createSessionLocks({ idleMs: 0 });
   const key = [990001, Math.floor(Math.random() * 1e6)];
 
   await t.test('it excludes another process, which waits or is told it is busy', async () => {
@@ -90,6 +90,16 @@ test('session locks on a lock connection of their own', { timeout: 60000 }, asyn
     const c = createSessionLocks({ makeClient: (cs) => new (require('pg').Client)({ connectionString: cs, connectionTimeoutMillis: 500 }) });
     await assert.rejects(c.withSessionLock(nowhere, key, async () => 'ran'));
     assert.equal(await c.withSessionLock(nowhere, key, async () => 'ran', { unlockedOnError: true }), 'ran');
+  });
+
+  await t.test('the connection stays open a while with no lock held, so the next lock does not wait for one', async () => {
+    const c = createSessionLocks({ idleMs: 200 });
+    await c.withSessionLock(pool, key, async () => {});
+    assert.equal(c.openConnections(), 1, 'kept');
+    await c.withSessionLock(pool, key, async () => {});
+    assert.equal(c.openConnections(), 1, 'reused');
+    await sleep(350);
+    assert.equal(c.openConnections(), 0, 'closed once idle');
   });
 
   await t.test('the connection closes when no lock is held, and one that died is replaced', async () => {
