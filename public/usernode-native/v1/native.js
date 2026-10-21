@@ -3047,6 +3047,19 @@
     return zoomRectUsable(rect, window.innerHeight) ? rect : null;
   }
 
+  // Optional zoom timing (#3618). A caller may pass `duration`, a positive
+  // number of milliseconds or a function returning one (asked once the
+  // source has resolved). Absent, the kit's own timings are untouched — the
+  // fallback is the literal each direction always used.
+  function zoomDuration(opts, fallbackMs) {
+    var value = opts.duration;
+    if (typeof value === 'function') {
+      try { value = value(); } catch (e) { value = null; }
+    }
+    return typeof value === 'number' && isFinite(value) && value > 0
+      ? value : fallbackMs;
+  }
+
   function zoomTransition(fn, type, opts) {
     var el = opts.el;
     var after = typeof opts.after === 'function' ? opts.after : null;
@@ -3121,20 +3134,21 @@
         if (after) after();
         return Promise.resolve();
       }
+      var duration = zoomDuration(opts, 380);
       unpin = zoomPin(el, target);
       el.style.transform = 'translate(' + pose.tx + 'px, ' + pose.ty + 'px) '
         + 'scale(' + pose.sx + ', ' + pose.sy + ')';
       el.style.opacity = '0.3';
       el.style.borderRadius = ZOOM_RADIUS;
       void el.offsetHeight; // flush the start pose before enabling the transition
-      el.style.transition = 'transform 380ms ' + ZOOM_EASE
-        + ', opacity 220ms ease, border-radius 380ms ease';
+      el.style.transition = 'transform ' + duration + 'ms ' + ZOOM_EASE
+        + ', opacity ' + Math.min(duration, 220) + 'ms ease, border-radius ' + duration + 'ms ease';
       el.style.transform = 'none';
       el.style.opacity = '1';
       el.style.borderRadius = '0px';
       zoomCleanup = finish;
       el.addEventListener('transitionend', onEnd);
-      setTimeout(finish, 500); // safety if transitionend never fires
+      setTimeout(finish, duration + 120); // safety if transitionend never fires
       return promise;
     }
 
@@ -3152,15 +3166,17 @@
       return promise;
     }
     void el.offsetHeight;
-    el.style.transition = 'transform 340ms ' + ZOOM_EASE
-      + ', opacity 200ms ease 60ms, border-radius 340ms ease';
+    var duration = zoomDuration(opts, 340);
+    el.style.transition = 'transform ' + duration + 'ms ' + ZOOM_EASE
+      + ', opacity ' + Math.round(duration * 200 / 340) + 'ms ease '
+      + Math.round(duration * 60 / 340) + 'ms, border-radius ' + duration + 'ms ease';
     el.style.transform = 'translate(' + outPose.tx + 'px, ' + outPose.ty + 'px) '
       + 'scale(' + outPose.sx + ', ' + outPose.sy + ')';
     el.style.opacity = '0';
     el.style.borderRadius = ZOOM_RADIUS;
     zoomCleanup = finish;
     el.addEventListener('transitionend', onEnd);
-    setTimeout(finish, 480); // safety if transitionend never fires
+    setTimeout(finish, duration + 140); // safety if transitionend never fires
     return promise;
   }
 

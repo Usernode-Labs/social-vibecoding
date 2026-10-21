@@ -15,6 +15,9 @@ import { flushSync } from 'react-dom';
 import { navStore, tabForScreen } from './nav-store.js';
 import { parkedStore, setParked } from './parked-store.js';
 import { forgetRecentApp, readRecentApps, recentAppsStore, rememberRecentApp } from './recent-apps-store.js';
+import {
+  collapseIntoResume, resumeHandleFor, RESUME_MOTION_MS, takeResumeOrigin,
+} from './resume-motion';
 
 navStore.setFlush(flushSync);
 // Same reason as the tab's: App.navigateToApp clears the strip inside
@@ -141,5 +144,22 @@ if (typeof window !== 'undefined') {
       if (parkedStore.get().app?.slug === slug) setParked(null);
       forgetRecentApp(slug, navStore.get().viewer);
     },
+    /**
+     * #3618: the router's two halves of the Resume motion. `collapse` draws
+     * the stand-in that shrinks a just-hidden app into its control; the
+     * `resumeHandle`/`takeResumeOrigin` pair tells a growing app which
+     * control it should come out of; `resumeMotionMs` is the one duration
+     * both directions use.
+     */
+    collapse(slug: string, from: { left: number; top: number; width: number; height: number } | null) {
+      collapseIntoResume(slug, from);
+    },
+    resumeHandle(slug: string) {
+      return resumeHandleFor(slug);
+    },
+    takeResumeOrigin(slug: string) {
+      return takeResumeOrigin(slug);
+    },
+    resumeMotionMs: RESUME_MOTION_MS,
   };
 }

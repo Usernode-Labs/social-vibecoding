@@ -4781,6 +4781,15 @@ const App = {
   _showOnlyScreen(revealId, keepAlso) {
     window.UsernodeBrowserScroll?.capture();
     const keep = keepAlso || [];
+    // #3618: measure the app view BEFORE anything hides it. A close draws the
+    // app shrinking into its Resume control, and by the time the screen swap
+    // below has run the window is gone. Only a RUNNING app on its way off
+    // screen: a reveal of #app-view is not a leave, and Home keeps the live
+    // view as `keepAlso` for its own zoom-out (that shrinking card IS the app
+    // view, so a stand-in would draw it twice).
+    App._leavingAppRect = App._runningApp && revealId !== 'app-view' && !keep.includes('app-view')
+      ? App._appViewRect()
+      : null;
     for (const id of App.SCREEN_IDS) {
       if (id === revealId || keep.includes(id)) continue;
       App._setScreenVisible(id, false);
@@ -4895,6 +4904,32 @@ const App = {
   // can draw is a handle that appears after you have stopped looking for it.
   _runningApp: null,
 
+  // #3618: the app view's rect, measured just before a close hides it. The
+  // stand-in that collapses into the Resume control starts from here.
+  _leavingAppRect: null,
+
+  _appViewRect() {
+    const el = typeof document !== 'undefined' ? document.getElementById('app-view') : null;
+    if (!el || typeof el.getBoundingClientRect !== 'function') return null;
+    const rect = el.getBoundingClientRect();
+    if (!(rect.width > 0) || !(rect.height > 0)) return null;
+    return { left: rect.left, top: rect.top, width: rect.width, height: rect.height };
+  },
+
+  // #3618: the control an app grows out of, when one is on screen.
+  _resumeHandleFor(slug) {
+    const bridge = window.UsernodeReact?.nav;
+    try {
+      return (slug && bridge?.resumeHandle?.(slug)) || null;
+    } catch (_) { return null; }
+  },
+
+  // The one duration both directions use; the bridge owns it.
+  _resumeMotionMs() {
+    const ms = Number(window.UsernodeReact?.nav?.resumeMotionMs);
+    return Number.isFinite(ms) && ms > 0 ? ms : 250;
+  },
+
   _syncParkedApp(inApp) {
     // The side panel's document never parks or unparks anything: it never runs
     // an app, and the handle is the TOP window's, in storage it shares.
@@ -4923,7 +4958,19 @@ const App = {
       if (typeof AppView !== 'undefined' && AppView.appData?.slug === left.slug
           && AppView.appData.self_hosted) return;
     } catch (_) { /* no record to ask */ }
+    // #3618: the rect the close measured, taken with the parked app so the
+    // next one is never a stale leftover. Park FIRST: the store flushes
+    // synchronously, so the Active row and its Resume control are drawn by
+    // the time the collapse asks where to land.
+    const from = App._leavingAppRect;
+    App._leavingAppRect = null;
     bridge.park(left);
+    // Home's close is still painting the live app view (keepAlso), and the
+    // kit's zoom-out is that shrink. Only a close to any other screen, where
+    // the app view is already hidden, needs the stand-in.
+    if (typeof bridge.collapse === 'function' && !App._isScreenVisible('app-view')) {
+      bridge.collapse(left.slug, from);
+    }
   },
 
   // The handle's display data for `slug`, or null for no app (or the platform
@@ -6778,6 +6825,13 @@ const App = {
     // #977: reachable from the drawer too (the footer's "Forked from"
     // link opens the source app), so the zoom goes through the same
     // single-motion gate — 'none' still runs fn + after as one mutation.
+    //
+    // #3618: a RESUME press noted its control on the way in (the desktop
+    // Active row's pill, or the phone strip). Taken here, once, and used as
+    // the tile the app grows out of — the same zoom, from the button that
+    // offered it. Any other open still grows out of the tile it was pressed
+    // on.
+    const resumeFrom = window.UsernodeReact?.nav?.takeResumeOrigin?.(slug) || null;
     const appViewEl = document.getElementById('app-view');
     // The Workshop tab returning to this app's Workshop (resumeWorkshopView)
     // is a tab switch, not an app opening: no tile to grow out of (#2881),
@@ -6817,7 +6871,10 @@ const App = {
     }, {
       type: App._entryTransition('zoom-in', appViewEl, viaTab),
       el: document.getElementById('app-view'),
-      fromEl: () => App._tileFor(slug),
+      fromEl: () => resumeFrom || App._tileFor(slug),
+      // The Resume press grows out of its control in the same shortened time
+      // the close uses; every other open keeps the kit's own timing.
+      ...(resumeFrom ? { duration: App._resumeMotionMs() } : null),
       // The outgoing screen: the kit hides it while measuring the
       // destination so the flex-sibling split doesn't skew the target
       // rect (see the comment block above).
@@ -6978,6 +7035,10 @@ const App = {
     // ignores `outEl`, so the kit can't correct for that). #app-view is
     // the one root kept alive into `after` — that IS the shrinking card.
     const av = document.getElementById('app-view');
+    // Does a Resume control exist right now? The app is still mounted, so its
+    // Active row is drawn even though it is the lit one; once `fn` parks the
+    // app, `fromEl` below resolves the pill that row has just gained.
+    const resumeTarget = leavingSlug ? App._resumeHandleFor(leavingSlug) : null;
     PlatformUI.transition(() => {
       AppView.close();
       App._showOnlyScreen('home-screen', ['app-view']);
@@ -6997,7 +7058,15 @@ const App = {
     }, {
       type: App._entryTransition('zoom-out', av, viaTab),
       el: av,
-      fromEl: () => (leavingSlug ? App._tileFor(leavingSlug) : null),
+      // #3618: close INTO the Resume control when one is on screen — the app
+      // is still running in Active, so its button is the promise the shrink
+      // keeps. The Home tile remains the fallback (an app with no live row).
+      fromEl: () => (leavingSlug
+        ? (App._resumeHandleFor(leavingSlug) || App._tileFor(leavingSlug))
+        : null),
+      // A quarter second, not the kit's 340ms: the app is going somewhere
+      // small and already drawn.
+      ...(resumeTarget ? { duration: App._resumeMotionMs() } : null),
       fallback: fallbackType,
       after: () => {
         av.classList.add('hidden');

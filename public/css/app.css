@@ -19359,9 +19359,9 @@ html.un-ios {
   height: 28px;
   padding: 0 12px;
   border-radius: 999px;
-  border: 1px solid var(--brand-line);
-  background: var(--brand-tint);
-  color: var(--brand-ink);
+  border: 0;
+  background: var(--accent);
+  color: var(--accent-ink);
   font-size: 13px;
   font-weight: 600;
 }
@@ -19433,6 +19433,41 @@ html.un-kb #platform-parked {
 @media (prefers-reduced-motion: reduce) {
   .platform-parked-enter, .platform-parked-leave,
   .platform-parked-enter > *, .platform-parked-leave > * { animation: none; }
+}
+
+/* ── CLOSING INTO THE RESUME CONTROL (#3618) ──────────────────────────
+   frontend/src/features/nav/resume-motion.ts carries the argument. When an
+   app closes to a screen other than Home, #app-view is already hidden by the
+   time the motion runs, so a stand-in carries the app's face: a fixed card
+   at the rect the app occupied, shrinking into its Resume pill or the phone
+   strip, then removed. It is appended to <body> and owns no shell node. */
+.resume-ghost {
+  position: fixed;
+  z-index: 9960;
+  pointer-events: none;
+  transform-origin: 0 0;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-primary);
+  box-shadow: inset 0 0 0 1px var(--app-sheet-line), 0 12px 40px rgba(0, 0, 0, .18);
+}
+.resume-ghost-tile {
+  width: 72px;
+  height: 72px;
+  border-radius: 18px;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 36px;
+  font-weight: 700;
+}
+/* No motion at all: the close is the plain swap it was, and any stand-in
+   that slipped through is invisible. */
+@media (prefers-reduced-motion: reduce) {
+  .resume-ghost { display: none; }
 }
 
 
@@ -20011,6 +20046,30 @@ html.un-kb #platform-parked {
     border-radius: 999px;
     /* The unread count's own fill in Messages (`.messages-unread`). */
     background: var(--accent);
+  }
+  /* RESUME IS THE ROW'S ACTION (#3618). The platform's action blue, the
+     pill's radius and the row's own height, at the label's end: the running
+     apps waiting for you are the first thing the rail points at. A label
+     inside the row's anchor, not a nested button (./recents-list.tsx says
+     why), so it keeps the pointer's whole row as its target. */
+  .platform-recent-resume {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    height: 22px;
+    padding: 0 9px;
+    border-radius: 999px;
+    background: var(--accent);
+    color: var(--accent-ink);
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1;
+  }
+  /* ONE MARK PER ROW (#3618): a row that offers Resume does not also wear
+     the green still-open dot — the button already says the app is running.
+     The current app's row has no button, so it keeps the dot. */
+  .platform-recent-resume ~ .platform-recent-live {
+    display: none;
   }
 
   /* ── ACTIVE (#3074) ──────────────────────────────────────────────────
