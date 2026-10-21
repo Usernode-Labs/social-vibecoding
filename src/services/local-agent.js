@@ -712,15 +712,6 @@ async function takeOverOwnedTurn(pool, workId) {
   return rows[0] || null;
 }
 
-// The recovered tail is still running: it keeps its claim's heartbeat fresh
-// (hasUnfinishedTurn reads it), as its waiting did.
-async function touchWaiter(pool, turnId, waiterId) {
-  await pool.query(
-    'UPDATE local_agent_turns SET waiter_seen_at = NOW() WHERE id = $1 AND waiter_id = $2',
-    [turnId, waiterId]
-  );
-}
-
 // The recovered tail got to its end.
 async function markTailFinished(pool, turnId) {
   await pool.query(
@@ -905,7 +896,6 @@ module.exports = {
   WAITER_RENEW_MS,
   renewWaiter,
   claimTail,
-  touchWaiter,
   markTailFinished,
   takeOverOwnedTurn,
   buildTurnResult,

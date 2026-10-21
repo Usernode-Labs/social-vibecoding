@@ -1,7 +1,7 @@
 // turn: a person's turn with an agent, as workflow work. One instance per
 // stream a turn runs on: `agent:<id>` for a conversation (an agent session's
 // Mayor, and the coding run it dispatches), `session:<id>` for a change (a
-// headless run, the classic Mayor's two paths, a turn an older release left).
+// headless run, the classic Mayor's two paths, a record a settled item left).
 //
 // A turn is one work item, `turn.run`, that runs all of it in whichever
 // workflow process claims it: the Mayor's rounds, the dispatch, the coding
@@ -42,7 +42,7 @@ export function turnEndEvent(key: string, turnId: string): Record<string, unknow
 }
 
 export const MACHINE = 'turn';
-export const WORK = Object.freeze({ run: 'turn.run', stalled: 'turn.stalled', name: 'turn.name' });
+export const WORK = Object.freeze({ run: 'turn.run', stalled: 'turn.stalled', name: 'turn.name', repair: 'turn.repair' });
 export const KINDS = Object.freeze(['agent', 'classic', 'headless', 'recover'] as const);
 export type Kind = typeof KINDS[number];
 
@@ -142,12 +142,26 @@ function start(key: string, t: Turn, waiting: Turn[], ctx: TransitionContext): O
 // The turn a running instance runs.
 const cur = (s: S) => s.data.running!;
 
+// A change's dev chat turn that did not end its own way (its run failed for
+// good, ran out of time or of claims) owes its change the dev chat's repair:
+// the reply's pills, or the "didn't answer" note (services/turns.js
+// repairCut). A resumed one repairs itself (resumeClassic).
+function repairWork(s: S, key: string, ctx: TransitionContext, how: 'done' | 'failed' | 'lost'): WorkRequest[] {
+  const m = /^session:(\d+)$/.exec(key);
+  if (how === 'done' || !m || cur(s).kind !== 'classic') return [];
+  return [{ kind: WORK.repair, key: `repair:${cur(s).turnId}`, input: { sessionId: Number(m[1]), owedAt: ctx.now.toISOString() } }];
+}
+
 function ended(s: S, key: string, ctx: TransitionContext, how: 'done' | 'failed' | 'lost'): Outcome<S> {
   const d = s.data;
   const writes = [{ type: 'released', key, turnId: cur(s).turnId, kind: cur(s).kind, how }];
+  const repair = repairWork(s, key, ctx, how);
   const [next, ...rest] = d.waiting;
-  if (next) return { ...start(key, next, rest, ctx), writes };
-  return { next: { name: 'idle', data: { running: null, waiting: [] } }, writes, timer: null };
+  if (next) {
+    const out = start(key, next, rest, ctx);
+    return { ...out, writes, work: [...(out.work || []), ...repair] };
+  }
+  return { next: { name: 'idle', data: { running: null, waiting: [] } }, writes, work: repair, timer: null };
 }
 
 const runResult = (s: S, e: Event<any>) => {

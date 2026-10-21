@@ -233,7 +233,7 @@ The screen also guessed "the Mayor is working" from those events. The results we
 
 - **The server is the one source of truth, and says when it moved.**
   - `agent_sessions.state_version` is bumped by database triggers on every write a screen draws: a message written or edited, the active change's status, checks or preview, the turn lease taken, moving phase or released, a card, the title, the model, the archive.
-  - A claim's `renewedAt` (stamped only for an older release during a rollout) and a read (`seen_at`) do not bump it.
+  - A read (`seen_at`) does not bump it.
   - Every message row carries `rev`, taken from one sequence on insert and on update.
   - Each bump is announced by the trigger itself, as a `pg_notify` in `services/ws-bus.js`'s own envelope, so every pod delivers `agent_session_changed { agentSessionId, version, busy }` to the owner's sockets.
 - **One consistent read.** `GET /api/agent-sessions/:id/state?version=&rev=` reads the session with its changes, the running turn, the messages and the cards in one `REPEATABLE READ` snapshot.
@@ -616,7 +616,7 @@ The plan is five proposals, each shippable on its own. None changes what a user 
 - The run's events reach the conversation (its SSE response and `agent:<id>`) and the change's own channels (its bus key and the global WebSocket), so the change page and the Dev board see a build started from a conversation like any other. `done` and `stopped` go to the change only; `token`, `usage` and `error` stay off the WebSocket, as in a classic turn.
 - The wrap-up is a second Mayor call (`mayor_phase_2`) offered only `suggest_replies`, and it cannot be stopped, as in a classic session. With no payer left, a plain fallback line is recorded instead. The change's durable turn is finished only after the wrap-up (`deferTurnCleanup`), so a restart during the wrap-up is recovered the classic way.
 - Stop: during the Mayor's own rounds, `POST /api/agent-sessions/:id/stop` stops the turn. During a dispatch it answers `{stopped: false, reason: 'dispatch_running', changeId}`, and the client calls the change's own `POST /api/sessions/:changeId/stop`, which keeps its kill confirmation and force escalation. During the wrap-up it answers `wrap_up_not_stoppable`.
-- The turn lease is renewed every 15 seconds (`active_turn.renewedAt`), so a build of any length is not taken over. The takeover test reads `COALESCE(renewedAt, startedAt)`.
+- The turn lease lasts exactly as long as its turn: taken with the turn's `Asked`, released when its work item ends, never renewed and never taken over.
 - After the user confirms a card, the Mayor takes a follow-up turn on its own. That turn records no user message: the card's outcome is already in the conversation.
 - Compaction (`services/mayor/agent-compaction.js`) runs after a turn when the replayed history passes about 60k tokens (characters / 4). It keeps the last 10 user turns word for word and folds everything older into `agent_sessions.summary_md` with one Mayor-model call. `summary_through_id` only moves forward, through a conditional `UPDATE`. The summary reaches the prompt inside an untrusted-content block.
 - Mayor-internal tools: `web_fetch`, `suggest_replies`, and `get_prod_status` when the active change is eligible for production debug access (an admin's change on the platform app), the same rule a classic session uses. `draft_issue_report` is left out: filing a request from a conversation is `create_request` behind a card.

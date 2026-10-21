@@ -390,9 +390,9 @@ async function resumeHeadless(ctx, { config, pool }, input) {
 // ── A coding record nothing carries (services/turn-leftovers.js) ──────
 
 // A coding run's record no work item holds (its item settled without
-// releasing it): the adoption the leader ran, as it ran it (a turn a live
-// process still runs is left alone there too), tried again as an owned one
-// is.
+// releasing it): the adoption the leader ran, as it ran it (a turn this
+// process still follows is left alone there too), tried again as an owned
+// one is.
 async function runRecover(ctx, { config, pool }, input) {
   const sessionId = Number(input.sessionId);
   try {
@@ -481,6 +481,17 @@ async function run(ctx, deps) {
   }
 }
 
+// The dev chat's repair (#786: turn-recovery.js repairUnansweredTurn), owed
+// by a change's classic turn that did not end its own way (the turn
+// machine's turn.repair). Not while another turn runs on the change: that
+// one answers the conversation.
+async function repairCut({ pool }, { sessionId }) {
+  const { rows: [busy] } = await pool.query(
+    `SELECT 1 FROM wf_instances WHERE machine = 'turn' AND key = $1 AND state = 'running'`, [`session:${Number(sessionId)}`]);
+  if (busy) return { skipped: 'running' };
+  return { repaired: await require('./turn-recovery').repairUnansweredTurn(pool, Number(sessionId)) };
+}
+
 // "Session stopped before finishing" (#4729), owed by an agent turn that
 // failed on change `sessionId` (the turn machine's turn.stalled): belled
 // unless somebody is watching the conversation now, on any process. Throws
@@ -493,4 +504,4 @@ async function tellStalled({ pool }, { sessionId, agentSessionId }) {
   return { told: true };
 }
 
-module.exports = { run, tellStalled, ownedChange, RECOVERY_RETRY, STOP_POLL, LOST_LEASE, NO_RESPONSE };
+module.exports = { run, tellStalled, repairCut, ownedChange, RECOVERY_RETRY, STOP_POLL, LOST_LEASE, NO_RESPONSE };

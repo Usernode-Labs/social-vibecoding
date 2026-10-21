@@ -95,7 +95,7 @@ test('turn machine against the full PostgreSQL schema', { timeout: 180000 }, asy
   const pushed = [];
   const rt = createRuntime({
     pool, machines: [machine], pollMs: 50, publish: async (_q, list) => { pushed.push(...list); },
-    services: { [WORK.run]: fake(WORK.run), [WORK.stalled]: fake(WORK.stalled), [WORK.name]: fake(WORK.name), [TURN_STOP]: fake(TURN_STOP) },
+    services: { [WORK.run]: fake(WORK.run), [WORK.stalled]: fake(WORK.stalled), [WORK.name]: fake(WORK.name), [WORK.repair]: fake(WORK.repair), [TURN_STOP]: fake(TURN_STOP) },
   });
   runtimes.push(rt);
   let rk = 0;
@@ -184,6 +184,30 @@ test('turn machine against the full PostgreSQL schema', { timeout: 180000 }, asy
     await settle();
     const states = pushed.filter((p) => p.data.type === 'session_state').map((p) => [p.kind, p.routing.userId, p.data.sessionId, p.data.busy, p.data.appSlug]);
     assert.deepEqual(states, [['user', u.id, ch.id, true, a.slug], ['user', u.id, ch.id, false, a.slug]]);
+  });
+
+  // A dev chat turn that did not end its own way owes its change the dev
+  // chat's repair as work: once, a once-per-release sweep caught it.
+  await t.test('T1e a change\'s dev chat turn that failed owes its repair as work, once; one that finished, or a conversation\'s, owes none', async () => {
+    const { rows: [u] } = await pool.query(`INSERT INTO users (username, password) VALUES ($1, 'x') RETURNING id`, [`tu_${++seq}`]);
+    const { rows: [a] } = await pool.query(
+      `INSERT INTO apps (name, slug, created_by) VALUES ($1::text, $1::text, $2) RETURNING id`, [`tu-app-${++seq}`, u.id]);
+    const { rows: [ch] } = await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, status) VALUES ($1, $2, 'active') RETURNING id`, [a.id, u.id]);
+    const key = `session:${ch.id}`;
+    work.answer = (ctx) => { if (ctx.input.turnId === 'turn-r1') throw new Error('the database blinked'); return { ended: 'done' }; };
+    await send({ key }, 'Asked', { turnId: 'turn-r1', kind: 'classic', input: { sessionId: ch.id } });
+    await send({ key }, 'Asked', { turnId: 'turn-r2', kind: 'classic', input: { sessionId: ch.id } });
+    await settle();
+    const c = await conversation();
+    work.answer = () => { throw new Error('the model did not answer'); };
+    await ask(c, 'turn-r3');
+    await settle();
+    work.answer = null;
+    const owed = work.calls.filter((w) => w.kind === WORK.repair);
+    assert.deepEqual(owed.map((w) => [w.key, w.input.sessionId]), [['repair:turn-r1', ch.id]]);
+    assert.ok(Math.abs(Date.parse(owed[0].input.owedAt) - Date.now()) < 60 * 1000, 'when it was owed (a late one is not run)');
+    work.calls.length = 0;
   });
 
   await t.test('T2 a turn asked for while one runs waits its turn, in order; the same turn twice is one', async () => {
@@ -781,6 +805,33 @@ test('turn machine against the full PostgreSQL schema', { timeout: 180000 }, asy
     assert.ok(Array.isArray(crumbs[0].metadata.quickReplies), 'with its pills');
     assert.deepEqual(classic.stalled, [d.id], 'and the bell says it stopped before finishing');
     assert.equal((await sessionBus.snapshot(d.id)).map((e) => (e.event || e).type).pop(), 'done');
+  });
+
+  await t.test('C4 the repair a failed dev chat turn owes: the "didn\'t answer" note, once, never while another turn runs on the change', async () => {
+    classic.stalled.length = 0;
+    const d = await change();
+    await pool.query(`INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'user', 'Add a toggle', '{}')`, [d.id]);
+    const crumbs = async () => (await pool.query(
+      `SELECT metadata FROM chat_session_messages WHERE session_id = $1 AND role = 'system'`, [d.id])).rows;
+    // Another turn runs on it: that one answers.
+    const db = await pool.connect();
+    try {
+      await db.query(`BEGIN; SET LOCAL app.wf_writer = 'transition'`);
+      await db.query(`INSERT INTO wf_instances (machine, key, state, data, machine_version) VALUES ('turn', $1, 'running', '{}', 2)`, [d.key]);
+      await db.query('COMMIT');
+    } finally { db.release(); }
+    assert.deepEqual(await turns.repairCut({ pool }, { sessionId: d.id }), { skipped: 'running' });
+    assert.deepEqual(await crumbs(), []);
+    const idle = await pool.connect();
+    try {
+      await idle.query(`BEGIN; SET LOCAL app.wf_writer = 'transition'`);
+      await idle.query(`UPDATE wf_instances SET state = 'idle' WHERE machine = 'turn' AND key = $1`, [d.key]);
+      await idle.query('COMMIT');
+    } finally { idle.release(); }
+    assert.deepEqual(await turns.repairCut({ pool }, { sessionId: d.id }), { repaired: 'breadcrumb' });
+    await turns.repairCut({ pool }, { sessionId: d.id });
+    assert.deepEqual((await crumbs()).map((c) => c.metadata.recoveredReason), ['unanswered'], 'once');
+    assert.deepEqual(classic.stalled, [d.id], 'and the bell says it stopped before finishing');
   });
 
   // ── 4. A headless run (an auto session on a request) ────────────────

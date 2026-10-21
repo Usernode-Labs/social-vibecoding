@@ -372,13 +372,9 @@ const STATES = [
           agentSessionId: id, minutesAgo: 1,
           content: 'Make the empty state on the dev board friendlier.',
         });
-        // Nothing in a copy renews a running agent's lease, and one not
-        // renewed for 90 seconds reads as interrupted: this one is renewed
-        // ahead, past the life of any shots pair.
         await client.query(
           `UPDATE agent_sessions SET active_turn = jsonb_build_object(
-             'id', $2::text, 'startedAt', NOW() - INTERVAL '40 seconds',
-             'renewedAt', NOW() + INTERVAL '6 hours', 'phase', 'mayor')
+             'id', $2::text, 'startedAt', NOW() - INTERVAL '40 seconds', 'phase', 'mayor')
              || CASE WHEN $3 THEN jsonb_build_object(
                   'stopRequestedAt', NOW() - INTERVAL '10 seconds', 'stopRequestedBy', $4::text)
                 ELSE '{}'::jsonb END

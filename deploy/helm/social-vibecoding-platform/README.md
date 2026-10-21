@@ -428,11 +428,10 @@ work over as soon as the new one appears, so the two share the surge slot. The m
 
 Both Pods may serve independent requests during the brief overlap, and a
 replaced Pod may still run work for as long as it drains. That is safe because
-`PLATFORM_LEADER_LOCK=1` uses the platform's PostgreSQL advisory-lock
-coordinator: only one Pod runs singleton recovery, sweepers and reconcilers.
-Each process also records what it is working on (`platform_processes`,
-`process_holds`), so the new leader's recovery leaves a replaced Pod's live
-work alone, and a Stop clicked on one Pod reaches the Pod that runs the turn.
+no process leads: what a leader ran is workflow work or a clock, a person's
+turn is its machine's work item, and a Stop is an event to that machine,
+which reaches the turn wherever it runs (docs/workflows.md). Each process
+records itself in `platform_processes` for its drain and the roster.
 This is intentionally implemented with the built-in Deployment controller;
 the cluster does not need Caddy, Argo Rollouts, or another rollout CRD.
 

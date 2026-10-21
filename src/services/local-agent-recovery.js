@@ -102,7 +102,6 @@ async function finishAdoptedTurn({ config, pool, turn, deps = {} }) {
   const emit = handle.send;
   const agentMeta = { agentBackend: 'claude_code', agentModel: null, runner: 'local', localAgentLabel: label, localMode: mode };
 
-  let tailHeartbeat = null;
   try {
     // ── Wait, as the dead waiter would have ────────────────────────────
     // The progress card is rebuilt wholesale from the turn's own lines (the
@@ -143,13 +142,7 @@ async function finishAdoptedTurn({ config, pool, turn, deps = {} }) {
       // Someone else holds the tail now, or the turn is gone with its change.
       return { outcome };
     }
-    // The tail is this process's now (claimTail). Its heartbeat keeps saying
-    // so while it runs: a staging build alone can take minutes, and a
-    // conversation must not be ended as interrupted meanwhile.
-    tailHeartbeat = setInterval(() => {
-      d.localAgent.touchWaiter(pool, turn.id, turn.waiter_id).catch(() => {});
-    }, d.localAgent.WAITER_RENEW_MS);
-    if (typeof tailHeartbeat.unref === 'function') tailHeartbeat.unref();
+    // The tail is this process's now (claimTail).
     const terminalLines = progressFor(finished);
     // Lines the laptop posted after the last poll, then the card's end.
     for (const text of terminalLines.slice(sent)) emit('cc_progress', { text, ...agentMeta });
@@ -288,7 +281,6 @@ async function finishAdoptedTurn({ config, pool, turn, deps = {} }) {
     });
     return { outcome, wrapUp: wrapUpOutcome };
   } finally {
-    if (tailHeartbeat) clearInterval(tailHeartbeat);
     d.stopRegistry.deleteIf(sessionId, handle);
     d.activeWorkers.activeWorkers.delete(sessionId);
     emit('done', {});

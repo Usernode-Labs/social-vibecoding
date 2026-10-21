@@ -763,7 +763,9 @@ per turn, run whole in whichever workflow process claims it.
   process's memory. A process's holds (`services/processes.js`) are its own drain's.
 - **What a turn owes after it** is the machine's work, never a call after its end: a
   turn that stopped before finishing tells its person once (`turn.stalled`,
-  `turns.tellStalled`), and a conversation opened on a request is named from it beside its
+  `turns.tellStalled`), a change's dev chat turn that did not end its own way (failed,
+  out of time or of claims) gets the dev chat's repair once, unless another turn runs on
+  the change (`turn.repair`, `turns.repairCut`), and a conversation opened on a request is named from it beside its
   run (`turn.name`, `agent-sessions.nameFromRequest`). A change's `session_state` (busy or
   idle) is pushed from the transition that starts or ends its turn (`pushes.ts
   sessionState`), from the change's row; `session-state.js` reads busy from the durable

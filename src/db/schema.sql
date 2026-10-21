@@ -12323,9 +12323,9 @@ BEGIN
 END;
 $$;
 
--- The conversation's own row. Only what a screen draws bumps it: renewing
--- the turn lease every half minute, reading the conversation (seen_at) and
--- the compaction summary do not. A write that already moved state_version
+-- The conversation's own row. Only what a screen draws bumps it: a claim's
+-- `renewedAt` (which only a release before roadmap item 3.2 stamps),
+-- reading the conversation (seen_at) and the compaction summary do not. A write that already moved state_version
 -- (the triggers above) is left as it is.
 CREATE OR REPLACE FUNCTION agent_session_state_touch() RETURNS trigger
 LANGUAGE plpgsql AS $$
