@@ -7,8 +7,8 @@
  * src/routes/workshop-overview.js), each item naming the project it belongs
  * to. It used to draw its own cards (a Yes and a No at the foot of each, a
  * link to read the rest), so the two Needs you screens looked and answered
- * differently: the project's had the rail (Vote, Description, Comments, Ask,
- * Try it, More), the vote sheet, the swipe, the keys and the end card, and
+ * differently: the project's had the rail (Vote, Comments, Ask, Try it,
+ * More), the vote sheet, the swipe, the keys and the end card, and
  * this one had none of them. Now the rows are adapted here and drawn by the
  * project's own `NeedsFeed` (dev-board/workshop/workshop.tsx), so the two
  * cannot drift apart again.
@@ -18,8 +18,9 @@
  * A CHANGE is voted from the vote sheet with the platform's own vote
  * (AppView.castVote), carrying the approval epoch the server checks (#2038),
  * asking for a line on a No the way every vote does, and turning a
- * membership refusal into Join through the fetch wrapper. Description,
- * Comments and Ask are the project's own, addressed to the row's project.
+ * membership refusal into Join through the fetch wrapper. The caption's
+ * "more", Comments and Ask are the project's own, addressed to the row's
+ * project.
  * A GROUP DECISION (a rename, a secret, closing a request) is decided on its
  * own page, where its options and consequences are shown: those votes can
  * apply the decision on the spot, and that belongs on the screen that
@@ -33,12 +34,14 @@
  * effect; nothing here is in the prerendered document.
  */
 
-import { useEffect, useMemo, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, type ReactNode } from 'react';
 
 import type { DevWorkshopView } from '../dev-board/card/model';
 import { callAppView } from '../dev-board/card/fold';
 import { NeedsFeed } from '../dev-board/workshop/workshop';
 import { AppIconContent, AppIconLink, appIconKind } from '../apps/app-card-view';
+import { useMessages } from '../../lib/i18n/react';
+import { t as translate } from '../../lib/i18n/runtime';
 import { agoStamp } from '../../lib/timestamp';
 
 export type NeedsFeedItem = {
@@ -57,15 +60,48 @@ export type NeedsFeedItem = {
    * needs (B7, the server's rule for `_cardVoteButtonSpecs`' `approve`).
    */
   approve?: boolean;
+  /**
+   * #5365: the viewer's vote does not decide this change — `advisory`: they
+   * are outside the project's deciders (#4747, the server's
+   * `my_vote_advisory`); `uncounted`: a test account's vote, recorded but
+   * not counted. The item is labelled as advisory and the feed puts the
+   * rows whose vote decides first.
+   */
+  advisory?: boolean;
+  uncounted?: boolean;
+  /**
+   * #4490: the card's picture, as a project's Needs you draws it: the
+   * change's before & after shots run and legacy capture pair (shaped by
+   * `AppView._workshopVisuals`, as there), its author's diagram, "What it
+   * touches", and a group decision's own facts.
+   */
+  shots?: unknown;
+  visuals?: unknown;
+  diagram?: unknown;
+  diagram_source?: string | null;
+  touches?: unknown;
+  nothing_visible?: boolean;
+  decision?: unknown;
   app: { slug: string; name: string; icon_url: string | null; icon_emoji: string | null };
 };
+
+/**
+ * The shots and legacy pair as the item draws them: the project page's own
+ * shaping (`AppView._workshopVisuals`), so the two feeds cannot differ.
+ * Null when AppView is not loaded or there is nothing to show.
+ */
+function feedVisuals(item: NeedsFeedItem): FeedRow['visuals'] {
+  if (item.kind === 'governance' || (!item.shots && !item.visuals)) return null;
+  const out = callAppView('_workshopVisuals', item.visuals || null, item.shots || null);
+  return out && typeof out === 'object' ? (out as FeedRow['visuals']) : null;
+}
 
 type FeedRow = DevWorkshopView['queue'][number];
 
 /**
  * A proposal's summary is Markdown written for its own page. On the item it
  * is a paragraph: headings, emphasis, code ticks and list markers go, a link
- * keeps its words, and the whitespace collapses. The Description sheet has
+ * keeps its words, and the whitespace collapses. The caption's "more" has
  * it rendered.
  */
 export function plainSummary(md: string | null | undefined): string {
@@ -87,7 +123,7 @@ export function plainSummary(md: string | null | undefined): string {
  * the epoch, and on a project that is just yours the Yes marked `approve`, so
  * the item says Approve and Don't approve as its card does, #4270); a group
  * decision has none, and the vote sheet opens its page.
- * `html` renders a summary for the Description sheet (DevChat's renderer,
+ * `html` renders a summary for the caption's "more" (DevChat's renderer,
  * through AppView, where it is loaded).
  */
 export function reelRows(
@@ -108,7 +144,7 @@ export function reelRows(
         cls: '',
         attrs,
         icon: null,
-        title: { text: item.title || (change ? 'A change' : 'A group decision'), title: '' },
+        title: { text: item.title || (change ? translate('communities:reel.fallbackTitle.change') : translate('communities:reel.fallbackTitle.decision')), title: '' },
         meta: [],
         pill: null,
         linked: [],
@@ -124,16 +160,30 @@ export function reelRows(
         uncapped: false,
       },
       kind: 'vote',
-      ask: change ? 'Should this change go in?' : 'Should this go ahead?',
-      yes: change ? { label: 'Yes', act: { fn: 'castVote', args: [item.id, 'yes', ...rev] }, ...(item.approve ? { approve: true } : {}) } : null,
-      no: change ? { label: 'No', act: { fn: 'castVote', args: [item.id, 'no', ...rev] } } : null,
+      ask: change ? translate('communities:reel.ask.change') : translate('communities:reel.ask.decision'),
+      yes: change
+        ? {
+          label: translate('communities:reel.yes'),
+          act: { fn: 'castVote', args: [item.id, 'yes', ...rev] },
+          ...(item.approve ? { approve: true } : {}),
+          // #5365: the flags the sheet's picker reads its line from, next to
+          // `approve` — only ever set together on a real server, and the
+          // test-account line wins in the picker.
+          ...(item.uncounted ? { uncounted: true } : {}),
+          ...(item.advisory ? { advisory: true } : {}),
+        }
+        : null,
+      no: change ? { label: translate('communities:reel.no'), act: { fn: 'castVote', args: [item.id, 'no', ...rev] } } : null,
       who: item.author || null,
       ago: item.at ? agoStamp(item.at).text : '',
       number: item.number,
-      body: null,
       summary,
       descriptionHtml: item.summary ? html(item.summary) : '',
-      visuals: null,
+      visuals: feedVisuals(item),
+      ...(item.diagram ? { diagram: item.diagram, diagramSource: item.diagram_source || 'author' } : {}),
+      ...(item.touches ? { touches: item.touches } : {}),
+      ...(item.nothing_visible ? { nothingVisible: true } : {}),
+      ...(item.decision ? { decision: item.decision } : {}),
       askAbout: { kind: change ? 'proposal' : 'gov', ref: item.id },
       thread: { type: change ? 'session' : 'governance', ref: item.id },
       app: item.app,
@@ -168,18 +218,35 @@ function ReelApp(item: FeedRow): ReactNode {
 
 const NO_MODELS: DevWorkshopView['models'] = { list: [], selected: null };
 
-export function NeedsReel({ items, error, capped, onDone }: {
+export function NeedsReel({ items, error, capped, onDone, onAnswered }: {
   items: NeedsFeedItem[] | null;
   error: boolean;
   /** The read stopped at its bound: there may be more than these. */
   capped: boolean;
   /** The end card's way on: back to the list of communities. */
   onDone: () => void;
+  /**
+   * #4794: a vote the feed has just saved, so the controller can take its
+   * card out of the store's copy at once. Absent on a project's own feed,
+   * whose refresh already drops the row.
+   */
+  onAnswered?: (id: number, epoch: number | null) => void;
 }) {
-  const rows = useMemo(() => (items ? reelRows(items, (md) => {
-    const out = callAppView('_proposalSummaryHtml', { pr_summary_md: md });
-    return typeof out === 'string' ? out : '';
-  }) : []), [items]);
+  // `t` changes with the language on screen, so the rows' words (reelRows)
+  // are read again when it does.
+  const t = useMessages('communities');
+  // `epochs` is each row's source item's epoch, keyed by the row key
+  // NeedsFeed answers by: the vote's third argument, which the answered set
+  // matches on.
+  const { rows, epochs } = useMemo(() => {
+    const built = items ? reelRows(items, (md) => {
+      const out = callAppView('_proposalSummaryHtml', { pr_summary_md: md });
+      return typeof out === 'string' ? out : '';
+    }) : [];
+    const epochs = new Map<string, number | null>();
+    items?.forEach((item, i) => epochs.set(built[i].key, item.epoch));
+    return { rows: built, epochs };
+  }, [items, t]);
   // The ask box's models: the dev session's own list, as on a project page.
   const models = useMemo(() => {
     const m = callAppView('_workshopModels') as DevWorkshopView['models'] | undefined;
@@ -191,33 +258,50 @@ export function NeedsReel({ items, error, capped, onDone }: {
     callAppView('_attrInit');
     callAppView('_cardMenuInit');
   }, []);
+  // ONCE DRAWN, DRAWN (#4794): a vote on the last card empties the store's
+  // feed, and the feed the viewer is inside must not switch to the empty
+  // line over their head — the pin keeps the answered card, and the end card
+  // follows. Reset by the unmount, so reopening a genuinely empty feed still
+  // says so.
+  const drawnRef = useRef(false);
+  useEffect(() => {
+    if (items && items.length) drawnRef.current = true;
+  }, [items]);
 
   if (error) {
-    return <p className="px-4 pt-3 text-sm text-zinc-500 dark:text-zinc-400" data-needs-error="">Couldn't load what is waiting on you. Each project's own Needs you page still has it.</p>;
+    return <p className="px-4 pt-3 text-sm text-zinc-500 dark:text-zinc-400" data-needs-error="">{t('communities:reel.error')}</p>;
   }
-  if (!items) {
-    return <div className="workshop-needs-feed workshop-reel-loading" data-needs-reel="" aria-busy="true" aria-label="Loading what needs you" />;
+  if (!items && !drawnRef.current) {
+    return <div className="workshop-needs-feed workshop-reel-loading" data-needs-reel="" aria-busy="true" aria-label={t('communities:reel.loading')} />;
   }
-  if (!items.length) {
-    return <p className="px-4 pt-3 text-sm text-zinc-500 dark:text-zinc-400" data-needs-empty="">Nothing is waiting on your vote in any of your projects.</p>;
+  const shown = items || [];
+  if (!shown.length && !drawnRef.current) {
+    return <p className="px-4 pt-3 text-sm text-zinc-500 dark:text-zinc-400" data-needs-empty="">{t('communities:reel.empty')}</p>;
   }
   return (
     <>
       <div className="workshop-needs-feed" data-needs-reel="">
         <NeedsFeed
           rows={rows}
-          total={rows.length}
           models={models}
           slug=""
           canPost
           onDone={onDone}
-          doneLabel="Back to your communities"
+          doneLabel={t('communities:reel.done')}
           renderApp={ReelApp}
+          onAnswered={onAnswered ? (row) => {
+            // A group decision has no Yes or No in the feed (reelRows sets
+            // both to null), so answer() never reaches here for one; a
+            // proposal's epoch rides along for the answered set.
+            if (row.askAbout && row.askAbout.kind === 'proposal') {
+              onAnswered(row.askAbout.ref as number, epochs.get(row.key) ?? null);
+            }
+          } : undefined}
         />
       </div>
-      {capped ? (
+      {capped && shown.length ? (
         <p className="px-4 pt-2 text-xs text-zinc-500 dark:text-zinc-400" data-needs-capped="">
-          Showing the newest {items.length}. Each project's own Needs you page has the rest.
+          {t('communities:reel.capped', { count: shown.length })}
         </p>
       ) : null}
     </>

@@ -23,6 +23,7 @@
 import { Button } from '@/components/ui/button';
 import { SectionHeading } from '@/components/ui/field';
 
+import { useMessages } from '../../../lib/i18n/react';
 import { requestTour } from '../../home/tour/tour-request';
 import { clearDone, currentUserId } from '../../home/tour/tour-storage';
 
@@ -35,11 +36,12 @@ function replay(): void {
 }
 
 export function TourSection() {
+  const t = useMessages('settings');
   return (
     <div data-settings-section="tour" className="hidden">
       <div id="settings-tour-section">
-        <SectionHeading title="Welcome tour">
-          A one-minute walk through your apps and the Homeroom menu.
+        <SectionHeading title={t('settings:tour.title')}>
+          {t('settings:tour.intro')}
         </SectionHeading>
         <Button
           id="settings-tour-replay"
@@ -48,10 +50,10 @@ export function TourSection() {
           size="narrow"
           onClick={replay}
         >
-          Replay the tour
+          {t('settings:tour.replay')}
         </Button>
         <p id="settings-tour-hint" className="mt-2 text-xs text-zinc-500 dark:text-zinc-500">
-          It starts again on your home screen.
+          {t('settings:tour.hint')}
         </p>
       </div>
     </div>

@@ -47,6 +47,9 @@ const dockerJs = read('src/services/docker.js');
 const stagingJs = read('src/services/staging.js');
 const eventsJs = read('src/services/events.js');
 const rolloverJs = read('src/services/app-rollover.js');
+// The job's shape (a unit pending, running, then its outcome) is the fleet
+// job's, which the rollover runs on.
+const fleetJobJs = read('src/services/fleet-job.js');
 
 // The POST handler's source, from its router line to the GET that follows.
 function postHandler() {
@@ -90,7 +93,9 @@ test('a second start is a 409 carrying the in-flight job', () => {
   const post = postHandler();
   assert.match(post, /if \(!started\)/, 'the service reports whether it actually started');
   assert.match(post, /status\(409\)/);
-  assert.match(post, /Rollover already in progress/);
+  assert.match(post, /FLEET_JOB_REFUSED\.get\(reason\)/, 'a refusal says why');
+  assert.match(adminRoutes, /\['running', 'Rollover already in progress'\]/);
+  assert.match(adminRoutes, /\['rollout', 'A platform release is rolling out\. Try again in a few minutes\.'\]/);
   assert.match(post, /status\(202\)/, 'a real start is fire-and-forget: 202 + the job record');
 });
 
@@ -149,7 +154,7 @@ test('progress is broadcast to admins only', () => {
   assert.match(rolloverJs, /broadcastToAdmins/);
   assert.ok(!/broadcastGlobal\b/.test(rolloverJs),
     'the payload is an inventory of every app — it must not reach every client');
-  assert.match(rolloverJs, /type: 'admin_rollover_status'/);
+  assert.match(rolloverJs, /fleetJob\.frame\('admin_rollover_status', job\)/);
 });
 
 test('the shell routes the aggregate event into the console', () => {
@@ -205,7 +210,7 @@ test('the console keeps the WS surface app.js calls, forwarding to the module', 
     assert.ok(consoleJs.includes(fwd), `AdminConsole.${fwd} is where app.js looks for it`);
     assert.ok(consoleJs.includes(target), `${fwd} forwards to the module`);
   }
-  assert.match(rolloverTsx, /handleStatus\(data: \{ job\?: RolloverJob \| null \} \| null\) \{/);
+  assert.match(rolloverTsx, /handleStatus\(data: \{ job\?: RolloverJob \| null; changed\?: boolean \} \| null\) \{/);
   assert.match(rolloverTsx, /\n  reload\(\) \{ live\?\.reload\(\); \},/);
   // A frame that lands while the admin is on another section must be
   // dropped, not applied to an unmounted component — `live` is null exactly
@@ -228,16 +233,23 @@ test('the start button confirms before recreating anything', () => {
   assert.match(start, /method: 'POST'/);
 });
 
+test('a nudge (a job too big for one bus frame) reads the job again', () => {
+  for (const tsx of [rolloverTsx, read('frontend/src/features/admin/admin-staging-reap.tsx')]) {
+    const handler = tsx.slice(tsx.indexOf('handleStatus(data'), tsx.indexOf('handleStatus(data') + 300);
+    assert.match(handler, /if \(data\.changed && data\.job === undefined\) \{ live\.reload\(\); return; \}/);
+  }
+});
+
 test('the table renders one row per app with its outcome chip', () => {
   assert.match(rolloverTsx, /const ROLLOVER_STATES: Record<string, \{ label: string; cls: string \}> = \{/);
   for (const state of [
-    'pending', 'running', 'rolled', 'rebuilt',
+    'pending', 'running', 'rolled', 'rebuild_requested',
     'skipped_deploying', 'skipped_missing_secrets', 'skipped_no_db_password',
     'skipped_deleted', 'failed',
   ]) {
     assert.match(rolloverTsx, new RegExp(`${state}:`),
       `the UI has a chip for the ${state} outcome the service can emit`);
-    assert.match(rolloverJs, new RegExp(`'${state}'`),
+    assert.match(rolloverJs + fleetJobJs, new RegExp(`'${state}'`),
       `the service actually emits ${state}`);
   }
   const row = rolloverTsx.slice(

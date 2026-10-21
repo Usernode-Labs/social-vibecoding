@@ -29,6 +29,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { getTemplateFiles } = require('../src/services/template.js');
+const { message } = require('./lib/platform-i18n');
 
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 
@@ -44,10 +45,15 @@ test('scaffold server.js redirects unauthenticated document navigations to the c
   // Via PLATFORM_ORIGIN rather than an inlined literal: the origin is read
   // from the injected USERNODE_PLATFORM_ORIGIN at runtime (no hostname is
   // baked in at scaffold time), so the link follows the platform when its
-  // domain moves instead of pointing at where it used to be.
+  // domain moves instead of pointing at where it used to be. The slug is
+  // read at runtime too (USERNODE_APP_SLUG), so no app's slug is written in
+  // and every project made from one starter is the same code
+  // (services/starter-images.js).
+  assert.match(server, /const APP_SLUG = process\.env\.USERNODE_APP_SLUG \|\| '';/);
+  assert.doesNotMatch(server, /demo-app-abc123/, 'no slug is written in');
   assert.match(
     server,
-    /res\.redirect\(302, PLATFORM_ORIGIN \+ '\/app\/demo-app-abc123\/full' \+ deepPath\)/,
+    /const appPath = APP_SLUG \? '\/app\/' \+ encodeURIComponent\(APP_SLUG\) \+ '\/full' \+ deepPath : '';\s+if \(PLATFORM_ORIGIN && req\.get\('sec-fetch-dest'\) === 'document'\) \{\s+return res\.redirect\(302, PLATFORM_ORIGIN \+ appPath\);/,
     'redirects to the platform chromeless deep link for this slug, carrying the inner path'
   );
   // The redirect must live INSIDE the unauthenticated branch, before the
@@ -83,7 +89,7 @@ test('scaffold server.js encodes ?path= from req.originalUrl behind the characte
 test('scaffold landing page deep-links to the app, not the bare platform origin', () => {
   const files = getTemplateFiles('Demo App', 'demo-app-abc123', 'postgres://x', 's');
   const server = files.find((f) => f.path === 'server.js').content;
-  assert.match(server, /href="\$\{PLATFORM_ORIGIN\}\/app\/demo-app-abc123\/full\$\{deepPath\}"/,
+  assert.match(server, /href="\$\{PLATFORM_ORIGIN\}\$\{appPath\}"/,
     'landing anchor carries the gated deep path too, on the runtime origin');
 });
 
@@ -110,12 +116,13 @@ test('register.html stub forwards an incoming fragment into the SPA', () => {
 test('the anonymous SPA boot remembers either clean or legacy app deep links', () => {
   const src = read('public/js/app.js');
   // restoreFromHash's anonymous branch: a non-auth route (e.g.
-  // /app/<slug>/full) is stored for after login, then the login screen
-  // shows — parity with the old server redirect to login.html.
-  assert.ok(src.includes('AuthScreens.rememberDeepLink(App._deepLinkTarget());'),
-    'anonymous branch stores the deep link');
-  assert.ok(src.includes("AuthScreens.show('login');"),
-    'anonymous branch then shows the login screen');
+  // /app/<slug>/full) is stored for after login, then the landing's
+  // sign-in sheet opens, titled for it (#5264).
+  assert.ok(src.includes('AuthScreens.showSignInFor(App._deepLinkTarget());'),
+    'anonymous branch hands the deep link to the sign-in sheet');
+  const screens = read('public/js/auth-screens.js');
+  assert.match(screens, /showSignInFor\(fullHash\) \{\s*AuthScreens\.rememberDeepLink\(fullHash\);/,
+    'which stores it for after login');
 });
 
 test('finishLogin restores the pending deep link before the authed boot', () => {
@@ -130,12 +137,29 @@ test('finishLogin restores the pending deep link before the authed boot', () => 
 
 test('app.js routes /app/<slug>/full onto the App tab in chromeless mode', () => {
   const src = read('public/js/app.js');
-  assert.ok(src.includes("const chromeless = tab === 'full';"),
+  assert.ok(src.includes("const fullRoute = tab === 'full';"),
     'restoreFromHash recognizes the full segment');
   assert.ok(src.includes('App.setChromeless(chromeless);'),
     'restoreFromHash applies the mode on app routes');
   assert.ok(src.includes('App.setChromeless(false)'),
     'non-app routes clear the mode');
+});
+
+test('an app opened from its home-screen icon keeps the header on /full', () => {
+  const src = read('public/js/app.js');
+  // The per-app manifest launches at /app/<slug>/full; installed, the shell
+  // draws its header there instead of the floating pill, and the address
+  // stays /full so it is still inside the installed app's scope.
+  assert.ok(src.includes('const chromeless = fullRoute && !App._installedDisplay();'),
+    'chromeless only in a browser tab');
+  assert.ok(src.includes('chromeless: fullRoute, innerPath, boardView,'),
+    'the canonical address keeps /full either way');
+  const helper = src.slice(src.indexOf('_installedDisplay() {'));
+  assert.match(helper.slice(0, 400),
+    /matchMedia\('\(display-mode: standalone\), \(display-mode: fullscreen\)'\)\.matches[\s\S]*navigator\.standalone === true/,
+    'standalone or fullscreen display, or Safari\'s navigator.standalone');
+  assert.equal(require('../src/services/app-install-manifest').buildManifest({ slug: 'x' }).start_url,
+    '/app/x/full', 'the start_url this reads');
 });
 
 test('app.js round-trips the clean chromeless path, inner path included', () => {
@@ -160,8 +184,8 @@ test('app.js splits the fragment-query off before segment routing', () => {
   // so an inner query string survives raw & / = / ?).
   assert.ok(src.includes('fragQuery.match(/(?:^|&)path=(.*)$/)'),
     'path value is the raw tail of the fragment query');
-  assert.ok(src.includes('if (chromeless && fragQuery) {'),
-    'the fragment-query is honored on the chromeless route only');
+  assert.ok(src.includes('if (fullRoute && fragQuery) {'),
+    'the fragment-query is honored on the /full route only');
 });
 
 test('app.js validates the inner path (relative-only, attribute-safe, capped)', () => {
@@ -214,8 +238,8 @@ test('app.js screen identity handles both clean paths and legacy hashes', () => 
   const src = read('public/js/app.js');
   assert.match(src, /parsed\.hash[\s\S]{0,120}parsed\.pathname/,
     'screenIdOf prefers a legacy hash and otherwise parses the clean pathname');
-  assert.ok(src.includes('(chromeless && innerPath !== prevInnerPath)'),
-    'a chromeless hash with a different inner path forces a re-render');
+  assert.ok(src.includes('(fullRoute && innerPath !== prevInnerPath)'),
+    'a /full address with a different inner path forces a re-render');
 });
 
 test('app.js setChromeless toggles the header and the pill', () => {
@@ -259,7 +283,8 @@ test('app.js setChromeless toggles the header and the pill', () => {
   // the prerendered markup and the first hydrating render identical.
   assert.ok(pill.includes('if (!chromeless) return null;'));
   assert.ok(pill.includes("id=\"chromeless-pill\""));
-  assert.ok(pill.includes("aria-label=\"Open this app on Homeroom\""));
+  assert.ok(pill.includes("aria-label={t('core:chromeless.openAppLabel')}"));
+  assert.equal(message('core:chromeless.openAppLabel'), 'Open this app on Homeroom');
   // The pill's exit target is the regular App-tab view, which clears the
   // mode via restoreFromHash. The slug is read at CLICK time, so the pill
   // survives app-to-app navigation without a remount.

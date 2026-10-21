@@ -153,15 +153,17 @@ const API_TIMEOUT_MS = 1000;
 // message pages, a proposal's detail, anything paginated. Those keep the 1s
 // deadline above.
 //
-// The board does cross a line this list used to draw at the launcher: a
-// cached /promoted carries VOTE COUNTS and CHECK STATES, and for the first
-// moments of a warm load those are last-visit's numbers. That is accepted
-// deliberately and is bounded by three things — the correction below fires
-// on exactly the bytes that changed, every vote and every promotion is
-// re-validated server-side (a tap on a stale row cannot double-count), and
-// the alternative on a weak link is not "the right number", it is a
-// skeleton. Being one load behind on a board you are looking at is the same
-// trade the navigate and shell tiers already take.
+// NOT /promoted AND /merged (polish board #3, 19 Oct 2026). The board used to
+// cross a line this list draws at the launcher: a cached /promoted carries
+// VOTE COUNTS and CHECK STATES, /merged what went live, and for the first
+// moments of a warm load those were last visit's. The project's hub states
+// them as facts, in its own words and on the Communities tab's badge ("6 to
+// vote", the Needs you line, Recently live), and every warm open drew last
+// visit's and then swapped them half a second later. The hub already waits
+// for its community record, which is not in this lane, so those two reads
+// now take the ordinary deadline beside it: on a healthy link the hub draws
+// once, with today's numbers; on a slow one the saved copy still answers at
+// API_TIMEOUT_MS and is corrected in place below.
 //
 // The correction is not optional: it is what makes this safe. networkFirstApi
 // posts `api-updated` when the copy it served disagrees with the answer that
@@ -189,7 +191,7 @@ const BOOT_READ_PATHS = [
 
 // Per-app reads with a slug in the path, so an exact match cannot express
 // them. Anchored at both ends and one segment wide on purpose: this must
-// admit `/api/apps/:slug/promoted` and refuse `/api/apps/:slug/messages`,
+// admit `/api/apps/:slug/issues` and refuse `/api/apps/:slug/messages`,
 // which is paginated and stays on the ordinary deadline.
 //
 // The first is the app record itself — it is not board content, it is the
@@ -197,7 +199,7 @@ const BOOT_READ_PATHS = [
 // have left the chain one round trip long and bought nothing.
 const BOOT_READ_PATTERNS = [
   /^\/api\/apps\/[^/]+$/,
-  /^\/api\/apps\/[^/]+\/(?:github-issues|issues|promoted|merged|board-order|sessions|shared-sessions|topic-categories)$/,
+  /^\/api\/apps\/[^/]+\/(?:github-issues|issues|board-order|sessions|shared-sessions|topic-categories)$/,
 ];
 
 const BOOT_API_TIMEOUT_MS = 0;
@@ -373,11 +375,10 @@ const SHELL_ASSETS = [
   '/icons/v3/icon-192.png',
   '/icons/v3/icon-512.png',
   '/icons/v3/icon-maskable-512.png',
-  // The signed-out landing's illustration. Unlike the challenge artwork that
-  // deliberately stays on the network (see the classify tests), this one has no
-  // fallback to draw in its place, and it is the first thing a visitor who has
-  // never signed in sees — on a document that is itself precached. An offline
-  // first run would otherwise render the new landing around a broken image.
+  // The signed-out landing's illustration. It has no fallback to draw in its
+  // place, and it is the first thing a visitor who has never signed in sees —
+  // on a document that is itself precached. An offline first run would
+  // otherwise render the new landing around a broken image.
   // Provenance and export settings in public/brand/README.md.
   '/brand/people.png',
   // #2718: the Homeroom mark, drawn in the header on EVERY route — the
@@ -386,6 +387,25 @@ const SHELL_ASSETS = [
   // place; this one because a missing header logo is a hole at the top of
   // every screen, offline and on a cold cache alike.
   '/brand/homeroom-mark.png',
+  // The built-in challenge artwork (frontend/src/lib/challenge-illustrations.ts,
+  // one file per slug). It used to stay on the network, as decoration with a
+  // fallback, and that cost Home a visible step on every cold load: the
+  // Challenges cards drew, and their pictures arrived a frame or more later
+  // (#1 and #10, the polish board of 19 Oct 2026; in the app the launch cover
+  // now waits for them). From the release cache they are on hand when the
+  // cards are. About 150 KB together; tests/pwa-sw-classify.test.js holds this
+  // list to the directory.
+  '/illustrations/challenges/block-production.svg',
+  '/illustrations/challenges/connect-participants.svg',
+  '/illustrations/challenges/identity-level-one.svg',
+  '/illustrations/challenges/identity-level-two.svg',
+  '/illustrations/challenges/invite-to-network.svg',
+  '/illustrations/challenges/make-a-proposal.svg',
+  '/illustrations/challenges/network-participation.svg',
+  '/illustrations/challenges/proposal-accepted.svg',
+  '/illustrations/challenges/ten-minutes-in-apps.svg',
+  '/illustrations/challenges/try-three-apps.svg',
+  '/illustrations/challenges/useful-feedback.svg',
 ];
 
 // Server-rendered standalone pages that stay online-only: never serve the
@@ -406,6 +426,10 @@ const NO_FALLBACK_PAGES = [
   // app shell. Serving the cached SPA shell for it offline would show a
   // page that looks signed in but cannot approve anything.
   '/connect/authorize',
+  // The notification ask's code to scan (routes/public-api.js /get-app): a
+  // redirect to the phone's own store, never a shell route. The cached shell
+  // answering it would open Homeroom's home screen instead of the store.
+  '/get-app',
 ];
 
 // Prefix-matched counterpart of NO_FALLBACK_PAGES, for standalone pages
@@ -425,6 +449,10 @@ const NO_FALLBACK_PAGES = [
 const NO_FALLBACK_PREFIXES = [
   '/reports/',
 ];
+
+// An app's install page: a server page under /app/<slug>/ that is never the
+// shell (classifyRequest and isShellDocumentUrl below).
+const APP_INSTALL_PAGE = /^\/app\/[a-z0-9][a-z0-9-]{0,254}\/install$/;
 
 // Pure request classifier — the single source of truth for what the fetch
 // handler does with a request. Returns one of:
@@ -502,6 +530,10 @@ function classifyRequest(method, url, acceptHeader, mode, selfOrigin) {
   // Auth endpoints are online-only — EXCEPT /api/auth/me, which is cached
   // so the SPA's boot check succeeds offline for a logged-in user.
   if (p.startsWith('/api/auth/') && p !== '/api/auth/me') return 'bypass';
+  // The optional boot read (#5678): "nobody is signed in" must never be
+  // replayed from the cache, and offline it is a non-answer, as the
+  // no-snapshot boot always was.
+  if (p === '/api/auth/me' && u.searchParams.get('optional') === '1') return 'bypass';
 
   // Group-chat attachment responses are files, not JSON or SPA documents.
   // In particular, clicking an image opens this URL as a navigation. If the
@@ -535,6 +567,13 @@ function classifyRequest(method, url, acceptHeader, mode, selfOrigin) {
     if (/^\/(?:issue-images|visuals|app-icons|avatars|app-files)\/[a-f0-9]{32}$/.test(p)) {
       return 'bypass';
     }
+    // The same again for an app's install page (/app/<slug>/install,
+    // routes/app-install.js), which "Add to home screen" opens from Home's
+    // card menu, Discover and the app menu's About. It is a server page, not
+    // a shell route, so the cached shell answered it, the router read
+    // `install` as the App tab and reopened the app: the tap did nothing a
+    // tester could see.
+    if (APP_INSTALL_PAGE.test(p)) return 'bypass';
     return 'navigate';
   }
 
@@ -555,6 +594,11 @@ function classifyRequest(method, url, acceptHeader, mode, selfOrigin) {
 
   // The shell's own static assets (incl. /usernode-bridge/v1/... versions).
   if (/\.(?:html|js|css|webmanifest)$/i.test(p)) return 'shell';
+  // A pack the server's translation cache serves (src/routes/languages.js):
+  // its URL is its content hash, so it never changes, and the runtime checks
+  // its bytes against the hash GET /api/languages gave. It is no build's, so
+  // no release lists it: kept cache-first, like the other hashed assets.
+  if (/^\/locales\/live\/[a-zA-Z-]+\.[a-z-]+\.[a-f0-9]{64}\.json$/.test(p)) return 'immutable';
   // A language pack (scripts/language-packs.js): content-hashed, fetched only
   // when a person's language asks for it, verified against the release and
   // kept for offline use from then on. Never in SHELL_ASSETS, so installing
@@ -564,6 +608,13 @@ function classifyRequest(method, url, acceptHeader, mode, selfOrigin) {
   // The brand assets the shell itself draws, precached above. Without this rule
   // the SHELL_ASSETS entry would fill the cache on install and never be read.
   if (p.startsWith('/brand/')) return 'shell';
+  // The built-in challenge artwork, precached above for the same reason.
+  if (p.startsWith('/illustrations/challenges/')) return 'shell';
+  // Uploaded challenge artwork: minted per upload and served immutable
+  // (src/routes/topochain/challenge-illustrations.js), so cache-first like
+  // the app icons. Its card draws the moment it is on hand rather than a
+  // frame after.
+  if (/^\/challenge-illustrations\/[a-f0-9]{32}$/.test(p)) return 'immutable';
 
   // Everything else (e.g. the /health connectivity probe) goes straight
   // to the network so it always reflects real reachability.
@@ -593,6 +644,7 @@ function isShellDocumentUrl(url, selfOrigin) {
   try {
     const u = new URL(url, selfOrigin);
     if (u.origin !== selfOrigin) return false;
+    if (APP_INSTALL_PAGE.test(u.pathname)) return false;
     return SHELL_DOCUMENT_PATHS.includes(u.pathname)
       || /^\/app\/[a-z0-9][a-z0-9-]{0,254}(?:\/.*)?$/.test(u.pathname);
   } catch { return false; }
@@ -1540,9 +1592,18 @@ if (typeof module !== 'undefined' && module.exports) {
   // hold the new build, and shellFromCacheThisLoad keeps the assets consistent
   // with whichever document was served.
   //
-  // `cache: 'reload'` on every request, because the HTTP cache is the other
-  // copy of the old build and a prefetch that revalidated its way to a 304
-  // would report success having stored nothing new.
+  // A prefetch must never store an old build's bytes as the new one's. The
+  // generated release worker (sw-release.js, the path every hosted image
+  // takes) asks the HTTP cache first and is still safe: every asset it
+  // downloads is hashed against the new release's manifest, js and css live
+  // under the new build's /b/<sha>/ URL, and a copy that does not match is
+  // fetched again with `cache: 'reload'` before anything is stored. Its
+  // release.json is always fetched with 'reload'. The precacheShell fallback
+  // below (no generated release, so no hashes to check against) keeps
+  // `cache: 'reload'` on every request, because there the HTTP cache is the
+  // other copy of the old build
+  // and a prefetch that revalidated its way to a 304 would report success
+  // having stored nothing new.
   const shellPrefetches = new Map();
 
   // Resolves `{ ok, mismatch }`: `ok` when the whole build is in the cache,

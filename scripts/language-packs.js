@@ -15,10 +15,22 @@
 //                    the runtime shows English for that one message. A
 //                    translation never fails a build.
 //
-// Output (both ignored by git and Docker, rebuilt by every shell build):
+// A language listed in config.json SHIPS (is offered in Settings, matched to a
+// device and given packs) only once its translations cover at least
+// `minimumCoverage` of the English messages. Until the translation step has
+// filled it, a configured language is built into nothing and Homeroom stays
+// in English for its readers; afterwards a message the step has not reached
+// yet still falls back to English on its own.
+//
+// Output (all ignored by git and Docker, rebuilt by every shell build):
 //
 //   frontend/src/lib/i18n/catalogs.generated.json   bundled English + manifest
 //   public/locales/<language>.<namespace>.<sha256>.json   one pack per pair
+//   public/locales/.source.json   every catalog file as built, for the server:
+//                    the translation cache (src/services/language-cache.js)
+//                    reads the running build's English and committed
+//                    translations from it, since the runtime image carries
+//                    no frontend/. A dotfile, so it is never served.
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -26,6 +38,10 @@ const crypto = require('node:crypto');
 
 const hash = (value) => crypto.createHash('sha256').update(value).digest('hex');
 const PACK_NAME = /^[a-zA-Z-]+\.[a-z-]+\.[a-f0-9]{64}\.json$/;
+const SOURCE_FILE = '.source.json';
+// The catalog files the source carries: config, glossary, and every
+// language's namespaces (English included).
+const SOURCE_PATH = /^(?:config\.json|glossary\.json|[a-zA-Z-]+\/[a-z][a-z-]*\.json)$/;
 const NAMESPACE = /^[a-z][a-z-]*$/;
 const KEY = /^[A-Za-z][A-Za-z0-9_.-]*$/;
 const PARAMETER = /^[a-z][A-Za-z0-9]*$/;
@@ -76,6 +92,39 @@ function sourceProblem(key, entry) {
   return null;
 }
 
+// The top-level keys a catalog names more than once. JSON.parse keeps the
+// last and says nothing: on 12 Oct 2026 two proposals that fixed the same
+// request each added kudos.rankNote to leaderboard.json, git merged both,
+// and the second's wording replaced the first's without an error anywhere.
+// `text` is valid JSON (it has parsed already).
+function duplicateKeys(text) {
+  const seen = new Set();
+  const twice = new Set();
+  let depth = 0;
+  let expectKey = false;
+  for (let i = 0; i < text.length; i += 1) {
+    const c = text[i];
+    if (c === '"') {
+      let j = i + 1;
+      while (j < text.length && text[j] !== '"') j += text[j] === '\\' ? 2 : 1;
+      if (depth === 1 && expectKey) {
+        const key = JSON.parse(text.slice(i, j + 1));
+        if (seen.has(key)) twice.add(key); else seen.add(key);
+        expectKey = false;
+      }
+      i = j;
+    } else if (c === '{' || c === '[') {
+      depth += 1;
+      if (depth === 1 && c === '{') expectKey = true;
+    } else if (c === '}' || c === ']') {
+      depth -= 1;
+    } else if (c === ',' && depth === 1) {
+      expectKey = true;
+    }
+  }
+  return [...twice];
+}
+
 function readSource(directory) {
   const errors = [];
   const english = {};
@@ -89,10 +138,17 @@ function readSource(directory) {
     const namespace = file.slice(0, -5);
     if (!NAMESPACE.test(namespace)) { errors.push(`en/${file}: a namespace is lower-case letters and "-"`); continue; }
     let source;
-    try { source = JSON.parse(fs.readFileSync(path.join(directory, 'en', file), 'utf8')); } catch (err) {
+    let text;
+    try {
+      text = fs.readFileSync(path.join(directory, 'en', file), 'utf8');
+      source = JSON.parse(text);
+    } catch (err) {
       errors.push(`en/${file}: ${err.message}`); continue;
     }
     if (!isObject(source)) { errors.push(`en/${file}: the catalog is an object of entries`); continue; }
+    for (const key of duplicateKeys(text)) {
+      errors.push(`en/${namespace}:${key}: defined more than once in en/${file}; only the last would show`);
+    }
     const messages = {};
     for (const [key, entry] of Object.entries(source)) {
       const problem = sourceProblem(key, entry);
@@ -123,7 +179,19 @@ function readConfig(directory) {
       throw new Error(`frontend/locales/config.json: "${tag}" must be a canonical language tag with its own name`);
     }
   }
+  if ('minimumCoverage' in config && !(typeof config.minimumCoverage === 'number'
+      && config.minimumCoverage >= 0 && config.minimumCoverage <= 1)) {
+    throw new Error('frontend/locales/config.json: minimumCoverage is a fraction from 0 to 1');
+  }
   return config;
+}
+
+/** The share of a language's messages a translation must cover before it ships. */
+const minimumCoverage = (config) => (typeof config.minimumCoverage === 'number' ? config.minimumCoverage : 0);
+
+/** Whether a configured language's coverage lets it ship (`tally` from collectCatalogs). */
+function covered(tally, config) {
+  return tally.total > 0 && tally.translated / tally.total >= minimumCoverage(config);
 }
 
 /**
@@ -155,17 +223,45 @@ function requiredMessages(source, language) {
   return { required, groups };
 }
 
-/** 'missing' | 'stale' | 'invalid' for an entry that cannot be used, or null. */
-function translationProblem(entry, english) {
+/**
+ * True when a translation spells a character as an escape code, the six
+ * characters \u00a0 where a no-break space belongs (#4838), that the English
+ * does not have as many times. JSON decodes "\\u00a0" to a backslash, a u
+ * and four hex digits, which the screen shows as written.
+ */
+const ESCAPE_CODES = /\\u[0-9a-fA-F]{4}/g;
+function writtenOutEscape(text, english) {
+  const left = (english.match(ESCAPE_CODES) || []).map((code) => code.toLowerCase());
+  return (text.match(ESCAPE_CODES) || []).some((code) => {
+    const at = left.indexOf(code.toLowerCase());
+    if (at === -1) return true;
+    left.splice(at, 1);
+    return false;
+  });
+}
+
+/**
+ * 'missing' | 'stale' | 'invalid' for an entry that cannot be used, or null.
+ *
+ * A translation carries exactly the English text's parameters, with one
+ * exception for a form of a counted message (`counted`): the number the form
+ * was chosen by, `{{count}}`, is always handed to it, so a translation may
+ * show it where English spells the number out ("an hour ago"), and may leave
+ * it out where its own form already says it. Russian's `one` form is also
+ * used for 21, 31 and 101: it has to be able to print the number.
+ */
+function translationProblem(entry, english, counted = false) {
   if (entry === undefined) return 'missing';
   if (!isObject(entry) || typeof entry.text !== 'string' || !entry.text.trim()) return 'invalid';
   if (Object.keys(entry).some((field) => !['text', 'source', 'locked'].includes(field))) return 'invalid';
   if ('locked' in entry && typeof entry.locked !== 'boolean') return 'invalid';
   if (entry.source !== hash(english)) return 'stale';
-  if (!sameList(parameters(entry.text), parameters(english))) return 'invalid';
+  const named = (text) => parameters(text).filter((name) => !(counted && name === 'count'));
+  if (!sameList(named(entry.text), named(english))) return 'invalid';
   try {
     if (!sameList(componentTags(entry.text), componentTags(english))) return 'invalid';
   } catch { return 'invalid'; }
+  if (writtenOutEscape(entry.text, english)) return 'invalid';
   return null;
 }
 
@@ -197,9 +293,10 @@ function collectCatalogs(root) {
       const { required, groups } = requiredMessages(english[namespace], language);
       const messages = {};
       const unusable = new Set();
+      const countedKeys = new Set([...groups.values()].flat());
       for (const [key, text] of Object.entries(required)) {
         tally.total += 1;
-        const problem = translationProblem(translation[key], text);
+        const problem = translationProblem(translation[key], text, countedKeys.has(key));
         if (problem) { tally[problem].push(`${namespace}:${key}`); unusable.add(key); } else messages[key] = translation[key].text;
       }
       // A counted message is used whole or not at all: half a plural set
@@ -213,18 +310,29 @@ function collectCatalogs(root) {
       tally.translated += Object.keys(messages).length;
       catalogs[language][namespace] = messages;
     }
+    tally.ships = covered(tally, config);
     report[language] = tally;
   }
   return { config, namespaces, english, catalogs, report };
 }
 
+/** English and every configured language whose coverage lets it ship, in config order. */
+function shippedLanguages(config, report) {
+  return Object.fromEntries(Object.entries(config.languages)
+    .filter(([language]) => language === 'en' || report[language]?.ships));
+}
+
 function buildLanguagePacks(root) {
   const { config, namespaces, english, catalogs, report } = collectCatalogs(root);
+  const languages = shippedLanguages(config, report);
   const output = path.join(root, 'public/locales');
   fs.mkdirSync(output, { recursive: true });
   const manifest = {};
   const current = new Set();
   for (const [language, packs] of Object.entries(catalogs)) {
+    // A language the translation step has not filled yet gets no pack: it is
+    // not offered, so nothing would ever ask for one.
+    if (!(language in languages)) continue;
     manifest[language] = {};
     for (const [namespace, messages] of Object.entries(packs)) {
       const bytes = JSON.stringify(messages);
@@ -242,22 +350,66 @@ function buildLanguagePacks(root) {
   }
   const generated = path.join(root, 'frontend/src/lib/i18n/catalogs.generated.json');
   fs.mkdirSync(path.dirname(generated), { recursive: true });
-  fs.writeFileSync(generated, JSON.stringify({ languages: config.languages, namespaces, english, manifest }));
-  return { manifest, report };
+  fs.writeFileSync(generated, JSON.stringify({ languages, namespaces, english, manifest }));
+  writeSource(root, output);
+  return { manifest, report, languages };
 }
 
-function formatReport(report) {
+/**
+ * Every catalog file as built, in one JSON document ({ files: { path: json } },
+ * paths relative to frontend/locales), for a server whose image has no
+ * frontend/ (public/locales/.source.json). Returns its path.
+ */
+function writeSource(root, output = path.join(root, 'public/locales')) {
+  const directory = path.join(root, 'frontend/locales');
+  const files = {};
+  const walk = (relative) => {
+    for (const entry of fs.readdirSync(path.join(directory, relative), { withFileTypes: true })) {
+      const name = relative ? `${relative}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) walk(name);
+      else if (SOURCE_PATH.test(name)) {
+        try { files[name] = JSON.parse(fs.readFileSync(path.join(directory, name), 'utf8')); } catch { /* a malformed translation is left out, as a build leaves it out */ }
+      }
+    }
+  };
+  walk('');
+  fs.mkdirSync(output, { recursive: true });
+  const target = path.join(output, SOURCE_FILE);
+  fs.writeFileSync(target, JSON.stringify({ files }));
+  return target;
+}
+
+/** Writes a source document's files back out as root/frontend/locales, for collectCatalogs and the translation step. */
+function materializeSource(source, root) {
+  const directory = path.join(root, 'frontend/locales');
+  for (const [name, content] of Object.entries(source?.files || {})) {
+    if (!SOURCE_PATH.test(name)) continue;
+    const target = path.join(directory, ...name.split('/'));
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(target, `${JSON.stringify(content, null, 2)}\n`);
+  }
+  return root;
+}
+
+/**
+ * The coverage report. `limit` caps the keys listed per reason and language
+ * (a language nobody has translated yet is every message missing); pass
+ * Infinity for all of them.
+ */
+function formatReport(report, { limit = 25 } = {}) {
   const languages = Object.keys(report);
-  if (!languages.length) return 'Only English is shipped; there is no translation coverage to report.';
+  if (!languages.length) return 'Only English is configured; there is no translation coverage to report.';
   const lines = [];
   for (const language of languages) {
-    const { total, translated, missing, stale, invalid, unknown } = report[language];
+    const { total, translated, missing, stale, invalid, unknown, ships } = report[language];
     const percent = total ? Math.floor((translated / total) * 100) : 100;
     lines.push(`${language}: ${translated} of ${total} translated (${percent}%), `
       + `${missing.length} missing, ${stale.length} stale, ${invalid.length} invalid`
-      + (unknown.length ? `, ${unknown.length} no longer in English` : ''));
+      + (unknown.length ? `, ${unknown.length} no longer in English` : '')
+      + (ships === false ? ', not offered yet' : ''));
     for (const [reason, keys] of [['missing', missing], ['stale', stale], ['invalid', invalid]]) {
-      for (const key of keys) lines.push(`  ${reason}  ${key}`);
+      for (const key of keys.slice(0, limit)) lines.push(`  ${reason}  ${key}`);
+      if (keys.length > limit) lines.push(`  ${reason}  … and ${keys.length - limit} more`);
     }
   }
   return lines.join('\n');
@@ -267,11 +419,13 @@ if (require.main === module) {
   const root = path.join(__dirname, '..');
   try {
     if (process.argv.includes('--report')) {
-      console.log(formatReport(collectCatalogs(root).report));
+      const limit = process.argv.includes('--all') ? Infinity : undefined;
+      console.log(formatReport(collectCatalogs(root).report, { limit }));
     } else if (process.argv.includes('--check')) {
-      const { config, namespaces } = collectCatalogs(root);
+      const { config, namespaces, report } = collectCatalogs(root);
       console.log(`[language-packs] English source is valid: ${namespaces.length} namespace(s), `
-        + `${Object.keys(config.languages).length} shipped language(s)`);
+        + `${Object.keys(config.languages).length} configured language(s), `
+        + `${Object.keys(shippedLanguages(config, report)).length} shipped`);
     } else {
       buildLanguagePacks(root);
     }
@@ -282,5 +436,7 @@ if (require.main === module) {
 }
 
 module.exports = {
-  PACK_NAME, buildLanguagePacks, collectCatalogs, componentTags, formatReport, hash, parameters, requiredMessages,
+  PACK_NAME, SOURCE_FILE, buildLanguagePacks, collectCatalogs, componentTags, formatReport, hash, materializeSource,
+  minimumCoverage, parameters, readConfig, requiredMessages, shippedLanguages, translationProblem, writeSource,
+  writtenOutEscape,
 };

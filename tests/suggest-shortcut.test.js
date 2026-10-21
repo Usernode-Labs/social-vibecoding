@@ -3,11 +3,11 @@
 // #4289 and its follow-up: the C key comments on the page (a pin where the
 // pointer is, ../frontend/src/features/comment-pin/, tested in
 // tests/comment-pin.test.js), on a computer, with nothing selected.
-// Experimental, off by default, kept on the device.
+// On by default, kept on the device.
 //
 // What is pinned, and each is a way it can be quietly wrong:
 //
-//   1. THE SWITCH. Off until a person turns it on, and stored where the
+//   1. THE SETTING. On unless this device stored an off, and stored where the
 //      shortcut reads it.
 //   2. ONLY A C NOBODY ELSE USED. Typing, a selection, a modifier, a dialog
 //      on screen, or a screen that claimed the key (preventDefault) leaves it
@@ -47,7 +47,7 @@ const inTextbox = { tagName: 'SPAN', closest: (sel) => (sel.includes('textbox') 
 const shadowHost = { tagName: 'MY-WIDGET', closest: () => null };
 
 function memoryStorage(on) {
-  const map = new Map(on ? [[shortcut.SUGGEST_SHORTCUT_STORAGE_KEY, '1']] : []);
+  const map = new Map([[shortcut.SUGGEST_SHORTCUT_STORAGE_KEY, on ? '1' : '0']]);
   return {
     getItem: (k) => (map.has(k) ? map.get(k) : null),
     setItem: (k, v) => { map.set(k, String(v)); },
@@ -71,6 +71,7 @@ function keyEvent(init = {}) {
 
 function shellHarness({
   enabled = true, fine = true, signedIn = true, panel = false, dialogs = [], active = body,
+  staging = false,
 } = {}) {
   const listeners = {};
   const timers = [];
@@ -79,13 +80,18 @@ function shellHarness({
     contentWindow: frameWin,
     getBoundingClientRect: () => ({ left: 200, top: 56, width: 800, height: 600 }),
   };
+  const stagingFrameWin = { name: 'staging frame' };
+  const stagingFrame = {
+    contentWindow: stagingFrameWin,
+    getBoundingClientRect: () => ({ left: 40, top: 20, width: 900, height: 700 }),
+  };
   let selection = '';
   let opened = 0;
   const points = [];
   const doc = {
-    activeElement: active === 'frame' ? frame : active,
+    activeElement: active === 'frame' ? frame : active === 'staging' ? stagingFrame : active,
     documentElement: { classList: { contains: (c) => panel && c === 'in-side-panel' } },
-    getElementById: (id) => (id === 'app-iframe' ? frame : null),
+    getElementById: (id) => (id === 'app-iframe' ? frame : id === 'staging-iframe' ? (staging ? stagingFrame : null) : null),
     querySelectorAll: () => dialogs,
   };
   const win = {
@@ -99,7 +105,7 @@ function shellHarness({
     win, doc, storage, open: (p) => { opened += 1; points.push(p); }, signedIn: () => signedIn,
   });
   return {
-    doc, frame, frameWin, storage, points,
+    doc, frame, frameWin, stagingFrame, stagingFrameWin, storage, points,
     select(text) { selection = text; },
     move(x, y) { listeners.pointermove({ clientX: x, clientY: y }); },
     // Press, let any later listener act on the event, then run the task.
@@ -153,22 +159,28 @@ function bridgeHarness({ top = false, platformShell = false, active = body, poin
 
 // ── 1. The switch ─────────────────────────────────────────────────────
 
-test('the shortcut is off until it is turned on, and the switch is what it reads', () => {
+test('the setting is on by default, off only where a device stored that, and the switch is what it reads', () => {
+  assert.equal(shortcut.suggestShortcutEnabled(modeStorage()), true, 'on by default');
+  assert.equal(shortcut.suggestShortcutEnabled(modeStorage({ [shortcut.SUGGEST_SHORTCUT_STORAGE_KEY]: '1' })), true);
   const storage = memoryStorage(false);
-  assert.equal(shortcut.suggestShortcutEnabled(storage), false, 'off by default');
+  assert.equal(shortcut.suggestShortcutEnabled(storage), false, 'a stored off is honoured');
   shortcut.setSuggestShortcutEnabled(true, storage);
   assert.equal(shortcut.suggestShortcutEnabled(storage), true);
+  assert.equal(storage.getItem(shortcut.SUGGEST_SHORTCUT_STORAGE_KEY), '1');
   shortcut.setSuggestShortcutEnabled(false, storage);
   assert.equal(shortcut.suggestShortcutEnabled(storage), false);
-  assert.equal(shortcut.suggestShortcutEnabled(null), false, 'no storage reads as off');
+  assert.equal(storage.getItem(shortcut.SUGGEST_SHORTCUT_STORAGE_KEY), '0', 'off is stored, not removed');
+  assert.equal(shortcut.suggestShortcutEnabled(null), true, 'no storage reads as on');
   const broken = { getItem() { throw new Error('denied'); }, setItem() { throw new Error('denied'); }, removeItem() {} };
-  assert.equal(shortcut.suggestShortcutEnabled(broken), false, 'unreadable storage reads as off');
+  assert.equal(shortcut.suggestShortcutEnabled(broken), true, 'unreadable storage reads as on');
   assert.doesNotThrow(() => shortcut.setSuggestShortcutEnabled(true, broken));
 
-  const h = shellHarness({ enabled: false });
-  assert.equal(h.press().opened, 0, 'a C with the switch off does nothing');
+  const h = shellHarness();
+  assert.equal(h.press().opened, 1, 'a fresh device opens with a C');
+  shortcut.setSuggestShortcutEnabled(false, h.storage);
+  assert.equal(h.press().opened, 1, 'and a stored off stops it, with no reload');
   shortcut.setSuggestShortcutEnabled(true, h.storage);
-  assert.equal(h.press().opened, 1, 'and opens once it is on, with no reload');
+  assert.equal(h.press().opened, 2, 'and on again opens again');
 });
 
 // ── 2. Only a C nobody else used ──────────────────────────────────────
@@ -240,6 +252,22 @@ test('the shell takes the bridge\'s C only from its app frame, while that frame 
   assert.equal(shellHarness({ active: 'frame' }).message({ [shortcut.SHORTCUT_MESSAGE_KEY]: 'other' }), 0);
   assert.equal(shellHarness({ active: 'frame' }).message(null), 0);
   assert.equal(shellHarness({ active: 'frame' }).message('suggest'), 0);
+});
+
+test('the shell takes the bridge\'s C from the staging preview\'s frame too, only while it has focus', () => {
+  const msg = { [shortcut.SHORTCUT_MESSAGE_KEY]: 'suggest' };
+  const h = shellHarness({ active: 'staging', staging: true });
+  assert.equal(h.message({ [shortcut.SHORTCUT_MESSAGE_KEY]: 'suggest', x: 100, y: 50 }, h.stagingFrameWin), 1, 'a C in the preview opens the comment');
+  assert.deepEqual(h.points[0], { x: 140, y: 70 }, 'placed by the staging frame\'s rectangle');
+  const afterStaging = h.opened;
+  h.message(msg);
+  assert.equal(h.opened, afterStaging, 'the app frame\'s message while the preview has focus: no');
+  assert.equal(shellHarness({ active: 'frame', staging: true }).message(msg, h.stagingFrameWin), 0, 'the preview\'s message while the app frame has focus: no');
+  assert.equal(shellHarness({ active: body, staging: true }).message(msg, h.stagingFrameWin), 0, 'no focus in the preview: no');
+  assert.equal(shellHarness({ active: 'staging', staging: true, enabled: false }).message(msg, h.stagingFrameWin), 0, 'the switch');
+  assert.equal(shellHarness({ active: 'staging', staging: true, signedIn: false }).message(msg, h.stagingFrameWin), 0, 'signed out');
+  // No staging frame on screen (the harness answers none): its message finds no frame.
+  assert.equal(shellHarness({ active: body }).message(msg, h.stagingFrameWin), 0, 'no staging frame, no open');
 });
 
 test('the bridge forwards an unused C to the shell and never touches the app\'s keys', () => {
@@ -327,30 +355,122 @@ test('the Workshop claims its C, so the two never both open', () => {
   assert.match(ws, /if \(k === 'c' \|\| k === 'C'\) \{ e\.preventDefault\(\); toggleSheet\('comments'\); return; \}/);
 });
 
-test('the bundle installs the shortcut, which loads the comment on the first C', () => {
+test('the bundle installs the shortcut, which loads comment mode on the first C', () => {
   assert.match(read('frontend/src/main.tsx'), /^import '\.\/features\/improve\/suggest-shortcut';$/m);
   const src = read('frontend/src/features/improve/suggest-shortcut.ts');
-  assert.match(src, /import\('\.\.\/comment-pin\/comment-pin'\)\s*\.then\(\(m\) => m\.openCommentPin\(point\)\)\s*\.catch\(\(\) => openSuggest\(\)\)/,
-    'loaded on demand, and the dialog if it cannot load');
+  assert.match(src, /import\('\.\.\/comment-pin\/comment-pin'\)\s*\.then\(\(m\) => m\.toggleCommentMode\(\{ via: 'key' \}\)\)\s*\.catch\(\(\) => openSuggest\(\)\)/,
+    'loaded on demand, on and off, and the dialog if it cannot load');
+  assert.match(src, /^import type \{ OpenOptions \} from '\.\.\/comment-pin\/comment-pin';$/m,
+    'only its type: the mode is never in the shell\'s bundle');
   assert.match(src, /w\.Improve\.giveFeedback\(\)/);
   assert.match(src, /bridge\.suggestShortcut = \{/, 'published for settings.js, which cannot import');
 });
 
-test('Settings, Experimental has the switch, unchecked as shipped, painted and saved through the module', () => {
+test('Settings, Experimental no longer has the switch', () => {
   const { ExperimentalSection } = loadTsx('frontend/src/features/settings/sections/experimental.tsx', {
     stubs: { '../local-agents-list': { LocalAgentsList: () => null } },
   });
   const html = renderToHtml(createElement(ExperimentalSection));
-  assert.match(html,
-    /<label[^>]*><input id="suggest-shortcut-enabled" type="checkbox" class="un-switch"\/><span[^>]*>Press C to comment on the page<\/span><\/label>/);
-  assert.match(html, /pressing C drops a pin where your pointer is/);
-  assert.match(html, /Saved on this device only\./);
-  assert.ok(html.indexOf('id="suggest-shortcut-enabled"') < html.indexOf('id="settings-local-agents-section"'),
-    'inside the Experimental block');
+  assert.doesNotMatch(html, /suggest-shortcut-enabled/, 'the switch is gone');
+  assert.doesNotMatch(html, /Comment on the page/);
+  // The other experiments keep their switches and their order.
+  assert.ok(html.indexOf('id="ai-progress-estimate"') < html.indexOf('id="session-bridge-enabled"'));
+  assert.ok(html.indexOf('id="session-bridge-enabled"') < html.indexOf('id="review-flow-enabled"'));
+  assert.ok(html.indexOf('id="review-flow-enabled"') < html.indexOf('id="settings-local-agents-section"'));
 
   const settings = read('frontend/src/features/settings/settings.js');
-  const render = settings.match(/_renderExperimentalSection\(\) \{[\s\S]*?\n    \},/);
-  assert.match(render[0], /getElementById\('suggest-shortcut-enabled'\)/, 'every paint shows the stored value');
-  assert.match(render[0], /shortcut\.checked = !!shortcutPref\?\.enabled\(\)/);
-  assert.match(settings, /pref\?\.setEnabled\(e\.target\.checked\)/, 'saved on change');
+  assert.doesNotMatch(settings, /suggest-shortcut-enabled/, 'nothing paints or saves it there');
+});
+
+// ── 6. Suggest an improvement opens comment mode (#4289 follow-up) ─────
+
+function modeStorage(entries = {}) {
+  const map = new Map(Object.entries(entries));
+  return {
+    getItem: (k) => (map.has(k) ? map.get(k) : null),
+    setItem: (k, v) => { map.set(k, String(v)); },
+    removeItem: (k) => { map.delete(k); },
+    map,
+  };
+}
+
+test('Suggest an improvement opens comment mode by default, on a phone too, but not in the side panel', () => {
+  const on = { [shortcut.SUGGEST_SHORTCUT_STORAGE_KEY]: '1' };
+  const off = { [shortcut.SUGGEST_SHORTCUT_STORAGE_KEY]: '0' };
+  const page = { document: { documentElement: { classList: { contains: () => false } } } };
+  const panel = { document: { documentElement: { classList: { contains: (c) => c === 'in-side-panel' } } } };
+  assert.equal(shortcut.suggestOpensComment(page, modeStorage()), true, 'a fresh device opens comment mode');
+  assert.equal(shortcut.suggestOpensComment(page, modeStorage(on)), true);
+  assert.equal(shortcut.suggestOpensComment(page, modeStorage(off)), false, 'the form, where the device turned it off');
+  assert.equal(shortcut.suggestOpensComment(panel, modeStorage()), false, 'the side panel keeps the form');
+  assert.equal(shortcut.suggestOpensComment(null, modeStorage()), false, 'no window, no comment mode');
+  assert.equal(shortcut.formOffersComment(page, modeStorage()), true);
+  assert.equal(shortcut.formOffersComment(page, modeStorage(off)), false, 'the form offers nothing where the device turned it off');
+  assert.equal(shortcut.formOffersComment(panel, modeStorage()), false);
+  assert.equal(shortcut.SUGGEST_MODE_STORAGE_KEY, undefined, 'nothing remembers a last way: the setting decides');
+});
+
+test('a plain open of the form goes to comment mode where the switch says so, and nothing else does', () => {
+  const fc = read('frontend/src/features/dialogs/feedback-controller.js');
+  const open = fc.match(/App\.openFeedbackModal = \(opts = \{\}\) => \{[\s\S]*?\n  \};/)[0];
+  assert.match(open, /const plain = !opts\.edit && !opts\.firstFeedback && !opts\.description && !opts\.screenshotBlob && !opts\.screenshots\s*&& opts\.mode !== 'form';/);
+  assert.match(open, /if \(plain && shortcut\?\.opensComment\?\.\(\)\) \{\s*shortcut\.openComment\(\{ via: 'suggest' \}\);\s*return;/);
+  const src = read('frontend/src/features/improve/suggest-shortcut.ts');
+  assert.match(src, /opensComment: \(\) => suggestOpensComment\(\),/);
+  assert.match(src, /openComment: \(opts\?: OpenOptions\) => openCommentMode\(opts \|\| \{\}\),/);
+  // Comment mode's Form asks for the form by name, past the routing.
+  const mode = read('frontend/src/features/comment-pin/comment-pin.tsx');
+  assert.match(mode, /openFeedbackModal\?\.\(\{ mode: 'form' \}\)/);
+  assert.doesNotMatch(mode, /setSuggestMode/);
+});
+
+test('the form offers comment mode with its draft, and only where the switch is on', () => {
+  const { FeedbackDialog } = loadTsx('frontend/src/features/dialogs/feedback.tsx', {
+    stubs: { './feedback-controller': { Feedback: {}, init() {} } },
+  });
+  const html = renderToHtml(createElement(FeedbackDialog));
+  assert.match(html, /<div class="hidden"><span class="[^"]*" role="radiogroup" aria-label="How to suggest it">/,
+    'shipped hidden: the switch is off until a person turns it on');
+  const src = read('frontend/src/features/dialogs/feedback.tsx');
+  assert.match(src, /setOffersComment\(formOffersComment\(\)\);/, 'read on every open');
+  assert.match(src, /const carry = Feedback\._takeDraft\(\);\s*dialog\.close\(\);/, 'taken, then closed, so no second copy is saved');
+  assert.match(src, /openCommentMode\(\{ via: 'switch', carry: any \? carry : null \}\);/);
+  const fc = read('frontend/src/features/dialogs/feedback-controller.js');
+  assert.match(fc, /Feedback\._takeDraft = \(\) => \{[\s\S]*?feedbackText\.value = '';[\s\S]*?resetScreenshotState\(\);[\s\S]*?return draft;/);
+});
+
+test('comment mode\'s code and drawing library are fetched a few seconds after the page loads, where the switch is on', () => {
+  // A quick tap on "Suggest an improvement" right after the app opened waited
+  // on both downloads before anything could move (12 Oct 2026).
+  const src = fs.readFileSync(path.join(__dirname, '..', 'frontend/src/features/improve/suggest-shortcut.ts'), 'utf8');
+  assert.equal(shortcut.WARM_DELAY_MS, 3000);
+  // Scheduled after the load event, or at once when the page has already loaded.
+  const calls = [];
+  const fakeWin = (state) => ({
+    document: { readyState: state },
+    setTimeout: (fn, ms) => { calls.push(['timeout', ms]); return 1; },
+    addEventListener: (type, fn, opts) => { calls.push(['listen', type, !!(opts && opts.once)]); fn(); },
+  });
+  shortcut.scheduleWarmComment(fakeWin('loading'));
+  assert.deepEqual(calls, [['listen', 'load', true], ['timeout', 3000]]);
+  calls.length = 0;
+  shortcut.scheduleWarmComment(fakeWin('complete'));
+  assert.deepEqual(calls, [['timeout', 3000]]);
+  // Only where comment mode is the way Suggest opens, once per page, and the
+  // mode's own warm-up fetches the library without drawing anything.
+  assert.match(src, /export function warmComment\(\): void \{\s*if \(warmed \|\| !suggestOpensComment\(\) \|\| onCaptureRoute\(\)\) return;\s*warmed = true;\s*import\('\.\.\/comment-pin\/comment-pin'\)\s*\.then\(\(m\) => m\.warmCommentMode\(\)\)/);
+  assert.match(src, /export function prepareComment\(\): void \{\s*if \(!suggestOpensComment\(\) \|\| onCaptureRoute\(\)\) return;/,
+    'neither warms nor draws on a capture route');
+  // A `?shot=` / `?demo=` page renders one state for a check or a still: the
+  // picture drawn at boot there fetched the page's images for over 29 s and
+  // the `?shot=app-context` check never reached network idle.
+  assert.equal(shortcut.onCaptureRoute({ location: { search: '?shot=app-context' } }), true);
+  assert.equal(shortcut.onCaptureRoute({ location: { search: '?demo=1&ws=all' } }), true);
+  assert.equal(shortcut.onCaptureRoute({ location: { search: '?panel=1#app/x' } }), false);
+  assert.equal(shortcut.onCaptureRoute({ location: { search: '' } }), false);
+  assert.equal(shortcut.onCaptureRoute(null), false, 'no window: nothing to skip for');
+  assert.match(src, /scheduleWarmComment\(window\);/);
+  assert.match(src, /setEnabled: \(on: boolean\) => \{\s*setSuggestShortcutEnabled\(!!on\);\s*if \(on\) warmComment\(\);\s*\},/, 'and when the switch is turned on');
+  const mode = fs.readFileSync(path.join(__dirname, '..', 'frontend/src/features/comment-pin/comment-pin.tsx'), 'utf8');
+  assert.match(mode, /export function warmCommentMode\(\): void \{\s*loadLibrary\(\)\.catch\(/);
 });

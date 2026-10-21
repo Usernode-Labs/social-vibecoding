@@ -6,6 +6,7 @@ import {
   BookmarkIcon, BookmarkSolidIcon, EllipsisHorizontalIcon, FaceSmileIcon, ReplyArrowIcon, type IconProps,
 } from '@/components/ui/icons';
 
+import { useMessages } from '../../lib/i18n/react';
 import { emojiName } from './emoji-data';
 
 /**
@@ -85,13 +86,14 @@ export function MessageActionBar({
   /** The picker and the menu, anchored to the bar. */
   children?: ReactNode;
 }) {
+  const t = useMessages('messages');
   const quick = onReact ? recents.slice(0, 3) : [];
   return (
     <div
       ref={barRef}
       className={`${className} msgx-bar ${pickerOpen || moreOpen ? 'msgx-bar-open' : ''} ${hidden ? 'messages-message-actions-reserved' : ''}`}
       role="toolbar"
-      aria-label="Message actions"
+      aria-label={t('messages:actions.toolbar')}
       aria-hidden={hidden || undefined}
       inert={hidden || undefined}
     >
@@ -104,7 +106,7 @@ export function MessageActionBar({
             type="button"
             className={`msgx-bar-emoji ${on ? 'msgx-bar-emoji-on' : ''}`}
             aria-pressed={on}
-            aria-label={on ? `Remove your ${name} reaction` : `React with ${name}`}
+            aria-label={on ? t('messages:actions.removeReaction', { emoji: name }) : t('messages:actions.reactWith', { emoji: name })}
             title={name}
             onClick={() => onReact?.(emoji)}
           >
@@ -118,8 +120,8 @@ export function MessageActionBar({
           ref={pickerButtonRef}
           type="button"
           className={`msgx-bar-icon msgx-bar-picker ${pickerOpen ? 'msgx-bar-icon-on' : ''}`}
-          aria-label="Add reaction"
-          title="Add reaction"
+          aria-label={t('messages:actions.addReaction')}
+          title={t('messages:actions.addReaction')}
           aria-haspopup="dialog"
           aria-expanded={!!pickerOpen}
           onClick={onTogglePicker}
@@ -128,7 +130,7 @@ export function MessageActionBar({
         </button>
       ) : null}
       {onReply ? (
-        <button type="button" className="msgx-bar-icon msgx-bar-reply" aria-label="Reply" title="Reply" onClick={onReply}>
+        <button type="button" className="msgx-bar-icon msgx-bar-reply" aria-label={t('messages:actions.reply')} title={t('messages:actions.reply')} onClick={onReply}>
           <ReplyArrowIcon strokeWidth="1.8" aria-hidden="true" />
         </button>
       ) : null}
@@ -140,8 +142,8 @@ export function MessageActionBar({
           type="button"
           className={`msgx-bar-icon msgx-bar-save ${saved ? 'messages-action-saved msgx-bar-icon-accent' : ''}`}
           aria-pressed={!!saved}
-          aria-label={saved ? 'Unsave message' : 'Save message'}
-          title={saved ? 'Saved. Click to unsave' : 'Save to your notifications'}
+          aria-label={saved ? t('messages:actions.unsaveMessage') : t('messages:actions.saveMessage')}
+          title={saved ? t('messages:actions.savedTooltip') : t('messages:actions.saveTooltip')}
           onClick={onToggleSave}
         >
           {saved ? <BookmarkSolidIcon aria-hidden="true" /> : <BookmarkIcon strokeWidth="1.6" aria-hidden="true" />}
@@ -152,8 +154,8 @@ export function MessageActionBar({
           ref={moreButtonRef}
           type="button"
           className={`msgx-bar-icon ${moreClassName} ${moreOpen ? 'msgx-bar-icon-on' : ''}`}
-          aria-label="More actions"
-          title="More"
+          aria-label={t('messages:actions.moreActions')}
+          title={t('messages:actions.more')}
           aria-haspopup="menu"
           aria-expanded={!!moreOpen}
           onClick={onToggleMore}
@@ -181,6 +183,7 @@ export function MessageMenu({ items, onClose, placement = 'below', menuRef, clas
   menuRef?: Ref<HTMLDivElement>;
   className?: string;
 }) {
+  const t = useMessages('messages');
   const own = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     const first = own.current?.querySelector<HTMLButtonElement>('button:not(:disabled)');
@@ -205,7 +208,7 @@ export function MessageMenu({ items, onClose, placement = 'below', menuRef, clas
       ref={setRefs}
       className={`msgx-menu msgx-menu-${placement} ${className}`}
       role="menu"
-      aria-label="More actions"
+      aria-label={t('messages:actions.moreActions')}
       onKeyDown={move}
     >
       {items.map((item) => (

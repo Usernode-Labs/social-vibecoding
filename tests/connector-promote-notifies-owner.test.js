@@ -9,13 +9,19 @@
 // pr_proposed fan-out, which leaves the proposer out by design, so work
 // submitted that way reached the vote without a word to its owner.
 //
-// What is pinned here, on the real route:
-//   - a bearer-token promote (req.cliAuthenticated) notifies its owner once,
-//     as connector_submitted 'submitted', and pushes the row;
-//   - a person pressing Propose in the browser is not notified about their
-//     own click, and neither is the platform's own agent session (a delegated
-//     grant) or anyone on a promote that was refused;
-//   - a failing notification never fails a promote that already happened.
+// Since the proposal machine, the route decides WHO put it up and hands that
+// to platform.promoteProposal as `viaAgent`; the machine writes the owner's
+// connector_submitted row beside the pr_proposed fan-out in the transaction
+// that moves the proposal into review (machine.ts `proposed` write, pinned
+// against PostgreSQL by tests/workflow-proposal-postgres.test.js P2). What is
+// pinned here, on the real route:
+//   - a bearer-token promote (req.cliAuthenticated) is handed on as viaAgent;
+//   - a person pressing Propose in the browser is not, and neither is the
+//     platform's own agent session (a delegated grant) or the Homeroom bot
+//     (a synthetic user); a refused promote reaches the machine not at all.
+// [main]'s "a failing notification never fails a promote that already
+// happened" has no subject any more: the notification commits with the move
+// into review, or neither does.
 //
 // Same require.cache stubbing and real Express router as
 // tests/votes-promote-reopen.test.js.
@@ -45,7 +51,7 @@ const sessionRow = {
 };
 
 function promotePool(session) {
-  let row = { ...session };
+  const row = { ...session };
   return {
     async query(sql, params) {
       const s = String(sql);
@@ -53,25 +59,18 @@ function promotePool(session) {
         return ['active', 'paused'].includes(row.status) && row.user_id === params[1]
           ? { rows: [{ ...row }], rowCount: 1 } : { rows: [], rowCount: 0 };
       }
-      if (/COUNT\(\*\) AS cnt FROM chat_sessions/i.test(s)) return { rows: [{ cnt: '0' }], rowCount: 1 };
-      if (/SET status = 'promoted', promoted_at = NOW\(\)/.test(s)) {
-        const matches = params[2] === row.status;
-        if (matches) row = { ...row, status: 'promoted' };
-        return { rows: [], rowCount: matches ? 1 : 0 };
-      }
       return { rows: [], rowCount: 0 };
     },
   };
 }
 
-function loadVotesRouter({ pool, connectorNotify }) {
+function loadVotesRouter({ pool }) {
   const ids = {
     logger: require.resolve('../src/services/logger'),
     pool: require.resolve('../src/db/pool'),
     github: require.resolve('../src/services/github'),
     staging: require.resolve('../src/services/staging'),
     docker: require.resolve('../src/services/docker'),
-    resolver: require.resolve('../src/services/conflict-resolver'),
     ws: require.resolve('../src/services/ws'),
     activeUsers: require.resolve('../src/services/active-users'),
     notifications: require.resolve('../src/services/notifications'),
@@ -79,74 +78,43 @@ function loadVotesRouter({ pool, connectorNotify }) {
     events: require.resolve('../src/services/events'),
     appAccess: require.resolve('../src/services/app-access'),
     topicAttrs: require.resolve('../src/services/topic-attributes'),
-    visuals: require.resolve('../src/services/visuals'),
-    prImportSync: require.resolve('../src/services/pr-import-sync'),
-    pipeline: require.resolve('../src/services/handoff-pipeline'),
+    platform: require.resolve('../src/workflow/platform.ts'),
     subject: require.resolve('../src/routes/votes'),
   };
   const orig = {};
   for (const [k, id] of Object.entries(ids)) orig[k] = require.cache[id];
 
-  const calls = { proposed: [], connector: [], pushed: [] };
-  // Resolves once the route has run everything it does after answering: the
-  // owner's notification is post-response, like the fan-out beside it.
-  let finished;
-  const done = new Promise((resolve) => { finished = resolve; });
+  const calls = { promote: [], notified: [] };
 
   stub(ids.logger, { info() {}, warn() {}, error() {}, debug() {} });
   stub(ids.pool, { getPool: () => pool });
   stub(ids.github, {
     isEnabled: () => true,
     getPR: async () => ({ state: 'open', merged: false, draft: true, node_id: 'PR_26', head: { sha: HEAD } }),
-    reopenPR: async () => ({}),
-    markPrReadyForReview: async (_o, _r, _n, existing) => ({ ...existing, draft: false }),
   });
   stub(ids.staging, {});
-  // The change's own run is still checking HEAD, so the route starts no
-  // second build after answering.
-  stub(ids.pipeline, { hasInFlightHandoffPipeline: () => true });
   stub(ids.docker, {});
-  stub(ids.resolver, {
-    checkAndResolveConflicts: async () => {},
-    resolveAndMaybeRetry: async () => ({ ok: true }),
-    isResolving: () => false,
-  });
-  stub(ids.ws, {
-    sendSystemMessage: async () => {},
-    pushNotificationToUser() {},
-    pushVoteUpdate() {},
-    pushSessionUpdate() {},
-  });
-  stub(ids.activeUsers, {
-    getActiveUserStats: async () => ({ active: 1, majority: 1 }),
-    isUserActive: async () => true,
-    mergeGate,
-  });
+  stub(ids.ws, { sendSystemMessage: async () => {}, pushNotificationToUser() {}, pushVoteUpdate() {}, pushSessionUpdate() {} });
+  stub(ids.activeUsers, { getActiveUserStats: async () => ({ active: 1, majority: 1 }), isUserActive: async () => true, mergeGate });
+  // The route writes no notification of its own any more: the machine's
+  // move into review does.
+  const record = (name) => async (...args) => { calls.notified.push(name, args); return []; };
   stub(ids.notifications, {
-    createPrProposedNotifications: async (_pool, args) => {
-      calls.proposed.push(args);
-      // Nothing more follows a promote that does not notify its owner.
-      setTimeout(finished, 30);
-      return [];
-    },
-    createConnectorSubmittedNotification: async (_pool, args) => {
-      calls.connector.push(args);
-      if (connectorNotify) return connectorNotify(args);
-      return [{ id: 901, user_id: args.userId, kind: 'connector_submitted', detail: args.detail }];
-    },
-    hydrateAndPush: async (_pool, row) => { calls.pushed.push(row); },
+    createPrProposedNotifications: record('pr_proposed'),
+    createConnectorSubmittedNotification: record('connector_submitted'),
+    hydrateAndPush: record('push'),
     serialize: (x) => x,
   });
   stub(ids.adminApproval, { isAppLocked: async () => false, hasAdminYesVote: async () => true });
   stub(ids.events, { record: () => {}, EVENT_TYPES: { PR_PROMOTED: 'pr_promoted', PR_MERGED: 'pr_merged' } });
   stub(ids.appAccess, { sessionCollabGuard: () => (_req, _res, next) => next() });
   stub(ids.topicAttrs, {});
-  stub(ids.visuals, {
-    setChecksPending: async () => true,
-    notifyChecksPending() {},
-    captureForSession: async () => {},
+  stub(ids.platform, {
+    async promoteProposal(p) {
+      calls.promote.push(p);
+      return { status: 200, body: { ok: true, prNumber: 26 } };
+    },
   });
-  stub(ids.prImportSync, { rerunChecksForNewHead: async () => {} });
 
   delete require.cache[ids.subject];
   const { voteRoutes } = require(ids.subject);
@@ -156,21 +124,22 @@ function loadVotesRouter({ pool, connectorNotify }) {
       if (orig[k]) require.cache[id] = orig[k]; else delete require.cache[id];
     }
   };
-  return { voteRoutes, calls, done, restore };
+  return { voteRoutes, calls, restore };
 }
 
 // `as` is how the request was authenticated, set the way the real auth
 // layers set it: cli-auth.js marks a CLI or connector bearer token
 // cliAuthenticated, and a delegated grant (the platform's own agent session)
-// carries mcpDelegation as well. A browser session sets neither.
-async function promote({ as = 'browser', session = sessionRow, connectorNotify } = {}) {
+// carries mcpDelegation as well. A browser session sets neither; the
+// Homeroom bot is a synthetic user.
+async function promote({ as = 'browser', session = sessionRow } = {}) {
   const pool = promotePool(session);
-  const ctx = loadVotesRouter({ pool, connectorNotify });
+  const ctx = loadVotesRouter({ pool });
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
-    req.user = { id: 3, username: 'evan' };
-    if (as === 'agent' || as === 'delegated') req.cliAuthenticated = true;
+    req.user = { id: 3, username: 'evan', ...(as === 'bot' ? { is_synthetic: true } : {}) };
+    if (as === 'agent' || as === 'delegated' || as === 'bot') req.cliAuthenticated = true;
     if (as === 'delegated') req.mcpDelegation = { kind: 'agent_mayor' };
     next();
   });
@@ -179,33 +148,28 @@ async function promote({ as = 'browser', session = sessionRow, connectorNotify }
   await new Promise((r) => server.once('listening', r));
   try {
     const response = await fetch(`http://127.0.0.1:${server.address().port}/api/sessions/7/promote`, { method: 'POST' });
-    const status = response.status;
-    if (status === 200) {
-      await Promise.race([ctx.done, new Promise((r) => setTimeout(r, 2000))]);
-    }
-    return { status, calls: ctx.calls };
+    return { status: response.status, calls: ctx.calls };
   } finally {
     server.close();
     ctx.restore();
   }
 }
 
-test('an agent that puts its owner\'s change up for the vote tells the owner, once', async () => {
+test('an agent that puts its owner\'s change up for the vote is handed on as the owner\'s agent', async () => {
   const { status, calls } = await promote({ as: 'agent' });
   assert.equal(status, 200);
-  assert.equal(calls.proposed.length, 1, 'everybody else still hears about it as before');
-  assert.deepEqual(calls.connector, [{ userId: 3, appId: 5, sessionId: 7, detail: 'submitted' }],
-    'the owner hears it as "Submitted by your agent", the same row submit_work writes');
-  assert.equal(calls.pushed.length, 1, 'and the row reaches their open screens');
-  assert.equal(calls.pushed[0].id, 901);
+  assert.equal(calls.promote.length, 1);
+  assert.equal(calls.promote[0].viaAgent, true,
+    'the machine writes the owner\'s "Submitted by your agent" with the move into review');
+  assert.equal(calls.promote[0].userId, 3);
+  assert.deepEqual(calls.notified, [], 'the route itself writes no notification');
 });
 
 test('a person pressing Propose is not told about their own click', async () => {
   const { status, calls } = await promote({ as: 'browser' });
   assert.equal(status, 200);
-  assert.equal(calls.proposed.length, 1);
-  assert.deepEqual(calls.connector, []);
-  assert.deepEqual(calls.pushed, []);
+  assert.equal(calls.promote[0].viaAgent, false);
+  assert.deepEqual(calls.notified, []);
 });
 
 test('the platform\'s own agent session does not get a second notice', async () => {
@@ -213,22 +177,17 @@ test('the platform\'s own agent session does not get a second notice', async () 
   // owner already follows the change, so it is left out.
   const { status, calls } = await promote({ as: 'delegated' });
   assert.equal(status, 200);
-  assert.deepEqual(calls.connector, []);
+  assert.equal(calls.promote[0].viaAgent, false);
+});
+
+test('the Homeroom bot promoting as itself is not an owner\'s agent', async () => {
+  const { calls } = await promote({ as: 'bot' });
+  assert.equal(calls.promote[0].viaAgent, false);
 });
 
 test('a refused promote tells nobody anything', async () => {
   const { status, calls } = await promote({ as: 'agent', session: { ...sessionRow, user_id: 99 } });
   assert.equal(status, 404);
-  assert.deepEqual(calls.connector, []);
-  assert.deepEqual(calls.proposed, []);
-});
-
-test('a failing notification never fails a promote that already happened', async () => {
-  const { status, calls } = await promote({
-    as: 'agent',
-    connectorNotify: async () => { throw new Error('notifications table unavailable'); },
-  });
-  assert.equal(status, 200);
-  assert.equal(calls.connector.length, 1);
-  assert.deepEqual(calls.pushed, []);
+  assert.deepEqual(calls.promote, []);
+  assert.deepEqual(calls.notified, []);
 });

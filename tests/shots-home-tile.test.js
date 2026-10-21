@@ -114,14 +114,12 @@ test('the page escapes what the repository wrote and runs no script', () => {
     /data-icon="letter">D<\/div>/);
 });
 
-test('a run serves each side\'s page, and nothing for a side it has no tile for', async (t) => {
-  controlPlane._clearForTests();
-  t.after(() => controlPlane._clearForTests());
+test('a run serves each side\'s page, and nothing for a side it has no tile for', async () => {
   const tiles = {
     base: { name: 'Habit Streak', icon: { kind: 'letter', letter: 'H' }, color: null },
     head: { name: 'Habit Streak', icon: { kind: 'emoji', emoji: '🔥' }, color: null },
   };
-  const { control } = controlPlane.registerRun({
+  const control = new controlPlane.RunControl({
     runId: 'e'.repeat(32), sessionId: 42, intent: fixtures.intent(), context: {}, expiresAt: Date.now() + 60_000,
     homeTiles: tiles,
   });
@@ -131,7 +129,7 @@ test('a run serves each side\'s page, and nothing for a side it has no tile for'
   for (const side of ['outside', 'hosted', '']) {
     assert.throws(() => control.homeTilePage(side), { code: 'home_tile_unavailable', status: 404 });
   }
-  const { control: bare } = controlPlane.registerRun({
+  const bare = new controlPlane.RunControl({
     runId: 'd'.repeat(32), sessionId: 42, intent: fixtures.intent(), context: {}, expiresAt: Date.now() + 60_000,
   });
   assert.throws(() => bare.homeTilePage('base'), { code: 'home_tile_unavailable' });

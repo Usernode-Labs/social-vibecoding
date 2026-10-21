@@ -1,9 +1,10 @@
-// The Me page as the navigation prototype draws it (`scrMe`), as the UI
-// overhaul left it: the profile card, three stat cards, then "Your work" and
-// "More", lists whose rows say what is behind them — shaped in
+// The Me page as the navigation prototype draws it (`scrMe`), regrouped by
+// the navigation review: the profile card, three stat cards, then "Your
+// work", "Rewards" (Challenges & standings, Kudos) and "Account" (Friends,
+// App slots), lists whose rows say what is behind them — shaped in
 // frontend/src/features/profile/profile-store.js and drawn by
-// profile-view.tsx. "Your contributions", which closed the page, is gone:
-// Your changes lists every merged change.
+// profile-view.tsx, two columns on a wide window. "Your contributions",
+// which closed the page, is gone: Your changes lists every merged change.
 //
 // Pinned here: what each part SAYS for real data and for missing data, that
 // every part of the older, longer Profile still has a home, and that the
@@ -14,6 +15,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -36,10 +38,22 @@ const SUMMARY = {
 
 test('the three stat cards: merged, kudos, challenges — and a dash, not a zero, without data', () => {
   const { statsView } = loadTsx(STORE);
-  assert.deepEqual(statsView(SUMMARY).map((s) => [s.key, s.value, s.label]),
+  // With kudos on (the switch passed explicitly, #5249).
+  assert.deepEqual(statsView(SUMMARY, { kudosParked: false }).map((s) => [s.key, s.value, s.label]),
     [['merged', '9', 'live'], ['kudos', '3', 'kudos'], ['challenges', '2', 'challenges']]);
-  assert.deepEqual(statsView(null).map((s) => s.value), ['–', '–', '–'],
+  assert.deepEqual(statsView(null, { kudosParked: false }).map((s) => s.value), ['–', '–', '–'],
     'a read that failed is not a claim of zero');
+});
+
+test('parked (#5249), two stat cards: merged and challenges, side by side', () => {
+  const { statsView } = loadTsx(STORE);
+  assert.deepEqual(statsView(SUMMARY).map((s) => [s.key, s.value, s.label]),
+    [['merged', '9', 'live'], ['challenges', '2', 'challenges']], 'the default is the switch, which is on');
+  assert.deepEqual(statsView(null).map((s) => s.value), ['–', '–']);
+  const view = read('frontend/src/features/profile/profile-view.tsx');
+  assert.match(view, /const STAT_GRID = KUDOS_PARKED \? 'grid grid-cols-2 gap-2 mb-2' : 'grid grid-cols-3 gap-2 mb-2';/,
+    'the grid has as many columns as cards');
+  assert.match(view, /<div id="profile-stats" className=\{STAT_GRID\}>/);
 });
 
 test('the rows say what is behind them, from the data only', () => {
@@ -57,6 +71,7 @@ test('the rows say what is behind them, from the data only', () => {
     kudos: '3 received',
     changes: '9 live · 2 in progress',
     requests: '2 open · 1 done',
+    requestsPending: false,
     votes: 'Latest: Weekly distance leaderboard',
     friends: '1 request waiting',
     feedback: '4 sent · 1 counted',
@@ -77,7 +92,7 @@ test('the rows say what is behind them, from the data only', () => {
   assert.equal(moreRowsView({ ranking: {}, summary: { ...SUMMARY, merged: 0 } }).changes, null);
   // A read that failed is not a claim that there is nothing.
   assert.deepEqual(moreRowsView({ ranking: null, summary: null }), {
-    challenges: null, kudos: null, changes: null, requests: null, votes: null, friends: null, feedback: null,
+    challenges: null, kudos: null, changes: null, requests: null, requestsPending: false, votes: null, friends: null, feedback: null,
   });
 });
 
@@ -87,14 +102,17 @@ test('the card\'s one line of facts: @handle, building since, apps', () => {
   const view = identityView({ user, data: { summary: SUMMARY } });
   assert.equal(view.name, 'Evan S');
   // Month names are the runtime locale's; the shape is what is pinned.
-  assert.match(view.sub, /^@evan · Building since \S+ 2026 · 3 apps$/);
+  // "Changes live in": apps with a change of theirs live, not the apps they
+  // made, which the App slots row counts (N18 of the 19 Oct polish board:
+  // "21 apps" here beside "18 apps" there read as one count disagreeing).
+  assert.match(view.sub, /^@evan · Building since \S+ 2026 · Changes live in 3 apps$/);
   const bare = identityView({ user: { username: 'evan' }, data: { summary: { ...SUMMARY, apps: 1 } } });
   assert.equal(bare.name, '@evan');
-  assert.match(bare.sub, /^Building since \S+ 2026 · 1 app$/, 'the handle is the headline, so not repeated');
+  assert.match(bare.sub, /^Building since \S+ 2026 · Changes live in 1 app$/, 'the handle is the headline, so not repeated');
   assert.equal(identityView({ user: { username: 'evan' }, data: null }).sub, null);
 });
 
-test('the page renders its four parts in order', () => {
+test('the page renders its six parts in order', () => {
   const state = {
     open: true,
     data: { ranking: { season_name: 'Season 3', rank: 3 }, summary: SUMMARY, ownerPublicProfile: null },
@@ -106,13 +124,26 @@ test('the page renders its four parts in order', () => {
     stubs: { './profile-store.js': { ...real, profileStore: { get: () => state, subscribe: () => () => {} } } },
   });
   const html = renderToHtml(createElement(mod.ProfileRoot, {}));
-  const order = ['id="profile-identity-card"', 'id="profile-stats"', 'id="profile-work"', 'id="profile-more"']
+  const order = ['id="profile-identity-card"', 'id="profile-stats"', 'id="profile-work"',
+    'id="profile-rewards"', 'id="profile-account"', 'id="profile-settings"']
     .map((needle) => html.indexOf(needle));
-  assert.ok(order.every((i) => i >= 0), 'all four parts render');
-  assert.deepEqual([...order].sort((a, b) => a - b), order, 'card, stats, Your work, More');
+  assert.ok(order.every((i) => i >= 0), 'all six parts render');
+  assert.deepEqual([...order].sort((a, b) => a - b), order,
+    'card, stats, Your work, Rewards, Account, Settings');
+  // The who block holds the card and its numbers alone, nothing between.
+  const between = html.slice(html.indexOf('id="profile-identity-card"'), html.indexOf('id="profile-stats"'));
+  assert.ok(!/id="profile-(work|rewards|account|settings)|id="profile-row-/.test(between),
+    'the identity card and the stat cards stay adjacent');
   assert.match(html, /id="profile-edit-btn"/);
+  // The Settings card shows at every width now (#5557): no md:hidden, and
+  // the two rows the desktop Me page never had.
+  const settingsCard = html.slice(html.indexOf('id="profile-settings"'), html.indexOf('id="profile-row-settings"'));
+  assert.ok(!/md:hidden/.test(settingsCard), 'no md:hidden on the Settings card');
+  assert.ok(settingsCard.includes('id="profile-row-profile"') && settingsCard.includes('id="profile-row-notifications"'),
+    'Profile and Notifications rows render before Settings');
   assert.ok(!/profile-contributions|data-contribution=/.test(html), 'Your contributions is gone');
   assert.ok(!/id="profile-friends"/.test(html), 'Friends is a row, not a section, until it is opened');
+  assert.ok(!/id="profile-more"/.test(html), 'the "More" list is regrouped away');
   assert.ok(!/Log out|profile-row-admin|data-completed-challenge|Points breakdown/.test(html),
     'nothing that moved elsewhere is drawn twice');
 });
@@ -141,18 +172,18 @@ test('Me sits in the Workshop tab\'s frame, and its labels on the rows\' edge (#
   const workshop = read('frontend/src/features/workshop/index.tsx');
   assert.match(workshop, /className="max-w-2xl mx-auto pb-8"/, 'Workshop\'s column is still the reference');
   assert.match(workshop, /<div className="pt-5" aria-hidden="true" \/>/, 'and it still steps down pt-5 before its first element');
-  for (const cls of ['max-w-2xl', 'mx-auto', 'px-4', 'pt-5', 'pb-8']) {
+  for (const cls of ['max-w-2xl', 'lg:max-w-5xl', 'mx-auto', 'px-4', 'pt-5', 'pb-8']) {
     assert.ok(classes.includes(cls), `#profile-root carries ${cls}`);
   }
   assert.ok(!classes.includes('max-w-3xl') && !classes.includes('p-4'),
     'not the wider column, nor the p-4 that left the card 8px under the bar');
 
-  // Both section labels are SectionHeader at its own px-4 — on the rows'
+  // The section labels are SectionHeader at its own px-4 — on the rows'
   // content edge, as Settings and Discover set theirs — not the px-1 that
   // sat them 12px left of the cards' rows.
   const html = renderToHtml(createElement(view.ProfileRoot, {}));
-  const headings = [...html.matchAll(/<h2 class="([^"]*)">(Your work|More)<\/h2>/g)];
-  assert.deepEqual(headings.map((m) => m[2]), ['Your work', 'More']);
+  const headings = [...html.matchAll(/<h2 class="([^"]*)">(Your work|Rewards|Account)<\/h2>/g)];
+  assert.deepEqual(headings.map((m) => m[2]), ['Your work', 'Rewards', 'Account']);
   for (const [, cls, label] of headings) {
     const list = cls.split(/\s+/);
     assert.ok(list.includes('px-4') && !list.includes('px-1'), `"${label}" sits on the rows' edge: ${cls}`);
@@ -160,21 +191,29 @@ test('Me sits in the Workshop tab\'s frame, and its labels on the rows\' edge (#
 });
 
 test('every part of the older Profile has a home', () => {
-  // points, rank, breakdown, token → the Challenges tab's standing card
+  // rank and token → the Challenges tab's standing card; the points by event
+  // went with the seasons (the Semi design, 2026-10-16), and the points are
+  // on that tab's summary line
   const standing = read('frontend/src/features/leaderboard/your-standing.tsx');
-  assert.match(standing, /Points by event/);
-  assert.match(standing, /Token allocation/);
+  assert.match(standing, /id="leaderboard:standing\.rankOf"/);
+  assert.equal(message('leaderboard:standing.rankOf', { rank: 3, count: 12, number: '12' }), '<0>#3</0> of 12 ranked');
+  assert.match(standing, /\{t\('leaderboard:standing\.token\.label'\)\}/);
+  assert.equal(message('leaderboard:standing.token.label'), 'Token allocation');
   assert.match(read('frontend/src/features/leaderboard/challenges-pane.tsx'), /<YourStanding \/>/);
   // public-profile publishing → the Edit profile sheet
   const sheet = read('frontend/src/features/profile/profile-edit-sheet.tsx');
   assert.match(sheet, /id="public-profile-controls"/);
   assert.match(sheet, /Profile\._setPublished\(!published\)/);
-  assert.match(sheet, /Copy public link/);
-  // Admin & moderation, node / wallet / staking → Settings; Log out already there
+  assert.match(sheet, /\{t\('profile:edit\.public\.copy'\)\}/);
+  assert.equal(message('profile:edit.public.copy'), 'Copy public link');
+  // node / wallet / staking → Settings; Log out already there. Admin &
+  // moderation went to Settings too, and came back to Me (admins only) in
+  // #5281: tests/admin-console-entry-row.test.js pins where it is.
   const rows = read('frontend/src/features/settings/account-rows.tsx');
-  for (const needle of ['id="settings-row-admin"', '<NodePillRow />', '<WalletRow />', '<StakingRow />']) {
+  for (const needle of ['<NodePillRow />', '<WalletRow />', '<StakingRow />']) {
     assert.ok(rows.includes(needle), needle);
   }
+  assert.ok(!rows.includes('settings-row-admin'), 'Admin & moderation is not a Settings row any more');
   assert.match(read('frontend/src/features/settings/index.tsx'), /id="settings-logout"/);
   // completions → counted on Me, listed on the Challenges tab
   assert.match(read(STORE), /summary\.challenges && summary\.challenges\.done/);

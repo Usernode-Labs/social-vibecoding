@@ -5,14 +5,13 @@
 // button that answered no_active_turn, until the stale window ran out and
 // nothing told the screens even then (production agent session 3).
 //
-//   1. Handing back: a stale lease is cleared and the dead turn's `done` is
-//      sent in its place, never while this process runs a turn there.
-//   2. Recovery hands back the conversation whose change it ran, and tries
-//      again once a lease still inside the window goes stale. While the
+//   1. A recovered run (its turn's work item carried it on after its process
+//      went: services/turns.js) tells every conversation whose change it ran
+//      that it is over; the claim is the turn machine's to release. While the
 //      recovered build runs, it is the conversation's running dispatch.
-//   3. The screen's stop settles from the server when nothing was running.
+//   2. The screen's stop settles from the server when nothing was running.
 //
-// The lease SQL itself runs against Postgres in
+// The claim SQL itself runs against Postgres in
 // tests/agent-sessions-postgres.test.js.
 
 const test = require('node:test');
@@ -22,68 +21,38 @@ const { withStateRead } = require('./lib/agent-session-state-read');
 
 const agentTurn = require('../src/services/mayor/agent-turn');
 
-function fakes({ stale = new Set(), conversations = [] } = {}) {
-  const calls = { released: [], notified: [], published: [] };
+function fakes({ conversations = [] } = {}) {
+  const calls = { notified: [], published: [] };
   const deps = {
-    agentSessions: {
-      TURN_LEASE_STALE_SECONDS: 90,
-      releaseStaleTurnLease: async (_pool, args) => {
-        calls.released.push(args);
-        return stale.delete(args.agentSessionId);
-      },
-      conversationsOfChange: async () => conversations,
-    },
+    agentSessions: { conversationsOfChange: async () => conversations },
     notifyUser: (userId, payload) => calls.notified.push([userId, payload]),
     sessionBus: { publish: (key, event) => calls.published.push([key, event]) },
   };
-  return { deps, calls, stale };
+  return { deps, calls };
 }
 
-test('a stale lease is handed back with the done its dead turn never sent', async () => {
-  const { deps, calls } = fakes({ stale: new Set([5]) });
-  assert.equal(await agentTurn.handBackOrphanedTurn({ pool: {}, agentSessionId: 5, userId: 7, deps }), true);
-  assert.deepEqual(calls.released, [{ agentSessionId: 5, userId: 7, finished: false }]);
-  assert.deepEqual(calls.notified, [[7, { type: 'agent_session_changed', agentSessionId: 5, busy: false }]]);
-  assert.equal(calls.published.length, 1);
-  const [key, event] = calls.published[0];
-  assert.equal(key, agentTurn.busKey(5));
-  assert.equal(event.type, 'done');
-  assert.match(event._seq, /^orphan-/, 'a sequence no live turn uses, so a screen does not drop it as seen');
-
-  assert.equal(await agentTurn.handBackOrphanedTurn({ pool: {}, agentSessionId: 5, userId: 7, deps }), false,
-    'a live lease, or none, is left alone');
-  assert.equal(calls.published.length, 1);
+test('a recovered run tells its change\'s conversations it is over; their claims are their turn machine\'s', async () => {
+  const { deps, calls } = fakes({
+    conversations: [{ agentSessionId: 5, userId: 7 }, { agentSessionId: 8, userId: 7 }],
+  });
+  await agentTurn.handBackAfterRecovery({ pool: {}, changeId: 4834, deps });
+  assert.deepEqual(calls.published.map(([key, event]) => [key, event.type]),
+    [[agentTurn.busKey(5), 'done'], [agentTurn.busKey(8), 'done']], 'the run their screens follow is over');
+  assert.match(calls.published[0][1]._seq, /^recovered-/, 'a sequence no live turn uses, so a screen does not drop it as seen');
+  assert.deepEqual(calls.notified.map(([userId, payload]) => [userId, payload.agentSessionId, payload.busy]),
+    [[7, 5, false], [7, 8, false]], 'the lists stop marking both as working');
+  assert.equal(typeof agentTurn.handBackOrphanedTurn, 'undefined', 'no claim is handed back by recovery: the turn machine releases it');
 });
 
-test('a turn running in this process is never handed back', async () => {
-  const { deps, calls } = fakes({ stale: new Set([6]) });
+test('a conversation whose Mayor turn runs in this process answers for itself', async () => {
+  const { deps, calls } = fakes({ conversations: [{ agentSessionId: 6, userId: 7 }] });
   agentTurn._stopRegistry.set(6, { phase: 'cc' });
   try {
-    assert.equal(await agentTurn.handBackOrphanedTurn({ pool: {}, agentSessionId: 6, userId: 7, deps }), false);
-    assert.equal(calls.released.length, 0, 'not even asked of the database');
+    await agentTurn.handBackAfterRecovery({ pool: {}, changeId: 4834, deps });
+    assert.deepEqual(calls.published, []);
   } finally {
     agentTurn._stopRegistry.delete(6);
   }
-});
-
-test('recovery hands back its change\'s conversations, and waits out a lease still in the window', async () => {
-  const { deps, calls, stale } = fakes({
-    stale: new Set([5]),
-    conversations: [{ agentSessionId: 5, userId: 7 }, { agentSessionId: 8, userId: 7 }],
-  });
-  await agentTurn.handBackAfterRecovery({ pool: {}, changeId: 4834, deps, retryMs: 10 });
-  assert.deepEqual(calls.released.map((r) => [r.agentSessionId, r.finished]), [[5, true], [8, true]],
-    'the wrap-up was posted, so each finished something');
-  assert.deepEqual(calls.published.map(([key, event]) => [key, event.type]),
-    [[agentTurn.busKey(5), 'done'], [agentTurn.busKey(8), 'done']],
-    'conversation 8 is still inside the stale window, but the run its screen follows is over');
-  assert.deepEqual(calls.notified.map(([userId, payload]) => [userId, payload.agentSessionId, payload.busy]),
-    [[7, 5, false], [7, 8, false]], 'the lists stop marking both as working');
-
-  stale.add(8);
-  await new Promise((resolve) => setTimeout(resolve, 40));
-  assert.deepEqual(calls.released.map((r) => r.agentSessionId), [5, 8, 8], 'tried again once');
-  assert.deepEqual(calls.published.map(([key]) => key), [agentTurn.busKey(5), agentTurn.busKey(8), agentTurn.busKey(8)]);
 });
 
 test('a recovered build on the active change is the conversation\'s running dispatch', () => {
@@ -120,12 +89,6 @@ test('a running turn reports when its work started: the build once dispatched, e
   }
 });
 
-test('the default retry waits past the stale window', () => {
-  const agentSessions = require('../src/services/agent-sessions');
-  assert.ok(agentSessions.TURN_LEASE_STALE_SECONDS <= 120, 'a dead turn\'s conversation looks busy for a minute or two, not twenty');
-  assert.ok(agentTurn.LEASE_RENEW_MS * 5 < agentSessions.TURN_LEASE_STALE_SECONDS * 1000,
-    'a live turn can miss several renewals before it is taken for dead');
-});
 
 function withStore(respond, run) {
   globalThis.window = { location: { hash: '' }, App: { setHeaderTitle() {} }, UsernodeReact: {} };

@@ -1,33 +1,39 @@
 /**
  * "Your communities": the switcher behind the Communities tab.
  *
- * All communities first (the list of every community you are in), then each
- * community with its tile, who it is for and how many are in it, how many
- * votes it is waiting on you for, and a tick on the one you are on; then
+ * A search box first, which filters every community you are in by name as
+ * you type (./sections.ts matchRows, the rule the Communities screen and the
+ * phone's drawer search by); then Recent, the communities you use
+ * (`switcherRecent`: your pins, then the five the desktop's sidebar lists);
+ * then All communities, the way to the page that lists every one; then
  * "Join a community" (Discover) and "Start a community" (the new-project
- * dialog, #3543). Picking one makes it the
- * tab's community and opens its hub (./community-scope.ts goToCommunity).
+ * dialog, #3543). Each community has its tile, who it is for and how many
+ * are in it, how many votes it is waiting on you for, and a tick on the one
+ * you are on. Picking one makes it the tab's community and opens it
+ * (./community-scope.ts goToCommunity).
  *
- * The communities are drawn as the Communities screen draws them (#3519):
- * Public communities, Private communities, Just you, newest first inside
- * each, three out and then "Show N more", five a press, then "Show fewer"
- * (./sections.ts, shared with the screen, so the switcher and the page can
- * never disagree about the order of your communities). The one you are on is
- * never folded away.
+ * #5290: it used to draw the All communities page in a smaller box (the
+ * three sections and their "Show N more", #3519). That is the page's job,
+ * and the switcher is for the few you move between; the All communities row
+ * stays as the clear way there (the review asked to keep it).
  *
  * It replaced the in-place "Which project?" panel under the header, and it
  * opens from three places, all through the same store: the community's name
  * and ⌄ in the coloured header, the header's "Communities ⌄" on the
- * Communities list, and the phone's tab HELD (#3701). The tab PRESSED while
- * it is lit no longer opens it, at any width: it goes up a level, to the
- * community, its top, then All communities (./tab-ladder.ts).
+ * Communities list, and ⌘K / Ctrl+K anywhere in the signed-in shell
+ * (./community-shortcut.ts), which focuses the search. The phone's tab held
+ * opened it too (#3701) until the drawer's list replaced it there (18 Oct
+ * 2026). The tab PRESSED while it is lit does not open it, at any width: it
+ * goes up a level, to the community, its top, then All communities
+ * (./tab-ladder.ts).
  *
  * ── Two presentations ──────────────────────────────────────────────────
  *
  * On a phone it is a sheet from the floor, handed to the native kit when one
  * is there (lib/kit-surface.ts, the same hand-off as the staking sheet) and a
  * CSS sheet over a scrim when not. From 768px up it is a menu hung off
- * whatever opened it: under the header's name.
+ * whatever opened it: under the header's name, or, from ⌘K, in the middle
+ * of the window near its top.
  *
  * ── Island rules ───────────────────────────────────────────────────────
  *
@@ -40,14 +46,20 @@ import { createPortal } from 'react-dom';
 
 import { CheckIcon, PlusIcon, SearchIcon, UserGroupIcon } from '@/components/ui/icons';
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
+import { useMessages } from '../../lib/i18n/react';
+import { t as translate } from '../../lib/i18n/runtime';
 import { adoptKitSurface, type KitAdoption } from '../../lib/kit-surface';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
 import { useCommunityColor } from '../../lib/community-color';
+import { navStore } from '../nav/nav-store.js';
+import { pinnedAppsStore } from '../nav/pinned-apps-store.js';
+import { railCommunities, readKept } from '../nav/rail-communities';
 import {
-  closeSwitcher, communityScopeStore, goToCommunity, type CommunityInfo,
+  closeSwitcher, communityScopeStore, goToCommunity, openSwitcher, type CommunityInfo, type SwitcherFrom,
 } from './community-scope';
-import { SECTIONS, sectionFloor, sectionFoldFrom, type Audience } from './sections';
+import { COMMUNITY_SHORTCUT_KEYS, installCommunityShortcut } from './community-shortcut';
+import { matchRows } from './sections';
 
 const WIDE = '(min-width: 768px)';
 
@@ -65,23 +77,24 @@ function useWide(): boolean {
   return wide;
 }
 
-function plural(n: number, one: string, many: string): string {
-  return `${n} ${n === 1 ? one : many}`;
-}
-
 /** "Public · 23 members", "Private · 11 members", "Just you". */
 export function switcherSub(info: Pick<CommunityInfo, 'audience' | 'memberCount'>): string {
-  if (info.audience === 'solo') return 'Just you';
-  const who = info.audience === 'invited' ? 'Private' : 'Public';
-  return `${who} · ${plural(Number(info.memberCount) || 0, 'member', 'members')}`;
+  if (info.audience === 'solo') return translate('communities:switcher.row.solo');
+  const count = Number(info.memberCount) || 0;
+  return info.audience === 'invited'
+    ? translate('communities:switcher.row.invited', { count })
+    : translate('communities:switcher.row.open', { count });
 }
 
 function Waiting({ n }: { n: number }) {
+  const t = useMessages('communities');
   if (!n) return null;
-  return <span className="community-switcher-waiting" data-switcher-waiting="">{`${n} to vote`}</span>;
+  return <span className="community-switcher-waiting" data-switcher-waiting="">{t('communities:switcher.toVote', { count: n })}</span>;
 }
 
 function Row({ info, current }: { info: CommunityInfo; current: boolean }) {
+  // Subscribed: the second line (switcherSub) is read in the language on screen.
+  useMessages('communities');
   const color = useCommunityColor({ color: info.iconColor, iconUrl: info.iconUrl, iconEmoji: info.iconEmoji, key: info.slug });
   const app = { slug: info.slug, name: info.name, icon_url: info.iconUrl, icon_emoji: info.iconEmoji };
   return (
@@ -108,63 +121,6 @@ function Row({ info, current }: { info: CommunityInfo; current: boolean }) {
   );
 }
 
-/**
- * One audience's part of the list (#3519): its label and count, its most
- * recent rows, and the row that shows more of them.
- *
- * THE LABEL IS NOT A STOP. The arrows rove `.community-switcher-row` only
- * (roveRows), so they go from the last row of one section to the first row
- * of the next. The fold row IS a row, so the keyboard reaches it; pressing it
- * moves focus to the first row it revealed, and "Show fewer" keeps focus on
- * itself.
- */
-function SwitcherSection({ audience, label, rows, current }: {
-  audience: Audience;
-  label: string;
-  rows: CommunityInfo[];
-  current: string | null;
-}) {
-  const floor = sectionFloor(rows, current);
-  const [limit, setLimit] = useState(floor);
-  const fold = sectionFoldFrom(rows.length, limit, floor);
-  const shown = rows.slice(0, fold.shown);
-  const groupRef = useRef<HTMLDivElement>(null);
-  // The index of the first row a press revealed, focused once it renders.
-  const revealFrom = useRef<number | null>(null);
-  useEffect(() => {
-    const from = revealFrom.current;
-    revealFrom.current = null;
-    if (from === null) return;
-    groupRef.current?.querySelectorAll<HTMLElement>('[data-switcher-community]')[from]?.focus({ preventScroll: true });
-  }, [fold.shown]);
-  const labelId = `community-switcher-section-${audience}`;
-  return (
-    <div ref={groupRef} role="group" aria-labelledby={labelId} data-switcher-section={audience}>
-      <h3 className="community-switcher-section" id={labelId}>
-        <span>{label}</span>
-        <span className="community-switcher-section-n" aria-label={`${rows.length} in ${label}`}>{rows.length}</span>
-      </h3>
-      {shown.map((info) => (
-        <Row key={info.slug} info={info} current={current === info.slug} />
-      ))}
-      {fold.label ? (
-        <button
-          type="button"
-          className="community-switcher-row community-switcher-more"
-          data-switcher-more={audience}
-          aria-expanded={fold.shown === rows.length}
-          onClick={() => {
-            if (fold.next > fold.shown) revealFrom.current = fold.shown;
-            setLimit(fold.next);
-          }}
-        >
-          {fold.label}
-        </button>
-      ) : null}
-    </div>
-  );
-}
-
 /** Arrow keys between the rows; Home and End to either end. */
 function roveRows(e: React.KeyboardEvent<HTMLDivElement>): void {
   const keys = ['ArrowDown', 'ArrowUp', 'Home', 'End'];
@@ -179,25 +135,99 @@ function roveRows(e: React.KeyboardEvent<HTMLDivElement>): void {
   rows[next]?.focus();
 }
 
-/** The switcher's contents, in either presentation. Exported for tests. */
+/**
+ * RECENT (#5290): the communities you use, the ones the desktop's sidebar
+ * lists. The ones you pinned first (an account's pins, ../nav/rail-pinned.tsx,
+ * which the phone draws nowhere else), then the sidebar's five: this device's
+ * own order (../nav/rail-communities.tsx railCommunities, kept under the
+ * viewer by the tab bar's useRailCommunities), else the most recently active
+ * of yours. Only communities you are in. Pure.
+ */
+export function switcherRecent(
+  pinned: readonly string[],
+  kept: readonly string[],
+  list: readonly string[] | null,
+): string[] {
+  if (!list) return [];
+  const pins = pinned.filter((slug, k) => list.includes(slug) && pinned.indexOf(slug) === k);
+  return [...pins, ...railCommunities(kept, list.filter((slug) => !pins.includes(slug)))];
+}
+
+/**
+ * The switcher's contents, in either presentation. Exported for tests.
+ *
+ * #5290: it no longer repeats the All communities page (its three sections
+ * and their "Show N more") in a smaller box. A search over every community
+ * you are in comes first, then Recent, then All communities, the clear way
+ * to that page (Evan's review), then Join and Start. While there are words
+ * in the search, the matches take Recent's place.
+ */
 export function SwitcherBody(): ReactNode {
+  const t = useMessages('communities');
   const st = useStoreState(communityScopeStore);
+  const { viewer } = useStoreState(navStore);
+  const { apps: pins } = useStoreState(pinnedAppsStore);
+  const [query, setQuery] = useState('');
   const all = !st.slug;
-  const rows = (st.list || []).map((slug) => st.info[slug]).filter(Boolean) as CommunityInfo[];
-  // The list is already newest first (community-scope.ts reads orderRows);
-  // each section keeps that order. An audience the client does not know is
-  // read as public, the server's own default, so no row falls out.
-  const known = (a: unknown): Audience => (a === 'invited' || a === 'solo' ? a : 'open');
-  const sections = SECTIONS
-    .map((section) => ({ ...section, rows: rows.filter((info) => known(info.audience) === section.key) }))
-    .filter((section) => section.rows.length > 0);
+  const rowsOf = (slugs: readonly string[]) => slugs.map((slug) => st.info[slug]).filter(Boolean) as CommunityInfo[];
+  // This device's order, read when the switcher opens: never in a
+  // prerendered document, since the switcher is not in one.
+  const [kept] = useState(() => readKept(viewer));
+  const q = query.trim();
+  const found = q ? matchRows(rowsOf(st.list || []), q) : [];
+  const recent = q ? [] : rowsOf(switcherRecent(pins.map((app: { slug: string }) => app.slug), kept, st.list));
   return (
     <>
       <div className="community-switcher-head">
-        <h2 className="community-switcher-title" id="community-switcher-title">Your communities</h2>
+        <h2 className="community-switcher-title" id="community-switcher-title">{t('communities:switcher.title')}</h2>
       </div>
+      <label className="community-switcher-search">
+        <SearchIcon className="community-switcher-search-glyph" aria-hidden="true" />
+        <input
+          id="community-switcher-search"
+          type="search"
+          className="community-switcher-search-input"
+          value={query}
+          placeholder={t('communities:switcher.search.placeholder')}
+          aria-label={t('communities:switcher.search.label')}
+          aria-keyshortcuts={COMMUNITY_SHORTCUT_KEYS}
+          autoComplete="off"
+          autoCapitalize="off"
+          spellCheck={false}
+          enterKeyHint="go"
+          onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={(e) => {
+            // Down into the rows; Enter opens the first match.
+            if (e.key === 'ArrowDown') {
+              e.preventDefault();
+              e.currentTarget.closest('.community-switcher')?.querySelector<HTMLButtonElement>('.community-switcher-list .community-switcher-row')?.focus();
+            } else if (e.key === 'Enter' && found[0]) {
+              e.preventDefault();
+              goToCommunity(found[0].slug);
+            }
+          }}
+        />
+      </label>
       {/* Up and Down move between the rows, as in the Homeroom menu. */}
       <div className="community-switcher-list" onKeyDown={roveRows}>
+        {st.list == null ? (
+          <p className="community-switcher-note" data-switcher-loading="">{t('communities:switcher.loading')}</p>
+        ) : q ? (
+          found.length ? (
+            <div role="group" aria-label={t('communities:switcher.search.results')} data-switcher-results="">
+              {found.map((info) => <Row key={info.slug} info={info} current={st.slug === info.slug} />)}
+            </div>
+          ) : (
+            <p className="community-switcher-note" data-switcher-none="">{t('communities:switcher.search.none', { query: q })}</p>
+          )
+        ) : recent.length ? (
+          <div role="group" aria-labelledby="switcher-recent-label" data-switcher-section="recent">
+            <h3 className="community-switcher-section" id="switcher-recent-label">
+              <span>{t('communities:switcher.recent')}</span>
+            </h3>
+            {recent.map((info) => <Row key={info.slug} info={info} current={st.slug === info.slug} />)}
+          </div>
+        ) : null}
         <button
           type="button"
           className="community-switcher-row"
@@ -214,9 +244,9 @@ export function SwitcherBody(): ReactNode {
             <UserGroupIcon />
           </span>
           <span className="community-switcher-text">
-            <span className="community-switcher-name">All communities</span>
+            <span className="community-switcher-name">{t('communities:switcher.all.name')}</span>
             <span className="community-switcher-sub">
-              {st.list ? plural(st.list.length, 'community', 'communities') : 'Every community you are in'}
+              {st.list ? t('communities:switcher.all.count', { count: st.list.length }) : t('communities:switcher.all.every')}
             </span>
           </span>
           <Waiting n={Number(st.totalNeeds) || 0} />
@@ -224,17 +254,6 @@ export function SwitcherBody(): ReactNode {
             <CheckIcon className="w-5 h-5" strokeWidth="2.5" />
           </span>
         </button>
-        {st.list == null ? (
-          <p className="community-switcher-note" data-switcher-loading="">Loading your communities…</p>
-        ) : sections.map((section) => (
-          <SwitcherSection
-            key={section.key}
-            audience={section.key}
-            label={section.label}
-            rows={section.rows}
-            current={st.slug}
-          />
-        ))}
         {/* #3543: two ways out, not one. "Join or start a community" went
             to Discover, where there is nothing to start; Start opens the
             new-project dialog, which asks who it is for first. */}
@@ -248,7 +267,7 @@ export function SwitcherBody(): ReactNode {
             <SearchIcon className="w-5 h-5" />
           </span>
           <span className="community-switcher-text">
-            <span className="community-switcher-name">Join a community</span>
+            <span className="community-switcher-name">{t('communities:switcher.join')}</span>
           </span>
         </button>
         <button
@@ -261,7 +280,7 @@ export function SwitcherBody(): ReactNode {
             <PlusIcon className="w-5 h-5" />
           </span>
           <span className="community-switcher-text">
-            <span className="community-switcher-name">Start a community</span>
+            <span className="community-switcher-name">{t('communities:switcher.start')}</span>
           </span>
         </button>
       </div>
@@ -269,7 +288,21 @@ export function SwitcherBody(): ReactNode {
   );
 }
 
+/**
+ * Where focus lands when the switcher opens: the search box when ⌘K opened
+ * it, else the row you are on (a phone's keyboard does not jump up under a
+ * tap on the header's name).
+ */
+function focusOnOpen(panel: HTMLElement, from: SwitcherFrom | null): void {
+  if (from === 'shortcut') {
+    panel.querySelector<HTMLInputElement>('#community-switcher-search')?.focus();
+    return;
+  }
+  panel.querySelector<HTMLButtonElement>('[aria-current="true"]')?.focus();
+}
+
 function SwitcherSheet(): ReactNode {
+  const { switcher } = useStoreState(communityScopeStore);
   const panel = useRef<HTMLDivElement | null>(null);
   const [adopted, setAdopted] = useState(false);
   useIsomorphicLayoutEffect(() => {
@@ -283,7 +316,7 @@ function SwitcherSheet(): ReactNode {
       onDismiss: () => { adoption = null; closeSwitcher(); },
     });
     setAdopted(!!adoption);
-    panel.current.querySelector<HTMLButtonElement>('[aria-current="true"]')?.focus();
+    focusOnOpen(panel.current, switcher);
     return () => {
       if (adoption) adoption.release();
       previousFocus?.focus?.();
@@ -315,7 +348,7 @@ function SwitcherMenu(): ReactNode {
   const panel = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     const previousFocus = document.activeElement as HTMLElement | null;
-    panel.current?.querySelector<HTMLButtonElement>('[aria-current="true"]')?.focus();
+    if (panel.current) focusOnOpen(panel.current, st.switcher);
     const onDown = (e: Event) => {
       const t = e.target as Node | null;
       if (t && panel.current?.contains(t)) return;
@@ -339,11 +372,14 @@ function SwitcherMenu(): ReactNode {
     };
   }, []);
   // Under what opened it (the header's name, or its "Communities ⌄"); with no box
-  // to hang from, under the header's left edge.
+  // to hang from, under the header's left edge. ⌘K opens it from nowhere in
+  // particular, so it comes down in the middle of the window, as a search.
   const a = st.anchor;
-  const style: Record<string, string> = a
-    ? { left: `${Math.max(8, Math.round(a.left))}px`, top: `${Math.round(a.bottom + 8)}px` }
-    : { left: '240px', top: '64px' };
+  const style: Record<string, string> = st.switcher === 'shortcut'
+    ? { left: '50%', top: '12vh', transform: 'translateX(-50%)' }
+    : a
+      ? { left: `${Math.max(8, Math.round(a.left))}px`, top: `${Math.round(a.bottom + 8)}px` }
+      : { left: '240px', top: '64px' };
   return (
     <div
       ref={panel}
@@ -362,6 +398,16 @@ function SwitcherMenu(): ReactNode {
 export function CommunitySwitcher(): ReactNode {
   const st = useStoreState(communityScopeStore);
   const wide = useWide();
+  // ⌘K / Ctrl+K, from anywhere in the signed-in shell (#5290): the switcher
+  // with its search focused, or shut again (./community-shortcut.ts).
+  useEffect(() => installCommunityShortcut({
+    win: window,
+    doc: document as never,
+    isOpen: () => !!communityScopeStore.get().switcher,
+    open: () => openSwitcher('shortcut'),
+    close: closeSwitcher,
+    signedIn: () => !!(window as unknown as { App?: { user?: unknown } }).App?.user,
+  }), []);
   // A route change closes it: the page it was about has gone.
   useEffect(() => {
     if (!st.switcher) return undefined;

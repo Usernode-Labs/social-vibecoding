@@ -41,6 +41,7 @@ let targetUser;          // resolved by the username lookup
 let existingApproverRow; // status of an existing app_approvers row, or null
 let collabMember;        // is the target a collaborator member?
 let pendingInviteUpdate; // rows returned by the accept UPDATE
+let contactable;         // #5104: user_contactable_by's answer for the invitee
 
 function defaultHandler() {
   return async (sql, params) => {
@@ -60,6 +61,9 @@ function defaultHandler() {
       // scripts the TARGET invitee's membership (id 7 in invite tests).
       const isTargetCheck = params && params[1] === targetUser?.id && currentUser.id !== targetUser?.id;
       return { rows: (isTargetCheck ? collabMember : true) ? [{ 1: 1 }] : [] };
+    }
+    if (/user_contactable_by/.test(sql)) {
+      return { rows: [{ ok: contactable }] };
     }
     if (/INSERT INTO app_approvers/.test(sql)) {
       return { rows: existingApproverRow ? [] : [{ user_id: targetUser?.id }] };
@@ -109,6 +113,7 @@ test.beforeEach(() => {
   existingApproverRow = null;
   collabMember = true;
   pendingInviteUpdate = [{ invited_by: 1 }];
+  contactable = true;
   poolQueryHandler = defaultHandler();
 });
 
@@ -137,6 +142,15 @@ test('invite: creator succeeds, roster mutation notifies', async () => {
   const ins = calls.find((c) => /INSERT INTO app_approvers/.test(c.sql));
   assert.ok(ins);
   assert.deepEqual(ins.params.slice(0, 2), [11, 7]);
+});
+
+test('invite: someone who takes invitations only from people in projects with them gets 403 and no row (#5104)', async () => {
+  contactable = false;
+  const res = await invite('newapprover');
+  assert.equal(res.status, 403);
+  const body = await res.json();
+  assert.match(body.error, /invite link/);
+  assert.ok(!calls.some((c) => /INSERT INTO app_approvers/.test(c.sql)));
 });
 
 test('invite: plain collaborator (non-creator, non-admin) gets 403', async () => {

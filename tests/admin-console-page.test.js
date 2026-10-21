@@ -24,6 +24,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { message } = require('./lib/platform-i18n');
 
 const root = path.join(__dirname, '..');
 const html = fs.readFileSync(path.join(root, 'public/index.html'), 'utf8');
@@ -125,10 +126,19 @@ test('the console island imports every admin module, console first', () => {
     .map((m) => m[1]);
   assert.equal(order[0], 'admin-console', 'admin-console.js is imported first');
   assert.deepEqual(order.slice(1).sort(), [
+    // #5133: Access review, who holds admin rights and the quarterly review.
+    'admin-access-review',
     'admin-analytics',
-    // How the Homeroom bot builds first versions, and how each configuration measures up.
-    'admin-bot-configs',
-    'admin-campaigns', 'admin-codes', 'admin-db-export',
+    // Apps & usage: every app's members, contributors and activity.
+    'admin-apps-usage',
+    // Bot configurations is the Homeroom bot's Configurations tab now,
+    // imported by admin-homeroom-bot.tsx rather than by the island.
+    'admin-campaigns', 'admin-codes',
+    // #5634: Compliance, the compliance plan's items and the weekly scan.
+    'admin-compliance',
+    'admin-db-export',
+    // #4405: every custom domain a project has claimed.
+    'admin-domains',
     'admin-e2e', 'admin-estimator', 'admin-featured-apps', 'admin-features',
     'admin-gallery',
     // #2684: the Homeroom bot's shadow-mode verdicts and their ratings.
@@ -154,6 +164,8 @@ test('the console island imports every admin module, console first', () => {
     'admin-status', 'admin-storage',
     // Support: one user's account, points, events, kudos and history.
     'admin-support',
+    // Templates: ready-made apps' prebuilt images, and Rebuild.
+    'admin-templates',
     // Test accounts: make, list and retire first-time-user test accounts.
     'admin-test-accounts',
     'admin-topochain', 'admin-users',
@@ -371,8 +383,10 @@ test('the two formerly-public sections stay reachable for non-admins', () => {
   assert.match(head, /if \(!isAdmin && !publicMode\)/,
     'a non-admin on any non-public section still bails');
   assert.match(head, /App\.navigateHome\(\)/, 'and lands on home');
-  assert.match(fn.slice(0, 4000), /publicMode \? 'Platform status' : 'Admin & moderation'/,
+  assert.match(fn.slice(0, 4000), /publicMode\s+\? PlatformI18n\.t\('shell:title\.platformStatus'\)\s+: PlatformI18n\.t\('shell:title\.admin'\)/,
     'public mode retitles the header');
+  assert.equal(message('shell:title.platformStatus'), 'Platform status');
+  assert.equal(message('shell:title.admin'), 'Admin & moderation');
 });
 
 test('section switches replace, never push, history', () => {

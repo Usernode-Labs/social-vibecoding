@@ -32,8 +32,17 @@ function adminWorkflowRoutes(config) {
   router.get('/api/admin/workflow', async (req, res) => {
     try {
       const { inspect } = kernel();
-      const [problems, counts] = await Promise.all([inspect.problems(pool), inspect.stateCounts(pool)]);
-      res.json({ running: platform().workflowRunning(), actions: platform().adminEvents(), problems, counts });
+      const { runsWorkflow } = require('../services/process-role');
+      const [problems, counts, processes] = await Promise.all([
+        inspect.problems(pool, { attention: platform().attentionStates(), ...platform().workLimits() }), inspect.stateCounts(pool),
+        require('../services/processes').list(pool),
+      ]);
+      // The live processes that run the workflow's loops (a conductor's
+      // replicas, or one that does everything): none is what "Nobody takes
+      // this work" means.
+      const runners = processes.filter((p) => runsWorkflow(p.role))
+        .map((p) => ({ id: p.id, role: p.role, release: p.release, host: p.host, state: p.state, startedAt: p.started_at }));
+      res.json({ running: platform().workflowRunning(), runners, actions: platform().adminEvents(), problems, counts });
     } catch (err) { fail(res, err, 'Workflow overview'); }
   });
 

@@ -63,6 +63,88 @@ app.kubernetes.io/component: postgresql
 {{- end -}}
 {{- end -}}
 
+{{- /*
+The platform's own Pods (web and conductor) prefer the zone of the external
+CloudNativePG primary, as previews and production apps do
+(src/services/kubernetes.js databaseAffinity): every request and every leader
+loop makes many sequential queries, and a Pod in another data centre pays that
+round trip on each. Same switch and same cluster as PREVIEW_DATABASE_CLUSTER;
+empty for bundled PostgreSQL or a database without the CNPG cluster selector.
+A preference only: the Pod still schedules when that zone is full.
+*/}}
+{{- define "social-vibecoding-platform.databasePrimaryAffinity" -}}
+{{- if and .Values.config.previewFollowDatabasePrimary (not .Values.postgresql.enabled) -}}
+{{- $cluster := index .Values.postgresql.podSelector "cnpg.io/cluster" | default "" -}}
+{{- if $cluster -}}
+affinity:
+  podAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          namespaces: [{{ default .Release.Namespace .Values.postgresql.namespace | quote }}]
+          labelSelector:
+            matchLabels:
+              cnpg.io/cluster: {{ $cluster | quote }}
+              cnpg.io/instanceRole: primary
+          topologyKey: topology.kubernetes.io/zone
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{- /*
+The connection budget (postgresql.platformConnections): the most connections
+the platform's processes can hold at once on the main server must fit in the
+share reserved for its user. Each role counts its serving Pods plus one more
+(the Deployments' maxSurge 1), drainingMax replaced Pods per replica at
+platform.drainPools, and five connections per process outside its pools
+(the bus listener, presence, the lock connection, the debug pool, the
+build-retention guard). A database operation counts twice: one can hold two
+connections at once (pg_dump beside pg_restore; services/db-manager.js).
+A replaced Pod keeps the connections checked out when it shrank until they
+are given back, so for a while it holds more than its drain sizes. Until it
+does not, it holds a capacity claim (an advisory lock that goes no earlier
+than its connections). A Pod starting does not start its work while a Pod of
+its role holds one (processes.js waitForRoom), and that older Pod hands its
+work over as soon as it sees the new one (server.js drainUntilIdle). So
+while it is above, the new Pod holds only what its boot needs, and the two
+together fit the surge slot as long as a boot needs no more than a drain
+size. The migration Job adds its pool plus two (its
+administrative connection and a psql).
+*/}}
+{{- define "social-vibecoding-platform.connectionBudget" -}}
+{{- $p := .Values.platform -}}
+{{- $c := .Values.config -}}
+{{- $d := $p.drainPools -}}
+{{- if or (lt (int $d.dbPoolMax) 1) (lt (int $d.wfPoolMax) 2) (lt (int $d.databaseOperations) 1) -}}
+  {{- fail "platform.drainPools needs dbPoolMax 1 or more, wfPoolMax 2 or more (its outcome listener and one more) and databaseOperations 1 or more" -}}
+{{- end -}}
+{{- $outside := 5 -}}
+{{- $drainEach := add (int $d.dbPoolMax) (int $d.wfPoolMax) (mul 2 (int $d.databaseOperations)) $outside -}}
+{{- $roles := list -}}
+{{- if $p.conductor.enabled -}}
+  {{- $roles = append $roles (dict "name" "web" "replicas" (int $p.replicas) "serving" (add (int $c.dbPoolMax) (int $c.wfPoolMax) (mul 2 (int $c.databaseOperations)) $outside)) -}}
+  {{- $roles = append $roles (dict "name" "conductor" "replicas" (int $p.conductor.replicas) "serving" (add (int (default $c.dbPoolMax $p.conductor.dbPoolMax)) (int $p.conductor.wfPoolMax) (mul 2 (int $p.conductor.databaseOperations)) $outside)) -}}
+{{- else -}}
+  {{- $roles = append $roles (dict "name" "platform" "replicas" (int $p.replicas) "serving" (add (int $c.dbPoolMax) (int $p.conductor.wfPoolMax) (mul 2 (int $p.conductor.databaseOperations)) $outside)) -}}
+{{- end -}}
+{{- $total := 0 -}}
+{{- $parts := list -}}
+{{- range $roles -}}
+  {{- $n := add (mul (add .replicas 1) .serving) (mul .replicas (int $p.drainingMax) $drainEach) -}}
+  {{- $total = add $total $n -}}
+  {{- $parts = append $parts (printf "%s %d" .name $n) -}}
+{{- end -}}
+{{- if .Values.migration.enabled -}}
+  {{- $m := add (int .Values.migration.dbPoolMax) 2 -}}
+  {{- $total = add $total $m -}}
+  {{- $parts = append $parts (printf "migration %d" $m) -}}
+{{- end -}}
+{{- $reserve := int .Values.postgresql.platformConnections -}}
+{{- if and (gt $reserve 0) (gt $total $reserve) -}}
+  {{- fail (printf "the platform could hold %d connections at once on its database server (%s), more than postgresql.platformConnections (%d): lower a pool or platform.drainPools, or raise the reserve" $total (join ", " $parts) $reserve) -}}
+{{- end -}}
+{{- end -}}
+
 {{- define "social-vibecoding-platform.validate" -}}
 {{- if .Values.enabled -}}
   {{- if or .Values.platform.enabled .Values.migration.enabled -}}
@@ -74,6 +156,21 @@ app.kubernetes.io/component: postgresql
     {{- end -}}
   {{- end -}}
   {{- if .Values.platform.enabled -}}
+    {{- $drain := float64 .Values.platform.drainMinutes -}}
+    {{- if or (lt $drain 5.0) (gt $drain 240.0) (ne (float64 (int $drain)) $drain) -}}
+      {{- fail "platform.drainMinutes must be a whole number of minutes from 5 to 240" -}}
+    {{- end -}}
+    {{- $draining := float64 .Values.platform.drainingMax -}}
+    {{- if or (lt $draining 0.0) (ne (float64 (int $draining)) $draining) -}}
+      {{- fail "platform.drainingMax must be a whole number, 0 or more" -}}
+    {{- end -}}
+    {{- include "social-vibecoding-platform.connectionBudget" . -}}
+    {{- if .Values.platform.conductor.enabled -}}
+      {{- $conductors := float64 .Values.platform.conductor.replicas -}}
+      {{- if or (lt $conductors 1.0) (ne (float64 (int $conductors)) $conductors) -}}
+        {{- fail "platform.conductor.replicas must be a whole number, 1 or more" -}}
+      {{- end -}}
+    {{- end -}}
     {{- range $name, $image := dict "platform.workerImage" .Values.platform.workerImage "platform.captureImage" .Values.platform.captureImage -}}
       {{- if not (regexMatch "^sha256:[a-f0-9]{64}$" $image.digest) -}}
         {{- fail (printf "%s.digest must be an immutable sha256 digest when platform is enabled" $name) -}}
@@ -91,6 +188,22 @@ app.kubernetes.io/component: postgresql
   {{- end -}}
   {{- if and .Values.secrets.create (not (regexMatch "^[A-Za-z0-9._~-]+$" .Values.secrets.databasePassword)) -}}
     {{- fail "secrets.databasePassword must be non-empty and URL-safe" -}}
+  {{- end -}}
+  {{- if .Values.previewPostgresql.enabled -}}
+    {{- if or (lt (int .Values.previewPostgresql.port) 1) (gt (int .Values.previewPostgresql.port) 65535) -}}
+      {{- fail "previewPostgresql.port must be between 1 and 65535" -}}
+    {{- end -}}
+    {{- if and .Values.networkPolicy.enabled .Values.platform.enabled (empty .Values.previewPostgresql.podSelector) -}}
+      {{- fail "previewPostgresql.podSelector is required when previewPostgresql and the network policy are enabled" -}}
+    {{- end -}}
+    {{- if .Values.secrets.create -}}
+      {{- if or (empty .Values.previewPostgresql.host) (empty .Values.previewPostgresql.username) (empty .Values.previewPostgresql.database) -}}
+        {{- fail "previewPostgresql.host, username and database are required when previewPostgresql is enabled with chart-created secrets" -}}
+      {{- end -}}
+      {{- if not (regexMatch "^[A-Za-z0-9._~-]+$" .Values.secrets.previewDatabasePassword) -}}
+        {{- fail "secrets.previewDatabasePassword must be non-empty and URL-safe when previewPostgresql is enabled" -}}
+      {{- end -}}
+    {{- end -}}
   {{- end -}}
   {{- if and .Values.platform.enabled .Values.secrets.create (or (empty .Values.secrets.githubAppId) (empty .Values.secrets.githubPrivateKey) (empty .Values.secrets.githubBotToken)) -}}
     {{- fail "secrets.githubAppId, secrets.githubPrivateKey and secrets.githubBotToken are required when platform is enabled" -}}

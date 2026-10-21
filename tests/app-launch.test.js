@@ -249,6 +249,7 @@ function makeAppView({ fetchImpl, apps = [RUNNING], offline = false, reduceMotio
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(`${SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;
@@ -475,13 +476,30 @@ test('the cover cross-fades out when the frame loads', () => {
   assert.equal(cover.isConnected, false, 'and removed once the fade finishes');
 });
 
-test('an errored frame is revealed too — the app renders its own error page', () => {
-  const { AppView, dom } = makeAppView({ fetchImpl: okToken() });
+test('an errored launch keeps the cover, marks it failed, and the 2s cap cannot strip it', () => {
+  const { AppView, dom, clock } = makeAppView({ fetchImpl: okToken() });
   AppView._tokenFresh = { slug: 'notes', token: 'tok-1', at: 0 };
   AppView.beginLaunch('notes');
-  dom.els.get('app-iframe').onerror();
-  assert.equal(dom.els.get('app-iframe').style.opacity, '1');
-  assert.equal(dom.els.get('app-launch-cover').classList.contains('app-launch-cover--out'), true);
+  const iframe = dom.els.get('app-iframe');
+  const cover = dom.els.get('app-launch-cover');
+  const spinner = dom.els.get('app-launch-cover-spinner');
+  const note = dom.els.get('app-launch-cover-note');
+
+  iframe.onerror();
+  assert.equal(cover.dataset.launchFailed, 'true', 'the cover is marked failed');
+  assert.equal(cover.classList.contains('app-launch-cover--out'), false, 'the cover stays up');
+  assert.notEqual(iframe.style.opacity, '1', 'a failed launch does not reveal the frame');
+  assert.equal(note.textContent, "Couldn't open this app", 'the failed card replaces the wait');
+  assert.equal(spinner.classList.contains('hidden'), true, 'the spinner is gone');
+
+  clock.advance(10_000);
+  assert.equal(cover.classList.contains('app-launch-cover--out'), false,
+    'the 2s cap cannot strip the failed cover');
+
+  // A late load still reveals the app as it normally would.
+  iframe.onload();
+  assert.equal(iframe.style.opacity, '1', 'revealed on the late load');
+  assert.equal(cover.classList.contains('app-launch-cover--out'), true);
 });
 
 test('the ladder adds a spinner at 500ms, reveals at 2s, and explains itself at 20s', () => {
@@ -517,6 +535,81 @@ test('the 2s cap reveals a frame that is loading but has not fired load', () => 
   assert.equal(cover.classList.contains('app-launch-cover--out'), true, 'revealed at the cap');
 });
 
+test('a launch that never starts loading fails the cover at 45s and not before', () => {
+  const { impl } = deferredToken(); // mint never settles: no src, no load event
+  const { AppView, dom, clock } = makeAppView({ fetchImpl: impl });
+  AppView.beginLaunch('notes');
+  const cover = dom.els.get('app-launch-cover');
+
+  clock.advance(20_000);
+  assert.equal(cover.dataset.launchFailed, undefined, 'still waiting at the slow note');
+  assert.match(dom.els.get('app-launch-cover-note').textContent, /taking longer than expected/);
+  clock.advance(24_999);
+  assert.equal(cover.dataset.launchFailed, undefined, 'not failed a moment before the rung');
+  clock.advance(2);
+  assert.equal(cover.dataset.launchFailed, 'true', 'failed at 45s');
+});
+
+test('retryLaunch restores Opening…, re-arms the ladder, and re-points the same element', async () => {
+  const { impl, release } = deferredToken();
+  const { AppView, dom, clock } = makeAppView({ fetchImpl: impl });
+  AppView.beginLaunch('notes');
+  const iframe = dom.els.get('app-iframe');
+  const cover = dom.els.get('app-launch-cover');
+  const spinner = dom.els.get('app-launch-cover-spinner');
+  const note = dom.els.get('app-launch-cover-note');
+
+  clock.advance(45_000);
+  assert.equal(cover.dataset.launchFailed, 'true');
+
+  assert.equal(AppView.retryLaunch(), true);
+  assert.equal(cover.dataset.launchFailed, undefined, 'the failed card is gone');
+  assert.equal(note.textContent, 'Opening…', 'the cover is waiting again');
+  assert.equal(dom.els.get('app-iframe'), iframe, 'same frame element — no remount');
+  assert.equal(iframe.getAttribute('src'), null, 'still waiting for the mint');
+  assert.equal(AppView._launchAdopt, null);
+
+  release();
+  await flush();
+  assert.equal(iframe.src, 'https://notes.apps.example/?token=tok-late&un-theme=light',
+    're-pointed once the mint settles');
+  assert.equal(AppView._launchAdopt.src, iframe.src);
+
+  // The ladder re-armed off the re-point: its first rung runs again.
+  clock.advance(500);
+  assert.equal(spinner.classList.contains('hidden'), false);
+});
+
+test('retry is inert once the launch is superseded', () => {
+  const { impl } = deferredToken();
+  const { AppView, dom, clock } = makeAppView({ fetchImpl: impl });
+  AppView.beginLaunch('notes');
+  clock.advance(45_000);
+  const iframe = dom.els.get('app-iframe');
+
+  AppView._teardownLaunch(); // e.g. Back
+  assert.equal(AppView.retryLaunch(), false);
+  assert.equal(iframe.getAttribute('src'), null, 'the stale retry did not point the frame');
+});
+
+test('?shot=app-launching&failed=1 paints the failed card with no app behind it', () => {
+  const { AppView, dom } = makeAppView({ fetchImpl: okToken() });
+  AppView.showLaunchFailedShot();
+
+  const cover = dom.els.get('app-launch-cover');
+  assert.ok(cover, 'cover painted');
+  assert.equal(cover.dataset.launchFailed, 'true', 'the failed card is up');
+  assert.equal(dom.els.get('app-iframe').getAttribute('src'), null, 'no origin loads');
+  assert.match(dom.els.get('app-launch-cover-note').textContent, /Couldn't open this app/);
+  assert.equal(dom.els.get('app-launch-cover-spinner').classList.contains('hidden'), true);
+  assert.equal(dom.els.get('app-view').classList.contains('hidden'), false);
+  assert.equal(dom.els.get('home-screen').classList.contains('hidden'), true);
+
+  // Try again is inert here: the shot sets no _launchRetry, and nothing
+  // real sits behind the card for it to reopen.
+  assert.equal(AppView.retryLaunch(), false);
+});
+
 test('a superseded launch’s load event and timers are inert', () => {
   const { AppView, dom, clock } = makeAppView({ fetchImpl: okToken() });
   AppView._tokenFresh = { slug: 'notes', token: 'tok-1', at: 0 };
@@ -539,6 +632,87 @@ test('reduced motion swaps the cross-fade for an instant swap', () => {
   AppView.beginLaunch('notes');
   dom.els.get('app-iframe').onload();
   assert.equal(dom.els.get('app-launch-cover'), undefined, 'cover removed outright, no fade');
+});
+
+// ── 4b. The app's own "first screen drawn" (usernode.ready) ─────────────
+//
+// An app that calls `usernode.ready(firstRender)` says "waiting" while it
+// loads and "drawn" once its first real screen is up. Its cover stays up
+// past load and the 2s cap, lifts on "drawn", and lifts at the ready cap if
+// "drawn" never comes. An app that never calls it keeps the ladder above.
+
+function readyLaunch() {
+  const made = makeAppView({ fetchImpl: okToken() });
+  made.AppView._tokenFresh = { slug: 'notes', token: 'tok-1', at: 0 };
+  made.AppView.beginLaunch('notes');
+  const iframe = made.dom.els.get('app-iframe');
+  iframe.contentWindow = {};
+  const say = (state, source = iframe.contentWindow) => made.AppView.handleReadyBridgeMessage({
+    source, data: { __usernode_ready: state },
+  });
+  return { ...made, iframe, cover: made.dom.els.get('app-launch-cover'), say };
+}
+
+const lifted = (cover) => cover.classList.contains('app-launch-cover--out');
+
+test('an app waiting on its first render keeps the cover past load and the 2s cap, and "drawn" lifts it', () => {
+  const { AppView, iframe, cover, clock, say } = readyLaunch();
+  say('waiting');
+  iframe.onload();
+  assert.equal(lifted(cover), false, 'load alone does not reveal an app that is still drawing');
+  assert.equal(AppView.iframeFocused, true, 'the load bookkeeping still runs');
+  clock.advance(AppView.LAUNCH_REVEAL_CAP_MS + 1);
+  assert.equal(lifted(cover), false, 'nor does the 2s cap');
+  say('drawn');
+  assert.equal(lifted(cover), true, 'its first screen is up: the cover cross-fades out');
+  assert.equal(iframe.style.opacity, '1');
+});
+
+test('an app that never says "drawn" is revealed at the ready cap', () => {
+  const { AppView, iframe, cover, clock, say } = readyLaunch();
+  say('waiting');
+  iframe.onload();
+  clock.advance(AppView.LAUNCH_READY_CAP_MS - 1);
+  assert.equal(lifted(cover), false);
+  clock.advance(2);
+  assert.equal(lifted(cover), true, 'never hidden for long');
+  assert.ok(AppView.LAUNCH_READY_CAP_MS > AppView.LAUNCH_REVEAL_CAP_MS);
+  assert.ok(AppView.LAUNCH_READY_CAP_MS <= 6000, 'a few seconds, not more');
+});
+
+test('"drawn" before the load event reveals at once', () => {
+  const { iframe, cover, say } = readyLaunch();
+  say('waiting');
+  say('drawn');
+  assert.equal(lifted(cover), true);
+  iframe.onload();
+  assert.equal(lifted(cover), true, 'the late load is harmless');
+});
+
+test('an app that never calls ready() reveals on load, as before', () => {
+  const { iframe, cover } = readyLaunch();
+  iframe.onload();
+  assert.equal(lifted(cover), true);
+});
+
+test('only the launched frame, on the launch armed now, is believed', () => {
+  const { AppView, iframe, cover, clock, say } = readyLaunch();
+  say('waiting');
+  iframe.onload();
+  say('drawn', {});
+  assert.equal(lifted(cover), false, 'a message from another window does nothing');
+  AppView._launchId += 1; // a newer navigation took over
+  say('drawn');
+  assert.equal(lifted(cover), false, 'a superseded launch is not revealed by its app');
+  clock.advance(30_000);
+  assert.equal(cover.isConnected, true);
+  for (const data of [null, {}, { __usernode_ready: 'ready' }, { __usernode_ready: 1 }]) {
+    AppView.handleReadyBridgeMessage({ source: iframe.contentWindow, data });
+  }
+});
+
+test('the shell listens for the ready message beside the other bridge relays', () => {
+  assert.match(SRC, /try \{ AppView\.handleReadyBridgeMessage\(e\); \} catch \{\}/);
 });
 
 // ── 5. One-shot adoption in renderAppTab ────────────────────────────────
@@ -877,4 +1051,21 @@ test('the landing viewer’s cover honours its own generation counter', () => {
   assert.notEqual(frame.style.opacity, '1', 'a late load cannot repaint a closed viewer');
   clock.advance(30_000);
   assert.equal(cover.isConnected, true, 'and its ladder is inert');
+});
+
+test('the landing viewer still reveals on error — its cover has no failed state', () => {
+  const { AppView, dom, clock } = makeAppView({ fetchImpl: okToken() });
+  const frame = dom.els.get('app-viewer-frame');
+  const timers = [];
+  let current = true;
+  AppView.mountViewerCover(dom.els.get('app-viewer'), frame, RUNNING, { timers, isCurrent: () => current });
+  const cover = dom.els.get('app-viewer-cover');
+
+  frame._src = 'https://notes.apps.example';
+  frame.onerror();
+  assert.equal(frame.style.opacity, '1', 'revealed — the app renders whatever it got');
+  assert.equal(cover.classList.contains('app-launch-cover--out'), true);
+  assert.equal(cover.dataset.launchFailed, undefined, 'no failed card on the landing cover');
+  clock.advance(AppView.LAUNCH_FADE_MS + 40);
+  assert.equal(cover.isConnected, false);
 });

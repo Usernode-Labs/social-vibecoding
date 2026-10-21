@@ -18,7 +18,10 @@
 //   - a later build's result and its side trial's make a pair with no
 //     screenshots needed; the pair shows each side's spec and diff, blind;
 //     a pick names its scope; the numbers come out per scope, with the build
-//     rate and the current version's live proposals' outcomes.
+//     rate and the current version's live proposals' outcomes;
+//   - a side that plans alike finds the live build's first spec version, or
+//     that the live build ended without one, and its result carries that
+//     spec's cost off the live session's ledger.
 //
 // Skips when no database is reachable, unless TEST_DATABASE_URL insists.
 
@@ -166,7 +169,7 @@ test('the later changes\' configurations against the full PostgreSQL schema', { 
     runId = await runRow({ issue: 1, proposal: await proposalSession('merged') });
     await pool.query('UPDATE homeroom_bot_runs SET bot_config_version_id = $2 WHERE id = $1', [runId, laterCurrent.id]);
     const snapshotId = await snapshotFor(runId);
-    const lane = { woke: 0, wake() { this.woke += 1; } };
+    const lane = { woke: 0, look() { this.woke += 1; } };
     const out = await configs.spawnSideBuilds(pool, {}, {
       botRunId: runId, app, snapshotId, current: laterCurrent, scope: 'later', deps: { lane },
     });
@@ -211,7 +214,7 @@ test('the later changes\' configurations against the full PostgreSQL schema', { 
     assert.equal(await configs.sideWeeklyCents(pool), 2500, 'the first versions\' is its own setting');
     const other = await runRow({ issue: 2 });
     const out = await configs.spawnSideBuilds(pool, {}, {
-      botRunId: other, app, snapshotId: await snapshotFor(other), current: laterCurrent, scope: 'later', deps: { lane: { wake() {} } },
+      botRunId: other, app, snapshotId: await snapshotFor(other), current: laterCurrent, scope: 'later', deps: { lane: { look() {} } },
     });
     assert.deepEqual({ trials: out.trials, skipped: out.skipped }, { trials: 0, skipped: 1 });
     const { rows: [r] } = await pool.query('SELECT status, error FROM bot_config_results WHERE bot_run_id = $1', [other]);
@@ -227,7 +230,7 @@ test('the later changes\' configurations against the full PostgreSQL schema', { 
     const skipped = await configs.spawnSideBuilds(pool, {}, {
       botRunId: platform, app, snapshotId: await snapshotFor(platform), current: laterCurrent, scope: 'later',
       skipReason: "the platform's own repository is left out of side builds (homeroom_bot_shadow_build_platform is off)",
-      deps: { lane: { wake() { throw new Error('nothing is queued'); } } },
+      deps: { lane: { look() { throw new Error('nothing is queued'); } } },
     });
     assert.deepEqual({ trials: skipped.trials, skipped: skipped.skipped }, { trials: 0, skipped: 1 });
     const { rows: [p] } = await pool.query('SELECT status, error FROM bot_config_results WHERE bot_run_id = $1', [platform]);
@@ -356,11 +359,138 @@ test('the later changes\' configurations against the full PostgreSQL schema', { 
   await t.test('a later build given up stops its side builds, in its own words', async () => {
     const id = await runRow({ issue: 6 });
     await pool.query('UPDATE homeroom_bot_runs SET bot_config_version_id = $2 WHERE id = $1', [id, laterCurrent.id]);
-    await configs.spawnSideBuilds(pool, {}, { botRunId: id, app, snapshotId: await snapshotFor(id), current: laterCurrent, scope: 'later', deps: { lane: { wake() {} } } });
+    await configs.spawnSideBuilds(pool, {}, { botRunId: id, app, snapshotId: await snapshotFor(id), current: laterCurrent, scope: 'later', deps: { lane: { look() {} } } });
     const stopped = await configs.abandonSideBuilds(pool, id, 'not needed any more', { lane: { cancelTrial() {} } });
     assert.equal(stopped, 1);
     const { rows: [tr] } = await pool.query('SELECT status, error FROM bench_trials WHERE bot_run_id = $1', [id]);
     assert.equal(tr.status, 'cancelled');
     assert.equal(tr.error, 'the build they are compared with was not needed any more');
+  });
+
+  await t.test('a build\'s stages come off its session\'s ledger, a restart\'s too; what no stage takes is named under the remainder', async () => {
+    const session = async (issue) => (await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, is_headless, linked_issues)
+       VALUES ($1, $2, $3, 'paused', FALSE, '{}') RETURNING id`, [app.id, botUser.id, `dev/homeroom_bot-${issue}`],
+    )).rows[0].id;
+    const turn = async (sessionId, { cost, component = null, model = GLM, logical = crypto.randomUUID(), attempt = 1 }) => {
+      await pool.query(
+        `INSERT INTO agent_turns (id, session_id, user_id, backend, status, requested_model, estimated_cost_usd, logical_turn_id,
+                                  attempt_number, metadata)
+         VALUES ($1, $2, $3, 'codex_openrouter', 'completed', $4, $5, $6, $7, $8::jsonb)`,
+        [crypto.randomUUID(), sessionId, botUser.id, model, cost, logical, attempt,
+          JSON.stringify(component ? { telemetry_component: component } : {})],
+      );
+      return logical;
+    };
+    const resultOf = async (runId) => (await pool.query(
+      "SELECT cost_usd::float8 AS cost, cost_parts FROM bot_config_results WHERE bot_run_id = $1 AND source = 'live'", [runId],
+    )).rows[0];
+    const stagesOf = (parts) => parts.stages.map((x) => [x.stage, x.model, x.usd]);
+
+    // A shadow build a restart finished names none of its turns: its spec
+    // and build were all `other` before (finishConfiguredShadow passes no
+    // stage costs). The ledger's components name them now.
+    const recovered = await runRow({ issue: 7, mode: 'shadow' });
+    const s1 = await session(7);
+    await turn(s1, { cost: 0.5, component: 'homeroom_bot_spec', model: OPUS });
+    await turn(s1, { cost: 0.3, component: 'homeroom_bot_build' });
+    await turn(s1, { cost: 0.1, component: 'homeroom_bot_build_nudge' });
+    await turn(s1, { cost: 0.05, component: 'homeroom_bot_triage' });
+    await turn(s1, { cost: 0.02 });
+    assert.equal(await configs.finishLive(pool, {
+      botRunId: recovered, version: laterCurrent,
+      built: { ok: false, sessionId: s1, costUsd: 0.97, error: 'the build produced no change to propose (finished after a restart)' },
+    }), true);
+    const r1 = await resultOf(recovered);
+    assert.ok(Math.abs(r1.cost - 1.0) < 1e-9, 'the ledger and the triage');
+    assert.deepEqual(stagesOf(r1.cost_parts), [['triage', GLM, 0.03], ['spec', OPUS, 0.5], ['build', GLM, 0.4]]);
+    assert.equal(r1.cost_parts.other.usd, 0.07);
+    assert.deepEqual(r1.cost_parts.other.of, [{ component: 'homeroom_bot_triage', usd: 0.05 }, { component: 'unnamed', usd: 0.02 }],
+      'what is left says what it is');
+
+    // A build that named its turns keeps them, at what the ledger holds for
+    // them (every attempt), and a kept plan's cost is named too.
+    const named = await runRow({ issue: 8 });
+    const s2 = await session(8);
+    const specId = await turn(s2, { cost: 0.6, model: OPUS });
+    const buildId = await turn(s2, { cost: 0.2 });
+    await turn(s2, { cost: 0.1, logical: buildId, attempt: 2 });
+    assert.equal(await configs.finishLive(pool, {
+      botRunId: named, version: laterCurrent, carriedUsd: 0.4,
+      built: {
+        ok: true, sessionId: s2, sha: 'd'.repeat(40), commits: 1, costUsd: 0.85,
+        stageCosts: { spec: { usd: 0.6, model: OPUS, turnIds: [specId] }, build: { usd: 0.25, model: GLM, turnIds: [buildId] } },
+      },
+    }), true);
+    const r2 = await resultOf(named);
+    assert.ok(Math.abs(r2.cost - (0.9 + 0.4 + 0.03)) < 1e-9);
+    assert.deepEqual(stagesOf(r2.cost_parts), [['triage', GLM, 0.03], ['spec', OPUS, 0.6], ['build', GLM, 0.3]]);
+    assert.deepEqual(r2.cost_parts.other, { usd: 0.4, of: [{ component: 'kept_plan', usd: 0.4 }] });
+
+    const cur = (await configs.listWithStats(pool, { scope: 'later' })).versions[0].stats.avgCostByStage;
+    assert.deepEqual(cur.otherOf.map((o) => o.component), ['kept_plan', 'homeroom_bot_triage', 'unnamed'], 'the averages name the remainder too');
+  });
+
+  await t.test('a side that plans alike finds the live build\'s spec, and its result carries that spec\'s cost', async () => {
+    const saved = await configs.saveVersion(pool, {
+      key: 'later-opus-spec-opus-build', label: 'Opus spec + Opus build', role: 'side', scope: 'later',
+      recipe: { models: { triage: GLM, spec: OPUS, build: OPUS }, reviewer: null, pack: null },
+    });
+    assert.equal(saved.ok, true, saved.error);
+    const alike = saved.version;
+    const live = await runRow({ issue: 9 });
+    const state = (versionId = alike.id, botRunId = live) => configs.liveSpecState(pool, { botRunId, versionId });
+    assert.deepEqual(await state(), { share: false }, 'a run that names no configuration');
+    await pool.query('UPDATE homeroom_bot_runs SET bot_config_version_id = $2 WHERE id = $1', [live, laterCurrent.id]);
+    assert.deepEqual(await state(), { share: true }, 'no build session yet: still being written');
+    assert.deepEqual(await state(laterGlm.id), { share: false }, 'All GLM writes its own');
+    const { rows: [{ id: sessionId }] } = await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, is_headless, linked_issues)
+       VALUES ($1, $2, 'dev/homeroom_bot-9', 'active', FALSE, '{}') RETURNING id`, [app.id, botUser.id],
+    );
+    await pool.query('UPDATE homeroom_bot_runs SET build_session_id = $2 WHERE id = $1', [live, sessionId]);
+    assert.deepEqual(await state(), { share: true }, 'its session has no spec yet');
+    await pool.query(
+      `INSERT INTO chat_session_specs (session_id, version, content, content_html)
+       VALUES ($1, 1, '# Dark mode\n\nThe live plan.', '<h1>Dark mode</h1>'), ($1, 2, '# Dark mode\n\nA revision.', NULL)`,
+      [sessionId],
+    );
+    assert.deepEqual(await state(), { share: true, spec: { sessionId, version: 1 } }, 'the plan the build was built from, not a later revision');
+    assert.deepEqual(await configs.liveSpecText(pool, { sessionId, version: 1 }), { specMd: '# Dark mode\n\nThe live plan.', specHtml: '<h1>Dark mode</h1>' });
+    assert.equal(await configs.liveSpecText(pool, { sessionId, version: 3 }), null);
+
+    // A live build that ended without a spec: stopped at its plan, or for another reason.
+    const blocked = await runRow({ issue: 10 });
+    await pool.query(
+      "UPDATE homeroom_bot_runs SET bot_config_version_id = $2, build_ok = FALSE, build_error = 'blocked: already on main' WHERE id = $1",
+      [blocked, laterCurrent.id],
+    );
+    assert.deepEqual(await state(alike.id, blocked), { share: true, ended: { blocked: true, error: 'blocked: already on main' } });
+    await pool.query("UPDATE homeroom_bot_runs SET build_error = 'the spec turn failed (timeout)' WHERE id = $1", [blocked]);
+    assert.deepEqual(await state(alike.id, blocked), { share: true, ended: { blocked: false, error: 'the spec turn failed (timeout)' } });
+
+    // Its result: its own build, the run's triage, and the live spec's cost off the live session's ledger.
+    await pool.query(
+      `INSERT INTO agent_turns (id, session_id, user_id, backend, status, requested_model, estimated_cost_usd, logical_turn_id, attempt_number, metadata)
+       VALUES ($1, $3, $4, 'codex_openrouter', 'completed', $5, 0.7, $1, 1, '{"telemetry_component":"homeroom_bot_spec"}'::jsonb),
+              ($2, $3, $4, 'codex_openrouter', 'completed', $6, 0.2, $2, 1, '{"telemetry_component":"homeroom_bot_build"}'::jsonb)`,
+      [crypto.randomUUID(), crypto.randomUUID(), sessionId, botUser.id, OPUS, GLM],
+    );
+    const { rows: [side] } = await pool.query(
+      `INSERT INTO bench_trials (run_id, task_id, model, attempt, status, cost_usd, duration_ms, build_sha, base_sha, item_token,
+                                 bot_run_id, bot_config_version_id, parsed)
+       SELECT run_id, task_id, $2, 1, 'ok', 0.15, 300000, $3, $4, $5, $6, $7, $8::jsonb FROM bench_trials WHERE id = $1
+       RETURNING id`,
+      [trialId, `config:${alike.id}`, 'e'.repeat(40), BASE, crypto.randomBytes(12).toString('base64url'), live, alike.id,
+        JSON.stringify({ built: true, livePlan: { sessionId, version: 1 }, costParts: { build: { usd: 0.15, model: OPUS } } })],
+    );
+    assert.equal(await configs.finishSideTrial(pool, side.id), true);
+    const { rows: [r] } = await pool.query(
+      'SELECT built, cost_usd::float8 AS cost, cost_parts FROM bot_config_results WHERE bot_run_id = $1 AND config_version_id = $2',
+      [live, alike.id],
+    );
+    assert.equal(r.built, true);
+    assert.ok(Math.abs(r.cost - (0.15 + 0.03 + 0.7)) < 1e-9, 'its build, the triage and the live spec');
+    assert.deepEqual(r.cost_parts.stages.map((x) => [x.stage, x.model, x.usd]), [['triage', GLM, 0.03], ['spec', OPUS, 0.7], ['build', OPUS, 0.15]]);
   });
 });

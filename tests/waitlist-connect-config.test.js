@@ -154,7 +154,9 @@ test('no waitlist module reads an undeclared WAITLIST_* variable', () => {
 // before requiring the route modules, so these exercise the REAL routing
 // and redirect logic against a stubbed data layer.
 const poolMod = require('../src/db/pool');
-poolMod.getPool = () => ({ query: async () => ({ rows: [] }) });
+// The round trip's state lives in waitlist_connect_states.
+const connectStates = require('./lib/waitlist-connect-states').connectStatesPool();
+poolMod.getPool = () => connectStates;
 
 const waitlist = require('../src/services/waitlist');
 const TOKEN = 'more-token-fixture';

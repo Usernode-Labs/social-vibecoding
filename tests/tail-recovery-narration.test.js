@@ -3,18 +3,19 @@
 // Three surfaces, one rule: never ask someone to redo work that already
 // landed, and never leave a minutes-long repair silent.
 //
-//   1. server.js adoption — the tail-aware branches. A running container
+//   1. recovery-pills — the new wording, and its own matcher (the boot
+//      backfill has to recognise a row it wrote without knowing which PR
+//      number shaped it).
+//   2. server.js adoption — the tail-aware branches. A running container
 //      with a held record resumes; a DEAD container with a held record
 //      whose commit was pushed reports what landed and heals the preview,
 //      instead of "That coding turn didn't finish — send your request
 //      again" (which is what sent session 2954's owner into a duplicate
 //      10-minute build).
-//   2. staging-recovery — a background rebuild announces itself BEFORE it
-//      starts. Cloning the self-app database alone is ~4:45, and until now
-//      this path posted nothing until it succeeded.
-//   3. recovery-pills — the new wording, and its own matcher (the boot
-//      backfill has to recognise a row it wrote without knowing which PR
-//      number shaped it).
+//   3. the client — a persisted "Building staging preview..." row keeps its
+//      spinner while it is the transcript's last word. The rebuild itself is
+//      the preview machine's (src/workflow/preview/), which writes the
+//      preview's outcome rows; those are tested with the machine.
 //
 // Run with: node --test tests/tail-recovery-narration.test.js
 
@@ -23,7 +24,10 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
 
-const SERVER_SRC = fs.readFileSync(path.join(__dirname, '../server.js'), 'utf8');
+// With what a turn's recovery runs, moved out of server.js unchanged
+// (services/turn-recovery.js).
+const SERVER_SRC = fs.readFileSync(path.join(__dirname, '../server.js'), 'utf8')
+  + fs.readFileSync(path.join(__dirname, '../src/services/turn-recovery.js'), 'utf8');
 const recoveryPills = require('../src/services/recovery-pills');
 
 // ── 1. The breadcrumb wording ───────────────────────────────────────────
@@ -131,7 +135,7 @@ test('a successful mid-exec replay stamps tail_pending before the tail writes mi
 
   const resumeAt = fn.indexOf('worker.resumeTurnFromJournal(');
   const stampGuardAt = fn.indexOf(
-    'turnLifecycle.phaseOf(recoveryActiveTurn) === turnLifecycle.PHASE_EXECUTING'
+    'const replayedPhase = turnLifecycle.phaseOf(recoveryActiveTurn);'
   );
   const stampAt = fn.indexOf('worker.markTurnTail(');
   const firstTailWorkAt = fn.indexOf('resumeRecoveredCodexFreshRetry');
@@ -146,8 +150,15 @@ test('a successful mid-exec replay stamps tail_pending before the tail writes mi
   // The guard must stay narrow: an interrupted TAIL is already
   // tail_pending, and re-stamping would clobber its milestone map with the
   // fresh seed (redoing non-idempotent tail steps on the next resume).
-  assert.match(fn, /=== turnLifecycle\.PHASE_EXECUTING\) \{/,
-    'only the executing phase is stamped');
+  //
+  // Change 7490 (9 Oct 2026): a record still in dispatch_pending is the
+  // other phase with no milestone map. Its replay is over too, and without
+  // the stamp recovery retried "milestone attempted from dispatch_pending"
+  // through five restarts while the proposal read as running.
+  const guard = fn.slice(stampGuardAt, stampAt);
+  assert.match(guard, /replayedPhase === turnLifecycle\.PHASE_EXECUTING\s*\n\s*\|\| replayedPhase === turnLifecycle\.PHASE_DISPATCH_PENDING\) \{/,
+    'executing and dispatch_pending are stamped');
+  assert.doesNotMatch(guard, /PHASE_TAIL_PENDING|'tail'/, 'and never an interrupted tail');
 });
 
 test('the warm-idle branch narrates a dangling tail instead of returning silently', () => {
@@ -186,132 +197,7 @@ test('the dangling-tail fallback picks its wording from the session row', () => 
   assert.match(fn, /if \(!landed\) return;[\s\S]{0,400}rebuildSessionStaging/);
 });
 
-// ── 3. Background rebuilds announce themselves ──────────────────────────
-
-const STAGING_RECOVERY_SRC = fs.readFileSync(
-  path.join(__dirname, '../src/services/staging-recovery.js'), 'utf8'
-);
-
-function loadStagingRecovery() {
-  const ids = {
-    logger: require.resolve('../src/services/logger'),
-    ws: require.resolve('../src/services/ws'),
-    subject: require.resolve('../src/services/staging-recovery'),
-  };
-  const orig = {};
-  for (const [k, id] of Object.entries(ids)) orig[k] = require.cache[id];
-  const noop = () => {};
-  require.cache[ids.logger] = {
-    id: ids.logger, filename: ids.logger, loaded: true, paths: [],
-    exports: { info: noop, warn: noop, error: noop, debug: noop },
-  };
-  const bus = { broadcasts: [], sessionUpdates: [], systemMessages: [] };
-  require.cache[ids.ws] = {
-    id: ids.ws, filename: ids.ws, loaded: true, paths: [],
-    exports: {
-      broadcastGlobal: (m) => bus.broadcasts.push(m),
-      pushSessionUpdate: (m) => bus.sessionUpdates.push(m),
-      sendSystemMessage: async (pool, appId, body, kind, metadata, thread) => {
-        bus.systemMessages.push({ appId, body, kind, metadata, thread });
-      },
-    },
-  };
-  delete require.cache[ids.subject];
-  const subject = require('../src/services/staging-recovery');
-  const restore = () => {
-    for (const [k, id] of Object.entries(ids)) {
-      if (orig[k]) require.cache[id] = orig[k];
-      else delete require.cache[id];
-    }
-  };
-  return { subject, bus, restore };
-}
-
-test('a native session gets an in-progress row + a spinner hint before the build', async () => {
-  const { subject, bus, restore } = loadStagingRecovery();
-  try {
-    const inserts = [];
-    const pool = {
-      query: async (sql, params) => { inserts.push({ sql: String(sql), params }); return { rows: [] }; },
-    };
-    await subject.announceRebuildStarted({
-      pool,
-      session: { id: 2954, app_id: 10, app_slug: 'usernode-2d5619', pr_number: 922 },
-      imported: false,
-    });
-
-    assert.equal(inserts.length, 1);
-    assert.match(inserts[0].sql, /INSERT INTO chat_session_messages/);
-    assert.equal(inserts[0].params[1], 'Building staging preview...');
-    // Same wording as the live dev-turn path, so the client's existing
-    // status-row rendering applies with no special case.
-    assert.equal(subject.STAGING_REBUILD_IN_PROGRESS, 'Building staging preview...');
-    const meta = JSON.parse(inserts[0].params[2]);
-    assert.equal(meta.stagingBuild, 'running');
-    assert.equal(meta.recovered, true, 'findable in SQL as recovery-written');
-    assert.equal(meta.prNumber, 922);
-
-    const status = bus.broadcasts.find((b) => b.event === 'status');
-    assert.ok(status, 'open tabs get a live row');
-    assert.equal(status.text, 'Building staging preview...');
-    assert.equal(status.sessionId, 2954);
-    // No turn is in flight for /status to report, so the spinner has to be
-    // asked for explicitly.
-    assert.equal(status.active, true);
-    assert.equal(status.stagingBuild, 'running');
-    assert.deepEqual(bus.sessionUpdates, [{
-      action: 'staging_building', sessionId: 2954, appSlug: 'usernode-2d5619',
-    }]);
-    assert.equal(bus.systemMessages.length, 0, 'native rows do not use the thread');
-  } finally { restore(); }
-});
-
-test('an imported proposal is narrated in its thread, not a dev chat it lacks', async () => {
-  const { subject, bus, restore } = loadStagingRecovery();
-  try {
-    const inserts = [];
-    const pool = {
-      query: async (sql, params) => { inserts.push({ sql: String(sql), params }); return { rows: [] }; },
-    };
-    await subject.announceRebuildStarted({
-      pool,
-      session: { id: 2869, app_id: 4, app_slug: 'opinion-market', pr_number: 41, pr_title: 'Tier colors' },
-      imported: true,
-    });
-    assert.equal(inserts.length, 0, 'no chat_session_messages row — nobody could open it');
-    assert.equal(bus.systemMessages.length, 1);
-    const msg = bus.systemMessages[0];
-    assert.match(msg.body, /Rebuilding the staging preview for PR #41: Tier colors/);
-    assert.deepEqual(msg.thread, { type: 'session', ref: 2869 });
-    assert.equal(msg.metadata.stagingBuild, 'running');
-  } finally { restore(); }
-});
-
-test('narration failures never fail the rebuild', async () => {
-  const { subject, restore } = loadStagingRecovery();
-  try {
-    const pool = { query: async () => { throw new Error('db down'); } };
-    // Must resolve, not reject: a lost breadcrumb is a cosmetic problem, a
-    // thrown one costs the user their preview.
-    await subject.announceRebuildStarted({
-      pool, session: { id: 1, app_id: 1 }, imported: false,
-    });
-  } finally { restore(); }
-});
-
-test('the announcement runs before the build, and every outcome posts after it', () => {
-  const announce = STAGING_RECOVERY_SRC.indexOf('await announceRebuildStarted(');
-  const build = STAGING_RECOVERY_SRC.indexOf('stagingResult = await staging.buildAndDeployStaging(');
-  assert.ok(announce > 0 && build > announce,
-    'the in-progress row lands before the ~5-minute build, or it is pointless');
-  // Success appends 'Staging preview rebuilt'; failure appends
-  // recordStagingBootFailure's explanation. Either way the in-progress row
-  // is superseded rather than left as the transcript's last word.
-  assert.match(STAGING_RECOVERY_SRC, /'Staging preview rebuilt'/);
-  assert.match(STAGING_RECOVERY_SRC, /recordStagingBootFailure\(\{ config, pool, session, commitHash, err \}\)/);
-});
-
-// ── 4. The client honours the hint ──────────────────────────────────────
+// ── 3. The client honours the hint ──────────────────────────────────────
 
 const DEV_CHAT_SRC = fs.readFileSync(
   path.join(__dirname, '../frontend/src/features/dev-chat/dev-chat.js'), 'utf8'

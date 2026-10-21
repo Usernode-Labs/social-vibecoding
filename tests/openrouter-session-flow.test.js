@@ -23,10 +23,12 @@ const settings = fs.readFileSync(
   path.join(__dirname, '..', 'frontend', 'src', 'features', 'settings', 'settings.js'),
   'utf8',
 );
+// With what a turn's recovery runs, moved out of server.js unchanged
+// (services/turn-recovery.js).
 const server = fs.readFileSync(
   path.join(__dirname, '..', 'server.js'),
   'utf8',
-);
+) + fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'turn-recovery.js'), 'utf8');
 
 // #2779: the chat route hands the turn itself to services/mayor/turn.js, so
 // "the chat route" is the route handler followed by that module.
@@ -55,8 +57,13 @@ test('interactive OpenRouter chat bypasses Claude billing', () => {
   // there is no Anthropic key to spill onto and no Anthropic allowance to
   // consume. What it does now is share ONE weekly pool when the key is the
   // company-funded one, so that case is gated by checkBudget directly.
-  assert.match(route, /if \(isOpenRouterSession\) \{\s*if \(await managedOpenRouter\.usesIncludedKey\(pool, req\.user\.id\)\) \{\s*const budget = await limits\.checkBudget\(pool, req\.user\.id\);/);
-  assert.match(route, /\} else \{\s*billing = await limits\.resolveBillingPath/,
+  // The route asks resolveClassicPayer, and so does the turn as it runs
+  // (services/turns.js): one rule for both.
+  assert.match(route, /const payer = await resolveClassicPayer\(\{ pool, config, userId: req\.user\.id, isOpenRouterSession \}\);/);
+  assert.match(fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'turns.js'), 'utf8'), /sessions\.resolveClassicPayer\(\{\s*pool, config, userId: user\.id, isOpenRouterSession: input\.isOpenRouterSession === true,/);
+  const payer = between(sessions, 'async function resolveClassicPayer(', 'const MAYOR_TURN_DEPS');
+  assert.match(payer, /if \(isOpenRouterSession\) \{\s*if \(await managedOpenRouter\.usesIncludedKey\(pool, userId\)\) \{\s*const budget = await limits\.checkBudget\(pool, userId\);/);
+  assert.match(payer, /return \{ ok: true, userApiKey: null \};\s*\}\s*const billing = await limits\.resolveBillingPath/,
     'the Claude path keeps the limit-first platform/BYOK contract');
 
   const direct = between(
@@ -159,15 +166,16 @@ test('Generate proposal follows the saved OpenRouter provider without Claude cre
     '// "Start session from proposal"',
   );
   assert.match(modal, /openrouterCredentialSource === 'usernode_managed'/);
-  assert.match(modal, /Uses your included OpenRouter credits/);
-  assert.match(modal, /Uses your OpenRouter account/);
+  assert.match(modal, /openrouterCredentialSource === 'usernode_managed'\s*\? PlatformI18n\.t\('changes:issue\.autoRun\.billing\.included'\)\s*: PlatformI18n\.t\('changes:issue\.autoRun\.billing\.openRouter'\)\)/);
+  assert.match(require('./lib/platform-i18n').message('changes:issue.autoRun.billing.included'), /Uses your included OpenRouter credits/);
+  assert.match(require('./lib/platform-i18n').message('changes:issue.autoRun.billing.openRouter'), /Uses your OpenRouter account/);
   assert.doesNotMatch(modal, /onFavorite|onRefresh|Experimental/);
 });
 
 test('OpenRouter headless and recovery paths do not resolve Anthropic billing', () => {
   const headless = between(
     sessions,
-    'async function runHeadlessSession({',
+    'async function runHeadlessSessionInner({',
     'async function runRecoveredWrapUp({',
   );
   const directHeadless = between(
@@ -197,9 +205,16 @@ test('settings and restart recovery use OpenRouter as the user-facing provider n
     '_formatOpenRouterPrice(value)',
   );
   assert.match(settingsCopy, /heading\.textContent = 'OpenRouter'/);
-  assert.match(settingsCopy, /all chat and coding in an OpenRouter session/);
-  assert.match(settingsCopy, /do not use your platform Claude allowance/);
+  // The description and the model label are catalog messages now; the copy
+  // people read is their English.
+  assert.match(settingsCopy, /intro\.textContent = tr\('settings:openrouter\.intro'\);/);
+  assert.match(settingsCopy, /modelLabel\.textContent = tr\('settings:openrouter\.model\.label'\);/);
+  const { message } = require('./lib/platform-i18n');
+  const intro = message('settings:openrouter.intro');
+  assert.match(intro, /all chat and coding in an OpenRouter session/);
+  assert.match(intro, /do not use your platform Claude allowance/);
   assert.doesNotMatch(settingsCopy, /Codex/);
+  assert.doesNotMatch(`${intro} ${message('settings:openrouter.model.label')}`, /Codex/);
 
   const recoveryIdentity = between(
     server,

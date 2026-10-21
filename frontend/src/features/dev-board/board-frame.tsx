@@ -71,10 +71,12 @@ import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 
 import { DevActionsRow } from './actions-row';
+import { useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
 import { useDevViewMode } from './view-mode-store';
 import { discussionStore, type DiscussionState } from './discussion-store';
 import { skeletonKanbanHtml, skeletonListHtml } from './card/skeleton';
+import { isChannelPlace } from './workshop/places';
 import { mainPauseStore, mainPauseText, type MainPauseState } from './main-pause-store';
 import { releaseStallStore, releaseStallText, type ReleaseStallState } from './release-stall-store';
 
@@ -130,6 +132,21 @@ export interface DevBoardFrameProps {
 // where three becoming four read as the page jumping on the way in (#2880).
 const DEV_BODY_WORKSHOP_INITIAL = { __html: '<div id="dev-workshop">' + skeletonListHtml(4) + '</div>' };
 const DEV_BODY_KANBAN_INITIAL = { __html: skeletonKanbanHtml() };
+// THE HUB AND A CHANNEL OPEN ON AN EMPTY HOST (polish board #3, #19): their
+// own loading state is not the card list (workshop.tsx draws the hub's shape,
+// and a channel its room's "Loading messages…", under the page's bar), so the
+// card list first was a second, different loading state in front of theirs.
+const DEV_BODY_PLACE_INITIAL = { __html: '<div id="dev-workshop"></div>' };
+
+/** Whether the page opens on a place that draws its own loading shape. */
+function opensOnOwnShape(): boolean {
+  try {
+    const tab = (window as any).AppView?._workshopTab?.();
+    return tab === 'status' || isChannelPlace(tab);
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Which of the two this mount opens with, decided ONCE.
@@ -147,7 +164,8 @@ function useBodyInitial(): { __html: string } {
   const mode = useDevViewMode();
   const chosen = useRef<{ __html: string } | null>(null);
   if (!chosen.current) {
-    chosen.current = mode === 'kanban' ? DEV_BODY_KANBAN_INITIAL : DEV_BODY_WORKSHOP_INITIAL;
+    chosen.current = mode === 'kanban' ? DEV_BODY_KANBAN_INITIAL
+      : opensOnOwnShape() ? DEV_BODY_PLACE_INITIAL : DEV_BODY_WORKSHOP_INITIAL;
   }
   return chosen.current;
 }
@@ -179,6 +197,7 @@ function useBodyInitial(): { __html: string } {
  * `href: null` — no app open — renders nothing rather than a dead card.
  */
 function DiscussionCard({ cardCls, cardHoverCls }: { cardCls: string; cardHoverCls: string }) {
+  const t = useMessages('project');
   const mode = useDevViewMode();
   const { href, preview } = useStoreState<DiscussionState>(discussionStore);
   if (mode !== 'kanban' || !href) return null;
@@ -188,14 +207,14 @@ function DiscussionCard({ cardCls, cardHoverCls }: { cardCls: string; cardHoverC
         id="dev-chat-card"
         href={href}
         className={`${cardCls} ${cardHoverCls}`}
-        title="Open the app's general chat"
+        title={t('project:board.discussion.open')}
       >
         <span className="w-9 h-9 rounded-lg bg-violet-600/15 text-violet-700 flex items-center justify-center shrink-0 dark:text-violet-400">
           <ChatIcon className="w-5 h-5" aria-hidden="true" />
         </span>
         <span className="flex-1 min-w-0">
           <span className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">
-            General discussion
+            {t('project:board.discussion.title')}
           </span>
           {/* The last thing said in it, or the standing description until the
               one request for it lands. RENDERED, not an innerHTML host: the
@@ -225,6 +244,8 @@ function DiscussionCard({ cardCls, cardHoverCls }: { cardCls: string; cardHoverC
  * there is one resume path and one toast.
  */
 function MainPauseNotice(): ReactNode {
+  // Subscribed: mainPauseText reads the runtime's `t`.
+  const t = useMessages('project');
   const s = useStoreState<MainPauseState>(mainPauseStore);
   const btnRef = useRef<HTMLButtonElement>(null);
   if (!s.paused) return null;
@@ -248,9 +269,9 @@ function MainPauseNotice(): ReactNode {
             size="xs"
             className="shrink-0"
             onClick={resume}
-            title="Resume merges on this app while main’s unit suite is red. The pause returns if a later merge fails the suite again."
+            title={t('project:pause.resumeHint')}
           >
-            Resume merges
+            {t('project:pause.resume')}
           </Button>
         ) : null}
       </div>
@@ -268,6 +289,8 @@ function MainPauseNotice(): ReactNode {
  * carries it when it is on github.com.
  */
 function ReleaseStallNotice(): ReactNode {
+  // Subscribed: releaseStallText reads the runtime's `t`.
+  const t = useMessages('project');
   const s = useStoreState<ReleaseStallState>(releaseStallStore);
   if (!s.stalled) return null;
   return (
@@ -289,7 +312,7 @@ function ReleaseStallNotice(): ReactNode {
               rel="noopener noreferrer"
               className="ml-1 underline underline-offset-2"
             >
-              Open the workflow run
+              {t('project:releaseStall.openRun')}
             </a>
           ) : null}
         </span>

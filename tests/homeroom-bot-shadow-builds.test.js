@@ -1,13 +1,14 @@
-// Shadow builds: on an app outside the live list, a ready verdict is also
-// built on a branch of its own, and nothing else happens. No proposal, no
-// post, nothing in the app: the dashboard and the export carry the branch,
-// so what the bot would have proposed can be spot-checked before an app
-// goes live.
-//
-// The builds run in a lane of their own, beside triage: a ready verdict only
-// queues its build, and the lane drains the queue `buildConcurrency` at a
-// time, shared between apps in turns. tests/homeroom-bot-build-lane-postgres.test.js runs the
-// lane's SQL against the real schema; this file pins the rest with stubs.
+// What is left of shadow builds. The shadow build lane is gone (design D2:
+// production treats mode 'shadow' as 'live', and a staging copy runs no
+// worker turns), with the queue of builds it drained. What stays: its
+// settings (whether a later change's side builds include the platform's own
+// repository reads one: laterSideSkipReason); the not-proposed
+// build (live.buildAndPropose with `propose: false`) the benchmark makes;
+// the runs' shadow history on the dashboard and the export; and the rule
+// that the benchmark yields only to the bot's live slots. The bot is live on
+// every app but a paused one (live.liveScope), so a triage that acts on
+// nothing is a staging copy's: this file runs as one (USERNODE_ENV=staging,
+// set below) unless a test says otherwise.
 //
 // Run with: node --test tests/homeroom-bot-shadow-builds.test.js
 
@@ -19,6 +20,10 @@ const express = require('express');
 
 const bot = require('../src/services/homeroom-bot');
 const live = require('../src/services/homeroom-bot-live');
+// A build closes its own session through the proposal machine
+// (session-lifecycle.closeOwnSession), which no fake pool runs: the build
+// harness stands in for it and records every close.
+const sessionLifecycle = require('../src/services/session-lifecycle');
 
 const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
 
@@ -29,7 +34,17 @@ const BOT = { id: 77, username: 'homeroom_bot' };
 const ITEM = { id: 31, app_id: 9, issue_number: 12, priority: 1, reason: 'new', thread_seen_at: '2026-09-28T00:00:00Z' };
 const READY = '```json\n{"verdict":"ready","determined":true,"missing_fact":"none","build_note":"Add an hourly refresh."}\n```';
 const PERSON = '```json\n{"verdict":"person","determined":false,"missing_fact":"x","reason":"policy"}\n```';
-const ON = { mode: 'shadow', liveApps: [], pausedApps: [], shadowBuilds: true, buildConcurrency: 2, shadowBuildPlatform: false };
+const ON = { mode: 'shadow', pausedApps: [], shadowBuilds: true, buildConcurrency: 2, shadowBuildPlatform: false };
+
+// A staging copy acts on nothing (live.liveScope), so every app there is the
+// shadow lane's; outside one, every app but a paused one is live.
+function setEnv(value) {
+  if (value === undefined) delete process.env.USERNODE_ENV;
+  else process.env.USERNODE_ENV = value;
+}
+const ENV_BEFORE = process.env.USERNODE_ENV;
+test.before(() => setEnv('staging'));
+test.after(() => setEnv(ENV_BEFORE));
 
 // ── The settings ─────────────────────────────────────────────────────────
 
@@ -62,14 +77,10 @@ test('shadow builds ship off; the lane runs two at once and leaves the platform 
   assert.doesNotMatch(schema, /homeroom_bot_shadow_builds_per_day/, 'the daily count is gone: the weekly cap bounds the lane');
 });
 
-test('which apps are shadow built: not live, not paused, and not the platform unless included', () => {
-  const why = (settings, app, config = {}) => bot.shadowBuildSkipReason(settings, app, config);
-  assert.equal(why(ON, APP), null);
-  assert.equal(why({ ...ON, shadowBuilds: false }, APP), 'shadow builds are off');
-  assert.equal(why({ ...ON, liveApps: ['todo'] }, APP), 'the app is live now');
-  assert.equal(why({ ...ON, pausedApps: ['todo'] }, APP), 'the app is paused');
-  assert.equal(why(ON, PLATFORM), "the platform's own repository is left out");
-  assert.equal(why({ ...ON, shadowBuildPlatform: true }, PLATFORM), null);
+test('the platform\'s own repository is told apart from any other', () => {
+  // A later change's side builds leave it out unless an admin includes it
+  // (laterSideSkipReason), and its builds get more time (buildBudgets).
+  assert.equal(bot.isPlatformRepo(PLATFORM), true);
   assert.equal(bot.isPlatformRepo({ repo_url: 'https://github.com/usernode-labs/Social-Vibecoding' }), true, 'case-insensitive, as GitHub is');
   assert.equal(bot.isPlatformRepo(APP, { platformRepoUrl: 'https://github.com/usernode-bot/todo' }), true, 'config names it');
   assert.equal(bot.isPlatformRepo(APP), false);
@@ -78,7 +89,8 @@ test('which apps are shadow built: not live, not paused, and not the platform un
 // ── The build: the same one live runs, minus everything a person sees ────
 
 function buildHarness(result = { pushOk: true, ahead: 2, sha: 'c'.repeat(40) }) {
-  const calls = { queries: [], promoted: [] };
+  const calls = { queries: [], promoted: [], closed: [] };
+  sessionLifecycle.closeOwnSession = async ({ sessionId, reason }) => { calls.closed.push({ sessionId, reason }); return true; };
   const pool = {
     async query(sql, params) {
       calls.queries.push({ sql: String(sql), params });
@@ -105,7 +117,6 @@ function buildHarness(result = { pushOk: true, ahead: 2, sha: 'c'.repeat(40) }) 
     },
     agentTurn: { async resolveCodexRuntimeContext() { return {}; } },
     sessionLifecycle: { async ensureSessionBranch({ sessionId }) { return { branchName: `dev/homeroom_bot-s${sessionId}` }; } },
-    activeWorkers: new Set(),
     votesRouter: router,
   };
   return { pool, deps, calls };
@@ -130,9 +141,7 @@ test('propose: false builds and pushes, then puts the session away: no proposal,
   const insert = h.calls.queries.find((q) => /INSERT INTO chat_sessions/.test(q.sql));
   assert.equal(insert.params[2], null, 'no issue: no board reads it as work under way on #12');
   assert.match(insert.params[3], /^Homeroom bot shadow build: #12 /);
-  const archived = h.calls.queries.find((q) => /SET status = 'archived'/.test(q.sql));
-  assert.ok(archived, 'archived the moment the build ends');
-  assert.deepEqual(archived.params, [6001, BOT.id]);
+  assert.deepEqual(h.calls.closed, [{ sessionId: 6001, reason: 'not-proposed' }], 'archived the moment the build ends');
 });
 
 test('a shadow build that changes nothing is a failure with its branch named', async () => {
@@ -144,7 +153,7 @@ test('a shadow build that changes nothing is a failure with its branch named', a
   assert.deepEqual(h.calls.promoted, []);
 });
 
-// ── runTriage: a ready verdict QUEUES its build, and never waits on it ───
+// ── runTriage where nothing is live: a verdict and its run, nothing built ──
 
 function triage({ settings = ON, verdictText = READY, app = APP } = {}) {
   const calls = { queries: [], builds: [] };
@@ -156,7 +165,6 @@ function triage({ settings = ON, verdictText = READY, app = APP } = {}) {
         return { rows: [{ id: 501, user_id: 77, app_id: app.id, branch_name: 'main', agent_backend: 'codex_openrouter' }] };
       }
       if (/INSERT INTO homeroom_bot_runs/.test(s)) return { rows: [{ id: 900 }] };
-      if (/SET build_queued_at = NOW\(\)/.test(s)) return { rows: [], rowCount: 1 };
       if (/COUNT\(\*\)::int AS cnt/.test(s)) return { rows: [{ cnt: 0 }] };
       return { rows: [] };
     },
@@ -199,18 +207,6 @@ async function runWith(t, h, app = APP) {
   return bot.runTriage(h.pool, {}, { bot: BOT, app, item: ITEM, mode: 'shadow', settings: h.settings, deps: h.deps });
 }
 
-const queuedFor = (h) => h.calls.queries.find((q) => /SET build_queued_at = NOW\(\)/.test(q.s));
-
-test('a shadow ready verdict is queued for the lane, and triage moves straight on', async (t) => {
-  const h = triage();
-  const out = await runWith(t, h);
-  assert.equal(out.verdict, 'ready');
-  assert.equal(out.acted, 'shadow_queued');
-  assert.equal(h.calls.builds.length, 0, 'nothing is built inside triage');
-  assert.deepEqual(queuedFor(h).params, [900]);
-  assert.match(queuedFor(h).s, /WHERE id = \$1 AND build_queued_at IS NULL AND build_ok IS NULL/, 'queued once, never rebuilt');
-});
-
 test('every verdict supersedes an older queued build of the same issue, ready or not', async (t) => {
   for (const verdictText of [READY, PERSON]) {
     const h = triage({ verdictText });
@@ -222,308 +218,43 @@ test('every verdict supersedes an older queued build of the same issue, ready or
   }
 });
 
-test('nothing is queued when it is off, not ready, the app is paused, or it is the platform', async (t) => {
-  const cases = [
-    ['off', triage({ settings: { ...ON, shadowBuilds: false } }), APP],
-    ['not ready', triage({ verdictText: PERSON }), APP],
-    ['paused', triage({ settings: { ...ON, pausedApps: ['todo'] } }), APP],
-    ['the platform', triage({ app: PLATFORM }), PLATFORM],
-  ];
-  for (const [why, h, app] of cases) {
-    const out = await runWith(t, h, app);
-    assert.equal(queuedFor(h), undefined, `no build when ${why}`);
-    assert.equal(out.acted, undefined, why);
-  }
-});
-
-// ── One queued build ─────────────────────────────────────────────────────
-
-function lane({ issueState = 'open', built = null, app = APP, settings = ON, firstVersion = false } = {}) {
-  const calls = { queries: [], builds: [], spend: [] };
-  const pool = {
-    async query(sql, params) {
-      const s = String(sql);
-      calls.queries.push({ s, params });
-      if (/FROM apps WHERE id = \$1/.test(s)) return { rows: app ? [app] : [] };
-      if (/SELECT first_version FROM homeroom_bot_requesters/.test(s)) return { rows: firstVersion ? [{ first_version: true }] : [] };
-      return { rows: [], rowCount: 1 };
-    },
-  };
-  const deps = {
-    github: {
-      isEnabled: () => true,
-      getBotUsername: async () => 'usernode-bot',
-      async fetchPublicIssue() { return { issue: { number: 12, title: 'Refresh feeds', body: 'hourly', state: issueState } }; },
-      async fetchIssueComments() { return { comments: [{ body: 'every hour please' }] }; },
-    },
-    limits: { async checkBudget() { return { ok: true }; }, async recordSpend(_p, _id, cents) { calls.spend.push(cents); } },
-    threadContext: { async loadIssueThread() { return { messages: [{ content: 'and on mobile' }] }; } },
-    managedOpenRouter: { async usesIncludedKey() { return true; } },
-    sessions: { buildHeadlessSeed: (n, _issue, comments, _u, thread) => `ISSUE #${n} ${comments.length}c ${thread.length}t` },
-    worker: {}, agentTurn: {}, activeWorkers: new Set(), sessionLifecycle: {},
-  };
-  const outcome = built || { ok: true, sessionId: 6001, branchName: 'dev/homeroom_bot-s6001', sha: 'c'.repeat(40), commits: 2, costUsd: 0.04 };
-  return { pool, deps, calls, settings: { turnSeconds: 1200, ...settings }, outcome };
-}
-
-async function buildWith(t, h, claim = { id: 900, app_id: APP.id, issue_number: 12, build_note: 'Add an hourly refresh.' }) {
+test('a run records what started its read: its queue reason, and for a change what moved', async (t) => {
+  const h = triage();
   const real = live.buildAndPropose;
   t.after(() => { live.buildAndPropose = real; });
-  live.buildAndPropose = async (args) => { h.calls.builds.push(args); return h.outcome; };
-  return bot.runQueuedBuild(h.pool, {}, { bot: BOT, claim, settings: h.settings, deps: h.deps });
-}
-
-const recorded = (h) => h.calls.queries.find((q) => /SET build_ok = \$2/.test(q.s));
-
-test('a claimed build reads the thread as it is now, builds without proposing, and records its branch', async (t) => {
-  bot._resetForTests();
-  const h = lane();
-  const out = await buildWith(t, h);
-  assert.equal(out, 'shadow_built');
-  assert.equal(h.calls.builds.length, 1);
-  const args = h.calls.builds[0];
-  assert.equal(args.propose, false, 'never proposed');
-  assert.equal(args.buildNote, 'Add an hourly refresh.', 'from the verdict\'s own plan');
-  assert.equal(args.seed, 'ISSUE #12 1c 1t', 'the issue, its comments and its thread, read at build time');
-  assert.deepEqual(args.repo, REPO);
-  assert.equal(args.turnBudgetMs, 1_200_000, 'the same wall clock a triage turn has');
-  // #3654: the model the build ran on (no default in this config), then a
-  // build turn that changed nothing (none here).
-  assert.deepEqual(recorded(h).params, [900, true, 'dev/homeroom_bot-s6001', 'c'.repeat(40), 2, null, 0.04, 6001, null, null, null]);
-  // Its lane, for the count of turns that change nothing, and where that is
-  // kept the moment one does (homeroom-bot-live.js buildNudgePrompt).
-  assert.deepEqual(args.origin, { lane: 'shadow', runId: 900 });
-  assert.equal(typeof args.onNoChange, 'function');
-  assert.deepEqual(h.calls.spend, [4], 'paid from the weekly allowance');
+  live.buildAndPropose = async () => ({ ok: true });
+  // What moved comes with the debt (bot-request's Owed changedBy), onto the
+  // item the look reads: nothing here claims a queue row to learn it.
+  await bot.runTriage(h.pool, {}, {
+    bot: BOT, app: APP, item: { ...ITEM, reason: 'changed', changed_by: 'github' }, mode: 'shadow', settings: h.settings, deps: h.deps,
+  });
+  assert.equal(h.calls.queries.some((q) => /homeroom_bot_queue/.test(q.s)), false, 'the queue is the request machine\'s');
+  const insert = h.calls.queries.find((q) => /INSERT INTO homeroom_bot_runs/.test(q.s));
+  assert.match(insert.s, /payer_user_id, read_reason\)/);
+  assert.equal(insert.params[insert.params.length - 1], 'changed:github', 'the issue itself moved since the last read');
+  assert.equal(bot.readReasonOf({ reason: 'changed', changed_by: 'discussion' }), 'changed:discussion');
+  assert.equal(bot.readReasonOf({ reason: 'retry_failed', changed_by: 'github' }), 'retry_failed', 'only a change says what changed');
+  assert.equal(bot.readReasonOf({ reason: 'changed' }), 'changed', 'a row queued before changed_by');
+  assert.equal(bot.readReasonOf({}), null);
 });
 
-test('a first version\'s shadow build gets its doubled clock and builds as one, as the live lane does (#1080)', async (t) => {
-  // turnly #1 (2026-10-05), a first version, was cut at 20 minutes of 40.
-  bot._resetForTests();
-  const h = lane({ firstVersion: true });
-  assert.equal(await buildWith(t, h), 'shadow_built');
-  const args = h.calls.builds[0];
-  assert.equal(args.turnBudgetMs, 2_400_000, 'FIRST_VERSION_BUILD_TIME_FACTOR times the turn clock');
-  assert.equal(args.firstVersion, true, 'its spec and build decide its look');
-  const asked = h.calls.queries.find((q) => /SELECT first_version FROM homeroom_bot_requesters/.test(q.s));
-  assert.deepEqual(asked.params, [APP.id, 12]);
-});
+// ── A build's error: the platform's, or the model's ─────────────────────
 
-test('a failed build is recorded with its reason; the lane carries on', async (t) => {
-  bot._resetForTests();
-  const h = lane({ built: { ok: false, sessionId: 6001, branchName: 'dev/x', error: 'the build produced no change to propose', costUsd: 0.01 } });
-  assert.equal(await buildWith(t, h), 'shadow_failed');
-  const u = recorded(h).params;
-  assert.equal(u[1], false);
-  assert.equal(u[5], 'the build produced no change to propose');
-});
-
-test('a closed issue, a live app or a gone app is skipped, not built, and says why', async (t) => {
-  const cases = [
-    ['the issue is no longer open', lane({ issueState: 'closed' })],
-    ['the app is live now', lane({ settings: { ...ON, liveApps: ['todo'] } })],
-    ['the app is gone', lane({ app: null })],
-  ];
-  for (const [why, h] of cases) {
-    bot._resetForTests();
-    assert.equal(await buildWith(t, h), `skipped: ${why}`);
-    assert.equal(h.calls.builds.length, 0, why);
-    const skip = h.calls.queries.find((q) => /SET build_queued_at = NULL, build_at = NULL, build_error = \$2/.test(q.s));
-    assert.deepEqual(skip.params, [900, `skipped: ${why}`]);
-  }
-});
-
-test('a platform fault hands the claim back and backs the lane off, instead of failing the build', async (t) => {
-  bot._resetForTests();
+test('a build error the platform produced is told apart from one the model did', () => {
+  // The benchmark (services/bench/runner.js) reads it to keep a platform
+  // fault out of a model's score.
   assert.equal(bot.isInfraBuildError('the worker would not start: quota'), true);
   assert.equal(bot.isInfraBuildError('the build turn failed (credential_required)'), true);
   assert.equal(bot.isInfraBuildError('the build turn failed (dispatch: socket hang up)'), true);
   assert.equal(bot.isInfraBuildError('the build produced no change to propose'), false);
   assert.equal(bot.isInfraBuildError('the build ran past its time limit'), false);
-
-  const h = lane({ built: { ok: false, sessionId: 6001, error: 'the worker would not start: volume quota', costUsd: null } });
-  assert.equal(await buildWith(t, h), 'infra');
-  assert.equal(recorded(h), undefined, 'not recorded as the bot\'s failure');
-  const back = h.calls.queries.find((q) => /SET build_at = NULL, build_attempts = GREATEST\(build_attempts - 1, 0\)/.test(q.s));
-  assert.deepEqual(back.params, [900], 'back in the queue, the attempt not counted');
-  const summary = await bot.buildLaneSummary({ async query() { return { rows: [{}] }; } });
-  assert.match(summary.fault.error, /worker would not start/, 'the dashboard says why the lane is idle');
-  bot._resetForTests();
 });
 
-// ── The lane: builds side by side, never more than its slots ────────────
+// ── The backfill is gone with the shadow apps it built for ──────────────
 
-function drainPool({ claims, settings = { shadow_builds: 'on', build_concurrency: '2' }, seen = [] }) {
-  return {
-    async query(sql, params) {
-      const s = String(sql);
-      seen.push({ s, params });
-      if (/FROM platform_settings/.test(s)) {
-        return {
-          rows: [
-            { key: 'homeroom_bot_mode', value: 'shadow' },
-            { key: bot.KEY_SHADOW_BUILDS, value: settings.shadow_builds },
-            { key: bot.KEY_BUILD_CONCURRENCY, value: settings.build_concurrency },
-          ],
-        };
-      }
-      if (/SELECT id, username, weekly_limit_cents FROM users/.test(s)) return { rows: [{ id: 77, username: 'homeroom_bot', weekly_limit_cents: 15000 }] };
-      if (/SELECT is_synthetic FROM users/.test(s)) return { rows: [{ is_synthetic: true }] };
-      if (/WITH building AS/.test(s)) return { rows: claims.splice(0, params[0]) };
-      if (/FROM apps WHERE id = \$1/.test(s)) return { rows: [{ ...APP, id: params[0], slug: `app-${params[0]}` }] };
-      return { rows: [], rowCount: 0 };
-    },
-  };
-}
-
-function drainDeps(budget = { ok: true }) {
-  return {
-    github: {
-      isEnabled: () => true,
-      getBotUsername: async () => 'usernode-bot',
-      async fetchPublicIssue() { return { issue: { number: 1, title: 't', state: 'open' } }; },
-      async fetchIssueComments() { return { comments: [] }; },
-    },
-    limits: { async checkBudget() { return budget; }, async recordSpend() {} },
-    threadContext: { async loadIssueThread() { return { messages: [] }; } },
-    managedOpenRouter: { async usesIncludedKey() { return false; } },
-    sessions: { buildHeadlessSeed: () => 'seed' },
-    worker: {}, agentTurn: {}, activeWorkers: new Set(), sessionLifecycle: {},
-  };
-}
-
-test('the lane runs builds side by side, up to its slots, and returns without waiting on them', async (t) => {
-  bot._resetForTests();
-  const real = live.buildAndPropose;
-  t.after(() => { live.buildAndPropose = real; bot._resetForTests(); });
-  const gates = [];
-  let running = 0;
-  let peak = 0;
-  live.buildAndPropose = async (args) => {
-    running += 1; peak = Math.max(peak, running);
-    await new Promise((resolve) => gates.push(resolve));
-    running -= 1;
-    return { ok: true, sessionId: args.issueNumber, branchName: `dev/b${args.issueNumber}`, commits: 1, costUsd: 0 };
-  };
-  const claims = [
-    { id: 1, app_id: 10, issue_number: 1, build_note: 'a' },
-    { id: 2, app_id: 11, issue_number: 2, build_note: 'b' },
-    { id: 3, app_id: 12, issue_number: 3, build_note: 'c' },
-  ];
-  const seen = [];
-  const pool = drainPool({ claims, seen });
-  const settle = () => new Promise((r) => setTimeout(r, 10));
-
-  const first = await bot.drainBuilds(pool, {}, drainDeps());
-  assert.equal(first.started, 2, 'two slots, two builds');
-  assert.deepEqual(bot._buildsInFlightForTests(), [1, 2]);
-  const claim = seen.find((q) => /WITH building AS/.test(q.s));
-  assert.deepEqual(claim.params, [2, []], 'asks for exactly the free slots');
-  await settle();
-  assert.equal(peak, 2, 'both run at once, each on its own session and worker');
-
-  const again = await bot.drainBuilds(pool, {}, drainDeps());
-  assert.equal(again.started, 0, 'no free slot, no claim');
-  assert.equal(seen.filter((q) => /WITH building AS/.test(q.s)).length, 1);
-  const stale = seen.filter((q) => /interrupted: the build never finished/.test(q.s)).pop();
-  assert.deepEqual(stale.params[1], [1, 2], 'a build still running here is never released as stale');
-
-  gates.shift()();
-  await settle();
-  assert.deepEqual(bot._buildsInFlightForTests(), [2], 'a finished build frees its slot');
-  const third = await bot.drainBuilds(pool, {}, drainDeps());
-  assert.equal(third.started, 1, 'and the next one takes it');
-  await settle();
-  while (gates.length) gates.shift()();
-  await bot._awaitBuildsForTests();
-  assert.deepEqual(bot._buildsInFlightForTests(), []);
-});
-
-test('the lane idles when shadow builds are off, and on the weekly cap', async () => {
-  bot._resetForTests();
-  const seen = [];
-  const off = await bot.drainBuilds(drainPool({ claims: [], settings: { shadow_builds: 'off', build_concurrency: '2' }, seen }), {}, drainDeps());
-  assert.equal(off.paused, 'off');
-  assert.equal(seen.some((q) => /WITH building AS/.test(q.s)), false);
-  const capped = await bot.drainBuilds(drainPool({ claims: [{ id: 1, app_id: 10, issue_number: 1 }], seen }), {}, drainDeps({ error: 'limit', reason: 'weekly' }));
-  assert.equal(capped.paused, 'budget');
-  assert.equal(capped.started, 0);
-  assert.equal(seen.some((q) => /WITH building AS/.test(q.s)), false, 'nothing is claimed that cannot be paid for');
-});
-
-test('the claim deals the free slots to apps in turns, oldest first, skipping paused apps', () => {
-  const src = read('src/services/homeroom-bot.js');
-  const sql = src.slice(src.indexOf('const CLAIM_BUILDS_SQL'), src.indexOf('RETURNING r.id, r.app_id, r.issue_number, r.build_note'));
-  assert.match(sql, /SELECT app_id, COUNT\(\*\)::int AS n FROM homeroom_bot_runs/, 'builds under way are counted per app');
-  assert.match(sql, /COALESCE\(b\.n, 0\)\s*\+ ROW_NUMBER\(\) OVER \(PARTITION BY r\.app_id ORDER BY r\.build_queued_at, r\.id\) AS turn/,
-    'an app\'s queued builds take turns after the ones it already has under way');
-  assert.doesNotMatch(sql, /NOT IN \(SELECT app_id FROM building\)/, 'an app already building can still fill an idle slot');
-  assert.doesNotMatch(sql, /DISTINCT ON/, 'an app alone in the queue is not held to one slot');
-  assert.match(sql, /NOT \(a\.slug = ANY\(\$2::text\[\]\)\)/, 'paused apps wait');
-  assert.match(sql, /ORDER BY turn, build_queued_at, id LIMIT \$1/, 'turn first, then oldest, the free slots only');
-  assert.match(sql, /WHERE r\.id = picked\.id AND r\.build_at IS NULL/, 'the UPDATE is the claim');
-});
-
-// ── The backfill: every open ready request, once ────────────────────────
-
-function backfillPool(rows, settings = { shadowBuilds: 'on', platform: 'off', live: '[]' }) {
-  const seen = [];
-  return {
-    seen,
-    async query(sql, params) {
-      const s = String(sql);
-      seen.push({ s, params });
-      if (/FROM platform_settings/.test(s)) {
-        return {
-          rows: [
-            { key: 'homeroom_bot_mode', value: 'shadow' },
-            { key: bot.KEY_SHADOW_BUILDS, value: settings.shadowBuilds },
-            { key: bot.KEY_SHADOW_BUILD_PLATFORM, value: settings.platform },
-            { key: bot.KEY_LIVE_APPS, value: settings.live },
-          ],
-        };
-      }
-      if (/SELECT DISTINCT ON \(r\.app_id, r\.issue_number\)/.test(s)) return { rows };
-      if (/UPDATE homeroom_bot_runs SET build_queued_at = NOW\(\)\s+WHERE id = ANY/.test(s)) {
-        return { rows: params[0].map((id) => ({ id, app_id: rows.find((r) => r.id === id).app_id })) };
-      }
-      return { rows: [] };
-    },
-  };
-}
-
-const latest = (id, over = {}) => ({
-  id, app_id: 9, issue_number: id, verdict: 'ready', build_queued_at: null, build_ok: null, build_error: null,
-  slug: 'todo', repo_url: APP.repo_url, ...over,
-});
-
-test('the backfill queues each issue whose LATEST verdict is ready and has no build, and says what it left out', async () => {
-  const pool = backfillPool([
-    latest(1),
-    latest(2, { app_id: 10, slug: 'notes' }),
-    latest(3, { verdict: 'question' }),
-    latest(4, { build_ok: true }),
-    latest(5, { build_queued_at: '2026-09-28T00:00:00Z' }),
-    latest(6, { build_error: 'skipped: the issue is no longer open' }),
-    latest(7, { slug: 'usernode-2d5619', repo_url: PLATFORM.repo_url, app_id: 1 }),
-    latest(8, { slug: 'live-one', app_id: 11 }),
-  ], { shadowBuilds: 'on', platform: 'off', live: '["live-one"]' });
-  const out = await bot.queueShadowBackfill(pool, {});
-  assert.deepEqual(out, { ok: true, queued: 2, apps: 2, left: { live: 1, platform: 1, paused: 0 } });
-  const upd = pool.seen.find((q) => /WHERE id = ANY\(\$1::int\[\]\)/.test(q.s));
-  assert.deepEqual(upd.params, [[1, 2]]);
-  assert.match(upd.s, /AND build_queued_at IS NULL AND build_ok IS NULL/, 'a race with triage cannot queue one twice');
-  const sql = pool.seen.find((q) => /SELECT DISTINCT ON \(r\.app_id, r\.issue_number\)/.test(q.s)).s;
-  assert.match(sql, /ORDER BY r\.app_id, r\.issue_number, r\.id DESC/, 'the latest verdict per issue');
-  assert.match(sql, /r\.verdict IN \('question', 'ready', 'person', 'empty'\)/, 'a later failed run does not hide a ready verdict');
-});
-
-test('the backfill refuses while shadow builds are off', async () => {
-  const pool = backfillPool([latest(1)], { shadowBuilds: 'off', platform: 'off', live: '[]' });
-  const out = await bot.queueShadowBackfill(pool, {});
-  assert.equal(out.ok, false);
-  assert.equal(out.status, 409);
-  assert.equal(pool.seen.some((q) => /SELECT DISTINCT ON/.test(q.s)), false);
+test('there is no backfill any more: every app but a paused one is live', () => {
+  assert.equal(bot.queueShadowBackfill, undefined);
+  assert.doesNotMatch(read('src/routes/admin.js'), /shadow-builds\/backfill/);
 });
 
 // ── Seeing it: the export and the dashboard ─────────────────────────────
@@ -541,20 +272,23 @@ test('the export carries the branch, with a compare address to open, after every
   assert.equal(bot.exportRow({ id: 2, repo_url: 'https://github.com/o/r' })[header.indexOf('build_url')], '', 'no branch, no address');
 });
 
-test('the dashboard has the switch, the slots, the platform box, the lane line and the backfill', () => {
+test('the dashboard keeps the two settings that still do something, and the runs keep their shadow history', () => {
   const tsx = read('frontend/src/features/admin/admin-homeroom-bot.tsx');
-  assert.match(tsx, /id="admin-homeroom-bot-shadow-builds"/);
-  assert.match(tsx, /onChange=\{\(e\) => setField\('shadowBuilds', e\.target\.value === 'on'\)\}/);
-  assert.match(tsx, /id="admin-homeroom-bot-build-concurrency"/);
+  // No shadow apps, so no switch, no backfill and no lane line for them.
+  assert.doesNotMatch(tsx, /id="admin-homeroom-bot-shadow-builds"|admin-homeroom-bot-shadow-backfill|admin-homeroom-bot-build-lane|shadow-builds\/backfill/);
+  assert.doesNotMatch(tsx, /setField\('shadowBuilds'/);
+  // How many shadow builds run at once, and whether side builds include the
+  // platform's own repository (laterSideSkipReason), say so; and the note
+  // says the benchmark and side builds wait for the live requests at once
+  // (the bench lane's machine), not for this number, which held them back behind
+  // any two live builds until 9 Oct 2026.
+  assert.match(tsx, /id="admin-homeroom-bot-side-builds"/);
+  assert.match(tsx, /<NumberField id="admin-homeroom-bot-build-concurrency" label="Shadow builds at once"/);
+  assert.doesNotMatch(tsx, /Live builds before side builds wait|fewer live builds than this/);
+  assert.match(tsx, /start only while the bot&apos;s live requests leave a slot free \(Live requests at once, under Advanced\)/);
   assert.match(tsx, /onChange=\{\(v\) => setField\('buildConcurrency', v\)\}/);
-  // #3710: the backfill acts on what is SAVED: it waits until shadow builds are on and saved.
-  assert.match(tsx, /disabled=\{busy !== '' \|\| !saved\.shadowBuilds \|\| dirty\.includes\('shadowBuilds'\)\}/);
-  assert.match(tsx, /id="admin-homeroom-bot-shadow-build-platform"/);
-  assert.match(tsx, /id="admin-homeroom-bot-build-lane"/);
-  assert.match(tsx, /id="admin-homeroom-bot-shadow-backfill"/);
-  assert.match(tsx, /write\('\/api\/admin\/homeroom-bot\/shadow-builds\/backfill', 'POST'/);
-  assert.match(tsx, /id="admin-homeroom-bot-shadow-builds-note"/);
-  assert.doesNotMatch(tsx, /shadowBuildsPerDay/);
+  assert.match(tsx, /id="admin-homeroom-bot-shadow-build-platform"[\s\S]{0,400}<span>Make side builds on Homeroom&apos;s own repository too<\/span>/);
+  assert.match(tsx, /id="admin-homeroom-bot-side-builds-note"/);
   const fn = tsx.slice(tsx.indexOf('function ShadowBuild('), tsx.indexOf('function VerdictBody('));
   assert.match(fn, /data-shadow-build="queued"/);
   assert.match(fn, /data-shadow-build="building"/);
@@ -565,24 +299,25 @@ test('the dashboard has the switch, the slots, the platform box, the lane line a
   assert.match(tsx, /<ShadowBuild run=\{run\} \/>/);
 });
 
-test('the backfill route is admin-write only and hands off to the service', () => {
-  const src = read('src/routes/admin.js');
-  assert.match(src, /router\.post\('\/api\/admin\/homeroom-bot\/shadow-builds\/backfill', requireAdminWrite, drainGuard,/);
-  assert.match(src, /homeroomBot\.queueShadowBackfill\(pool, config\)/);
-});
-
-// #3654: the benchmark yields only to live builds, the ones a person is
+// #3654: the benchmark yields only to live work, the requests a person is
 // waiting for. A full shadow lane must not hold it back: both are
 // experiments, and counting shadow builds starved the benchmark whenever
-// the shadow bot was busy.
-test('the benchmark waits for live builds only, never for shadow builds', () => {
-  const settings = { buildConcurrency: 2 };
-  assert.equal(bot.isLiveLaneSaturated(settings, { live: 0 }), false, 'nothing live: the bench may run');
-  assert.equal(bot.isLiveLaneSaturated(settings, { live: 1 }), false);
-  assert.equal(bot.isLiveLaneSaturated(settings, { live: 2 }), true, 'every slot taken by live builds');
-  assert.equal(bot.isLiveLaneSaturated({ buildConcurrency: 4 }, { live: 3 }), false);
-  // With no live builds under way in this process, a busy shadow lane
-  // does not saturate it.
-  assert.equal(bot.isLiveLaneSaturated(settings), false);
-  assert.doesNotMatch(String(bot.isLiveLaneSaturated), /buildsInFlight\.size \+/, 'shadow builds are not counted');
+// the shadow bot was busy. Live work has `liveAtOnce` slots; the benchmark
+// waited behind the shadow lane's `buildConcurrency` (2) until 9 Oct 2026,
+// so any two live builds held every trial and side build back.
+test('the benchmark waits for live work to fill its live slots only, never for shadow builds', () => {
+  // The bench lane's machine (src/workflow/bench-lane/) reads the slots the
+  // bot's lane has granted, reads and builds alike, from its requests
+  // (rules/bot-loop.ts SLOTS_IN_USE_SQL): the same count in every process
+  // and after a restart, against \`liveAtOnce\`, never the shadow lane's
+  // \`buildConcurrency\`. tests/bench-lane-postgres.test.js L1 and L7 run it.
+  const fs = require('node:fs');
+  const facts = fs.readFileSync(require.resolve('../src/workflow/bench-lane/facts.ts'), 'utf8');
+  assert.match(facts, /const \{ liveAtOnce \} = laneSettings\(settingRows\);/);
+  assert.match(facts, /SELECT COUNT\(\*\)::int AS n FROM \(\$\{SLOTS_IN_USE_SQL\}\) s/);
+  const machine = fs.readFileSync(require.resolve('../src/workflow/bench-lane/machine.ts'), 'utf8');
+  assert.match(machine, /if \(f\.liveInUse >= f\.liveAtOnce\) \{ blocked = 'live'; stop = true; break; \}/);
+  assert.doesNotMatch(facts + machine, /buildConcurrency/, 'the shadow lane\'s number is not the live lane\'s');
+  const { SLOTS_IN_USE_SQL } = require('../src/workflow/rules/bot-loop.ts');
+  assert.match(SLOTS_IN_USE_SQL, /FROM wf_instances w\s+WHERE w\.machine = 'bot-request' AND w\.state IN \('reading', 'following_up', 'building'\)\s+AND jsonb_typeof\(w\.data->'slot'\) = 'object' AND w\.flag IS NULL/);
 });

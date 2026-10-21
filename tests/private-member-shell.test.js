@@ -1,16 +1,17 @@
 'use strict';
 
 // A PRIVATE MEMBER in the shell (users.private_member_since): an invite link
-// lands them inside the group's app with no ✕, the mark menu's "Go to
-// Homeroom" is their way on, and its first use runs a nine-step tour of
-// their app, its hub and a Home that has Discover but no Challenges and no
-// New project, and has the waitlist card. The invite's Join that makes
+// lands them inside the group's app with no ✕ (and the tip under the
+// Homeroom mark), the mark menu's "Go to Homeroom" is their way on, and the
+// Home it opens runs the walk, its fourth card the waitlist card, on a Home
+// that has Discover but no Challenges and no New project. The invite's Join that makes
 // them asks for a name and a phone first (tests/phone-invite-join.test.js).
 // The server half is tests/private-member-postgres.test.js and
 // tests/community-invites-postgres.test.js.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -20,77 +21,96 @@ const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 const APP = read('public/js/app.js');
 
-test('the private tour: the maker\'s nine cards, three reworded for someone invited, ending on the waitlist card', () => {
-  const { privateSteps, makerSteps, invitedSteps } = loadTsx('frontend/src/features/first-session/tour-steps.ts');
-  const project = { slug: 'best-brunch', name: 'Best brunch spots' };
-  const steps = privateSteps(project);
-  assert.deepEqual(steps.map((s) => s.screen), ['home', 'app', 'app', 'app', 'app', 'home', 'hub', 'hub', 'home']);
-  assert.deepEqual(steps.map((s) => s.tap || null), ['Tap it', null, 'Tap the menu', null, 'Tap ✕', 'Tap Communities', null, null, null]);
+// The private member's walk is every newcomer's three cards (Evan, 20 Oct
+// 2026): no waitlist card (they find it on Home), and Go to community last.
+test('the private member\'s walk: the three cards every newcomer gets, and no waitlist card', () => {
+  const { homeWalkSteps } = loadTsx('frontend/src/features/first-session/tour-steps.ts');
+  const steps = homeWalkSteps({ slug: 'best-brunch', name: 'Best Brunch' });
+  assert.deepEqual(steps.map((s) => s.screen), ['home', 'home', 'home']);
   assert.deepEqual(steps.map((s) => s.target), [
-    '.app-card[data-slug="best-brunch"]',
-    '#app-view',
-    '#platform-mark-btn',
-    '#improve-row-feedback',
-    '#back-btn',
-    '#platform-tab-workshop',
-    '#app-content',
+    '#app-list .app-card[data-slug="best-brunch"]',
     '#platform-tab-messages',
-    '#home-waitlist-card',
+    '#platform-tab-workshop',
   ]);
-  // The owner-approved words (#4398): the maker's where they match, the app,
-  // Suggest and hub cards said to someone who was invited, and the bot card
-  // whose words the owner approved for #4397.
   assert.deepEqual(steps.map((s) => [s.title, s.text]), [
-    ['Best brunch spots is on your Home', 'Open it any time from here.'],
-    ['Best brunch spots opens here', 'You and everyone in its community use it, and make it better together.'],
-    ['Suggest an improvement', 'Every app has this menu. Tap it.'],
-    ['Suggest an improvement', 'Got an idea for Best brunch spots? Suggest it here. Homeroom bot builds it, or brings it to the group, and you can follow along.'],
-    ['✕ takes you back to Home', 'Open Best brunch spots again from Home any time.'],
-    ['You can find Best brunch spots here', 'Communities lists every community you\'re in.'],
-    ['The Best brunch spots hub', 'Talk with the group here, and vote on what changes.'],
-    ['Meet Homeroom bot', 'Tell it what Best brunch spots should do next, and it builds it for the group to try. It\'s always here in Messages.'],
-    ['Your own apps start here', 'Join the waitlist to get your spot.'],
+    ['Welcome to Homeroom', 'Best Brunch lives here, on Home.'],
+    ['Homeroom bot', 'It\'s in Messages. Ask it to make any changes to Best Brunch.'],
+    ['Communities', 'Best Brunch\'s hub is here. Invite people and decide what changes.'],
   ]);
-  // The first seven are the maker's own steps, the same places and presses,
-  // with only the three reworded cards' text differing.
-  const maker = makerSteps({ ...project, conversationId: 12 }).slice(0, 7);
-  assert.deepEqual(maker, invitedSteps(project).slice(0, 7), 'which the join tour shares');
-  steps.slice(0, 7).forEach((s, i) => {
-    assert.deepEqual({ ...s, text: '' }, { ...maker[i], text: '' }, `step ${i + 1} is the maker's`);
-    if (![1, 3, 6].includes(i)) assert.equal(s.text, maker[i].text, `step ${i + 1} in the maker's words`);
-  });
-  // The Suggest card is the one in the menu, pointed at and not pressed.
-  assert.equal(steps[3].inMenu, true);
-  // The bot and waitlist cards point at their place and lead on with Next.
-  assert.deepEqual(steps.map((s) => !!s.ringed), [false, false, false, true, false, false, false, true, true]);
-  assert.deepEqual(steps.map((s) => !!s.last), [false, false, false, false, false, false, false, false, true]);
-  // No challenges or points.
-  assert.doesNotMatch(JSON.stringify(steps), /challenge|points/i);
-  // Every target is one the shell draws: the tabs are the bar's own ids, the
-  // card is the waitlist card's own section.
+  // The group's app from a ready-made starter: its example on the bot card.
+  const fromStarter = homeWalkSteps({ slug: 'best-brunch', name: 'Best Brunch', example: 'add a price range to each place' });
+  assert.equal(fromStarter[1].text, 'Ask it for changes, like “add a price range to each place”.');
+  // Each points at its place and leads on with Next; none is pressed.
+  assert.deepEqual(steps.map((s) => !!s.ringed), [true, true, true]);
+  assert.deepEqual(steps.map((s) => !!s.last), [false, false, true]);
+  assert.ok(steps.every((s) => !s.tap && !s.inMenu && !s.waitsFor));
+  // No challenges or points, and no waitlist.
+  assert.doesNotMatch(JSON.stringify(steps), /challenge|points|waitlist/i);
+  // Every target is one the shell draws: the tabs are the bar's own ids.
   const bar = read('frontend/src/features/nav/tab-bar.tsx');
   assert.ok(bar.includes('id={`platform-tab-${key}`}'));
   for (const key of ["key: 'workshop' as const", "key: 'messages' as const"]) assert.ok(bar.includes(key), key);
-  assert.match(read('frontend/src/features/home/waitlist-card.tsx'), /<section id="home-waitlist-card"/);
 });
 
-test('"Go to Homeroom" starts it once; a private member lands in the app instead of "You\'re in"', () => {
+test('a private member lands in the app with the tip, and "Go to Homeroom" opens the Home that runs the walk', () => {
   const src = read('frontend/src/features/first-session/index.tsx');
-  assert.match(src, /if \(mode\.path === 'private'\) return privateSteps\(project\);/);
+  // The same walk as any newcomer's.
+  assert.match(src, /const \{ slug, name, example \} = mode\.info;\s+return homeWalkSteps\(\{ slug, name, example \}\);/);
   const welcome = src.slice(src.indexOf('welcome(info: FirstSessionInfo): boolean {'), src.indexOf('goHome('));
-  assert.match(welcome, /if \(legacy\(\)\.App\?\.user\?\.privateMember\) \{[\s\S]*legacy\(\)\.App\?\.navigateToApp\?\.\(slug, 'app'\);[\s\S]*return true;/);
-  assert.ok(welcome.indexOf('privateMember') < welcome.indexOf("setMode({ kind: 'welcome', info })"), 'before "You\'re in"');
+  assert.match(welcome, /const privateMember = !!app\?\.user\?\.privateMember;/);
+  assert.match(welcome, /walkOwed = \(privateMember \|\| !!info\.newAccount\) && oweWalk\(uid, \{ slug, name, privateMember \}\);\s+if \(walkOwed\) app\?\._noteHomeWalk\?\.\('owed'\);/);
+  assert.match(welcome, /const going = app\?\.navigateToApp\?\.\(slug, 'app'\);/);
+  // Go to Homeroom: noted first (the app has its ✕ from then on), then Home,
+  // where the walk runs: the app was their first visit.
   const goHome = src.slice(src.indexOf('goHome('), src.indexOf('holdWelcome(): boolean'));
-  assert.match(goHome, /const first = !app\?\._privateHomeVisited\?\.\(\);\s+app\?\._notePrivateHome\?\.\(\);\s+app\?\.navigateHome\?\.\(\);/);
-  assert.match(goHome, /if \(!first \|\| !info\?\.slug\) return;/, 'the tour runs the first time only');
-  assert.match(goHome, /path: 'private'/);
+  assert.match(goHome, /app\?\._notePrivateHome\?\.\(\);\s+app\?\.navigateHome\?\.\(\);/);
+  assert.match(goHome, /if \(uid != null\) \{ armWalk\(uid\); setOwing\(\(n\) => n \+ 1\); \}/);
+  assert.doesNotMatch(goHome, /path: 'private'/);
 });
 
 test('the app has no ✕ for a private member until they have gone to Homeroom, from either writer', () => {
-  assert.match(APP, /_privateNoClose\(\) \{\s+return !!App\.user\?\.privateMember && !App\._privateHomeVisited\(\);/);
+  // Nor for anybody new the first session still owes its walk on Home: their
+  // menu offers the same "Go to Homeroom", and the ✕ skipped the walk.
+  assert.match(APP, /_privateNoClose\(\) \{\s+return \(!!App\.user\?\.privateMember \|\| App\._homeWalkOwed\(\)\) && !App\._privateHomeVisited\(\);/);
+  // The walk is read as first-visit.ts owedWalk reads it, under its prefix.
+  const { WALK_PREFIX } = { WALK_PREFIX: read('frontend/src/features/first-session/first-visit.ts').match(/export const WALK_PREFIX = '([^']+)';/)[1] };
+  assert.ok(APP.includes(`FIRST_SESSION_WALK_PREFIX: '${WALK_PREFIX}'`), 'the same key as the first session writes');
+  const owed = APP.slice(APP.indexOf('  _homeWalkOwed() {'), APP.indexOf('  _privateNoClose() {'));
+  assert.match(owed, /if \(!raw \|\| raw === 'done'\) return false;/, 'a walk that has run is not owed');
+  assert.match(owed, /typeof record\.slug === 'string' && record\.slug/, 'a record with a slug, as owedWalk asks');
+  // Kept by the account, so every device agrees: /api/auth/me's marks first,
+  // this device's records beside them.
+  assert.match(owed, /if \(App\.user\?\.homeWalkOwed === true\) return true;/);
+  const visited = APP.slice(APP.indexOf('  _privateHomeVisited() {'), APP.indexOf('  _notePrivateHome() {'));
+  assert.match(visited, /if \(App\.user\?\.homeroomReached === true\) return true;/);
+  assert.match(visited, /=== 'done';/, 'the walk having run here is Homeroom reached');
+  assert.match(APP, /_notePrivateHome\(\) \{[\s\S]{0,200}App\._noteHomeWalk\('reached'\);/);
+  assert.match(APP, /HOME_WALK_PATH: '\/api\/me\/home-walk'/);
+  // The first session tells the account when the walk is owed and when it
+  // runs or is claimed; goHome tells it through _notePrivateHome.
+  const fs = read('frontend/src/features/first-session/index.tsx');
+  assert.match(fs, /walkOwed = \(privateMember \|\| !!info\.newAccount\) && oweWalk\(uid, \{ slug, name, privateMember \}\);\s+if \(walkOwed\) app\?\._noteHomeWalk\?\.\('owed'\);/);
+  assert.match(fs, /if \(oweWalk\(uid, \{ slug, name, maker: true \}\)\) legacy\(\)\.App\?\._noteHomeWalk\?\.\('owed'\);/);
+  assert.match(fs, /noteWalkRun\(uid\);\s+\/\/ On Home: they have reached Homeroom, on every device\.\s+legacy\(\)\.App\?\._noteHomeWalk\?\.\('reached'\);/);
+  assert.match(fs, /!claimWalk\(uid\)\) \{ setMode\(\{ kind: 'none' \}\); return; \}\s+legacy\(\)\.App\?\._noteHomeWalk\?\.\('reached'\);/);
+  // The menu and the tip read the account's mark too, and never once reached.
+  assert.match(read('frontend/src/features/app-context/about-data.ts'),
+    /const owed = owedWalk\(uid\) != null \|\| app\?\.user\?\.homeWalkOwed === true;\s+return owed && !app\?\._privateHomeVisited\?\.\(\);/);
+  // The account's side: the route, the marks, and /api/auth/me's two fields.
+  assert.match(read('src/routes/onboarding.js'), /router\.post\('\/api\/me\/home-walk', drainGuard, sameOriginBrowserOnly,/);
+  const auth = read('src/routes/auth.js');
+  assert.match(auth, /\(u\.getting_started_seen->>'home_walk_owed' IS NOT NULL\s+AND u\.getting_started_seen->>'homeroom_reached' IS NULL\) AS home_walk_owed,/);
+  assert.match(auth, /\(u\.getting_started_seen->>'homeroom_reached' IS NOT NULL\) AS homeroom_reached,/);
+  assert.match(auth, /\n\s+homeWalkOwed,\n\s+homeroomReached,\n/);
   const slotFor = APP.slice(APP.indexOf('  _backSlotFor(revealId) {'), APP.indexOf("return ['close', App._closeAppHref()];"));
   assert.match(slotFor, /if \(App\._privateNoClose\(\)\) return \['none'\];/);
-  assert.match(APP, /if \(App\._privateNoClose\(\)\) App\.setBackIcon\(\.\.\.App\._backSlotFor\('app-view'\)\);\s+else App\.setBackIcon\('close', App\._closeAppHref\(\)\);/);
+  // switchTab's App branch publishes the table's own answer, so the two
+  // writers agree by construction (and the ✕ never comes back that way).
+  assert.match(APP, /if \(tab === 'app'\) \{[\s\S]{0,1200}App\.setBackIcon\(\.\.\.App\._backSlotFor\('app-view'\)\);\s+AppView\.renderAppTab\(\);/);
+  assert.doesNotMatch(APP, /App\.setBackIcon\('close',/);
+  // No rail beside their first app either: the predicate that keeps it on a
+  // desktop asks the same question.
+  assert.match(APP, /_railBesideApp\(\) \{[\s\S]{0,200}&& !App\._privateNoClose\(\);/);
   // Remembered per account on this device, like the tours.
   assert.match(APP, /PRIVATE_HOME_PREFIX: 'usernode:private-home:'/);
 });
@@ -107,9 +127,12 @@ test('the shell follows the tier: a reload when it changes, the store told, "Wan
   assert.match(read('frontend/src/features/nav/nav-store.js'), /viewer: null,\s+privateMember: false,/);
 });
 
-test('the mark menu: "Go to Homeroom" for a private member, and no terminal or Build it yourself', () => {
+test('the mark menu: "Go to Homeroom" for a private member, and no terminal or Build it now', () => {
   const sheet = read('frontend/src/features/app-context/app-context-sheet.tsx');
-  assert.match(sheet, /\{mounted && privateMember \? \(\s+<div\s+id="app-menu-homeroom-card"[^>]*>\s+<button\s+id="app-menu-row-homeroom"/);
+  // …and for any newcomer the walk on Home is still owed to (sign-up test,
+  // 19 Oct 2026; tests/app-about-pane.test.js draws it). A private member's
+  // only until they have been Home (Evan, 20 Oct 2026): `newcomer`.
+  assert.match(sheet, /\{mounted && \(newcomer \|\| walkOwed\) \? \(\s+<div\s+id="app-menu-homeroom-card"[^>]*>\s+<button\s+id="app-menu-row-homeroom"/);
   // A white card leading the list, right under "Suggest an improvement"
   // (#4401): 20px, one inset hairline, the mark, rows' 15 over 13, a chevron.
   // The card is a wrapper since #4399, which can add a second row to it.
@@ -117,8 +140,10 @@ test('the mark menu: "Go to Homeroom" for a private member, and no terminal or B
   const card = sheet.slice(sheet.indexOf('id="app-menu-row-homeroom"'));
   assert.match(card, /^id="app-menu-row-homeroom"\s+type="button"/);
   assert.match(card, /src="\/brand\/homeroom-mark\.png"[\s\S]*?className="platform-mark-tile w-10 h-10/);
-  assert.match(card, /text-\[15px\] font-\[650\][^>]*>Go to Homeroom</);
-  assert.match(card, /text-\[13px\][^>]*>Your Home, your communities and Homeroom bot</);
+  assert.match(card, /text-\[15px\] font-\[650\][^>]*>\{t\('agent:appContext\.goToHomeroom\.title'\)\}</);
+  assert.equal(message('agent:appContext.goToHomeroom.title'), 'Go to Homeroom');
+  assert.match(card, /text-\[13px\][^>]*>\{t\('agent:appContext\.goToHomeroom\.sub'\)\}</);
+  assert.equal(message('agent:appContext.goToHomeroom.sub'), 'Your Home, your communities and Homeroom bot');
   assert.match(card.slice(0, card.indexOf('</button>')), /<ChevronRightIcon/);
   assert.match(sheet, /firstSession\?\.goHome\?\.\(info\)/);
   assert.match(sheet, /\{showTerminal && !privateMember \? \(/);
@@ -130,22 +155,29 @@ test('the mark menu: "Go to Homeroom" for a private member, and no terminal or B
   assert.ok(sheet.indexOf('id="app-menu-row-homeroom"') < sheet.indexOf('id="app-menu-row-workshop"'));
 });
 
-test('the Go to Homeroom card carries the home-screen offer, and the banner waits (#4399)', () => {
+// "Add this app to your home screen" (Evan, 20 Oct 2026): the row puts the
+// APP they are in on the home screen, not Homeroom. It runs the app page's
+// own install item, as About's row does (tests/app-install-sheet-row.test.js),
+// so the icon it leaves opens the app.
+test('the Go to Homeroom card carries "Add this app to your home screen", and the banner waits (#4399)', () => {
   const sheet = read('frontend/src/features/app-context/app-context-sheet.tsx');
   const card = sheet.slice(sheet.indexOf('id="app-menu-homeroom-card"'), sheet.indexOf('GIVE FEEDBACK IS NOT A ROW'));
   // A second row in the same card, under a hairline, only while Go to
-  // Homeroom is offered and only when the banner would offer the home screen.
-  assert.match(sheet, /const homeScreenOs = useHomeScreenOffer\(open && newcomer\);/);
-  assert.match(card, /\{newcomer && homeScreenOs \? \(\s+<>\s+<div aria-hidden="true" className="[^"]*h-px bg-\[color:var\(--app-sheet-line\)\]"/);
+  // Homeroom is offered to a private member, on a phone outside the app.
+  assert.match(sheet, /const appRow = useAboutApp\(slug \|\| null, open && newcomer && !!slug && !restricted\);/);
+  assert.match(sheet, /\(menuItemsFor\(appRow\) \|\| \[\]\)\.find\(\(i\) => i && i\.key === 'install'\)/);
+  assert.match(sheet, /const addToHomeScreen = newcomer && !isNativeApp\(\) \? installItem : null;/);
+  assert.match(card, /\{addToHomeScreen \? \(\s+<>\s+<div aria-hidden="true" className="[^"]*h-px bg-\[color:var\(--app-sheet-line\)\]"/);
   assert.match(card, /id="app-menu-row-add-home"/);
+  assert.match(card, /onClick=\{\(\) => \{ void AppContext\.dismissForNav\(\)\.then\(\(\) => addToHomeScreen\.run\(\)\); \}\}/);
   assert.match(card, /w-10 h-10 rounded-\[11px\] bg-zinc-100[^"]*"[^>]*>\s+<PhonePlusIcon/);
-  assert.match(card, /text-\[15px\] font-\[650\][^>]*>Add Homeroom to your home screen</);
-  assert.match(card, /<InstallStepsSheet os=\{homeScreenOs\}/);
-  // The offer is the banner's own decision, an a2hs one, minus its dismissal.
-  const hook = read('frontend/src/features/mobile-install/home-screen-offer.ts');
-  assert.match(hook, /installOffer\(\{/);
-  assert.match(hook, /dismissed: false,/);
-  assert.match(hook, /offer && offer\.kind === 'a2hs' \? offer\.os : null/);
+  assert.match(card, /text-\[15px\] font-\[650\][^>]*>\{t\('agent:appContext\.addAppToHomeScreen'\)\}</);
+  assert.equal(message('agent:appContext.addAppToHomeScreen'), 'Add this app to your home screen');
+  // The card's row adds the app, never Homeroom: Homeroom's steps are a row
+  // of their own further down (tests/homeroom-home-screen.test.js), and the
+  // sheet has no install address of its own.
+  assert.doesNotMatch(card, /InstallStepsSheet|setHomeroomSteps|openHomeroomInBrowser/);
+  assert.doesNotMatch(sheet, /useHomeScreenOffer|addHomeroomToHomeScreen|\/install['"`]/);
   // The banner stays down while Go to Homeroom is offered.
   const banner = read('frontend/src/features/mobile-install/install-banner.tsx');
   assert.match(banner, /if \(offeringGoToHomeroom\(!!privateMember\)\) \{ setOffer\(null\); return; \}/);
@@ -201,7 +233,9 @@ test('the waitlist card: join, an email, a code, then On the waitlist with "Want
   assert.match(byPhone, /id="home-waitlist-add-email"[^>]*>Add an email too</);
   assert.match(byPhone, new RegExp(`href="#more/${token}"`));
   assert.doesNotMatch(listed, /Add an email too/, 'an email row has nothing to add');
-  assert.match(read('frontend/src/features/home/index.tsx'), /<AppsMore \/>\s+<\/section>[\s\S]*<WaitlistCard \/>\s+[\s\S]*<DiscoverSection \/>/);
+  // Discover follows the launcher directly (#4937); the waitlist card keeps
+  // its place after it.
+  assert.match(read('frontend/src/features/home/index.tsx'), /<AppsMore \/>\s+<\/section>[\s\S]*<DiscoverSection \/>\s+[\s\S]*<WaitlistCard \/>/);
 });
 
 test('Home for a private member: no New project tile, Discover kept, no Challenges or Create panels', () => {
@@ -236,4 +270,109 @@ test('the waitlist card\'s routes: a code-mailing join behind the email code\'s 
   const server = read('server.js');
   assert.ok(server.indexOf('app.use(authMiddleware(config));') < server.indexOf('app.use(memberWaitlistRoutes(config));'));
   assert.ok(server.indexOf('app.use(communityInviteRoutes(config));') < server.indexOf('app.use(memberWaitlistRoutes(config));'));
+});
+
+// ── Every newcomer, not only a private member (sign-up test, 19 Oct 2026) ─
+//
+// Evan made a project, opened it, and the mark's menu offered "Go to
+// community". He took it: the project's hub opened inside the app, and the
+// walk on Home (his tile, Messages and Homeroom bot, Communities) did not run
+// until he found Home himself. While that walk is owed, the menu's way on is
+// "Go to Homeroom", which goes Home and runs it.
+
+/**
+ * The menu as it draws once mounted, on the server renderer: its after-mount
+ * effect runs in render (a render-phase update, which the renderer draws
+ * again for), once per draw, and the layout effect that hides "Go to
+ * community" runs on stand-in elements, since a server render attaches no
+ * refs. `walk` is what this device holds for user `uid`, or nothing, and
+ * `viewer` is who is signed in.
+ */
+function drawMenu({ walk = null, uid = 42, viewer = uid, privateMember = false, visited = false } = {}) {
+  const React = require(require.resolve('react', { paths: [path.join(ROOT, 'frontend')] }));
+  const { renderToHtml, createElement } = require('./lib/render-tsx');
+  let mountedOnce = false;
+  const refs = [];
+  const hides = (fn) => /classList\.toggle\(["']hidden["'], hide\)/.test(String(fn));
+  const fake = {
+    ...React,
+    useEffect(fn, deps) {
+      if (!mountedOnce && Array.isArray(deps) && deps.length === 0 && /setMounted\(true\)/.test(String(fn))) {
+        mountedOnce = true;
+        fn();
+      } else if (hides(fn)) fn();
+    },
+    useLayoutEffect(fn) { if (hides(fn)) fn(); },
+    useRef(init) {
+      if (init !== null) return React.useRef(init);
+      const classes = new Set();
+      const el = { classes, classList: { contains: (c) => classes.has(c), toggle: (c, on) => { if (on) classes.add(c); else classes.delete(c); } } };
+      refs.push(el);
+      return React.useRef(el);
+    },
+  };
+  const ui = loadTsx('tests/fixtures/app-context-sheet-api.ts', { stubs: { react: fake } });
+  const data = new Map(walk ? [[`usernode:first-session:walk:${uid}`, typeof walk === 'string' ? walk : JSON.stringify(walk)]] : []);
+  const had = { window: Object.getOwnPropertyDescriptor(globalThis, 'window'), localStorage: Object.getOwnPropertyDescriptor(globalThis, 'localStorage') };
+  Object.defineProperty(globalThis, 'window', { value: { App: { user: { id: viewer }, _privateHomeVisited: () => visited } }, configurable: true, writable: true });
+  Object.defineProperty(globalThis, 'localStorage', { value: { getItem: (k) => (data.has(k) ? data.get(k) : null), setItem: (k, v) => { data.set(k, String(v)); } }, configurable: true, writable: true });
+  const before = ui.improveStore.get();
+  const nav = ui.navStore.get();
+  ui.improveStore.set({ ...before, target: 'app', slug: 'city-tier-list', name: 'City Tier List' });
+  ui.navStore.set({ privateMember });
+  try {
+    const html = renderToHtml(createElement(ui.AppsSwitcherSheet));
+    return { html, mounted: mountedOnce, hidden: refs.filter((el) => el.classes.has('hidden')).length };
+  } finally {
+    ui.improveStore.set(before);
+    ui.navStore.set({ privateMember: nav.privateMember });
+    for (const [k, d] of Object.entries(had)) {
+      if (d) Object.defineProperty(globalThis, k, d); else delete globalThis[k];
+    }
+  }
+}
+
+test('a newcomer owed the walk on Home: the menu offers "Go to Homeroom", and "Go to community" is hidden', () => {
+  const owed = drawMenu({ walk: { slug: 'city-tier-list', name: 'City Tier List', maker: true, armed: true } });
+  assert.ok(owed.mounted, 'drawn as mounted');
+  assert.match(owed.html, /<div id="app-menu-homeroom-card" class="[^"]*"><button id="app-menu-row-homeroom" type="button"/);
+  assert.match(owed.html, />Go to Homeroom<\/span>/);
+  assert.equal(owed.hidden, 1, '"Go to community" hidden');
+  // Still in the document, its id and address the Workshop's (dapp.json
+  // checks select on it for a viewer who is owed no walk).
+  assert.match(owed.html, /<a id="app-menu-row-workshop" data-context-row="workshop" href="#app\/city-tier-list\/workshop"/);
+  // The home-screen row stays a private member's.
+  assert.doesNotMatch(owed.html, /app-menu-row-add-home/);
+  // Not yet armed (they have not opened the app yet) counts the same.
+  assert.equal(drawMenu({ walk: { slug: 'city-tier-list', name: 'City Tier List', maker: true } }).hidden, 1);
+
+  // Nobody owed a walk: "Go to community", as always. None on this device,
+  // one that has run, or one owed to somebody else signed in here before.
+  for (const [label, drawn] of [
+    ['none', drawMenu({ walk: null })],
+    ['run already', drawMenu({ walk: 'done' })],
+    ['somebody else\'s', drawMenu({ walk: { slug: 'x', name: 'X' }, uid: 42, viewer: 7 })],
+  ]) {
+    assert.ok(drawn.mounted, label);
+    assert.doesNotMatch(drawn.html, /app-menu-homeroom-card/, label);
+    assert.equal(drawn.hidden, 0, label);
+    assert.match(drawn.html, /id="app-menu-row-workshop"/, label);
+  }
+});
+
+// "After the first time going through, Go to Homeroom would change to Go to
+// community" (Evan, 20 Oct 2026): a private member is offered the card until
+// they have been Home, then it goes and "Go to community" is back, as for
+// everyone else. It used to stay at the top for as long as they were one.
+test('a private member: "Go to Homeroom" until they have been Home, then "Go to community"', () => {
+  const first = drawMenu({ privateMember: true, visited: false });
+  assert.ok(first.mounted);
+  assert.match(first.html, /id="app-menu-homeroom-card"/);
+  assert.match(first.html, />Go to Homeroom<\/span>/);
+  assert.equal(first.hidden, 1, '"Go to community" hidden while Go to Homeroom is offered');
+  const after = drawMenu({ privateMember: true, visited: true });
+  assert.ok(after.mounted);
+  assert.doesNotMatch(after.html, /app-menu-homeroom-card|Go to Homeroom/);
+  assert.equal(after.hidden, 0, '"Go to community" shown');
+  assert.match(after.html, /<a id="app-menu-row-workshop" data-context-row="workshop" href="#app\/city-tier-list\/workshop"/);
 });

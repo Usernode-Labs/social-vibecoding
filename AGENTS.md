@@ -191,10 +191,17 @@ is no replay plan to write and nothing to verify locally.
   first, `expectText` gives short text that shows the state was reached, and
   `focusTarget` locates the element to point at. Hints guide; they are never
   executed.
+- If a fresh staging copy lacks the state a change shows, seed it in the same
+  proposal (`src/db/migrate.js`, idempotent, obviously fake): it reaches the
+  after copy, the side a new state needs. Seed rows for the shots' fixture
+  accounts (`usernode-capture` is the member) and fake people, never a signal
+  the code reads to decide something, and a bot's reply as the stored message,
+  never asked for. A change to a state that already existed needs it on both
+  sides: its seed merges first, in its own proposal.
 - `impact: none` applies only when no user-visible state changes. Changed
   text, counts, loading, error, and status states need a `ui` change even if
-  the code reuses existing markup and styles. If a required fixture or state
-  is missing, report that blocker instead of declaring `none`.
+  the code reuses existing markup and styles. If a required state can be
+  neither reached nor seeded, report that blocker instead of declaring `none`.
 - For an error state caused by a failed API request, declare
   `intent.controlledFailurePath` as one exact same-origin `GET /api/...`
   path, and make the first `intent.steps` entry exactly
@@ -222,19 +229,48 @@ is no replay plan to write and nothing to verify locally.
 - **Communities is the fourth tab, beside you; Messages is in the middle.**
   The tab is a community: the one you last had open (its tile in a square
   ring, its short name, the votes it waits on you for) or All communities,
-  whose page lists every community you are in (Public communities, Private
-  communities, Just you) at `#communities` (`#workshop` still routes there;
-  the tab's key and ids keep `workshop`). Pressing it while it is lit, the
-  header's name and ⌄, or the list's All chip opens **Your communities**
+  whose page lists every community you are in, as one list under a search
+  and All, Public, Private and Just you chips, at `#communities` (`#workshop` still routes there;
+  the tab's key and ids keep `workshop`). Under 768px the header's name
+  and ⌄ open **Your communities**
   (`features/workshop/community-switcher.tsx`, scope in
-  `community-scope.ts`). A project's page wears its community's colour
+  `community-scope.ts`); pressing the lit tab goes up a level. From 768px
+  the rail is a 212px sidebar of rows (`features/nav/sidebar-rows.ts`):
+  the communities you pinned under Pinned (`rail-pinned.tsx`), then your
+  five most recent under a Communities heading with a hover search
+  (`rail-communities.tsx`), the tab is their "All 13 communities" row, and
+  the header's name is only a name. **A pin is the account's**
+  (`community_pins`, `services/community-pins.js`,
+  `/api/me/community-pins`): a member's only, four at most, gone when they
+  leave, made from a community's row (right-click), the hub's ⋯ or a My
+  apps tile dropped on the sidebar (`features/nav/pin-actions.ts`), and
+  never one of the five. A project's page wears its community's colour
   (`lib/community-color.ts`: dapp.json's `icon.color`, else read off the
-  icon) and has four tabs, **Hub** (who is here and who it is for, the
-  actions, a 14-day trend, since your last visit, votes owed, the chat's
-  last lines, your work), **Discussion**, **Needs you** and **Workshop**
-  (`features/dev-board/workshop/project-band.tsx`). **All items** is a page
-  under the Workshop (its "See all"), with a way back, and the Workshop tab
-  stays lit while it is up. The Communities
+  icon) and is navigated by one list of **places**
+  (`features/dev-board/workshop/project-places.tsx`): **Hub** (who it is
+  for and who was active this week, the actions, For you: votes owed, your
+  work and the chat's last line, then Recently live; no charts),
+  **Needs you** and **Workshop**, a line, then **Channels** (**#general**) and **Topics**
+  (each topic's channel), each group under its heading. Place keys are
+  `status`, `needs`, `workshop`, `discussion` (#general) and `c:<handle>`
+  (`places.ts`); a channel has its own address, `#app/<slug>/dev/c/<handle>`.
+  Above Hub, the list's first row is **App**, the project's own app
+  (Homeroom's community has none: the platform is its app). On a phone the
+  list is the drawer's middle level (`features/nav-drawer/`), or, where the
+  drawer is off, a tray behind the place bar that names where you are
+  (`place-bar.tsx`, `places-tray.tsx`); from 768px it nests under the
+  community's row in the sidebar (`rail-communities.tsx`,
+  `rail-nest.tsx`), and the page publishes where it is for it
+  (`place-store.ts`). While an app runs in a
+  kept frame its App row carries the green still-open dot, and that
+  community keeps its row and its App row in the sidebar until the frame
+  goes (`features/app-frame/live-apps.tsx`). **All
+  items** is a page under the Workshop (its "See all"), with a way back, and
+  the Workshop stays lit in the list while it is up. A **topic** is a
+  channel and a category at once: an entry of dapp.json's `topics`,
+  reconciled into `app_category_registry` (origin `'topic'`) when a change
+  merges, its channel a `'category'` thread; a new topic, a rename, a merge
+  or an archive is a proposal (Settings & rules › Topics). The Communities
   screen's Needs you is one feed of every decision owed across your projects
   (`GET /api/workshop/needs-feed`). A project's channel lives on its page,
   not in Messages, and #general is the Homeroom community's channel;
@@ -244,22 +280,34 @@ is no replay plan to write and nothing to verify locally.
   or #general. `ws.sendSystemMessage` writes nothing without a thread, so a
   new platform line names the proposal's, request's or decision's own thread
   (`{ type: 'session' | 'issue' | 'governance', ref }`) or is not written.
+  Homeroom bot answering somebody who mentioned it there is conversation,
+  not activity: it replies in a reply thread under their message
+  (`services/homeroom-bot-voice.js`), never unprompted and never in the
+  channel's own stream.
   App-wide state is shown where it lives: merges paused and a stalled release
-  are banners on the project page, and settings changed lately and the
-  Friday card are the Workshop tab's notices panel (`services/app-notices.js`,
-  read from `events` — record a new kind there, not a chat line).
+  are banners on the project page. Settings changed lately and the Friday
+  card are recorded in `events` and read back by `services/app-notices.js`
+  (`GET /api/apps/:slug/notices`); record a new kind there, not a chat line.
+  No screen draws them since the Workshop's "Lately in this project" panel
+  was removed.
   `migrate.clearAutomatedChannelLines` clears the lines written before. A
   door to a project's hub (a link that says so) calls
   `AppView._landOnHub(slug)` first, so it opens on the hub rather than the
-  tab the page was last left on. Back and Forward are not doors: the page
-  reopens on the tab last shown, read fresh when it mounts.
+  place the page was last left on. A switch is not a door: the header's ⌄
+  menu, a row of All communities and the phone drawer's list open the other
+  community on the place you were on when it has it, else its hub
+  (`landKeepingPlace` in `place-store.ts`, `keepPlace` in the drawer). Back
+  and Forward are not doors either: the page reopens on the place last
+  shown, read fresh when it mounts.
 - **Audience is derived, never stored.** `communities.audienceSql` reads it
   off the app's `view_visibility` and its member/invite count. A second
   stored copy is one the visibility reconcile would have to remember. So a
   project GROWS by the same two levers: Invite makes Just you a Private
-  community, and the hero's "Make it public" (or, on a public community,
-  "Make it private" in the hero's ⋯) opens the visibility PR
-  (`POST /api/apps/:slug/visibility-pr`), which applies once it merges.
+  community, and "Make it public" (a just-you project's Share it card) or
+  "Who can see & change it" (the hero's ⋯, the rule line's Rules;
+  `features/dialogs/who-decides.tsx`) opens the PR
+  (`POST /api/apps/:slug/visibility-pr`, or `/who-decides-pr`, which also
+  carries the approval rule), which applies once it merges.
 - **Communities and apps are one-to-one today.** A community with a single
   project is drawn as that project — its name, icon and page — and nothing
   should render a separate "community" layer for it. The table is bare on
@@ -272,13 +320,20 @@ is no replay plan to write and nothing to verify locally.
   GitHub repo in place (`import-repo.tsx`), and makes a private community
   with nobody invited yet; inviting comes next, on its made screen. The
   create dialog that asked who it is for and who approves is retired: those
-  are the project's own levers afterwards (Invite, "Make it public", Members
-  & approvals). `POST /api/apps` still takes `audience`, a private
+  are the project's own levers afterwards (Invite, and "Who can see & change
+  it"). The approval rule is the one thing Make it says before it makes:
+  one line under the two answers, "Who can change it: You or the group",
+  whose Change offers the four presets (`who-decides/make-rule.tsx`); a
+  pick goes out as the new project's `governance` block, and the invite
+  sheet after it says nothing about the rule. `POST /api/apps` still takes `audience`, a private
   community's `invitees` and the approval rule as dapp.json's own
   `governance` block (`src/services/create-options.js`) for any other
   caller; the rule is written into the new repository's dapp.json by the
   template, so it is votable later like any other line there, and an
-  import's own dapp.json decides instead. Every project uses an app slot
+  import's own dapp.json decides instead. A new project starts on the You
+  or the group preset (#4666, `src/services/governance-rules.js`: the
+  creator's yes, or the group's time-&-majority vote); a change to who
+  decides always goes by that rule, whatever preset a project picks. Every project uses an app slot
   whatever its audience: each one is a real container and database.
 - **Membership gates taking part, not reading.** Starting a change,
   proposing, filing a request, voting (on proposals and requests) and posting
@@ -341,6 +396,22 @@ is no replay plan to write and nothing to verify locally.
   image build enforces the same ordering: its shell builder prerenders the
   current `index.html`, then the CSS builder scans that generated document.
   There is no loop — `tailwind.css` is not a shell input.
+- **In `Dockerfile.kubernetes` the commit id comes after the bundle and the
+  stylesheet, and nothing above it may read it.** A build arg above a `RUN`
+  is part of that step's cache key. With `GIT_SHA` above the Vite step, every
+  commit rebuilt the bundle and the stylesheet whatever it had changed (167
+  of 167 preview builds in the logs that prompted the move). So the shell
+  stage runs `build-shell.mjs --keep-prerender` and the Tailwind compile
+  first, declares `ARG GIT_SHA`, and only then runs
+  `build-shell.mjs --document`, the release file and the precompressed
+  copies. `--document` runs no Vite: it renders again with the prerender
+  bundle the first run kept and rewrites `public/index.html` alone. The id
+  may reach the document and nothing else. Read it in either Vite pass, or
+  move a step that needs it above the `ARG`, and the reuse is gone with no
+  test of the output failing. Tailwind therefore scans a `dev` document;
+  `tests/tailwind-build.test.js` holds that an id adds no class, and
+  `tests/kubernetes-deployment-contract.test.js` pins the order. Run with no
+  flag, as every local flow does, the script still does everything in one go.
 - **`Shell.tsx` is now hand-maintained; resolve conflicts in it directly.** The
   one-time generators that derived it from the hand-written document
   (`html-to-jsx.cjs`, `apply-step1-edits.cjs`) and the pre-migration fixture
@@ -479,6 +550,9 @@ carry most of them.
 
   A state that is already done gets no fill. "Joined" is grey with a check;
   a filled green pill made the settled thing the loudest thing on screen.
+  A finished progress bar may be green (`--state-ok`, with a green check and
+  figure, as a change page's Votes and Testing cards are): there the end is
+  the good news, while a bar still moving is drawn in `--lit-ink`.
 - **Say it in words or a very obvious glyph, and let zero say nothing.** A
   count on a row is a phrase ("2 in progress · 3 to vote") or a number
   beside a glyph so obvious that nobody needs a legend to read it, like
@@ -557,24 +631,48 @@ Two behaviours are easy to lose to React's defaults and are worth naming:
 
 ## Translatable text is written once, in English — never translate by hand
 
-- **Homeroom ships English only, and most shell text is still a literal in
-  its component.** `frontend/locales/README.md` describes the language runtime
-  (`frontend/src/lib/i18n/`) that will carry it: text moves into
-  `frontend/locales/en/<namespace>.json` one surface at a time. Leave a
-  literal where it is unless the change is that conversion. On a surface that
-  already reads from a catalog, add new text to the catalog too.
+- **The client's text lives in catalogs, in English, and Homeroom translates
+  it.**
+  `frontend/locales/README.md` describes the language runtime
+  (`frontend/src/lib/i18n/`) and the rules for an entry. Everything the shell
+  shows or announces, in `frontend/src/**` and `public/js/**`, is read from
+  `frontend/locales/en/<namespace>.json`, one namespace per surface. New or
+  changed interface text goes into the surface's catalog in the same change;
+  do not write an English literal into a component or a classic script. What
+  stays in code is listed in the README: the admin console, a server's own
+  error sentences, text a person wrote, developer-only messages, and the
+  standalone pages that load no shell bundle.
 - **A catalog entry is a whole message with a description.**
   `{ "text": "…", "description": "…" }`: no fragment joined to another, named
-  parameters (`{{email}}`, never `{{value1}}`), one line saying where it
-  appears, and numbered tags with `RichMessage` for a link inside a sentence.
-  The shell build and `tests/language-packs.test.js` reject an entry that
-  breaks these, because that is a mistake in the change itself.
+  parameters (`{{email}}`, never `{{value1}}`), a `_one`/`_other` pair for a
+  count, one line saying where it appears, and numbered tags with
+  `RichMessage` (or `PlatformI18n.htmlRich` in a classic script) for a link
+  inside a sentence. The shell build and `tests/language-packs.test.js`
+  reject an entry that breaks the format, because that is a mistake in the
+  change itself.
+- **A message id is one whole literal**, `'namespace:area.element'`, so
+  `node scripts/language-inventory.js --ids` (run by
+  `tests/language-extraction.test.js`) can check that every id the code asks
+  for exists. `--literals` reports English still written in code, less
+  `frontend/locales/literal-allowlist.json`; it is a report, not a gate.
+- **A suite that pinned English in a source file pins the id and the catalog
+  text instead** (`message(id)` from `tests/lib/platform-i18n.js`), and a
+  sandboxed classic script gets `PlatformI18n: englishPlatformI18n()`.
 - **Do not add, edit or hash another language's catalog.** Translations come
-  from the translation step, and a build never waits on one: a missing or
-  out-of-date translation shows English for that one message and appears in
-  `node scripts/language-packs.js --report`. Nothing in a build or a test may
-  fail because a translation is absent.
-- `public/locales/` and `frontend/src/lib/i18n/catalogs.generated.json` are
+  from the translation step (`src/services/language-sync-runner.js`), which
+  Homeroom runs in the background against the running build and keeps in the
+  translation cache (`src/services/language-cache.js`), served at once
+  through `GET /api/languages` with no proposal and no deploy. A build never
+  waits on one: a missing or out-of-date translation shows English for that
+  one message. Nothing in a build or a test may fail because a translation is
+  absent, or because one is present: never pin which languages ship. A person
+  correcting a translation commits its text with `"locked": true`, which wins
+  over the cache.
+- **Adding a language is one line in `frontend/locales/config.json`** (and its
+  terms and style note in `glossary.json`). It is offered once its committed
+  and cached translations together cover `minimumCoverage` of the English.
+- `public/locales/` (its packs and `.source.json`, the catalogs the server's
+  cache reads) and `frontend/src/lib/i18n/catalogs.generated.json` are
   generated by `scripts/language-packs.js` on every shell build. Never commit
   them.
 

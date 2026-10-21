@@ -37,14 +37,11 @@
 
 import { useEffect, useState } from 'react';
 
+import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
 import { AddPhoneCard } from './add-phone';
 import { waitlistOptions } from './waitlist-shared';
 
-export const VERIFY_TITLE = 'Verify to vote on public apps';
-export const VERIFY_LEAD = 'Votes on public apps count from verified accounts, so each person votes once. '
-  + 'Add your phone number to vote now. Nobody sees your number.';
-const VERIFY_REASON = 'Votes on public apps count from verified accounts, so each person votes once.';
 
 const QUIET = 'py-1 text-[15px] font-medium text-violet-700 dark:text-violet-400 hover:underline';
 
@@ -56,19 +53,25 @@ export type VerifyCopy = {
   reason: string;
 };
 
-export const VOTE_COPY: VerifyCopy = { title: VERIFY_TITLE, lead: VERIFY_LEAD, reason: VERIFY_REASON };
+/** A sheet's own copy as message ids, read when the sheet renders. */
+export type VerifyCopyIds = { title: string; lead: string; reason: string };
 
-export const MAKE_PUBLIC_COPY: VerifyCopy = {
-  title: 'Verify to make it public',
-  lead: 'Public projects need a verified owner, so each person counts once. '
-    + 'Add your phone number and it goes public. Nobody sees your number.',
-  reason: 'Public projects need a verified owner, so each person counts once.',
+export const VOTE_COPY: VerifyCopyIds = {
+  title: 'auth:verify.vote.title',
+  lead: 'auth:verify.vote.lead',
+  reason: 'auth:verify.vote.reason',
 };
 
-export const CREDITS_COPY: VerifyCopy = {
-  title: 'Verify your account',
-  lead: 'Verified accounts get more free AI credits, so each person counts once. Nobody sees your number.',
-  reason: 'Verified accounts get more free AI credits, so each person counts once.',
+export const MAKE_PUBLIC_COPY: VerifyCopyIds = {
+  title: 'auth:verify.public.title',
+  lead: 'auth:verify.public.lead',
+  reason: 'auth:verify.public.reason',
+};
+
+export const CREDITS_COPY: VerifyCopyIds = {
+  title: 'auth:verify.credits.title',
+  lead: 'auth:verify.credits.lead',
+  reason: 'auth:verify.credits.reason',
 };
 
 /** This device: the person was asked at a public step and closed it. Home's card shows after that. */
@@ -91,7 +94,7 @@ export function identityNeededHere(): boolean {
   return app?.user?.identityNeeded === true;
 }
 
-export function VerifyIdentityBody({ phoneOffered, copy = VOTE_COPY, className = 'px-4 pb-5', onVerified, onSettings, onNotNow }: {
+export function VerifyIdentityBody({ phoneOffered, copy: given, className = 'px-4 pb-5', onVerified, onSettings, onNotNow }: {
   phoneOffered: boolean;
   copy?: VerifyCopy;
   className?: string;
@@ -100,6 +103,9 @@ export function VerifyIdentityBody({ phoneOffered, copy = VOTE_COPY, className =
   /** A way past it, where the sheet or the card offers one. */
   onNotNow?: () => void;
 }) {
+  const t = useMessages('auth');
+  // A caller's copy is already in the language on screen; the default is the vote's.
+  const copy = given || { title: t(VOTE_COPY.title), lead: t(VOTE_COPY.lead), reason: t(VOTE_COPY.reason) };
   return (
     <div data-verify-identity="" className={className}>
       {phoneOffered ? (
@@ -111,15 +117,13 @@ export function VerifyIdentityBody({ phoneOffered, copy = VOTE_COPY, className =
         </section>
       )}
       <p className="mt-3 text-center text-[14px] text-zinc-500 dark:text-zinc-400">
-        {phoneOffered ? 'Or link both GitHub and X in ' : 'Link both GitHub and X in '}
-        <a href="#settings/linked-accounts" data-verify-identity-settings="" onClick={() => onSettings()} className="font-medium text-violet-700 dark:text-violet-400 hover:underline">
-          Settings
-        </a>
-        .
+        <RichMessage id={phoneOffered ? 'auth:verify.linkAccountsInstead' : 'auth:verify.linkAccounts'} components={[
+        <a href="#settings/linked-accounts" data-verify-identity-settings="" onClick={() => onSettings()} className="font-medium text-violet-700 dark:text-violet-400 hover:underline" />,
+        ]} />
       </p>
       {onNotNow ? (
         <div className="mt-1 flex justify-center">
-          <button type="button" data-verify-identity-not-now="" className={QUIET} onClick={() => onNotNow()}>Not now</button>
+          <button type="button" data-verify-identity-not-now="" className={QUIET} onClick={() => onNotNow()}>{t('auth:verify.notNow')}</button>
         </div>
       ) : null}
     </div>
@@ -128,11 +132,12 @@ export function VerifyIdentityBody({ phoneOffered, copy = VOTE_COPY, className =
 
 /** The sheet's contents, once the options say whether phone sign-in is offered. */
 function VerifySheet({ copy, onVerified, onSettings, onNotNow }: {
-  copy: VerifyCopy;
+  copy: VerifyCopyIds;
   onVerified: () => void;
   onSettings: () => void;
   onNotNow?: () => void;
 }) {
+  const t = useMessages('auth');
   const [phoneOffered, setPhoneOffered] = useState<boolean | null>(null);
   useEffect(() => {
     let live = true;
@@ -140,7 +145,7 @@ function VerifySheet({ copy, onVerified, onSettings, onNotNow }: {
     return () => { live = false; };
   }, []);
   if (phoneOffered === null) return null;
-  return <VerifyIdentityBody phoneOffered={phoneOffered} copy={copy} onVerified={onVerified} onSettings={onSettings} onNotNow={onNotNow} />;
+  return <VerifyIdentityBody phoneOffered={phoneOffered} copy={{ title: t(copy.title), lead: t(copy.lead), reason: t(copy.reason) }} onVerified={onVerified} onSettings={onSettings} onNotNow={onNotNow} />;
 }
 
 type SheetKit = { sheet?: (opts: { contentEl: HTMLElement; onDismiss?: () => void }) => { dismiss: () => void } | null };
@@ -155,7 +160,7 @@ let open: Promise<VerifyOutcome> | null = null;
  * the open one's outcome. `notNow` adds a "Not now". Closed or "Not now",
  * the person has been asked: Home's card follows up.
  */
-export function openVerifySheet({ copy = VOTE_COPY, notNow = false }: { copy?: VerifyCopy; notNow?: boolean } = {}): Promise<VerifyOutcome> {
+export function openVerifySheet({ copy = VOTE_COPY, notNow = false }: { copy?: VerifyCopyIds; notNow?: boolean } = {}): Promise<VerifyOutcome> {
   if (open) return open;
   const kit = (typeof window !== 'undefined' ? (window as unknown as { PlatformUI?: SheetKit }).PlatformUI : null);
   if (!kit || typeof kit.sheet !== 'function' || typeof document === 'undefined') return Promise.resolve('unavailable');

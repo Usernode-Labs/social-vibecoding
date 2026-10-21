@@ -30,6 +30,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
@@ -64,6 +65,7 @@ function makeAppView(over = {}) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(`${SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;
@@ -112,7 +114,9 @@ test('B7: the button, the status, the step and ⋯ on a project that is just you
   AppView.appData = { slug: 'plant-pal', audience: 'invited' };
   assert.equal(AppView.statusPillState(change({ votes_required: 2 })).label, 'Vote · 0/2');
   assert.ok(!AppView._proposalMenuItems(change(), {}).some((i) => i.label === 'Don’t approve'));
-  assert.match(SRC, /const voteStep = AppView\._approveSolo\(item\) \? 'Your approval' : 'Vote';/);
+  assert.match(SRC, /const voteStep = AppView\._approveSolo\(item\) \? PlatformI18n\.t\('changes:page\.steps\.label\.yourApproval'\) : PlatformI18n\.t\('changes:page\.steps\.label\.vote'\);/);
+  assert.equal(message('changes:page.steps.label.yourApproval'), 'Your approval');
+  assert.equal(message('changes:page.steps.label.vote'), 'Vote');
   // B10a: the change page's eyebrow and the card's meta line say it the same way.
   AppView.appData = { slug: 'plant-pal', audience: 'solo' };
   assert.equal(AppView._waitingWords(change()), 'Waiting for your approval');
@@ -124,8 +128,8 @@ test('B7: the button, the status, the step and ⋯ on a project that is just you
 
 // The pair `_cardVoteButtonSpecs` hands a solo change: the Yes carries
 // `approve` (and `solo`, from the app's own record).
-const yes = { key: 'yes', cls: 'gc-vote-btn gc-vote-btn-yes', title: 'Yes votes: 0 of 1', label: 'Yes (0/1)', act: { fn: 'castVote', args: [7, 'yes', 3] }, solo: true, approve: true };
-const no = { key: 'no', cls: 'gc-vote-btn gc-vote-btn-no', title: 'No votes: 0', label: 'No (0/1)', act: { fn: 'castVote', args: [7, 'no', 3] } };
+const yes = { key: 'yes', cls: 'gc-vote-btn gc-vote-btn-yes', title: 'Yes votes: 0 of 1', label: 'Yes (0/1)', tally: '0/1', act: { fn: 'castVote', args: [7, 'yes', 3] }, solo: true, approve: true };
+const no = { key: 'no', cls: 'gc-vote-btn gc-vote-btn-no', title: 'No votes: 0', label: 'No (0/1)', tally: '0/1', act: { fn: 'castVote', args: [7, 'no', 3] } };
 const active = (spec) => ({ ...spec, cls: `${spec.cls} gc-vote-active` });
 
 test('#3977: Approve opens the picker a group\'s vote opens, and reads Approved once it is in', () => {
@@ -152,14 +156,14 @@ test('#3977: Approve opens the picker a group\'s vote opens, and reads Approved 
   assert.match(group, />Vote<svg/);
   // One button, one path: the solo face is the group's button with other
   // words, so the board, the folded row (fold.tsx) and the change page
-  // (topic-head.tsx), which all draw VoteButton, open the picker alike.
+  // (change-head.tsx, its Votes card), which all draw VoteButton, open the picker alike.
   const fn = CARD_SRC.slice(CARD_SRC.indexOf('export function VoteButton('), CARD_SRC.indexOf('export function VotePicker('));
   assert.match(fn, /const approve = !!yes\.approve && yes\.act\?\.fn === 'castVote';/);
   assert.equal((fn.match(/<button\b/g) || []).length, 1, 'no second, one-tap button');
   assert.match(fn, /onClick=\{toggle\}/, 'the press opens the picker (popover on desktop, sheet on touch)');
   assert.doesNotMatch(fn, /send\(yes, null\); \}\}/, 'the one tap is gone');
   assert.match(fn, /approve=\{approve\}/, 'the picker is told it is an approval');
-  for (const file of ['frontend/src/features/dev-board/card/fold.tsx', 'frontend/src/features/dev-board/topic/topic-head.tsx']) {
+  for (const file of ['frontend/src/features/dev-board/card/fold.tsx', 'frontend/src/features/dev-board/topic/change-head.tsx']) {
     const src = fs.readFileSync(path.join(__dirname, '..', file), 'utf8');
     assert.match(src, /<VoteButton yes=\{[^}]+\} no=\{[^}]+\} \/>/, `${file} draws the same button`);
   }
@@ -182,10 +186,10 @@ test('#3977: the picker\'s sides read Approve and Don\'t approve, with the note,
   assert.match(onYes, /Add a note, if you like\.<\/label>/, 'the optional note');
   assert.match(onYes, /<button type="button" class="dev-vote-reason-send dev-vote-reason-send-yes">Approve<\/button>/, 'and no note needed to approve');
   const onNo = picker({ side: 'no' });
-  assert.match(onNo, /What’s not working for you\? One line is plenty\.<\/label>/, 'a No\'s line, worded as any No\'s');
+  assert.match(onNo, /What’s not working for you\? Add a line, if you like\.<\/label>/, 'a No\'s line, worded as any No\'s');
   assert.match(onNo, /placeholder="What would you want to change\?"/);
-  assert.match(onNo, /<button type="button" class="dev-vote-reason-send dev-vote-reason-send-no" disabled="">Don’t approve<\/button>/,
-    'Don\'t approve waits for its line, as a No does (the server asks for one)');
+  assert.match(onNo, /<button type="button" class="dev-vote-reason-send dev-vote-reason-send-no">Don’t approve<\/button>/,
+    'Don\'t approve needs no line, as a No does');
   const typed = picker({ side: 'no', line: 'Sort the list by date' });
   assert.match(typed, /<button type="button" class="dev-vote-reason-send dev-vote-reason-send-no">Don’t approve<\/button>/);
   const group = picker({ approve: false, solo: false });
@@ -206,8 +210,10 @@ test('#3977: a solo Don\'t approve sends its note the way a group\'s No sends it
   assert.match(fn, /onSend=\{submit\}/);
   // Fallback with no kit sheet: Approve asks for nothing, Don't approve asks
   // for its line through castVote's own prompt, as any No.
-  assert.match(fn, /\{ label: '✓  Approve', handler: \(\) => send\(yes, null\) \}/);
-  assert.match(fn, /label: approve \? '✕  Don’t approve' : [^\n]*handler: \(\) => pickTouch\(no\) \}/);
+  assert.match(fn, /\{ label: t\('project:card\.vote\.sheet\.approve'\), handler: \(\) => send\(yes, null\) \}/);
+  assert.match(fn, /label: approve \? t\('project:card\.vote\.sheet\.dontApprove'\) : [^\n]*handler: \(\) => pickTouch\(no\) \}/);
+  assert.equal(message('project:card.vote.sheet.approve'), '✓  Approve');
+  assert.equal(message('project:card.vote.sheet.dontApprove'), '✕  Don’t approve');
 
   // And castVote posts that line with the No: the server stores it on the
   // vote (pr_votes.reason) and writes it into the change's own discussion,
@@ -246,19 +252,22 @@ test('#4270: ⋯ no longer offers a separate "Don\'t approve"', () => {
   assert.doesNotMatch(menu, /castVote\(/, 'no vote is cast from ⋯');
   assert.doesNotMatch(menu, /label: 'Don’t approve'/);
   // The picker still has it, worded so, on every face that draws VoteButton.
-  assert.match(CARD_SRC, /const noWord = approve \? 'Don’t approve' :/);
+  assert.match(CARD_SRC, /const noWord = approve\s*\? t\('project:card\.vote\.picker\.dontApprove'\)\s*:/);
+  assert.equal(message('project:card.vote.picker.dontApprove'), 'Don’t approve');
 });
 
 test('#3977: the Needs you tab\'s vote sheet is the same picker, as an approval', () => {
   // Its row's Yes carries `approve` from `_cardVoteButtonSpecs` (app-view.js
-  // builds the queue; tests/dev-workshop.test.js renders the tab).
-  assert.match(SRC, /yes: yes \? \{ label: yes\.label, act: yes\.act, \.\.\.\(yes\.approve \? \{ approve: true \} : \{\}\) \} : null,/);
+  // builds the queue; tests/dev-workshop.test.js renders the tab). #5365:
+  // the Yes spec also carries the advisory/uncounted flags the card puts
+  // there, so the feed's item can label a vote that does not decide.
+  assert.match(SRC, /yes: yes \? \{[\s\S]*?\.\.\.\(yes\.approve \? \{ approve: true \} : \{\}\),[\s\S]*?\.\.\.\(yes\.uncounted \? \{ uncounted: true \} : \{\}\),[\s\S]*?\.\.\.\(yes\.advisory \? \{ advisory: true \} : \{\}\),[\s\S]*?\} : null,/);
   const { NeedsVoteForm } = loadTsx('frontend/src/features/dev-board/workshop/workshop.tsx');
   const noop = () => {};
   const row = (approve) => ({
     t: 'card', key: 'needs:proposal:7', kind: 'vote', ask: 'Should this change go in?',
-    yes: { label: 'Yes (0/1)', act: { fn: 'castVote', args: [7, 'yes', 3] }, ...(approve ? { approve: true } : {}) },
-    no: { label: 'No (0/1)', act: { fn: 'castVote', args: [7, 'no', 3] } },
+    yes: { label: 'Yes (0/1)', tally: '0/1', act: { fn: 'castVote', args: [7, 'yes', 3] }, ...(approve ? { approve: true } : {}) },
+    no: { label: 'No (0/1)', tally: '0/1', act: { fn: 'castVote', args: [7, 'no', 3] } },
   });
   const draw = (approve, side = 'yes') => renderToHtml(createElement(NeedsVoteForm, {
     row: row(approve), slug: 'plant-pal', side, line: '',
@@ -269,7 +278,7 @@ test('#3977: the Needs you tab\'s vote sheet is the same picker, as an approval'
   assert.match(solo, /dev-vote-switch-yes" aria-pressed="true" data-act="castVote">[\s\S]*?Approve<\/button>/);
   assert.match(solo, /dev-vote-switch-no" aria-pressed="false" data-act="castVote">[\s\S]*?Don’t approve<\/button>/);
   assert.match(solo, /dev-vote-reason-send-yes">Approve<\/button>/);
-  assert.match(draw(true, 'no'), /dev-vote-reason-send-no" disabled="">Don’t approve<\/button>/);
+  assert.match(draw(true, 'no'), /dev-vote-reason-send-no">Don’t approve<\/button>/, 'a Don\'t approve needs no line either');
   const group = draw(false);
   assert.match(group, />Your vote<\/div>/);
   assert.match(group, />Vote yes<\/button>/);
@@ -313,7 +322,7 @@ test('#4270: the feed across every project says Approve and Don\'t approve for t
   assert.match(form(solo), />Your approval<\/div>/);
   assert.match(form(solo), /dev-vote-switch-yes" aria-pressed="true" data-act="castVote">[\s\S]*?Approve<\/button>/);
   assert.match(form(solo), /dev-vote-switch-no" aria-pressed="false" data-act="castVote">[\s\S]*?Don’t approve<\/button>/);
-  assert.match(form(solo, 'no'), /dev-vote-reason-send-no" disabled="">Don’t approve<\/button>/);
+  assert.match(form(solo, 'no'), /dev-vote-reason-send-no">Don’t approve<\/button>/, 'no line needed');
 
   // A group's row is a vote, word for word.
   const groupHtml = draw([feedItem({ id: 8, title: 'Sort', author: 'ada', yes: 1, app: { slug: 'garden', name: 'Garden', icon_url: null, icon_emoji: null } })]);
@@ -327,7 +336,8 @@ test('#4270: the feed across every project says Approve and Don\'t approve for t
   // "You approved it" / "You didn't approve it", not "You voted yes".
   const lander = fs.readFileSync(path.join(__dirname, '..', 'frontend/src/features/dev-board/workshop/workshop.tsx'), 'utf8');
   const facts = lander.slice(lander.indexOf('function factsFor('), lander.indexOf('function approves('));
-  assert.equal((facts.match(/text: youAnswered\(row, voted\)/g) || []).length, 2, 'both branches, the project\'s and the feed\'s');
+  assert.equal((facts.match(/text: youAnswered\(row, voted\)/g) || []).length, 1, 'one fact for both, the project\'s rows and the feed\'s');
+  assert.ok(facts.indexOf('text: youAnswered(row, voted)') < facts.indexOf('if (st) {'), 'said before either count');
   assert.doesNotMatch(facts, /`You voted \$\{voted\}`/);
 });
 
@@ -348,9 +358,12 @@ test('#4270: the needs feed marks a change approve by AppView._approveSolo\'s th
   assert.ok(!('approve' in shaped({ solo: true, votes_required: 2 })), 'a rule asking for two Yes votes keeps the vote');
   assert.ok(!('approve' in shaped({ solo: false, votes_required: 1 })), 'a group, or a vote that does not count, keeps the vote');
   assert.ok(!('approve' in shaped({})));
-  // And the route works the count out before it shapes.
+  // And the route works the count out before it shapes. #5365: it also
+  // marks the rows advisory/uncounted first, and puts the deciding rows
+  // first after shaping.
   const src = fs.readFileSync(path.join(__dirname, '..', 'src/routes/workshop-overview.js'), 'utf8');
-  assert.match(src, /const items = shapeNeedsFeed\(await withVotesRequired\(pool, rows\)\);/);
+  assert.match(src, /await withViewerDecides\(pool, rows, req\.user\.id\);/);
+  assert.match(src, /const items = decidingFirst\(shapeNeedsFeed\(await withVotesRequired\(pool, rows\)\)\);/);
   assert.match(src, /row\.votes_required = governance\.computeGate\(gov, electorate\.active, row\.yes, row\.no, row\.at, null\)\.required;/);
 });
 

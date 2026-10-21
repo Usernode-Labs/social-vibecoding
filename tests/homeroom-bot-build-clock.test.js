@@ -30,13 +30,22 @@ test('a first version\'s 40-minute build is told when it started, when it is sto
   const t = flat(live.clockLines({ startedAt: STARTED, budgetMs: 40 * MIN }));
   assert.match(t, /^\nTIME\. This build started at 19:41 UTC\. The platform stops it at 20:21 UTC \(40 minutes\), and a build it stops is thrown away: nothing is proposed\./);
   assert.match(t, /Aim to be finished by 20:11 UTC \(30 minutes\)\./);
-  assert.match(t, /Read the time with `date -u \+%H:%M` whenever you are about to start another round of testing or polish\./);
+  assert.match(t, /Read the time whenever you are about to start another round of testing or polish, but never as a step of its own:\nput `date -u \+%H:%M;` in front of a command you are running anyway/);
   assert.match(t, /1\. Build everything the spec and the plan ask for\. This is never what gets cut\./);
   assert.match(t, /2\. Boot the app and do its main thing once, as a person would\./);
   assert.match(t, /3\. Fix what that shows is broken\./);
   assert.match(t, /4\. Only then, while it is before 20:11 UTC: the other screens, sizes and looks, the empty and error states, and polish\./);
   assert.match(t, /After 20:11 UTC, start no new round of testing or polish\. Finish building what the spec asks for if you still are, finish the fix you are in, check the app still boots, and finish your turn\. Say in your summary what you did not get to check\./);
   assert.doesNotMatch(t, /—/);
+});
+
+test('a reviewed first version\'s clock leaves sizes, looks and empty and error states to the reviewer', () => {
+  const t = flat(live.clockLines({ startedAt: STARTED, budgetMs: 40 * MIN, reviewed: true }));
+  assert.match(t, /2\. Boot the app and do its main thing once, as a person would\./);
+  assert.match(t, /4\. Only then, while it is before 20:11 UTC: the spec's other screens, and polish \(the reviewer checks sizes, looks, and empty and error states\)\./);
+  assert.doesNotMatch(t, /sizes and looks, the empty and error states/);
+  const short = flat(live.clockLines({ startedAt: STARTED, budgetMs: 20 * MIN, reviewed: true }));
+  assert.match(short, /4\. Only then, with time to spare: the spec's other screens, and polish \(the reviewer checks/);
 });
 
 test('a build whose clock is not longer than the soft budget has no soft mark, only its stop', () => {
@@ -69,11 +78,13 @@ test('with a clock, the TIME section comes before the browser block, which defer
 
 test('the live build hands its prompt the clock its turn is stopped on', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'homeroom-bot-live.js'), 'utf8');
-  // Read once, as the turn starts: the prompt's clock and the nudge's share
-  // of it (homeroom-bot-live.js buildNudgePrompt) are the same clock.
-  assert.match(src, /const turnStartedMs = Date\.now\(\);\n  const prompt = buildPrompt\(\{/);
+  // Read once, as the turn starts, and kept as a step of the build's own
+  // (durable-steps.js), so the build carried on after a restart keeps it:
+  // the prompt's clock and the nudge's share of it (homeroom-bot-live.js
+  // buildNudgePrompt) are the same clock.
+  assert.match(src, /const turnStartedMs = Number\(await steps\.once\('build_clock', async \(\) => Date\.now\(\)\)\) \|\| Date\.now\(\);\n  const prompt = buildPrompt\(\{/);
   assert.match(src, /clock: \{ startedAt: turnStartedMs, budgetMs: turnBudgetMs \},/);
-  assert.match(src, /runBuildTurn\(\{ prompt, budgetMs: turnBudgetMs, commitMsg, progress \}\)/, 'the same budget the turn\'s timer uses');
+  assert.match(src, /runBuildTurn\(\{ prompt, budgetMs: turnBudgetMs, commitMsg, progress, key: 'build' \}\)/, 'the same budget the turn\'s timer uses');
 });
 
 test('a drag is tried with the tools the build has, twice at most, and a failed gesture is said', () => {

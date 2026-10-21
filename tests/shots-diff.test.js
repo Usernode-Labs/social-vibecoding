@@ -112,6 +112,53 @@ test('changes on one screen share it, each area tied to the change whose element
   }
 });
 
+test('a focus shot covering most of the screen does not stretch the outline', async () => {
+  // A panel that covers more than half of the 300×200 screen: the agent
+  // photographed a whole dialog, so taking it into the box would outline
+  // the panel instead of the two rows added inside it.
+  const panel = [30, 30, 240, 140, [200, 200, 210]];
+  const before = screen(300, 200, [...glyphs(10, 10, 20), panel]);
+  const after = screen(300, 200, [...glyphs(10, 10, 20), panel, ...glyphs(50, 60, 10), ...glyphs(50, 120, 10)]);
+  const stories = [{ id: 'panel', viewports: [{ name: 'desktop' }] }];
+  const files = [
+    file('panel', 'desktop', 'base', 'context', before), file('panel', 'desktop', 'head', 'context', after),
+    file('panel', 'desktop', 'head', 'focus', crop(after, 30, 30, 240, 140)),
+  ];
+  const [shown] = await diff.screensFor(stories, files);
+  assert.equal(shown.regions.length, 2, 'the two added rows stay separate');
+  for (const region of shown.regions) {
+    assert.equal(region.story, 'panel', 'each row is tied to the change whose element shot holds it');
+    assert.ok(region.a[3] < 140, 'the box is much smaller than the crop, not stretched to it');
+    assert.notDeepEqual(region.a, [30, 30, 240, 140]);
+  }
+});
+
+test('overlapping whole-panel regions are merged into one, keeping the first change number', async () => {
+  // A panel under half the screen, so the box is still widened to it — but
+  // two changes whose element shot is the same panel then each yield the
+  // whole-panel box, and the card gets one outline, not a stack.
+  const panel = [30, 40, 160, 100, [200, 200, 210]];
+  const before = screen(240, 200, [...glyphs(10, 10, 20), panel]);
+  const after = screen(240, 200, [...glyphs(10, 10, 20), panel, ...glyphs(50, 60, 10), ...glyphs(50, 120, 10)]);
+  const focus = crop(after, 30, 40, 160, 100);
+  const stories = [
+    { id: 'first', viewports: [{ name: 'desktop' }] },
+    { id: 'second', viewports: [{ name: 'desktop' }] },
+  ];
+  const files = [
+    file('first', 'desktop', 'base', 'context', before), file('first', 'desktop', 'head', 'context', after),
+    file('first', 'desktop', 'head', 'focus', focus),
+    file('second', 'desktop', 'base', 'context', before), file('second', 'desktop', 'head', 'context', after),
+    file('second', 'desktop', 'head', 'focus', focus),
+  ];
+  const [shown] = await diff.screensFor(stories, files);
+  assert.equal(shown.regions.length, 1, 'one outline over the panel, not a stack');
+  const [region] = shown.regions;
+  assert.equal(region.story, 'first', "it carries the first change's number");
+  assert.ok(region.a[0] <= 30 && region.a[1] <= 40 && region.a[0] + region.a[2] >= 190
+    && region.a[1] + region.a[3] >= 140, 'the box covers the panel');
+});
+
 test('screens of different widths are shown without outlines rather than guessed', async () => {
   const stories = [{ id: 'x', viewports: [{ name: 'desktop' }] }];
   const files = [
@@ -135,4 +182,55 @@ test('unchangedStories names the changes whose every screen shows no difference'
   assert.deepEqual([...diff.unchangedStories(screens)].sort(), ['a', 'c', 'd']);
   assert.deepEqual([...diff.unchangedStories([])], []);
   assert.deepEqual([...diff.unchangedStories(undefined)], []);
+});
+
+// A screen as a browser at `k` device pixels per CSS pixel saves it: each
+// CSS pixel drawn as a k×k block.
+const atDensity = (px, k) => {
+  const w = px.w * k;
+  const d = new Uint8Array(w * px.h * k * 4);
+  for (let y = 0; y < px.h * k; y += 1) {
+    for (let x = 0; x < w; x += 1) {
+      d.set(px.d.subarray((Math.floor(y / k) * px.w + Math.floor(x / k)) * 4, (Math.floor(y / k) * px.w + Math.floor(x / k)) * 4 + 4), (y * w + x) * 4);
+    }
+  }
+  return { w, h: px.h * k, d };
+};
+
+test('stills saved at device scale are compared in CSS pixels, and the screen says its density', async () => {
+  const before = screen(240, 200, [...glyphs(10, 10, 20), [20, 40, 80, 20, [37, 99, 235]], ...glyphs(20, 120, 10)]);
+  const after = screen(240, 200, [...glyphs(10, 10, 20), [20, 40, 180, 20, [37, 99, 235]], ...glyphs(20, 120, 10)]);
+  const shown = async (k) => {
+    const stories = [{ id: 'well', viewports: [{ name: 'phone', width: 240, height: 200 }] }];
+    const files = [
+      file('well', 'phone', 'base', 'context', atDensity(before, k)),
+      file('well', 'phone', 'head', 'context', atDensity(after, k)),
+      file('well', 'phone', 'head', 'focus', atDensity(crop(after, 18, 38, 184, 24), k)),
+    ];
+    return (await diff.screensFor(stories, files))[0];
+  };
+  const flat = await shown(1);
+  for (const k of [2, 3]) {
+    const dense = await shown(k);
+    assert.deepEqual([dense.width, dense.heightBefore, dense.heightAfter], [240, 200, 200], `${k}x geometry stays in CSS pixels`);
+    assert.equal(dense.density, k);
+    assert.deepEqual(dense.regions, flat.regions, `${k}x outlines the same areas as 1x`);
+  }
+  assert.equal(flat.density, 1);
+});
+
+test('a 3x phone screen is within what the diff compares; the size is read before anything is inflated', () => {
+  const phone = png(screen(1170, 2532));
+  assert.deepEqual([diff.decode(phone, 3).w, diff.decode(phone, 3).h], [390, 844]);
+  assert.throws(() => diff.decode(phone, 1), /too large/, 'at 1x the same image is too many pixels');
+  // A header claiming a huge image is refused without decoding its body.
+  const claim = Buffer.from(phone);
+  claim.writeUInt32BE(8000, 16);
+  claim.writeUInt32BE(8000, 20);
+  assert.throws(() => diff.decode(claim, 2), /too large/);
+});
+
+test('averaging down keeps a block\'s mean colour', () => {
+  const two = { width: 2, height: 2, data: Buffer.from([0, 0, 0, 255, 255, 255, 255, 255, 0, 0, 0, 255, 255, 255, 255, 255]) };
+  assert.deepEqual([...diff.averageDown(two, 2).d], [128, 128, 128, 255]);
 });

@@ -53,10 +53,18 @@ const MIN = 60 * 1000;
 
 function makePool() {
   const queries = [];
+  // apps.release_head_seen, as the row keeps it (release-watch.js firstSeenAt).
+  const seen = new Map();
   return {
     queries,
     query: async (sql, params) => {
       queries.push({ sql: String(sql), params });
+      if (/SET release_head_seen = CASE/.test(String(sql))) {
+        const [appId, sha, at] = params;
+        const prev = seen.get(appId);
+        if (!prev || prev.sha !== sha) seen.set(appId, { sha, at });
+        return { rows: [{ at: seen.get(appId).at }], rowCount: 1 };
+      }
       return { rows: [], rowCount: 1 };
     },
   };
@@ -102,7 +110,6 @@ function finished(at) {
 
 function reset() {
   posted.length = 0; notified.length = 0; pushed.length = 0; logged.length = 0;
-  releaseWatch._forTest.resetFirstSeen();
 }
 
 const written = (pool) => pool.queries.filter((q) => /SET release_stall = \$1/.test(q.sql))
@@ -368,6 +375,13 @@ test('the same commit escalating to a different kind is news again', async () =>
   assert.equal(failed.reported, true);
   assert.deepEqual(written(pool).map((r) => r.kind), ['workflow_running', 'workflow_failed']);
   assert.equal(notified.length, 2, 'the admins are told of each');
+  // Each is kept as an event too, after the record is cleared: the infra
+  // topic's "Homeroom releases that stalled" counts the commit once.
+  const kept = pool.queries.filter((q) => /INSERT INTO events/.test(q.sql)).map((q) => [q.params[1], q.params[3], JSON.parse(q.params[4])]);
+  assert.deepEqual(kept, [
+    [10, 'release_stalled', { sha: MERGED, kind: 'workflow_running', prNumber: 2589 }],
+    [10, 'release_stalled', { sha: MERGED, kind: 'workflow_failed', prNumber: 2589 }],
+  ]);
 });
 
 test('main moving on to a further commit starts over for that commit', async () => {
@@ -389,7 +403,7 @@ test('main moving on to a further commit starts over for that commit', async () 
   assert.equal(written(pool).length, 1);
 });
 
-test('a head the API could not date is measured from when this process first saw it', async () => {
+test('a head the API could not date is measured from when a look first saw it, kept on the row', async () => {
   reset();
   const pool = makePool();
   const undated = { sha: MERGED, committedAt: null, subject: HEAD.subject };

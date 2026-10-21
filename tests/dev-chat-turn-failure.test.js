@@ -60,7 +60,7 @@ test('an agent RUN that fails is a failure too, not a green tick', () => {
   for (const failing of [
     'Scout error: ${result.fatalError',
     'Scout error: ${(ccText',
-    "'Scout finished but produced no spec text.'",
+    "'Scout finished but produced no plan text.'",
     'Worker error: ${result.fatalError',
     '${executionAgentName} error: ${(ccText',
   ]) {
@@ -73,16 +73,16 @@ test('an agent RUN that fails is a failure too, not a green tick', () => {
 });
 
 test('…but an OUTCOME that is merely not a success is left alone', () => {
-  // Three neighbours of those six set the same `isError` flag and must NOT
-  // become failure cards:
+  // Neighbours of those six set the same `isError` flag and must NOT become
+  // failure cards:
   //   * "No changes were made by X" is an outcome, and the no_changes card
   //     already says so without claiming the turn broke;
-  //   * a stop is not a failure — the user asked for it;
-  //   * a staging-build failure carries changesReady and keeps its
-  //     Changes-ready card, because the commit exists and is proposable.
+  //   * a stop is not a failure — the user asked for it.
+  // (A staging-build failure is no longer the turn's to report: the turn
+  // hands the commit to the preview machine, whose failed prepare writes
+  // its own card.)
   for (const notAFailure of [
     'No changes were made by ${executionAgentName}',
-    'Staging build failed.',
   ]) {
     const at = SESSIONS.indexOf(notAFailure);
     assert.ok(at > 0, `${notAFailure} must still be produced`);

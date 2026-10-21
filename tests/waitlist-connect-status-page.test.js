@@ -22,7 +22,9 @@ const vm = require('node:vm');
 const express = require('express');
 
 const poolMod = require('../src/db/pool');
-poolMod.getPool = () => ({ query: async () => ({ rows: [] }) });
+// The round trip's state lives in waitlist_connect_states.
+const connectStates = require('./lib/waitlist-connect-states').connectStatesPool();
+poolMod.getPool = () => connectStates;
 
 const waitlist = require('../src/services/waitlist');
 const TOKEN = 'b'.repeat(48);

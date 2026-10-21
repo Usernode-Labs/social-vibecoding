@@ -35,7 +35,7 @@ const workerProgress = require('../worker-progress');
 const {
   activeWorkers,
   beginSessionOperation,
-  isSessionBusy,
+  isSessionBusyAnywhere,
 } = require('../active-workers');
 const {
   fallbackKindForTurn,
@@ -110,6 +110,9 @@ async function runMayorTurn(ctx, deps) {
     // client sent with it (null when none was sent).
     userMessageId = null,
     clientMessageId = null,
+    // The turn machine's work item running this turn (src/workflow/turn/,
+    // services/turns.js), named on the coding run's record as its owner.
+    owner = null,
   } = ctx;
   // Reassigned when a later model call needs a fresh payer (#664).
   let { userApiKey } = ctx;
@@ -436,7 +439,7 @@ async function runMayorTurn(ctx, deps) {
       const directSpec = await loadSessionSpec(pool, session.id);
       turnHasSpec = !!String(directSpec || '').trim();
 
-      if (isSessionBusy(session.id)) {
+      if (await isSessionBusyAnywhere(session.id, { pool, exceptTurn: true })) {
         const live = workerProgress.get(session.id);
         const busyIdentity = live?.backend
           ? {
@@ -457,6 +460,7 @@ async function runMayorTurn(ctx, deps) {
       }
 
       releaseDispatchOperation = beginSessionOperation(session.id);
+      await releaseDispatchOperation.recorded;
       send('assistant_message_end', {});
 
       let attachmentsBlock = '';
@@ -475,7 +479,7 @@ async function runMayorTurn(ctx, deps) {
 
       setPhase('cc');
       const toolResult = await runClaudeCodeTool({
-        pool, config, req, res, session, selectedModel,
+        pool, config, req, res, session, selectedModel, owner,
         userMessage: messageText,
         toolPromptArg: messageText,
         attachmentsBlock,
@@ -729,7 +733,7 @@ async function runMayorTurn(ctx, deps) {
     // alive". Treating warm-idle as busy here would falsely lock
     // the Mayor out of dispatch_scout / dispatch_claude_code for
     // the entire idle-eviction window of a previous turn.
-    const isWorkerBusy = isSessionBusy(session.id);
+    const isWorkerBusy = await isSessionBusyAnywhere(session.id, { pool, exceptTurn: true });
     // Inject the live spec_md into the Mayor's system prompt every
     // turn so revisions anchor against real content instead of
     // regenerating from scratch. Re-read before phase-2 below in
@@ -1392,7 +1396,7 @@ async function runMayorTurn(ctx, deps) {
     // gating on container-status would reject every scout/build
     // for ~10 min after the first dispatch finishes (warm idle is
     // not busy).
-    if (isSessionBusy(session.id)) {
+    if (await isSessionBusyAnywhere(session.id, { pool, exceptTurn: true })) {
       const live = workerProgress.get(session.id);
       const busyAgent = live?.backend
         ? {
@@ -1417,6 +1421,7 @@ async function runMayorTurn(ctx, deps) {
     // pass a point-in-time busy check and then mutate the branch while the
     // other is awaiting DB/GitHub work.
     releaseDispatchOperation = beginSessionOperation(session.id);
+    await releaseDispatchOperation.recorded;
 
     // Seal the phase-1 assistant bubble so the phase-2 wrap-up
     // lands in a fresh bubble below the CC status/progress events.
@@ -1528,7 +1533,7 @@ async function runMayorTurn(ctx, deps) {
 
       setPhase('cc');
       toolResult = await runScoutTool({
-        pool, config, req, res, session, selectedModel,
+        pool, config, req, res, session, selectedModel, owner,
         userMessage: messageText,
         toolPromptArg,
         attachmentsBlock,
@@ -1569,7 +1574,7 @@ async function runMayorTurn(ctx, deps) {
 
       setPhase('cc');
       toolResult = await runClaudeCodeTool({
-        pool, config, req, res, session, selectedModel,
+        pool, config, req, res, session, selectedModel, owner,
         userMessage: messageText,
         toolPromptArg,
         attachmentsBlock,
@@ -1814,7 +1819,7 @@ async function runMayorTurn(ctx, deps) {
       } else if (toolKind === 'scout') {
         // Spec/scout just planned something — make the build handoff
         // explicit so a finished spec doesn't read as a finished change.
-        mayorText2 = "_Spec updated: it's in the spec viewer. Tell me to build it whenever you're ready and I'll dispatch the coding agent._";
+        mayorText2 = "_Plan updated: it's in the plan viewer. Tell me to build it whenever you're ready and I'll dispatch the coding agent._";
       } else {
         mayorText2 = '_Done._';
       }

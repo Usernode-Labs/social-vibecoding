@@ -22,6 +22,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { execFileSync, spawnSync } = require('node:child_process');
+const { RUNNER_TEST_ENV } = require('./lib/runner-env');
 
 const ROOT = path.join(__dirname, '..');
 const LIB = path.join(ROOT, 'worker', 'session-branch.sh');
@@ -256,6 +257,42 @@ test('the push heal never reports a commit it did not push', (t) => {
   assert.equal(git(origin, 'rev-parse', 'refs/heads/dev/me'), mine);
 });
 
+// ── A failed first version's work, kept (worker.buildPartialCommitScript) ──
+
+function runPartialScript(ws, branch, msg = 'Homeroom bot: #1 Plant log') {
+  const script = `BRANCH='${branch}'\nCOMMIT_MSG='${msg}'\n${worker.buildPartialCommitScript({ workspace: ws, lib: LIB })}`;
+  const r = spawnSync('sh', ['-c', script], { env: GIT_ENV, encoding: 'utf8' });
+  return { code: r.status, stdout: r.stdout, parsed: worker.parsePartialCommit(r.stdout), stderr: r.stderr };
+}
+
+test('a failed turn\'s uncommitted work is committed on the session branch, and how far it is ahead is read', (t) => {
+  const { ws } = fixture(t);
+  fs.writeFileSync(path.join(ws, 'board.js'), 'half a board\n');
+  fs.writeFileSync(path.join(ws, 'app.js'), 'v1 and more\n');
+  const r = runPartialScript(ws, 'dev/me');
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(r.parsed.ahead, 2, 'its earlier turn and this one');
+  assert.equal(r.parsed.sha, git(ws, 'rev-parse', 'HEAD'));
+  assert.equal(git(ws, 'log', '-1', '--format=%s'), 'Homeroom bot: #1 Plant log');
+  assert.equal(git(ws, 'status', '--porcelain'), '', 'everything it left is in the commit');
+});
+
+test('a checkout with nothing past main keeps nothing, and a turn that ended on another line is not committed', (t) => {
+  const { ws } = fixture(t);
+  git(ws, 'checkout', '-q', '-b', 'dev/fresh', 'origin/main');
+  const r = runPartialScript(ws, 'dev/fresh');
+  assert.equal(r.code, 0, r.stderr);
+  assert.deepEqual(r.parsed, { ahead: 0, sha: git(ws, 'rev-parse', 'HEAD') });
+
+  const other = fixture(t);
+  git(other.ws, 'fetch', '-q', 'origin', 'dev/other');
+  git(other.ws, 'checkout', '-q', '-b', 'borrowed', other.theirs);
+  fs.writeFileSync(path.join(other.ws, 'calm.js'), 'calm\n');
+  const mismatch = runPartialScript(other.ws, 'dev/me');
+  assert.deepEqual(mismatch.parsed, { ahead: 0, sha: null });
+  assert.equal(worker.parsePartialCommit('no line'), null);
+});
+
 // ── The runners, end to end ────────────────────────────────────────────────
 
 function runnerEnv(t, ws, agentScript, extra = {}) {
@@ -274,7 +311,7 @@ function runnerEnv(t, ws, agentScript, extra = {}) {
     PATH: `${bin}:${process.env.PATH}`,
     HOME: dir,
     PROMPT_FILE: prompt, SYSTEM_PROMPT_FILE: system,
-    SESSION_ID: '1', PLATFORM_URL: 'http://127.0.0.1:9', WORKER_JWT: 'jwt',
+    ...RUNNER_TEST_ENV, SESSION_ID: '1', PLATFORM_URL: 'http://127.0.0.1:9', WORKER_JWT: 'jwt',
     MODE: 'build', BRANCH: 'dev/me', WORKSPACE_DIR: ws,
     BROWSER_MCP_CONFIG: path.join(dir, 'no-mcp.json'),
     INLOOP_PGDATA: path.join(dir, 'no-pgdata'),
@@ -350,7 +387,7 @@ exit 0
     ...GIT_ENV,
     PATH: `${bin}:${process.env.PATH}`, HOME: dir,
     PROMPT_FILE: prompt, BRANCH: 'dev/me', MODE: 'build',
-    WORKER_JWT: 'jwt', SESSION_ID: '1', PLATFORM_URL: 'http://127.0.0.1:9',
+    ...RUNNER_TEST_ENV, WORKER_JWT: 'jwt', SESSION_ID: '1', PLATFORM_URL: 'http://127.0.0.1:9',
     OPENROUTER_API_KEY: 'sk-or-v1-test', OPENROUTER_API_BASE: 'https://openrouter.ai/api/v1',
     AGENT_MODEL: 'z-ai/glm-5.3-flash',
     WORKSPACE_DIR: ws, CODEX_HOME: path.join(dir, 'codex-home'),
@@ -394,7 +431,7 @@ test('a branch mismatch reaches chat as its own message, live and after a restar
   const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
   const sessions = read('src/routes/sessions.js');
   assert.match(sessions, /\} else if \(result\.branchMismatch\) \{[\s\S]{0,400}ended up working on a different branch that doesn't build on this change, `\n\s+\+ 'so nothing from this turn was saved\. Send your request again to redo it here\.';/);
-  const server = read('server.js');
+  const server = read('server.js') + read('src/services/turn-recovery.js');
   assert.match(server, /\} else if \(result\.branchMismatch\) \{\n\s+summaryParts\.push\('The coding agent ended up working on a different branch/);
   const host = read('src/services/worker.js');
   assert.match(host, /else if \(k === 'branch_mismatch'\) state\.branchMismatch = v === '1';/);

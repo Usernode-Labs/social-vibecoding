@@ -61,6 +61,7 @@ const DDL = `
     joined_at TIMESTAMPTZ,
     left_at TIMESTAMPTZ,
     last_read_message_id INTEGER,
+    invite_note TEXT,
     PRIMARY KEY (conversation_id, user_id)
   );
   CREATE UNIQUE INDEX conversation_active_owner
@@ -132,6 +133,9 @@ const DDL = `
   CREATE TABLE notifications (
     id SERIAL PRIMARY KEY,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    -- #5580: set on the Homeroom bot's news about a project (schema.sql's
+    -- column references apps, which this schema does not create).
+    app_id INTEGER,
     conversation_id INTEGER REFERENCES conversations(id) ON DELETE CASCADE,
     conversation_message_id INTEGER REFERENCES conversation_messages(id) ON DELETE CASCADE,
     chat_message_id INTEGER,
@@ -154,6 +158,14 @@ const DDL = `
     PRIMARY KEY (user_low_id, user_high_id),
     CHECK (user_low_id < user_high_id)
   );
+  -- #5104: who may start something new with whom, and who a channel's @
+  -- list offers. This file pins consent, retries and revocation, so both
+  -- answer yes; the real rules (schema.sql) are pinned against the full
+  -- schema by tests/contact-privacy-postgres.test.js.
+  CREATE FUNCTION user_contactable_by(target_id INTEGER, sender_id INTEGER)
+    RETURNS BOOLEAN LANGUAGE sql AS $$ SELECT TRUE $$;
+  CREATE FUNCTION user_discoverable_by(target_id INTEGER, viewer_id INTEGER)
+    RETURNS BOOLEAN LANGUAGE sql AS $$ SELECT TRUE $$;
   CREATE TABLE chat_session_spec_conversation_shares (
     session_id INTEGER NOT NULL,
     version INTEGER NOT NULL,
@@ -353,6 +365,78 @@ test('postgres serializes conversation consent, retries, and revocation', async 
     assert.deepEqual((await conversations.listMessages(pool, frank, shared.conversationId)).messages
       .map((message) => message.content), ['before block', 'after block'],
     'unblocking restores retained shared-room history');
+  } finally {
+    if (pool) await pool.end().catch(() => {});
+    await client.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`).catch(() => {});
+    await client.end().catch(() => {});
+  }
+});
+
+// #3228: a group invitation carries the inviter's note and the accepted
+// member count, and the note is gone once the invitation is answered.
+test('a group invitation carries the inviter\'s note and the accepted member count', async (t) => {
+  const connection = await connect();
+  if (!connection) return t.skip('the pg driver is not installed in this environment');
+  if (connection.error) return t.skip(`no postgres reachable at ${DSN}: ${connection.error}`);
+
+  const { client, Pool } = connection;
+  const schema = `platform_messaging_note_test_${process.pid}`;
+  let pool;
+  try {
+    await client.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
+    await client.query(`CREATE SCHEMA ${schema}`);
+    pool = new Pool({
+      connectionString: DSN,
+      connectionTimeoutMillis: 3000,
+      max: 8,
+      options: `-c search_path=${schema}`,
+    });
+    await pool.query(DDL);
+
+    const ada = await addUser(pool, 'ada');
+    const mamase = await addUser(pool, 'mamase');
+    const sam = await addUser(pool, 'sam');
+
+    // The note rides the invitation: the invitee's payload has it beside the
+    // accepted member count, while the roster stays hidden until acceptance.
+    const created = await conversations.createGroup(
+      pool, ada, 'Friday demo crew', [mamase.id], 'Planning the Friday demo, we need someone for the slides');
+    assert.ok(created);
+    const invite = await conversations.getConversation(pool, mamase, created.conversationId);
+    assert.equal(invite.inviteNote, 'Planning the Friday demo, we need someone for the slides');
+    assert.equal(invite.memberCount, 1, 'the count includes only people who have accepted');
+    assert.deepEqual(invite.members, [], 'the roster stays hidden until acceptance');
+    assert.equal((await conversations.getConversation(pool, ada, created.conversationId)).inviteNote, null,
+      'the owner\'s own payload carries no note');
+
+    // The note is one line: a whitespace-only note is no note, while an
+    // overlong one or a non-string refuses the invitation like a bad title.
+    const blank = await conversations.createGroup(pool, ada, 'Blank note room', [mamase.id], ' \n\t ');
+    assert.ok(blank);
+    assert.equal((await conversations.getConversation(pool, mamase, blank.conversationId)).inviteNote, null);
+    assert.equal(await conversations.createGroup(pool, ada, 'Too long', [mamase.id], 'x'.repeat(141)), null);
+    assert.equal(await conversations.createGroup(pool, ada, 'Not text', [mamase.id], 7), null);
+
+    // addMembers writes the note, and a re-invite after a decline replaces
+    // it — or clears it, when the new invite carries none.
+    const second = await conversations.createGroup(pool, ada, 'Second room', [sam.id]);
+    assert.ok(await conversations.addMembers(pool, ada, second.conversationId, [mamase.id], 'Bring the slides'));
+    assert.equal((await conversations.getConversation(pool, mamase, second.conversationId)).inviteNote, 'Bring the slides');
+    assert.ok(await conversations.respond(pool, mamase, second.conversationId, 'decline'));
+    await conversations.addMembers(pool, ada, second.conversationId, [mamase.id]);
+    assert.equal((await conversations.getConversation(pool, mamase, second.conversationId)).inviteNote, null,
+      'a re-invite with no note clears the old one');
+
+    // Answering the invitation takes the note away with the membership.
+    assert.ok(await conversations.respond(pool, mamase, second.conversationId, 'accept'));
+    const member = await conversations.getConversation(pool, mamase, second.conversationId);
+    assert.equal(member.inviteNote, null);
+    assert.equal(member.memberCount, 2);
+
+    // Direct requests already name the requester: they never carry a note.
+    const direct = await conversations.createDirect(pool, ada, mamase.id);
+    assert.ok(direct);
+    assert.equal((await conversations.getConversation(pool, mamase, direct.conversationId)).inviteNote, null);
   } finally {
     if (pool) await pool.end().catch(() => {});
     await client.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`).catch(() => {});

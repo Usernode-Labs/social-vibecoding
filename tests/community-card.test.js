@@ -66,6 +66,21 @@ test('the approval rule is one sentence per regime, read from the server', () =>
   assert.doesNotMatch(read('public/css/app.css'), /\.dev-ws-rules-sub/, 'and its style with it');
 });
 
+test('#4527, After-Workshop-B: the rule is one line, worded shorter where the card is narrow', () => {
+  const CSS = read('public/css/app.css');
+  // The three steps went, and their stacking with them: the rule is the
+  // last line of the Overview card.
+  assert.doesNotMatch(CSS, /\.dev-ws-rule-step|\.dev-ws-rule-join|\.dev-ws-strip\[data-ws-approval-rules\]/);
+  // The card is its own container, so the shorter wording ("Goes live
+  // when …") fires when the CARD is narrow — a phone, or beside the side
+  // panel — not only when the window is.
+  assert.match(CSS, /^\.dev-ws-strip\[data-ws-dashboard\] \{ container-type: inline-size; \}$/m);
+  assert.match(CSS, /\.dev-ws-ov-narrow \{ display: none; \}\n@container \(max-width: 520px\) \{\n\s*\.dev-ws-ov-wide \{ display: none; \}\n\s*\.dev-ws-ov-narrow \{ display: inline; \}\n\}/);
+  // A rule over it, the shield, the words, then Rules at its far end.
+  assert.match(CSS, /\.dev-ws-ov-rule \{\s*margin: 0; padding-top: 10px; border-top: 1px solid var\(--app-sheet-line\);\s*display: flex; align-items: flex-start; gap: 8px;/);
+  assert.match(CSS, /\.dev-ws-ov-rule-text \{ flex: 1 1 auto; min-width: 0; \}/);
+});
+
 test('the audience line uses the words on screen, and "Just you" counts nobody', () => {
   const { audienceLine } = loadTsx(CARD);
   assert.equal(audienceLine({ audience: 'open', audience_label: 'Public community', member_count: 12 }), 'Public community · 12 members');
@@ -73,11 +88,30 @@ test('the audience line uses the words on screen, and "Just you" counts nobody',
   assert.equal(audienceLine({ audience: 'solo', audience_label: 'Just you', member_count: 1 }), 'Just you');
 });
 
+test('#4896: the hero says "Just you so far" to the one person in a project nobody else has joined', () => {
+  const { justYouSoFar, audienceLine } = loadTsx(CARD);
+  assert.equal(justYouSoFar({ audience: 'solo' }, true), 'Just you so far');
+  assert.equal(justYouSoFar({ audience: 'solo' }, false), null, 'not to somebody outside it, who is not "you"');
+  assert.equal(justYouSoFar({ audience: 'invited' }, true), null);
+  assert.equal(justYouSoFar({ audience: 'open' }, true), null);
+  // The audience keeps its name everywhere else it is said (the Who can see
+  // & change it sheet's line reads audienceLine).
+  assert.equal(audienceLine({ audience: 'solo', audience_label: 'Just you', member_count: 1 }), 'Just you');
+  assert.match(read('frontend/src/features/dialogs/who-decides.tsx'), /audience: audienceLine\(community\)/);
+  const src = read(CARD);
+  assert.match(src, /data-ws-community-audience="">\{justYouSoFar\(data, member\) \|\| audienceLine\(data\)\}<\/span>/,
+    'under the name, from the first day');
+  // 15 Oct 2026: one hub from the first day, and a link out is still Just
+  // you: no first week's people row, and no "Private community" said for a
+  // project nobody has joined.
+  assert.doesNotMatch(src, /audienceLabel=\{justYouSoFar|WeekPeople|week\.privateCommunity|data-ws-seats/);
+});
+
 test('before the read the hero draws only what needs none: Open app and the ⋯', () => {
   // No server render of it, so no hydration to mismatch. The tile and the
-  // name are the coloured header's now (#852), so before the read the hero
-  // is the actions that depend on nothing it says, or nothing at all; the
-  // fetch runs in an effect.
+  // name come with the read (HeroIdentity), so before it the hero is the
+  // actions that depend on nothing it says, or nothing at all; the fetch
+  // runs in a (layout) effect.
   const { CommunityCard } = loadTsx(CARD);
   assert.equal(renderToHtml(createElement(CommunityCard, { slug: 'notes' })), '');
   const pending = renderToHtml(createElement(CommunityCard, { slug: 'notes', name: 'Notes', canOpenApp: true }));
@@ -87,20 +121,25 @@ test('before the read the hero draws only what needs none: Open app and the ⋯'
   // sets it (features/header/community-tint.ts), not from a prop.
   assert.match(read('public/css/app.css'), /\.dev-ws-open-app \{[^}]*background: var\(--community-tint, var\(--accent\)\)/);
   assert.doesNotMatch(pending, /dev-ws-hero-name|data-ws-community=""|Join|data-ws-community-rule/,
-    'no second name under the header\'s, and nothing that depends on membership before it is known');
+    'no name before the read says it, and nothing that depends on membership before it is known');
   const src = read(CARD);
   // ONE READ FOR THE HUB: the hero and the hub's cards share the community
-  // record, and each mount asks for a fresh copy unless one is on its way.
+  // record, and each mount asks for a fresh copy unless one is on its way:
+  // before the first paint, so a hub with none yet holds its skeleton
+  // (communityPending, onboarding run two).
   assert.match(src, /const data = useCommunity\(slug\);/);
-  assert.match(src, /if \(slug && !inflight\.has\(slug\)\) void reloadCommunity\(slug\);/);
+  assert.match(src, /useLayoutEffect\(\(\) => \{\s+if \(!slug \|\| inflight\.has\(slug\)\) return;\s+void reloadCommunity\(slug\);/);
 });
 
 test('the channel is a hub card at its old address; Join asks under its button and joins through offerJoin', () => {
   const src = read(CARD);
   const hub = read('frontend/src/features/dev-board/workshop/hub-cards.tsx');
   assert.doesNotMatch(src, /#messages\/app\//, 'the hero no longer carries a channel row');
-  assert.match(hub, /const href = channel\.href \|\| `#messages\/app\/\$\{encodeURIComponent\(slug\)\}`;/,
-    'the hub\'s channel card opens the same room, at the same address');
+  // The hub's way to the room is For you's Discussion row, which opens the
+  // page's own Discussion place (the room at its address lives there).
+  assert.match(hub, /data-ws-channel="preview"\s+data-ws-channel-open=""\s+data-ws-channel-handle=\{channel\.handle \|\| undefined\}\s+onClick=\{onOpen\}/,
+    'the hub\'s Discussion row is a door to the Discussion place');
+  assert.doesNotMatch(hub, /#messages\/app\//, 'and links to no second copy of the room');
   assert.match(src, /await offerJoin\(\{ code: 'join_required', app: \{ slug, name: name \|\| data\.name \|\| slug \} \}\)/,
     'the button asks the question every refusal asks, through the same function');
   assert.match(src, /registerJoinAnchor\(slug, \{/,
@@ -125,20 +164,25 @@ test('the channel is a hub card at its old address; Join asks under its button a
   // `member` is is_member, except under `?shot=invite-join`, which draws the
   // hero as an invitee sees it (#3700).
   assert.match(src, /const member = data\.is_member && !offer\?\.preview;/);
-  assert.match(src, /\{member && !solo \? \(\s*<Button[\s\S]{0,160}data-ws-community-invite=""/,
-    'Invite is offered to members');
+  // #4896: on a project that is just yours too, beside "Just you so far":
+  // it was left to the Share it card, and a newcomer met "Just you" alone.
+  assert.match(src, /\{member \? \(\s*<Button[\s\S]{0,160}data-ws-community-invite=""/,
+    'Invite is offered to members, a project of one included');
   assert.doesNotMatch(src, /_plusMenuShowsMembers/, 'not by the members dialog\'s gate');
 });
 
-test('the hero leads the hub, above what needs you and its discussion; who is here is the hero\'s (#3268)', () => {
+test('the hero leads the hub, above what is for you and what went live; who is around is the hero\'s (#3268)', () => {
   const lander = read('frontend/src/features/dev-board/workshop/workshop.tsx');
   const tab = lander.indexOf("{tab === 'status' ? (");
   const hero = lander.indexOf('<CommunityCard\n          slug={slug}');
-  const needs = lander.indexOf('<NeedsCard');
-  const channel = lander.indexOf('<ChannelCard');
-  assert.ok(tab > 0 && hero > tab && needs > hero && channel > needs,
-    'first on the hub, then Needs you and the discussion');
-  assert.doesNotMatch(lander, /<MembersCard/, 'no separate Members & activity card');
-  assert.match(lander, /<CommunityCard\s+slug=\{slug\}\s+name=\{app\.name \|\| undefined\}\s+canOpenApp=\{!actions\.selfHosted\}/,
-    'its tile and name are the coloured header\'s (#852)');
+  const forYou = lander.indexOf('<ForYouCard');
+  const recent = lander.indexOf('<RecentlyLive');
+  assert.ok(tab > 0 && hero > tab && forYou > hero && recent > forYou,
+    'first on the hub, then For you and Recently live');
+  assert.doesNotMatch(lander, /<MembersCard|<NeedsCard|<ChannelCard|<GoingCard/,
+    'no separate Members & activity, Needs you, channel or metrics card');
+  // The hub's head: its tile and name are the page's own record of the app,
+  // the header chip's (improveStore), once it is about this project.
+  assert.match(lander, /<CommunityCard\s+slug=\{slug\}\s+name=\{app\.name \|\| undefined\}\s+iconUrl=\{own \? app\.iconUrl : null\}\s+iconEmoji=\{own \? app\.iconEmoji : null\}\s+canOpenApp=\{!actions\.selfHosted\}/,
+    'its tile and name are the header chip\'s');
 });

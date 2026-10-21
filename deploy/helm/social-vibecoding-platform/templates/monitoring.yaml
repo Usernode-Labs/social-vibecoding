@@ -1,0 +1,96 @@
+{{- /* Only where the Prometheus Operator's kinds exist: a cluster without them
+would refuse the whole sync. */}}
+{{- if and .Values.enabled .Values.platform.enabled .Values.platform.conductor.enabled .Values.platform.conductor.metricsPort .Values.monitoring.enabled (.Capabilities.APIVersions.Has "monitoring.coreos.com/v1") }}
+{{- $conductor := printf "%s-conductor" (include "social-vibecoding-platform.fullname" .) }}
+{{- $ns := .Release.Namespace | quote }}
+# The workflow's metrics and alerts (docs/kubernetes-operations.md,
+# "Workflow alerts"). Every conductor replica serves the same numbers, read
+# from Postgres on each scrape (src/workflow/metrics.ts): the rules take max.
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: {{ $conductor }}-workflow
+  labels:
+    {{- include "social-vibecoding-platform.labels" . | nindent 4 }}
+    release: {{ .Values.monitoring.prometheusRelease }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "social-vibecoding-platform.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: platform
+      social.usernode.io/process-role: conductor
+  podMetricsEndpoints:
+    - port: metrics
+      path: /metrics
+      interval: 30s
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ $conductor }}-workflow
+  labels:
+    {{- include "social-vibecoding-platform.labels" . | nindent 4 }}
+    release: {{ .Values.monitoring.prometheusRelease }}
+spec:
+  groups:
+    - name: social-vibecoding-workflow
+      rules:
+        - alert: SocialWorkflowNoConductor
+          expr: max(kube_deployment_status_replicas_available{namespace={{ $ns }},deployment={{ $conductor | quote }}}) < 1
+          for: 2m
+          labels: {severity: critical, namespace: {{ $ns }}, deployment: {{ $conductor | quote }}}
+          annotations:
+            summary: No conductor is running, so nothing decides or runs the workflow
+            description: Votes, merges, previews and the bot wait; routes answer "pending".
+        - alert: SocialWorkflowConductorUnderStrength
+          expr: |
+            max(kube_deployment_status_replicas_available{namespace={{ $ns }},deployment={{ $conductor | quote }}})
+              < max(kube_deployment_spec_replicas{namespace={{ $ns }},deployment={{ $conductor | quote }}})
+          for: 15m
+          labels: {severity: warning, namespace: {{ $ns }}, deployment: {{ $conductor | quote }}}
+          annotations:
+            summary: Fewer conductors are running than asked for
+        - alert: SocialWorkflowConductorRestarting
+          expr: sum(increase(kube_pod_container_status_restarts_total{namespace={{ $ns }},pod=~{{ printf "%s-.*" $conductor | quote }}}[30m])) > 3
+          labels: {severity: warning, namespace: {{ $ns }}, deployment: {{ $conductor | quote }}}
+          annotations:
+            summary: The conductors restarted more than three times in half an hour
+        - alert: SocialWorkflowWorkNobodyTakes
+          expr: max(homeroom_workflow_unclaimed_oldest_seconds{namespace={{ $ns }}}) > 300
+          for: 5m
+          labels: {severity: critical, namespace: {{ $ns }}}
+          annotations:
+            summary: Workflow work that a conductor could take has waited over five minutes
+            description: Admin → Workflows lists it under "nobody takes it".
+        - alert: SocialWorkflowEventsNotDecided
+          expr: max(homeroom_workflow_pending_event_oldest_seconds{namespace={{ $ns }}}) > 120
+          for: 5m
+          labels: {severity: critical, namespace: {{ $ns }}}
+          annotations:
+            summary: A workflow event has waited over two minutes to be decided
+        - alert: SocialWorkflowWorkKeepsLapsing
+          expr: max(homeroom_workflow_work_lapsed_most_last_hour{namespace={{ $ns }}}) >= 3
+          labels: {severity: warning, namespace: {{ $ns }}}
+          annotations:
+            summary: A work item's lease lapsed three times in an hour (its process died, hung or lost the database)
+            description: An item that takes its process down with it shows here; Admin → Workflows lists its attempts.
+        - alert: SocialWorkflowInstancesFlagged
+          expr: max by (flag) (homeroom_workflow_instances_flagged{namespace={{ $ns }}}) > 0
+          for: 15m
+          labels: {severity: warning, namespace: {{ $ns }}}
+          annotations:
+            summary: Workflow instances are faulted or stalled
+            description: Admin → Workflows, "Needs a person".
+        - alert: SocialWorkflowDeadlinesOverdue
+          expr: max(homeroom_workflow_deadlines_overdue{namespace={{ $ns }}}) > 0
+          for: 10m
+          labels: {severity: warning, namespace: {{ $ns }}}
+          annotations:
+            summary: Workflow deadlines passed without firing
+        - alert: SocialWorkflowSlowDecisions
+          expr: max by (machine) (homeroom_workflow_decision_seconds_p95{namespace={{ $ns }}}) > 5
+          for: 15m
+          labels: {severity: warning, namespace: {{ $ns }}}
+          annotations:
+            summary: People's workflow events take over five seconds to be decided (95th percentile)
+{{- end }}

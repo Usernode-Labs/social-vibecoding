@@ -31,6 +31,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -86,11 +87,13 @@ test('the spinner is gated on the busy state alone', () => {
   // first one — not whichever branch happens to be listed first.
   const busyBranch = body.slice(body.indexOf('if (session.busy)'),
     body.indexOf("if (session.kind === 'task')"));
-  assert.match(busyBranch, /label: 'Working'/);
+  assert.match(busyBranch, /label: t\('agent:menu\.row\.state\.working'\)/);
+  assert.equal(message('agent:menu.row.state.working'), 'Working');
   assert.match(busyBranch, /spinner: true/);
 
   const taskBranch = body.slice(body.indexOf("if (session.kind === 'task')"));
-  assert.match(taskBranch, /label: 'Handed off'[\s\S]{0,200}?spinner: false/,
+  assert.equal(message('agent:menu.row.state.handedOff'), 'Handed off');
+  assert.match(taskBranch, /label: t\('agent:menu\.row\.state\.handedOff'\)[\s\S]{0,200}?spinner: false/,
     'a work order runs on the user own machine; an arc turning here would '
     + 'claim a liveness this side has no way to observe (#1417)');
 });
@@ -156,16 +159,17 @@ test('the pill lays its two children out like the platform\'s other one', () => 
 test('the busy-row check selects the arc, and no check was added', () => {
   // The SURFACE moved and the check moved with it (#2718 review): these rows
   // were the Improve panel's, and with the panel retired they were the
-  // notifications sheet's Agents tab; #2815 folded that tab into Messages,
-  // so they are reached by `?shot=notifications-messages` now. The row, the
-  // mock and the arc are unchanged, which is why this still asserts one
-  // check owning one mock row.
+  // notifications sheet's Agents tab; #2815 folded that tab into the bell's
+  // Messages filter, and #5289 took that filter out: the rows are checked on
+  // the Messages screen's agents list now, where they had been drawn all
+  // along. The row, the mock and the arc are unchanged, which is why this
+  // still asserts one check owning one mock row.
   const busy = MANIFEST.tests.filter((t) =>
-    /a\[href\$="\/proposals\/990102"\]/.test(t.expectSelector || ''));
+    /\[data-inbox-session="s990102"\]/.test(t.expectSelector || ''));
   assert.equal(busy.length, 1, 'one check owns the busy mock row');
   assert.match(busy[0].expectSelector, /\.dc-status-spinner-arc$/,
     'retargeted with the markup — .animate-pulse now matches nothing there');
-  assert.equal(busy[0].path, '/?shot=notifications-messages&demo=1#app/usernode-2d5619/dev');
+  assert.equal(busy[0].path, '/?demo=1#messages');
 
   // …and it RETARGETS rather than adds, which is what the equality above
   // pins: one check owns the busy mock row, before and after.

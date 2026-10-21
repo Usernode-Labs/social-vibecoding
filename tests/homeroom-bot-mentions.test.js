@@ -105,7 +105,7 @@ test('a post tags everyone in the thread and notifies each of them; GitHub gets 
     pool, github, ws, app, repo: { owner: 'o', repo: 'r' }, issueNumber: 24, kind: 'spec',
     text: 'spec', mentions: ['evan'], mention: 'evan', sender: BOT, notifications, threadMessage: card,
   });
-  assert.match(sent[0].content, /^@evan 📋 Homeroom bot's spec/, 'the spec card tags them too, once');
+  assert.match(sent[0].content, /^@evan 📋 Plan v1: T\. I'm building it now\./, 'a card with tags carries them once');
 });
 
 // ── Recorded before anything is posted ──────────────────────────────────
@@ -147,12 +147,12 @@ test('triage records the ask before the verdict is posted, so that very post lea
   };
   const out = await bot.runTriage(pool, {}, {
     bot: { id: 77, username: 'homeroom_bot' }, app: { id: 9, slug: 'todo', repo_url: 'https://github.com/o/r' },
-    item: { id: 1, issue_number: 12 }, mode: 'shadow', settings: { mode: 'shadow', liveApps: [], turnSeconds: 60 }, deps,
+    item: { id: 1, issue_number: 12 }, mode: 'shadow', settings: { mode: 'shadow', turnSeconds: 60 }, deps,
   });
   assert.equal(out.verdict, 'person');
   assert.deepEqual(order, [['run'], ['asks', ['maya'], ['sam'], 900]]);
   const src = read('src/services/homeroom-bot.js');
-  const tri = src.slice(src.indexOf('await supersedeQueuedBuilds(pool, { appId: app.id, issueNumber, runId })'), src.indexOf("log.info('homeroom-bot', 'Triaged', {"));
+  const tri = src.slice(src.lastIndexOf('await supersedeEarlierBuilds(pool, { app, issueNumber, runId });'), src.indexOf("log.info('homeroom-bot', 'Triaged', {"));
   assert.match(tri, /live\.applyMentionAsks\(/, 'recorded before actOnVerdict runs, in the same run');
   const fu = src.slice(src.indexOf('const parsed = followup.parseFollowUp(result.lastResultText);'), src.indexOf('const moved = followup.headMoved({'));
   assert.match(fu, /live\.applyMentionAsks\(\{\n\s+pool, github, app, repo, issueNumber, stop: parsed\.stopMentioning, resume: parsed\.resumeMentioning,\n\s+proposalSessionId: session\.id,/,

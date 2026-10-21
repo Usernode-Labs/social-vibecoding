@@ -12,10 +12,10 @@
 //      carrying a count. This is the per-conversation quality the retired
 //      Messages tag had and the bell gave up; it comes back here rather than
 //      as a second badge somewhere else.
-//   2. The sheet grows a Messages tab — one place to catch up on
-//      conversations whatever the rest of the feed is doing — and that tab
-//      carries the way out to the full #messages screen, the same
-//      destination the app chip's Messages row opens.
+//   2. The sheet grew a Messages tab for a while, with a way out to the
+//      #messages screen. #5289 took it out again: it repeated the Messages
+//      tab in the bar, which lists the same conversations and the agents
+//      beside them. The pins in part 2 hold that it stays gone.
 //
 // Frontend logic is extracted from the shipped source (so these cannot drift
 // from what runs) and exercised against stubs, in the style of
@@ -25,6 +25,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -119,110 +120,47 @@ test('the count rides only on a genuine collapse', () => {
     'a single notification keeps the view it always had, with no count field');
 });
 
-// ── 2. the Messages tab ─────────────────────────────────────────────────
+// ── 2. #5289: no Messages filter in the bell ────────────────────────────
 
-test('the sheet filters a Messages tab off the row flag, not off kind', () => {
-  assert.match(SHEET_SRC, /const messages = all\.filter\(\(view\) => view\.conversation \|\| view\.agent\)/);
-  assert.match(SHEET_SRC, /tab === 'unread' \? unread\s*\n\s*: tab === 'messages' \? messages : all/);
-  // The flag is set where CONVERSATION_NOTIF_KINDS already lives, so the tab
-  // cannot drift from the set the routing and the row copy agree on.
+test('the strip is Unread and All, and nothing filters on a Messages tab', () => {
+  assert.match(SHEET_SRC, /type Tab = 'all' \| 'unread';/);
+  assert.doesNotMatch(SHEET_SRC, /notifications-tab-messages|notifications-all-messages|'messages'/);
+  assert.doesNotMatch(SHEET_SRC, /notifications-see-older-messages|loadOlderMessages/);
+  assert.doesNotMatch(HTML, /id="notifications-tab-messages"/);
+  assert.match(HTML, /id="notifications-tab-unread"[\s\S]*?id="notifications-tab-all"/);
+  // The pager it had, and the cursor behind it, went with it.
+  assert.doesNotMatch(FE_SRC, /loadOlderMessages|msgNextBefore|msgHasMore/);
+  // A conversation row still says it is one: the sheet draws a person for it
+  // and never folds it into a kind group.
   assert.match(FE_SRC, /conversation: true,/);
-  assert.match(HTML, /id="notifications-tab-messages"/,
-    'the tab ships in the static markup, so it is there before any data loads');
+  assert.doesNotMatch(FE_SRC, /AGENT_NOTIF_KINDS|agent: true/);
 });
 
-// ── #2815: agents live under Messages, not on a tab of their own ────────
-
-test('there is no Agents tab: the strip is Unread, Messages, All', () => {
+test('there is no Agents tab either, and the old deep link opens the sheet on Unread', () => {
   assert.doesNotMatch(SHEET_SRC, /notifications-tab-agents/);
   assert.doesNotMatch(SHEET_SRC, /'agents'/);
-  assert.doesNotMatch(HTML, /id="notifications-tab-agents"/);
-  assert.doesNotMatch(FE_SRC, /notifications-agents/,
-    'the retired deep link is gone from the opener too');
-});
-
-test('agent notifications carry a flag set beside the kinds that name them', () => {
-  const kinds = FE_SRC.slice(FE_SRC.indexOf('const AGENT_NOTIF_KINDS'));
-  for (const kind of ['session_done', 'session_stalled', 'auto_solve_done', 'agent_awaiting_input', 'connector_submitted']) {
-    assert.match(kinds.slice(0, kinds.indexOf(']);')), new RegExp(`'${kind}'`));
-  }
-  assert.match(FE_SRC, /AGENT_NOTIF_KINDS\.has\(run\.item && run\.item\.kind\)\s*\n?\s*\? \{ \.\.\.rowView\(run\.item\), agent: true \}/);
-});
-
-test('the Messages tab interleaves running sessions with its rows by time', () => {
-  // The same <SessionRow> the Agents tab drew, sorted into one list with the
-  // notification rows on their own timestamps, newest first.
-  assert.match(SHEET_SRC, /\{ type: 'session', key: `s:\$\{session\.key\}`, at: session\.sortAt \|\| 0, session \}/);
-  assert.match(SHEET_SRC, /\]\.sort\(\(a, b\) => b\.at - a\.at\)/);
-  assert.match(SHEET_SRC, /<SessionRow[\s\S]{0,120}showApp/);
-});
-
-test('the tab count sums collapsed rows, so it agrees with the bell', () => {
-  assert.match(
-    SHEET_SRC,
-    /unread\.reduce\(\(sum, view\) => sum \+ \(view\.count \|\| 1\), 0\)/,
-    'a collapsed row stands for `count` notifications; counting rows would say 1 where the '
-    + 'badge says 4',
-  );
-  assert.match(SHEET_SRC, /\{unreadCount \? `Unread \(\$\{unreadCount\}\)` : 'Unread'\}/);
-});
-
-test('the Messages tab carries the way out to the full Messages screen', () => {
-  const button = SHEET_SRC.slice(
-    SHEET_SRC.indexOf("id=\"notifications-all-messages\""),
-    SHEET_SRC.indexOf('<NotificationsPinnedSections />'),
-  );
-  assert.ok(button, 'the button is rendered on the messages tab');
-  // Same destination as the app chip's Messages row, reached the same way a
-  // notification row reaches a conversation.
-  assert.match(button, /if \(bridge\?\.open\) bridge\.open\(\);/,
-    'the React bridge re-renders even when #messages is already the hash');
-  assert.match(button, /else window\.location\.hash = '#messages';/,
-    'and the hash fallback works before the island publishes its controller');
-  // On touch the sheet is a modal kit sheet: it has to be gone before the
-  // screen it navigates to arrives.
-  assert.match(button, /NotificationsSheet\.close\(\)/);
-  const closeAt = button.indexOf('NotificationsSheet.close()');
-  const navAt = button.indexOf('bridge.open()');
-  assert.ok(closeAt > -1 && navAt > closeAt, 'dismissed before it routes');
-  // It replaces Saved + Invites on that tab rather than stacking under them:
-  // between them those two can hold ~384px, most of a phone's first screen.
-  assert.match(SHEET_SRC, /tab === 'messages' \? \(/);
-});
-
-test('a URL reaches the tab, because a declared check cannot click', () => {
+  assert.doesNotMatch(FE_SRC, /notifications-agents/);
   assert.match(FE_SRC, /shot !== 'notifications' && shot !== 'notifications-messages'/,
-    'the deep link opens the sheet');
-  assert.match(SHEET_SRC, /if \(shot === 'notifications-messages'\) setTab\('messages'\)/,
-    'and selects the tab');
-  // In an effect, never in the initial state: the SSG pass renders this island
-  // in Node, and a render-time read of location would mismatch on hydration —
-  // which console.errors, which fails proposal checks.
-  const effect = SHEET_SRC.slice(SHEET_SRC.indexOf("const [tab, setTab]"),
+    'a link that still carries the old shot opens the sheet');
+  assert.doesNotMatch(SHEET_SRC, /setTab\('messages'\)/);
+  const effect = SHEET_SRC.slice(SHEET_SRC.indexOf('const [tab, setTab]'),
     SHEET_SRC.indexOf('const all = snap.screenList'));
-  assert.match(effect, /useIsomorphicLayoutEffect/);
-  // The prerendered tab is UNREAD, which is also where the sheet opens: the
-  // bell is tapped because it has a count, and the count is the unread. What
-  // this line is really pinning is that the initial tab is a CONSTANT — the
-  // SSG pass and the client's first render must agree on it, whatever it is,
-  // or hydration mismatches and console.errors.
   assert.match(effect, /useState<Tab>\('unread'\)/, 'the prerendered tab is Unread');
-  assert.doesNotMatch(HTML, /id="notifications-all-messages"/,
-    'so the button is absent from the static markup, and is not an ADDED_IDS entry');
 });
 
-test('declared checks cover the tab, the way out and a collapsed row', () => {
-  const has = (fragment) => dapp.tests.some(
-    (t) => (t.expectSelector || '').includes(fragment),
-  );
-  assert.ok(has('#notifications-tab-messages'), 'the tab is checked');
-  assert.ok(has('#notifications-all-messages'), 'the way out is checked');
-  assert.ok(has('[aria-label="2 notifications"]'), 'a collapsed count is checked');
-  // Every route that needs the tab active reaches it by URL.
-  for (const t of dapp.tests) {
-    if ((t.expectSelector || '').includes('#notifications-all-messages')) {
-      assert.match(t.path, /shot=notifications-messages/,
-        'the check opens the tab it asserts on');
-    }
-  }
+test('declared checks follow the agent rows to Messages and keep a collapsed row', () => {
+  const has = (fragment) => dapp.tests.some((t) => (t.expectSelector || '').includes(fragment));
+  assert.ok(!has('#notifications-tab-messages'));
+  assert.ok(!has('#notifications-all-messages'));
+  assert.ok(!dapp.tests.some((t) => /shot=notifications-messages/.test(t.path)));
+  assert.ok(has('[data-notif-id="990207"] [aria-label="2 notifications"]'), 'a collapsed count is checked');
+  // #18: a plain message is not on Unread, so its rows are checked on All,
+  // which `?shot=notifications-all` opens the sheet on.
+  const messageChecks = dapp.tests.filter((t) => (t.expectSelector || '').includes('[data-notif-id="990207"]'));
+  assert.ok(messageChecks.length >= 2);
+  for (const check of messageChecks) assert.equal(check.path, '/?shot=notifications-all&demo=1', check.name);
+  assert.match(FE_SRC, /shot !== 'notifications-all'\) return;/, 'the All link opens the sheet');
+  assert.match(SHEET_SRC, /if \(shot === 'notifications-all'\) setTab\('all'\);/, 'and the sheet lands on All');
+  assert.ok(has('#messages-screen:not(.hidden) [data-improve-row="task"][href$="/dev/issues/900002"]'),
+    'the work-order row is checked where it lives now');
 });

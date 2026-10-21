@@ -111,53 +111,27 @@ test('exportFilename is timestamped, .sql.gz, and filesystem-safe', () => {
   assert.ok(!/[/\\"']/.test(name), 'no quote or separator can break Content-Disposition');
 });
 
-// ── Single-flight guard ──────────────────────────────────────────────
+// ── Single-flight guard and tickets ──────────────────────────────────
+//
+// Both are kept on the export's db_exports row, against the full schema in
+// tests/db-export-postgres.test.js. What is pinned here needs no database.
 
-test('only one export may run platform-wide', () => {
-  dbExport.endExport();
-  assert.equal(dbExport.isExportInProgress(), false);
-  assert.equal(dbExport.beginExport({ userId: 1 }), true);
-  assert.equal(dbExport.isExportInProgress(), true);
-  assert.equal(dbExport.beginExport({ userId: 2 }), false, 'second export is refused');
-  assert.equal(dbExport.currentExport().userId, 1);
-  dbExport.endExport();
-  assert.equal(dbExport.isExportInProgress(), false);
-  assert.equal(dbExport.beginExport({ userId: 2 }), true, 'reusable after release');
-  dbExport.endExport();
-});
-
-// ── Tickets ──────────────────────────────────────────────────────────
-
-test('a ticket is single-use', () => {
-  dbExport._resetTickets();
-  const { token } = dbExport.issueTicket({ userId: 7, ip: '203.0.113.5', auditId: 42, dbName: 'usernode' });
-  const first = dbExport.consumeTicket(token, 7);
-  assert.equal(first.auditId, 42);
-  assert.equal(dbExport.consumeTicket(token, 7), null, 'replay is refused');
-});
-
-test('a ticket is bound to the admin who was verified for it', () => {
-  dbExport._resetTickets();
-  const { token } = dbExport.issueTicket({ userId: 7, auditId: 1, dbName: 'usernode' });
-  assert.equal(dbExport.consumeTicket(token, 8), null, 'another admin cannot redeem it');
-  // …and the failed attempt must not burn it for the rightful owner.
-  assert.ok(dbExport.consumeTicket(token, 7), 'owner can still redeem');
-});
-
-test('unknown and malformed tokens are refused', () => {
-  dbExport._resetTickets();
-  for (const bad of ['', null, undefined, 'deadbeef', 123]) {
-    assert.equal(dbExport.consumeTicket(bad, 7), null);
+test('a malformed token is refused before any query', async () => {
+  const pool = { query: async () => { throw new Error('no query for a malformed token'); } };
+  for (const bad of ['', null, undefined, 'deadbeef', 123, 'g'.repeat(64)]) {
+    assert.equal(await dbExport.consumeTicket(pool, bad, 7), null);
   }
 });
 
-test('tokens are long random hex, and the TTL is short', () => {
-  dbExport._resetTickets();
-  const { token, expiresInSeconds } = dbExport.issueTicket({ userId: 7 });
+test('tokens are long random hex, only their hash is stored, and the TTL is short', async () => {
+  const seen = [];
+  const pool = { query: async (sql, params) => { seen.push(params); return { rowCount: 1, rows: [] }; } };
+  const { token, expiresInSeconds } = await dbExport.issueTicket(pool, { auditId: 42 });
   assert.match(token, /^[0-9a-f]{64}$/, '32 random bytes, hex-encoded');
   assert.equal(expiresInSeconds, 60);
+  assert.ok(!JSON.stringify(seen).includes(token), 'the token itself never reaches the database');
+  assert.equal(seen[0][1], require('node:crypto').createHash('sha256').update(token).digest('hex'));
   assert.ok(dbExport.TICKET_TTL_MS <= 5 * 60 * 1000, 'a download ticket must be short-lived');
-  dbExport._resetTickets();
 });
 
 // ── The dump ─────────────────────────────────────────────────────────
@@ -165,12 +139,23 @@ test('tokens are long random hex, and the TTL is short', () => {
 // The bytes on the wire are gzip, produced by an in-process zlib stream
 // between pg_dump's stdout and the response. zlib works on libuv's
 // threadpool and only emits once its output buffer fills (or is flushed on
-// end), so these tests `await settle()` after feeding the child rather
-// than asserting synchronously, and use INCOMPRESSIBLE data whenever they
-// need output to appear mid-stream — a megabyte of 'AAAA' compresses to
-// nothing and would still be sitting in the compressor.
+// end), so these tests wait for what they expect (`until`) after feeding
+// the child rather than asserting synchronously, and use INCOMPRESSIBLE
+// data whenever they need output to appear mid-stream — a megabyte of
+// 'AAAA' compresses to nothing and would still be sitting in the compressor.
 
-const settle = () => new Promise((r) => setTimeout(r, 50));
+// Wait for the condition, not for a fixed time. These tests used to sleep
+// 50 ms, and in a checks pod running three suites at once on throttled CPUs
+// zlib's first 64 KB can take longer than that: the header and backpressure
+// tests failed four runs on 12 Oct 2026 (request #4864). Polls `check`
+// until it holds, and fails saying `what` after `timeoutMs`.
+async function until(check, what, { timeoutMs = 10000, everyMs = 5 } = {}) {
+  const end = Date.now() + timeoutMs;
+  while (!check()) {
+    if (Date.now() > end) assert.fail(`timed out waiting until ${what}`);
+    await new Promise((r) => setTimeout(r, everyMs));
+  }
+}
 
 // Random bytes don't compress, so ~64 KB in forces ~64 KB out, which is
 // past zlib's 16 KB chunk size — i.e. it reaches the socket immediately.
@@ -247,7 +232,7 @@ test('the gzip trailer is never truncated by ending the socket at pg_dump exit',
   const res = fakeRes();
   const p = dbExport.runExport({ dbName: 'usernode', res, filename: 'd.sql.gz', spawnFn: () => child });
   child.emitOut(incompressible());
-  await settle();
+  await until(() => res.bytes() > 0, 'bytes reach the socket');
   assert.ok(res.bytes() > 0, 'bytes are already streaming before the child exits');
   assert.ok(!res.ended, 'not ended yet — the compressor still holds the trailer');
   child.exit(0);
@@ -273,7 +258,7 @@ test('download headers are set on the first byte, and no Content-Length is claim
   const p = dbExport.runExport({ dbName: 'usernode', res, filename: 'dump.sql.gz', spawnFn: () => child });
   assert.equal(Object.keys(res.headers).length, 0, 'nothing committed before the first byte');
   child.emitOut(incompressible());
-  await settle();
+  await until(() => res.bytes() > 0, 'the first byte reaches the socket');
   assert.equal(res.headers['content-type'], 'application/gzip');
   assert.equal(res.headers['content-disposition'], 'attachment; filename="dump.sql.gz"');
   assert.equal(res.headers['cache-control'], 'no-store', 'a credential dump is never cached');
@@ -295,7 +280,9 @@ test('onStart fires once, when the stream actually begins', async () => {
   assert.equal(starts, 0);
   child.emitOut(incompressible());
   child.emitOut(incompressible());
-  await settle();
+  // The second chunk is flowing too, so a second start would have fired.
+  // (zlib keeps up to one 16 KB buffer back until it is ended.)
+  await until(() => res.bytes() > 64 * 1024, 'the second chunk reaches the socket');
   assert.equal(starts, 1, 'marked streaming exactly once');
   child.exit(0);
   await p;
@@ -326,7 +313,7 @@ test('the response is committed on pg_dump\'s first byte, gzip header and all', 
   const res = fakeRes();
   const p = dbExport.runExport({ dbName: 'usernode', res, filename: 'd.sql.gz', spawnFn: () => child });
   child.emitOut('-- PostgreSQL database dump\n');
-  await settle();
+  await until(() => res.bytes() > 0, 'the gzip header reaches the socket');
   assert.equal(res.headers['content-disposition'], 'attachment; filename="d.sql.gz"');
   assert.ok(res.bytes() > 0, 'the gzip header is already on the wire');
 
@@ -346,7 +333,7 @@ test('a mid-stream failure destroys the socket instead of ending it truthfully',
   const res = fakeRes();
   const p = dbExport.runExport({ dbName: 'usernode', res, filename: 'd.sql.gz', spawnFn: () => child });
   child.emitOut(incompressible());
-  await settle();
+  await until(() => res.bytes() > 0, 'bytes reach the socket');
   assert.ok(res.bytes() > 0, 'bytes are on the wire');
   child.emitErr('pg_dump: error: query failed');
   child.exit(1);
@@ -383,14 +370,19 @@ test('backpressure pauses the child instead of buffering the dump', async () => 
   const child = fakeChild();
   const res = fakeRes({ backpressure: true });
   let paused = false;
+  let resumes = 0;
   child.stdout.pause = () => { paused = true; };
-  child.stdout.resume = () => { paused = false; };
+  child.stdout.resume = () => { paused = false; resumes += 1; };
   const p = dbExport.runExport({ dbName: 'usernode', res, filename: 'd.sql.gz', spawnFn: () => child });
   child.emitOut(incompressible());
-  await settle();
-  assert.equal(paused, true, 'a slow client pauses pg_dump');
-  res.emit('drain');
-  assert.equal(paused, false, 'and it resumes when the socket drains');
+  await until(() => paused, 'a slow client pauses pg_dump');
+  // The socket drains. pg_dump resumes once the compressor has drained too,
+  // on the threadpool's time; a drain before that leaves it paused, and the
+  // compressor's next write fills this socket again. This socket accepts no
+  // write, so only a drain can lift the pause: a resume after this point is
+  // the drain's doing, whenever the compressor gets there.
+  const before = resumes;
+  await until(() => { res.emit('drain'); return resumes > before; }, 'it resumes when the socket drains');
   child.exit(0);
   await p;
 });

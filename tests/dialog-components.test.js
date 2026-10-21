@@ -69,6 +69,17 @@ const DIALOG_IDS = [
   // uses the app.
   'app-notifications-modal',
   'report-modal', // #2721 shared reporting dialog
+  // #4405: a project's custom domain. Its own dialog rather than a section
+  // of app-settings-modal: that one proposes a vote-gated access change,
+  // this one claims a hostname and shows where it stands on its way live.
+  'app-domain-modal',
+  // #4417: a project's topics (Settings & rules › Topics). Its own dialog:
+  // each change it makes is a proposal against dapp.json's `topics`.
+  'topics-modal',
+  // #4666: who can see a project and how its changes are approved, one
+  // proposal for both. Its own dialog: it replaces the approval controls of
+  // members-modal and the Access section of app-settings-modal.
+  'who-decides-modal',
 ];
 
 /**
@@ -89,7 +100,13 @@ const DIALOG_IDS = [
  * is the load-bearing one: without it, a genuine dialog that forgot its
  * root would fall into the support half and skip every check in this file.
  */
-const SUPPORT_FILES = ['create-progress.tsx', 'app-allowance.tsx'];
+// controller-text.tsx is the first words of a node a controller module then
+// owns (feedback, members, app secrets); it renders text, never a root.
+// #5687: feedback-preview.tsx is the "Suggest an improvement" form's
+// full-size picture or clip, opened from a thumbnail. It is not a dialog root
+// — it has no id, no `useDialog` and no chassis; it portals its own layer
+// beside the feedback dialog, the way the chat's image viewer does.
+const SUPPORT_FILES = ['create-progress.tsx', 'app-allowance.tsx', 'controller-text.tsx', 'feedback-preview.tsx'];
 
 const allFiles = fs.readdirSync(DIALOGS)
   .filter((f) => f.endsWith('.tsx') && f !== 'index.tsx');
@@ -148,11 +165,12 @@ function rootTag(src, id) {
 }
 
 test('every dialog root is rendered by exactly one dialog component', () => {
-  // 13 → 14 with #2721's shared report dialog, and 14 → 13 with the
-  // create dialog's retirement. The count guards the list above against
-  // being trimmed to make this test pass; the per-id assertions below are
-  // what actually check the 1:1 mapping.
-  assert.equal(DIALOG_IDS.length, 13);
+  // 13 → 14 with #2721's shared report dialog, 14 → 13 with the create
+  // dialog's retirement, 13 → 14 with #4405's Custom domain dialog, and
+  // 14 → 15 with #4417's Topics dialog. The count guards the list above against being trimmed to make this test
+  // pass; the per-id assertions below are what actually check the 1:1
+  // mapping.
+  assert.equal(DIALOG_IDS.length, 16);
   for (const id of DIALOG_IDS) {
     const owners = [...componentSrc].filter(([, src]) => src.includes(`id="${id}"`));
     assert.equal(owners.length, 1, `#${id} should be rendered by exactly one features/dialogs/* component, got ${owners.map((o) => o[0])}`);

@@ -43,16 +43,23 @@
  * the cards will be (InvitePending), and nothing at all renders on any other
  * path: the landing is every signed-out visitor's first screen, and only an
  * invite link has anything to say here. While a live link's card is up, or
- * still on its way, the landing hides its own pitch (landing.tsx); a dead
- * link keeps it and says why above it, and so does a preview that could not
- * be read.
+ * still on its way, the landing hides its own pitch (landing.tsx). A dead
+ * link has a page of its own in the pitch's place (DeadInvite, #5263): a
+ * welcome, what happened to the link, what to do about it and one way on
+ * into Homeroom. A mistyped link (/invite/<anything that is not a token>)
+ * is a dead one too, told so without asking the server, which would only
+ * say `unknown`. A preview that could not be read keeps the pitch.
  */
 
 import { useEffect, useState } from 'react';
 
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 
+import { RichMessage, useMessages } from '../../lib/i18n/react';
+import { t as translate } from '../../lib/i18n/runtime';
+
 import { FeaturedCard, sketchCardOf } from '../first-session/sketch-card';
+import { SMALL_CAPS } from './story';
 
 export type InvitePicture =
   | { kind: 'shot' | 'illustration'; url: string; darkUrl: string | null }
@@ -86,11 +93,13 @@ export type InvitePreview = {
   memberCount?: number;
 };
 
-const DEAD: Record<string, string> = {
-  expired: 'This invite link has expired. Ask whoever sent it for a new one.',
-  revoked: 'This invite link was turned off. Ask whoever sent it for a new one.',
-  used_up: 'This invite link has been used as many times as it allows. Ask whoever sent it for a new one.',
-  unknown: 'This invite link does not work. Check it was copied whole.',
+// Message ids, read when the page renders: what happened to the link, and
+// what to do about it.
+const DEAD: Record<string, { title: string; next: string }> = {
+  expired: { title: 'auth:invite.dead.expired', next: 'auth:invite.dead.askForNew' },
+  revoked: { title: 'auth:invite.dead.revoked', next: 'auth:invite.dead.askForNew' },
+  used_up: { title: 'auth:invite.dead.usedUp', next: 'auth:invite.dead.askForNew' },
+  unknown: { title: 'auth:invite.dead.unknown', next: 'auth:invite.dead.checkLink' },
 };
 
 // The pieces share the landing's card: white on the wallpaper, the sheet
@@ -103,10 +112,26 @@ export function inviteTokenFrom(pathname: string): string | null {
   return m ? m[1] : null;
 }
 
+/**
+ * Whether this is an invite link's path at all, a token or not (#5263):
+ * /invite/ and one segment, the shape the server lets a signed-out visitor
+ * open (isSpaDocumentPath, src/middleware/auth.js). A link cut short or
+ * mistyped is one, so it says it does not work rather than showing the
+ * plain landing.
+ */
+export function onInviteLink(pathname: string): boolean {
+  return /^\/invite\/[^/]+$/.test(pathname || '');
+}
+
 /** "@ada invited you to join Game Corner." */
 export function invitedLine(preview: InvitePreview): string {
-  const name = preview.project?.name || 'a project';
-  return preview.inviter ? `@${preview.inviter} invited you to join ${name}.` : `You are invited to join ${name}.`;
+  const name = preview.project?.name;
+  if (preview.inviter) {
+    return name
+      ? translate('auth:invite.joinInvitedBy', { username: preview.inviter, project: name })
+      : translate('auth:invite.joinInvitedByUnnamed', { username: preview.inviter });
+  }
+  return name ? translate('auth:invite.joinInvited', { project: name }) : translate('auth:invite.joinInvitedUnnamed');
 }
 
 /**
@@ -125,7 +150,7 @@ export function inviterLabel(preview: Pick<InvitePreview, 'inviter' | 'inviterNa
 /** "26 people are in it", "1 person is in it", or '' for none. */
 export function membersPhrase(count: number | undefined): string {
   if (!count || count < 1) return '';
-  return `${count} ${count === 1 ? 'person is' : 'people are'} in it`;
+  return translate('auth:invite.members', { count });
 }
 
 /**
@@ -135,11 +160,18 @@ export function membersPhrase(count: number | undefined): string {
  * zero count says nothing.
  */
 export function inviteLine(preview: InvitePreview): string {
-  const name = preview.project?.name || 'a project';
+  const name = preview.project?.name;
   const who = inviterLabel(preview);
-  const invited = who ? `${who} invited you to ${name}` : `You're invited to ${name}`;
+  let invited: string;
+  if (who) {
+    invited = name
+      ? translate('auth:invite.invitedBy', { inviter: who, project: name })
+      : translate('auth:invite.invitedByUnnamed', { inviter: who });
+  } else {
+    invited = name ? translate('auth:invite.invited', { project: name }) : translate('auth:invite.invitedUnnamed');
+  }
   const members = membersPhrase(preview.memberCount);
-  return members ? `${invited} · ${members}` : invited;
+  return members ? translate('auth:invite.facts', { first: invited, second: members }) : invited;
 }
 
 /**
@@ -149,18 +181,19 @@ export function inviteLine(preview: InvitePreview): string {
  */
 export function invitedYouLine(preview: InvitePreview): string {
   const who = inviterLabel(preview);
-  const invited = who ? `${who} invited you` : "You're invited";
+  const invited = who ? translate('auth:invite.invitedYouBy', { inviter: who }) : translate('auth:invite.invitedYou');
   const members = membersPhrase(preview.memberCount);
-  return members ? `${invited} · ${members}` : invited;
+  return members ? translate('auth:invite.facts', { first: invited, second: members }) : invited;
 }
 
 /** The one line that names Homeroom, at the foot of the invite page (#4049). */
-export const HOMEROOM_LINE = 'On Homeroom, people using an app build and improve it together.';
+// A message id: MadeForYou reads it when it renders.
+export const HOMEROOM_LINE = 'auth:invite.homeroomLine';
 
 /** "12 people are in it." or '' for none. */
 export function membersLine(count: number | undefined): string {
-  const members = membersPhrase(count);
-  return members ? `${members}.` : '';
+  if (!count || count < 1) return '';
+  return translate('auth:invite.membersSentence', { count });
 }
 
 // How long the landing waits on a preview before it shows its own pitch
@@ -184,11 +217,14 @@ export const INVITE_PREVIEW_WAIT_MS = 8000;
 export function useInvitePreview(): { preview: InvitePreview | null; pending: boolean } {
   const [preview, setPreview] = useState<InvitePreview | null>(null);
   const [pending, setPending] = useState(
-    () => typeof location !== 'undefined' && !!inviteTokenFrom(location.pathname),
+    () => typeof location !== 'undefined' && onInviteLink(location.pathname),
   );
   useEffect(() => {
+    if (!onInviteLink(location.pathname)) { setPending(false); return undefined; }
     const token = inviteTokenFrom(location.pathname);
-    if (!token) { setPending(false); return undefined; }
+    // #5263: no token can look like this, so it is the server's `unknown`
+    // without the trip.
+    if (!token) { setPreview({ live: false, reason: 'unknown' }); setPending(false); return undefined; }
     let live = true;
     const giveUp = setTimeout(() => { if (live) setPending(false); }, INVITE_PREVIEW_WAIT_MS);
     fetch(`/api/public/invites/${encodeURIComponent(token)}`)
@@ -258,8 +294,9 @@ function Picture({ project }: { project: NonNullable<InvitePreview['project']>; 
  * first.
  */
 export function InvitePending() {
+  const t = useMessages('auth');
   return (
-    <SkeletonGroup label="Opening your invite" data-landing-invite="pending">
+    <SkeletonGroup label={t('auth:invite.opening')} data-landing-invite="pending">
       <div className={`${CARD} mt-4 flex items-center gap-3`}>
         <Skeleton shape="block" className="h-12 w-12 rounded-xl" />
         <div className="min-w-0 flex-1">
@@ -272,11 +309,40 @@ export function InvitePending() {
   );
 }
 
-/** A dead link's one sentence, above the landing's own pitch. */
-export function DeadInvite({ preview }: { preview: InvitePreview }) {
+/**
+ * A dead link's page, in place of the landing's pitch (#5263): the
+ * landing's own picture and "Welcome to Homeroom", then what happened to the
+ * link as the heading ("This invite link has expired"), what to do about it,
+ * and one way on, Continue to Homeroom, which opens the signed-out front
+ * page at / (the story, with its Continue). Centred in the column the way
+ * the story centres its group.
+ */
+export function DeadInvite({ preview, primaryClass }: { preview: InvitePreview; primaryClass: string }) {
+  const t = useMessages('auth');
+  const dead = DEAD[preview.reason || 'unknown'] || DEAD.unknown;
   return (
-    <section data-landing-invite="dead" className="mx-4 mt-4 rounded-[20px] bg-white/80 dark:bg-zinc-900/80 p-4 text-[15px] text-zinc-600 dark:text-zinc-300">
-      {DEAD[preview.reason || 'unknown'] || DEAD.unknown}
+    <section data-landing-invite="dead" className="px-4 flex grow flex-col items-center justify-center py-6 text-center">
+      {/* Decorative: the words under it say everything. */}
+      <img
+        src="/brand/people.png"
+        alt=""
+        width={816}
+        height={612}
+        draggable={false}
+        className="mx-auto block h-auto w-[240px] xl:w-[280px] max-w-full"
+      />
+      <div className={`mt-4 ${SMALL_CAPS}`}>{t('auth:story.welcome')}</div>
+      <h1 data-landing-invite-dead-title="" className="mt-2 text-[26px] leading-[30px] font-extrabold text-balance">
+        {t(dead.title)}
+      </h1>
+      <p data-landing-invite-dead-next="" className="mt-2.5 text-[16px] leading-[22px] text-zinc-500 dark:text-zinc-400 text-pretty">
+        {t(dead.next)}
+      </p>
+      <div className="mt-8 w-full max-w-sm md:max-w-md mx-auto">
+        <a href="/" data-landing-invite-dead-continue="" className={primaryClass}>
+          {t('auth:invite.dead.continue')}
+        </a>
+      </div>
     </section>
   );
 }
@@ -287,6 +353,7 @@ export function DeadInvite({ preview }: { preview: InvitePreview }) {
  * scroller.
  */
 export function MadeForYou({ preview }: { preview: InvitePreview }) {
+  const t = useMessages('auth');
   const project = preview.project!;
   const sketch = sketchOf(project);
   const tile = pictureIsTile(project);
@@ -348,14 +415,17 @@ export function MadeForYou({ preview }: { preview: InvitePreview }) {
         {preview.note ? (
           <section className={`${CARD} mt-3`}>
             <p data-landing-invite-note="" className="rounded-2xl bg-violet-500/10 px-4 py-3 text-[15px] leading-snug text-zinc-700 dark:text-zinc-200">
-              <span className="font-medium">{`${inviterLabel(preview) || 'They'}:`}</span>
-              {` “${preview.note}”`}
+              <RichMessage
+                id={inviterLabel(preview) ? 'auth:invite.note' : 'auth:invite.noteUnnamed'}
+                values={{ inviter: inviterLabel(preview), note: preview.note }}
+                components={[<span className="font-medium" />]}
+              />
             </p>
           </section>
         ) : null}
       </div>
       <p data-landing-invite-homeroom="" className="mx-4 pt-1 text-center text-[14px] leading-5 text-zinc-500 dark:text-zinc-400 text-pretty">
-        {HOMEROOM_LINE}
+        {t(HOMEROOM_LINE)}
       </p>
     </>
   );
@@ -377,6 +447,7 @@ export function InviteJoinBar({ preview, primaryClass, onJoin }: {
   /** Opens the sign-in sheet over this screen (./sign-in-sheet.tsx). */
   onJoin: () => void;
 }) {
+  const t = useMessages('auth');
   const project = preview.project!;
   return (
     <div
@@ -393,7 +464,7 @@ export function InviteJoinBar({ preview, primaryClass, onJoin }: {
           className={primaryClass}
           onClick={(e) => { e.preventDefault(); onJoin(); }}
         >
-          {`Join ${project.name}`}
+          {t('auth:invite.join', { project: project.name })}
         </a>
       </div>
     </div>

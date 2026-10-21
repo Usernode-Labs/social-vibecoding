@@ -1,0 +1,750 @@
+{
+  "sections.open.label": {
+    "text": "Public communities",
+    "description": "Section heading in the list of the person's communities, on the Communities screen and in the Your communities switcher: the communities anyone can find and join."
+  },
+  "sections.invited.label": {
+    "text": "Private communities",
+    "description": "Section heading in the list of the person's communities, on the Communities screen and in the Your communities switcher: the communities only invited people can open."
+  },
+  "sections.solo.label": {
+    "text": "Just you",
+    "description": "Section heading in the list of the person's communities, on the Communities screen and in the Your communities switcher: the projects that have no member but this person."
+  },
+  "sections.open.noun": {
+    "text": "Public community",
+    "description": "What one community anyone can find and join is called, as a singular noun naming its audience."
+  },
+  "sections.invited.noun": {
+    "text": "Private community",
+    "description": "What one community only invited people can open is called, as a singular noun naming its audience."
+  },
+  "sections.solo.noun": {
+    "text": "Just you",
+    "description": "What a project with no member but this person is called, naming its audience. It stands where \"Public community\" or \"Private community\" would."
+  },
+  "sections.open.count_one": {
+    "text": "{{count}} in Public communities",
+    "description": "Accessible name of the number beside the Public communities section heading. {{count}} is how many of the person's communities are in that section."
+  },
+  "sections.open.count_other": {
+    "text": "{{count}} in Public communities",
+    "description": "Accessible name of the number beside the Public communities section heading. {{count}} is how many of the person's communities are in that section."
+  },
+  "sections.invited.count_one": {
+    "text": "{{count}} in Private communities",
+    "description": "Accessible name of the number beside the Private communities section heading. {{count}} is how many of the person's communities are in that section."
+  },
+  "sections.invited.count_other": {
+    "text": "{{count}} in Private communities",
+    "description": "Accessible name of the number beside the Private communities section heading. {{count}} is how many of the person's communities are in that section."
+  },
+  "sections.solo.count_one": {
+    "text": "{{count}} in Just you",
+    "description": "Accessible name of the number beside the Just you section heading. {{count}} is how many of the person's projects have no other member. \"Just you\" is the section's name."
+  },
+  "sections.solo.count_other": {
+    "text": "{{count}} in Just you",
+    "description": "Accessible name of the number beside the Just you section heading. {{count}} is how many of the person's projects have no other member. \"Just you\" is the section's name."
+  },
+  "sections.shownOf_one": {
+    "text": "{{shown}} of {{count}}",
+    "description": "Number beside a section heading in the list of the person's communities, while the section is folded: how many of its communities are listed out of how many it has, as in \"3 of 27\". {{shown}} is how many rows show, {{count}} the section's total."
+  },
+  "sections.shownOf_other": {
+    "text": "{{shown}} of {{count}}",
+    "description": "Number beside a section heading in the list of the person's communities, while the section is folded: how many of its communities are listed out of how many it has, as in \"3 of 27\". {{shown}} is how many rows show, {{count}} the section's total."
+  },
+  "sections.shownOfLabel_one": {
+    "text": "Showing {{shown}} of {{count}}",
+    "description": "Accessible name of the \"3 of 27\" number beside a folded section heading in the list of the person's communities. The heading's own name says which section. {{shown}} is how many rows show, {{count}} the section's total."
+  },
+  "sections.shownOfLabel_other": {
+    "text": "Showing {{shown}} of {{count}}",
+    "description": "Accessible name of the \"3 of 27\" number beside a folded section heading in the list of the person's communities. The heading's own name says which section. {{shown}} is how many rows show, {{count}} the section's total."
+  },
+  "sections.showFewer": {
+    "text": "Show fewer",
+    "description": "Last row of a section in the list of the person's communities, once every community in it is showing: folds the section back to its first few rows."
+  },
+  "sections.showMore_one": {
+    "text": "Show {{count}} more",
+    "description": "Last row of a section in the list of the person's communities: reveals the next communities in that section. {{count}} is how many this press reveals."
+  },
+  "sections.showMore_other": {
+    "text": "Show {{count}} more",
+    "description": "Last row of a section in the list of the person's communities: reveals the next communities in that section. {{count}} is how many this press reveals."
+  },
+  "filter.label": {
+    "text": "Show communities",
+    "description": "Accessible name of the row of filter chips above the list of every community the person is in (All, Public, Private, Just you) on the All communities page."
+  },
+  "filter.all": {
+    "text": "All",
+    "description": "Filter chip above the list of the person's communities: shows every community they are in, whoever it is for."
+  },
+  "filter.open": {
+    "text": "Public",
+    "description": "Filter chip above the list of the person's communities: shows only the public communities (anyone can see and join them)."
+  },
+  "filter.invited": {
+    "text": "Private",
+    "description": "Filter chip above the list of the person's communities: shows only the private communities (people are invited in)."
+  },
+  "filter.solo": {
+    "text": "Just you",
+    "description": "Filter chip above the list of the person's communities: shows only the projects nobody else is in yet."
+  },
+  "filter.allCount_one": {
+    "text": "All, {{count}} community",
+    "description": "Accessible name of the All filter chip above the list of the person's communities, with how many communities they are in. {{count}} is that number."
+  },
+  "filter.allCount_other": {
+    "text": "All, {{count}} communities",
+    "description": "Accessible name of the All filter chip above the list of the person's communities, with how many communities they are in. {{count}} is that number."
+  },
+  "list.loading": {
+    "text": "Loading your communities",
+    "description": "Accessible name of the placeholder rows on the Communities screen while the person's list of communities is loading."
+  },
+  "list.loadError": {
+    "text": "Couldn't load your communities",
+    "description": "Title of the error card on the Communities screen when the list of the person's communities could not be loaded. A retry button follows it."
+  },
+  "list.empty.title": {
+    "text": "You haven’t joined anything yet",
+    "description": "Title of the card on the Communities screen when the person belongs to no community. The card is a link to Discover."
+  },
+  "list.empty.subtitle": {
+    "text": "Browse the directory to find a project to join.",
+    "description": "Second line of the card on the Communities screen when the person belongs to no community. The directory is the Discover screen; a project is what a community builds."
+  },
+  "list.join.title": {
+    "text": "Join a community",
+    "description": "Row under the list on the Communities screen: opens Discover, where the person can find a community to join."
+  },
+  "list.join.subtitle": {
+    "text": "Find one to join in Discover.",
+    "description": "Second line of the Join a community row on the Communities screen. \"One\" is a community; Discover is the name of the screen and of its tab."
+  },
+  "list.start.title": {
+    "text": "Start a community",
+    "description": "Row under the list on the Communities screen: opens the dialog that creates a new project and its community."
+  },
+  "list.start.subtitle": {
+    "text": "Make a project for you, a group or everyone.",
+    "description": "Second line of the Start a community row on the Communities screen. The three audiences a new project can be made for: only this person, an invited group, or the public."
+  },
+  "row.members_one": {
+    "text": "{{count}} member",
+    "description": "Quiet fact on a community's row on the Communities screen: how many people belong to that community."
+  },
+  "row.members_other": {
+    "text": "{{count}} members",
+    "description": "Quiet fact on a community's row on the Communities screen: how many people belong to that community."
+  },
+  "row.inviteOut": {
+    "text": "Invite link out",
+    "description": "Quiet fact on a project's row on the Communities screen, in place of when it was last active: the person has sent an invite link for it and nobody has joined yet."
+  },
+  "row.active.justNow": {
+    "text": "just now",
+    "description": "The whole quiet fact on the row of a project that is just the person's own, on the Communities screen: it was last active less than a minute ago. Drawn in its own element, in lower case."
+  },
+  "row.active.minutes_one": {
+    "text": "{{count}}m ago",
+    "description": "Quiet fact on the row of a project that is just the person's own, on the Communities screen: how many minutes ago it was last active. \"m\" abbreviates minutes; keep it short."
+  },
+  "row.active.minutes_other": {
+    "text": "{{count}}m ago",
+    "description": "Quiet fact on the row of a project that is just the person's own, on the Communities screen: how many minutes ago it was last active. \"m\" abbreviates minutes; keep it short."
+  },
+  "row.active.hours_one": {
+    "text": "{{count}}h ago",
+    "description": "Quiet fact on the row of a project that is just the person's own, on the Communities screen: how many hours ago it was last active. \"h\" abbreviates hours; keep it short."
+  },
+  "row.active.hours_other": {
+    "text": "{{count}}h ago",
+    "description": "Quiet fact on the row of a project that is just the person's own, on the Communities screen: how many hours ago it was last active. \"h\" abbreviates hours; keep it short."
+  },
+  "row.active.days_one": {
+    "text": "{{count}}d ago",
+    "description": "Quiet fact on the row of a project that is just the person's own, on the Communities screen: how many days ago it was last active. \"d\" abbreviates days; keep it short."
+  },
+  "row.active.days_other": {
+    "text": "{{count}}d ago",
+    "description": "Quiet fact on the row of a project that is just the person's own, on the Communities screen: how many days ago it was last active. \"d\" abbreviates days; keep it short."
+  },
+  "row.inProgress_one": {
+    "text": "{{count}} in progress",
+    "description": "Status on a community's row on the Communities screen: how many changes people are working on in its project right now."
+  },
+  "row.inProgress_other": {
+    "text": "{{count}} in progress",
+    "description": "Status on a community's row on the Communities screen: how many changes people are working on in its project right now."
+  },
+  "row.toVote_one": {
+    "text": "{{count}} to vote",
+    "description": "Status on a community's row on the Communities screen: how many proposals and group decisions in it are waiting for this person's vote. \"To vote\" means still to be voted on by you."
+  },
+  "row.toVote_other": {
+    "text": "{{count}} to vote",
+    "description": "Status on a community's row on the Communities screen: how many proposals and group decisions in it are waiting for this person's vote. \"To vote\" means still to be voted on by you."
+  },
+  "row.newMessages_one": {
+    "text": "{{count}} new message",
+    "description": "Status on a community's row on the Communities screen, after how many proposals wait for the person's vote (\"1 to vote · 1 new message\"): how many messages in its chat channel the person has not read yet."
+  },
+  "row.newMessages_other": {
+    "text": "{{count}} new messages",
+    "description": "Status on a community's row on the Communities screen, after how many proposals wait for the person's vote (\"1 to vote · 5 new messages\"): how many messages in its chat channel the person has not read yet."
+  },
+  "needsYou.heading": {
+    "text": "Needs you",
+    "description": "Section heading at the top of the Communities screen, over the row that opens the feed of votes waiting for this person across all their projects."
+  },
+  "needsYou.waiting_one": {
+    "text": "{{count}} vote waiting on you",
+    "description": "Title of the Needs you row on the Communities screen: how many votes across the person's projects they have not yet seen or cast."
+  },
+  "needsYou.waiting_other": {
+    "text": "{{count}} votes waiting on you",
+    "description": "Title of the Needs you row on the Communities screen: how many votes across the person's projects they have not yet seen or cast."
+  },
+  "needsYou.skipped_one": {
+    "text": "{{count}} vote you skipped",
+    "description": "Title of the Needs you row on the Communities screen when nothing new waits: how many votes the person looked at and passed over without voting, which they can still cast."
+  },
+  "needsYou.skipped_other": {
+    "text": "{{count}} votes you skipped",
+    "description": "Title of the Needs you row on the Communities screen when nothing new waits: how many votes the person looked at and passed over without voting, which they can still cast."
+  },
+  "needsYou.projectsMore_one": {
+    "text": "{{projects}} and {{count}} more",
+    "description": "Second line of the Needs you row on the Communities screen: which projects the votes are owed on. {{projects}} is the first three project names, already joined as a list; {{count}} is how many further projects there are."
+  },
+  "needsYou.projectsMore_other": {
+    "text": "{{projects}} and {{count}} more",
+    "description": "Second line of the Needs you row on the Communities screen: which projects the votes are owed on. {{projects}} is the first three project names, already joined as a list; {{count}} is how many further projects there are."
+  },
+  "needsYou.review": {
+    "text": "Review",
+    "description": "Verb, at the end of the Needs you row on the Communities screen: says that pressing the row opens the votes waiting for the person so they can go through them."
+  },
+  "needsYou.back": {
+    "text": "Back to Communities",
+    "description": "Accessible name and tooltip of the back arrow over the Needs you feed on the Communities screen: returns to the list of the person's communities. Communities is the screen's name."
+  },
+  "needsYou.over": {
+    "text": "Communities",
+    "description": "Small line above the title of the Needs you feed on the Communities screen: names the screen the feed belongs to."
+  },
+  "needsYou.title": {
+    "text": "Needs you",
+    "description": "Title of the page of the Communities screen that shows, one at a time, every vote waiting for this person across their projects."
+  },
+  "reel.fallbackTitle.change": {
+    "text": "A change",
+    "description": "Stands in for the title of a proposal (a change to a project put up for a vote) in the Needs you feed when the proposal has no title."
+  },
+  "reel.fallbackTitle.decision": {
+    "text": "A group decision",
+    "description": "Stands in for the title of a group decision (a vote on a project's settings, such as a rename, rather than on a code change) in the Needs you feed when it has no title."
+  },
+  "reel.ask.change": {
+    "text": "Should this change go in?",
+    "description": "Question over the Yes and No buttons of a proposal in the Needs you feed: asks whether the proposed change should be merged into the project."
+  },
+  "reel.ask.decision": {
+    "text": "Should this go ahead?",
+    "description": "Question over a group decision in the Needs you feed: asks whether the decision (for example a rename of the project) should be carried out."
+  },
+  "reel.yes": {
+    "text": "Yes",
+    "description": "Vote button on a proposal in the Needs you feed of the Communities screen: votes for the change going in."
+  },
+  "reel.no": {
+    "text": "No",
+    "description": "Vote button on a proposal in the Needs you feed of the Communities screen: votes against the change going in."
+  },
+  "reel.error": {
+    "text": "Couldn't load what is waiting on you. Each project's own Needs you page still has it.",
+    "description": "Shown in place of the Needs you feed on the Communities screen when it could not be loaded. Needs you is also the name of a tab on every project's page, which lists the same votes for that project."
+  },
+  "reel.loading": {
+    "text": "Loading what needs you",
+    "description": "Accessible name of the empty placeholder shown while the Needs you feed on the Communities screen is loading."
+  },
+  "reel.empty": {
+    "text": "Nothing is waiting on your vote in any of your projects.",
+    "description": "Shown in place of the Needs you feed on the Communities screen when no proposal or group decision is waiting for this person's vote."
+  },
+  "reel.done": {
+    "text": "Back to your communities",
+    "description": "Button on the card at the end of the Needs you feed on the Communities screen: returns to the list of the person's communities."
+  },
+  "reel.capped_one": {
+    "text": "Showing the newest {{count}}. Each project's own Needs you page has the rest.",
+    "description": "Note under the Needs you feed on the Communities screen when there are more votes than it loads. {{count}} is how many it shows. Needs you is also the name of a tab on every project's page."
+  },
+  "reel.capped_other": {
+    "text": "Showing the newest {{count}}. Each project's own Needs you page has the rest.",
+    "description": "Note under the Needs you feed on the Communities screen when there are more votes than it loads. {{count}} is how many it shows. Needs you is also the name of a tab on every project's page."
+  },
+  "switcher.title": {
+    "text": "Your communities",
+    "description": "Title of the switcher that lists every community the person belongs to, opened from the header's name or the Communities tab, for moving from one community to another."
+  },
+  "switcher.all.name": {
+    "text": "All communities",
+    "description": "First row of the Your communities switcher: leaves the single community being shown and opens the list of all of the person's communities."
+  },
+  "switcher.all.count_one": {
+    "text": "{{count}} community",
+    "description": "Second line of the All communities row in the Your communities switcher: how many communities the person belongs to."
+  },
+  "switcher.all.count_other": {
+    "text": "{{count}} communities",
+    "description": "Second line of the All communities row in the Your communities switcher: how many communities the person belongs to."
+  },
+  "switcher.all.every": {
+    "text": "Every community you are in",
+    "description": "Second line of the All communities row in the Your communities switcher while the list is still loading, so there is no count to show yet."
+  },
+  "switcher.loading": {
+    "text": "Loading your communities…",
+    "description": "Note in the Your communities switcher while the list of the person's communities is loading."
+  },
+  "switcher.row.solo": {
+    "text": "Just you",
+    "description": "Second line of a row in the Your communities switcher, for a project that has no member but this person."
+  },
+  "switcher.row.invited_one": {
+    "text": "Private · {{count}} member",
+    "description": "Second line of a row in the Your communities switcher, for a community only invited people can open. {{count}} is how many people belong to it. Keep the middle dot between the two facts."
+  },
+  "switcher.row.invited_other": {
+    "text": "Private · {{count}} members",
+    "description": "Second line of a row in the Your communities switcher, for a community only invited people can open. {{count}} is how many people belong to it. Keep the middle dot between the two facts."
+  },
+  "switcher.row.open_one": {
+    "text": "Public · {{count}} member",
+    "description": "Second line of a row in the Your communities switcher, for a community anyone can find and join. {{count}} is how many people belong to it. Keep the middle dot between the two facts."
+  },
+  "switcher.row.open_other": {
+    "text": "Public · {{count}} members",
+    "description": "Second line of a row in the Your communities switcher, for a community anyone can find and join. {{count}} is how many people belong to it. Keep the middle dot between the two facts."
+  },
+  "switcher.toVote_one": {
+    "text": "{{count}} to vote",
+    "description": "Badge on a row of the Your communities switcher: how many proposals and group decisions in that community (or, on the All communities row, in all of them) are waiting for this person's vote."
+  },
+  "switcher.toVote_other": {
+    "text": "{{count}} to vote",
+    "description": "Badge on a row of the Your communities switcher: how many proposals and group decisions in that community (or, on the All communities row, in all of them) are waiting for this person's vote."
+  },
+  "switcher.search.placeholder": {
+    "text": "Search your communities",
+    "description": "Placeholder of the search field at the top of the Your communities switcher, which filters the person's communities by name as they type."
+  },
+  "switcher.search.label": {
+    "text": "Search your communities",
+    "description": "Accessible name of the search field at the top of the Your communities switcher. It can also be reached with Command+K or Ctrl+K."
+  },
+  "switcher.search.results": {
+    "text": "Matching communities",
+    "description": "Accessible name of the list of communities whose names match what the person typed in the Your communities switcher's search."
+  },
+  "switcher.search.none": {
+    "text": "None of your communities match “{{query}}”.",
+    "description": "Shown in the Your communities switcher when no community the person is in has the searched words in its name. {{query}} is what they typed."
+  },
+  "switcher.recent": {
+    "text": "Recent",
+    "description": "Small heading in the Your communities switcher over the communities the person used most recently (and the ones they pinned), above the All communities row."
+  },
+  "switcher.join": {
+    "text": "Join a community",
+    "description": "Row at the end of the Your communities switcher: closes it and opens Discover, where the person can find a community to join."
+  },
+  "switcher.start": {
+    "text": "Start a community",
+    "description": "Row at the end of the Your communities switcher: closes it and opens the dialog that creates a new project and its community."
+  },
+  "drawer.outer.name": {
+    "text": "Your communities",
+    "description": "On a phone, under the Communities tab: the name, for a screen reader, of the outermost level of the navigation drawer, the list of every community the person is in."
+  },
+  "drawer.places.name": {
+    "text": "{{community}}'s places",
+    "description": "On a phone, under the Communities tab: the name, for a screen reader, of the drawer level that lists one community's places (Hub, Needs you, Workshop, its channels). {{community}} is the community's name."
+  },
+  "drawer.peek.page": {
+    "text": "Back to {{page}}",
+    "description": "On a phone, under the Communities tab: what a screen reader says for the edge of the page that peeks in beside a community's places; pressing it slides back to that page. {{page}} is the page's name, for example Workshop or #general."
+  },
+  "drawer.search.placeholder": {
+    "text": "Search your communities",
+    "description": "Placeholder of the search field at the top of the list of the person's communities, in the phone's navigation drawer."
+  },
+  "drawer.search.label": {
+    "text": "Search your communities",
+    "description": "Accessible name of the search field at the top of the list of the person's communities, in the phone's navigation drawer."
+  },
+  "drawer.search.cancel": {
+    "text": "Cancel",
+    "description": "Button beside the communities search in the phone's navigation drawer: ends the search, clears it, and narrows the list back so the community's places peek in again."
+  },
+  "drawer.search.none": {
+    "text": "None of your communities match “{{query}}”.",
+    "description": "Shown in the phone's navigation drawer when no community the person is in has the searched words in its name. {{query}} is what they typed."
+  },
+  "review.end.line": {
+    "text": "That's everything for now",
+    "description": "Quiet line at the end of the new Needs you feed (an experiment), under a check mark, once every waiting change has been shown."
+  },
+  "review.page.back": {
+    "text": "Back to Needs you",
+    "description": "Accessible name of the back button in the header of a change's page in the new Needs you flow (an experiment)."
+  },
+  "review.page.more": {
+    "text": "More options",
+    "description": "Accessible name of the ⋯ button in the header of a change's page in the new Needs you flow (an experiment). Opens Open the change page and Copy link."
+  },
+  "review.thumbs.label": {
+    "text": "Screens",
+    "description": "Accessible name of the row of small screen pictures under a change's before and after slider in the new Needs you flow (an experiment)."
+  },
+  "review.thumbs.one": {
+    "text": "Screen {{n}} of {{total}}",
+    "description": "Accessible name of one small screen picture under a change's slider in the new Needs you flow (an experiment). {{n}} is its position, {{total}} how many there are."
+  },
+  "review.alt.after": {
+    "text": "The screen after this change",
+    "description": "Alt text of the after picture in a change's before and after slider (new Needs you flow, an experiment)."
+  },
+  "review.alt.before": {
+    "text": "The screen before this change",
+    "description": "Alt text of the before picture in a change's before and after slider (new Needs you flow, an experiment)."
+  },
+  "review.compare.label": {
+    "text": "Compare before and after",
+    "description": "Accessible name of the before and after slider on a change's page (new Needs you flow, an experiment). Drag sideways, or use the arrow keys, to compare."
+  },
+  "review.compare.showingAfter": {
+    "text": "Showing the screen after the change",
+    "description": "Screen reader value of the before and after slider when most of it shows the screen after the change."
+  },
+  "review.compare.showingBefore": {
+    "text": "Showing the screen before the change",
+    "description": "Screen reader value of the before and after slider when most of it shows the screen before the change."
+  },
+  "review.compare.captionBefore": {
+    "text": "Before <0>· Today</0>",
+    "description": "Caption printed at the top left of the before picture on a change's page (new Needs you flow, an experiment), in small capitals. <0> wraps the quieter part. Keep it very short."
+  },
+  "review.compare.captionAfter": {
+    "text": "<0>If it passes ·</0> After",
+    "description": "Caption printed at the top right of the after picture on a change's page (new Needs you flow, an experiment), in small capitals: the screen as it will be if the vote passes. <0> wraps the quieter part. Keep it very short."
+  },
+  "review.compare.switch": {
+    "text": "Show the screen before the change",
+    "description": "Accessible name of the small switch at the foot of the before and after picture (new Needs you flow, an experiment). On: the before screen fills the picture. Off: the after screen."
+  },
+  "review.sheet.label": {
+    "text": "Your vote",
+    "description": "Accessible name of the vote sheet at the foot of a change's page (new Needs you flow, an experiment)."
+  },
+  "review.sheet.more": {
+    "text": "More about voting",
+    "description": "Accessible name of the small handle at the top of the vote sheet while it rests: tapping it opens the help (Ask privately, Discussion, Try it, About)."
+  },
+  "review.sheet.close": {
+    "text": "Close",
+    "description": "Accessible name of the small handle at the top of the vote sheet while it is open: tapping it folds the sheet back."
+  },
+  "review.sheet.backToHelp": {
+    "text": "Back to help",
+    "description": "Accessible name of the back button beside a help page's title in the vote sheet (Ask privately, Discussion, Try it, About)."
+  },
+  "review.vote.yes": {
+    "text": "Yes",
+    "description": "Button in the vote sheet on a change's page: vote for the change going live."
+  },
+  "review.vote.no": {
+    "text": "No",
+    "description": "Button in the vote sheet on a change's page: vote against the change. It asks for one line on what would make it a yes."
+  },
+  "review.vote.approve": {
+    "text": "Approve",
+    "description": "Yes button in the vote sheet on a change to a project that is just yours, where your yes is the one it needs."
+  },
+  "review.vote.dontApprove": {
+    "text": "Don't approve",
+    "description": "No button in the vote sheet on a change to a project that is just yours."
+  },
+  "review.unsure.line": {
+    "text": "Your vote counts once. If most members say yes, it goes live for everyone.",
+    "description": "Short line in the vote sheet's help, under Yes and No, saying how a change is decided."
+  },
+  "review.unsure.label": {
+    "text": "Help with this change",
+    "description": "Accessible name of the list of help rows in the vote sheet (Ask privately, Discussion, Try it, About)."
+  },
+  "review.unsure.ask.title": {
+    "text": "Ask privately",
+    "description": "Help row in the vote sheet, and the title of its page: ask questions about the change that only you see."
+  },
+  "review.unsure.ask.line": {
+    "text": "Only you see the answers",
+    "description": "Second line of the Ask privately help row in the vote sheet."
+  },
+  "review.unsure.talk.title": {
+    "text": "Discussion",
+    "description": "Help row in the vote sheet, and the title of its page: the change's conversation."
+  },
+  "review.unsure.talk.line": {
+    "text": "What others said about it",
+    "description": "Second line of the Discussion help row in the vote sheet."
+  },
+  "review.unsure.try.title": {
+    "text": "Try it",
+    "description": "Help row in the vote sheet, and the title of its page: open a live copy with this change."
+  },
+  "review.unsure.try.line": {
+    "text": "A live copy with this change",
+    "description": "Second line of the Try it help row in the vote sheet, when the change has a live preview."
+  },
+  "review.unsure.try.none": {
+    "text": "No live copy right now",
+    "description": "Second line of the Try it help row in the vote sheet, when the change has no live preview at the moment."
+  },
+  "review.unsure.about.title": {
+    "text": "About this change",
+    "description": "Help row in the vote sheet, and the title of its page: what the change does, who made it, and how deciding works."
+  },
+  "review.unsure.about.line": {
+    "text": "What it does, who made it",
+    "description": "Second line of the About this change help row in the vote sheet."
+  },
+  "review.no.placeholder": {
+    "text": "One line for {{name}}",
+    "description": "Placeholder in the box for a No vote's line, which is optional. {{name}} is the username of the person who made the change."
+  },
+  "review.no.placeholderNoName": {
+    "text": "One line for whoever made it",
+    "description": "Placeholder in the box for a No vote's line, when the change's maker is not known."
+  },
+  "review.reason.add": {
+    "text": "Add a reason",
+    "description": "Quiet link above the vote buttons after someone voted No on a change (new Needs you flow, an experiment). The reason is optional."
+  },
+  "review.reason.label": {
+    "text": "Your reason, optional",
+    "description": "Accessible name of the one-line field where someone adds a reason to their No vote (new Needs you flow, an experiment)."
+  },
+  "review.reason.share": {
+    "text": "Share",
+    "description": "Button inside the one-line reason field: sends the reason with the No vote (new Needs you flow, an experiment)."
+  },
+  "review.said.yes": {
+    "text": "You said yes",
+    "description": "Title in the vote sheet after voting Yes, under a large check mark."
+  },
+  "review.said.no": {
+    "text": "You said no",
+    "description": "Title in the vote sheet after voting No, under a large mark."
+  },
+  "review.said.undo": {
+    "text": "Undo",
+    "description": "Button in the vote sheet after voting: takes the vote back while voting is still open."
+  },
+  "review.said.next": {
+    "text": "Next change",
+    "description": "Button in the vote sheet after voting: moves sideways to the next change waiting on you."
+  },
+  "review.said.done": {
+    "text": "Done",
+    "description": "Button in the vote sheet after voting on the last change without your vote: opens the all-done message, which says that nothing else is waiting and offers the way back to the list."
+  },
+  "review.ask.note": {
+    "text": "Only you see this. Answers come from the change itself.",
+    "description": "Line at the top of Ask privately in the vote sheet."
+  },
+  "review.ask.who": {
+    "text": "Homeroom",
+    "description": "Name over an answer in Ask privately in the vote sheet."
+  },
+  "review.ask.q1": {
+    "text": "What exactly changes?",
+    "description": "Suggested question in Ask privately in the vote sheet. Tapping it asks it."
+  },
+  "review.ask.q2": {
+    "text": "Can it be undone?",
+    "description": "Suggested question in Ask privately in the vote sheet. Tapping it asks it."
+  },
+  "review.ask.placeholder": {
+    "text": "Ask about this change",
+    "description": "Placeholder of the question box in Ask privately in the vote sheet."
+  },
+  "review.ask.send": {
+    "text": "Ask",
+    "description": "Button that sends a question in Ask privately in the vote sheet."
+  },
+  "review.ask.reading": {
+    "text": "Reading the change…",
+    "description": "Placeholder answer in Ask privately while the answer is on its way."
+  },
+  "review.ask.failed": {
+    "text": "Couldn't get an answer just now. Try again in a moment.",
+    "description": "Answer in Ask privately when the question could not be answered and the server gave no reason."
+  },
+  "review.ask.offline": {
+    "text": "You seem to be offline. Try again when you're connected.",
+    "description": "Answer in Ask privately when the question could not be sent."
+  },
+  "review.try.note": {
+    "text": "A live copy with this change. Nothing you do there is kept.",
+    "description": "Line on the Try it page of the vote sheet, over the button that opens the live copy."
+  },
+  "review.try.open": {
+    "text": "Open the live copy",
+    "description": "Button on the Try it page of the vote sheet: opens the change's live preview."
+  },
+  "review.try.none": {
+    "text": "There's no live copy of this change right now. Its page may be able to start one.",
+    "description": "Line on the Try it page of the vote sheet when the change has no live preview."
+  },
+  "review.about.what": {
+    "text": "What it does",
+    "description": "Small heading on the About this change page of the vote sheet, over the change's summary."
+  },
+  "review.about.who": {
+    "text": "Who and when",
+    "description": "Small heading on the About this change page of the vote sheet, over who made it and where."
+  },
+  "review.about.builtBy": {
+    "text": "Made by {{name}}",
+    "description": "Row on the About this change page. {{name}} is the username of the person who made the change."
+  },
+  "review.about.inApp": {
+    "text": "In {{app}}",
+    "description": "Row on the About this change page: the project the change is for. {{app}} is its name."
+  },
+  "review.about.number": {
+    "text": "Change #{{number}}",
+    "description": "Small line under the project row on the About this change page. {{number}} is the change's number."
+  },
+  "review.about.deciding": {
+    "text": "How deciding works",
+    "description": "Small heading on the About this change page of the vote sheet."
+  },
+  "review.about.decidingLine": {
+    "text": "Each member votes once and can change their vote while voting is open. If most say yes, the change goes live for everyone.",
+    "description": "Paragraph on the About this change page explaining how a change is decided."
+  },
+  "review.more.open": {
+    "text": "Open the change page",
+    "description": "Menu entry and link: opens the change's full page with everything about it."
+  },
+  "review.more.copy": {
+    "text": "Copy link",
+    "description": "Menu entry that copies a link to the change's page."
+  },
+  "review.more.copied": {
+    "text": "Link copied",
+    "description": "Menu entry's words just after the link to the change's page was copied."
+  },
+  "review.more.cancel": {
+    "text": "Cancel",
+    "description": "Menu entry that closes the ⋯ menu on a change's page."
+  },
+  "review.benefit.fixed": {
+    "text": "Fixed",
+    "description": "Label over a drawn picture in the new Needs you (an experiment): the benefit a change brings, for a change with no screenshots. Shown in small capitals beside the part of Homeroom it touches."
+  },
+  "review.benefit.stability": {
+    "text": "Stability",
+    "description": "Label over a drawn picture in the new Needs you (an experiment): the benefit a change brings, for a change with no screenshots. Shown in small capitals beside the part of Homeroom it touches."
+  },
+  "review.benefit.clarity": {
+    "text": "Clarity",
+    "description": "Label over a drawn picture in the new Needs you (an experiment): the benefit a change brings, for a change with no screenshots. Shown in small capitals beside the part of Homeroom it touches."
+  },
+  "review.benefit.more": {
+    "text": "Can do more",
+    "description": "Label over a drawn picture in the new Needs you (an experiment): the benefit a change brings, for a change with no screenshots. Shown in small capitals beside the part of Homeroom it touches."
+  },
+  "review.benefit.results": {
+    "text": "Better results",
+    "description": "Label over a drawn picture in the new Needs you (an experiment): the benefit a change brings, for a change with no screenshots. Shown in small capitals beside the part of Homeroom it touches."
+  },
+  "review.benefit.speed": {
+    "text": "Speed",
+    "description": "Label over a drawn picture in the new Needs you (an experiment): the benefit a change brings, for a change with no screenshots. Shown in small capitals beside the part of Homeroom it touches."
+  },
+  "review.benefit.effort": {
+    "text": "Less effort",
+    "description": "Label over a drawn picture in the new Needs you (an experiment): the benefit a change brings, for a change with no screenshots. Shown in small capitals beside the part of Homeroom it touches."
+  },
+  "review.benefit.security": {
+    "text": "Security & privacy",
+    "description": "Label over a drawn picture in the new Needs you (an experiment): the benefit a change brings, for a change with no screenshots. Shown in small capitals beside the part of Homeroom it touches."
+  },
+  "review.benefit.behind": {
+    "text": "Behind the scenes",
+    "description": "Label over a drawn picture in the new Needs you (an experiment): the benefit a change brings, for a change with no screenshots. Shown in small capitals beside the part of Homeroom it touches."
+  },
+  "review.area.agents": {
+    "text": "Agents",
+    "description": "Label over a drawn picture in the new Needs you (an experiment), after the benefit: the part of Homeroom the change is felt in."
+  },
+  "review.area.proposals": {
+    "text": "Proposals",
+    "description": "Label over a drawn picture in the new Needs you (an experiment), after the benefit: the part of Homeroom the change is felt in."
+  },
+  "review.area.platform": {
+    "text": "Platform",
+    "description": "Label over a drawn picture in the new Needs you (an experiment), after the benefit: the part of Homeroom the change is felt in."
+  },
+  "review.area.projects": {
+    "text": "Projects",
+    "description": "Label over a drawn picture in the new Needs you (an experiment), after the benefit: the part of Homeroom the change is felt in."
+  },
+  "review.area.accounts": {
+    "text": "Accounts",
+    "description": "Label over a drawn picture in the new Needs you (an experiment), after the benefit: the part of Homeroom the change is felt in."
+  },
+  "review.area.admin": {
+    "text": "Admin",
+    "description": "Label over a drawn picture in the new Needs you (an experiment), after the benefit: the part of Homeroom the change is felt in."
+  },
+  "review.area.messages": {
+    "text": "Messages",
+    "description": "Label over a drawn picture in the new Needs you (an experiment), after the benefit: the part of Homeroom the change is felt in."
+  },
+  "review.area.challenges": {
+    "text": "Challenges",
+    "description": "Label over a drawn picture in the new Needs you (an experiment), after the benefit: the part of Homeroom the change is felt in."
+  },
+  "review.decision.closeIssue": {
+    "text": "Close a request",
+    "description": "Label over a group decision's drawn picture in the new Needs you (an experiment): what kind of decision it is. Shown in small capitals beside the project's name."
+  },
+  "review.decision.rename": {
+    "text": "Rename",
+    "description": "Label over a group decision's drawn picture in the new Needs you (an experiment): what kind of decision it is. Shown in small capitals beside the project's name."
+  },
+  "review.decision.secret": {
+    "text": "Secret",
+    "description": "Label over a group decision's drawn picture in the new Needs you (an experiment): what kind of decision it is. Shown in small capitals beside the project's name."
+  },
+  "review.decision.other": {
+    "text": "Group decision",
+    "description": "Label over a group decision's drawn picture in the new Needs you (an experiment): what kind of decision it is. Shown in small capitals beside the project's name."
+  },
+  "review.end.backToProject": {
+    "text": "Back to the Workshop",
+    "description": "Button at the end of a project's Needs you in the new review flow (an experiment), once every waiting change has been shown: opens the project's Workshop."
+  }
+}

@@ -458,7 +458,11 @@ test('collector is same-origin-only and the admin report is protected', async (t
       release() {},
       });
     },
-    async query() { throw new Error('admin aggregate must stay behind its gate'); },
+    async query(sql) {
+      // These people switched "Share usage analytics" on (#5097).
+      if (/SELECT usage_analytics FROM users/.test(sql)) return { rows: [{ usage_analytics: true }] };
+      throw new Error('admin aggregate must stay behind its gate');
+    },
   };
   const { uiTelemetryRoutes } = require('../src/routes/ui-telemetry');
   const app = express();
@@ -618,8 +622,10 @@ test('real PostgreSQL insert is idempotent and aggregates matched lifecycle iden
     // remain deterministic.
     await pool.query("DELETE FROM events WHERE event_type IN ('ui_experience','ui_telemetry_delivery')");
     const suffix = `${process.pid}-${Date.now()}`;
+    // Switched "Share usage analytics" on (#5097): the server-side failure
+    // note below is recorded only for somebody who did.
     const user = (await pool.query(
-      'INSERT INTO users (username, password) VALUES ($1, $2) RETURNING id',
+      'INSERT INTO users (username, password, usage_analytics) VALUES ($1, $2, TRUE) RETURNING id',
       [`ui-telemetry-${suffix}`, 'test']
     )).rows[0];
     const app = (await pool.query(
@@ -720,10 +726,13 @@ test('real PostgreSQL insert is idempotent and aggregates matched lifecycle iden
     await pool.query(
       `INSERT INTO events (user_id, event_type, metadata) VALUES
        ($1, 'ui_experience', $2::jsonb),
-       ($1, 'ui_telemetry_delivery', $3::jsonb)`,
+       ($1, 'ui_experience', $3::jsonb),
+       ($1, 'ui_telemetry_delivery', $4::jsonb)`,
       [serviceUser.id,
         JSON.stringify({ eventId: id('event'), visitId: id('visit'), kind: 'screen_visit',
           screen: 'app_detail', sequence: 1 }),
+        JSON.stringify({ eventId: id('event'), visitId: id('visit'), kind: 'page_load',
+          screen: 'home', durationMs: 100, sequence: 2 }),
         JSON.stringify({ batchId: id('batch'), submitted: 1, accepted: 1,
           failedBatches: 0, droppedEvents: 0 })]
     );
@@ -738,6 +747,28 @@ test('real PostgreSQL insert is idempotent and aggregates matched lifecycle iden
           screen: 'home', via: 'own', sequence: 1 }),
         JSON.stringify({ eventId: id('event'), visitId: id('visit'), kind: 'screen_hidden',
           screen: 'home', sequence: 2 })]
+    );
+
+    // Page load times (#4965) share the event type as bare durations on the
+    // landing screens: they feed their own aggregate and must leave the
+    // failure report's visits and screens untouched.
+    const loadDurations = [['home', 400], ['home', 1200], ['discover', 2600],
+      ['discover', 2800], ['messages', 640], ['shell_boot', 5000]];
+    const loadParams = [user.id];
+    const loadValues = loadDurations.map(([screen, ms], i) => {
+      loadParams.push(JSON.stringify({ eventId: id('event'), visitId: id('visit'),
+        kind: 'page_load', screen, durationMs: ms, sequence: i + 1 }));
+      return `($1, 'ui_experience', $${loadParams.length}::jsonb)`;
+    });
+    await pool.query(
+      `INSERT INTO events (user_id, event_type, metadata) VALUES ${loadValues.join(', ')}`,
+      loadParams
+    );
+    await pool.query(
+      `INSERT INTO events (user_id, event_type, metadata, created_at)
+       VALUES ($1, 'ui_experience', $2::jsonb, NOW() - INTERVAL '20 days')`,
+      [user.id, JSON.stringify({ eventId: id('event'), visitId: id('visit'),
+        kind: 'page_load', screen: 'home', durationMs: 90, sequence: 1 })]
     );
 
     const report = await telemetry.aggregate(pool, { days: 14 });
@@ -767,6 +798,17 @@ test('real PostgreSQL insert is idempotent and aggregates matched lifecycle iden
       'the correlated server classification supersedes the generic client 404');
     assert.equal(report.contexts[0].app_slug, app.slug);
 
+    // Percentiles are over the six in-window loads: 400, 640, 1200, 2600,
+    // 2800, 5000. The 20-day-old load and the service identity's are out.
+    const loads = await telemetry.pageLoads(pool, { days: 14 });
+    assert.deepEqual(loads.total, { screen: null, loads: 6, people: 1, p50Ms: 1900, p95Ms: 4450 });
+    assert.deepEqual(loads.screens, [
+      { screen: 'discover', loads: 2, people: 1, p50Ms: 2700, p95Ms: 2790 },
+      { screen: 'home', loads: 2, people: 1, p50Ms: 800, p95Ms: 1160 },
+      { screen: 'messages', loads: 1, people: 1, p50Ms: 640, p95Ms: 640 },
+      { screen: 'shell_boot', loads: 1, people: 1, p50Ms: 5000, p95Ms: 5000 },
+    ]);
+
     other = (await pool.query(
       'INSERT INTO users (username, password) VALUES ($1, $2) RETURNING id',
       [`ui-telemetry-other-${suffix}`, 'test']
@@ -782,6 +824,10 @@ test('admin surface explains coverage and non-failure signals', () => {
   const service = fs.readFileSync(path.join(__dirname, '../src/services/ui-telemetry.js'), 'utf8');
   const server = fs.readFileSync(path.join(__dirname, '../server.js'), 'utf8');
   assert.match(source, /id="ui-failures"/);
+  assert.match(source, /id="page-loads"/, 'the page load card is rendered on Analytics');
+  assert.match(source, /Page load times/);
+  assert.match(source, /95th percentile/);
+  assert.match(source, /All page loads/);
   assert.match(source, /No delivery coverage/);
   assert.match(service, /not zero failures/);
   assert.match(source, /success.*failed outcomes/i);
@@ -843,6 +889,85 @@ test('a via mark explains only the navigation right after it', async () => {
     'a stale mark does not mislabel a later step');
 });
 
+// ── Page load times (#4965) ──
+
+const navigationTiming = (loadEventEnd, startTime = 0) => ({
+  getEntriesByType: (type) => (type === 'navigation' ? [{ startTime, loadEventEnd }] : []),
+});
+
+test('client measures one full page load and credits it to the first real screen', async () => {
+  const h = clientHarness({ withDocument: true });
+  h.env.performance = navigationTiming(1234);
+  h.api.setUser({ id: 44, uiTelemetryEligible: true }, true);
+  const pageLoads = () => h.sent.flatMap((b) => b.body.events).filter((e) => e.kind === 'page_load');
+  // A first-run sheet is not a landing: the load waits for a real screen.
+  h.api.navigate('username_sheet');
+  h.elapse(500, true);
+  assert.equal(pageLoads().length, 0, 'no screen has landed yet');
+  h.api.navigate('home');
+  h.elapse(2000, true);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(pageLoads().map((e) => [e.screen, e.durationMs]), [['home', 1234]],
+    'one page_load, on the first real screen');
+  h.api.navigate('discover');
+  h.elapse(2000, true);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(pageLoads().length, 1, 'a load is measured once per page');
+  // Without Navigation Timing available the client stays silent rather than
+  // inventing a duration.
+  const quiet = clientHarness({ withDocument: true });
+  quiet.api.setUser({ id: 48, uiTelemetryEligible: true }, true);
+  quiet.api.navigate('home');
+  quiet.elapse(5000, true);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(quiet.sent.flatMap((b) => b.body.events).some((e) => e.kind === 'page_load'), false);
+});
+
+test('a load that finished before any screen showed is kept under shell_boot', async () => {
+  const h = clientHarness({ withDocument: true });
+  h.env.performance = navigationTiming(900, 2);
+  h.api.setUser({ id: 45, uiTelemetryEligible: true }, true);
+  h.elapse(500, true); // the load ends; no screen has landed
+  h.document.visibilityState = 'hidden';
+  h.documentListeners.get('visibilitychange')();
+  h.listeners.get('pagehide')();
+  await new Promise((resolve) => setImmediate(resolve));
+  const pageLoads = h.sent.flatMap((b) => b.body.events).filter((e) => e.kind === 'page_load');
+  assert.deepEqual(pageLoads.map((e) => [e.screen, e.durationMs]), [['shell_boot', 898]],
+    'the page closed without showing a screen, so the load is a shell_boot duration');
+});
+
+test('a load that finishes while the page stays visible is measured; hidden first is not', async () => {
+  const h = clientHarness({ withDocument: true });
+  h.env.performance = navigationTiming(0); // loadEventEnd still 0: the load has not finished
+  h.api.setUser({ id: 46, uiTelemetryEligible: true }, true);
+  const pageLoads = () => h.sent.flatMap((b) => b.body.events).filter((e) => e.kind === 'page_load');
+  h.api.navigate('home');
+  h.elapse(500, true);
+  assert.equal(pageLoads().length, 0, 'the load has not finished yet');
+  // The load finishes while the page is still visible: the next poll keeps it.
+  h.env.performance = navigationTiming(1500);
+  h.elapse(1000, true);
+  await new Promise((resolve) => setImmediate(resolve));
+  h.elapse(1000, true); // the delivery drains the load it just kept
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(pageLoads().map((e) => [e.screen, e.durationMs]), [['home', 1500]],
+    'a load that finishes after the landing is kept');
+  // A page hidden before its load finishes is not measured, even when the
+  // load finishes afterwards and a screen lands.
+  const hidden = clientHarness({ withDocument: true });
+  hidden.env.performance = navigationTiming(0);
+  hidden.api.setUser({ id: 47, uiTelemetryEligible: true }, true);
+  hidden.document.visibilityState = 'hidden';
+  hidden.documentListeners.get('visibilitychange')();
+  hidden.env.performance = navigationTiming(1500);
+  hidden.api.navigate('home');
+  hidden.elapse(5000, true);
+  hidden.listeners.get('pagehide')();
+  await hidden.api.flush(false);
+  assert.equal(hidden.sent.flatMap((b) => b.body.events).some((e) => e.kind === 'page_load'), false);
+});
+
 // ── Browser languages, for choosing which languages Homeroom ships (#3659) ──
 
 test('the browser language is the most preferred Accept-Language, kept to language, script and region', () => {
@@ -873,7 +998,11 @@ test('the collector notes the browser language on a shell start and nowhere else
       },
       release() {},
     }),
-    async query() { throw new Error('the language count must stay behind its gate'); },
+    async query(sql) {
+      // These people switched "Share usage analytics" on (#5097).
+      if (/SELECT usage_analytics FROM users/.test(sql)) return { rows: [{ usage_analytics: true }] };
+      throw new Error('the language count must stay behind its gate');
+    },
   };
   const { uiTelemetryRoutes } = require('../src/routes/ui-telemetry');
   const app = express();

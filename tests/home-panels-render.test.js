@@ -36,6 +36,7 @@ const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 const { HOME_SRC: HOME, PANELS_SRC: SRC, PANELS_RAW } = require('./helpers/home-modules');
 const { installPanelsStore } = require('./helpers/home-grid-store');
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
+const { englishPlatformI18n, message } = require('./lib/platform-i18n');
 const INDEX = read('public/index.html');
 const ISLAND = read('frontend/src/features/home/index.tsx');
 const SW = read('public/sw.js');
@@ -152,6 +153,7 @@ function makeHomePanels({
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = englishPlatformI18n();
   vm.createContext(sandbox);
   // home-panels.js imports its view-model store; ./helpers/home-modules strips
   // the line so the source runs as classic script text, and this supplies the
@@ -210,12 +212,14 @@ const challenge = (over = {}) => ({
   ...over,
 });
 
-// The first challenge card and everything after it, up to the footer — the
-// card markup without the season progress above it or the controls below it.
-const cardOf = (html) => {
-  const from = html.indexOf('home-challenge-card');
-  const to = html.indexOf('home-panel-footer', from);
-  return html.slice(from, to > from ? to : undefined);
+// The first challenge card and everything after it: the card markup without
+// the heading above it.
+const cardOf = (html) => html.slice(html.indexOf('home-challenge-card'));
+// The first card alone, up to where the next one starts.
+const firstCardOf = (html) => {
+  const card = cardOf(html);
+  const next = card.indexOf('home-challenge-card', 1);
+  return next < 0 ? card : card.slice(0, next);
 };
 
 const panel = (over = {}) => ({
@@ -400,11 +404,12 @@ test('the rank rule is named on HomePanels, as the tab names its own', () => {
   const { HP } = makeHomePanels();
   const G = HP.CHALLENGE_GROUPS;
   assert.deepEqual(
-    [G.ONBOARDING, G.WEEKLY, G.PERSISTENT, HP.OTHER_GROUP].map((g) => g.heading),
-    ['First challenges', 'This week', 'Always open', 'Season challenges']);
-  assert.deepEqual(
     [G.ONBOARDING, G.WEEKLY, G.PERSISTENT, HP.OTHER_GROUP].map((g) => g.key),
     ['setup', 'week', 'always', 'other'], 'the keys do not change');
+  assert.deepEqual(
+    [G.ONBOARDING, G.WEEKLY, G.PERSISTENT, HP.OTHER_GROUP].map((g) => g.heading),
+    [undefined, undefined, undefined, undefined],
+    'no headings: Home draws no group headers any more (the Semi design)');
   for (const [group, finished, want] of [
     [G.ONBOARDING, false, 0], [G.WEEKLY, false, 1], [G.PERSISTENT, false, 2], [HP.OTHER_GROUP, false, 3],
     [G.ONBOARDING, true, 4], [G.WEEKLY, true, 1], [G.PERSISTENT, true, 2], [HP.OTHER_GROUP, true, 3],
@@ -425,205 +430,221 @@ test('the rank rule is named on HomePanels, as the tab names its own', () => {
   assert.equal(HP.setupFinished(null), false);
 });
 
-// ── summaryLine ───────────────────────────────────────────────────
-
-test('summaryLine: the points clause only appears when it can be honest', () => {
-  const { HP } = makeHomePanels();
-  assert.equal(HP.summaryLine(panel({ total: 5, done: 2, points_remaining: 4300 })),
-    '2 of 5 · 4,300 pts left');
-  assert.equal(HP.summaryLine(panel({ total: 5, done: 2, points_remaining: null })),
-    '2 of 5');
-  assert.equal(HP.summaryLine(panel({ total: 3, done: 3, points_remaining: 0 })),
-    '3 of 3', 'nothing left to earn drops the clause');
-});
-
-// ── visibleSlots ──────────────────────────────────────────────────
+// ── What the block holds, and what it is called (the Semi design) ─────
 //
-// The height cap buys exactly ROW_SLOTS 40px rows. Overflow spends the
-// LAST slot on the "See all N" link rather than adding a row, so the
-// budget is the same whether or not there is overflow.
+// 2026-10-16, owner-approved. The block is named by what it holds: "First
+// challenges" while any First challenge (ONBOARDING) is unfinished, "Next
+// challenges" (at most three, furthest along first) once they are done, and
+// "Challenges" over one line when nothing is open. No season, no points
+// total, no counts, no group headers and no deadline anywhere.
 
-test('visibleSlots: everything fits, no link row', () => {
-  const { HP } = makeHomePanels();
-  const four = Array.from({ length: 4 }, (_, i) => challenge({ id: i + 1 }));
-  const out = HP.visibleSlots(panel({ total: 4, challenges: four }));
-  assert.equal(out.rows.length, 4);
-  assert.equal(out.link, false);
-  assert.equal(out.total, 4);
-});
+const DONE = { done: true, current: null, target: null };
+const ids = (view) => [...view.rows].map((r) => r.id);
 
-test('visibleSlots: overflow keeps all four row slots — the footer owns it', () => {
-  const { HP } = makeHomePanels();
-  const four = Array.from({ length: 4 }, (_, i) => challenge({ id: i + 1 }));
-  const out = HP.visibleSlots(panel({ total: 9, challenges: four }));
-  // The overflow affordance moved OUT of the row list into the footer's
-  // expand toggle, so a fourth challenge is no longer sacrificed for it.
-  assert.equal(out.rows.length, 4);
-  assert.equal(out.link, false, 'no row slot is spent on overflow any more');
-  assert.equal(out.total, 9, 'the footer label carries the TRUE total');
-  assert.ok(out.rows.length <= HP.ROW_SLOTS);
-});
-
-test('visibleSlots: not-done rows win the slots when the cap trims', () => {
-  const { HP } = makeHomePanels();
-  const rows = [
-    challenge({ id: 1, progress: { done: true, current: null, target: null } }),
-    challenge({ id: 2 }),
-    challenge({ id: 3 }),
-    challenge({ id: 4 }),
-    challenge({ id: 5 }),
-  ];
-  const out = HP.visibleSlots(panel({ total: 7, challenges: rows }));
-  assert.deepEqual([...out.rows].map((c) => c.id), [2, 3, 4, 5],
-    'the actionable rows survive; the finished one is what gets dropped');
-  assert.equal(out.doneFrom, null, 'four unfinished rows leave no slot to fill');
-});
-
-// #2490 (owner decision, 2026-09-21: option B of the prototype). Unfinished
-// challenges take the slots first, in the tab's order, across groups; finished
-// ones fill only the slots that are left, in the same order, and draw last.
-test('visibleSlots: finished rows fill only the slots unfinished ones leave, and come last', () => {
-  const { HP } = makeHomePanels();
-  const done = { done: true, current: null, target: null };
-  const rows = [
-    challenge({ id: 1, label: 'WEEKLY', display_order: 1, progress: done }),
-    challenge({ id: 2, label: 'WEEKLY', display_order: 2, progress: done }),
-    challenge({ id: 3, label: 'WEEKLY', display_order: 3 }),
-    challenge({ id: 4, label: 'PERSISTENT', display_order: 4 }),
-    challenge({ id: 5, label: 'PERSISTENT', display_order: 5, progress: done }),
-  ];
-  const out = HP.visibleSlots(panel({ total: 5, challenges: rows }));
-  assert.deepEqual([...out.rows].map((c) => c.id), [3, 4, 1, 2],
-    "both unfinished rows first, then the first two finished ones in the tab's order");
-  assert.equal(out.doneFrom, 2, 'the finished fill starts after the unfinished rows');
-
-  const allDone = rows.map((c) => ({ ...c, progress: done }));
-  const finished = HP.visibleSlots(panel({ total: 5, challenges: allDone }));
-  assert.deepEqual([...finished.rows].map((c) => c.id), [1, 2, 3, 4],
-    'a season the viewer has finished still draws four cards');
-  assert.equal(finished.doneFrom, 0);
-
-  HP._expanded.challenges = true;
-  const open = HP.visibleSlots(panel({ total: 5, challenges: rows }));
-  assert.deepEqual([...open.rows].map((c) => c.id), [3, 1, 2, 4, 5],
-    "expanded keeps the tab's order: a finished card sinks inside its own group");
-  assert.equal(open.doneFrom, null, 'and there is no finished fill to head');
-});
-
-test('challengesView: the finished fill sits last under one Done header, with no clock', () => {
-  const inHours = (h) => new Date(Date.now() + h * 3600000).toISOString();
+test('First challenges: every one of them while any is unfinished, done ones in place', () => {
   const { HP } = makeHomePanels({ slots: [] });
-  const done = { done: true, current: null, target: null };
+  const first = (id, over = {}) => challenge({ id, label: 'ONBOARDING', display_order: id, goal: `First ${id}`, ...over });
   const view = HP.challengesView(panel({
-    season: { id: 1, name: 'Season 1', ends_at: inHours(71) },
-    total: 5,
     challenges: [
-      challenge({ id: 1, label: 'WEEKLY', display_order: 1, progress: done }),
-      challenge({ id: 2, label: 'WEEKLY', display_order: 2, progress: done }),
+      // The server's sequence is not the admin's: the view puts them back.
+      first(3), first(1, { progress: DONE }), first(4), first(2, { progress: DONE }),
+      challenge({ id: 5, label: 'WEEKLY', display_order: 5 }),
+      challenge({ id: 6, label: 'PERSISTENT', display_order: 6 }),
+    ],
+  }));
+  assert.equal(view.mode, 'first');
+  assert.equal(view.heading, 'First challenges');
+  assert.equal(view.seeAll, true);
+  assert.equal(view.note, null);
+  assert.deepEqual(ids(view), ['1', '2', '3', '4'],
+    "the admin's order, the finished ones keeping their seats; nothing else yet");
+  assert.deepEqual([...view.rows].map((r) => r.stateLabel), ['Done', 'Done', 'Not started', 'Not started']);
+
+  // No display_order on every row (the staging demo, an older cache): the
+  // server's sequence, still with the done ones in place.
+  const noOrder = HP.challengesView(panel({
+    challenges: [challenge({ id: 9, label: 'ONBOARDING', progress: DONE }), challenge({ id: 8, label: 'onboarding ' })],
+  }));
+  assert.deepEqual(ids(noOrder), ['9', '8']);
+
+  // An older server's gate summary still decides, as on the tab.
+  const gated = HP.challengesView(panel({
+    onboarding: { unlocked: true },
+    challenges: [first(1), challenge({ id: 5, label: 'WEEKLY' })],
+  }));
+  assert.equal(gated.mode, 'next', 'unlocked: past the First challenges');
+  for (const gone of ['locked', 'lockedCount', 'lockedNames', 'onboardingNote', 'groups', 'season',
+    'summary', 'total', 'allTotal', 'expandable', 'expanded']) {
+    assert.equal(gone in view, false, `no ${gone} on the view`);
+  }
+  for (const gone of ['gettingStartedOnHome', 'lockedOnboarding']) {
+    assert.equal(gone in HP, false, `HomePanels.${gone} went with the card`);
+  }
+});
+
+test('Next challenges: at most three open ones, in the Challenges tab\'s order whatever the progress (polish N11)', () => {
+  const { HP } = makeHomePanels({ slots: [] });
+  assert.equal(HP.NEXT_SLOTS, 3);
+  const counted = (id, current, target, over = {}) => challenge({
+    id, display_order: id,
+    metric: { kind: 'count', label: 'apps', target },
+    progress: { done: false, current, target },
+    ...over,
+  });
+  const view = HP.challengesView(panel({
+    challenges: [
+      challenge({ id: 1, label: 'ONBOARDING', display_order: 0, progress: DONE }),
+      challenge({ id: 2, label: 'WEEKLY', display_order: 2 }),
+      counted(3, 1, 4, { label: 'PERSISTENT' }),
+      challenge({ id: 4, label: 'PERSISTENT', display_order: 4, earned_points: 50 }),
+      counted(5, 2, 3, { label: 'COMMUNITY' }),
+      counted(6, 0, 5, { label: 'WEEKLY' }),
+      challenge({ id: 7, label: 'WEEKLY', display_order: 7, progress: DONE }),
+      challenge({ id: 8, label: 'PERSISTENT', display_order: 8, open: false, earned_points: 10 }),
+    ],
+  }));
+  assert.equal(view.mode, 'next');
+  assert.equal(view.heading, 'Next challenges');
+  assert.equal(view.seeAll, true);
+  assert.deepEqual(ids(view), ['2', '6', '3'],
+    'This week first, then Always open, in the tab\'s order; '
+    + 'never a finished, a First or a not-open challenge');
+  // Progress moving (the boot copy, then the fresh read) moves nothing.
+  const later = HP.challengesView(panel({
+    challenges: [
+      challenge({ id: 1, label: 'ONBOARDING', display_order: 0, progress: DONE }),
+      challenge({ id: 2, label: 'WEEKLY', display_order: 2 }),
+      counted(3, 3, 4, { label: 'PERSISTENT' }),
+      challenge({ id: 4, label: 'PERSISTENT', display_order: 4, earned_points: 50 }),
+      counted(5, 2, 3, { label: 'COMMUNITY' }),
+      counted(6, 4, 5, { label: 'WEEKLY' }),
+      challenge({ id: 7, label: 'WEEKLY', display_order: 7, progress: DONE }),
+      challenge({ id: 8, label: 'PERSISTENT', display_order: 8, open: false, earned_points: 10 }),
+    ],
+  }));
+  assert.deepEqual(ids(later), ids(view), 'the same three, in the same places, after a step on two of them');
+
+  // Ties keep the Challenges tab's order (orderRows): This week first.
+  const fresh = HP.challengesView(panel({
+    challenges: [
+      challenge({ id: 1, label: 'COMMUNITY', display_order: 1 }),
+      challenge({ id: 2, label: 'PERSISTENT', display_order: 2 }),
       challenge({ id: 3, label: 'WEEKLY', display_order: 3 }),
       challenge({ id: 4, label: 'PERSISTENT', display_order: 4 }),
-      challenge({ id: 5, label: 'PERSISTENT', display_order: 5, progress: done }),
     ],
   }));
-  const groups = [...view.groups];
-  assert.deepEqual(groups.map((g) => [g.key, g.heading, g.meta, [...g.rows].map((r) => r.id)]), [
-    ['week', 'This week', '3d left', ['3']],
-    ['always', 'Always open', 'no deadline', ['4']],
-    ['done', 'Done', null, ['1', '2']],
-  ], 'the unfinished cards under their own headers, then the finished fill under Done');
-  assert.deepEqual([...view.rows].map((r) => r.id), ['3', '4', '1', '2'], "`rows` is the groups' sequence");
-  assert.deepEqual([...view.rows].map((r) => r.deadline), [null, null, null, null]);
-  assert.deepEqual([...groups[2].rows].map((r) => r.stateLabel), ['Done', 'Done']);
-  assert.equal(HP.DONE_GROUP.heading, 'Done');
-  assert.equal(view.expandable, true, 'the fifth card is behind the toggle');
+  assert.deepEqual(ids(fresh), ['3', '2', '4'], 'nobody has started any: the tab\'s order, cut to three');
+
+  const two = HP.challengesView(panel({ challenges: [challenge({ id: 1 }), challenge({ id: 2 })] }));
+  assert.deepEqual(ids(two), ['1', '2'], 'fewer than three: all of them, no filler');
 });
 
-// The Getting started card is on Home (App.user.showGettingStarted): only
-// then does a closed gate with a count draw the one locked card.
-const WITH_CARD = { id: 1, isAdmin: false, showGettingStarted: true };
-
-test('challengesView: while setup gates the season, its finished card moves under Done', () => {
-  const { HP } = makeHomePanels({ slots: [], user: WITH_CARD });
-  const done = { done: true, current: null, target: null };
-  // With nothing hidden to count (the season holds First challenges only),
-  // a closed gate still draws them, in their groups.
-  const view = HP.challengesView(panel({
-    total: 2,
-    onboarding: { total: 2, completed: 1, unlocked: false, hidden_count: 0 },
-    challenges: [
-      challenge({ id: 1, label: 'ONBOARDING', display_order: 0, progress: done }),
-      challenge({ id: 2, label: 'ONBOARDING', display_order: 1 }),
-    ],
-  }));
-  assert.deepEqual([...view.groups].map((g) => [g.heading, [...g.rows].map((r) => r.id)]),
-    [['First challenges', ['2']], ['Done', ['1']]]);
-  assert.equal(view.locked, undefined);
-  assert.equal(view.lockedCount, 0);
-  // With a count (2026-10-01), the block is the one locked card instead: the
-  // Getting started card on top of Home already lists the First challenges.
-  const locked = HP.challengesView(panel({
-    total: 2,
-    onboarding: { total: 2, completed: 1, unlocked: false, hidden_count: 7, hidden_names: ['A', ' ', 'B'] },
-    challenges: [
-      challenge({ id: 1, label: 'ONBOARDING', display_order: 0, progress: done }),
-      challenge({ id: 2, label: 'ONBOARDING', display_order: 1 }),
-    ],
-  }));
-  assert.equal(locked.locked, true);
-  assert.deepEqual([locked.rows.length, locked.groups.length, locked.season], [0, 0, null]);
-  assert.equal(locked.lockedCount, 7);
-  assert.deepEqual([...locked.lockedNames], ['A', 'B'], 'blank names dropped');
-  assert.equal(locked.expandable, false, 'no footer under the one card');
-});
-
-// The #2490 report: one member's Pre Season 2 board while it was open. This
-// week held one unfinished and three finished challenges, Always open three
-// unfinished ones, and setup was done. The block used to draw This week's four
-// cards, three of them finished, and none of Always open.
+// #2490 still holds: a finished card never takes the place of one to do.
 test("#2490: the block shows what is left to do, not This week's finished cards", () => {
   const { HP } = makeHomePanels({ slots: [] });
-  const done = { done: true, current: null, target: null };
   const view = HP.challengesView(panel({
-    total: 9,
     onboarding: { total: 0, completed: 0, unlocked: true },
     challenges: [
       challenge({ id: 76, label: 'PERSISTENT', display_order: 2 }),
       challenge({ id: 77, label: 'PERSISTENT', display_order: 3 }),
       challenge({ id: 78, label: 'PERSISTENT', display_order: 4 }),
       challenge({ id: 79, label: 'WEEKLY', display_order: 5 }),
-      challenge({ id: 74, label: 'ONBOARDING', display_order: 0, progress: done }),
-      challenge({ id: 75, label: 'ONBOARDING', display_order: 1, progress: done }),
-      challenge({ id: 80, label: 'WEEKLY', display_order: 6, progress: done }),
-      challenge({ id: 81, label: 'WEEKLY', display_order: 7, progress: done }),
-      challenge({ id: 82, label: 'WEEKLY', display_order: 8, progress: done }),
+      challenge({ id: 74, label: 'ONBOARDING', display_order: 0, progress: DONE }),
+      challenge({ id: 80, label: 'WEEKLY', display_order: 6, progress: DONE }),
+      challenge({ id: 81, label: 'WEEKLY', display_order: 7, progress: DONE }),
     ],
   }));
-  assert.deepEqual([...view.groups].map((g) => [g.heading, [...g.rows].map((r) => r.id)]), [
-    ['This week', ['79']],
-    ['Always open', ['76', '77', '78']],
-  ], 'the four unfinished challenges, and no finished card');
+  assert.deepEqual(ids(view), ['79', '76', '77'], 'three to do, and no finished card');
 });
 
-test('visibleSlots: expanded draws every row the server sent', () => {
-  const { HP } = makeHomePanels();
-  const nine = Array.from({ length: 9 }, (_, i) => challenge({ id: i + 1 }));
-  HP._expanded.challenges = true;
-  const out = HP.visibleSlots(panel({ total: 9, challenges: nine, expanded: true }));
-  assert.equal(out.rows.length, 9, 'the row cap does not apply when expanded');
-  assert.equal(out.expanded, true);
+test('nothing open: "All done for this week" when the weekly ones are done', () => {
+  const { HP } = makeHomePanels({ slots: [] });
+  const view = HP.challengesView(panel({
+    challenges: [
+      challenge({ id: 1, label: 'ONBOARDING', progress: DONE }),
+      challenge({ id: 2, label: 'WEEKLY', progress: DONE }),
+      challenge({ id: 3, label: 'WEEKLY', progress: DONE }),
+      challenge({ id: 4, label: 'weekly', progress: DONE }),
+      challenge({ id: 5, label: 'PERSISTENT', progress: DONE }),
+    ],
+  }));
+  assert.equal(view.mode, 'done');
+  assert.equal(view.heading, 'Challenges');
+  assert.equal(view.seeAll, true, 'the finished ones are still a tap away');
+  assert.equal(view.rows.length, 0);
+  assert.deepEqual({ ...view.note },
+    { title: 'All done for this week', text: '3 challenges start again on Monday.' });
+  const one = HP.challengesView(panel({ challenges: [challenge({ id: 2, label: 'WEEKLY', progress: DONE })] }));
+  assert.equal(one.note.text, '1 challenge starts again on Monday.', 'the count is a plural pair');
+  // A weekly challenge still open is something to do next, not "all done".
+  const open = HP.challengesView(panel({
+    challenges: [challenge({ id: 2, label: 'WEEKLY', progress: DONE }), challenge({ id: 3, label: 'WEEKLY' })],
+  }));
+  assert.equal(open.mode, 'next');
 });
 
-test('visibleSlots: tolerates an empty/absent challenge list', () => {
-  const { HP } = makeHomePanels();
-  // Field-by-field, not deepEqual: the module runs in a vm realm, so its
-  // objects have a different Object.prototype and strict deepEqual rejects
-  // them as "same structure but not reference-equal".
-  const empty = HP.visibleSlots(panel({ total: 0, challenges: [] }));
-  assert.equal(empty.rows.length, 0);
-  assert.equal(empty.link, false);
-  assert.equal(empty.total, 0);
-  assert.equal(HP.visibleSlots({}).rows.length, 0);
-  assert.equal(HP.visibleSlots({}).link, false);
+test('nothing open: "No challenges right now" otherwise, with no See all', () => {
+  const { HP } = makeHomePanels({ slots: [] });
+  for (const [why, challenges] of [
+    ['nothing running', []],
+    ['no list at all', undefined],
+    ['everything done, none weekly', [challenge({ id: 1, label: 'PERSISTENT', progress: DONE })]],
+    ['only a not-open challenge', [challenge({ id: 1, open: false })]],
+  ]) {
+    const view = HP.challengesView(panel({ total: 0, challenges }));
+    assert.equal(view.mode, 'none', why);
+    assert.equal(view.heading, 'Challenges', why);
+    assert.equal(view.seeAll, false, `${why}: nothing behind a See all`);
+    assert.deepEqual({ ...view.note }, { title: 'No challenges right now', text: 'New ones will show up here.' }, why);
+  }
+});
+
+test('the block reads no season, no points total and no clock off the payload', () => {
+  const inHours = (h) => new Date(Date.now() + h * 3600000).toISOString();
+  const { HP } = makeHomePanels({ slots: [] });
+  const view = HP.challengesView(panel({
+    season: { id: 1, name: 'Season 1', ends_at: inHours(71) },
+    total: 6, done: 2, all_total: 15, all_done: 4, points_total: 2000, points_earned: 1000,
+    points_remaining: 3900,
+    challenges: [
+      challenge({ id: 1, label: 'ONBOARDING', ends_at: inHours(5) }),
+      challenge({ id: 2, label: 'WEEKLY', ends_at: inHours(23) }),
+    ],
+  }));
+  assert.equal(JSON.stringify(view).match(/\d+[dh] left|Season 1|2,000|3,900|of 15/), null,
+    'nothing from the season, its points or its clocks reaches the view');
+  for (const row of view.rows) {
+    assert.equal('deadline' in row, false, 'a row carries no deadline');
+    assert.equal('group' in row, false, 'and no group header key');
+  }
+  for (const gone of ['seasonView', 'summaryLine', 'timeLeft', 'endsOf', 'weekEnd', 'challengeGroups',
+    'visibleSlots', 'toggleExpanded', 'ROW_SLOTS', 'DONE_GROUP', '_expanded']) {
+    assert.equal(HP[gone], undefined, `HomePanels.${gone} is retired`);
+  }
+  assert.doesNotMatch(SRC, /params\.set\('expand'/, 'the fetch no longer asks for an expanded list');
+});
+
+// The three This week challenges count by the week, so a counted rail says
+// so. A yes-or-no one keeps its words: there is no count to put a week on.
+test('a This week challenge says "this week" on a counted rail, and only there', () => {
+  const { HP } = makeHomePanels({ slots: [] });
+  const weekly = (over) => HP.challengeRowView(challenge({ label: 'WEEKLY', ...over }));
+  assert.equal(weekly({
+    metric: { kind: 'count', label: 'apps tried', target: 3 },
+    progress: { done: false, current: 2, target: 3 },
+  }).stateLabel, '2/3 apps tried this week');
+  assert.equal(weekly({
+    metric: { kind: 'count', label: '', target: 3 },
+    progress: { done: false, current: 0, target: 3 },
+  }).stateLabel, '0/3 this week');
+  assert.equal(weekly({}).stateLabel, 'Not started', 'yes-or-no: no invented count');
+  assert.equal(weekly({ earned_points: 20 }).stateLabel, 'Started');
+  assert.equal(weekly({ progress: DONE }).stateLabel, 'Done');
+  assert.equal(HP.challengeRowView(challenge({
+    label: 'PERSISTENT',
+    metric: { kind: 'count', label: 'joined', target: 3 },
+    progress: { done: false, current: 1, target: 3 },
+  })).stateLabel, '1/3 joined', 'any other challenge counts as before');
 });
 
 // ── Rendering ─────────────────────────────────────────────────────
@@ -642,19 +663,22 @@ test('render: a yes-or-no challenge reads Not started on the shared rail, with n
 });
 
 test('render: a done row reads Done and says what the viewer earned', () => {
+  // A finished card is drawn in First challenges, where the done ones keep
+  // their seats while another is still to do.
   const p = panel({
-    done: 1,
     challenges: [challenge({
+      label: 'ONBOARDING',
       progress: { done: true, current: null, target: null },
       earned_points: 250,
-    })],
+    }), challenge({ id: 2, label: 'ONBOARDING' })],
   });
-  const card = cardOf(renderWith({ registry: [], hidden: [], panels: [p] }).html);
-  assert.match(card, /aria-valuetext="Done"/);
-  assert.match(card, /bg-emerald-500\/10 text-emerald-700 dark:text-emerald-400/, 'the green done rail');
-  assert.match(card, /text-emerald-700 dark:text-emerald-400">Earned 250 pts<\/span>/,
-    'and the meta line says it in emerald ink');
-  assert.match(card, />Earned 250 pts</, 'the chip says what was earned, not what is on offer');
+  const card = firstCardOf(renderWith({ registry: [], hidden: [], panels: [p] }).html);
+  assert.match(card, /data-challenge-state="done"/);
+  assert.doesNotMatch(card, /role="progressbar"/, 'a finished card is one line, with no rail (#4563)');
+  assert.match(card, /<span class="sr-only">Done<\/span>/, 'it still says Done to a screen reader');
+  assert.match(card, /text-emerald-700 dark:text-emerald-400">250 pts<\/span>/,
+    'and says what was earned in emerald ink');
+  assert.match(card, />250 pts</, 'the chip says what was earned, not what is on offer');
   assert.doesNotMatch(card, /home-panel-glyph/, 'the old filled ✓ disc is retired');
 });
 
@@ -721,50 +745,6 @@ test('the retired pill, capsule and category well leave nothing behind', () => {
     'the script that measured the capsule went with it');
 });
 
-test('every open First challenges card says how long it has left; the season progress does not repeat it', () => {
-  // Every card here is from First challenges, the one group whose header has no
-  // clock, so the line under each title carries it: the challenge's own end
-  // when it has one, else the season's. A finished challenge has nothing to
-  // count down to.
-  const inHours = (h) => new Date(Date.now() + h * 3600000).toISOString();
-  const { html } = renderWith({
-    registry: [], hidden: [],
-    panels: [panel({
-      season: { id: 1, name: 'Season 1', ends_at: inHours(71) },
-      total: 3,
-      challenges: [
-        challenge({ id: 1, label: 'ONBOARDING' }),
-        challenge({ id: 2, label: 'ONBOARDING', goal: 'Share the announcement', ends_at: inHours(23) }),
-        challenge({ id: 3, label: 'ONBOARDING', goal: 'Say hello', progress: { done: true, current: null, target: null } }),
-      ],
-    })],
-  });
-  const progress = html.slice(html.indexOf('home-panel-season'), html.indexOf('home-panel-body'));
-  assert.doesNotMatch(progress, /\d+[dh] left/, 'the season progress carries no deadline');
-  const cardById = (id) => {
-    const at = html.indexOf(`data-challenge-id="${id}"`);
-    assert.ok(at > 0, `card ${id} renders`);
-    const next = html.indexOf('home-challenge-card', at);
-    return html.slice(at, next > at ? next : html.indexOf('home-panel-footer', at));
-  };
-  assert.match(cardById(1),
-    /<span class="shrink-0 text-zinc-500 dark:text-zinc-400">3d left<\/span><span aria-hidden="true"[^>]*>·<\/span><span class="[^"]*text-amber-800[^"]*">250 pts<\/span>/,
-    'the season end, beside the reward, on a challenge with no end of its own');
-  assert.match(cardById(2), />23h left</, 'a challenge’s own earlier end wins');
-  assert.doesNotMatch(cardById(3), /\d+[dh] left/, 'nothing to count down on a finished challenge');
-
-  // The same words as the Challenges tab (TopochainChallenges._timeLeft).
-  const { HP } = makeHomePanels({ slots: [] });
-  for (const [h, want] of [
-    [0.2, '1h left'], [7.5, '8h left'], [23, '23h left'], [23.5, '1d left'],
-    [25, '2d left'], [71, '3d left'], [5 * 24 - 1, '5d left'], [-1, null],
-  ]) {
-    assert.equal(HP.timeLeft(inHours(h)), want, `${h}h`);
-  }
-  assert.equal(HP.timeLeft('not a date'), null);
-  assert.equal(HP.timeLeft(null), null);
-});
-
 test('a target of one is a yes-or-no on Home too: words, no count, no bar', () => {
   const { HP } = makeHomePanels({ slots: [] });
   const row = HP.challengeRowView(challenge({
@@ -775,294 +755,32 @@ test('a target of one is a yes-or-no on Home too: words, no count, no bar', () =
   assert.equal(row.counted, false);
 });
 
-test('a challenge the expanded list carries while not open shows no countdown', () => {
-  const { HP } = makeHomePanels({ slots: [] });
-  const ends = new Date(Date.now() + 71 * 3600000).toISOString();
-  const p = panel({ season: { id: 1, name: 'Season 1', ends_at: ends } });
-  assert.equal(HP.challengeRowView(challenge(), p).deadline, '3d left', 'open: the season end');
-  assert.equal(HP.challengeRowView(challenge({ open: false }), p).deadline, null,
-    'organiser-closed or outside its window: no "3d left" on a challenge nobody can do');
-});
-
-// QA 2026-09-24 Q17: Home said "2/6 done" (the OPEN challenges) where the
-// profile said "4 of 15 done" for the same season, and the figure flipped to
-// the other when "See all" expanded the block. The season progress counts
-// every challenge in the season now, the profile's rule, from `all_done` of
-// `all_total`; an older payload without `all_done` keeps the open counts.
-test('QA 2026-09-24 Q17: the season progress counts the whole season, as the profile does', () => {
-  const { HP } = makeHomePanels({ slots: [] });
-  const season = { id: 1, name: 'Season 1' };
-  const whole = HP.challengesView(panel({ season, total: 6, done: 2, all_total: 15, all_done: 4 }));
-  assert.deepEqual({ ...whole.season }, { done: 4, total: 15, caption: 'done in Season 1' });
-  const expanded = HP.seasonView(panel({ season, total: 15, done: 4, all_total: 15, all_done: 4 }));
-  assert.deepEqual({ ...expanded }, { ...whole.season }, 'expanding the block does not change it');
-  const older = HP.challengesView(panel({ season, total: 6, done: 2, all_total: 15 }));
-  assert.deepEqual({ ...older.season }, { done: 2, total: 6, caption: 'done in Season 1' },
-    'no all_done: the open counts, as before');
-  const gated = HP.seasonView(panel({
-    season, total: 6, done: 2, all_total: 15, all_done: 4,
-    onboarding: { unlocked: false, total: 3, completed: 1 },
-  }));
-  assert.deepEqual({ ...gated }, { done: 1, total: 3, caption: 'done in First challenges' },
-    'setup still gates the scope while it is closed');
-});
-
-test('the season progress names its scope, and leaves deadlines to the cards and their headers', () => {
-  const ends = new Date(Date.now() + 71 * 3600000).toISOString();
-  const { HP } = makeHomePanels({ slots: [] });
-  const allDone = HP.challengesView(panel({
-    season: { id: 1, name: 'Season 1', ends_at: ends },
-    total: 1, done: 1,
-    challenges: [challenge({ progress: { done: true, current: null, target: null } })],
-  }));
-  assert.deepEqual({ ...allDone.season }, { done: 1, total: 1, caption: 'done in Season 1' },
-    'every card finished: still just the tally, no "3d left" moved onto it');
-  const open = HP.challengesView(panel({ season: { id: 1, name: 'Season 1', ends_at: ends } }));
-  assert.equal(open.season.caption, 'done in Season 1');
-  assert.equal(open.groups[0].meta, '3d left', 'the group header says the deadline');
-  assert.equal(open.rows[0].deadline, null, 'and its card leaves it to the header');
-  const setup = HP.challengesView(panel({
-    season: { id: 1, name: 'Season 1', ends_at: ends },
-    challenges: [challenge({ label: 'ONBOARDING' })],
-  }));
-  assert.equal(setup.rows[0].deadline, '3d left', 'a First challenges card says its own');
-  const unnamed = HP.challengesView(panel({ season: { id: 1, name: '' } }));
-  assert.equal(unnamed.season.caption, 'done', 'no name, no scope words');
-});
-
-// ── Group headers ─────────────────────────────────────────────────
-//
-// The board's groups (First challenges, This week, Always open, the season's other
-// challenges) head Home's cards: every group on screen, a block of one group
-// included, as the Challenges tab heads each of its own (S10). Home's headers
-// carry no counts and no toggle (a collapsed block does not draw the whole
-// group), and the clock moves from the cards onto them, except in First challenges.
-
-const DONE = { done: true, current: null, target: null };
-
-test('a row carries its group key, read from the category label', () => {
-  const { HP } = makeHomePanels({ slots: [] });
-  for (const [label, want] of [
-    ['ONBOARDING', 'setup'], [' weekly ', 'week'], ['PERSISTENT', 'always'],
-    ['COMMUNITY', 'other'], [null, 'other'], [undefined, 'other'],
-  ]) {
-    assert.equal(HP.challengeRowView(challenge({ label })).group, want, String(label));
-  }
-});
-
-test('cards from one group are still headed, and the header takes the clock', () => {
-  const inHours = (h) => new Date(Date.now() + h * 3600000).toISOString();
-  const data = () => ({
-    registry: [], hidden: [],
-    panels: [panel({
-      season: { id: 1, name: 'Season 1', ends_at: inHours(71) },
-      total: 2,
-      challenges: [
-        challenge({ id: 1, label: 'WEEKLY' }),
-        challenge({ id: 2, label: 'weekly', goal: 'Say hello', ends_at: inHours(23) }),
-      ],
-    })],
-  });
-  const { HP } = makeHomePanels({ slots: [] });
-  const view = HP.challengesView(data().panels[0]);
-  assert.equal(view.groups.length, 1);
-  const [only] = view.groups;
-  assert.deepEqual({ key: only.key, heading: only.heading, meta: only.meta },
-    { key: 'week', heading: 'This week', meta: '23h left' },
-    'the tab heads every group, so Home does too; the clock is the soonest card end');
-  assert.equal(only.rows.length, view.rows.length);
-  only.rows.forEach((r, i) => assert.equal(r, view.rows[i], 'the same row objects as `rows`'));
-  assert.deepEqual([...view.rows].map((r) => r.deadline), [null, null],
-    'the header owns the clock, so the cards drop theirs');
-
-  const { html } = renderWith(data());
-  const body = html.slice(html.indexOf('class="home-panel-body'), html.indexOf('</article>'));
-  const list = body.slice(body.indexOf('home-panel-rows'));
-  assert.match(list, />This week<\/span>/, 'a header over a single group');
-  assert.ok(list.indexOf('>This week</span>') < list.indexOf('home-challenge-card'), 'before its cards');
-  assert.equal((list.match(/\d+[dh] left/g) || []).length, 1, 'one clock, on the header');
-  assert.match(list, />23h left</);
-
-  // A First challenges block is headed too, with no clock, and its cards keep theirs.
-  const setup = HP.challengesView(panel({
-    season: { id: 1, name: 'Season 1', ends_at: inHours(71) },
-    challenges: [challenge({ id: 1, label: 'ONBOARDING' })],
-  }));
-  assert.deepEqual([...setup.groups].map((g) => [g.heading, g.meta]), [['First challenges', null]]);
-  assert.equal(setup.rows[0].deadline, '3d left');
-});
-
-test('cards from several groups are headed in board order, with clocks and no counts', () => {
-  const inHours = (h) => new Date(Date.now() + h * 3600000).toISOString();
-  const { HP } = makeHomePanels({ slots: [] });
-  HP._expanded.challenges = true;
-  const view = HP.challengesView(panel({
-    season: { id: 1, name: 'Season 1', ends_at: inHours(9.5 * 24) },
-    total: 8,
-    challenges: [
-      challenge({ id: 1, label: 'COMMUNITY' }),
-      challenge({ id: 2, label: 'PERSISTENT', ends_at: inHours(47) }),
-      challenge({ id: 3, label: 'WEEKLY', ends_at: inHours(95) }),
-      challenge({ id: 4, label: 'ONBOARDING', ends_at: inHours(5) }),
-      challenge({ id: 5, label: 'WEEKLY', ends_at: inHours(71) }),
-      challenge({ id: 6, label: 'WEEKLY', ends_at: inHours(7), open: false }),
-      challenge({ id: 7, label: 'WEEKLY', ends_at: inHours(2), progress: DONE }),
-      challenge({ id: 8, label: 'ONBOARDING', progress: DONE }),
-    ],
-  }));
-  const groups = [...view.groups];
-  assert.deepEqual(groups.map((g) => g.heading), ['First challenges', 'This week', 'Always open', 'Season challenges']);
-  assert.deepEqual(groups.map((g) => g.key), ['setup', 'week', 'always', 'other']);
-  assert.deepEqual(groups.map((g) => [...g.rows].map((r) => r.id)),
-    [['4', '8'], ['3', '5', '6', '7'], ['2'], ['1']],
-    'contiguous groups, each in the orderRows sequence (unfinished first)');
-  assert.deepEqual(groups.map((g) => g.meta), [null, '3d left', 'no deadline', '10d left'],
-    'First challenges has no clock; This week is its soonest open unfinished card (a closed and a done '
-    + 'card ending sooner do not count); Always open has none; the rest fall back to the season');
-  for (const g of groups) {
-    assert.doesNotMatch(String(g.meta), /\d+\/\d+|done/, `${g.key}: never a count`);
-  }
-
-  assert.deepEqual([...view.rows].map((r) => r.id), ['4', '8', '3', '5', '6', '7', '2', '1'],
-    '`rows` is the groups\' sequence: orderRows sorts by group first');
-  assert.deepEqual([...view.rows].map((r) => r.deadline),
-    ['5h left', null, null, null, null, null, null, null],
-    'the header owns the clock; only the open First challenges card keeps its own');
-  assert.equal(groups[1].rows[1], view.rows.find((r) => r.id === '5'), 'rows and groups share one row object');
-
-  const noClock = HP.challengesView(panel({
-    total: 2,
-    challenges: [challenge({ id: 1, label: 'ONBOARDING' }), challenge({ id: 2, label: 'WEEKLY', progress: DONE })],
-  }));
-  assert.deepEqual([...noClock.groups].map((g) => g.meta), [null, null],
-    'a group with nothing open to count down to says nothing');
-
-  // Setup finished (no summary, every setup card done): First challenges goes last.
-  const finished = HP.challengesView(panel({
-    total: 3,
-    challenges: [
-      challenge({ id: 1, label: 'ONBOARDING', progress: DONE }),
-      challenge({ id: 2, label: 'COMMUNITY' }),
-      challenge({ id: 3, label: 'WEEKLY' }),
-    ],
-  }));
-  assert.deepEqual([...finished.groups].map((g) => g.key), ['week', 'other', 'setup']);
-});
-
-test('render: the group headers sit inside the rows list, before their cards, with no toggle', () => {
+test('render: no season progress, no points total, no group header and no clock', () => {
   const inHours = (h) => new Date(Date.now() + h * 3600000).toISOString();
   const { html } = renderWith({
     registry: [], hidden: [],
     panels: [panel({
       season: { id: 1, name: 'Season 1', ends_at: inHours(71) },
-      total: 3,
+      total: 6, done: 1, all_total: 6, all_done: 1, points_total: 2000, points_earned: 500,
+      points_remaining: 1500,
       challenges: [
-        challenge({ id: 1, label: 'WEEKLY' }),
-        challenge({ id: 2, label: 'PERSISTENT', goal: 'Keep a node up' }),
-        challenge({ id: 3, label: 'ONBOARDING', goal: 'Say hello', ends_at: inHours(5) }),
+        challenge({ id: 1, label: 'ONBOARDING', ends_at: inHours(5) }),
+        challenge({ id: 2, label: 'ONBOARDING', progress: DONE }),
+        challenge({ id: 3, label: 'WEEKLY' }),
+        challenge({ id: 4, label: 'PERSISTENT' }),
       ],
     })],
   });
-  assert.match(html, /data-rows="3"/, 'data-rows still counts cards, not headers');
-  const body = html.slice(html.indexOf('class="home-panel-body'), html.indexOf('</article>'));
-  const rows = body.slice(body.indexOf('home-panel-rows'));
-  const at = (frag) => {
-    const i = rows.indexOf(frag);
-    assert.ok(i > 0, `${frag} is inside .home-panel-body .home-panel-rows`);
-    return i;
-  };
-  const order = ['>First challenges</span>', 'data-challenge-id="3"', '>This week</span>', 'data-challenge-id="1"',
-    '>Always open</span>', 'data-challenge-id="2"'].map(at);
-  assert.deepEqual(order, [...order].sort((a, b) => a - b), 'each header opens its own group, in board order');
-  assert.match(rows, /<h3[^>]*><div[^>]*>/, 'a static row, not a disclosure button');
-  assert.match(rows, />3d left<\/span>/, "This week's clock is on its header");
-  assert.match(rows, />no deadline<\/span>/, 'and Always open says it has none');
-  assert.match(rows, />5h left</, 'a First challenges card keeps its own deadline');
-  assert.equal((rows.match(/\d+[dh] left/g) || []).length, 2,
-    'the week card dropped the clock its header now carries');
-  assert.doesNotMatch(rows, /aria-expanded|aria-controls/, 'Home headers do not collapse');
-  assert.doesNotMatch(rows, />\d+\/\d+</, 'and carry no count');
-  assert.match(challengesSrc(), /import \{ GroupHeader \} from '\.\.\/\.\.\/leaderboard\/group-header';/,
-    "the Challenges tab's header, shared");
-});
-
-test('render: the Done header follows every unfinished card, carries its hook, and no clock', () => {
-  const inHours = (h) => new Date(Date.now() + h * 3600000).toISOString();
-  const done = { done: true, current: null, target: null };
-  const { html } = renderWith({
-    registry: [], hidden: [],
-    panels: [panel({
-      season: { id: 1, name: 'Season 1', ends_at: inHours(71) },
-      total: 3,
-      challenges: [
-        challenge({ id: 1, label: 'WEEKLY', display_order: 1, progress: done }),
-        challenge({ id: 2, label: 'WEEKLY', display_order: 2 }),
-        challenge({ id: 3, label: 'PERSISTENT', display_order: 3 }),
-      ],
-    })],
-  });
-  assert.match(html, /data-rows="3"/, 'data-rows still counts cards, not headers');
-  const body = html.slice(html.indexOf('class="home-panel-body'), html.indexOf('</article>'));
-  const rows = body.slice(body.indexOf('home-panel-rows'));
-  const at = (frag) => {
-    const i = rows.indexOf(frag);
-    assert.ok(i > 0, `${frag} is inside .home-panel-body .home-panel-rows`);
-    return i;
-  };
-  const order = ['>This week</span>', 'data-challenge-id="2"', '>Always open</span>', 'data-challenge-id="3"',
-    '<h3 class="home-challenge-done-head">', '>Done</span>', 'data-challenge-id="1"'].map(at);
-  assert.deepEqual(order, [...order].sort((a, b) => a - b), 'the finished card comes last, under Done');
-  assert.equal((rows.match(/home-challenge-done-head/g) || []).length, 1, 'one Done header');
-  const tail = rows.slice(rows.indexOf('home-challenge-done-head'));
-  assert.doesNotMatch(tail.slice(0, tail.indexOf('home-challenge-card')), /\d+[dh] left|no deadline/,
-    'the Done header carries no clock');
-  assert.equal((rows.match(/<h3 class="[^"]+"/g) || []).length, 1,
-    'the other headers carry no class of their own');
-});
-
-// S10 and #2490: collapsed, the four slots go to unfinished rows first, in the
-// grouped, ordered list's sequence, so the cap can cut a group mid-way, and a
-// finished row only takes a slot the unfinished ones leave. Expanded draws the
-// whole grouped list.
-test('the cap: collapsed gives its four slots to unfinished rows, cutting a group mid-way', () => {
-  const inHours = (h) => new Date(Date.now() + h * 3600000).toISOString();
-  const data = () => ({
-    registry: [], hidden: [],
-    panels: [panel({
-      season: { id: 1, name: 'Season 1', ends_at: inHours(71) },
-      total: 7, all_total: 7,
-      challenges: [
-        challenge({ id: 1, label: 'COMMUNITY', display_order: 1 }),
-        challenge({ id: 2, label: 'PERSISTENT', display_order: 2 }),
-        challenge({ id: 3, label: 'PERSISTENT', display_order: 3 }),
-        challenge({ id: 4, label: 'WEEKLY', display_order: 4, progress: DONE }),
-        challenge({ id: 5, label: 'WEEKLY', display_order: 5 }),
-        challenge({ id: 6, label: 'PERSISTENT', display_order: 6 }),
-        challenge({ id: 7, label: 'PERSISTENT', display_order: 7 }),
-      ],
-    })],
-  });
-  const { HP } = makeHomePanels({ slots: [] });
-  assert.equal(HP.ROW_SLOTS, 4);
-  const view = HP.challengesView(data().panels[0]);
-  assert.deepEqual([...view.rows].map((r) => r.id), ['5', '2', '3', '6'],
-    "This week's unfinished card, then Always open cut after three of its four; "
-    + 'the finished card gives up its slot');
-  assert.deepEqual([...view.groups].map((g) => [g.key, [...g.rows].map((r) => r.id)]),
-    [['week', ['5']], ['always', ['2', '3', '6']]]);
-  assert.equal(view.expandable, true, 'four drawn of seven');
-
-  const { html } = renderWith(data());
-  assert.match(html, /data-rows="4"/);
-  assert.doesNotMatch(html, /data-challenge-id="(1|4|7)"/, 'past the cap');
-  assert.doesNotMatch(html, /home-challenge-done-head/, 'no finished fill to head');
-  assert.match(html, />See all 7 challenges</);
-
-  HP._expanded.challenges = true;
-  const open = HP.challengesView(data().panels[0]);
-  assert.deepEqual([...open.rows].map((r) => r.id), ['5', '4', '2', '3', '6', '7', '1'],
-    'expanded: the whole grouped list, the finished card last in its own group');
-  assert.deepEqual([...open.groups].map((g) => g.key), ['week', 'always', 'other']);
+  assert.doesNotMatch(html, /home-panel-season|role="meter"/, 'no season progress line or bar');
+  assert.doesNotMatch(html, /Season 1|done in|1\/6|of 6/, 'no season name and no "N of M done"');
+  assert.doesNotMatch(html, /2,000|1,500|pts left/, 'no points total');
+  assert.doesNotMatch(html, /<h3/, 'no group headers');
+  assert.doesNotMatch(html, /home-challenge-done-head|>This week<|>Always open<|>Season challenges<|>Done<\/span><\/div><\/h3>/);
+  assert.doesNotMatch(html, /\d+[dh] left|no deadline/, 'no deadline or countdown anywhere');
+  assert.equal((html.match(/data-challenge-id/g) || []).length, 2, 'the two First challenges, nothing else');
+  const src = challengesSrc();
+  assert.doesNotMatch(src, /from '\.\.\/\.\.\/leaderboard\/(group-header|season-progress)'/,
+    'neither GroupHeader nor SeasonProgress is imported any more');
 });
 
 test('the lane is gone, and a row carries the rail instead of a meter', () => {
@@ -1103,7 +821,7 @@ test("a row carries the Challenges tab's rail descriptor", () => {
     { state: 'new', stateLabel: 'Not started', fill: 0, earned: null });
   assert.deepEqual(pick(HP.challengeRowView(challenge({
     progress: { done: true, current: null, target: null }, earned_points: 250,
-  }))), { state: 'done', stateLabel: 'Done', fill: 1, earned: 'Earned 250 pts' });
+  }))), { state: 'done', stateLabel: 'Done', fill: 1, earned: '250 pts' });
   // Block production reads the viewer's snapshot count server-side, so the
   // board's own "180/500 blocks" is reachable here.
   assert.deepEqual(pick(HP.challengeRowView(challenge({
@@ -1130,23 +848,24 @@ test("a row carries the Challenges tab's rail descriptor", () => {
   assert.equal(row.label, undefined, 'no category: the tile never shows it');
 });
 
-test('a numeric challenge at full target reads Done on a green rail', () => {
+test('a numeric challenge at full target is a finished line, not a count (#4563)', () => {
   const { html } = renderWith({
     registry: [], hidden: [],
     panels: [panel({
-      done: 1,
       challenges: [challenge({
+        label: 'ONBOARDING',
         goal: 'Vote on five proposals',
         metric: { kind: 'count', label: 'Proposals voted', target: 5 },
         progress: { done: true, current: 5, target: 5 },
         earned_points: 900,
-      })],
+      }), challenge({ id: 2, label: 'ONBOARDING' })],
     })],
   });
-  const card = cardOf(html);
-  assert.match(card, /aria-valuetext="Done"/);
-  assert.match(card, /aria-valuenow="100"/);
-  assert.match(card, />Earned 900 pts</);
+  const card = firstCardOf(html);
+  assert.match(card, /data-challenge-state="done"/);
+  assert.doesNotMatch(card, /role="progressbar"/, 'no rail on a finished card');
+  assert.match(card, /<span class="sr-only">Done<\/span>/);
+  assert.match(card, /text-emerald-700 dark:text-emerald-400">900 pts</);
   assert.doesNotMatch(card, />5\/5</, "finished reads the tab's word, not a count");
 });
 
@@ -1178,7 +897,7 @@ test('render: the card shows the kind icon and the title, never the task, the ca
   assert.doesNotMatch(card, /Find and file a reproducible bug report/,
     'no description on the card: the title and the rail are the whole card');
   assert.doesNotMatch(card, /\btitle="/, 'and no tooltip either: a phone has no hover');
-  assert.doesNotMatch(html, /<a href=/, 'still no per-challenge Start button');
+  assert.doesNotMatch(card, /<a href=/, 'still no per-challenge Start button');
   assert.doesNotMatch(html, /example\.invalid/);
 });
 
@@ -1188,7 +907,7 @@ test('render: a registry illustration takes the kind icon’s place in the tile'
     panels: [panel({ challenges: [challenge({ icon: '🐞', illustration })] })],
   }).html);
   const card = withArt('useful-feedback');
-  assert.match(card, /<img src="\/illustrations\/challenges\/useful-feedback\.svg" alt="" draggable="false" class="object-contain"\/>/,
+  assert.match(card, /<img src="\/illustrations\/challenges\/useful-feedback\.svg" alt="" width="64" height="64" decoding="sync" draggable="false" class="object-contain"\/>/,
     'the artwork, from the same-origin static path');
   assert.match(card, /home-tone-orange bg-\[var\(--tint-art\)\] dark:bg-\[var\(--tint-art\)\]/, 'on its pale tone');
   assert.doesNotMatch(card, /🐞/, 'in place of the kind icon');
@@ -1206,7 +925,7 @@ test('render: a registry illustration takes the kind icon’s place in the tile'
     panels: [panel({ challenges: [challenge({ icon: '🐞', illustration: `u-${HEX}`, illustration_tone: tone })] })],
   }).html);
   const onTone = uploadedCard('yellow');
-  assert.ok(onTone.includes(`<img src="/challenge-illustrations/${HEX}" alt="" draggable="false" class="object-contain"/>`),
+  assert.ok(onTone.includes(`<img src="/challenge-illustrations/${HEX}" alt="" width="64" height="64" decoding="sync" draggable="false" class="object-contain"/>`),
     'the upload, from its derived path');
   assert.match(onTone, /home-tone-yellow bg-\[var\(--tint-art\)\] dark:bg-\[var\(--tint-art\)\]/, 'on the payload tone');
   assert.doesNotMatch(onTone, /🐞/, 'in place of the kind icon');
@@ -1237,255 +956,98 @@ test('render: organiser text is escaped in text AND attribute contexts', () => {
   assert.match(html, /aria-label="[^"]*&quot;out&quot;[^"]*"/, 'the rail label is escaped');
 });
 
-test('render: the footer carries the expand toggle, and the heading the way out', () => {
-  const four = Array.from({ length: 4 }, (_, i) => challenge({ id: i + 1 }));
-  const { html } = renderWith({
-    registry: [], hidden: [], panels: [panel({ total: 8, challenges: four })],
-  }, AT_DESKTOP);
-  // Overflow now lives in the FOOTER, so all four row slots stay
-  // challenges — the label carries the true total.
-  assert.match(html, /home-panel-footer/);
-  assert.match(html, /home-panel-expand[^>]*data-panel-key="challenges"/);
-  assert.match(html, /See all 8 challenges/);
-  // Counted by `data-challenge-id` and by the card class rather than by
-  // `home-panel-row`: a challenge is a card now, and that class belongs to the
-  // 56px divided row it replaced. It survives on the EMPTY state's one note
-  // line, which is still a row, so counting it here would have counted a
-  // different thing in the two branches.
-  assert.equal((html.match(/home-challenge-card/g) || []).length, 4);
-  assert.equal((html.match(/data-challenge-id/g) || []).length, 4);
-  assert.doesNotMatch(html, /home-panel-more/, 'the old link ROW is gone');
-  // The footer's second way out is GONE: it read "Open challenges" and landed
-  // on the same tab as the heading's link one card above it. The heading's
-  // `home-panel-lb-browse` is the area's one door.
-  assert.doesNotMatch(html, /home-panel-open/, 'no second door in the footer');
-  assert.equal((html.match(/aria-label="Open challenges"/g) || []).length, 1,
-    'one "Open challenges" on the block, the heading\'s');
-  assert.doesNotMatch(html, />Open<\/span>/, 'the bare "Open" label is gone');
-  assert.match(html, /aria-expanded="false"/);
+// ── The heading names what the block holds, and carries "See all" ─────
+
+// The Challenges section's heading; Discover's, which renders first, carries
+// #home-browse-btn.
+const headingOf = (html) => [...html.matchAll(/<h2 class="home-area-label[\s\S]*?<\/h2>/g)]
+  .map((m) => m[0]).find((h) => !h.includes('home-browse-btn'));
+const SEE_ALL = /<a href="#leaderboard\/challenges" class="home-panel-see-all [^"]*" aria-label="See all challenges"><span class="whitespace-nowrap">See all<\/span><\/a>/;
+
+test('render: the heading says First, Next or Challenges, with See all beside it', () => {
+  const heading = (challenges) => headingOf(renderWith({
+    registry: [], hidden: [], panels: [panel({ challenges })],
+  }).host('challenges').innerHTML);
+
+  const first = heading([challenge({ id: 1, label: 'ONBOARDING' }), challenge({ id: 2, label: 'WEEKLY' })]);
+  assert.match(first, /<span class="min-w-0 flex-1 truncate whitespace-nowrap">First challenges<\/span>/);
+  assert.match(first, SEE_ALL, 'a real link to the Challenges tab, at the right of the heading');
+
+  const next = heading([challenge({ id: 1, label: 'ONBOARDING', progress: DONE }), challenge({ id: 2, label: 'WEEKLY' })]);
+  assert.match(next, />Next challenges<\/span>/);
+  assert.match(next, SEE_ALL);
+
+  const allDone = heading([challenge({ id: 2, label: 'WEEKLY', progress: DONE })]);
+  assert.match(allDone, />Challenges<\/span>/);
+  assert.match(allDone, SEE_ALL, 'all done for this week: the finished ones are still a tap away');
+
+  const none = heading([]);
+  assert.match(none, />Challenges<\/span>/);
+  assert.doesNotMatch(none, /home-panel-see-all|See all/, 'No challenges right now: no See all');
 });
 
-// ── The toggle only appears when it has something to reveal (#1824) ──
-//
-// It used to render whenever the block had any rows, so a season with three
-// challenges drew "See all 3 challenges" underneath all three of them: a
-// label that was false and a click that refetched the same list. The payload
-// carries `all_total` — how many rows an expansion would DRAW, finished and
-// out-of-window challenges included — precisely so the client can tell a
-// full-but-short list from a short list with more behind it.
-
-test('#1824: a block already showing every challenge draws no expand toggle', () => {
-  const three = Array.from({ length: 3 }, (_, i) => challenge({ id: i + 1 }));
-  const { html, HP } = renderWith({
-    registry: [], hidden: [],
-    panels: [panel({ total: 3, all_total: 3, challenges: three })],
-  }, AT_DESKTOP);
-  assert.equal((html.match(/data-challenge-id/g) || []).length, 3);
-  assert.doesNotMatch(html, /home-panel-expand/, 'no toggle');
-  assert.doesNotMatch(html, /See all 3 challenges/, 'and no false label');
-  // …and no footer at all. It used to stay for its "Open challenges" door;
-  // that door is the heading's alone now, so an empty footer would be a
-  // 26px gap under the cards.
-  assert.doesNotMatch(html, /home-panel-footer/, 'no footer with nothing in it');
-  assert.match(html, /home-panel-lb-browse[^>]*aria-label="Open challenges"/,
-    'the way out is still one tap away, in the heading');
-  // The view says so in one field, so a renderer cannot re-derive it wrong.
-  const view = HP.challengesView(panel({ total: 3, all_total: 3, challenges: three }));
-  assert.equal(view.expandable, false);
-  assert.equal(view.allTotal, 3);
+test('render: See all replaces "Open challenges" and the in-place toggle', () => {
+  const five = Array.from({ length: 5 }, (_, i) => challenge({ id: i + 1 }));
+  const { html } = renderWith({ registry: [], hidden: [], panels: [panel({ total: 8, all_total: 9, challenges: five })] });
+  assert.equal((html.match(/data-challenge-id/g) || []).length, 3, 'three Next challenges, whatever the season holds');
+  assert.match(html, /data-rows="3"/, 'data-rows reports what is DRAWN');
+  assert.equal((html.match(/home-panel-see-all/g) || []).length, 1, 'one way out, in the heading');
+  assert.doesNotMatch(html, /home-panel-lb-browse|Open challenges/, '"Open challenges" is gone');
+  assert.doesNotMatch(html, /home-panel-footer|home-panel-expand|home-panel--expanded|See all \d|Show less|aria-expanded/,
+    'and so is the footer with its expand toggle');
+  const [, ui] = PANEL_SOURCES.find(([n]) => n.endsWith('ui.tsx'));
+  assert.doesNotMatch(ui, /export function (LeaderboardLink|PanelFooter)\b/);
+  assert.doesNotMatch(ui, /ChevronDownIcon/, 'the toggle\'s chevron went with it');
 });
 
-test('#1824: the toggle stays when the list is truncated, or has finished rows behind it', () => {
-  const four = Array.from({ length: 4 }, (_, i) => challenge({ id: i + 1 }));
-  // Truncated: eight open, four drawn.
-  const cut = renderWith({
-    registry: [], hidden: [],
-    panels: [panel({ total: 8, all_total: 8, challenges: four })],
-  }, AT_DESKTOP);
-  assert.match(cut.html, /home-panel-expand[^>]*data-panel-key="challenges"/);
-  assert.match(cut.html, /See all 8 challenges/);
-
-  // Not truncated, but the season has finished challenges an expansion
-  // reveals — `total` alone would have hidden the toggle and taken the only
-  // door to them off the home screen.
-  const three = Array.from({ length: 3 }, (_, i) => challenge({ id: i + 1 }));
-  const behind = renderWith({
-    registry: [], hidden: [],
-    panels: [panel({ total: 3, all_total: 5, challenges: three })],
-  }, AT_DESKTOP);
-  assert.match(behind.html, /home-panel-expand[^>]*data-panel-key="challenges"/);
-  assert.match(behind.html, /See all 3 challenges/, 'the label still counts the OPEN ones');
+// Prerender safety: the section is prerendered with no view, and the first
+// client render must agree with that document. The heading's element is the
+// same in every state; before a view exists it holds "Challenges" invisible
+// (#10: the words used to switch to "Next challenges" as the view landed)
+// with no link, which is what the prerender holds too. The skeleton under it
+// is tests/home-first-paint.test.js's.
+test('the heading is the prerender\'s own until the data lands', () => {
+  const mod = loadTsx(SECTIONS);
+  const before = renderToHtml(createElement(mod.ChallengesSectionView, { painted: false, discover: null, challenges: null }));
+  assert.match(before, /^<section id="home-challenges-section" data-panel-slot="challenges" class="home-section-pending px-3 pb-3">/,
+    'not hidden before the first paint');
+  assert.match(headingOf(before), /><span class="invisible">Challenges<\/span><\/span><\/h2>$/,
+    'the constant label, its words held, and no link');
+  assert.doesNotMatch(before, /home-panel-see-all|<article/);
+  const [, sections] = PANEL_SOURCES.find(([n]) => n.endsWith('sections.tsx'));
+  assert.match(sections,
+    /label=\{challenges \? challenges\.heading : t\('home:challenges\.heading'\)\}\s*action=\{challenges\?\.seeAll \? <SeeAllLink \/> : null\}/,
+    'the content-named heading and its link follow the view, and fall back to the prerender\'s values');
+  assert.equal(message('home:challenges.heading'), 'Challenges');
 });
 
-test('#1824: a payload with no all_total falls back to `total`', () => {
-  const { HP } = makeHomePanels();
-  // A client running from a cache written before the field existed.
-  const three = Array.from({ length: 3 }, (_, i) => challenge({ id: i + 1 }));
-  assert.equal(HP.challengesView(panel({ total: 3, challenges: three })).expandable, false);
-  assert.equal(HP.challengesView(panel({ total: 9, challenges: three })).expandable, true,
-    'more open than are drawn is still an expansion, field or no field');
-  // And a nonsense value never shrinks the answer below what `total` proves.
-  assert.equal(HP.challengesView(panel({ total: 9, all_total: 'wat', challenges: three })).allTotal, 9);
-});
-
-test('#1824: an expanded block always keeps its way back', () => {
-  const { HP } = makeHomePanels();
-  const three = Array.from({ length: 3 }, (_, i) => challenge({ id: i + 1 }));
-  HP._expanded.challenges = true;
-  // Expanded and nothing more to show: the toggle is the only "Show less"
-  // there is, so it must render regardless of the count.
-  const view = HP.challengesView(panel({ total: 3, all_total: 3, challenges: three }));
-  assert.equal(view.expanded, true);
-  assert.equal(view.expandable, true);
-});
-
-test('render: expanded lifts the cap, shows everything, and flips the toggle', () => {
-  const nine = Array.from({ length: 9 }, (_, i) => challenge({ id: i + 1 }));
-  const hosts = ['challenges'].map(makeSlot);
-  const { HP, sandbox } = makeHomePanels({ slots: hosts });
-  HP._data = { registry: [], hidden: [], panels: [panel({ total: 9, challenges: nine })] };
-  HP._expanded.challenges = true;
-  HP.render();
-  const html = paintHosts(sandbox, hosts);
-  assert.match(html, /home-panel--expanded/, 'the class app.css hangs max-height: none on');
-  assert.equal((html.match(/data-challenge-id/g) || []).length, 9,
-    'every row the server sent, past the four-slot budget');
-  assert.match(html, /Show less/, 'the same control collapses it');
-  assert.match(html, /aria-expanded="true"/);
-});
-
-test('expanding stops the rows list clipping, and there is no cap left to lift', () => {
-  const css = read('public/css/app.css');
-  // The rows list must stop clipping, or a list longer than the flex layout
-  // budgeted for would be cut instead of drawn.
-  assert.match(css, /\.home-panel--expanded \.home-panel-rows \{[^}]*overflow:\s*visible/);
-  assert.match(css, /\.home-panel-footer \{/);
-  // `.home-panel--expanded { max-height: none }` lifted --home-panel-max-h.
-  // Both went when the block became a SECTION that grows to its content —
-  // there is no ceiling to lift, and the collapsed size is bounded by the
-  // markup (visibleSlots draws at most ROW_SLOTS rows) instead.
-  assert.doesNotMatch(css, /\.home-panel--expanded \{/);
-  assert.doesNotMatch(css, /--home-panel-max-h:/);
-});
-
-test('render: the heading names its area — the counter is the season progress', () => {
-  const { html } = renderWith({
-    registry: [], hidden: [], panels: [panel({ total: 6, done: 1, points_remaining: 3900 })],
+// #4635 (evan): no Getting started card on top of Home; a new account's First
+// challenges are ordinary `.home-challenge-card`s in this block. The Semi
+// design names the block by them while any is unfinished.
+test('a new account\'s First challenges are .home-challenge-card under "First challenges", never locked', () => {
+  const first = (id, over = {}) => challenge({ id, label: 'ONBOARDING', display_order: id, goal: `First ${id}`, ...over });
+  const p = panel({
+    total: 6, done: 1, all_total: 6, all_done: 1,
+    // What a server before #4635 sent a new account. It changes nothing now.
+    onboarding: { total: 4, completed: 1, unlocked: false, event_id: 1, hidden_count: 2,
+      hidden_names: ['Make your first proposal', 'Invite a friend'] },
+    challenges: [
+      first(1, { progress: DONE }), first(2), first(3), first(4),
+      challenge({ id: 5, label: 'WEEKLY', display_order: 5 }),
+      challenge({ id: 6, label: 'PERSISTENT', display_order: 6 }),
+    ],
   });
-  // The label and the controls are the SECTION HEADING's. The block's title bar
-  // held them until the title moved out to become that heading; what was left
-  // was a strip of card with one shrink-0 link floating at the right of it, so
-  // the controls followed the title out and the card opens on its own content.
-  assert.match(html, /home-area-label/);
-  assert.match(html, /Challenges/);
-  // The ⋮ followed the title out too, and then LEFT: the homescreen design's
-  // area rows are label + link and nothing else, so no heading renders it now
-  // and hiding is retired. Nothing may bring it back into the card either.
-  assert.doesNotMatch(html, /home-panel-menu/, 'no ⋮ anywhere in the block');
-
-  // THE COUNTER IS NOT. "· 1 of 6 · 3,900 pts left" rode here at 12px —
-  // shrunk from the label's own size because at 15px it ellipsised
-  // "Challenges" on a phone, in a heading that also carries a link and the ⋮.
-  // It is the season progress inside the card now ("1/6 done in Season 1"
-  // over six segments), the first thing in the block rather than a footnote
-  // above it, and the same component the Challenges tab opens on.
-  const heading = html.match(/<h2 class="home-area-label[\s\S]*?<\/h2>/)[0];
-  assert.doesNotMatch(heading, /1 of 6/, 'no counter left in the heading');
-  assert.doesNotMatch(heading, /3,900/);
-  const progress = html.slice(html.indexOf('home-panel-season'), html.indexOf('home-panel-body'));
-  assert.match(progress, />1\/6<\/span><span[^>]*>done in Season 1</, 'the figure and its scope');
-  assert.match(progress, /role="meter"[^>]*aria-label="1 of 6 done in Season 1"/);
-  assert.equal((progress.match(/h-\[5px\]/g) || []).length, 6, 'one segment per challenge');
-  assert.equal((progress.match(/bg-violet-700/g) || []).length, 1, 'one of them filled');
-  // The ring and its two lines went with it: no points lead, no arc.
-  assert.doesNotMatch(progress, /pts left|stroke-dasharray/);
-});
-
-test('the season progress: nothing filled at zero, and setup is its own scope', () => {
-  const zero = renderWith({
-    registry: [], hidden: [], panels: [panel({ total: 6, done: 0, points_remaining: 3900 })],
-  }).html;
-  assert.match(zero, /home-panel-season/);
-  assert.match(zero, />0\/6</);
-  const zeroBar = zero.slice(zero.indexOf('home-panel-season'), zero.indexOf('home-panel-body'));
-  assert.doesNotMatch(zeroBar, /bg-violet-700/, 'a season nobody has started draws no fill');
-
-  // While setup gates the rest, the block holds only setup's challenges, so
-  // the progress counts those and the gate line under it stays short.
-  const gated = renderWith({
-    registry: [], hidden: [],
-    panels: [panel({ total: 3, done: 0, onboarding: { total: 3, completed: 1, unlocked: false, event_id: 1 } })],
-  }).html;
-  assert.match(gated, />1\/3<\/span><span[^>]*>done in First challenges</);
-  assert.match(gated, />Finish Getting started to unlock the rest of the season\.</);
-  assert.doesNotMatch(gated, /onboarding challenges completed/, 'the count is not said twice');
-});
-
-// S8 (owner decision, 2026-09-15): while setup gates the season the server
-// sends how many challenges it holds back (`onboarding.hidden_count`), and the
-// block draws them as ONE dashed placeholder. 2026-10-01 (evan's "one list"):
-// the gate is a new account's Getting started list, which the card on top of
-// Home draws in full, so while it is closed the block draws the placeholder
-// ALONE, in place of the First challenges, and names the first two it hides
-// (`hidden_names`). Without a count the cards and the note still show, the
-// note UNDER the challenges.
-test('locked setup: one dashed placeholder alone, in place of the First challenges', () => {
-  const onboarding = (over) => ({ total: 4, completed: 1, unlocked: false, event_id: 1, ...over });
-  const locked = panel({
-    total: 2, done: 0,
-    onboarding: onboarding({ hidden_count: 6, hidden_names: ['Make your first proposal', 'Invite a friend'] }),
-    challenges: [challenge({ id: 1, label: 'ONBOARDING' }), challenge({ id: 2, label: 'ONBOARDING' })],
-  });
-  const { HP } = makeHomePanels({ slots: [], user: WITH_CARD });
-  assert.equal(HP.challengesView(locked).lockedCount, 6);
-
-  const { html } = renderWith({ registry: [], hidden: [], panels: [locked] }, { user: WITH_CARD });
-  // No cards, no season progress over it, no footer under it.
-  assert.doesNotMatch(html, /home-panel-footer/);
-  assert.doesNotMatch(html, /home-panel-season/, 'the card above counts the list');
-  assert.equal((html.match(/home-challenge-card/g) || []).length, 0, 'the First challenges are not drawn twice');
-  assert.equal((html.match(/home-challenge-locked/g) || []).length, 1, 'one placeholder');
-  const rows = html.slice(html.indexOf('home-panel-rows'), html.indexOf('</article>'));
-  assert.ok(rows.indexOf('home-challenge-locked') > 0, 'inside the rows list, where the cards would be');
-  assert.match(html, /data-rows="0"/, 'and not counted as a card');
-  assert.match(html, /home-challenge-locked [^"]*rounded-3xl[^"]*border-dashed/);
-  assert.match(html, />6 challenges unlock after Getting started</);
-  assert.match(html, />Make your first proposal, Invite a friend and 4 more</);
-  assert.doesNotMatch(html, /unlock the rest of the season/,
-    'the placeholder already says what unlocks them');
-
-  const one = renderWith({
-    registry: [], hidden: [],
-    panels: [panel({ onboarding: onboarding({ hidden_count: 1 }) })],
-  }, { user: WITH_CARD }).html;
-  assert.match(one, />1 challenge unlocks after Getting started</);
-  assert.match(one, />Finish Getting started on Home to see them</, 'no names: what to do');
-
-  // Locked, but a payload with no count (an older server) or a zero count:
-  // no placeholder, the cards, and the note under them, last in the block
-  // (before the footer when the block draws one; a short list draws none).
-  for (const hidden of [undefined, 0, 'wat']) {
-    const p = panel({ onboarding: onboarding({ hidden_count: hidden }) });
-    assert.equal(HP.challengesView(p).lockedCount, 0, `hidden_count ${hidden}`);
-    const out = renderWith({ registry: [], hidden: [], panels: [p] }, { user: WITH_CARD }).html;
-    assert.doesNotMatch(out, /home-challenge-locked/, `hidden_count ${hidden}: no placeholder`);
-    const note = out.indexOf('Finish Getting started to unlock the rest of the season.');
-    assert.ok(note > out.lastIndexOf('home-challenge-card'), `hidden_count ${hidden}: the note follows the cards`);
-    const footer = out.indexOf('home-panel-footer');
-    assert.ok(note < (footer > -1 ? footer : out.indexOf('</article>', note)),
-      `hidden_count ${hidden}: and closes the block, before any footer`);
-    assert.match(out, /<p class="pt-2 pb-1\.5 text-sm text-zinc-500 dark:text-zinc-400" role="status">Finish Getting started/);
-    assert.match(out, /home-panel-season[\s\S]*?<\/div><div class="home-panel-body/,
-      'the season progress and the body stay adjacent');
-  }
-
-  // Unlocked: a stray count draws nothing, and there is no note at all (S10).
-  const open = panel({ onboarding: onboarding({ unlocked: true, hidden_count: 6 }) });
-  assert.equal(HP.challengesView(open).lockedCount, 0);
-  assert.equal(HP.challengesView(open).onboardingNote, null, 'nothing to say once unlocked');
-  const unlocked = renderWith({ registry: [], hidden: [], panels: [open] }, { user: WITH_CARD }).html;
-  assert.doesNotMatch(unlocked, /home-challenge-locked|unlock after Getting started/);
-  assert.doesNotMatch(unlocked, /are unlocked|unlock the rest/, 'no unlock note');
+  const { html } = renderWith({ registry: [], hidden: [], panels: [p] });
+  assert.doesNotMatch(html, /home-challenge-locked/, 'no locked placeholder');
+  assert.doesNotMatch(html, /Getting started/, 'the words are gone from Home');
+  assert.doesNotMatch(html, /unlock/i, 'nothing is locked, so nothing unlocks');
+  assert.match(headingOf(html), />First challenges<\/span>/);
+  const ids = [...html.matchAll(/home-challenge-card[^>]*data-challenge-id="(\d+)"/g)].map((m) => m[1]);
+  assert.deepEqual(ids, ['1', '2', '3', '4'], 'all four, in the admin\'s order, the done one in place');
+  assert.match(html, /data-rows="4"/, 'real cards, counted as such');
+  // Tapping one opens it on the Challenges tab like any other card.
+  assert.match(challengesSrc(), /onClick=\{\(\) => panels\(\)\?\.goToChallenge\?\.\(row\.eventId, row\.id\)\}/);
+  assert.doesNotMatch(challengesSrc(), /LockedChallengesCard|onboardingNote|view\.locked/);
 });
 
 // The area LABEL is the section's own, not the block's (see SectionHeading in
@@ -1504,54 +1066,55 @@ test('render: nothing at all when signed out or unloaded', () => {
     assert.ok(host._classes.has('hidden'), `${host.dataset.panelSlot} host hidden`);
   }
 
-  // Data not loaded yet — absent, never a skeleton flash.
+  // Data not loaded yet: no block, and not hidden either. The section holds
+  // its skeleton at the height this device last drew it (#10,
+  // tests/home-first-paint.test.js): hiding it and showing it again when the
+  // data landed was the jump.
   const unloaded = renderWith(null);
-  assert.equal(blocksOf(unloaded.html), '');
+  assert.doesNotMatch(unloaded.html, /<article/);
+  for (const host of unloaded.hosts) {
+    assert.ok(!host._classes.has('hidden'), `${host.dataset.panelSlot} host not hidden while it waits`);
+  }
+
+  // Answered with nothing (a failed read keeps no copy): absent and hidden.
+  const failed = renderWith(null);
+  failed.HP._answered = true;
+  failed.rerender();
+  assert.equal(blocksOf(failed.rerender()), '');
+  for (const host of failed.hosts) {
+    assert.ok(host._classes.has('hidden'), `${host.dataset.panelSlot} host hidden once the read failed`);
+  }
 
 });
 
-// #947 reversed the admin-only empty box. It is now a COMPACT block that
-// every viewer gets: a widget that silently vanishes between seasons leaves
-// the viewer unable to tell "nothing is running" from "this broke", and the
-// compact block is not the full-size empty box the old comment argued
-// against (it is ~68px — title bar plus one line, no footer).
-test('render: the empty state renders for EVERY viewer, compact and footer-less', () => {
+// #947 reversed the admin-only empty box: every viewer gets the block, and
+// with nothing open it says why in ONE line, a card with a title and a
+// sentence (the Semi design). A block that silently vanished would leave the
+// viewer unable to tell "nothing to do" from "this broke".
+test('render: the one-line card renders for EVERY viewer, with no footer', () => {
   const empty = panel({ total: 0, done: 0, challenges: [] });
   for (const isAdmin of [false, true]) {
     const out = renderWith({ registry: [], hidden: [], panels: [empty] },
       { user: { id: 1, isAdmin } });
     const who = isAdmin ? 'admin' : 'member';
-    assert.match(out.html, /No challenges are running right now/,
-      `${who}: the block says why it is quiet`);
+    assert.match(out.html,
+      /<div class="home-panel-rows home-panel-row home-challenges-note [^"]*"><p class="truncate text-\[15px\] font-\[650\][^"]*">No challenges right now<\/p><p class="truncate text-\[13px\][^"]*text-zinc-500[^"]*">New ones will show up here\.<\/p><\/div>/,
+      `${who}: the block says why it is quiet, 15 over 13`);
     assert.ok(!out.host('challenges')._classes.has('hidden'), `${who}: section shown`);
-    // Exactly one row, and no footer: nothing to expand, nothing to count.
     assert.equal((out.html.match(/home-panel-row\b/g) || []).length, 1, `${who}: one line`);
     assert.doesNotMatch(out.html, /home-panel-footer/, `${who}: no footer`);
-    // The ⋮ sits at the right edge of the SECTION HEADING, same as the
-    // populated branch — the label takes the row (`flex-1`) and the controls
-    // are what is left at the end of it.
     assert.match(out.html, /home-area-label[^"]*flex items-center/, `${who}: the heading is a row`);
     assert.match(out.html, /min-w-0 flex-1 truncate[^>]*>Challenges/, `${who}: the label takes it`);
     assert.match(out.html, /data-rows="0"/, `${who}: stamped`);
-    assert.doesNotMatch(out.html, /data-fill/,
-      `${who}: no standings preview, so no stamp counting its rows`);
+    assert.doesNotMatch(out.host('challenges').innerHTML, /<button|<a /, `${who}: a statement, and no link`);
   }
-});
-
-// The empty payload must not leave the expand flag set: ensureLoaded() would
-// keep sending ?expand=challenges, which asks for the season's FINISHED
-// challenges and would repopulate a block that should read as quiet.
-test('render: an empty payload clears the in-place expanded flag', () => {
-  const hosts = ['challenges'].map(makeSlot);
-  const { HP, sandbox } = makeHomePanels({ slots: hosts });
-  HP._expanded.challenges = true;
-  HP._data = {
+  const allDone = renderWith({
     registry: [], hidden: [],
-    panels: [panel({ total: 0, done: 0, challenges: [] })],
-  };
-  HP.render();
-  assert.equal(HP._expanded.challenges, false);
-  assert.match(paintHosts(sandbox, hosts), /No challenges are running right now/);
+    panels: [panel({ challenges: [1, 2, 3].map((id) => challenge({ id, label: 'WEEKLY', progress: DONE })) })],
+  }).html;
+  assert.match(allDone, />All done for this week<\/p><p[^>]*>3 challenges start again on Monday\.<\/p>/);
+  assert.match(allDone, /data-rows="0"/);
+  assert.doesNotMatch(allDone, /data-challenge-id/, 'one line, no cards');
 });
 
 test('render: stale hidden metadata cannot suppress fixed sections (#1801)', () => {
@@ -1572,7 +1135,7 @@ test('render: stale hidden metadata cannot suppress fixed sections (#1801)', () 
       assert.match(out.host(key).innerHTML, new RegExp(`data-panel="${key}"`));
     }
     assert.match(out.host('challenges').innerHTML,
-      panels.length ? /Report a reproducible bug/ : /No challenges are running right now/);
+      panels.length ? /Report a reproducible bug/ : /No challenges right now/);
     assert.doesNotMatch(out.html, /data-create-enabled/, 'no create block among the panels');
   }
 });
@@ -1581,11 +1144,10 @@ test('render: stale hidden metadata cannot suppress fixed sections (#1801)', () 
 //
 // #3847 hid this block for an account's first seven days (`firstWeek` on
 // GET /api/auth/me). Evan reversed it after his own first session: a
-// brand-new account expected Challenges on Home, with its Getting started
-// challenges. An account its first session brought in has no Getting started
-// card (first-session.js leaves communities_onboarded_at unset), so the
-// block draws those challenges itself rather than a locked card pointing at
-// a list that is not there.
+// brand-new account expected Challenges on Home, with its First challenges.
+// Since #4635 there is no Getting started card for any account, so the block
+// draws those challenges itself for every one of them, and never a locked
+// card in their place.
 
 const NEW_ACCOUNT_DATA = () => ({
   registry: [{ key: 'challenges', title: 'Challenges' }, { key: 'discover', title: 'Discover' }],
@@ -1600,32 +1162,32 @@ const NEW_ACCOUNT_DATA = () => ({
   })],
 });
 
-test('a brand-new account sees Challenges, whatever its age, with its Getting started challenges', () => {
-  for (const user of [{ id: 7, isAdmin: false, firstWeek: true }, { id: 7, isAdmin: false }, { id: 7, showGettingStarted: false }]) {
+test('a brand-new account sees Challenges, whatever its age, with its First challenges', () => {
+  // A cached session that still says `showGettingStarted: true` (from before
+  // #4635) changes nothing: there is no card to defer to.
+  for (const user of [{ id: 7, isAdmin: false, firstWeek: true }, { id: 7, isAdmin: false },
+    { id: 7, showGettingStarted: false }, { id: 7, showGettingStarted: true }]) {
     const out = renderWith(NEW_ACCOUNT_DATA(), { user });
     const host = out.host('challenges');
     assert.ok(!host._classes.has('hidden'), `shown for ${JSON.stringify(user)}`);
     assert.match(host.innerHTML, /home-challenge-card[\s\S]*Try an app/, 'the First challenges, drawn in the block');
     assert.match(host.innerHTML, /Join a community/, 'done ones under Done');
-    assert.doesNotMatch(host.innerHTML, /home-challenge-locked/, 'no card pointing at a list that is not on Home');
-    assert.match(host.innerHTML, />Finish Getting started to unlock the rest of the season\.</);
+    assert.doesNotMatch(host.innerHTML, /home-challenge-locked/, `no locked card for ${JSON.stringify(user)}`);
+    assert.doesNotMatch(host.innerHTML, /Getting started/, 'and no gate line under them');
   }
-  // With the Getting started card on Home, the block is its one locked card,
-  // as before: the card lists the First challenges.
-  const withCard = renderWith(NEW_ACCOUNT_DATA(), { user: { id: 7, showGettingStarted: true } });
-  assert.match(withCard.host('challenges').innerHTML, /home-challenge-locked/);
-  assert.doesNotMatch(withCard.host('challenges').innerHTML, /home-challenge-card/);
 });
 
 test('nothing about an account\'s age hides the block, and /api/auth/me says nothing about it', () => {
   assert.doesNotMatch(PANELS_RAW, /inFirstWeek|firstWeek ===/);
   assert.match(PANELS_RAW, /challenges: viewFor\('challenges', HomePanels\.challengesView\),/);
-  assert.match(PANELS_RAW, /const locked = HomePanels\.gettingStartedOnHome\(\) \? HomePanels\.lockedOnboarding\(panel\) : null;/);
-  assert.match(PANELS_RAW, /gettingStartedOnHome\(\) \{\s+return !!\(typeof window !== 'undefined' && window\.App && App\.user && App\.user\.showGettingStarted === true\);/);
+  // Nor does the session: the block no longer asks whether a Getting started
+  // card is on Home (#4635), so it has no repaint to wait for when the
+  // verified session lands.
+  assert.doesNotMatch(PANELS_RAW, /showGettingStarted|gettingStartedOnHome|lockedOnboarding/);
+  assert.doesNotMatch(PANELS_RAW, /addEventListener\('sv:session'/);
   const auth = read('src/routes/auth.js');
   assert.doesNotMatch(auth, /first_week|firstWeek/);
-  // A boot paints from the snapshot; the verified user repaints, once loaded.
-  assert.match(PANELS_RAW, /document\.addEventListener\('sv:session', \(\) => \{\s+if \(HomePanels\._data\) HomePanels\.render\(\);\s+\}\);/);
+  assert.doesNotMatch(auth, /showGettingStarted|show_getting_started/);
 });
 
 // ── Container shape: one bordered block PER SECTION ───────────────
@@ -1715,45 +1277,27 @@ test('every text node in a row is single-line — no wrapping anywhere', () => {
   // the meta line's reward and the rail's label. Nothing on the card wraps,
   // not even as a row: the reward rides the meta line and the rail is alone.
   const card = cardOf(html);
-  assert.match(card, /class="truncate text-base font-medium[^"]*">Produce Every Block - June 2026</, 'the goal truncates');
+  assert.match(card, /class="[^"]*\btruncate\b[^"]*">Produce Every Block - June 2026</, 'the goal truncates');
   assert.doesNotMatch(card, /<p /, 'and there is no task line to wrap');
   assert.match(card, /<span class="relative min-w-0 truncate">543\/720 Blocks produced<\/span>/, 'the rail label truncates');
-  assert.match(card, /<span class="min-w-0 truncate font-medium text-amber-800 dark:text-amber-300">Up to 6,500 pts<\/span>/,
-    'the reward truncates on the meta line');
+  assert.match(card, /class="[^"]*\btruncate\b[^"]*">Up to 6,500 pts</, 'the reward truncates');
   assert.doesNotMatch(card, /flex-wrap/, 'and no row on the card wraps');
 });
 
-test('the title bar and the footer controls are single-line too', () => {
+test('the heading and its link are single-line too', () => {
   const data = {
     registry: [], hidden: [],
     panels: [panel({ total: 9, done: 2, points_remaining: 24300 })],
   };
-  const { html } = renderWith(data, AT_DESKTOP);
-  // The heading is the area's NAME and nothing else. It carried the counter
-  // after a separator, shrunk to 12px because at the label's own size a
-  // "· 2 of 9 · 24,300 pts left" ellipsised "Challenges" on a phone — and the
-  // heading still had a link and the ⋮ after that. The counter is the season
-  // progress inside the card now, so the label has the row to itself and needs no
-  // caption slot to keep off its own name.
-  assert.match(html, /min-w-0 flex-1 truncate[^>]*>Challenges<\/span>/);
-  assert.doesNotMatch(html, /whitespace-nowrap text-\[12px\]"> · /,
-    'no counter appended to the area label');
-  // The season progress says it instead, on one line that truncates rather
-  // than wraps.
-  assert.match(html, /home-panel-season[\s\S]*?>2\/9<\/span><span class="min-w-0 truncate[^"]*">done in Season 1</);
-  // The bar carries the way out (#968, now the leaderboard link of #980).
-  // Nothing competes with it for the row any more — the summary that used to
-  // is one level up — but it stays shrink-0 and nowrap: the label used to
-  // shorten to "Leaderboard" in the one-cell phone shape, and a section's bar
-  // fits the full one at every width, so _leaderboardLink takes no flag.
-  assert.match(html, /home-panel-lb-browse shrink-0[^"]*whitespace-nowrap/);
-  // #1916: the heading link reads "Open challenges".
-  assert.match(html, /home-panel-lb-browse[^>]*>\s*<span class="whitespace-nowrap">Open challenges<\/span>/);
-  // The footer's label, the expand toggle's. It may not wrap: the footer is a
-  // fixed-height flex row, so a wrap would be clipped exactly like a wrapped
-  // row.
-  assert.match(html, /<span class="whitespace-nowrap">See all 9 challenges<\/span>/);
-  assert.match(html, /home-panel-expand[^>]*whitespace-nowrap/);
+  const { html } = renderWith(data);
+  // The heading is the block's NAME and its one link. No counter rides it
+  // (the season progress and its points are gone from Home altogether), and
+  // the name truncates rather than wraps beside the link on a 320px phone.
+  const heading = headingOf(html);
+  assert.match(heading, /min-w-0 flex-1 truncate whitespace-nowrap">Next challenges<\/span>/);
+  assert.doesNotMatch(heading, /24,300|2 of 9| · /, 'no counter appended to the label');
+  assert.match(heading, /home-panel-see-all shrink-0[^"]*whitespace-nowrap/, 'the link never shrinks or wraps');
+  assert.match(heading, /<span class="whitespace-nowrap">See all<\/span><\/a>/, 'and has no chevron, as Discover\'s See all has none');
 });
 
 test('the row declares nowrap and clips, so a wrap cannot ship unnoticed', () => {
@@ -1961,6 +1505,26 @@ test('the drag overlay draws the whole canvas and doubles as the hit-test', () =
   assert.match(CSS, /\.home-grid-cell::before \{[^}]*inset: -4px/);
 });
 
+// #4738 capped the My apps area at 48rem and centred it so a few apps
+// grouped closer on a wide window; #4861 removed the cap — the narrower
+// block read as odder than wide spacing, sitting inside the width of the
+// search bar above and the sections below (evan). The overlay — inside
+// #app-list, inset by the same padding, sized by the same engine — was
+// never touched by either, and still lines up with zero arithmetic.
+test('the My apps area spans the full home column on wide windows, overlay untouched (#4861)', () => {
+  const wide = CSS.slice(CSS.indexOf('@media (min-width: 640px) {\n  .home-grid-overlay'),
+    CSS.indexOf('\n}\n', CSS.indexOf('.home-grid-overlay {\n    /* #app-list')));
+  // No width cap on the area, of any kind: the grid runs to the same edges
+  // as the search bar above it and Discover Communities below.
+  assert.doesNotMatch(wide, /#home-apps-section[^{]*\{[^}]*max-width/);
+  assert.doesNotMatch(wide, /#home-apps-section[^{]*\{[^}]*margin-inline/);
+  // The overlay's inset and gap are unchanged: it is inset by #app-list's
+  // own padding, so any drift here is a jump at the end of the drop glide.
+  const overlay = wide.match(/\.home-grid-overlay \{[^}]*\}/)[0];
+  assert.match(overlay, /inset: 0\.5rem 0\.75rem 0\.75rem;/);
+  assert.match(overlay, /gap: 0\.5rem;/);
+});
+
 // Gesture-only and account-dependent surfaces are invisible to the
 // before/after captures and to every declared check, so they need URLs.
 test('the overlay and both create-quota treatments are URL-reachable', () => {
@@ -2053,8 +1617,8 @@ test('retired hide controls and their client mutation code are absent', () => {
 // back. `--home-panel-max-h` (two app-grid cells plus the gap, 16rem) with
 // .home-panel-rows' overflow: hidden made a block CLIP inside the rectangle
 // it occupied on the launcher canvas. A section has no rectangle, and the
-// collapsed size is bounded by the MARKUP — visibleSlots() draws at most
-// ROW_SLOTS challenge rows and the footer's "See all N" is the way past them.
+// size is bounded by the MARKUP — HomePanels.challengesView draws a short
+// pick, and "See all" goes to the Challenges tab for the rest.
 //
 // Re-introducing it would clip the block a viewer actually gets: four
 // challenge rows plus the chrome is already past the 256px the cap allowed.
@@ -2069,17 +1633,15 @@ test('the block sizes to its content — no height cap to clip it', () => {
   assert.match(css.match(/\.home-panel-row \{[^}]*\}/)[0],
     /height:\s*var\(--home-panel-row-h\)/);
   assert.match(css, /--home-panel-row-h:\s*3\.5rem/);
-  // The collapsed block a viewer actually gets — the season progress, four
-  // challenge rows and the footer — is what a re-introduced 16rem cap would
-  // start cutting into. Two lines per row made it taller, not shorter, so the
-  // cap is further out of the question than it was.
+  // What bounds the block is the MARKUP: every First challenge (the admin
+  // sets four), or at most NEXT_SLOTS Next ones, each a card taller than a
+  // row. A re-introduced 16rem cap would cut into four of them.
   const rowPx = parseFloat(css.match(/--home-panel-row-h:\s*([\d.]+)rem/)[1]) * 16;
-  const footerPx = parseFloat(
-    css.match(/\.home-panel-footer \{[^}]*min-height:\s*([\d.]+)rem/)[1]) * 16;
-  const rowSlots = Number(SRC.match(/ROW_SLOTS:\s*(\d+)/)[1]);
-  const collapsed = 2 + rowSlots * rowPx + footerPx + 1;
-  assert.ok(collapsed > 160,
-    `the collapsed block is ${collapsed}px, and a 16rem cap is a ceiling on it`);
+  const nextSlots = Number(SRC.match(/NEXT_SLOTS:\s*(\d+)/)[1]);
+  assert.equal(nextSlots, 3);
+  const firstBlock = 4 * rowPx;
+  assert.ok(firstBlock > 160,
+    `four First challenges are past ${firstBlock}px, and a 16rem cap is a ceiling on them`);
   // No runtime measurement — #922 deleted that mechanism for the width
   // axis and app.css says not to bring it back.
   assert.doesNotMatch(HOME, /alignSections|--home-section-indent/);
@@ -2144,6 +1706,11 @@ test('the cell height still matches the app tile it is derived from', () => {
   assert.match(titleRule, /line-height:\s*1\.18\s*;/, 'the line height is unitless so it tracks the font');
   assert.doesNotMatch(titleRule, /line-height:\s*0\.8125rem/);
   assert.match(titleRule, /-webkit-line-clamp:\s*2/, 'long names ellipsise at two lines');
+  // #5195: 11px on 13px lines again. #4934's step up to 12px/14px cut most
+  // names after a few letters on a phone's four columns; the two-line lane
+  // (26px) is the term the desktop cell's 124px adds up to.
+  assert.match(titleRule, /font-size:\s*0\.6875rem/, 'the label is 11px (#5195)');
+  assert.match(CSS, /--home-cell-h: 7\.75rem/, 'the desktop cell adds up the terms above');
   assert.match(CSS.match(/\.app-card-status \{[^}]*\}/)[0], /line-height:\s*0\.75rem/);
   // THE CAPTION LANE IS LOAD-BEARING. The status dot is gone from the tile
   // face, so this line is a tile's only status signal — and rows are a
@@ -2243,11 +1810,10 @@ test('each block is a full-width child of the section, not separately bounded', 
 });
 
 // The ITERATION 03 board's Home screen draws Challenges straight on the page
-// ground: season summary, group headers, cards and footer in one column,
-// aligned with the section heading, with no plate, border or rule anywhere.
-// It used to wear a translucent plate (`.home-challenges-plate`, PanelShell's
-// retired 'soft') with a hairline under the season progress and another over
-// the footer, and every band inside was inset to the plate's padding.
+// ground: the cards in one column, aligned with the section heading, with no
+// plate, border or rule. It used to wear a translucent plate
+// (`.home-challenges-plate`, PanelShell's retired 'soft') with hairlines, and
+// every band inside was inset to the plate's padding.
 test('Challenges sits on the page ground: no plate, no divider, no inset', () => {
   const populated = renderWith({ registry: [], hidden: [], panels: [panel()] }).html;
   const empty = renderWith(
@@ -2256,28 +1822,21 @@ test('Challenges sits on the page ground: no plate, no divider, no inset', () =>
   for (const [name, html] of [['populated', populated], ['empty state', empty]]) {
     const article = html.match(/<article class="([^"]*)"[^>]*data-panel="challenges"/);
     assert.ok(article, `${name}: the Challenges article renders`);
-    assert.match(article[1], /^home-panel( home-panel--expanded)?$/,
-      `${name}: the article carries no plate class`);
+    assert.equal(article[1], 'home-panel', `${name}: the article carries no plate class`);
     assert.doesNotMatch(html, /home-challenges-plate/, `${name}: the translucent plate is gone`);
     assert.doesNotMatch(article[0], /home-panel-card/, `${name}: and it did not become the white card`);
-    // Nothing inside is inset from the heading's left edge.
-    assert.doesNotMatch(html, /class="home-panel-rows home-panel-row[^"]*\bpx-/,
-      `${name}: the quiet line starts at the heading's edge`);
+    assert.match(html, /<div class="home-panel-body pt-2">/, `${name}: the body is not inset`);
   }
-  // Flush text under a background tint reads as a clipped highlight, and the
-  // body's overflow: hidden rules out a negative-margin inset, so the quiet
-  // line's hover changes its text colour instead.
-  assert.doesNotMatch(empty, /class="home-panel-rows home-panel-row[^"]*\bhover:bg-/,
-    'empty state: no hover tint flush against the text');
-  assert.match(populated, /home-panel-season/, 'the season progress still renders');
-  assert.doesNotMatch(populated, /class="[^"]*home-panel-season[^"]*\bpx-/, 'season progress: no inset');
-  assert.doesNotMatch(populated, /class="home-panel-footer[^"]*\bpx-/, 'footer: no inset');
+  // The one line is a card of its own, white like the challenge cards, which
+  // starts at the heading's edge; its text is padded inside it.
+  assert.match(empty, /class="home-panel-rows home-panel-row home-challenges-note [^"]*rounded-\[1\.25rem\] bg-white px-4 dark:bg-zinc-900"/);
 
   const css = read('public/css/app.css');
   assert.doesNotMatch(css, /\.home-challenges-plate\s*\{/, 'no plate rule, light');
   assert.doesNotMatch(css, /\.dark \.home-challenges-plate/, 'no plate rule, dark');
   assert.doesNotMatch(css, /\.home-panel-season::after\s*\{/, 'no hairline under the season progress');
-  assert.doesNotMatch(css, /\.home-panel-footer::before\s*\{/, 'no hairline over the footer');
+  assert.doesNotMatch(css, /^\.home-panel-footer[\s{:]/m, 'no footer rule: the footer is gone');
+  assert.doesNotMatch(css, /^\.home-panel--expanded/m, 'and no expanded rule');
 
   const ui = read('frontend/src/features/home/panels/ui.tsx');
   assert.match(ui, /plate\?: 'card' \| 'none';/, "PanelShell's 'soft' plate is retired");
@@ -2384,13 +1943,13 @@ test('the Discover widget renders the curated cards when Home is reachable', () 
   // name the next reader has to disbelieve.
   assert.match(html, /class="app-card home-discover-card [^"]*" data-slug="alpha"/);
   assert.doesNotMatch(html, /home-discover-tile\b/, 'the grid tile is retired, not renamed in place');
-  assert.match(html, /Browse all apps/, 'and the browse control is always there');
-  assert.doesNotMatch(html, /Nothing to discover/);
+  assert.match(html, /id="home-browse-btn"[\s\S]*?>See all<\/span>/, 'and the browse control is always there');
+  assert.doesNotMatch(html, /No communities to suggest/);
 
   // With Home genuinely absent it still renders — the note, not a crash.
   const bare = renderBlock('discover').html;
-  assert.match(bare, /Nothing to discover right now/);
-  assert.match(bare, /Browse all apps/);
+  assert.match(bare, /No communities to suggest right now/);
+  assert.match(bare, /id="home-browse-btn"[\s\S]*?>See all<\/span>/);
 });
 
 // ── #1567: the badge ticks from the CACHE, in the same paint ─────────
@@ -2432,6 +1991,68 @@ test('discoverTileView.added follows the cached flags, with no refetch (#1567)',
   HP.render();
   assert.match(paintHosts(sandbox, [host]), /data-added="false"/);
   assert.equal(fetches, 0);
+});
+
+// ── #4937: the pill follows what the viewer already is ───────────────
+//
+// The corner control is one labelled pill with three jobs, picked by what the
+// viewer already is: not a member, the real join; a member with the app on
+// Home, the quiet "Joined"; a member whose app is not on Home yet, a plain
+// "Add". `joined` is read from the same cached flags `added` is, through
+// Home.isJoined, and the facts line fills in only where the app declares no
+// description of its own.
+test('the Discover card carries data-join, the three pill states and the fallback facts line (#4937)', () => {
+  const alpha = { slug: 'alpha', name: 'Alpha', featured: true, active_users: 12 };
+  const beta = { slug: 'beta', name: 'Beta', featured: true, manifest_snapshot: { description: 'Its own sentence.' } };
+  const gamma = { slug: 'gamma', name: 'Gamma', featured: true, is_member: true, is_favorited: true };
+  const delta = { slug: 'delta', name: 'Delta', featured: true, is_member: true };
+  const html = renderDiscover({
+    featuredApps: () => [alpha, beta, gamma, delta],
+    popularApps: () => [],
+    isYours: (a) => !!a.is_favorited,
+    isJoined: (a) => !!a.is_member,
+    // The real line, spelled out. What composes it is unit-tested in
+    // home-find-more.test.js against the real Home.discoverMetaLine.
+    discoverMetaLine: (a) => (a.slug === 'alpha' ? '12 users · Updated 3d ago' : null),
+  });
+
+  // Not a member: the real join, offered by name.
+  assert.match(html, /class="card-add-btn [^"]*" data-slug="alpha" data-added="false" data-join="join"/);
+  assert.match(html, /aria-label="Join Alpha"/);
+  assert.match(html, />Join<\/span>/);
+  assert.match(html, /home-discover-facts[^>]*>12 users · Updated 3d ago</,
+    'the facts line stands in where the app declares no description');
+
+  // A description wins: the facts line does not repeat under it.
+  assert.match(html, />Its own sentence.</);
+  assert.equal((html.match(/home-discover-facts/g) || []).length, 1,
+    'exactly one card drew the facts line');
+
+  // A member whose app is on Home: the quiet "Joined", pressed, in grey.
+  assert.match(html, /data-slug="gamma" data-added="true" data-join="joined" aria-pressed="true"/);
+  assert.match(html, /aria-label="Joined Gamma"/);
+  assert.match(html, />Joined<\/span>/);
+  assert.match(html, /class="card-add-btn [^"]*border-transparent[^"]*" data-slug="gamma"/,
+    'the joined pill is the quiet grey, not the violet action');
+
+  // A member whose app is NOT on Home yet: a plain pin to My apps.
+  assert.match(html, /data-slug="delta" data-added="false" data-join="add"/);
+  assert.match(html, /aria-label="Add Delta to My apps"/);
+  assert.match(html, />Add<\/span>/);
+
+  // The pill's own name is still a pill's; the card keeps its own.
+  assert.match(html, /class="home-discover-name /);
+  assert.doesNotMatch(html, /home-discover-name[^>]*\btruncate\b/,
+    'the name wraps to two lines instead of cutting mid-word');
+
+  // The two-line clamp and the repointed preview overrides live in app.css.
+  const rule = CSS.match(/\.home-discover-name \{[^}]*\}/)[0];
+  assert.match(rule, /-webkit-line-clamp:\s*2/, 'the name ellipsises at two lines');
+  assert.match(rule, /overflow-wrap:\s*anywhere/, 'a run without spaces wraps instead of overflowing');
+  assert.match(CSS, /\.card-add-btn:not\(\[data-join="joined"\]\)/,
+    'the preview themes recolour the join and add pill, not the quiet joined one');
+  assert.doesNotMatch(CSS, /card-add-btn\[data-added="false"\]/,
+    'the old added-only override is gone with the round badge');
 });
 
 // ── Discover: ONE shape, at every width ───────────────────────────────
@@ -2496,9 +2117,12 @@ test('the Discover section is headed Discover Communities; the tab and the link 
   const heading = renderDiscover().match(/<h2 class="home-area-label[\s\S]*?<\/h2>/)[0];
   assert.match(heading, /<span class="min-w-0 flex-1 truncate[^"]*">Discover Communities<\/span>/,
     'the label truncates rather than wraps at 320px, beside the link');
-  assert.match(heading, />Browse all apps<\/span>/);
+  // Polish N3: the link is "See all", as Challenges' is, not an "apps"
+  // beside a heading that says communities.
+  assert.match(heading, /aria-label="See all communities"[^>]*><span class="whitespace-nowrap">See all<\/span>/);
   const bar = fs.readFileSync(path.join(__dirname, '../frontend/src/features/nav/tab-bar.tsx'), 'utf8');
-  assert.match(bar, /key: 'discover' as const, label: 'Discover', href: '#apps'/);
+  assert.match(bar, /key: 'discover' as const, label: 'core:tabs\.discover', href: '#apps'/);
+  assert.equal(message('core:tabs.discover'), 'Discover');
 });
 
 test('Discover’s degenerate states: cards, or the note — never both', () => {
@@ -2506,19 +2130,19 @@ test('Discover’s degenerate states: cards, or the note — never both', () => 
   const featuredOnly = renderDiscover({ popularApps: () => [] });
   assert.match(featuredOnly, /data-slug="alpha"/);
   assert.doesNotMatch(featuredOnly, /home-discover-divider/);
-  assert.doesNotMatch(featuredOnly, /Nothing to discover/);
+  assert.doesNotMatch(featuredOnly, /No communities to suggest/);
 
   // Popular only — the reporter's case: everything curated is already theirs.
   // With two rails this drew the note ON TOP of six perfectly good cards.
   // One lane makes that a contradiction, so the cards are the whole answer.
   const popularOnly = renderDiscover({ featuredApps: () => [] });
-  assert.doesNotMatch(popularOnly, /Nothing to discover/);
+  assert.doesNotMatch(popularOnly, /No communities to suggest/);
   assert.match(popularOnly, /data-slug="pop"/);
   assert.match(popularOnly, /home-discover-rail/);
 
   // Neither: the note, and nothing else.
   const neither = renderDiscover({ featuredApps: () => [], popularApps: () => [] });
-  assert.match(neither, /Nothing to discover right now/);
+  assert.match(neither, /No communities to suggest right now/);
   assert.doesNotMatch(neither, /home-discover-rail/);
   assert.doesNotMatch(neither, /home-discover-tiles/);
   assert.doesNotMatch(neither, /home-discover-divider/);
@@ -2607,7 +2231,7 @@ test('dapp.json’s home-widget checks describe markup this module emits', () =>
   for (const cls of ['home-panel', 'home-discover-rail', 'app-card']) {
     assert.ok(discover.expectSelector.includes(cls), cls);
   }
-  assert.equal(discover.expectText, 'Browse all apps');
+  assert.equal(discover.expectText, 'See all');
   const desktop = renderDiscover();
   assert.ok(desktop.includes('home-discover-rail') && desktop.includes('app-card'),
     'and this module emits both classes that selector chains');
@@ -2719,8 +2343,8 @@ test('the Discover rail is a fixed-width row that bleeds to both screen edges', 
 // the block draws a single line. `FillView`, `fillView`, `FillFooter`,
 // FILL_SLOTS, the `data-fill` stamp and `.home-panel-fill*` / `.home-panel-lb-row`
 // went together, as did the server's two board queries (see
-// tests/home-panels-api.test.js). `.home-panel-lb-browse` — the heading's link
-// — is a different thing and stays.
+// tests/home-panels-api.test.js). The heading's own link, "Open challenges"
+// (`.home-panel-lb-browse`), was a different thing; it is "See all" now.
 
 // ── The phone shape (#968) is gone ────────────────────────────────
 //
@@ -2736,37 +2360,15 @@ test('the Discover rail is a fixed-width row that bleeds to both screen edges', 
 // every width. What used to be the desktop-only rendering is now simply the
 // rendering — which is what these assert, at no particular width.
 
-test('the block draws all four rows, its footer and its toggle — at any width', () => {
-  const four = Array.from({ length: 4 }, (_, i) => challenge({ id: i + 1 }));
-  const { html } = renderWith({
-    registry: [], hidden: [], panels: [panel({ total: 8, challenges: four })],
-  });
-  assert.equal((html.match(/data-challenge-id/g) || []).length, 4);
-  assert.match(html, /data-rows="4"/, 'data-rows reports what is DRAWN');
-  assert.match(html, /home-panel-footer/);
-  assert.match(html, /home-panel-expand[^>]*data-panel-key="challenges"/);
-  assert.match(html, /See all 8 challenges/);
-  assert.doesNotMatch(html, /home-panel-open/,
-    'the footer holds the toggle only; the heading holds the door');
-  // The leaderboard link (#980) with the LONG label — the compact
-  // "Leaderboard" existed only for the one-cell bar. It is in the SECTION
-  // HEADING now, which is where every block's chrome went when the title
-  // left the card (the ⋮ that once followed it is gone).
-  assert.match(html, /home-area-label[\s\S]*?home-panel-lb-browse[\s\S]*?<\/h2>/,
-    'inside the heading');
-  // #1916: "Open challenges", landing on the
-  // Leaderboard screen's Challenges tab — the area's name, not a different
-  // thing's.
-  assert.match(html, /home-panel-lb-browse[^>]*title="Go to the Challenges tab on the Leaderboard screen"/);
-  assert.match(html, /home-panel-lb-browse[^>]*aria-label="Open challenges"/);
-  assert.match(html, /home-panel-lb-browse[^>]*>\s*<span class="whitespace-nowrap">Open challenges<\/span>\s*<\/button>/,
-    'no chevron after the label, as Browse all apps has none');
-  assert.doesNotMatch(html, /Open leaderboard/, 'the old label is gone');
-  const [, ui] = PANEL_SOURCES.find(([n]) => n.endsWith('ui.tsx'));
-  assert.match(ui, /home-panel-lb-browse[\s\S]{0,700}?goToChallenges\?\.\(\)/,
-    'and that control is wired to the Challenges tab');
-  assert.doesNotMatch(ui, /'Leaderboard' : 'Open leaderboard'/,
-    'the two-label branch went with the shape that needed the short one');
+test('the block draws the same pick at any width, and nothing expands', () => {
+  const five = Array.from({ length: 5 }, (_, i) => challenge({ id: i + 1 }));
+  for (const opts of [{}, AT_DESKTOP]) {
+    const { html } = renderWith({ registry: [], hidden: [], panels: [panel({ total: 8, challenges: five })] }, opts);
+    assert.equal((html.match(/data-challenge-id/g) || []).length, 3);
+    assert.match(html, /data-rows="3"/, 'data-rows reports what is DRAWN');
+    assert.match(headingOf(html), SEE_ALL, 'the way out is in the heading');
+    assert.doesNotMatch(html, /home-panel-footer|home-panel-expand|home-panel--expanded/);
+  }
 });
 
 test('the empty state is one note row, and nothing else', () => {
@@ -2774,31 +2376,12 @@ test('the empty state is one note row, and nothing else', () => {
     registry: [], hidden: [],
     panels: [panel({ total: 0, done: 0, challenges: [] })],
   });
-  assert.match(html, /No challenges are running right now/, 'it still says why');
+  assert.match(html, /No challenges right now/, 'it still says why');
   assert.match(html, /data-rows="0"/);
-  // The standings preview that used to fill this state is removed, so the
-  // between-seasons card is that one line. Its way to the board is the
-  // section heading's link, which renders in this branch like every other.
   assert.doesNotMatch(html, /home-panel-lb-row|home-panel-lb-open|data-fill/);
-  assert.match(html, /home-panel-lb-browse/, 'the heading still links to the screen');
-  // Still no expand toggle — there is nothing to expand.
+  assert.doesNotMatch(html, /home-panel-see-all|home-panel-lb-browse/,
+    'nothing to see behind a link: no See all in this state');
   assert.doesNotMatch(html, /home-panel-expand/);
-});
-
-test('an expansion is honoured at every width now', () => {
-  // `_expanded` is per-visit CLIENT state and survives a resize. The phone
-  // branch had to IGNORE it: a lifted height cap in a 116px cell would have
-  // painted an expanded season over the app tiles below. A section grows.
-  const nine = Array.from({ length: 9 }, (_, i) => challenge({ id: i + 1 }));
-  const slot = makeSlot('challenges');
-  const { HP, sandbox } = makeHomePanels({ slots: [slot] });
-  HP._expanded.challenges = true;
-  HP._data = { registry: [], hidden: [], panels: [panel({ total: 9, challenges: nine })] };
-  HP.render();
-  const html = paintHosts(sandbox, [slot]);
-  assert.match(html, /home-panel--expanded/,
-    'the class app.css hangs max-height: none on');
-  assert.equal((html.match(/data-challenge-id/g) || []).length, 9);
 });
 
 // The per-cell BUDGETS the phone shape was designed against went with it:
@@ -2847,8 +2430,8 @@ test('a Home challenge card opens that challenge’s page on the Challenges tab,
   const ui = read('frontend/src/features/home/panels/challenges.tsx');
   assert.match(ui, /data-challenge-id=\{row\.id\}\s*onClick=\{\(\) => panels\(\)\?\.goToChallenge\?\.\(row\.eventId, row\.id\)\}/,
     'each card deep-links to its own challenge');
-  assert.equal((ui.match(/goToChallenges\?\.\(\)/g) || []).length, 1,
-    'only the empty state still goes to the list (the bar link lives in ui.tsx)');
+  assert.equal((ui.match(/goToChallenges\?\.\(\)/g) || []).length, 0,
+    'nothing in the block goes to the list: "See all" is a real link in the heading (ui.tsx)');
   const panels = read('frontend/src/features/home/home-panels.js');
   const fn = panels.slice(panels.indexOf('  goToChallenge(eventId, challengeId) {'));
   assert.ok(fn.length > 0, 'goToChallenge is defined');
@@ -2860,18 +2443,18 @@ test('a Home challenge card opens that challenge’s page on the Challenges tab,
     'the row view carries the event id from the payload');
 });
 
-// #2989 (#1918): the between-seasons line opens the Challenges tab, so it is
-// a real <button>: focusable and Enter/Space-activatable natively. Its name
-// starts with the visible text and then says where it goes.
-test('#2989: the empty-state line is a keyboard-reachable button', () => {
-  const { html } = renderWith({
-    registry: [], hidden: [],
-    panels: [panel({ total: 0, done: 0, challenges: [] })],
-  });
-  assert.match(html, /<button type="button" class="home-panel-rows home-panel-row [^"]*w-full[^"]*text-left[^"]*"[^>]*>No challenges are running right now<\/button>/);
-  assert.match(html, /aria-label="No challenges are running right now\. Go to the Challenges tab on the Leaderboard screen"/);
-  assert.doesNotMatch(html, /<p[^>]*home-panel-row/, 'no click-only paragraph left');
-  const [, src] = PANEL_SOURCES.find(([n]) => n.endsWith('challenges.tsx'));
-  assert.match(src, /<button\s+type="button"[\s\S]{0,900}?goToChallenges\?\.\(\)/,
-    'and it is wired to the Challenges tab');
+// #2989 (#1918) made the between-seasons line a real <button> to the
+// Challenges tab. The Semi design draws it as a statement instead ("No
+// challenges right now" / "All done for this week"), and the way to the tab
+// is "See all": a real link, so it is focusable, announced as a link and
+// Enter-activatable natively, with a name that starts with its visible words.
+test('#2989: the way to the Challenges tab is a keyboard-reachable link', () => {
+  const { html } = renderWith({ registry: [], hidden: [], panels: [panel()] });
+  assert.match(headingOf(html), SEE_ALL);
+  assert.equal(message('home:challenges.seeAll.label'), 'See all challenges');
+  assert.ok(message('home:challenges.seeAll.label').startsWith(message('home:challenges.seeAll.text')),
+    'the accessible name starts with the visible text');
+  const empty = renderWith({ registry: [], hidden: [], panels: [panel({ total: 0, challenges: [] })] }).html;
+  const block = empty.slice(empty.indexOf('data-panel="challenges"'));
+  assert.doesNotMatch(block, /<button|role="button"|cursor-pointer/, 'the one line is not a control with nowhere to go');
 });

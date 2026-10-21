@@ -144,7 +144,26 @@ test('the glyphs live in the module, not inline beside it', () => {
   // files only became visible here when #1120 started converting console
   // sections to .tsx; the inline-path-data rule above still covers them, which
   // is the half that actually catches a glyph.
-  const shellFiles = featureFiles().filter((f) => !f.startsWith('frontend/src/features/admin/'));
+  //
+  // One shell file may draw an <svg> of its own, and it is not a glyph
+  // either: the review flow's drawn pictures (one outlined object per
+  // benefit or group decision, on a card's ground). They are scenes on a
+  // 200-unit board at card and hero size, with a fill, a sage highlight and a
+  // hard shadow filter, and nothing in icons.tsx draws on that board or could
+  // stand in for one. The allowance is pinned to what makes it safe: exactly
+  // ONE <svg>, hidden from assistive tech (the picture's label is on its
+  // wrapper), no literal path data, and nothing borrowed from the glyph set.
+  // A second file here, or a second <svg> in this one, is a glyph escaping.
+  const PICTURES = 'frontend/src/features/review-flow/illustrations.tsx';
+  {
+    const src = read(PICTURES);
+    const tags = svgTags(src);
+    assert.equal(tags.length, 1, `${PICTURES} draws its pictures in exactly one <svg>`);
+    assert.match(tags[0], /aria-hidden="true"/, 'the drawing is hidden; its label is on the wrapper');
+    assert.ok(!/\sd="/.test(src), `${PICTURES} carries no literal path attribute`);
+    assert.ok(!/from '@\/components\/ui\/icons'/.test(src), `${PICTURES} draws scenes, not glyphs from the set`);
+  }
+  const shellFiles = featureFiles().filter((f) => !f.startsWith('frontend/src/features/admin/') && f !== PICTURES);
   assert.deepEqual(shellFiles.filter((f) => svgTags(read(f)).length > 0), [],
     'a raw <svg> in a feature file is a glyph that escaped the module');
 });
@@ -240,9 +259,11 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // cog is in the cold document again.
     'M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z',
     'M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z',
-    // LockOpenIcon: Getting started's done card, "7 challenges unlocked"
-    // (2026-10-01), which shows only once the list is finished.
-    'M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zM8 11V7a4 4 0 017.75-1.4',
+    // GlobeIcon (#4405): the hub's Custom domain row, drawn only for
+    // whoever manages the project.
+    'M12 21a9 9 0 100-18 9 9 0 000 18zm0 0c2.485 0 4.5-4.03 4.5-9S14.485 3 12 3m0 18c-2.485 0-4.5-4.03-4.5-9S9.515 3 12 3M3.6 9h16.8M3.6 15h16.8',
+    // LockOpenIcon left this list, and the module, with the Getting started
+    // card's done state, its one user (#4635).
     // LockIcon and UserGroupIcon LEFT this list with communities, stage 3:
     // the create dialog's first step (who it is for) draws them on its
     // "A group" and "A community" rows, and the dialog prerenders every step.
@@ -251,6 +272,9 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // "Download image", both drawn only after a tap.
     'M12 3v12m0 0l-4-4m4 4l4-4M5 13v7h14v-7',
     'M12 3v12m0-12l-4 4m4-4l4 4M5 13v7h14v-7',
+    // ArrowsMoveIcon (#4514): the comment bar's drag handle, drawn only in
+    // comment mode.
+    'M12 3v18M3 12h18M9 6l3-3 3 3M9 18l3 3 3-3M6 9l-3 3 3 3M18 9l3 3-3 3',
     'M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z',
     'M12 3v8.25m0 0l-3-3m3 3l3-3',
     // PhonePlusIcon (#4399): the mark menu's "Add Homeroom to your home
@@ -302,16 +326,16 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // mark is drawn only by a project page's Workshop tab, behind state.
     'M4 5h4v14H4zM10 5h4v9h-4zM16 5h4v6h-4z',
     'M4 5v6c0 4 16 4 16 0V5M4 11v6c0 4 16 4 16 0v-6',
-    // THE GRID is back on this list with #852. #2759 put it behind state when
-    // the all-apps Workshop's scope chip went, and #3051 brought the chip back
-    // as "All apps", drawing it unconditionally. #852 moves it into the
-    // header at every width, as "Communities ⌄" (#header-scope-switch, drawn
-    // once the router says the Communities screen is up), so nothing
-    // prerenders the grid again.
-    'M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z',
-    // DescriptionIcon: the Needs-you rail's Description, client-rendered
-    // with the rest of that rail.
-    'M4 6h16M4 12h16M4 18h10',
+    // THE GRID left this list again with D (18 Oct 2026). #852 had put it
+    // behind state, in the header's "Communities ⌄"; the Communities tab now
+    // draws it unconditionally as the desktop sidebar's All row glyph
+    // (features/nav/tab-bar.tsx, shown by app.css from 1024px only), so it
+    // prerenders.
+    // DescriptionIcon LEFT this list with comment mode (#4289 follow-up):
+    // the Suggest an improvement form's Detailed / Comment switch draws it,
+    // and the form prerenders (the switch hidden until the device turns it
+    // on), so it is in the cold document. The Needs-you rail still draws it
+    // behind state too.
     'M4 6h16M4 12h16M4 18h16',
     'M4.5 12.75l6 6 9-13.5',
     'M5 13l4 4L19 7',
@@ -392,6 +416,38 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     'M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z',
     'M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z',
     'M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z',
+    // #4666: You or the group's bolt and Make your own's sliders, drawn in
+    // the Who can see & change it sheet and the invite sheet's presets, both
+    // of which render only once opened.
+    'M13 3 5 13.5h6l-1 7.5 8-10.5h-6l1-7.5Z',
+    'M4 7h9M17 7h3M4 17h3M11 17h9',
+    'M13 7a2 2 0 104 0 2 2 0 00-4 0zM7 17a2 2 0 104 0 2 2 0 00-4 0z',
+    // #4916: the board's filter strip draws as icons, the sliders above for
+    // Filters and these person glyphs for Assigned to you and Created by
+    // you, and All items' grouping tabs draw the tag (category) and the
+    // board (stage). The strip mounts once a project's board has loaded,
+    // and All items is a page of its own, so all of them render behind state.
+    'M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2',
+    'M5 7a4 4 0 108 0 4 4 0 10-8 0z',
+    'M16 11l2 2 4-4',
+    'M11.5 15H7a4 4 0 00-4 4v2',
+    'M6 7a4 4 0 108 0 4 4 0 10-8 0z',
+    'M21.38 16.63a2.12 2.12 0 00-3-3l-4.01 4a2 2 0 00-.51.86l-.84 2.87a.5.5 0 00.62.62l2.87-.84a2 2 0 00.86-.51z',
+    'M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z',
+    // ── v3 (18 Oct 2026): All messages, under Messages in the sidebar ──
+    //
+    // ChatsIcon (two paths) draws only while the inbox is open in the
+    // sidebar of rows, which the prerender never is.
+    'M4 5.5h10.5a1.5 1.5 0 011.5 1.5v5.5a1.5 1.5 0 01-1.5 1.5H9l-3.5 3v-3H4a1.5 1.5 0 01-1.5-1.5V7A1.5 1.5 0 014 5.5z',
+    'M19 9h.5a1.5 1.5 0 011.5 1.5v5a1.5 1.5 0 01-1.5 1.5H19v3l-3.5-3h-3',
+    // ── New Needs you (an experiment): the before/after switch ──
+    //
+    // HistoryIcon draws only on a change's page in the new review flow
+    // (features/review-flow/compare.tsx), which is client-rendered behind
+    // its switch.
+    'M3 12a9 9 0 1 0 2.64-6.36',
+    'M3 4.5V9h4.5',
+    'M12 7.5V12l3 2',
   ];
   assert.deepEqual(absent.sort(), expected.sort());
 });

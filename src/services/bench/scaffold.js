@@ -50,13 +50,15 @@ function requestCard(sketch) {
  * the pack's files on top. Pure but for the template code's own reads.
  */
 function filesFor({ input, pack = null, sketch = null }) {
-  const { getTemplateFiles } = require('../template');
+  const { getTemplateFiles, fillAppName } = require('../template');
   const { slugOf } = require('./taste');
-  const files = getTemplateFiles(input.appName, slugOf(input.appName), '', null, {
+  // Its name in the page: a trial's preview runs as the studio's host app,
+  // whose name the page would otherwise show (template.js fillAppName).
+  const files = fillAppName(getTemplateFiles(input.appName, slugOf(input.appName), '', null, {
     template: input.template || null,
     description: input.description || null,
     sketch: sketch && sketch.design ? { design: sketch.design, model: sketch.model || null, ready_at: sketch.readyAt || null } : null,
-  });
+  }), input.appName);
   return packs.withPackFiles(files, pack);
 }
 
@@ -109,14 +111,16 @@ async function make(pool, id, { runId, input, pack, repo, github, user, deps }) 
  */
 async function ensure(pool, {
   runId, taskId, pack = null, input, repo, github, user = null, deps = {}, waitMs = WAIT_MS, pollMs = POLL_MS,
+  claimant = null,
 }) {
   const packId = pack && pack.id ? Number(pack.id) : null;
   const args = { runId, input, pack, repo, github, user, deps };
+  const by = claimant == null ? null : String(claimant);
   try {
     const { rows: [claimed] } = await pool.query(
-      `INSERT INTO bench_scaffolds (run_id, task_id, context_pack_id)
-       VALUES ($1, $2, $3) ON CONFLICT DO NOTHING RETURNING id`,
-      [Number(runId), Number(taskId), packId],
+      `INSERT INTO bench_scaffolds (run_id, task_id, context_pack_id, claimed_by)
+       VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING RETURNING id`,
+      [Number(runId), Number(taskId), packId, by],
     );
     if (claimed) return make(pool, claimed.id, args);
     const deadline = Date.now() + waitMs;
@@ -125,12 +129,16 @@ async function ensure(pool, {
       const row = await readRow(pool, { runId, taskId, packId });
       if (!row) return { ok: false, error: 'the first commit\'s record is gone' };
       if (row.status === 'ready') return { ok: true, id: row.id, sha: row.sha, branch: row.branch, sketch: row.sketch || null };
+      // A claim of this caller's own (a durable trial carried on after the
+      // process that claimed it died: one process runs a trial at a time)
+      // is taken over at once, not waited for.
       // eslint-disable-next-line no-await-in-loop
       const { rows: [taken] } = await pool.query(
-        `UPDATE bench_scaffolds SET status = 'making', claimed_at = NOW(), error = NULL
-          WHERE id = $1 AND (status = 'failed' OR (status = 'making' AND claimed_at < NOW() - make_interval(secs => $2)))
+        `UPDATE bench_scaffolds SET status = 'making', claimed_at = NOW(), claimed_by = $3, error = NULL
+          WHERE id = $1 AND (status = 'failed' OR (status = 'making' AND (
+                  claimed_at < NOW() - make_interval(secs => $2) OR ($3::text IS NOT NULL AND claimed_by = $3::text))))
           RETURNING id`,
-        [row.id, CLAIM_STALE_SECONDS],
+        [row.id, CLAIM_STALE_SECONDS, by],
       );
       if (taken) return make(pool, taken.id, args);
       if (Date.now() + pollMs > deadline) return { ok: false, error: 'the first commit was not ready in time' };

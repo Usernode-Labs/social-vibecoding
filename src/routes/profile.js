@@ -5,6 +5,7 @@
 //
 //   PATCH  /api/me/profile             display name / bio
 //   POST   /api/me/username            change the @handle
+//   POST   /api/me/username/code       email a code that confirms it (#5281)
 //   POST   /api/me/username/choose      take the FIRST @handle (#2563)
 //   POST   /api/me/avatar              raw image bytes -> user_avatars
 //   DELETE /api/me/avatar              remove the picture
@@ -278,11 +279,13 @@ const PROPOSALS_PER_BUCKET = 50;
 const MY_PROPOSALS_SQL = `
   WITH items AS (
     SELECT 'inProgress' AS section, cs.id AS session_id, cs.session_title AS title,
+           cs.pr_title, cs.pr_number, cs.check_state,
            cs.app_id, cs.status, cs.last_activity_at AS at
       FROM chat_sessions cs
      WHERE ${MY_SESSIONS_WHERE}
      UNION ALL
     SELECT 'openForVote' AS section, cs.id AS session_id, cs.session_title AS title,
+           cs.pr_title, cs.pr_number, cs.check_state,
            cs.app_id, cs.status, COALESCE(cs.promoted_at, cs.last_activity_at) AS at
       FROM chat_sessions cs
      WHERE ${MY_PROPOSALS_WHERE} AND cs.is_headless = FALSE
@@ -290,11 +293,13 @@ const MY_PROPOSALS_SQL = `
     -- Live once production runs it (live_at); going live, it is still in progress.
     SELECT CASE WHEN cs.live_at IS NULL THEN 'openForVote' ELSE 'merged' END AS section,
            cs.id AS session_id, cs.session_title AS title,
+           cs.pr_title, cs.pr_number, cs.check_state,
            cs.app_id, cs.status, COALESCE(cs.live_at, cs.merged_at, cs.last_activity_at) AS at
       FROM chat_sessions cs
      WHERE cs.user_id = $1 AND cs.is_headless = FALSE AND cs.status = 'merged'
      UNION ALL
     SELECT 'closed' AS section, cs.id AS session_id, cs.session_title AS title,
+           cs.pr_title, cs.pr_number, cs.check_state,
            cs.app_id, cs.status, COALESCE(cs.archived_at, cs.last_activity_at) AS at
       FROM chat_sessions cs
      WHERE cs.user_id = $1 AND cs.is_headless = FALSE AND cs.status = 'archived'
@@ -305,7 +310,7 @@ const MY_PROPOSALS_SQL = `
            ) AS rn
       FROM items it
   )
-  SELECT r.section, r.session_id, r.title, r.status, r.at,
+  SELECT r.section, r.session_id, r.title, r.pr_title, r.pr_number, r.check_state, r.status, r.at,
          a.slug AS app_slug, a.name AS app_name, a.icon_emoji, a.icon_image_id
     FROM ranked r
     JOIN apps a ON a.id = r.app_id
@@ -314,10 +319,17 @@ const MY_PROPOSALS_SQL = `
 `;
 
 // Pure (exported for tests): raw rows → the response body's four buckets.
+// #5272: `prTitle` and `prNumber` name a change nobody titled, and
+// `checkState` is the latest checks verdict (chat_sessions.check_state), so
+// Your changes can say a change's checks failed.
 function shapeProposalRow(r) {
+  const prNumber = Number(r.pr_number);
   return {
     sessionId: Number(r.session_id),
     title: r.title,
+    prTitle: r.pr_title || null,
+    prNumber: Number.isSafeInteger(prNumber) && prNumber > 0 ? prNumber : null,
+    checkState: r.check_state || null,
     appSlug: r.app_slug,
     appName: r.app_name,
     appIconEmoji: r.icon_emoji || null,
@@ -338,15 +350,20 @@ function shapeProposals(rows) {
 
 // Staging-only ?demo=1 rows, one per bucket. Ids follow src/routes/profile.js
 // and src/routes/votes.js's occupied 91000xx ranges (see their own comments);
-// 9100035-9100040 were unused before this. The merged bucket reuses
+// 9100035-9100040 were unused before this (9100037 is the untitled row,
+// #5272). The merged bucket reuses
 // DEMO_CONTRIBUTIONS' own ids/titles so the same mock row opens the same
 // proposal page from either screen.
 const DEMO_PROPOSALS = {
   inProgress: [
     { sessionId: 9100035, title: '[Mock] Rework the onboarding checklist', status: 'active' },
+    // #5272: nobody titled it yet, so Your changes names it by its PR.
+    { sessionId: 9100037, title: null, prNumber: 9999, status: 'paused' },
   ],
   openForVote: [
-    { sessionId: 9100036, title: '[Mock] Ship the notification digest', status: 'promoted' },
+    // #5272: its checks failed, so Your changes offers "Fix checks".
+    { sessionId: 9100036, title: '[Mock] Ship the notification digest', status: 'promoted',
+      checkState: 'failing' },
   ],
   merged: [
     { sessionId: 9100030, title: '[Mock] Completed: rework the onboarding checklist',
@@ -373,6 +390,9 @@ function withDemoProposals(proposals, selfApp, now = Date.now()) {
     result[key] = (DEMO_PROPOSALS[key] || []).map((d) => ({
       sessionId: d.sessionId,
       title: d.title,
+      prTitle: d.prTitle || null,
+      prNumber: d.prNumber || null,
+      checkState: d.checkState || null,
       appSlug: selfApp.slug,
       appName: selfApp.name || selfApp.slug,
       appIconEmoji: selfApp.icon_emoji || null,
@@ -411,9 +431,20 @@ function withDemoProposals(proposals, selfApp, now = Date.now()) {
 // So "Done" is shipped or closed, and a request somebody closed on GitHub
 // by hand stays under Open until one of those is true. Bounded by
 // MY_REQUESTS_LIMIT, newest first; the two counts are over the whole set.
+// Profile's row needs only the counts, and asks for them alone
+// (?counts=1, MY_REQUEST_COUNTS_SQL).
+//
+// WHERE EACH ONE STANDS IS READ ONCE PER APP, NOT ONCE PER REQUEST. The
+// numbers the apps' changes name (`linked`, unnested from linked_issues)
+// and the numbers their voted-through close requests applied
+// (`applied_closes`) are each read in one pass and joined to the requests by
+// app and number. It was three EXISTS probes per request, each walking the
+// app's changes for `number = ANY(linked_issues)`, which no index serves:
+// 3.7 s for someone with about 800 requests on Homeroom (19 Oct 2026), and
+// the profile waited for it.
 const MY_REQUESTS_LIMIT = 50;
 
-const MY_REQUESTS_SQL = `
+const MY_REQUESTS_STANDING = `
   WITH self_app AS (
     SELECT id, repo_url FROM apps WHERE self_hosted = TRUE ORDER BY id ASC LIMIT 1
   ),
@@ -438,29 +469,49 @@ const MY_REQUESTS_SQL = `
      WHERE f.app_id IS NOT NULL
      ORDER BY f.app_id, f.number, f.created_at ASC
   ),
+  linked AS (
+    SELECT cs.app_id, n.number,
+           bool_or(cs.status = 'merged' AND cs.live_at IS NOT NULL) AS shipped,
+           bool_or(cs.status IN ('active', 'paused', 'promoted', 'merging')) AS underway
+      FROM chat_sessions cs
+     CROSS JOIN LATERAL unnest(cs.linked_issues) AS n(number)
+     WHERE cs.app_id IN (SELECT app_id FROM mine)
+       AND cs.status IN ('merged', 'active', 'paused', 'promoted', 'merging')
+     GROUP BY cs.app_id, n.number
+  ),
+  applied_closes AS (
+    SELECT DISTINCT c.app_id, c.payload->>'issueNumber' AS number
+      FROM issues c
+     WHERE c.app_id IN (SELECT app_id FROM mine)
+       AND c.kind = 'close_issue' AND c.status = 'closed'
+       AND c.payload ? 'appliedAt'
+  ),
   standing AS (
     SELECT m.number, m.title, m.created_at,
            a.slug AS app_slug, a.name AS app_name, a.self_hosted,
-           EXISTS (SELECT 1 FROM chat_sessions cs
-                    WHERE cs.app_id = m.app_id AND cs.status = 'merged' AND cs.live_at IS NOT NULL
-                      AND m.number = ANY(cs.linked_issues)) AS shipped,
-           EXISTS (SELECT 1 FROM issues c
-                    WHERE c.app_id = m.app_id AND c.kind = 'close_issue' AND c.status = 'closed'
-                      AND c.payload ? 'appliedAt'
-                      AND c.payload->>'issueNumber' = m.number::text) AS closed,
-           EXISTS (SELECT 1 FROM chat_sessions cs
-                    WHERE cs.app_id = m.app_id
-                      AND cs.status IN ('active', 'paused', 'promoted', 'merging')
-                      AND m.number = ANY(cs.linked_issues)) AS underway
+           COALESCE(l.shipped, FALSE) AS shipped,
+           (ac.number IS NOT NULL) AS closed,
+           COALESCE(l.underway, FALSE) AS underway
       FROM mine m
       JOIN apps a ON a.id = m.app_id
+      LEFT JOIN linked l ON l.app_id = m.app_id AND l.number = m.number
+      LEFT JOIN applied_closes ac ON ac.app_id = m.app_id AND ac.number = m.number::text
   )
+`;
+
+const MY_REQUESTS_SQL = `${MY_REQUESTS_STANDING}
   SELECT s.*,
          COUNT(*) OVER () AS total,
          COUNT(*) FILTER (WHERE s.shipped OR s.closed) OVER () AS done
     FROM standing s
    ORDER BY s.created_at DESC NULLS LAST, s.number DESC
    LIMIT $2
+`;
+
+const MY_REQUEST_COUNTS_SQL = `${MY_REQUESTS_STANDING}
+  SELECT COUNT(*)::int AS total,
+         COUNT(*) FILTER (WHERE s.shipped OR s.closed)::int AS done
+    FROM standing s
 `;
 
 // Pure (exported for tests): the rows → the response body.
@@ -489,6 +540,14 @@ function shapeRequests(rows) {
   };
 }
 
+// Pure (exported for tests): MY_REQUEST_COUNTS_SQL's one row → { open, done }.
+function shapeRequestCounts(row) {
+  const r = row || {};
+  const total = Number(r.total) || 0;
+  const done = Number(r.done) || 0;
+  return { open: Math.max(0, total - done), done };
+}
+
 // Staging-only ?demo=1 rows, the same mock requests GET /api/feedback/mine
 // shows (routes/feedback.js DEMO_FEEDBACK), one in each standing so every
 // kind of line is on screen. REAL DATA WINS: rows of the viewer's own are
@@ -511,6 +570,14 @@ function withDemoRequests(body, selfApp, now = Date.now()) {
   }));
   const done = requests.filter((r) => r.state === 'shipped' || r.state === 'closed').length;
   return { requests, open: requests.length - done, done };
+}
+
+// The counts the demo rows above would give, on the same rule: a viewer with
+// requests of their own keeps their counts.
+function withDemoRequestCounts(counts, selfApp) {
+  if (!selfApp || counts.open || counts.done) return counts;
+  const { open, done } = withDemoRequests({ requests: [], open: 0, done: 0 }, selfApp);
+  return { open, done };
 }
 
 // Pure (exported for tests): validate an uploaded avatar body.
@@ -674,8 +741,8 @@ async function fetchProfileSeason(pool, preferredSeasonId = null) {
 // The viewer's done rule for one season, as Home's Challenges block counts
 // it: DONE_EXPR, with the First challenges' own answer over it where the
 // season has them (home-panels.js onboardingDoneExpr). A First challenge is
-// done from every credit on its TEMPLATE, an earlier season's included, which
-// is also how the Getting started card and the gate read it (2026-10-01), so
+// done from every credit on its TEMPLATE, an earlier season's included
+// (services/topochain/challenge-onboarding.js), so
 // Me's "N of M done" and Home's "N/M done in Season 2" cannot disagree about
 // one of them. `sql(n)` places the rule's two parameters at $n and $n+1 of
 // the statement it is spliced into; with no First challenges it is DONE_EXPR
@@ -808,48 +875,102 @@ function profileRoutes(config) {
     }
   );
 
+  // ── POST /api/me/username/code ───────────────────────────────────────
+  //
+  // No body. Emails a six-digit code to the account's own CONFIRMED address,
+  // to confirm a username change on an account that has no password (#5281).
+  // Refused (409) for an account that has a password, an admin account, and
+  // an account with no confirmed address; see requestUsernameCode in
+  // services/account-email.js for the code's bounds. Behind the same
+  // per-user limiter as the address proof's request, and the mail layer's
+  // own per-recipient throttle (`username_change`), and same-origin only.
+  router.post(
+    '/api/me/username/code',
+    requireUser,
+    profileWriteLimiter,
+    // No body, so nothing a cross-site form cannot send: refuse a request a
+    // browser did not make from this origin, as DELETE /api/me/avatar does.
+    sameOriginBrowserOnly,
+    async (req, res) => {
+      try {
+        return res.json(await accountEmail.requestUsernameCode(pool, config, req.user.id));
+      } catch (error) {
+        if (error instanceof accountEmail.AccountEmailError) {
+          return res.status(error.status).json({ error: error.message });
+        }
+        log.error('profile', 'Username code request failed', { userId: req.user.id, err: error.message });
+        return res.status(500).json({ error: 'Could not send a code. Please try again.' });
+      }
+    }
+  );
+
   // ── POST /api/me/username ────────────────────────────────────────────
   //
-  // Body: { username, currentPassword }. Separate from PATCH /api/me/profile
-  // on purpose — see the header. The step order below is a security order,
-  // not a readability one:
+  // Body: { username, currentPassword }, or { username, code } for an
+  // account with NO password (#5281), the code from POST
+  // /api/me/username/code above. Which proof is asked for is decided by the
+  // account, never by the body: an account with a password confirms with
+  // the password whatever else it sends, and a code is worth nothing to it.
+  // Separate from PATCH /api/me/profile on purpose — see the header. The
+  // step order below is a security order, not a readability one:
   //
   //   1. shape         — pure, leaks nothing, costs nothing
-  //   2. password      — BEFORE any availability answer, so a stolen session
-  //                      without the password cannot walk the namespace
-  //                      asking "is @x free?"
+  //   2. proof         — the password, or the emailed code, BEFORE any
+  //                      availability answer, so a stolen session without
+  //                      either cannot walk the namespace asking "is @x
+  //                      free?"
   //   3. service ident — a seeded identity may never move
   //   4. cooldown      — before availability for the same reason: a user in
   //                      cooldown gets no probes either
   //   5. availability  — live table AND retired ledger
-  //   6. rename        — one transaction
+  //   6. rename        — one transaction (a code is spent just before it)
   router.post(
     '/api/me/username',
     requireUser,
     usernameChangeLimiter,
     express.json({ limit: '4kb' }),
     async (req, res) => {
-      const { username: requested, currentPassword } = req.body || {};
+      const { username: requested, currentPassword, code } = req.body || {};
 
       const check = usernames.validateUsername(requested);
       if (!check.ok) return res.status(400).json({ error: check.error });
       const next = check.value;
 
-      if (!currentPassword || typeof currentPassword !== 'string') {
-        return res.status(400).json({ error: 'Current password is required' });
-      }
-
       try {
         const { rows } = await pool.query(
-          'SELECT username, password FROM users WHERE id = $1',
+          'SELECT username, password, password_set FROM users WHERE id = $1',
           [req.user.id]
         );
         if (!rows.length) return res.status(404).json({ error: 'User not found' });
         const { username: current, password: hash } = rows[0];
+        // Only an explicit FALSE is "no password": the column is NOT NULL
+        // DEFAULT TRUE, and anything else keeps the password gate.
+        const passwordless = rows[0].password_set === false;
 
-        const valid = await bcrypt.compare(currentPassword, hash);
-        if (!valid) {
-          return res.status(401).json({ error: 'Current password is incorrect' });
+        // The emailed code's hash, once checked, so step 6 spends that code.
+        let codeProof = null;
+        if (!passwordless) {
+          if (!currentPassword || typeof currentPassword !== 'string') {
+            return res.status(400).json({ error: 'Current password is required' });
+          }
+          const valid = await bcrypt.compare(currentPassword, hash);
+          if (!valid) {
+            return res.status(401).json({ error: 'Current password is incorrect' });
+          }
+        } else {
+          if (!code || typeof code !== 'string') {
+            return res.status(400).json({
+              error: 'Ask for a code by email to confirm this change.', codeRequired: true,
+            });
+          }
+          try {
+            codeProof = await accountEmail.checkUsernameCode(pool, req.user.id, code);
+          } catch (error) {
+            if (error instanceof accountEmail.AccountEmailError) {
+              return res.status(error.status).json({ error: error.message });
+            }
+            throw error;
+          }
         }
 
         // Seeded service accounts (usernode-capture and friends) are found
@@ -879,6 +1000,12 @@ function profileRoutes(config) {
         const free = await usernames.checkAvailability(pool, next, req.user.id);
         if (!free.available) {
           return res.status(409).json({ error: free.error });
+        }
+
+        // Spend the code now, and only now: one statement, so of two
+        // submissions racing with the same code exactly one goes on.
+        if (codeProof && !await accountEmail.consumeUsernameCode(pool, req.user.id, codeProof.codeHash)) {
+          return res.status(400).json({ error: 'Invalid or expired code. Request a new code if needed.' });
         }
 
         const result = await usernames.renameUser(pool, req.user.id, next);
@@ -1211,9 +1338,20 @@ function profileRoutes(config) {
   // ── GET /api/me/requests ─────────────────────────────────────────────
   //
   // "Your requests" on Me. See MY_REQUESTS_SQL above for the two ways a
-  // request is recorded and where each one stands.
+  // request is recorded and where each one stands. `?counts=1` answers only
+  // { open, done }, all Profile's row draws.
   router.get('/api/me/requests', requireUser, async (req, res) => {
     try {
+      if (req.query.counts === '1') {
+        const { rows } = await pool.query(MY_REQUEST_COUNTS_SQL, [req.user.id]);
+        let counts = shapeRequestCounts(rows[0]);
+        if (IS_STAGING && req.query.demo === '1') {
+          const { rows: selfRows } = await pool.query(SELF_APP_SQL);
+          counts = withDemoRequestCounts(counts, selfRows[0] || null);
+        }
+        res.set('Cache-Control', 'no-store');
+        return res.json(counts);
+      }
       const { rows } = await pool.query(MY_REQUESTS_SQL, [req.user.id, MY_REQUESTS_LIMIT]);
       let body = shapeRequests(rows);
       if (IS_STAGING && req.query.demo === '1') {
@@ -1272,9 +1410,12 @@ module.exports = {
   withDemoProposals,
   DEMO_PROPOSALS,
   MY_REQUESTS_SQL,
+  MY_REQUEST_COUNTS_SQL,
   MY_REQUESTS_LIMIT,
   shapeRequests,
+  shapeRequestCounts,
   withDemoRequests,
+  withDemoRequestCounts,
   DEMO_REQUESTS,
   MY_PROPOSALS_SQL,
   PROPOSALS_PER_BUCKET,

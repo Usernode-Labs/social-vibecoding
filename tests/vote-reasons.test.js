@@ -6,18 +6,20 @@
 //      line", a paragraph is refused, and so is anything not a string;
 //   2. recordVote writes the line, and its upsert keeps an earlier line on
 //      a same-side re-cast and drops it on a flip;
-//   3. the route: a No without its line is refused before anything is
-//      written; a No with one is recorded and the thread quotes it; a Yes
+//   3. the route: a No without its line is recorded with reason null and
+//      announced; a No with one is recorded and the thread quotes it; a Yes
 //      needs none and its line reads exactly as before; the same side with
 //      new words updates the row without a second announcement; a re-cast
-//      No that already has its line passes the gate;
+//      No that already has its line keeps it, and a flip to No without one
+//      stores null;
 //   3b. #3977: a No's line on a change Homeroom bot built goes to the bot
 //      (homeroom-bot-dm.js handVoteLine), and the vote row then leaves the
 //      line out, so the discussion shows it once, as the voter's reply;
 //   4. the roster names each counted vote's line, and the people whose vote
 //      was on an earlier version of the proposal;
 //   5. the merge credits: who is named when a proposal lands, and how the
-//      sentence reads.
+//      sentence reads (src/workflow/rules/merge-credits.ts, which the
+//      merge-followups machine runs).
 //
 // Run with: node --test tests/vote-reasons.test.js
 
@@ -87,7 +89,6 @@ function loadVotes({ pool }) {
     github: require.resolve('../src/services/github'),
     staging: require.resolve('../src/services/staging'),
     docker: require.resolve('../src/services/docker'),
-    resolver: require.resolve('../src/services/conflict-resolver'),
     ws: require.resolve('../src/services/ws'),
     activeUsers: require.resolve('../src/services/active-users'),
     notifications: require.resolve('../src/services/notifications'),
@@ -116,13 +117,8 @@ function loadVotes({ pool }) {
     getPR: async () => ({ state: 'open', merged: false, head: { sha: HEAD } }),
     getInstallationOctokit: async () => ({ request: async () => ({ data: {} }) }),
   });
-  stub(ids.staging, { rebuildProduction: async () => ({ ok: true }), teardownStaging: async () => {} });
+  stub(ids.staging, { teardownStaging: async () => {} });
   stub(ids.docker, {});
-  stub(ids.resolver, {
-    checkAndResolveConflicts: async () => {},
-    resolveAndMaybeRetry: async () => ({ ok: true }),
-    isResolving: () => false,
-  });
   stub(ids.ws, {
     sendSystemMessage: async (_pool, appId, content, msgType, metadata, thread) => {
       systemMessages.push({ appId, content, msgType, metadata, thread });
@@ -218,9 +214,8 @@ async function withServer(poolOpts, fn) {
 test('normalizeVoteReason: collapsed, capped, and "no line" when empty', () => {
   const { subject, restore } = loadVotes({ pool: makeRecordingPool([]) });
   try {
-    const { normalizeVoteReason, VOTE_REASON_MAX, VOTE_REASON_REQUIRED } = subject;
+    const { normalizeVoteReason, VOTE_REASON_MAX } = subject;
     assert.equal(VOTE_REASON_MAX, 280);
-    assert.equal(VOTE_REASON_REQUIRED, 'A No comes with a line: what is not working for you?');
     assert.deepEqual(normalizeVoteReason(undefined), { reason: null });
     assert.deepEqual(normalizeVoteReason(null), { reason: null });
     assert.deepEqual(normalizeVoteReason('   '), { reason: null });
@@ -245,21 +240,26 @@ test('recordVote writes the line, and the upsert carries or drops the old one by
       revisionEnforced: false, reason: 'The new colors clash on mobile.',
     });
     assert.deepEqual(r.rows, [{ id: 1, reason: 'The new colors clash on mobile.' }]);
+    // One statement for every proposal, an imported one's included (the
+    // proposal machine's bug 5): the row is locked and must still be up for
+    // a vote; an epoch is held to only when the revision is enforced.
     const plain = pool.queries[0];
+    assert.match(plain.sql, /FOR UPDATE/);
+    assert.match(plain.sql, /status IN \('promoted', 'merging'\)/, 'only a proposal still up for a vote');
     assert.match(plain.sql, /INSERT INTO pr_votes \(session_id, user_id, vote, head_sha, approval_epoch, reason\)/);
     assert.match(plain.sql, /WHEN EXCLUDED\.reason IS NOT NULL THEN EXCLUDED\.reason/, 'a line that arrives replaces the old one');
     assert.match(plain.sql, /WHEN pr_votes\.vote = EXCLUDED\.vote THEN pr_votes\.reason/, 'none arriving keeps it on the same side');
     assert.match(plain.sql, /ELSE NULL END/, 'and drops it on a flip');
     assert.match(plain.sql, /RETURNING id, reason/);
-    assert.deepEqual(plain.params, [41, 8, 'no', HEAD, 'The new colors clash on mobile.']);
+    assert.deepEqual(plain.params, [41, 8, 'no', HEAD, 'The new colors clash on mobile.', null, null]);
 
     await subject.recordVote({
       pool, session: { id: 41 }, userId: 8, vote: 'yes', headSha: HEAD, revisionEnforced: true,
     });
     const locked = pool.queries[1];
-    assert.match(locked.sql, /FOR UPDATE/, 'the revision-enforced path still takes the row lock');
+    assert.equal(locked.sql, plain.sql, 'the revision-enforced path is the same locked statement');
     assert.match(locked.sql, /WHEN pr_votes\.vote = EXCLUDED\.vote THEN pr_votes\.reason/);
-    assert.deepEqual(locked.params, [41, 8, 'yes', HEAD, null, null], 'no line: null, never the empty string; no epoch stamp: null');
+    assert.deepEqual(locked.params, [41, 8, 'yes', HEAD, null, null, null], 'no line: null, never the empty string; no epoch stamp: null');
   } finally {
     restore();
   }
@@ -267,21 +267,26 @@ test('recordVote writes the line, and the upsert carries or drops the old one by
 
 // ── 3. The route ──────────────────────────────────────────────────────
 
-test('a No without its line is refused before anything is written', async () => {
+test('a No without its line is recorded with reason null and announced', async () => {
   await withServer({}, async (ctx) => {
     const r = await ctx.post({ vote: 'no' });
-    assert.equal(r.status, 400);
-    assert.deepEqual(await r.json(), {
-      error: 'reason_required',
-      message: 'A No comes with a line: what is not working for you?',
-      maxLength: 280,
-    });
-    assert.equal(ctx.pool.inserted.length, 0, 'nothing recorded');
-    assert.equal(ctx.systemMessages.length, 0, 'nothing announced');
-    assert.equal(ctx.voteUpdates.length, 0);
-
+    assert.equal(r.status, 200);
+    assert.deepEqual(await r.json(), { ok: true, merged: false });
+    assert.equal(ctx.pool.inserted.length, 1);
+    assert.deepEqual(ctx.pool.inserted[0].params, [7, 3, 'no', HEAD, null, null, 'evan'],
+      'no line: null, never the empty string');
+    assert.equal(ctx.systemMessages[0].content, 'evan voted no on PR #26: Native iOS look',
+      'the row reads without a quote, as a lineless Yes already does');
+    assert.deepEqual(ctx.systemMessages[0].metadata, { vote: { sessionId: 7, prNumber: 26, reason: null } });
+    assert.deepEqual(ctx.voteUpdates, [{ sessionId: 7, appSlug: 'widget', merged: false }]);
+    assert.deepEqual(ctx.prompts, [7], 'a No is the one vote that can make a proposal contested');
+  });
+  await withServer({}, async (ctx) => {
     const blank = await ctx.post({ vote: 'no', reason: '   ' });
-    assert.equal(blank.status, 400, 'whitespace is not a line');
+    assert.equal(blank.status, 200, 'whitespace is no line, not a refusal');
+    assert.deepEqual(ctx.pool.inserted[0].params, [7, 3, 'no', HEAD, null, null, 'evan']);
+  });
+  await withServer({}, async (ctx) => {
     const long = await ctx.post({ vote: 'no', reason: 'x'.repeat(281) });
     assert.equal(long.status, 400);
     assert.deepEqual(await long.json(), { error: 'Reason must be 280 characters or fewer' });
@@ -297,7 +302,7 @@ test('a No with its line is recorded, quoted in the thread, and checks whether t
     assert.equal(r.status, 200);
     assert.deepEqual(await r.json(), { ok: true, merged: false });
     assert.equal(ctx.pool.inserted.length, 1);
-    assert.deepEqual(ctx.pool.inserted[0].params, [7, 3, 'no', HEAD, 'The new colors clash on mobile.'],
+    assert.deepEqual(ctx.pool.inserted[0].params, [7, 3, 'no', HEAD, 'The new colors clash on mobile.', null, 'evan'],
       'the line goes in normalised, beside the vote');
 
     assert.equal(ctx.systemMessages.length, 1);
@@ -319,7 +324,7 @@ test('a Yes needs no line, and without one reads exactly as before', async () =>
   await withServer({}, async (ctx) => {
     const r = await ctx.post({ vote: 'yes' });
     assert.equal(r.status, 200);
-    assert.deepEqual(ctx.pool.inserted[0].params, [7, 3, 'yes', HEAD, null]);
+    assert.deepEqual(ctx.pool.inserted[0].params, [7, 3, 'yes', HEAD, null, null, 'evan']);
     assert.equal(ctx.systemMessages[0].content, 'evan voted yes on PR #26: Native iOS look');
     assert.deepEqual(ctx.systemMessages[0].metadata, { vote: { sessionId: 7, prNumber: 26, reason: null } });
     assert.deepEqual(ctx.prompts, [], 'a Yes never asks for a conversation');
@@ -335,7 +340,7 @@ test('the same side with new words updates the row and nothing else', async () =
     const r = await ctx.post({ vote: 'yes', reason: 'new words' });
     assert.equal(r.status, 200);
     assert.deepEqual(await r.json(), { ok: true, merged: false, unchanged: false, reasonUpdated: true });
-    assert.deepEqual(ctx.pool.inserted[0].params, [7, 3, 'yes', HEAD, 'new words']);
+    assert.deepEqual(ctx.pool.inserted[0].params, [7, 3, 'yes', HEAD, 'new words', null, 'evan']);
     assert.equal(ctx.systemMessages.length, 0, 'the vote did not move: no second announcement');
     assert.equal(ctx.voteNotifications.length, 0, 'and no second ping to the proposer');
     assert.deepEqual(ctx.voteUpdates, [{ sessionId: 7, appSlug: 'widget', merged: false }],
@@ -343,7 +348,7 @@ test('the same side with new words updates the row and nothing else', async () =
   });
 });
 
-test('a re-cast No that already has its line passes the gate; a flip to No does not', async () => {
+test('a re-cast No that already has its line keeps it; a flip to No without a line stores null', async () => {
   await withServer({ prev: [{ vote: 'no', reason: 'Clash', approval_epoch: 2, current_epoch: 2 }] }, async (ctx) => {
     const r = await ctx.post({ vote: 'no' });
     assert.equal(r.status, 200);
@@ -352,8 +357,9 @@ test('a re-cast No that already has its line passes the gate; a flip to No does 
   });
   await withServer({ prev: [{ vote: 'yes', reason: 'Loved v1', approval_epoch: 2, current_epoch: 2 }] }, async (ctx) => {
     const r = await ctx.post({ vote: 'no' });
-    assert.equal(r.status, 400, 'the old line argued for the other side');
-    assert.equal((await r.json()).error, 'reason_required');
+    assert.equal(r.status, 200);
+    assert.deepEqual(await r.json(), { ok: true, merged: false });
+    assert.equal(ctx.pool.inserted[0].reason, null, 'the old line argued for the other side');
   });
 });
 
@@ -372,7 +378,6 @@ async function withBotDm({ target = null, handed = { ok: true, queued: true } } 
   let rowsSoFar = () => 0;
   stub(id, {
     noteApproved: async () => null,
-    noteVoted: async () => null,
     voteLineFor,
     voteLineTarget: async (_pool, args) => { asked.push(args.sessionId); return target; },
     handVoteLine: async (_pool, args) => {
@@ -394,7 +399,7 @@ test('#3977: a No\'s line on the bot\'s change goes to the bot first, and the vo
       bot.watch(ctx);
       const r = await ctx.post({ vote: 'no', reason: '  Sort the list   by date ' });
       assert.equal(r.status, 200);
-      assert.deepEqual(ctx.pool.inserted[0].params, [7, 3, 'no', HEAD, 'Sort the list by date'], 'the vote keeps its line');
+      assert.deepEqual(ctx.pool.inserted[0].params, [7, 3, 'no', HEAD, 'Sort the list by date', null, 'evan'], 'the vote keeps its line');
       assert.deepEqual(bot.asked, [7]);
       assert.deepEqual(bot.hands, [{ userId: 3, line: 'Sort the list by date', target: BOT_TARGET, rowsBefore: 0 }],
         'handed once, as the voter, before the vote row');
@@ -490,25 +495,20 @@ test('the roster carries each counted line and the people whose vote was on an e
 // ── 5. The credits ────────────────────────────────────────────────────
 
 test('creditsSentence: built, backed, shaped — and the older wording with nobody to name', () => {
-  const { subject, restore } = loadVotes({ pool: makeRecordingPool([]) });
-  try {
-    const { creditsSentence } = subject;
-    const all = { author: 'evan', backers: ['alice', 'bob'], shapers: ['carol'] };
-    assert.equal(creditsSentence(all), 'Built by evan, backed by alice and bob, shaped by carol.');
-    assert.equal(creditsSentence(all, { withAuthor: false }), 'Backed by alice and bob, shaped by carol.',
-      'the author is left out of the sentence that goes to the author');
-    assert.equal(creditsSentence({ author: 'evan', backers: ['alice'], shapers: [] }), 'Built by evan, backed by alice.');
-    assert.equal(creditsSentence({ author: 'evan', backers: [], shapers: [] }), 'Built by evan.');
-    assert.equal(creditsSentence({ author: null, backers: ['alice', 'bob', 'carol'], shapers: [] }), 'Backed by alice, bob and carol.');
-    assert.equal(creditsSentence({ author: null, backers: [], shapers: ['carol'] }), 'Shaped by carol.');
-    assert.equal(creditsSentence({ author: null, backers: [], shapers: [] }), 'Thanks to everyone who voted');
-    assert.equal(creditsSentence({ author: null, backers: [], shapers: [] }, { withAuthor: false }), '');
-    const many = Array.from({ length: 10 }, (_, i) => `u${i + 1}`);
-    assert.equal(creditsSentence({ author: null, backers: many, shapers: [] }),
-      'Backed by u1, u2, u3, u4, u5, u6, u7, u8 and 2 more.', 'a sentence, not a roll call');
-  } finally {
-    restore();
-  }
+  const { creditsSentence } = require('../src/workflow/rules/merge-credits.ts');
+  const all = { author: 'evan', backers: ['alice', 'bob'], shapers: ['carol'] };
+  assert.equal(creditsSentence(all), 'Built by evan, backed by alice and bob, shaped by carol.');
+  assert.equal(creditsSentence(all, { withAuthor: false }), 'Backed by alice and bob, shaped by carol.',
+    'the author is left out of the sentence that goes to the author');
+  assert.equal(creditsSentence({ author: 'evan', backers: ['alice'], shapers: [] }), 'Built by evan, backed by alice.');
+  assert.equal(creditsSentence({ author: 'evan', backers: [], shapers: [] }), 'Built by evan.');
+  assert.equal(creditsSentence({ author: null, backers: ['alice', 'bob', 'carol'], shapers: [] }), 'Backed by alice, bob and carol.');
+  assert.equal(creditsSentence({ author: null, backers: [], shapers: ['carol'] }), 'Shaped by carol.');
+  assert.equal(creditsSentence({ author: null, backers: [], shapers: [] }), 'Thanks to everyone who voted');
+  assert.equal(creditsSentence({ author: null, backers: [], shapers: [] }, { withAuthor: false }), '');
+  const many = Array.from({ length: 10 }, (_, i) => `u${i + 1}`);
+  assert.equal(creditsSentence({ author: null, backers: many, shapers: [] }),
+    'Backed by u1, u2, u3, u4, u5, u6, u7, u8 and 2 more.', 'a sentence, not a roll call');
 });
 
 test('mergeCredits: the author, the counted Yes voters, then the objectors with a line and the people in the thread', async () => {
@@ -523,31 +523,27 @@ test('mergeCredits: the author, the counted Yes voters, then the objectors with 
     ]],
     [/FROM chat_messages cm/, [{ username: 'frank' }, { username: 'alice' }, { username: 'evan' }]],
   ]);
-  const { subject, restore } = loadVotes({ pool });
-  try {
-    const credits = await subject.mergeCredits(pool, { id: 41, app_id: 5, user_id: 7 });
-    assert.deepEqual(credits, { author: 'evan', backers: ['alice', 'bob'], shapers: ['carol', 'frank'] },
-      'in vote order, nobody named twice');
-    const votes = pool.queries.find((q) => /FROM pr_votes pv/.test(q.sql));
-    assert.match(votes.sql, /pv\.approval_epoch = cs\.approval_epoch/, 'only the votes that counted at merge');
-    const talk = pool.queries.find((q) => /FROM chat_messages cm/.test(q.sql));
-    assert.match(talk.sql, /cm\.thread_type = 'session' AND cm\.thread_ref = \$2/, 'the proposal\'s own thread');
-    assert.match(talk.sql, /cm\.msg_type = 'message'/, 'a word from a person, not a vote row or a notice');
-    assert.deepEqual(talk.params, [5, 41, null], 'no bound unless one is asked for');
-    // The merge-followups machine names them when the change goes live, which
-    // can be well after the merge: only those who spoke before it count.
-    const bounded = makeRecordingPool([]);
-    await subject.mergeCredits(bounded, { id: 41, app_id: 5, user_id: null }, { before: '2026-10-07T12:00:00.000Z' });
-    const boundedTalk = bounded.queries.find((q) => /FROM chat_messages cm/.test(q.sql));
-    assert.match(boundedTalk.sql, /cm\.created_at <= \$3::timestamptz/);
-    assert.deepEqual(boundedTalk.params, [5, 41, '2026-10-07T12:00:00.000Z']);
+  const subject = require('../src/workflow/rules/merge-credits.ts');
+  const credits = await subject.mergeCredits(pool, { id: 41, app_id: 5, user_id: 7 });
+  assert.deepEqual(credits, { author: 'evan', backers: ['alice', 'bob'], shapers: ['carol', 'frank'] },
+    'in vote order, nobody named twice');
+  const votes = pool.queries.find((q) => /FROM pr_votes pv/.test(q.sql));
+  assert.match(votes.sql, /pv\.approval_epoch = cs\.approval_epoch/, 'only the votes that counted at merge');
+  const talk = pool.queries.find((q) => /FROM chat_messages cm/.test(q.sql));
+  assert.match(talk.sql, /cm\.thread_type = 'session' AND cm\.thread_ref = \$2/, 'the proposal\'s own thread');
+  assert.match(talk.sql, /cm\.msg_type = 'message'/, 'a word from a person, not a vote row or a notice');
+  assert.deepEqual(talk.params, [5, 41, null], 'no bound unless one is asked for');
+  // The merge-followups machine names them when the change goes live, which
+  // can be well after the merge: only those who spoke before it count.
+  const bounded = makeRecordingPool([]);
+  await subject.mergeCredits(bounded, { id: 41, app_id: 5, user_id: null }, { before: '2026-10-07T12:00:00.000Z' });
+  const boundedTalk = bounded.queries.find((q) => /FROM chat_messages cm/.test(q.sql));
+  assert.match(boundedTalk.sql, /cm\.created_at <= \$3::timestamptz/);
+  assert.deepEqual(boundedTalk.params, [5, 41, '2026-10-07T12:00:00.000Z']);
 
-    const nobody = makeRecordingPool([]);
-    assert.deepEqual(await subject.mergeCredits(nobody, { id: 41, app_id: 5, user_id: null }),
-      { author: null, backers: [], shapers: [] });
-  } finally {
-    restore();
-  }
+  const nobody = makeRecordingPool([]);
+  assert.deepEqual(await subject.mergeCredits(nobody, { id: 41, app_id: 5, user_id: null }),
+    { author: null, backers: [], shapers: [] });
 });
 
 // ── 6. The issue side (#2603) ─────────────────────────────────────────
@@ -579,12 +575,13 @@ function makeIssuePool(handlers) {
   };
 }
 
+// A request (kind 'general'): the route records its vote itself. A
+// governance proposal's vote goes to the governance machine, which applies
+// the same rules (tests/workflow-governance-routes-postgres.test.js).
 const GOV_ROW = (over) => ({
-  id: 61, app_id: 9, app_slug: 'cool-app', kind: 'close_issue', status: 'open',
-  created_by: 42, title: 'Close issue: "Dark mode resets"',
-  // No issueNumber: the apply helper returns before touching GitHub, which
-  // keeps these tests about the VOTE rather than about the close.
-  payload: { issueTitle: 'Dark mode resets' },
+  id: 61, app_id: 9, app_slug: 'cool-app', kind: 'general', status: 'open',
+  created_by: 42, title: 'Dark mode resets',
+  payload: {},
   ...over,
 });
 
@@ -623,7 +620,7 @@ function loadIssueVotes(pool) {
     ...realActiveUsers,
     getActiveUserStats: async () => ({ active: 3, majority: 2 }),
   });
-  stub(ids.adminApproval, { isAppLocked: async () => false, hasAdminUpVote: async () => true });
+  stub(ids.adminApproval, { isAppLocked: async () => false });
   stub(ids.events, {
     EVENT_TYPES: { ISSUE_VOTE_CAST: 'issue_vote_cast' },
     record: (_pool, event) => { eventCalls.push(event); },
@@ -678,13 +675,14 @@ async function castIssueVote(body, { existing = [], row } = {}) {
   }
 }
 
-test('issue vote: a No without a line is refused, in votes.js\'s own words, before anything is written', async () => {
-  const { res, pool } = await castIssueVote({ vote: 'down' });
-  assert.equal(res.statusCode, 400);
-  assert.equal(res.body.error, 'reason_required');
-  assert.equal(res.body.message, 'A No comes with a line: what is not working for you?');
-  assert.equal(res.body.maxLength, 280);
-  assert.equal(pool.issued(/INSERT INTO issue_votes/), undefined, 'no row written');
+test('issue vote: a No without a line is recorded with reason null', async () => {
+  const { res, pool, systemMessages } = await castIssueVote({ vote: 'down' });
+  assert.equal(res.statusCode, 200);
+  const insert = pool.issued(/INSERT INTO issue_votes/);
+  assert.ok(insert, 'the row is written');
+  assert.deepEqual(insert.params, [61, 3, 'down', null], 'no line stored as null');
+  assert.equal(systemMessages[0].content, 'evan voted down on issue: "Dark mode resets"',
+    'the thread reads without a quote, as for a lineless up vote');
 });
 
 test('issue vote: a No with a line is recorded, and the proposal\'s thread quotes it', async () => {
@@ -699,7 +697,7 @@ test('issue vote: a No with a line is recorded, and the proposal\'s thread quote
   assert.deepEqual(insert.params, [61, 3, 'down', 'This one is still broken.'],
     'normalised by votes.js\'s normaliser, whitespace and all');
   assert.equal(systemMessages[0].content,
-    'evan voted down on close proposal for issue #?: “This one is still broken.”');
+    'evan voted down on issue: "Dark mode resets": “This one is still broken.”');
   assert.deepEqual(systemMessages[0].thread, { type: 'governance', ref: 61 });
 });
 
@@ -708,7 +706,7 @@ test('issue vote: a Yes needs no line, emits a durable action, and the thread re
   assert.equal(res.statusCode, 200);
   assert.deepEqual(pool.issued(/INSERT INTO issue_votes/).params, [61, 3, 'up', null],
     'no line: null, never the empty string');
-  assert.equal(systemMessages[0].content, 'evan voted up on close proposal for issue #?');
+  assert.equal(systemMessages[0].content, 'evan voted up on issue: "Dark mode resets"');
   assert.deepEqual(eventCalls, [{
     type: 'issue_vote_cast', userId: 3, appId: 9,
     metadata: { vote: 'up', issueId: 61, issueVoteId: 91 },
@@ -851,8 +849,9 @@ test('the browser sends the line, and re-reads the roster once the vote lands', 
   assert.match(fn, /reason = await AppView\._resolveVoteReason\(vote === 'down' \? 'no' : 'yes', opts\);/,
     'castVote\'s own resolver: a string is the line, null asks nothing, an absent key prompts');
   assert.match(fn, /body: JSON\.stringify\(\{ vote, \.\.\.\(reason \? \{ reason \} : \{\}\) \}\)/);
-  assert.match(fn, /data\.error === 'reason_required' && data\.message/,
-    'a refused No says so in the server\'s words');
+  assert.match(fn, /PlatformUI\.toast\(data\.error \|\|/,
+    'a refused vote says so in the server\'s words');
+  assert.doesNotMatch(fn, /reason_required/, 'no No-specific refusal is read any more');
   assert.match(fn, /AppView\._invalidateGovVoteRoster\(issueId\);/);
   // The roster is the governance twin of _loadVoteRoster, with the same
   // re-entry guard — publishing repaints, and a paint calls the loader. A

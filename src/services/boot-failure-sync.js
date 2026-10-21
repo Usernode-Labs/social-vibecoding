@@ -14,7 +14,7 @@
 // sync with main was the whole fix.
 //
 // The merge queue does not bring a clean proposal up to date, on purpose
-// (services/merge-queue.js): a proposal that merges cleanly merges as it
+// (the merge-queue machine, src/workflow/merge-queue/): a proposal that merges cleanly merges as it
 // stands, judged on its own head. That holds while there is a verdict to
 // judge it on. A preview that never started gives none, and the proposal
 // waits until somebody notices. So here, and only here, the platform runs
@@ -30,45 +30,29 @@
 //     refused;
 //   - the failed commit is still the head, and it is behind main and merges
 //     with it cleanly, measured from the mirror (services/integration.js);
-//   - at most once per head (chat_sessions.boot_failure_sync_head). After a
-//     sync the new head contains main, so a preview that still will not
-//     start is the change's own failure, and nothing here runs again until
-//     main moves.
+//   - at most once per head (chat_sessions.boot_failure_sync_head, written
+//     by the proposal machine with the sync's own work, so a restart never
+//     strands it as tried: merge trace bug 9). After a sync the new head
+//     contains main, so a preview that still will not start is the change's
+//     own failure, and nothing here runs again until main moves.
+//
+// This file only measures, in the preview's prepare work: the failure note
+// says what it found, and when it says sync, the preview machine asks the
+// proposal machine for one (SyncRequested, reason boot_failure).
 //
 // A clean sync is a mechanical merge, so the approval epoch does not move and
 // the votes the proposal has keep counting (services/pr-vote-revision.js).
 
 const log = require('./logger');
 
-// A failure recorded at the end of a dev-chat turn arrives while that turn's
-// tail still holds the session. runSyncMain adds and then deletes the
-// session in the shared activeWorkers set, so running it inside somebody
-// else's turn would clear their marker. Wait for the session to be idle.
-const IDLE_POLL_MS = 3000;
-const IDLE_WAIT_MS = 10 * 60 * 1000;
-
-// One waiter per session in this process. The claim is what stops a second
-// sync; this only stops a burst of backoff retries from each starting one.
-const _pending = new Set();
-
 function sameSha(a, b) {
   return !!a && !!b && String(a).toLowerCase() === String(b).toLowerCase();
 }
 
-// Required lazily: staging-recovery calls in on every boot failure, and only
-// a sync needs the worker and the merge queue loaded at all.
+// Required lazily: the preview's prepare calls in on every boot failure.
 function defaultDeps() {
   return {
     get integration() { return require('./integration'); },
-    get syncMain() { return require('./sync-main'); },
-    get activeWorkers() { return require('./active-workers'); },
-    get mergeQueue() { return require('./merge-queue'); },
-    votes: () => require('../routes/votes'),
-    sleep: (ms) => new Promise((resolve) => {
-      const t = setTimeout(resolve, ms);
-      if (t && typeof t.unref === 'function') t.unref();
-    }),
-    now: () => Date.now(),
   };
 }
 
@@ -128,109 +112,16 @@ async function plan({ pool, sessionId, commitHash }, deps = defaultDeps()) {
   }
 }
 
-async function waitForIdle(sessionId, deps) {
-  const deadline = deps.now() + IDLE_WAIT_MS;
-  while (deps.activeWorkers.isSessionBusy(Number(sessionId))) {
-    if (deps.now() >= deadline) return false;
-    await deps.sleep(IDLE_POLL_MS);
-  }
-  return true;
-}
-
-// The one write that makes this once per head. Conditional on the row still
-// describing the failed commit, so a push that landed while this waited, or
-// a second process, finds nothing to claim.
-async function claim(pool, sessionId, commitHash) {
-  const { rows } = await pool.query(
-    `UPDATE chat_sessions
-        SET boot_failure_sync_head = $2
-      WHERE id = $1 AND status = 'promoted'
-        AND checks_commit_sha = $2
-        AND boot_failure_sync_head IS DISTINCT FROM $2
-      RETURNING id`,
-    [sessionId, commitHash]
-  );
-  return rows.length > 0;
-}
-
 /**
- * Bring the proposal up to date with main and start the run for its new head.
- * Waits for the session to be idle, measures again, and claims the head
- * before it syncs. Never throws; resolves to what happened.
+ * Called by the preview machine's prepare work (src/workflow/preview/
+ * services.ts) when a preview failed to start: what that means for the
+ * proposal, measured now, for the failure note; `sync: true` when the
+ * preview machine should ask for a sync. Never throws.
  */
-async function run({ config, pool, sessionId, commitHash }, deps = defaultDeps()) {
-  const id = Number(sessionId);
-  if (!(await waitForIdle(id, deps))) return { synced: false, why: 'busy' };
-  if (deps.mergeQueue.isIntegratingSession(id)) return { synced: false, why: 'integrating' };
-
-  const now = await plan({ pool, sessionId: id, commitHash }, deps);
-  if (!now.sync) return { synced: false, why: now.why };
-  if (!(await claim(pool, id, commitHash))) return { synced: false, why: 'claimed' };
-
-  log.info('boot-failure-sync', 'Preview failed to start on a proposal behind main; syncing it', {
-    sessionId: id, headSha: commitHash, behindBy: now.behindBy,
-  });
-  let result;
-  try {
-    result = await deps.syncMain.runSyncMain(config, pool, id, {
-      // runSyncMain narrates only when it believes the branch is behind, and
-      // behind_main is a turn's count, which a proposal untouched since
-      // promotion may never have had. The measurement is the current answer.
-      sessionRow: { ...now.row, behind_main: now.behindBy },
-      trigger: 'boot_failure',
-    });
-  } catch (err) {
-    log.warn('boot-failure-sync', 'Sync after a preview failure threw', { sessionId: id, err: err.message });
-    return { synced: false, why: 'sync_threw' };
-  }
-  const pushed = !!result && result.pushOk
-    && (result.syncResult === 'clean' || result.syncResult === 'resolved');
-  if (!pushed) {
-    log.info('boot-failure-sync', 'Sync after a preview failure pushed nothing', {
-      sessionId: id, syncResult: result ? result.syncResult : null,
-    });
-    return { synced: false, why: (result && result.syncResult) || 'not_pushed' };
-  }
-
-  // What the merge queue does after its own sync (reconcileResolvedHead):
-  // measure the pushed head so the columns describe it, then install it as
-  // the reviewed revision and start its run. A mechanical merge keeps the
-  // approvals; the preview and checks run on the new head.
-  try {
-    const fresh = await loadRow(pool, id);
-    if (fresh && fresh.status === 'promoted') {
-      await deps.integration.measure({ pool, session: fresh }, { force: true }).catch(() => {});
-      await deps.votes().reconcileNativeReviewedHead({
-        config, pool, session: fresh, fresh: true, notify: false,
-      });
-    }
-  } catch (err) {
-    log.warn('boot-failure-sync', 'Synced, but could not start the new head\'s run', {
-      sessionId: id, err: err.message,
-    });
-  }
-  return { synced: true, why: null, sha: result.sha || null };
-}
-
-/**
- * Called by staging-recovery.recordStagingBootFailure. Measures, starts the
- * sync in the background when it applies, and returns the plan so the
- * failure note can say what is happening. Never throws.
- */
-async function afterBootFailure({ config, pool, session, commitHash, err }, deps = null) {
+async function afterBootFailure({ pool, session, commitHash, err }, deps = null) {
   if (!err || err.healthcheckFailed !== true) return null;
   if (!session || session.source === 'imported' || !commitHash) return null;
-  deps = deps || defaultDeps();
-  const id = Number(session.id);
-  const found = await plan({ pool, sessionId: id, commitHash }, deps);
-  if (found.sync && !_pending.has(id)) {
-    _pending.add(id);
-    Promise.resolve()
-      .then(() => run({ config, pool, sessionId: id, commitHash }, deps))
-      .catch((e) => log.warn('boot-failure-sync', 'unexpected rejection', { sessionId: id, err: e.message }))
-      .finally(() => _pending.delete(id));
-  }
-  const { row: _row, ...answer } = found;
+  const { row: _row, ...answer } = await plan({ pool, sessionId: Number(session.id), commitHash }, deps || defaultDeps());
   return answer;
 }
 
@@ -259,9 +150,5 @@ function explain(found) {
 module.exports = {
   afterBootFailure,
   plan,
-  run,
   explain,
-  IDLE_POLL_MS,
-  IDLE_WAIT_MS,
-  _pending,
 };

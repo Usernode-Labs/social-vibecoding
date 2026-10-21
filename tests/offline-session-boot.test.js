@@ -50,6 +50,7 @@ const CSS = read('css/app.css');
 // bytes. Decoding compares what the user actually reads.
 const { decodeEntities } = require('./helpers/html-tokens');
 const { interiorHtmlFor } = require('./lib/lazy-interiors');
+const { englishPlatformI18n, message } = require('./lib/platform-i18n');
 const DAPP = JSON.parse(fs.readFileSync(
   path.join(__dirname, '..', 'dapp.json'), 'utf8'
 ));
@@ -194,7 +195,7 @@ test('a device that has booted here before paints before it asks', () => {
   // The snapshot read comes FIRST, and the boot returns on it without ever
   // awaiting the session read.
   const snapAt = init.indexOf('const snap = App.readSessionSnapshot();');
-  const readAt = init.indexOf('res = await App._fetchSession();');
+  const readAt = init.indexOf('res = await App._fetchSession({ optional: true });');
   assert.ok(snapAt !== -1 && readAt !== -1);
   assert.ok(snapAt < readAt, 'the snapshot is consulted before the network is');
   assert.match(init.slice(snapAt),
@@ -208,7 +209,7 @@ test('a device with no snapshot still waits for the answer', () => {
   // Nothing to be optimistic WITH: the read is the only answer there is, and
   // the three outcomes (#1021) are unchanged.
   const init = APP.slice(APP.indexOf('async init()'), APP.indexOf('async _fetchSession()'));
-  const tail = init.slice(init.indexOf('res = await App._fetchSession();'));
+  const tail = init.slice(init.indexOf('res = await App._fetchSession({ optional: true });'));
   assert.match(tail, /if \(res && res\.ok\)/);
   assert.match(tail, /App\._dropCachedSession\(\);\s*await App\.enterAnonymous\(\);/,
     'an answered 401 is still authoritative and still drops every cached trace');
@@ -337,6 +338,7 @@ function loadSettings({ boot, fetchImpl }) {
     return Promise.resolve(fetchImpl ? fetchImpl(String(url)) : { ok: false });
   };
   if (boot !== undefined) sandbox.App = { bootSession: () => Promise.resolve(boot) };
+  sandbox.PlatformI18n = englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(SETTINGS, sandbox, { filename: 'settings.js' });
   return sandbox;
@@ -559,12 +561,14 @@ test('every credential exchange refuses to submit while offline', () => {
 });
 
 test('home says "offline", not "failed", when the feed cannot load', () => {
-  const cat = HOME.slice(HOME.indexOf("Couldn't load your apps") - 1500);
+  const cat = HOME.slice(HOME.indexOf("message('home:grid.notice.loadFailed')") - 1500);
   assert.match(cat, /Offline\.isOffline\(\)/);
-  assert.match(cat, /You're offline/);
+  assert.match(cat, /text: message\('home:grid\.notice\.offline'\),/);
+  assert.match(message('home:grid.notice.offline'), /^You're offline\./);
   // The failure state is still there for real failures (#1899: the grid
   // draws it as the shared error card with a Retry).
-  assert.match(HOME, /notice: \{ text: "Couldn't load your apps", tone: 'error' \}/);
+  assert.match(HOME, /notice: \{ text: message\('home:grid\.notice\.loadFailed'\), tone: 'error' \}/);
+  assert.equal(message('home:grid.notice.loadFailed'), "Couldn't load your apps");
 });
 
 // ── Screenshot deep links ────────────────────────────────────────────

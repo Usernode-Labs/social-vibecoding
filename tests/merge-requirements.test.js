@@ -150,7 +150,7 @@ test('every knowable requirement met reads as about to merge, not as unresolved'
 test('the labels are short nouns, the same on the card and the page', () => {
   assert.deepEqual(requirements.GATES.map((g) => g.label), [
     'Votes', 'A Yes from another member', 'Admin approval', 'No conflicts with main', 'Checks',
-    'Before & after shots', 'Platform variables', 'Main is healthy', 'Merge',
+    'Before & after screenshots', 'Platform variables', 'Main is healthy', 'Merge',
   ]);
   const prov = requirements.provisional({ votes_required: 1, yes_count: 1, app_main_check_state: 'passing' });
   for (const g of prov) {
@@ -487,6 +487,13 @@ test('a conflict names who resolves it, from what the conflict lane wrote on the
   assert.deepEqual([step(['fork_head']).state, step(['fork_head']).actor], ['waiting', 'author']);
   // Out of budget: a clock's, not an admin's, who has nothing to press.
   assert.deepEqual([step(['budget']).state, step(['budget']).actor], ['active', 'auto']);
+  // Its checks fail or could not run: the lane spends nothing on it, so it is
+  // the author's (19 Oct 2026: 33 of 35 such cards said the platform would).
+  assert.deepEqual([step(['checks_failing']).state, step(['checks_failing']).actor], ['blocked', 'author']);
+  assert.match(step(['checks_failing']).note, /checks are failing; the author fixes them first, then the platform resolves the conflict/);
+  assert.deepEqual([step(['checks_error']).state, step(['checks_error']).actor], ['blocked', 'author']);
+  assert.match(step(['checks_error']).note, /checks could not run; once they are re-run and pass, the platform resolves the conflict/);
+  assert.doesNotMatch(step(['checks_failing']).note, /will resolve/);
 });
 
 test('the provisional list reads a deferred verdict as waiting on the conflict, not on a runner', () => {
@@ -644,10 +651,6 @@ function makePool(opts) {
       }
       if (/vote = 'yes'/.test(sql)) return { rows: [{ cnt: String(opts.yes) }] };
       if (/vote = 'no'/.test(sql)) return { rows: [{ cnt: String(opts.no) }] };
-      if (/SET status = 'merging'/.test(sql)) return { rows: [{ id: opts.sessionId }] };
-      if (/SELECT \* FROM apps WHERE id/.test(sql)) {
-        return { rows: [{ id: opts.appId, self_hosted: false, slug: 'widget' }] };
-      }
       if (/SELECT id, repo_url, self_hosted FROM apps/.test(sql)) {
         return { rows: [{ id: opts.appId, repo_url: '', self_hosted: false }] };
       }
@@ -667,16 +670,14 @@ function loadVotes(over) {
     logger: require.resolve('../src/services/logger'),
     pool: require.resolve('../src/db/pool'),
     github: require.resolve('../src/services/github'),
-    staging: require.resolve('../src/services/staging'),
+    platform: require.resolve('../src/workflow/platform.ts'),
     docker: require.resolve('../src/services/docker'),
-    resolver: require.resolve('../src/services/conflict-resolver'),
     ws: require.resolve('../src/services/ws'),
     activeUsers: require.resolve('../src/services/active-users'),
     notifications: require.resolve('../src/services/notifications'),
     adminApproval: require.resolve('../src/services/admin-approval'),
     events: require.resolve('../src/services/events'),
     appAccess: require.resolve('../src/services/app-access'),
-    worker: require.resolve('../src/services/worker'),
     mergeDebug: require.resolve('../src/services/merge-debug'),
     integration: require.resolve('../src/services/integration'),
     subject: require.resolve('../src/routes/votes'),
@@ -687,11 +688,15 @@ function loadVotes(over) {
   stub(ids.logger, { info() {}, warn() {}, error() {}, debug() {} });
   stub(ids.pool, { getPool: () => ({}) });
   stub(ids.github, { isEnabled: () => false, mergePR: async () => ({}) });
-  stub(ids.staging, { teardownStaging: async () => {}, rebuildProduction: async () => ({}) });
-  stub(ids.docker, {});
-  stub(ids.resolver, {
-    checkAndResolveConflicts: async () => {}, resolveAndMaybeRetry: async () => ({ ok: true }), isResolving: () => false,
+  // A merge is reported to the merge-followups workflow machine; the
+  // promoted→merging claim and its release are the proposal machine's.
+  stub(ids.platform, {
+    mergeConfirmed: async () => ({ status: 'accepted', eventId: 1 }),
+    claimMerge: async () => ({ status: 'accepted', eventId: 2, reply: { claim: 1 } }),
+    releaseMerge: async () => ({ status: 'accepted', eventId: 3 }),
+    abandonMerge: async () => ({ status: 'accepted', eventId: 4 }),
   });
+  stub(ids.docker, {});
   stub(ids.ws, {
     sendSystemMessage: async () => {}, pushNotificationToUser() {}, pushVoteUpdate() {},
     pushSessionUpdate() {}, pushIssueUpdate() {}, broadcastGlobalScoped() {},
@@ -708,7 +713,6 @@ function loadVotes(over) {
   });
   stub(ids.events, { record() {}, EVENT_TYPES: { PR_MERGED: 'pr_merged', BOUNTY_AWARDED: 'bounty_awarded' } });
   stub(ids.appAccess, { sessionCollabGuard: () => (_req, _res, next) => next() });
-  stub(ids.worker, { destroyCcVolume: async () => {}, retireWorker: async () => ({ deferred: false }), isInFlight: () => false });
   stub(ids.mergeDebug, { startRun: async () => 1, step() {}, endRun() {}, pruneOldRuns: async () => {} });
   stub(ids.integration, {
     ...require('../src/services/integration'),
@@ -771,7 +775,7 @@ for (const c of DRIFT) {
     const { subject, restore } = loadVotes(c.load || {});
     try {
       const { pool, saved } = makePool({ ...c.world, sessionId: 7, appId: 5 });
-      const r = await subject.checkAndMerge({ jwtSecret: 's' }, pool, session, {});
+      const r = await subject.evaluateMergeGate({ jwtSecret: 's' }, pool, session, {});
       assert.equal(r.merged, false, 'precondition: this world must not merge');
       assert.ok(saved.length, 'the run recorded what it did');
 
@@ -794,7 +798,7 @@ test('a passing run records every gate as done', async () => {
   const { subject, restore } = loadVotes({});
   try {
     const { pool, saved } = makePool({ yes: 4, no: 0, sessionId: 7, appId: 5 });
-    await subject.checkAndMerge({ jwtSecret: 's' }, pool, session, {});
+    await subject.evaluateMergeGate({ jwtSecret: 's' }, pool, session, {});
     assert.ok(saved.length, 'the run recorded what it did');
     const list = requirements.describe(saved[saved.length - 1]);
     const byKey = Object.fromEntries(list.map((g) => [g.key, g.state]));
@@ -815,7 +819,7 @@ test('a clean head behind main passes the integration gate as it stands', async 
   const { subject, restore } = loadVotes({ measured: { behindBy: 3, mergesClean: true, conflictPaths: [] } });
   try {
     const { pool, saved } = makePool({ yes: 4, no: 0, sessionId: 7, appId: 5 });
-    await subject.checkAndMerge({ jwtSecret: 's' }, pool, session, {});
+    await subject.evaluateMergeGate({ jwtSecret: 's' }, pool, session, {});
     const list = requirements.describe(saved[saved.length - 1]);
     const integration = list.find((g) => g.key === 'integration');
     assert.equal(integration.state, 'done');
@@ -836,7 +840,7 @@ test('a red main stops the run at main_healthy, for the admin', async () => {
       }
       return inner(sql, params);
     };
-    const r = await subject.checkAndMerge({ jwtSecret: 's' }, pool, session, {});
+    const r = await subject.evaluateMergeGate({ jwtSecret: 's' }, pool, session, {});
     assert.equal(r.merged, false);
     assert.equal(r.blockReason, 'main_failing');
     const list = requirements.describe(saved[saved.length - 1]);
@@ -854,14 +858,12 @@ test('the recording is descriptive only — a failed write never blocks a merge'
     if (/SET merge_requirements/.test(sql)) throw new Error('disk on fire');
     if (/vote = 'yes'/.test(sql)) return { rows: [{ cnt: '4' }] };
     if (/vote = 'no'/.test(sql)) return { rows: [{ cnt: '0' }] };
-    if (/SET status = 'merging'/.test(sql)) return { rows: [{ id: 7 }] };
-    if (/SELECT \* FROM apps WHERE id/.test(sql)) return { rows: [{ id: 5, self_hosted: false, slug: 'widget' }] };
     if (/SELECT check_state/.test(sql)) return { rows: [{ check_state: 'passing', test_results: [] }] };
     return { rows: [] };
   } };
   const { subject, restore } = loadVotes({});
   try {
-    const r = await subject.checkAndMerge({ jwtSecret: 's' }, failing, session, {});
+    const r = await subject.evaluateMergeGate({ jwtSecret: 's' }, failing, session, {});
     assert.ok(r && typeof r === 'object', 'the merge ran to a verdict despite the write failing');
   } finally {
     restore();

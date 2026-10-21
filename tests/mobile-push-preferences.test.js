@@ -42,9 +42,14 @@ const CURRENT_KINDS = [
   'revision_recheck', 'weekly_digest',
   // B7: a change you can approve is ready to try, proposal lifecycle too.
   'change_ready',
+  // #4787: a change the person voted on going live, proposal lifecycle too.
+  'voted_change_merged',
   // #2387: a reply in an app-chat reply thread you started or joined. A
   // direct interaction, beside mention and reply.
   'thread_reply',
+  // #4535: a message in a request's discussion you filed or posted in. A
+  // direct interaction beside thread_reply, the same sense of reply.
+  'issue_thread_reply',
   // #2386's two: a friend request and its acceptance — one person reaching
   // you directly, so they join direct_interactions.
   'friend_request', 'friend_accept',
@@ -57,6 +62,9 @@ const CURRENT_KINDS = [
   // invite link brings back to its maker ("Your invites").
   'build_ready', 'build_needs_you', 'build_stopped', 'build_live',
   'invite_opened', 'member_joined', 'first_message',
+  // #4396: a project the person joined while it was made is open
+  // (proposal_alerts, services/project-opened.js).
+  'project_opened',
   // A person's message in a small private group's discussion, the group's
   // chat, so it rides the Messages switch.
   'channel_message',

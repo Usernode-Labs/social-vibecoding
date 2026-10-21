@@ -72,6 +72,9 @@ Ordered by how badly an agent working offline gets each one wrong.
    fabricates the answer makes that code path untestable by the gate
    and different for real users. A project's first version is the one
    exception, on `?demo=1` only: see "A first version's populated demo".
+   The shots' fixture accounts are not whoever opened the preview: a
+   state new in a change is seeded in that change, for them or for fake
+   people, as "Who the before & after shots see" says.
 4. **Tables are public by default; mark the sensitive ones private.**
    `COMMENT ON TABLE foo IS 'staging:private'` copies the schema to
    staging without the rows. Use it for auth material, direct messages,
@@ -130,6 +133,11 @@ Ordered by how badly an agent working offline gets each one wrong.
     AI-generated text: prompts for app AI features must tell the model to
     decline these topics. Decline such a request and offer a compliant
     version. Full text: "Content rules" section.
+12. **Data rules.** No trackers, analytics or ad SDKs and no scripts from
+    another origin, no special-category data (health, religion, sexuality,
+    ethnicity, politics, biometrics), nothing aimed at children, never
+    collect passwords or card data, and no login of the app's own. Full
+    text: "Data rules" section.
 
 One thing NOT to apply: the full document contains a section titled
 "Don't `git push` yourself". That is addressed to Homeroom's own build
@@ -370,6 +378,8 @@ guests. Nothing turns it on: write the app so a guest can look around.
   COLUMN IF NOT EXISTS` so repeated migrations are safe.
 - Connect via a single `pg.Pool({ connectionString: process.env.DATABASE_URL })`.
 - Record ownership with `user_id` / `username` from `req.user`.
+  Find a person's rows by `user_id`, never by `username` alone: account
+  deletion erases them by id (see "Your people's data").
 
 ## Graceful shutdown
 
@@ -549,8 +559,10 @@ Seed rules:
   `ON CONFLICT DO NOTHING`.
 - **Obviously fake.** Give seeded rows a consistent "Staging demo …"
   prefix so they can't be mistaken for real user content. (A first
-  version's `?demo=1` demo is labelled once instead: see "A first
-  version's populated demo" below.)
+  version's `?demo=1` demo, and any rows it seeds on boot, are
+  labelled once instead, on an element marked
+  `data-usernode-demo-note`: see "A first version's populated demo"
+  below.)
 - **Small.** A handful of rows — just enough for the testing steps.
   (A project's first version is the one exception: see "A first
   version's populated demo" below.)
@@ -575,12 +587,18 @@ seed rules change. Every later change keeps the rules above.
   screen and a half of the main screen at phone width (390×844), not
   a handful.
 - **Labelled once, not on every row.** The screen says "Staging demo"
-  once, plainly and visibly: a banner or a line at the top of the
-  screen, or the name of the list or collection the rows belong to.
+  once, plainly and visibly: a banner or a line of its own at the top
+  of the screen (never the app's name, nor in place of its tagline),
+  or the name of the list or collection the rows belong to.
   Each row needs no label of its own (a "Staging demo" pill or prefix
   on every row only clutters the screen), and this replaces the
   "Staging demo …" prefix above for these rows. The rows themselves
   stay obviously made up: no real people and no real private data.
+  The element that carries the label gets the attribute
+  `data-usernode-demo-note`: the banner or the line itself, or, in a
+  list's name, a `<span data-usernode-demo-note>` around the label's
+  own words, so the name stays. Homeroom hides that element where it
+  shows the app with its sample data under a label of its own.
 - **The viewer's own data too.** What the app keeps for a person
   (their items, choices, progress, saved things) is shown as the
   viewer's: a demo where only made-up people have done anything shows
@@ -606,6 +624,12 @@ the plain route keeps its test of the production-shaped answer. The
 viewer's demo rows must never be what makes a check of the form "has
 this user done X" pass (see the next section): keep such checks off
 demo rows, or add the rows to the responses rather than storing them.
+The same goes for a check of the plain route's empty state: a proposal's
+checks run at the same time, signed in as one account, on one staging
+database, so once the `?demo=1` check has stored that account's rows the
+plain route shows them too. Add the viewer's rows to the `?demo=1`
+responses without storing them, or store them marked as demo and leave
+those out of every response without `?demo=1`.
 
 ### Seeded data must not fabricate a signal your logic reads
 
@@ -637,7 +661,9 @@ app's own logic. Three habits keep them apart:
   so attributing seeded rows to them is handing the preview a
   credential production won't have. (A first version's `?demo=1` demo
   may give the viewer rows of their own, within the limits of "A first
-  version's populated demo" above; nothing else may.)
+  version's populated demo" above; nothing else may.) The before & after
+  shots' fixture accounts are not the visitor: "Who the before & after
+  shots see" below says what a seed may give them.
 - **Request-time seeding only behind `?demo=1`.** Never seed from a
   route the app serves normally. A `GET /api/lists` that writes demo
   rows as a side effect leaves no way to ask the app what production
@@ -710,9 +736,26 @@ Two related notes on `path:` form:
 ### Who the before & after shots see
 
 The shots agent signs in as the persona each declared change names, on
-throwaway copies of the app. Three things it cannot do by itself, which
+throwaway copies of the app. Five things it cannot do by itself, which
 account for most changes that end up with no shots:
 
+- **It finds only the data the copies hold.** Each copy is a fresh
+  staging copy that runs its own revision's `IS_STAGING` seed. When the
+  state a change shows is not there, add an idempotent, obviously fake
+  seed for it in the same proposal: the seed reaches the after copy,
+  which is the side a state new in this proposal needs. Seed rows for
+  fake people and for the shots' own accounts, by username
+  (`usernode-capture` is the member; `usernode-capture-admin` and
+  `usernode-shots-full-admin` are the two administrators). That is not
+  "seeding the visitor" (see "Never seed the visitor" above): a fixture
+  account is one named account, not whoever opens the preview. The rest
+  of that rule holds: never seed a signal your code reads to decide
+  something, so a seed never answers the question the change's own code
+  asks ("may this person invite?", "has this user done X?"). A reply
+  from an AI feature is seeded as the stored reply, never asked for: the
+  copies have no model key. A seed cannot help a change to a state that
+  already existed, which both copies need: put the steps that make it in
+  `hints.setup`, or seed it first, in its own proposal.
 - **It has no role in your app.** `member` is an ordinary signed-in member:
   not your app's manager or owner, with no linked wallet and nothing it
   made. When a change shows only to someone with a role, put the real
@@ -721,6 +764,23 @@ account for most changes that end up with no shots:
   whoever opens the preview in seed data (see "Never seed the visitor"
   above). If no in-app path reaches it, declare what a member does see and
   say in the claim what the shots will leave out.
+- **No persona is your app's creator or one of its admins.** Homeroom tells
+  your app who is signed in, never their role in it: `req.user` has no
+  creator or admin field, and no platform call answers "is this the
+  owner?". `read_only_admin` and `full_admin` are Homeroom's own
+  administrators, which your app is not told; it sees them as ordinary
+  signed-in people (only on Homeroom's own proposals are they its
+  administrators). So a screen your code keeps for particular accounts (a
+  username or id written into it, an allowlist, "private to this account")
+  refuses every shots browser, and its changes are skipped. It refuses every
+  other voter who opens the preview too. Do not hard-code people into a
+  screen the project works on: gate it on something a signed-in person can
+  reach through the app's own UI (whoever creates a story edits it) and name
+  that way in `hints.setup`. When a screen must stay with particular people,
+  declare what a member sees and say in the claim what the shots leave out.
+  The response to `declare_visible_changes` warns when a change is declared
+  for an administrator persona, or names a creator, owner or admin screen
+  with no `hints.setup`.
 - **It cannot sign out.** A change that signed-out visitors see is declared
   with persona `guest`. A private app shows a guest only what it shows a
   signed-out visitor outside Homeroom, usually a sign-in page, so declare a
@@ -904,6 +964,64 @@ Per-test fields:
 - `impact` — required with `visual: true`; up to 20 repo-relative globs using
   `*`, `?`, or `**`. A changed file must match. Keep this mapping in
   `dapp.json`, not in source functions.
+
+A check has no say in how its page is loaded. The old per-check
+`"coldLoad": true` is retired: the platform ignores it, so remove it.
+
+**How checks share a page load.** The runner loads each document (the
+address up to its `#`) once and reaches that document's other checks by
+changing `location.hash`, the way a person following a link inside the app
+would. So **an address change must draw what a fresh load of that address
+draws.** When a check's screen does not appear after the switch, the runner
+waits out its whole assertion window (up to ~15 s) and then reloads the
+page at that address and judges it there. The verdict stays the same, but
+the run is slower and the checks-timing line counts it under `fallbacks`. A
+check that falls back on a plain address is a **navigation bug**. Fix it in
+the app: a route handler that never redraws, a dialog that closes on its own
+`hashchange`, or a parameter read only at boot that people also reach by
+navigating. Do not work around it in `dapp.json`.
+
+Two things legitimately cannot be reached by a switch. Both are facts about
+the app, so `dapp.json` declares each once at its top level:
+
+```json
+{
+  "bootParams": ["shot", "details"],
+  "routingBoundaries": [
+    { "route": "#app/*", "reason": "A running app opens the next page in a side panel beside it" }
+  ]
+}
+```
+
+- `bootParams` — query parameters your app reads **only when the page
+  loads**: a one-time deep link scripted at boot, such as a `?shot=` that
+  opens a sheet or a `?details=1` that opens a panel once. An address
+  change rightly does not replay them. Every check whose address carries
+  one, in its query or in its fragment's query, gets a page load of its
+  own, shared only with checks at the same address. List up to 8 plain
+  names (letters, digits, `-`, `_`). Declare a parameter only if the app
+  really reads it once at boot. Each one costs a load on every check that
+  uses it. A parameter that people reach by navigating (such as a `?flow=`
+  link inside a conversation that is already open) must work on an address
+  change: fix the app, and do not declare the parameter.
+- `routingBoundaries` — fragment routes whose screen **sends the next
+  address change somewhere else** on purpose. Homeroom's App tab is one: on
+  a desktop, a running app opens the pages about it in a side panel beside
+  it, so the page itself never draws them. A check at such a route is still
+  reached by a switch and judged like any other. The only change is that
+  **no other check is switched to after it**: it ends its group. It never
+  changes which checks get a page load, its own or any other: every check
+  that would be reached by a switch without the rule still is. Where it
+  cannot end a group without changing that, it is grouped like any other
+  address, and the check after it may fall back. Each entry
+  is `{ "route", "reason" }`, up to 8. `route` starts with `#`, and its
+  `/`-separated segments are literal or `*` (exactly one segment). It
+  matches the whole route without the fragment's `?query`, never a prefix,
+  and its first segment must be literal. An entry without a `reason` is
+  dropped.
+
+Neither rule takes a check on a plain address out of being reached by a
+switch. Apps that declare neither are grouped as before.
 
 Visual scenario metadata remains useful executable documentation and durable
 regression coverage. Before/after shots are proposal-specific: the authoring
@@ -1238,6 +1356,9 @@ Rules:
 - If both `emoji` and `image` are declared, the image wins; the emoji
   is the fallback should the image file fail validation (missing,
   oversized, wrong format).
+- **Inside the app.** A header that shows the app's own mark shows
+  this icon (its emoji) or no mark at all: never an empty tile.
+  `brand/icon.png` is not served, so the app cannot load it.
 - **Changing the icon is just a PR that edits this block** (and, for
   an image, commits the file). The change takes effect when the PR is
   voted in, merged, and redeployed — not before. Don't mutate the
@@ -2179,6 +2300,56 @@ const { members, has_more } = await resp.json();
   list for a minute rather than asking on every request. `?limit=` defaults
   to 100, at most 200; `has_more` says there are more.
 
+## Your people's data: account deletion and export
+
+When a person deletes their Homeroom account, the platform erases what it
+holds about them, then asks every app they used to do the same in its own
+database. The app answers two server-to-server requests, sent only by the
+platform to the app's production container:
+
+- `POST /usernode/user-deletion`: erase or anonymise the person's rows,
+  then answer 2xx. It must be idempotent: the platform retries until it
+  gets a 2xx (at a doubling interval, for about a week), so a second call
+  for the same person finds nothing left and still answers 2xx.
+- `GET /usernode/user-export`: answer the person's rows as JSON
+  (`{ userId, tables: { <table>: [rows] } }`), for a copy of their data.
+
+Each request carries a platform token in the `x-usernode-platform-token`
+header (never `x-usernode-token`): RS256, signed by the same key as a
+person's sign-in token, so verify it with `USERNODE_JWT_PUBLIC_KEY`,
+`algorithms: ['RS256']`, issuer `usernode` and audience
+`usernode:app:<USERNODE_APP_ID>`, then check `pur` is `'user-deletion'` or
+`'user-export'` for the route. Its claims are the person's `id` and
+`usernode_pubkey` (their wallet address, or null), and the request has
+no body: read the person only from the verified token. It names no username: by
+then the account is anonymised, so find rows by `id` (or the wallet
+address), which is one more reason to key a person's rows by
+`req.user.id`. Refuse anything else with 403. Mount both routes before the
+sign-in check: the request carries no person's sign-in token.
+
+The scaffold does this in `usernode-user-data.js`, mounted from
+`server.js`. By default it erases (and exports) every row of every table
+with a `user_id` or `usernode_pubkey` column matching the person. When you
+add a table:
+
+- **Keyed by `user_id`, the person's own row** (a vote, an entry, a
+  comment): nothing to do.
+- **The person's row keyed another way** (`author_id`, `created_by`): add
+  it to `OWNED_BY` with `action: 'delete'`.
+- **A shared row other people's rows hang off** (a poll other people voted
+  in, a list others added to): add it to `OWNED_BY` with
+  `action: 'anonymise'` and the columns that name them in `clear`, so it
+  stays for the group without saying who made it.
+- **A `user_id` that is not the person the row is about**: add the table
+  to `SKIP`.
+
+An app with no handler is recorded on the deletion's receipt for an
+operator to follow up, so an app written before this contract (no
+`usernode-user-data.js`) should add the file and its mount. Files uploaded
+through the platform's storage are the platform's: a person's private
+files are deleted with their account, so the app only drops the rows that
+point at them.
+
 ## Don't `git push` yourself
 
 The worker container runs with **zero GitHub credentials in env** —
@@ -2516,6 +2687,37 @@ that animate, polling), listen for:
 
 An app that is not reopened soon is dropped and loads fresh next time, so
 keep durable state server-side (or in `localStorage`) as you already should.
+
+## Opening in one step — `usernode.ready()`
+
+Homeroom opens an app behind a cover showing its icon and name, and lifts
+the cover once the frame's document has loaded. That is usually before the
+app's own data has arrived, so without help the viewer watches the page
+assemble itself: a skeleton, then the real screen in a different shape. Tell
+the shell when your first real screen is drawn and the cover stays up until
+then, so the app appears in one step:
+
+```js
+// app.js, where the first load starts: pass the promise of the first render.
+usernode.ready(load());
+```
+
+- **`usernode.ready(promise)`** says "waiting" at once and "drawn" when the
+  promise settles, fulfilled or rejected: an error screen is a first screen
+  too, so settle after drawing whichever of ready, empty or error you show.
+- **`usernode.ready()`** with no argument says "drawn" now; call it once,
+  right after the first render.
+- Only the first call counts. Outside a Homeroom frame it does nothing, so
+  guard it only against a missing bridge:
+  `if (window.usernode && usernode.ready) usernode.ready(load());`
+- The cover lifts after a few seconds regardless, so a first render that
+  never settles is never hidden for long. An app that never calls it opens
+  as before.
+- Keep the skeleton anyway, shaped like the real first screen: it is what a
+  viewer sees when the data is slower than that cap, and on every refresh
+  after the first.
+
+The ready-made starters all do this.
 
 ## Browser capabilities in the app frame
 
@@ -3105,6 +3307,89 @@ apps.
    leave tabs/menus/panels instant.
 7. Optionally override `--un-*` variables to match the app's branding.
 
+## Games: draw the play area on a canvas
+
+A game's play area (the board, the field, the table, the pieces, the
+cards) is drawn on a `<canvas>` and played with pointer events on that
+canvas. That holds for turn-based and grid games too: minesweeper,
+sudoku, 2048, chess, match-three, solitaire, a word grid. A grid of
+`<button>`s or `<div>`s looks like the quicker way to build those, and it
+is the one that comes out less polished on a phone:
+
+- **Nothing to select or copy.** On HTML, a long press selects a number
+  or opens the copy callout, and a quick swipe highlights half the board.
+  A canvas has no text to select.
+- **No touch delay.** A canvas game acts on the pointer event itself, the
+  moment the finger lands or lifts, instead of waiting for a `click` the
+  browser sends only after ruling out a double tap or a scroll.
+- **One owner for every pixel.** Hit-testing is one function from a point
+  to a cell, a long press is one timer, and an animation (a tile
+  flipping, a cascade opening, a piece sliding) is a redraw, not CSS
+  transitions fighting the layout.
+
+What stays HTML is everything that is not the play: the title screen,
+menus and settings, the score, timer and turn line around the board, the
+buttons beside it, dialogs, results, the leaderboard and the history.
+Build those from the design kit and the native UI kit like any other
+screen.
+
+How to build it:
+
+- **Size it to its box, at the screen's density.** Lay the canvas out
+  with CSS (`width: 100%` and an `aspect-ratio`, or filling the window),
+  set `canvas.width` and `canvas.height` to that size times
+  `devicePixelRatio`, scale the context by the same factor, and redraw
+  from a `ResizeObserver`. A canvas left at its default size is blurry on
+  every phone ("Rendering invariants" has a self-check for this). Fit the
+  play area on the screen: a finger on it does not scroll the page.
+- **Turn the browser's own gestures off on the play area, and only
+  there.** The page around it still scrolls, and its text still selects:
+
+  ```css
+  .play {
+    touch-action: none;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+  ```
+
+  and call `preventDefault()` on the canvas's `contextmenu` event.
+- **Input is pointer events, never `click`.** Map the point from
+  `getBoundingClientRect()` to a cell and act on `pointerdown`, or on
+  `pointerup` when the same press can also be a long press or a drag. A
+  long press (a flag, a mark) is a timer started on `pointerdown` and
+  cancelled when the finger moves or lifts; a right-click does the same
+  on a desktop. Keep a visible way to do it without the long press too,
+  such as a mode switch, because few people discover a long press by
+  themselves.
+- **Colours from the app's tokens.** Read the design kit's colour tokens
+  (`"R G B"` values) with `getComputedStyle(document.documentElement)`,
+  draw with `rgb(...)`, and redraw on `usernode:theme-changed`, so the
+  board follows the light and dark look like the rest of the screen. A
+  game that keeps one fixed look says so in its `CLAUDE.md` ("New apps: a
+  light and a dark look, following the platform").
+- **Draw from state.** Keep the game in plain data, with one `draw()`
+  that paints all of it from that data, called after every move and on
+  resize. Run a `requestAnimationFrame` loop only while something moves.
+- **Leave a readable trace.** A canvas is opaque to a selector, an
+  accessibility snapshot and a screen reader. Put the game's phase and
+  its key numbers on the canvas's wrapper as `data-*` attributes (for
+  example `data-phase="won"`, `data-flags="3"`), give the canvas
+  `role="img"` and an `aria-label` that says the state in words, and
+  select on those in `dapp.json` checks.
+- **Trying a move in the in-loop browser.** `browser_click` on a canvas
+  presses its centre. To press a given cell, dispatch `pointerdown` and
+  `pointerup` on the canvas with `browser_evaluate`, with `clientX` and
+  `clientY` worked out from `getBoundingClientRect()` and the cell's
+  position.
+
+A three.js or WebGL game already draws on a canvas: the same rule. A
+project built on a game starter keeps the starter's own drawing and
+builds on it. An existing game drawn in HTML stays as it is until a
+request asks for it to be redrawn: do not convert one as a drive-by.
+
 ## Tailwind — precompiled per app, runtime centrally hosted
 
 Every app on this platform styles itself with Tailwind. There are two ways
@@ -3472,7 +3757,8 @@ committing.
 Use it before declaring a `ui` or `motion` change for before/after shots.
 A declared change must describe a checkpoint you actually reached in the
 local app, including the state the shots agent will need to reach it
-again (put that in `hints.setup`). For backend-only,
+again (put that in `hints.setup`, or seed it as "Who the before & after
+shots see" says). For backend-only,
 refactor, or docs work, rendering may tell you nothing and the browser is
 optional. Chromium only launches on the first browser tool call. Scout and
 sync turns have no browser at all.
@@ -3487,6 +3773,11 @@ locally inside the worker the same way a staging container does:
   `INLOOP_DATABASE_URL` for exactly this. Typical launch:
   `usernode-run-inloop node server.js &`
   (or this app's declared `dapp.json` entrypoint).
+- **Stop only what you started**, by its own PID (`$!` right after the
+  launch) or its job (`kill %1`). Never signal PID 1 (`kill 1`), every
+  process (`kill -1`), or every process a `/proc` walk finds: PID 1 is
+  the worker's init, and stopping it restarts the worker and ends your
+  turn.
 - The launch command supplies the manifest's committed `staging_default` /
   `default` values, as staging does. If a required value has no committed
   fallback, it reports the missing key and stops. Never copy a production
@@ -3515,9 +3806,14 @@ locally inside the worker the same way a staging container does:
   to `/tailwind.css` shipped a blank production page for days. Only once
   the page itself is sound, suspect missing seed data — the local DB starts
   empty. Check the app's existing staging fixtures or
-  `?demo=1` route first. A sign-in screen means this browser is signed out;
-  use an existing documented fake staging account through the normal UI if
-  possible. Do not change auth code or seed passwords solely for this check.
+  `?demo=1` route first. For an app that verifies the platform's identity
+  token, the launch signs it in as Homeroom does: it prints a link that opens
+  the app signed in, and `usernode-run-inloop --link <route>` prints one for
+  any route (`usernode-run-checks` signs its checks in the same way). A page
+  opened without it is signed out. For an app with a sign-in of its own, a
+  sign-in screen means this browser is signed out; use an existing documented
+  fake staging account through the normal UI if possible. Do not change auth
+  code, mint a token or seed passwords solely for this check.
 - Keep it tight (a couple of launch→check→fix cycles, a minute or two).
   **If the app won't boot** — no local Postgres, a missing required
   secret, a crash on start — report the blocker. You can still finish
@@ -3582,6 +3878,35 @@ automated reviewer reads the proposal's diff against this section and flags
 what breaks it. It starts advisory (shown, not blocking); an admin can make
 it blocking. It reads text and code only, so these rules still apply to
 images you add.
+
+## Data rules: what no app may collect or load
+
+Every app on Homeroom, the platform shell included, keeps to these rules.
+Like the content rules, a repo `CLAUDE.md`, a spec or a user request
+cannot override them.
+
+**Never build, add or ship:**
+
+- **Third-party trackers or external scripts.** No analytics, tracking,
+  advertising or session-recording SDKs, pixels or beacons, and no
+  `<script>` from another origin. An app loads its own code and the
+  centrally hosted Homeroom assets only. A legacy `cdn.tailwindcss.com`
+  tag (rule 1) is tolerated; new code adds none.
+- **Special-category data.** Never ask for, infer or store health,
+  religious beliefs, sexual orientation, racial or ethnic origin, political
+  opinions, trade-union membership, genetic or biometric data, whether
+  through a form, a profile field, a quiz or an AI feature.
+- **Apps aimed at children.** No app is designed or marketed for children.
+- **Passwords or payment card data.** Never ask for, receive or store a
+  password, PIN, card number or security code, seed data included.
+- **A sign-in of its own.** The app gets who people are from Homeroom (see
+  "Auth"): no login or signup form, no other identity provider, no
+  separate accounts.
+
+**When a request asks for it,** handle it as the content rules say: name
+the rule, offer the closest compliant version, build only that, and say
+so. When unsure, treat it as not allowed and ask. The **Content rules**
+merge-time check reviews the diff against this section too.
 
 ## Writing user-facing copy: no em dashes
 

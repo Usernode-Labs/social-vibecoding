@@ -12,7 +12,7 @@
 // runs went at once.
 //
 // This file holds the rules that need no database: the order and the slot
-// rule (planAdmission), the stale sweeps' reading of a waiting run, where the
+// rule (planAdmission), how a waiting run is read (never overdue), where the
 // gate sits in captureForSession, and what people and agents are told while a
 // run waits. tests/checks-queue-postgres.test.js runs the queue on a real
 // Postgres: two processes, a freed slot, a superseded run, a restart.
@@ -21,6 +21,10 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+
+// The scripts under test read their text from the language runtime's
+// global; give them the real English one.
+globalThis.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
@@ -164,19 +168,26 @@ test('checkRunOverdue never reads a run waiting for a slot as overdue, however l
   assert.equal(stagingRecovery.checkRunOverdue({
     check_state: 'pending', check_phase: 'queued', checks_commit_sha: 'head', checks_checked_at: old,
   }, { now, staleMs: 600000 }), false);
+  // Nor a running one: 'pending' is the preview machine's outstanding work,
+  // alive while its lease is, never overdue by clock.
   assert.equal(stagingRecovery.checkRunOverdue({
     check_state: 'pending', check_phase: 'testing', checks_commit_sha: 'head', checks_checked_at: old,
-  }, { now, staleMs: 600000 }), true, 'a run that is running is judged as before');
+  }, { now, staleMs: 600000 }), false, 'a run that is running is the machine\'s to time');
+  assert.equal(stagingRecovery.checkRunOverdue({
+    check_state: null, checks_commit_sha: 'head', checks_checked_at: old,
+  }, { now, staleMs: 600000 }), true, 'a head nothing ever recorded is still judged by clock');
 });
 
-test('the stale sweep skips a queued session while it has a row in line, and only then', async () => {
-  const queries = [];
-  const pool = { query: async (sql, params) => { queries.push({ sql, params }); return { rows: [] }; } };
-  await stagingRecovery.findStuckCheckSessions({ pool, staleMs: 600000, maxAutoRetries: 6 });
-  const sql = queries[0].sql;
-  assert.match(sql, /cs\.check_phase IS DISTINCT FROM 'queued'\s+OR NOT EXISTS \(SELECT 1 FROM check_runs cr\s+WHERE cr\.session_id = cs\.id AND cr\.admitted_at IS NULL\)/,
-    'a queued session with no row left in line is overdue by the usual clock: the backstop');
-  assert.deepEqual(queries[0].params, [600000, 6, 50]);
+test('a queued run whose process died is carried on by its checks run\'s retry, from its place in line', () => {
+  // No sweep re-drives a queued session (the leader's stuck-checks sweep is
+  // gone): the wait is inside the preview machine's checks run, a work item
+  // with a lease, and the claim after a lost one asks for its slot as of the
+  // place the earlier claim had. tests/checks-queue-postgres.test.js runs it.
+  const services = stripComments(read('src/workflow/preview/services.ts'));
+  const run = services.slice(services.indexOf('[WORK.run]: {'));
+  assert.match(run, /if \(attempt > 1\) \{[\s\S]*?SELECT min\(queued_at\) AS at FROM check_runs WHERE session_id = \$1 AND manifest->>'runKey' = \$2/);
+  assert.match(run, /queuedSince, report,/);
+  assert.equal(stagingRecovery.findStuckCheckSessions, undefined);
 });
 
 test('the merge gate kicks no recheck for a queued run, and says it is waiting', () => {
@@ -186,19 +197,25 @@ test('the merge gate kicks no recheck for a queued run, and says it is waiting',
   assert.match(src, /checksQueued \? 'is waiting for a checks slot' : 'is still running its tests'/);
 });
 
-test('merge-queue counts a queued run as in flight, so nothing re-drives it', () => {
-  const src = stripComments(read('src/services/merge-queue.js'));
-  assert.match(src, /function checkRunInFlight\(row\) \{[\s\S]{0,400}return !require\('\.\/staging-recovery'\)\.checkRunOverdue\(row\);/);
+test('the merge queue counts a queued run as in flight, so nothing re-drives it', () => {
+  const src = stripComments(read('src/workflow/merge-queue/facts.ts'));
+  assert.match(src, /runInFlight: r\.check_state === 'pending' && r\.check_phase !== 'deferred' && onHead/);
 });
 
-test('main-watch\'s interrupted-run sweep leaves a run alive in the queue, and re-drives a dead waiting one now', () => {
-  const src = stripComments(read('src/services/main-watch.js'));
-  const sweep = src.slice(src.indexOf('async function resumeInterrupted('));
-  assert.match(sweep, /AND NOT EXISTS \(\s*SELECT 1 FROM check_runs cr\s+WHERE cr\.kind = 'main' AND cr\.app_id = apps\.id[\s\S]{0,120}cr\.heartbeat_at >= NOW\(\)/);
-  assert.match(sweep, /OR EXISTS \(\s*SELECT 1 FROM check_runs cr\s+WHERE cr\.kind = 'main'[\s\S]{0,200}cr\.admitted_at IS NULL\)\)/);
+test('a main run a restart interrupted is carried on by its work item, through the queue row it named', () => {
+  // No sweep: the main-check machine's main.suite work is resumable, keeps
+  // the queue row's run id as its checkpoint, and the next attempt adopts
+  // that run's Jobs only once its row was admitted (a waiting row had none).
+  // tests/main-watch.test.js and workflow-main-check-postgres pin what follows.
+  const run = stripComments(read('src/services/main-watch.js'));
+  assert.match(run.slice(run.indexOf('async function runMainSuite(')),
+    /SELECT owner FROM check_runs WHERE run_id = \$1 AND admitted_at IS NOT NULL/);
+  const services = stripComments(read('src/workflow/main-check/services.ts'));
+  assert.match(services, /resumable: true,/);
+  assert.match(services, /onRunId: \(runId: string\) => ctx\.checkpoint\(\{ runId \}\)/);
 });
 
-test('the harvest leaves main-watch rows to main-watch, and runOnCluster counts a waiting run as the run', () => {
+test('the orphan listing leaves main-watch rows to main-watch, and a row not yet admitted is a waiting one', () => {
   const runs = stripComments(read('src/services/check-runs.js'));
   assert.match(runs, /FROM check_runs\s+WHERE kind = 'proposal' AND session_id IS NOT NULL/);
   assert.equal(checksQueue.isWaitingRow({ admitted_at: null }), true);
@@ -209,33 +226,35 @@ test('the harvest leaves main-watch rows to main-watch, and runOnCluster counts 
 // ── Where the gate sits ─────────────────────────────────────────────────
 
 test('captureForSession waits for its slot after the preview is up and before anything a slot is for', () => {
+  // It runs only as the preview machine's checks.run, once the attempt
+  // serves: the preview is up by the time it asks.
   const src = read('src/services/visuals.js');
-  const live = src.slice(src.indexOf('async function captureForSession('), src.indexOf('function holdCapture('));
-  const ready = live.indexOf("throw new Error('Preview revision is not ready for capture')");
-  const redundant = live.indexOf('checksAlreadyDecided(pool, session.id, commitHash)');
-  const enqueue = live.indexOf('checksQueue.enqueue(runsPool');
-  const wait = live.indexOf('await waitForChecksSlot(pool, runsPool');
-  const testing = live.indexOf("setChecksPending(pool, session.id, commitHash, 'testing', trigger)");
+  const live = src.slice(src.indexOf('async function captureForSession('), src.indexOf('function workflowOperation('));
+  const enqueue = live.indexOf('checksQueue.enqueue(pool');
+  const wait = live.indexOf('await waitForChecksSlot(pool');
+  const testing = live.indexOf("setChecksPhase(pool, session.id, commitHash, 'testing')");
   const token = live.indexOf('mintCaptureToken(captureUser, app.id)');
   const cookie = live.indexOf("'INSERT INTO sessions (token, user_id, expires_at) VALUES ($1, $2, $3)'");
   const unit = live.indexOf('unitSuite.maybeRunUnitSuite({');
   const capture = live.indexOf('kubernetes.runCaptureJob(');
-  assert.ok(ready > 0 && redundant > ready && enqueue > redundant && wait > enqueue,
-    'the preview is checked live, a redundant run skipped, then the run joins the line');
+  assert.ok(enqueue > 0 && wait > enqueue, 'the run joins the line, then waits in it');
   assert.ok(testing > wait, '"testing" only once it has a slot');
   assert.ok(token > wait && cookie > wait,
     'the capture tokens and the 15-minute "before" cookie are minted after the wait, not before it');
   assert.ok(unit > wait && capture > wait, 'no Job exists, so no Job deadline runs, while it waits');
-  assert.match(live, /if \(slot\.outcome === 'superseded'\) \{[\s\S]{0,300}traceStatus = 'superseded';\s+return undefined;/,
+  assert.match(live, /if \(slot\.outcome === 'superseded'\) \{[\s\S]{0,300}traceStatus = 'superseded';\s+settledRun = true;\s+return \{ outcome: 'blocked', reason: /,
     'a superseded waiting run leaves with no verdict; its finally clears its row');
-  assert.match(live, /const place = checksQueue\.isEnabled\(\)\s+\? await checksQueue\.enqueue\(runsPool, \{ \.\.\.provisional, queuedSince: opts\.queuedSince \|\| null \}\)\s+: null;\s+if \(!place\) await checkRuns\.record\(runsPool, provisional\);/,
+  assert.match(live, /const place = checksQueue\.isEnabled\(\)\s+\? await checksQueue\.enqueue\(pool, \{ \.\.\.provisional, queuedSince: workflow\.queuedSince \|\| null \}\)\s+: null;\s+if \(!place\) await checkRuns\.record\(pool, provisional\);/,
     'the queue row is the provisional manifest; without the queue it is written as before');
 });
 
-test('a newer request for a session whose run is still waiting supersedes it at once', () => {
+test('a run the machine cancels while it waits leaves the line at once', () => {
+  // A newer head, a retirement or an admin: the machine cancels the work
+  // item, and its lease's signal ends the wait.
   const src = read('src/services/visuals.js');
-  assert.match(src, /if \(movedOn && typeof running\.leaveQueue === 'function' && running\.leaveQueue\(\)\) \{/);
-  assert.match(src, /const flight = \{ operation, commitHash: commitHash \|\| null \};\s+_inFlight\.set\(key, flight\);/);
+  const fn = src.slice(src.indexOf('async function waitForChecksSlot('), src.indexOf('async function captureForSession('));
+  assert.match(fn, /const \{ signal \} = operation;/);
+  assert.match(fn, /checksQueue\.waitForSlot\(pool, \{ runId, signal, stillWanted, onPosition \}\)/);
 });
 
 test('every run\'s row going wakes this process\'s waiters', () => {
@@ -243,13 +262,13 @@ test('every run\'s row going wakes this process\'s waiters', () => {
   assert.match(src, /async function finish\(pool, runId\) \{[\s\S]{0,400}\} finally \{\s+require\('\.\/checks-queue'\)\.slotFreed\(\);/);
 });
 
-test('the harvest re-drives a run in the place it had in line', () => {
-  const src = stripComments(read('src/services/check-harvest.js'));
-  assert.match(src, /const queuedSince = row\.queued_at \|\| null;/);
-  assert.match(src, /recheckSessionChecks\(\{\s+config, pool, session, reason: 'orphaned-run', \.\.\.\(queuedSince \? \{ queuedSince \} : \{\}\),\s+\}\)/);
-  const recovery = stripComments(read('src/services/staging-recovery.js'));
-  assert.match(recovery, /async function recheckSessionChecks\(\{ config, pool, session, reason, queuedSince = null \}\)/);
-  assert.match(recovery, /\.\.\.\(queuedSince \? \{ queuedSince \} : \{\}\),/);
+test('a retried run asks for its slot in the place its earlier claim had in line', () => {
+  const services = stripComments(read('src/workflow/preview/services.ts'));
+  const run = services.slice(services.indexOf('[WORK.run]: {'), services.indexOf('[WORK.cancel]: {'));
+  assert.match(run, /SELECT min\(queued_at\) AS at FROM check_runs WHERE session_id = \$1 AND manifest->>'runKey' = \$2/);
+  assert.match(run, /unitRunId: unitEarlyRunId\(input\.sessionId, input\.n\), queuedSince,/);
+  assert.ok(run.indexOf('min(queued_at)') < run.indexOf('await clearRun(input.sessionId, input.runId);'),
+    'read before the earlier claims\' rows go');
 });
 
 // ── What people and agents read ─────────────────────────────────────────
@@ -315,6 +334,7 @@ function makeAppView() {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext([
     read('public/js/merge-status.js'),
@@ -348,9 +368,11 @@ test('the card says "Waiting for a checks slot (2 ahead)", offers no re-run, and
   assert.doesNotMatch(`${note.heading} ${text}`, /—/, 'user-facing copy carries no em dash');
 
   assert.equal(AppView._checksLine({ state: 'active' }, QUEUED, false), 'Waiting for a slot · 2 ahead');
-  assert.equal(AppView._testedLine(QUEUED).text, 'Waiting for a checks slot (2 ahead)');
-  assert.equal(AppView._testedLine({ ...QUEUED, checks_progress: null }).text, 'Waiting for a checks slot');
-  assert.equal(AppView._testedLine(QUEUED).state, 'running');
+  // #4452: the change page's Testing card says it, still moving.
+  assert.equal(AppView._changeTestingView(QUEUED).note.join(' '), 'Waiting for a checks slot (2 ahead)');
+  assert.equal(AppView._changeTestingView({ ...QUEUED, checks_progress: null }).note.join(' '), 'Waiting for a checks slot');
+  assert.equal(AppView._changeTestingView(QUEUED).figure, 'Waiting for a slot');
+  assert.equal(AppView._changeTestingView(QUEUED).done, false);
 });
 
 test('the status pill says the run is waiting, with its place, and keeps the running treatment', () => {
@@ -375,6 +397,7 @@ test('the ?demo=1 fixture serves a queued run, and a declared check reads its ca
   }
   const ctx = { module: {}, console, connectionExhaustionMessage: () => '', ROLLOUT_RETRY_DETAIL: '' };
   ctx.globalThis = ctx;
+  ctx.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(ctx);
   vm.runInContext(`${src.slice(start, end)}\n;globalThis.__rows = stagingMockProposals;`, ctx);
   const mock = JSON.parse(JSON.stringify(ctx.__rows('me').find((r) => r.id === 9000054)));
@@ -384,6 +407,21 @@ test('the ?demo=1 fixture serves a queued run, and a declared check reads its ca
   assert.equal(makeAppView()._checksStatusNotes({ ...mock, status: 'promoted' })[0].heading,
     'Waiting for a checks slot (2 ahead)');
 
+  // #4502: a clearly labelled deferred example uses the actual conflict
+  // shape, independently of this transient state existing in a cloned DB.
+  const deferred = JSON.parse(JSON.stringify(ctx.__rows('me').find((r) => r.id === 9000055)));
+  assert.match(deferred.pr_title, /^\[Mock\] /);
+  assert.equal(deferred.check_state, 'pending');
+  assert.equal(deferred.check_phase, 'deferred');
+  assert.equal(deferred.integration_merges_clean, false);
+  assert.equal(deferred.mergeability, 'conflict');
+  assert.deepEqual(deferred.test_results, []);
+  assert.equal(deferred.checks_progress.build.step, 'done');
+  assert.match(makeAppView()._changeTestingView(deferred).noteDetail, /conflicts with main/);
+  assert.match(src, /const IS_STAGING = process\.env\.USERNODE_ENV === 'staging'/);
+  assert.match(src, /const demoMode = IS_STAGING && req\.query\.demo === '1'/);
+  assert.match(src, /if \(!proposal && IS_STAGING && req\.query\.demo === '1'\)/);
+
   const declared = JSON.parse(read('dapp.json')).tests.filter((t) => String(t.path).includes('/proposals/9000054'));
   assert.equal(declared.length, 1);
   assert.equal(declared[0].expectText, 'Waiting for a checks slot (2 ahead)');
@@ -391,7 +429,7 @@ test('the ?demo=1 fixture serves a queued run, and a declared check reads its ca
 
 // The declared check on 9000054 reads the page's innerText, case-blind
 // (capture/capture.js), and Details is a sheet kept hidden until opened. So
-// the words have to be on the page itself: the hero's Tested line, the one
+// the words have to be on the page itself: the Testing card's line, the one
 // line about the checks a reader sees without opening anything. The mock's
 // own title must not carry them, or the check would pass on the title alone
 // (as "running the automated tests" does on 9000026's).
@@ -407,6 +445,7 @@ test('the proposal page itself says where a waiting run is in line, without open
   }
   const ctx = { module: {}, console, connectionExhaustionMessage: () => '', ROLLOUT_RETRY_DETAIL: '' };
   ctx.globalThis = ctx;
+  ctx.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(ctx);
   vm.runInContext(`${src.slice(start, end)}\n;globalThis.__rows = stagingMockProposals;`, ctx);
   const mock = JSON.parse(JSON.stringify(ctx.__rows('me').find((r) => r.id === 9000054)));
@@ -419,11 +458,11 @@ test('the proposal page itself says where a waiting run is in line, without open
   const AppView = makeAppView();
   AppView.appData = { slug: 'usernode-2d5619', can_collaborate: true };
   const v = AppView._topicViewFor('proposal', mock);
-  const page = renderToHtml(createElement(ChangeDetail, { card: v.card, body: v.body, item: mock, conversation: true }));
+  const page = renderToHtml(createElement(ChangeDetail, { card: v.card, body: v.body, item: mock }));
   const text = page.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').toLowerCase();
   assert.ok(text.includes(want), `the page says "${declared.expectText}"; it read: ${text.slice(0, 600)}`);
-  assert.match(page, /<button type="button" class="dev-topic-tested" data-tested="running">[\s\S]*?Waiting for a checks slot \(2 ahead\)/,
-    'on the hero\'s Tested line');
+  assert.match(page, /data-change-gate="testing" data-done="false"[\s\S]*?<p class="dev-change-gate-note">Waiting for a checks slot \(2 ahead\)<\/p>/,
+    'on the Testing card\'s line');
 });
 
 test('the Helm chart passes the cap through, documented beside CAPTURE_CPUS', () => {

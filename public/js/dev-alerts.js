@@ -15,7 +15,11 @@
 // (localStorage, default ON). The AudioContext and the browser Notification
 // permission are both unlocked LAZILY on a user gesture (first dev-chat
 // send, or the Settings toggle / test button) — never at page load — to
-// satisfy browser autoplay + permission-prompt policies.
+// satisfy browser autoplay + permission-prompt policies. The first send
+// explains before it asks (offerNotifyPermission, 21 Oct 2026): the
+// browser's own prompt used to arrive on it with no word of what it was
+// for, which is the ask a person refuses and the browser then never shows
+// again.
 //
 // There is intentionally no service worker / web-push here (none exists in
 // this repo): browser notifications fire from the live page and so only
@@ -33,6 +37,10 @@
   // chime and an incoming notification_new chime for the SAME turn can't
   // double up (see Notifications.handleIncoming + DevChat._finishStreaming).
   const TONE_DEDUP_MS = 1000;
+
+  // Written once the first send has explained the ask on this device, so it
+  // is explained once (the browser's permission is the device's too).
+  const OFFERED_KEY = 'devchat_notify_offered';
 
   const DevAlerts = {
     _audioCtx: null,
@@ -129,6 +137,39 @@
       } catch { /* non-fatal */ }
     },
 
+    // The first send's ask: an in-app question first, and the browser's
+    // prompt only behind "Notify me" (the notification ask's rule,
+    // frontend/src/features/notify-ask/). Once per device, and only while
+    // the browser has not been answered. Resolves once it is done; never
+    // throws. The Settings switch and its test button ask directly: those
+    // are already somebody saying yes.
+    async offerNotifyPermission() {
+      if (DevAlerts._isNative() || !DevAlerts.enabled()) return;
+      try {
+        if (typeof Notification === 'undefined' || Notification.permission !== 'default') return;
+        if (localStorage.getItem(OFFERED_KEY) === '1') return;
+        localStorage.setItem(OFFERED_KEY, '1');
+      } catch {
+        return;
+      }
+      const ui = window.PlatformUI;
+      if (!ui || typeof ui.confirm !== 'function') return;
+      const t = (id) => (window.PlatformI18n ? window.PlatformI18n.t(id) : id);
+      let yes = false;
+      try {
+        yes = await ui.confirm({
+          title: t('shell:devAlerts.ask.title'),
+          message: t('shell:devAlerts.ask.message'),
+          confirmLabel: t('shell:devAlerts.ask.confirm'),
+          cancelLabel: t('shell:devAlerts.ask.notNow'),
+        });
+      } catch {
+        return;
+      }
+      // Still inside the tap's activation, which the browser's prompt needs.
+      if (yes) DevAlerts.requestNotifyPermission();
+    },
+
     // In-app deep-link hash for a completion, mirroring the routing in
     // Notifications._onItemClick.
     _routeFor(info) {
@@ -183,7 +224,7 @@
     //  - Browser: a Web Notification, only when permission is granted.
     systemNotify(info) {
       if (!DevAlerts.enabled() || !info) return;
-      const title = info.title || 'Agent session';
+      const title = info.title || PlatformI18n.t('shell:alerts.notification.fallbackTitle');
       const body = info.body || '';
       if (DevAlerts._isNative()) {
         // The canonical notification already has an FCM delivery. Avoid a
@@ -252,11 +293,11 @@
         credentials: 'same-origin',
       });
       const result = await response.json();
-      if (!response.ok) throw new Error(result.error || 'Could not queue the test push. Please try again.');
+      if (!response.ok) throw new Error(result.error || PlatformI18n.t('shell:alerts.test.queueFailed'));
       const info = {
         kind: 'test_alert',
-        title: 'Homeroom test alert',
-        body: 'This is a test of your agent session sound and alerts.',
+        title: PlatformI18n.t('shell:alerts.test.title'),
+        body: PlatformI18n.t('shell:alerts.test.body'),
       };
       setTimeout(() => {
         // A native background test is delivered by the server, even when

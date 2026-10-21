@@ -5,14 +5,14 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { AdminUI } from './admin-console.js';
 import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
 
-// Limits (#admin/limits): the server's app limit, GitHub's hourly request
-// budget (read-only), the platform's LLM budget dials, and the Anthropic
-// credit balance the remaining-credit figure is derived from.
+// Limits (#admin/limits): the server's app limit and session limit, GitHub's
+// hourly request budget (read-only), the platform's LLM budget dials, and
+// the Anthropic credit balance the remaining-credit figure is derived from.
 //
 // PERMISSIONS: visible to any admin; every field and every Save button is
 // gated on AdminConsole.canWrite() (canAdminWrite). The server enforces the
-// same on PUT /api/admin/app-limit, PUT /api/admin/limits and
-// PUT /api/admin/anthropic-credits.
+// same on PUT /api/admin/app-limit, PUT /api/admin/session-limit,
+// PUT /api/admin/limits and PUT /api/admin/anthropic-credits.
 //
 // ── Sixth section out of the chassis (#1120 slice 21) ─────────────────
 //
@@ -191,6 +191,139 @@ function AppLimitCard({ canWrite }: { canWrite: boolean }) {
   );
 }
 
+// The platform-wide session limit (services/session-limit.js), the app
+// limit's twin: the admin's setting, else the deploy's MAX_GLOBAL_SESSIONS,
+// which on the Kubernetes deploy lives in the infra repository's chart. The
+// cluster quota is drawn under the field because it is the real ceiling:
+// every proposal in review keeps a preview running, and a limit past what
+// the quota holds only moves the refusal to Kubernetes.
+function SessionLimitCard({ canWrite }: { canWrite: boolean }) {
+  const console_ = () => (window as any).AdminConsole;
+  const [data, setData] = useState<any>(null);
+  const [value, setValue] = useState('');
+  const [status, setStatus] = useState<Status | null>(null);
+  const [saving, setSaving] = useState(false);
+  const alive = useRef(true);
+  useEffect(() => () => { alive.current = false; }, []);
+
+  const fill = useCallback((next: any) => {
+    setData(next);
+    setValue(next && next.setting ? String(next.setting.value) : '');
+  }, []);
+
+  useEffect(() => {
+    (async () => {
+      const { data: next } = await console_().fetchJson('/api/admin/session-limit');
+      if (alive.current && next && typeof next === 'object') fill(next);
+    })();
+  }, [fill]);
+
+  const put = async (limit: number | null) => {
+    setStatus(null);
+    setSaving(true);
+    try {
+      const res = await fetch('/api/admin/session-limit', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ limit }),
+      });
+      const next = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(next.error || `Save failed (${res.status})`);
+      if (!alive.current) return;
+      fill(next);
+      setStatus({ text: limit === null ? 'Using MAX_GLOBAL_SESSIONS again.' : 'Saved. It applies within ten seconds.', tone: 'ok' });
+    } catch (err: any) {
+      if (alive.current) setStatus({ text: err.message, tone: 'err' });
+    } finally {
+      if (alive.current) setSaving(false);
+    }
+  };
+
+  const save = () => {
+    const raw = value.trim();
+    if (!raw) { put(null); return; }
+    const n = Number(raw);
+    if (!Number.isInteger(n) || n < 1) {
+      setStatus({ text: 'Enter a whole number of sessions, 1 or more.', tone: 'err' });
+      return;
+    }
+    put(n);
+  };
+
+  const usage = !data ? 'Loading…' : `${data.used} of ${data.limit} sessions`;
+  let source = '';
+  if (data && data.source === 'admin') {
+    const who = data.setting.updatedBy ? ` by @${data.setting.updatedBy}` : '';
+    const when = data.setting.updatedAt ? ` on ${String(data.setting.updatedAt).slice(0, 10)}` : '';
+    source = `Set here${who}${when}. Without it, the deploy's MAX_GLOBAL_SESSIONS (${data.defaultLimit}) applies.`;
+  } else if (data) {
+    source = `Using the deploy's MAX_GLOBAL_SESSIONS (${data.defaultLimit}). Enter a number to change it here.`;
+  }
+  const figure = (m: any) => (m ? `${m.used} of ${m.hard}` : null);
+  const quota = data && Array.isArray(data.quota) ? data.quota : [];
+
+  return (
+    <div id="admin-session-limit" className={`${AdminUI.card} p-4 mt-4`}>
+      <div className="flex items-center justify-between mb-3">
+        <h2 className={AdminUI.cardTitle}>Session limit</h2>
+        <span id="admin-session-limit-usage" className="text-xs text-zinc-500 dark:text-zinc-400">{usage}</span>
+      </div>
+      <p className={`${AdminUI.muted} mb-3`}>
+        How many coding sessions the whole platform runs at once: sessions being worked on and
+        proposals in review. At the limit, starting or reopening a session pauses somebody's idle
+        one, and is refused when none is idle. Proposals in review are never paused, and each
+        keeps a preview running. Full admins are notified at {data ? data.warnPercent : 80}% of
+        the limit and again when it is reached. A change applies to every server within ten
+        seconds, with no deploy.
+      </p>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+        <label className="block">
+          <span className={LABEL}>Sessions allowed</span>
+          <input id="admin-session-limit-input" type="number" min="1" step="1" inputMode="numeric"
+            disabled={!canWrite || !data}
+            className={`${AdminUI.input} mt-1 font-mono disabled:opacity-60`}
+            placeholder={data ? String(data.defaultLimit) : ''}
+            value={value} onChange={(e) => setValue(e.target.value)} />
+        </label>
+      </div>
+      {quota.length ? (
+        <div id="admin-session-limit-quota" className="mb-3">
+          <p className={LABEL}>Cluster quota (the real ceiling)</p>
+          <ul className="mt-1 space-y-1">
+            {quota.map((q: any) => (
+              <li key={q.namespace} className="text-xs font-mono text-zinc-600 dark:text-zinc-300">
+                {[q.namespace,
+                  figure(q.pods) && `pods ${figure(q.pods)}`,
+                  figure(q.requestsCpu) && `CPU ${figure(q.requestsCpu)}`,
+                  figure(q.requestsMemory) && `memory ${figure(q.requestsMemory)}`,
+                ].filter(Boolean).join(' · ')}
+              </li>
+            ))}
+          </ul>
+          <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
+            Raising the limit past what these hold moves the refusal to Kubernetes. The quotas
+            are set in the infra repository.
+          </p>
+        </div>
+      ) : null}
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p id="admin-session-limit-source" className="text-xs text-zinc-500 dark:text-zinc-400">{source}</p>
+        {canWrite ? (
+          <div className="flex items-center gap-2">
+            {data && data.source === 'admin' ? (
+              <button id="admin-session-limit-reset-btn" type="button" className={AdminUI.btn.outline}
+                disabled={saving} onClick={() => put(null)}>Use MAX_GLOBAL_SESSIONS</button>
+            ) : null}
+            <button id="admin-save-session-limit-btn" type="button" className={AdminUI.btn.primary}
+              disabled={saving || !data} onClick={save}>Save</button>
+          </div>
+        ) : null}
+      </div>
+      <StatusLine id="admin-session-limit-status" status={status} okClass="text-green-800 dark:text-green-400" />
+    </div>
+  );
+}
+
 // GitHub's hourly REST budget per credential (services/github-budget.js),
 // read-only: what GitHub reported on the last response with each one. Its
 // own card under the app limit because it is the other server-wide ceiling
@@ -207,6 +340,21 @@ const GITHUB_BAR_TONE = {
   held: 'bg-red-500',
 } as const;
 
+// Who spent a credential's hour (services/github-budget.js noteRequest): the
+// requests this server sent in GitHub's window, by caller and endpoint, and
+// what GitHub counted that this server did not send.
+interface GithubSpendEndpoint { endpoint: string; count: number; free: number }
+interface GithubSpendCaller { caller: string; count: number; free: number; endpoints: GithubSpendEndpoint[] }
+interface GithubSpend {
+  expired: boolean;
+  counted: number;
+  free: number;
+  usedBeforeCounting: number;
+  notCounted: number;
+  callers: GithubSpendCaller[];
+  otherCallers: { callers: number; count: number } | null;
+}
+
 interface GithubBudgetRow {
   credential: string;
   kind: 'pat' | 'installation' | 'anonymous';
@@ -218,13 +366,91 @@ interface GithubBudgetRow {
   resetInSeconds: number;
   expired: boolean;
   held: boolean;
+  spend?: GithubSpend | null;
+  previousSpend?: GithubSpend | null;
+}
+
+interface GithubReads {
+  installation: number;
+  pat: number;
+  patReasons: Record<string, number>;
+  noInstallation?: Record<string, number>;
 }
 
 interface GithubBudgetPayload {
   reservePercent: number;
   credentials: GithubBudgetRow[];
+  reads?: GithubReads;
   configured?: { botToken: boolean; app: boolean };
   demo?: boolean;
+}
+
+const figure = (v: number) => v.toLocaleString('en-US');
+
+// One window's spenders, most first, each with the endpoints it called. A
+// <details> so the card stays short until an admin asks who used the hour.
+function GithubSpendList({ id, title, spend }: { id: string; title: string; spend: GithubSpend }) {
+  if (!spend.counted && !spend.free && !spend.notCounted) return null;
+  return (
+    <details id={`admin-github-spend-${id}`} className="mt-2">
+      <summary className={`${AdminUI.btn.ghost} cursor-pointer text-xs`}>
+        {title}: {figure(spend.counted)} sent by this server
+        {spend.notCounted ? `, ${figure(spend.notCounted)} by something else` : ''}
+      </summary>
+      <ul className="mt-2 space-y-2">
+        {spend.callers.map((c) => (
+          <li key={c.caller} data-caller={c.caller}>
+            <div className="flex items-baseline justify-between gap-2 text-xs">
+              <span className="font-mono text-zinc-900 dark:text-zinc-100 break-all">{c.caller}</span>
+              <span className="font-mono text-zinc-700 dark:text-zinc-300 shrink-0">
+                {figure(c.count)}{c.free ? ` (+${figure(c.free)} free)` : ''}
+              </span>
+            </div>
+            <ul className="mt-0.5">
+              {c.endpoints.map((e) => (
+                <li key={e.endpoint} className="flex items-baseline justify-between gap-2 text-xs text-zinc-500 dark:text-zinc-400">
+                  <span className="font-mono break-all">{e.endpoint}</span>
+                  <span className="font-mono shrink-0">{figure(e.count)}</span>
+                </li>
+              ))}
+            </ul>
+          </li>
+        ))}
+      </ul>
+      {spend.otherCallers ? (
+        <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-2">
+          {figure(spend.otherCallers.count)} more from {figure(spend.otherCallers.callers)} other callers.
+        </p>
+      ) : null}
+      {spend.free ? (
+        <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-2">
+          {figure(spend.free)} answered "not modified", which GitHub does not count.
+        </p>
+      ) : null}
+      {spend.notCounted ? (
+        <p className="text-xs text-amber-700 dark:text-amber-400 mt-2">
+          GitHub counted {figure(spend.notCounted)} more than this server sent: another copy of the
+          token (a container, another server) or a call that does not go through services/github.js.
+        </p>
+      ) : null}
+      {spend.usedBeforeCounting ? (
+        <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-2">
+          {figure(spend.usedBeforeCounting)} were already used when this server started counting.
+        </p>
+      ) : null}
+    </details>
+  );
+}
+
+// Why a read routed through the App went to the bot token instead
+// (services/github.js getReadOctokit), in words.
+function readReasonLabel(reason: string): string {
+  if (reason === 'no_installation') return 'App not installed on the owner';
+  if (reason === 'budget_used_up' || reason === 'rate_limited') return "the App's hour used up";
+  if (reason === 'not_a_read') return 'writes on a read client';
+  const status = /^status_(\d+)$/.exec(reason);
+  if (status) return `the App refused (${status[1]})`;
+  return reason;
 }
 
 function githubCredentialLabel(row: GithubBudgetRow): string {
@@ -239,6 +465,78 @@ function githubResetLine(row: GithubBudgetRow): string {
   const minutes = Math.max(1, Math.ceil(row.resetInSeconds / 60));
   const reset = minutes === 1 ? 'resets in about a minute' : `resets in about ${minutes} minutes`;
   return `${left}, ${reset}.${row.held ? ' Background work is waiting for the reset.' : ''}`;
+}
+
+// The figures, from one payload: the missing installations, then one row per
+// credential with its bar, its reset, and who spent it. A component of its
+// own so it renders from a payload alone (tests/github-spend.test.js).
+function GithubBudgetFigures({ data }: { data: GithubBudgetPayload }) {
+  const rows = data.credentials.filter((r) => r.resource === 'core');
+  const reads = data.reads || null;
+  const missing = reads && reads.noInstallation
+    ? Object.entries(reads.noInstallation).sort((a, b) => b[1] - a[1])
+    : [];
+  const patReasons = reads ? Object.entries(reads.patReasons).sort((a, b) => b[1] - a[1]) : [];
+  let empty = '';
+  if (!rows.length) {
+    empty = data.configured && !data.configured.botToken && !data.configured.app
+      ? 'GitHub is not configured on this server.'
+      : 'No GitHub response since this server started. The figures appear after its next request.';
+  }
+
+  return (
+    <>
+      {empty ? <p id="admin-github-budget-empty" className={AdminUI.muted}>{empty}</p> : null}
+      {missing.length ? (
+        <p id="admin-github-no-installation" className="text-sm text-amber-700 dark:text-amber-400 mb-3">
+          The GitHub App is not installed on {missing.map(([owner]) => owner).join(', ')}, so reads of
+          {missing.length === 1 ? ' its repositories' : ' their repositories'} use the bot token
+          ({figure(missing.reduce((sum, [, c]) => sum + c, 0))} since this server started). Installing the App
+          there moves them to the App's own budget.
+        </p>
+      ) : null}
+      {rows.length ? (
+        <ul id="admin-github-budget-rows" className="space-y-3">
+          {rows.map((row) => {
+            const pct = row.limit > 0 ? Math.min(100, Math.round((row.used / row.limit) * 100)) : 0;
+            const tone = row.held ? 'held' : (row.remaining <= row.limit * 0.2 && !row.expired ? 'low' : 'ok');
+            const key = row.credential.replace(/[^a-z0-9-]/gi, '-');
+            return (
+              <li key={row.credential} data-credential={row.credential}>
+                <div className="flex flex-wrap items-baseline justify-between gap-2 text-sm">
+                  <span className="font-medium text-zinc-900 dark:text-zinc-100">{githubCredentialLabel(row)}</span>
+                  <span className="font-mono text-zinc-700 dark:text-zinc-300">
+                    {(row.expired ? 0 : row.used).toLocaleString('en-US')} of {row.limit.toLocaleString('en-US')} used
+                  </span>
+                </div>
+                <div className="h-1.5 mt-1 rounded-full bg-zinc-200 dark:bg-zinc-800 overflow-hidden">
+                  <div className={`h-full ${GITHUB_BAR_TONE[tone]}`} style={{ width: `${row.expired ? 0 : pct}%` }} />
+                </div>
+                <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">{githubResetLine(row)}</p>
+                {row.kind === 'pat' && reads && (reads.installation || reads.pat) ? (
+                  <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
+                    Reads since this server started: {figure(reads.installation)} through the App, {figure(reads.pat)} with the bot token
+                    {patReasons.length ? ` (${patReasons.map(([r, c]) => `${readReasonLabel(r)}: ${figure(c)}`).join(', ')})` : ''}.
+                  </p>
+                ) : null}
+                {row.spend && !row.spend.expired ? (
+                  <GithubSpendList id={key} title="Who used this hour" spend={row.spend} />
+                ) : null}
+                {row.previousSpend ? (
+                  <GithubSpendList id={`${key}-previous`} title="The hour before" spend={row.previousSpend} />
+                ) : null}
+              </li>
+            );
+          })}
+        </ul>
+      ) : null}
+      {data.demo ? (
+        <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-3">
+          This preview has no GitHub token, so these are sample figures.
+        </p>
+      ) : null}
+    </>
+  );
 }
 
 function GithubBudgetCard() {
@@ -257,14 +555,7 @@ function GithubBudgetCard() {
     })();
   }, []);
 
-  const rows = data ? data.credentials.filter((r) => r.resource === 'core') : [];
   const reserve = data ? data.reservePercent : 15;
-  let empty = '';
-  if (data && !rows.length) {
-    empty = data.configured && !data.configured.botToken && !data.configured.app
-      ? 'GitHub is not configured on this server.'
-      : 'No GitHub response since this server started. The figures appear after its next request.';
-  }
 
   return (
     <div id="admin-github-budget" className={`${AdminUI.card} p-4 mt-4`}>
@@ -280,34 +571,7 @@ function GithubBudgetCard() {
       </p>
       {!data && !failed ? <p className={AdminUI.loading}>Loading…</p> : null}
       {failed ? <p className="text-xs text-red-400">Couldn’t load the GitHub figures.</p> : null}
-      {empty ? <p id="admin-github-budget-empty" className={AdminUI.muted}>{empty}</p> : null}
-      {rows.length ? (
-        <ul id="admin-github-budget-rows" className="space-y-3">
-          {rows.map((row) => {
-            const pct = row.limit > 0 ? Math.min(100, Math.round((row.used / row.limit) * 100)) : 0;
-            const tone = row.held ? 'held' : (row.remaining <= row.limit * 0.2 && !row.expired ? 'low' : 'ok');
-            return (
-              <li key={row.credential} data-credential={row.credential}>
-                <div className="flex flex-wrap items-baseline justify-between gap-2 text-sm">
-                  <span className="font-medium text-zinc-900 dark:text-zinc-100">{githubCredentialLabel(row)}</span>
-                  <span className="font-mono text-zinc-700 dark:text-zinc-300">
-                    {(row.expired ? 0 : row.used).toLocaleString('en-US')} of {row.limit.toLocaleString('en-US')} used
-                  </span>
-                </div>
-                <div className="h-1.5 mt-1 rounded-full bg-zinc-200 dark:bg-zinc-800 overflow-hidden">
-                  <div className={`h-full ${GITHUB_BAR_TONE[tone]}`} style={{ width: `${row.expired ? 0 : pct}%` }} />
-                </div>
-                <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">{githubResetLine(row)}</p>
-              </li>
-            );
-          })}
-        </ul>
-      ) : null}
-      {data && data.demo ? (
-        <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-3">
-          This preview has no GitHub token, so these are sample figures.
-        </p>
-      ) : null}
+      {data ? <GithubBudgetFigures data={data} /> : null}
     </div>
   );
 }
@@ -472,6 +736,8 @@ function LimitsSection() {
     <>
       <AppLimitCard canWrite={canWrite} />
 
+      <SessionLimitCard canWrite={canWrite} />
+
       <GithubBudgetCard />
 
       <div className={`${AdminUI.card} p-4 mt-4`}>
@@ -595,5 +861,7 @@ const AdminLimits = {
 if (typeof window !== 'undefined') (window as any).AdminLimits = AdminLimits;
 
 // AppLimitCard is exported for tests/app-limit.test.js, which renders it,
-// and GithubBudgetCard for tests/github-budget.test.js.
-export { AdminLimits, AppLimitCard, GithubBudgetCard };
+// SessionLimitCard for tests/session-limit.test.js, GithubBudgetCard for
+// tests/github-budget.test.js, and GithubBudgetFigures for
+// tests/github-spend.test.js, which renders it from a payload.
+export { AdminLimits, AppLimitCard, SessionLimitCard, GithubBudgetCard, GithubBudgetFigures };

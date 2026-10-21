@@ -83,15 +83,31 @@ export const notificationsStore = createStore({
   /** A page is in flight — the pager says so and stops taking clicks. */
   loadingMore: false,
   /**
-   * The same pair for the Messages tab, which pages the conversation kinds on
-   * a cursor of its own (Notifications.loadOlderMessages). Two pairs rather
-   * than one because the two queries skip different rows: sharing a cursor
-   * would let paging on one tab strand rows the other could never reach.
-   * `messagesCanLoadMore` starts true — nothing has asked yet, and the first
-   * press is what finds out.
+   * #5289: the bell's number (Notifications._badgeTotal: the account-wide
+   * unread plus pending invites), published by _renderBadge so the sheet's
+   * Unread tab prints the same count the bell and the browser tab do.
    */
-  messagesCanLoadMore: true,
-  loadingOlderMessages: false,
+  badgeTotal: 0,
+  /**
+   * #5527: the same pair for the Unread tab, which pages unread rows only on
+   * a cursor of its own (Notifications.loadMoreUnread over `?unread=1`) —
+   * under the exact filters the badge's countUnread applies, so paging here
+   * can fill the list up to the number the bell paints. Starts false:
+   * refresh() seeds it from the first page's own hasMore, so there is
+   * nothing to discover before the first ask.
+   */
+  unreadCanLoadMore: false,
+  loadingUnread: false,
+  /**
+   * #5527: bumped by every refresh() whose first page landed, published with
+   * each _renderList. The Unread tab's auto-fill arms itself when the sheet
+   * opens and walks loadMoreUnread when this CHANGES while it is open — the
+   * sheet's own open is not the trigger, because opening always refreshes,
+   * and a fill that starts before that refresh lands is thrown away by it
+   * (refresh replaces the feed). Filling after the refresh lands is the one
+   * order that cannot race.
+   */
+  refreshTick: 0,
   /** PlatformUI.isTouch() at render time — gates the swipe-action wiring. */
   touch: false,
   /**

@@ -2,8 +2,8 @@
 
 import { AdminUI } from './admin-console.js';
 
-// Rollout health (#admin/homeroom-bot, Overview): before the bot is on for
-// everyone, whether it is working, over the last week. The numbers and
+// Rollout health (#admin/homeroom-bot, Overview): whether the bot is
+// working, over the last week. The numbers and
 // which of them are past their line come from the dashboard's payload
 // (services/homeroom-bot-health.js); this file only says them. A figure
 // with too little behind it says so instead of passing a verdict, and only
@@ -123,7 +123,8 @@ export function healthRows(h: RolloutHealthData, now: number = Date.now()): Heal
 }
 
 // #4210: an error that should not happen, as the payload's incidents list
-// them (services/platform-incidents.js). Only build_interrupted so far.
+// them (services/platform-incidents.js): build_interrupted, and a red check
+// that is not its change's doing (checks_not_change).
 export interface Incident {
   at: string;
   kind: string;
@@ -142,12 +143,20 @@ export interface Incidents {
 
 export const INCIDENT_KIND: Record<string, string> = {
   build_interrupted: 'Build interrupted',
+  checks_not_change: 'Red check not caused by its change',
 };
 
 export const INCIDENT_OUTCOME: Record<string, string> = {
   resumed: 'carried on from its plan',
   requeued: 'started over from the request',
   failed: 'stopped: too many in a row',
+  // A first version's review a restart cut short (homeroom-bot.js
+  // noteReviewIncident): what was proposed.
+  fix_kept: 'review fix booted, proposed',
+  fix_rolled_back: 'review fix rolled back, proposed',
+  proposed_as_it_stood: 'proposed as it stood',
+  review_carried_on: 'review carried on where it was cut',
+  not_open: 'request no longer open',
 };
 
 /** One incident as a line: when, what, where, why, what became of it. Pure. */

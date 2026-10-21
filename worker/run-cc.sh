@@ -43,7 +43,9 @@
 #                              claude-openrouter-request.js adapter, and needs
 #                              OPENROUTER_API_KEY + AGENT_MODEL (MODEL is the
 #                              same slug); OPENROUTER_API_BASE,
-#                              AGENT_MODEL_MAX_OUTPUT_TOKENS and
+#                              AGENT_MODEL_MAX_OUTPUT_TOKENS,
+#                              AGENT_MODEL_CONTEXT_WINDOW (sets the window
+#                              Claude Code compacts at) and
 #                              AGENT_REASONING_EFFORT are optional.
 #   DISCARD_FAILED_TURN        1: a build whose claude failed commits and
 #                              pushes nothing (the Homeroom bot's turns);
@@ -54,6 +56,34 @@
 #                              end a turn that has changed nothing (the
 #                              Homeroom bot's build and review-fix turns).
 #                              The result line then carries stop_hook_blocks
+#   STOP_GUARD_CHECKS          with STOP_GUARD: the platform's check command
+#                              (worker.js writeAppCheck), which the hook runs
+#                              when a turn that changed something tries to
+#                              end, sending it back (twice at most) while a
+#                              check dapp.json declares fails (L2). The result
+#                              line then carries stop_hook_check_blocks.
+#                              The hook also stops any server the agent left
+#                              running in its workspace before the checks and
+#                              the turn's end: stop_hook_servers_stopped,
+#                              on the result line when it stopped any
+#   STOP_GUARD_DEADLINE        when the platform stops the turn (epoch ms):
+#                              the checks are not started with too little left
+#   STOP_GUARD_REQUIRE_TESTS   1, with STOP_GUARD_CHECKS (a first version's
+#                              build and review fixes): a dapp.json with a
+#                              `checks` key or no routed `tests` sends the
+#                              turn back too (build-stop-hook.js)
+#   BUILD_PROFILE              first_version: a build of a project's first
+#                              version (the Homeroom bot's build and review
+#                              fixes) loads only the tools one uses: the
+#                              browser without visible_changes, the Homeroom
+#                              read tools narrowed to get_platform_conventions,
+#                              and no WebSearch, WebFetch or NotebookEdit
+#   LEAN_TURNS                 1: such a build under its configuration's
+#                              lean_turns tweak also leaves out the delegation,
+#                              planning and to-do tools and the browser tools
+#                              a build never uses, and the request adapter
+#                              cuts stale browser and shell output from what
+#                              each model call re-sends
 #   PAT                        legacy back-compat — not set by the
 #                              current platform. The push step uses
 #                              `usernode-push` (which calls back into
@@ -102,6 +132,8 @@ fi
 : "${SYSTEM_PROMPT_FILE:=}"
 : "${RESUME_FALLBACK_PROMPT_FILE:=}"
 : "${BROWSER_MCP_CONFIG:=/home/node/.usernode-mcp.json}"
+: "${BROWSER_ONLY_MCP_CONFIG:=/home/node/.usernode-mcp-browser.json}"
+: "${BUILD_PROFILE:=}"
 : "${SHOTS_JWT:=}"
 : "${SHOTS_RUN_ID:=}"
 : "${SHOTS_BASE_ORIGIN:=}"
@@ -112,6 +144,10 @@ fi
 # Optional: the guest browser is signed out, and carries a guest token only
 # for a view-public child app (shots-origin-proxy.js).
 : "${SHOTS_GUEST_TOKEN:=}"
+# Optional: the invited fixtures' tokens (#4437), present only for a run
+# whose declared changes name their personas, on the platform's own copies.
+: "${SHOTS_INVITED_MEMBER_TOKEN:=}"
+: "${SHOTS_INVITED_MEMBER_LISTED_TOKEN:=}"
 : "${AGENT_PROVIDER:=anthropic}"
 
 SYSTEM_PROMPT_FLAGS=""
@@ -201,6 +237,8 @@ fi
 # Sourced here, after the readiness and argument guards above, so a turn
 # that must stop early never depends on it.
 . "$(dirname "$0")/session-branch.sh"
+# The container's memory, for the result line (mem_peak_mib and the rest).
+. "$(dirname "$0")/memory-fields.sh"
 
 # Pre-exec hygiene: every turn starts from a known-good tree. Pulls in
 # anything pushed by a parallel turn / merge bot since we last ran, and
@@ -355,13 +393,34 @@ fi
 # Net effect: scout has full read-only Bash + WebFetch (so it can run
 # `git submodule update --init`, `gh api`, etc.) but cannot escape the
 # worker container even if CC misbehaves.
+# A first version's build (BUILD_PROFILE=first_version, run four, 13 Oct
+# 2026): every tool loaded is sent with every one of its model requests (52
+# definitions on that build's 156), so the ones a brand-new app's build never
+# uses are left out. Bash, Read, Edit, Write, Glob, Grep, Skill and the
+# browser's tools stay: the in-loop browser guidance and the design skill use
+# them.
+FIRST_VERSION_BUILD=""
+if [ "$MODE" = "build" ] && [ "$BUILD_PROFILE" = "first_version" ]; then
+  FIRST_VERSION_BUILD=1
+fi
 if [ "$MODE" = "scout" ]; then
   PERMISSION_FLAGS="--dangerously-skip-permissions --disallowed-tools Edit Write NotebookEdit"
+elif [ -n "$FIRST_VERSION_BUILD" ]; then
+  PERMISSION_FLAGS="--dangerously-skip-permissions --disallowed-tools WebSearch WebFetch NotebookEdit"
+  # Build speed (L7, lean_turns): every model call re-sends every tool's
+  # definition. A first version's build has no use for a subagent, a plan
+  # mode or a to-do list (each a model call of its own), nor for installing
+  # a browser, uploading files, tabs or raw Playwright code.
+  if [ "${LEAN_TURNS:-}" = "1" ]; then
+    PERMISSION_FLAGS="$PERMISSION_FLAGS Task Agent TodoWrite ExitPlanMode mcp__playwright__browser_install mcp__playwright__browser_file_upload mcp__playwright__browser_tabs mcp__playwright__browser_run_code"
+  fi
 elif [ "$MODE" = "shots" ]; then
   # Shots turns operate only through platform-seeded MCP servers. Removing
   # every filesystem, shell, web and delegation tool prevents the model from
-  # reading browser storage state or inherited process credentials.
-  PERMISSION_FLAGS="--dangerously-skip-permissions --disallowed-tools Bash Edit Write NotebookEdit Read Glob Grep WebFetch WebSearch Task Agent Skill TodoWrite mcp__browser_member__browser_evaluate mcp__browser_member__browser_run_code mcp__browser_member__browser_file_upload mcp__browser_member__browser_install mcp__browser_admin__browser_evaluate mcp__browser_admin__browser_run_code mcp__browser_admin__browser_file_upload mcp__browser_admin__browser_install mcp__browser_full_admin__browser_evaluate mcp__browser_full_admin__browser_run_code mcp__browser_full_admin__browser_file_upload mcp__browser_full_admin__browser_install mcp__browser_guest__browser_evaluate mcp__browser_guest__browser_run_code mcp__browser_guest__browser_file_upload mcp__browser_guest__browser_install"
+  # reading browser storage state or inherited process credentials. Each
+  # persona's phone browser (browser_<persona>_phone, present only when a
+  # declared screen is a phone's) is denied the same browser tools.
+  PERMISSION_FLAGS="--dangerously-skip-permissions --disallowed-tools Bash Edit Write NotebookEdit Read Glob Grep WebFetch WebSearch Task Agent Skill TodoWrite mcp__browser_member__browser_evaluate mcp__browser_member__browser_run_code mcp__browser_member__browser_file_upload mcp__browser_member__browser_install mcp__browser_admin__browser_evaluate mcp__browser_admin__browser_run_code mcp__browser_admin__browser_file_upload mcp__browser_admin__browser_install mcp__browser_full_admin__browser_evaluate mcp__browser_full_admin__browser_run_code mcp__browser_full_admin__browser_file_upload mcp__browser_full_admin__browser_install mcp__browser_guest__browser_evaluate mcp__browser_guest__browser_run_code mcp__browser_guest__browser_file_upload mcp__browser_guest__browser_install mcp__browser_member_phone__browser_evaluate mcp__browser_member_phone__browser_run_code mcp__browser_member_phone__browser_file_upload mcp__browser_member_phone__browser_install mcp__browser_admin_phone__browser_evaluate mcp__browser_admin_phone__browser_run_code mcp__browser_admin_phone__browser_file_upload mcp__browser_admin_phone__browser_install mcp__browser_full_admin_phone__browser_evaluate mcp__browser_full_admin_phone__browser_run_code mcp__browser_full_admin_phone__browser_file_upload mcp__browser_full_admin_phone__browser_install mcp__browser_guest_phone__browser_evaluate mcp__browser_guest_phone__browser_run_code mcp__browser_guest_phone__browser_file_upload mcp__browser_guest_phone__browser_install mcp__browser_invited_member__browser_evaluate mcp__browser_invited_member__browser_run_code mcp__browser_invited_member__browser_file_upload mcp__browser_invited_member__browser_install mcp__browser_invited_member_phone__browser_evaluate mcp__browser_invited_member_phone__browser_run_code mcp__browser_invited_member_phone__browser_file_upload mcp__browser_invited_member_phone__browser_install mcp__browser_invited_member_listed__browser_evaluate mcp__browser_invited_member_listed__browser_run_code mcp__browser_invited_member_listed__browser_file_upload mcp__browser_invited_member_listed__browser_install mcp__browser_invited_member_listed_phone__browser_evaluate mcp__browser_invited_member_listed_phone__browser_run_code mcp__browser_invited_member_listed_phone__browser_file_upload mcp__browser_invited_member_listed_phone__browser_install"
 else
   PERMISSION_FLAGS="--dangerously-skip-permissions"
 fi
@@ -377,6 +436,12 @@ fi
 # before. The MCP server only spawns on claude startup; Chromium launches
 # lazily on the first browser tool call, so a build turn that never reaches
 # for it pays nothing.
+# A first version declares no visible changes (homeroom-bot-live.js
+# buildPrompt): its build loads the browser alone, when the bootstrap wrote
+# that config (worker-run.sh).
+if [ -n "$FIRST_VERSION_BUILD" ] && [ -f "$BROWSER_ONLY_MCP_CONFIG" ]; then
+  BROWSER_MCP_CONFIG="$BROWSER_ONLY_MCP_CONFIG"
+fi
 BROWSER_MCP_FLAGS=""
 if [ "$MODE" = "build" ] && [ -f "$BROWSER_MCP_CONFIG" ]; then
   BROWSER_MCP_FLAGS="--mcp-config $BROWSER_MCP_CONFIG --strict-mcp-config"
@@ -389,12 +454,36 @@ fi
 # browser config; a scout loads it alone, so it stays browser-free. Still
 # --strict-mcp-config either way.
 HOMEROOM_MCP_CONFIG="${HOMEROOM_MCP_CONFIG:-/usr/local/share/usernode/homeroom-mcp.json}"
+# A brand-new app has no requests, proposals or changes to read: a first
+# version's bridge offers the platform conventions alone
+# (homeroom-read-mcp.js HOMEROOM_READ_TOOLS), which its prompt and CLAUDE.md
+# send it to instead of fetching the whole hosted copy.
+if [ -n "$FIRST_VERSION_BUILD" ]; then
+  HOMEROOM_READ_TOOLS=get_platform_conventions
+  export HOMEROOM_READ_TOOLS
+fi
 if [ -n "${HOMEROOM_MCP_TOKEN:-}" ] && [ -f "$HOMEROOM_MCP_CONFIG" ]; then
   if [ "$MODE" = "build" ] && [ -n "$BROWSER_MCP_FLAGS" ]; then
     BROWSER_MCP_FLAGS="--mcp-config $BROWSER_MCP_CONFIG $HOMEROOM_MCP_CONFIG --strict-mcp-config"
   elif [ "$MODE" = "build" ] || [ "$MODE" = "scout" ]; then
     BROWSER_MCP_FLAGS="--mcp-config $HOMEROOM_MCP_CONFIG --strict-mcp-config"
   fi
+fi
+
+# App bench run 193 (14 Oct 2026): a first version's build called
+# browser_evaluate on a promise nothing settled (the kit's confirm dialog,
+# waiting for a click) and the call held the turn for 1,800 s, Claude Code's
+# own limit on one MCP tool call, before it failed. Every MCP call a build
+# makes (the browser, Homeroom's read tools, visible changes) answers in
+# seconds: none of the run's other browser calls took 20. Two minutes is past
+# every limit Playwright sets itself (5 s an action, 60 s a navigation), so
+# only a call that would never return reaches it, and it fails while the
+# build still has time to go on. A Codex build's browser gets 60 s
+# (run-codex-agent.sh). The shots agent records clips, and keeps Claude
+# Code's own limit. A value already in the environment is kept.
+if [ "$MODE" = "build" ]; then
+  MCP_TOOL_TIMEOUT="${MCP_TOOL_TIMEOUT:-120000}"
+  export MCP_TOOL_TIMEOUT
 fi
 
 SHOTS_PROXY_PID=""
@@ -421,9 +510,16 @@ if [ "$MODE" = "shots" ]; then
   : > "$SHOTS_BROWSER_DIAGNOSTIC_FILE"
   # Each persona's browser saves the shots agent's named screenshots (and
   # clips, when a motion change is declared) here; the shots bridge reads
-  # them back by name to publish them.
+  # them back by name to publish them. A phone browser saves beside its
+  # persona's, in <persona>_phone, which the config writer creates.
   export SHOTS_DIR="$SHOTS_TMP/shots"
   mkdir -p "$SHOTS_DIR/member" "$SHOTS_DIR/admin" "$SHOTS_DIR/full_admin" "$SHOTS_DIR/guest" \
+    || die "could not create the shots directories"
+  # The invited fixtures' browsers (#4437) save beside these, in their own
+  # directory, when this run starts one.
+  [ -z "$SHOTS_INVITED_MEMBER_TOKEN" ] || mkdir -p "$SHOTS_DIR/invited_member" \
+    || die "could not create the shots directories"
+  [ -z "$SHOTS_INVITED_MEMBER_LISTED_TOKEN" ] || mkdir -p "$SHOTS_DIR/invited_member_listed" \
     || die "could not create the shots directories"
   tail -n +1 -s 0.2 -f "$SHOTS_BROWSER_DIAGNOSTIC_FILE" &
   SHOTS_DIAGNOSTIC_TAIL_PID=$!
@@ -435,6 +531,12 @@ if [ "$MODE" = "shots" ]; then
   # otherwise. The bootstrap and the control plane keep the shared port above.
   export SHOTS_PROXY_PERSONA_PORTS='{"member":17892,"read_only_admin":17893,"full_admin":17894,"guest":17895}'
   export SHOTS_PROXY_CONTROL_TOKEN=$(node -e "process.stdout.write(require('crypto').randomBytes(32).toString('hex'))")
+  # The shots bridge's upload_file asks a browser's observer to choose a
+  # sample file (shots-samples.js) over a socket here, with its own token:
+  # the agent's browser_file_upload stays denied below.
+  export SHOTS_BROWSER_CONTROL_DIR="$SHOTS_TMP/ctl"
+  export SHOTS_BROWSER_CONTROL_TOKEN=$(node -e "process.stdout.write(require('crypto').randomBytes(32).toString('hex'))")
+  mkdir -m 700 "$SHOTS_BROWSER_CONTROL_DIR" || die "could not create the shots browser control directory"
   export SHOTS_PROXY_READY="$SHOTS_TMP/proxy.ready"
   export SHOTS_ALLOWED_ORIGINS="[\"$SHOTS_BASE_ORIGIN\",\"$SHOTS_HEAD_ORIGIN\"]"
   # The proxy also samples the worker's memory every 5 seconds into the
@@ -453,7 +555,8 @@ if [ "$MODE" = "shots" ]; then
   export SHOTS_BOOTSTRAP_FAILURE_FILE="$SHOTS_TMP/browser-bootstrap.failure"
   node /usr/local/bin/shots-browser-bootstrap.js \
     || die "$(head -c 300 "$SHOTS_BOOTSTRAP_FAILURE_FILE" 2>/dev/null | tr -d '\r\n' | grep . || echo 'shots browser authentication failed')"
-  unset SHOTS_MEMBER_TOKEN SHOTS_ADMIN_TOKEN SHOTS_FULL_ADMIN_TOKEN SHOTS_GUEST_TOKEN
+  unset SHOTS_MEMBER_TOKEN SHOTS_ADMIN_TOKEN SHOTS_FULL_ADMIN_TOKEN SHOTS_GUEST_TOKEN \
+    SHOTS_INVITED_MEMBER_TOKEN SHOTS_INVITED_MEMBER_LISTED_TOKEN
   BROWSER_MCP_CONFIG="$SHOTS_TMP/mcp.json"
   node /usr/local/bin/write-shots-mcp-config.js "$BROWSER_MCP_CONFIG" \
     || die "could not create shots MCP config"
@@ -482,15 +585,32 @@ TURN_START_SHA=$(git rev-parse HEAD 2>/dev/null || echo "")
 # hook, exactly as it ran before, rather than failing it.
 STOP_GUARD_FLAGS=""
 STOP_GUARD_DIR=""
+# The checks gate (STOP_GUARD_CHECKS, L2): the same hook, with a timeout long
+# enough to boot the app and run its declared checks, when the platform wrote
+# its check command for this turn.
+STOP_GUARD_CHECKS_ON=""
+if [ -n "${STOP_GUARD_CHECKS:-}" ] && [ -f "$STOP_GUARD_CHECKS" ]; then STOP_GUARD_CHECKS_ON=1; fi
 if [ "$MODE" = "build" ] && [ "${STOP_GUARD:-}" = "1" ]; then
   if [ -n "$TURN_START_SHA" ] \
       && STOP_GUARD_DIR=$(mktemp -d /tmp/usernode-stop-guard.XXXXXX 2>/dev/null) \
-      && node "$(dirname "$0")/build-stop-hook.js" --settings > "$STOP_GUARD_DIR/settings.json" 2>/dev/null \
+      && node "$(dirname "$0")/build-stop-hook.js" --settings ${STOP_GUARD_CHECKS_ON:+--checks} > "$STOP_GUARD_DIR/settings.json" 2>/dev/null \
       && [ -s "$STOP_GUARD_DIR/settings.json" ]; then
     USERNODE_STOP_GUARD_START="$TURN_START_SHA"
     USERNODE_STOP_GUARD_COUNT="$STOP_GUARD_DIR/blocks"
     USERNODE_STOP_GUARD_REPO=$(pwd)
-    export USERNODE_STOP_GUARD_START USERNODE_STOP_GUARD_COUNT USERNODE_STOP_GUARD_REPO
+    # The servers it stopped because the agent left them running (the hook's
+    # header, LEFTOVER SERVERS), counted for the result line.
+    USERNODE_STOP_GUARD_SERVERS="$STOP_GUARD_DIR/servers"
+    export USERNODE_STOP_GUARD_START USERNODE_STOP_GUARD_COUNT USERNODE_STOP_GUARD_REPO USERNODE_STOP_GUARD_SERVERS
+    if [ -n "$STOP_GUARD_CHECKS_ON" ]; then
+      USERNODE_STOP_GUARD_CHECKS="$STOP_GUARD_CHECKS"
+      USERNODE_STOP_GUARD_CHECKS_COUNT="$STOP_GUARD_DIR/checks"
+      USERNODE_STOP_GUARD_CHECKS_PASSED="$STOP_GUARD_DIR/checks-passed"
+      USERNODE_STOP_GUARD_DEADLINE="${STOP_GUARD_DEADLINE:-}"
+      USERNODE_STOP_GUARD_REQUIRE_TESTS="${STOP_GUARD_REQUIRE_TESTS:-}"
+      export USERNODE_STOP_GUARD_CHECKS USERNODE_STOP_GUARD_CHECKS_COUNT USERNODE_STOP_GUARD_CHECKS_PASSED USERNODE_STOP_GUARD_DEADLINE
+      export USERNODE_STOP_GUARD_REQUIRE_TESTS
+    fi
     STOP_GUARD_FLAGS="--settings $STOP_GUARD_DIR/settings.json"
   else
     echo "__USERNODE_WARN__ the stop guard could not be set up; this build runs without it"
@@ -538,8 +658,27 @@ if [ -n "$STOP_GUARD_FLAGS" ]; then
   if [ "$STOP_HOOK_BLOCKS" -gt 0 ]; then
     echo "__USERNODE_WARN__ The agent tried to end its turn having changed nothing; the stop guard sent it back to work (stop_hook_blocks=$STOP_HOOK_BLOCKS)"
   fi
+  if [ -n "$STOP_GUARD_CHECKS_ON" ]; then
+    STOP_HOOK_CHECK_BLOCKS=$(cat "$USERNODE_STOP_GUARD_CHECKS_COUNT" 2>/dev/null || echo 0)
+    case "$STOP_HOOK_CHECK_BLOCKS" in ''|*[!0-9]*) STOP_HOOK_CHECK_BLOCKS=0 ;; esac
+    STOP_HOOK_BLOCKS_FIELD="$STOP_HOOK_BLOCKS_FIELD stop_hook_check_blocks=$STOP_HOOK_CHECK_BLOCKS"
+    if [ "$STOP_HOOK_CHECK_BLOCKS" -gt 0 ]; then
+      echo "__USERNODE_WARN__ The app's declared checks failed when the agent tried to end its turn; the checks gate sent it back to fix them (stop_hook_check_blocks=$STOP_HOOK_CHECK_BLOCKS)"
+    fi
+  fi
+  # Servers the agent left running that the hook stopped (only when there
+  # were some, so a turn's line reads as before otherwise).
+  STOP_HOOK_SERVERS=$(cat "$USERNODE_STOP_GUARD_SERVERS" 2>/dev/null || echo 0)
+  case "$STOP_HOOK_SERVERS" in ''|*[!0-9]*) STOP_HOOK_SERVERS=0 ;; esac
+  if [ "$STOP_HOOK_SERVERS" -gt 0 ]; then
+    STOP_HOOK_BLOCKS_FIELD="$STOP_HOOK_BLOCKS_FIELD stop_hook_servers_stopped=$STOP_HOOK_SERVERS"
+    echo "__USERNODE_WARN__ The agent left servers running in its workspace; the stop guard stopped them as the turn ended (stop_hook_servers_stopped=$STOP_HOOK_SERVERS)"
+  fi
 fi
 if [ -n "$STOP_GUARD_DIR" ]; then rm -rf "$STOP_GUARD_DIR" 2>/dev/null || true; fi
+
+# Read once the agent is done: the most the container used by then.
+MEMORY_FIELDS=$(usernode_memory_fields)
 
 if [ "$MODE" = "scout" ] || [ "$MODE" = "shots" ]; then
   # Read-only run: no commit, no push. The host pulls scout output out
@@ -549,7 +688,7 @@ if [ "$MODE" = "scout" ] || [ "$MODE" = "shots" ]; then
   # Terminal phase marker so the progress card ends on "Finished"
   # instead of freezing on the last action line.
   echo "__USERNODE_PHASE__ done"
-  echo "__USERNODE_RESULT__ cc_exit=$CC_EXIT ahead=0 behind=0 sha= push_ok=0 mode=$MODE"
+  echo "__USERNODE_RESULT__ cc_exit=$CC_EXIT ahead=0 behind=0 sha= push_ok=0 mode=$MODE$MEMORY_FIELDS"
   exit "$CC_EXIT"
 fi
 
@@ -573,7 +712,7 @@ if [ "${DISCARD_FAILED_TURN:-}" = "1" ]; then
   if [ -n "$TURN_FAILED" ]; then
     echo "__USERNODE_WARN__ $TURN_FAILED; skipping commit/push"
     echo "__USERNODE_PHASE__ done"
-    echo "__USERNODE_RESULT__ cc_exit=$CC_EXIT ahead=0 behind=0 sha= push_ok=0 mode=build$STOP_HOOK_BLOCKS_FIELD"
+    echo "__USERNODE_RESULT__ cc_exit=$CC_EXIT ahead=0 behind=0 sha= push_ok=0 mode=build$STOP_HOOK_BLOCKS_FIELD$MEMORY_FIELDS"
     if [ "$CC_EXIT" -ne 0 ]; then exit "$CC_EXIT"; fi
     exit 1
   fi
@@ -623,5 +762,5 @@ if [ "$PUSH_OK" = "1" ]; then
 else
   echo "__USERNODE_PHASE__ push_failed"
 fi
-echo "__USERNODE_RESULT__ cc_exit=$CC_EXIT ahead=$AHEAD behind=$BEHIND sha=$SHA push_ok=$PUSH_OK mode=build$BRANCH_MISMATCH_FIELD$STOP_HOOK_BLOCKS_FIELD"
+echo "__USERNODE_RESULT__ cc_exit=$CC_EXIT ahead=$AHEAD behind=$BEHIND sha=$SHA push_ok=$PUSH_OK mode=build$BRANCH_MISMATCH_FIELD$STOP_HOOK_BLOCKS_FIELD$MEMORY_FIELDS"
 exit "$CC_EXIT"

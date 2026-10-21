@@ -46,7 +46,7 @@ poolMod.getPool = () => ({
         }],
       };
     }
-    if (/COALESCE\(SUM\(total_cost_cents\), 0\) AS total/.test(sql)) {
+    if (/llm_usage WHERE user_id = \$1 AND date >= \$2/.test(sql)) {
       return { rows: [{ total: row.weekly_spent_cents, byok: row.weekly_byok_cents }] };
     }
     if (/LEFT JOIN llm_usage/.test(sql)) {

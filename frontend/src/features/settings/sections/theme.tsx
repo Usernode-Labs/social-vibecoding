@@ -36,6 +36,7 @@ import { useCallback, useRef, useState } from 'react';
 import { SectionHeading } from '@/components/ui/field';
 import { Switch } from '@/components/ui/switch';
 
+import { useMessages } from '../../../lib/i18n/react';
 import { useIsomorphicLayoutEffect, useWindowEvent } from '../../../lib/legacy-dom';
 
 // Order of the three segments in the DOM — also the caret's stop index, so the
@@ -47,9 +48,9 @@ const THEME_SEG_CLASS =
   'theme-seg flex-1 basis-0 rounded-md px-1.5 py-1 transition-colors';
 
 const THEME_LABELS: Record<ThemeMode, string> = {
-  light: 'Light',
-  dark: 'Dark',
-  system: 'System',
+  light: 'settings:theme.mode.light',
+  dark: 'settings:theme.mode.dark',
+  system: 'settings:theme.mode.system',
 };
 
 /**
@@ -74,6 +75,7 @@ const THEME_LABELS: Record<ThemeMode, string> = {
  * changed while the viewer was elsewhere in Settings.
  */
 function ThemeControl() {
+  const t = useMessages('settings');
   const [mode, setMode] = useState<ThemeMode | null>(null);
   const trackRef = useRef<HTMLDivElement | null>(null);
 
@@ -127,7 +129,7 @@ function ThemeControl() {
       id="drawer-theme-track"
       ref={trackRef}
       role="radiogroup"
-      aria-label="Theme"
+      aria-label={t('settings:theme.controlName')}
       className="relative flex p-0.5 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 text-xs font-medium"
     >
       {THEME_MODES.map((m) => (
@@ -140,7 +142,7 @@ function ThemeControl() {
           className={mode === m ? `${THEME_SEG_CLASS} theme-seg-active` : THEME_SEG_CLASS}
           onClick={() => choose(m)}
         >
-          {THEME_LABELS[m]}
+          {t(THEME_LABELS[m])}
         </button>
       ))}
       <span id="drawer-theme-caret-track" aria-hidden="true">
@@ -153,14 +155,16 @@ function ThemeControl() {
 
 // The key App._railPinned reads (public/js/app.js). Read here too so the
 // switch can show the stored value before App exists, and written through
-// App.setRailPinned so the router re-decides at once.
+// App.setRailPinned so the router re-decides at once. ON unless '0' is
+// stored: nothing stored is the default, and a '1' from when this was
+// opt-in still reads as on.
 export const RAIL_PINNED_KEY = 'usernode:rail-pinned';
 
 function readRailPinned(): boolean {
   try {
-    return window.localStorage.getItem(RAIL_PINNED_KEY) === '1';
+    return window.localStorage.getItem(RAIL_PINNED_KEY) !== '0';
   } catch {
-    return false;
+    return true;
   }
 }
 
@@ -170,25 +174,28 @@ export function writeRailPinned(on: boolean): void {
     return;
   }
   try {
-    if (on) window.localStorage.setItem(RAIL_PINNED_KEY, '1');
-    else window.localStorage.removeItem(RAIL_PINNED_KEY);
+    if (on) window.localStorage.removeItem(RAIL_PINNED_KEY);
+    else window.localStorage.setItem(RAIL_PINNED_KEY, '0');
   } catch { /* unwritable storage: the switch does not stick */ }
 }
 
 /**
  * "Keep sidebar open in apps" (#3319) — the desktop rail stays docked beside
- * a running app instead of giving the app the whole window. Off by default.
+ * a running app, with the sidebar toggle where the app's ✕ was. ON by
+ * default; off gives the app the whole window and its ✕ back.
  *
  * DESKTOP ONLY, and the class string says so (`hidden md:block`): below
  * 768px the bar is the phone's bottom bar, which an app always covers.
  *
- * `pinned` starts false, which is the prerender (an unchecked switch), and
- * the stored value arrives in an effect — localStorage is client-only, and
- * reading it during render would be a hydration mismatch for anyone who had
- * turned it on. Re-read on every entry into this section, like the theme.
+ * `pinned` starts true, which is the prerender (a checked switch, the
+ * default), and the stored value arrives in an effect — localStorage is
+ * client-only, and reading it during render would be a hydration mismatch
+ * for anyone who had turned it off. Re-read on every entry into this
+ * section, like the theme.
  */
 function RailPinnedRow() {
-  const [pinned, setPinned] = useState(false);
+  const t = useMessages('settings');
+  const [pinned, setPinned] = useState(true);
   const sync = useCallback(() => setPinned(readRailPinned()), []);
   useIsomorphicLayoutEffect(() => { sync(); }, [sync]);
   useWindowEvent('usernode:settings-section', sync);
@@ -206,22 +213,23 @@ function RailPinnedRow() {
           }}
         />
         <span className="text-sm text-zinc-800 dark:text-zinc-200">
-          Keep sidebar open in apps
+          {t('settings:theme.railPinned.label')}
         </span>
       </label>
       <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
-        Off, an app you open takes the whole window and the sidebar comes back when you point at the left edge. On, the sidebar stays beside it.
+        {t('settings:theme.railPinned.description')}
       </p>
     </div>
   );
 }
 
 export function ThemeSection() {
+  const t = useMessages('settings');
   return (
     <div data-settings-section="theme" className="hidden">
       <div id="settings-theme-section">
-        <SectionHeading title="Theme">
-          Light, dark, or follow your device. Applies everywhere on this browser.
+        <SectionHeading title={t('settings:theme.title')}>
+          {t('settings:theme.intro')}
         </SectionHeading>
         <div className="max-w-xs">
           <ThemeControl />

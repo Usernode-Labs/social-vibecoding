@@ -17,6 +17,8 @@
 //
 // Run with: node --test tests/set-checks-pending.test.js
 
+// The verdict's writers: the preview machine's own (its transitions run them).
+const rowStore = require('../src/workflow/preview/check-store.ts');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const visuals = require('../src/services/visuals');
@@ -25,7 +27,7 @@ test('setChecksPending: every $2 occurrence is explicitly cast (uniform type for
   const queries = [];
   const pool = { query: async (sql, params) => { queries.push({ sql, params }); return { rows: [] }; } };
 
-  await visuals.setChecksPending(pool, 42, 'abc123');
+  await rowStore.setChecksPending(pool, 42, 'abc123');
 
   assert.equal(queries.length, 1);
   const { sql, params } = queries[0];
@@ -62,7 +64,7 @@ test('setChecksPending: null commit sha still passes a typed parameter', async (
   const queries = [];
   const pool = { query: async (sql, params) => { queries.push({ sql, params }); return { rows: [] }; } };
 
-  await visuals.setChecksPending(pool, 42, null);
+  await rowStore.setChecksPending(pool, 42, null);
   assert.deepEqual(queries[0].params, [42, null, null, null]);
 });
 
@@ -72,10 +74,10 @@ test('setChecksPending records the run phase, and the streak CASE arms are untou
   const queries = [];
   const pool = { query: async (sql, params) => { queries.push({ sql, params }); return { rows: [] }; } };
 
-  await visuals.setChecksPending(pool, 42, 'abc123', 'building');
+  await rowStore.setChecksPending(pool, 42, 'abc123', 'building');
   assert.deepEqual(queries[0].params, [42, 'abc123', 'building', null]);
 
-  await visuals.setChecksPending(pool, 42, 'abc123', 'testing');
+  await rowStore.setChecksPending(pool, 42, 'abc123', 'testing');
   assert.deepEqual(queries[1].params, [42, 'abc123', 'testing', null]);
 
   // The phase is a PLAIN assignment, not another commit-conditional CASE
@@ -96,7 +98,7 @@ test('setChecksPending stores an unrecognised or absent phase as NULL', async ()
   // would render an unknown caption; NULL is the legacy-wording fallback.
   for (const bad of [undefined, null, '', 'BUILDING', 'cloning', 42, {}]) {
     queries.length = 0;
-    await visuals.setChecksPending(pool, 42, 'abc123', bad);
+    await rowStore.setChecksPending(pool, 42, 'abc123', bad);
     assert.equal(queries[0].params[2], null, `phase ${JSON.stringify(bad)} → NULL`);
   }
 });
@@ -109,7 +111,7 @@ test('setChecksPending records the trigger, and only from the known vocabulary',
 
   for (const trigger of visuals.CHECK_TRIGGERS) {
     queries.length = 0;
-    await visuals.setChecksPending(pool, 42, 'abc123', 'building', trigger);
+    await rowStore.setChecksPending(pool, 42, 'abc123', 'building', trigger);
     assert.equal(queries[0].params[3], trigger, `trigger ${trigger} round-trips`);
   }
 
@@ -118,7 +120,7 @@ test('setChecksPending records the trigger, and only from the known vocabulary',
   // a later reader might try to interpret.
   for (const bad of [undefined, null, '', 'COMMIT-PUSH', 'capture', 42, {}]) {
     queries.length = 0;
-    await visuals.setChecksPending(pool, 42, 'abc123', 'building', bad);
+    await rowStore.setChecksPending(pool, 42, 'abc123', 'building', bad);
     assert.equal(queries[0].params[3], null, `trigger ${JSON.stringify(bad)} → NULL`);
   }
 
@@ -130,15 +132,15 @@ test('a terminal verdict clears the phase so a settled card never shows a stage'
   const queries = [];
   const pool = { query: async (sql, params) => { queries.push({ sql, params }); return { rows: [] }; } };
 
-  await visuals.storeChecks(pool, 42, 'abc123', { state: 'passing', results: [] });
+  await rowStore.storeChecks(pool, 42, 'abc123', { state: 'passing', results: [] });
   assert.match(queries[0].sql, /check_phase = NULL/);
 
   queries.length = 0;
-  await visuals.storeChecks(pool, 42, 'abc123', { state: 'error', results: [] }, 'boom');
+  await rowStore.storeChecks(pool, 42, 'abc123', { state: 'error', results: [] }, 'boom');
   assert.match(queries[0].sql, /check_phase = NULL/);
 
   queries.length = 0;
-  await visuals.storeChecksSkipped(pool, 42, 'abc123', 'nothing to test');
+  await rowStore.storeChecksSkipped(pool, 42, 'abc123', 'nothing to test');
   assert.match(queries[0].sql, /check_phase = NULL/);
 });
 
@@ -147,7 +149,7 @@ test('a terminal verdict clears the phase so a settled card never shows a stage'
 test("'deferred' is a known phase, so the pending stamp can name it", async () => {
   const queries = [];
   const pool = { query: async (sql, params) => { queries.push({ sql, params }); return { rows: [] }; } };
-  await visuals.setChecksPending(pool, 42, 'abc123', 'deferred', 'proposal-open');
+  await rowStore.setChecksPending(pool, 42, 'abc123', 'deferred', 'proposal-open');
   assert.deepEqual(queries[0].params, [42, 'abc123', 'deferred', 'proposal-open']);
 });
 
@@ -155,7 +157,7 @@ test('the deferral stamp keeps the verdict pending, names the phase, and is pinn
   const queries = [];
   const pool = { query: async (sql, params) => { queries.push({ sql, params }); return { rows: [], rowCount: 1 }; } };
 
-  const stamped = await visuals.storeChecksDeferred(pool, 42, 'abc123',
+  const stamped = await rowStore.storeChecksDeferred(pool, 42, 'abc123',
     'Checks wait until this proposal merges cleanly with main');
   assert.equal(stamped, true);
   const { sql, params } = queries[0];
@@ -175,7 +177,7 @@ test('the deferral stamp keeps the verdict pending, names the phase, and is pinn
 
   // A guard miss reports false so the caller logs a discard, not a notify.
   const miss = { query: async () => ({ rows: [], rowCount: 0 }) };
-  assert.equal(await visuals.storeChecksDeferred(miss, 42, 'abc123'), false);
+  assert.equal(await rowStore.storeChecksDeferred(miss, 42, 'abc123'), false);
 });
 
 test("'conflict-resolved' is a known trigger: the run that judges a head the platform just made clean", async () => {
@@ -190,7 +192,7 @@ test('the rolling-deploy console snapshot is bound to the same live commit', asy
       return { rows: [], rowCount: 1 };
     },
   };
-  const stored = await visuals.storeConsoleCheck(
+  const stored = await rowStore.storeConsoleCheck(
     pool, 42, { state: 'clean', errors: [] }, 'abc123'
   );
   assert.equal(stored, true);

@@ -32,6 +32,7 @@ const { HOME_SRC: SRC, PANELS_SRC, LAYOUT_SRC } = require('./helpers/home-module
 // the tile is rendered here rather than dropped from the sweep — the same
 // choice tests/estimator-card-render.test.js made when its module converted.
 const { renderComponent } = require('./lib/render-tsx');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 
 const WIDGET_STRIP = 'frontend/src/features/home/widget-strip.tsx';
 
@@ -89,6 +90,7 @@ function makeHome() {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = englishPlatformI18n();
   vm.createContext(sandbox);
   // home.js's iconTileFor / renderAppPillsHtml delegate to the shared card
   // builders (frontend/src/features/apps/app-card.js) since #1083 chunk F.

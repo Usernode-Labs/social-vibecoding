@@ -17,7 +17,6 @@ const assert = require('node:assert/strict');
 
 const reclaim = require('../src/services/worker-volume-reclaim');
 const kubernetes = require('../src/services/kubernetes');
-const orchestrator = require('../src/services/shots-orchestrator');
 
 const NOW = Date.parse('2026-09-25T13:00:00Z');
 const HOUR = 60 * 60 * 1000;
@@ -51,7 +50,11 @@ function fakes({ volumes, busy = [] }) {
         listWorkerVolumes: async () => volumes,
         destroyCcVolume: async (id) => { destroyed.push(id); },
       },
-      activeWorkers: { isSessionBusy: (id) => busy.includes(id) },
+      activeWorkers: {
+        isSessionBusy: (id) => busy.includes(id),
+        // What works on the sessions on any process, read once for the pass.
+        busySessionsAnywhere: async (ids) => new Set(ids.filter((id) => busy.includes(id))),
+      },
     },
   };
 }
@@ -229,22 +232,5 @@ test('the volume inventory names each change\'s state claim and whether a worker
   ]);
 });
 
-// ── Before & after shots on a closed change ─────────────────────────────────
-
-for (const status of ['merged', 'archived']) {
-  test(`no automatic shots run starts on a ${status} change`, async () => {
-    const created = [];
-    const pool = {
-      async query() {
-        return { rows: [{ id: 4649, status, app_slug: 'rss', repo_url: 'https://github.com/o/r', shots_detail: { required: true, intent: {} } }] };
-      },
-    };
-    const result = await orchestrator.scheduleForSession(
-      { shots: { execute: true } },
-      { pool, sessionId: 4649, headSha: 'a'.repeat(40), trigger: 'checks-harvested' },
-      { state: { createRun: async (...args) => { created.push(args); return { run: {}, created: true }; } } }
-    );
-    assert.deepEqual(result, { scheduled: false, reason: 'closed' });
-    assert.equal(created.length, 0);
-  });
-}
+// (A closed change starts no automatic shots run: the shots machine's
+// facts, tests/workflow-shots-postgres.test.js S18.)

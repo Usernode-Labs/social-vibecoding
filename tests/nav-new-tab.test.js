@@ -428,10 +428,16 @@ test('"back out of an issue / proposal / governance topic" is the in-pane Worksh
     'and renders only when that answer exists');
   // First in `.dev-topic`, so it sits above the hero or the card and scrolls
   // with them, on every kind of topic (TopicHead is the head of all of them).
-  assert.match(topicHeadTsx, /<div ref=\{root\} className="dev-topic">\n\s+\{back \? <TopicBack \/> : null\}/,
+  assert.match(topicHeadTsx, /<div ref=\{root\} className=\{changePage \? 'dev-change-head' : 'dev-topic'\}>\n[^\n]*\n\s+\{back && !changePage \? <TopicBack \/> : null\}/,
     'topic-head.tsx: the chip is the first child of .dev-topic');
-  assert.match(topicHeadTsx, /conversation=\{conversation\} back \/>;/,
+  assert.match(topicHeadTsx, /item=\{item\} back \/>;/,
     'and TopicHead, the topic page, is what asks for it');
+  // #4453/#4455: a request's and a change's page are threads, and their chip
+  // sits above the sheet, in the shell's own host.
+  for (const rel of ['request-head.tsx', 'change-head.tsx']) {
+    const src = fs.readFileSync(path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-board', 'topic', rel), 'utf8');
+    assert.match(src, /\{back \? createPortal\(<TopicBack \/>, back\) : null\}/, `${rel} portals the chip above its sheet`);
+  }
 });
 
 test('a topic page has exactly one back control: the chip, and no header arrow (#2916)', () => {

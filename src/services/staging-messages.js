@@ -117,7 +117,7 @@ function demoMessagesRaw(user, conversationId) {
       content: 'The proposal card is ready to review.', createdAt: '2026-08-13T13:30:00Z', editedAt: null,
       reply: null, reactions: [], attachments: [], objects: [{
         type: 'spec', appId: 1, appSlug: 'usernode', sessionId: 3327, version: 1,
-        available: true, title: 'Platform Messages spec v1', subtitle: 'Homeroom',
+        available: true, title: 'Platform Messages plan v1', subtitle: 'Homeroom',
         state: 'v1', author: 'ada', href: '#app/usernode/dev/sessions/3327',
       }, {
         type: 'governance', appId: 1, appSlug: 'usernode', proposalId: 701,
@@ -475,6 +475,14 @@ const BOT_DM_ASK_KEY = 'staging-hrbot-ask';
 const BOT_DM_PLAN_KEY = 'staging-hrbot-plan';
 const BOT_DM_PLAN_ACTION_ID = 990002;
 const BOT_DM_TWO_QUESTIONS_KEY = 'staging-hrbot-two-questions';
+// #4488: a complicated change's plan on a project that already exists,
+// waiting for its requester's Build it, its screens on the request. A
+// fixture too: Build it names an action no row stands behind.
+const BOT_DM_COMPLICATED_PLAN_KEY = 'staging-hrbot-complicated-plan';
+const BOT_DM_COMPLICATED_PLAN_ACTION_ID = 990003;
+// 20 Oct 2026: and the plan it asks about, which its card shows: the shared
+// spec version src/db/migrate.js seedStagingComplicatedPlanSpec writes.
+const BOT_DM_COMPLICATED_PLAN_SPEC = Object.freeze({ sessionId: 900832, version: 1 });
 // #4046: and a first version's plan its maker already built, which the
 // card that follows its build sits under.
 const BOT_DM_BUILT_PLAN_KEY = 'staging-hrbot-plan-built';
@@ -643,6 +651,35 @@ async function ensureBotDmFixture(pool, user) {
       },
     });
   }
+  // #4488: a complicated change's plan, sent once, after what is there.
+  const complicatedSent = await pool.query(
+    `SELECT 1 FROM conversation_messages
+      WHERE conversation_id = $1 AND sender_id = $2 AND idempotency_key = $3`,
+    [opened.conversationId, bot.id, BOT_DM_COMPLICATED_PLAN_KEY]
+  );
+  if (!complicatedSent.rows.length) {
+    const plan = {
+      bullets: [
+        'Staging demo: a Leaderboard tab beside the list',
+        'Points for each item you finish, counted weekly',
+        'Your own place shown at the top',
+      ],
+      questions: [{ question: 'Who shows on the leaderboard?', answers: ['Everyone in the project', 'Only people who opt in'] }],
+      complicated: true,
+      spec: { ...BOT_DM_COMPLICATED_PLAN_SPEC },
+    };
+    await conversations.sendMessage(pool, { id: bot.id }, opened.conversationId, {
+      content: require('./homeroom-bot-dm').planCardText({ appName: 'Staging demo app', plan, issueNumber: 17 }),
+      idempotency_key: BOT_DM_COMPLICATED_PLAN_KEY,
+    }, {
+      metadata: {
+        homeroomBot: {
+          kind: 'plan', appName: 'Staging demo app', issueNumber: 17, firstVersion: false,
+          plan, actionId: BOT_DM_COMPLICATED_PLAN_ACTION_ID, status: 'open',
+        },
+      },
+    });
+  }
   // #3736: and two activity cards, each the bot's work on a request followed
   // in place: one that ended in a proposal, and one being built now, the
   // newest. Their state is homeroom-bot-activity.js demoCards', found by
@@ -721,6 +758,7 @@ async function ensureBotDmFixture(pool, user) {
       },
     });
   }
+  await ensureBotDmStory(pool, { botId: bot.id, conversationId: opened.conversationId, cardKey: cardKeys.thread });
   await pool.query(
     `INSERT INTO staging_conversation_fixtures (user_id, legacy_id, conversation_id)
      VALUES ($1, $2, $3)
@@ -728,6 +766,125 @@ async function ensureBotDmFixture(pool, user) {
     [user.id, BOT_DM_LEGACY_ID, opened.conversationId]
   );
   return opened.conversationId;
+}
+
+// One request, one story: a demo request whose card is the root of its
+// thread, with the bot's quiet lines under it and one moment that rings (a
+// question with answers to tap), which the main chat shows too, under its
+// "↳ in …" label. Sent once, after what is already there, so the older
+// fixture's messages and the checks that read them stay as they were.
+// Obviously fake: no project or request stands behind it, nothing rings
+// (notify: false) and nothing is recorded as a question the bot waits on,
+// so an answer tapped here gets the bot's short help, as the fixture's other
+// question does. The card's state is demoCards' (DEMO_CARD_KEYS.thread).
+const BOT_DM_STORY = Object.freeze({
+  appName: 'Staging demo app', issueNumber: 18, issueTitle: 'Staging demo, a weekly dinner rota',
+});
+// #5219: the story card names its project (the platform's own app), so its
+// thread shows what people said on that request's public discussion.
+const BOT_DM_STORY_LINES = Object.freeze([
+  { key: 'staging-hrbot-story-origin', step: 'origin', content: 'You suggested this on Staging demo app\'s page. It\'s request #18.' },
+  { key: 'staging-hrbot-story-reading', step: 'reading', content: 'Reading it.' },
+  {
+    key: 'staging-hrbot-story-plan', step: 'spec',
+    content: 'Plan: a weekly rota on the first screen, with a reminder the day before. I\'m building it now.',
+  },
+  { key: 'staging-hrbot-story-built', step: 'built', content: 'Built. Testing it: its checks, and its before and after screens.' },
+]);
+// The two people whose words the thread shows, on the request's discussion
+// (chat_messages, thread_type 'issue'). Obviously fake "Staging demo:" lines,
+// keyed on their content so each is inserted once.
+const BOT_DM_STORY_DISCUSSION = Object.freeze([
+  { userId: DEMO_ADA.id, content: 'Staging demo: could the reminder go out the evening before too?' },
+  { userId: DEMO_LIN.id, content: 'Staging demo: tried the rota, the dinner names overflow on a narrow screen.' },
+]);
+const BOT_DM_STORY_QUESTION_KEY = 'staging-hrbot-story-question';
+
+async function ensureBotDmStory(pool, { botId, conversationId, cardKey }) {
+  const story = BOT_DM_STORY;
+  // The platform's own app, found the way this file already finds it (the
+  // fixture at line 313): self_hosted marks it, not a slug read from config,
+  // whose export carries the loader and not the loaded object.
+  const selfApp = (await pool.query(
+    'SELECT id, slug FROM apps WHERE self_hosted = TRUE ORDER BY id LIMIT 1'
+  )).rows[0] || null;
+  // #5219: even on a staging copy whose story card was sent before it named
+  // its project, the card names it now, so its thread reads the discussion.
+  if (selfApp) {
+    await pool.query(
+      `UPDATE conversation_messages
+          SET metadata = jsonb_set(metadata, '{homeroomBot,appSlug}', to_jsonb($4::text), true)
+        WHERE conversation_id = $1 AND sender_id = $2 AND idempotency_key = $3
+          AND metadata->'homeroomBot'->>'appSlug' IS NULL`,
+      [conversationId, botId, cardKey, selfApp.slug]
+    );
+    // And the seeded discussion those words come from — before the early
+    // return below, so a copy whose story card was already sent still gets
+    // the two people on the request's own thread. Staging only, like the
+    // rest of the fixture. The list route and the thread route both open
+    // the fixture, so the insert sits under the file's per-user advisory
+    // lock — its NOT EXISTS guard reads before either caller commits.
+    await conversations.transaction(pool, async db => {
+      await db.query('SELECT pg_advisory_xact_lock(4781, $1)', [conversationId]);
+      for (const line of BOT_DM_STORY_DISCUSSION) {
+        await db.query(
+          `INSERT INTO chat_messages (app_id, user_id, content, msg_type, thread_type, thread_ref)
+           SELECT $1, $2, $3, 'message', 'issue', $4
+            WHERE NOT EXISTS (
+              SELECT 1 FROM chat_messages other
+               WHERE other.app_id = $1 AND other.thread_type = 'issue' AND other.thread_ref = $4
+                 AND other.user_id = $2 AND other.content = $3
+            )`,
+          [selfApp.id, line.userId, line.content, story.issueNumber]
+        );
+      }
+    });
+  }
+  const sent = await pool.query(
+    `SELECT 1 FROM conversation_messages WHERE conversation_id = $1 AND sender_id = $2 AND idempotency_key = $3`,
+    [conversationId, botId, cardKey]
+  );
+  if (sent.rows.length) return;
+  const card = await conversations.sendMessage(pool, { id: botId }, conversationId, {
+    content: `**${story.appName}** · request #${story.issueNumber}: ${story.issueTitle}\n\n`
+      + 'I\'m working on this now. This card updates as I go.',
+    idempotency_key: cardKey,
+  }, {
+    notify: false,
+    metadata: {
+      homeroomBot: {
+        kind: 'activity', appName: story.appName, issueNumber: story.issueNumber,
+        issueTitle: story.issueTitle, requestTitle: story.issueTitle, mirrors: true,
+        ...(selfApp ? { appSlug: selfApp.slug } : {}),
+      },
+    },
+  });
+  const rootId = card?.messageId ?? card?.message?.id;
+  if (!rootId) return;
+  const about = {
+    appName: story.appName, issueNumber: story.issueNumber, issueTitle: story.issueTitle,
+    requestTitle: story.issueTitle, threadRootId: rootId,
+  };
+  for (const line of BOT_DM_STORY_LINES) {
+    await conversations.sendMessage(pool, { id: botId }, conversationId, {
+      content: line.content, idempotency_key: line.key, thread_root_id: rootId,
+    }, { notify: false, metadata: { homeroomBot: { kind: 'step', step: line.step, ...about } } });
+  }
+  const question = 'Which night should the rota start on?';
+  await conversations.sendMessage(pool, { id: botId }, conversationId, {
+    content: `One thing before it's ready to try:\n\n${question}`,
+    idempotency_key: BOT_DM_STORY_QUESTION_KEY,
+    thread_root_id: rootId,
+  }, {
+    notify: false,
+    metadata: {
+      homeroomBot: {
+        kind: 'question', ...about, mirrors: true, status: 'open',
+        question, answers: ['Sunday', 'Monday', 'Let me pick each week'],
+        moment: 'needs_you', said: 'question', alsoInChat: true,
+      },
+    },
+  });
 }
 
 // The demo of a card joining work already under way: what opening the bot's

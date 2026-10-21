@@ -1,6 +1,6 @@
 /**
  * The Communities tab pressed while it is lit: up a level, at every width
- * (#3701). Held on a phone's bar: "Your communities".
+ * (#3701). Held, it does nothing more than a press (18 Oct 2026).
  *
  * ── One gesture had two meanings ───────────────────────────────────────
  *
@@ -19,11 +19,18 @@
  *
  *   1. BELOW A COMMUNITY'S TABS (All items, a card, a reply thread beside
  *      its Discussion): back to the community, on the tab you were on, at
- *      its top. 'up'
+ *      its top. 'up'. #4417: the tabs are places now, and every place but
+ *      the Hub is below it: a channel, Needs you or the Workshop goes up to
+ *      the Hub, and a page under a place (All items) to that place first.
  *   2. ON ONE OF ITS TABS, SCROLLED DOWN: to the top. 'top'
  *   3. ON ONE OF ITS TABS, AT THE TOP: All communities, the tab's root. 'root'
  *   4. ON ALL COMMUNITIES: to the top, and nothing else. 'top', or 'none'
  *      when it is already there.
+ *
+ * ON A PHONE, A COMMUNITY'S PAGE IS THE DRAWER'S (../nav-drawer/, Evan's
+ * design, 18 Oct 2026): a press goes back one level of it at a time, the
+ * page to the community's places, the places to your communities, after
+ * whatever is below a place (a reply thread, All items) has gone up to it.
  *
  * A STEP THAT CHANGES PAGE PUSHES AN ENTRY, as a tab press does (#3620), so
  * Back from where it landed is where it was pressed: a card goes up by the
@@ -34,12 +41,21 @@
  *
  * ── Switching sideways ────────────────────────────────────────────────
  *
- * The switcher is no harder to reach. The header's name and ⌄ open it as
- * they did (../header/header-title.tsx), and on a phone's bar a press HELD
- * for HOLD_MS without moving opens it too (`createHold`), the way Instagram
- * and Threads switch accounts from their profile tab. A short press never
- * does. No haptic goes with it: the native bridge has no haptic call
- * (NATIVE-BRIDGE.md), and the kit's tick is private to the kit.
+ * On a wide window the header's name and ⌄ open "Your communities"
+ * (../header/header-title.tsx). On a phone the drawer's outermost level is
+ * the list of your communities, and nothing on the bar opens the old
+ * switcher: holding the tab used to (#3701), which put the sheet the drawer
+ * replaced back over it, so the hold was removed (18 Oct 2026). A held tab
+ * is an ordinary press.
+ *
+ * ── The blue number is a count (#5708) ────────────────────────────────
+ *
+ * The tab's blue number is the votes waiting on you (./community-scope.ts
+ * `tabVotes`), and that is all it is. #5040 made a press from another tab
+ * open Needs you while the number showed, and that detour also wrote Needs
+ * you over the place remembered for the next return, so an account that
+ * always had votes waiting always came back to Needs you. A press from
+ * another tab now returns to the view left, whatever the number says.
  *
  * ── Who knows where you are ───────────────────────────────────────────
  *
@@ -52,7 +68,11 @@
  * Nothing here renders.
  */
 
-import { goToCommunity, openSwitcher } from './community-scope';
+import { drawerStore, pressTab as pressDrawerTab } from '../nav-drawer/drawer-store';
+import { goToCommunity } from './community-scope';
+
+/** The pages under a place (../dev-board/workshop/places.ts): a step above them is the place. */
+const PAGES_UNDER_A_PLACE = ['all', 'bot', 'plan'];
 
 /** What one press of the lit tab does. */
 export type Rung = 'up' | 'top' | 'root' | 'none';
@@ -81,6 +101,12 @@ export interface Level {
   up?: () => void;
   /** The page's own element, which says where the page scrolls. */
   host?: () => HTMLElement | null;
+  /**
+   * #4417: how deep it is. The page says every place but the Hub is below
+   * the Hub (depth 1); a reply thread open beside a channel is below the
+   * channel (depth 2). A press takes the deepest step first.
+   */
+  depth?: number;
 }
 
 const levels = new Set<Level>();
@@ -128,17 +154,19 @@ export function toTop(el: HTMLElement | null): void {
   el.scrollTop = 0;
 }
 
-/** The project page's tabs (AppView.WORKSHOP_TABS). */
+/** The project page's places (AppView.WORKSHOP_TABS), and a topic's channel (`c:<handle>`, #4417). */
 const PAGE_TABS = ['status', 'discussion', 'workshop', 'needs', 'all'];
+const CHANNEL_PLACE = /^c:[a-z][a-z0-9-]{0,39}$/;
 
 /**
- * The tab a page below the community goes back to: the one last up there
+ * The place a page below the community goes back to: the one last up there
  * (AppView._workshopTab), and for All items the Workshop it hangs off, which
- * is the tab lit over it. Anything unreadable is the hub.
+ * is the place lit over it. Anything unreadable is the hub.
  */
 export function tabToReturnTo(last: unknown): string {
   if (last === 'all') return 'workshop';
-  return typeof last === 'string' && PAGE_TABS.includes(last) ? last : 'status';
+  if (typeof last !== 'string') return 'status';
+  return PAGE_TABS.includes(last) || CHANNEL_PLACE.test(last) ? last : 'status';
 }
 
 type ViewApi = {
@@ -177,8 +205,13 @@ export function upToCommunity(slug: string): void {
 /**
  * A press of the lit Communities tab. `screen` is the nav store's: the
  * screen root the router last revealed. Returns the rung it took.
+ *
+ * `stopAtCommunity`: the press of the community's own row in the desktop's
+ * sidebar (../nav/rail-communities.tsx, D, 18 Oct 2026), which goes up the
+ * community's page the same way and stops at its Hub's top rather than
+ * taking the root step to All communities: the sidebar's All row is that.
  */
-export function pressLitTab(screen: string | null): Rung {
+export function pressLitTab(screen: string | null, { stopAtCommunity = false }: { stopAtCommunity?: boolean } = {}): Rung {
   if (screen === 'workshop-screen') {
     const el = scrollerOf(document.getElementById('workshop-screen'));
     const rung = rungFor('root', isScrolled(el));
@@ -193,9 +226,32 @@ export function pressLitTab(screen: string | null): Rung {
   let onPage = false;
   try { onPage = !!view()?._onProjectPage?.(slug); } catch { onPage = false; }
   const mine = [...levels].filter((level) => level.slug === slug);
+  // The deepest level that says something is up (#4417): a reply thread
+  // beside a channel before the channel's own step up to the Hub.
   const open = onPage
-    ? mine.find((level) => { try { return !!level.below?.(); } catch { return false; } })
+    ? mine
+      .filter((level) => { try { return !!level.below?.(); } catch { return false; } })
+      .sort((a, b) => (b.depth || 0) - (a.depth || 0))[0]
     : undefined;
+  // THE PHONE'S DRAWER: one level of it at a time, rather than up to All
+  // communities. What is below a place still goes to it first: a reply
+  // thread beside a channel, and a page under a place (All items, the bot's
+  // slots, the plan).
+  if (drawerStore.get().on) {
+    const isBelow = (level: Level) => { try { return !!level.below?.(); } catch { return false; } };
+    const thread = onPage ? mine.find((level) => (level.depth || 0) >= 2 && isBelow(level)) : undefined;
+    if (thread?.up) {
+      thread.up();
+      return 'up';
+    }
+    const under = PAGES_UNDER_A_PLACE.includes(drawerStore.get().shown.place);
+    const page = under && onPage ? mine.find((level) => (level.depth || 0) === 1 && level.up) : undefined;
+    if (page?.up) {
+      page.up();
+      return 'up';
+    }
+    return pressDrawerTab();
+  }
   const host = mine.map((level) => level.host?.() || null).find(Boolean) || null;
   const el = scrollerOf(host?.closest<HTMLElement>('#dev-forum-scroll') || null);
   // Off the project page's own address is a page below it: a card, a
@@ -208,147 +264,8 @@ export function pressLitTab(screen: string | null): Rung {
   } else if (rung === 'top') {
     toTop(el);
   } else if (rung === 'root') {
+    if (stopAtCommunity) return 'none';
     goToCommunity(null);
   }
   return rung;
-}
-
-/** How long a press is held before it opens "Your communities". */
-export const HOLD_MS = 500;
-/** A finger that moves further than this is scrolling or swiping, not holding. */
-export const HOLD_SLOP_PX = 10;
-/** How long after the finger lifts the click that lift may leave is still the hold's. */
-export const HOLD_CLICK_MS = 700;
-
-/** The parts of a pointer event a hold reads: React's and the DOM's both fit. */
-interface HoldPointer {
-  pointerType: string;
-  isPrimary?: boolean;
-  clientX: number;
-  clientY: number;
-  currentTarget: EventTarget | null;
-}
-
-export interface HoldOptions {
-  /** Whether a hold may start now: the phone's bar, not the desktop rail. */
-  enabled: () => boolean;
-  /** The hold landed, on `el`. */
-  onHold: (el: Element | null) => void;
-  ms?: number;
-  /** For the tests: the document and the clock. */
-  doc?: Pick<Document, 'addEventListener' | 'removeEventListener'>;
-  setTimer?: (fn: () => void, ms: number) => number;
-  clearTimer?: (id: number) => void;
-}
-
-/**
- * A held press, for touch: HOLD_MS still (within HOLD_SLOP_PX) runs
- * `onHold`. Lifting early, moving, or the browser taking the touch for a
- * scroll (pointercancel) cancels it, and the press is an ordinary tap.
- *
- * TWO THINGS THE BROWSER WOULD DO WITH THE SAME HOLD are stood down:
- *
- *   - its own long-press menu on a link (Android's, as `contextmenu`; iOS's
- *     preview is app.css's `-webkit-touch-callout: none`). A `contextmenu`
- *     while the finger is down is the browser deciding the press was held,
- *     so it lands the hold at once rather than racing the timer;
- *   - the click the lift may still send. "Your communities" is over the bar
- *     by then, so that click can be hit-tested onto the sheet's scrim (which
- *     would shut it again) or reach the tab (which would take a ladder step).
- *     The first click after a landed hold is swallowed, at the document, in
- *     the capture phase, before either sees it, unless a new press starts
- *     first or HOLD_CLICK_MS passes.
- *
- * A plain object, not a hook, so the tests can drive it without React.
- */
-export function createHold(opts: HoldOptions) {
-  const ms = opts.ms ?? HOLD_MS;
-  const doc = opts.doc ?? (typeof document !== 'undefined' ? document : null);
-  const setTimer = opts.setTimer ?? ((fn: () => void, wait: number) => window.setTimeout(fn, wait));
-  const clearTimer = opts.clearTimer ?? ((id: number) => window.clearTimeout(id));
-  let timer = 0;
-  let origin: { x: number; y: number } | null = null;
-  let target: Element | null = null;
-  let down = false;
-  let fired = false;
-  let unguard: (() => void) | null = null;
-
-  const stop = () => {
-    if (timer) clearTimer(timer);
-    timer = 0;
-    origin = null;
-  };
-  const land = () => {
-    stop();
-    fired = true;
-    opts.onHold(target);
-  };
-  const guard = () => {
-    if (!doc || unguard) return;
-    let wait = 0;
-    const off = () => {
-      if (!unguard) return;
-      unguard = null;
-      doc.removeEventListener('click', onClick, true);
-      doc.removeEventListener('pointerdown', off, true);
-      if (wait) clearTimer(wait);
-    };
-    const onClick = (event: Event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      off();
-    };
-    unguard = off;
-    doc.addEventListener('click', onClick, true);
-    doc.addEventListener('pointerdown', off, true);
-    wait = setTimer(off, HOLD_CLICK_MS);
-  };
-  const lift = () => {
-    down = false;
-    stop();
-    if (fired) guard();
-    fired = false;
-  };
-
-  return {
-    onPointerDown(event: HoldPointer) {
-      if (event.pointerType !== 'touch' || event.isPrimary === false) return;
-      stop();
-      fired = false;
-      if (!opts.enabled()) return;
-      down = true;
-      target = (event.currentTarget as Element | null) || null;
-      origin = { x: event.clientX, y: event.clientY };
-      timer = setTimer(land, ms);
-    },
-    onPointerMove(event: HoldPointer) {
-      const start = origin;
-      if (!start) return;
-      if (Math.abs(event.clientX - start.x) > HOLD_SLOP_PX || Math.abs(event.clientY - start.y) > HOLD_SLOP_PX) stop();
-    },
-    onPointerUp() { lift(); },
-    onPointerCancel() { lift(); },
-    onContextMenu(event: { preventDefault: () => void }) {
-      if (!down) return;
-      event.preventDefault();
-      if (timer) land();
-    },
-    /** Unmounting: no timer left to land, no guard left on the document. */
-    dispose() {
-      stop();
-      down = false;
-      fired = false;
-      unguard?.();
-    },
-  };
-}
-
-/** The phone's bar: below the 768px breakpoint, where the bar is not the rail. */
-function onPhoneBar(): boolean {
-  try { return !window.matchMedia('(min-width: 768px)').matches; } catch { return false; }
-}
-
-/** The Communities tab's hold: "Your communities", on the phone's bar only. */
-export function createSwitcherHold() {
-  return createHold({ enabled: onPhoneBar, onHold: (el) => openSwitcher('tab', el) });
 }

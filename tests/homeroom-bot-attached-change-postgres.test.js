@@ -117,8 +117,9 @@ test('D: the prompt rules em dashes out, and one in a reply becomes what fits th
 
 test('B: the prompt and revise_proposal say an attached change is the one to fix', () => {
   const prompt = mayor.systemPrompt({ username: 'sam' });
-  assert.match(prompt, /A proposal of yours they attached to their message \(the conversation says so, with its proposal id\) is the one\n  they are writing about\./);
-  assert.match(prompt, /Never offer a new\n  request for something that proposal should fix: it is not live yet\./);
+  // One story: the prompt says "change", never "proposal" (its tools keep their names).
+  assert.match(prompt, /A change of yours they attached to their message \(the conversation says so, with its proposal id\) is the one\n  they are writing about\./);
+  assert.match(prompt, /Never offer a new\n  request for something that change should fix: it is not live yet\./);
   const revise = mayor.TOOLS.find((tool) => tool.function.name === 'revise_proposal');
   assert.match(revise.function.description, /or reported a problem with one they attached to their message\./);
 });
@@ -156,12 +157,41 @@ test('B and C against the full PostgreSQL schema', { timeout: 180000 }, async (t
   await admin.query(`CREATE DATABASE ${name}`);
   const url = new URL(DSN); url.pathname = `/${name}`;
   const pool = new Pool({ connectionString: String(url), max: 8 });
+  // A problem handed to the bot's change owes its request a look, by its
+  // bot-request instance (its queue row the projection): the workflow
+  // runtime runs here, on this database, its pipeline only (no timers, no
+  // work).
+  const platform = require('../src/workflow/platform.ts');
+  require('../src/db/pool').getPool = () => pool;
   t.after(async () => {
+    await platform.stopWorkflow();
     await pool.end();
     await admin.query(`DROP DATABASE ${name}`);
     await admin.end();
   });
   await pool.query(fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8'));
+  await platform.startWorkflow({ databaseUrl: String(url), dataEncryptionKey: 'synthetic-key', wfPoolMax: 4, wfSlots: 2 }, { loops: false });
+  // The bot's queue is bot-request's projection: a test clears it as the
+  // machines would have none (each request's instance, its pending events
+  // and work, its row), written as the kernel writes.
+  const forgetRequests = async (appId = null) => {
+    const c = await pool.connect();
+    try {
+      await c.query('BEGIN');
+      await c.query("SET LOCAL app.wf_writer = 'transition'");
+      const keys = appId == null ? 'request:%' : `request:${Number(appId)}:%`;
+      await c.query("DELETE FROM wf_work WHERE machine = 'bot-request' AND key LIKE $1", [keys]);
+      await c.query("DELETE FROM wf_events WHERE machine = 'bot-request' AND key LIKE $1 AND status = 'pending'", [keys]);
+      await c.query("DELETE FROM wf_instances WHERE machine = 'bot-request' AND key LIKE $1", [keys]);
+      await c.query('DELETE FROM homeroom_bot_queue WHERE $1::int IS NULL OR app_id = $1', [appId]);
+      await c.query('COMMIT');
+    } catch (err) {
+      await c.query('ROLLBACK');
+      throw err;
+    } finally {
+      c.release();
+    }
+  };
 
   const user = async (username, synthetic = false) => (await pool.query(
     `INSERT INTO users (username, password, has_platform_access, is_synthetic) VALUES ($1, 'x', TRUE, $2)
@@ -186,9 +216,8 @@ test('B and C against the full PostgreSQL schema', { timeout: 180000 }, async (t
   for (const member of [maya, sam]) {
     await pool.query('INSERT INTO community_members (community_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [app.community_id, member.id]);
   }
+  // On, for everyone with platform access, on every app but a paused one.
   await setting('homeroom_bot_mode', 'shadow');
-  await setting('homeroom_bot_dm_users', JSON.stringify(['maya', 'sam', 'ola']));
-  await setting('homeroom_bot_live_apps', JSON.stringify(['flat-chores']));
   // The group's first version: the bot's change for Maya's request #1,
   // waiting for approval. And an older one of its changes that is live.
   await pool.query(
@@ -208,7 +237,7 @@ test('B and C against the full PostgreSQL schema', { timeout: 180000 }, async (t
   const queueRow = async () => (await pool.query(
     'SELECT reason, requested_by, payer_user_id FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = 1', [app.id],
   )).rows[0] || null;
-  const clearQueue = () => pool.query('DELETE FROM homeroom_bot_queue WHERE app_id = $1', [app.id]);
+  const clearQueue = () => forgetRequests(app.id);
 
   const chatOf = async (person) => (await conversations.ensureAdmittedDirect(pool, bot.id, person.id)).conversationId;
   const samChat = await chatOf(sam);

@@ -37,8 +37,8 @@
 //
 // The reconcile runs from three triggers, all through the same function:
 // a board change (ws.pushSessionUpdate / pushIssueUpdate → noteBoardChange,
-// debounced per app), the hourly leader sweep over apps viewed in the last
-// week (sweep), and a GET that finds no draft, cards the row does not know,
+// debounced per app), the hourly workshop-themes clock over apps viewed in
+// the last week (sweepTargets, each app a target: sweepApp), and a GET that finds no draft, cards the row does not know,
 // a stage run under another prompt version or a paragraph that is due
 // (getThemes), so a first visit still starts one. GET never waits on the
 // model: it serves what the row has, with `coverage` saying how much of the
@@ -112,8 +112,6 @@ const CHANGE_DEBOUNCE_MS = envInt('WORKSHOP_THEMES_DEBOUNCE_MS', 30 * 1000, 1000
 // failure (a model outage, output the sanitiser rejects) could cost one
 // model call per board change. The failure is also what the GET reports.
 const FAILURE_BACKOFF_MS = envInt('WORKSHOP_THEMES_FAILURE_BACKOFF_MS', 5 * 60 * 1000, 30 * 1000);
-// A GET starts a reconcile at most this often per app (per process).
-const GET_KICK_MIN_MS = 60 * 1000;
 // The row-level lease one reconcile holds; a crashed holder's lease lapses.
 const LEASE_INTERVAL = '10 minutes';
 // Cards per placement call.
@@ -212,9 +210,12 @@ async function buildThemeInput(pool, app) {
     // which is exactly the behaviour this change replaces — degraded, not broken.
     log.warn('workshop-themes', 'in-progress read failed', { app: app.slug, message: err.message });
   }
+  // A request the platform filed about itself is in its signal's topic
+  // unless the group voted it elsewhere (services/platform-signals.js).
+  const signalTopics = await require('./platform-signals').topicsByIssue(pool, appId);
   for (const i of ghIssues.slice(0, MAX_ISSUES)) {
     const a = attrs.get(i.number) || {};
-    const category = top(a.category);
+    const category = top(a.category) || signalTopics.get(Number(i.number)) || null;
     categoryOf.set(i.number, category);
     push({
       key: `issue:${i.number}`,
@@ -470,6 +471,52 @@ function assignIds(themes, previous) {
   });
 }
 
+// ── Topics: the categories the group set (#4417) ──────────────────────
+//
+// A project's topics are categories dapp.json owns, each with a channel of
+// its own. To the grouping they are FIXED DEFINITIONS: discovery is handed
+// them and asked to return them as given and draft around them, and this is
+// where that stops being a request, exactly as keepPinned is for a pinned
+// category. Whatever the model answered, the standing list leads with every
+// live topic, in dapp.json's order, under dapp.json's name, about and icon
+// (the model's saying and anchors are kept, so a topic reads like the rest);
+// and a RETIRED topic's key (archived, or merged into another) is in no
+// list, because its cards are placed again or moved with the merge.
+
+/** The live topics among `registry` (registryCategories), in their order. */
+function liveTopicsOf(registry) {
+  return (registry || [])
+    .filter((r) => r && r.id && r.topic)
+    .slice()
+    .sort((a, b) => (Number(a.topic.order) || 0) - (Number(b.topic.order) || 0));
+}
+
+/** Pure. `themes` with the topics first and fixed, and no retired key. */
+function fixTopics(themes, registry, retired = []) {
+  const topics = liveTopicsOf(registry);
+  const gone = new Set(retired || []);
+  const topicIds = new Set(topics.map((t) => t.id));
+  const drafted = new Map((themes || []).filter(Boolean).map((t) => [t.id, t]));
+  const lead = topics.map((tp) => {
+    const d = drafted.get(tp.id) || null;
+    return {
+      id: tp.id,
+      name: tp.name,
+      description: tp.description || (d && d.description) || '',
+      saying: d ? d.saying || null : null,
+      icon: tp.icon || (d && d.icon) || '',
+      anchors: d && Array.isArray(d.anchors) ? d.anchors : [],
+    };
+  });
+  const rest = (themes || []).filter((t) => t && t.id && !topicIds.has(t.id) && !gone.has(t.id));
+  return [...lead, ...rest];
+}
+
+/** The order of ids, for "did fixing the topics change the standing list". */
+function sameIds(a, b) {
+  return a.length === b.length && a.every((t, i) => t.id === b[i].id);
+}
+
 // ── The no-model grouping ─────────────────────────────────────────────
 //
 // By the community-voted category, which is the grouping the board already
@@ -485,7 +532,7 @@ const CATEGORY_LABELS = {
   design: 'Design', docs: 'Docs', chore: 'Chores',
 };
 
-function fallbackThemes(input) {
+function fallbackThemes(input, registry = []) {
   const groups = new Map();
   const rest = [];
   for (const it of (input && input.items) || []) {
@@ -493,18 +540,37 @@ function fallbackThemes(input) {
     if (!groups.has(it.category)) groups.set(it.category, []);
     groups.get(it.category).push(it.key);
   }
+  // #4417: the project's topics lead, in their order and under their own
+  // names, each drawn even before anything is filed under it: a topic is a
+  // place to talk as well as a grouping.
+  const topics = liveTopicsOf(registry);
+  const topicOf = new Map(topics.map((t) => [t.id, t]));
+  for (const t of topics) if (!groups.has(t.id)) groups.set(t.id, []);
   const themes = [...groups.entries()]
-    .sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0]))
+    .sort((a, b) => {
+      const ta = topicOf.get(a[0]);
+      const tb = topicOf.get(b[0]);
+      if (ta || tb) {
+        if (!ta) return 1;
+        if (!tb) return -1;
+        return (Number(ta.topic.order) || 0) - (Number(tb.topic.order) || 0);
+      }
+      return b[1].length - a[1].length || a[0].localeCompare(b[0]);
+    })
     .map(([cat, keys]) => {
-      const label = CATEGORY_LABELS[cat]
-        || (cat.charAt(0).toUpperCase() + cat.slice(1));
+      const topic = topicOf.get(cat);
+      const label = topic ? topic.name : (CATEGORY_LABELS[cat]
+        || (cat.charAt(0).toUpperCase() + cat.slice(1)));
       return {
         id: `category-${slugify(cat)}`,
         name: label,
-        description: `Everything the group has tagged as ${label.toLowerCase()}.`,
+        description: topic && topic.description
+          ? topic.description
+          : `Everything the group has tagged as ${label.toLowerCase()}.`,
         saying: null,
-        icon: CATEGORY_ICONS[cat] || '',
+        icon: topic ? topic.icon || '' : (CATEGORY_ICONS[cat] || ''),
         items: keys,
+        ...(topic ? { topic: { key: topic.id, handle: topic.topic.handle } } : {}),
       };
     });
   if (rest.length) {
@@ -541,19 +607,31 @@ const STAGING_THEME_NAMES = [
 // changes about the row of theme heads.
 const STAGING_THEME_ICONS = ['\uD83D\uDD11', '\uD83D\uDCF1', '\uD83D\uDDF3\uFE0F', '\uD83C\uDFA8'];
 
-function stagingDemoGrouping(input) {
+function stagingDemoGrouping(input, registry = []) {
   const items = (input && input.items) || [];
-  if (!items.length) return [];
+  // #4417: the project's topics are real, so a preview leads with them (a
+  // board with topics and nothing else to deal still shows them), and the
+  // demo themes after them hold the rest of the deal.
+  const topics = liveTopicsOf(registry).map((t) => ({
+    id: t.id,
+    name: t.name,
+    description: t.description || '',
+    saying: 'Staging demo: what people are asking for in this topic would be summarised here by the model.',
+    icon: t.icon || '',
+    items: [],
+    topic: { key: t.id, handle: t.topic.handle },
+  }));
+  if (!items.length) return topics;
   const n = Math.min(STAGING_THEME_NAMES.length, Math.max(1, Math.ceil(items.length / 4)));
-  const themes = STAGING_THEME_NAMES.slice(0, n).map((name, i) => ({
+  const themes = [...topics, ...STAGING_THEME_NAMES.slice(0, n).map((name, i) => ({
     id: `staging-demo-${i + 1}`,
     name,
     description: 'A staging-only grouping of real board items, dealt out to show the Workshop\'s shape.',
     saying: 'Staging demo: what people are asking for in this category would be summarised here by the model.',
     icon: STAGING_THEME_ICONS[i] || '',
     items: [],
-  }));
-  items.forEach((it, i) => { themes[i % n].items.push(it.key); });
+  }))];
+  items.forEach((it, i) => { themes[i % themes.length].items.push(it.key); });
   return themes;
 }
 
@@ -561,7 +639,8 @@ function stagingDemoGrouping(input) {
 
 const ROW_COLUMNS = `app_id, input_hash, themes_json, placements_json, unplaced_json, source, model,
           generated_at, discovered_at, discovery_key_count, churn_added, churn_removed,
-          last_error, last_failed_at, last_viewed_at, reconcile_started_at,
+          last_error, last_failed_at, last_viewed_at, reconcile_started_at, reconcile_due_at,
+          reconcile_started_at > NOW() - '${LEASE_INTERVAL}'::interval AS reconciling,
           digest_text, digest_json, digest_at, digest_error,
           discovery_version, placement_version, digest_version`;
 
@@ -592,6 +671,10 @@ function shapeRow(r) {
     lastFailedAt: r.last_failed_at || null,
     lastViewedAt: r.last_viewed_at || null,
     reconcileStartedAt: r.reconcile_started_at || null,
+    // A pass owed (reconcile_due_at) or one holding the lease now: what the
+    // page reads as pending, from any process.
+    reconcileDueAt: r.reconcile_due_at || null,
+    reconciling: !!r.reconciling,
     digest: r.digest_text || null,
     // The three windowed lines the lander draws as cards. `digest_text`
     // beside it is the same answer flattened to prose, kept so a row stays
@@ -632,29 +715,38 @@ async function ensureRow(pool, appId) {
   );
 }
 
-// One reconcile per app at a time ACROSS instances: two colours serve
-// during a rollout, and a board change reaches whichever handled the
-// request. The lease lapses on its own so a crashed holder cannot wedge
-// the app.
+// One reconcile per app at a time ACROSS processes: a board change or a
+// page view reaches whichever process served it, and the sweep runs
+// wherever the workflow does. The lease lapses on its own so a crashed
+// holder cannot wedge the app. Its stamp (to the microsecond, as text) is
+// the reconcile's token: what it writes back is conditional on still
+// holding it, so one that stalled past the lease writes nothing over the
+// reconcile that took the app after it.
 async function claimLease(pool, appId) {
   const { rows } = await pool.query(
-    `UPDATE app_workshop_themes SET reconcile_started_at = NOW()
+    `UPDATE app_workshop_themes SET reconcile_started_at = clock_timestamp()
       WHERE app_id = $1
         AND (reconcile_started_at IS NULL OR reconcile_started_at < NOW() - $2::interval)
-      RETURNING app_id`,
+      RETURNING reconcile_started_at::text AS stamp`,
     [appId, LEASE_INTERVAL]
   );
+  return rows[0] ? rows[0].stamp : null;
+}
+
+async function releaseLease(pool, appId, stamp) {
+  await pool.query(
+    'UPDATE app_workshop_themes SET reconcile_started_at = NULL WHERE app_id = $1 AND reconcile_started_at = $2::timestamptz',
+    [appId, stamp]
+  );
+}
+
+async function stillLeased(pool, appId, stamp) {
+  const { rows } = await pool.query(
+    'SELECT 1 FROM app_workshop_themes WHERE app_id = $1 AND reconcile_started_at = $2::timestamptz', [appId, stamp]);
   return rows.length > 0;
 }
 
-async function releaseLease(pool, appId) {
-  await pool.query(
-    'UPDATE app_workshop_themes SET reconcile_started_at = NULL WHERE app_id = $1',
-    [appId]
-  );
-}
-
-async function writeRow(pool, appId, next) {
+async function writeRow(pool, appId, next, stamp) {
   const { rows } = await pool.query(
     `UPDATE app_workshop_themes
         SET input_hash = $2, themes_json = $3::jsonb, placements_json = $4::jsonb,
@@ -694,7 +786,7 @@ async function writeRow(pool, appId, next) {
             placement_version = CASE WHEN $16::boolean THEN $17::integer ELSE placement_version END,
             digest_version = CASE WHEN $13::boolean THEN $18::integer ELSE digest_version END,
             reconcile_started_at = NULL
-      WHERE app_id = $1
+      WHERE app_id = $1 AND reconcile_started_at = $20::timestamptz
       RETURNING ${ROW_COLUMNS}`,
     [
       appId, next.inputHash, JSON.stringify(next.themes), JSON.stringify(next.placements),
@@ -702,18 +794,18 @@ async function writeRow(pool, appId, next) {
       next.churnAdded, next.churnRemoved, next.lastError || null, next.digest || null,
       !!next.digestTried, next.digestError || null,
       llm.WORKSHOP_DISCOVERY_VERSION, !!next.placedAll, llm.WORKSHOP_PLACEMENT_VERSION, llm.WORKSHOP_DIGEST_VERSION,
-      next.digestCards ? JSON.stringify(next.digestCards) : null,
+      next.digestCards ? JSON.stringify(next.digestCards) : null, stamp,
     ]
   );
-  return shapeRow(rows[0]);
+  return rows[0] ? shapeRow(rows[0]) : null;
 }
 
-async function recordFailure(pool, appId, message) {
+async function recordFailure(pool, appId, message, stamp) {
   await pool.query(
     `UPDATE app_workshop_themes
         SET last_error = $2, last_failed_at = NOW(), reconcile_started_at = NULL
-      WHERE app_id = $1`,
-    [appId, String(message || 'failed').slice(0, 200)]
+      WHERE app_id = $1 AND reconcile_started_at = $3::timestamptz`,
+    [appId, String(message || 'failed').slice(0, 200), stamp]
   );
 }
 
@@ -839,12 +931,16 @@ function themesWithItems(row, keys, placements, votes = {}, registry = []) {
       }
     }
   }
+  // #4417: a topic says so, with its channel's handle, which is what the
+  // client splits By category on and what "Discuss in #name" opens.
+  const topicOf = new Map((registry || []).filter((r) => r && r.topic).map((r) => [r.id, r.topic]));
   return defs.map((t) => ({
     id: t.id, name: t.name, description: t.description || '', saying: t.saying || null,
     // '' when the model gave none, or on a row written before icons existed —
     // the client draws the theme's initial rather than a stand-in glyph.
     icon: t.icon || '',
     items: byTheme.get(t.id),
+    ...(topicOf.has(t.id) ? { topic: { key: t.id, handle: topicOf.get(t.id).handle } } : {}),
   }));
 }
 
@@ -916,6 +1012,7 @@ async function registryCategories(pool, appId) {
     .map((r) => ({
       id: r.value, name: r.label, description: r.description || '',
       icon: r.icon || '', pinned: !!r.pinned, origin: r.origin || 'ai',
+      ...(r.topic ? { topic: { handle: r.topic.handle, order: r.topic.order ?? null } } : {}),
     }));
 }
 
@@ -993,15 +1090,21 @@ function chunk(arr, n) {
   return out;
 }
 
-async function discover({ pool, app, input, previous }) {
+async function discover({ pool, app, input, previous, retired = [] }) {
   const keys = input.items.map((i) => i.key);
+  const topics = liveTopicsOf(previous);
   const result = await llm.generateWorkshopThemeDefinitions({
     inputJson: JSON.stringify({
       ...input,
-      previousCategories: previous,
+      previousCategories: previous.filter((p) => !p.topic),
       // The six the platform ships. Named so the draft works AROUND them
       // instead of redrawing "bug" as a category of its own.
       builtInCategories: builtInCategories(),
+      // #4417: the project's topics, fixed: returned as given, drafted
+      // around (fixTopics holds the draft to it).
+      ...(topics.length ? {
+        topics: topics.map((t) => ({ id: t.id, name: t.name, description: t.description || '' })),
+      } : {}),
     }),
     appName: app.name || app.slug,
     itemKeys: keys,
@@ -1011,7 +1114,8 @@ async function discover({ pool, app, input, previous }) {
   // assignIds keeps a reused id stable; keepPinned then re-adds any theme
   // the GROUP pinned that the model dropped. Order matters — a pinned theme
   // re-added here already carries its final id and must not be re-slugged.
-  const themes = keepPinned(assignIds(result.themes, previous), previous);
+  // And then the topics lead, fixed, and no retired topic survives.
+  const themes = fixTopics(keepPinned(assignIds(result.themes, previous), previous), previous, retired);
   return { themes, model: result.model };
 }
 
@@ -1345,11 +1449,14 @@ async function makeDigest({ pool, app, input, themes, now = Date.now() }) {
 // outright is left for the next reconcile (`failed`) and the error is the
 // row's to report. Sequential on purpose: the theme prefix is cached after
 // the first call, and the platform account's rate budget is shared.
-async function placeAll({ pool, app, themes, input, keys }) {
+async function placeAll({ pool, app, themes, input, keys, topicIds = null }) {
   const byKey = new Map(input.items.map((i) => [i.key, i]));
   const themeIds = themes.map((t) => t.id);
+  // #4417: the topics lead the list already (fixTopics), marked, and the
+  // prompt sends a card that fits one as well as another category to it.
   const themesJson = JSON.stringify(themes.map((t) => ({
     id: t.id, name: t.name, description: t.description, anchors: t.anchors || [],
+    ...(topicIds && topicIds.has(t.id) ? { topic: true } : {}),
   })));
   const placed = {};
   const none = [];
@@ -1404,11 +1511,6 @@ function notify(app, stage) {
 
 // ── The reconcile ─────────────────────────────────────────────────────
 
-// Per process: apps with a reconcile running, and apps a change reached
-// while one was running (they get one more pass when it ends).
-const inFlight = new Set();
-const dirty = new Set();
-
 async function reconcile({ pool, app, reason }) {
   const result = {
     reason: reason || null, skipped: null, discovered: false, replaced: false, placed: 0, none: 0, failed: 0, removed: 0,
@@ -1418,10 +1520,8 @@ async function reconcile({ pool, app, reason }) {
     // The stages this pass re-ran because their prompt version had moved.
     outdated: [],
   };
-  if (inFlight.has(app.id)) { dirty.add(app.id); return { ...result, skipped: 'in-flight' }; }
   if (!llm.isEnabled()) return { ...result, skipped: 'no-model' };
-  inFlight.add(app.id);
-  let leased = false;
+  let leased = null;
   try {
     const { input } = await buildThemeInput(pool, app);
     if (!input.items.length) return { ...result, skipped: 'empty' };
@@ -1431,12 +1531,31 @@ async function reconcile({ pool, app, reason }) {
     if (backingOff(row)) return { ...result, skipped: 'backoff' };
     leased = await claimLease(pool, app.id);
     if (!leased) return { ...result, skipped: 'leased' };
+    const stamp = leased;
 
     const keys = input.items.map((i) => i.key);
     const diff = diffRow(row, keys);
     const churnAdded = row.churnAdded + diff.added.length;
     const churnRemoved = row.churnRemoved + diff.removed;
     result.removed = diff.removed;
+    // #4417: the registry (whose topics are fixed definitions) and the keys
+    // of the retired topics, read once for the pass. A failed read degrades
+    // to the grouping before topics: the standing draft as it is.
+    let registryNow = [];
+    let retiredKeys = [];
+    try {
+      [registryNow, retiredKeys] = await Promise.all([
+        registryCategories(pool, app.id),
+        topicAttrs.retiredTopicKeys(pool, app.id),
+      ]);
+    } catch (err) {
+      log.warn('workshop-themes', 'registry read failed', { app: app.slug, message: err.message });
+    }
+    const standing = row.themes.length ? fixTopics(row.themes, registryNow, retiredKeys) : row.themes;
+    // A topic added, retired or moved since the draft: the standing list is
+    // not the one the cards were placed against, so they are placed again,
+    // all of them, as for a placement prompt that moved.
+    const topicsMoved = row.themes.length > 0 && !sameIds(standing, row.themes);
     const why = needsDiscovery({
       hasThemes: row.themes.length > 0, discoveredAt: row.discoveredAt,
       discoveryKeyCount: row.discoveryKeyCount, churnAdded, churnRemoved,
@@ -1444,7 +1563,7 @@ async function reconcile({ pool, app, reason }) {
     });
     // Cards placed under an older prompt are placed again, all of them,
     // against the definitions as they stand. A re-draft does that anyway.
-    const replace = !why && versionBehind(row.placementVersion, llm.WORKSHOP_PLACEMENT_VERSION);
+    const replace = !why && (versionBehind(row.placementVersion, llm.WORKSHOP_PLACEMENT_VERSION) || topicsMoved);
     // A pass with nothing else to do still runs when the paragraph is due:
     // on a settled board this branch is the ONLY one that ever fires, which
     // is exactly why the digest never got written before.
@@ -1452,16 +1571,16 @@ async function reconcile({ pool, app, reason }) {
     // `let`, because a draft that FAILS has to take this back. See the catch.
     let wantDigest = !!digestWhy;
     if (why === 'version') result.outdated.push('discovery');
-    if (replace) result.outdated.push('placement');
+    if (replace) result.outdated.push(topicsMoved ? 'topics' : 'placement');
     if (digestWhy === 'version') result.outdated.push('digest');
     if (result.outdated.length) log.info('workshop-themes', 'prompt version moved', { app: app.slug, stages: result.outdated });
     if (!why && !replace && !wantDigest && !diff.added.length && !diff.removed && !row.lastError) {
-      await releaseLease(pool, app.id);
-      leased = false;
+      await releaseLease(pool, app.id, stamp);
+      leased = null;
       return { ...result, skipped: 'unchanged' };
     }
 
-    let themes = row.themes;
+    let themes = standing;
     let model = row.model;
     const next = {
       placements: diff.placements, unplaced: diff.unplaced,
@@ -1496,20 +1615,16 @@ async function reconcile({ pool, app, reason }) {
       // draft is folded in for anything the registry write missed, so a
       // failed registry sync degrades to the old behaviour instead of
       // losing the standing vocabulary.
-      let previous = [];
-      try {
-        previous = await registryCategories(pool, app.id);
-      } catch (err) {
-        log.warn('workshop-themes', 'registry read failed', { app: app.slug, message: err.message });
-      }
+      const previous = registryNow.slice();
       const seenPrev = new Set(previous.map((p2) => p2.id));
+      const gone = new Set(retiredKeys);
       for (const t of row.themes) {
-        if (seenPrev.has(t.id)) continue;
+        if (seenPrev.has(t.id) || gone.has(t.id)) continue;
         seenPrev.add(t.id);
         previous.push({ id: t.id, name: t.name, description: t.description, icon: t.icon || '', pinned: false });
       }
       try {
-        const disc = await discover({ pool, app, input, previous });
+        const disc = await discover({ pool, app, input, previous, retired: retiredKeys });
         themes = disc.themes;
         model = disc.model;
         next.placements = {};
@@ -1563,7 +1678,10 @@ async function reconcile({ pool, app, reason }) {
     // one call per batch of forty, to sort cards into no categories at all.
     // Every card came back unplaced, which then counts as churn.
     if (toPlace.length && themes.length) {
-      const out = await placeAll({ pool, app, themes, input, keys: toPlace });
+      const out = await placeAll({
+        pool, app, themes, input, keys: toPlace,
+        topicIds: new Set(liveTopicsOf(registryNow).map((t) => t.id)),
+      });
       Object.assign(next.placements, out.placed);
       for (const k of out.none) next.unplaced.add(k);
       if (out.model) model = out.model;
@@ -1590,7 +1708,9 @@ async function reconcile({ pool, app, reason }) {
     //
     // Best-effort — a registry failure must not throw away a draft the
     // platform has already paid for.
-    if (themes.length) {
+    // Only while this reconcile still holds the app: one that stalled past
+    // its lease leaves the registry to the reconcile that took over.
+    if (themes.length && await stillLeased(pool, app.id, stamp)) {
       try {
         await syncCategories(pool, app.id, themes);
       } catch (err) {
@@ -1600,7 +1720,7 @@ async function reconcile({ pool, app, reason }) {
 
     const dig = wantDigest ? await makeDigest({ pool, app, input, themes }) : { digest: null, error: null };
 
-    await writeRow(pool, app.id, {
+    const written = await writeRow(pool, app.id, {
       inputHash: fingerprintKeys(keys), themes, placements: next.placements,
       unplaced: [...next.unplaced], model, discovered: next.discovered,
       discoveryKeyCount: next.discoveryKeyCount, churnAdded: next.churnAdded,
@@ -1608,8 +1728,11 @@ async function reconcile({ pool, app, reason }) {
       digest: flattenDigest(dig.digest), digestCards: dig.digest,
       digestTried: wantDigest, digestError: dig.error,
       placedAll,
-    });
-    leased = false;
+    }, stamp);
+    leased = null;
+    // Another reconcile took the app after this one's lease lapsed: its
+    // result stands, and this one's is dropped.
+    if (!written) return { ...result, skipped: 'lease-lost' };
     // What the pass DID, not what it set out to do: a draft that failed
     // published no new categories, so telling open pages otherwise would have
     // them re-fetch expecting a grouping that never changed.
@@ -1617,13 +1740,11 @@ async function reconcile({ pool, app, reason }) {
     return result;
   } catch (err) {
     log.warn('workshop-themes', 'reconcile failed', { app: app.slug, reason, message: err.message });
-    await recordFailure(pool, app.id, err && err.message).catch(() => {});
-    leased = false;
+    if (leased) await recordFailure(pool, app.id, err && err.message, leased).catch(() => {});
+    leased = null;
     return { ...result, error: String(err && err.message || err) };
   } finally {
-    if (leased) await releaseLease(pool, app.id).catch(() => {});
-    inFlight.delete(app.id);
-    if (dirty.delete(app.id)) noteBoardChange(pool, { appId: app.id, appSlug: app.slug });
+    if (leased) await releaseLease(pool, app.id, leased).catch(() => {});
   }
 }
 
@@ -1636,39 +1757,111 @@ async function loadApp(pool, { appId, appSlug }) {
   return rows[0] || null;
 }
 
-// A board change (ws.pushSessionUpdate / pushIssueUpdate). One timer per
-// app: a second change inside the quiet period joins the first. Returns
-// whether a reconcile is scheduled.
-const changeTimers = new Map();
-function noteBoardChange(pool, info) {
-  if (!llm.isEnabled() || !pool || !info) return false;
-  const key = info.appId != null ? `id:${info.appId}` : (info.appSlug ? `slug:${info.appSlug}` : null);
-  if (!key) return false;
-  if (changeTimers.has(key)) return true;
-  const timer = setTimeout(() => {
-    changeTimers.delete(key);
-    runChange(pool, info).catch((err) => {
-      log.warn('workshop-themes', 'change reconcile failed', { key, message: err.message });
-    });
-  }, CHANGE_DEBOUNCE_MS);
-  if (timer.unref) timer.unref();
-  changeTimers.set(key, timer);
-  return true;
+// A board change (ws.pushSessionUpdate / pushIssueUpdate, and a machine's
+// push marked boardChange, in every process that relays it): the app is
+// owed a pass once the board has been quiet for CHANGE_DEBOUNCE_MS from its
+// first change, kept on its row (reconcile_due_at) and run by the
+// workshop-changes clock (changeTargets, changeApp), so a burst — a merge
+// that closes three issues and lands a row — is one placement call. Each
+// process that heard the change writes the same due time. A change while a
+// pass holds the row (its due a lease, further off than the quiet period)
+// owes the next pass from now, so the pass under way does not take it off.
+// It was a timer per process that heard it: lost to a restart, and one per
+// process. Resolves whether a pass is owed.
+async function noteBoardChange(pool, info) {
+  if (!llm.isEnabled() || !pool || !info || (info.appId == null && !info.appSlug)) return false;
+  try {
+    await pool.query(
+      `INSERT INTO app_workshop_themes (app_id, input_hash, last_viewed_at, reconcile_due_at)
+       SELECT id, '', NOW(), NOW() + make_interval(secs => $3::double precision / 1000) FROM apps
+        WHERE ($1::int IS NOT NULL AND id = $1::int) OR ($1::int IS NULL AND slug = $2::text)
+       ON CONFLICT (app_id) DO UPDATE
+         SET reconcile_due_at = CASE
+               WHEN app_workshop_themes.reconcile_due_at IS NULL
+                 OR app_workshop_themes.reconcile_due_at > EXCLUDED.reconcile_due_at
+               THEN EXCLUDED.reconcile_due_at ELSE app_workshop_themes.reconcile_due_at END`,
+      [info.appId ?? null, info.appSlug || null, CHANGE_DEBOUNCE_MS]
+    );
+    return true;
+  } catch (err) {
+    log.warn('workshop-themes', 'Could not owe a pass for a board change', { appId: info.appId, message: err.message });
+    return false;
+  }
 }
 
-async function runChange(pool, info) {
-  const app = await loadApp(pool, info);
-  if (!app) return null;
-  return reconcile({ pool, app, reason: 'change' });
+// A page view's pass: owed now (it was a reconcile started in the web
+// process that served the view, once a minute per process).
+async function owePassNow(pool, appId) {
+  await pool.query(
+    `UPDATE app_workshop_themes SET reconcile_due_at = LEAST(COALESCE(reconcile_due_at, NOW()), NOW()) WHERE app_id = $1`,
+    [appId]
+  );
 }
 
-// The hourly leader sweep: every app somebody opened in the last week, in
-// turn. Discovery is due for most of them at most once a day; the rest is
-// a diff that finds nothing and costs no model call.
-async function sweep({ pool, isShuttingDown }) {
-  if (!llm.isEnabled()) return { apps: 0, skipped: 'no-model' };
+// The workshop-changes clock: the apps whose pass is due, each a target.
+async function changeTargets({ pool, limit = SWEEP_MAX_APPS }) {
+  if (!llm.isEnabled()) return { apps: 0, skipped: 'no-model', items: [] };
   const { rows } = await pool.query(
-    `SELECT a.id, a.slug, a.name, a.repo_url
+    `SELECT app_id, reconcile_due_at::text AS due FROM app_workshop_themes
+      WHERE reconcile_due_at IS NOT NULL AND reconcile_due_at <= NOW()
+      ORDER BY reconcile_due_at LIMIT $1`,
+    [limit]
+  );
+  return { apps: rows.length, items: rows.map((r) => ({ target: `app:${r.app_id}`, input: { appId: Number(r.app_id), due: r.due } })) };
+}
+
+// One target of it: the pass it owes claimed on the row (only the one it was
+// listed for: its due moved PASS_LEASE_MS on, so a process that dies in the
+// pass leaves it owed then), run, and taken off only if no change came
+// meanwhile (a change pulls the claim back to its quiet period). A pass
+// another holds the reconcile's lease for now is owed again shortly, as the
+// change that owed it may be newer than what that pass read.
+const PASS_LEASE_MS = 10 * 60 * 1000;
+async function changeApp({ pool, appId, due }) {
+  const { rows: [claimed] } = await pool.query(
+    `UPDATE app_workshop_themes SET reconcile_due_at = NOW() + make_interval(secs => $3::double precision / 1000)
+      WHERE app_id = $1 AND reconcile_due_at = $2::timestamptz
+      RETURNING reconcile_due_at::text AS claim`,
+    [appId, due, PASS_LEASE_MS]
+  );
+  if (!claimed) return { skipped: 'not_owed' };
+  // Off the row only if no change came while it ran (it would have pulled
+  // the claim in).
+  const done = () => pool.query(
+    'UPDATE app_workshop_themes SET reconcile_due_at = NULL WHERE app_id = $1 AND reconcile_due_at = $2::timestamptz',
+    [appId, claimed.claim]
+  );
+  const app = await loadApp(pool, { appId });
+  if (!app) {
+    await done();
+    return { skipped: 'gone' };
+  }
+  const r = await reconcile({ pool, app, reason: 'change' });
+  if (r && r.skipped === 'leased') {
+    await pool.query(
+      `UPDATE app_workshop_themes SET reconcile_due_at = NOW() + make_interval(secs => $3::double precision / 1000)
+        WHERE app_id = $1 AND reconcile_due_at = $2::timestamptz`,
+      [appId, claimed.claim, CHANGE_DEBOUNCE_MS]
+    );
+  } else {
+    await done();
+  }
+  return { discovered: !!(r && r.discovered), skipped: (r && r.skipped) || null, error: (r && r.error) || null };
+}
+
+// The hourly sweep (the `workshop-themes` clock, src/workflow/clock/services.ts):
+// every app somebody opened in the last week, each a target of its own, so a
+// reconcile (and its model calls) runs once per app however many passes find
+// it. Discovery is due for most of them at most once a day; the rest is a
+// diff that finds nothing and costs no model call. While GitHub's hourly
+// budget is nearly used up (each reconcile reads the app's open issues) the
+// sweep hands back none: a board change or a page view still reconciles on
+// its own trigger.
+async function sweepTargets({ pool }) {
+  if (!llm.isEnabled()) return { apps: 0, skipped: 'no-model', items: [] };
+  if (!githubBudget.budgetAllows('background')) return { apps: 0, held: true, items: [] };
+  const { rows } = await pool.query(
+    `SELECT a.id
        FROM app_workshop_themes t
        JOIN apps a ON a.id = t.app_id
       WHERE t.last_viewed_at IS NOT NULL AND t.last_viewed_at >= NOW() - $1::interval
@@ -1676,37 +1869,24 @@ async function sweep({ pool, isShuttingDown }) {
       LIMIT $2`,
     [SWEEP_VIEWED_INTERVAL, SWEEP_MAX_APPS]
   );
-  let apps = 0;
-  let discovered = 0;
-  for (const app of rows) {
-    if (typeof isShuttingDown === 'function' && isShuttingDown()) break;
-    // Each reconcile reads the app's open issues from GitHub. The sweep is
-    // background work, so it stops while GitHub's hourly budget is nearly
-    // used up (services/github-budget.js); a board change or a page view
-    // still reconciles on its own trigger.
-    if (!githubBudget.budgetAllows('background')) return { apps, discovered, held: true };
-    const r = await reconcile({ pool, app, reason: 'sweep' });
-    apps += 1;
-    if (r && r.discovered) discovered += 1;
-  }
-  return { apps, discovered };
+  return { apps: rows.length, items: rows.map((r) => ({ target: `app:${r.id}`, input: { appId: Number(r.id) } })) };
 }
 
-// A GET starts a reconcile at most once a minute per app: the row's own
-// lease and the failure backoff bound the rest.
-const lastKick = new Map();
-function kickAllowed(appId) {
-  const t = lastKick.get(appId) || 0;
-  if (Date.now() - t < GET_KICK_MIN_MS) return false;
-  lastKick.set(appId, Date.now());
-  return true;
+// One target of the sweep: its app reconciled.
+async function sweepApp({ pool, appId }) {
+  if (!githubBudget.budgetAllows('background')) return { held: true };
+  const app = await loadApp(pool, { appId });
+  if (!app) return { skipped: 'gone' };
+  const r = await reconcile({ pool, app, reason: 'sweep' });
+  return { discovered: !!(r && r.discovered), skipped: (r && r.skipped) || null };
 }
 
 // What the route serves. Never waits on the model. With definitions, the
 // themes with their items from the placements, `coverage` counting how
 // much of the board they hold, `unplaced` naming the cards the placer
-// declined, and `pending` when a reconcile is running or was just started
-// (`pendingStage` says which stage). Without definitions, the category
+// declined, and `pending` when a reconcile is running or owed, or this view
+// owed one (`pendingStage` says which stage): the workshop-changes clock
+// runs it, never the process that served the view. Without definitions, the category
 // grouping (or staging's demo) with the same flags.
 async function getThemes({ pool, app }) {
   const { input } = await buildThemeInput(pool, app);
@@ -1721,10 +1901,12 @@ async function getThemes({ pool, app }) {
   // that shipped before, which is also what a brand-new app sees.
   let votes = {};
   let registry = [];
+  let retired = [];
   try {
-    [votes, registry] = await Promise.all([
+    [votes, registry, retired] = await Promise.all([
       loadThemeVotes(pool, app.id, keys),
       registryCategories(pool, app.id),
+      topicAttrs.retiredTopicKeys(pool, app.id),
     ]);
   } catch (err) {
     log.warn('workshop-themes', 'theme vote overlay failed', { app: app.slug, message: err.message });
@@ -1732,14 +1914,15 @@ async function getThemes({ pool, app }) {
 
   const hasThemes = !!(row && row.themes.length);
   if (!hasThemes) {
-    let pending = inFlight.has(app.id);
-    if (!pending && enabled && keys.length && !backingOff(row) && kickAllowed(app.id)) {
+    let pending = !!(row && (row.reconciling || row.reconcileDueAt));
+    if (!pending && enabled && keys.length && !backingOff(row)) {
       pending = true;
-      void reconcile({ pool, app, reason: 'get' });
+      await ensureRow(pool, app.id);
+      await owePassNow(pool, app.id);
     }
     if (IS_STAGING && !enabled) {
       return {
-        themes: stagingDemoGrouping(input), source: 'demo', generatedAt: null, discoveredAt: null,
+        themes: stagingDemoGrouping(input, registry), source: 'demo', generatedAt: null, discoveredAt: null,
         stale: true, pending: false, pendingStage: null, lastError: null, coverage: null, unplaced: [],
         digest: 'Staging demo: the model\u2019s three lines on the two weeks and the open board would sit here.',
         digestCards: {
@@ -1751,7 +1934,7 @@ async function getThemes({ pool, app }) {
       };
     }
     return {
-      themes: fallbackThemes(input), source: 'category', generatedAt: null, discoveredAt: null,
+      themes: fallbackThemes(input, registry), source: 'category', generatedAt: null, discoveredAt: null,
       registry, votes,
       digest: null, digestCards: null,
       stale: true, pending, pendingStage: pending ? 'discovery' : null,
@@ -1761,7 +1944,11 @@ async function getThemes({ pool, app }) {
   }
 
   const diff = diffRow(row, keys);
-  const themes = themesWithItems(row, keys, diff.placements, votes, registry);
+  // #4417: the topics lead, fixed, whatever the standing draft says; a
+  // retired one is in no list (its cards wait for the next pass).
+  const themes = themesWithItems(
+    { ...row, themes: fixTopics(row.themes, registry, retired) }, keys, diff.placements, votes, registry
+  );
   const placedCount = themes.reduce((n, t) => n + t.items.length, 0);
   const unplacedKeys = [...diff.unplaced];
   const pendingCount = Math.max(0, keys.length - placedCount - unplacedKeys.length);
@@ -1772,15 +1959,15 @@ async function getThemes({ pool, app }) {
   });
   const replace = !why && versionBehind(row.placementVersion, llm.WORKSHOP_PLACEMENT_VERSION);
   const digestWhy = digestDue(row);
-  let pending = inFlight.has(app.id);
-  // A view starts a pass for anything the row does not know or holds under
+  let pending = !!(row.reconciling || row.reconcileDueAt);
+  // A view owes a pass for anything the row does not know or holds under
   // an older prompt, the paragraph included. It used to wait for unplaced
   // cards or a due draft alone, so a version bump, or a day-old paragraph,
   // reached the page only when the hourly sweep came round.
   const due = pendingCount > 0 || !!why || replace || !!digestWhy;
-  if (!pending && enabled && due && !backingOff(row) && kickAllowed(app.id)) {
+  if (!pending && enabled && due && !backingOff(row)) {
     pending = true;
-    void reconcile({ pool, app, reason: 'get' });
+    await owePassNow(pool, app.id);
   }
   return {
     themes,
@@ -1808,7 +1995,8 @@ module.exports = {
   buildThemeInput, fingerprint, fingerprintKeys, fallbackThemes, stagingDemoGrouping, assignIds, slugify, excerpt,
   needsDiscovery, versionBehind, digestDue, digestStale, diffRow, themesWithItems,
   keepPinned, targetOfKey, loadThemeVotes, registryCategories, builtInCategories, syncCategories,
-  getCached, getThemes, reconcile, noteBoardChange, sweep, setNotifier,
+  liveTopicsOf, fixTopics,
+  getCached, getThemes, reconcile, noteBoardChange, changeTargets, changeApp, sweepTargets, sweepApp, setNotifier,
   DISCOVERY_MAX_AGE_MS, DIGEST_MAX_AGE_MS, DIGEST_RETRY_MS, DRIFT_RATIO, CHANGE_DEBOUNCE_MS, FAILURE_BACKOFF_MS, PLACEMENT_BATCH,
   // The digest’s own windows, fetched apart from the board snapshot so a
   // week is never a truncated slice of one. DIGEST_WEEK_MAX is the cap it
@@ -1817,9 +2005,4 @@ module.exports = {
   // #3293: the weeks before those two, derived rather than drafted, back to
   // the project's start.
   fetchDigestHistory, historyLine, DIGEST_HISTORY_TITLES,
-  _inFlightForTests: inFlight,
-  _dirtyForTests: dirty,
-  _changeTimersForTests: changeTimers,
-  _lastKickForTests: lastKick,
-  _runChangeForTests: runChange,
 };

@@ -1,6 +1,6 @@
 import { createInstance, type TOptions } from 'i18next';
 import { sha256 } from '@noble/hashes/sha2.js';
-import { resolveLanguage, type Catalogs } from './locale';
+import { matchLanguage, resolveLanguage, type Catalogs } from './locale';
 
 /**
  * The language runtime, built from one set of catalogs.
@@ -16,6 +16,8 @@ import { resolveLanguage, type Catalogs } from './locale';
 
 /** The notice shown once when the language was picked automatically. */
 export type LanguageNotice = { language: string; name: string };
+/** What the server's translation cache offers now (GET /api/languages). */
+export type LiveCatalogs = Pick<Catalogs, 'languages' | 'manifest'>;
 type Save = (value: string | null) => Promise<void>;
 /** A choice that has been saved and is owed to the screen. */
 type Commit = { id: number; language: string; value: string | null; auto: boolean };
@@ -24,8 +26,42 @@ type Commit = { id: number; language: string; value: string | null; auto: boolea
 const DEVICE_KEY = 'homeroom:language:device';
 // Set once the automatic-language notice has been shown on this device.
 const NOTICE_KEY = 'homeroom:language:auto-notice';
+// The language last on screen on this device. The head's first-paint hold
+// (frontend/src/head.html) reads it before anything paints.
+const SHOWN_KEY = 'homeroom:language:shown';
+const PENDING_CLASS = 'language-pending';
 const PACK_TIMEOUT_MS = 8000;
 const RETRY_AFTER_MS = 10000;
+// How long a language the build does not ship waits for the server's list
+// before the screen settles on what the build has.
+const LIVE_WAIT_MS = 1500;
+const PACK_URL = /^\/locales\/(?:live\/)?[a-zA-Z-]+\.[a-z-]+\.[a-f0-9]{64}\.json$/;
+const HASH = /^[a-f0-9]{64}$/;
+
+/** A list from GET /api/languages that the runtime can use, or null. */
+function validLive(value: unknown, namespaces: readonly string[]): LiveCatalogs | null {
+  const isRecord = (item: unknown): item is Record<string, unknown> => !!item && typeof item === 'object' && !Array.isArray(item);
+  if (!isRecord(value) || !isRecord(value.languages) || !isRecord(value.manifest)) return null;
+  if (value.languages.en !== 'English' && typeof value.languages.en !== 'string') return null;
+  const languages: Record<string, string> = {};
+  const manifest: Catalogs['manifest'] = {};
+  for (const [tag, name] of Object.entries(value.languages)) {
+    if (typeof name !== 'string' || !name.trim()) return null;
+    if (tag === 'en') { languages[tag] = name; continue; }
+    const packs = value.manifest[tag];
+    if (!isRecord(packs)) return null;
+    const entries: Record<string, { url: string; hash: string }> = {};
+    for (const namespace of namespaces) {
+      const entry = packs[namespace];
+      if (!isRecord(entry) || typeof entry.url !== 'string' || !PACK_URL.test(entry.url)
+          || typeof entry.hash !== 'string' || !HASH.test(entry.hash)) return null;
+      entries[namespace] = { url: entry.url, hash: entry.hash };
+    }
+    languages[tag] = name;
+    manifest[tag] = entries;
+  }
+  return { languages, manifest };
+}
 
 function readStored(key: string): string | null {
   try { return localStorage.getItem(key) || null; } catch { return null; }
@@ -41,14 +77,29 @@ function deviceLanguages(): readonly string[] {
 }
 
 export function createLanguageRuntime(catalogs: Catalogs) {
-  const shipped = Object.keys(catalogs.languages);
+  // What is offered: the build's catalogs, until the server's translation
+  // cache says what it has now (setLiveCatalogs).
+  let languages: Record<string, string> = { ...catalogs.languages };
+  let manifest: Catalogs['manifest'] = catalogs.manifest;
+  let shipped = Object.keys(languages);
+  let languageList: readonly { tag: string; name: string }[] = Object.freeze(
+    Object.entries(languages).map(([tag, name]) => ({ tag, name })),
+  );
+  const languageListeners = new Set<() => void>();
+  // The server's list on its way: a language only it has is waited for, briefly.
+  let liveWait: Promise<void> | null = null;
+  let liveSettled = true;
+  // The last session answer, so a list that arrives late can show what it adds.
+  let lastSession: { id?: string | number; locale?: string | null } | null | undefined;
   const i18n = createInstance();
   // Hydrate the English build-time document synchronously. A language is
   // activated after hydration; hydrated DOM is never translated behind
   // React's back, and a form is never rebuilt just to change its labels.
   void i18n.init({
     lng: 'en', fallbackLng: 'en', load: 'currentOnly',
-    supportedLngs: shipped,
+    // Which languages may show is decided here (resolveLanguage over
+    // `shipped`), and the server's list can add one after this is made.
+    supportedLngs: false,
     ns: catalogs.namespaces, defaultNS: 'core', keySeparator: false,
     resources: { en: catalogs.english }, initAsync: false,
     interpolation: { escapeValue: false },
@@ -88,50 +139,108 @@ export function createLanguageRuntime(catalogs: Catalogs) {
   let saveQueue: Promise<unknown> = Promise.resolve();
 
   function languageName(language: string): string {
-    if (catalogs.languages[language]) return catalogs.languages[language];
+    if (languages[language]) return languages[language];
     try {
       return new Intl.DisplayNames([language], { type: 'language' }).of(language) || language;
     } catch { return language; }
   }
 
+  // The refresher runtime.ts installs: ask the server for its list again
+  // (GET /api/languages) when a pack has moved. One ask at a time; parallel
+  // readers share the one in flight.
+  let liveRefresh: (() => Promise<boolean>) | null = null;
+  let liveRefreshing: Promise<boolean> | null = null;
+
+  function refreshLive(): Promise<boolean> {
+    if (!liveRefresh) return Promise.resolve(false);
+    if (!liveRefreshing) {
+      // A refresh that cannot be used (offline, refused, an answer the
+      // runtime cannot trust) is never an error of its own: the pack
+      // request's own failure is the one that stands.
+      liveRefreshing = (async () => {
+        try { return !!(await liveRefresh()); } catch { return false; }
+      })().finally(() => { liveRefreshing = null; });
+    }
+    return liveRefreshing;
+  }
+
+  /**
+   * A pack request that failed the way a MOVED pack does: the answer was 404
+   * or 410, or the bytes were not the hash the list named. Only these ask for
+   * the list again; an outage, a timeout or a malformed pack fails on its own.
+   */
+  type MovedError = Error & { status?: number; mismatch?: boolean };
+
+  function packMoved(error: unknown): boolean {
+    const moved = error as MovedError;
+    return moved instanceof Error
+      && (moved.status === 404 || moved.status === 410 || moved.mismatch === true);
+  }
+
+  async function loadPack(language: string, namespace: string, entry: { url: string; hash: string }): Promise<void> {
+    const controller = new AbortController();
+    const deadline = setTimeout(() => controller.abort(), PACK_TIMEOUT_MS);
+    try {
+      const response = await fetch(entry.url, {
+        credentials: 'same-origin', signal: controller.signal, redirect: 'error',
+      });
+      if (!response.ok) {
+        const unavailable: MovedError = new Error('Language pack unavailable');
+        unavailable.status = response.status;
+        throw unavailable;
+      }
+      const bytes = await response.arrayBuffer();
+      // HTTP previews and self-hosted installations do not expose
+      // SubtleCrypto. The exact bytes are still verified there; integrity
+      // is never skipped.
+      const subtle = globalThis.crypto?.subtle;
+      const digest = subtle
+        ? await subtle.digest('SHA-256', bytes)
+        : sha256(new Uint8Array(bytes));
+      const actual = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+      if (actual !== entry.hash) {
+        const mismatch: MovedError = new Error('Language pack does not match this build');
+        mismatch.mismatch = true;
+        throw mismatch;
+      }
+      const messages = JSON.parse(new TextDecoder().decode(bytes));
+      if (!messages || Array.isArray(messages) || typeof messages !== 'object'
+          || Object.values(messages).some((value) => typeof value !== 'string')) {
+        throw new Error('Invalid language pack');
+      }
+      const showing = language === activeLanguage;
+      i18n.addResourceBundle(language, namespace, messages, true, true, { silent: !showing });
+      // React readers hear the store. A legacy reader repaints on this
+      // event, and its first read of this namespace was English: tell it the
+      // text for the language on screen is here. A pack loaded ahead of a
+      // switch is announced by the switch itself (activate), once.
+      if (showing) announce(namespace);
+    } finally { clearTimeout(deadline); }
+  }
+
   async function fetchPack(language: string, namespace: string): Promise<void> {
     if (language === 'en' || i18n.hasResourceBundle(language, namespace)) return;
-    const entry = catalogs.manifest[language]?.[namespace];
+    const entry = manifest[language]?.[namespace];
     if (!entry) throw new Error('Unknown language pack');
     const key = `${language}:${namespace}`;
     const requested = requests.get(key);
     if (requested) return requested;
     const request = (async () => {
-      const controller = new AbortController();
-      const deadline = setTimeout(() => controller.abort(), PACK_TIMEOUT_MS);
       try {
-        const response = await fetch(entry.url, {
-          credentials: 'same-origin', signal: controller.signal, redirect: 'error',
-        });
-        if (!response.ok) throw new Error('Language pack unavailable');
-        const bytes = await response.arrayBuffer();
-        // HTTP previews and self-hosted installations do not expose
-        // SubtleCrypto. The exact bytes are still verified there; integrity
-        // is never skipped.
-        const subtle = globalThis.crypto?.subtle;
-        const digest = subtle
-          ? await subtle.digest('SHA-256', bytes)
-          : sha256(new Uint8Array(bytes));
-        const actual = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
-        if (actual !== entry.hash) throw new Error('Language pack does not match this build');
-        const messages = JSON.parse(new TextDecoder().decode(bytes));
-        if (!messages || Array.isArray(messages) || typeof messages !== 'object'
-            || Object.values(messages).some((value) => typeof value !== 'string')) {
-          throw new Error('Invalid language pack');
+        await loadPack(language, namespace, entry);
+      } catch (error) {
+        // The list this page booted with can be out of date: English has
+        // changed since, or a translation pass has run, and a pack's URL is
+        // its content. A moved pack asks for the list once; if it now names
+        // this pack elsewhere, take it from there. Readers of the same pack
+        // share the refresh, which lives inside this request's promise.
+        if (packMoved(error) && await refreshLive()) {
+          const fresh = manifest[language]?.[namespace];
+          if (!fresh) throw new Error('Unknown language pack');
+          if (fresh.url !== entry.url) return loadPack(language, namespace, fresh);
         }
-        const showing = language === activeLanguage;
-        i18n.addResourceBundle(language, namespace, messages, true, true, { silent: !showing });
-        // React readers hear the store. A legacy reader repaints on this
-        // event, and its first read of this namespace was English: tell it the
-        // text for the language on screen is here. A pack loaded ahead of a
-        // switch is announced by the switch itself (activate), once.
-        if (showing) announce(namespace);
-      } finally { clearTimeout(deadline); }
+        throw error;
+      }
     })();
     requests.set(key, request);
     try { await request; } finally { requests.delete(key); }
@@ -183,8 +292,67 @@ export function createLanguageRuntime(catalogs: Catalogs) {
     }[character]!));
   }
 
+  /**
+   * A whole message with markup inside it, for an owner that builds HTML as a
+   * string. The catalog holds numbered tags (`Read <0>the terms</0>.`); `wrap`
+   * supplies the element for each number as a function of its (already
+   * escaped) inner HTML. Everything else, parameters included, is escaped, so
+   * neither a translation nor a value can add markup of its own. A tag with
+   * no wrapper keeps its text and loses the tag.
+   */
+  function htmlRich(key: string, values: Record<string, string | number | null | undefined> = {},
+    wrap: ((inner: string) => string)[] = []): string {
+    const escape = (text: string) => text.replace(/[&<>"']/g, (character) => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+    }[character]!));
+    // Leave {{parameters}} in place: they are substituted after the tags are
+    // parsed, so a value that looks like a tag stays text (as in RichMessage).
+    const text = t(key, {
+      count: typeof values.count === 'number' ? values.count : undefined,
+      interpolation: { prefix: '[[unused:', suffix: ']]' },
+    } as TOptions);
+    const stack: { index: number; html: string }[] = [{ index: -1, html: '' }];
+    for (const token of text.split(/(<\/?\d+>|{{\s*\w+\s*}})/g)) {
+      const open = /^<(\d+)>$/.exec(token);
+      const close = /^<\/(\d+)>$/.exec(token);
+      const parameter = /^{{\s*(\w+)\s*}}$/.exec(token);
+      const top = stack[stack.length - 1];
+      if (open) stack.push({ index: Number(open[1]), html: '' });
+      else if (close && stack.length > 1 && top.index === Number(close[1])) {
+        stack.pop();
+        const wrapper = wrap[top.index];
+        stack[stack.length - 1].html += wrapper ? wrapper(top.html) : top.html;
+      } else if (parameter) top.html += escape(String(values[parameter[1]] ?? ''));
+      else top.html += escape(token);
+    }
+    // An unclosed tag keeps what it held.
+    return stack.map((group) => group.html).join('');
+  }
+
+  /**
+   * Independent facts said one after another, as an accessible name gives
+   * them ("App: Recipe Box, still open, unread"). Each part is a whole
+   * message of its own. What joins two of them is a message too
+   * (`core:list.pair`), so a language can use its own punctuation.
+   */
+  function listText(parts: readonly (string | null | undefined | false)[]): string {
+    const said = parts.filter((part): part is string => typeof part === 'string' && part !== '');
+    if (!i18n.exists('core:list.pair')) return said.join(', ');
+    if (!said.length) return '';
+    return said.reduce((first, second) => t('core:list.pair', { first, second }));
+  }
+
   async function prepareLanguage(value: string | null): Promise<{ language: string; auto: boolean }> {
-    const resolved = resolveLanguage(value, deviceLanguages(), shipped);
+    let resolved = resolveLanguage(value, deviceLanguages(), shipped);
+    // The language wanted first (the saved choice, else the device's first)
+    // is not one this build ships, and the server's list may still add it:
+    // wait for it a moment rather than show another and switch. Somebody
+    // whose first language ships never waits.
+    const wanted = typeof value === 'string' && value ? value : deviceLanguages()[0];
+    if (wanted && !matchLanguage(wanted, shipped) && liveWait && !liveSettled) {
+      await Promise.race([liveWait, new Promise((resolve) => { setTimeout(resolve, LIVE_WAIT_MS); })]);
+      resolved = resolveLanguage(value, deviceLanguages(), shipped);
+    }
     let seen = 0;
     // A screen may register a namespace while these load.
     while (seen !== requestedNamespaces.size) {
@@ -210,6 +378,10 @@ export function createLanguageRuntime(catalogs: Catalogs) {
       document.documentElement.lang = language;
     }
     if (changed) announce();
+    // The language is on screen: lift the head's hold, and remember it so
+    // the next load holds (or does not) for the right language.
+    writeStored(SHOWN_KEY, language);
+    if (typeof document !== 'undefined') document.documentElement.classList?.remove(PENDING_CLASS);
     // Once per device, the first time the language was picked for the person
     // rather than by them. Shown, it is spent, whatever they do with it.
     if (auto && language !== 'en') {
@@ -292,6 +464,7 @@ export function createLanguageRuntime(catalogs: Catalogs) {
 
   /** The session resolved: `user` signed in, or null for the sign-in screens. */
   async function applySessionLanguage(user: { id?: string | number; locale?: string | null } | null): Promise<void> {
+    lastSession = user;
     const next = user ? String(user.id ?? '') : null;
     if (next !== account) {
       account = next;
@@ -317,10 +490,40 @@ export function createLanguageRuntime(catalogs: Catalogs) {
     await activate(resolved.language, value, resolved.auto);
   }
 
+  /**
+   * The server's list (GET /api/languages): the languages its translation
+   * cache covers well enough now, and where their packs are. Replaces the
+   * build's; a pack already loaded stays. A language it adds that this
+   * session wants is shown. Resolves whether the list could be used.
+   */
+  function setLiveCatalogs(value: unknown): boolean {
+    const live = validLive(value, catalogs.namespaces);
+    if (!live) return false;
+    languages = live.languages;
+    manifest = live.manifest;
+    shipped = Object.keys(languages);
+    languageList = Object.freeze(Object.entries(languages).map(([tag, name]) => ({ tag, name })));
+    for (const listener of languageListeners) listener();
+    if (typeof document !== 'undefined') document.dispatchEvent(new CustomEvent('homeroom:languages-changed'));
+    if (lastSession !== undefined) {
+      const wanted = resolveLanguage(lastSession?.locale || readStored(DEVICE_KEY), deviceLanguages(), shipped).language;
+      if (wanted !== activeLanguage) void applySessionLanguage(lastSession);
+    }
+    return true;
+  }
+
+  /** The server's list is on its way (`request` settles once it is used or given up). */
+  function waitForLive(request: Promise<unknown>): void {
+    liveSettled = false;
+    liveWait = request.then(() => {}, () => {}).finally(() => { liveSettled = true; });
+  }
+
   return {
     i18n,
     t,
     htmlText,
+    htmlRich,
+    listText,
     languageName,
     registerNamespace,
     ensureNamespace,
@@ -335,6 +538,16 @@ export function createLanguageRuntime(catalogs: Catalogs) {
       return () => { noticeListeners.delete(listener); };
     },
     dismissNotice: () => setNotice(null),
+    setLiveCatalogs,
+    waitForLive,
+    /** runtime.ts installs this: its list fetch, asked again on a moved pack. */
+    setLiveRefresh(refresh: () => Promise<boolean>): void { liveRefresh = refresh; },
+    /** The languages offered now, English first, each under its own name. */
+    getLanguages: () => languageList,
+    subscribeLanguages(listener: () => void) {
+      languageListeners.add(listener);
+      return () => { languageListeners.delete(listener); };
+    },
   };
 }
 

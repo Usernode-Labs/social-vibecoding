@@ -1,9 +1,18 @@
 /**
- * The C key comments on the page (#4289 and its follow-up). Experimental: off
- * until a person turns it on in Settings, Experimental, and saved on that
- * device only (a keyboard shortcut is a property of the keyboard in front of
- * you). What it opens is ../comment-pin/: a pin where the pointer is, a box
- * beside it, and a request posted with a screenshot that shows the pin.
+ * The C key turns comment mode on and off (#4289 and its follow-ups).
+ * On by default, and kept per device (a keyboard shortcut is a property of
+ * the keyboard in front of you; ./suggest-settings.ts). What it opens is
+ * ../comment-pin/: a layer where every click leaves a comment, each posted
+ * as its own request with a screenshot of the page and its pin beside it.
+ *
+ * ── The other way in ────────────────────────────────────────────────────
+ *
+ * "Suggest an improvement" opens comment mode, on a
+ * phone too (a tap is a comment there), and the form is one switch away
+ * (Form, on comment mode's bar or in its box). The form's own Comment switch
+ * opens comment mode with the form's draft. Both reach this module through
+ * `openCommentMode` (the form's island imports it; feedback-controller.js,
+ * which cannot import, through window.UsernodeReact.suggestShortcut).
  *
  * ── Only a C nobody else used ─────────────────────────────────────────
  *
@@ -17,23 +26,27 @@
  * after the key, so every handler on the page has run by then, wherever and
  * whenever it was registered.
  *
- * ── From inside an app ──────────────────────────────────────────────────
+ * ── From inside an app or a preview ─────────────────────────────────────
  *
  * While a person works in an app, its document has the keyboard and the shell
- * never sees the key. The bridge every app loads watches for the same unused
- * C in there and tells the shell (`__usernode_shortcut`, the
+ * never sees the key. The bridge every app and preview loads watches for the
+ * same unused C in there and tells the shell (`__usernode_shortcut`, the
  * __USERNODE_SHORTCUTS_ block of public/usernode-bridge/v1/bridge.js). The
- * shell takes that message only from the running app's own frame, and only
- * while that frame holds focus: a frame without focus cannot have had a key
- * pressed in it, so a message from one is not a person pressing C.
+ * shell takes that message only from the running app's own frame or the
+ * change preview's frame (`#staging-iframe`), and only while that frame holds
+ * focus: a frame without focus cannot have had a key pressed in it, so a
+ * message from one is not a person pressing C.
  *
  * ── Where the pointer is ────────────────────────────────────────────────
  *
- * The pin goes where the person was pointing. Over the shell, this module
- * watches the pointer itself; over the app's frame the shell sees no pointer
- * events at all, so the bridge sends its own last position with the C (x, y
- * in the frame's viewport) and it is placed by the frame's rectangle. Nobody
- * has moved the pointer yet: the middle of the screen (or of the frame).
+ * Over the shell, this module watches the pointer itself; over the app's
+ * frame the shell sees no pointer events at all, so the bridge sends its own
+ * last position with the C (x, y in the frame's viewport), placed by the
+ * frame's rectangle. Comment mode takes its pins from clicks, so the point
+ * is not used for one; it is still passed along, for the day it is.
+ *
+ * C turns the mode off again (asking first about words nobody has posted),
+ * by the same rules: not while typing in its box.
  *
  * The comment's code is loaded on the first C, not with the shell. If it
  * cannot load, C opens what the "Suggest an improvement" button opens
@@ -44,42 +57,15 @@
  */
 
 import { EMBEDDED_PANEL_CLASS } from '../../lib/side-panel-mode';
+import type { OpenOptions } from '../comment-pin/comment-pin';
+import {
+  defaultStorage, setSuggestShortcutEnabled, suggestShortcutEnabled, type StorageLike,
+} from './suggest-settings';
 
-/** Where the switch is kept: `'1'` when on, absent when off (the default). */
-export const SUGGEST_SHORTCUT_STORAGE_KEY = 'usernode:suggest-shortcut';
+export { SUGGEST_SHORTCUT_STORAGE_KEY, setSuggestShortcutEnabled, suggestShortcutEnabled } from './suggest-settings';
 
 /** The bridge's message from inside an app; its one value is `'suggest'`. */
 export const SHORTCUT_MESSAGE_KEY = '__usernode_shortcut';
-
-type StorageLike = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
-
-function defaultStorage(): StorageLike | null {
-  try {
-    return typeof window !== 'undefined' ? window.localStorage : null;
-  } catch {
-    return null;
-  }
-}
-
-/** Whether this device has the shortcut turned on. Off when storage is unreadable. */
-export function suggestShortcutEnabled(storage: StorageLike | null = defaultStorage()): boolean {
-  try {
-    return !!storage && storage.getItem(SUGGEST_SHORTCUT_STORAGE_KEY) === '1';
-  } catch {
-    return false;
-  }
-}
-
-export function setSuggestShortcutEnabled(
-  on: boolean,
-  storage: StorageLike | null = defaultStorage(),
-): void {
-  if (!storage) return;
-  try {
-    if (on) storage.setItem(SUGGEST_SHORTCUT_STORAGE_KEY, '1');
-    else storage.removeItem(SUGGEST_SHORTCUT_STORAGE_KEY);
-  } catch { /* private mode: the switch simply does not stick */ }
-}
 
 interface KeyLike {
   key?: string;
@@ -157,7 +143,7 @@ interface ElementLike {
   getClientRects?: () => { length: number };
 }
 
-interface DocLike {
+export interface DocLike {
   activeElement?: unknown;
   documentElement?: { classList?: { contains(name: string): boolean } } | null;
   getElementById(id: string): unknown;
@@ -181,7 +167,7 @@ export interface SuggestShortcutDeps {
   win: WinLike;
   doc: DocLike;
   storage?: StorageLike | null;
-  /** Open the comment, pinned at a viewport point (null: nobody has pointed). */
+  /** Turn comment mode on, or off (a viewport point, null when nobody has pointed). */
   open: (point: Point | null) => void;
   /** Whether somebody is signed in: a visitor has no dialog to open. */
   signedIn: () => boolean;
@@ -209,8 +195,9 @@ function onScreen(el: ElementLike | null): boolean {
 /**
  * Anything presenting itself as a dialog: the kit's modals and sheets
  * (`aria-modal`), and the shell's own dialogs and menus (`role="dialog"`).
+ * ⌘K reads it too (../workshop/community-shortcut.ts).
  */
-function dialogShowing(doc: DocLike): boolean {
+export function dialogShowing(doc: DocLike): boolean {
   let nodes: ArrayLike<unknown>;
   try {
     nodes = doc.querySelectorAll('[aria-modal="true"], [role="dialog"]');
@@ -277,11 +264,19 @@ export function installSuggestShortcut(deps: SuggestShortcutDeps): void {
   win.addEventListener('message', (e: { data?: unknown; source?: unknown }) => {
     const data = (e ? e.data : null) as Record<string, unknown> | null | undefined;
     if (!data || typeof data !== 'object' || data[SHORTCUT_MESSAGE_KEY] !== 'suggest') return;
-    const frame = doc.getElementById('app-iframe') as {
+    // The app's frame and the change preview's frame both carry the bridge.
+    // The message counts only from the one that is on screen, checked
+    // staging first: it sits over the app, so when both are up it is the
+    // one showing.
+    const frames = [
+      doc.getElementById('staging-iframe'),
+      doc.getElementById('app-iframe'),
+    ] as Array<{
       contentWindow?: unknown;
       getBoundingClientRect?: () => { left: number; top: number; width: number; height: number };
-    } | null;
-    if (!frame || !e.source || e.source !== frame.contentWindow) return;
+    } | null>;
+    const frame = frames.find((f) => f && e.source && f.contentWindow === e.source) || null;
+    if (!frame) return;
     if (doc.activeElement !== frame) return;
     if (!ready()) return;
     open(framePoint(frame, finitePoint(data.x, data.y)));
@@ -311,11 +306,121 @@ export function framePoint(
   };
 }
 
-/** Open the comment; what the "Suggest an improvement" button opens, if it cannot load. */
-function openComment(point: Point | null): void {
+/** C: comment mode on, or off; what the "Suggest an improvement" button opens, if it cannot load. */
+function toggleComment(_point: Point | null): void {
   import('../comment-pin/comment-pin')
-    .then((m) => m.openCommentPin(point))
+    .then((m) => m.toggleCommentMode({ via: 'key' }))
     .catch(() => openSuggest());
+}
+
+/** How long after the page has loaded comment mode's code and library are fetched (ms). */
+export const WARM_DELAY_MS = 3000;
+let warmed = false;
+
+/**
+ * Whether this document is a `?shot=` / `?demo=` capture route. Those render
+ * ONE state deterministically for a declared check or a before/after shot,
+ * and comment mode's chunk, its 250 KB library or a picture being drawn in
+ * the background is exactly the nondeterminism they exist to be free of: the
+ * `?shot=app-context` check, whose menu now prepares comment mode because the
+ * mode is the default, sat in network idle past 29 s while the picture of the
+ * page fetched its images. Same guard, for the same reason, as
+ * `AdminConsole.prefetchSections` and `prefetchSettings`. Nothing is lost: an
+ * open still loads the mode, which is what a real open does anyway.
+ */
+export function onCaptureRoute(
+  win: { location?: { search?: string } } | null = typeof window !== 'undefined' ? window : null,
+): boolean {
+  try {
+    const q = new URLSearchParams(win?.location?.search || '');
+    return !!(q.get('shot') || q.get('demo'));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Comment mode's code and its drawing library, fetched ahead of time unless
+ * this device has turned it off: a few seconds after the page loads, and
+ * when it is turned back on. Without it the first picture of a session
+ * waited on both downloads (about 250 KB for the library), and a quick tap
+ * on "Suggest an improvement" right after the app opened sat on a still
+ * screen for over a second (iPhone 17 simulator, production, 12 Oct 2026).
+ * Once per page; nothing is drawn, nothing at all where the device has
+ * turned it off, and nothing on a capture route.
+ */
+export function warmComment(): void {
+  if (warmed || !suggestOpensComment() || onCaptureRoute()) return;
+  warmed = true;
+  import('../comment-pin/comment-pin')
+    .then((m) => m.warmCommentMode())
+    .catch(() => { warmed = false; });
+}
+
+/** Run `warmComment` once the page has loaded and settled, out of the way of the first paint. */
+export function scheduleWarmComment(win: Pick<Window, 'setTimeout' | 'addEventListener'> & { document?: { readyState?: string } }): void {
+  const later = () => { win.setTimeout(() => warmComment(), WARM_DELAY_MS); };
+  if (win.document?.readyState === 'complete') later();
+  else win.addEventListener('load', later, { once: true });
+}
+
+/**
+ * The Homeroom menu or the form has opened, and comment mode is one tap
+ * away: load its code and draw the page now, while it sits still under the
+ * sheet, so the mode opens on it at once (comment-pin.tsx
+ * `prepareCommentView`). Nothing at all where the device has turned it off,
+ * and nothing on a capture route (`onCaptureRoute`).
+ */
+export function prepareComment(): void {
+  if (!suggestOpensComment() || onCaptureRoute()) return;
+  import('../comment-pin/comment-pin')
+    .then((m) => m.prepareCommentView())
+    .catch(() => { /* the mode loads when it opens, as before */ });
+}
+
+/**
+ * Comment mode, from "Suggest an improvement" or the form's switch, with the
+ * form's draft when there is one. The form itself if the mode cannot load.
+ */
+export function openCommentMode(opts: OpenOptions = {}): void {
+  import('../comment-pin/comment-pin')
+    .then((m) => m.openCommentMode(opts))
+    .catch(() => {
+      (window as unknown as { App?: { openFeedbackModal?: (o?: unknown) => void } }).App?.openFeedbackModal?.({ mode: 'form' });
+    });
+}
+
+type MediaHost = {
+  document?: { documentElement?: { classList?: { contains(name: string): boolean } } | null };
+};
+
+/**
+ * Where comment mode can be: anywhere but the side panel (`?panel=1`), which
+ * is the platform framed beside an app and would cover only itself. A phone
+ * can: a tap is a comment there.
+ */
+function commentable(win: MediaHost | null): boolean {
+  try {
+    return !!win && !win.document?.documentElement?.classList?.contains(EMBEDDED_PANEL_CLASS);
+  } catch {
+    return false;
+  }
+}
+
+/** Whether "Suggest an improvement" opens comment mode: this device has not turned it off, and it can be here. */
+export function suggestOpensComment(
+  win: MediaHost | null = typeof window !== 'undefined' ? window : null,
+  storage: StorageLike | null = defaultStorage(),
+): boolean {
+  return suggestShortcutEnabled(storage) && commentable(win);
+}
+
+/** Whether the form offers the switch to comment mode: the same. */
+export function formOffersComment(
+  win: MediaHost | null = typeof window !== 'undefined' ? window : null,
+  storage: StorageLike | null = defaultStorage(),
+): boolean {
+  return suggestShortcutEnabled(storage) && commentable(win);
 }
 
 /** What the "Suggest an improvement" button does. */
@@ -335,14 +440,21 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
   installSuggestShortcut({
     win: window as unknown as WinLike,
     doc: document as unknown as DocLike,
-    open: openComment,
+    open: toggleComment,
     signedIn: () => !!(window as unknown as { App?: { user?: unknown } }).App?.user,
   });
-  // Settings, Experimental paints and saves the switch through this; it is a
-  // classic script there and cannot import.
+  // The feedback dialog's controller asks where "Suggest an improvement"
+  // goes, and its C key's `ready()` check reads the setting; that code is
+  // classic there and cannot import.
   const bridge = ((window as unknown as { UsernodeReact?: Record<string, unknown> }).UsernodeReact ||= {});
+  scheduleWarmComment(window);
   bridge.suggestShortcut = {
     enabled: () => suggestShortcutEnabled(),
-    setEnabled: (on: boolean) => setSuggestShortcutEnabled(!!on),
+    setEnabled: (on: boolean) => {
+      setSuggestShortcutEnabled(!!on);
+      if (on) warmComment();
+    },
+    opensComment: () => suggestOpensComment(),
+    openComment: (opts?: OpenOptions) => openCommentMode(opts || {}),
   };
 }

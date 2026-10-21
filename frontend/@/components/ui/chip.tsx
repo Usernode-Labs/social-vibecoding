@@ -95,7 +95,7 @@ export function Chip({ className, selected, shape, size, ...props }: ChipProps) 
  * rail is finger-scrolled on the surface this language targets, and a visible
  * bar under a row of circles reads as a rendering fault.
  */
-export function ChipRail({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
+export function ChipRail({ className, ...props }: React.ComponentProps<'div'>) {
   return (
     <div
       className={cn(

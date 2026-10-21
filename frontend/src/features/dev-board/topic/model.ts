@@ -24,6 +24,7 @@
  */
 
 import type { ActionSpec, StatusPillState } from '../card/model';
+import type { RequestSpecCard } from './request-model';
 
 
 /** The four tints a note box comes in. Resolved to classes by the component. */
@@ -111,18 +112,30 @@ export interface CheckRow {
   keepReason?: boolean;
   reason?: string | null;
   /**
-   * The repo unit suite row's per-test excerpts (request #3978): the file,
-   * the test name and the captured error text — assertion message,
-   * expected/actual, the first stack lines. Empty on every other row; a
-   * declared check's reason is its diagnosis.
+   * 'early_burst' when this check's failure was one of a burst in the run's
+   * first seconds whose retries all passed (src/services/check-signals.js):
+   * often the environment, never proof of it. Null otherwise.
    */
-  details?: { file: string | null; test: string; excerpt: string }[];
+  retryClass?: 'early_burst' | null;
+  /**
+   * An advisory about the check itself, shown in its fold: today, that a
+   * check this proposal adds or changes needed a fresh load after its
+   * address change. Never a verdict.
+   */
+  note?: string | null;
   errors?: { kind: string; message: string; source?: string | null }[];
   /**
    * The repo unit suite only (#3978): per failing test, its file, its name
-   * and a bounded, redacted excerpt of the error the runner printed.
+   * and a bounded, redacted excerpt of the error the runner printed, with
+   * the line it failed on and its error message read off that excerpt
+   * (app-view.js `_excerptFacts`). Empty on every other row; a declared
+   * check's reason is its diagnosis.
    */
-  details?: { file?: string | null; test: string; excerpt: string }[];
+  details?: { file?: string | null; test: string; excerpt: string; line?: number | null; said?: string | null }[];
+  /** This row is the app's own test suite (`npm test`), drawn by what it is. */
+  unit?: boolean;
+  /** The suite's tally from its reason: how many tests failed, of how many. */
+  unitTally?: { failed: number; total: number | null } | null;
 }
 
 export interface ChecksVerdict {
@@ -131,6 +144,8 @@ export interface ChecksVerdict {
   summary: string;
   failures: CheckRow[];
   passes: CheckRow[];
+  /** The passes with something to say, for the Checks step (see StepRun.noted). */
+  noted?: CheckRow[];
   /**
    * How many passed. More than `passes.length` while the row counts its
    * passes rather than listing them (a Workshop list row, or the item's own
@@ -183,6 +198,12 @@ export interface LedgerUnitProgress {
   /** Last completed run's `# tests`, when known; null while it is not. */
   expected: number | null;
   done?: boolean;
+  /**
+   * Set when this run did not run the suite but reused an earlier pass of the
+   * same commit (services/unit-suite-reuse.js): how long ago that pass was,
+   * the start of its run id, the whole id and its time.
+   */
+  reused?: { when: string; run: string; runId: string | null; at: string | null };
 }
 
 /** One phase inside the image build (a buildpack lifecycle phase). */
@@ -319,7 +340,6 @@ export interface RosterView {
   approved?: boolean;
   yes?: { label: string; names: string };
   no?: { label: string; names: string };
-  needs?: string;
   /** #1688: the line each counted vote carries, one entry per voter who left one. */
   reasons?: { who: string; vote: 'yes' | 'no'; text: string }[];
   /** #1688: "Earlier version: @alice, @bob …" — votes on a previous version, or null. */
@@ -371,8 +391,8 @@ export interface IssueClosedBand {
   /** Short stamp: "Oct 5", or "3d ago" inside a week. */
   when: string | null;
   whenTitle: string | null;
-  /** "by vote" / "by an admin"; null on a merged close (the pill says it). */
-  how: string | null;
+  /** Which way it was closed; null on a merged close (the pill says it). */
+  how: 'vote' | 'admin' | null;
   ref: IssueProposalRef | null;
 }
 
@@ -389,7 +409,7 @@ export interface IssueClosedBand {
 export interface HeroView {
   /** The eyebrow's first word, "Change" (B10b). */
   kind: string;
-  /** "PR#2473", linking to GitHub when the change has a pull request. Drawn in Details (B10b). */
+  /** "PR#2473", linking to GitHub when the change has a pull request. Rides the hero's by-line and is drawn in Details (B10b). */
   ref: { s: string; href: string | null } | null;
   /** "Waiting for approval", "Merged", "Not shared yet", "Visible to the group". */
   status: string;
@@ -453,6 +473,8 @@ export interface StepRow {
   help?: boolean;
   /** The Checks step: what it shows when it opens. */
   run?: StepRun | null;
+  /** The Checks step, failed, for the change's author: Fix it, before the re-run. */
+  fix?: FixChecksView | null;
   /** Extra hooks on the row (the superseded-base marker on Checks). */
   attrs?: Record<string, string>;
 }
@@ -475,7 +497,11 @@ export interface StepRun {
   checks: { ran: number; passed: number; failed: number; expected: number | null; done: boolean } | null;
   unit: LedgerUnitProgress | null;
   fails: CheckRow[];
+  /** Passing checks with something to say: a retry and its class, or a note. */
+  noted?: CheckRow[];
   note: string | null;
+  /** A failed run: what went wrong, in plain words, over the failures. */
+  explain?: ChecksExplainView | null;
 }
 
 /** The steps sheet: the strip's own headline over its rows, expanded. */
@@ -490,6 +516,164 @@ export interface StepsView {
 }
 
 /** Everything under the card, by topic kind. */
+/** #4453: what a request's page says about the request itself. */
+export interface RequestView {
+  number: number;
+  /** The category's name, as plain words under "Request #N"; null when unset. */
+  category: string | null;
+  /** The ⋯ disc's rows, registered with AppView's card-menu registry. '' for none. */
+  menuKey: string;
+  asker: string;
+  /** When it was asked: the formatted stamp, its unelided title and the instant. */
+  askedAt: string | null;
+  askedTime: string;
+  askedTitle: string;
+  title: string;
+  /** The author's inline title editor, open (`AppView._editingIssueTitle`). */
+  titleEditing: { issue: number; initial: string } | null;
+  /** The request's words, rendered, without the leading "**Source:**" line. */
+  bodyHtml: string;
+  /**
+   * The author's editor for the words. `source` is the "**Source:**" line
+   * the page leaves out, put back in front of what they save.
+   */
+  editor: { issue: number; markdown: string; source: string | null; canEdit: boolean };
+  status: RequestStatusView;
+  /**
+   * 16 Oct 2026: where Homeroom bot's work on it is, as the server words it
+   * (services/homeroom-bot-track.js), read field by field by
+   * ../../messages/api.ts normalizeBotTrack. Null when the bot has none.
+   */
+  track?: unknown;
+  /** The page is drawn from the board's older row: the track card keeps its
+      place, hidden, until the board's reload lands (polish board #12). */
+  trackPending?: boolean;
+}
+
+/** The card under the request: where it stands, and the one next step. */
+export interface RequestStatusView {
+  /** How far the issue row alone says it got; the stream can add Spec. */
+  stage: 'asked' | 'built' | 'voted';
+  /** Who is on it, as the sentence's first half ("You're working on this."). */
+  lead: string;
+  /** Said instead of the spec half when the row knows more ("A change is waiting for approval."). */
+  note: string | null;
+  /** The claim's lapse, in small words. */
+  fine: string | null;
+  /** The one action for this viewer, or null. */
+  action: { label: string; title?: string; disabled?: boolean; act?: { fn: string; args?: unknown[] }; href?: string } | null;
+  /** A closed request: the words that say so, and no stepper. */
+  closed: string | null;
+  /**
+   * The sentence already says what Homeroom bot is doing with its plan (or
+   * its change), so no "Plan v1 is ready for comments." after it.
+   */
+  botSays?: boolean;
+}
+
+/** #4455: one part of a Votes or Testing card's bar. */
+export interface ChangeBarPart {
+  /** Its share of the bar's length (a yes each, or how long that part usually takes). */
+  weight: number;
+  /** How full it is, 0–100. */
+  pct: number;
+  /** `moving` is drawn in the lit ink, `done` green on a finished card, `bad` red. */
+  state: 'moving' | 'done' | 'bad' | 'idle';
+}
+
+/**
+ * A failed run's checks in plain words (./failed-checks.ts): the run to ask
+ * GET /api/sessions/:id/checks-explanation about, and the failure's own
+ * words to show until it answers and when it has nothing
+ * (app-view.js `_checksExplainView`).
+ */
+export interface ChecksExplainView {
+  /** The change's id. */
+  id: number;
+  /** The run: its checks_checked_at. */
+  at: string;
+  fallback: string | null;
+}
+
+/**
+ * Fix it from the change's page (./failed-checks.ts): what the dev chat's
+ * own Fix it card would send (../../agent-session/fix-checks.ts), and the
+ * build conversation it goes to. Only for the change's author, on a change
+ * built in an agent session that is still open to more work
+ * (app-view.js `_fixChecksView`).
+ */
+export interface FixChecksView {
+  agentSessionId: number;
+  changeId: number;
+  prNumber: number | null;
+  /** How many blocking checks failed in all. */
+  total: number;
+  /** The first few, each with what it reported. */
+  checks: Array<{ name: string; reason: string }>;
+  /** The run: its checks_checked_at. A new run is a new Fix it. */
+  at: string;
+}
+
+/** #4455: the Votes card or the Testing card under a change's summary. */
+export interface ChangeGateView {
+  name: string;
+  /** The figure at the right of the name: "Needs 1 more yes", "about 6 min left". */
+  figure: string;
+  /** `ask` is in the accent (the viewer can give it), `done` green, `bad` red. */
+  tone: 'ask' | 'muted' | 'done' | 'bad' | 'warn';
+  /** Finished: full and green, with a green check. */
+  done: boolean;
+  segments: ChangeBarPart[];
+  /** The bar's words for a screen reader. */
+  label: string;
+  /** The one line under the card, as its sentences. */
+  note: string[];
+  /** Why this status is shown, disclosed beside the note when available. */
+  noteDetail?: string;
+  /** Testing only: its re-run, or a retry of the preview. */
+  actions?: ActionSpec[];
+  /** Testing only: a "See what failed" door into Details. */
+  details?: boolean;
+  /** Testing only, when its checks failed: what went wrong, in plain words. */
+  explain?: ChecksExplainView | null;
+  /** Testing only, for the change's author: Fix it. */
+  fix?: FixChecksView | null;
+  /** Testing only, for everybody else: who has to fix it. */
+  authorNote?: string | null;
+  /**
+   * Votes only, on a merge of Homeroom itself that is not live yet: the
+   * server's `release` block, which the card words after the note and keeps
+   * counting down ("Merged; goes live in the next release (about 8
+   * minutes)", frontend/src/lib/release-eta.ts).
+   */
+  release?: unknown;
+}
+
+/** #4455: what a change's page says about the change itself, as the thread's root post. */
+export interface ChangeThreadView {
+  /** The pull request's number, for "Change #N"; null before it has one. */
+  number: number | null;
+  /**
+   * The status pill the board card shows, beside "Change #N": "✓ Live",
+   * "Going live…", or the vote's own words. Null while the change is being
+   * built or closed (AppView._changeThreadView).
+   */
+  status: StatusPillState | null;
+  category: string | null;
+  author: string;
+  at: string | null;
+  time: string;
+  timeTitle: string;
+  /** "via Claude Code": what built it, when something outside Homeroom did. */
+  via: string | null;
+  votes: ChangeGateView;
+  testing: ChangeGateView;
+  /** The Before and after card, or null when there is nothing to show. */
+  shots: { state: string; html: string; line: string | null; waiting?: boolean } | null;
+  /** Whether the Addresses row carries "👏 Thank <author>". */
+  thanks: boolean;
+}
+
 export interface TopicBody {
   changeId?: number;
   issues?: IssueLink[];
@@ -565,10 +749,26 @@ export interface TopicBody {
     markdown: string;
     canEdit: boolean;
   } | null;
-  /** Render the `#dev-issue-comments` host (features/dev-board/issue-comments.tsx). */
-  comments?: boolean;
+  /**
+   * #4453: a request's page, drawn as a Messages reply thread
+   * (./request-head.tsx). Set on an issue's page only; its GitHub comments
+   * are in the thread's stream now (`AppView._requestThreadRows`).
+   */
+  request?: RequestView | null;
+  /** #4455: a change's page, drawn as a Messages reply thread (./change-head.tsx). */
+  thread?: ChangeThreadView | null;
   /** A proposal's plain-language summary, already rendered. */
   summaryHtml?: string | null;
+  /**
+   * #4490: the diagram its author sent (services/diagram.js), which leads
+   * the change's page. Untyped here; lib/diagram reads it defensively.
+   */
+  diagram?: unknown;
+  /**
+   * #4479: the plan a change was built from, as the card a request's page
+   * hangs under the request (`AppView._changePlanCard`), or null.
+   */
+  plan?: RequestSpecCard | null;
   /** The previous summary was retained for provenance but no longer describes this revision. */
   summaryStale?: boolean;
   /**
@@ -589,12 +789,15 @@ export interface TopicBody {
    * follow keeps the disclosure from collapsing under the reader.
    */
   proposalBody?: { id: number | null; open: boolean; html: string } | null;
+  /**
+   * A change page with no summary and no plan folds `proposalBody` under
+   * the summary line as "Description", where the line says it is.
+   */
+  descriptionFold?: boolean;
   details?: ProposalDetails | null;
   /** A change page's hero, and its steps (drawn in Details, B10b). Set with `changeId`. */
   hero?: HeroView | null;
   steps?: StepsView | null;
-  /** B10b: the hero's one Tested line, from the latest checks run (`AppView._testedLine`). */
-  tested?: { state: 'passed' | 'running' | 'failed' | 'skipped' | 'broken'; text: string } | null;
   /** The one-line explainer under a session or governance card. */
   note?: string | null;
   /**

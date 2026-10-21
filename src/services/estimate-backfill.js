@@ -32,8 +32,8 @@
 // sweeper's constants (its own unit tests among them).
 const log = require('./logger');
 
+// The estimate-backfill clock's interval (src/workflow/clock/services.ts).
 const SWEEP_INTERVAL_MS = 30 * 60_000;   // every 30 minutes
-const FIRST_SWEEP_DELAY_MS = 2 * 60_000; // let boot settle first
 // Only rows older than this are eligible. A turn can legitimately run for
 // well over an hour (the longest observed was 1h45m), so this is set past
 // any plausible in-flight run rather than at the median.
@@ -108,9 +108,8 @@ async function sweepOnce(pool) {
   return { runs: rows.length, ticks };
 }
 
-async function sweep(config) {
-  const { getPool } = require('../db/pool');
-  const pool = getPool(config);
+// One pass of the estimate-backfill clock.
+async function sweep(pool) {
   const { runs, ticks } = await sweepOnce(pool);
   if (runs) {
     log.info('estimate-backfill', 'Resolved orphaned progress estimates', { runs, ticks });
@@ -118,18 +117,7 @@ async function sweep(config) {
   return { runs, ticks };
 }
 
-function start(config) {
-  log.info('estimate-backfill', 'Starting', { intervalMs: SWEEP_INTERVAL_MS });
-  setTimeout(() => {
-    sweep(config).catch((err) => log.error('estimate-backfill', 'Initial sweep failed', { err: err.message }));
-  }, FIRST_SWEEP_DELAY_MS).unref?.();
-  setInterval(() => {
-    sweep(config).catch((err) => log.error('estimate-backfill', 'Sweep failed', { err: err.message }));
-  }, SWEEP_INTERVAL_MS).unref?.();
-}
-
 module.exports = {
-  start,
   sweep,
   sweepOnce,
   SWEEP_INTERVAL_MS,

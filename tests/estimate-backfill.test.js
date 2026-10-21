@@ -23,9 +23,9 @@ const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 const sweeper = require('../src/services/estimate-backfill.js');
 const SRC = read('src/services/estimate-backfill.js');
 
-test('#892: the sweeper exports the poller surface', () => {
-  assert.equal(typeof sweeper.start, 'function', 'server.js calls start(config)');
-  assert.equal(typeof sweeper.sweep, 'function');
+test('#892: the sweeper exports its pass', () => {
+  assert.equal(sweeper.start, undefined, 'no timer of its own: its clock runs it');
+  assert.equal(typeof sweeper.sweep, 'function', 'the clock calls sweep(pool)');
   assert.equal(typeof sweeper.sweepOnce, 'function', 'the pass itself must be unit-callable');
 });
 
@@ -96,19 +96,13 @@ test('#892: the sweeper is grouped per run, not per row', () => {
     'orphans must be resolved a run at a time — every tick in a run shares one total');
 });
 
-test('#892: the sweeper is registered on boot', () => {
-  const server = read('server.js');
-  assert.match(server, /require\('\.\/src\/services\/estimate-backfill'\)\.start\(config\)/,
-    'server.js must start the sweeper alongside the other pollers');
-});
-
-test('#892: the interval never holds the process open', () => {
-  // Same posture as the other pollers — an un-unref\'d timer would stop the
-  // process exiting cleanly on SIGTERM.
-  const timers = SRC.match(/setTimeout\(|setInterval\(/g) || [];
-  const unrefs = SRC.match(/\.unref\?\.\(\)/g) || [];
-  assert.equal(timers.length, unrefs.length,
-    'every timer must be unref\'d');
+test('#892: the sweep is a clock of the workflow, holding no timer of its own', () => {
+  // One run at a time wherever the workflow runs (src/workflow/clock/), so
+  // nothing here keeps a process open or runs twice during a rollout.
+  const clock = read('src/workflow/clock/services.ts');
+  assert.match(clock, /name: 'estimate-backfill', everyMs: 30 \* MIN,\s*run: \(_ctx: WorkContext, \{ pool \}: JobDeps\) => legacy\('services\/estimate-backfill'\)\.sweep\(pool\),/);
+  assert.doesNotMatch(SRC, /setTimeout\(|setInterval\(|leaderTimers/);
+  assert.doesNotMatch(read('server.js'), /estimate-backfill/);
 });
 
 test('#892: schema documents the unknown outcome the sweeper writes', () => {

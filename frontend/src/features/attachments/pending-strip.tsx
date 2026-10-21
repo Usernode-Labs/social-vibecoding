@@ -27,10 +27,14 @@
  * is worse than an honest "…".
  */
 
+import { useMessages } from '../../lib/i18n/react';
+
 export interface PendingAttachmentView {
   /** Stable per row — the module's own key, not the filename. */
   key: string;
   name: string;
+  /** The file has no name; `name` is a stand-in label. */
+  unnamed?: boolean;
   kind: string;
   /** MD / HTML / BIN / ZIP · N files, or null where the kind carries no tag. */
   badge: string | null;
@@ -50,14 +54,15 @@ export interface PendingStripProps {
 function Row({
   item, index, onRemove,
 }: { item: PendingAttachmentView; index: number; onRemove: (index: number) => void }) {
+  const t = useMessages('messages');
   const remove = item.uploading ? (
     <span className="dc-attach-uploading">…</span>
   ) : (
     <button
       type="button"
       className="dc-attach-remove"
-      title="Remove"
-      aria-label={`Remove ${item.name}`}
+      title={t('messages:attachments.remove')}
+      aria-label={item.unnamed ? t('messages:attachments.removeUnnamed') : t('messages:attachments.removeNamed', { file: item.name })}
       onClick={() => onRemove(index)}
     >
       ×

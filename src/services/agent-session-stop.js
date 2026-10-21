@@ -17,14 +17,12 @@ async function readWork(pool, { agentSessionId, userId }, deps = {}) {
   const { rows } = await pool.query(
     `SELECT s.active_turn, s.active_change_id,
             c.id AS change_id, c.active_turn AS change_turn,
-            (s.active_turn IS NOT NULL AND
-             COALESCE(s.active_turn->>'renewedAt', s.active_turn->>'startedAt')::timestamptz
-               >= NOW() - make_interval(secs => $3)) AS turn_live
+            (s.active_turn IS NOT NULL) AS turn_live
        FROM agent_sessions s
        LEFT JOIN chat_sessions c ON c.id = s.active_change_id
          AND c.user_id = s.user_id AND c.agent_session_id = s.id
       WHERE s.id = $1 AND s.user_id = $2`,
-    [agentSessionId, userId, sessions.TURN_LEASE_STALE_SECONDS],
+    [agentSessionId, userId],
   );
   if (!rows.length) return null;
   const row = rows[0];
@@ -67,24 +65,21 @@ async function requestStop({ pool, user, agentSessionId, token = null, scheduleI
   const work = await readWork(pool, { agentSessionId, userId: user.id }, deps);
   const fail = (status, error, code) => ({ status, body: { error, code } });
   if (!work) return fail(404, 'Agent session not found', 'not_found');
-  if (!work.busy) {
-    const released = work.row.active_turn
-      ? await (deps.mayor || mayor).handBackOrphanedTurn({ pool, agentSessionId, userId: user.id }) : false;
-    return { status: 200, body: { stopped: false, reason: 'no_active_turn', ...(released ? { released: true } : {}) } };
-  }
+  if (!work.busy) return { status: 200, body: { stopped: false, reason: 'no_active_turn' } };
   if (token && token !== work.turn.stopToken) return fail(409, 'The running job changed. Try Stop again.', 'turn_changed');
   if (work.turn.phase === 'mayor2') return { status: 200, body: { stopped: false, reason: 'wrap_up_not_stoppable' } };
   const { row, turn } = work;
-  // Persist before signalling, including on a pod that does not own the
-  // in-memory Mayor. Its lease heartbeat consumes this request.
+  // Stamped on the turn's claim, which the turn reads between its steps
+  // wherever it runs, then told to the turn's machine, which stops its
+  // coding agent by its journal (src/workflow/turn/).
   if (row.active_turn?.id) {
     const marked = await sessions.markTurnStopRequested(pool, {
       agentSessionId, userId: user.id, turnId: row.active_turn.id, by: user.username,
     });
     if (!marked) return fail(409, 'The running turn changed. Try Stop again.', 'turn_changed');
-    // Wake the actual owner now. The durable stamp/heartbeat remains the
-    // fallback if this best-effort notification is missed.
-    require('./ws-bus').publish('agent_stop', null, { agentSessionId, turnId: row.active_turn.id });
+    await (deps.platform || require('../workflow/platform.ts')).stopTurn({
+      key: `agent:${Number(agentSessionId)}`, by: user.username,
+    });
   }
   (deps.mayor || mayor).stopAgentTurn(agentSessionId, { by: user.username, expectedTurnId: row.active_turn?.id || null });
   if (turn.changeId) {

@@ -70,6 +70,7 @@ function harness({ routes, snapshotBoot = true, session = memoryStorage(), confi
   const local = memoryStorage();
   const location = makeLocation(`https://homeroom.test${INVITE}`);
   const context = vm.createContext({
+    PlatformI18n: require('./lib/platform-i18n').englishPlatformI18n(),
     location,
     history: {
       pushState() {},

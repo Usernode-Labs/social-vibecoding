@@ -1,18 +1,18 @@
 'use strict';
 
-// The governance routes with WF_GOVERNANCE_ENABLED on (src/routes/issues.js
+// The governance routes (src/routes/issues.js
 // handing off to src/workflow/platform.ts), against the full PostgreSQL
 // schema and a running workflow runtime: the vote, withdraw and admin-apply
 // routes answer with the shapes the client reads, the create route and the
 // boot backfill enroll proposals, and a merged PR's `Closes #N` supersedes a
-// close proposal through the machine. Handlers are driven off the router
+// close proposal through the machine, told by the merge's follow-ups. Handlers are driven off the router
 // stack, like the sibling route suites; GitHub and WS pushes are stubbed.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
-const { Pool } = require('pg');
+const { Client, Pool } = require('pg');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
 
@@ -77,15 +77,25 @@ test('governance routes through the workflow machine', { timeout: 120000 }, asyn
     getIssue: async () => ({ state: 'open' }),
   });
   const config = {
-    databaseUrl: String(url), dataEncryptionKey: 'synthetic-key', wfGovernanceEnabled: true,
+    databaseUrl: String(url), dataEncryptionKey: 'synthetic-key',
     wfPoolMax: 4, wfSlots: 2, wfOwnershipMode: 'raise',
   };
+  // What the machine tells browsers arrives on the WebSocket bus's channel,
+  // published in its transaction (platform.ts publishPushes), as every web
+  // process hears it.
+  const heard = [];
+  const listener = new Client({ connectionString: String(url) });
+  await listener.connect();
+  listener.on('notification', (m) => { const e = JSON.parse(m.payload); if (e.i === 'workflow') heard.push(e); });
+  await listener.query('LISTEN usernode_ws');
   const platform = require('../src/workflow/platform.ts');
-  const { issueRoutes, resolveSupersededCloseProposals } = require('../src/routes/issues');
+  const { issueRoutes } = require('../src/routes/issues');
+  const { appendEvent } = require('../src/workflow/kernel/index.ts');
   const router = issueRoutes(config);
   const adminRouter = require('../src/routes/admin-workflow').adminWorkflowRoutes(config);
   t.after(async () => {
     await platform.stopWorkflow();
+    await listener.end();
     await pool.end();
     await admin.query(`DROP DATABASE ${dbName}`);
     await admin.end();
@@ -130,17 +140,21 @@ test('governance routes through the workflow machine', { timeout: 120000 }, asyn
     assert.equal(r.body.renamed.applied, true);
     assert.equal(r.body.renamed.newName, 'Renamed by route');
     assert.equal((await status(before)).status, 'closed');
-    assert.ok(pushes.some(([k, d]) => k === 'app' && d.action === 'renamed'), 'the rename was pushed after commit');
+    await until(async () => heard.some((e) => e.k === 'scoped' && e.d.type === 'app_update' && e.d.action === 'renamed'
+      && e.r.appId === app.id), 'browsers hear the rename');
+    assert.ok(heard.some((e) => e.k === 'room' && e.d.type === 'chat' && /App renamed/.test(e.d.content) && e.r.appId === app.id),
+      'and its line, in the app\'s room');
+    assert.ok(heard.some((e) => e.k === 'scoped' && e.d.type === 'issue_update' && e.d.action === 'closed' && e.d.issueId === before.id));
     const again = await call(vote, { params: { id: String(before.id) }, body: { vote: 'up' }, user: await user() });
     assert.deepEqual([again.status, again.body.error], [409, 'Issue is not open']);
   });
 
-  await t.test('a No without a line is refused; a retraction toggles', async () => {
+  await t.test('a No without a line is accepted; a flip and a toggle move it', async () => {
     const i = await issue('close_issue', { issueNumber: 3, issueTitle: 'x' });
     await pool.query('UPDATE apps SET approvals_required = 5 WHERE id = $1', [app.id]);
     const voter = await user();
     const noLine = await call(vote, { params: { id: String(i.id) }, body: { vote: 'down' }, user: voter });
-    assert.deepEqual([noLine.status, noLine.body.error], [400, 'reason_required']);
+    assert.equal(noLine.status, 200, JSON.stringify(noLine.body));
     const up = await call(vote, { params: { id: String(i.id) }, body: { vote: 'up' }, user: voter });
     assert.equal(up.body.issueClosed.applied, false);
     const toggle = await call(vote, { params: { id: String(i.id) }, body: { vote: 'up' }, user: voter });
@@ -179,12 +193,35 @@ test('governance routes through the workflow machine', { timeout: 120000 }, asyn
       assert.equal(r.status, 201, JSON.stringify(r.body));
       const created = r.body.issue;
       await until(async () => (await instance(created))?.state === 'open', 'enrolled by the create route');
-      const { resolved } = await resolveSupersededCloseProposals(pool, {
-        appId: app.id, numbers: [5], cause: { kind: 'pr-merge', prNumber: 77 },
-      });
-      assert.deepEqual(resolved, [created.id]);
+      // A merge's follow-ups saw #5 closed (merge-followups machine.ts, the
+      // issues.closeAfterMerge result): a message, which only that machine's
+      // is taken as.
+      const outcome = async (id) => (await pool.query('SELECT status, result, reason FROM wf_events WHERE id = $1', [id])).rows[0];
+      const settled = async (id) => { await until(async () => (await outcome(id)).status === 'processed', 'processed'); return outcome(id); };
+      const tell = (from, n = 5) => appendEvent(pool, 'governance-proposal', `issue:${created.id}`,
+        { type: 'TargetClosed', payload: { issueNumber: n, cause: { kind: 'pr-merge', prNumber: 77 } } },
+        { requestKey: `merge-test:${from}:${n}`, appId: app.id, source: { kind: 'message', from: { machine: from, key: 'session:1', eventId: 1 } } });
+      const forged = await settled(await tell('app-delivery'));
+      assert.deepEqual([forged.result, forged.reason], ['rejected', 'internal_only'], 'not from another machine');
+      const other = await settled(await tell('merge-followups', 6));
+      assert.deepEqual([other.result, other.reason], ['rejected', 'not_target'], 'nor about another request');
+      assert.equal((await instance(created)).state, 'open');
+      const told = await settled(await tell('merge-followups'));
+      assert.equal(told.result, 'accepted');
       await until(async () => (await instance(created)).state === 'superseded', 'superseded');
       assert.equal((await status(created)).payload.supersededBy, 'pr-merge:#77');
+
+      // A close proposal the governance machine never enrolled (filed before
+      // it ran) is filed by the same merge's message first, then told.
+      const unfiled = await issue('close_issue', { issueNumber: 8, issueTitle: 'Old' });
+      const from = { kind: 'message', from: { machine: 'merge-followups', key: 'session:2', eventId: 2 } };
+      await appendEvent(pool, 'governance-proposal', `issue:${unfiled.id}`, { type: 'Filed', payload: { issueId: unfiled.id } },
+        { requestKey: `merge-test:file:${unfiled.id}`, appId: app.id, source: from });
+      await appendEvent(pool, 'governance-proposal', `issue:${unfiled.id}`,
+        { type: 'TargetClosed', payload: { issueNumber: 8, cause: { kind: 'pr-merge', prNumber: 78 } } },
+        { requestKey: `merge-test:close:${unfiled.id}`, appId: app.id, source: from });
+      await until(async () => (await instance(unfiled))?.state === 'superseded', 'filed, then superseded');
+      assert.equal((await status(unfiled)).payload.supersededBy, 'pr-merge:#78');
     } finally {
       appAccess.getAppForUser = origGet;
     }
@@ -272,7 +309,7 @@ test('governance routes through the workflow machine', { timeout: 120000 }, asyn
     await new Promise((res) => setTimeout(res, 100));
     const { rows } = await pool.query(
       `SELECT pg_terminate_backend(pid) AS killed FROM pg_stat_activity
-        WHERE application_name = 'homeroom-workflow' AND datname = current_database() AND state = 'idle'`);
+        WHERE application_name LIKE 'homeroom-%-workflow' AND datname = current_database() AND state = 'idle'`);
     assert.ok(rows.length > 0, 'there were idle workflow connections to drop');
     await new Promise((res) => setTimeout(res, 300));
     const i = await issue('close_issue', { issueNumber: 33, issueTitle: 'm' });
@@ -294,4 +331,22 @@ test('governance routes through the workflow machine', { timeout: 120000 }, asyn
     assert.equal(r.body.renamed.upCount, 1);
     assert.equal((await instance(i)).state, 'open');
   });
+});
+
+// The machine is the only path for a governance proposal, so a process
+// whose workflow runtime or loops fail to start exits (start()'s catch ends
+// it) and is restarted, rather than serving votes nothing would decide.
+test('a failed workflow runtime or loop start ends the process; the loops need no leader', () => {
+  const server = fs.readFileSync(require.resolve('../server.js'), 'utf8');
+  assert.match(server, /await require\('\.\/src\/workflow\/platform\.ts'\)\.startWorkflow\(config, \{ loops: false \}\);/);
+  assert.doesNotMatch(server, /\.startWorkflow\([^;]*\)\s*\.catch\(/, 'nothing swallows the failure');
+  // A process that runs the workflow starts its loops in start(), once it
+  // listens, whether or not it leads; a failure is start()'s to end.
+  const start = server.slice(server.indexOf('async function start()'));
+  const block = start.slice(start.indexOf('if (processRole.runsWorkflow(ownRole)) {'));
+  assert.ok(block.length < start.length, 'the loops start in start()');
+  assert.match(block.slice(0, 400), /if \(!server\.listening\) await once\(server, 'listening'\);\s+const workflow = require\('\.\/src\/workflow\/platform\.ts'\);\s+await workflow\.startWorkflowLoops\(\);/);
+  assert.ok(start.indexOf('ws.attach(server, config);') < start.indexOf('await workflow.startWorkflowLoops();'), 'after the bus is up');
+  assert.doesNotMatch(server.slice(server.indexOf('async function becomeLeader()'), server.indexOf('async function start()')),
+    /startWorkflowLoops\(/, 'no leader work');
 });

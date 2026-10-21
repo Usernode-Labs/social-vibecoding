@@ -5,7 +5,67 @@ so the next person who wants to change one starts from what was already
 checked: the default OpenRouter model (#2819), and the design guidance every
 coding agent builds with (#2817).
 
-## Default coding model: GLM 5.3 Flash stays (reviewed 2026-09-23)
+## Default coding model: DeepSeek V4.1 Flash 1017 (decided 2026-10-19)
+
+`deepseek/deepseek-v4.1-flash-1017` replaces GLM 5.3 Flash as the default
+OpenRouter coding model. It is the model a new agent chat session starts
+with, and the one the Homeroom bot's chat replies use, which read the same
+default. It runs in Claude Code (`OPENROUTER_MODEL_HARNESSES`) on its
+Parasail and InferenceNet host shortlist
+(`worker/claude-openrouter-request.js` `PROVIDER_ROUTING_BY_MODEL`). Since
+#5507, agent chat's conversation is routed to the same hosts.
+
+What decided it, on the Homeroom bot bench (blind judge, both models in
+Claude Code):
+
+| | DeepSeek V4.1 Flash 1017 | GLM 5.3 Flash |
+|---|---|---|
+| Core build tasks, runs 210 to 212 (54 trials each) | 33 passed | 26 passed |
+| Of those, on the Homeroom repository (30 each) | 17 | 12 |
+| Core triage accuracy, run 217 (129 trials each) | 65.1% | 62.8% |
+| Triage tasks right all three times (of 43) | 26 | 17 |
+| Triage answers with no readable verdict | 0 | 11 |
+| Triage latency, median / 95th percentile | 23 s / 77 s | 34 s / 108 s |
+| First versions passing the taste judge, App bench run 216 (of 10) | 9 | 6 |
+
+The triage difference, paired, is +2.3 points with a 95% interval of -12.7 to
++10.3: no worse, not shown to be better. What it costs: about 3.4 times GLM
+per triage call ($0.011 against $0.0034), and a first version's build and
+review fixes about $0.17 more ($0.41 against $0.24, the Opus plan aside).
+Where it is weaker: it asks a clarifying question less often (29% against 42%
+on the triage tasks whose right answer is a question), and its first
+versions kept 0.8 tap targets under 44px a build to GLM's none, which the
+first-version review now raises as an issue to fix (#5529).
+
+Not covered by this default: the build model of later changes (the `later`
+configuration in `services/bot-configs.js`, still GLM while a 1017 version
+is compared blind beside it), and the Homeroom bot's per-stage models
+(triage, follow-up), which an admin sets in the bot's console settings.
+
+Changing the default is an admin setting: Admin → Homeroom bot → Settings
+→ Models → Platform default (`services/default-model.js`, stored in
+`platform_settings`). Every server follows a save within 10 seconds, with no
+deploy. Blank goes back to the deployment's default, which is
+`OPENROUTER_DEFAULT_CODEX_MODEL` where the deploy sets it, else the fallback
+in `src/config.js`. On the Kubernetes deploy nothing sets it: the platform
+chart does not carry it and the Platform variables panel is not applied
+there, so the deployment's default is `src/config.js`'s. The VPS deploy
+workflow (`.github/workflows/deploy.yml`, run by hand only) writes its own
+fallback, still `z-ai/glm-5.3-flash`; the admin setting wins over it too.
+`OPENROUTER_RECOMMENDED_MODELS` has no admin setting and comes from the same
+places.
+
+What follows the default: a new agent chat for an account whose coding
+agent preference names no model, the model catalog's recommended model, and
+the Homeroom bot's stages left on the platform default and its answers in
+DMs and chats. A key set up for an account stores no model, so the account
+follows the default until its person picks one. Before this, setting up a
+key stored the default of the day, so a one-time migration
+(`followPlatformDefaultModel` in `src/db/migrate.js`) moved the GLM 5.3
+Flash preferences nobody had touched since their key was set up back to
+following the default. A model a person picked stays theirs.
+
+## Before 2026-10-19: GLM 5.3 Flash stays (reviewed 2026-09-23)
 
 #2819 asked whether `xiaomi/mimo-v2.6-pro` should replace the default. It
 should not yet. GLM 5.3 Flash (`z-ai/glm-5.3-flash`) remains the default at
@@ -49,11 +109,6 @@ has more than one OpenRouter provider, and the tool-loop issues are closed.
 Until then it stays selectable like any other model in the user's catalog;
 it is just not what a new session starts with.
 
-Changing the default is an operations change, not only a code change:
-production reads `OPENROUTER_DEFAULT_CODEX_MODEL` from the deploy workflow's
-repository variable, and the value in `src/config.js` is only the fallback
-for deployments that set nothing.
-
 One discrepancy seen during the review and not acted on: an Artificial
 Analysis snapshot lists GLM 5.3 Flash at $0.15 / $0.50, above the $0.10 /
 $0.40 in `src/services/model-costs.js`. The live OpenRouter catalog is what a
@@ -73,7 +128,63 @@ per model from `OPENROUTER_MODEL_HARNESSES` (`src/config.js`
 |---|---|
 | `z-ai/glm-5.3-flash` | Claude Code |
 | `deepseek/deepseek-v4.1-flash` | Codex |
+| `deepseek/deepseek-v4.1-flash-1017` | Claude Code |
 | anything not listed | Codex |
+
+#3296's evidence was one admin's impression ("apparently"), not a measured
+run. The 2 Oct Core bench runs (3, 4 and 5) then put DeepSeek V4.1 Flash, in
+Codex, level with GLM 5.3 Flash on triage (73% and 74%), and found it cost
+1.4 to 10 times as much per attempt across triage, DM, checks fix and build,
+although the two models' token prices are almost the same.
+
+### DeepSeek V4.1 Flash 1017 (17 Oct 2026)
+
+The 1017 snapshot runs in Claude Code. DeepSeek documents both Claude Code
+and Codex without preferring either, but it measured 1017's Terminal-Bench 4.0
+score in Claude Code. Core bench run 205, launched the same day, is the
+"before": 1017 and the 0910 snapshot both in Codex, routed by OpenRouter's
+defaults. Its other settings follow DeepSeek's own documentation:
+
+- **Host:** Parasail, then InferenceNet, fastest first
+  (`PROVIDER_ROUTING_BY_MODEL` in both worker listeners), with the
+  shortlist's usual fallback to every host. It first named DeepSeek's own
+  host alone, but the platform's OpenRouter account excludes endpoints that
+  may train on prompts, and DeepSeek's is one: every request was refused
+  (404, "Paid model training violation") and sent again to every host, so
+  bench run 206's 1017 builds ran on InferenceNet and Parasail with a round
+  trip lost per call. Allowing it would open every such endpoint, for every
+  model and all of the platform's traffic. Of the hosts left, both kept
+  1017's thinking across a tool call and gave the same three effort levels
+  (17 Oct probes, below), and Parasail ran 130 to 150 tokens/s and 3.1 s a
+  call in a build. InferenceNet's window is 262k tokens, so a longer prompt
+  goes to Parasail alone (measured). Left out: Cloudflare (rate-limited in
+  bursts, and recalled its thinking 2 times of 3), DeepInfra (its base slug
+  includes the slow flex tier, 40 to 80 tokens/s) and Baseten (untested).
+  Parasail costs $0.30/$1.20 per million tokens in and out, InferenceNet
+  $0.08/$0.50, against GLM's usual hosts at $0.15/$0.50. A turn's ledger row
+  keeps every host its requests used and how many left the shortlist
+  (`routed_providers`, `shortlist_fallbacks`), and the bench's build and
+  plan speed show both, so a shortlist that never holds is visible at once.
+- **Compaction in Claude Code:** at 786,432 tokens, DeepSeek's own
+  `CLAUDE_CODE_AUTO_COMPACT_WINDOW` (`worker/claude-openrouter-request.js`
+  `autoCompactLimit`), for every `deepseek/` model. A first version's
+  `roomy_context` tweak never lowers it. Codex keeps its 200k limit.
+- **Thinking level:** unchanged. The platform default `xhigh` is what
+  DeepSeek's API runs as `high`, the level its Codex guide sets, and on
+  OpenRouter it is the same: over 15 calls a level across four hosts, the
+  same prompt took 3.0k output tokens at `low`, 3.9k at `high`, 3.8k at
+  `xhigh` and 4.6k at `max`. DeepSeek's Claude Code guide sets `max`.
+- **Sampling:** nothing to send. DeepSeek ignores temperature in thinking
+  mode and clamps top_p to 0.95 to 1.0.
+- **Reasoning across tool calls:** with tools, DeepSeek's API refuses (400) a
+  request that does not send back the earlier reasoning; Parasail and
+  InferenceNet accept it, and the model then has silently lost its own
+  reasoning. Claude Code sends the thinking back, unsigned, with its text,
+  and the listeners pass it through: asked for a number it had chosen only in
+  its thinking, before a tool call, 1017 recalled it 4 times of 4 with the
+  thinking sent back and 0 of 6 without, and 2 of 2 through Claude Code
+  itself (17 Oct). Claude Code asks for at most 32,000 output tokens a
+  request.
 
 Users do not choose it. The model picker marks the Claude Code models, and the
 OpenRouter settings description says what that mark means. The transcript

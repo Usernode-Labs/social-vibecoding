@@ -41,6 +41,9 @@ import { ShareDialog } from './share';
 import { AppSecretsDialog } from './app-secrets';
 import { BoardFiltersDialog } from './board-filters';
 import { WalletRecoveryDialog } from './wallet-recovery';
+import { AppDomainDialog } from './app-domain';
+import { TopicsDialog } from './topics';
+import { WhoDecidesDialog } from './who-decides';
 
 export function Dialogs() {
   return (
@@ -68,6 +71,12 @@ export function Dialogs() {
       <AppSettingsDialog />
       <AppNotificationsDialog />
       <ReportDialog />
+      {/* #4405: a project's custom domain. New markup, appended last. */}
+      <AppDomainDialog />
+      {/* #4417: a project's topics, from Settings & rules. New markup, appended last. */}
+      <TopicsDialog />
+      {/* #4666: who can see a project and how its changes are approved. New markup, appended last. */}
+      <WhoDecidesDialog />
     </>
   );
 }

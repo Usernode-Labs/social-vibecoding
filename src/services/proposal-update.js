@@ -233,35 +233,18 @@ function renameHeadFailure(result, branch) {
 // either loses its own commits or lands on a proposal whose votes were
 // cleared for a revision that no longer exists.
 //
-// Keyed on the SESSION id, on a dedicated client, held across the whole
-// update and released in `finally` — the same shape as
-// external-agent-tasks.js's task lock, and for the same reason: a git fetch
-// and push take seconds of network, and holding a transaction open across
-// that is worse than the race it prevents. Degrades to running unlocked when
-// the pool has no `connect()`, which is never a reason to refuse an update.
+// Keyed on the SESSION id, a session advisory lock held across the whole
+// update on the process's lock connection (src/db/session-locks.js), never
+// a pooled one: a git fetch and push take seconds of network, and holding a
+// transaction open across that is worse than the race it prevents. A writer
+// waiting for it holds no connection while it waits (every revision writer of
+// a proposal takes it, a hand-off upload or build included). Degrades to
+// running unlocked when the pool is not a database pool, which is never a
+// reason to refuse an update.
 async function withProposalLock(pool, sessionId, fn) {
   const id = Number(sessionId);
-  if (!Number.isSafeInteger(id) || id <= 0 || !pool || typeof pool.connect !== 'function') {
-    return fn();
-  }
-  let client;
-  try {
-    client = await pool.connect();
-  } catch (err) {
-    log.warn('proposal-update', 'update lock unavailable, proceeding unlocked', {
-      sessionId: id, err: err.message,
-    });
-    return fn();
-  }
-  try {
-    await client.query('SELECT pg_advisory_lock($1, $2)', [PROPOSAL_UPDATE_LOCK, id]);
-    return await fn();
-  } finally {
-    try {
-      await client.query('SELECT pg_advisory_unlock($1, $2)', [PROPOSAL_UPDATE_LOCK, id]);
-    } catch { /* releasing the client drops the session lock anyway */ }
-    client.release();
-  }
+  if (!Number.isSafeInteger(id) || id <= 0) return fn();
+  return require('../db/session-locks').withSessionLock(pool, [PROPOSAL_UPDATE_LOCK, id], fn, { unlockedOnError: true });
 }
 
 // The proposal, re-read under the lock. The caller's copy was loaded before
@@ -344,8 +327,8 @@ async function updateProposalFromForkBranch(deps, params) {
   const votes = deps.votes || require('../routes/votes');
   const prImportSync = deps.prImportSync || require('./pr-import-sync');
   const githubPublic = deps.githubPublic || require('./external-agent-tasks').githubPublic;
-  const serialize = deps.serialize
-    || require('./handoff-pipeline').serializeHandoffSubmission;
+  // Ordered per session with every other revision writer, on any process.
+  const lock = deps.lock || withProposalLock;
 
   const { user, origin } = params;
 
@@ -422,7 +405,7 @@ async function updateProposalFromForkBranch(deps, params) {
   }
 
   const sessionId = Number(params.session.id);
-  return serialize(sessionId, () => withProposalLock(pool, sessionId, async () => {
+  return lock(pool, sessionId, async () => {
     // Everything from here on judges the row as it is NOW, not as it was
     // when the caller queued.
     const session = (await reloadSession(pool, sessionId)) || params.session;
@@ -437,7 +420,7 @@ async function updateProposalFromForkBranch(deps, params) {
     const forkRepo = forkRepoName || repo;
 
     const busy = deps.busy || defaultBusyCheck;
-    if (busy(session)) {
+    if (await busy(session, { pool })) {
       return fail(
         'session_busy',
         'This proposal is in the middle of a build right now. Retry in a minute. Pushing onto it mid-build '
@@ -502,7 +485,7 @@ async function updateProposalFromForkBranch(deps, params) {
     } finally {
       releaseOperation();
     }
-  }));
+  });
 }
 
 // A managed local upload has already advanced the bot-owned PR branch. Apply
@@ -520,6 +503,7 @@ async function reconcileManagedCommitUpload(deps, params) {
     fresh: true,
     notify: true,
     deferChecks: true,
+    madeBy: 'homeroom',
   });
   if (revision.blocked) {
     return fail(
@@ -634,7 +618,7 @@ function visibleChangesSubmissionFields(result = {}) {
 // the new SHA. This is best-effort after a Git push: metadata storage must not
 // falsely report that code which already landed did not land.
 async function applyShotsRevision({
-  pool, config, session, headSha, visibleChanges, headChanged = false,
+  pool, config, session, headSha, visibleChanges, headChanged = false, pin = null, from = null,
 }) {
   const submitted = visibleChanges !== undefined;
   if (!config?.shots?.collect) {
@@ -650,7 +634,10 @@ async function applyShotsRevision({
   const intent = submitted ? visibleChanges : storedVisibleChanges(session);
   try {
     if (headChanged && shotsState.validSha(headSha)) {
-      await shotsState.markStaleForHead(pool, Number(session.id), headSha);
+      // Appended before the head is written (applyHeadChange, the reviewed
+      // head's reconcile, below): `from` lets the shots machine tell this
+      // move from one a newer move overtook.
+      await shotsState.markStaleForHead(pool, Number(session.id), headSha, null, { pin, from });
     }
     if (!intent) {
       const required = session.shots_detail?.required === true;
@@ -664,7 +651,7 @@ async function applyShotsRevision({
       pool,
       Number(session.id),
       intent,
-      shotsState.validSha(headSha) ? { headSha } : {}
+      shotsState.validSha(headSha) ? { headSha, pin, from } : {}
     );
     session.shots_state = result.state;
     session.shots_detail = result.detail;
@@ -1067,21 +1054,15 @@ async function applyTestingMetadata({ pool, session, testing }) {
   const stepsChanged = !!testing.testingMd && String(session.testing_md || '') !== testing.testingMd;
   if (!pathsChanged && !stepsChanged) return unchangedResult(testing.testingPaths);
 
-  const sets = [];
-  const values = [];
-  if (pathsChanged) {
-    values.push(JSON.stringify(testing.testingPaths));
-    sets.push(`testing_paths = $${values.length}::jsonb`);
-    values.push(testing.testingPath);
-    sets.push(`testing_path = $${values.length}`);
-  }
-  if (stepsChanged) {
-    values.push(testing.testingMd);
-    sets.push(`testing_md = $${values.length}`);
-  }
-  values.push(Number(session.id));
   try {
-    await pool.query(`UPDATE chat_sessions SET ${sets.join(', ')} WHERE id = $${values.length}`, values);
+    await pool.query(
+      `UPDATE chat_sessions
+          SET testing_paths = CASE WHEN $2::boolean THEN $3::jsonb ELSE testing_paths END,
+              testing_path = CASE WHEN $2::boolean THEN $4 ELSE testing_path END,
+              testing_md = CASE WHEN $5::boolean THEN $6 ELSE testing_md END
+        WHERE id = $1`,
+      [Number(session.id), pathsChanged, pathsChanged ? JSON.stringify(testing.testingPaths) : null,
+        pathsChanged ? testing.testingPath : null, stepsChanged, stepsChanged ? testing.testingMd : null]);
   } catch (err) {
     log.error('proposal-update', 'could not store the revision\'s testing metadata', {
       sessionId: Number(session.id), err: err.message,
@@ -1316,8 +1297,13 @@ async function resubmitUnchanged(ctx, headSha, via) {
   const { pool, config, gh, session, sessionId, owner, repo } = ctx;
   const base = unchanged(session, headSha, via);
   const applied = await applyTestingMetadata({ pool, session, testing: ctx.testing });
+  // The head did not move, but another writer may have moved it since this
+  // request read the row: the declaration names the revision column and the
+  // head it read there, so a newer move refuses it (shots/machine.ts staleHead).
+  const pin = String(session.source) === 'imported' ? 'imported' : 'reviewed';
   const shotsApplied = await applyShotsRevision({
     pool, config, session, headSha, visibleChanges: ctx.visibleChanges,
+    pin, from: (pin === 'imported' ? session.imported_pr_head_sha : session.reviewed_head_sha) || null,
   });
   // Same-commit resubmits are also how a title correction arrives — the
   // update that should have carried it may already have landed (#1199's
@@ -1376,9 +1362,15 @@ async function resubmitUnchanged(ctx, headSha, via) {
   // so no reviewer is waiting on a new preview of it.
   const recovery = ctx.recovery || require('./staging-recovery');
   try {
+    // 'shots-update' only when the shots are ALL that changed. New testing
+    // routes, or an explicit `recheck: true`, ask for a fresh verdict even
+    // when the shots changed too: 'testing-update' reads as a manual re-run,
+    // so the unit suite runs again rather than reusing an earlier pass of
+    // this commit (services/unit-suite-reuse.js).
+    const shotsOnly = shotsApplied.changed && !applied.changed && !ctx.recheck;
     const run = recovery.recheckSessionChecks({
       config, pool, session,
-      reason: shotsApplied.changed ? 'shots-update' : 'testing-update',
+      reason: shotsOnly ? 'shots-update' : 'testing-update',
     });
     if (run && typeof run.catch === 'function') {
       run.catch((err) => log.warn('proposal-update', 'testing-metadata recheck failed (non-fatal)', {
@@ -1448,21 +1440,15 @@ function ownershipGate(session, user) {
   return null;
 }
 
-// Is the platform itself mid-write on this proposal? Same four questions the
-// commit-upload route asks, and for the same reason: a staging build or a
-// screenshot capture in flight is pinned to the CURRENT head, and moving the
-// branch underneath it produces a preview of one commit labelled with
-// another.
-function defaultBusyCheck(session) {
-  const { isSessionBusy } = require('./active-workers');
-  const staging = require('./staging');
-  const visuals = require('./visuals');
+// Is the platform itself mid-write on this proposal, on any process? The
+// questions the commit-upload route asks: a turn or an operation, or a
+// hand-off being adopted (it records an operation too). A build or checks run
+// of the current head needs no refusal: the new head reaches the preview
+// machine as a revision, which cancels it.
+async function defaultBusyCheck(session, { pool = null } = {}) {
+  const { isSessionBusyAnywhere } = require('./active-workers');
   const { hasInFlightHandoffPipeline } = require('./handoff-pipeline');
-  const id = Number(session.id);
-  return isSessionBusy(id)
-    || hasInFlightHandoffPipeline(session.id)
-    || staging.hasInFlightBuild(id)
-    || visuals.hasInFlightCapture(session.id);
+  return hasInFlightHandoffPipeline(session.id) || isSessionBusyAnywhere(Number(session.id), { pool });
 }
 
 // ── The bot-owned branch ───────────────────────────────────────────────
@@ -1647,6 +1633,7 @@ async function advanceAppRepoBranch(ctx) {
   const shotsApplied = await applyShotsRevision({
     pool, config, session, headSha: verified.headSha,
     visibleChanges: ctx.visibleChanges, headChanged: liveHead !== verified.headSha,
+    pin: String(session.source) === 'imported' ? 'imported' : 'reviewed', from: liveHead,
   });
   // And the submitted title: stored for the promote-time lazy PR creation
   // when the row has no PR yet, or a rename of the existing PR when it does.
@@ -1862,7 +1849,7 @@ async function advanceAppRepoBranch(ctx) {
   let reconciled = null;
   try {
     reconciled = await votes.reconcileNativeReviewedHead({
-      config, pool, session, fresh: true, notify: true,
+      config, pool, session, fresh: true, notify: true, madeBy: 'homeroom',
     });
   } catch (err) {
     // The push landed. A reconciliation that failed is caught up by the next
@@ -1930,11 +1917,14 @@ function sessionParts(ctx) {
     // this file for the same reason — it pulls in the server's socket state.
     pushSessionUpdate: c.pushSessionUpdate
       || ((payload) => require('./ws').pushSessionUpdate(payload)),
+    // The reviewed head's reconcile, for an active session that went up for
+    // a vote under the update (bug 13).
+    votes: c.votes || null,
   };
 }
 
 async function settleActiveSession({ config, pool, session, sessionId, headSha, parts }) {
-  const { visuals, pipeline } = parts;
+  const { pipeline } = parts;
   const { beginHandoffPipeline, startHandoffPipeline, OWNED_SOURCE_SQL } = pipeline;
 
   // Guarded on `status = 'active'`: a manual pause or archive between the
@@ -1942,31 +1932,36 @@ async function settleActiveSession({ config, pool, session, sessionId, headSha, 
   // write that re-arms a check pipeline for a session that is no longer live.
   // Guarded on `checks_commit_sha` as well — the value read UNDER THE LOCK, so
   // a newer head that took the session while this push was in flight keeps it
-  // rather than being regressed to an older commit's pending state.
+  // rather than being regressed to an older commit. The verdict and the
+  // preview are the preview machine's: the hand-off below gives it the head.
   const adopted = await pool.query(
     `UPDATE chat_sessions
-        SET check_state = 'pending', checks_commit_sha = $1,
-            check_error_detail = NULL,
-            staging_container_id = NULL, staging_url = NULL,
-            last_activity_at = NOW()
-      WHERE id = $2 AND status = 'active' AND ${OWNED_SOURCE_SQL}
-        AND checks_commit_sha IS NOT DISTINCT FROM $3`,
-    [headSha, sessionId, session.checks_commit_sha || null]
+        SET last_activity_at = NOW()
+      WHERE id = $1 AND status = 'active' AND ${OWNED_SOURCE_SQL}
+        AND checks_commit_sha IS NOT DISTINCT FROM $2`,
+    [sessionId, session.checks_commit_sha || null]
   );
   if (!adopted.rowCount) {
-    await settlePausedSession({ pool, session, sessionId, headSha, parts });
+    // It moved on meanwhile (bug 13: a promote that committed between the
+    // read and here). The tail is the one for the status it has NOW: a
+    // proposal gone up for a vote gets its reviewed head reconciled, never
+    // the paused tail (which cleared a promoted proposal's verdict).
+    const { rows: [now] = [] } = await pool.query('SELECT status FROM chat_sessions WHERE id = $1', [sessionId]);
+    if (now?.status === 'paused') await settlePausedSession({ pool, session, sessionId, headSha, parts });
+    else if (now?.status === 'promoted' || now?.status === 'merging') {
+      const votes = parts.votes || require('../routes/votes');
+      const reconciled = await votes.reconcileNativeReviewedHead({
+        config, pool, session: { ...session, status: now.status }, fresh: true, notify: true, madeBy: 'homeroom',
+      }).catch((err) => {
+        log.error('proposal-update', 'head-move reconciliation failed after a successful push', { sessionId, err: err.message });
+        return null;
+      });
+      return { rebuilding: !!(reconciled && reconciled.updated && reconciled.changed !== false && reconciled.checksCarry !== true) };
+    }
     return { rebuilding: false };
   }
 
   await recordChangesReadyCard({ pool, session, sessionId, headSha });
-
-  const pending = await visuals.setChecksPending(pool, sessionId, headSha, 'building', 'commit-push')
-    .catch((err) => {
-      log.warn('proposal-update', 'setChecksPending failed (non-fatal)', { sessionId, err: err.message });
-      return true;
-    });
-  if (pending === false) return { rebuilding: false };
-  try { visuals.notifyChecksPending(sessionId, headSha, 'building', 'commit-push'); } catch { /* notify only */ }
 
   const app = {
     id: session.app_id,
@@ -2004,26 +1999,16 @@ async function settleActiveSession({ config, pool, session, sessionId, headSha, 
 // looking like it had never been checked at all.
 async function settlePausedSession({ pool, session, sessionId, headSha, parts }) {
   const { lifecycle: sessionLifecycle, pushSessionUpdate } = parts;
-  // The same column list the CLI commit-upload route clears for a commit
-  // nothing has run yet, minus the 'pending' verdict itself — nothing IS
-  // running, and a 'pending' no pipeline will ever resolve is a spinner
-  // forever. NULL check_state is the honest "no verdict for the current code",
-  // and it blocks merge, which is the correct answer here.
-  await pool.query(
-    `UPDATE chat_sessions
-        SET check_state = NULL, check_phase = NULL,
-            check_error_detail = NULL, check_error_notified_at = NULL,
-            check_next_retry_at = NULL,
-            test_results = '[]'::jsonb, checks_checked_at = NULL,
-            consecutive_check_failures = 0,
-            first_check_failure_at = NULL, last_check_failure_at = NULL,
-            capture_state = NULL, capture_detail = NULL, captured_at = NULL,
-            last_activity_at = NOW()
-      WHERE id = $1 AND status = 'paused'`,
-    [sessionId]
-  ).catch((err) => log.warn('proposal-update', 'could not clear the stale verdict', {
-    sessionId, err: err.message,
-  }));
+  // No verdict for the current code: the preview machine clears it (NULL
+  // check_state, not a 'pending' no run will resolve; it blocks merge, which
+  // is the correct answer here). checks_commit_sha stays, as said above.
+  // Only while it is still paused (bug 13): a proposal that went up for a
+  // vote meanwhile keeps its verdict and its preview.
+  const still = await pool.query(`UPDATE chat_sessions SET last_activity_at = NOW() WHERE id = $1 AND status = 'paused'`, [sessionId])
+    .catch(() => ({ rowCount: 0 }));
+  if (!still.rowCount) return;
+  await require('./preview-workflow').clear({ session: { ...session, id: sessionId }, reason: 'paused-update' })
+    .catch((err) => log.warn('proposal-update', 'could not clear the stale verdict', { sessionId, err: err.message }));
 
   await recordChangesReadyCard({ pool, session, sessionId, headSha });
 
@@ -2186,7 +2171,7 @@ async function advanceForkHead(ctx) {
   const testingApplied = await applyTestingMetadata({ pool, session, testing: ctx.testing });
   const shotsApplied = await applyShotsRevision({
     pool, config, session, headSha: liveHead,
-    visibleChanges: ctx.visibleChanges, headChanged: oldHead !== liveHead,
+    visibleChanges: ctx.visibleChanges, headChanged: oldHead !== liveHead, pin: 'imported', from: oldHead,
   });
   // The request linkage (#1310). On an imported row this stores the DB half
   // only — the close watcher and the Dev board read it — and applyLinkedIssues
@@ -2225,6 +2210,18 @@ async function advanceForkHead(ctx) {
       'platform_unavailable',
       'Homeroom could not record your new commit against this proposal. Your push is on GitHub either way, so try '
       + 'again shortly.',
+      { retryable: true }
+    );
+  }
+
+  // Homeroom did not decide the move in time (applyHeadChange asked again,
+  // and each was refused as expired): nothing moved, and the push is on
+  // GitHub either way, so the agent may submit again.
+  if (moved && moved.notDecided) {
+    return fail(
+      'not_decided',
+      'Homeroom has not recorded your new commit against this proposal yet, so nothing changed. Your push is on GitHub '
+      + 'either way, so try again in a few seconds.',
       { retryable: true }
     );
   }

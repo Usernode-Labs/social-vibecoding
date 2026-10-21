@@ -21,7 +21,7 @@ const P = Object.freeze({
 });
 
 const step = (key, state, at = null, note = null) => ({ key, state, at, note });
-// Getting started as the first mile's onboard column reads it: the tour and
+// The first-run list as the first mile's onboard column reads it: the tour and
 // four First challenges, `done` of `total`.
 const onboard = (done, total = 5) => ({ shown: true, done, total, complete: done === total });
 const NO_CARD = Object.freeze({ shown: false, done: null, total: null, complete: false });
@@ -34,7 +34,7 @@ function firstMilePerson(p, steps, extra = {}) {
     door: 'admitted', steps, furthest: done.length ? done[done.length - 1].key : null,
     stuckAt: stuck ? stuck.key : null, stuckReason: stuck ? stuck.note : null,
     daysSince: 3, failedAttempts: 0, repeatedTaps: 0, tour: null, welcome: null,
-    onboard: p ? onboard(5) : null, ...extra,
+    mail: null, onboard: p ? onboard(5) : null, ...extra,
   };
 }
 
@@ -58,48 +58,52 @@ function firstMile(day) {
   if (day === '2026-09-24') {
     const people = [P.okafor, P.jun, P.sable].map((p) => allDone(p, '2026-09-24T10:00:00Z'));
     return { demo: true, cohort: day, people, steps: journey.firstMileCounts(people),
-      notRecorded: { followedLink: journey.notRecorded('Nothing records the admit mail being opened or its link followed.') } };
+      mail: journey.notRecorded('No admit mail in this cohort was tracked: tracking began on 7 Oct 2026.'),
+      notRecorded: {} };
   }
   if (day === 'other_way') {
     const people = [allDone(P.rafa, '2026-09-20T10:00:00Z', { door: 'activation code' })];
     people[0].steps = people[0].steps.slice(journey.FIRST_MILE_STEPS.indexOf('account'));
-    return { demo: true, cohort: day, people, steps: journey.firstMileCounts(people), notRecorded: {} };
+    return { demo: true, cohort: day, people, steps: journey.firstMileCounts(people),
+      mail: journey.notRecorded('No admit mail in this cohort was tracked: tracking began on 7 Oct 2026.'),
+      notRecorded: {} };
   }
   const D = '2026-10-05T09:10:00Z';
   const people = [
     firstMilePerson(P.mira, [
-      step('admitted', 'done', D), step('mail_sent', 'done', D), step('code_asked', 'done', '2026-10-05T18:31:00Z'),
+      step('admitted', 'done', D), step('mail_sent', 'done', D, 'clicked the link'), step('code_asked', 'done', '2026-10-05T18:31:00Z', 'its sign-in link'),
       step('account', 'done', '2026-10-05T18:32:00Z'), step('access', 'done', '2026-10-05T18:32:00Z'),
       step('opened', 'done', '2026-10-05T18:34:00Z'), step('username', 'done'),
       step('join', 'done', '2026-10-05T18:36:00Z', 'joined'),
       step('first_act', 'done', '2026-10-05T18:52:00Z', 'message'),
-    ], { tour: { ended: 'finish', step: 3, at: '2026-10-05T18:40:00Z' }, onboard: onboard(3) }),
+    ], { mail: { opened: true, clicked: true }, tour: { ended: 'finish', step: 3, at: '2026-10-05T18:40:00Z' }, onboard: onboard(3) }),
     firstMilePerson(P.tobi, [
-      step('admitted', 'done', D), step('mail_sent', 'done', D), step('code_asked', 'done', '2026-10-06T07:48:00Z'),
+      step('admitted', 'done', D), step('mail_sent', 'done', D, 'opened'), step('code_asked', 'done', '2026-10-06T07:48:00Z', 'a sign-in code'),
       step('account', 'done', '2026-10-06T07:49:00Z'), step('access', 'done', '2026-10-06T07:49:00Z'),
       step('opened', 'done', '2026-10-06T07:51:00Z'), step('username', 'done'),
       step('join', 'done', '2026-10-06T07:52:00Z', 'skipped'),
       step('first_act', 'stuck', null, 'Inside, no act yet'),
-    ], { failedAttempts: 2, repeatedTaps: 1, tour: { ended: 'skip', step: 1, at: '2026-10-06T07:53:00Z' }, onboard: onboard(1) }),
+    ], { mail: { opened: true, clicked: false }, failedAttempts: 2, repeatedTaps: 1, tour: { ended: 'skip', step: 1, at: '2026-10-06T07:53:00Z' }, onboard: onboard(1) }),
     firstMilePerson(P.lena, [
-      step('admitted', 'done', D), step('mail_sent', 'done', D), step('code_asked', 'done', '2026-10-05T12:20:00Z'),
+      step('admitted', 'done', D), step('mail_sent', 'done', D, 'clicked the link'), step('code_asked', 'done', '2026-10-05T12:20:00Z', 'its sign-in link'),
       step('account', 'done', '2026-10-05T12:22:00Z'), step('access', 'done', '2026-10-05T12:22:00Z'),
       step('opened', 'done', '2026-10-05T12:25:00Z'), step('username', 'done'),
       step('join', 'stuck', null, 'Join screen shown, not answered'), step('first_act', 'not_yet'),
-    ], { onboard: NO_CARD }),
+    ], { mail: { opened: true, clicked: true }, onboard: NO_CARD }),
     firstMilePerson(null, [
-      step('admitted', 'done', D), step('mail_sent', 'done', D),
-      step('code_asked', 'stuck', null, 'Admitted, never asked for a login code'),
+      step('admitted', 'done', D), step('mail_sent', 'done', D, 'no open seen'),
+      step('code_asked', 'stuck', null, 'Admitted, never followed the mail'),
       step('account', 'not_yet'), step('access', 'not_yet'), step('opened', 'not_yet'),
       step('username', 'not_yet'), step('join', 'not_yet'), step('first_act', 'not_yet'),
-    ]),
+    ], { mail: { opened: false, clicked: false } }),
   ];
   return {
     demo: true,
     cohort: day || '2026-10-05',
     people,
     steps: journey.firstMileCounts(people),
-    notRecorded: { followedLink: journey.notRecorded('Nothing records the admit mail being opened or its link followed.') },
+    mail: { tracked: 4, opened: 3, clicked: 2 },
+    notRecorded: {},
   };
 }
 
@@ -256,6 +260,13 @@ function person(userId) {
     repeatedTaps: 1,
     challenges: { openedAt: null, credits: [] },
     navigation: { recorded: true },
+    made: DEMO_PROJECTS.filter((p) => p.userId === P.tobi.userId).map((p) => ({
+      slug: p.slug, project: p.project, createdAt: p.createdAt, asked: p.asked, template: p.template, firstVersion: p.firstVersion,
+    })),
+    madeScreen: DEMO_MADE_SCREENS.filter(([p]) => p.userId === P.tobi.userId).flatMap(([, at, list]) => list.map((m, i) => {
+      const [kind, detail] = Array.isArray(m) ? m : [m, {}];
+      return { kind, at: new Date(Date.parse(at) + 60000 + i * 20000).toISOString(), ...detail };
+    })),
   };
 }
 
@@ -302,6 +313,75 @@ const DEMO_WEEKS = Array.from({ length: journey.TREND_WEEKS }, (_, i) => {
   return { start, end: new Date(start.getTime() + journey.WEEK_MS), label: start.toISOString().slice(0, 10) };
 });
 
+// Where the time to running went (#4895), for the projects that ran since
+// creation was timed: the record services/app-creation-timing.js writes,
+// read back the way journey.creationTiming reads a real one.
+const demoTimed = (totalMs, stages, build, pod) => journey.creationTiming({
+  outcome: 'running', kind: 'new_repo', totalMs, stages: { lock: 10, manifest: 300, checkout: 250, card: 20, ...stages }, build, pod,
+});
+const BUILDKIT_STEPS = [
+  { name: 'exporting cache to registry', ms: 19000 },
+  { name: '[css 3/7] RUN npm ci --include=dev', ms: 16000 },
+  { name: 'exporting to image', ms: 11000 },
+];
+const DEMO_TIMING = {
+  pantry: demoTimed(95000, { database: 1100, repository: 4300, build: 70000, deploy: 800, rollout: 18300 },
+    { engine: 'kpack', phases: [{ name: 'build', ms: 31000 }, { name: 'export', ms: 17000 }, { name: 'restore', ms: 9000 }] },
+    { scheduleMs: 1000, startMs: 12000, readyMs: 5000 }),
+  'run-club': demoTimed(118000, { database: 900, repository: 5200, build: 92000, deploy: 700, rollout: 18600 },
+    { engine: 'kpack', phases: [{ name: 'build', ms: 44000 }, { name: 'export', ms: 21000 }, { name: 'restore', ms: 12000 }] },
+    { scheduleMs: 1000, startMs: 13000, readyMs: 4000 }),
+  'reading-pile': demoTimed(90000, { database: 1000, repository: 4100, build: 66000, deploy: 600, rollout: 17800 },
+    { engine: 'buildkit', steps: BUILDKIT_STEPS }, { scheduleMs: 1000, startMs: 12000, readyMs: 4000 }),
+  'bird-log': demoTimed(94000, { database: 1200, repository: 4600, build: 69000, deploy: 700, rollout: 18100 },
+    { engine: 'buildkit', steps: BUILDKIT_STEPS }, { scheduleMs: 1000, startMs: 13000, readyMs: 4000 }),
+  tally: demoTimed(101000, { database: 1000, repository: 6900, build: 73000, deploy: 800, rollout: 19500 },
+    { engine: 'buildkit', steps: BUILDKIT_STEPS }, { scheduleMs: 2000, startMs: 13000, readyMs: 4000 }),
+  'book-swap': demoTimed(87000, { database: 900, repository: 3900, build: 64000, deploy: 600, rollout: 17200 },
+    { engine: 'buildkit', steps: BUILDKIT_STEPS }, { scheduleMs: 1000, startMs: 12000, readyMs: 4000 }),
+};
+
+// What each demo project's maker asked for, as the page shows it.
+const DEMO_ASKED = {
+  pantry: 'Track what is in the shared pantry and who is bringing what to the next potluck.',
+  'run-club': 'Plan our Saturday runs: the route, who is coming, and a pace for each group.',
+  'reading-pile': 'A list of books our club wants to read, where anyone can add a title and vote on the next one.',
+  'bird-log': 'Log the birds we see on our morning walks, with the place, and a count for the week.',
+  tally: 'Keep score for our board game nights, with a running total for each of us over the season.',
+  'book-swap': 'Neighbours list the books they are happy to lend, and anyone can ask to borrow one.',
+};
+
+// Each demo first version, read the way journey.firstVersionOf reads a real
+// one: [seconds from Make it to each stage reached, in pipeline order],
+// how its filing and latest run ended, and its maker around its going live
+// (active within the window, and seconds until they opened it after).
+const FV_PIPELINE = [
+  'plan_written', 'go_ahead', 'picked_up', 'spec_started', 'first_look_saved', 'build_started',
+  'build_done', 'review_round', 'testing_started', 'merged', 'live',
+];
+const DEMO_FIRST_VERSIONS = {
+  pantry: { secs: [18, 80, 95, 100, 170, 180], failed: false },
+  'run-club': { secs: [22, 140, 160, 165, 230, 240], failed: true },
+  'reading-pile': { secs: [20, 95, 110, 115, 190, 200, 520, 530, 700, 900, 960], nearLive: true, back: 40 },
+  'bird-log': { secs: [25, 300, 320, 330, 410, 420, 760, 770, 950, 1150, 1230], nearLive: false, back: 7200 },
+  tally: { secs: [24], failed: false },
+  'book-swap': { secs: [19, 60, 70, 75, 140, 150, 480, 490, 650, 840, 900], nearLive: true, back: 15 },
+};
+const DEMO_NOW = new Date('2026-10-05T00:00:00Z');
+
+function demoFirstVersion(slug, createdAt) {
+  const fv = DEMO_FIRST_VERSIONS[slug];
+  if (!fv) return null;
+  const at = (sec) => new Date(Date.parse(createdAt) + sec * 1000).toISOString();
+  const stages = Object.fromEntries(fv.secs.map((sec, i) => [FV_PIPELINE[i], at(sec)]));
+  const liveSec = fv.secs.length === FV_PIPELINE.length ? fv.secs[fv.secs.length - 1] : null;
+  return journey.firstVersionOf({
+    bot_builds: true, created_at: createdAt, stages, filing: 'filed', run_failed: !!fv.failed,
+    near_live: liveSec != null ? !!fv.nearLive : null,
+    back_at: liveSec != null && fv.back != null ? at(liveSec + fv.back) : null,
+  }, DEMO_NOW, { stagesFrom: DEMO_RECORDED_FROM });
+}
+
 // [person, slug, project, created at, seconds to running, first version,
 // preview opened, requested change live]; null is not reached.
 const DEMO_PROJECTS = [
@@ -329,6 +409,10 @@ const DEMO_PROJECTS = [
       preview: ev(preview),
       change_live: ev(changeLive),
     },
+    timing: DEMO_TIMING[slug] || null,
+    asked: DEMO_ASKED[slug] || null,
+    template: null,
+    firstVersion: demoFirstVersion(slug, createdAt),
   };
 });
 
@@ -354,10 +438,16 @@ function creation(day, all = false) {
       steps: journey.creationSteps(projects.filter((p) => inDemoSpan(p.createdAt, w)))
         .map((s) => ({ key: s.key, reached: s.reached, medianSeconds: s.medianSeconds })),
     })),
+    timing: { from: DEMO_RECORDED_FROM, ...journey.creationTimingSummary(inWeek) },
+    firstVersion: { from: DEMO_RECORDED_FROM, ...journey.firstVersionSummary(inWeek, { recordedFrom: DEMO_RECORDED_FROM }) },
     examples: [...inWeek].reverse().slice(0, 6).map((p) => ({
       userId: p.userId, name: p.name, slug: p.slug, project: p.project, createdAt: p.createdAt,
       steps: journey.CREATION_STEPS.filter((key) => key !== 'created')
         .map((key) => ({ key, recorded: p.steps[key].counted, seconds: p.steps[key].seconds })),
+      timing: p.timing,
+      asked: p.asked,
+      template: p.template,
+      firstVersion: p.firstVersion ? { recorded: p.firstVersion.recorded, outcome: p.firstVersion.outcome, last: p.firstVersion.last } : null,
     })),
   };
 }
@@ -425,10 +515,31 @@ const DEMO_FIRST_SESSIONS = [
   const row = {
     path, user_id: p.userId, username: p.name, slug, name, intent_at: at,
     reward_at: null, invited_at: null, running_at: null, said_at: null, suggested_at: null, made_at: null,
+    brief: path === 'make' ? DEMO_ASKED[slug] || null : null, template: null,
   };
   if (path === 'make') return { ...row, reward_at: plus(secs[0]), invited_at: plus(secs[1]), running_at: plus(secs[2]) };
   if (path === 'join') return { ...row, said_at: plus(secs[0]), suggested_at: plus(secs[1]) };
   return { ...row, made_at: plus(secs[0]) };
+});
+
+// Each demo maker's made screen and tour, as journey.MADE_SCREEN_SQL
+// returns its rows: [person, when it opened, moments in order], a moment
+// being its kind, or [kind, detail].
+const TOUR_CARDS = 6;
+const tourCards = (n) => Array.from({ length: n }, (_, i) => ['tour_step_shown', { step: i + 1, steps: TOUR_CARDS }]);
+const DEMO_MADE_SCREENS = [
+  [P.jun, '2026-09-29T08:00:00Z', ['made_shown', 'questions_shown', 'submit_tapped', 'invite_shown', 'share_invite_tapped',
+    ['invite_sent', { how: 'shared' }], 'continue_tapped', ['tour_started', { steps: TOUR_CARDS }], ...tourCards(6),
+    ['tour_ended', { step: 6, steps: TOUR_CARDS, how: 'done' }]]],
+  [P.okafor, '2026-09-29T17:00:00Z', ['made_shown', 'questions_shown', 'submit_tapped', 'invite_shown', 'invite_later_tapped',
+    'continue_tapped', ['tour_started', { steps: TOUR_CARDS }], ...tourCards(3), ['tour_ended', { step: 3, steps: TOUR_CARDS, how: 'skipped' }]]],
+  [P.tobi, '2026-09-30T09:00:00Z', ['made_shown', 'questions_shown']],
+  [P.mira, '2026-10-01T18:00:00Z', ['made_shown', 'invite_shown', 'share_invite_tapped', ['invite_sent', { how: 'copied' }],
+    'continue_tapped', ['tour_started', { steps: TOUR_CARDS }], ...tourCards(2)]],
+];
+const madeRows = (p, moments) => moments.map((m) => {
+  const [kind, detail] = Array.isArray(m) ? m : [m, {}];
+  return { user_id: p.userId, kind, how: detail.how || null, step: detail.step ?? null, steps: detail.steps ?? null };
 });
 
 function firstSession(day, all = false) {
@@ -452,6 +563,9 @@ function firstSession(day, all = false) {
     },
     { week: window, cohort: !!ids },
   );
+  const moments = DEMO_MADE_SCREENS
+    .filter(([p, at]) => (!ids || ids.has(p.userId)) && inDemoSpan(at, window))
+    .flatMap(([p, , list]) => madeRows(p, list));
   return {
     demo: true,
     ...journey.firstSessionReading(rows, opens, {
@@ -460,6 +574,7 @@ function firstSession(day, all = false) {
         make: DEMO_RECORDED_FROM, reward: DEMO_RECORDED_FROM, opens: DEMO_RECORDED_FROM, signedIn: DEMO_RECORDED_FROM, look: DEMO_RECORDED_FROM,
       },
     }),
+    made: journey.madeScreenReading(moments, { week: window, recordedFrom: DEMO_RECORDED_FROM }),
   };
 }
 

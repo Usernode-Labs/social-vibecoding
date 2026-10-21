@@ -2,37 +2,18 @@
  * What the About pane SAYS — pure, so the wording is pinned by tests with
  * plain objects rather than by a browser.
  *
- * ── How it is built: one warm line, the mechanics a tap away (#4218) ────
+ * ── No line about how it is built ──────────────────────────────────────
  *
- * The note under the actions used to spell out the app's approval regime —
- * who may suggest, which votes count, an admin's yes on a locked app, the
- * checks — assembled per app so it stayed true for each of the three regimes
- * the platform runs (services/governance.js). It was accurate and it was the
- * longest thing a newcomer read on the pane. It says who builds it now, and
- * the pane links "How changes work" to the app's Workshop, where the voting
- * help (../dev-board/voting-help.tsx) spells the rules out for THIS app.
+ * The note under the actions once spelled out the app's approval regime,
+ * then (#4218) said only that its community builds it together, with "How
+ * changes work" opening the Workshop. It said the same thing on every pane,
+ * and a project's hub is where the way it changes lives, so it is gone from
+ * the app's About and from Homeroom's.
  */
+
+import { t } from '../../lib/i18n/runtime';
 
 export type AppRow = Record<string, any>;
-
-/** The build line under an app's actions: "Notes’s community builds it together." */
-export function appNote(name: string | null | undefined): string {
-  const who = typeof name === 'string' && name.trim() ? name.trim() : 'This app';
-  return who === 'This app'
-    ? 'This app’s community builds it together.'
-    : `${who}’s community builds it together.`;
-}
-
-/**
- * The platform's line. `restricted` when this viewer is not served its row:
- * they cannot open its workshop either, so the line says so rather than
- * leaving them a link the platform would refuse.
- */
-export function platformNote(name: string | null | undefined, restricted: boolean): string {
-  const who = typeof name === 'string' && name.trim() ? name.trim() : 'Homeroom';
-  const line = `${who}’s community builds it together, the same way as the apps on it.`;
-  return restricted ? `${line} On this server its workshop is open to admins only.` : line;
-}
 
 /** The app's tagline: its manifest's one-line description (HomePanels.appBlurb's rule). */
 export function taglineOf(row: AppRow | null | undefined): string | null {
@@ -60,7 +41,7 @@ export function shortVersionOf(row: AppRow | null | undefined): string | null {
 export function membersPillText(count: unknown): string | null {
   const n = typeof count === 'number' ? count : parseInt(String(count ?? ''), 10);
   if (!Number.isFinite(n) || n < 1) return null;
-  return n === 1 ? '1 member' : `${n.toLocaleString()} members`;
+  return t('agent:appContext.about.members', { count: n, formatted: n.toLocaleString() });
 }
 
 /**
@@ -69,9 +50,20 @@ export function membersPillText(count: unknown): string | null {
  * does. While a new build deploys, it says so; with no version, no row.
  */
 export function versionRowText(version: string | null, deploying: boolean, platform: boolean): string | null {
-  const lead = platform ? 'Version' : 'App version';
-  if (deploying) return version ? `${lead}: ${version} (deploying…)` : `${lead}: deploying…`;
-  return version ? `${lead}: ${version}` : null;
+  if (deploying) {
+    if (version) {
+      return platform
+        ? t('agent:appContext.about.version.platformDeploying', { version })
+        : t('agent:appContext.about.version.appDeploying', { version });
+    }
+    return platform
+      ? t('agent:appContext.about.version.platformDeployingOnly')
+      : t('agent:appContext.about.version.appDeployingOnly');
+  }
+  if (!version) return null;
+  return platform
+    ? t('agent:appContext.about.version.platform', { version })
+    : t('agent:appContext.about.version.app', { version });
 }
 
 export interface StatCard { key: 'apps' | 'members' | 'merged'; value: string; label: string }
@@ -87,22 +79,36 @@ export function statCards(stats: { apps?: number; members?: number; merged?: num
   const members = n(s.members);
   const merged = n(s.merged);
   return [
-    { key: 'apps', value: apps.toLocaleString(), label: apps === 1 ? 'app' : 'apps' },
-    { key: 'members', value: members.toLocaleString(), label: members === 1 ? 'member' : 'members' },
-    { key: 'merged', value: merged.toLocaleString(), label: 'live' },
+    { key: 'apps', value: apps.toLocaleString(), label: t('agent:appContext.about.stat.apps', { count: apps }) },
+    { key: 'members', value: members.toLocaleString(), label: t('agent:appContext.about.stat.members', { count: members }) },
+    { key: 'merged', value: merged.toLocaleString(), label: t('agent:appContext.about.stat.live', { count: merged }) },
   ];
 }
 
-export interface ContributorView { who: string; initial: string; merged: number }
+export interface ContributorView { who: string; initial: string; merged: number; creator: boolean }
 
 /**
  * One contributor row, from GET /api/apps/:slug/contributors' shape — the
  * payload Discover's app page reads (../apps/browse.js contributorRowView).
  */
 export function contributorView(c: AppRow | null | undefined): ContributorView {
-  const who = (c && typeof c.username === 'string' && c.username) || 'unknown';
+  const who = (c && typeof c.username === 'string' && c.username) || t('agent:appContext.about.contributor.unknown');
   const merged = parseInt(String(c ? c.merged_count : 0), 10) || 0;
-  return { who, initial: (who[0] || '?').toUpperCase(), merged };
+  return { who, initial: (who[0] || '?').toUpperCase(), merged, creator: !!(c && c.is_creator) };
+}
+
+/**
+ * What a contributor's row says at its end: "Creator" for the person who
+ * made the app, how many of their changes are live, both, or nothing. A
+ * maker with nothing merged yet read "0 live" beside their own name.
+ */
+export function contributorNote(c: ContributorView): string | null {
+  if (c.creator) {
+    return c.merged > 0
+      ? t('agent:appContext.about.contributor.creatorLive', { count: c.merged })
+      : t('agent:appContext.about.contributor.creator');
+  }
+  return c.merged > 0 ? t('agent:appContext.about.contributor.live', { count: c.merged }) : null;
 }
 
 /**
@@ -112,8 +118,8 @@ export function contributorView(c: AppRow | null | undefined): ContributorView {
  */
 export function openLabel(status: string | null | undefined, parked: boolean): { label: string; canOpen: boolean } {
   const canOpen = status === 'running' || status === 'awaiting_secrets';
-  if (canOpen) return { label: parked ? 'Resume' : 'Open', canOpen };
-  if (status === 'creating') return { label: 'Spinning up…', canOpen };
-  if (status === 'error') return { label: 'Not running', canOpen };
-  return { label: status || 'Unavailable', canOpen };
+  if (canOpen) return { label: parked ? t('agent:appContext.about.open.resume') : t('agent:appContext.about.open.open'), canOpen };
+  if (status === 'creating') return { label: t('agent:appContext.about.open.spinningUp'), canOpen };
+  if (status === 'error') return { label: t('agent:appContext.about.open.notRunning'), canOpen };
+  return { label: status || t('agent:appContext.about.open.unavailable'), canOpen };
 }

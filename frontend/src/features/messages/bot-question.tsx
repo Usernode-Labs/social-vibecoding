@@ -2,17 +2,20 @@ import { useState } from 'react';
 
 import { InfoCircleIcon } from '@/components/ui/icons';
 
+import { useMessages } from '../../lib/i18n/react';
+import { t as translate } from '../../lib/i18n/runtime';
 import { InviteSheet } from '../first-session/made';
 import type { Made } from '../first-session/make';
 import { AnsweredChoices } from './bot-plan-view';
-import { answerBotQuestion, scopeKey, setReply, tapBotAction } from './store';
+import { useTrackOf } from './bot-track';
+import { answerBotQuestion, quoteInComposer, tapBotAction } from './store';
 import type { ConversationMessage, HomeroomBotAction, HomeroomBotMeta } from './types';
 
 /*
  * #3624: what hangs under a message from the Homeroom bot.
  *
  * A QUESTION carries its suggested answers as buttons, the bot's default
- * first and marked as such, and a "Something else" that quotes the question
+ * first and marked as such, and a "Write my own" that quotes the question
  * in the composer for an answer of one's own. Tapping an answer sends it at
  * once, quoting the question, which is how the server knows which request
  * it answers (services/homeroom-bot-dm.js). Once answered (or closed by
@@ -29,7 +32,7 @@ import type { ConversationMessage, HomeroomBotAction, HomeroomBotMeta } from './
  * #3624 stage 2: an OFFER (kind `confirm`) uses the same buttons: File it
  * and Not now under a request the bot offers to file. Nothing is posted
  * anywhere until File it, so it has no public note, no "suggested" and no
- * Something else (anything typed is read by the bot instead). #3770: File
+ * Write my own (anything typed is read by the bot instead). #3770: File
  * it is the act, filled in the accent; Not now is the neutral fill beside
  * it. A question's answers keep one look: none of them is the act.
  * #11 (WP3): an offer to withdraw one of the bot's proposals is the same
@@ -62,9 +65,38 @@ export function botMeta(message: ConversationMessage): HomeroomBotMeta | null {
 }
 
 /** "Homeroom request #12", the place an answer is posted. */
-export function requestPlace(meta: HomeroomBotMeta): string {
-  const app = meta.appName || meta.appSlug || 'the project';
-  return meta.firstVersion ? `${app}’s first-version request` : `${app} request #${meta.issueNumber}`;
+/** Where an answer or a reply is posted, one whole sentence per case. */
+const POSTED_NOTES = {
+  answer: {
+    firstVersion: 'messages:bot.posted.answer.firstVersion',
+    firstVersionUnnamed: 'messages:bot.posted.answer.firstVersionUnnamed',
+    request: 'messages:bot.posted.answer.request',
+    requestUnnamed: 'messages:bot.posted.answer.requestUnnamed',
+  },
+  answers: {
+    firstVersion: 'messages:bot.posted.answers.firstVersion',
+    firstVersionUnnamed: 'messages:bot.posted.answers.firstVersionUnnamed',
+    request: 'messages:bot.posted.answers.request',
+    requestUnnamed: 'messages:bot.posted.answers.requestUnnamed',
+  },
+  reply: {
+    firstVersion: 'messages:bot.posted.reply.firstVersion',
+    firstVersionUnnamed: 'messages:bot.posted.reply.firstVersionUnnamed',
+    request: 'messages:bot.posted.reply.request',
+    requestUnnamed: 'messages:bot.posted.reply.requestUnnamed',
+  },
+} as const;
+
+/**
+ * The line that says an answer, a pair of answers or a reply is posted on the
+ * request's public discussion, naming the request it is posted on.
+ */
+export function postedNote(meta: HomeroomBotMeta, what: keyof typeof POSTED_NOTES): string {
+  const ids = POSTED_NOTES[what];
+  const project = meta.appName || meta.appSlug || '';
+  if (meta.firstVersion) return project ? translate(ids.firstVersion, { project }) : translate(ids.firstVersionUnnamed);
+  const number = String(meta.issueNumber);
+  return project ? translate(ids.request, { project, number }) : translate(ids.requestUnnamed, { number });
 }
 
 export function BotQuestion({ message, conversationId, hidePrompts = false }: {
@@ -77,6 +109,7 @@ export function BotQuestion({ message, conversationId, hidePrompts = false }: {
    */
   hidePrompts?: boolean;
 }) {
+  const t = useMessages('messages');
   const meta = botMeta(message);
   // The answer tapped here, until the server's own state comes back.
   const [chosen, setChosen] = useState<string | null>(null);
@@ -92,14 +125,14 @@ export function BotQuestion({ message, conversationId, hidePrompts = false }: {
     void answerBotQuestion(message, answer).catch(() => setChosen(null));
   }
 
-  function somethingElse() {
+  function writeOwn() {
     quoteInComposer(message, conversationId);
   }
 
   return (
     <div className="messages-bot-question" data-bot-question={meta.status || 'open'}>
       {open ? (
-        <div className="messages-bot-answers" role="group" aria-label={offer ? (meta.question || 'File this request?') : 'Suggested answers'}>
+        <div className="messages-bot-answers" role="group" aria-label={offer ? (meta.question || t('messages:bot.question.fileRequest')) : t('messages:bot.question.suggestedAnswers')}>
           {answers.map((answer, index) => (
             <button
               key={answer}
@@ -109,21 +142,21 @@ export function BotQuestion({ message, conversationId, hidePrompts = false }: {
               onClick={() => choose(answer)}
             >
               <span>{answer}</span>
-              {index === 0 && !offer ? <span className="messages-bot-default">suggested</span> : null}
+              {index === 0 && !offer ? <span className="messages-bot-default">{t('messages:bot.question.suggested')}</span> : null}
             </button>
           ))}
-          {offer ? null : <button type="button" className="messages-bot-other" onClick={somethingElse}>Something else</button>}
+          {offer ? null : <button type="button" className="messages-bot-other" onClick={writeOwn}>{t('messages:bot.question.writeOwn')}</button>}
         </div>
       ) : null}
-      {answered && offer ? <p className="messages-bot-answered">{`You chose: ${answered}`}</p> : null}
-      {answered && !offer ? <AnsweredChoices items={[{ question: 'You answered', answer: answered }]} /> : null}
+      {answered && offer ? <p className="messages-bot-answered">{t('messages:bot.question.youChose', { answer: answered })}</p> : null}
+      {answered && !offer ? <AnsweredChoices items={[{ question: t('messages:bot.question.youAnswered'), answer: answered }]} /> : null}
       {(open || chosen) && mirrorsReplies(meta) ? (
         <p className="messages-bot-note">
           <InfoCircleIcon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-          <span>{`Your answer is posted on ${requestPlace(meta)}’s public discussion, where the group can see it.`}</span>
+          <span>{postedNote(meta, 'answer')}</span>
         </p>
       ) : null}
-      {meta.status === 'closed' && !answered ? <p className="messages-bot-answered">No longer needed.</p> : null}
+      {meta.status === 'closed' && !answered ? <p className="messages-bot-answered">{t('messages:bot.question.closed')}</p> : null}
     </div>
   );
 }
@@ -136,18 +169,12 @@ export function BotQuestion({ message, conversationId, hidePrompts = false }: {
  * keeps it that way. A refused press (decided already elsewhere) brings
  * nothing back: that device's choice arrives with the update.
  */
-/**
- * Quote `message` in the composer and put the caret there: a reply bar, for
- * them to write what the message asks for. The reply bar puts the caret in
- * the composer where there is a keyboard; a phone gets it too, since this is
- * a request to type.
+/*
+ * Quoting `message` in the composer (store.quoteInComposer) puts the caret
+ * there: a reply bar, for them to write what the message asks for, in the
+ * request's thread when the message is in one. A phone gets the caret too,
+ * since this is a request to type.
  */
-function quoteInComposer(message: ConversationMessage, conversationId: number) {
-  setReply(scopeKey(conversationId, null), message);
-  window.requestAnimationFrame(() => {
-    document.querySelector<HTMLTextAreaElement>('.messages-composer-input')?.focus({ preventScroll: true });
-  });
-}
 
 /** Whether a message's buttons are all suggestions of what to say next (homeroom-bot-dm.js suggestsOnly). */
 export function suggestsOnly(actions: readonly HomeroomBotAction[]): boolean {
@@ -161,10 +188,20 @@ function BotActions({ message, meta, conversationId, hidePrompts = false }: {
   hidePrompts?: boolean;
 }) {
   // The button pressed here, until the server's own state comes back.
+  const t = useMessages('messages');
   const [pressed, setPressed] = useState<HomeroomBotAction | null>(null);
   // #4231: the invite sheet, opened in place by Invite people.
   const [inviting, setInviting] = useState(false);
-  const actions = meta.actions || [];
+  // 16 Oct 2026 (C6): a step its request has moved past retires its button.
+  // "Read the plan" under the plan stopped meaning the next step once the
+  // build began, yet it was the last button in the thread and read as one;
+  // the request's card at the top of its thread says where it is now.
+  const track = useTrackOf(meta.appSlug || meta.appName ? {
+    appSlug: meta.appSlug, appName: meta.appName, issueNumber: meta.issueNumber, firstVersion: meta.firstVersion === true,
+  } : null);
+  const pastPlan = !!track && !['queued', 'planning', 'waiting'].includes(track.state);
+  const actions = (meta.actions || []).filter((action) => !(pastPlan && action.id === 'read_plan'));
+  if (!actions.length) return null;
   const invite = inviteMade(meta);
   const settled = meta.status === 'answered' || meta.status === 'closed';
   const open = !settled && !pressed && !message.deleted;
@@ -176,7 +213,10 @@ function BotActions({ message, meta, conversationId, hidePrompts = false }: {
   // #4097 follow-up: suggestions the bot has moved on from (its newer
   // message closed them, homeroom-bot-dm.js retireSuggestions) go quietly;
   // "No longer needed." is for a decision that was overtaken.
-  if (meta.status === 'closed' && !chosen && suggestions) return null;
+  // A request's own step (Try again, Add detail, Go ahead) closed by newer
+  // news about the same request says why in its place (`closedWhy`).
+  const closedWhy = meta.status === 'closed' && !chosen ? meta.closedWhy || null : null;
+  if (meta.status === 'closed' && !chosen && suggestions && !closedWhy) return null;
   // #4046: one set of suggestions at a time: while a plan or a question
   // offers its own answers, what to say next waits (a button that quotes,
   // such as Try again, is not a suggestion). Asked already, it still says so.
@@ -209,7 +249,7 @@ function BotActions({ message, meta, conversationId, hidePrompts = false }: {
   return (
     <div className="messages-bot-question" data-bot-question={meta.status || 'open'}>
       {open ? (
-        <div className="messages-bot-answers" role="group" aria-label={meta.question || (prompts ? 'Questions you can ask' : suggestions ? 'What you can do next' : 'Choices')}>
+        <div className="messages-bot-answers" role="group" aria-label={meta.question || (prompts ? t('messages:bot.actions.questionsYouCanAsk') : suggestions ? t('messages:bot.actions.whatNext') : t('messages:bot.actions.choices'))}>
           {actions.map((action, index) => (
             <button
               key={action.id}
@@ -229,11 +269,11 @@ function BotActions({ message, meta, conversationId, hidePrompts = false }: {
       {posts ? (
         <p className="messages-bot-note">
           <InfoCircleIcon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-          <span>{`Your answer is posted on ${requestPlace(meta)}’s public discussion, where the group can see it.`}</span>
+          <span>{postedNote(meta, 'answer')}</span>
         </p>
       ) : null}
-      {chosen ? <p className="messages-bot-answered">{chosenAction?.type === 'prompt' && !chosenAction.quote ? `You asked: ${chosen}` : `You chose ${chosen}`}</p> : null}
-      {meta.status === 'closed' && !chosen ? <p className="messages-bot-answered">No longer needed.</p> : null}
+      {chosen ? <p className="messages-bot-answered">{chosenAction?.type === 'prompt' && !chosenAction.quote ? t('messages:bot.actions.youAsked', { question: chosen }) : t('messages:bot.actions.youChose', { choice: chosen })}</p> : null}
+      {meta.status === 'closed' && !chosen ? <p className="messages-bot-answered" data-bot-closed-why={closedWhy ? '' : undefined}>{closedWhy || t('messages:bot.actions.closed')}</p> : null}
       {inviting && invite ? (
         <InviteSheet made={invite} me={inviterName()} onClose={() => setInviting(false)} onSent={() => {}} />
       ) : null}

@@ -10,8 +10,6 @@ const fixtures = require('./fixtures/shots');
 const db = require('../src/db/pool');
 const appAccess = require('../src/services/app-access');
 const appAdmins = require('../src/services/app-admins');
-const github = require('../src/services/github');
-const orchestrator = require('../src/services/shots-orchestrator');
 const state = require('../src/services/shots-state');
 
 // Mounts the shots routes over a fake pool with the given stubs, the way
@@ -37,83 +35,30 @@ async function serve(t, { pool, user, config = { shots: { present: true, execute
   return `http://127.0.0.1:${server.address().port}/api/apps/demo/proposals/42/shots`;
 }
 
-test('retry of a no-impact claim settles as not required without reclassifying files', async (t) => {
-  const base = 'a'.repeat(40);
-  const head = 'b'.repeat(40);
-  const runId = '1'.repeat(32);
-  const declaration = { version: 1, impact: 'none', rationale: 'Server-only change.', stories: [] };
+test('a retry hands the shots machine the declaration it was given, validated, and answers its outcome', async (t) => {
+  // What a retry of a no-impact declaration settles as is the machine's
+  // (tests/workflow-shots-postgres.test.js S18); the route validates and asks.
   const session = {
     id: 42, app_id: 9, user_id: 7, source: 'imported', status: 'merged',
-    imported_pr_head_sha: head, shots_state: 'failed', shots_run_id: runId,
+    imported_pr_head_sha: 'b'.repeat(40), shots_state: 'failed', shots_run_id: '1'.repeat(32),
+    shots_detail: { intent: { version: 1, impact: 'none', rationale: 'Server-only change.', stories: [] } },
   };
-  const oldRun = {
-    id: runId, session_id: 42, base_sha: base, head_sha: head, state: 'failed',
-    intent: declaration, current_run_id: runId,
-    failure_code: 'shots_capture_incomplete',
-  };
-  const inserted = [];
-  const sessionUpdates = [];
-  const pool = { query: async (sql, params) => {
-    const text = String(sql);
-    if (text.includes('FROM chat_sessions cs')) return { rows: [session] };
-    if (text.includes('FROM shot_runs r') && text.includes('JOIN chat_sessions s')) {
-      return { rows: [oldRun] };
-    }
-    if (text.includes('UPDATE shot_runs')) return { rowCount: 1, rows: [] };
-    if (text.includes('INSERT INTO shot_runs')) {
-      const row = {
-        id: params[0], session_id: params[1], base_sha: params[2], head_sha: params[3],
-        intent: JSON.parse(params[5]), state: params[6], trigger: params[7],
-      };
-      inserted.push(row);
-      return { rows: [row] };
-    }
-    if (text.includes('UPDATE chat_sessions')) {
-      sessionUpdates.push({ state: params[1], detail: JSON.parse(params[3]) });
-      return { rowCount: 1, rows: [] };
-    }
-    throw new Error(`Unexpected query: ${text.slice(0, 80)}`);
+  const pool = { query: async (sql) => {
+    if (String(sql).includes('FROM chat_sessions cs')) return { rows: [session] };
+    throw new Error(`Unexpected query: ${String(sql).slice(0, 80)}`);
   } };
-  const saved = {
-    pool: db.getPool, access: appAccess.getAppForUser, compare: github.compareRefs,
-    schedule: orchestrator.scheduleForSession,
-  };
-  db.getPool = () => pool;
-  appAccess.getAppForUser = async () => ({ id: 9, slug: 'demo', repo_url: 'https://github.com/Usernode-Labs/social-vibecoding' });
-  let comparisons = 0;
-  github.compareRefs = async () => { comparisons += 1; return { files: [], filesComplete: true }; };
-  const scheduled = [];
-  orchestrator.scheduleForSession = async (_config, options) => {
-    scheduled.push(options.headSha);
-    return { scheduled: false, reason: 'not_required' };
-  };
-  const routePath = require.resolve('../src/routes/shots');
-  delete require.cache[routePath];
-  const isolatedRoutes = require('../src/routes/shots');
-  const app = express();
-  app.use((req, _res, next) => { req.user = { id: 7 }; next(); });
-  app.use(isolatedRoutes.shotsRoutes({ shots: { execute: true } }));
-  const server = app.listen(0);
-  await new Promise((resolve) => server.once('listening', resolve));
-  t.after(() => {
-    server.close();
-    db.getPool = saved.pool;
-    appAccess.getAppForUser = saved.access;
-    github.compareRefs = saved.compare;
-    orchestrator.scheduleForSession = saved.schedule;
-    delete require.cache[routePath];
+  const asked = [];
+  const url = await serve(t, {
+    pool, user: () => 7,
+    stubs: [
+      [appAccess, 'getAppForUser', async () => ({ id: 9, slug: 'demo' })],
+      [state, 'retryShots', async (r) => { asked.push(r); return { status: 'accepted', reply: { state: 'not_required', runId: null } }; }],
+    ],
   });
-  const url = `http://127.0.0.1:${server.address().port}/api/apps/demo/proposals/42/shots/rerun`;
-  const response = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
-  const body = await response.json();
+  const response = await fetch(`${url}/rerun`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
   assert.equal(response.status, 202);
-  assert.equal(body.shotsState, 'not_required');
-  assert.equal(inserted.length, 1);
-  assert.equal(inserted[0].state, 'not_required', 'a zero-story declaration never becomes a shots run');
-  assert.equal(sessionUpdates.at(-1).state, 'not_required');
-  assert.equal(sessionUpdates.at(-1).detail.required, false);
-  assert.equal(comparisons, 0, 'the declaration is trusted; GitHub is not consulted');
-  assert.deepEqual(scheduled, [head]);
+  assert.deepEqual(await response.json(), { ok: true, runId: null, shotsState: 'not_required' });
+  assert.deepEqual(asked, [{ sessionId: 42, appId: 9, intent: null, actor: 'user:7' }]);
 });
 
 test('artifact range parsing supports full, open, and suffix ranges and fails closed', () => {
@@ -157,7 +102,9 @@ test('run diagnostics are private to the author or app manager, available live, 
     completed_at: new Date('2026-09-01T00:02:00Z'),
     updated_at: new Date('2026-09-01T00:02:00Z'),
     plan_hash: 'c'.repeat(64),
-    hard_verdict: { passed: true, mode: 'shots', runs: 1, stories },
+    hard_verdict: { passed: true, mode: 'shots', runs: 1, stories, notices: [
+      { text: 'The sort control overlaps a heading.', change: 'invite-suggestions', screen: 'desktop', shot: null, alsoBefore: 'unknown' },
+    ] },
     // Columns a replay-era row may still hold; none of them is read.
     replay_plan: { secret: 'must not escape' }, author_plan: { secret: 'must not escape' }, repair_attempt: 1,
     failure_code: 'shots_capture_incomplete', failure_reason: 'The shots agent could not reach the dialog.',
@@ -200,6 +147,10 @@ test('run diagnostics are private to the author or app manager, available live, 
         media: 'png', bytes: 345, width: 640, height: 480, sha256: 'c'.repeat(64),
       }] };
     }
+    // What the agent is doing now, from the run's workspace.
+    if (String(sql).includes('FROM shot_run_control')) {
+      return { rows: params[0] === runId ? [{ progress: { agentActivity: { events: [{ kind: 'tool_start' }] } } }] : [] };
+    }
     throw new Error(`Unexpected query: ${String(sql).slice(0, 80)}`);
   } };
   let userId = 7;
@@ -222,6 +173,7 @@ test('run diagnostics are private to the author or app manager, available live, 
   assert.equal(diagnostics.currentRun, true);
   assert.equal(diagnostics.planHash, 'c'.repeat(64));
   assert.deepEqual(diagnostics.shotResults, stories);
+  assert.deepEqual(diagnostics.shotNotices, run.hard_verdict.notices, 'what the agent noticed, as stored');
   for (const key of ['replayPlan', 'authorPlan', 'authorPlanSupplied', 'repairAttempt', 'diagnosticArtifacts']) {
     assert.equal(Object.hasOwn(diagnostics, key), false, key);
   }
@@ -233,9 +185,8 @@ test('run diagnostics are private to the author or app manager, available live, 
   assert.equal(diagnostics.trace.heartbeat.poolWaiting, 3);
   assert.equal(diagnostics.trace.idleWait.waitClass, 'shots_recovery');
   assert.equal(diagnostics.trace.idleWait.activeTurnPhase, 'cleanup_pending');
-  assert.match(diagnostics.observer.processId, /^[0-9a-f]{16}$/);
-  assert.equal(diagnostics.observer.ownsRun, false);
-  assert.equal(diagnostics.observer.heartbeatWrite, null);
+  assert.equal(Object.hasOwn(diagnostics, 'observer'), false, 'no process owns a run any more');
+  assert.equal(diagnostics.agentProgress.agentActivity.events[0].kind, 'tool_start', 'read from the run\'s workspace, in any process');
   assert.equal(diagnostics.trace.agentDispatches[0].backend, 'claude_code');
   assert.equal(diagnostics.trace.agentDispatches[0].fallbackReason, 'model_without_tools');
   assert.equal(diagnostics.trace.agentActivity.events[0].kind, 'agent_deadline');
@@ -323,7 +274,6 @@ test('the diagnostic image route and the author plan route are gone', async (t) 
     if (String(sql).includes('FROM chat_sessions cs')) return { rows: [session] };
     throw new Error(`Unexpected query: ${String(sql).slice(0, 80)}`);
   } };
-  const scheduled = [];
   const reruns = [];
   let userId = 7;
   const base = await serve(t, {
@@ -331,8 +281,7 @@ test('the diagnostic image route and the author plan route are gone', async (t) 
     stubs: [
       [appAccess, 'getAppForUser', async () => ({ id: 9, slug: 'demo' })],
       [appAdmins, 'canManageApp', async () => true],
-      [orchestrator, 'scheduleForSession', async (_config, options) => { scheduled.push(options); return { scheduled: true }; }],
-      [state, 'rerunSameHead', async (...args) => { reruns.push(args); return { id: '3'.repeat(32), state: 'planned' }; }],
+      [state, 'retryShots', async (...args) => { reruns.push(args); return { status: 'accepted', reply: {} }; }],
     ],
   });
   for (const user of [7, 8]) {
@@ -345,8 +294,7 @@ test('the diagnostic image route and the author plan route are gone', async (t) 
     body: JSON.stringify({ headSha: head, plan: { version: 1, stories: [] } }),
   });
   assert.equal(plan.status, 404);
-  assert.deepEqual(scheduled, [], 'no submitted plan starts a run');
-  assert.deepEqual(reruns, []);
+  assert.deepEqual(reruns, [], 'no submitted plan starts a run');
   assert.ok(!queries.some((sql) => /shot_diagnostic_artifacts/.test(sql)));
 
   const src = fs.readFileSync(path.join(__dirname, '..', 'src/routes/shots.js'), 'utf8');
@@ -366,7 +314,6 @@ test('rerun, stop and override keep their access rules', async (t) => {
     throw new Error(`Unexpected query: ${String(sql).slice(0, 80)}`);
   } };
   const reruns = [];
-  const scheduled = [];
   const stops = [];
   const overrides = [];
   let userId = 7;
@@ -376,16 +323,15 @@ test('rerun, stop and override keep their access rules', async (t) => {
       [appAccess, 'getAppForUser', async () => ({ id: 9, slug: 'demo' })],
       // User 8 manages the app; user 9 is only a collaborator.
       [appAdmins, 'canManageApp', async (_pool, app, user) => app.id === 9 && user.id === 8],
-      [state, 'rerunSameHead', async (_pool, id, options) => {
-        reruns.push({ id, options });
-        return { id: '3'.repeat(32), head_sha: head, state: 'planned' };
+      [state, 'retryShots', async (r) => {
+        reruns.push(r);
+        return { status: 'accepted', reply: { runId: '3'.repeat(32), state: 'provisioning' } };
       }],
-      [state, 'overrideRun', async (_pool, id, options) => {
-        overrides.push({ id, options });
-        return { id, state: 'overridden' };
+      [state, 'waiveShots', async (r) => {
+        overrides.push(r);
+        return { status: 'accepted', reply: { runId, state: 'overridden' } };
       }],
-      [orchestrator, 'scheduleForSession', async (_config, options) => { scheduled.push(options); return { scheduled: true }; }],
-      [orchestrator, 'stopForSession', async (_pool, id) => { stops.push(id); return { stopped: true, runId }; }],
+      [state, 'stopShots', async (r) => { stops.push(r.sessionId); return { status: 'accepted', reply: { runId } }; }],
     ],
   });
   const post = async (route, body = {}) => {
@@ -398,10 +344,8 @@ test('rerun, stop and override keep their access rules', async (t) => {
   // The author takes the shots again for the same head.
   const rerun = await post('rerun');
   assert.equal(rerun.status, 202);
-  assert.deepEqual(rerun.body, { ok: true, runId: '3'.repeat(32), shotsState: 'planned' });
-  assert.deepEqual(reruns, [{ id: runId, options: { trigger: 'manual-rerun', intent: null } }]);
-  assert.deepEqual(scheduled.map(({ sessionId, headSha, trigger }) => ({ sessionId, headSha, trigger })),
-    [{ sessionId: 42, headSha: head, trigger: 'manual-rerun' }]);
+  assert.deepEqual(rerun.body, { ok: true, runId: '3'.repeat(32), shotsState: 'provisioning' });
+  assert.deepEqual(reruns, [{ sessionId: 42, appId: 9, intent: null, actor: 'user:7' }]);
 
   // A replacement declaration is validated before anything is written.
   const invalid = fixtures.intent();
@@ -413,7 +357,7 @@ test('rerun, stop and override keep their access rules', async (t) => {
   // The name the declaration had before the rename is still read.
   const replaced = await post('rerun', { visualEvidence: fixtures.motionIntent() });
   assert.equal(replaced.status, 202);
-  assert.equal(reruns[1].options.intent.impact, 'motion');
+  assert.equal(reruns[1].intent.impact, 'motion');
 
   // The author and an app manager can stop a running set.
   assert.deepEqual((await post('stop')).body, { stopped: true, runId });
@@ -427,7 +371,7 @@ test('rerun, stop and override keep their access rules', async (t) => {
   userId = 8;
   const waived = await post('override', { reason: 'Copy-only change.' });
   assert.deepEqual(waived.body, { ok: true, runId, shotsState: 'overridden' });
-  assert.deepEqual(overrides, [{ id: runId, options: { userId: 8, reason: 'Copy-only change.' } }]);
+  assert.deepEqual(overrides, [{ sessionId: 42, appId: 9, userId: 8, reason: 'Copy-only change.' }]);
 
   // Anyone else sees no proposal at all.
   userId = 9;
@@ -444,4 +388,63 @@ test('rerun, stop and override keep their access rules', async (t) => {
   const missing = await post('override', { reason: 'Copy-only change.' });
   assert.equal(missing.status, 409);
   assert.equal(missing.body.error, 'shots_run_missing');
+});
+
+test('a dense still is served only at its own address, and only to an account in the experiment', async (t) => {
+  const session = { id: 42, app_id: 9, user_id: 7, source: 'imported', imported_pr_head_sha: 'b'.repeat(40), shots_state: 'verified' };
+  const FLAT = Buffer.from('flat-png');
+  const DENSE = Buffer.from('dense-png-at-2x');
+  const asked = [];
+  const pool = { query: async (sql, params) => {
+    if (String(sql).includes('FROM chat_sessions cs')) return { rows: [session] };
+    if (String(sql).includes('review_flow_enabled')) return { rows: [{ review_flow_enabled: params[0] === 7 }] };
+    if (String(sql).includes('FROM shot_artifacts a')) {
+      asked.push(params[3]);
+      // The query's CASE: the original only when asked for, the 1x copy otherwise.
+      return { rows: [{ data: params[3] ? DENSE : FLAT, sha256: (params[3] ? 'd' : 'f').repeat(64), content_type: 'image/png', bytes: 8 }] };
+    }
+    throw new Error(`Unexpected query: ${String(sql).slice(0, 80)}`);
+  } };
+  let userId = 7;
+  const url = `${await serve(t, {
+    pool, user: () => userId, config: { shots: { present: true } },
+    stubs: [[appAccess, 'getAppForUser', async () => ({ id: 9, slug: 'demo' })]],
+  })}/${'1'.repeat(32)}`;
+  const body = async (address) => {
+    const res = await fetch(address);
+    assert.equal(res.status, 200);
+    return [Buffer.from(await res.arrayBuffer()).toString(), res.headers.get('etag')];
+  };
+  // In the experiment: its own address serves the original; the plain one the 1x copy.
+  assert.deepEqual(await body(`${url}?density=device`), ['dense-png-at-2x', `"${'d'.repeat(64)}"`]);
+  assert.deepEqual(await body(url), ['flat-png', `"${'f'.repeat(64)}"`]);
+  // Anyone else asking for the dense address gets the 1x copy.
+  userId = 8;
+  assert.deepEqual(await body(`${url}?density=device`), ['flat-png', `"${'f'.repeat(64)}"`]);
+  assert.deepEqual(asked, [true, false, false]);
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src/routes/shots.js'), 'utf8');
+  assert.match(src, /CASE WHEN \$4 THEN COALESCE\(a\.dense_data, a\.data\) ELSE a\.data END AS data/);
+});
+
+test('a close-up is served only to an account in the experiment, at its own address', async (t) => {
+  const session = { id: 42, app_id: 9, user_id: 7, source: 'imported', imported_pr_head_sha: 'b'.repeat(40), shots_state: 'verified' };
+  const pool = { query: async (sql, params) => {
+    if (String(sql).includes('FROM chat_sessions cs')) return { rows: [session] };
+    if (String(sql).includes('review_flow_enabled')) return { rows: [{ review_flow_enabled: params[0] === 7 }] };
+    if (String(sql).includes('FROM shot_artifacts a')) {
+      return { rows: [{ data: Buffer.from('closeup-png'), sha256: 'e'.repeat(64), content_type: 'image/png', bytes: 11, variant: 'closeup' }] };
+    }
+    throw new Error(`Unexpected query: ${String(sql).slice(0, 80)}`);
+  } };
+  let userId = 7;
+  const url = `${await serve(t, {
+    pool, user: () => userId, config: { shots: { present: true } },
+    stubs: [[appAccess, 'getAppForUser', async () => ({ id: 9, slug: 'demo' })]],
+  })}/${'1'.repeat(32)}`;
+  const ok = await fetch(`${url}?density=device`);
+  assert.equal(ok.status, 200);
+  assert.equal(Buffer.from(await ok.arrayBuffer()).toString(), 'closeup-png');
+  assert.equal((await fetch(url)).status, 404, 'not at the plain address');
+  userId = 8;
+  assert.equal((await fetch(`${url}?density=device`)).status, 404, 'not to anyone else');
 });

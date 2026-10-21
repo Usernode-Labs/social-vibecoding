@@ -25,6 +25,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
@@ -185,6 +186,7 @@ function makeAppView() {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(`${SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;
@@ -245,8 +247,8 @@ test('the heading needs the ISSUE state, which is why the server does not word i
 test('the reference links the proposal page in-app, and names the PR', () => {
   const AppView = makeAppView();
   const ref = AppView._issueProposalRefView(issueRow());
-  assert.equal(ref.href, '#app/demo/dev/proposals/5001',
-    'the proposal page, not the GitHub URL — the resolver only ever returns rows that have one');
+  assert.equal(ref.href, '#app/demo/dev/changes/2431',
+    'the proposal page, not the GitHub URL, at its PR number (#4367) — the resolver only ever returns rows that have one');
   assert.equal(ref.label, '#2431');
   assert.equal(ref.title, 'A closed issue says which proposal closed it');
 
@@ -277,8 +279,13 @@ test('a closed issue gets one status band: emerald for a merged change, zinc for
   assert.ok(merged.closedBand.when, 'says when');
   assert.equal(merged.addressedBy, null, 'the band carries the change; no second box');
 
-  assert.equal(view({ addressed_by: null, closed_via: 'vote' }).closedBand.how, 'by vote');
-  assert.equal(view({ addressed_by: null, closed_via: 'admin' }).closedBand.how, 'by an admin');
+  // The view says which way, as a key; the band's whole message words it.
+  assert.equal(view({ addressed_by: null, closed_via: 'vote' }).closedBand.how, 'vote');
+  assert.equal(view({ addressed_by: null, closed_via: 'admin' }).closedBand.how, 'admin');
+  assert.equal(message('changes:request.closedBand.byVote'), '<0>Closed</0><1>·</1><2>by vote</2>');
+  assert.equal(message('changes:request.closedBand.byAdmin'), '<0>Closed</0><1>·</1><2>by an admin</2>');
+  assert.equal(message('changes:request.closedBand.whenByVote', { date: 'Oct 5' }), '<0>Closed</0><1>·</1><2>Oct 5</2><3>·</3><4>by vote</4>');
+  assert.equal(message('changes:request.closedBand.whenByAdmin', { date: 'Oct 5' }), '<0>Closed</0><1>·</1><2>Oct 5</2><3>·</3><4>by an admin</4>');
   const unknown = view({ addressed_by: null, closed_via: null, closedAt: null }).closedBand;
   assert.deepEqual({ ...unknown }, { tone: 'settled', when: null, whenTitle: null, how: null, ref: null });
 
@@ -306,7 +313,7 @@ test('the issue topic page renders the reference as a navigable row', () => {
   const closed = render({});
   assert.match(closed, /class="dev-issue-closed-band" data-tone="merged" data-topic-part="closed-band"/);
   assert.match(closed, /class="dev-issue-closed-band-k">Closed</);
-  assert.match(closed, /href="#app\/demo\/dev\/proposals\/5001"/);
+  assert.match(closed, /href="#app\/demo\/dev\/changes\/2431"/);
   assert.match(closed, /class="dev-ws-chip dev-ws-chip-info dev-topic-issue" data-addressed-by="5001"/);
   assert.ok(closed.includes('<b>#2431</b>'), 'the PR number leads the pill');
   assert.ok(closed.includes('A closed issue says which proposal closed it'));
@@ -346,7 +353,6 @@ test('the issue topic page renders the reference as a navigable row', () => {
     assert.ok(!bare.includes(`>${label}<`), label);
   }
   // …and the rest of the issue page is untouched by its absence.
-  assert.match(bare, /id="dev-issue-comments"/);
   assert.ok(bare.includes('About this request'));
 });
 

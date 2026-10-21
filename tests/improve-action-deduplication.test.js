@@ -13,6 +13,7 @@
 // menu keeps its row): the same method, Improve.startSession, from both.
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { englishPlatformI18n, message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
@@ -36,12 +37,12 @@ const board = (props = {}) => renderToHtml(createElement(DevActionsRow, { ...BAS
 const actions = (html) => [...html.matchAll(/<button data-plus="([^"]+)"/g)].map((m) => m[1]);
 
 test('the rendered + menu keeps only distinct actions, including app-management gates', () => {
-  // B8: Suggest an improvement leads; Build it yourself is second.
+  // B8: Suggest an improvement leads; Build it now is second.
   // #4045: "Settings & rules" is one row, its settings in the panel under it.
-  assert.deepEqual(actions(board()), ['issue', 'new-change', 'import-pr', 'settings', 'members', 'rename', 'secrets', 'fork']);
-  assert.deepEqual(actions(board({ showsMembers: false })), ['issue', 'new-change', 'import-pr', 'settings', 'rename', 'secrets', 'fork']);
+  assert.deepEqual(actions(board()), ['issue', 'new-change', 'import-pr', 'settings', 'members', 'rename', 'topics', 'secrets', 'fork']);
+  assert.deepEqual(actions(board({ showsMembers: false })), ['issue', 'new-change', 'import-pr', 'settings', 'rename', 'topics', 'secrets', 'fork']);
   const platform = board({ selfHosted: true });
-  assert.deepEqual(actions(platform), ['issue', 'new-change', 'import-pr', 'settings', 'members', 'rename', 'secrets']);
+  assert.deepEqual(actions(platform), ['issue', 'new-change', 'import-pr', 'settings', 'members', 'rename', 'topics', 'secrets']);
   assert.match(platform, /Proposal approvals/);
   assert.match(platform, /Platform variables/);
   assert.doesNotMatch(platform, /Members &amp; visibility/);
@@ -72,7 +73,7 @@ test('hiding import leaves Suggest an improvement first, so the settings divider
   // where the rest begins.
   const html = board({ canCollaborate: false });
   // #4045: "Settings & rules" is one row now, its settings in a panel under it.
-  assert.deepEqual(actions(html), ['issue', 'new-change', 'settings', 'members', 'rename', 'secrets', 'fork']);
+  assert.deepEqual(actions(html), ['issue', 'new-change', 'settings', 'members', 'rename', 'topics', 'secrets', 'fork']);
   assert.doesNotMatch(html, /data-plus-group="build"/);
   assert.doesNotMatch(html, /Add to the board/);
   const settings = html.match(/<button data-plus="settings" data-plus-group="settings"[^>]*>/);
@@ -207,8 +208,8 @@ for (const touch of [false, true]) {
         assert.equal(h.sheets.length, index + 1, 'one sheet per click after re-wiring');
         const sheet = h.sheets.at(-1);
         assert.deepEqual(Array.from(sheet.actions, (item) => item.label), [
-          'Suggest an improvement', 'Build it yourself', 'Import Feature from a PR', 'Settings & rules',
-          'Members & approvals', 'App display name', 'App secrets', 'Remix',
+          'Suggest an improvement', 'Build it now', 'Import Feature from a PR', 'Settings & rules',
+          'Members & approvals', 'App display name', 'Topics', 'App secrets', 'Remix',
         ]);
         // #1930: every action row carries its own glyph, class-stripped.
         for (const item of sheet.actions.filter((a) => !a.heading)) {
@@ -216,11 +217,12 @@ for (const touch of [false, true]) {
           assert.equal(item.iconEl.classRemoved, true, `${item.label}'s icon drops its Tailwind classes`);
         }
         assert.ok(h.classes.has('hidden'), 'touch never opens the desktop dropdown');
-        // Build it yourself is React's own onClick (the sheet's handler
+        // Build it now is React's own onClick (the sheet's handler
         // clicks the row), so _wirePlusMenu dispatches the rest.
         // "Settings & rules" opens the settings as a sheet of their own
         // (#4045); this harness has no panel, so its rows stay on this one.
-        sheet.actions.filter((item) => !item.heading && item.label !== 'Build it yourself' && item.label !== 'Settings & rules')[index].handler();
+        // #4417: Topics is React's own onClick too, like Build it now.
+        sheet.actions.filter((item) => !item.heading && !['Build it now', 'Settings & rules', 'Topics'].includes(item.label))[index].handler();
       } else {
         assert.equal(h.attributes['aria-expanded'], 'true');
         assert.equal(h.classes.has('hidden'), false);
@@ -237,25 +239,27 @@ for (const touch of [false, true]) {
 test('Suggest an improvement and Start a new change each exist once, and the read-only gate holds', () => {
   // ONE BUTTON AND ONE ROW (UI overhaul). The menu's well held two buttons,
   // Give feedback and New change, and people found both confusing. The
-  // button is Suggest an improvement now (the same dialog), and New change is
-  // "Build it yourself" under Agent chats in the menu's list, because
-  // what it opens is an agent session.
+  // button is Suggest an improvement now (the same dialog). New change —
+  // "Build it now" — left the menu with its Agent chats section (#4729) and
+  // is Messages' "+" choice, because what it opens is an agent session.
   //
   // WHAT THIS FILE IS ABOUT is unchanged: each action exists ONCE and calls
   // ONE method, whichever surface it is on.
   const MENU = read('frontend/src/features/app-context/app-context-sheet.tsx');
   assert.equal(PANEL.split('id="improve-row-feedback"').length - 1, 1, 'the button is here');
-  assert.match(PANEL, /id="improve-row-feedback"\s+label="Suggest an improvement"\s+onClick=\{\(\) => Improve\.giveFeedback\(\)\}/);
+  assert.match(PANEL, /id="improve-row-feedback"\s+label=\{t\('agent:menu\.suggestImprovement'\)\}\s+onClick=\{\(\) => Improve\.giveFeedback\(\)\}/);
+  assert.equal(message('agent:menu.suggestImprovement'), 'Suggest an improvement');
   assert.equal(PANEL.split('id="improve-row-new-session"').length - 1, 0, 'and it is alone in its well');
   assert.equal(MENU.split('id="improve-row-feedback"').length - 1, 0,
     'and not in two places — that id is what the outbox dot\'s writer selects');
   assert.ok(!MENU.includes('giveFeedback'),
     'the menu does not keep a second caller of the same method');
-  assert.equal(MENU.split('id="improve-row-new-session"').length - 1, 1);
-  // B8: the row is Build it yourself, beside Suggest an improvement going to Homeroom bot.
-  assert.match(MENU, /id="improve-row-new-session"[\s\S]{0,160}onClick=\{\(\) => Improve\.startSession\(\)\}[\s\S]{0,480}label="Build it yourself"/);
-  // A read-only viewer may not start a change, as the button's gate was.
-  assert.match(MENU, /\{readOnly \? null : \(\s*<button\s+id="improve-row-new-session"/);
+  assert.equal(MENU.split('id="improve-row-new-session"').length - 1, 0,
+    'and the menu carries no start-a-change row any more (#4729)');
+  // Messages' "+" is Agent chat, opening an agent session.
+  assert.equal(message('messages:inbox.new.agent.label'), 'Agent chat');
+  assert.match(read('frontend/src/features/messages/index.tsx'),
+    /startAgentSession\(\{ entry: 'messages' \}\)/);
   // #852 review: the hub's ⋯ leads with it too, calling the same method, and
   // only on a writeable board (it is inside the menu's readOnly gate).
   const ROW = read('frontend/src/features/dev-board/actions-row.tsx');
@@ -280,8 +284,8 @@ test('Suggest an improvement is a real button[data-plus] row that leads the writ
   // It needs nothing of the viewer beyond a writeable board: present without
   // the collaborator bit, absent for the read-only viewer, who keeps Fork —
   // and on the platform app no "+" at all, as before.
-  // B8: first, with Build it yourself under it, and ahead of the rest.
-  assert.deepEqual(actions(html).slice(0, 2), ['issue', 'new-change'], 'it leads, Build it yourself second');
+  // B8: first, with Build it now under it, and ahead of the rest.
+  assert.deepEqual(actions(html).slice(0, 2), ['issue', 'new-change'], 'it leads, Build it now second');
   assert.deepEqual(actions(board({ canCollaborate: false })).slice(0, 2), ['issue', 'new-change']);
   assert.deepEqual(actions(board({ readOnly: true, canCollaborate: false })), ['fork']);
   assert.deepEqual(actions(board({ selfHosted: true, readOnly: true, canCollaborate: false })), []);
@@ -339,6 +343,8 @@ function improveHarness(currentApp = 'demo') {
   const sheet = { open: false };
   runModules(sandbox, [['improve-controller.js', CONTROLLER]], {
     imports: {
+      // The module reads its words through the language runtime: the real one, in English.
+      '../../lib/i18n/runtime': englishPlatformI18n(),
       '../apps/app-card.js': { iconViewFor() {} },
       // THE CONTROLLER PRESENTS NOTHING NOW (#2718 review). It adopted the
       // Improve panel's root through lib/kit-surface and swept the other
@@ -363,19 +369,34 @@ function improveHarness(currentApp = 'demo') {
   return { Improve: sandbox.Improve, App: sandbox.App, sandbox, calls, get navigation() { return navigation; } };
 }
 
-test('Give feedback still opens the shared dialog for the current app', () => {
+test('Give feedback still opens the shared dialog for the current app', async () => {
   const { Improve, calls } = improveHarness();
-  Improve.giveFeedback();
+  await Improve.giveFeedback();
   // #4236: `fromDev` with no `target`, so the dialog asks where it goes
-  // with neither destination chosen (#2707). Only Getting started's
-  // "Suggest a change to <app>", which named the app, preselects it.
+  // with neither destination chosen (#2707). Only a button that names the
+  // app (`target: 'app'`) preselects it.
   assert.deepEqual(calls, [['close'], ['feedback', true, undefined]]);
 });
 
-test('#21: from another app Give feedback names no target: there is no open app for "This app" to mean', () => {
+test('#21: from another app Give feedback names no target: there is no open app for "This app" to mean', async () => {
   const { Improve, calls } = improveHarness('other');
-  Improve.giveFeedback();
+  await Improve.giveFeedback();
   assert.deepEqual(calls, [['close'], ['feedback', undefined, undefined]]);
+});
+
+// #4730: the dialog's comment shortcut draws the page as it opens, so the
+// menu must be gone from the screen before the open, not merely told to
+// close. The other dialog rows (share, terminal) already wait this way.
+test('#4730: Give feedback waits for the menu to be gone before opening the dialog', async () => {
+  const { Improve, calls } = improveHarness();
+  let release;
+  Improve.close = () => new Promise((resolve) => { release = resolve; });
+  const settled = Improve.giveFeedback();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(calls, [], 'the dialog does not open while the menu is still leaving');
+  release();
+  await settled;
+  assert.deepEqual(calls, [['feedback', true, undefined]]);
 });
 
 // #2770 sent New change straight to the app's classic unsent-change screen

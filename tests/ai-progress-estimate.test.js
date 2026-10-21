@@ -439,8 +439,8 @@ test('#906: /status reports the cohort fixtures as busy in staging only', () => 
   assert.match(sessions, /fixtureStoppable = fixture\.stoppable;/,
     'and must carry its declared stoppability into the /status payload');
   // It must never be able to mask a genuinely idle non-fixture session.
-  assert.match(sessions, /let busy = isSessionBusy\(sessionId\);/,
-    'the shared worker/operation registry must still be the primary source');
+  assert.match(sessions, /let busy = await isSessionBusyAnywhere\(sessionId, \{ pool \}\);/,
+    'what works on the session, on any process, must still be the primary source');
 });
 
 // ── 4. Reliability for long runs (#323) ─────────────────────────────────

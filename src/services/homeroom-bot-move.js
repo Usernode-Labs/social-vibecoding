@@ -16,12 +16,15 @@
 //                        the original. Closed at once ONLY when the person
 //                        tapping filed it and nobody else has taken part in
 //                        it (no comments, votes, claims, kudos or
-//                        proposals); otherwise the original's group votes on
-//                        closing it (a close_issue proposal), so nothing
+//                        proposals; an open bounty from before kudos was
+//                        parked still counts, unnamed); otherwise the
+//                        original's group votes on closing it (a
+//                        close_issue proposal), so nothing
 //                        somebody else is involved in closes without a vote.
 //   Keep it here         leaves everything as it is.
 
 const log = require('./logger');
+const { KUDOS_PARKED } = require('./kudos-parked');
 
 const MAX_TITLE_CHARS = 200;
 // GitHub's own limit on an issue's body, less room for the footer.
@@ -83,7 +86,8 @@ function movedFooter({ app, issueNumber, link, author }) {
 /**
  * The request a move is about, read fresh: an open issue (not a pull
  * request) on a project that is not Homeroom's own, which this person asked
- * for (homeroom_bot_requesters) or filed. Resolves { ok: true, app, repo,
+ * for (homeroom_bot_requesters) or filed, or whose project they run (its
+ * creator or an admin: app-admins.js canManageApp). Resolves { ok: true, app, repo,
  * issue: { title, body, login }, author: { userId, username } | null } or
  * { ok: false, code, error }.
  */
@@ -100,7 +104,11 @@ async function moveGate(pool, { app, issueNumber, user, deps = {} }) {
   try {
     raw = await github.getIssue(repo.owner, repo.repo, n);
   } catch (err) {
+    if (err?.status === 404) return { ok: false, code: 'not_found', error: 'There is no such request.' };
     log.warn('homeroom-bot-move', 'Could not read a request to move', { app: app.slug, issueNumber: n, err: err.message });
+    // Under a tap's claim (its act's work), a read a retry can cure is
+    // thrown, so the work tries again rather than fail the tap.
+    if (mayorModule().retryAct(err, deps.actKey)) throw err;
     return { ok: false, code: 'unreadable', error: 'Its request cannot be read right now.' };
   }
   if (!raw || raw.pull_request) return { ok: false, code: 'not_found', error: 'There is no such request.' };
@@ -117,8 +125,10 @@ async function moveGate(pool, { app, issueNumber, user, deps = {} }) {
     'SELECT 1 FROM homeroom_bot_requesters WHERE app_id = $1 AND issue_number = $2 AND user_id = $3',
     [app.id, n, user.id],
   );
-  if (!asked.length && author?.userId !== Number(user.id)) {
-    return { ok: false, code: 'not_theirs', error: 'Only the person who filed it, or asked for it, can move it.' };
+  // The project's creator and admins may move it too: HOMESTEAD #33 and #35
+  // stayed on its board because only their requester could, and never did.
+  if (!asked.length && author?.userId !== Number(user.id) && !(await require('./app-admins').canManageApp(pool, app, user))) {
+    return { ok: false, code: 'not_theirs', error: 'Only the person who filed it or asked for it, or the project\'s creator or admins, can move it.' };
   }
   return { ok: true, app, repo, issueNumber: n, issue, author };
 }
@@ -157,7 +167,11 @@ async function othersInvolved(pool, { app, repo, issueNumber, authorId, authorLo
   if (counts.comments) reasons.push('others wrote in its discussion');
   if (counts.votes) reasons.push('others voted on it');
   if (counts.claims) reasons.push('somebody else claimed it');
-  if (counts.kudos) reasons.push('somebody put kudos on it');
+  // #5249: a bounty somebody pledged before kudos was parked still keeps the
+  // original open for a vote (it is still paid when a merged change closes
+  // the request), but members no longer see kudos, so the reply names it the
+  // way it names any other involvement it does not spell out.
+  if (counts.kudos) reasons.push(KUDOS_PARKED ? 'others are involved in it' : 'somebody put kudos on it');
   if (counts.proposals) reasons.push('a proposal is linked to it');
   if (counts.closing) reasons.push('somebody already proposed closing it');
   // Its comments on GitHub, less the bot's own posts and the platform's
@@ -221,7 +235,7 @@ async function proposeClose(pool, { app, user, issueNumber, issueTitle, reason, 
   await ws.sendSystemMessage(pool, app.id, said, 'system', null, { type: 'issue', ref: n }).catch(() => {});
   try {
     const workflow = deps.workflow || require('../workflow/platform.ts');
-    if (workflow.governsKind('close_issue')) await workflow.fileProposal(id, app.id);
+    await workflow.fileProposal(id, app.id);
   } catch (err) {
     // The next vote, or the boot backfill, files it (routes/issues.js).
     log.warn('homeroom-bot-move', 'Filing the close proposal failed', { issueId: id, err: err.message });
@@ -244,8 +258,10 @@ async function closeNow(pool, { app, repo, issueNumber, user, newNumber, deps = 
     log.warn('homeroom-bot-move', 'Could not close a moved request', { app: app.slug, issueNumber: n, err: err.message });
     return { ok: false };
   }
+  // The request's own twin rows: a governance proposal that names the same
+  // number is decided by its vote (and its machine), not by a move.
   await pool.query(
-    `UPDATE issues SET status = 'closed' WHERE app_id = $1 AND github_issue_number = $2 AND status = 'open'`,
+    `UPDATE issues SET status = 'closed' WHERE app_id = $1 AND github_issue_number = $2 AND status = 'open' AND kind = 'general'`,
     [app.id, n],
   ).catch(() => {});
   await ws.sendSystemMessage(pool, app.id, `${user.username} moved this request to Homeroom as #${newNumber} and closed it here`,
@@ -306,6 +322,8 @@ async function decideMove(pool, config, { bot = null, user, settings, action, ye
   try {
     filed = await mayor.fileRequest(pool, config, {
       user: credited, app: target, settings, deps,
+      // Filed once per move: a retry of its act finds it (the tap's work).
+      fileKey: `dm-action:${action.id}`,
       title: clip(gate.issue.title || action.title, MAX_TITLE_CHARS),
       details: clip(gate.issue.body, MAX_BODY_CHARS),
       askedText: gate.issue.title || action.title,
@@ -314,6 +332,8 @@ async function decideMove(pool, config, { bot = null, user, settings, action, ye
     });
   } catch (err) {
     log.warn('homeroom-bot-move', 'Could not file a moved request', { app: app.slug, issueNumber: n, err: err.message });
+    // A failure a retry can cure: the act's work tries again, its claim kept.
+    if (mayor.retryAct(err, deps.actKey)) throw err;
     return failed(err.message, 'I couldn\'t move it just now. Try again in a minute.');
   }
   await pool.query('UPDATE homeroom_bot_dm_actions SET issue_number = $2 WHERE id = $1', [action.id, filed.issueNumber]);
@@ -365,48 +385,160 @@ async function decideMove(pool, config, { bot = null, user, settings, action, ye
   );
 }
 
+// What became of a platform verdict's move offer (homeroom_bot_runs
+// move_offer): sent, or why it was not.
+const MOVE_OFFER_OUTCOMES = Object.freeze(['sent', 'no_requester', 'no_bot', 'repeat_held', 'already_offered', 'not_sent']);
+
 /**
- * #4239: after the bot told a requester it left their request because it is
- * about Homeroom itself (homeroom-bot-dm.js relayIssuePost), the offer to
- * move it, under its own buttons. Offered once per request and person.
- * Never throws; resolves what was sent, or null.
+ * Record on run `runId` what became of its move offer (MOVE_OFFER_OUTCOMES),
+ * for the console's Move offers line and get_homeroom_bot. Only on a run the
+ * triage flagged as about Homeroom itself. Never throws.
  */
-async function offerMove(pool, { bot, userId, app, issueNumber, title, reason = null, key = null, deps = {} }) {
+async function noteMoveOffer(pool, runId, outcome) {
+  const id = Number(runId);
+  if (!Number.isInteger(id) || id <= 0 || !MOVE_OFFER_OUTCOMES.includes(outcome)) return;
+  await pool.query('UPDATE homeroom_bot_runs SET move_offer = $2 WHERE id = $1 AND about_platform', [id, outcome])
+    .catch((err) => log.warn('homeroom-bot-move', 'Could not record a move offer\'s outcome', { runId: id, outcome, err: err.message }));
+}
+
+// How far back the console's Move offers line looks.
+const MOVE_OFFER_DAYS = 7;
+
+/**
+ * The move offers of the last MOVE_OFFER_DAYS days, for the console and
+ * get_homeroom_bot: offers sent (any source: a platform verdict's DM, or
+ * the DM chat's offer_move_request), and how each was decided: moved
+ * (Move it to Homeroom), kept (Keep it here), still open, failed. And the
+ * live `person` verdicts flagged as about Homeroom itself that sent no
+ * offer, counted by why (move_offer; `unrecorded` for a run from before it
+ * was kept, or whose DM news did not go out), with the latest few.
+ * Codes and counts, never anybody's words.
+ */
+async function moveOfferSummary(pool, { days = MOVE_OFFER_DAYS } = {}) {
+  const { rows: [o] } = await pool.query(
+    `SELECT COUNT(*)::int AS sent,
+            COUNT(*) FILTER (WHERE status = 'done')::int AS moved,
+            COUNT(*) FILTER (WHERE status = 'declined')::int AS kept,
+            COUNT(*) FILTER (WHERE status = 'open')::int AS open,
+            COUNT(*) FILTER (WHERE status = 'failed')::int AS failed
+       FROM homeroom_bot_dm_actions
+      WHERE kind = 'move_request' AND created_at > NOW() - make_interval(days => $1)`,
+    [days],
+  );
+  const { rows: missed } = await pool.query(
+    `SELECT r.id, r.issue_number, r.created_at, a.slug AS app_slug,
+            COALESCE(r.move_offer, 'unrecorded') AS why
+       FROM homeroom_bot_runs r JOIN apps a ON a.id = r.app_id
+      WHERE r.about_platform AND r.verdict = 'person' AND r.mode = 'live'
+        AND r.created_at > NOW() - make_interval(days => $1)
+        AND r.move_offer IS DISTINCT FROM 'sent'
+        AND (r.move_offer IS NOT NULL OR NOT EXISTS (
+          SELECT 1 FROM homeroom_bot_dm_actions x
+           WHERE x.kind = 'move_request' AND x.app_id = r.app_id AND x.source_issue_number = r.issue_number))
+      ORDER BY r.id DESC`,
+    [days],
+  );
+  const byWhy = {};
+  for (const m of missed) byWhy[m.why] = (byWhy[m.why] || 0) + 1;
+  return {
+    days,
+    sent: o?.sent || 0,
+    moved: o?.moved || 0,
+    kept: o?.kept || 0,
+    open: o?.open || 0,
+    failed: o?.failed || 0,
+    notOffered: missed.length,
+    notOfferedByWhy: byWhy,
+    notOfferedRecent: missed.slice(0, 10).map((m) => ({
+      runId: Number(m.id), app: m.app_slug, issueNumber: Number(m.issue_number),
+      why: m.why, at: new Date(m.created_at).toISOString(),
+    })),
+  };
+}
+
+// One story per request: what to tap under "This looks done already", the
+// verdict and its offer in one message. Tell me what's missing quotes the
+// message in the composer, and what they write goes on the request
+// (homeroom-bot-dm.js MIRRORED_KINDS), which has the bot look again.
+const DONE_ACTIONS = Object.freeze([
+  Object.freeze({ id: 'yes', label: 'Propose to close', style: 'primary', type: 'server' }),
+  Object.freeze({ id: 'missing', label: 'Tell me what\'s missing', style: 'secondary', type: 'reply' }),
+]);
+
+/**
+ * One story per request: an offer folded into the moment that gives its
+ * reason, so one verdict is one message and rings once (homeroom-bot-dm.js
+ * relayIssuePost). `kind` is 'move_request' (about Homeroom itself: Move it
+ * to Homeroom · Keep it here) or 'close_request' (done already: Propose to
+ * close · Tell me what's missing). Records the offer, once per request and
+ * person (and, for a close, not while a close vote is open), and resolves
+ * { actionId, metadata } to send with the message, then `attach` it to the
+ * message sent (foldedOfferSent). Null when there is nothing to offer.
+ * Never throws.
+ */
+async function foldOffer(pool, { kind, userId, app, issueNumber, title, reason = null, runId = null, deps = {} }) {
   try {
     const n = Number(issueNumber);
-    if (!bot?.id || !userId || !app?.id || !Number.isInteger(n)) return null;
-    if (await isPlatformApp(pool, app, deps) || !(await platformApp(pool, deps))) return null;
+    if (!userId || !app?.id || !Number.isInteger(n)) return null;
+    const move = kind === 'move_request';
+    if (move && (await isPlatformApp(pool, app, deps) || !(await platformApp(pool, deps)))) {
+      await noteMoveOffer(pool, runId, 'not_sent');
+      return null;
+    }
     const { rows: before } = await pool.query(
       `SELECT 1 FROM homeroom_bot_dm_actions
-        WHERE user_id = $1 AND app_id = $2 AND kind = 'move_request' AND source_issue_number = $3
-          AND status IN ('open', 'done')`,
-      [userId, app.id, n],
+        WHERE user_id = $1 AND app_id = $2 AND kind = $4 AND source_issue_number = $3
+          AND status IN ('open', 'done')
+       UNION ALL
+       SELECT 1 FROM issues
+        WHERE $4 = 'close_request' AND app_id = $2 AND kind = 'close_issue' AND status = 'open'
+          AND (payload->>'issueNumber')::int = $3`,
+      [userId, app.id, n, kind],
     );
-    if (before.length) return null;
-    const name = app.name || app.slug;
+    if (before.length) {
+      if (move) await noteMoveOffer(pool, runId, 'already_offered');
+      return null;
+    }
     const { rows: [action] } = await pool.query(
       `INSERT INTO homeroom_bot_dm_actions (user_id, app_id, kind, title, details, source_issue_number)
-       VALUES ($1, $2, 'move_request', $3, $4, $5) RETURNING id`,
-      [userId, app.id, clip(title || `Request #${n}`, MAX_TITLE_CHARS), reason ? clip(reason, 600) : null, n],
+       VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+      [userId, app.id, kind, clip(title || `Request #${n}`, MAX_TITLE_CHARS), reason ? clip(reason, 600) : null, n],
     );
-    const sent = await dmModule(deps).sendDm(pool, {
-      bot, userId,
-      content: moveOfferText({ name, issueNumber: n }),
-      idempotencyKey: key ? `hrbot-move-${key}` : `hrbot-move-${action.id}`,
-      metadata: moveOfferMeta({ app, actionId: action.id }),
-    });
+    const actionId = Number(action.id);
+    const mayor = mayorModule();
+    const actions = move ? mayor.offerActions('move_request') : DONE_ACTIONS.map((a) => ({ ...a }));
+    return {
+      actionId, kind, runId,
+      metadata: {
+        actionId, actions, answers: actions.map((a) => a.label), status: 'open',
+      },
+    };
+  } catch (err) {
+    log.warn('homeroom-bot-move', 'Could not fold an offer into its message', { app: app?.slug, issueNumber, kind, err: err.message });
+    if (kind === 'move_request') await noteMoveOffer(pool, runId, 'not_sent');
+    return null;
+  }
+}
+
+/**
+ * The message a folded offer (foldOffer) went out in, or did not: the offer
+ * is tied to it, or dropped. Never throws.
+ */
+async function foldedOfferSent(pool, offer, sent) {
+  if (!offer) return;
+  try {
     if (!sent?.messageId || sent.duplicate) {
-      await pool.query('DELETE FROM homeroom_bot_dm_actions WHERE id = $1', [action.id]);
-      return sent || null;
+      await pool.query('DELETE FROM homeroom_bot_dm_actions WHERE id = $1 AND message_id IS NULL', [offer.actionId]);
+      if (offer.kind === 'move_request') await noteMoveOffer(pool, offer.runId, sent?.duplicate ? 'already_offered' : 'not_sent');
+      return;
     }
     await pool.query(
       'UPDATE homeroom_bot_dm_actions SET message_id = $2, conversation_id = $3 WHERE id = $1',
-      [action.id, sent.messageId, sent.conversationId],
+      [offer.actionId, sent.messageId, sent.conversationId],
     );
-    return sent;
+    if (offer.kind === 'move_request') await noteMoveOffer(pool, offer.runId, 'sent');
   } catch (err) {
-    log.warn('homeroom-bot-move', 'Could not offer to move a request', { app: app?.slug, issueNumber, err: err.message });
-    return null;
+    log.warn('homeroom-bot-move', 'Could not tie a folded offer to its message', { actionId: offer.actionId, err: err.message });
   }
 }
 
@@ -435,6 +567,12 @@ function moveOfferMeta({ app, actionId }) {
 }
 
 module.exports = {
+  MOVE_OFFER_OUTCOMES,
+  noteMoveOffer,
+  moveOfferSummary,
+  foldOffer,
+  foldedOfferSent,
+  DONE_ACTIONS,
   requestLink,
   movedFooter,
   moveGate,
@@ -443,7 +581,6 @@ module.exports = {
   closeNow,
   closedWords,
   decideMove,
-  offerMove,
   moveOfferText,
   moveOfferMeta,
 };

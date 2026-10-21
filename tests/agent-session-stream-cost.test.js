@@ -209,7 +209,7 @@ test('the screen reads the stream in two places only, and past replies keep thei
   assert.deepEqual(readers.sort(), ['FollowOutput', 'LiveTurn']);
   // Rows are memo()'d and a reply's markdown keeps its wrapper.
   assert.match(panel, /^const Item = memo\(function Item\(/m);
-  assert.match(panel, /^const MayorText = memo\(function MayorText\(/m);
+  assert.match(panel, /^(?:export )?const MayorText = memo\(function MayorText\(/m);
   const mayor = panel.slice(panel.indexOf('const MayorText'), panel.indexOf('function appInitial'));
   assert.match(mayor, /const inner = useInnerHtml\(html \|\| ''\);/);
   assert.match(mayor, /dangerouslySetInnerHTML=\{inner\}/);
@@ -226,8 +226,9 @@ test('the screen reads the stream in two places only, and past replies keep thei
 test('the readers outside the conversation read the list of sessions, not the snapshot', () => {
   for (const file of [
     'frontend/src/features/messages/index.tsx',
-    'frontend/src/features/nav/recents-list.tsx',
-    'frontend/src/features/app-context/app-context-sheet.tsx',
+    // (#4417: the rail's Recents, a third reader, is retired. #4729: the
+    // mark menu's Agent chats rows went with the menu's section, so the
+    // sheet reads no session list at all any more.)
   ]) {
     const src = read(file);
     assert.match(src, /useAgentSessions\(\)/, `${file} reads the list`);

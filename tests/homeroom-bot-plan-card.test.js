@@ -59,7 +59,8 @@ test('#4046: while a plan or a question offers its own answers, the bot\'s quest
     'a question\'s own answers are never hidden');
 
   const screen = read('frontend/src/features/messages/index.tsx');
-  assert.match(screen, /const plans = botDm \? planLayout\(snap\.messages\) : NO_PLAN_LAYOUT;/);
+  // #4564: plans and the change blocks are read by one memo, for the bot's DM alone.
+  assert.match(screen, /if \(!botDm\) return \{ plans: NO_PLAN_LAYOUT, blocks: null as ReadonlyMap<number, ChangeBlock> \| null \};/);
   assert.match(screen, /hidePrompts=\{plans\.answersOpen && !!message\.sender\.bot\}/);
   const row = read('frontend/src/features/messages/message-row.tsx');
   assert.match(row, /<BotQuestion message=\{message\} conversationId=\{conversationId\} hidePrompts=\{hidePrompts\} \/>/);
@@ -98,10 +99,19 @@ test('#4046: the plan is the one place its request\'s step shows: the cards abov
   const working = (extra) => ({ messageId: 20, state: 'working', startedAt: null, workedFrom: null, links: {}, step: null, of: null, stepName: null, doing: null, outcome: null, endedAt: null, ...extra });
   assert.deepEqual(planProgress(working({ step: 3, of: 7, stepName: 'Write a plan' }), 'open'), { line: 'Step 3 of 7', step: 3, of: 7 },
     'while it waits: the step, and nothing else');
-  assert.deepEqual(planProgress(working({ step: 4, of: 7, stepName: 'Build it', typicalMinutes: { from: 10, to: 25 } }), 'built'),
-    { line: 'Step 4 of 7 · Build it · 10 to 25 min', step: 4, of: 7 }, 'the step, its name, the time: short enough for one line');
-  assert.equal(planTime({ from: 10, to: 25 }), '10 to 25 min');
-  assert.equal(planTime({ from: 3, to: 3 }), 'about 3 min');
+  // One request, one story: the step leads by its name, as the chat says
+  // it everywhere ("Building · step 4 of 7 · 10 to 25 min").
+  assert.deepEqual(planProgress(working({ step: 4, of: 7, stepName: 'Building', typicalMinutes: { from: 10, to: 25 } }), 'built'),
+    { line: 'Building · step 4 of 7 · 10 to 25 min', step: 4, of: 7 }, 'the step, its name, the time: short enough for one line');
+  // The time is a kind and its numbers; the line that holds it is one whole message.
+  assert.deepEqual(planTime({ from: 10, to: 25 }), { kind: 'range', from: 10, count: 25 });
+  assert.deepEqual(planTime({ from: 3, to: 3 }), { kind: 'about', from: 3, count: 3 });
+  assert.deepEqual(planProgress(working({ step: 4, of: 7, typicalMinutes: { from: 3, to: 3 } }), 'built'),
+    { line: 'Step 4 of 7 · about 3 min', step: 4, of: 7 });
+  assert.deepEqual(planProgress(working({ doing: 'building it', typicalMinutes: { from: 10, to: 25 } }), 'built'),
+    { line: 'Building it · 10 to 25 min', step: null, of: null });
+  assert.deepEqual(planProgress(working({ typicalMinutes: { from: 3, to: 3 } }), 'built'),
+    { line: 'Working on it · about 3 min', step: null, of: null });
   assert.equal(planTime(null), null);
   assert.deepEqual(planProgress(working({ doing: 'ready to build; waiting its turn to be built' }), 'built'),
     { line: 'Ready to build; waiting its turn to be built', step: null, of: null }, 'a step it cannot count is said in words, with no bar');
@@ -116,7 +126,7 @@ test('#4046: the plan is the one place its request\'s step shows: the cards abov
   assert.doesNotMatch(row, /underPlan|BotPlanFollowUp/);
   assert.match(row, /<BotPlanCard message=\{message\} conversationId=\{conversationId\} cardId=\{planCardId\} \/>/);
   const screen = read('frontend/src/features/messages/index.tsx');
-  assert.match(screen, /if \(plans\.hidden\.has\(message\.id\)\) continue;\s*const day = dayKey\(message\);/,
+  assert.match(screen, /if \(plans\.hidden\.has\(message\.id\)\) continue;\s*\/\/[^\n]*\n\s*if \(newsFold\?\.hidden\.has\(message\.id\)\) continue;\s*const day = dayKey\(message\);/,
     'skipped before its day and its name are counted, as a moved card is');
   assert.match(screen, /planCardId=\{plans\.cardOf\.get\(message\.id\) \?\? null\}\s*hidePrompts=/);
   const host = read('frontend/src/features/messages/bot-plan.tsx');

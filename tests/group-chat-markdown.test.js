@@ -269,6 +269,112 @@ test('decorateMentionsAndRefs never reintroduces raw HTML from a text node', () 
   assert.match(html, /data-ref-number="5"/, 'ref still chipped');
 });
 
+// ─── #4668: a chip with a project behind it is a real link ──────────────────
+
+test('decorateMentionsAndRefs emits anchor chips when the chat names a project', () => {
+  const { decorateMentionsAndRefs, document } = loadGroupChat({
+    AppView: { appData: { slug: 'lost-starways' } },
+  });
+  const p = el(document, 'p', 'closing issue #28 and PR#31');
+  decorateMentionsAndRefs(p);
+  const html = p.innerHTML;
+  assert.match(html, /<a class="gc-ref gc-ref-issue" data-ref-type="issue" data-ref-number="28" href="#app\/lost-starways\/dev\/issues\/28">#28<\/a>/);
+  assert.match(html, /<a class="gc-ref gc-ref-pr" data-ref-type="pr" data-ref-number="31" href="#app\/lost-starways\/dev\/changes\/31">PR#31<\/a>/);
+  // an anchor is focusable and a link already — no role or tabindex
+  assert.doesNotMatch(html, /role="link"|tabindex="0"/);
+});
+
+test('renderWithMentions emits the same anchor chips on the string fallback path', () => {
+  const { renderWithMentions } = loadGroupChat({
+    AppView: { appData: { slug: 'lost-starways' } },
+  });
+  const out = renderWithMentions('closing issue #28 and PR#31');
+  assert.match(out, /<a class="gc-ref gc-ref-issue" href="#app\/lost-starways\/dev\/issues\/28" data-ref-type="issue" data-ref-number="28">#28<\/a>/);
+  assert.match(out, /<a class="gc-ref gc-ref-pr" href="#app\/lost-starways\/dev\/changes\/31" data-ref-type="pr" data-ref-number="31">PR#31<\/a>/);
+});
+
+test('the mounting caller\'s app names the chip\'s address, not the app view\'s', () => {
+  const { GroupChat, renderWithMentions } = loadGroupChat({
+    AppView: { appData: { slug: 'lost-starways' } },
+  });
+  GroupChat._app = { slug: 'other' };
+  assert.match(renderWithMentions('#28'), /href="#app\/other\/dev\/issues\/28"/);
+});
+
+test('with no project named, a chip stays today\'s plain span', () => {
+  const { renderWithMentions } = loadGroupChat();
+  const out = renderWithMentions('closing issue #28');
+  assert.match(out, /<span class="gc-ref gc-ref-issue" data-ref-type="issue" data-ref-number="28" role="link" tabindex="0">#28<\/span>/);
+  assert.doesNotMatch(out, /<a class="gc-ref/);
+});
+
+// A chip as the decoration builds it, with the `dataset` a real DOM gives.
+function makeChip(document, isPr, num) {
+  const chip = document.createElement('a');
+  chip.className = isPr ? 'gc-ref gc-ref-pr' : 'gc-ref gc-ref-issue';
+  chip.setAttribute('href', `#app/a/dev/${isPr ? 'changes' : 'issues'}/${num}`);
+  chip.setAttribute('data-ref-type', isPr ? 'pr' : 'issue');
+  chip.setAttribute('data-ref-number', String(num));
+  chip.dataset = { refType: isPr ? 'pr' : 'issue', refNumber: String(num) };
+  return chip;
+}
+
+test('_openRef: the chip naming the open request scrolls back up to it', () => {
+  const scrolled = [];
+  const AppView = {
+    appData: { slug: 'a' },
+    _devTopic: { kind: 'issue', id: 28 },
+    revealInDrawer: () => scrolled.push('revealed'),
+  };
+  const loc = { hash: '' };
+  const { GroupChat, document } = loadGroupChat({ AppView, location: loc });
+  GroupChat._threadPinned = true;
+  GroupChat._threadScrollEl = () => ({ scrollTo(opts) { scrolled.push(opts); } });
+  GroupChat._openRef(makeChip(document, false, '28'));
+  assert.equal(scrolled.length, 1, 'one scroll, nothing revealed');
+  assert.equal(scrolled[0].top, 0);
+  assert.equal(scrolled[0].behavior, 'smooth');
+  assert.equal(GroupChat._threadPinned, false);
+});
+
+test('_openRef: another request in the same app still reveals in the drawer', () => {
+  const calls = [];
+  const AppView = { appData: { slug: 'a' }, revealInDrawer: (...a) => calls.push(a) };
+  const loc = { hash: '' };
+  const { GroupChat, document } = loadGroupChat({ AppView, location: loc });
+  GroupChat._openRef(makeChip(document, false, '12'));
+  assert.deepEqual(calls, [['issue', '12']]);
+  assert.equal(loc.hash, '');
+});
+
+test('_openRef: a chip for a different project follows its own address', () => {
+  const calls = [];
+  const AppView = { appData: { slug: 'b' }, revealInDrawer: (...a) => calls.push(a) };
+  const loc = { hash: '' };
+  const { GroupChat, document } = loadGroupChat({ AppView, location: loc });
+  GroupChat._app = { slug: 'a' };
+  GroupChat._openRef(makeChip(document, false, '28'));
+  assert.deepEqual(calls, []);
+  assert.equal(loc.hash, '#app/a/dev/issues/28');
+});
+
+test('_attachQuoteHandlers: a modified click stands down before preventDefault, and both press paths route through _openRef', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'group-chat.js'), 'utf8');
+  const clickBranch = src.slice(
+    src.indexOf("const ref = e.target.closest('.gc-ref');"),
+    src.indexOf('.gc-spec-pr'),
+  );
+  const keydownBranch = src.slice(src.indexOf('#130: chips are spans'));
+  // The modified-click early return precedes preventDefault, so the browser
+  // — not this handler — opens the new tab, and no reply is staged either
+  // (the branch returns before the tap-to-quote tail).
+  const modifiedAt = clickBranch.indexOf('e.metaKey || e.ctrlKey || e.shiftKey || e.altKey');
+  assert.ok(modifiedAt > -1, 'a modified click is recognised');
+  assert.ok(modifiedAt < clickBranch.indexOf('e.preventDefault()'), 'before preventDefault');
+  assert.match(clickBranch, /GroupChat\._openRef\(ref\)/);
+  assert.match(keydownBranch, /GroupChat\._openRef\(ref\)/);
+});
+
 // ─── (A3) renderMessageBody fallback (no DevChat / no markdown libs) ─────────
 
 test('renderMessageBody falls back to escaped mention/ref rendering without DevChat', () => {

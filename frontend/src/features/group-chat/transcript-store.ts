@@ -49,6 +49,7 @@
  */
 
 import { createStore } from '../../lib/plain-store.js';
+import type { ReleaseOutlook } from '../../lib/release-eta';
 
 export interface Reaction {
   emoji: string;
@@ -94,7 +95,11 @@ export interface Quote {
   targetId: number | null;
 }
 
-export type MessageKind = 'message' | 'system' | 'vote' | 'spec_share';
+/**
+ * `github` (#4453) is a comment on a request's GitHub issue, which a request's
+ * page draws in the same stream as its thread (AppView._requestThreadRows).
+ */
+export type MessageKind = 'message' | 'system' | 'vote' | 'spec_share' | 'github';
 
 /**
  * B9: a request's chip on its message (homeroom-bot-chat.js setStatus).
@@ -106,6 +111,19 @@ export interface BotRequestChip {
   status: 'reading' | 'building' | 'ready' | 'live' | 'fixing' | 'waiting_first_version';
   issueNumber: number | null;
   sessionId: number | null;
+}
+
+/**
+ * 10 October: what Homeroom bot offered to do in its reply in a thread
+ * (homeroom-bot-voice.js): file a request, withdraw one of its changes, or
+ * open a vote on closing a request. Nothing happens until the person it was
+ * offered to (`forMe`) taps Yes; once decided, `status` is no longer
+ * 'open' and the buttons go, for everybody.
+ */
+export interface BotOfferView {
+  status: 'open' | 'deciding' | 'done' | 'declined' | 'failed';
+  forMe: boolean;
+  actions: { id: 'yes' | 'no'; label: string; primary: boolean }[];
 }
 
 /**
@@ -125,6 +143,14 @@ export interface BotRequestState {
   more?: number;
   missing?: number;
   needed?: number;
+  /** A project's first version, which goes live without a vote (13 Oct 2026, D1). */
+  noVote?: boolean;
+  /**
+   * `approved`, on a merge of the platform's own app that is not live yet:
+   * when the platform's next release carries it (services/release-watch.js),
+   * which the card words (../../lib/release-eta.ts).
+   */
+  release?: ReleaseOutlook;
 }
 
 /**
@@ -249,6 +275,8 @@ export interface Attachment {
   kind: string;
   /** The filename, as a text child — never interpolated into an attribute. */
   name: string;
+  /** The file has no name; `name` is a stand-in label and the tooltips use their unnamed wording. */
+  unnamed?: boolean;
   url: string;
   /** Pre-formatted by the module: "2 KB", "3.0 MB". */
   size: string;
@@ -261,7 +289,8 @@ export interface ThreadSummaryView {
   lastReplyAt: string | null;
   participants: string[];
   /** The newest reply, which the card under the message shows (#2387 follow-up). */
-  lastReply?: { name: string; text: string } | null;
+  /** `unnamed`: nobody to name; `name` is the stand-in shown where a name would be. */
+  lastReply?: { name: string; unnamed?: boolean; text: string } | null;
 }
 
 /**
@@ -280,6 +309,8 @@ export interface TranscriptMessage {
   id: number | null;
   kind: MessageKind;
   username: string;
+  /** No author came with the row; `username` is a stand-in and sentences use their own wording. */
+  usernameMissing?: boolean;
   senderId?: number | null;
   /**
    * Rendered stamp — formatted by the module, whose locale rules these are.
@@ -351,6 +382,14 @@ export interface TranscriptMessage {
    * version" message in a project's channel. Absent or null on every other row.
    */
   openApp?: { label: string; target: string } | null;
+  /** 10 October: the buttons under Homeroom bot's offer in a thread. Absent or null on every other row. */
+  botOffer?: BotOfferView | null;
+  /**
+   * #4455: a system row that announces the preview build, from its metadata:
+   * `started` (a change's page leaves it out: its Testing card says so) or
+   * `ready` ("The preview is ready · Try it"). Absent on every other row.
+   */
+  stagingBuild?: 'started' | 'ready';
   /** Spec-share rows only — see SpecShareView. Null on every other kind. */
   specShare: SpecShareView | null;
   /**
@@ -393,6 +432,14 @@ export interface TranscriptMessage {
   threadRoot?: boolean;
   /** Set on a reply-thread reply; the general transcript draws it as activity. */
   replyOf?: ReplyInStream | null;
+  /** #4453: a `github` row's stable key (GitHub's comment id, or its place). */
+  key?: string;
+  /**
+   * #4453: Homeroom bot's spec on a `github` row (`AppView._botSpecOf`): its
+   * title and its text, as markdown and rendered. A request's page draws it
+   * as a spec card and an event line, not as a comment.
+   */
+  githubSpec?: { title: string | null; markdown: string; html: string } | null;
 }
 
 /**
@@ -408,11 +455,21 @@ export interface SpecShareView {
   /** The header the panel shows while the fetch is in flight. */
   previewTitle: string;
   sharedBy: string;
+  /** `sharedBy` is a stand-in word, not an account's name: sentences use their unnamed wording. */
+  sharedByUnknown?: boolean;
   version: number;
   /** Formatted build time, or null when the share carried none. */
   built: string | null;
   prNumber: number | null;
   sessionId: number | null;
+  /**
+   * Homeroom bot's plan, in its sentence on a request's page: `building`
+   * ("I'm building it now.") or `waiting` (for `waitingFor` to say Build
+   * it), and once it stopped waiting (papote #3), `replaced` by a newer
+   * plan or `stopped`. Absent on a person's share and on older rows.
+   */
+  botNote?: 'building' | 'waiting' | 'replaced' | 'stopped' | null;
+  waitingFor?: string | null;
   snippetHtml: string | null;
   snippetText: string | null;
 }
@@ -427,6 +484,12 @@ export interface TranscriptLead {
   earlier: boolean;
   /** The placeholder line, or null when there are messages to show. */
   placeholder: string | null;
+  /**
+   * #5683: a topic's channel that has loaded with nothing in it — the facts
+   * its centred invitation is drawn from (the channel's name, what it is for,
+   * and whether this viewer has a composer). Null or absent elsewhere.
+   */
+  emptyChannel?: { handle: string; about: string; canPost: boolean } | null;
   /**
    * #2992: the history request failed — the line to show with a "Try again"
    * control, drawn whether or not live rows have landed since. Null or absent
@@ -451,7 +514,21 @@ export interface TranscriptLead {
    * whoever did it, the general chat's language. Absent or 'flat', the
    * thread keeps its flat named rows and centred lines (an issue's page).
    */
-  language?: 'chat' | 'flat';
+  language?: 'chat' | 'flat' | 'request' | 'change';
+  /**
+   * #4453: a request's page. `loaded` once its thread's history has
+   * answered; `githubMore` when GitHub returned only the newest comments,
+   * with the issue's page to read the rest on.
+   */
+  request?: { loaded: boolean; githubMore?: { url: string | null } | null } | null;
+  /**
+   * #4455: a change's page. `loaded` once its thread's history has answered;
+   * `closed` is what the page says instead of a stream while nobody else can
+   * see the change (its thread is not read then). #5007: `issue` is the
+   * request the change was built for — the pointer above the replies opens
+   * its page, where the conversation about the change lives.
+   */
+  change?: { loaded: boolean; closed: string | null; issue?: { n: number; href: string } | null } | null;
   /**
    * The general chat only: where the reader's reading stood when the
    * channel opened (`GroupChat._takeUnreadMark`), the newest message read
@@ -460,6 +537,32 @@ export interface TranscriptLead {
    * absent with nothing unread.
    */
   unread?: { lastReadId: number; count: number } | null;
+  /**
+   * #4417: cards the history draws BY TIME, the way a date divider is drawn,
+   * rather than as rows of the stream: in a topic's channel, one for each
+   * topic merged into it, at the moment the merge applied. Drawn from the
+   * merge itself (app_category_registry), never from a message, so nothing
+   * was posted for them. Null or absent on every other transcript.
+   */
+  markers?: TranscriptMarker[] | null;
+  /**
+   * #4417 follow-up: the general pane holds a topic's channel and has older
+   * history it has not loaded yet. It pages back as the reader scrolls up,
+   * with no "Load earlier" control (`earlier`), so this says the same to the
+   * markers: one older than every loaded row waits for that page.
+   */
+  moreBefore?: boolean;
+}
+
+/** #4417: one card drawn in a history at a moment (see TranscriptLead.markers). */
+export interface TranscriptMarker {
+  /** Stable across publishes, for React's key. */
+  key: string;
+  /** ISO: where in the history it is drawn. */
+  at: string;
+  kind: 'merged-topic';
+  /** The topic that was merged in. */
+  from: { handle: string; name: string; icon: string };
 }
 
 export interface TranscriptView {

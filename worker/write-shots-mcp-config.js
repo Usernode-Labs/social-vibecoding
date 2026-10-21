@@ -28,16 +28,72 @@ const shotsDir = process.env.SHOTS_DIR;
 if (!shotsDir) throw new Error('Shots MCP config inputs are incomplete.');
 const recordClips = process.env.SHOTS_RECORD_CLIPS === '1';
 // Clips are recorded at the motion screens' own size (a phone clip at a
-// desktop size is mostly grey); 1280x800 when the platform names none.
-const clipSize = /^[1-9][0-9]{2,3}x[1-9][0-9]{2,3}$/.test(process.env.SHOTS_CLIP_SIZE || '')
-  ? process.env.SHOTS_CLIP_SIZE : '1280x800';
-for (const persona of ['member', 'admin', 'full_admin', 'guest']) {
-  fs.mkdirSync(path.join(shotsDir, persona), { recursive: true, mode: 0o700 });
+// desktop size is mostly grey); 1280x800 when the platform names none. The
+// phone browsers record at the phone motion screens' size.
+const SIZE = /^[1-9][0-9]{2,3}x[1-9][0-9]{2,3}$/;
+const clipSize = SIZE.test(process.env.SHOTS_CLIP_SIZE || '') ? process.env.SHOTS_CLIP_SIZE : '1280x800';
+const phoneClipSize = SIZE.test(process.env.SHOTS_PHONE_CLIP_SIZE || '')
+  ? process.env.SHOTS_PHONE_CLIP_SIZE : clipSize;
+// A persona with a phone screen (narrower than a tablet,
+// visible-changes.phoneScreen) also gets a phone browser: the same storage
+// state, proxy listener and init script, presenting as an iPhone running
+// Safari through Playwright's device descriptor (its user agent, touch,
+// isMobile and screen density), so a page that asks what it runs on answers
+// as a phone. It saves into its own directory beside the persona's
+// (`member_phone`): the boundary keeps one closed-session record per
+// directory, so a desktop session can never stand for a phone clip's.
+const PHONE_DEVICE = 'iPhone 15';
+// Experimental, off unless the platform switched it on for this run
+// (services/shots-density.js): shots saved at the screen's own density.
+// The browsers then save at device scale (patch-playwright-mcp-screenshot.js
+// reads SHOTS_SCREENSHOT_SCALE), so the browser's density is the shots'
+// density: the phone's is its device's (3), and a desktop browser draws at
+// 3 too, so a card can zoom into a change without drawing it soft (at 2,
+// one desktop piece in eight the card shows needed more: the close-up
+// capture design, 2026-10-21). Playwright takes a density only with a fixed viewport, so the
+// desktop browser opens at 1280x720 instead of its window's size; the agent
+// resizes to each declared screen before it shoots, as it always has. Off,
+// every shot is 1x, as it always was.
+const deviceDensity = process.env.SHOTS_DEVICE_DENSITY === '1';
+const DESKTOP_DENSITY = 3;
+const desktopConfig = path.join(path.dirname(path.resolve(output)), 'shots-desktop-browser.json');
+if (deviceDensity) {
+  fs.writeFileSync(desktopConfig, `${JSON.stringify({
+    browser: { contextOptions: { viewport: { width: 1280, height: 720 }, deviceScaleFactor: DESKTOP_DENSITY } },
+  })}\n`, { mode: 0o600 });
+}
+const PERSONAS = ['member', 'read_only_admin', 'full_admin', 'guest', 'invited_member', 'invited_member_listed'];
+// Which desktop browsers this run starts (services/worker.js
+// SHOTS_BROWSER_PERSONAS): the four ordinary ones, plus an invited
+// fixture's only when the run's declared changes name it.
+const ORDINARY_PERSONAS = ['member', 'read_only_admin', 'full_admin', 'guest'];
+let browserPersonas;
+try { browserPersonas = JSON.parse(process.env.SHOTS_BROWSER_PERSONAS || 'null'); } catch { browserPersonas = null; }
+if (!Array.isArray(browserPersonas) || !browserPersonas.length
+    || !browserPersonas.every((persona) => PERSONAS.includes(persona))
+    || !ORDINARY_PERSONAS.every((persona) => browserPersonas.includes(persona))) {
+  browserPersonas = [...ORDINARY_PERSONAS];
+}
+let phonePersonas;
+try { phonePersonas = JSON.parse(process.env.SHOTS_PHONE_PERSONAS || '[]'); } catch { phonePersonas = null; }
+if (!Array.isArray(phonePersonas) || !phonePersonas.every((persona) => PERSONAS.includes(persona))) {
+  throw new Error('Shots MCP config inputs are invalid.');
+}
+// A phone browser reads its persona's saved storage state, so its desktop
+// browser must have been bootstrapped for it.
+phonePersonas = phonePersonas.filter((persona) => browserPersonas.includes(persona));
+const directory = (persona, phone = false) => (
+  `${persona === 'read_only_admin' ? 'admin' : persona}${phone ? '_phone' : ''}`);
+for (const persona of browserPersonas) {
+  fs.mkdirSync(path.join(shotsDir, directory(persona)), { recursive: true, mode: 0o700 });
+  if (phonePersonas.includes(persona)) {
+    fs.mkdirSync(path.join(shotsDir, directory(persona, true)), { recursive: true, mode: 0o700 });
+  }
 }
 // Each persona's browser reaches its own proxy listener, which is how the
 // proxy knows whose identity a hosted app's page load should carry. Without
 // the ports (the image-build verifiers) every browser shares one listener
-// and nothing is attached, as before.
+// and nothing is attached, as before. A phone browser shares its persona's.
 let personaPorts = {};
 try { personaPorts = JSON.parse(process.env.SHOTS_PROXY_PERSONA_PORTS || '{}') || {}; } catch { personaPorts = {}; }
 const proxyFor = (persona) => {
@@ -46,12 +102,13 @@ const proxyFor = (persona) => {
   const shared = new URL(proxy);
   return `${shared.protocol}//${shared.hostname}:${personaPort}`;
 };
-const browserArgs = (persona) => {
-  const observed = persona === 'read_only_admin' ? 'admin' : persona;
+const browserArgs = (persona, { phone = false } = {}) => {
+  const observed = directory(persona, phone);
   return [
     '/usr/local/bin/shots-browser-observer.js',
     observed,
     '--browser', 'chromium', '--headless', '--isolated', '--no-sandbox', '--caps', 'vision',
+    ...(phone ? ['--device', PHONE_DEVICE] : deviceDensity ? ['--config', desktopConfig] : []),
     '--storage-state', path.join(stateDir, `${persona}.json`),
     '--block-service-workers', '--image-responses', 'allow',
     '--proxy-server', proxyFor(persona),
@@ -60,23 +117,30 @@ const browserArgs = (persona) => {
     // own loopback services behind the proxy's refusal if that default goes.
     '--proxy-bypass', '<-loopback>',
     '--timeout-action', '10000', '--timeout-navigation', '30000',
+    // #4087: every page starts with the install strip already dismissed.
+    '--init-script', '/usr/local/share/usernode/shots-page-init.js',
     '--output-dir', path.join(shotsDir, observed),
-    ...(recordClips ? [`--save-video=${clipSize}`] : []),
+    ...(recordClips ? [`--save-video=${phone ? phoneClipSize : clipSize}`] : []),
   ];
 };
 const browserEnv = {
   SHOTS_ALLOWED_ORIGINS: JSON.stringify([baseOrigin, headOrigin]),
   SHOTS_BROWSER_DIAGNOSTIC_FILE: process.env.SHOTS_BROWSER_DIAGNOSTIC_FILE || '',
   SHOTS_NAVIGATION_HINTS: process.env.SHOTS_NAVIGATION_HINTS || '{}',
+  ...(deviceDensity ? { SHOTS_SCREENSHOT_SCALE: 'device' } : {}),
 };
 const config = {
   mcpServers: {
     shots: { command: 'node', args: ['/usr/local/bin/shots-mcp.js'] },
-    browser_member: { command: 'node', args: browserArgs('member'), env: browserEnv },
-    browser_admin: { command: 'node', args: browserArgs('read_only_admin'), env: browserEnv },
-    browser_full_admin: { command: 'node', args: browserArgs('full_admin'), env: browserEnv },
-    // Not signed in: its storage state is empty (shots-browser-bootstrap.js).
-    browser_guest: { command: 'node', args: browserArgs('guest'), env: browserEnv },
+    // Each ordinary persona's desktop browser, always started, plus an
+    // invited fixture's when this run declares a change for it: each is one
+    // more browser server in the worker's memory.
+    ...Object.fromEntries(browserPersonas.map((persona) => [`browser_${directory(persona)}`,
+      { command: 'node', args: browserArgs(persona), env: browserEnv }])),
+    // Only the phone browsers this run's phone screens need: each is one
+    // more browser server in the worker's memory.
+    ...Object.fromEntries(phonePersonas.map((persona) => [`browser_${directory(persona, true)}`,
+      { command: 'node', args: browserArgs(persona, { phone: true }), env: browserEnv }])),
   },
 };
 fs.writeFileSync(output, `${JSON.stringify(config)}\n`, { mode: 0o600 });

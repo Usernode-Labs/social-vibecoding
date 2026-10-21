@@ -19,6 +19,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { message } = require('./lib/platform-i18n');
 
 const SRC = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'js', 'session-transcript.js'),
@@ -36,6 +37,7 @@ function load({ withDevChat = true } = {}) {
     sandbox.DevChat = { renderMarkdown: (t) => `<md>${t}</md>` };
   }
   sandbox.relTime = () => '5 minutes ago';
+  sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(SRC, sandbox);
   return sandbox.SessionTranscript;
@@ -140,18 +142,18 @@ test('attachment chips are inert: names only, no href, no <img>', () => {
   assert.match(html, /4 KB/);
 });
 
-test('spec previews render as static text with no "View full spec" link', () => {
+test('spec previews render as static text with no "View full plan" link', () => {
   const ST = load();
   const html = ST.renderHtml(payload([{
-    id: 1, role: 'system', content: 'Spec drafted', created_at: 'x',
+    id: 1, role: 'system', content: 'Plan drafted', created_at: 'x',
     metadata: { specPreview: '# Spec\n\n- item', specVersion: 2, specLines: 3 },
   }]));
-  assert.match(html, /Spec v2/);
+  assert.match(html, /Plan v2/);
   assert.match(html, /3 lines/);
   assert.match(html, /<md># Spec/);
   // A reader isn't authorised on GET /specs/:version unless it was
   // separately group-shared, so no affordance is offered.
-  assert.doesNotMatch(html, /View full spec/);
+  assert.doesNotMatch(html, /View full plan/);
   assert.doesNotMatch(html, /data-spec-version/);
 });
 
@@ -197,7 +199,8 @@ test('headerText labels both the collapsed and expanded states', () => {
   assert.doesNotMatch(ST.headerText(s, { expanded: true }), /read-only/);
   const HEAD = fs.readFileSync(path.join(
     __dirname, '..', 'frontend', 'src', 'features', 'dev-board', 'topic', 'topic-head.tsx'), 'utf8');
-  assert.match(HEAD, /className="st-readonly-tag">read-only</, 'the chip is the one that says it');
+  assert.match(HEAD, /className="st-readonly-tag">\{t\('project:topic\.transcript\.readOnly'\)\}</, 'the chip is the one that says it');
+  assert.equal(message('project:topic.transcript.readOnly'), 'read-only');
   // Singular, and a missing count degrades rather than printing "0 messages".
   assert.strictEqual(
     ST.headerText({ username: 'alice', message_count: 1 }, { expanded: true }),

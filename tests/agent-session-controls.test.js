@@ -18,6 +18,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
@@ -101,13 +102,20 @@ test('the walkthrough is the dev chat\'s: its steps over the server\'s status', 
     'the instructions are asked to carry this change\'s spec (the server checks it is the viewer\'s)');
   // One button: copy inside the click, then the agent opens in a new tab.
   assert.match(dialog, /href=\{AGENT_URL\[agent\]\}\s+target="_blank"\s+rel="noopener noreferrer"\s+data-agent-session-handoff-action="copy-open"\s+onClick=\{copyAndOpen\}/);
-  assert.match(dialog, /\{`Copy instructions and open \$\{label\}`\}/);
-  assert.match(dialog, />Paste into the new session\. It starts building straight away\.</);
-  assert.match(dialog, /Handed over with the instructions/);
-  assert.match(dialog, /`This chat's spec: "\$\{active\.title\}"`/);
+  assert.match(dialog, /\{t\('agent:session\.handoff\.copyAndOpen', \{ agent: label \}\)\}/);
+  assert.equal(message('agent:session.handoff.copyAndOpen', { agent: 'Codex' }), 'Copy instructions and open Codex');
+  assert.match(dialog, />\{t\('agent:session\.handoff\.pasteHint'\)\}</);
+  assert.equal(message('agent:session.handoff.pasteHint'), 'Paste into the new session. It starts building straight away.');
+  assert.match(dialog, /t\('agent:session\.handoff\.carried\.heading'\)/);
+  assert.equal(message('agent:session.handoff.carried.heading'), 'Handed over with the instructions');
+  assert.match(dialog, /t\('agent:session\.handoff\.carried\.specTitled', \{ title: active\.title \}\)/);
+  assert.equal(message('agent:session.handoff.carried.specTitled', { title: 'Dark mode' }), 'This chat\'s plan: "Dark mode"');
+  assert.equal(message('agent:session.handoff.carried.spec'), 'This chat\'s plan');
+  assert.equal(message('agent:session.handoff.carried.noSpec', { agent: 'Codex' }), 'No plan yet, so Codex will ask what to build.');
   // The copy fallback: the instructions, open, for copying by hand.
   assert.match(dialog, /<details [^>]*open=\{manual\}>/);
-  assert.match(dialog, /Could not copy\. Copy the instructions below by hand/);
+  assert.match(dialog, /t\('agent:session\.handoff\.copyFailed'\)/);
+  assert.match(message('agent:session.handoff.copyFailed'), /Could not copy\. Copy the instructions below by hand/);
   assert.doesNotMatch(dialog, /export function (HandoffDialog|VenuePicker)|<dialog/, 'no second dialog');
 });
 
@@ -265,11 +273,39 @@ test('the card\'s checks open the dialog and a failing run offers Re-run; the ba
   assert.match(panel, /<BuildSheetBody\s+tab=\{buildTab\}/);
   assert.match(panel, /handoff=\{buildTab === 'homeroom' \? null : <HandoffPanel agent=\{buildTab\} onClose=\{closeSheet\} \/>\}/);
   assert.match(panel, /if \(!snapshot\.handoff\) return;\s*openSheet\(snapshot\.handoff\);\s*closeHandoff\(\);/);
-  assert.match(panel, /\{ label: 'Rename…'/);
-  assert.match(panel, /label: 'Archive',[\s\S]*?destructive: true/);
-  assert.match(panel, /\{ label: 'Unarchive'/);
+  assert.match(panel, /\{ label: t\('agent:session\.menu\.rename'\)/);
+  assert.equal(message('agent:session.menu.rename'), 'Rename…');
+  assert.match(panel, /label: t\('agent:session\.menu\.archive'\),[\s\S]*?destructive: true/);
+  assert.equal(message('agent:session.menu.archive'), 'Archive');
+  assert.match(panel, /\{ label: t\('agent:session\.menu\.unarchive'\)/);
+  assert.equal(message('agent:session.menu.unarchive'), 'Unarchive');
   assert.match(panel, /\{snapshot\.credits \? <CreditsCard refusal=\{snapshot\.credits\} \/> : null\}/);
   assert.match(panel, /useStoreState<AiBudgetState>\(aiBudgetStore\)/, 'the header\'s own meter, kept live by budget_updated');
-  assert.match(panel, /This session is archived\. Unarchive it to keep going\./);
+  assert.match(panel, /t\('agent:session\.composer\.archivedNote'\)/);
+  assert.equal(message('agent:session.composer.archivedNote'), 'This session is archived. Unarchive it to keep going.');
   assert.match(panel, /window\.AppView\?\.openSessionChecks\?\.\(item\.changeId\)/);
+});
+
+// ── #5683: the change pill says where the LATEST change stands ──────────
+
+test('the pill reads the latest change, even when it is no longer the active one; "No change yet" only with none', () => {
+  const page = 'frontend/src/features/agent-session/index.tsx';
+  const { SessionBar } = loadTsx(page);
+  const about = { focusApp: { slug: 'notes', name: 'Notes', selfHosted: false } };
+  const bar = (session) => renderToHtml(createElement(SessionBar, { session, about, embedded: false }));
+
+  // Nothing active, one merged change behind it: the pill is that change's.
+  const finished = bar({ id: 1, title: 'Dark mode', activeChange: null, changes: [change({ status: 'merged', prNumber: 14 })] });
+  const pill = /<span data-agent-session-change-pill[^>]*>([\s\S]*?)<\/span>\s*<button/.exec(finished);
+  assert.ok(pill, 'the pill sits before Changes');
+  assert.doesNotMatch(pill[1], /No change yet/);
+  assert.match(pill[0], /bg-emerald-100/, 'the latest change\'s own tone');
+  assert.match(pill[1], new RegExp(message('agent:session.changeStatus.live')));
+
+  // An active change still wins over an older one in the list.
+  const active = bar({ id: 1, title: 'Dark mode', activeChange: change({ id: 51, status: 'active' }), changes: [change({ status: 'merged' }), change({ id: 51 })] });
+  assert.match(active, new RegExp(`data-agent-session-change-pill[^>]*>\\s*<span[^>]*>${message('agent:session.changeStatus.inProgress')}`));
+
+  // No change at all: the old words.
+  assert.match(bar({ id: 1, title: 'Dark mode', activeChange: null, changes: [] }), /No change yet/);
 });

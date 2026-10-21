@@ -9,6 +9,7 @@ const { announceIssueCreated, findAppByRepo } = require('../services/issue-annou
 const appAccess = require('../services/app-access');
 const communities = require('../services/communities');
 const { placeBounty } = require('../services/bounties');
+const { kudosParked } = require('../services/kudos-parked');
 const { getPool } = require('../db/pool');
 const { sniffImageType, sniffVideoType } = require('../services/attachments');
 const { feedbackTitleLimiter, feedbackSubmitLimiter, issueScreenshotLimiter, feedbackVideoLimiter } = require('../middleware/rate-limits');
@@ -19,6 +20,8 @@ const { parseGitHubRepo, createPlatformIssue, recordFeedbackReport } = require('
 // #4194: the description may be as long as a GitHub issue body allows, less
 // the room the lines this route adds around it need.
 const { GITHUB_ISSUE_BODY_MAX, FEEDBACK_DESCRIPTION_MAX } = require('../services/issue-body-limit');
+const { editInfo, readEditInfo, saveFeedbackEdit } = require('../services/feedback-edit');
+const { pushIssueUpdate } = require('../services/ws');
 
 const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 
@@ -52,9 +55,10 @@ function validateScreenshotUpload(data) {
 }
 
 // Pure (exported for tests): the exact markdown suffix appended to the
-// issue body for an attached screenshot.
-function buildScreenshotEmbed(id, domain) {
-  return `\n\n**Screenshot:**\n![Screenshot](https://${domain}/issue-images/${id})`;
+// issue body for an attached screenshot. `fragment` is its pin's (#4482,
+// pinFragment below), or nothing.
+function buildScreenshotEmbed(id, domain, fragment = '') {
+  return `\n\n**Screenshot:**\n![Screenshot](https://${domain}/issue-images/${id}${fragment})`;
 }
 
 // #3027: how many images one feedback submit may carry ("one before saving
@@ -100,12 +104,105 @@ function parseScreenshotIds(body) {
 // Pure (exported for tests): the issue-body suffix for every attached image.
 // One image keeps the exact pre-#3027 line, so an issue with one screenshot
 // reads as it always has; several are numbered under one heading, in the
-// order they were attached.
-function buildScreenshotsEmbed(ids, domain) {
+// order they were attached. `pins` (#4482) maps an id to its pins; that
+// image's link carries them as its fragment, each note with its share of the
+// budget among all of the request's pins.
+function buildScreenshotsEmbed(ids, domain, pins = null) {
   if (!Array.isArray(ids) || ids.length === 0) return '';
-  if (ids.length === 1) return buildScreenshotEmbed(ids[0], domain);
-  const lines = ids.map((id, i) => `![Screenshot ${i + 1}](https://${domain}/issue-images/${id})`);
+  let total = 0;
+  if (pins) for (const list of pins.values()) total += list.length;
+  const budget = Math.floor(PIN_NOTE_ENCODED_MAX / Math.max(1, total));
+  const fragment = (id) => (pins && pins.has(id) ? pinsFragment(pins.get(id), budget) : '');
+  if (ids.length === 1) return buildScreenshotEmbed(ids[0], domain, fragment(ids[0]));
+  const lines = ids.map((id, i) => `![Screenshot ${i + 1}](https://${domain}/issue-images/${id}${fragment(id)})`);
   return `\n\n**Screenshots:**\n${lines.join('\n')}`;
+}
+
+// #4482: a C comment's pin, kept as data on its screenshot instead of drawn
+// into it, so the request's page can show the page clean or with the comment
+// on it. It rides on the image's link as the URL's fragment,
+//
+//   ![Screenshot](https://<domain>/issue-images/<id>#pin=0.4213,0.318&note=Make%20it%20bigger)
+//
+// which never reaches a server: GitHub's image proxy, the coding agents and
+// GET /issue-images/:id all see the plain picture, and the comment's words
+// and where line are in the body for them. The same rule as
+// frontend/src/features/comment-pin/pin-data.ts `pinsFragment`, which reads
+// it back; tests/comment-pin.test.js holds the two together. A request made
+// of several comments numbers them, and a picture with several of their pins
+// carries each in turn: `#pin=x,y&n=1&note=…&pin=x,y&n=2&note=…`.
+//
+// A post carries `screenshotPins: [{ id, x, y, n?, note? }]`, up to
+// MAX_PINS_PER_ISSUE: `id` one of the attached screenshotIds (several pins
+// may share one), `x` and `y` fractions of the picture, `n` the comment's
+// number when there are several, `note` its words. The notes share what the
+// body's reserve has room for (FEEDBACK_BODY_RESERVE), PIN_NOTE_ENCODED_MAX
+// in all; eight pins keep the whole fragment, with every other line the
+// route adds, inside it.
+const MAX_PINS_PER_ISSUE = 8;
+const PIN_NOTE_MAX = 280;
+const PIN_NOTE_ENCODED_MAX = 600;
+
+function encodePinNote(s) {
+  return encodeURIComponent(s).replace(/[!'()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
+}
+
+function fitPinNote(text, budget = PIN_NOTE_ENCODED_MAX) {
+  const chars = Array.from(String(text || '').replace(/\s+/g, ' ').trim());
+  let note = chars.length > PIN_NOTE_MAX ? `${chars.slice(0, PIN_NOTE_MAX - 1).join('').trimEnd()}\u2026` : chars.join('');
+  while (note && encodePinNote(note).length > budget) {
+    note = `${Array.from(note).slice(0, -2).join('').trimEnd()}\u2026`;
+  }
+  return note;
+}
+
+// Pure (exported for tests): the fragment for a picture's pins, `#`
+// included; `budget` is each note's encoded length.
+function pinsFragment(pins, budget = Math.floor(PIN_NOTE_ENCODED_MAX / Math.max(1, pins.length))) {
+  if (!pins.length) return '';
+  const round4 = (v) => Math.round(Math.max(0, Math.min(1, v)) * 10000) / 10000;
+  return `#${pins.map((pin) => {
+    const note = fitPinNote(pin.note, budget);
+    const n = Number.isInteger(pin.n) && pin.n > 0 ? `&n=${pin.n}` : '';
+    return `pin=${round4(pin.x)},${round4(pin.y)}${n}${note ? `&note=${encodePinNote(note)}` : ''}`;
+  }).join('&')}`;
+}
+
+// Pure (exported for tests): the fragment for one pin, `#` included.
+function pinFragment(pin) {
+  return pinsFragment([pin]);
+}
+
+// Pure (exported for tests): the pins a POST /api/feedback body puts on its
+// screenshots. Returns { ok: true, pins } (a Map of id to its pins, each
+// { x, y, n, note }, in the order sent; empty when there are none) or
+// { ok: false, error }.
+function parseScreenshotPins(body, screenshotIds) {
+  const raw = (body || {}).screenshotPins;
+  const pins = new Map();
+  if (raw === undefined || raw === null) return { ok: true, pins };
+  if (!Array.isArray(raw)) return { ok: false, error: 'screenshotPins must be an array' };
+  if (raw.length > MAX_PINS_PER_ISSUE) return { ok: false, error: `A request carries at most ${MAX_PINS_PER_ISSUE} pins` };
+  const ids = new Set(screenshotIds || []);
+  for (const p of raw) {
+    if (!p || typeof p !== 'object' || !ids.has(p.id)) {
+      return { ok: false, error: 'A pin must be on an attached screenshot' };
+    }
+    const inside = (n) => typeof n === 'number' && Number.isFinite(n) && n >= 0 && n <= 1;
+    if (!inside(p.x) || !inside(p.y)) return { ok: false, error: 'A pin must be on the picture' };
+    if (p.note !== undefined && p.note !== null && typeof p.note !== 'string') {
+      return { ok: false, error: 'A pin note must be text' };
+    }
+    if (typeof p.note === 'string' && p.note.length > FEEDBACK_DESCRIPTION_MAX) {
+      return { ok: false, error: 'A pin note is too long' };
+    }
+    if (p.n !== undefined && p.n !== null && !(Number.isInteger(p.n) && p.n > 0 && p.n <= 99)) {
+      return { ok: false, error: 'A pin number must be a small whole number' };
+    }
+    if (!pins.has(p.id)) pins.set(p.id, []);
+    pins.get(p.id).push({ x: p.x, y: p.y, n: p.n || null, note: p.note || '' });
+  }
+  return { ok: true, pins };
 }
 
 // #3940: feedback-modal video attachments. Same shape as the screenshots
@@ -198,6 +295,16 @@ function bodyTooLong(res, body) {
       + `${GITHUB_ISSUE_BODY_MAX}-character limit. Shorten it by at least `
       + `${body.length - GITHUB_ISSUE_BODY_MAX} characters.`,
   });
+}
+
+// The issue is already filed. Losing the optional edit metadata must never
+// turn a successful submission into an error that invites a duplicate.
+async function filedEditInfo(pool, report, userId) {
+  try { return await readEditInfo(pool, report?.id, userId); }
+  catch (err) {
+    log.warn('feedback', 'Filed request edit metadata unavailable', { message: err.message });
+    return null;
+  }
 }
 
 // Pure (exported for tests): the collapsed <details> suffix appended to
@@ -334,7 +441,10 @@ const MY_FEEDBACK_LIMIT = 50;
 
 const MY_FEEDBACK_SQL = `
   SELECT fr.id, fr.target, fr.title, fr.issue_owner, fr.issue_repo, fr.issue_number,
-         fr.created_at, a.slug AS app_slug, a.name AS app_name,
+         fr.created_at, fr.description, fr.source, fr.edit_version,
+         (fr.body_prefix IS NOT NULL AND fr.body_suffix IS NOT NULL) AS has_body,
+         GREATEST(0, EXTRACT(EPOCH FROM fr.created_at + INTERVAL '5 minutes' - clock_timestamp())) AS seconds_left,
+         a.slug AS app_slug, a.name AS app_name,
          cr.points AS credited_points,
          COUNT(*) OVER () AS total_sent,
          COUNT(cr.source_key) OVER () AS total_counted
@@ -391,6 +501,7 @@ function shapeMyFeedback(rows, selfApp) {
       createdAt: r.created_at ? new Date(r.created_at).toISOString() : null,
       status: counted ? 'counted' : 'received',
       points: counted ? Number(r.credited_points) || 0 : null,
+      edit: editInfo(r),
     };
   });
   const sent = Number(first.total_sent) || 0;
@@ -474,6 +585,9 @@ function feedbackRoutes(config) {
   const router = Router();
   const pool = getPool(config);
   const { owner: feedbackOwner, repo: feedbackRepo } = parseGitHubRepo(config.platformRepoUrl);
+  // #5249: a submit asking for a kudos bounty files without one while kudos
+  // is parked (services/kudos-parked.js).
+  const bountiesParked = kudosParked(config);
 
   // Feedback titles are small calls, but they are still billable. Resolve
   // the payer before every generation so neither the preview endpoint nor
@@ -628,6 +742,9 @@ function feedbackRoutes(config) {
     const parsedShots = parseScreenshotIds(req.body);
     if (!parsedShots.ok) return res.status(400).json({ error: parsedShots.error });
     const screenshotIds = parsedShots.ids;
+    // #4482: and the pin a C comment keeps on its screenshot, as data.
+    const parsedPins = parseScreenshotPins(req.body, screenshotIds);
+    if (!parsedPins.ok) return res.status(400).json({ error: parsedPins.error });
     if (screenshotIds.length) {
       try {
         const { rows } = await pool.query(
@@ -696,7 +813,10 @@ function feedbackRoutes(config) {
     if (req.body.bounty !== undefined && typeof req.body.bounty !== 'boolean') {
       return res.status(400).json({ error: 'bounty must be a boolean' });
     }
-    const wantsBounty = req.body.bounty === true;
+    // #5249: while kudos is parked the flag is accepted and ignored: the
+    // feedback is filed as usual, with no bounty and no `bounty` field in the
+    // answer. A request saved offline before parking still carries it.
+    const wantsBounty = req.body.bounty === true && !bountiesParked;
 
     // Normalise the feedback target. Anything other than the explicit
     // 'app' opt-in falls back to platform feedback (today's behaviour).
@@ -834,7 +954,7 @@ function feedbackRoutes(config) {
       // the public /issue-images/:id URL GitHub's camo proxy, the in-app
       // topic view, and the coding agents can all fetch. Appended after
       // the description-length validation, so it never eats user budget.
-      const screenshotSuffix = buildScreenshotsEmbed(screenshotIds, require('../services/caddy').USERNODE_DOMAIN);
+      const screenshotSuffix = buildScreenshotsEmbed(screenshotIds, require('../services/caddy').USERNODE_DOMAIN, parsedPins.pins);
       // #3940: the clip's embed link, after the screenshots (the body's
       // reading order: what happened, then the stills, then the moving
       // picture).
@@ -886,7 +1006,8 @@ function feedbackRoutes(config) {
         // #1054: the "written while offline" line sits with the other header
         // lines, above the description — it is context for reading the report,
         // not part of it.
-        const fixedBody = `**Source:** ${source}\n**App:** ${appContext.name} (${appContext.slug})\n${queuedLine}\n${description.trim()}${screenshotSuffix}${videoSuffix}`;
+        const bodyPrefix = `**Source:** ${source}\n**App:** ${appContext.name} (${appContext.slug})\n${queuedLine}\n`;
+        const fixedBody = `${bodyPrefix}${description.trim()}${screenshotSuffix}${videoSuffix}`;
         // #4194: the snapshot gets whatever room the report leaves it.
         const body = fixedBody + fitPageState(fixedBody, pageState, pageStateTruncated);
         if (body.length > GITHUB_ISSUE_BODY_MAX) return bodyTooLong(res, body);
@@ -922,9 +1043,10 @@ function feedbackRoutes(config) {
             issueNumber: issue.number, user: req.user,
           })
           : null;
-        await recordFeedbackReport(pool, {
+        const report = await recordFeedbackReport(pool, {
           user: req.user, app: appContext, owner: issueOwner, repo: issueRepo,
           issueNumber: issue.number, title, description: description.trim(),
+          bodyPrefix, bodySuffix: body.slice(bodyPrefix.length + description.trim().length),
         });
         // "Suggest an improvement" counts the report just recorded, now
         // rather than on the rule's next pass: #3568 was this step still
@@ -940,7 +1062,7 @@ function feedbackRoutes(config) {
         const homeroomBot = await require('../services/homeroom-bot-dm').noteRequestFiled(pool, {
           app: appContext, user: req.user, issueNumber: issue.number, title, askedText: description.trim(),
         });
-        // Its confirmation's small "Build it yourself" link, for somebody who
+        // Its confirmation's small "Build it now" link, for somebody who
         // could start a change here (the first-request moment's canFix rule).
         if (homeroomBot?.botWillBuild) {
           let canFix = false;
@@ -952,6 +1074,7 @@ function feedbackRoutes(config) {
         }
         return res.json({
           url: issue.html_url, title, titleFallback,
+          edit: await filedEditInfo(pool, report, req.user?.id),
           ...(bounty ? { bounty } : {}),
           ...(firstFeedback ? { firstFeedback } : {}),
           ...(homeroomBot ? { homeroomBot } : {}),
@@ -961,7 +1084,8 @@ function feedbackRoutes(config) {
       // The platform repo, with the bot's token (services/feedback-reports.js
       // createPlatformIssue): a hand-rolled call that applies safeMention to
       // the user-typed title and description itself (#723).
-      const platformBody = `**Source:** ${source}\n${queuedLine}\n${description.trim()}${screenshotSuffix}${videoSuffix}`;
+      const bodyPrefix = `**Source:** ${source}\n${queuedLine}\n`;
+      const platformBody = `${bodyPrefix}${description.trim()}${screenshotSuffix}${videoSuffix}`;
       if (platformBody.length > GITHUB_ISSUE_BODY_MAX) return bodyTooLong(res, platformBody);
       const created = await createPlatformIssue({
         owner: issueOwner,
@@ -999,23 +1123,95 @@ function feedbackRoutes(config) {
           issueNumber: issue.number, user: req.user,
         })
         : null;
-      await recordFeedbackReport(pool, {
+      const report = await recordFeedbackReport(pool, {
         user: req.user, app: null, owner: issueOwner, repo: issueRepo,
         issueNumber: issue.number, title, description: description.trim(),
+        bodyPrefix, bodySuffix: screenshotSuffix + videoSuffix,
       });
       // The same count for platform feedback (#3568).
       await challengeScorer.scoreOnFeedback(pool, config);
       const firstFeedback = await firstFeedbackMoment(pool, {
         user: req.user, app: null, owner: issueOwner, repo: issueRepo, issueNumber: issue.number,
       });
+      // B8: Homeroom bot takes a request to Homeroom itself as it does one to
+      // any project: its card in the person's chat with it, and the
+      // confirmation's "Your idea is underway!". The platform repo is itself
+      // an app row on self-hosted instances (no-op when none matches); the
+      // row carries appAccess.ACCESS_COLUMNS. findAppByRepo returns no name,
+      // so the bot's card names the platform as the report list does.
+      //
+      // Best effort, and synchronous throw included: the issue is already
+      // filed, so a lookup that fails must never turn a successful submission
+      // into an error (the rule firstFeedbackMoment follows).
+      let platformApp = null;
+      try {
+        platformApp = (await findAppByRepo(pool, issueOwner, issueRepo)) || null;
+      } catch (err) {
+        log.warn('feedback', 'Platform request destination unavailable', { message: err.message });
+      }
+      const homeroomBot = platformApp
+        ? await require('../services/homeroom-bot-dm').noteRequestFiled(pool, {
+          app: { id: platformApp.id, slug: platformApp.slug, name: 'Homeroom' },
+          user: req.user, issueNumber: issue.number, title, askedText: description.trim(),
+        })
+        : null;
+      if (homeroomBot?.botWillBuild) {
+        let canFix = false;
+        try { canFix = await appAccess.checkAppAccess(pool, platformApp, req.user, 'collab'); } catch { canFix = false; }
+        Object.assign(homeroomBot, { canFix, appSlug: platformApp.slug, issueNumber: issue.number });
+      }
       res.json({
         url: issue.html_url, title, titleFallback,
+        edit: await filedEditInfo(pool, report, req.user?.id),
         ...(bounty ? { bounty } : {}),
         ...(firstFeedback ? { firstFeedback } : {}),
+        ...(homeroomBot ? { homeroomBot } : {}),
       });
     } catch (err) {
       log.error('feedback', 'Error filing issue', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // #4803: the author can correct the title and words for five minutes.
+  // Attachments, the destination and attribution are exclusively server-owned.
+  router.patch('/api/feedback/:id', feedbackSubmitLimiter, async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    if (!req.user?.id) return res.status(401).json({ error: 'Sign in to edit feedback' });
+    const id = /^\d+$/.test(req.params.id) ? Number(req.params.id) : NaN;
+    if (!Number.isSafeInteger(id) || id <= 0) return res.status(400).json({ error: 'Invalid feedback id' });
+    const { title, description, version } = req.body || {};
+    if (typeof title !== 'string' || !title.trim() || title.trim().length > 200) {
+      return res.status(400).json({ error: 'Title is required (max 200 chars)' });
+    }
+    if (typeof description !== 'string' || !description.trim() || description.trim().length > FEEDBACK_DESCRIPTION_MAX) {
+      return res.status(400).json({ error: `Description is required (max ${FEEDBACK_DESCRIPTION_MAX} chars)` });
+    }
+    if (!Number.isSafeInteger(version) || version < 0) {
+      return res.status(400).json({ error: 'Invalid feedback version' });
+    }
+    try {
+      const result = await saveFeedbackEdit(pool, id, req.user.id,
+        { title: title.trim(), description: description.trim(), version });
+      if (result.code === 'body_too_long') return bodyTooLong(res, { length: result.length });
+      if (result.status !== 200) return res.status(result.status).json({ code: result.code });
+      if (result.target) {
+        const fr = result.target;
+        // The save has committed. A failed refresh never turns that success
+        // into an error which could encourage another submission.
+        try {
+          github.invalidateIssuesCache(fr.issue_owner, fr.issue_repo);
+          const app = await findAppByRepo(pool, fr.issue_owner, fr.issue_repo);
+          if (app) pushIssueUpdate({ action: 'updated', source: 'github',
+            appSlug: app.slug, appId: app.id, issueNumber: fr.issue_number });
+        } catch (err) {
+          log.warn('feedback', 'Edited request refresh failed', { id, message: err.message });
+        }
+      }
+      return res.json({ ok: true, ...(result.unchanged ? { unchanged: true } : {}), edit: result.edit });
+    } catch (err) {
+      log.warn('feedback', 'Feedback edit failed', { id, message: err.message });
+      return res.status(502).json({ error: "Couldn't save the request. Try again in a moment." });
     }
   });
 
@@ -1060,6 +1256,11 @@ module.exports = {
   parseScreenshotIds,
   buildScreenshotsEmbed,
   MAX_SCREENSHOTS_PER_ISSUE,
+  // #4482: a comment's pin as data on its screenshot — tests/comment-pin.test.js.
+  parseScreenshotPins,
+  pinFragment,
+  pinsFragment,
+  MAX_PINS_PER_ISSUE,
   // #3940: video attachments — tests/feedback-video.test.js.
   validateVideoUpload,
   buildVideoEmbed,

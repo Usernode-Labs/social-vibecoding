@@ -35,7 +35,22 @@ function failingResultsOnly(row) {
   const kept = row.test_results.filter((r) => !(r && r.status === 'pass'));
   const omitted = row.test_results.length - kept.length;
   if (!omitted) return row;
-  return { ...row, test_results: kept, test_results_omitted: omitted };
+  // The few passes with something to say stay readable beside the count,
+  // in a field of their own so the count of omitted passes stays the whole
+  // count: one that passed only on a retry (and why: the run's fault or
+  // the check's), and one this proposal adds or changes that needed a
+  // fresh load after its address change (services/check-signals.js). The
+  // Checks step names them (AppView._checksVerdictView `noted`).
+  const noted = row.test_results.filter(notedPass).slice(0, MAX_NOTED_PASSES);
+  return {
+    ...row, test_results: kept, test_results_omitted: omitted,
+    ...(noted.length ? { test_results_noted: noted } : {}),
+  };
+}
+
+const MAX_NOTED_PASSES = 20;
+function notedPass(r) {
+  return !!(r && r.status === 'pass' && (r.passedOnRetry || (r.cohortFallback && r.authored === true)));
 }
 
 // #3978: a failing unit-suite row carries its per-test excerpts (up to
@@ -78,6 +93,8 @@ function forItem(req, row) {
 }
 
 module.exports = {
+  notedPass,
+  MAX_NOTED_PASSES,
   wantsFailingResults,
   failingResultsOnly,
   withoutFailureDetails,

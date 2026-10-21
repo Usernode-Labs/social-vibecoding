@@ -1,6 +1,6 @@
 // Wiring tests for the merge gate and the proposal-card display of the
 // platform-variables check (src/routes/votes.js, public/js/app-view.js,
-// src/services/visuals.js).
+// the preview machine's checks.publish work in src/workflow/preview/services.ts).
 //
 // The load-bearing detail is that the GATE and the DISPLAY read
 // different things. The card renders the stored verdict from
@@ -14,13 +14,23 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 
 const root = path.join(__dirname, '..');
 const votesJs = fs.readFileSync(path.join(root, 'src/routes/votes.js'), 'utf8');
 const appViewJs = fs.readFileSync(path.join(root, 'public/js/app-view.js'), 'utf8');
-const visualsJs = fs.readFileSync(path.join(root, 'src/services/visuals.js'), 'utf8');
+const servicesTs = fs.readFileSync(path.join(root, 'src/workflow/preview/services.ts'), 'utf8');
+const envCheckJs = fs.readFileSync(path.join(root, 'src/services/platform-env-check.js'), 'utf8');
+
+// The machine's checks.publish work: what runs once a checks run settles.
+const publishWork = (() => {
+  const start = servicesTs.indexOf('[WORK.publish]: {');
+  assert.notStrictEqual(start, -1, 'the checks.publish work anchor moved');
+  const end = servicesTs.indexOf('[WORK.', start + 1);
+  return servicesTs.slice(start, end === -1 ? undefined : end);
+})();
 
 // ── The gate ──────────────────────────────────────────────────────────
 
@@ -110,8 +120,10 @@ test('a failing verdict names the missing keys and offers the fix in place', () 
   assert.match(detailFn, /fn: 'openPlatformVariables'/,
     'one click from the block to the panel is the difference between a '
     + '20-second fix and a hunt');
-  assert.match(detailFn, /'Set them now' : 'Propose a value'/,
+  assert.match(detailFn, /PlatformI18n\.t\('changes:envNote\.setNow'\) : PlatformI18n\.t\('changes:envNote\.proposeValue'\)/,
     'both audiences get an action: admins set it, everyone else proposes it');
+  assert.equal(message('changes:envNote.setNow'), 'Set them now');
+  assert.equal(message('changes:envNote.proposeValue'), 'Propose a value');
 });
 
 test('an error verdict is shown as non-blocking, not as a failure', () => {
@@ -121,16 +133,19 @@ test('an error verdict is shown as non-blocking, not as a failure', () => {
 // ── Re-capture ────────────────────────────────────────────────────────
 
 test('a staging capture refreshes the verdict and reuses the checks broadcast', () => {
-  const capture = visualsJs.slice(visualsJs.indexOf('refreshPlatformEnvCheck') - 1500,
-    visualsJs.indexOf('refreshPlatformEnvCheck') + 1500);
-  assert.match(capture, /refreshPlatformEnvCheck/);
-  assert.match(capture, /notifyChecks/,
+  // A settled run's checks.publish work refreshes the platform's own app's
+  // verdict. The checks_ready the settlement pushed went out before this
+  // ran, so the refreshed verdict needs its own broadcast to reach the card.
+  assert.match(publishWork, /refreshPlatformEnvCheck/);
+  assert.match(publishWork, /checks_ready|notifyChecks/,
     'reusing checks_ready avoids a second event type the client would have to learn');
 });
 
 test('a refresh failure never breaks the capture pipeline', () => {
-  const idx = visualsJs.indexOf('refreshPlatformEnvCheck');
-  const before = visualsJs.slice(Math.max(0, idx - 900), idx);
-  assert.match(before, /try \{/,
+  // The publish work awaits the refresh, so the refresh itself must never
+  // throw: a throw would retry the whole publish (the PR body patch too).
+  const fn = envCheckJs.slice(envCheckJs.indexOf('async function refreshPlatformEnvCheck('));
+  assert.match(fn, /^async function refreshPlatformEnvCheck\(\{ pool, app, session \}\) \{\s+try \{/,
     'the verdict is a nice-to-have; the screenshots are not');
+  assert.match(fn.slice(0, fn.indexOf('\n}\n')), /\} catch \(err\) \{[\s\S]*return null;\s+\}/);
 });

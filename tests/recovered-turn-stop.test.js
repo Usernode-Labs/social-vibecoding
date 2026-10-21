@@ -89,6 +89,8 @@ try {
 
 const stopRegistry = require('../src/services/stop-registry');
 const sessionBus = require('../src/services/session-bus');
+// Its streams kept in this process: no database here (services/session-bus.js).
+sessionBus.init({ memory: true });
 const sessionsRoutes = require('../src/routes/sessions');
 
 // ── fixtures ────────────────────────────────────────────────────────────
@@ -241,7 +243,7 @@ test('buildRecoveryStopHandle seeds a durable stop stamp so a pre-cutover click 
   assert.equal(makeHandle(activeTurn()).stopped, false);
 });
 
-test('the adopted run is relayed to the conversations that dispatched it, all but its end', () => {
+test('the adopted run is relayed to the conversations that dispatched it, all but its end', async () => {
   const agentTurn = require('../src/services/mayor/agent-turn');
   const relayed = [];
   const unsubscribe = sessionBus.subscribe(agentTurn.busKey(3), (event) => relayed.push(event));
@@ -256,6 +258,7 @@ test('the adopted run is relayed to the conversations that dispatched it, all bu
     handle.send('cc_progress', { text: '$ npm test' });
     handle.send('stopped', { by: 'alice' });
     handle.send('done', {});
+    await sessionBus.settle();
     assert.deepEqual(relayed.map((e) => [e.type, e.changeId, e.agentSessionId, e.text]),
       [['cc_progress', SESSION.id, 3, '$ npm test']],
       'the conversation\'s own end comes from handBackAfterRecovery');
@@ -302,6 +305,7 @@ test('a stopped recovery clears active_turn and emits stopped + done', async () 
   journalTail = async () => { handle.stopped = true; handle.stoppedBy = 'alice'; return killedResult(); };
 
   await resumeDetachedTurnInner({ ...baseArgs(pool, turn), stopHandle: handle });
+  await sessionBus.settle();
   if (typeof unsub === 'function') unsub();
 
   assert.equal(finishTurnCalls.length, 1, 'the durable turn record was released');

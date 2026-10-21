@@ -47,6 +47,7 @@ const SETTINGS_READ_PATHS = Object.freeze({
   theme: [],
   language: ['/api/auth/me'],
   alerts: ['/api/me/notification-preferences', '/api/me/mobile-push-preferences'],
+  privacy: ['/api/me/usage-analytics'],
   username: ['/api/auth/me'],
   email: ['/api/me/email'],
   password: [],
@@ -57,7 +58,7 @@ const SETTINGS_READ_PATHS = Object.freeze({
     '/api/me/credentials/openrouter',
     '/api/me/credentials/openrouter/allowance',
   ],
-  usage: ['/api/me/ai-budget'],
+  usage: ['/api/me/ai-budget', '/api/me/building-time'],
   'api-key': ['/api/auth/me', '/api/me/ai-budget'],
   connectors: ['/api/me/connectors'],
   'linked-accounts': ['/api/me/social-identities', '/api/me/github'],
@@ -74,6 +75,7 @@ const SETTINGS_READ_PATHS = Object.freeze({
 const SETTINGS_ACTION_MATCHERS = Object.freeze({
   language: [/\/api\/me\/locale$/],
   alerts: [/notification-preferences/, /mobile-push-preferences/, /test-alert/],
+  privacy: [/\/api\/me\/usage-analytics$/],
   username: [/\/api\/me\/username$/],
   email: [/\/api\/me\/email/],
   password: [/\/api\/me\/(?:password|wallet-change-password)$/],
@@ -87,7 +89,7 @@ const SETTINGS_ACTION_MATCHERS = Object.freeze({
   'app-permissions': [/permission-grants|device-permission/],
   'agent-files': [/agent-files/],
   cli: [/cli-tokens|local-agents/],
-  experimental: [/ai-progress-estimate|session-bridge|homeroom-bot-dm/],
+  experimental: [/ai-progress-estimate|session-bridge|review-flow/],
   usernode: [/\/api\/v4\/mobile|wallet|staking/],
 });
 
@@ -495,7 +497,7 @@ function authProjection(group, data) {
     profile: ['username', 'displayName'],
     username: ['username'],
     'api-key': ['hasApiKey', 'keyLast4', 'demoKey'],
-    experimental: ['aiProgressEstimate', 'sessionBridgeEnabled', 'homeroomBotDm'],
+    experimental: ['aiProgressEstimate', 'sessionBridgeEnabled', 'reviewFlowEnabled'],
   }[group] || [];
   return Object.fromEntries(fields.filter((key) => Object.hasOwn(user, key)).map((key) => [key, user[key]]));
 }

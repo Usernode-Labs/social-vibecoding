@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState, type RefObject } from 'react';
 
+import { t } from '../../lib/i18n/runtime';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { isNearBottom, STICK_SLACK_PX, type ScrollBox } from './stick-to-bottom';
+import { inMainStream } from './bot-shared';
 
 /*
  * A conversation with unread messages opens where they begin.
@@ -21,14 +23,16 @@ import { isNearBottom, STICK_SLACK_PX, type ScrollBox } from './stick-to-bottom'
  *   - the "New" LINE above that message, and a BANNER over the top of the
  *     transcript saying how many are new. The banner goes once the reader
  *     has scrolled onto the line or past it, or reached the bottom; a tap
- *     takes them back to the line. The line stays while the conversation is
+ *     takes them back to the line, or on to the latest when they are at the
+ *     line already (bannerTarget). The line stays while the conversation is
  *     open;
  *
  * and the third reads only where the reader is:
  *
- *   - JUMP TO LATEST, a round button over the foot of the transcript
- *     whenever the reader is not at the bottom, with a dot when somebody
- *     wrote while they were away from it.
+ *   - JUMP TO LATEST, a round button at the right edge of the
+ *     transcript's foot, just above the composer, whenever the reader is
+ *     not at the bottom, with a dot when somebody wrote while they were
+ *     away from it.
  *
  * Everything that decides is a pure function here, so a test can pin it;
  * the hooks only measure and call them.
@@ -91,7 +95,7 @@ export function firstUnreadId(rows: readonly UnreadRow[], lastReadId: number): n
 export function newMessagesLabel(count: number): string {
   const n = Math.floor(Number(count) || 0);
   if (n <= 0) return '';
-  return `${n} new ${n === 1 ? 'message' : 'messages'}`;
+  return t('messages:thread.newMessages', { count: n });
 }
 
 /**
@@ -114,6 +118,38 @@ export function openingScrollTop(
   const bottom = Math.max(0, scrollHeight - clientHeight);
   const top = Math.min(bottom, Math.max(0, Math.round(lineTop - context)));
   return { top, pinned: bottom - top <= slack };
+}
+
+/**
+ * How far a glide must go to read as the transcript moving at all. A tap on
+ * the banner that would move it less than this goes on to the latest.
+ */
+export const BANNER_STILL_PX = 24;
+
+/**
+ * Where a tap on the "3 new messages" banner takes the reader. To the "New"
+ * line, placed as the opening places it, when that is somewhere else; when
+ * the reader is there already, on to the latest, where the new messages end.
+ *
+ * Run six (14 Oct 2026): the banner is up from the opening, which already
+ * put the line near the top, so a tap "to the line" moved nothing, the
+ * banner went, and the reader had to find Jump to latest to see what was
+ * new. A tap now always moves toward the new messages.
+ */
+export function bannerTarget(
+  { lineTop, scrollTop, scrollHeight, clientHeight, context = UNREAD_CONTEXT_PX, still = BANNER_STILL_PX }: {
+    lineTop: number;
+    scrollTop: number;
+    scrollHeight: number;
+    clientHeight: number;
+    context?: number;
+    still?: number;
+  },
+): { top: number; to: 'line' | 'latest' } {
+  const bottom = Math.max(0, scrollHeight - clientHeight);
+  const { top } = openingScrollTop({ lineTop, scrollHeight, clientHeight, context });
+  if (Math.abs(top - scrollTop) >= still) return { top, to: 'line' };
+  return { top: bottom, to: 'latest' };
 }
 
 /** Where the "New" line is against what the scroller shows. */
@@ -182,8 +218,8 @@ export function jumpShown(box: ScrollBox, slack: number = STICK_SLACK_PX): boole
 
 /** The button's name, which says what the dot means. */
 export function jumpLabel(arrived: number): string {
-  const words = newMessagesLabel(arrived);
-  return words ? `Jump to latest, ${words}` : 'Jump to latest';
+  const n = Math.floor(Number(arrived) || 0);
+  return n > 0 ? t('messages:thread.jumpToLatestNew', { count: n }) : t('messages:thread.jumpToLatest');
 }
 
 /** A glide the reader asked for, or a jump for a reader who asked for less motion. */
@@ -347,8 +383,11 @@ export function useUnreadAffordances(
     const el = scroller.current;
     const mark = line.current;
     banner.current = { ...banner.current, dismissed: true };
-    if (el && mark) {
-      const { top } = openingScrollTop({ lineTop: lineTopIn(el, mark), scrollHeight: el.scrollHeight, clientHeight: el.clientHeight });
+    if (el) {
+      // No line drawn (it went with a refresh): what is new ends at the latest.
+      const top = mark
+        ? bannerTarget({ lineTop: lineTopIn(el, mark), scrollTop: el.scrollTop, scrollHeight: el.scrollHeight, clientHeight: el.clientHeight }).top
+        : el.scrollHeight;
       el.scrollTo({ top, behavior: scrollBehavior() });
     }
     measure(false);
@@ -364,16 +403,21 @@ export function useUnreadAffordances(
  * A message as this module reads it. Countable the way the server's unread
  * count is (services/conversations.js countUnread): the main stream only,
  * not deleted, not a platform line, and stored (a row still sending, or one
- * that failed, has no place among what was read).
+ * that failed, has no place among what was read). One request, one story: a
+ * thread reply the chat with Homeroom bot also lists in its main stream
+ * (`alsoInChat`, ./bot-shared.ts inMainStream) is part of that stream.
  */
 export function messageRow(
-  message: { id: number; sender: { id: number }; threadRootId?: number | null; deleted?: boolean; system?: boolean; pending?: boolean; failed?: boolean },
+  message: {
+    id: number; sender: { id: number }; threadRootId?: number | null; deleted?: boolean; system?: boolean; pending?: boolean; failed?: boolean;
+    metadata?: { homeroomBot?: { alsoInChat?: boolean } | null } | null;
+  },
   viewerId: number,
 ): UnreadRow {
   return {
     id: message.id,
     mine: !!viewerId && message.sender.id === viewerId,
-    countable: message.id > 0 && !message.threadRootId && !message.deleted && !message.system && !message.pending && !message.failed,
+    countable: message.id > 0 && inMainStream(message) && !message.deleted && !message.system && !message.pending && !message.failed,
   };
 }
 

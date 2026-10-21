@@ -26,6 +26,7 @@ const ids = {
   lifecycle: require.resolve('../src/services/lifecycle'),
   rateLimits: require.resolve('../src/middleware/rate-limits'),
   pool: require.resolve('../src/db/pool'),
+  platform: require.resolve('../src/workflow/platform.ts'),
   appsRoute: require.resolve('../src/routes/apps'),
 };
 for (const id of Object.values(ids)) delete require.cache[id];
@@ -33,22 +34,23 @@ for (const id of Object.values(ids)) delete require.cache[id];
 let failedApp;
 let sourceApp;
 let currentUser;
-let createCalls;
-let forkCalls;
+let retryCalls;
+let retryAnswer;
 let queries;
 
 stub(ids.logger, { info() {}, warn() {}, error() {}, debug() {} });
 stub(ids.appCreator, {
-  createApp: async (...args) => { createCalls.push(args); },
 });
 stub(ids.appForker, {
-  forkApp: async (...args) => { forkCalls.push(args); },
   findForkSource: async () => sourceApp,
 });
 stub(ids.caddy, { productionHostname: (slug) => `${slug}.example.test` });
 stub(ids.docker, { getHostPort: async () => null });
 stub(ids.github, { parseGithubUrl: () => null, isEnabled: () => false });
-stub(ids.driftPoller, { checkAndRedeployOne: async () => ({}) });
+stub(ids.driftPoller, { checkByHand: async () => ({}) });
+// A project's making (src/workflow/app-creation/): what Retry asked of it,
+// and what it answers.
+stub(ids.platform, { retryCreation: async (appId, o) => { retryCalls.push([appId, o]); return retryAnswer; } });
 stub(ids.appSecrets, {});
 const realManifest = require('../src/services/app-manifest');
 stub(ids.appManifest, {
@@ -68,6 +70,7 @@ stub(ids.rateLimits, {
   // route module, not just the route that uses it.
   githubLookupLimiter: (_req, _res, next) => next(),
   feedbackTitleLimiter: (_req, _res, next) => next(),
+  firstSessionMomentLimiter: (_req, _res, next) => next(),
 });
 
 const pool = {
@@ -146,25 +149,62 @@ test.beforeEach(() => {
   failedApp = app();
   sourceApp = source();
   currentUser = { id: 5, username: 'fork-owner' };
-  createCalls = [];
-  forkCalls = [];
+  retryCalls = [];
+  retryAnswer = { status: 'accepted' };
   queries = [];
 });
 
-test('retrying a fork dispatches app-forker with the recorded source', async () => {
+test('retrying a fork asks its making to set it up again, counted', async () => {
   const server = await startServer();
   try {
     const { res, body } = await post(server, '/api/apps/forked-app/retry');
     assert.equal(res.status, 200);
     assert.deepEqual(body, { ok: true });
-    assert.equal(forkCalls.length, 1);
-    assert.equal(forkCalls[0][1], failedApp);
-    assert.equal(forkCalls[0][2], sourceApp);
-    assert.equal(createCalls.length, 0, 'a fork must never enter fresh-app template provisioning');
-    const reset = queries.find((q) => /retry_count = retry_count \+ 1/.test(q.sql));
-    assert.ok(reset);
-    assert.match(reset.sql, /last_failure = NULL/,
-      'the old generic failure must not survive into the new attempt');
+    assert.deepEqual(retryCalls, [[22, { counted: true, actor: 'fork-owner' }]]);
+    assert.ok(!queries.some((q) => /UPDATE apps SET status/.test(q.sql)), 'the making writes the status, not the route');
+  } finally {
+    server.close();
+  }
+});
+
+test('a retry its making refuses (an attempt still finishing) is a 409', async () => {
+  retryAnswer = { status: 'rejected', reason: 'setting_up' };
+  const server = await startServer();
+  try {
+    const { res, body } = await post(server, '/api/apps/forked-app/retry');
+    assert.equal(res.status, 409);
+    assert.match(body.error, /still finishing/);
+  } finally {
+    server.close();
+  }
+});
+
+test('a retry while its first deploy is still on its way, or one its making could not decide, is a 409 that says so', async () => {
+  const server = await startServer();
+  try {
+    retryAnswer = { status: 'rejected', reason: 'still_deploying' };
+    let { res, body } = await post(server, '/api/apps/forked-app/retry');
+    assert.equal(res.status, 409);
+    assert.match(body.error, /first deploy is still on its way/);
+    retryAnswer = { status: 'faulted', reason: 'transition_threw' };
+    ({ res, body } = await post(server, '/api/apps/forked-app/retry'));
+    assert.equal(res.status, 409);
+    // Not answered within the wait: its making will.
+    retryAnswer = { status: 'pending' };
+    ({ res } = await post(server, '/api/apps/forked-app/retry'));
+    assert.equal(res.status, 200);
+  } finally {
+    server.close();
+  }
+});
+
+test('an interrupted failure\'s retry is free', async () => {
+  failedApp = app({ retry_count: 3, last_failure: { reason: 'interrupted', interrupted: true } });
+  const server = await startServer();
+  try {
+    const { res } = await post(server, '/api/apps/forked-app/retry');
+    assert.equal(res.status, 200);
+    assert.deepEqual(retryCalls, [[22, { counted: false, actor: 'fork-owner' }]]);
   } finally {
     server.close();
   }
@@ -177,10 +217,7 @@ test('a copied fork can retry from its independent repo after the source is dele
   try {
     const { res } = await post(server, '/api/apps/forked-app/retry');
     assert.equal(res.status, 200);
-    assert.equal(forkCalls.length, 1);
-    assert.equal(forkCalls[0][2], null,
-      'app-forker resumes the already-copied repo without reading a deleted source');
-    assert.equal(createCalls.length, 0);
+    assert.equal(retryCalls.length, 1, 'its setup resumes from its own repository');
   } finally {
     server.close();
   }
@@ -193,10 +230,7 @@ test('a missing source stops an uncopied fork retry with an actionable reason', 
     const { res, body } = await post(server, '/api/apps/forked-app/retry');
     assert.equal(res.status, 409);
     assert.match(body.error, /came from no longer exists/i);
-    assert.equal(forkCalls.length, 0);
-    assert.equal(createCalls.length, 0);
-    assert.ok(!queries.some((q) => /retry_count = retry_count \+ 1/.test(q.sql)),
-      'a retry that cannot start does not consume the retry budget');
+    assert.deepEqual(retryCalls, [], 'a retry that cannot start does not consume the retry budget');
   } finally {
     server.close();
   }
@@ -212,15 +246,14 @@ test('forking a source still being created is refused before a fork row is inser
     assert.equal(res.status, 409);
     assert.match(body.error, /still being set up/i);
     assert.ok(!queries.some((q) => /INSERT INTO apps/.test(q.sql)));
-    assert.equal(forkCalls.length, 0);
   } finally {
     server.close();
   }
 });
 
 // A remix starts as Just you, whatever the original's audience, and its
-// lineage records when it was made. The worker adds the two commits once the
-// repository is copied (tests/app-forker-reliability.test.js).
+// lineage records when it was made. Its insert starts its making, which adds
+// the two commits once the repository is copied (tests/app-creator-failure.test.js).
 test('a remix is inserted as Just you with reference-only lineage', async () => {
   failedApp = null;
   sourceApp = source({ collab_visibility: 'public', view_visibility: 'public' });
@@ -240,7 +273,7 @@ test('a remix is inserted as Just you with reference-only lineage', async () => 
     assert.equal(lineage.appId, 11);
     assert.equal(lineage.slug, 'source-app');
     assert.ok(Date.parse(lineage.forkedAt) >= before - 1000, 'forkedAt is when the copy was made');
-    assert.equal(forkCalls.length, 1, 'the worker copies it');
+    assert.deepEqual(retryCalls, [], 'nothing asked of the making by hand: its insert started it');
   } finally {
     server.close();
   }

@@ -14,6 +14,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { englishPlatformI18n, message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
@@ -66,6 +67,23 @@ test('a row links only to a request it can name', () => {
   assert.equal(row({ status: 'reviewed' }).status, 'received', 'only the two statuses the server can prove');
 });
 
+test('recent feedback offers a sibling Edit row, subtracting time spent in the cached profile', () => {
+  const { feedbackListView } = loadTsx(STORE);
+  const { FeedbackSheet } = loadTsx('frontend/src/features/profile/feedback-sheet.tsx');
+  const now = Date.now();
+  const payload = { sent: 1, counted: 0, receivedAt: now - 61000, reports: [{
+    ...FEEDBACK.reports[1], edit: { reportId: 20, version: 2, title: 'Board jumps', description: 'Original words', secondsLeft: 300 },
+  }] };
+  const view = feedbackListView(payload, now);
+  assert.equal(view.rows[0].edit.expiresAt, now + 239000);
+  assert.equal(view.rows[0].edit.version, 2);
+  const html = renderToHtml(createElement(FeedbackSheet, { view }));
+  assert.match(html, /<\/a><button [^>]*data-feedback-edit="20"/);
+  assert.match(html, /Edit this request/);
+  assert.match(html, /4 more minutes/);
+  assert.equal(feedbackListView(payload, now + 240000).rows[0].edit, null);
+});
+
 test('a failed read is not "nothing sent", and a capped list says so', () => {
   const { feedbackListView } = loadTsx(STORE);
   assert.deepEqual(feedbackListView(null, NOW), { loaded: false, summary: null, truncated: false, rows: [] });
@@ -87,7 +105,12 @@ test('the list renders its rows, its empty state and its failure', () => {
   assert.match(html, /<a [^>]*href="#app\/usernode-2d5619\/dev\/issues\/3001"[^>]*data-feedback-report="30"[^>]*data-feedback-status="counted"/);
   assert.match(html, /Counted · 180 pts/);
   assert.match(html, /<div [^>]*data-feedback-report="10"/, 'no request, so a row and not a link');
-  assert.match(html, /Received: it was filed as a request\. Counted: it earned points in the feedback challenge\./);
+  // #4036: the legend says what is received but never counted, so a row on
+  // the viewer's own project that stays "Received" is not read as a stuck count.
+  const legend = message('profile:feedback.legend');
+  assert.ok(html.includes(legend.replace(/'/g, '&#x27;')), 'the legend is drawn from its catalog entry');
+  assert.match(legend, /^Received: it was filed as a request\. Counted: it earned points in a feedback challenge\./);
+  assert.match(legend, /a project you made, or on one only you are in, is received but not counted/);
   const empty = renderToHtml(createElement(FeedbackSheet, { view: feedbackListView({ sent: 0, counted: 0, reports: [] }, NOW) }));
   assert.match(empty, /id="profile-feedback-empty"/);
   assert.doesNotMatch(empty, /profile-feedback-list/);
@@ -196,6 +219,7 @@ test('the feedback challenge\'s page links to Your feedback, and no other page d
   sandbox.window.window = sandbox.window;
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
+  sandbox.PlatformI18n = englishPlatformI18n();
   vm.runInContext(src, sandbox, { filename: 'topochain-challenges.js' });
   const pane = sandbox.window.TopochainChallenges;
   const pageOf = (illustration) => {
@@ -205,6 +229,13 @@ test('the feedback challenge\'s page links to Your feedback, and no other page d
   assert.equal(pageOf('useful-feedback').feedbackLink, true);
   assert.equal(pageOf('try-three-apps').feedbackLink, false);
   assert.equal(pageOf(null).feedbackLink, false);
+  // #4036: the feedback challenge says what counts and when, under the rail;
+  // no other page carries the note.
+  const note = message('leaderboard:challenges.feedback.note');
+  assert.equal(pageOf('useful-feedback').feedbackNote, note);
+  assert.match(note, /a project you made, or on one only you are in, doesn't count here/);
+  assert.match(note, /Counts run on a schedule and each report is graded/);
+  assert.equal(pageOf('try-three-apps').feedbackNote, null);
   pane._detailChallenge = null;
 
   const { DetailPage } = loadTsx('frontend/src/features/leaderboard/challenges-pane.tsx');
@@ -218,4 +249,9 @@ test('the feedback challenge\'s page links to Your feedback, and no other page d
     /<a id="tc-se-feedback-mine" href="#profile\?feedback"[^>]*>See your feedback<\/a>/);
   assert.doesNotMatch(renderToHtml(createElement(DetailPage, { view: { ...view, feedbackLink: false } })),
     /tc-se-feedback-mine/);
+  const noted = renderToHtml(createElement(DetailPage, { view: { ...view, feedbackLink: true, feedbackNote: 'A report counts when you send it.' } }));
+  const rail = noted.indexOf('role="progressbar"');
+  const at = noted.indexOf('A report counts when you send it.');
+  assert.ok(rail > 0 && at > rail && at < noted.indexOf('tc-se-feedback-mine'), 'the note sits under the rail, before the link');
+  assert.doesNotMatch(renderToHtml(createElement(DetailPage, { view })), /A report counts when/);
 });

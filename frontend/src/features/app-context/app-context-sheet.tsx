@@ -113,7 +113,7 @@
  */
 
 import { OverlayScrim } from '../../lib/overlay-scrim-view';
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 
@@ -122,33 +122,31 @@ import {
   ChevronRightIcon,
   FlagIcon,
   InfoCircleIcon,
-  PlusIcon,
   PhonePlusIcon,
   PlusWideIcon,
-  SparklesIcon,
   TerminalIcon,
   UserGroupIcon,
   XIcon,
 } from '@/components/ui/icons';
 
 import { AboutPane } from './about-pane';
-import { offeringGoToHomeroom } from './about-data';
+import { offeringGoToHomeroom, owedHomeWalk, useAboutApp } from './about-data';
 import { InvitePane } from './invite-pane';
-import { useHomeScreenOffer } from '../mobile-install/home-screen-offer';
+import { isNativeApp } from '../mobile-install/environment';
 import { InstallStepsSheet } from '../mobile-install/install-steps-sheet';
+import type { MobileOs } from '../mobile-install/detect';
+import { homeroomHomeScreen, openHomeroomInBrowser, takeArrival } from '../mobile-install/homeroom-home-screen';
+import { useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
 import { ImproveQuickActions, UpdateStatus } from '../improve/actions';
+import { prepareComment } from '../improve/suggest-shortcut';
 import { openReport } from '../dialogs/report';
+import { waitlistOptions } from '../auth/waitlist-shared';
 import { improveStore } from '../improve/improve-store.js';
 import { Improve } from '../improve/improve-controller.js';
 import { appContextStore } from './app-context-store.js';
 import { AppContext } from './app-context-controller.js';
 import { recordAppUse } from './app-recency';
-import { continueRows, type ContinueList, type ContinueRow } from './continue-model';
-import { AgentActivityIcon } from '../agent-session/activity-mark';
-import { ACTIVITY_LABEL } from '../agent-session/activity';
-import { archiveListedSession, loadAgentSessions, useAgentChatsShown, useAgentSessions } from '../agent-session/store';
-import { setFilter as setMessagesFilter } from '../messages/store';
 import { hydrateNeedsSeen, unseenNeeds } from '../workshop/needs-seen';
 import { navStore } from '../nav/nav-store.js';
 
@@ -184,15 +182,6 @@ const BACK_DISC = 'shrink-0 inline-flex items-center justify-center w-9 h-9 roun
 const SECTION = 'px-5 pt-4 pb-1 ' + SECTION_TYPE;
 
 /**
- * "Show more" under the agent sessions (#3405): a link in the action accent,
- * not a row. The left padding is ROW's px-5 plus RowBody's 20px glyph and
- * gap-3, so the words start where the session titles above them start.
- */
-const CONTINUE_ALL = 'inline-flex items-center gap-1 min-h-[44px] pl-[52px] pr-5 '
-  + 'text-[13px] font-semibold text-violet-700 dark:text-violet-300 '
-  + 'hover:underline underline-offset-2';
-
-/**
  * One destination. An ANCHOR, always — whether clean-path or fragment-routed,
  * cmd/ctrl click, middle-click and "open in new tab" all have to work, the same
  * reason #back-btn is an <a>. `dismissForNav` closes the sheet on a plain
@@ -202,20 +191,15 @@ const CONTINUE_ALL = 'inline-flex items-center gap-1 min-h-[44px] pl-[52px] pr-5
 /**
  * A row's INSIDES — the glyph, the label, anything trailing, the chevron.
  *
- * Split out because this menu has three row shapes and they have to read as
- * one kind of thing: two of them are <button>s (About, which is a second pane
+ * Split out because this menu has row shapes that have to read as one kind
+ * of thing: two of them are <button>s (About, which is a second pane
  * of this sheet rather than an address, and Improve, which opens a panel) and
  * the rest are <a>s. One fragment is what keeps "the buttons look like the
- * links" true by construction rather than by three copies staying in step.
+ * links" true by construction rather than by copies staying in step.
  */
-function RowBody({ icon, label, sub, lead, trailing }: {
+function RowBody({ icon, label, trailing }: {
   icon: ReactNode;
   label: string;
-  // A second line under the label: an agent session's app and where its
-  // change stands ("Run Club · in progress").
-  sub?: string;
-  // A mark drawn just before the label: an agent session's state (#3013).
-  lead?: ReactNode;
   trailing?: ReactNode;
 }): ReactNode {
   return (
@@ -223,13 +207,7 @@ function RowBody({ icon, label, sub, lead, trailing }: {
       <span className="shrink-0 [&>svg]:h-5 [&>svg]:w-5 text-zinc-500 dark:text-zinc-400" aria-hidden="true">
         {icon}
       </span>
-      {lead}
-      {sub ? (
-        <span className="flex-1 min-w-0 py-1.5">
-          <span className="block truncate font-medium">{label}</span>
-          <span className="block truncate text-xs text-zinc-500 dark:text-zinc-400">{sub}</span>
-        </span>
-      ) : <span className="flex-1 min-w-0 truncate font-medium">{label}</span>}
+      <span className="flex-1 min-w-0 truncate font-medium">{label}</span>
       {trailing}
       <ChevronRightIcon className="w-4 h-4 shrink-0 text-zinc-300 dark:text-zinc-600" aria-hidden="true" />
     </>
@@ -273,16 +251,14 @@ function followThenDismiss(e: React.MouseEvent, href: string): void {
 }
 
 function MenuRow({
-  id, href, icon, label, sub, lead, trailing, onClick, elRef, shipsHidden, dataContextRow,
+  id, href, icon, label, trailing, onClick, elRef, shipsHidden, dataContextRow,
 }: {
   id: string;
-  sub?: string;
   // Names the destination for selectors that key on it rather than on the id.
   dataContextRow?: string;
   href: string;
   icon: ReactNode;
   label: string;
-  lead?: ReactNode;
   trailing?: ReactNode;
   onClick?: (e: React.MouseEvent) => void;
   elRef?: React.Ref<HTMLAnchorElement>;
@@ -303,191 +279,25 @@ function MenuRow({
         followThenDismiss(e, href);
       }}
     >
-      <RowBody icon={icon} label={label} sub={sub} lead={lead} trailing={trailing} />
+      <RowBody icon={icon} label={label} trailing={trailing} />
     </a>
   );
 }
 
 /**
- * One of your agent sessions under Agent chats: a MenuRow that, on a
- * phone, a left swipe archives (#3515).
- *
- * ARCHIVE, NOT DELETE. The request asked to delete, and nothing deletes an
- * agent session: what puts one away is Archive, on the ⋯ of the session's own
- * screen, which takes it out of your lists, pauses its change and can be
- * undone. So the swipe offers that, in its word and with its confirm
- * (../agent-session/store.ts `archiveListedSession`), rather than a second
- * way to put a session away that means something different.
- *
- * THE SWIPE IS THE KIT'S (PlatformUI.swipeActions), wired the way the
- * notifications' Saved and Invite rows wire it: on touch only, from an
- * effect, after mount. The row takes only sideways drags (the kit gives it
- * `touch-action: pan-y` and puts its drag through the gesture arbiter), so
- * an up-and-down drag on a row still scrolls the list, and the kit sheet
- * this menu is on a phone, which lets go of any drag that reads as
- * sideways, still pulls down from its top as it did. A tap on the row still
- * opens the session.
- *
- * Nothing replaces the swipe for a mouse or a keyboard. The rows it would
- * sit beside are links, and a second control inside each one is a nested
- * interactive element; the session the row opens has Archive on its ⋯,
- * where it already was.
- *
- * WHY THE <a> SITS IN A <div> OF ITS OWN. The kit wraps the element it is
- * handed: it moves it into a `.un-swipe` container it inserts in its place,
- * beside the action tray. Were the <a> a direct child of #app-menu-continue,
- * React would go on inserting rows before it and removing it from a parent it
- * is no longer in, which throws the first time the list changes. The slot is
- * the node React places, moves and removes; whatever the kit does happens
- * inside it, and the <a> in it is only ever updated in place. Same id, same
- * `data-context-row`, same href as the row it was.
- *
- * WHY THE SLOT HAS A KEY. Archive is the tray's destructive action, so a full
- * swipe commits it the way the kit commits any: the row slides out, collapses
- * and is taken out of the document, and only THEN is the handler called
- * (a tap on the revealed Archive goes the same way). So the confirm is
- * asked after the row has gone, the only order the kit has: gone, "Archive
- * this session?", back on Cancel. "Back" is a new key: React drops the
- * emptied slot and renders the row again, and the effect wraps it again.
- * An archive that went through needs no repair, because the session leaves
- * the list and its slot goes with it.
+ * The agent chats that sat here — Build it now and the session rows — left
+ * the menu (#4729): Messages' Agents list is their one home, where the "+"
+ * starts a new one and "Show archived" reaches the archived ones. A menu
+ * that lists an inbox's CONTENTS was the decay this file's header warns of;
+ * the section was that, and it is gone whole. Nothing replaces it here.
  */
-function SessionRow({ row, index }: { row: ContinueRow; index: number }): ReactNode {
-  const rowRef = useRef<HTMLAnchorElement | null>(null);
-  const [round, setRound] = useState(0);
-  useEffect(() => {
-    const el = rowRef.current;
-    const ui = window.PlatformUI;
-    if (!el || !ui?.isTouch() || !ui.swipeActions) return undefined;
-    const swipe = ui.swipeActions(el, {
-      actions: [{
-        label: 'Archive',
-        destructive: true,
-        handler: () => {
-          void archiveListedSession(row.sessionId).then((archived) => {
-            if (!archived) setRound((n) => n + 1);
-          });
-        },
-      }],
-    });
-    return () => swipe.detach();
-  }, [row.sessionId, round]);
 
-  return (
-    <div key={round}>
-      <MenuRow
-        id={`app-menu-continue-${index}`}
-        dataContextRow="continue-agent"
-        elRef={rowRef}
-        href={row.href}
-        // Working, the spinner takes the icon's place (#3028); finished
-        // unseen, the green dot does (#3076). The icon slot is aria-hidden,
-        // so the state rides in the lead as words.
-        icon={row.activity
-          ? <AgentActivityIcon activity={row.activity} className="h-5 w-5" />
-          : <SparklesIcon />}
-        label={row.title}
-        sub={row.sub}
-        lead={row.activity
-          ? <span className="sr-only">{ACTIVITY_LABEL[row.activity]}</span>
-          : null}
-      />
-    </div>
-  );
-}
-
-/**
- * AGENT CHATS (it was "Continue", #2779 follow-up, then "Agent sessions",
- * then "More"), BELOW the app's own rows: Build it yourself and your agent
- * sessions, on every app, under their own heading. See the comment on
- * `continuing` in the sheet below for the sessions' rules.
- *
- * ONLY FOR SOMEBODY WHO HAS BUILT SOMETHING THEMSELVES (first-session
- * run-through, 5 Oct 2026). For a first-time user the menu is the app's own
- * rows and Suggest an improvement, above, which is the front door: the
- * whole section shows only once they have had an agent session, started
- * from any of the other doors (the hub's ⋯, a request's Build it yourself,
- * Messages' new chat, the filed request's link). The sheet asks the store
- * (useAgentChatsShown): a session, archived ones included, which the list's
- * read reports, and which the first message of a new one sets, so the
- * section is here from the moment the first one exists, with no reload. The
- * heading went back to "Agent chats" with it: "More" was a plain word for a
- * newcomer, who no longer sees it.
- *
- * NOT IN THE PRERENDER, then: whether the viewer has one is their own data,
- * known after mount, so the prerender and the hydrating render both draw
- * nothing here. #app-menu-sessions and #improve-row-new-session left the
- * shell's static ids for that reason (tests/shell-id-inventory.test.js).
- *
- * IT LEADS WITH "BUILD IT YOURSELF", which was the "New change" button
- * beside Give feedback. People read that button as a way to ask for
- * something, and it opened an agent session without saying so; under this
- * heading it says what it opens. Same id and same call as the button
- * (Improve.startSession()), and hidden, as the button was, for a viewer who
- * may not write, who sees their sessions alone.
- */
-export function AgentChats({ readOnly, continuing }: {
-  readOnly: boolean;
-  continuing: ContinueList;
-}): ReactNode {
-  return (
-    <div id="app-menu-sessions">
-      <div className={SECTION}>Agent chats</div>
-      {readOnly ? null : (
-        <button
-          id="improve-row-new-session"
-          type="button"
-          className={`${ROW} w-full text-left`}
-          onClick={() => Improve.startSession()}
-        >
-          {/* B8: Suggest an improvement (above) goes to Homeroom bot; this
-              is building it yourself, with a coding agent. */}
-          <RowBody
-            icon={<PlusIcon className="text-violet-600 dark:text-violet-400" />}
-            label="Build it yourself"
-          />
-        </button>
-      )}
-      {continuing.rows.length ? (
-        <div id="app-menu-continue" data-app-menu-continue={continuing.rows.length}>
-          {/* A left swipe archives one, on a phone (#3515): see
-              SessionRow. */}
-          {continuing.rows.map((row, index) => (
-            <SessionRow key={row.key} row={row} index={index} />
-          ))}
-          {/*
-              SHOW MORE IS A LINK UNDER THE LIST, NOT A ROW IN IT (#3405).
-              Drawn as one more row (icon, label, chevron at the edge) it
-              read as a sixth session. It is small accent text instead,
-              set in line with the session titles above so it reads as
-              the list's own tail, with a small chevron because it leaves
-              the menu for Messages' Agents list. Still an anchor, so
-              it is in the Tab order and "open in new tab" works; the
-              tap target stays 44px tall though the text is small.
-          */}
-          {continuing.more ? (
-            <a
-              id="app-menu-continue-all"
-              href="#messages"
-              className={CONTINUE_ALL}
-              onClick={(e) => {
-                setMessagesFilter('agents');
-                followThenDismiss(e, '#messages');
-              }}
-            >
-              Show more
-              <ChevronRightIcon className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-            </a>
-          ) : null}
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
+/** One of Home.menuItemsFor's items for an app (features/home/home.js). */
+type MenuItem = { key: string; run: () => void };
 
 export function AppsSwitcherSheet(): ReactNode {
-  const { open, adopted, view } = useStoreState(appContextStore);
+  const t = useMessages('agent');
+  const { open, adopted, view, back } = useStoreState(appContextStore);
   // Everything this sheet says about the app comes from ONE store, published
   // by the classic writers that already owned those facts. #2718 adds the
   // three the rows need — the name to label them with, the terminal's gate,
@@ -499,14 +309,24 @@ export function AppsSwitcherSheet(): ReactNode {
   // A PRIVATE MEMBER (../nav/nav-store.js): an invite link let them into this
   // app's group before they were let in off the waitlist. Their menu has
   // "Go to Homeroom", which is their way out of the app until they have used
-  // it once (App._privateNoClose), and no Developer terminal or Build it
-  // yourself: they suggest changes to Homeroom bot instead. So Agent chats
-  // reads them as a viewer who may not write.
+  // it once (App._privateNoClose), and no Developer terminal: they suggest
+  // changes to Homeroom bot instead.
   const { privateMember } = useStoreState(navStore);
+  // Homeroom's privacy notice, for the foot's Privacy link (#5116): the
+  // address GET /api/public/waitlist/options serves (marketing-links.js
+  // privacyNoticeUrl). Asked for when the sheet first opens, not at boot;
+  // the fetch is shared with every other screen that names the notice. The
+  // link is left out until the address is known.
+  const [privacyHref, setPrivacyHref] = useState<string | null>(null);
+  useEffect(() => {
+    if (!open || privacyHref) return undefined;
+    let live = true;
+    void waitlistOptions().then((options) => {
+      if (live && options?.privacy_link) setPrivacyHref(options.privacy_link);
+    });
+    return () => { live = false; };
+  }, [open, privacyHref]);
   const readOnly = writeBarred || privateMember;
-  const agentSessions = useAgentSessions();
-  // Whether the viewer has built something themselves: see AgentChats.
-  const agentChats = useAgentChatsShown();
   // Votes this viewer owes on the app in context — the badge on the
   // "Go to community hub" row. See the fetch below.
   const [owed, setOwed] = useState<number | null>(null);
@@ -532,63 +352,84 @@ export function AppsSwitcherSheet(): ReactNode {
   // who has not used it yet has that one way onward, and the community page
   // comes after it, so "Go to community" is hidden through the same seam
   // until they have used it or are let in (./about-data.ts
-  // offeringGoToHomeroom). Hidden, never renamed or dropped: the row is in
-  // the prerender, and its id is the Workshop's.
+  // offeringGoToHomeroom), and so is it for any newcomer while the walk on
+  // Home is owed to them (`walkOwed`, below). Hidden, never renamed or
+  // dropped: the row is in the prerender, and its id is the Workshop's.
   // AFTER MOUNT ONLY, for the viewer's own rows below (their agent
   // sessions): the hydrating render must print what the prerender printed
   // whatever the store says by then, or it is React #418 on every route. The
   // class toggle below is an effect for the same reason.
+  //
+  // A NEWCOMER WHO HAS NOT REACHED HOMEROOM YET (Evan, sign-up test, 19 Oct
+  // 2026): the first session's walk on Home is still owed to them on this
+  // device (./about-data.ts owedHomeWalk), a maker in their first app or an
+  // invited person new to Homeroom. "Go to community" opened the project's
+  // hub inside the app, where the walk does not run, so they get "Go to
+  // Homeroom" instead, as a private member does: Home, and the walk on it.
+  // The home-screen row stays a private member's (`newcomer`).
   const [mounted, setMounted] = useState(false);
   useEffect(() => { setMounted(true); }, []);
   const newcomer = mounted && offeringGoToHomeroom(!!privateMember);
+  const walkOwed = mounted && owedHomeWalk();
   // #4399: the home-screen offer that rides in the Go to Homeroom card while
-  // it is offered (the banner is held down meanwhile). Asked only while the
-  // menu is open, so a closed menu costs no request.
-  const homeScreenOs = useHomeScreenOffer(open && newcomer);
-  const [homeScreenSteps, setHomeScreenSteps] = useState(false);
+  // it is offered (the banner is held down meanwhile). It puts THIS app on
+  // the home screen (Evan, 20 Oct 2026), not Homeroom: Home.menuItemsFor's
+  // `install` item for the app, taken by key and run as is, as About's row
+  // does (./about-pane.tsx). That item is a phone's only, and never in the
+  // Homeroom app, where it would leave for the system browser. Read only
+  // while the menu is open, so a closed menu costs nothing.
+  const appRow = useAboutApp(slug || null, open && newcomer && !!slug && !restricted);
+  const installItem = useMemo(() => {
+    const menuItemsFor = typeof window === 'undefined' ? undefined
+      : (window as unknown as { Home?: { menuItemsFor?: (row: unknown) => MenuItem[] } }).Home?.menuItemsFor;
+    if (!appRow || typeof menuItemsFor !== 'function') return null;
+    try { return (menuItemsFor(appRow) || []).find((i) => i && i.key === 'install') || null; } catch { return null; }
+  }, [appRow]);
+  const addToHomeScreen = newcomer && !isNativeApp() ? installItem : null;
   const workshopRowRef = useRef<HTMLAnchorElement | null>(null);
   useIsomorphicLayoutEffect(() => {
-    const hide = !!restricted || newcomer;
+    const hide = !!restricted || newcomer || walkOwed;
     for (const el of [workshopRowRef.current]) {
       if (el && el.classList.contains('hidden') !== hide) {
         el.classList.toggle('hidden', hide);
       }
     }
-  }, [restricted, newcomer, view, open]);
+  }, [restricted, newcomer, walkOwed, view, open]);
 
   // "About Notes", not "About this app". The name is what the viewer is
   // looking at and it is already on the bar above; "this app" is what you
   // write when you do not have it. It falls back to the slug and then to a
   // bare "this app", because the menu opens on Home too — where the context
   // is the platform's own self-hosted row and the name may not have landed.
-  const appLabel = name || slug || 'this app';
+  const appName = name || slug || null;
+  const appLabel = appName || t('agent:appContext.thisApp');
+  // The back disc's name says where it goes (AppContext.goBack): About, for
+  // an invite pane opened from there, or the menu.
+  const backLabel = view === 'invite' && back === 'about'
+    ? (appName ? t('agent:appContext.backToAbout', { app: appName }) : t('agent:appContext.backToAboutThisApp'))
+    : (appName ? t('agent:appContext.backToMenu', { app: appName }) : t('agent:appContext.backToThisAppMenu'));
 
   const close = useCallback(() => AppContext.close(), []);
 
-  /*
-      CONTINUE (#2779 follow-up): your five most recent agent sessions, on
-      any app, below this app's own rows, so going back to one is a tap from
-      anywhere (Home included), each with the lists' mark (a spinner while it
-      works, a green dot once it finished unseen); then, when there are more,
-      "Show more", which opens Messages' Agents list.
-      The rules are ./continue-model.ts's.
-
-      AFTER MOUNT and after the list loads, never in the prerender: the rows
-      are the viewer's own data, and the hydrating render has to print what
-      the prerender printed. The conversations are read on open, for any
-      signed-in viewer, the flag or not — Messages' rule: turning agent
-      sessions off never hides a conversation that already exists.
-  */
+  // ADD HOMEROOM TO YOUR HOME SCREEN (Evan, 20 Oct 2026): a plain row, on a
+  // phone where Homeroom is not on the home screen yet: in the browser it
+  // shows the install banner's steps, and in an app saved to the home screen
+  // (no Share button there) it opens Homeroom in the browser, whose page puts
+  // the same steps up on arrival. ../mobile-install/homeroom-home-screen.ts
+  // says which. Read after mount, for the prerender's sake.
+  const homeroomOffer = useMemo(() => (mounted ? homeroomHomeScreen() : null), [mounted, open]);
+  const [homeroomSteps, setHomeroomSteps] = useState<MobileOs | null>(null);
   useEffect(() => {
-    if (open && window.App?.user) void loadAgentSessions();
-  }, [open]);
-  const continuing = mounted && view === 'menu'
-    ? continueRows(agentSessions || [])
-    : { rows: [], more: false };
-  // The section itself, after mount too, and only once the viewer has had
-  // an agent session (AgentChats).
-  const showAgentChats = mounted && agentChats;
-
+    if (!takeArrival()) return undefined;
+    let live = true;
+    // After the boot settles, so the steps are not drawn under the first screen.
+    const boot = (window as any).App?.bootSession?.();
+    void Promise.resolve(boot).then(() => {
+      const offer = homeroomHomeScreen();
+      if (live && offer?.via === 'steps') setHomeroomSteps(offer.os);
+    });
+    return () => { live = false; };
+  }, []);
 
   // Every way into an app funnels through improveStore.slug, so recording
   // recency here counts a home tile, an /app/<slug> deep link and a
@@ -662,6 +503,14 @@ export function AppsSwitcherSheet(): ReactNode {
     return () => { live = false; };
   }, [open, slug]);
 
+  // The menu's blue "Suggest an improvement" opens comment mode, and the
+  // page under the menu is still while it is open: the mode's picture of it is drawn now, once the sheet has slid in,
+  // so the mode opens on it the moment the menu has gone
+  // (../comment-pin/comment-pin.tsx `prepareCommentView`).
+  useEffect(() => {
+    if (open) prepareComment();
+  }, [open]);
+
 
   return (
     <>
@@ -678,7 +527,7 @@ export function AppsSwitcherSheet(): ReactNode {
       <div
         id="apps-switcher-sheet"
         role="dialog"
-        aria-label="Menu"
+        aria-label={t('agent:appContext.sheetLabel')}
         aria-hidden={open ? undefined : 'true'}
         {...(open ? { 'data-open': '' } : {})}
         className="fixed z-50 flex flex-col dc-lift dc-lift-panel app-context-transition"
@@ -700,21 +549,26 @@ export function AppsSwitcherSheet(): ReactNode {
               THE PLATFORM'S BACK DISC (#4218), not a chevron in the label's
               small caps: the header's own disc, in its brand ink, at the
               size the Workshop's page heads draw it one level down (36px),
-              with the kit's 44pt hit box (`un-touch-target`). The name
-              beside it says where it goes back to.
+              with the kit's 44pt hit box (`un-touch-target`). It goes one
+              step back: to About for an invite pane opened from there, to
+              the menu otherwise (AppContext.goBack).
+
+              NO NAME BESIDE IT. The app's name in small caps sat here, and
+              each second pane opens on the same name as its own title (About's
+              large name, Invite's "Invite people to …"), so it read twice in
+              a row. The disc's accessible name still says where it goes.
           */}
           {view !== 'menu' ? (
-            <div className="flex-1 min-w-0 flex items-center gap-2.5">
+            <div className="flex-1 min-w-0 flex items-center">
               <button
                 id="app-about-back"
                 type="button"
-                aria-label={`Back to ${appLabel}'s menu`}
+                aria-label={backLabel}
                 className={BACK_DISC}
-                onClick={() => AppContext.showMenu()}
+                onClick={() => AppContext.goBack()}
               >
                 <ChevronLeftIcon className="w-[18px] h-[18px]" aria-hidden="true" />
               </button>
-              <span className={'min-w-0 truncate ' + SECTION_TYPE}>{appLabel}</span>
             </div>
           ) : (
             /*
@@ -732,7 +586,7 @@ export function AppsSwitcherSheet(): ReactNode {
             id="apps-switcher-close"
             type="button"
             className="text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 un-touch-target"
-            aria-label="Close"
+            aria-label={t('core:common.close')}
             onClick={close}
           >
             <XIcon className="w-5 h-5" />
@@ -788,8 +642,8 @@ export function AppsSwitcherSheet(): ReactNode {
           id="switcher-nav"
           className="flex-1 min-h-0 overflow-y-auto pb-2 platform-safe-sheet"
         >
-          {view === 'about' ? <AboutPane label={appLabel} /> : view === 'invite' ? (
-            <InvitePane slug={slug || null} label={appLabel} />
+          {view === 'about' ? <AboutPane label={appLabel} unnamed={!appName} /> : view === 'invite' ? (
+            <InvitePane slug={slug || null} label={appLabel} unnamed={!appName} />
           ) : (
           <>
           {/*
@@ -813,10 +667,12 @@ export function AppsSwitcherSheet(): ReactNode {
               nests a mini-app's menu.
           */}
           {/*
-              GO TO HOMEROOM, for a private member only, and only after mount
-              (the store says who is signed in after hydration, so the
-              prerender has no such row). Home, and the first time its tour
-              (features/first-session goHome).
+              GO TO HOMEROOM, for a private member, and for any newcomer the
+              first session's walk on Home is still owed to (`walkOwed`, in
+              place of "Go to community"), and only after mount (the store
+              says who is signed in after hydration, so the prerender has no
+              such row). Home, and the first time its walk (features/
+              first-session goHome).
 
               A CARD, NOT A ROW (#4401): as a plain row among the app's own it
               was easy to miss, and it is the one door a private member has to
@@ -827,15 +683,19 @@ export function AppsSwitcherSheet(): ReactNode {
               it, and the row type, 15 over 13. It sits INSIDE #switcher-nav
               so `#improve-quick-actions + #switcher-nav` still holds.
 
-              ADD TO HOME SCREEN, IN THE SAME CARD (#4399): while Go to
-              Homeroom is still offered, the install banner stays down over
-              the app they were invited into, and the offer is a second row
-              here under a hairline instead. It opens the banner's How sheet
-              for their OS, and only when the banner itself would offer the
-              home-screen install (../mobile-install/home-screen-offer.ts).
-              Once they have been Home the row goes and the banner is back.
+              ADD THIS APP TO YOUR HOME SCREEN, IN THE SAME CARD (#4399):
+              while Go to Homeroom is still offered, the install banner stays
+              down over the app they were invited into, and the offer is a
+              second row here under a hairline instead. It opens the app's
+              own install page (`addToHomeScreen`, above), so the icon it
+              leaves opens the app they were invited into.
+
+              ONCE THEY HAVE BEEN HOME the card goes, a private member's too
+              (Evan, 20 Oct 2026, "after the first time, Go to Homeroom
+              would change to Go to community"): "Go to community" is back
+              below, and the ✕ is back on the frame (App._privateNoClose).
           */}
-          {mounted && privateMember ? (
+          {mounted && (newcomer || walkOwed) ? (
             <div
               id="app-menu-homeroom-card"
               className="mx-4 mt-1 mb-2 w-[calc(100%_-_2rem)] rounded-[20px] bg-white dark:bg-zinc-900 shadow-[inset_0_0_0_1px_var(--app-sheet-line)]"
@@ -862,31 +722,26 @@ export function AppsSwitcherSheet(): ReactNode {
                   />
                 </span>
                 <span className="flex-1 min-w-0">
-                  <span className="block truncate text-[15px] font-[650] text-zinc-900 dark:text-zinc-100">Go to Homeroom</span>
-                  <span className="block truncate text-[13px] text-zinc-500 dark:text-zinc-400">Your Home, your communities and Homeroom bot</span>
+                  <span className="block truncate text-[15px] font-[650] text-zinc-900 dark:text-zinc-100">{t('agent:appContext.goToHomeroom.title')}</span>
+                  <span className="block truncate text-[13px] text-zinc-500 dark:text-zinc-400">{t('agent:appContext.goToHomeroom.sub')}</span>
                 </span>
                 <ChevronRightIcon className="w-4 h-4 shrink-0 text-zinc-300 dark:text-zinc-600" aria-hidden="true" />
               </button>
-              {newcomer && homeScreenOs ? (
+              {addToHomeScreen ? (
                 <>
                   <div aria-hidden="true" className="mx-3.5 h-px bg-[color:var(--app-sheet-line)]" />
                   <button
                     id="app-menu-row-add-home"
                     type="button"
-                    aria-haspopup="dialog"
-                    aria-expanded={homeScreenSteps}
                     className="flex w-full items-center gap-3 rounded-[20px] px-3.5 py-3 text-left hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors"
-                    onClick={() => setHomeScreenSteps(true)}
+                    onClick={() => { void AppContext.dismissForNav().then(() => addToHomeScreen.run()); }}
                   >
                     <span className="shrink-0 inline-flex items-center justify-center w-10 h-10 rounded-[11px] bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-200" aria-hidden="true">
                       <PhonePlusIcon className="w-5 h-5" aria-hidden="true" />
                     </span>
-                    <span className="flex-1 min-w-0 block truncate text-[15px] font-[650] text-zinc-900 dark:text-zinc-100">Add Homeroom to your home screen</span>
+                    <span className="flex-1 min-w-0 block truncate text-[15px] font-[650] text-zinc-900 dark:text-zinc-100">{t('agent:appContext.addAppToHomeScreen')}</span>
                     <ChevronRightIcon className="w-4 h-4 shrink-0 text-zinc-300 dark:text-zinc-600" aria-hidden="true" />
                   </button>
-                  {open && homeScreenSteps ? (
-                    <InstallStepsSheet os={homeScreenOs} onClose={() => setHomeScreenSteps(false)} />
-                  ) : null}
                 </>
               ) : null}
             </div>
@@ -975,19 +830,22 @@ export function AppsSwitcherSheet(): ReactNode {
             elRef={workshopRowRef}
             href={slug ? `#app/${encodeURIComponent(slug)}/workshop` : '#'}
             icon={<UserGroupIcon />}
-            label="Go to community"
+            label={t('agent:appContext.row.community')}
             trailing={owed ? (
               <span
                 id="app-menu-workshop-owed"
-                title={`${owed} to vote`}
-                aria-label={`${owed} to vote`}
+                title={t('agent:appContext.row.toVote', { count: owed })}
+                aria-label={t('agent:appContext.row.toVote', { count: owed })}
                 className="shrink-0 text-[0.8125rem] font-semibold text-violet-700 dark:text-violet-300"
               >
-                {`${owed} to vote`}
+                {t('agent:appContext.row.toVote', { count: owed })}
               </span>
             ) : null}
             // It says community, so it opens the hub, not whichever tab
-            // the page was last left on (AppView._landOnHub).
+            // the page was last left on (AppView._landOnHub). Beside a
+            // running app on a desktop it opens full width, leaving the app,
+            // as every link to a community does: a community's page is never
+            // the side panel's (../side-panel/routes.ts).
             onClick={(e) => {
               if (slug) (window as any).AppView?._landOnHub?.(slug);
               followThenDismiss(e, slug ? `#app/${encodeURIComponent(slug)}/workshop` : '#');
@@ -1014,7 +872,7 @@ export function AppsSwitcherSheet(): ReactNode {
               id="improve-row-terminal"
               href="#"
               icon={<TerminalIcon />}
-              label="Developer terminal"
+              label={t('agent:appContext.row.terminal')}
               onClick={(e) => {
                 e.preventDefault();
                 void AppContext.dismissForNav().then(() => {
@@ -1043,31 +901,67 @@ export function AppsSwitcherSheet(): ReactNode {
             className={`${ROW} w-full text-left`}
             onClick={() => AppContext.showAbout()}
           >
-            <RowBody icon={<InfoCircleIcon />} label={`About ${appLabel}`} />
+            <RowBody icon={<InfoCircleIcon />} label={appName ? t('agent:appContext.row.about', { app: appName }) : t('agent:appContext.row.aboutThisApp')} />
           </button>
-          {/* AGENT CHATS, for somebody who has built something
-              themselves: see AgentChats above. */}
-          {showAgentChats ? <AgentChats readOnly={!!readOnly} continuing={continuing} /> : null}
+          {homeroomOffer ? (
+            <button
+              id="app-menu-row-add-homeroom"
+              type="button"
+              className={`${ROW} w-full text-left`}
+              onClick={() => {
+                if (homeroomOffer.via === 'browser') {
+                  openHomeroomInBrowser();
+                  void AppContext.dismissForNav();
+                  return;
+                }
+                const { os } = homeroomOffer;
+                void AppContext.close().then(() => setHomeroomSteps(os));
+              }}
+            >
+              <RowBody icon={<PhonePlusIcon />} label={t('agent:appContext.row.addHomeroom')} />
+            </button>
+          ) : null}
+          {/* AGENT CHATS left the menu (#4729): see the note above
+              AppsSwitcherSheet. */}
           {/*
               REPORT APP IS SMALL TEXT AT THE FOOT (UI overhaul), not a row in
               the list: it is the one thing here that is about the app rather
               than for it, and a row of the same weight as Go to community
               read as one more place to go. Same id, same gate, same dialog.
           */}
-          {slug && canReport ? (
-            <div className="px-5 pt-3 pb-1">
-              <button
-                id="improve-row-report"
-                type="button"
-                className="inline-flex items-center gap-1.5 min-h-[32px] text-xs text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 hover:underline"
-                onClick={async () => {
-                  await AppContext.close();
-                  openReport({ targetType: 'app', target: slug, label: appLabel });
-                }}
-              >
-                <FlagIcon className="w-3.5 h-3.5" aria-hidden="true" />
-                Report app
-              </button>
+          {/*
+              PRIVACY SITS BESIDE IT (#5116): "Privacy · Report app", the
+              same two links the bridge's footer carries on an app opened at
+              its own address. Privacy is Homeroom's notice, in a new tab.
+          */}
+          {(slug && canReport) || privacyHref ? (
+            <div id="app-menu-legal" className="flex flex-wrap items-center justify-center gap-x-2 px-5 pt-3 pb-1 text-xs text-zinc-500 dark:text-zinc-400">
+              {privacyHref ? (
+                <a
+                  id="app-menu-privacy"
+                  href={privacyHref}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center min-h-[32px] hover:text-zinc-700 dark:hover:text-zinc-200 hover:underline"
+                >
+                  {t('agent:appContext.privacy')}
+                </a>
+              ) : null}
+              {privacyHref && slug && canReport ? <span aria-hidden="true">·</span> : null}
+              {slug && canReport ? (
+                <button
+                  id="improve-row-report"
+                  type="button"
+                  className="inline-flex items-center gap-1.5 min-h-[32px] text-xs text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 hover:underline"
+                  onClick={async () => {
+                    await AppContext.close();
+                    openReport({ targetType: 'app', target: slug, label: appLabel });
+                  }}
+                >
+                  <FlagIcon className="w-3.5 h-3.5" aria-hidden="true" />
+                  {t('agent:appContext.reportApp')}
+                </button>
+              ) : null}
             </div>
           ) : null}
           </>
@@ -1075,6 +969,7 @@ export function AppsSwitcherSheet(): ReactNode {
         </nav>
       </div>
       <OverlayScrim panelId="apps-switcher-sheet" backdropId="apps-switcher-overlay" />
+      {homeroomSteps ? <InstallStepsSheet os={homeroomSteps} onClose={() => setHomeroomSteps(null)} /> : null}
     </>
   );
 }

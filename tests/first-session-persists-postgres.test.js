@@ -90,6 +90,7 @@ test('the first session\'s question is owed until it is answered, against the fu
     const { user } = await (await fetch(`${base}/api/auth/me`, { headers: { Cookie: `session=${who.token}` } })).json();
     return { access: user.hasPlatformAccess, owed: user.needsCommunitiesChoice, make: user.storyFirstSession };
   };
+  const me = async (who) => (await (await fetch(`${base}/api/auth/me`, { headers: { Cookie: `session=${who.token}` } })).json()).user;
   const row = async (who) => (await pool.query(
     `SELECT needs_communities_choice AS owed, communities_onboarded_at,
             getting_started_seen->>'first_session' AS first_session,
@@ -124,8 +125,12 @@ test('the first session\'s question is owed until it is answered, against the fu
     await firstSession.answerJoinScreenByMaking(pool, maya.id);
     assert.deepEqual(await row(maya),
       { owed: false, communities_onboarded_at: null, first_session: 'sign_in', join_answer: 'sign_in', answer: 'made' },
-      'Journey still reads how it reached them; the answer sits beside it; no Getting started card');
+      'Journey still reads how it reached them; the answer sits beside it');
     assert.deepEqual(await boot(maya), { access: true, owed: false, make: false });
+    // #4635: Home has no Getting started card any more, so the session no
+    // longer says whether to draw one, for this account or any other. Its
+    // First challenges are ordinary cards in Home's Challenges area.
+    assert.equal('showGettingStarted' in await me(maya), false, 'no card to show');
   });
 
   await t.test('"Look around first" ends it too, once', async () => {
@@ -154,6 +159,7 @@ test('the first session\'s question is owed until it is answered, against the fu
       `UPDATE users SET needs_communities_choice = FALSE,
               getting_started_seen = jsonb_build_object('join_answer', 'invite') WHERE id = $1`, [ivy.id]);
     assert.deepEqual(await boot(ivy), { access: true, owed: false, make: false });
+    assert.equal('showGettingStarted' in await me(ivy), false, '#4635: no card for an invitee either');
     // Anything else that got them in first: a group they are a member of,
     // or a project made some other way. Asked the join screen, which lists
     // what they are in, rather than what to make.

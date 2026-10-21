@@ -227,3 +227,21 @@ test('every sheet overlay derives data-open from open && !adopted', () => {
     );
   }
 });
+
+// ── handed back, out of sight (onboarding run three, 12 Oct 2026) ───────
+//
+// The Homeroom menu's bottom sheet stood again at its open place for 190ms
+// after the kit's exit had taken it away (the recording's frames show the
+// web sheet, no grabber). A node homed on <body> goes back there with
+// REHOMED_CLASS, which app.css keeps out of sight, until its next adoption
+// starts, so a refused one still shows the web presentation.
+test('kit-surface: a node the kit hands back to <body> stays out of sight until it is presented again', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'frontend/src/lib/kit-surface.ts'), 'utf8');
+  assert.match(src, /export const REHOMED_CLASS = 'platform-surface-rehomed';/);
+  assert.match(src, /\} else if \(presented\) \{\s+contentEl\.classList\.add\(REHOMED_CLASS\);\s+document\.body\.appendChild\(contentEl\);/);
+  // Let go first thing, before any gate can refuse the adoption.
+  const fn = src.slice(src.indexOf('export function adoptKitSurface('));
+  assert.ok(fn.indexOf('options.contentEl.classList.remove(REHOMED_CLASS);') < fn.indexOf('const ui = kit();'));
+  const css = fs.readFileSync(path.join(__dirname, '..', 'public/css/app.css'), 'utf8');
+  assert.match(css, /\.platform-surface-rehomed \{\s+visibility: hidden !important;\s+transition: none !important;\s+\}/);
+});

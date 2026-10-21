@@ -200,7 +200,8 @@ test('#3494: exactly one copy of the thread is drawn, and the page\'s has no hea
   const embedded = SCREEN.slice(SCREEN.indexOf('export function EmbeddedConversation('), SCREEN.indexOf('export function MessagesScreen('));
   // #3653: with the place a door named in the room, taken once (`take`).
   assert.match(embedded, /if \(!active \|\| messagesOpen\) return undefined;\s*embed\(conversationId, take\(\)\);\s*return \(\) => release\(conversationId\);/);
-  assert.match(embedded, /\{here \? <ConversationThread embedded \/> : null\}/);
+  // Polish board #19: until the room is in place, the room's own loading row.
+  assert.match(embedded, /\{here \? <ConversationThread embedded \/> : <ChannelLoading \/>\}/);
   assert.match(embedded, /\{here && snap\.route\.threadRootId \? <ReplyThreadPanel \/> : null\}/);
 });
 
@@ -222,7 +223,8 @@ test('#3494: the Discussion tab turns for Homeroom too, and mounts #general whil
   assert.equal(generalRoom(null), null);
 
   const html = renderToHtml(createElement(ProjectDiscussion, { slug: 'usernode-2d5619', name: 'Homeroom', data: general }));
-  assert.match(html, /<section class="dev-ws-discussion" data-ws-discussion="" data-ws-discussion-room="general" aria-label="Homeroom discussion"><div data-stub-room="1"><\/div><\/section>/);
+  // #5303: under #general's line (channel-head.tsx).
+  assert.match(html, /<section class="dev-ws-discussion dev-ws-general-channel" data-ws-discussion="" data-ws-discussion-room="general" aria-label="Homeroom discussion"><div class="dev-ws-channel-head" data-ws-channel-head="general">[\s\S]*?<\/div><div data-stub-room="1"><\/div><\/section>/);
   assert.equal(seen.length, 1);
   assert.equal(seen[0].conversationId, 1);
   assert.equal(seen[0].active, false, 'not on screen until the router has revealed #app-view');
@@ -234,7 +236,7 @@ test('#3494: the Discussion tab turns for Homeroom too, and mounts #general whil
   const own = renderToHtml(createElement(ProjectDiscussion, {
     slug: 'garden', name: 'Garden', data: { channel: { handle: null, href: '#messages/app/garden', post_url: '/api/apps/garden/messages' } },
   }));
-  assert.match(own, /<section class="dev-ws-discussion" data-ws-discussion="" data-discussion-app="garden" aria-label="Garden discussion"><div class="dev-ws-discussion-host"><\/div><\/section>/);
+  assert.match(own, /<section class="dev-ws-discussion dev-ws-general-channel" data-ws-discussion="" data-discussion-app="garden" aria-label="Garden discussion"><div class="dev-ws-channel-head" data-ws-channel-head="general">[\s\S]*?<\/div><div class="dev-ws-discussion-host"><\/div><\/section>/);
 });
 
 test('#3494: the room fills the tab edge to edge, as a project\'s own chat does', () => {

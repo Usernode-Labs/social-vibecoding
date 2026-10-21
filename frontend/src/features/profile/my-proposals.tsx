@@ -20,6 +20,14 @@
  *   votes     #profile/your-votes: GET /api/me/history?type=votes, the changes
  *             and group decisions you voted on, Still open / Decided.
  *
+ * #5272 made the three one page: a tab strip at the top of the column
+ * (`data-profile-work-tab`) switches between them, and each tab is its
+ * address above, so a tab press changes the hash and the router opens the
+ * view, exactly as Profile's three rows do. Your changes adds stage chips
+ * and a Project choice over the rows it loaded (`data-profile-work-stage`,
+ * `data-profile-work-project`; see proposalsView), and a row whose own status
+ * says what comes next carries that step as one pill.
+ *
  * The legacy router (`App.navigateToProfileProposals`) is a classic script
  * and cannot import from this bundle, so it reaches the controller below by
  * name through `window.UsernodeReact.profileProposals`, the same seam as
@@ -34,12 +42,20 @@
 import { useRef, useState, type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
+import { Chip, ChipRail } from '@/components/ui/chip';
 import { GroupedList, ListRow, SectionHeader } from '@/components/ui/grouped-list';
+import { Select } from '@/components/ui/select';
+import {
+  SECTION_TAB_ACTIVE, SECTION_TAB_BASE, SECTION_TAB_INACTIVE, SECTION_TABS_LIST,
+  Tabs, TabsList, TabsTrigger,
+} from '@/components/ui/tabs';
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import { createStore } from '../../lib/plain-store.js';
+import { useMessages } from '../../lib/i18n/react';
+import { FRESH, watch } from '../../lib/live-reads';
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
-import { proposalsView, requestsView, votesView } from './profile-store.js';
+import { CHANGE_STAGE_LABELS, proposalsView, requestsView, votesView } from './profile-store.js';
 
 export type WorkKind = 'changes' | 'requests' | 'votes';
 
@@ -49,9 +65,13 @@ type WorkState = {
   /** Each view's read, as it answered; null until it does. */
   data: Partial<Record<WorkKind, unknown>>;
   error: boolean;
+  /** Your changes' stage chip: one of CHANGE_STAGES, or 'all' (#5272). */
+  stage: string;
+  /** Your changes' Project choice: an app slug, or '' for every project. */
+  project: string;
 };
 
-const initial: WorkState = { open: false, kind: 'changes', data: {}, error: false };
+const initial: WorkState = { open: false, kind: 'changes', data: {}, error: false, stage: 'all', project: '' };
 const profileProposalsStore = createStore(initial);
 
 /** Where each view reads from. */
@@ -61,17 +81,39 @@ const READS: Record<WorkKind, string> = {
   votes: '/api/me/history?type=votes&limit=50',
 };
 
+/** The order of the tabs, and the address each one opens (app.js PROFILE_WORK). */
+export const WORK_KINDS: WorkKind[] = ['changes', 'requests', 'votes'];
+export const WORK_ROUTES: Record<WorkKind, string> = {
+  changes: '#profile/your-changes',
+  requests: '#profile/your-requests',
+  votes: '#profile/your-votes',
+};
+
+/** What each tab says. */
+export const WORK_TABS: Record<WorkKind, string> = {
+  changes: 'profile:work.tab.changes',
+  requests: 'profile:work.tab.requests',
+  votes: 'profile:work.tab.votes',
+};
+
 /** What each view is called, on the bar and in its messages. */
 export const WORK_TITLES: Record<WorkKind, string> = {
-  changes: 'Your changes',
-  requests: 'Your requests',
-  votes: 'Your votes',
+  changes: 'profile:work.changes.title',
+  requests: 'profile:work.requests.title',
+  votes: 'profile:work.votes.title',
 };
 
 const EMPTY: Record<WorkKind, string> = {
-  changes: 'You have not started a change yet.',
-  requests: 'You have not suggested an improvement yet.',
-  votes: 'You have not voted on anything yet.',
+  changes: 'profile:work.changes.empty',
+  requests: 'profile:work.requests.empty',
+  votes: 'profile:work.votes.empty',
+};
+
+/** "Your changes could not be loaded.": one whole message per list. */
+const LOAD_FAILED: Record<WorkKind, string> = {
+  changes: 'profile:work.changes.loadFailed',
+  requests: 'profile:work.requests.loadFailed',
+  votes: 'profile:work.votes.loadFailed',
 };
 
 /** A folded group shows this many rows until "Show all" is pressed. */
@@ -79,8 +121,8 @@ export const FOLD_AT = 5;
 
 /** The groups that fold, and what their "Show all" says. */
 const FOLDS: Record<string, string> = {
-  'changes:merged': 'Show all live',
-  'votes:decided': 'Show all',
+  'changes:merged': 'profile:work.fold.allLive',
+  'votes:decided': 'profile:work.fold.allDecided',
 };
 
 const TITLE = 'text-base font-semibold whitespace-normal line-clamp-2';
@@ -102,20 +144,95 @@ function demoQuery(url: string): string {
 
 /** The project a Your changes row belongs to, in app-card.js's field names. */
 type RowApp = { slug: string; name: string; icon_emoji: string | null; icon_url: string | null };
-type Row = { key: string; href: string | null; title: string; meta: string; app?: RowApp };
+type Row = { key: string; href: string | null; title: string; meta: string; app?: RowApp; step?: string | null };
 type Section = { key: string; label: string; rows: Row[] };
 
 /** The project's icon tile, drawn as the Communities list draws it. */
 const ICON_TILE = 'app-icon-tile w-11 h-11 shrink-0 rounded-xl overflow-hidden '
   + 'flex items-center justify-center font-bold text-lg';
 
-function viewOf(kind: WorkKind, data: unknown): { loaded: boolean; sections: Section[]; empty: boolean } {
+/** A row's next step (#5272): an action, so the accent; one per row at most. */
+const STEP_PILL = 'shrink-0 rounded-full bg-violet-500/15 px-2.5 py-0.5 text-[0.75rem] font-semibold '
+  + 'text-violet-700 dark:text-violet-300';
+
+type View = {
+  loaded: boolean;
+  sections: Section[];
+  empty: boolean;
+  /** Your changes only: the filters left nothing, though something was started. */
+  filtered?: boolean;
+  stages?: string[];
+  projects?: { slug: string; name: string }[];
+  stage?: string;
+  project?: string;
+};
+
+function viewOf(kind: WorkKind, data: unknown, state: WorkState): View {
   if (kind === 'requests') return requestsView(data);
   if (kind === 'votes') return votesView(data);
-  return proposalsView(data);
+  return proposalsView(data, Date.now(), { stage: state.stage, project: state.project });
+}
+
+/** A tab press goes to the tab's address; the router opens the view. */
+function openTab(kind: string): void {
+  const current = (profileProposalsStore.get() as WorkState).kind;
+  const next = workKind(kind);
+  if (next === current) return;
+  try {
+    location.hash = WORK_ROUTES[next];
+  } catch {
+    // No location to move (a test renderer): nothing to open.
+  }
+}
+
+/**
+ * Your changes' filters (#5272): a chip per stage that has rows, and a
+ * Project choice once the list spans two projects or more. Each is left out
+ * when it could only offer one answer.
+ */
+function ChangeFilters({ view }: { view: View }): ReactNode {
+  const t = useMessages('profile');
+  const stages = view.stages || [];
+  const projects = view.projects || [];
+  if (stages.length < 2 && projects.length < 2) return null;
+  const stage = view.stage || 'all';
+  return (
+    <div className="mt-1 mb-1 flex flex-col gap-2" data-profile-work-filters="">
+      {stages.length > 1 ? (
+        <ChipRail className="-mx-4 gap-2 py-1" role="group" aria-label={t('profile:changes.filter.stage')}>
+          {['all', ...stages].map((key) => (
+            <Chip
+              key={key}
+              size="bar"
+              className="px-4"
+              data-profile-work-stage={key}
+              selected={stage === key}
+              onClick={() => profileProposalsStore.set({ stage: key })}
+            >
+              {t((CHANGE_STAGE_LABELS as Record<string, string>)[key])}
+            </Chip>
+          ))}
+        </ChipRail>
+      ) : null}
+      {projects.length > 1 ? (
+        <Select
+          variant="plain"
+          className="w-auto max-w-full self-start rounded-full"
+          aria-label={t('profile:changes.filter.project')}
+          data-profile-work-project=""
+          value={view.project || ''}
+          onChange={(event) => profileProposalsStore.set({ project: event.currentTarget.value })}
+        >
+          <option value="">{t('profile:changes.filter.allProjects')}</option>
+          {projects.map((p) => <option key={p.slug} value={p.slug}>{p.name}</option>)}
+        </Select>
+      ) : null}
+    </div>
+  );
 }
 
 function Group({ kind, section }: { kind: WorkKind; section: Section }): ReactNode {
+  const t = useMessages('profile');
   const foldLabel = FOLDS[`${kind}:${section.key}`];
   const [all, setAll] = useState(false);
   const folded = !!foldLabel && !all && section.rows.length > FOLD_AT;
@@ -147,6 +264,9 @@ function Group({ kind, section }: { kind: WorkKind; section: Section }): ReactNo
             titleClassName={TITLE}
             subtitle={row.meta}
             subtitleClassName={SUBTITLE}
+            trailing={row.step ? (
+              <span className={STEP_PILL} data-profile-work-step="">{row.step}</span>
+            ) : undefined}
             chevron={!!row.href}
           />
         ))}
@@ -154,7 +274,7 @@ function Group({ kind, section }: { kind: WorkKind; section: Section }): ReactNo
           <ListRow
             as="button"
             data-profile-work-all={section.key}
-            title={foldLabel}
+            title={t(foldLabel)}
             titleClassName="text-[0.9375rem] font-semibold text-violet-700 dark:text-violet-400"
             chevron={false}
             onClick={() => setAll(true)}
@@ -168,10 +288,12 @@ function Group({ kind, section }: { kind: WorkKind; section: Section }): ReactNo
 export function ProfileProposalsScreen(): ReactNode {
   const screenRef = useRef<HTMLElement | null>(null);
   const state = useStoreState(profileProposalsStore) as WorkState;
+  // Subscribed: the rows' words are read by the view helpers as it renders.
+  const t = useMessages('profile');
   useVisibilityHiddenClass(screenRef, 'profile-proposals-screen', false);
   const kind = state.kind;
   const data = state.data[kind];
-  const view = viewOf(kind, data ?? null);
+  const view = viewOf(kind, data ?? null, state);
 
   return (
     <main
@@ -191,30 +313,54 @@ export function ProfileProposalsScreen(): ReactNode {
           edge to edge on a phone with no margin. The column is now
           #profile-root's, class for class. */}
       <div className="max-w-2xl mx-auto px-4 pt-5 pb-8">
+        {/* The three views' tabs (#5272). Drawn once the screen is opened, so
+            the prerender stays the empty frame the hydration expects. */}
+        {state.open ? (
+          <Tabs value={kind} onValueChange={openTab}>
+            <TabsList className={SECTION_TABS_LIST} data-profile-work-tabs="">
+              {WORK_KINDS.map((key) => (
+                <TabsTrigger
+                  key={key}
+                  value={key}
+                  data-profile-work-tab={key}
+                  className={SECTION_TAB_BASE}
+                  activeClassName={SECTION_TAB_ACTIVE}
+                  inactiveClassName={SECTION_TAB_INACTIVE}
+                >
+                  {t(WORK_TABS[key])}
+                </TabsTrigger>
+              ))}
+            </TabsList>
+          </Tabs>
+        ) : null}
         {state.error ? (
           <div className={NOTE}>
-            <p>{`${WORK_TITLES[kind]} could not be loaded.`}</p>
+            <p>{t(LOAD_FAILED[kind])}</p>
             <button
               type="button"
               className="mt-2 font-medium text-violet-600 dark:text-violet-400"
               onClick={() => { void profileProposalsController.reload(); }}
             >
-              Try again
+              {t('core:common.tryAgain')}
             </button>
           </div>
         ) : data == null || !view.loaded ? (
-          state.open ? <p className={NOTE}>Loading…</p> : null
-        ) : view.empty ? (
-          <p className={NOTE}>{EMPTY[kind]}</p>
+          state.open ? <p className={NOTE}>{t('core:common.loading')}</p> : null
+        ) : view.empty && !view.filtered ? (
+          <p className={NOTE}>{t(EMPTY[kind])}</p>
         ) : (
-          // Keyed by view, so a fold opened on one list is not open on the next.
-          view.sections.map((section) => (
-            <Group key={`${kind}:${section.key}`} kind={kind} section={section} />
-          ))
+          <>
+            {kind === 'changes' ? <ChangeFilters view={view} /> : null}
+            {view.filtered ? <p className={NOTE}>{t('profile:changes.filter.noMatch')}</p> : null}
+            {/* Keyed by view, so a fold opened on one list is not open on the next. */}
+            {view.sections.map((section) => (
+              <Group key={`${kind}:${section.key}`} kind={kind} section={section} />
+            ))}
+          </>
         )}
         {kind === 'votes' && view.loaded && !view.empty ? (
           <p className="px-4 mt-3 text-xs text-zinc-500 dark:text-zinc-400">
-            A vote can be changed while it is open, so each row says your vote as it stands.
+            {t('profile:work.votes.note')}
           </p>
         ) : null}
         {/* Your requests ends on the way to make another, the dialog every
@@ -227,7 +373,7 @@ export function ProfileProposalsScreen(): ReactNode {
               className="w-full"
               onClick={() => { (window as any).App?.openFeedbackModal?.(); }}
             >
-              Suggest an improvement
+              {t('profile:work.requests.suggest')}
             </Button>
           </div>
         ) : null}
@@ -241,29 +387,95 @@ export function ProfileProposalsScreen(): ReactNode {
  * publishes, so an answer that lands after the viewer left cannot paint into
  * a screen they are no longer on; `kind` is checked the same way, so a
  * changes read cannot paint into the votes view.
+ *
+ * `voted` is #5452: a vote cast on a change or a group decision belongs in
+ * Your votes the moment the server saved it, but the view reads once per
+ * open, and a vote button answers ahead of the row being written (a deciding
+ * vote can hold its POST for seconds). If the votes view is up, read again;
+ * if not, drop the cached list so the next open loads, and never paints the
+ * list from before the vote.
+ *
+ * `reload` asks for a fresh answer and the open view is registered with
+ * live-reads (#5457): on a slow connection the service worker used to answer
+ * the read from its saved copy (public/sw.js, API_TIMEOUT_MS), taken before
+ * the vote, and the `api-updated` correction it posts later never reached
+ * this screen — it is on no list in app.js refreshActiveScreen and registers
+ * no watcher — so the vote stayed missing until a refresh. FRESH
+ * (`cache: 'no-cache'`) makes the worker wait for the network instead, and
+ * the watcher re-reads the view that is up when a correction, a socket
+ * reconnect or the tab coming back arrives, then stops at close().
  */
+let readSeq = 0;
+
+/**
+ * The view that is up reads one URL; a correction to it re-reads that view,
+ * and a correction to another view's URL (or to another screen's) wakes
+ * nothing. The read is a root-relative path, so any absolute base parses it.
+ */
+function ownsRead(url: URL): boolean {
+  const kind = (profileProposalsStore.get() as WorkState).kind;
+  try {
+    const read = new URL(READS[kind], 'http://localhost');
+    if (url.pathname !== read.pathname) return false;
+    for (const [name, value] of read.searchParams) {
+      if (url.searchParams.get(name) !== value) return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** The live-reads registration, for as long as any view is up (#5457). */
+let unwatch: (() => void) | null = null;
+
 export const profileProposalsController = {
   open(kind?: unknown) {
     profileProposalsStore.set({ open: true, kind: workKind(kind), error: false });
+    // Registered once for as long as any view is up (repeated open() —
+    // switching views, re-navigation — must not stack watchers); close()
+    // stops it. The re-read reads whichever view is up then (reload() takes
+    // the kind from the store), and ownsRead keeps a correction to another
+    // view's URL from waking it.
+    if (!unwatch) unwatch = watch(() => profileProposalsController.reload(), { reads: ownsRead });
     return profileProposalsController.reload();
   },
   close() {
     profileProposalsStore.set({ open: false });
+    if (unwatch) { const stop = unwatch; unwatch = null; stop(); }
   },
   isOpen(kind?: unknown) {
     const state = profileProposalsStore.get() as WorkState;
     return state.open && (kind === undefined || state.kind === workKind(kind));
   },
+  voted() {
+    if (profileProposalsController.isOpen('votes')) {
+      return profileProposalsController.reload();
+    }
+    const now = profileProposalsStore.get() as WorkState;
+    if (now.data.votes !== undefined) {
+      const data = { ...now.data };
+      delete data.votes;
+      profileProposalsStore.set({ data });
+    }
+  },
   async reload() {
     const kind = (profileProposalsStore.get() as WorkState).kind;
+    // Only the newest read publishes: the one an open() started before a
+    // vote was saved could otherwise land after the post-vote read and put
+    // the stale list back (#5452).
+    const seq = ++readSeq;
     profileProposalsStore.set({ error: false });
     let data: unknown = null;
     try {
-      const res = await fetch(demoQuery(READS[kind]), { credentials: 'same-origin' });
+      // FRESH: the service worker waits for the network instead of answering
+      // from the saved copy that predates the vote (#5457).
+      const res = await fetch(demoQuery(READS[kind]), { ...FRESH, credentials: 'same-origin' });
       if (res.ok) data = await res.json();
     } catch {
       data = null;
     }
+    if (seq !== readSeq) return;
     const now = profileProposalsStore.get() as WorkState;
     if (!now.open || now.kind !== kind) return;
     if (!data) {

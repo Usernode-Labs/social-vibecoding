@@ -49,6 +49,12 @@ export type CardAnchors = {
   aboveTop: number | null;
   /** The bottom edge of the element a `{ below }` step names, when it is on the page. */
   belowBottom?: number | null;
+  /**
+   * The surface a `{ clear }` step keeps its card off, as the reader sees it
+   * (./index.tsx surfaceBox: on touch the kit's sheet around it), when it is
+   * on the page.
+   */
+  clear?: Box | null;
   /** The hole's padding round its target (./index.tsx PAD). */
   pad: number;
 };
@@ -80,12 +86,28 @@ function fromTop(top: number, height: number): CSSProperties | null {
   return { top: at, maxHeight: `calc(${height - VIEWPORT_MARGIN}px - ${at})`, overflowY: 'auto' };
 }
 
+/**
+ * CLEAR OF THE WHOLE SURFACE (newcomer run six, 14 Oct 2026, iPhone 17
+ * Safari). "Suggest an improvement" is a button partway down the Homeroom
+ * menu's sheet, and its card was hung just over the button: the sheet's top,
+ * its grabber, its rounded corners and the app's name in small caps, showed
+ * as a clipped sliver under the card. A `{ clear }` step's card keeps off the
+ * surface whole: over it, CARD_GAP clear of its top edge, when a card fits
+ * there (the sheet on a phone); else under it, CARD_GAP clear of its foot
+ * (the menu as a popover under the mark on a wide window); else null, and
+ * the card goes where `auto` puts it, clear of the target alone.
+ */
+export function clearOf(surface: Box, height: number): CSSProperties | null {
+  if (surface.top - CARD_GAP - VIEWPORT_MARGIN >= MIN_CARD_ROOM) return fromBottom(height - surface.top + CARD_GAP, height);
+  return fromTop(surface.top + surface.height + CARD_GAP, height);
+}
+
 /** The coach card's position for a target box, as inline style. */
 export function cardPosition(
   box: Box | null,
   place: TourStep['place'],
   viewport: { width: number; height: number },
-  { foot, aboveTop, belowBottom = null, pad }: CardAnchors,
+  { foot, aboveTop, belowBottom = null, clear = null, pad }: CardAnchors,
 ): CSSProperties {
   const H = viewport.height;
   // The foot of the screen: above the bottom bar on a phone, and the window's
@@ -95,6 +117,10 @@ export function cardPosition(
   if (place && typeof place === 'object') {
     if ('below' in place && belowBottom != null) return fromTop(belowBottom + 12, H) ?? aboveFoot;
     if ('above' in place && aboveTop != null) return fromBottom(H - aboveTop + 12, H);
+    if ('clear' in place && clear) {
+      const clearStyle = clearOf(clear, H);
+      if (clearStyle) return clearStyle;
+    }
   }
   if (place === 'bottom' || box.height > H * 0.45) return aboveFoot;
   const middle = box.top + box.height / 2;

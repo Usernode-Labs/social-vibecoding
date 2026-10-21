@@ -14,7 +14,7 @@
  * a container looking perfectly healthy while still holding stale env.
  *
  * Before this module the only on-demand env-correct path was
- * `POST /api/apps/:slug/redeploy` → `staging.rebuildProduction`, which does
+ * `POST /api/apps/:slug/redeploy` → `staging.deployProduction`, which does
  * a full clone + `docker build` (p50 ~28s per app) one app at a time. The
  * cheap path — `appRespawn.runExistingImage`, which re-runs the image that
  * is already on the host with a freshly assembled env (~3-6s per app) —
@@ -30,14 +30,15 @@
  *
  * SHAPE
  *
- *   - One job at a time (module-level singleton). A second start() while a
- *     job is live returns the in-flight job instead of beginning a second
- *     sweep; the route turns that into a 409.
- *   - In-memory, not persisted — same rationale as app-deploy-status.js: if
- *     the platform restarts mid-job the work dies with it, and a fresh
- *     process showing no in-flight job is exactly right. A stale guard
- *     (30 min, mirroring DEPLOY_STALE_AFTER_MS) keeps a job that never
- *     unwound from blocking the next one forever.
+ *   - One job at a time across every process: the container-rollover clock
+ *     (src/workflow/clock/services.ts), which runs only when an admin asks
+ *     (start: its RunNow). A start while a job runs is answered with the job
+ *     under way; the route turns that into a 409. Each app is a step of the
+ *     run's work item (services/fleet-job.js), so a restart carries the job
+ *     on after the apps it rolled, and its progress is that checkpoint,
+ *     which any process reads (read). It was an object in the memory of the
+ *     web process whose route started it: two presses on two processes ran
+ *     two sweeps, and a restart lost the job.
  *   - Per-app failure isolation: every unit is individually caught, the
  *     drain continues, and the failure lands in `apps.last_failure` so the
  *     existing "View build log" panel covers it.
@@ -53,7 +54,10 @@ const appRespawn = require('./app-respawn');
 const appDeployStatus = require('./app-deploy-status');
 const deployFailure = require('./deploy-failure');
 const events = require('./events');
+const fleetJob = require('./fleet-job');
 const { getPool } = require('../db/pool');
+const { withResourceUse } = require('./build-retention-guard');
+const { PRODUCTION_BUILD_LOCK } = require('./advisory-locks');
 
 // Mirrors app-heal.js's MAX_HEALS_PER_TICK: the existing precedent for
 // "how much docker churn is polite on this host". At 3, at most three apps
@@ -61,10 +65,8 @@ const { getPool } = require('../db/pool');
 const DEFAULT_CONCURRENCY = 3;
 const MAX_CONCURRENCY = 10;
 
-// Same TTL as app-deploy-status: anything claiming to be in flight for
-// >30min is an orphaned record (a caller died without unwinding), not a
-// genuinely slow sweep — every unit is seconds.
-const JOB_STALE_AFTER_MS = 30 * 60 * 1000;
+// The clock that runs the job (src/workflow/clock/services.ts).
+const JOB = 'container-rollover';
 
 // The apps this sweep owns. `self_hosted IS NOT TRUE` is the primary
 // self-app exclusion — the platform's own row is status='running' too, so
@@ -74,26 +76,33 @@ const ELIGIBLE_WHERE = "status = 'running' AND self_hosted IS NOT TRUE";
 
 // slug -> row shape runExistingImage needs (db_password, manifest_snapshot)
 // plus what the fallback and the UI need.
+const ELIGIBLE_COLUMNS = `id, slug, name, db_password, manifest_snapshot, repo_url,
+         self_hosted, main_sha, image_ref, deploy_state, deploy_started_at, deploy_from_sha`;
 const SELECT_ELIGIBLE = `
-  SELECT id, slug, name, db_password, manifest_snapshot, repo_url,
-         self_hosted, main_sha
+  SELECT ${ELIGIBLE_COLUMNS}
     FROM apps
    WHERE ${ELIGIBLE_WHERE}
    ORDER BY id`;
+// The same row again, read once this app's turn holds the locks: a deploy
+// that ran while the job waited (a merge, Redeploy, the drift poller) may
+// have built a newer image, which the respawn must run rather than the one
+// the job saw when it started (on Kubernetes image_ref is a digest).
+const SELECT_ONE = `
+  SELECT ${ELIGIBLE_COLUMNS}
+    FROM apps
+   WHERE id = $1 AND ${ELIGIBLE_WHERE}`;
 
 // Per-app outcomes, in the spirit of app-heal.checkAndHealOne's documented
 // status enum:
 //   rolled                  — image re-run with fresh env, healthy
-//   rebuilt                 — image was missing; full rebuildProduction ran
+//   rebuild_requested       — image was missing; the rebuild was asked of
+//                             app delivery
 //   skipped_deploying       — another rebuild owns this slug right now
 //   skipped_missing_secrets — required secrets unset; image can't run
 //   skipped_no_db_password  — per-role migration hasn't populated it
 //   skipped_deleted         — app row vanished mid-job
 //   failed                  — docker run / health check threw
 const FAILED = 'failed';
-
-let _job = null;
-let _seq = 0;
 
 function isStagingEnv() {
   return process.env.USERNODE_ENV === 'staging';
@@ -105,33 +114,11 @@ function concurrency() {
   return Math.min(raw, MAX_CONCURRENCY);
 }
 
-function isActive(job) {
-  if (!job || job.finishedAt) return false;
-  const age = Date.now() - new Date(job.startedAt).getTime();
-  return age <= JOB_STALE_AFTER_MS;
-}
-
-function snapshot(job) {
-  if (!job) return null;
-  return {
-    id: job.id,
-    startedAt: job.startedAt,
-    startedBy: job.startedBy || null,
-    finishedAt: job.finishedAt || null,
-    concurrency: job.concurrency,
-    total: job.total,
-    done: job.done,
-    failed: job.failed,
-    stale: !job.finishedAt && !isActive(job),
-    apps: job.apps.map((a) => ({
-      appId: a.appId,
-      slug: a.slug,
-      state: a.state,
-      ms: a.ms,
-      error: a.error,
-    })),
-  };
-}
+const SHAPE = {
+  rowsField: 'apps',
+  keyOf: (app) => String(app.id),
+  rowOf: (app) => ({ appId: app.id, slug: app.slug }),
+};
 
 // Lazily required so the module graph stays acyclic (ws.js does not import
 // this module, but routes that load ws also load this) — same dodge
@@ -139,14 +126,16 @@ function snapshot(job) {
 function broadcast(job) {
   try {
     const { broadcastToAdmins } = require('./ws');
-    broadcastToAdmins({ type: 'admin_rollover_status', job: snapshot(job) });
+    broadcastToAdmins(fleetJob.frame('admin_rollover_status', job));
   } catch (err) {
     log.warn('app-rollover', 'broadcast failed', { err: err.message });
   }
 }
 
-function read() {
-  return snapshot(_job);
+/** The job under way, or the last one, as the console shows it. */
+async function read(pool) {
+  const run = await require('../workflow/platform.ts').clockRunOf(pool, JOB);
+  return fleetJob.snapshotOf(run, { ...SHAPE, concurrency: concurrency() });
 }
 
 async function eligibleCount(config) {
@@ -179,7 +168,7 @@ function demoJob() {
     apps: [
       { appId: 900001, slug: 'staging-demo-app-one', state: 'rolled', ms: 4100, error: null },
       { appId: 900002, slug: 'staging-demo-app-two', state: 'rolled', ms: 3700, error: null },
-      { appId: 900003, slug: 'staging-demo-app-three', state: 'rebuilt', ms: 31200, error: null },
+      { appId: 900003, slug: 'staging-demo-app-three', state: 'rebuild_requested', ms: 31200, error: null },
       {
         appId: 900004,
         slug: 'staging-demo-app-four',
@@ -199,119 +188,53 @@ function demoJob() {
 }
 
 /**
- * Kick off a sweep. Synchronous by design: it creates and returns the job
- * record, then runs the docker work on a detached promise so the route can
- * answer 202 immediately (same fire-and-forget shape as /redeploy).
- *
- * Returns { started, job }. `started: false` means a job was already in
- * flight and `job` is that one.
+ * Ask for a sweep: the container-rollover clock's run, on whichever process
+ * runs the workflow. Returns { started, job }, or { started: false, reason }:
+ * `running` with the job under way when one runs (anywhere), `rollout` while
+ * an older build's workflow process still serves, `not_armed` where it is
+ * not armed.
  */
-function start(config, { userId = null, username = null } = {}) {
-  if (isActive(_job)) return { started: false, job: snapshot(_job) };
-
-  const job = {
-    id: ++_seq,
-    startedAt: new Date().toISOString(),
-    startedBy: username,
-    startedByUserId: userId,
-    finishedAt: null,
-    concurrency: concurrency(),
-    total: 0,
-    done: 0,
-    failed: 0,
-    apps: [],
-  };
-  _job = job;
-
-  // Detached: errors are contained here so an unhandled rejection can
-  // never escape into the request that started the sweep.
-  run(config, job).catch((err) => {
-    log.error('app-rollover', 'Rollover job crashed', { jobId: job.id, err: err.message });
-    if (!job.finishedAt) {
-      job.finishedAt = new Date().toISOString();
-      broadcast(job);
-    }
-  });
-
-  return { started: true, job: snapshot(job) };
+async function start(pool, admin) {
+  const now = await read(pool);
+  if (now && !now.finishedAt && !now.stale) return { started: false, reason: 'running', job: now };
+  const asked = await require('../workflow/platform.ts').askClockRun(JOB, admin);
+  if (asked !== 'asked' && asked !== 'pending') return { started: false, reason: asked, job: await read(pool) };
+  // Not yet taken (pending): the job shown is the one before it, so none.
+  const job = await read(pool);
+  return { started: true, job: job && (!now || job.id !== now.id) ? job : null };
 }
 
-async function run(config, job) {
-  const pool = getPool(config);
-  const startedMs = Date.now();
-
-  const { rows } = await pool.query(SELECT_ELIGIBLE);
-  job.total = rows.length;
-  job.apps = rows.map((app) => ({
-    appId: app.id,
-    slug: app.slug,
-    state: 'pending',
-    ms: null,
-    error: null,
-  }));
-  log.info('app-rollover', 'Container rollover started', {
-    jobId: job.id, total: job.total, concurrency: job.concurrency,
-    by: job.startedBy || null,
-  });
-  broadcast(job);
-
-  await drain(rows, job.concurrency, async (app, idx) => {
-    const entry = job.apps[idx];
-    entry.state = 'running';
-    broadcast(job);
-    const unitStarted = Date.now();
-    let outcome = FAILED;
-    let error = null;
-    try {
-      const result = await rollOne(config, pool, app);
-      outcome = result.outcome;
-      error = result.error || null;
-    } catch (err) {
-      // Belt-and-braces: rollOne already catches, so reaching here means a
-      // bug rather than a docker failure. Still isolated per app.
-      outcome = FAILED;
-      error = err && err.message ? err.message : 'rollover failed';
-      log.error('app-rollover', 'Unit threw outside its own guard', {
-        slug: app.slug, err: error,
+/** The clock's run: every eligible app rolled over, a step each. */
+async function runJob(ctx, { config, pool }) {
+  return fleetJob.run(ctx, {
+    name: JOB,
+    ...SHAPE,
+    concurrency: concurrency(),
+    list: async () => (await pool.query(SELECT_ELIGIBLE)).rows.map((r) => ({ id: r.id, slug: r.slug })),
+    unit: async ({ id }) => {
+      const { rows: [app] } = await pool.query(SELECT_ONE, [id]);
+      if (!app) return { outcome: 'skipped_deleted' };
+      return rollOne(config, pool, app);
+    },
+    publish: broadcast,
+    finish: (job, { durationMs }) => {
+      const tally = job.apps.reduce((acc, a) => { acc[a.state] = (acc[a.state] || 0) + 1; return acc; }, {});
+      // The job's record in the audit trail, with its tally.
+      return events.record(pool, {
+        type: events.EVENT_TYPES.CONTAINERS_ROLLED_OVER,
+        userId: ctx.input.asked?.userId ?? null,
+        metadata: {
+          jobId: job.id,
+          startedBy: job.startedBy,
+          total: job.total,
+          rolled: tally.rolled || 0,
+          rebuildRequested: tally.rebuild_requested || 0,
+          skipped: Object.keys(tally).filter((k) => k.startsWith('skipped_')).reduce((n, k) => n + tally[k], 0),
+          failed: job.failed,
+          failedSlugs: job.apps.filter((a) => a.state === FAILED).map((a) => a.slug),
+          durationMs,
+        },
       });
-    }
-    entry.state = outcome;
-    entry.error = error;
-    entry.ms = Date.now() - unitStarted;
-    job.done += 1;
-    if (outcome === FAILED) job.failed += 1;
-    broadcast(job);
-  });
-
-  job.finishedAt = new Date().toISOString();
-  const durationMs = Date.now() - startedMs;
-  const tally = job.apps.reduce((acc, a) => {
-    acc[a.state] = (acc[a.state] || 0) + 1;
-    return acc;
-  }, {});
-  const failedSlugs = job.apps.filter((a) => a.state === FAILED).map((a) => a.slug);
-  log.info('app-rollover', 'Container rollover finished', {
-    jobId: job.id, total: job.total, failed: job.failed, durationMs, tally,
-  });
-  broadcast(job);
-
-  // The only durable trace of the job — the job object itself is
-  // in-memory, so an interrupted sweep leaves no row (apps.last_deploy_at
-  // is the reconstruction path). Best-effort, like every events.record.
-  events.record(pool, {
-    type: events.EVENT_TYPES.CONTAINERS_ROLLED_OVER,
-    userId: job.startedByUserId || null,
-    metadata: {
-      jobId: job.id,
-      total: job.total,
-      rolled: tally.rolled || 0,
-      rebuilt: tally.rebuilt || 0,
-      skipped: Object.keys(tally)
-        .filter((k) => k.startsWith('skipped_'))
-        .reduce((n, k) => n + tally[k], 0),
-      failed: job.failed,
-      failedSlugs,
-      durationMs,
     },
   });
 }
@@ -324,9 +247,10 @@ async function rollOne(config, pool, app) {
   const containerName = `usernode-app-${app.slug}`;
   const imageName = `usernode-app-${app.slug}:latest`;
 
-  // Something else (merge, drift poller, heal) owns this slug right now.
+  // Something else (merge, drift poller, heal) owns this slug right now, in
+  // this process or by app delivery anywhere (the row's deploy_state).
   // Stepping on it would interleave two stopAndRemove/runContainer pairs.
-  const deploy = appDeployStatus.read(app.slug);
+  const deploy = appDeployStatus.read(app.slug, app);
   if (deploy && deploy.deploying) return { outcome: 'skipped_deploying' };
 
   const kubernetesMode = config.appRuntime === 'kubernetes';
@@ -335,9 +259,9 @@ async function rollOne(config, pool, app) {
     : await docker.imageExists(imageName).catch(() => false);
 
   if (!hasImage) {
-    // Fallback: the cheap path needs an image on the host. Deliberately
-    // NOT wrapped in serializeRebuild — rebuildProduction takes that lock
-    // itself, and nesting would deadlock the slug's chain.
+    // Fallback: the cheap path needs an image on the host. Without one, a
+    // rebuild is asked of app delivery, which runs it (one deploy of an app
+    // at a time, under the build lock).
     if (!app.repo_url) {
       const err = new Error(
         `no image ${imageName} on the host and no repo_url — nothing to run`
@@ -347,17 +271,9 @@ async function rollOne(config, pool, app) {
       return { outcome: FAILED, error: err.message };
     }
     try {
-      const staging = require('./staging');
-      const { containerId, sha } = await staging.rebuildProduction(config, app);
-      const { rowCount } = await pool.query(
-        `UPDATE apps SET container_id = $1, main_sha = $2, last_deploy_at = NOW()
-          WHERE id = $3`,
-        [containerId, sha || app.main_sha || null, app.id]
-      );
-      if (!rowCount) return { outcome: 'skipped_deleted' };
-      return { outcome: 'rebuilt' };
+      await require('../workflow/platform.ts').requestDeploy(app.id, 'rollover');
+      return { outcome: 'rebuild_requested' };
     } catch (err) {
-      // rebuildProduction persists its own last_failure record.
       log.warn('app-rollover', 'Rebuild fallback failed', {
         slug: app.slug, err: err.message,
       });
@@ -365,12 +281,19 @@ async function rollOne(config, pool, app) {
     }
   }
 
-  // Per-slug serialization: bulk rollover, dev-chat merges, the drift
-  // poller and heals all queue behind one another for the same app. This
-  // is the race staging.js's serializeRebuild comment documents —
-  // runExistingImage does not take the lock on its own.
+  // Per-slug serialization: a rollover and app delivery's deploys of the
+  // same app queue behind one another. This is the race staging.js's
+  // serializeRebuild comment documents — runExistingImage does not take the
+  // lock on its own. The chain orders this process; PRODUCTION_BUILD_LOCK
+  // (Kubernetes) orders this against a deploy in another process, as
+  // staging.deployProduction takes it.
   const staging = require('./staging');
-  return staging.serializeRebuild(app.slug, async () => {
+  return staging.serializeRebuild(app.slug, () => withResourceUse(config, PRODUCTION_BUILD_LOCK, app.slug, async () => {
+    const { rows: [current] } = await pool.query(SELECT_ONE, [app.id]);
+    if (!current) return { outcome: 'skipped_deleted' };
+    const now = appDeployStatus.read(current.slug, current);
+    if (now && now.deploying) return { outcome: 'skipped_deploying' };
+    app = current;
     // markStart/markEnd are the only emitters of app_redeploy_status, so
     // this is what makes the version pills spin during a rollover.
     appDeployStatus.markStart(app.slug, { fromSha: app.main_sha || null });
@@ -391,7 +314,7 @@ async function rollOne(config, pool, app) {
       }
 
       // null means required secrets are unset. Do NOT fall back to
-      // rebuildProduction — it would raise MissingSecretsError for the
+      // deployProduction — it would raise MissingSecretsError for the
       // same reason, after a pointless clone + build.
       if (!containerId) return { outcome: 'skipped_missing_secrets' };
 
@@ -428,7 +351,7 @@ async function rollOne(config, pool, app) {
     } finally {
       appDeployStatus.markEnd(app.slug, { failed: failedForPill });
     }
-  });
+  }));
 }
 
 // apps.last_failure so the existing "View build log" panel covers rollover
@@ -448,41 +371,16 @@ async function persistFailure(pool, app, err, stage) {
   }
 }
 
-// Fixed-width worker drain. No barrier between items: a slow app never
-// holds up the next one, and at most `limit` docker operations are in
-// flight. The worker is expected never to reject (callers guard).
-async function drain(items, limit, worker) {
-  if (!items.length) return;
-  let next = 0;
-  const width = Math.max(1, Math.min(limit, items.length));
-  const runners = [];
-  for (let i = 0; i < width; i++) {
-    runners.push((async () => {
-      for (;;) {
-        const idx = next++;
-        if (idx >= items.length) return;
-        await worker(items[idx], idx);
-      }
-    })());
-  }
-  await Promise.all(runners);
-}
-
-// Test seam only: drop the singleton so each case starts clean.
-function _reset() {
-  _job = null;
-  _seq = 0;
-}
-
 module.exports = {
   start,
   read,
+  runJob,
+  rollOne,
   demoJob,
   eligibleCount,
   isStagingEnv,
   concurrency,
+  JOB,
   DEFAULT_CONCURRENCY,
-  JOB_STALE_AFTER_MS,
   SELECT_ELIGIBLE,
-  _reset,
 };

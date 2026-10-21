@@ -39,7 +39,6 @@ async function readPins(pool, sessionId) {
 
 async function adoptActive({ config, pool, session, headSha, deps }) {
   const pipeline = deps.pipeline || require('./handoff-pipeline');
-  const visuals = deps.visuals || require('./visuals');
   const { rows } = await pool.query(
     `UPDATE chat_sessions
         SET handoff_head_sha = $1,
@@ -47,9 +46,7 @@ async function adoptActive({ config, pool, session, headSha, deps }) {
             handoff_uploaded_sha = $1,
             handoff_local_commit_sha = NULL,
             handoff_upload_checked_sha = NULL,
-            check_state = 'pending', checks_commit_sha = $1,
-            check_error_detail = NULL,
-            staging_container_id = NULL, staging_url = NULL,
+            -- The verdict and the preview are the preview machine's.
             last_activity_at = NOW()
       WHERE id = $2 AND status = 'active' AND source = 'cli_handoff'
         AND branch_name IS NOT DISTINCT FROM $3
@@ -71,30 +68,11 @@ async function adoptActive({ config, pool, session, headSha, deps }) {
 
   const fresh = rows[0];
   if (session.shots_state || session.shots_detail) {
-    await require('./shots-state').markStaleForHead(pool, session.id, headSha)
+    await require('./shots-state').markStaleForHead(pool, session.id, headSha, null, { pin: 'handoff' })
       .catch((err) => log.warn('cli-handoff-sync', 'could not invalidate prior-head before & after shots', {
         sessionId: session.id, headSha, err: err.message,
       }));
   }
-  const pending = await visuals.setChecksPending(
-    pool, session.id, headSha, 'building', 'sync-main'
-  ).catch((err) => {
-    // The atomic adoption above already removed the old verdict and pinned
-    // it to this exact SHA. Keep the rebuild moving; captureForSession stamps
-    // the testing phase again, and a failed preview receives a terminal
-    // error through the ordinary handoff pipeline.
-    log.warn('cli-handoff-sync', 'could not stamp sync-main build phase', {
-      sessionId: session.id, headSha, err: err.message,
-    });
-    return true;
-  });
-  if (pending === false) {
-    return { ok: false, reason: 'session_state_changed', headSha };
-  }
-  try {
-    visuals.notifyChecksPending(session.id, headSha, 'building', 'sync-main');
-  } catch (_) { /* notification only */ }
-
   const app = {
     id: session.app_id,
     slug: session.app_slug,
@@ -116,7 +94,7 @@ async function adoptActive({ config, pool, session, headSha, deps }) {
 async function adoptPromoted({ config, pool, session, headSha, deps }) {
   const votes = deps.votes || require('../routes/votes');
   const revision = await votes.reconcileNativeReviewedHead({
-    config, pool, session, fresh: true, notify: true, deferChecks: true,
+    config, pool, session, fresh: true, notify: true, deferChecks: true, madeBy: 'homeroom',
   });
   if (revision.blocked || !sameSha(revision.headSha, headSha)) {
     return {
@@ -133,7 +111,6 @@ async function adoptPromoted({ config, pool, session, headSha, deps }) {
             handoff_uploaded_sha = $1,
             handoff_local_commit_sha = NULL,
             handoff_upload_checked_sha = NULL,
-            staging_container_id = NULL, staging_url = NULL,
             last_activity_at = NOW()
       WHERE id = $2 AND status = 'promoted' AND source = 'cli_handoff'
         AND branch_name IS NOT DISTINCT FROM $3

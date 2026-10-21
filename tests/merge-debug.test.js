@@ -116,7 +116,7 @@ test('endRun on a null runId is a no-op', async () => {
   assert.equal(pool.calls.length, 0);
 });
 
-test('pruneOldRuns issues a bounded DELETE and never throws', async () => {
+test('pruneOldRuns issues a bounded DELETE, and a failure throws (the clock records it)', async () => {
   const pool = makePool((sql) => {
     if (/DELETE FROM merge_debug_runs/.test(sql)) return { rowCount: 3 };
     return { rows: [] };
@@ -125,6 +125,8 @@ test('pruneOldRuns issues a bounded DELETE and never throws', async () => {
   assert.equal(n, 3);
   const del = pool.calls.find((c) => /DELETE FROM merge_debug_runs/.test(c.sql));
   assert.ok(del);
+  const broken = makePool(() => { throw new Error('the database is gone'); });
+  await assert.rejects(md.pruneOldRuns(broken, 30), /the database is gone/);
 });
 
 // ── kind='checks': the proposal-checks timing trace ─────────────────────
@@ -139,8 +141,19 @@ test("a kind='checks' run round-trips its kind and trigger", async () => {
     appId: 1, sessionId: 2951, prNumber: 914, kind: 'checks', trigger: 'capture',
   });
   const ins = pool.calls.find((c) => /INSERT INTO merge_debug_runs/.test(c.sql));
-  assert.deepEqual(ins.params, [1, 2951, 914, 'checks', 'capture']);
+  assert.deepEqual(ins.params, [1, 2951, 914, 'checks', 'capture', null]);
   assert.equal(runId, 1);
+});
+
+test('a run can start at work it covers that began before it was opened (#4696)', async () => {
+  const pool = makePool();
+  await md.startRun(pool, { kind: 'checks', startedAt: new Date('2026-10-10T17:40:00Z') });
+  const ins = pool.calls.find((c) => /INSERT INTO merge_debug_runs/.test(c.sql));
+  assert.match(ins.sql, /COALESCE\(\$6::timestamptz, NOW\(\)\)/);
+  assert.equal(ins.params[5], '2026-10-10T17:40:00.000Z');
+  const bad = makePool();
+  await md.startRun(bad, { kind: 'checks', startedAt: new Date('not a date') });
+  assert.equal(bad.calls[0].params[5], null, 'an invalid start is now');
 });
 
 test('a checks step carries its durationMs through to the stored detail', async () => {

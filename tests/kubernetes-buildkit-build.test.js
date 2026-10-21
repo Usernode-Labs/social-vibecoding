@@ -52,11 +52,17 @@ function runtimeWith(clients, { diagnostics } = {}) {
 
 // A batch/core pair that records what the platform does and plays back a
 // Job that runs one poll then succeeds, its Pod carrying the digest in the
-// termination message.
+// termination message. `historyJobs` are the app's other finished builds:
+// the lookup for an image to reuse names the revision and does not see
+// them, the lookup for what earlier builds reported does.
+// `lateLines` are written to the followed log a moment after the rest, as
+// a Job still running prints them; `jobReadError(n)` may throw for the
+// n-th read of the Job.
 function fakeCluster({
   jobReads = null, podMessage = digest('d'), podExitCode = 0, logLines = [], existingJobs = [], createJobError = null,
+  historyJobs = [], historyError = null, lateLines = [], jobReadError = null,
 } = {}) {
-  const state = { secrets: [], jobs: [], patches: [], deleted: [], replacedSecrets: [], lists: [], logFollows: 0 };
+  const state = { secrets: [], jobs: [], patches: [], deleted: [], replacedSecrets: [], lists: [], logFollows: 0, aborts: 0, jobReads: 0 };
   let reads = 0;
   const jobStatuses = jobReads || [{ active: 1 }, { succeeded: 1, conditions: [{ type: 'Complete', status: 'True' }] }];
   const pod = () => ({
@@ -65,7 +71,12 @@ function fakeCluster({
     status: { containerStatuses: [{ name: 'buildkit', state: { terminated: { exitCode: podExitCode, message: podMessage } } }] },
   });
   const batch = {
-    async listNamespacedJob(request) { state.lists.push(request); return { items: existingJobs }; },
+    async listNamespacedJob(request) {
+      state.lists.push(request);
+      if (/social\.usernode\.io\/revision=/.test(request.labelSelector || '')) return { items: existingJobs };
+      if (historyError) throw historyError;
+      return { items: [...existingJobs, ...historyJobs] };
+    },
     async createNamespacedJob({ body }) {
       if (createJobError) throw createJobError;
       state.jobs.push(body);
@@ -74,6 +85,9 @@ function fakeCluster({
     async readNamespacedJob({ name }) {
       const status = jobStatuses[Math.min(reads, jobStatuses.length - 1)];
       reads += 1;
+      state.jobReads = reads;
+      const failure = jobReadError && jobReadError(reads);
+      if (failure) throw failure;
       return { metadata: { name, namespace: 'bk' }, status };
     },
     async patchNamespacedJob(request, options) { state.patches.push({ request, options }); },
@@ -92,8 +106,14 @@ function fakeCluster({
     async log(_ns, _pod, _container, sink) {
       state.logFollows += 1;
       for (const line of logLines) sink.write(`${line}\n`);
-      sink.end();
-      return { abort() {} };
+      if (!lateLines.length) sink.end();
+      else {
+        setTimeout(() => {
+          for (const line of lateLines) sink.write(`${line}\n`);
+          sink.end();
+        }, 20);
+      }
+      return { abort() { state.aborts += 1; } };
     },
   };
   return { clients: { batch, core, logs }, state };
@@ -103,6 +123,8 @@ test.afterEach(() => {
   kubernetes._setClientsForTest(null);
   buildkit._forTest.resetUnavailable();
 });
+// A Job followed after its image was handed over is read again this often.
+buildkit._forTest.setSettlePollMs(5);
 
 test('engine selection: kpack stays the default, auto prefers Dockerfile.kubernetes, buildkit insists on a Dockerfile', () => {
   const both = sourceTree(['Dockerfile', 'Dockerfile.kubernetes']);
@@ -160,6 +182,10 @@ test('the Job manifest: rootless daemon, per-app cache repository, source and id
   assert.equal(env.IMAGE_TAG, 'registry.test/apps/demo:git-x-abc');
   assert.equal(env.CACHE_REF, 'registry.test/cache/demo:buildkit-cache');
   assert.equal(env.REGISTRY_ATTRS, '');
+  assert.equal(env.CACHE_UPLOAD, 'auto');
+  assert.equal(env.CACHE_SETTLED_STEPS, '', 'no history: whatever runs causes a cache upload');
+  assert.equal(env.STARTER_CACHE_REF, '', 'an app made from no starter has its own cache only');
+  assert.equal(env.STARTER_CACHE_EXPORT, '');
   assert.equal(env.BUILDKITD_FLAGS, '--oci-worker-no-process-sandbox');
   assert.equal(env.DOCKER_CONFIG, undefined, 'anonymous registry: no credential mount');
   assert.deepEqual(pod.volumes.map((v) => v.name).sort(), ['buildkitd', 'workspace']);
@@ -190,7 +216,29 @@ test('the Job manifest: privileged mode, registry credentials and a plain-HTTP r
   assert.deepEqual(volume.secret, { secretName: 'push-creds', items: [{ key: '.dockerconfigjson', path: 'config.json' }] });
 });
 
-test('the build script: fetches by SHA, exports the tree without .git, never prints the clone URL, hands back only the digest', () => {
+test('Docker Hub\'s images come through a mirror by default, and only a host[:port] is ever written', () => {
+  const envOf = (over) => {
+    const cfg = config(over).kubernetes;
+    const body = buildkit._forTest.jobManifest(cfg, runtimeWith({}), {
+      app, revision, environment: 'staging', sessionId: 42, dockerfile: 'Dockerfile',
+      name: 'bk', tag: 't', cacheRef: 'c', recipe: 'r', inputSecretName: 'bk-input',
+    });
+    return Object.fromEntries(body.spec.template.spec.containers[0].env.map((e) => [e.name, e.value ?? e.valueFrom]));
+  };
+  // The deploy's default (config.js): every build pulled Docker Hub
+  // anonymously, and on 19 Oct 2026 65 at once met its 429.
+  const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '../src/config.js'), 'utf8');
+  assert.match(src, /buildkitDockerHubMirror: process\.env\.BUILDKIT_DOCKERHUB_MIRROR \?\? 'mirror\.gcr\.io',/);
+  assert.equal(envOf({ buildkitDockerHubMirror: 'mirror.gcr.io' }).DOCKERHUB_MIRROR, 'mirror.gcr.io');
+  assert.equal(envOf({ buildkitDockerHubMirror: 'registry.internal:5000' }).DOCKERHUB_MIRROR, 'registry.internal:5000');
+  assert.equal(envOf({ buildkitDockerHubMirror: '' }).DOCKERHUB_MIRROR, '', 'empty switches it off');
+  assert.equal(envOf({}).DOCKERHUB_MIRROR, '', 'a config without the key builds as before');
+  for (const bad of ['mirror.gcr.io"]\n[x', 'https://mirror.gcr.io', 'a b', 'mirror.gcr.io/path']) {
+    assert.equal(envOf({ buildkitDockerHubMirror: bad }).DOCKERHUB_MIRROR, '', JSON.stringify(bad));
+  }
+});
+
+test('the build script: fetches by SHA, exports the tree without .git, never prints the clone URL, ends its termination message with the digest', () => {
   const script = buildkit._forTest.BUILD_SCRIPT;
   assert.match(script, /^set -eu/m);
   assert.match(script, /git -c protocol\.version=2 fetch -q --depth 1 "\$REPO_URL" "\$GIT_SHA"/);
@@ -204,8 +252,31 @@ test('the build script: fetches by SHA, exports the tree without .git, never pri
   assert.match(script, /--export-cache "type=registry,ref=\$CACHE_REF,mode=max,image-manifest=true,oci-mediatypes=true\$REGISTRY_ATTRS"/);
   assert.match(script, /--progress plain/, 'line-oriented output is what the step parser reads');
   assert.match(script, /--metadata-file \/workspace\/metadata\.json/);
-  assert.match(script, /printf '%s' "\$digest" > \/dev\/termination-log/);
+  assert.match(script, /printf '%s' "\$digest"\n\} > \/dev\/termination-log \|\| exit 1/, 'the digest ends the termination message');
   assert.match(script, /test -n "\$digest"/, 'no digest is a failed build, not an empty result');
+  // Two buildctl runs: the build, which pushes the image and only reads the
+  // cache, and the cache upload, which outputs nothing. What decides whether
+  // the second one happens is tests/kubernetes-buildkit-cache-upload.test.js.
+  const runs = script.split('buildctl-daemonless.sh build').slice(1);
+  assert.equal(runs.length, 2);
+  const [build, upload] = runs.map((run) => run.slice(0, run.search(/\n(?! {2,}--)/)));
+  assert.match(build, /--output /);
+  assert.match(build, /--import-cache /);
+  assert.match(build, /--trace \/workspace\/trace\.json/, 'the trace says which steps ran');
+  assert.doesNotMatch(build, /--export-cache/, 'the build does not wait for a cache upload');
+  assert.match(upload, /--export-cache /);
+  assert.match(upload, /--import-cache /, 'layers the cache served are lazy references to it');
+  assert.doesNotMatch(upload, /--output|--metadata-file/, 'the pushed image cannot change after its digest is read');
+  // The starter's shared cache: read by both runs, written only by the upload.
+  assert.match(build, /\$\{starter_import:\+--import-cache "\$starter_import"\}/);
+  assert.match(upload, /\$\{starter_import:\+--import-cache "\$starter_import"\}/);
+  assert.doesNotMatch(build, /starter_export/);
+  assert.match(upload, /\$\{starter_export:\+--export-cache "\$starter_export"\}/);
+  for (const flag of ['--frontend dockerfile.v0', '--local context=/workspace/src', '--local dockerfile=/workspace/src',
+    '--opt "filename=$DOCKERFILE"', '--opt "build-arg:GIT_SHA=$GIT_SHA"']) {
+    assert.ok(build.includes(flag) && upload.includes(flag), `both runs solve the same build (${flag})`);
+  }
+  assert.ok(script.indexOf('test -n "$digest"') < script.indexOf('set +e'), 'only what follows the pushed image is allowed to fail');
   // The daemon preflight runs before any source is fetched and exits with
   // the code the platform reads as "the lane cannot run here".
   const preflight = script.indexOf('buildctl-daemonless.sh debug workers');
@@ -222,6 +293,46 @@ test('progress lines: BuildKit steps parse as the Docker builder\'s steps; the J
   assert.equal(p(''), null);
 });
 
+// #4895: where a build's time went, as BuildKit itself timed each step.
+const TIMED_BUILD_LOG = [
+  '[buildkit] building Dockerfile -> registry.test/apps/demo:git-x',
+  '#1 [internal] load build definition from Dockerfile',
+  '#1 DONE 0.0s',
+  '#4 [css 1/7] FROM docker.io/library/node:22-alpine@sha256:abc',
+  '#4 resolve docker.io/library/node:22-alpine 0.4s done',
+  '#9 [css 3/7] RUN npm ci --include=dev',
+  '#9 3.211 added 120 packages in 3s',
+  '#4 DONE 4.1s',
+  '#9 [css 3/7] RUN npm ci --include=dev',
+  '#9 DONE 6.25s',
+  '#10 [stage-1 3/5] RUN npm ci --omit=dev',
+  '#10 CACHED',
+  '#14 exporting to image',
+  '#14 pushing layers 3.2s done',
+  '#14 DONE 5.0s',
+  '#15 exporting cache to registry',
+  '#15 ERROR: failed to push',
+  '#15 DONE 7.5s',
+  '#15 DONE 9.9s',
+];
+
+test('stepClock: each step\'s own duration, named by its first line, slowest first', () => {
+  const clock = buildkit._forTest.stepClock();
+  for (const line of TIMED_BUILD_LOG) clock.line(line);
+  assert.deepEqual(clock.slowest(4), [
+    { name: 'exporting cache to registry', ms: 7500 },
+    { name: '[css 3/7] RUN npm ci --include=dev', ms: 6250 },
+    { name: 'exporting to image', ms: 5000 },
+    { name: '[css 1/7] FROM docker.io/library/node:22-alpine@sha256:abc', ms: 4100 },
+  ], 'a step closes once; an ERROR line does not rename it');
+  assert.equal(clock.cached, 1);
+  assert.equal(clock.baseImageMs, 4100, 'the base image\'s own time, whether or not it is among the slowest');
+  const long = buildkit._forTest.stepClock();
+  long.line(`#3 [css 2/7] RUN ${'x'.repeat(100)}`);
+  long.line('#3 DONE 1.0s');
+  assert.equal(long.slowest(1)[0].name.length, 60);
+});
+
 test('createBuild: Secret then Job, owner reference, digest from the termination message, annotation for reuse, step progress from the log', async () => {
   const { clients, state } = fakeCluster({ logLines: ['[buildkit] fetching source x', '#5 [shell 2/9] RUN npm ci', '#5 1.2 noise'] });
   const progress = [];
@@ -233,6 +344,7 @@ test('createBuild: Secret then Job, owner reference, digest from the termination
   assert.equal(result.buildRef, `bk/${state.jobs[0].metadata.name}`);
   assert.equal(result.engine, 'buildkit');
   assert.equal(result.reused, undefined);
+  assert.equal(result.cacheUpload, null, 'this Pod said nothing about the layer cache');
   assert.match(result.requestedTag, new RegExp(`^registry\\.test/apps/demo:git-${revision}-[a-f0-9]{12}$`));
   assert.match(state.jobs[0].metadata.name, /^bk-12-s42-bbbbbbbbbbbb-[a-f0-9]{12}$/);
   assert.ok(state.jobs[0].metadata.name.length <= 63);
@@ -252,6 +364,411 @@ test('createBuild: Secret then Job, owner reference, digest from the termination
   ]);
   assert.equal(state.deleted.length, 0, 'a successful Job stays for reuse until its TTL');
 });
+
+// A finished build of the app as the history lookup finds it.
+function finishedBuild(name, completionTime, cacheSteps) {
+  return {
+    metadata: { name, namespace: 'bk', labels: { 'social.usernode.io/app-id': '12' },
+      annotations: { 'social.usernode.io/image-digest': digest('e'), ...(cacheSteps ? { 'social.usernode.io/cache-steps': cacheSteps } : {}) } },
+    status: { succeeded: 1, completionTime },
+  };
+}
+
+test('createBuild: the Job is told which steps need no cache upload, from what the app\'s finished builds reported, and its own report is kept on it', async () => {
+  const hoursAgo = (h) => new Date(Date.now() - h * 3600 * 1000).toISOString();
+  const vite = 'aaaaaaaaaaaa';
+  const deps = 'bbbbbbbbbbbb';
+  const historyJobs = [
+    finishedBuild('bk-12-s1-a', hoursAgo(5), `cache-upload=done\ncache-ran=${vite} ${deps}\ncache-served=`),
+    finishedBuild('bk-12-s2-b', hoursAgo(4), `cache-upload=done\ncache-ran=${vite}\ncache-served=${deps}`),
+    finishedBuild('bk-12-s3-c', hoursAgo(3), `cache-upload=skipped\ncache-ran=${vite}\ncache-served=${deps}`),
+    finishedBuild('bk-12-s4-d', hoursAgo(2), null), // from before builds reported
+    finishedBuild('bk-12-s5-e', hoursAgo(1), 'cache-upload=done'), // could not tell which steps ran
+    { ...finishedBuild('bk-12-s6-f', hoursAgo(1), `cache-upload=done\ncache-ran=${deps}\ncache-served=`), status: { active: 1 } },
+    { ...finishedBuild('bk-12-s7-g', hoursAgo(1), `cache-upload=done\ncache-ran=${deps}\ncache-served=`), status: { failed: 1 } },
+  ];
+  const report = `cache-upload=skipped\ncache-ran=${vite}\ncache-served=${deps}`;
+  const { clients, state } = fakeCluster({ historyJobs, podMessage: `${report}\n${digest('d')}` });
+  const result = await buildkit.createBuild(config(), {
+    app, revision, environment: 'staging', sessionId: 42, sourceDir: sourceTree(['Dockerfile.kubernetes']),
+  }, runtimeWith(clients));
+  assert.equal(state.lists.length, 2, 'one lookup for an image to reuse, one for the history');
+  assert.equal(state.lists[1].namespace, 'bk');
+  assert.equal(state.lists[1].labelSelector,
+    'app.kubernetes.io/managed-by=social-vibecoding-runtime,social.usernode.io/app-id=12,social.usernode.io/build-engine=buildkit');
+  const env = Object.fromEntries(state.jobs[0].spec.template.spec.containers[0].env.map((e) => [e.name, e.value]));
+  assert.equal(env.CACHE_SETTLED_STEPS, vite, 'ran in two uploading builds and was never served; the dependency step was');
+  assert.equal(env.CACHE_UPLOAD, 'auto');
+  assert.equal(result.imageRef, `registry.test/apps/demo@${digest('d')}`, 'the digest is read past the cache lines');
+  assert.equal(result.cacheUpload, 'skipped');
+  assert.deepEqual(state.patches[0].request.body, { metadata: { annotations: {
+    'social.usernode.io/image-digest': digest('d'),
+    'social.usernode.io/cache-steps': report,
+  } } });
+});
+
+test('createBuild: a history that cannot be read is a build that uploads the cache, not a failed build', async () => {
+  const { clients, state } = fakeCluster({
+    historyError: Object.assign(new Error('etcdserver: request timed out'), { code: 500 }),
+    podMessage: `cache-upload=done\ncache-ran=aaaaaaaaaaaa\ncache-served=\n${digest('d')}`,
+  });
+  const result = await buildkit.createBuild(config(), {
+    app, revision, environment: 'staging', sessionId: 42, sourceDir: sourceTree(['Dockerfile']),
+  }, runtimeWith(clients));
+  const env = Object.fromEntries(state.jobs[0].spec.template.spec.containers[0].env.map((e) => [e.name, e.value]));
+  assert.equal(env.CACHE_SETTLED_STEPS, '');
+  assert.equal(result.cacheUpload, 'done');
+});
+
+test('createBuild: BUILDKIT_CACHE_UPLOAD=always asks for no history and uploads after every build', async () => {
+  const { clients, state } = fakeCluster({
+    historyJobs: [finishedBuild('bk-12-s1-a', new Date().toISOString(), 'cache-upload=done\ncache-ran=aaaaaaaaaaaa\ncache-served=')],
+  });
+  await buildkit.createBuild(config({ buildkitCacheUpload: 'always' }), {
+    app, revision, environment: 'staging', sessionId: 42, sourceDir: sourceTree(['Dockerfile']),
+  }, runtimeWith(clients));
+  assert.equal(state.lists.length, 1, 'only the lookup for an image to reuse');
+  const env = Object.fromEntries(state.jobs[0].spec.template.spec.containers[0].env.map((e) => [e.name, e.value]));
+  assert.equal(env.CACHE_UPLOAD, 'always');
+  assert.equal(env.CACHE_SETTLED_STEPS, '');
+  await assert.rejects(buildkit.createBuild(config({ buildkitCacheUpload: 'never' }), {
+    app, revision, environment: 'staging', sessionId: 42, sourceDir: sourceTree(['Dockerfile']),
+  }, runtimeWith(clients)), /Unsupported BUILDKIT_CACHE_UPLOAD=never \(auto, always\)/);
+});
+
+// The starter's shared cache (src/services/kubernetes-buildkit.js, "The
+// starter's shared cache"): which apps read it, which build writes it, and
+// the switch that turns it off. What the script does with the two
+// variables is in tests/kubernetes-buildkit-cache-upload.test.js.
+const starterApp = { ...app, slug: 'groceries-3f9a1c', template: 'grocery-list' };
+const envOf = (state) => Object.fromEntries(state.jobs[0].spec.template.spec.containers[0].env.map((e) => [e.name, e.value]));
+// The key the shared cache is named by: a hash of the Dockerfile and the
+// package files, as services/template.js writes them for the template.
+const packageKeyOf = (template) => {
+  const files = require('../src/services/template').getTemplateFiles('Any Name', 'any-name-123456', '', null, { template });
+  const hash = require('node:crypto').createHash('sha256');
+  for (const name of ['Dockerfile', 'package.json', 'package-lock.json']) {
+    hash.update(`${name}\0${files.find((f) => f.path === name).content}\0`);
+  }
+  return hash.digest('hex').slice(0, 12);
+};
+const READY_KEY = packageKeyOf('grocery-list');
+const READY_REF = `registry.test/cache/starter-pkg-${READY_KEY}:buildkit-cache`;
+
+test('starterCache: one cache per set of package files, not per starter, beside the apps\' caches', () => {
+  const { starterCache, starterPackageKey } = buildkit._forTest;
+  const runtime = runtimeWith({});
+  const cfg = config().kubernetes;
+  assert.match(READY_KEY, /^[a-f0-9]{12}$/);
+  assert.equal(starterPackageKey('grocery-list'), READY_KEY, 'the same hash the generator\'s files give');
+  assert.deepEqual(starterCache(cfg, runtime, starterApp), { id: 'grocery-list', key: READY_KEY, ref: READY_REF });
+  // Two ready-made starters write the same package files, so they share
+  // it: the first cities tier list finds what a grocery list left.
+  for (const template of ['tier-list-cities', 'tier-list-hikes', 'chore-list', 'challenge-books']) {
+    assert.equal(starterCache(cfg, runtime, { ...app, template }).ref, READY_REF, template);
+  }
+  // The empty scaffold (blank and own-idea projects) writes them too.
+  assert.equal(starterCache(cfg, runtime, { ...app, template: 'empty' }).ref, READY_REF);
+  // A starter with packages of its own (a game's `ws`) is another set.
+  const game = starterCache(cfg, runtime, { ...app, template: 'game-board' });
+  assert.notEqual(game.ref, READY_REF);
+  assert.match(game.ref, /^registry\.test\/cache\/starter-pkg-[a-f0-9]{12}:buildkit-cache$/);
+  assert.equal(starterCache(cfg, runtime, { ...app, template: 'game-trivia' }).ref, game.ref, 'the game starters share theirs');
+  // A row that names no template is the empty scaffold only on the build
+  // of the starter itself: an import, a fork and the platform's own app
+  // name none either, and build files of their own.
+  for (const template of [undefined, null]) {
+    assert.equal(starterCache(cfg, runtime, { ...app, template }), null, `${template}, any other build`);
+    assert.deepEqual(starterCache(cfg, runtime, { ...app, template }, { starterTree: true }),
+      { id: 'empty', key: READY_KEY, ref: READY_REF }, `${template}, the starter's own build`);
+  }
+  for (const template of ['game-2d', 'nope', '../../etc']) {
+    assert.equal(starterCache(cfg, runtime, { ...app, template }, { starterTree: true }), null, `${template}: not a template`);
+  }
+  assert.equal(starterCache(config({ buildkitStarterCache: false }).kubernetes, runtime, starterApp), null, 'BUILDKIT_STARTER_CACHE=off');
+  assert.ok(starterCache(config({ buildkitStarterCache: true }).kubernetes, runtime, starterApp));
+  assert.equal(starterCache(cfg, runtime, { ...starterApp, slug: `starter-pkg-${READY_KEY}` }), null,
+    'an app whose own cache would be the shared one keeps it to itself');
+});
+
+test('createBuild: a ready-made app\'s first build, of the starter as generated, reads and writes the shared cache', async () => {
+  const { clients, state } = fakeCluster({ podMessage: `cache-upload=done\ncache-ran=aaaaaaaaaaaa\ncache-served=bbbbbbbbbbbb\n${digest('d')}` });
+  const result = await buildkit.createBuild(config(), {
+    app: starterApp, revision, environment: 'production', sourceDir: sourceTree(['Dockerfile']), starterTree: true,
+  }, runtimeWith(clients));
+  const env = envOf(state);
+  assert.equal(env.CACHE_REF, 'registry.test/cache/groceries-3f9a1c:buildkit-cache', 'the app\'s own cache, as before');
+  assert.equal(env.STARTER_CACHE_REF, READY_REF);
+  assert.equal(env.STARTER_CACHE_EXPORT, 'yes');
+  assert.deepEqual(result.starterCache, { starter: 'grocery-list', key: READY_KEY, export: true });
+  assert.equal(result.cacheUpload, 'done');
+});
+
+test('createBuild: a blank project\'s first build, of the empty scaffold, reads and writes the same shared cache', async () => {
+  const { clients, state } = fakeCluster();
+  const result = await buildkit.createBuild(config(), {
+    app: { ...app, slug: 'my-idea-1a2b3c', template: null }, revision, environment: 'production',
+    sourceDir: sourceTree(['Dockerfile']), starterTree: true,
+  }, runtimeWith(clients));
+  const env = envOf(state);
+  assert.equal(env.STARTER_CACHE_REF, READY_REF);
+  assert.equal(env.STARTER_CACHE_EXPORT, 'yes');
+  assert.deepEqual(result.starterCache, { starter: 'empty', key: READY_KEY, export: true });
+});
+
+test('createBuild: every other build of a ready-made app only reads the shared cache', async () => {
+  for (const params of [
+    { environment: 'staging', sessionId: 42 }, // a proposal's preview
+    { environment: 'production' }, // a merge, a redeploy, a create that cloned its repository back
+    { environment: 'production', starterTree: false },
+  ]) {
+    const { clients, state } = fakeCluster();
+    const result = await buildkit.createBuild(config(), {
+      app: starterApp, revision, sourceDir: sourceTree(['Dockerfile']), ...params,
+    }, runtimeWith(clients));
+    const env = envOf(state);
+    assert.equal(env.STARTER_CACHE_REF, READY_REF, JSON.stringify(params));
+    assert.equal(env.STARTER_CACHE_EXPORT, '', JSON.stringify(params));
+    assert.deepEqual(result.starterCache, { starter: 'grocery-list', key: READY_KEY, export: false });
+  }
+});
+
+test('createBuild: an app of no template (an import, a fork, the platform), an unknown one, or BUILDKIT_STARTER_CACHE=off is the per-app cache alone, as before', async () => {
+  for (const [label, cfg, buildApp, starterTree] of [
+    ['no template, not the starter\'s own build', config(), app, false],
+    ['a template that is gone', config(), { ...app, template: 'game-2d' }, true],
+    ['switched off', config({ buildkitStarterCache: false }), starterApp, true],
+  ]) {
+    const { clients, state } = fakeCluster();
+    const result = await buildkit.createBuild(cfg, {
+      app: buildApp, revision, environment: 'production', sourceDir: sourceTree(['Dockerfile']), starterTree,
+    }, runtimeWith(clients));
+    const env = envOf(state);
+    assert.equal(env.STARTER_CACHE_REF, '', label);
+    assert.equal(env.STARTER_CACHE_EXPORT, '', `${label}: nothing to write either`);
+    assert.equal(result.starterCache, null, label);
+    assert.match(env.CACHE_REF, /:buildkit-cache$/, `${label}: its own cache stays`);
+  }
+});
+
+// As tests/data-key-rename.test.js boots it: load() needs these, and is chatty.
+function loadConfigWith(key, value) {
+  const runtimeConfig = require('../src/config');
+  const { setPlatformKeys } = require('./platform-keys');
+  setPlatformKeys();
+  const env = {
+    DATABASE_URL: 'postgres://localhost/test', SESSION_SECRET: 'test-session-secret',
+    ADMIN_USERNAME: 'admin', ADMIN_PASSWORD: 'admin-pass', [key]: value,
+  };
+  const saved = {};
+  for (const [k, v] of Object.entries(env)) {
+    saved[k] = process.env[k];
+    if (v === undefined) delete process.env[k];
+    else process.env[k] = v;
+  }
+  const realLog = console.log;
+  console.log = () => {};
+  try {
+    return runtimeConfig.load().kubernetes;
+  } finally {
+    console.log = realLog;
+    for (const [k, v] of Object.entries(saved)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
+}
+
+test('BUILDKIT_EARLY_IMAGE: on unless it is set to off', () => {
+  for (const value of [undefined, '', 'on', '1', 'true']) {
+    assert.equal(loadConfigWith('BUILDKIT_EARLY_IMAGE', value).buildkitEarlyImage, true, String(value));
+  }
+  for (const value of ['off', 'OFF', ' off ', '0', 'false']) {
+    assert.equal(loadConfigWith('BUILDKIT_EARLY_IMAGE', value).buildkitEarlyImage, false, value);
+  }
+});
+
+test('KUBERNETES_ASSET_BACKEND_WAIT: a deploy waits only for a backend that does not serve, unless it is always', () => {
+  for (const value of [undefined, '', 'serving', 'anything']) {
+    assert.equal(loadConfigWith('KUBERNETES_ASSET_BACKEND_WAIT', value).assetBackendWait, 'serving', String(value));
+  }
+  for (const value of ['always', 'ALWAYS', ' always ']) {
+    assert.equal(loadConfigWith('KUBERNETES_ASSET_BACKEND_WAIT', value).assetBackendWait, 'always', value);
+  }
+});
+
+test('BUILDKIT_STARTER_CACHE: on unless it is set to off', () => {
+  const runtimeConfig = require('../src/config');
+  const { setPlatformKeys } = require('./platform-keys');
+  setPlatformKeys();
+  // As tests/data-key-rename.test.js boots it: load() needs these, and is chatty.
+  const loadWith = (value) => {
+    const env = {
+      DATABASE_URL: 'postgres://localhost/test', SESSION_SECRET: 'test-session-secret',
+      ADMIN_USERNAME: 'admin', ADMIN_PASSWORD: 'admin-pass', BUILDKIT_STARTER_CACHE: value,
+    };
+    const saved = {};
+    for (const [k, v] of Object.entries(env)) {
+      saved[k] = process.env[k];
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+    const realLog = console.log;
+    console.log = () => {};
+    try {
+      return runtimeConfig.load().kubernetes.buildkitStarterCache;
+    } finally {
+      console.log = realLog;
+      for (const [k, v] of Object.entries(saved)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    }
+  };
+  for (const value of [undefined, '', 'on', '1', 'true', 'yes']) assert.equal(loadWith(value), true, String(value));
+  for (const value of ['off', 'OFF', ' off ', '0', 'false']) assert.equal(loadWith(value), false, value);
+});
+
+test('createBuild: a finished build says where its time went, without a progress listener', async () => {
+  const { clients } = fakeCluster({ logLines: TIMED_BUILD_LOG });
+  const result = await buildkit.createBuild(config(), {
+    app, revision, environment: 'production', sourceDir: sourceTree(['Dockerfile']),
+  }, runtimeWith(clients));
+  assert.deepEqual(result.steps.map((s) => s.name).slice(0, 2), ['exporting cache to registry', '[css 3/7] RUN npm ci --include=dev']);
+  assert.ok(result.steps.length <= 6);
+  assert.equal(result.cachedSteps, 1);
+  assert.equal(result.baseImageMs, 4100);
+});
+
+test('stepClock: the slowest FROM is the base image time; none closed is null', () => {
+  const clock = buildkit._forTest.stepClock();
+  assert.equal(clock.baseImageMs, null, 'nothing seen yet');
+  for (const line of [
+    '#3 [internal] load metadata for docker.io/library/node:22-alpine',
+    '#3 DONE 1.2s',
+    '#5 [css 1/8] FROM docker.io/library/node:22-alpine@sha256:abc',
+    '#6 [stage-1 1/6] FROM docker.io/library/alpine:3.20@sha256:def',
+    '#6 DONE 2.0s',
+    '#7 [css 2/8] WORKDIR /build',
+    '#7 DONE 0.1s',
+    '#5 DONE 16.7s',
+    '#8 [css 3/8] RUN echo FROM nothing',
+    '#8 DONE 30.0s',
+  ]) clock.line(line);
+  assert.equal(clock.baseImageMs, 16700, 'the slowest of the two pulls; metadata and a RUN that mentions FROM are not one');
+  const cachedOnly = buildkit._forTest.stepClock();
+  cachedOnly.line('#5 [css 1/8] FROM docker.io/library/node:22-alpine@sha256:abc');
+  cachedOnly.line('#5 CACHED');
+  assert.equal(cachedOnly.baseImageMs, null);
+});
+
+// "The image before the cache" (src/services/kubernetes-buildkit.js): the
+// Job says `[buildkit] image <tag>@<digest>` once the image is pushed, and
+// the platform takes it from there while the Job uploads the cache.
+const recipeOfDockerfile = () => buildkit._forTest.recipeOf(config().kubernetes, 'Dockerfile');
+const buildTag = () => `registry.test/apps/demo:git-${revision}-${recipeOfDockerfile()}`;
+const imageLine = (tag = buildTag(), d = digest('d')) => `[buildkit] image ${tag}@${d}`;
+const COMPLETE = { succeeded: 1, conditions: [{ type: 'Complete', status: 'True' }] };
+
+test('pushedImage: only the script\'s own line, for this build\'s tag, with a whole digest', () => {
+  const { pushedImage } = buildkit._forTest;
+  const tag = buildTag();
+  assert.equal(pushedImage(imageLine(), tag), digest('d'));
+  assert.equal(pushedImage(`  ${imageLine()}\r`, tag), digest('d'), 'surrounding whitespace is not part of it');
+  assert.equal(pushedImage(imageLine('registry.test/apps/other:git-x'), tag), null, 'another build\'s tag');
+  assert.equal(pushedImage(imageLine(tag, 'sha256:abc'), tag), null, 'a digest cut short');
+  assert.equal(pushedImage(imageLine(tag, `sha256:${'A'.repeat(64)}`), tag), null);
+  assert.equal(pushedImage(`${imageLine()} trailing`, tag), null);
+  assert.equal(pushedImage(`#12 0.345 ${imageLine()}`, tag), null, 'a RUN step printing the line is step output, not the script');
+  assert.equal(pushedImage(`[buildkit] pushed ${tag}@${digest('d')}`, tag), null);
+  assert.equal(pushedImage(imageLine(), null), null);
+});
+
+test('createBuild: the image is handed over as soon as it is pushed; the Job finishes its cache upload on its own', async () => {
+  const report = 'cache-upload=done\ncache-ran=aaaaaaaaaaaa\ncache-served=bbbbbbbbbbbb';
+  const { clients, state } = fakeCluster({
+    jobReads: [{ active: 1 }, { active: 1 }, COMPLETE],
+    podMessage: `${report}\n${digest('d')}`,
+    logLines: ['[buildkit] building Dockerfile -> x', '#4 [css 1/7] FROM docker.io/library/node:22-alpine', '#4 DONE 3.5s', imageLine()],
+    lateLines: ['[buildkit] uploading the layer cache', '#20 exporting cache to registry', '#20 DONE 14.0s', `[buildkit] pushed ${buildTag()}@${digest('d')}`],
+  });
+  const progress = [];
+  const result = await buildkit.createBuild(config(), {
+    app, revision, environment: 'production', sourceDir: sourceTree(['Dockerfile']),
+    onProgress: (image) => progress.push(image.detail),
+  }, runtimeWith(clients));
+  assert.equal(result.imageRef, `registry.test/apps/demo@${digest('d')}`);
+  assert.equal(result.cacheUpload, 'background', 'what became of the cache is not known yet');
+  assert.equal(result.baseImageMs, 3500);
+  assert.ok(state.jobReads <= 2, 'returned on the line, while the Job was still running');
+  assert.equal(state.aborts, 1, 'the log stream is closed when the build returns');
+  assert.equal(state.deleted.length, 0, 'nothing touches the Job that is still uploading');
+
+  // The Job's later lines reach no caller.
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  assert.ok(progress.includes(`image ${buildTag()}@${digest('d')}`));
+  assert.ok(!progress.some((detail) => /uploading the layer cache|pushed/.test(detail)), progress.join(' | '));
+  assert.ok(!result.steps.some((step) => /exporting cache/.test(step.name)), 'the upload is not the build\'s time');
+
+  // Once the Job has finished, it carries what a finished build always did.
+  await buildkit._forTest.settled();
+  assert.equal(state.patches.length, 1);
+  assert.deepEqual(state.patches[0].request.body, { metadata: { annotations: {
+    'social.usernode.io/image-digest': digest('d'),
+    'social.usernode.io/cache-steps': report,
+  } } });
+  assert.equal(state.deleted.length, 0);
+});
+
+test('createBuild: without its line the build waits for the Job, as before: another tag, a broken digest, or BUILDKIT_EARLY_IMAGE=off', async () => {
+  const report = 'cache-upload=skipped\ncache-ran=aaaaaaaaaaaa\ncache-served=';
+  for (const [label, cfg, line] of [
+    ['another build\'s tag', config(), imageLine('registry.test/apps/demo:git-other')],
+    ['a digest cut short', config(), imageLine(buildTag(), 'sha256:abc')],
+    ['an older script', config(), `[buildkit] pushed ${buildTag()}@${digest('e')}`],
+    ['switched off', config({ buildkitEarlyImage: false }), imageLine(buildTag(), digest('e'))],
+  ]) {
+    const { clients, state } = fakeCluster({ podMessage: `${report}\n${digest('d')}`, logLines: [line] });
+    const result = await buildkit.createBuild(cfg, {
+      app, revision, environment: 'production', sourceDir: sourceTree(['Dockerfile']),
+    }, runtimeWith(clients));
+    assert.equal(result.imageRef, `registry.test/apps/demo@${digest('d')}`, `${label}: the digest from the finished Job`);
+    assert.equal(result.cacheUpload, 'skipped', label);
+    assert.equal(state.jobReads, 2, `${label}: waited for completion`);
+    assert.equal(state.patches.length, 1, `${label}: annotated before returning`);
+  }
+});
+
+test('createBuild: a Job that fails after its image was handed over leaves the build standing, logged, and the Job in place', async (t) => {
+  const log = require('../src/services/logger');
+  const warnings = [];
+  t.mock.method(log, 'warn', (category, message, data) => warnings.push({ message, data }));
+  const { clients, state } = fakeCluster({
+    jobReads: [{ active: 1 }, { failed: 1, conditions: [{ type: 'Failed', status: 'True', reason: 'DeadlineExceeded' }] }],
+    logLines: [imageLine()],
+  });
+  const result = await buildkit.createBuild(config(), {
+    app, revision, environment: 'production', sourceDir: sourceTree(['Dockerfile']),
+  }, runtimeWith(clients));
+  assert.equal(result.imageRef, `registry.test/apps/demo@${digest('d')}`);
+  await buildkit._forTest.settled();
+  const warned = warnings.find((w) => /failed after its image was handed over/.test(w.message));
+  assert.ok(warned);
+  assert.equal(warned.data.reason, 'DeadlineExceeded');
+  assert.equal(state.deleted.length, 0, 'left to the failed-build sweep and its TTL; its Pod keeps the log');
+  assert.equal(state.patches.length, 0, 'a failed Job is never offered for reuse');
+});
+
+test('createBuild: after the hand-over a Job that is gone, or a read that fails, is not an error', async () => {
+  const gone = fakeCluster({ logLines: [imageLine()], jobReadError: (n) => (n === 2 ? Object.assign(new Error('nf'), { code: 404 }) : null) });
+  await buildkit.createBuild(config(), {
+    app, revision, environment: 'production', sourceDir: sourceTree(['Dockerfile']),
+  }, runtimeWith(gone.clients));
+  await buildkit._forTest.settled();
+  assert.equal(gone.state.patches.length, 0, 'removed (the app was deleted): nothing to annotate');
+  assert.equal(gone.state.jobReads, 2);
+});
+
 
 test('createBuild: a previous successful Job for the same revision and recipe is reused without a build', async () => {
   const first = fakeCluster();
@@ -341,6 +858,153 @@ test('createBuild: a namespace or RBAC the cluster does not have yet is the lane
     return true;
   });
   assert.equal(state.deleted.filter((d) => /-input$/.test(d.name)).length, 1, 'the clone credential does not outlive the attempt');
+});
+
+// The API's refusal when the lane's ResourceQuota is full, as
+// @kubernetes/client-node raises it: a 403 whose Status says so.
+function quotaRefusal(resource = 'count/jobs.batch') {
+  const status = { kind: 'Status', status: 'Failure', reason: 'Forbidden', code: 403,
+    message: `jobs.batch "bk-12" is forbidden: exceeded quota: bk, requested: ${resource}=1, used: ${resource}=1k, limited: ${resource}=1k` };
+  return Object.assign(new Error(`HTTP-Code: 403\nMessage: Unknown API Status Code!\nBody: ${JSON.stringify(JSON.stringify(status))}`), { code: 403, body: JSON.stringify(status) });
+}
+
+// A succeeded build of `appId` as the prune's listing finds it.
+function retainedBuild(name, appId, completionTime) {
+  return {
+    metadata: { name, namespace: 'bk', creationTimestamp: completionTime, labels: { 'social.usernode.io/app-id': String(appId) } },
+    status: { succeeded: 1, conditions: [{ type: 'Complete', status: 'True' }], completionTime },
+  };
+}
+
+// Five of app 12's builds, two of app 13's, one still running and one
+// failed: room is the oldest two of app 12's, beyond its newest three.
+const RETAINED = [
+  ...[1, 2, 3, 4, 5].map((day) => retainedBuild(`bk-12-old-${day}`, 12, `2026-10-0${day}T10:00:00Z`)),
+  retainedBuild('bk-13-a', 13, '2026-09-20T10:00:00Z'), retainedBuild('bk-13-b', 13, '2026-09-21T10:00:00Z'),
+  { metadata: { name: 'bk-14-running', labels: { 'social.usernode.io/app-id': '14' }, creationTimestamp: '2026-09-01T10:00:00Z' }, status: { active: 1 } },
+  { metadata: { name: 'bk-15-failed', labels: { 'social.usernode.io/app-id': '15' }, creationTimestamp: '2026-09-01T10:00:00Z' },
+    status: { failed: 1, conditions: [{ type: 'Failed', status: 'True' }] } },
+];
+const prunedNames = (state) => state.deleted.filter((d) => d.propagationPolicy === 'Background').map((d) => d.name).sort();
+
+// Refuses the first `times` creates through `method` for quota, then lets
+// them through; counts every attempt.
+function refuseFor(api, method, times, attempts) {
+  const real = api[method].bind(api);
+  api[method] = async (request) => {
+    attempts.push(method);
+    if (attempts.filter((m) => m === method).length <= times) throw quotaRefusal();
+    return real(request);
+  };
+}
+
+test('a quota refusal is told apart from the lane missing, in either shape the client raises it', () => {
+  const { isQuotaRefusal } = buildkit._forTest;
+  assert.equal(isQuotaRefusal(quotaRefusal()), true);
+  assert.equal(isQuotaRefusal(Object.assign(new Error('HTTP-Code: 403'), { code: 403, body: { message: 'exceeded quota: bk' } })), true, 'a parsed body');
+  assert.equal(isQuotaRefusal(Object.assign(new Error('jobs.batch is forbidden: cannot create resource "jobs"'), { code: 403 })), false, 'RBAC');
+  assert.equal(isQuotaRefusal(Object.assign(new Error('exceeded quota'), { code: 422 })), false, 'only a 403');
+});
+
+test('createBuild: a full quota is room to make, not the lane missing: older finished Jobs go and the create is tried again', async () => {
+  buildkit._forTest.setRoomTiming(5, 500);
+  const { clients, state } = fakeCluster({ historyJobs: RETAINED });
+  const attempts = [];
+  refuseFor(clients.batch, 'createNamespacedJob', 2, attempts);
+  const result = await buildkit.createBuild(config(), {
+    app, revision, environment: 'staging', sessionId: 42, sourceDir: sourceTree(['Dockerfile']),
+  }, runtimeWith(clients));
+  assert.equal(result.engine, 'buildkit');
+  assert.equal(result.imageRef, `registry.test/apps/demo@${digest('d')}`);
+  assert.deepEqual(prunedNames(state), ['bk-12-old-1', 'bk-12-old-2'], 'each app keeps its newest three; running and failed Jobs are left');
+  assert.equal(attempts.length, 3, 'tried again while the quota caught up with the deletions');
+  assert.equal(state.jobs.length, 1);
+  assert.equal(state.deleted.filter((d) => /-input$/.test(d.name)).length, 0, 'the clone credential stays for the Job');
+  assert.equal(buildkit.unavailableReason(), null);
+});
+
+test('createBuild: a Secret the quota refuses makes room the same way', async () => {
+  buildkit._forTest.setRoomTiming(5, 500);
+  const { clients, state } = fakeCluster({ historyJobs: RETAINED });
+  const attempts = [];
+  refuseFor(clients.core, 'createNamespacedSecret', 1, attempts);
+  const result = await buildkit.createBuild(config(), {
+    app, revision, environment: 'staging', sessionId: 42, sourceDir: sourceTree(['Dockerfile']),
+  }, runtimeWith(clients));
+  assert.equal(result.engine, 'buildkit');
+  assert.deepEqual(prunedNames(state), ['bk-12-old-1', 'bk-12-old-2']);
+  assert.equal(state.secrets.length, 1);
+});
+
+test('createBuild: a lane still full after making room, or with none to make, is full for this build, not unavailable', async () => {
+  buildkit._forTest.setRoomTiming(5, 40);
+  const full = fakeCluster({ historyJobs: RETAINED, createJobError: quotaRefusal() });
+  await assert.rejects(buildkit.createBuild(config(), {
+    app, revision, environment: 'staging', sessionId: 42, sourceDir: sourceTree(['Dockerfile']),
+  }, runtimeWith(full.clients)), (err) => {
+    assert.equal(err.engineUnavailable, true);
+    assert.equal(err.laneFull, true);
+    assert.match(err.message, /^BuildKit lane full: no room in bk's quota for Jobs \(/);
+    assert.equal(err.buildFailed, true, 'still a failed build for a caller that does not fall back');
+    return true;
+  });
+  assert.deepEqual(prunedNames(full.state), ['bk-12-old-1', 'bk-12-old-2']);
+  assert.equal(full.state.deleted.filter((d) => /-input$/.test(d.name)).length, 1, 'the clone credential does not outlive the attempt');
+  // Every app at its newest three: nothing to prune, so no wait either.
+  const kept = fakeCluster({ historyJobs: RETAINED.slice(2) });
+  const attempts = [];
+  refuseFor(kept.clients.batch, 'createNamespacedJob', Infinity, attempts);
+  await assert.rejects(buildkit.createBuild(config(), {
+    app, revision, environment: 'staging', sessionId: 42, sourceDir: sourceTree(['Dockerfile']),
+  }, runtimeWith(kept.clients)), (err) => err.laneFull === true);
+  assert.equal(attempts.length, 1);
+  assert.deepEqual(prunedNames(kept.state), []);
+});
+
+test('kubernetes.createBuild under auto sends only the build a full lane refuses to kpack', async () => {
+  buildkit._forTest.setRoomTiming(5, 20);
+  const full = fakeCluster({ historyJobs: RETAINED });
+  const attempts = [];
+  refuseFor(full.clients.batch, 'createNamespacedJob', Infinity, attempts);
+  const kpackCreated = [];
+  kubernetes._setClientsForTest({ ...full.clients, custom: {
+    async listNamespacedCustomObject() { return { items: [] }; },
+    async createNamespacedCustomObject(request) { kpackCreated.push(request.body); },
+    async getNamespacedCustomObject() {
+      return { status: { conditions: [{ type: 'Succeeded', status: 'True' }], latestImage: `registry.test/apps/demo@${digest('c')}` } };
+    },
+  } });
+  const params = () => ({ app, revision, environment: 'staging', sessionId: 42, sourceDir: sourceTree(['Dockerfile']) });
+  const first = await kubernetes.createBuild(config(), params());
+  assert.equal(first.imageRef, `registry.test/apps/demo@${digest('c')}`);
+  assert.equal(kpackCreated.length, 1);
+  assert.equal(buildkit.unavailableReason(), null, 'a full quota is not a verdict to remember');
+  const tried = attempts.length;
+  await kubernetes.createBuild(config(), params());
+  assert.ok(attempts.length > tried, 'the next build tries the lane again');
+  assert.equal(kpackCreated.length, 2);
+});
+
+test('makeRoom: builds refused together share one prune', async () => {
+  let lists = 0;
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const deleted = [];
+  const batch = {
+    async listNamespacedJob() { lists += 1; await gate; return { items: RETAINED }; },
+    async deleteNamespacedJob(request) { deleted.push(request.name); },
+  };
+  const runtime = runtimeWith({ batch });
+  const cfg = config().kubernetes;
+  const both = Promise.all([buildkit._forTest.makeRoom(cfg, runtime, { batch }), buildkit._forTest.makeRoom(cfg, runtime, { batch })]);
+  release();
+  const [a, b] = await both;
+  assert.equal(lists, 1);
+  assert.deepEqual(a, { examined: RETAINED.length, deleted: 2 });
+  assert.equal(a, b);
+  assert.deepEqual(deleted.sort(), ['bk-12-old-1', 'bk-12-old-2']);
+  await buildkit._forTest.makeRoom(cfg, runtime, { batch });
+  assert.equal(lists, 2, 'a later refusal makes room again');
 });
 
 test('createBuild: a Job name still held by a terminating Job past the create deadline does not strand the clone credential', async (t) => {

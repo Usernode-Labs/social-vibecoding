@@ -3,8 +3,8 @@
 /**
  * Shared classifier for build/deploy failures (issue #416).
  *
- * Every production deploy path (createApp / finalizeDeploy /
- * rebuildProduction) funnels its caught error through classify() to get
+ * Every production deploy path (a new project's setup, app-creator.js,
+ * and deployProduction) funnels its caught error through classify() to get
  * a persistable `apps.last_failure` record:
  *
  *   { stage, reason, log, at, sha }
@@ -34,6 +34,11 @@ const { redactString } = require('./log-redaction');
 
 const MAX_REASON = 280;
 const MAX_LOG = 16 * 1024;
+
+// A new repository GitHub refused with its secondary limit, after the
+// setup's waits (services/repo-create-queue.js). GitHub's own text is about
+// scraping and its terms of service; the server log keeps it.
+const REPO_SLOW_DOWN = 'GitHub is limiting how fast new projects can be made. Try again in a few minutes.';
 
 // Matches the "most specific error line" heuristic used by the staging
 // checks pipeline — the app's own crash message beats generic wrapper text.
@@ -153,6 +158,34 @@ function summarizeBootFailure(err) {
   return capReason(reason);
 }
 
+// An image that names no USER runs as root, and app Pods run with
+// runAsNonRoot and no runAsUser, so the kubelet refuses it before the
+// process starts. Nothing on the platform's side changes that: the same
+// commit fails the same way on every retry, and only a commit that changes
+// the Dockerfile can go live (src/prompts/app-conventions.md). Goalio sat
+// like that from 17 Sep to 15 Oct 2026, retried ~1,200 times a day, while
+// its merges read as done and its previous version kept serving.
+const ROOT_IMAGE = 'root_image';
+const ROOT_IMAGE_REJECTION = /runAsNonRoot and image will run as root/;
+const ROOT_IMAGE_FIX = "The app's image runs as root, so Kubernetes (runAsNonRoot) will not start it. "
+  + 'Add `USER 1000:1000` to the final stage of its Dockerfile, with `COPY --chown=1000:1000` '
+  + 'for files the app writes, and merge that change.';
+
+function isRootImageRefusal(err) {
+  if (!err) return false;
+  const text = [err.message, err.terminalPodDetails, err.containerLogs].filter(Boolean).join('\n');
+  return ROOT_IMAGE_REJECTION.test(text);
+}
+
+// Whether deploying `sha` would only repeat a refusal no retry can change:
+// the recorded failure is this very commit's image running as root. A new
+// commit, or a deploy asked for by hand, still goes ahead.
+function waitsForNewCommit(lastFailure, sha) {
+  const r = asRecord(lastFailure);
+  if (!r || r.kind !== ROOT_IMAGE || !r.sha || !sha) return false;
+  return String(r.sha).toLowerCase() === String(sha).toLowerCase();
+}
+
 // Map a caught deploy error onto { stage, reason, log }. `opts.stage`
 // lets a call site that knows better (e.g. the git-clone wrapper) force
 // the stage for errors that carry no marker of their own.
@@ -160,7 +193,9 @@ function classify(err, opts = {}) {
   if (err && err.healthcheckFailed) {
     return {
       stage: 'healthcheck',
-      reason: summarizeBootFailure(err),
+      reason: isRootImageRefusal(err)
+        ? capReason(`${err.containerStatus ? `[${err.containerStatus}] ` : ''}${ROOT_IMAGE_FIX}`)
+        : summarizeBootFailure(err),
       log: truncateLog(err.containerLogs || ''),
       // Carried so the checks pipeline can record this as 'error' (retried,
       // escalated to the platform owner) rather than 'failing' (blamed on
@@ -196,8 +231,9 @@ function classify(err, opts = {}) {
   // long enough to consume the whole 280-char budget on its own. Prefer the
   // process's own stderr line; failing that, drop the command line.
   const detail = pickReasonLine(stderr) || stripCommandFailedPrefix(message);
+  const slowDown = stage === 'repo' && require('./github-budget').isSecondaryRateLimitError(err);
   const reason = capReason(
-    stage === 'repo' ? `GitHub repo creation failed: ${detail}` : detail
+    slowDown ? REPO_SLOW_DOWN : stage === 'repo' ? `GitHub repo creation failed: ${detail}` : detail
   );
   return { stage, reason, log: stderr };
 }
@@ -211,6 +247,7 @@ function record(err, opts = {}) {
     log,
     at: new Date().toISOString(),
     sha: opts.sha || null,
+    ...(isRootImageRefusal(err) ? { kind: ROOT_IMAGE } : {}),
   };
 }
 
@@ -255,6 +292,12 @@ function asRecord(value) {
 }
 
 module.exports = {
+  REPO_SLOW_DOWN,
+  ROOT_IMAGE,
+  ROOT_IMAGE_FIX,
+  isRootImageRefusal,
+  waitsForNewCommit,
+  asRecord,
   classify,
   record,
   syntheticRecord,

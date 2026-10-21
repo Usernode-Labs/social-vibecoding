@@ -40,6 +40,10 @@ const githubMock = require('./github-mock');
 const { usesMockGithubForImports } = require('../config');
 const { sameSha } = require('./pr-vote-revision');
 
+// How long a pull request closed on GitHub stays closed before its proposal
+// is closed here (services/proposal-scans.js looks every three minutes).
+const CLOSE_SETTLES_MS = 5 * 60 * 1000;
+
 function parseRepo(url) {
   const [, owner, repo] = (url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
   return owner && repo ? { owner, repo } : null;
@@ -66,7 +70,7 @@ function prLabel(session) {
 // no dev chat (nobody in the app owns its session), so those rows render
 // nowhere and every minute of a multi-minute build looks like nothing
 // happening. The thread an imported proposal DOES have is the group
-// discussion keyed ('session', id) — the same channel checkAndMerge and the
+// discussion keyed ('session', id) — the same channel the merge's lines and the
 // head-change note use. Best-effort by construction: narration must never
 // affect the build's outcome.
 async function postProposalNote(pool, session, text, metadata) {
@@ -98,6 +102,9 @@ async function postProposalNote(pool, session, text, metadata) {
 //                 is not. Both are no-ops unless there is something wrong.
 //   'updated'   — the head moved: tally cleared, note posted, drift +
 //                 checks refreshed against the new head.
+//   'merged' / 'closed' — GitHub merged or closed the pull request: up
+//                 for a vote, a merge is recorded (merge-followups);
+//                 otherwise the proposal is closed.
 //
 // `session` must carry (at least): id, app_id, app_slug, source, pr_number,
 // pr_title, branch_name, repo_url, imported_pr_head_sha — i.e. the
@@ -141,6 +148,34 @@ async function syncImportedProposal({ config, pool, session }) {
           sessionId: session.id, err: err.message,
         });
       }
+    }
+
+    // GitHub's word on the pull request itself: merged or closed there, the
+    // proposal is settled here. Up for a vote, a merge is merge-followups'
+    // (it records it and runs every follow-up); a pull request that was
+    // never up for one, or one closed without merging, closes the proposal
+    // (the proposal machine decides, from the status read here). One being
+    // merged is the proposal machine's merge attempt's to settle.
+    if ((pr.merged || pr.state === 'closed') && session.status === 'merging') return 'skipped';
+    if (pr.merged && session.status === 'promoted') {
+      await require('../workflow/platform.ts').mergeObserved({
+        sessionId: session.id, appId: session.app_id, mergeSha: pr.merge_commit_sha || null, mergedAt: pr.merged_at || null,
+      });
+      return 'merged';
+    }
+    // A close is settled once it has stood a few minutes: an author closes
+    // and reopens a pull request to run its CI again, and the webhook's
+    // `closed` delivery comes first. The next look settles it.
+    const closedAt = pr.closed_at ? Date.parse(pr.closed_at) : NaN;
+    if (!pr.merged && pr.state === 'closed' && Number.isFinite(closedAt) && Date.now() - closedAt < CLOSE_SETTLES_MS) return 'unchanged';
+    if (pr.merged || pr.state === 'closed') {
+      const closed = await require('./session-lifecycle').archiveSession({
+        pool, sessionId: session.id, reason: pr.merged ? 'pr-merged' : 'pr-closed', from: session.status,
+      });
+      log.info('pr-import-sync', 'Imported pull request settled on GitHub; the proposal is closed', {
+        sessionId: session.id, prNumber: session.pr_number, merged: !!pr.merged, archived: !!closed?.archived,
+      });
+      return pr.merged ? 'merged' : 'closed';
     }
 
     const newHead = pr.head && pr.head.sha ? pr.head.sha : null;
@@ -213,6 +248,12 @@ async function classifyImportedHeadMove({ session, oldHead, newHead }) {
 // the verdict green, and nobody has tested it, so it is tested.
 const CARRIABLE_CHECK_STATES = new Set(['passing', 'skipped']);
 
+// How many times a head move is asked of the proposal machine while it did
+// not decide it in time (the conductor slow or restarting): refused as
+// `expired`, which changed nothing.
+const MOVE_ATTEMPTS = 3;
+const undecided = (out) => !!out && (out.status === 'pending' || out.reason === 'expired');
+
 // Apply a head change: advance the stored SHA, decide what the move costs the
 // approvals and the checks, refresh drift, and re-run SHA-pinned checks where
 // the verdict cannot carry. An active import has no votes to protect and
@@ -227,7 +268,7 @@ const CARRIABLE_CHECK_STATES = new Set(['passing', 'skipped']);
 //   'await'      — (default; the poller) run the rebuild here and wait for
 //                  it, so the sweep's per-session cooldown bounds concurrency.
 //   'background' — kick the rebuild and return.
-//   'defer'      — leave the rebuild to the caller's checkAndMerge, whose
+//   'defer'      — leave the rebuild to the caller's merge gate, whose
 //                  checks gate rebuilds exactly the pinned head when the
 //                  verdict's commit does not match it. Only honoured while
 //                  the approvals survive: a run that cleared them stops at
@@ -261,31 +302,37 @@ async function applyHeadChange({
   // Checks policy follows who wrote the tree, as on the native path: a
   // mechanical merge is pure git over a tested branch and a tested main, so
   // a settled verdict carries. A 'resolved' tree is one nobody has tested.
-  const checksCarry = kind === 'mechanical'
+  let checksCarry = kind === 'mechanical'
     && sameSha(session.checks_commit_sha, oldHead)
     && CARRIABLE_CHECK_STATES.has(session.check_state);
 
-  // 2. One statement. If the epoch bump and the head install could land
-  //    separately, a crash between them would leave a row whose approvals
-  //    describe neither the old code nor the new. The WHERE is the guard
-  //    against a second applier: it only fires if the pin is still the one
-  //    this decision was made about.
-  const { rows: claimed } = await pool.query(
-    `UPDATE chat_sessions
-        SET imported_pr_head_sha = $1,
-            ${summaryFreshness.invalidateHeadMoveSql('$1')},
-            stale_notified_at = NULL,
-            approval_epoch = approval_epoch + CASE WHEN $3::boolean THEN 1 ELSE 0 END,
-            checks_commit_sha = CASE WHEN $4::boolean THEN $1 ELSE checks_commit_sha END
-      WHERE id = $2
-        AND imported_pr_head_sha IS NOT DISTINCT FROM $5::varchar
-      RETURNING approval_epoch, pr_summary_stale`,
-    [newHead, session.id, bumpEpoch, checksCarry, oldHead]
-  );
-  if (!claimed.length) {
-    log.info('pr-import-sync', 'Head change already applied by another pass; nothing to do', {
-      sessionId: session.id, prNumber: session.pr_number, oldHead, newHead,
+  // 2. One move, the proposal machine's (Q3): the head installed and, unless
+  //    the move kept the approvals, the epoch moved on, in one statement, so
+  //    a crash can never leave a row whose approvals describe neither the old
+  //    code nor the new. It is refused if the pin is no longer the one this
+  //    decision was made about (another pass got there first), or the
+  //    proposal has closed or merged meanwhile.
+  //    A move the machine did not decide in time is asked again: it was
+  //    refused as expired (changing nothing), and a fresh event (a fresh
+  //    request key) is the only way it lands.
+  let moved = null;
+  for (let attempt = 0; attempt < MOVE_ATTEMPTS; attempt++) {
+    moved = await require('../workflow/platform.ts').moveReviewHead({
+      sessionId: session.id, appId: session.app_id, column: 'imported', from: oldHead || null, to: newHead,
+      keepVotes: !bumpEpoch, reason: `imported_head_${kind}`,
     });
+    if (!undecided(moved)) break;
+  }
+  if (moved.status !== 'accepted' && moved.status !== 'replayed') {
+    if (undecided(moved)) {
+      log.error('pr-import-sync', 'The proposal machine never answered the head move; the next pass tries again', {
+        sessionId: session.id, prNumber: session.pr_number, oldHead, newHead, attempts: MOVE_ATTEMPTS,
+      });
+    } else {
+      log.info('pr-import-sync', 'Head change already applied by another pass; nothing to do', {
+        sessionId: session.id, prNumber: session.pr_number, oldHead, newHead, refused: moved.reason || moved.status,
+      });
+    }
     // Let the caller carry on with the row as it now is, not as it was read:
     // a merge attempt that kept the stale pin would offer GitHub the old
     // commit and buy exactly the 409 this path exists to avoid.
@@ -295,8 +342,9 @@ async function applyHeadChange({
       [session.id]
     ).catch(() => ({ rows: [] }));
     if (current[0]) Object.assign(session, current[0]);
-    return { applied: false, votesKept: false, checksCarry: false, kind, epoch: null };
+    return { applied: false, votesKept: false, checksCarry: false, kind, epoch: null, ...(undecided(moved) ? { notDecided: true } : {}) };
   }
+  const claimed = [{ approval_epoch: moved.reply?.epoch, pr_summary_stale: moved.reply?.prSummaryStale }];
   const epoch = parseInt(claimed[0].approval_epoch, 10);
   session.imported_pr_head_sha = newHead;
   // #3344: read back, because an author summary recorded for this very head
@@ -305,17 +353,23 @@ async function applyHeadChange({
     ? claimed[0].pr_summary_stale
     : (session.pr_summary_stale || !!session.pr_summary_md);
   session.approval_epoch = epoch;
-  if (checksCarry) session.checks_commit_sha = newHead;
-  if (session.shots_state || session.shots_detail) {
-    // Revision fencing is synchronous with the imported head advance. Even
-    // when execution is disabled, reviewers must stop seeing shots from
-    // the commit that just ceased to be current.
-    await require('./shots-state').markStaleForHead(
-      pool, session.id, String(newHead).toLowerCase()
-    ).catch((err) => log.warn('pr-import-sync', 'Before & after shots invalidation failed', {
-      sessionId: session.id, oldHead, newHead, err: err.message,
-    }));
+  // A carried verdict is the preview machine's to move, as on the native
+  // path (votes.js reconcileNativeReviewedHead): it keeps a green verdict of
+  // the old head for the merged one, and checks the new head otherwise.
+  // A carry the machine never received is not one: the new head's checks
+  // are re-run instead (needsChecks below).
+  if (checksCarry) {
+    checksCarry = await require('./preview-workflow').revision({ pool, session, head: newHead, source: 'imported',
+      trigger: 'commit-push', carryFrom: oldHead }).then(() => true, (err) => {
+      log.warn('pr-import-sync', 'Carrying the verdict failed; the new head is checked instead', {
+        sessionId: session.id, oldHead, newHead, err: err.message,
+      });
+      return false;
+    });
+    if (checksCarry) session.checks_commit_sha = newHead;
   }
+  // The shots machine hears the head moved from the proposal machine, in the
+  // move's own transaction.
   if (bumpEpoch) {
     log.info('integration', 'Approvals cleared', {
       sessionId: session.id, epoch, reason: `imported_head_${kind}`,
@@ -482,9 +536,9 @@ async function reconcileImportedHead({
 // too — it renders no banner and the merge-candidate ordering already reads
 // it as clean, so there is no stale claim to correct.
 //
-// 'resolving' is deliberately absent: the conflict-resolver owns that state
-// for as long as its attempt is in flight and transitions out of it itself,
-// and overwriting it from here would race the resolver rather than help it.
+// 'resolving' is deliberately absent: the proposal machine's sync owns that
+// state for as long as it is in flight and moves out of it itself, and
+// overwriting it from here would race the sync rather than help it.
 const STRANDED_CONFLICT_STATES = new Set(['conflict', 'failed']);
 
 // #1365 — the missing half of refreshDriftState's "the next sweep re-checks".
@@ -536,7 +590,10 @@ async function refreshDriftState({ pool, session, pr, repo }) {
 
   let behindBy = null;
   try {
-    const octokit = await activeGithub().getOctokit(repo.owner);
+    // A read: through the App installation (services/github.js
+    // getReadOctokit), not the bot token's hourly budget. A stranded
+    // conflict re-derives here every few minutes.
+    const octokit = await activeGithub().getReadOctokit(repo.owner);
     const { data } = await octokit.rest.repos.compareCommits({
       owner: repo.owner, repo: repo.repo, base, head,
     });
@@ -558,294 +615,41 @@ async function refreshDriftState({ pool, session, pr, repo }) {
   // mergeable === null: leave the prior snapshot; the next sweep re-checks.
 }
 
-// Re-run the proposal's checks against the new head. Builds a fresh staging
-// preview pinned to `newHead` (Slice 1's exact-SHA clone) and captures the
-// checks against it — the same shape as the import-time kick — rather than
-// re-checking the still-running old-head container, which would test the
-// superseded code. Fire-and-forget at the capture layer, matching the
-// import + dev-turn callers; a genuine build failure is recorded as a
-// terminal 'error' verdict (recordStagingBootFailure) so the gate never
-// dead-ends on a NULL/pending state.
+// Re-run the proposal's checks against the new head: the preview machine
+// builds a fresh preview pinned to `newHead` and checks it (or, in
+// mock-GitHub mode, records the gate-passing 'skipped' verdict).
 async function rerunChecksForNewHead({
   config, pool, session, newHead, trigger = 'pr-import',
 }) {
-  const visuals = require('./visuals');
-  const staging = require('./staging');
-  const app = {
-    id: session.app_id, slug: session.app_slug,
-    name: session.app_name, repo_url: session.repo_url,
-  };
+  void config;
+  await handOffImported({ pool, session, head: newHead, trigger });
+}
 
-  // Stamp 'pending' immediately so the badge stops showing the old-head
-  // verdict while the (minutes-long) rebuild runs.
-  await visuals.setChecksPending(pool, session.id, newHead, 'building', trigger)
-    .catch((err) => log.warn('pr-import-sync', 'setChecksPending failed (non-fatal)', {
-      sessionId: session.id, err: err.message,
-    }));
-  visuals.notifyChecksPending(session.id, newHead, 'building', trigger);
-
-  // #687: in mock-GitHub mode (staging previews) there is no real repo to
-  // clone against the new head — record a gate-passing 'skipped' verdict
-  // instead of building staging, so the head-change flow stays clickable.
+// The preview machine's side of the two paths here: the new head goes to
+// the machine, or, in mock-GitHub mode, the gate-passing 'skipped' verdict
+// does. #687: in mock-GitHub mode (staging previews) there is no real repo
+// to clone, so the whole preview flow (import → vote → merge) stays
+// clickable on a neutral, mergeable verdict.
+async function handOffImported({ pool, session, head, trigger }) {
+  const workflow = require('./preview-workflow');
   if (usesMockGithubForImports()) {
-    const stored = await visuals.storeChecksSkipped(pool, session.id, newHead,
-      'mock GitHub preview: automated checks not run')
-      .catch((err) => log.warn('pr-import-sync', 'mock storeChecksSkipped failed (non-fatal)', {
-        sessionId: session.id, err: err.message,
-      }));
-    // The pending tick above reached every open page; so must the verdict.
-    if (stored) visuals.notifyChecks(session.id, { state: 'skipped', results: [] }, newHead, null);
-    return;
+    await workflow.skipped({ session, head, reason: 'mock GitHub preview: automated checks not run' });
+  } else {
+    await workflow.revision({ pool, session, head, source: 'imported', trigger });
   }
-
-  let result;
-  try {
-    result = await staging.buildAndDeployStaging(config, session, app, newHead || 'latest');
-  } catch (err) {
-    const stagingRecovery = require('./staging-recovery');
-    await stagingRecovery.recordStagingBootFailure({
-      config, pool, session, commitHash: newHead || null, err,
-    }).catch((e) => log.warn('pr-import-sync', 'recordStagingBootFailure failed (non-fatal)', {
-      sessionId: session.id, err: e.message,
-    }));
-    notifyStagingFailed({ session, app });
-    throw err;
-  }
-
-  // #866: the author can withdraw (or the group can close) the proposal
-  // while a minutes-long rebuild runs. See kickImportedChecks for the full
-  // rationale — persisting a preview onto a no-longer-open row leaks a
-  // container and re-arms a Preview button on a dead proposal.
-  if (!(await stillOpenForPreview(pool, session))) {
-    await discardStagingResult({ staging, session, app, result });
-    return;
-  }
-
-  await pool.query(
-    `UPDATE chat_sessions SET staging_container_id = $1, staging_url = $2 WHERE id = $3`,
-    [result.containerId, result.stagingUrl, session.id]
-  );
-  try {
-    await staging.verifyStagingEdge(session, result.hostname, result.stagingUrl);
-  } catch (_) { /* edge verification is best-effort */ }
-
-  await visuals.captureForSession(config, session, app, newHead || null, result, { send: null, trigger })
-    .catch((err) => log.warn('pr-import-sync', 'checks capture failed (non-fatal)', {
-      sessionId: session.id, err: err.message,
-    }));
-}
-
-// #866: is this proposal still one a staging preview belongs to?
-//
-// Re-read from the DB rather than trusting the in-memory `session` — it was
-// loaded before a build that takes minutes. A withdrawn proposal is
-// 'archived'; a merged one is 'merged'. Fails OPEN (returns true) if the row
-// can't be read, so a transient DB hiccup never throws away a good build.
-async function stillOpenForPreview(pool, session) {
-  try {
-    const { rows } = await pool.query(
-      `SELECT status FROM chat_sessions WHERE id = $1`, [session.id]
-    );
-    const status = rows[0] ? rows[0].status : null;
-    if (rows.length && status !== 'active' && status !== 'promoted' && status !== 'merging') {
-      log.info('pr-import-sync', 'Imported PR is no longer live while its preview was building — discarding the build', {
-        sessionId: session.id, status,
-      });
-      return false;
-    }
-    return true;
-  } catch (err) {
-    log.warn('pr-import-sync', 'post-build status re-check failed — keeping the build', {
-      sessionId: session.id, err: err.message,
-    });
-    return true;
-  }
-}
-
-// #866: throw away a preview that finished building for a proposal which is
-// no longer open. Without this the row keeps a staging_container_id nothing
-// will ever reclaim (the idle GC skips 'archived'/'merged' rows) and the card
-// re-grows a Preview button pointing at a withdrawn proposal. The fresh
-// runtime identity + URL are threaded in explicitly: the session object was
-// fetched before the build, and Kubernetes returns no Docker container ID.
-// teardownStaging needs the fresh runtime name before it can remove the
-// deployment and safely drop the database derived from `staging_url`.
-async function discardStagingResult({ staging, session, app, result }) {
-  try {
-    await staging.teardownStaging(
-      {
-        ...session,
-        staging_container_id: result.containerId,
-        staging_runtime_kind: result.runtimeKind || 'docker',
-        staging_runtime_name: result.runtimeName || result.containerId,
-        staging_url: result.stagingUrl,
-      },
-      { slug: app.slug }
-    );
-  } catch (err) {
-    log.warn('pr-import-sync', 'discarding staging build failed (non-fatal)', {
-      sessionId: session.id, err: err.message,
-    });
-  }
-}
-
-// #866: flip open proposal cards from "Preview building…" to "Preview
-// unavailable" the moment a build fails, instead of leaving a spinner up
-// until something else happens to refetch.
-//
-// The narration itself is NOT here: recordStagingBootFailure (called
-// immediately before this, on both build paths) is the one chokepoint that
-// posts the reason, and it is imported-aware — it routes an imported row's
-// note to the group thread rather than the invisible dev-chat transcript,
-// and it dedups to one post per failure streak. Duplicating the note here
-// would double-post every import-time failure.
-function notifyStagingFailed({ session, app }) {
-  try {
-    const { pushSessionUpdate } = require('./ws');
-    pushSessionUpdate({
-      action: 'staging_failed', sessionId: session.id,
-      appSlug: (app && app.slug) || session.app_slug || null,
-    });
-  } catch (e) {
-    log.warn('pr-import-sync', 'staging_failed notify failed (non-fatal)', {
-      sessionId: session.id, err: e.message,
-    });
-  }
-}
-
-// #2601/#2558: the connector-submission path reaches the shots
-// orchestrator through `visuals.captureForSession`, which schedules a run in
-// its own `finally` — so an import whose preview builds does call
-// `scheduleForSession`. The gap was the paths BELOW that never get that far:
-// a preview environment that runs no builds, and a staging build that fails.
-// Neither produced a run and neither wrote anything down, so the proposal
-// kept the 'planned' its submission wrote, with nothing to explain it.
-function noteShotsNotStarted(pool, sessionId, reason) {
-  require('./shots-orchestrator').noteNotStarted(pool, Number(sessionId), reason)
-    .catch((err) => log.warn('pr-import-sync', 'could not record why the preview did not start', {
-      sessionId, reason, err: err.message,
-    }));
 }
 
 // #687 Slice 1 / #846 — the IMPORT-TIME checks kick. Called (un-awaited) by
 // POST /api/apps/:slug/pr-import once the proposal row exists, so the route
-// can answer immediately while the SHA-pinned staging build runs behind it.
-// Sibling of rerunChecksForNewHead above — same sequence, same mock-mode
-// short-circuit — kept here rather than inline in the route so it is
-// testable on its own.
-//
-// #846: the staging_ready broadcast at the end is what makes an open
-// proposal page grow its Preview pill the moment the build lands, instead of
-// waiting minutes for the checks verdict to arrive and trigger a refetch.
-// It must fire AFTER the staging_url persist: Caddy's on-demand TLS gate
-// only approves a host once chat_sessions.staging_url equals it.
-//
-// Never throws — every failure is logged, and a genuine build failure is
-// recorded as a terminal 'error' verdict by recordStagingBootFailure so the
-// merge gate doesn't dead-end on a NULL/pending state.
+// can answer immediately: the preview machine builds and checks the pinned
+// head behind it (its own notes and pushes say when the preview is up).
+// Never throws.
 async function kickImportedChecks({ config, pool, session, app, headSha }) {
-  const visuals = require('./visuals');
-  const staging = require('./staging');
+  void config; void app;
   try {
-    await visuals.setChecksPending(pool, session.id, headSha || null, 'building', 'pr-import')
-      .catch((err) => log.warn('pr-import-sync', 'import setChecksPending failed (non-fatal)', {
-        sessionId: session.id, err: err.message,
-      }));
-    visuals.notifyChecksPending(session.id, headSha || null, 'building', 'pr-import');
-
-    // #687 Slice 6: in mock-GitHub mode there is no real repo to clone, so
-    // skip the staging build entirely and record a gate-passing 'skipped'
-    // verdict — the imported proposal shows a neutral (mergeable) check so
-    // the whole preview flow (import → vote → merge) is exercisable.
-    if (usesMockGithubForImports()) {
-      const stored = await visuals.storeChecksSkipped(pool, session.id, headSha || null,
-        'mock GitHub preview: automated checks not run')
-        .catch((err) => log.warn('pr-import-sync', 'import mock storeChecksSkipped failed (non-fatal)', {
-          sessionId: session.id, err: err.message,
-        }));
-      if (stored) visuals.notifyChecks(session.id, { state: 'skipped', results: [] }, headSha || null, null);
-      noteShotsNotStarted(pool, session.id, 'no_staging_preview');
-      return;
-    }
-
-    // #866: say out loud that a build started. This is the note that makes
-    // the minutes between "proposal appeared" and "Preview button appeared"
-    // legible — the card's "Preview building…" pill says the same thing, and
-    // this leaves a timestamped trace in the thread for anyone who arrives
-    // later or was looking at the discussion rather than the card.
-    await postProposalNote(
-      pool, session,
-      `Building a staging preview for ${prLabel(session)} is being built. This usually takes a few minutes. `
-        + 'The automated checks run against it, and a Preview button appears on this proposal when it\'s ready.',
-      { stagingBuild: 'started', headSha: headSha || null }
-    );
-
-    let result;
-    try {
-      result = await staging.buildAndDeployStaging(config, session, app, headSha || 'latest');
-    } catch (err) {
-      const stagingRecovery = require('./staging-recovery');
-      await stagingRecovery.recordStagingBootFailure({
-        config, pool, session, commitHash: headSha || null, err,
-      }).catch((e) => log.warn('pr-import-sync', 'import recordStagingBootFailure failed (non-fatal)', {
-        sessionId: session.id, err: e.message,
-      }));
-      notifyStagingFailed({ session, app });
-      noteShotsNotStarted(pool, session.id, 'no_staging_preview');
-      throw err;
-    }
-
-    // #866: a proposal can be withdrawn (or merged) during the build. The
-    // row we loaded minutes ago says 'promoted'; re-read before writing a
-    // preview onto it. Persisting anyway would (a) leak the container —
-    // the idle-GC sweep skips non-open statuses, so nothing would ever
-    // reclaim it — and (b) put a live Preview button back on a card whose
-    // vote is over.
-    if (!(await stillOpenForPreview(pool, session))) {
-      await discardStagingResult({ staging, session, app, result });
-      noteShotsNotStarted(pool, session.id, 'no_staging_preview');
-      return;
-    }
-
-    await pool.query(
-      `UPDATE chat_sessions SET staging_container_id = $1, staging_url = $2 WHERE id = $3`,
-      [result.containerId, result.stagingUrl, session.id]
-    );
-    await staging.verifyStagingEdge(session, result.hostname, result.stagingUrl);
-
-    // #866: and that it landed. The URL rides in metadata rather than the
-    // body — a preview host is long, ugly, and rotates on every rebuild,
-    // while the Preview button on the card is the durable way in.
-    await postProposalNote(
-      pool, session,
-      `The staging preview for ${prLabel(session)} is ready. Use the Preview button on this proposal to try the change. Automated checks are running against it now.`,
-      { stagingBuild: 'ready', headSha: headSha || null, stagingUrl: result.stagingUrl }
-    );
-
-    // Tell any open proposal page the preview is live (see above for why
-    // this is ordered after the persist). No chat_session_messages row: an
-    // imported proposal has no transcript surface to render it.
-    try {
-      const { broadcastGlobal, pushSessionUpdate } = require('./ws');
-      broadcastGlobal({
-        type: 'session_event', sessionId: session.id,
-        event: 'staging_ready', url: result.stagingUrl,
-      });
-      pushSessionUpdate({
-        action: 'staging_ready', sessionId: session.id, appSlug: app.slug,
-      });
-    } catch (err) {
-      log.warn('pr-import-sync', 'import staging_ready notify failed (non-fatal)', {
-        sessionId: session.id, err: err.message,
-      });
-    }
-
-    visuals.captureForSession(config, session, app, headSha || null, result, { trigger: 'pr-import' })
-      .catch((err) => log.warn('pr-import-sync', 'import visuals capture failed', {
-        sessionId: session.id, err: err.message,
-      }));
+    await handOffImported({ pool, session, head: headSha, trigger: 'pr-import' });
   } catch (err) {
-    log.warn('pr-import-sync', 'import staging build failed', {
+    log.warn('pr-import-sync', 'import checks hand-off failed', {
       sessionId: session.id, err: err.message,
     });
   }
@@ -861,10 +665,7 @@ module.exports = {
   rerunChecksForNewHead,
   kickImportedChecks,
   parseRepo,
-  // #866: exported for the thread-narration + withdrawn-mid-build tests.
+  // #866: exported for the thread-narration tests.
   prLabel,
   postProposalNote,
-  stillOpenForPreview,
-  discardStagingResult,
-  notifyStagingFailed,
 };

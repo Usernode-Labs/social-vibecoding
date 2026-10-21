@@ -2,8 +2,7 @@
 //
 // The third first-run step, after "Choose your username"
 // (./username-first-run.js) and the terms (../settings/terms-first-run.js),
-// and before Home's Getting started card, whose first row offers the welcome
-// tour (../home/tour, #3240). A new account picks the communities it wants to be part of
+// and before Home. A new account picks the communities it wants to be part of
 // before it sees Home, so the Home it lands on already has them on it: each
 // one it joins is pinned there (services/communities.js `join`).
 //
@@ -40,8 +39,8 @@
 // line under the name rather than instead of it. One button, which says
 // what it will do: "Join 3 communities". Homeroom is not counted in it: the
 // account is already in Homeroom, so keeping it ticked joins nothing, and it
-// never ticks "Join a community" on the Getting started card
-// (src/services/onboarding.js, COMMUNITY_JOINED), so the button and the
+// never ticks the "Join a community" First challenge
+// (services/topochain/challenge-scorer.js, COMMUNITY_JOINED), so the button and the
 // toast after it never call it a join. Homeroom ticked alone is "Continue".
 // Unticking everything is allowed to be a dead end on purpose ("Pick at
 // least one"): a newcomer in no community has nothing on Home and nothing in
@@ -216,8 +215,7 @@
     // Has THIS document shown the real join screen (never the ?shot=
     // fixture)? Read by the tour: a first run shown here, a new account's or
     // one an admin reset (Admin → Users → ⋯ → Reset first run), clears this
-    // browser's "done" for the tour, as the reset cleared the account's, so
-    // the Getting started card offers the tour again.
+    // browser's "done" for the tour, as the reset cleared the account's.
     shownHere() {
       return CommunitiesFirstRun._shownHere === true;
     },
@@ -338,8 +336,8 @@
       // code, a provider, an admin-made test account) is asked "What do
       // you want to make?" like one that did (../first-session), and
       // recorded the way that sheet records it (POST /api/me/first-session/
-      // started). Getting started stays out of the first session. With no
-      // island to open it, the join screen is asked as before.
+      // started). With no island to open it, the join screen is asked as
+      // before.
       const firstSession = CommunitiesFirstRun._island();
       if (window.App.user.storyFirstSession === true && firstSession) {
         CommunitiesFirstRun._openFirstSession(firstSession);
@@ -424,7 +422,7 @@
       figure.setAttribute('aria-hidden', 'true');
       wrap.appendChild(figure);
       wrap.appendChild(el('span', 'sr-only',
-        `${n.toLocaleString('en-US')} ${n === 1 ? 'member' : 'members'}`));
+        PlatformI18n.t('onboarding:communities.memberCount', { count: n, memberCount: n.toLocaleString('en-US') })));
       return wrap;
     },
 
@@ -490,18 +488,18 @@
       panel.appendChild(scroller);
       // A welcome first: this is a new account's first screen after its
       // name and the terms, so it says what the place is before it asks.
-      scroller.appendChild(el('div', 'text-xl font-bold pt-3', 'Welcome to Homeroom!'));
+      scroller.appendChild(el('div', 'text-xl font-bold pt-3', PlatformI18n.t('onboarding:communities.welcome')));
       scroller.appendChild(el('p', 'text-sm text-zinc-600 dark:text-zinc-300 mt-1',
-        'Homeroom is a place where communities build the apps they use together.'));
+        PlatformI18n.t('onboarding:communities.intro')));
       scroller.appendChild(el('div',
         'text-[0.9375rem] font-[650] leading-5 text-zinc-900 dark:text-zinc-100 mt-5 mb-2',
-        'What communities do you want to join?'));
+        PlatformI18n.t('onboarding:communities.question')));
 
       // One card of rows, the platform's grouped-list shape: the plane
       // colour, a 20px radius and one inset hairline.
       const group = el('div', 'rounded-[20px] shadow-[inset_0_0_0_1px_var(--app-sheet-line)] divide-y divide-zinc-200/70 dark:divide-zinc-800');
       group.setAttribute('role', 'group');
-      group.setAttribute('aria-label', 'Communities');
+      group.setAttribute('aria-label', PlatformI18n.t('onboarding:communities.listLabel'));
       scroller.appendChild(group);
 
       const picked = new Set(list.filter((c) => c.checked).map((c) => c.slug));
@@ -542,7 +540,7 @@
       }
 
       scroller.appendChild(el('p', 'text-[0.8125rem] text-zinc-500 dark:text-zinc-400 mt-3',
-        'You can join or leave any time from Discover, and start your own private or public community once you are in.'));
+        PlatformI18n.t('onboarding:communities.footnote')));
 
       // The foot: the error line and the two answers. Its top edge is a
       // hairline only while there is more of the body below it to scroll
@@ -571,7 +569,7 @@
       const skip = el('button',
         'w-full mt-1 py-2 text-sm font-medium text-zinc-500 hover:text-zinc-800 ' +
         'dark:text-zinc-400 dark:hover:text-zinc-100 disabled:opacity-50',
-        'Skip for now');
+        PlatformI18n.t('onboarding:communities.skip'));
       skip.type = 'button';
       skip.setAttribute('data-join-communities-skip', '');
       foot.appendChild(skip);
@@ -588,19 +586,22 @@
         const n = joins([...picked]);
         skip.disabled = busy;
         save.disabled = busy || ticked === 0;
-        save.textContent = ticked === 0 ? 'Pick at least one'
-          : n === 0 ? 'Continue'
-            : `Join ${n} ${n === 1 ? 'community' : 'communities'}`;
+        save.textContent = ticked === 0 ? PlatformI18n.t('onboarding:communities.pickOne')
+          : n === 0 ? PlatformI18n.t('onboarding:communities.continue')
+            : PlatformI18n.t('onboarding:communities.join', { count: n });
         save.setAttribute('data-picked', String(ticked));
       }
       rows.forEach((paint) => paint());
       paintButton();
+      // The button's words follow the language on screen.
+      document.addEventListener('homeroom:language-changed', paintButton);
 
       let sheet = null;
       let watch = null;
       const dismiss = () => {
         CommunitiesFirstRun._answered = true;
         if (watch) watch.disconnect();
+        document.removeEventListener('homeroom:language-changed', paintButton);
         if (sheet && sheet.dismiss) sheet.dismiss();
         CommunitiesFirstRun._presented = false;
         CommunitiesFirstRun._resolve();
@@ -624,19 +625,18 @@
           });
           const body = await res.json().catch(() => ({}));
           if (!res.ok && !body.alreadyDone) {
-            status.textContent = body.error || 'Could not join those. Try again.';
+            status.textContent = body.error || PlatformI18n.t('onboarding:communities.error.notJoined');
             busy = false;
             paintButton();
             return;
           }
           if (window.App && window.App.user) {
             window.App.user.needsCommunitiesChoice = false;
-            if (!body.alreadyDone) window.App.user.showGettingStarted = true;
             try { window.App.saveSessionSnapshot?.(window.App.user); } catch (_) {}
           }
           dismiss();
-          // Home re-reads the pins the joins just made, and the Getting
-          // started card appears (features/home/getting-started.tsx).
+          // Home re-reads the pins the joins just made, and its Challenges
+          // block the "Join a community" First challenge they ticked.
           document.dispatchEvent(new CustomEvent('sv:communities-joined', {
             detail: { joined: body.joined || [] },
           }));
@@ -644,11 +644,11 @@
           // Keeping Homeroom is not a join: nothing to announce for it.
           const n = joins(body.joined || []);
           if (n && window.PlatformUI) {
-            PlatformUI.toast(`You joined ${n} ${n === 1 ? 'community' : 'communities'}.`);
+            PlatformUI.toast(PlatformI18n.t('onboarding:communities.joinedToast', { count: n }));
           }
         } catch (err) {
           console.warn('[communities-first-run] answer failed:', err);
-          status.textContent = 'Network error. Try again.';
+          status.textContent = PlatformI18n.t('onboarding:communities.error.network');
           busy = false;
           paintButton();
         }
@@ -656,8 +656,7 @@
 
       save.addEventListener('click', () => {
         if (!picked.size) return;
-        // In the listed order, so the first one ticked below Homeroom is the
-        // one the Getting started card is about.
+        // In the listed order.
         void answer({ join: list.map((c) => c.slug).filter((s) => picked.has(s)) });
       });
       skip.addEventListener('click', () => { void answer({ skip: true }); });

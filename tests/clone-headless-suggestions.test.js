@@ -182,9 +182,9 @@ test('question clone with no source suggestions writes an empty-metadata follow-
 // questions) but DO carry outcome-appropriate next-step quick-reply pills,
 // so the cloned follow-up never lands with an empty pill bar.
 const EXPECTED_PILLS = {
-  spec: ['Build the spec', 'Revise the spec', 'What will this change?'],
+  spec: ['Build the plan', 'Revise the plan', 'What will this change?'],
   code: ['Propose it to the group', 'Make a tweak', 'What did it change?'],
-  spec_code: ['Propose it to the group', 'Revise the spec', 'Make a tweak'],
+  spec_code: ['Propose it to the group', 'Revise the plan', 'Make a tweak'],
 };
 
 for (const outcome of ['spec', 'code', 'spec_code']) {

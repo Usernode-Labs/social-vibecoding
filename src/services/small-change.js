@@ -34,9 +34,12 @@
 // row that could not be decided ('unavailable') is replaced by the next run.
 
 const log = require('./logger');
+const helperModel = require('./helper-model');
 
 const TABLE = 'small_change_tags';
-const MODEL = 'z-ai/glm-5.3-flash';
+// The built-in model; the one asked is the admin's helper model
+// (services/helper-model.js), which blank leaves on this one.
+const MODEL = helperModel.BUILT_IN;
 const BOT_USERNAME = 'homeroom_bot';
 const OPENROUTER = Object.freeze({ provider: 'openrouter', purpose: 'coding_agent' });
 
@@ -236,7 +239,7 @@ async function botKey(pool, config, deps) {
 }
 
 // Content-free telemetry, the same allowlisted event every helper records.
-function recordTelemetry(pool, { appId, sessionId, result, error, startedAt }) {
+function recordTelemetry(pool, { appId, sessionId, model, reasoning, result, error, startedAt }) {
   const llmTelemetry = require('./llm-telemetry');
   const usage = result?.usage || {};
   const costUsd = Number(usage.costUsd);
@@ -247,7 +250,7 @@ function recordTelemetry(pool, { appId, sessionId, result, error, startedAt }) {
     provider: 'openrouter',
     backend: 'helper',
     component: 'small_change',
-    requestedModel: MODEL,
+    requestedModel: model,
     servedModel: result?.servedModel || null,
     billingPath: 'platform',
     inputTokens: usage.inputTokens,
@@ -262,7 +265,7 @@ function recordTelemetry(pool, { appId, sessionId, result, error, startedAt }) {
     requestMode: 'single',
     toolChoiceMode: 'tool',
     outputFormat: 'tool',
-    reasoningEffort: 'low',
+    reasoningEffort: reasoning,
     maxOutputTokens: MAX_OUTPUT_TOKENS,
   });
 }
@@ -271,6 +274,8 @@ async function askModel({ pool, config, appId, sessionId, compare, deps }) {
   const transport = deps.openrouter || require('./global-chat/openrouter');
   const apiKey = await botKey(pool, config, deps);
   if (!apiKey) return { verdict: 'unavailable', error: 'no_key' };
+  const model = await helperModel.current(config, { pool });
+  const reasoning = helperModel.thinkingFor(model);
   const startedAt = Date.now();
   let result = null;
   try {
@@ -278,8 +283,8 @@ async function askModel({ pool, config, appId, sessionId, compare, deps }) {
       apiKey,
       baseUrl: config.openrouterApiBase || 'https://openrouter.ai/api/v1',
       origin: config.openrouterOrigin,
-      model: MODEL,
-      reasoning: 'low',
+      model,
+      reasoning,
       temperature: 0,
       maxOutputTokens: MAX_OUTPUT_TOKENS,
       timeoutMs: TIMEOUT_MS,
@@ -294,13 +299,13 @@ async function askModel({ pool, config, appId, sessionId, compare, deps }) {
       ],
     });
   } catch (err) {
-    recordTelemetry(pool, { appId, sessionId, result: null, error: err, startedAt });
+    recordTelemetry(pool, { appId, sessionId, model, reasoning, result: null, error: err, startedAt });
     return { verdict: 'unavailable', error: String(err.code || 'model_failed').slice(0, 64), durationMs: Date.now() - startedAt };
   }
-  recordTelemetry(pool, { appId, sessionId, result, error: null, startedAt });
+  recordTelemetry(pool, { appId, sessionId, model, reasoning, result, error: null, startedAt });
   const parsed = parseVerdict(result.toolCalls);
   const meta = {
-    model: result.servedModel || MODEL,
+    model: result.servedModel || model,
     costUsd: Number.isFinite(Number(result.usage?.costUsd)) ? Number(result.usage.costUsd) : null,
     durationMs: Date.now() - startedAt,
   };
@@ -471,7 +476,7 @@ async function adminPayload(pool, { limit = 50 } = {}) {
   }
   return {
     mode: mode(),
-    model: MODEL,
+    model: await helperModel.current(null, { pool }),
     limits: { maxFiles: MAX_FILES, maxLines: MAX_LINES },
     lastWeek: { ...lastWeek, costUsd, vetoes: Object.fromEntries(vetoTotals.map((v) => [v.veto, v.n])) },
     tags: rows.map((r) => ({

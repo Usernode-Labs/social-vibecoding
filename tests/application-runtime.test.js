@@ -94,6 +94,32 @@ test('Docker deploy returns the stable DNS name, not docker run\'s container ID'
   }
 });
 
+// #4895: app-creator times "applied" apart from "answering /health".
+test('Docker deploy says when the container runs, before the health wait, and an observer cannot fail it', async () => {
+  const { subject, calls, restore } = loadRuntime();
+  try {
+    await subject.deploy({ appRuntime: 'docker' }, {
+      ...input, onRollout: () => { calls.push(['rollout']); throw new Error('observer'); },
+    });
+    assert.deepEqual(calls.map((c) => c[0]), ['remove', 'run', 'rollout', 'healthy']);
+  } finally {
+    restore();
+  }
+});
+
+test('Kubernetes deploy hands the rollout observer to the adapter, and only when given', async () => {
+  const { subject, kubernetesDeployOptions, restore } = loadRuntime();
+  try {
+    const onRollout = () => {};
+    await subject.deploy({ appRuntime: 'kubernetes' }, { ...input, onRollout });
+    assert.equal(kubernetesDeployOptions().onRollout, onRollout);
+    await subject.deploy({ appRuntime: 'kubernetes' }, input);
+    assert.equal('onRollout' in kubernetesDeployOptions(), false);
+  } finally {
+    restore();
+  }
+});
+
 test('Kubernetes deploy preserves the adapter-provided runtime name', async () => {
   const { subject, restore } = loadRuntime();
   try {

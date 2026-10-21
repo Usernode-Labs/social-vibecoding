@@ -11,6 +11,7 @@ const source = fs.readFileSync(
 );
 
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
+const { englishPlatformI18n, message } = require('./lib/platform-i18n');
 
 // ONE bundle per process: a second `loadTsx` entry would hand this file a
 // different `walletSheetStore` from the one the components subscribe to.
@@ -82,6 +83,9 @@ function loadWallet({ bridgeInfo, walletState = null, isNative = true } = {}) {
   sandbox.walletSheetStore = mod().walletSheetStore;
   sandbox.WALLET_EMPTY = mod().WALLET_EMPTY;
   sandbox.mountWalletSheet = () => {};
+  // The module imports the runtime's `t`; the dropped import is bound to the
+  // real English runtime, so the words asserted below are the catalog's.
+  sandbox.t = englishPlatformI18n().t;
   sandbox.unmountWalletSheet = () => {};
   vm.createContext(sandbox);
   vm.runInContext(source.replace(/^import[^\n]*\n/gm, ''), sandbox);
@@ -228,7 +232,8 @@ test('background service note shows on Android only, active only while producing
     assert.doesNotMatch(html, /FOREGROUND_SERVICE|permission/i,
       'no Android permission wording reaches the user');
   }
-  for (const copy of [mod().BACKGROUND_SERVICE_ACTIVE, mod().BACKGROUND_SERVICE_INACTIVE]) {
+  // The two constants hold message ids now; the copy is the catalog's.
+  for (const copy of [message(mod().BACKGROUND_SERVICE_ACTIVE), message(mod().BACKGROUND_SERVICE_INACTIVE)]) {
     assert.ok(copy && !copy.includes('\u2014'), 'no em dashes in user copy');
   }
 });

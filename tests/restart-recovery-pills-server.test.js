@@ -2,16 +2,18 @@
 
 // Server-side half of #786: every restart-recovery breadcrumb must persist
 // the turn's quick-reply pills (and broadcast them on its status event), and
-// the boot-time backfill sweep must repair the two shapes that leave no
-// breadcrumb at all.
+// a dev chat turn cut before its reply must repair the two shapes that leave
+// no breadcrumb at all.
 //
 // Without these the dev-chat pill bar comes back empty after a restart: the
 // pills on a dispatch turn come ONLY from the Mayor's phase-2 wrap-up, which
 // the recovery paths deliberately don't resume.
 //
 // server.js only boots under the require.main guard, so requiring it here
-// exposes adoptOrphanWorker + restoreMissingQuickReplies without starting
-// servers. worker and ws are stubbed via require.cache BEFORE the require so
+// exposes adoptOrphanWorker without starting servers. The repair is a
+// classic turn's own when its item resumes (services/turns.js resumeClassic:
+// turn-recovery.js repairUnansweredTurn), driven here against a scripted
+// pool. worker and ws are stubbed via require.cache BEFORE the require so
 // server.js binds the stubs.
 //
 // Run with: node --test tests/restart-recovery-pills-server.test.js
@@ -70,17 +72,24 @@ const origSetTimeout = global.setTimeout;
 global.setInterval = (...a) => { const t = origSetInterval(...a); if (t && t.unref) t.unref(); return t; };
 global.setTimeout = (...a) => { const t = origSetTimeout(...a); if (t && t.unref) t.unref(); return t; };
 let adoptOrphanWorker;
-let restoreMissingQuickReplies;
 try {
-  ({ adoptOrphanWorker, restoreMissingQuickReplies } = require('../server'));
+  ({ adoptOrphanWorker } = require('../server'));
 } finally {
   global.setInterval = origSetInterval;
   global.setTimeout = origSetTimeout;
 }
 
-const activeWorkersSvc = require('../src/services/active-workers');
+// The repair a resumed classic turn runs for its change, against the pool
+// this test scripted, for each change the script names.
+const { repairUnansweredTurn } = require('../src/services/turn-recovery');
+const restoreMissingQuickReplies = async () => {
+  for (const session of backfillPool.sessions) await repairUnansweredTurn(backfillPool, session);
+};
 
-const SERVER_SRC = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+const SERVER_SRC = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8')
+  // With what a turn's recovery runs, moved out of server.js unchanged
+  // (services/turn-recovery.js).
+  + fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'turn-recovery.js'), 'utf8');
 
 // Collect the metadata of every chat_session_messages INSERT a pool saw.
 function insertedRows(calls) {
@@ -188,7 +197,7 @@ test('the recovered-turn success tail picks its wrap-up pill kind from the outco
   assert.match(SERVER_SRC,
     /wrapUpPillKind = finalizeOutcome === 'push_failed' \? 'push_failed' : 'code_done'/,
     'a recovered build wrap-up must fall back to code_done pills, or push_failed when the push failed');
-  assert.match(SERVER_SRC, /const \{ runRecoveredWrapUp \} = require\('\.\/src\/routes\/sessions'\)/,
+  assert.match(SERVER_SRC, /const \{ runRecoveredWrapUp \} = require\('(?:\.\/src|\.\.)\/routes\/sessions'\)/,
     'the build/scout branches end by re-issuing the Mayor wrap-up');
   assert.match(SERVER_SRC,
     /fallbackPillKind: wrapUpPillKind/,
@@ -197,10 +206,11 @@ test('the recovered-turn success tail picks its wrap-up pill kind from the outco
 
 // #896: a sync turn is system work with no Mayor reply on the live path
 // either — recovering one must not manufacture a chat message. What it does
-// owe is the follow-through of the merge-queue pass that dispatched it and
-// died with the previous process: take back the 'integrating' that pass
-// recorded, and put the proposal back in front of the queue so the merge
-// attempt happens. Without that, the card said "bringing up to date with
+// owe is the follow-through of the older release's merge-queue pass that
+// dispatched it and died with that process: take back the 'integrating'
+// that pass recorded, and ask the app's merge queue (the workflow machine)
+// to look again so the merge attempt happens. (A sync the proposal machine
+// ran is followed by its own work item and never reaches this branch.) Without that, the card said "bringing up to date with
 // main" until an unrelated trigger came by, and a proposal whose verdict
 // carried onto the merged head had no trigger left at all.
 test('a recovered sync turn gets no Mayor wrap-up, and hands back to the integration queue', () => {
@@ -208,13 +218,13 @@ test('a recovered sync turn gets no Mayor wrap-up, and hands back to the integra
     'sync mode is branched explicitly, not lumped in with build');
   const start = SERVER_SRC.indexOf("recoveryActiveTurn.mode === 'sync'");
   const branch = SERVER_SRC.slice(start, SERVER_SRC.indexOf('} else {', start));
-  assert.match(branch, /Recovered sync turn — handing back to the integration queue/,
+  assert.match(branch, /Recovered an older release\\'s sync turn; asking the merge queue to look again/,
     'the sync branch is logged rather than surfaced in chat');
   assert.doesNotMatch(branch, /wrapUpOutcome\s*=/, 'and sets no wrap-up outcome');
   assert.match(branch, /setBlockReasons\(pool, sessionId, \[\]\)/,
     "the dead pass's 'integrating' is taken back");
-  assert.match(branch, /checkAndResolveConflicts\(config, \{ app_id: session\.app_id \}\)/,
-    'and the app is enqueued so the merge attempt follows the sync');
+  assert.match(branch, /wantMerge\(\{ appId: session\.app_id, sessionId, reason: 'recovered-sync' \}\)/,
+    'and the app\'s merge queue is asked so the merge attempt follows the sync');
   assert.match(SERVER_SRC, /if \(wrapUpOutcome\) \{/,
     'the wrap-up only runs for a branch that set an outcome');
 });
@@ -252,40 +262,23 @@ test('the recovered scout tails carry spec_done / unrecoverable pills', () => {
     'the no-spec outcome is persisted, not emit-only (it used to vanish on reload)');
 });
 
-test('the failed-resume and watchdog-reap breadcrumbs carry retry pills', () => {
+test('the failed-resume breadcrumbs carry retry pills', () => {
   assert.match(SERVER_SRC, /const failedPills = recoveryPills\.buildRecoveryQuickReplies\('unrecoverable'\)/);
-  // The reap picks its set from whether the turn's code landed: a reaped
-  // TAIL offers Propose/tweak, a reaped exec offers "try that again".
-  assert.match(SERVER_SRC,
-    /const reapPills = recoveryPills\.buildRecoveryQuickReplies\(\s*reapCodeLanded \? 'code_done' : 'unrecoverable'\s*\)/);
   assert.match(SERVER_SRC, /const goneP = recoveryPills\.buildRecoveryQuickReplies\('unrecoverable'\)/);
   assert.match(SERVER_SRC, /const landedPills = recoveryPills\.buildRecoveryQuickReplies\('code_done'\)/,
     'a dead-worker tail whose commit landed gets code_done pills, not retry pills');
 });
 
-test('the backfill sweep is chained post-listen onto the recovery block', () => {
-  // Hard constraint: it must never run before the listener is up. It hangs
-  // off the same fire-and-forget chain as the other boot recovery steps.
-  assert.match(SERVER_SRC,
-    /resumeHeadlessRuns\(config\)[\s\S]{0,600}\.then\(\(\) => restoreMissingQuickReplies\(config\)\)/,
-    'restoreMissingQuickReplies is chained after resumeHeadlessRuns');
-  // Since blue-green, the recovery block lives in becomeLeader(), which is
-  // only ever invoked via leadership.start(becomeLeader) — and that call
-  // sits after app.listen() inside start(). Pin both halves: the chain is
-  // inside becomeLeader, and becomeLeader is started post-listen.
-  const leaderIdx = SERVER_SRC.indexOf('async function becomeLeader(');
-  const chainIdx = SERVER_SRC.indexOf('.then(() => restoreMissingQuickReplies(config))');
-  const startIdx = SERVER_SRC.indexOf('async function start(');
-  assert.ok(leaderIdx >= 0 && chainIdx > leaderIdx && chainIdx < startIdx,
-    'the backfill chain must live inside becomeLeader()');
-  const startBody = SERVER_SRC.slice(startIdx);
-  const listenIdx = startBody.indexOf('const server = app.listen(');
-  const electIdx = startBody.indexOf('leadership.start(becomeLeader)');
-  assert.ok(listenIdx >= 0 && electIdx > listenIdx,
-    'leadership.start(becomeLeader) must come after app.listen() in start()');
+test('a cut dev chat turn repairs itself when its item resumes; no pass looks for one an older release cut', () => {
+  assert.equal(require('../src/services/turn-leftovers').backfillUnanswered, undefined);
+  assert.doesNotMatch(fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'turn-leftovers.js'), 'utf8'), /repairUnansweredTurn/);
+  // A classic turn is its item's, which repairs its own change when it
+  // resumes (services/turns.js resumeClassic).
+  assert.match(fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'turns.js'), 'utf8'),
+    /await require\('\.\/turn-recovery'\)\.repairUnansweredTurn\(pool, sessionId\);/);
 });
 
-// ── 3. restoreMissingQuickReplies — the boot backfill sweep ────────────
+// ── 3. The unanswered-turn repair (turn-recovery.js repairUnansweredTurn) ──
 
 // Fake pool driven by a per-test script: the candidate sessions, the newest
 // user/assistant row per session, and the newest system row per session.
@@ -293,6 +286,7 @@ function makeBackfillPool({ sessions = [], lastRows = {}, newestSystem = {} } = 
   const calls = [];
   return {
     calls,
+    sessions,
     query: async (sql, params = []) => {
       const text = String(sql);
       calls.push({ sql: text, params });
@@ -320,22 +314,22 @@ function writes(pool) {
   return pool.calls.filter((c) => /^\s*(INSERT|UPDATE)/i.test(c.sql.trim()));
 }
 
-test('backfill: a row that already has pills is left alone', async () => {
+test('repair: a row that already has pills is left alone', async () => {
   backfillPool = makeBackfillPool({
     sessions: [{ id: 1, pr_number: 5, spec_md: 'x' }],
     lastRows: { 1: { id: 10, role: 'assistant', content: 'done', metadata: { quickReplies: ['Make a tweak'] } } },
   });
-  await restoreMissingQuickReplies({});
+  await restoreMissingQuickReplies();
   assert.deepEqual(writes(backfillPool), [], 'no writes for an already-healthy session');
   assert.deepEqual(broadcasts, []);
 });
 
-test('backfill: a bare assistant row with a PR gets the code_done pills', async () => {
+test('repair: a bare assistant row with a PR gets the code_done pills', async () => {
   backfillPool = makeBackfillPool({
     sessions: [{ id: 2, pr_number: 41, spec_md: null }],
     lastRows: { 2: { id: 20, role: 'assistant', content: "I'll have the agent do that.", metadata: {} } },
   });
-  await restoreMissingQuickReplies({});
+  await restoreMissingQuickReplies();
   const w = writes(backfillPool);
   assert.equal(w.length, 1);
   assert.match(w[0].sql, /UPDATE chat_session_messages/);
@@ -345,33 +339,33 @@ test('backfill: a bare assistant row with a PR gets the code_done pills', async 
   assert.equal(w[0].params[1], 20, 'patched the row the client actually reads');
 });
 
-test('backfill: a spec but no PR gets the spec_done pills', async () => {
+test('repair: a spec but no PR gets the spec_done pills', async () => {
   backfillPool = makeBackfillPool({
     sessions: [{ id: 3, pr_number: null, spec_md: '## User-facing changes\n\nx' }],
     lastRows: { 3: { id: 30, role: 'assistant', content: 'Scouting.', metadata: {} } },
   });
-  await restoreMissingQuickReplies({});
+  await restoreMissingQuickReplies();
   assert.deepEqual(JSON.parse(writes(backfillPool)[0].params[0]),
     recoveryPills.buildRecoveryQuickReplies('spec_done'));
 });
 
-test('backfill: neither PR nor spec falls back to unknown_state', async () => {
+test('repair: neither PR nor spec falls back to unknown_state', async () => {
   backfillPool = makeBackfillPool({
     sessions: [{ id: 4, pr_number: null, spec_md: '   ' }],
     lastRows: { 4: { id: 40, role: 'assistant', content: 'Hello.', metadata: {} } },
   });
-  await restoreMissingQuickReplies({});
+  await restoreMissingQuickReplies();
   assert.deepEqual(JSON.parse(writes(backfillPool)[0].params[0]),
     recoveryPills.buildRecoveryQuickReplies('unknown_state'));
 });
 
-test('backfill: a trailing user row gets the missed-reply breadcrumb + resend pill', async () => {
+test('repair: a trailing user row gets the missed-reply breadcrumb + resend pill', async () => {
   backfillPool = makeBackfillPool({
     sessions: [{ id: 5, pr_number: null, spec_md: null }],
     lastRows: { 5: { id: 50, role: 'user', content: 'Make the leaderboard sort by score', metadata: {} } },
     newestSystem: { 5: { content: 'Thinking about your request...' } },
   });
-  await restoreMissingQuickReplies({});
+  await restoreMissingQuickReplies();
   const w = writes(backfillPool).filter((c) => /chat_session_messages/.test(c.sql));
   assert.equal(w.length, 1);
   assert.match(w[0].sql, /INSERT INTO chat_session_messages/);
@@ -391,17 +385,17 @@ test('backfill: a trailing user row gets the missed-reply breadcrumb + resend pi
     ['Make the leaderboard sort by score', "What's the current state?"]);
 });
 
-test('backfill: the missed-reply breadcrumb is not posted twice across boots', async () => {
+test('repair: the missed-reply breadcrumb is not posted twice across boots', async () => {
   backfillPool = makeBackfillPool({
     sessions: [{ id: 6, pr_number: null, spec_md: null }],
     lastRows: { 6: { id: 60, role: 'user', content: 'Make it blue', metadata: {} } },
     newestSystem: { 6: { content: recoveryPills.UNANSWERED_BREADCRUMB } },
   });
-  await restoreMissingQuickReplies({});
+  await restoreMissingQuickReplies();
   assert.deepEqual(writes(backfillPool), [], 'a second boot must not duplicate the breadcrumb');
 });
 
-test('backfill: a question turn is skipped (answer chips take precedence)', async () => {
+test('repair: a question turn is skipped (answer chips take precedence)', async () => {
   backfillPool = makeBackfillPool({
     sessions: [{ id: 7, pr_number: null, spec_md: null }],
     lastRows: {
@@ -411,61 +405,6 @@ test('backfill: a question turn is skipped (answer chips take precedence)', asyn
       },
     },
   });
-  await restoreMissingQuickReplies({});
+  await restoreMissingQuickReplies();
   assert.deepEqual(writes(backfillPool), []);
-});
-
-test('backfill: a busy session is skipped before any read of its messages', async () => {
-  backfillPool = makeBackfillPool({
-    sessions: [{ id: 8, pr_number: 9, spec_md: null }],
-    lastRows: { 8: { id: 80, role: 'assistant', content: 'x', metadata: {} } },
-  });
-  activeWorkersSvc.activeWorkers.add(8);
-  try {
-    await restoreMissingQuickReplies({});
-  } finally {
-    activeWorkersSvc.activeWorkers.delete(8);
-  }
-  assert.deepEqual(writes(backfillPool), [], 'a live consumer will post its own breadcrumb');
-  assert.equal(
-    backfillPool.calls.filter((c) => /role IN \('user', 'assistant'\)/.test(c.sql)).length,
-    0,
-    'the busy guard short-circuits before the per-session reads'
-  );
-});
-
-test('backfill: the candidate query is bounded and excludes in-flight/headless rows', async () => {
-  backfillPool = makeBackfillPool({ sessions: [] });
-  await restoreMissingQuickReplies({});
-  const q = backfillPool.calls[0];
-  assert.match(q.sql, /status IN \('active', 'promoted'\)/);
-  assert.match(q.sql, /is_headless = FALSE/);
-  assert.match(q.sql, /active_turn IS NULL/);
-  assert.match(q.sql, /last_activity_at > NOW\(\) - make_interval/);
-  assert.match(q.sql, /LIMIT \$2/);
-  assert.deepEqual(q.params, [7, 200]);
-});
-
-test('backfill: one failing session does not abort the sweep', async () => {
-  const pool = makeBackfillPool({
-    sessions: [{ id: 9, pr_number: 1, spec_md: null }, { id: 10, pr_number: 2, spec_md: null }],
-    lastRows: {
-      9: { id: 90, role: 'assistant', content: 'a', metadata: {} },
-      10: { id: 100, role: 'assistant', content: 'b', metadata: {} },
-    },
-  });
-  const realQuery = pool.query;
-  pool.query = async (sql, params = []) => {
-    if (/UPDATE chat_session_messages/i.test(String(sql)) && params[1] === 90) {
-      pool.calls.push({ sql: String(sql), params, threw: true });
-      throw new Error('boom');
-    }
-    return realQuery(sql, params);
-  };
-  backfillPool = pool;
-  await restoreMissingQuickReplies({});
-  const patched = pool.calls.filter((c) => /UPDATE chat_session_messages/i.test(c.sql));
-  assert.equal(patched.length, 2, 'both sessions were attempted');
-  assert.equal(patched[0].threw, true, 'the first session threw mid-write');
-  assert.equal(patched[1].params[1], 100, 'the second session was still repaired');
 });

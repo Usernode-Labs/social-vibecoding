@@ -22,10 +22,12 @@
  *   surfaces still call (the admin gallery, the dev chat's "Changes ready"
  *   card, and its own tests), so it stays a string builder.
  *
- * And two genuine controller hosts, rendered once, empty, with a constant
- * className: `#dev-issue-comments` (features/dev-board/issue-comments.tsx
- * mounts into it) and `[data-transcript-body]`, which
- * public/js/session-transcript.js fills on expand.
+ * And a genuine controller host, rendered once, empty, with a constant
+ * className: `[data-transcript-body]`, which public/js/session-transcript.js
+ * fills on expand.
+ *
+ * A request's page is ./request-head.tsx (#4453): the request as a Messages
+ * thread's root post, its GitHub comments in the thread's own stream.
  */
 
 import { Fragment, useEffect, useRef, useState } from 'react';
@@ -33,24 +35,28 @@ import { createPortal } from 'react-dom';
 import type { FormEvent, KeyboardEvent, ReactNode, SyntheticEvent } from 'react';
 
 import { Html } from '../../../lib/html';
+import { RichMessage, useMessages } from '../../../lib/i18n/react';
+import { t as translate } from '../../../lib/i18n/runtime';
 import { FRESH, watch } from '../../../lib/live-reads';
 import { useStoreState } from '../../../lib/use-store-state';
 import { Button } from '@/components/ui/button';
 import { CheckIcon, ChevronRightIcon, PencilSquareIcon, PlusIcon, SearchIcon, XIcon } from '@/components/ui/icons';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import { ActionBand, ActionButton, Badge, DevCard, StatusPill, TitleContent, VoteButton, isVoteSpec } from '../card/dev-card';
-import type { DevCardModel } from '../card/model';
-import { swatchFor } from '../../group-chat/swatch';
+import { ActionButton, DevCard, StatusPill } from '../card/dev-card';
 import { useInlineImageViewer } from '../../image-viewer/image-viewer';
 import { topicHeadStore } from './topic-store';
-import { ChangeConversation } from './conversation';
+import { useChecksExplanation, useFixAsk, useFixing } from './failed-checks';
 import { TopicBack } from './topic-back';
+import { RequestHead } from './request-head';
+import { ChangeThreadHead } from './change-head';
 import { DescriptionEditor } from './description-editor';
 import { ISSUE_BODY_MAX } from '../../../lib/issue-body-limit';
 import type {
+  ChecksExplainView,
   ChecksVerdict,
   CheckRow,
+  FixChecksView,
   NoteBox,
   NoteTone,
   RosterView,
@@ -142,14 +148,104 @@ export function NoteBoxView({ box }: { box: NoteBox }): ReactNode {
  * errors sit until somebody asks: that detail is for whoever fixes the
  * check, not for a voter reading the row.
  */
+/**
+ * The door's label when a green row is open for something other than a
+ * plain retry: an early failure burst (often the environment, not proof of
+ * it), or a note
+ * on a check that needed a fresh load. Null for the two ordinary doors.
+ */
+function openLabel(r: CheckRow, t: ReturnType<typeof useMessages>): string | null {
+  if (!r.pass) return null;
+  if (r.retryClass === 'early_burst') return t('project:topic.check.earlyBurst');
+  if (r.note && !r.reason) return t('project:topic.check.freshLoad');
+  return null;
+}
+
+/** The unit suite's per-test output (#3978), once: each test's name over its excerpt. */
+function TestOutput({ details }: { details: NonNullable<CheckRow['details']> }): ReactNode {
+  return (
+    <ul className="dev-ledger-why-details mt-1 space-y-1">
+      {details.map((d, i) => (
+        <li key={i}>
+          <div className="font-medium">{d.file ? `${d.file} · ${d.test}` : d.test}</div>
+          <pre className="dev-ledger-why-excerpt mt-0.5 max-h-60 overflow-auto whitespace-pre-wrap break-words rounded bg-zinc-500/10 p-2 font-mono text-[0.7rem]">{d.excerpt}</pre>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/**
+ * The app's own test suite (`npm test`), failed: said by what it is ("The
+ * app's own tests", how many of them failed), then the tests that failed,
+ * each with the message it failed with and where, and the runner's own
+ * output folded under "Show the test output". The check's name ("Repo unit
+ * suite (npm test) passes"), the TAP tally and the "on package.json" its
+ * reason used to carry are for the platform, not for whoever reads the row.
+ */
+function UnitSuiteRow({ r }: { r: CheckRow }): ReactNode {
+  const t = useMessages('project');
+  const tests = r.details || [];
+  const tally = r.unitTally || null;
+  // Without per-test output, the reason's own first part names the files.
+  const reason = String(r.reason || '').split(/\s\|\s#\s/)[0].trim();
+  return (
+    <li className={`dev-ledger-check dev-ledger-check-unit${r.advisory ? ' opacity-70' : ''}`} data-check-unit="">
+      <div className="dev-ledger-unit-head">
+        <span className={`dev-ledger-check-glyph ${r.advisory ? 'text-zinc-500 dark:text-zinc-400' : 'text-red-700 dark:text-red-400'} font-medium`} aria-hidden="true">✗</span>
+        <span className="dev-ledger-unit-name" title={r.name}>{t('project:topic.check.unit.name')}</span>
+        <span className="dev-ledger-unit-cmd font-mono">npm test</span>
+        {r.advisory ? <span className="rounded bg-zinc-500/10 px-1 text-[0.65rem] opacity-70">{t('project:topic.check.advisory')}</span> : null}
+        {tally ? (
+          <span className="dev-ledger-unit-count">
+            {tally.total
+              ? t('project:topic.check.unit.failedOf', { count: tally.failed, failed: fmtCount(tally.failed), total: fmtCount(tally.total) })
+              : t('project:topic.check.unit.failed', { count: tally.failed, failed: fmtCount(tally.failed) })}
+          </span>
+        ) : null}
+      </div>
+      {tests.length ? (
+        <div className="dev-ledger-unit-part">
+          <div className="dev-ledger-unit-k">{t('project:topic.check.unit.testsThatFailed', { count: tests.length })}</div>
+          <ul className="dev-ledger-unit-tests">
+            {tests.map((d, i) => (
+              <li key={i}>
+                <span className="dev-ledger-unit-test">{d.test}</span>
+                {d.said ? <span className="dev-ledger-unit-said">{t('project:topic.check.unit.said', { said: d.said })}</span> : null}
+                {d.file ? (
+                  <span className="dev-ledger-unit-where font-mono">
+                    {d.line ? t('project:topic.check.unit.fileLine', { file: d.file, line: d.line }) : d.file}
+                  </span>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : (reason ? <p className="dev-ledger-unit-reason">{reason}</p> : null)}
+      {tests.length ? (
+        <details className="dev-ledger-why dev-ledger-unit-output">
+          <summary className="dev-ledger-check-line">
+            <span className="dev-ledger-check-open">{t('project:topic.check.unit.showOutput')}</span>
+          </summary>
+          <div className="dev-ledger-why-body">
+            <TestOutput details={tests} />
+          </div>
+        </details>
+      ) : null}
+    </li>
+  );
+}
+
 function CheckRowView({ r }: { r: CheckRow }): ReactNode {
+  const t = useMessages('project');
+  if (r.unit && !r.pass) return <UnitSuiteRow r={r} />;
   const glyphCls = `dev-ledger-check-glyph ${r.pass ? 'text-emerald-700 dark:text-emerald-400' : (r.advisory ? 'text-zinc-500 dark:text-zinc-400' : 'text-red-700 dark:text-red-400')} font-medium`;
   const tags = (
     <>
-      {r.advisory ? <span className="rounded bg-zinc-500/10 px-1 text-[0.65rem] opacity-70">advisory</span> : null}
+      {r.advisory ? <span className="rounded bg-zinc-500/10 px-1 text-[0.65rem] opacity-70">{t('project:topic.check.advisory')}</span> : null}
       {r.flaky ? (
-        <span className="dev-check-flaky" title={`Failed about ${r.flaky}% of its recorded runs`}>
-          {`flaky · ${r.flaky}%`}
+        <span className="dev-check-flaky" title={t('project:topic.check.flakyTitle', { percent: r.flaky })}>
+          {t('project:topic.check.flaky', { percent: r.flaky })}
         </span>
       ) : null}
     </>
@@ -174,25 +270,18 @@ function CheckRowView({ r }: { r: CheckRow }): ReactNode {
           <span className={glyphCls} aria-hidden="true">{r.pass ? '✓' : '✗'}</span>
           <span className="dev-ledger-check-name" title={r.name}>{r.name}</span>
           {tags}
-          <span className="dev-ledger-check-open">{r.pass ? 'Passed on retry' : 'Why it failed'}</span>
+          <span className="dev-ledger-check-open">{openLabel(r, t) || (r.pass ? t('project:topic.check.passedOnRetry') : t('project:topic.check.whyItFailed'))}</span>
         </summary>
         <div className="dev-ledger-why-body">
-          {r.reason || 'failed'}
-          {r.path ? <span className="dev-ledger-why-path">{` · on ${r.path}`}</span> : null}
-          {/* #3978: the unit-suite row's failing tests, each with the
-              assertion text the run captured. The fold is the collapse —
-              these open with "Why it failed" like the console errors below. */}
-          {r.details && r.details.length ? (
-            <ul className="dev-ledger-why-details">
-              {r.details.map((d, i) => (
-                <li key={i}>
-                  <span className="dev-ledger-why-test">{d.test}</span>
-                  {d.file ? <span className="dev-ledger-why-file">{` · in ${d.file}`}</span> : null}
-                  {d.excerpt ? <span className="dev-ledger-why-excerpt">{d.excerpt}</span> : null}
-                </li>
-              ))}
-            </ul>
-          ) : null}
+          {/* A pass kept open only for its note has no failure to state. */}
+          {r.pass && !r.reason && r.note ? null : r.path ? (
+            <RichMessage
+              id="project:topic.check.reasonOnPath"
+              values={{ reason: r.reason || t('project:topic.check.failed'), path: r.path }}
+              components={[<span className="dev-ledger-why-path" />]}
+            />
+          ) : (r.reason || t('project:topic.check.failed'))}
+          {r.note ? <div className="dev-ledger-why-note mt-1">{r.note}</div> : null}
           {r.errors && r.errors.length ? (
             <ul className="dev-ledger-why-errors">
               {r.errors.map((e, i) => (
@@ -204,16 +293,7 @@ function CheckRowView({ r }: { r: CheckRow }): ReactNode {
               ))}
             </ul>
           ) : null}
-          {r.details && r.details.length ? (
-            <ul className="dev-ledger-why-details mt-1 space-y-1">
-              {r.details.map((d, i) => (
-                <li key={i}>
-                  <div className="font-medium">{d.file ? `${d.file} · ${d.test}` : d.test}</div>
-                  <pre className="dev-ledger-why-excerpt mt-0.5 max-h-60 overflow-auto whitespace-pre-wrap break-words rounded bg-zinc-500/10 p-2 font-mono text-[0.7rem]">{d.excerpt}</pre>
-                </li>
-              ))}
-            </ul>
-          ) : null}
+          {r.details && r.details.length ? <TestOutput details={r.details} /> : null}
         </div>
       </details>
     </li>
@@ -240,15 +320,17 @@ function usePassNames(passesFor: number | null | undefined) {
 }
 
 function PassNamesPending({ state }: { state: 'idle' | 'loading' | 'failed' }): ReactNode {
+  const t = useMessages('project');
   return (
     <li className="dev-passes-pending opacity-70">
-      {state === 'failed' ? 'Could not load the passing checks. Close this and open it again to retry.' : 'Loading passing checks…'}
+      {state === 'failed' ? t('project:topic.checks.passNamesFailed') : t('project:topic.checks.passNamesLoading')}
     </li>
   );
 }
 
 /** The checks verdict: its rows nest, and its passes fold away. */
 export function ChecksVerdictView({ v }: { v: ChecksVerdict }): ReactNode {
+  const t = useMessages('project');
   const names = usePassNames(v.passesFor);
   const passList = v.passes.length || v.passesFor ? (
     <ul className="mt-1 ml-1 space-y-0.5">
@@ -267,7 +349,7 @@ export function ChecksVerdictView({ v }: { v: ChecksVerdict }): ReactNode {
       ) : null}
       {v.foldPasses ? (
         <details className="mt-1" onToggle={names.onToggle}>
-          <summary className="cursor-pointer opacity-80">{`Show ${v.passCount ?? v.passes.length} passing checks`}</summary>
+          <summary className="cursor-pointer opacity-80">{t('project:topic.checks.showPassing', { count: v.passCount ?? v.passes.length })}</summary>
           {passList}
         </details>
       ) : passList}
@@ -303,10 +385,13 @@ function Bar({ ran, passed, failed, expected, attr, value, indeterminate }: {
 }
 
 function BuildSteps({ steps }: { steps: LedgerBuildStep[] }): ReactNode {
+  const t = useMessages('project');
   const now = steps.find((s) => s.state === 'now');
   const fmt = (ms: number) => {
     const s = Math.max(0, Math.round(ms / 1000));
-    return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`;
+    return s < 60
+      ? t('project:topic.build.seconds', { seconds: s })
+      : t('project:topic.build.minutesSeconds', { minutes: Math.floor(s / 60), seconds: s % 60 });
   };
   const withPhases = steps.find((s) => s.phases && s.phases.length);
   const nowPhase = withPhases ? withPhases.phases!.find((p) => p.state === 'now') : null;
@@ -398,8 +483,9 @@ function Progress({ p }: { p: LedgerProgress }): ReactNode {
  * repeated here.
  */
 function Roster({ r }: { r: RosterView }): ReactNode {
+  const t = useMessages('project');
   if (r.phase === 'hidden') return null;
-  if (r.phase === 'loading') return <span className="dev-ledger-roster">Loading votes…</span>;
+  if (r.phase === 'loading') return <span className="dev-ledger-roster">{t('project:topic.roster.loading')}</span>;
   // QA 2026-09-24: a side nobody has taken is left out, rather than drawn as
   // "No (0): —". The loaders send an empty string for it; the bare dash is
   // what they sent before, and is still read as empty.
@@ -409,11 +495,15 @@ function Roster({ r }: { r: RosterView }): ReactNode {
   return (
     <span className="dev-ledger-roster" data-approved={r.approved ? '1' : undefined}>
       {r.approved ? (
-        <>
-          <span className="dev-ledger-lead dev-ledger-lead-ok">Approved</span>
-          {yesNames ? ` by ${yesNames}` : null}
-          {noNames ? <span className="dev-ledger-needs">{` · No: ${noNames}`}</span> : null}
-        </>
+        // One whole message per case: who approved, and who said No.
+        yesNames || noNames ? (
+          <RichMessage
+            id={yesNames && noNames ? 'project:topic.roster.approvedByWithNo'
+              : yesNames ? 'project:topic.roster.approvedBy' : 'project:topic.roster.approvedWithNo'}
+            values={{ approvers: yesNames, against: noNames }}
+            components={[<span className="dev-ledger-lead dev-ledger-lead-ok" />, <span className="dev-ledger-needs" />]}
+          />
+        ) : <span className="dev-ledger-lead dev-ledger-lead-ok">{t('project:topic.roster.approved')}</span>
       ) : (
         <>
           {/* The space rides inside the lead: a bare whitespace expression
@@ -421,17 +511,27 @@ function Roster({ r }: { r: RosterView }): ReactNode {
               tests/shell-build.test.js guards against. With nobody on
               either side the lead is the whole line: the tally beside it
               already says the count. */}
-          <span className="dev-ledger-lead dev-ledger-lead-vote">{yesNames || noNames ? 'Waiting for votes. ' : 'Waiting for votes.'}</span>
-          {yesNames ? <span className="dev-ledger-yes">{`${r.yes!.label}:`}</span> : null}
-          {yesNames ? ` ${yesNames}${noNames ? ' · ' : ''}` : null}
-          {noNames ? <span className="dev-ledger-no">{`${r.no!.label}:`}</span> : null}
-          {noNames ? ` ${noNames}` : null}
+          {yesNames || noNames ? (
+            <RichMessage
+              id={yesNames && noNames ? 'project:topic.roster.waitingYesNo'
+                : yesNames ? 'project:topic.roster.waitingYes' : 'project:topic.roster.waitingNo'}
+              values={{
+                yesLabel: r.yes ? r.yes.label : '', yesNames,
+                noLabel: r.no ? r.no.label : '', noNames,
+              }}
+              components={[
+                <span className="dev-ledger-lead dev-ledger-lead-vote" />,
+                <span className="dev-ledger-yes" />,
+                <span className="dev-ledger-no" />,
+              ]}
+            />
+          ) : <span className="dev-ledger-lead dev-ledger-lead-vote">{t('project:topic.roster.waiting')}</span>}
         </>
       )}
       {/* #1688: each voter's line under the names, in their own words. */}
       {(r.reasons || []).map((q) => (
         <span key={q.who} className="dev-ledger-reason" data-vote={q.vote}>
-          {`${q.who}: “${q.text}”`}
+          {t('project:topic.roster.reason', { voter: q.who, reason: q.text })}
         </span>
       ))}
       {r.earlier ? <span className="dev-ledger-earlier">{r.earlier}</span> : null}
@@ -441,16 +541,17 @@ function Roster({ r }: { r: RosterView }): ReactNode {
 
 /** "How voting works", and the circular "?" — both open the same popover. */
 function HelpLinks({ question }: { question: boolean }): ReactNode {
+  const t = useMessages('project');
   return (
     <span className="dev-ledger-help voting-help-hint">
-      <button type="button" className="voting-help-link un-touch-target" data-voting-help="">How voting works</button>
+      <button type="button" className="voting-help-link un-touch-target" data-voting-help="">{t('project:topic.help.howVotingWorks')}</button>
       {question ? (
         <button
           type="button"
           className="voting-help-btn un-touch-target"
           data-voting-help=""
-          aria-label="How voting and merges work"
-          title="How voting and merges work"
+          aria-label={t('project:topic.help.votingAndMerges')}
+          title={t('project:topic.help.votingAndMerges')}
         >?</button>
       ) : null}
     </span>
@@ -472,6 +573,7 @@ function passingCount(r: LedgerRow): number {
 }
 
 function LedgerRowBody({ r, help }: { r: LedgerRow; help: boolean }): ReactNode {
+  const t = useMessages('project');
   const names = usePassNames(r.passesFor);
   return (
     <>
@@ -523,7 +625,7 @@ function LedgerRowBody({ r, help }: { r: LedgerRow; help: boolean }): ReactNode 
           {(r.actions || []).map((a) => <ActionButton key={a.key} a={a} />)}
           {passingCount(r) ? (
             <details className="dev-ledger-passes" onToggle={names.onToggle}>
-              <summary className="gc-vote-btn dev-ledger-passes-btn">{`${passingCount(r)} passing`}</summary>
+              <summary className="gc-vote-btn dev-ledger-passes-btn">{t('project:topic.ledger.passing', { count: passingCount(r) })}</summary>
               <ul className="dev-ledger-fails">
                 {(r.passes || []).map((c) => <CheckRowView key={c.key} r={c} />)}
                 {r.passesFor ? <PassNamesPending state={names.state} /> : null}
@@ -536,17 +638,25 @@ function LedgerRowBody({ r, help }: { r: LedgerRow; help: boolean }): ReactNode 
   );
 }
 
-export function ProposalBody({ b }: { b: NonNullable<TopicBody['proposalBody']> }): ReactNode {
+export function ProposalBody({ b, named = 'technical', part }: {
+  b: NonNullable<TopicBody['proposalBody']>;
+  /** The disclosure's name: a change page with no summary calls it "Description". */
+  named?: 'technical' | 'description';
+  /** `data-topic-part`, when the disclosure stands in for a part of the page. */
+  part?: string;
+}): ReactNode {
+  const t = useMessages('project');
   return (
     <details
-      className="dev-topic-details"
+      className={part ? 'dev-topic-details dev-topic-hero-more' : 'dev-topic-details'}
+      data-topic-part={part}
       open={b.open}
       onToggle={(e) => {
         if (b.id != null) call('_setProposalBodyOpen', b.id, e.currentTarget.open);
       }}
     >
       <summary className="dev-topic-details-summary">
-        Technical details
+        {named === 'description' ? t('project:topic.change.descriptionFold') : t('project:topic.about.technicalDetails')}
       </summary>
       {/* DevChat.renderMarkdown's output — sanitised where it is built, and
           the same pipeline the issue body above uses. */}
@@ -562,7 +672,8 @@ export function ProposalBody({ b }: { b: NonNullable<TopicBody['proposalBody']> 
  * deciding on it. The open flag is AppView's, like ProposalBody's, so a
  * repaint does not shut it.
  */
-function SummaryMore({ m }: { m: NonNullable<TopicBody['summaryMore']> }): ReactNode {
+export function SummaryMore({ m }: { m: NonNullable<TopicBody['summaryMore']> }): ReactNode {
+  const t = useMessages('project');
   return (
     <details
       className="dev-topic-details dev-topic-hero-more"
@@ -572,41 +683,45 @@ function SummaryMore({ m }: { m: NonNullable<TopicBody['summaryMore']> }): React
         if (m.id != null) call('_setSummaryMoreOpen', m.id, e.currentTarget.open);
       }}
     >
-      <summary className="dev-topic-details-summary">How it’s built</summary>
+      <summary className="dev-topic-details-summary">{t('project:topic.hero.howItsBuilt')}</summary>
       {/* DevChat.renderMarkdown's output — sanitised where it is built. */}
       <Html className="dev-issue-body dev-topic-details-body" html={m.html} />
     </details>
   );
 }
 
-function Transcript({ t }: { t: TranscriptSection }): ReactNode {
+function Transcript({ t: section }: { t: TranscriptSection }): ReactNode {
+  const t = useMessages('project');
   return (
-    <div className="st-section" data-transcript-section={t.id}>
+    <div className="st-section" data-transcript-section={section.id}>
       <button
         type="button"
         className="st-section-head"
-        data-transcript-toggle={t.id}
-        aria-expanded={t.expanded}
-        onClick={() => call('toggleTranscript', t.id)}
+        data-transcript-toggle={section.id}
+        aria-expanded={section.expanded}
+        onClick={() => call('toggleTranscript', section.id)}
       >
         <span className="st-caret" aria-hidden="true"></span>
-        <span data-transcript-label="">{t.label}</span>
-        <span className="st-readonly-tag">read-only</span>
+        <span data-transcript-label="">{section.label}</span>
+        <span className="st-readonly-tag">{t('project:topic.transcript.readOnly')}</span>
       </button>
       {/* The BODY is public/js/session-transcript.js's — a controller host,
           rendered once with a constant className and never looked inside. */}
-      <div className="st-body" data-transcript-body={t.id} hidden={!t.expanded}></div>
+      <div className="st-body" data-transcript-body={section.id} hidden={!section.expanded}></div>
     </div>
   );
 }
 
-export function TopicHead({ conversation = false }: { conversation?: boolean }): ReactNode {
+export function TopicHead(): ReactNode {
   const { card, body, item } = useStoreState(topicHeadStore);
   if (!card || !body) return null;
+  // #4453: a request's page is a Messages reply thread with the request as
+  // its root post, not the card and its sheets.
+  if (body.request) return <RequestHead key={`request:${body.request.number}`} r={body.request} />;
   // `back`: this IS the topic page, whose one back control is the chip at the
   // top of the pane (#2916, ./topic-back.tsx). Every kind of topic comes
   // through here, a change page and an issue/governance thread head alike.
-  return <ChangeDetail key={item?.id || 'topic'} card={card} body={body} item={item} conversation={conversation} back />;
+  return <ChangeDetail key={item?.id || 'topic'} card={card} body={body} item={item} back />;
 }
 
 /** Refresh from the endpoint that owns this lifecycle's metadata. */
@@ -639,7 +754,7 @@ export async function readChangeDetail(item: any, owner: boolean, signal: AbortS
   const demo = av?._demoQS?.() ? '&demo=1' : '';
   const response = await fetch(`${url}?results=failing${demo}`, fresh ? { ...FRESH, signal } : { signal });
   const payload = await response.json();
-  if (!response.ok) throw new Error(payload.error || 'Could not refresh this change.');
+  if (!response.ok) throw new Error(payload.error || translate('project:topic.change.refreshFailed'));
   const session = review ? payload.proposal : payload.session;
   if (review && !signal.aborted) {
     if (owner || fresh) av._invalidateVoteRoster(id);
@@ -664,7 +779,7 @@ export function parseExactIssueNumber(value: string): { issue: number | null; er
   if (!/^#?[1-9]\d*$/.test(token)) return { issue: null, error: '' };
   const issue = Number(token.replace(/^#/, ''));
   if (!Number.isSafeInteger(issue) || issue > 2147483647) {
-    return { issue: null, error: `“${token}” is too large to be an issue number.` };
+    return { issue: null, error: translate('project:topic.requests.numberTooLarge', { input: token }) };
   }
   return { issue, error: '' };
 }
@@ -750,8 +865,9 @@ function IssueIdentity({ label, title }: { label: string; title: string }): Reac
  * returned.
  */
 function AddressedBy({ r }: { r: IssueProposalRef }): ReactNode {
+  const t = useMessages('project');
   return (
-    <aside className="dev-change-issues" aria-label="The change addressing this issue">
+    <aside className="dev-change-issues" aria-label={t('project:topic.request.addressedByRegion')}>
       <h4 className="dev-topic-h">{r.heading}</h4>
       <div className="mt-2">
         <a
@@ -779,31 +895,40 @@ function AddressedBy({ r }: { r: IssueProposalRef }): ReactNode {
  */
 function ClosedBand({ b }: { b: IssueClosedBand }): ReactNode {
   const r = b.ref;
+  const t = useMessages('project');
+  // The band's words are ONE message per case (closed, when, and by what), so
+  // a language orders them as it reads. Each numbered tag is one of the
+  // band's own elements; the separators are the aria-hidden dots.
+  const k = <span className="dev-issue-closed-band-k" />;
+  const dot = <span className="dev-issue-closed-band-dot" aria-hidden="true" />;
+  const when = <span title={b.whenTitle || undefined} />;
+  const chip = r ? (
+    <a
+      href={r.href}
+      className="dev-ws-chip dev-ws-chip-info dev-topic-issue"
+      data-addressed-by={r.sessionId}
+      aria-label={t('project:topic.request.closedBand.byChangeLabel', { change: r.label, title: r.title })}
+      onClick={(event) => {
+        if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+        event.preventDefault(); call('openTopic', 'proposal', r.sessionId);
+      }}
+    ><b>{r.label}</b><span>{r.title}</span><ChevronRightIcon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" /></a>
+  ) : null;
+  const words = chip
+    ? (b.when
+      ? <RichMessage id="project:topic.request.closedBand.whenByChange" values={{ date: b.when }} components={[k, dot, when, dot, <span />, chip]} />
+      : <RichMessage id="project:topic.request.closedBand.byChange" components={[k, dot, <span />, chip]} />)
+    : b.how
+      ? (b.when
+        ? <RichMessage id={b.how === 'admin' ? 'changes:request.closedBand.whenByAdmin' : 'changes:request.closedBand.whenByVote'} values={{ date: b.when }} components={[k, dot, when, dot, <span />]} />
+        : <RichMessage id={b.how === 'admin' ? 'changes:request.closedBand.byAdmin' : 'changes:request.closedBand.byVote'} components={[k, dot, <span />]} />)
+      : b.when
+        ? <RichMessage id="project:topic.request.closedBand.when" values={{ date: b.when }} components={[k, dot, when]} />
+        : <RichMessage id="project:topic.request.closedBand.closed" components={[k]} />;
   return (
     <div className="dev-issue-closed-band" data-tone={b.tone} data-topic-part="closed-band">
       <CheckIcon className="dev-issue-closed-band-glyph" aria-hidden="true" />
-      <span className="dev-issue-closed-band-k">Closed</span>
-      {b.when ? <>
-        <span className="dev-issue-closed-band-dot" aria-hidden="true">·</span>
-        <span title={b.whenTitle || undefined}>{b.when}</span>
-      </> : null}
-      {r ? <>
-        <span className="dev-issue-closed-band-dot" aria-hidden="true">·</span>
-        <span>by</span>
-        <a
-          href={r.href}
-          className="dev-ws-chip dev-ws-chip-info dev-topic-issue"
-          data-addressed-by={r.sessionId}
-          aria-label={`Closed by ${r.label}: ${r.title}`}
-          onClick={(event) => {
-            if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-            event.preventDefault(); call('openTopic', 'proposal', r.sessionId);
-          }}
-        ><b>{r.label}</b><span>{r.title}</span><ChevronRightIcon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" /></a>
-      </> : b.how ? <>
-        <span className="dev-issue-closed-band-dot" aria-hidden="true">·</span>
-        <span>{b.how}</span>
-      </> : null}
+      {words}
     </div>
   );
 }
@@ -814,9 +939,10 @@ function ClosedBand({ b }: { b: IssueClosedBand }): ReactNode {
  * `AddressedBy`, read from the other end again: that names the change that
  * closed an issue, this the change that carried this one live.
  */
-function IncludedIn({ r }: { r: IssueProposalRef }): ReactNode {
+export function IncludedIn({ r }: { r: IssueProposalRef }): ReactNode {
+  const t = useMessages('project');
   return (
-    <aside className="dev-change-issues" aria-label="The change this one went live in" data-topic-part="included-in">
+    <aside className="dev-change-issues" aria-label={t('project:topic.change.includedInRegion')} data-topic-part="included-in">
       <h4 className="dev-topic-h">{r.heading}</h4>
       <div className="mt-2">
         <a
@@ -833,13 +959,14 @@ function IncludedIn({ r }: { r: IssueProposalRef }): ReactNode {
   );
 }
 
-function IssueAssociations({
+export function IssueAssociations({
   proposalId,
   issues,
   issueOptions,
   linkedIssues,
   editable,
   onSaved,
+  thread,
 }: {
   proposalId: number;
   issues: IssueLink[];
@@ -847,7 +974,15 @@ function IssueAssociations({
   linkedIssues: number[];
   editable: boolean;
   onSaved: (issues: number[]) => void;
+  /**
+   * #4455: a change's page draws the line as one row under the summary:
+   * "Addresses", the first request, "+N more" (which opens the rest, one to a
+   * line), then the thanks. Editing is ⋯ "Edit requests", which asks for the
+   * editor by event, as "Edit description" does.
+   */
+  thread: { thanks: ReactNode };
 }): ReactNode {
+  const t = useMessages('project');
   const normalized = normalizeLinkedIssues(linkedIssues);
   const signature = normalized.join(', ');
   const [editing, setEditing] = useState(false);
@@ -860,18 +995,19 @@ function IssueAssociations({
   useEffect(() => {
     if (!editing) setSelected(normalized);
   }, [signature, editing]);
+  const [more, setMore] = useState(false);
 
   const selectedSignature = normalizeLinkedIssues(selected).join(', ');
   const changed = selectedSignature !== signature;
   const optionsByNumber = new Map([...issueOptions, ...issues].map((issue) => [issue.n, issue]));
   const selectedIssues = selected.map((n) => optionsByNumber.get(n) || {
-    n, title: `Request #${n}`, href: `#${n}`,
+    n, title: t('project:topic.requests.untitled', { number: n }), href: `#${n}`,
   });
   const suggestions = filterIssueOptions(query, issueOptions, selected);
   const exact = parseExactIssueNumber(query);
   const exactOption = exact.issue && !selected.includes(exact.issue)
     && !suggestions.some((issue) => issue.n === exact.issue)
-    ? { n: exact.issue, title: 'Add by issue number', href: `#${exact.issue}` } : null;
+    ? { n: exact.issue, title: t('project:topic.requests.addByNumber'), href: `#${exact.issue}` } : null;
 
   const openEditor = () => {
     setSelected(normalized);
@@ -886,10 +1022,18 @@ function IssueAssociations({
     setError('');
     setEditing(false);
   };
+  useEffect(() => {
+    if (!editable) return undefined;
+    const open = (event: Event) => {
+      if (Number((event as CustomEvent).detail) === proposalId) openEditor();
+    };
+    window.addEventListener('change-issues-edit', open);
+    return () => window.removeEventListener('change-issues-edit', open);
+  }, [editable, proposalId, signature]);
   const addIssue = (issue: number) => {
     if (selected.includes(issue)) return;
     if (selected.length >= MAX_LINKED_ISSUES) {
-      setError(`A change can link at most ${MAX_LINKED_ISSUES} requests.`);
+      setError(t('project:topic.requests.tooMany', { count: MAX_LINKED_ISSUES }));
       return;
     }
     setSelected((current) => normalizeLinkedIssues([...current, issue]));
@@ -911,7 +1055,7 @@ function IssueAssociations({
     if (suggestions[0]) addIssue(suggestions[0].n);
     else if (exactOption) addIssue(exactOption.n);
     else if (exact.error) setError(exact.error);
-    else setError('Choose a matching issue or enter its issue number.');
+    else setError(t('project:topic.requests.chooseOrEnter'));
   };
 
   async function save(event: FormEvent<HTMLFormElement>) {
@@ -926,64 +1070,28 @@ function IssueAssociations({
         body: JSON.stringify({ addIssues, removeIssues }),
       });
       const body = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(body.message || body.error || 'Couldn\'t update the requests.');
+      if (!response.ok) throw new Error(body.message || body.error || t('project:topic.requests.updateFailed'));
       const saved = Array.isArray(body.linkedIssues) ? body.linkedIssues.map(Number) : selected;
       onSaved(saved);
       setSelected(normalizeLinkedIssues(saved));
       setQuery('');
       setEditing(false);
       setNotice(body.prBodyStatus === 'github_unavailable'
-        ? 'Issues saved. The pull request could not be updated yet; saving again will retry it.'
-        : 'Issues saved.');
+        ? t('project:topic.requests.savedSyncPending')
+        : t('project:topic.requests.saved'));
     } catch (err) {
-      setError(err instanceof TypeError ? 'Network error. Try again.' : (err as Error).message);
+      setError(err instanceof TypeError ? t('project:topic.requests.networkError') : (err as Error).message);
     } finally {
       setSaving(false);
     }
   }
 
-  return (
-    <aside className="dev-topic-hero-issues" aria-label="Requests this change addresses">
-      {!editing ? (
-        <div className="dev-topic-hero-issues-line">
-          {/* One line under the summary: "Addresses", then each issue as a
-              chip — the number bold, the title after it — in the Needs-you
-              chip's accent tint. The chip opens the issue's own page; the
-              owner's pencil sits at the line's end. */}
-          <span className="dev-topic-hero-issues-k">Addresses</span>
-          {issues.length ? issues.map((issue) => (
-            <a
-              key={issue.n}
-              href={issue.href}
-              className="dev-ws-chip dev-ws-chip-info dev-topic-issue"
-              data-issue-ref={issue.n}
-              onClick={(event) => {
-                if (!issue.href.startsWith('#') && !issue.href.startsWith('/app/')) return;
-                if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-                event.preventDefault(); call('openTopic', 'issue', issue.n);
-              }}
-            ><b>{`#${issue.n}`}</b><span>{issue.title}</span></a>
-          )) : <span className="dev-topic-note">No requests linked yet.</span>}
-          {editable ? <Button
-            type="button"
-            variant="unstyled"
-            size="inline"
-            ink="none"
-            className="dev-topic-hero-issues-edit inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium text-violet-700 hover:bg-violet-500/10 dark:text-violet-300"
-            aria-expanded="false"
-            onClick={openEditor}
-          >
-            {issues.length ? <PencilSquareIcon className="h-4 w-4" aria-hidden="true" />
-              : <PlusIcon className="h-4 w-4" aria-hidden="true" />}
-            {issues.length ? 'Edit requests' : 'Add request'}
-          </Button> : null}
-        </div>
-      ) : null}
-      {editing ? <form className="mt-3 space-y-3" data-linked-issues-editor="" onSubmit={save}>
+  const editorForm = () => (
+    <form className="mt-3 space-y-3" data-linked-issues-editor="" onSubmit={save}>
         <div>
           <div className="mb-1.5 flex items-center justify-between gap-3 text-xs font-medium text-zinc-600 dark:text-zinc-400">
-            <span>{`Selected (${selected.length})`}</span>
-            <span>{`${MAX_LINKED_ISSUES - selected.length} remaining`}</span>
+            <span>{t('project:topic.requests.selectedCount', { count: selected.length })}</span>
+            <span>{t('project:topic.requests.remaining', { count: MAX_LINKED_ISSUES - selected.length })}</span>
           </div>
           {selectedIssues.length ? <div className="space-y-1.5">{selectedIssues.map((issue) => (
             <div key={issue.n} className="flex min-h-10 items-center gap-3 rounded-xl bg-zinc-100/80 px-3 py-2 dark:bg-zinc-800/80" data-selected-issue={issue.n}>
@@ -991,15 +1099,15 @@ function IssueAssociations({
               <button
                 type="button"
                 className="-mr-1 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-zinc-500 hover:bg-red-500/10 hover:text-red-700 dark:text-zinc-400 dark:hover:text-red-400"
-                aria-label={`Remove #${issue.n}: ${issue.title}`}
+                aria-label={t('project:topic.requests.remove', { number: issue.n, title: issue.title })}
                 onClick={() => removeIssue(issue.n)}
               ><XIcon className="h-4 w-4" aria-hidden="true" /></button>
             </div>
-          ))}</div> : <p className="rounded-xl bg-zinc-100/80 px-3 py-2 text-sm text-zinc-500 dark:bg-zinc-800/80 dark:text-zinc-400">No requests selected.</p>}
+          ))}</div> : <p className="rounded-xl bg-zinc-100/80 px-3 py-2 text-sm text-zinc-500 dark:bg-zinc-800/80 dark:text-zinc-400">{t('project:topic.requests.noneSelected')}</p>}
         </div>
         <div>
           <label htmlFor={`linked-issues-${proposalId}`} className="block text-xs font-medium text-zinc-700 dark:text-zinc-300">
-            Add another request
+            {t('project:topic.requests.addAnother')}
           </label>
           <div className="relative mt-1.5">
             <SearchIcon className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500 dark:text-zinc-400" aria-hidden="true" />
@@ -1009,232 +1117,77 @@ function IssueAssociations({
               value={query}
               onChange={(event) => { setQuery(event.target.value); setError(''); }}
               onKeyDown={handleSearchKey}
-              placeholder="Search by number or title"
+              placeholder={t('project:topic.requests.searchPlaceholder')}
               autoComplete="off"
               autoFocus
             />
           </div>
-          {query.trim() ? <div className="mt-2 overflow-hidden rounded-xl bg-zinc-100 dark:bg-zinc-800" aria-label="Matching requests">
+          {query.trim() ? <div className="mt-2 overflow-hidden rounded-xl bg-zinc-100 dark:bg-zinc-800" aria-label={t('project:topic.requests.matches')}>
             {suggestions.map((issue) => (
               <button
                 key={issue.n}
                 type="button"
                 className="flex min-h-11 w-full items-center gap-3 px-3 py-2 text-left hover:bg-zinc-200 dark:hover:bg-zinc-700"
-                aria-label={`Add #${issue.n}: ${issue.title}`}
+                aria-label={t('project:topic.requests.addNamed', { number: issue.n, title: issue.title })}
                 onClick={() => addIssue(issue.n)}
               ><IssueIdentity label={`#${issue.n}`} title={issue.title} /><PlusIcon className="h-4 w-4 shrink-0 text-violet-600 dark:text-violet-300" aria-hidden="true" /></button>
             ))}
             {exactOption ? <button
               type="button"
               className="flex min-h-11 w-full items-center gap-3 px-3 py-2 text-left hover:bg-zinc-200 dark:hover:bg-zinc-700"
-              aria-label={`Add request #${exactOption.n}`}
+              aria-label={t('project:topic.requests.addNumbered', { number: exactOption.n })}
               onClick={() => addIssue(exactOption.n)}
             ><IssueIdentity label={`#${exactOption.n}`} title={exactOption.title} /><PlusIcon className="h-4 w-4 shrink-0 text-violet-600 dark:text-violet-300" aria-hidden="true" /></button> : null}
-            {!suggestions.length && !exactOption ? <p className="px-3 py-2 text-sm text-zinc-500 dark:text-zinc-400">No matching open requests. Enter a request number to add it.</p> : null}
+            {!suggestions.length && !exactOption ? <p className="px-3 py-2 text-sm text-zinc-500 dark:text-zinc-400">{t('project:topic.requests.noMatches')}</p> : null}
           </div> : null}
-          <p className="mt-1.5 text-xs text-zinc-500 dark:text-zinc-400">Searches open requests in this project. You can always add one by its number.</p>
+          <p className="mt-1.5 text-xs text-zinc-500 dark:text-zinc-400">{t('project:topic.requests.searchHelp')}</p>
         </div>
         {error ? <p role="alert" className="text-xs text-red-700 dark:text-red-400">{error}</p> : null}
         <div className="flex justify-end gap-2">
-          <Button type="button" variant="pillNeutral" size="xsText" ink="neutral" onClick={cancelEditor} disabled={saving}>Cancel</Button>
-          <Button type="submit" variant="pillAccent" size="xsText" disabledStyle="dim" disabled={saving || !changed}>{saving ? 'Saving…' : 'Save requests'}</Button>
+          <Button type="button" variant="pillNeutral" size="xsText" ink="neutral" onClick={cancelEditor} disabled={saving}>{t('core:common.cancel')}</Button>
+          <Button type="submit" variant="pillAccent" size="xsText" disabledStyle="dim" disabled={saving || !changed}>{saving ? t('project:topic.requests.saving') : t('project:topic.requests.save')}</Button>
         </div>
-      </form> : null}
-      {!editing && notice ? <p role="status" className="dev-topic-note">{notice}</p> : null}
-    </aside>
+      </form>
   );
-}
-
-/** The shots run's state, as one strip: a failed or waived run explains itself. */
-function ShotsStrip({ e }: { e: NonNullable<TopicBody['shots']> }): ReactNode {
-  const red = e.state === 'failed' || e.state === 'stale' || e.state === 'cancelled';
-  return (
-    <div className="dev-topic-shots" data-shots-state={e.state}>
-      <span className={`dev-badge ${red ? 'bg-red-500/10 text-red-700 dark:text-red-400' : 'bg-zinc-500/10 text-zinc-600 dark:text-zinc-400'}`}>{e.label}</span>
-      <span className="dev-topic-shots-text">{e.sentence}</span>
-    </div>
+  const chip = (issue: IssueLink) => (
+    <a
+      key={issue.n}
+      href={issue.href}
+      className="dev-ws-chip dev-ws-chip-info dev-topic-issue"
+      data-issue-ref={issue.n}
+      onClick={(event) => {
+        if (!issue.href.startsWith('#') && !issue.href.startsWith('/app/')) return;
+        if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+        event.preventDefault(); call('openTopic', 'issue', issue.n);
+      }}
+    ><b>{`#${issue.n}`}</b><span>{issue.title}</span></a>
   );
-}
-
-/**
- * The shots states that are a run still going: the picture is coming.
- * 'planned' is in this set only while it is FRESH — `shots.notStarted`
- * (AppView._shotsNotStarted) marks the run that has sat there past the
- * idle threshold, and that one is not going anywhere on its own.
- */
-const SHOTS_BUILDING = new Set(['planned', 'provisioning', 'exploring', 'replaying', 'reviewing']);
-
-/**
- * The before/after: the verified shots card (or the legacy capture
- * tiles) once the run has it; until then one quiet line with the shell's
- * own spinner — no panel and no state label, because "Taking the shots"
- * in a box read as a verdict. A run that failed, or was waived,
- * keeps its strip: that is a fact a voter weighs.
- *
- * #2601/#2558: a run that never started keeps the PANEL rather than the
- * strip, because it is the one pending state with something for the reader
- * to do — the panel carries the recorded reason and the retry control.
- */
-function BeforeAfter({ body }: { body: TopicBody }): ReactNode {
-  const tiles = body.actions && body.actions.visuals ? body.actions.visuals : null;
-  const ev = body.shots || null;
-  const notStarted = !!(ev && ev.notStarted);
-  if (tiles && (!ev || ev.verified || notStarted)) {
-    return (
-      <div className="dev-topic-visuals" data-visuals-scope="1">
-        {/* AppView.visualsTilesHtml's markup — four other surfaces still
-            call it, so it stays a string builder. */}
-        <Html className="usn-visuals-body" html={tiles.tilesHtml} />
-      </div>
-    );
-  }
-  if (!ev || ev.verified) return null;
-  // An interrupted run the recovery sweep is about to start again reads as
-  // under way too: the next thing that happens needs nobody.
-  if (!notStarted && (SHOTS_BUILDING.has(ev.state) || ev.retrying)) {
-    return (
-      <p className="dev-topic-hero-shots" data-shots-state={ev.state}>
-        <span className="dc-status-spinner-arc" aria-hidden="true"></span>
-        <span>{ev.retrying ? 'Trying the shots again' : 'Taking before & after shots'}</span>
-      </p>
-    );
-  }
-  return <ShotsStrip e={ev} />;
-}
-
-/**
- * The hero: the change as the Workshop's Needs-you item. The eyebrow (what
- * the page is, the pull request, where it stands) with the age at its
- * right; the title, with the author's pencil; who proposed it; the card's
- * tags as chips, in the card's own tints — what the change IS, never what
- * state it is in, because the steps under it say that; the action band
- * with Vote first; the plain-English summary; the issue it addresses; the
- * picture, or the line that says it is coming.
- */
-function ChangeHero({ id, card, body, linkedIssues, onIssuesSaved }: {
-  id: number | null;
-  card: DevCardModel;
-  body: TopicBody;
-  linkedIssues: number[];
-  onIssuesSaved: (issues: number[]) => void;
-}): ReactNode {
-  const h: HeroView = body.hero || { kind: 'Change', ref: null, status: '', age: null, author: null, verb: 'proposed', provenance: null, tint: 'a' };
-  const all = card.actions || [];
-  const yesSpec = all.find((a) => isVoteSpec(a, 'yes'));
-  const noSpec = all.find((a) => isVoteSpec(a, 'no'));
-  const vote = yesSpec && noSpec ? <VoteButton yes={yesSpec} no={noSpec} /> : null;
-  const pills = vote ? all.filter((a) => a !== yesSpec && a !== noSpec) : all;
-  const pill = card.pill && card.pill.state && card.pill.state.label ? card.pill.state : null;
-  const hasIssues = !!((body.issues && body.issues.length) || body.canEditIssues) && !!id;
-  // The tags: priority, assignee, category, and the linkage. The state
-  // chips — checks, behind main, the shots — stay off: the steps say it.
-  // A request the Addresses line under the summary already names, by its
-  // number AND its title, is not a "Closes #1" tag up here as well: that
-  // tag said the same thing in a pull request's words (first-session
-  // run-through, 4 Oct 2026).
-  const named = new Set(hasIssues ? (body.issues || []).map((issue) => Number(issue.n)) : []);
-  const unnamed = (b: any) => !(b && b.n != null && named.has(Number(b.n)));
-  const badges = (card.badges || []).filter(Boolean);
-  const chips = [
-    ...badges.filter((b) => b.t === 'attr'),
-    ...(card.linked || []).filter(unnamed),
-    ...badges.filter((b) => b.t === 'issueChip' && unnamed(b)),
-  ];
+  const [first, ...rest] = issues;
   return (
-    <section className="dev-topic-sheet dev-topic-hero" data-topic-sheet="hero" data-ws-tint={h.tint}>
-      <div className="dev-topic-hero-top">
-        {/* B10b: what the page is and where it stands. The pull request it
-            names is in Details. */}
-        <span className="dev-ws-eyebrow dev-topic-hero-eyebrow">
-          {h.status ? `${h.kind} · ${h.status}` : h.kind}
-        </span>
-        {h.age ? <span className="dev-ws-item-of" title={h.age.title}>{h.age.s}</span> : null}
-      </div>
-      <h2 className="dev-ws-item-title dev-topic-hero-title"><TitleContent t={card.title} /></h2>
-      {h.author || h.age ? (
-        <p className="dev-ws-item-by dev-topic-hero-by">
-          {h.author ? (
-            <span className="dev-ws-item-avatar" style={{ background: swatchFor(h.author) }} aria-hidden="true">
-              {h.author.slice(0, 1).toUpperCase()}
+    <aside className="dev-change-addresses" aria-label={t('project:topic.requests.region')}>
+      {!editing && (first || thread.thanks) ? (
+        <div className="dev-change-chips" data-open={more ? 'true' : 'false'}>
+          {first ? <span className="dev-change-chips-lead">{t('project:topic.requests.addresses')}</span> : null}
+          {first ? (
+            <span className="dev-change-chips-first">
+              {chip(first)}
+              {rest.length ? (
+                <button
+                  type="button"
+                  className="dev-ws-chip dev-change-reqs-more"
+                  aria-expanded={more}
+                  onClick={() => setMore((v) => !v)}
+                >{more ? t('project:topic.requests.showLess') : t('project:topic.requests.more', { count: rest.length })}</button>
+              ) : null}
             </span>
           ) : null}
-          <span>
-            {h.author ? <b>{h.author}</b> : null}
-            {h.age ? <span>{`${h.author ? ' · ' : ''}${h.verb} ${h.age.s}`}</span> : null}
-            {h.provenance ? <span>{` · ${h.provenance}`}</span> : null}
-          </span>
-        </p>
-      ) : null}
-      {chips.length ? (
-        <div className="dev-ws-item-chips dev-topic-hero-chips">
-          {chips.map((b) => <Badge key={b.key} b={b} />)}
+          {thread.thanks}
+          {more && rest.length ? <span className="dev-change-chips-rest">{rest.map(chip)}</span> : null}
         </div>
       ) : null}
-      {/* The card's two rows, as the board card draws them: the status row —
-          the pill spanning, the Vote button at its right end — then the band
-          (card/dev-card.tsx ActionBand). The pill carries the vote's count,
-          so the Votes step below only names who voted. The rows wear the
-          card's class so the band's own rules — the one-line fold into ⋯,
-          the accent pills, Preview and the hamburger at the right — and the
-          pill's block form apply here as on the card; app.css takes the
-          card's box off it. */}
-      <div className="dev-card-topic dev-topic-hero-actions">
-        {pill || vote ? (
-          <div className="dev-card-badges dev-card-status dev-topic-hero-status">
-            {pill ? <StatusPill s={pill} /> : null}
-            {vote}
-          </div>
-        ) : null}
-        <ActionBand actions={pills} menuKey={card.rail.menuKey || ''} preview={card.actionPreview || card.rail.preview || null} dense={false} />
-      </div>
-      {/* #3826: the pill's lock explains itself only in a hover title, which
-          a phone never shows. While the other member's Yes is missing, say
-          it; once it is in, the line goes. */}
-      {pill && pill.awaitsOtherYes
-        ? <p className="dev-topic-note" data-topic-part="needs-other-yes">Needs a Yes from another member before it can go live.</p>
-        : null}
-      {/* DevChat.renderMarkdown's output — sanitised where it is built. */}
-      <Html className="dev-topic-hero-summary dev-topic-about-body" data-topic-part="summary" html={body.summaryHtml || ''} />
-      {body.summaryMore ? <SummaryMore m={body.summaryMore} /> : null}
-      {body.summaryStale && body.summaryHtml
-        ? <p className="dev-topic-note" role="note">This summary may describe an earlier revision.</p>
-        : null}
-      {body.tested && id ? <TestedLine id={id} t={body.tested} /> : null}
-      {body.includedIn ? <IncludedIn r={body.includedIn} /> : null}
-      {hasIssues ? (
-        <IssueAssociations
-          proposalId={Number(id)}
-          issues={body.issues || []}
-          issueOptions={body.issueOptions || []}
-          linkedIssues={linkedIssues}
-          editable={body.canEditIssues === true}
-          onSaved={onIssuesSaved}
-        />
-      ) : null}
-      <BeforeAfter body={body} />
-      {body.note ? <div className="dev-topic-note">{body.note}</div> : null}
-    </section>
-  );
-}
-
-/** B10b: the Tested line's mark, in the steps' own glyphs. */
-const TESTED_MARK: Record<string, string> = {
-  passed: '✓', failed: '✕', skipped: '·', broken: '!',
-};
-
-/**
- * B10b: one line for what testing found, where the steps list and its checks
- * used to be. A tap opens Details at the Checks part.
- */
-function TestedLine({ id, t }: { id: number; t: NonNullable<TopicBody['tested']> }): ReactNode {
-  const open = () => (window as any).AppView?.openTechnicalDetails(id, 'checks');
-  return (
-    <button type="button" className="dev-topic-tested" data-tested={t.state} onClick={open}>
-      <span className={`dev-topic-tested-mark dev-topic-tested-mark-${t.state}`} aria-hidden="true">
-        {t.state === 'running' ? <Spinner /> : (TESTED_MARK[t.state] || '·')}
-      </span>
-      <span>{t.text}</span>
-    </button>
+      {editing ? editorForm() : null}
+      {!editing && notice ? <p role="status" className="dev-topic-note">{notice}</p> : null}
+    </aside>
   );
 }
 
@@ -1245,13 +1198,14 @@ const STEP_MARK: Record<string, string> = {
 
 /** The vote step's line: the bar to the threshold, the card's pill, the counts. */
 function VoteTally({ v }: { v: NonNullable<StepRow['vote']> }): ReactNode {
+  const t = useMessages('project');
   const majority = Math.max(1, v.majority || 1);
   const pct = Math.max(0, Math.min(100, Math.round((v.yes / majority) * 100)));
   return (
     <div className="dev-step-vote">
       <span className="dev-step-vote-bar" aria-hidden="true"><i style={{ width: `${pct}%` }} /></span>
       {v.pill ? <StatusPill s={v.pill} inline /> : null}
-      <span className="dev-step-vote-tally">{`Yes ${v.yes} · No ${v.no}`}</span>
+      <span className="dev-step-vote-tally">{t('project:topic.steps.voteTally', { yes: v.yes, no: v.no })}</span>
       {v.was ? <span className="dev-step-vote-was">{v.was}</span> : null}
     </div>
   );
@@ -1281,14 +1235,15 @@ function StepRowView({ r, help }: { r: StepRow; help: boolean }): ReactNode {
 
 /** "?" — How voting works, on the Votes step's line. */
 function HelpQuestion(): ReactNode {
+  const t = useMessages('project');
   return (
     <span className="dev-ledger-help voting-help-hint">
       <button
         type="button"
         className="voting-help-btn un-touch-target"
         data-voting-help=""
-        aria-label="How voting and merges work"
-        title="How voting and merges work"
+        aria-label={t('project:topic.steps.votingHelp')}
+        title={t('project:topic.steps.votingHelp')}
       >?</button>
     </span>
   );
@@ -1298,6 +1253,12 @@ function HelpQuestion(): ReactNode {
 function fmtCount(n: number): string {
   return String(Math.trunc(Number(n) || 0)).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 }
+
+/** The unit suite's two set-up phases, as the Unit tests row names them (message ids). */
+const UNIT_PHASE: Record<'cloning' | 'installing', string> = {
+  cloning: 'project:topic.run.unit.cloning',
+  installing: 'project:topic.run.unit.installing',
+};
 
 /** One bar: passed from the left, failed after it, the rest the track. */
 function RunTrack({ c, busy }: {
@@ -1314,6 +1275,46 @@ function RunTrack({ c, busy }: {
 }
 
 /**
+ * A failed run's "What went wrong", over its failures: the plain-words
+ * sentence the Testing card shows (./failed-checks.ts), once it is read.
+ * Nothing until then, and nothing when there is none: the rows under it
+ * already say which tests failed and with what.
+ */
+function WhatWentWrong({ ex }: { ex?: ChecksExplainView | null }): ReactNode {
+  const t = useMessages('project');
+  const text = useChecksExplanation(ex);
+  if (!ex || !text) return null;
+  return (
+    <div className="dev-ledger-explain" data-checks-explained="">
+      <div className="dev-ledger-unit-k">{t('project:topic.checks.explain.title')}</div>
+      <p className="dev-ledger-explain-text">{text}</p>
+      <div className="dev-ledger-explain-source">{t('project:topic.checks.explain.source')}</div>
+    </div>
+  );
+}
+
+/** The Checks step's Fix it, for the change's author: the Testing card's own (./failed-checks.ts). */
+function FixStepButton({ fix }: { fix: FixChecksView }): ReactNode {
+  const t = useMessages('project');
+  const { asking, refused, tap } = useFixAsk(fix);
+  const fixing = useFixing(fix);
+  return (
+    <>
+      <button
+        type="button"
+        className="gc-vote-btn gc-vote-btn-accent"
+        data-change-fix-checks={fix.changeId}
+        disabled={asking || fixing}
+        onClick={tap}
+      >
+        {fixing ? t('project:topic.checks.fixing') : asking ? t('project:topic.change.gate.fixAsking') : t('project:topic.change.gate.fix')}
+      </button>
+      {refused ? <span className="dev-ledger-fix-refused" role="alert">{refused}</span> : null}
+    </>
+  );
+}
+
+/**
  * The Checks step, open: the build as its steps (equal segments — where the
  * build is, not how long is left; see BuildSteps), then the app's declared
  * checks and the unit suite as bars, the failures by name with their "Why it
@@ -1322,27 +1323,45 @@ function RunTrack({ c, busy }: {
  * (`data-build-step`, `data-build-progress`, `data-step`) for the checks.
  */
 function RunPanel({ run, id }: { run: StepRun; id: string }): ReactNode {
+  const t = useMessages('project');
   const b = run.build;
   const now = b ? b.steps.find((st) => st.state === 'now') : null;
   const built = b ? b.steps.filter((st) => st.state === 'done').length : 0;
   const c = run.checks;
+  // Each value is one whole message: the counts, and the failures when there
+  // are any. `count` only picks the plural; the numbers shown are formatted.
   const checksValue = c && c.ran
     ? (c.done
-      ? `${fmtCount(c.passed)} passed${c.failed ? ` · ${c.failed} failed` : ''}`
-      : `${fmtCount(c.ran)} / ${c.expected ? fmtCount(c.expected) : '?'}${c.failed ? ` · ${c.failed} failed` : ''}`)
+      ? (c.failed
+        ? t('project:topic.run.checks.passedFailed', { count: c.failed, passed: fmtCount(c.passed), failed: c.failed })
+        : t('project:topic.run.checks.passed', { count: c.passed, passed: fmtCount(c.passed) }))
+      : (c.failed
+        ? t('project:topic.run.checks.progressFailed', {
+          count: c.failed, ran: fmtCount(c.ran), expected: c.expected ? fmtCount(c.expected) : '?', failed: c.failed,
+        })
+        : t('project:topic.run.checks.progress', { ran: fmtCount(c.ran), expected: c.expected ? fmtCount(c.expected) : '?' })))
     : (run.live
-      ? (run.phase === 'testing' ? 'Starting' : run.phase === 'queued' ? 'Waiting for a slot' : 'After the build')
-      : 'Did not run');
+      ? (run.phase === 'testing' ? t('project:topic.run.checks.starting')
+        : run.phase === 'queued' ? t('project:topic.run.checks.waitingForSlot') : t('project:topic.run.checks.afterBuild'))
+      : t('project:topic.run.checks.didNotRun'));
   const u = run.unit;
   const unitPhase = u && !u.done && (u.phase === 'cloning' || u.phase === 'installing') ? u.phase : null;
-  const unitValue = !u ? '' : unitPhase ? `${unitPhase.charAt(0).toUpperCase()}${unitPhase.slice(1)}`
-    : u.done ? `${fmtCount(u.passed)} passed${u.failed ? ` · ${u.failed} failed` : ''}`
-      : `${fmtCount(u.ran)} / ${u.expected ? `~${fmtCount(u.expected)}` : '?'}${u.failed ? ` · ${u.failed} failed` : ''}`;
+  const unitExpected = u && u.expected ? `~${fmtCount(u.expected)}` : '?';
+  const unitValue = !u ? '' : unitPhase ? t(UNIT_PHASE[unitPhase])
+    : u.done && u.reused
+      ? t('project:topic.run.unit.reused', { count: u.passed, passed: fmtCount(u.passed), when: u.reused.when, run: u.reused.run })
+    : u.done
+      ? (u.failed
+        ? t('project:topic.run.unit.passedFailed', { count: u.failed, passed: fmtCount(u.passed), failed: u.failed })
+        : t('project:topic.run.unit.passed', { count: u.passed, passed: fmtCount(u.passed) }))
+      : (u.failed
+        ? t('project:topic.run.unit.progressFailed', { count: u.failed, ran: fmtCount(u.ran), expected: unitExpected, failed: u.failed })
+        : t('project:topic.run.unit.progress', { ran: fmtCount(u.ran), expected: unitExpected }));
   return (
     <div className="dev-step-run" id={id}>
       {b ? (
         <div className="dev-step-run-row dev-ledger-progress-build" data-build-step={now ? now.key : 'done'}>
-          <span className="dev-step-run-k">Build</span>
+          <span className="dev-step-run-k">{t('project:topic.run.build')}</span>
           <span className="dev-ledger-build-bar" aria-hidden="true" data-build-progress={`${built}/${b.steps.length}`}>
             {b.steps.map((st) => <span key={st.key} className={`dev-ledger-build-seg is-${st.state}`} data-step={st.key} />)}
           </span>
@@ -1350,20 +1369,28 @@ function RunPanel({ run, id }: { run: StepRun; id: string }): ReactNode {
         </div>
       ) : null}
       <div className="dev-step-run-row" data-checks-progress={c ? `${c.ran}/${c.expected ?? '?'}` : undefined}>
-        <span className="dev-step-run-k">App checks</span>
+        <span className="dev-step-run-k">{t('project:topic.run.checks.label')}</span>
         <RunTrack c={c} />
         <span className={`dev-step-run-v${c && c.failed ? ' is-bad' : ''}`}>{checksValue}</span>
       </div>
       {u ? (
-        <div className="dev-step-run-row" data-unit-phase={u.phase}>
-          <span className="dev-step-run-k">Unit tests</span>
+        <div className="dev-step-run-row" data-unit-phase={u.phase} data-unit-reused={u.reused ? (u.reused.runId || '') : undefined}>
+          <span className="dev-step-run-k">{t('project:topic.run.unit.label')}</span>
           <RunTrack c={unitPhase ? null : u} busy={!!unitPhase || (!u.done && u.ran === 0)} />
           <span className={`dev-step-run-v${u.failed ? ' is-bad' : ''}`}>{unitValue}</span>
         </div>
       ) : null}
+      <WhatWentWrong ex={run.explain} />
       {run.fails.length ? (
         <ul className="dev-ledger-fails">
           {run.fails.map((f) => <CheckRowView key={f.key} r={f} />)}
+        </ul>
+      ) : null}
+      {/* Passes with something to say: a retry and why, or a note. Drawn
+          as the failures' list is (its class), in a list of their own. */}
+      {run.noted && run.noted.length ? (
+        <ul className="dev-ledger-fails dev-ledger-noted">
+          {run.noted.map((f) => <CheckRowView key={f.key} r={f} />)}
         </ul>
       ) : null}
       {run.note ? <p className="dev-step-run-note">{run.note}</p> : null}
@@ -1432,11 +1459,14 @@ function GateStepView({ r }: { r: StepRow }): ReactNode {
           {r.was ? <span className="dev-step-line dev-step-vote-was">{r.was}</span> : null}
         </span>
       )}
-      {(run && open) || actions.length ? (
+      {(run && open) || actions.length || r.fix ? (
         <div className="dev-step-body">
           {run && open ? <RunPanel run={run} id={panelId} /> : null}
-          {actions.length ? (
-            <span className="dev-ledger-ops">{actions.map((a) => <ActionButton key={a.key} a={a} />)}</span>
+          {actions.length || r.fix ? (
+            <span className="dev-ledger-ops">
+              {r.fix ? <FixStepButton fix={r.fix} /> : null}
+              {actions.map((a) => <ActionButton key={a.key} a={a} />)}
+            </span>
           ) : null}
         </div>
       ) : null}
@@ -1487,18 +1517,19 @@ export function DetailsBody({ prRef, steps, help, html }: {
   help: boolean;
   html: string;
 }): ReactNode {
+  const t = useMessages('project');
   return (
     <>
       {prRef ? (
         <p className="dev-details-pr" data-details-part="pr">
           <span>{prRef.s}</span>
-          {prRef.href ? <a href={prRef.href} target="_blank" rel="noopener">Open on GitHub</a> : null}
+          {prRef.href ? <a href={prRef.href} target="_blank" rel="noopener">{t('project:topic.details.openOnGitHub')}</a> : null}
         </p>
       ) : null}
       {steps ? <StepsSheet s={steps} help={help} /> : null}
       {html ? (
         <section className="dev-details-part" data-details-part="description">
-          <h5 className="dev-details-sub">Description</h5>
+          <h5 className="dev-details-sub">{t('project:topic.details.description')}</h5>
           {/* DevChat.renderMarkdown's output — sanitised where it is built. */}
           <Html className="dev-issue-body dev-topic-details-body" html={html} />
         </section>
@@ -1520,13 +1551,16 @@ let detailsFromUrl = typeof window !== 'undefined'
  * shut, so the steps it carries are on the page for whoever reads them by
  * selector.
  */
-function DetailsSheet({ id, prRef, steps, help, html }: {
+function DetailsSheet({ id, prRef, steps, help, html, shotsHtml = '' }: {
   id: number;
   prRef: HeroView['ref'];
   steps: StepsView | null | undefined;
   help: boolean;
   html: string;
+  /** #4455: Shot details, what the change page's Before and after card leaves out. */
+  shotsHtml?: string;
 }): ReactNode {
+  const t = useMessages('project');
   const [open, setOpen] = useState(() => {
     if (!detailsFromUrl) return false;
     detailsFromUrl = false;
@@ -1560,14 +1594,21 @@ function DetailsSheet({ id, prRef, steps, help, html }: {
   if (typeof document === 'undefined') return null;
   return createPortal(
     <div className="dev-details-scrim" hidden={!open} data-change-details={id} onClick={(event) => { if (event.target === event.currentTarget) setOpen(false); }}>
-      <div ref={card} className="dev-details-card" role="dialog" aria-modal="true" aria-label="Details">
+      <div ref={card} className="dev-details-card" role="dialog" aria-modal="true" aria-label={t('project:topic.details.title')}>
         <div className="dev-details-head">
-          <h4 className="dev-topic-h">Details</h4>
-          <button type="button" className="dev-details-close" aria-label="Close" onClick={() => setOpen(false)}>
+          <h4 className="dev-topic-h">{t('project:topic.details.title')}</h4>
+          <button type="button" className="dev-details-close" aria-label={t('core:common.close')} onClick={() => setOpen(false)}>
             <XIcon className="w-4 h-4" aria-hidden="true" />
           </button>
         </div>
         <DetailsBody prRef={prRef} steps={steps} help={help} html={html} />
+        {shotsHtml ? (
+          <section className="dev-details-part" data-details-part="shots" data-note="shots">
+            <h5 className="dev-details-sub">{t('project:topic.details.shots')}</h5>
+            {/* AppView.shotsHtml's `details` reading, escaped where it is built. */}
+            <Html className="dev-shot-details" html={shotsHtml} />
+          </section>
+        ) : null}
       </div>
     </div>,
     document.body,
@@ -1578,22 +1619,21 @@ function DetailsSheet({ id, prRef, steps, help, html }: {
  * Full public metadata is fetched separately from the lightweight board.
  * This endpoint cannot return private agent messages or credentials.
  *
- * A CHANGE (a session or a proposal, `body.changeId`) reads top to bottom
- * as the Workshop's Needs-you item: the hero (ChangeHero) — the title, the
- * tags, the actions, the summary, the issues, the picture — then the merge
- * steps (StepsSheet), then, on its own page, the Discussion
- * (./conversation.tsx); the technical half is a sheet the ⋯ menu opens
- * (DetailsSheet). The hero's Build pill LEAVES this page for the change's
- * dev session (#2605). An issue or a governance vote keeps the card and
+ * A CHANGE (a session or a proposal, `body.changeId`) is a Messages reply
+ * thread's root post (#4455, ./change-head.tsx): the change, where it
+ * stands as its Votes and Testing cards, its before and after; its replies
+ * are the thread's stream. The technical half is a sheet the ⋯ menu opens
+ * (DetailsSheet). An issue or a governance vote keeps the card and
  * `TopicBodySections`.
  *
  * `back` puts the topic page's "‹ Workshop" chip (./topic-back.tsx) first in
  * `.dev-topic`, above the hero or the card (#2916). Only `TopicHead` passes
  * it: the chip is the page's back control, not part of the card.
  */
-export function ChangeDetail({ card: initialCard, body: initialBody, item, owner = false, active = true, conversation = false, back = false }: {
-  card: any; body: TopicBody; item?: any; owner?: boolean; active?: boolean; conversation?: boolean; back?: boolean;
+export function ChangeDetail({ card: initialCard, body: initialBody, item, owner = false, active = true, back = false }: {
+  card: any; body: TopicBody; item?: any; owner?: boolean; active?: boolean; back?: boolean;
 }): ReactNode {
+  const t = useMessages('project');
   const root = useRef<HTMLDivElement>(null);
   const [loaded, setLoaded] = useState<any>(null);
   const [error, setError] = useState('');
@@ -1694,20 +1734,18 @@ export function ChangeDetail({ card: initialCard, body: initialBody, item, owner
   const changePage = !!body.changeId;
   const linkedIssues = Array.isArray(session?.linked_issues) ? session.linked_issues : [];
   return (
-    <div ref={root} className="dev-topic">
-      {back ? <TopicBack /> : null}
-      {error ? <p role="alert" className="dev-topic-note">{error} <button className="gc-vote-btn" onClick={() => setRevision((n) => n + 1)}>Retry</button></p> : null}
+    <div ref={root} className={changePage ? 'dev-change-head' : 'dev-topic'}>
+      {/* A change's back chip is portalled above its sheet (change-head.tsx). */}
+      {back && !changePage ? <TopicBack /> : null}
+      {error ? <p role="alert" className="dev-topic-note">{error} <button className="gc-vote-btn" onClick={() => setRevision((n) => n + 1)}>{t('core:common.retry')}</button></p> : null}
       {changePage ? (
         <>
-          <ChangeHero id={id ? Number(id) : null} card={card} body={body} linkedIssues={linkedIssues} onIssuesSaved={applyLinkedIssues} />
-          {/* #2605: a change's page carries NO build surface — not the Build
-              sheet, and not the published chat's disclosure that used to sit
-              beside it. Both are the dev session page's now, behind the
-              hero's pill. */}
-          {conversation ? <ChangeConversation key={body.changeId} item={session} body={body} /> : null}
-          {/* The GitHub thread's host (issue-comments.tsx mounts into it):
-              a body that carries one gets it whatever page it is on. */}
-          {body.comments ? <div id="dev-issue-comments" className="dev-topic-sheet dev-topic-comments"></div> : null}
+          {/* #4455: the change as a Messages thread's root post, where it
+              stands, its shots; its replies are the thread's stream. #2605:
+              no build surface here: the ⋯'s Build door leaves for it. */}
+          {body.thread ? (
+            <ChangeThreadHead id={id ? Number(id) : null} card={card} body={body} v={body.thread} linkedIssues={linkedIssues} onIssuesSaved={applyLinkedIssues} />
+          ) : null}
           {id ? (
             <DetailsSheet
               id={Number(id)}
@@ -1715,6 +1753,7 @@ export function ChangeDetail({ card: initialCard, body: initialBody, item, owner
               steps={body.steps}
               help={!!(body.details && body.details.help)}
               html={body.proposalBody?.html || ''}
+              shotsHtml={av && session?.shots ? av.shotsHtml(session.shots, { sessionId: Number(id), details: true }) : ''}
             />
           ) : null}
           {id && active && av?._canEditDescription(session) ? <DescriptionEditor key={id} id={Number(id)} onSaved={(data) => {
@@ -1728,7 +1767,7 @@ export function ChangeDetail({ card: initialCard, body: initialBody, item, owner
         <>
           <div className="dev-topic-sheet dev-topic-card" data-topic-sheet="card">
             {/* #2431: an ISSUE's page names the change on it. A CHANGE's page
-                names its issues under the summary (ChangeHero). #4244: a
+                names its issues under the summary (change-head.tsx). #4244: a
                 CLOSED issue says so once, in the band at the card's top. */}
             {body.closedBand ? <ClosedBand b={body.closedBand} /> : null}
             {body.addressedBy ? <AddressedBy r={body.addressedBy} /> : null}
@@ -1741,11 +1780,32 @@ export function ChangeDetail({ card: initialCard, body: initialBody, item, owner
   );
 }
 
+/**
+ * Save a request's words: the author's PATCH, then every issue cache the page
+ * may have resolved through, returning the body as stored and rendered.
+ * Shared by the Workshop's About sheet (`IssueBody`) and a request's root
+ * post (./request-head.tsx).
+ */
+export async function saveIssueBody(slug: string, issue: number, draft: string): Promise<{ body: string; html: string }> {
+  const av = typeof window !== 'undefined' ? (window as any).AppView : null;
+  const response = await fetch(`/api/apps/${slug}/github-issues/${issue}/body`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ body: draft }),
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(result.error || translate('project:topic.request.body.saveFailed'));
+  const body = typeof result.body === 'string' ? result.body : draft;
+  const html = typeof av?._cacheIssueBody === 'function' ? av._cacheIssueBody(issue, body) : '';
+  return { body, html };
+}
+
 function IssueBody(
 { html: initialHtml, editor }: {
   html: string;
   editor: NonNullable<TopicBody['issueBodyEditor']>;
 }): ReactNode {
+  const t = useMessages('project');
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(editor.markdown);
   const [html, setHtml] = useState(initialHtml);
@@ -1772,29 +1832,19 @@ function IssueBody(
     const av = typeof window !== 'undefined' ? (window as any).AppView : null;
     const slug = av?.appData?.slug;
     if (!slug) {
-      setError('This request is not available right now.');
+      setError(t('project:topic.request.body.unavailable'));
       return;
     }
     setSaving(true);
     setError('');
     try {
-      const response = await fetch(`/api/apps/${slug}/github-issues/${editor.issue}/body`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ body: draft }),
-      });
-      const result = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(result.error || 'Couldn’t save the request.');
-      const savedBody = typeof result.body === 'string' ? result.body : draft;
-      const rendered = typeof av?._cacheIssueBody === 'function'
-        ? av._cacheIssueBody(editor.issue, savedBody)
-        : '';
-      setDraft(savedBody);
-      setHtml(rendered);
+      const saved = await saveIssueBody(slug, editor.issue, draft);
+      setDraft(saved.body);
+      setHtml(saved.html);
       setEditing(false);
       if (typeof av?._renderTopicHead === 'function') av._renderTopicHead();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Couldn’t save the request.');
+      setError(err instanceof Error ? err.message : t('project:topic.request.body.saveFailed'));
     } finally {
       setSaving(false);
     }
@@ -1803,13 +1853,13 @@ function IssueBody(
   return (
     <>
       <div className="flex items-center justify-between gap-2">
-        <h4 id="dev-issue-body-heading" className="dev-topic-h">About this request</h4>
+        <h4 id="dev-issue-body-heading" className="dev-topic-h">{t('project:topic.request.body.title')}</h4>
         {editor.canEdit && !editing ? (
           <button
             type="button"
             className="shrink-0 text-zinc-500 hover:text-zinc-600 dark:hover:text-zinc-200 transition-colors dark:text-zinc-400"
-            title="Edit this request (you asked for it)"
-            aria-label="Edit request"
+            title={t('project:topic.request.body.editTitle')}
+            aria-label={t('project:topic.request.body.editLabel')}
             data-issue-body-edit={editor.issue}
             onClick={() => { setError(''); setEditing(true); }}
           >
@@ -1834,14 +1884,14 @@ function IssueBody(
           />
           {error ? <p role="alert" className="text-xs text-red-700 dark:text-red-400">{error}</p> : null}
           <div className="flex justify-end gap-2">
-            <Button type="button" variant="pillNeutral" size="xsText" ink="neutral" onClick={cancel} disabled={saving}>Cancel</Button>
-            <Button type="submit" variant="pillAccent" size="xsText" disabledStyle="dim" disabled={saving}>{saving ? 'Saving…' : 'Save body'}</Button>
+            <Button type="button" variant="pillNeutral" size="xsText" ink="neutral" onClick={cancel} disabled={saving}>{t('core:common.cancel')}</Button>
+            <Button type="submit" variant="pillAccent" size="xsText" disabledStyle="dim" disabled={saving}>{saving ? t('project:topic.request.body.saving') : t('project:topic.request.body.save')}</Button>
           </div>
         </form>
       ) : html ? (
         <Html className="dev-topic-about-body" html={html} />
       ) : editor.canEdit ? (
-        <p className="dev-topic-note">No description yet.</p>
+        <p className="dev-topic-note">{t('project:topic.request.body.empty')}</p>
       ) : null}
     </>
   );
@@ -1858,10 +1908,12 @@ function IssueBody(
  * holds the one topic the screen is on and an inline expansion is not
  * navigation: two readers of one store would fight over it.
  *
- * The Workshop passes `comments: false`, so the singleton
- * `#dev-issue-comments` host below is emitted on the topic screen only.
+ * A request's own page draws none of this: it is a thread
+ * (./request-head.tsx), and only the Workshop's inline expansion still draws
+ * a request through these sections.
  */
 export function TopicBodySections({ body }: { body: TopicBody }): ReactNode {
+  const t = useMessages('project');
   const a = body.actions;
   // The About sheet: the words, the before/after tiles — open, they are the
   // most useful thing on the page for a voter — the PR body as a disclosure
@@ -1892,11 +1944,11 @@ export function TopicBodySections({ body }: { body: TopicBody }): ReactNode {
       {images.viewer}
       {hasAbout ? (
         <section className="dev-topic-sheet dev-topic-about" data-topic-sheet="about" {...images.scope}>
-          {!issueEditor ? <h4 className="dev-topic-h">{body.aboutTitle || 'About'}</h4> : null}
+          {!issueEditor ? <h4 className="dev-topic-h">{body.aboutTitle || t('project:topic.about.title')}</h4> : null}
           {/* DevChat.renderMarkdown's output — sanitised where it is built. */}
           {summaryHtml ? (
             <>
-              <h5 className="dev-topic-sub">What changes for you</h5>
+              <h5 className="dev-topic-sub">{t('project:topic.about.whatChanges')}</h5>
               <Html className="dev-topic-about-body" html={summaryHtml} />
             </>
           ) : null}
@@ -1911,9 +1963,9 @@ export function TopicBodySections({ body }: { body: TopicBody }): ReactNode {
           ) : null}
           {body.proposalBody ? <ProposalBody b={body.proposalBody} /> : null}
           {body.testing ? <details className="dev-topic-details">
-            <summary className="dev-topic-details-summary">Testing instructions</summary>
+            <summary className="dev-topic-details-summary">{t('project:topic.about.testing.title')}</summary>
             {body.testing.html ? <Html className="dev-issue-body dev-topic-details-body" html={body.testing.html} />
-              : <p className="dev-topic-note">{body.testing.path ? `Testing instructions are recorded in ${body.testing.path}.` : 'No testing instructions have been added yet.'}</p>}
+              : <p className="dev-topic-note">{body.testing.path ? t('project:topic.about.testing.recordedIn', { path: body.testing.path }) : t('project:topic.about.testing.none')}</p>}
           </details> : null}
           {body.note ? <div className="dev-topic-note">{body.note}</div> : null}
           {/* #2603: the votes, in the voters' own words — the same roster
@@ -1931,9 +1983,6 @@ export function TopicBodySections({ body }: { body: TopicBody }): ReactNode {
           <Transcript t={body.transcript} />
         </section>
       ) : null}
-      {/* The GitHub thread's host (issue-comments.tsx mounts into it), last
-          so app.css can run it into the Discussion sheet below the head. */}
-      {body.comments ? <div id="dev-issue-comments" className="dev-topic-sheet dev-topic-comments"></div> : null}
     </>
   );
 }

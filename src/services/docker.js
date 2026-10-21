@@ -358,7 +358,7 @@ async function runContainerInner(name, {
     // name still exists (a prior `stopAndRemove` raced, an aborted rebuild
     // left a half-removed container, or two rebuild paths interleaved),
     // docker fails with "The container name "/x" is already in use". The
-    // root-cause serialization lives in staging.rebuildProduction; this
+    // root-cause serialization lives in staging.deployProduction; this
     // retry just makes runContainer self-healing so a stray name never
     // bricks a deploy. Force-remove and try exactly once more.
     const msg = String((err && (err.stderr || err.message)) || '');
@@ -535,8 +535,8 @@ async function startContainer(nameOrId) {
   log.info('docker', 'Container started in place', { nameOrId });
 }
 
-// `docker restart` — used by the on-demand heal path (app-heal.js
-// requestHeal) for a container whose state is 'running' but whose HTTP
+// `docker restart` — used by app delivery's heal (app-heal.js heal, for an
+// app a person could not reach) for a container whose state is 'running' but whose HTTP
 // health endpoint stopped answering (hung process). Deliberately keeps the
 // long 10s grace where stopAndRemove now uses STOP_GRACE_SEC: heal stops a
 // container that is (nominally) live and may be mid-request, and it is not

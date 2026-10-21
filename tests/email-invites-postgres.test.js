@@ -29,6 +29,12 @@ test('a waiting email invite becomes a project invite when its address is confir
   const url = new URL(DSN); url.pathname = '/' + name;
   const pool = new Pool({ connectionString: String(url), max: 4 });
   await pool.query(read('src/db/schema.sql'));
+  // #5104: a claimed invite is held to the new account's contact_policy,
+  // and this file's inviters are strangers to the people they invite, which
+  // is the flow it pins, so here accounts start out open.
+  // tests/contact-privacy-postgres.test.js pins the default and the drop.
+  await pool.query(`ALTER TABLE users ALTER COLUMN contact_policy SET DEFAULT 'anyone',
+                                      ALTER COLUMN profile_discoverable SET DEFAULT TRUE`);
   t.after(async () => {
     await pool.end();
     await admin.query(`DROP DATABASE ${name}`);

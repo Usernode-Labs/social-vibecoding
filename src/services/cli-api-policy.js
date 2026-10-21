@@ -225,12 +225,14 @@ const CONNECTOR_ALLOWED_ROUTES = Object.freeze([
   { method: 'POST', pattern: '/api/bot-bench/tasks/:token/label' },
   // #3654: running the benchmark from the same admin's session. The same
   // gate, first on every handler (requireAdminWrite); the read is a run's
-  // aggregates only, never a trial; the two writes launch a run within a
-  // cap the caller must name, or cancel one, and touch no app.
+  // aggregates only, never a trial; the three writes launch a run within a
+  // cap the caller must name, cancel one, or grade a finished one again
+  // (no model runs), and touch no app.
   { method: 'GET', pattern: '/api/bot-bench/runs' },
   { method: 'GET', pattern: '/api/bot-bench/runs/:id' },
   { method: 'POST', pattern: '/api/bot-bench/runs' },
   { method: 'POST', pattern: '/api/bot-bench/runs/:id/cancel' },
+  { method: 'POST', pattern: '/api/bot-bench/runs/:id/regrade' },
   // The App bench studio, and the rest of the benchmark and the bot's own
   // data for the same admin's session (routes/bench-studio.js). The same gate
   // first on every handler (requireAdminWrite), reads included: they read
@@ -238,8 +240,9 @@ const CONNECTOR_ALLOWED_ROUTES = Object.freeze([
   // Every write is then limited per person and refused to a browser on
   // another origin; a launch must name its cap. They change no app: they
   // launch, steer and preview benchmark builds on the studio's own private
-  // host app, save context packs, add or edit benchmark tasks, and rate a bot
-  // run.
+  // host app, save context packs, add or edit benchmark tasks, rate a bot
+  // run, and save the bot's settings as the console's Save does (they decide
+  // what it does on every app, so the tool asks the person first).
   { method: 'GET', pattern: '/api/bot-studio' },
   { method: 'GET', pattern: '/api/bot-studio/gallery' },
   { method: 'GET', pattern: '/api/bot-studio/runs/:id/watch' },
@@ -259,8 +262,10 @@ const CONNECTOR_ALLOWED_ROUTES = Object.freeze([
   { method: 'POST', pattern: '/api/bot-studio/tasks/:id/taste' },
   { method: 'GET', pattern: '/api/bot-studio/runs/:id/trials' },
   { method: 'GET', pattern: '/api/bot-studio/trials/:id' },
+  { method: 'GET', pattern: '/api/bot-studio/trials/:id/transcript' },
   { method: 'GET', pattern: '/api/bot-studio/bot' },
   { method: 'POST', pattern: '/api/bot-studio/bot/runs/:id/rating' },
+  { method: 'POST', pattern: '/api/bot-studio/bot/settings' },
   { method: 'GET', pattern: '/api/bot-studio/shots' },
   { method: 'GET', pattern: '/api/bot-studio/shots/:id' },
   // The Homeroom bot's configurations, first versions' and later changes'
@@ -275,6 +280,21 @@ const CONNECTOR_ALLOWED_ROUTES = Object.freeze([
   { method: 'POST', pattern: '/api/bot-configs/budget' },
   { method: 'GET', pattern: '/api/bot-configs/pairs/next' },
   { method: 'POST', pattern: '/api/bot-configs/pairs/:token/pick' },
+  // Before & after shots evals (routes/shots-evals.js): the same gate first on
+  // every handler, reads included (an eval shows screenshots of any app,
+  // private ones too); every write limited per person and refused to a
+  // browser on another origin; a launch must name its cap. They change no
+  // app and no proposal: they save a shots configuration, launch or cancel
+  // an eval of merged proposals, and record a pick.
+  { method: 'GET', pattern: '/api/shots-evals' },
+  { method: 'POST', pattern: '/api/shots-evals' },
+  { method: 'GET', pattern: '/api/shots-evals/configs' },
+  { method: 'POST', pattern: '/api/shots-evals/configs' },
+  { method: 'GET', pattern: '/api/shots-evals/pairs/next' },
+  { method: 'POST', pattern: '/api/shots-evals/pairs/:token/pick' },
+  { method: 'GET', pattern: '/api/shots-evals/:id' },
+  { method: 'GET', pattern: '/api/shots-evals/:id/shots' },
+  { method: 'POST', pattern: '/api/shots-evals/:id/cancel' },
   // Test accounts for first-run testing (routes/test-accounts.js). The third
   // deliberate exception: these make, list and retire ACCOUNTS — a new
   // sign-in, handed back once to the admin who asked. They may because of the
@@ -292,6 +312,51 @@ const CONNECTOR_ALLOWED_ROUTES = Object.freeze([
   // A one-time phone sign-in for a test number, the same gate: what it signs
   // in to is a test account (services/test-accounts.js mintPhoneSignIn).
   { method: 'POST', pattern: '/api/test-accounts/phone-sign-ins' },
+  // The waitlist's "you're in" mail sent to a test address, the same gate:
+  // the account its link makes is a test account (services/test-accounts.js
+  // sendRelease), and the mail goes through the ordinary throttle.
+  { method: 'POST', pattern: '/api/test-accounts/release-emails' },
+  // A test project's run report, the same gate: a read of what was recorded
+  // about its first version, or the copy retiring the account kept
+  // (services/run-report.js). Metadata and short excerpts, never a secret.
+  { method: 'GET', pattern: '/api/test-accounts/run-report' },
+  // One notification of every kind to a test account, the same gate: the
+  // rows are fake, so only an account flagged as a test account takes them
+  // (services/test-notifications.js).
+  { method: 'POST', pattern: '/api/test-accounts/:id/notifications' },
+  // The programme's challenges (routes/challenge-admin.js): the events, the
+  // challenges in each, the templates they are stamped from and the rules
+  // that score them, as the console's Season events, Challenge templates and
+  // Challenge scoring screens manage them. The same gate first on every
+  // handler (requireAdminWrite), reads included; every write then limited per
+  // person and refused to a browser on another origin. Each one hands on to
+  // the console's own /api/v4/admin route, which a connector can never reach
+  // directly, and only these: deleting a whole event stays in the console.
+  // They change the programme people see on Challenges, never an app.
+  { method: 'GET', pattern: '/api/challenge-admin/season-events' },
+  { method: 'POST', pattern: '/api/challenge-admin/season-events' },
+  { method: 'GET', pattern: '/api/challenge-admin/season-events/:id' },
+  { method: 'PATCH', pattern: '/api/challenge-admin/season-events/:id' },
+  { method: 'GET', pattern: '/api/challenge-admin/season-events/:id/challenges' },
+  { method: 'POST', pattern: '/api/challenge-admin/season-events/:id/challenges' },
+  { method: 'GET', pattern: '/api/challenge-admin/season-events/:id/challenges/available-activity-types' },
+  { method: 'PATCH', pattern: '/api/challenge-admin/season-events/:id/challenges/update-display-orders' },
+  { method: 'PUT', pattern: '/api/challenge-admin/season-events/:id/challenges/:challenge' },
+  { method: 'DELETE', pattern: '/api/challenge-admin/season-events/:id/challenges/:challenge' },
+  { method: 'PATCH', pattern: '/api/challenge-admin/season-events/:id/challenges/:challenge/move' },
+  { method: 'GET', pattern: '/api/challenge-admin/challenge-templates' },
+  { method: 'POST', pattern: '/api/challenge-admin/challenge-templates' },
+  { method: 'GET', pattern: '/api/challenge-admin/challenge-templates/:id' },
+  { method: 'PATCH', pattern: '/api/challenge-admin/challenge-templates/:id' },
+  { method: 'DELETE', pattern: '/api/challenge-admin/challenge-templates/:id' },
+  { method: 'GET', pattern: '/api/challenge-admin/challenge-scoring' },
+  { method: 'POST', pattern: '/api/challenge-admin/challenge-scoring/rules' },
+  { method: 'PUT', pattern: '/api/challenge-admin/challenge-scoring/rules/:id' },
+  { method: 'DELETE', pattern: '/api/challenge-admin/challenge-scoring/rules/:id' },
+  { method: 'POST', pattern: '/api/challenge-admin/challenge-scoring/run' },
+  // The browser languages people use, and where the translation step stands
+  // (routes/ui-telemetry.js): a read, behind the same full-admin gate.
+  { method: 'GET', pattern: '/api/browser-languages' },
 ]);
 
 // ── Delegated grants (#2779) ───────────────────────────────────────────

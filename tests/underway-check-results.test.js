@@ -11,6 +11,7 @@ function appView(user = { id: 42 }) {
     localStorage: { getItem: () => null }, addEventListener() {},
     setTimeout, clearTimeout, setInterval, clearInterval };
   context.window = context;
+  context.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(context);
   vm.runInContext(fs.readFileSync('public/js/app-view.js', 'utf8') + '\n;globalThis.av = AppView;', context);
   return context.av;

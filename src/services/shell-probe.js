@@ -23,14 +23,28 @@
 // conservative convention check, not a proof that arbitrary app-specific
 // login flows or optional authenticated features work anonymously.
 //
+// AS A GUEST TOO. Where the app-host sign-in half is on, a visitor with no
+// account reaches a public app as a guest (services/edge-gate.js, "Guests
+// (P15)"): every request carries the guest token the gate mints, which the
+// scaffold reads as `req.guest` and lets READ. The same two GETs are made a
+// second time carrying that token in `x-usernode-token`, the header the gate
+// hands the app, and the verdict lands on apps.guest_shell. An app already
+// open to a visitor with no credential at all needs no second pass. With the
+// sign-in half off there are no guests, so nothing is asked and the column
+// keeps what it had: `guest_ready` ignores it then (public-app-directory.js).
+//
 // Results land on apps.anon_shell + anon_shell_checked_at (schema.sql).
 // The sweep runs every SWEEP_INTERVAL_MS and re-probes an app when it has
 // never been probed, was deployed since its last probe, or its result is
-// older than RECHECK_AFTER_MS. Boot also refreshes positive verdicts so an
-// older shell-only result does not remain unlocked for another hour.
+// older than RECHECK_AFTER_MS. The first sweep a new platform build runs also
+// refreshes positive verdicts, so an older shell-only result does not remain
+// unlocked for another hour. It is a pass of the `shell-probe` clock
+// (src/workflow/clock/services.ts), which hands each run the build the last one
+// ran under.
 
 const http = require('http');
 const log = require('./logger');
+const platformJwt = require('./platform-jwt');
 const applicationRuntime = require('./application-runtime');
 const { getPool } = require('../db/pool');
 
@@ -43,10 +57,6 @@ const RECHECK_AFTER_MS = 60 * 60 * 1000;
 // on one tick.
 const SWEEP_CONCURRENCY = 4;
 
-let intervalHandle = null;
-let sweepInFlight = false;
-let lastSweepAt = null;
-let lastError = null;
 
 // The app ROW decides the address, not the slug alone: `runtime_kind` and
 // `runtime_name` are what the deploy actually created, so an app on
@@ -88,10 +98,11 @@ function classifyResponse(statusCode, location, currentUrl) {
 
 // One GET without cookies/Sec-Fetch-Dest; resolves to the raw
 // { statusCode, location } pair. Rejects on network error / timeout.
-function fetchShell(url) {
+// `headers` adds to the request's own: the guest pass's token.
+function fetchShell(url, headers = {}) {
   return new Promise((resolve, reject) => {
     const req = http.get(url, {
-      headers: { accept: 'text/html' },
+      headers: { accept: 'text/html', ...headers },
       timeout: PROBE_TIMEOUT_MS,
     }, (res) => {
       // Drain so the socket is reusable; the body content is irrelevant.
@@ -104,12 +115,12 @@ function fetchShell(url) {
 }
 
 // One endpoint: follows same-origin redirects up to MAX_REDIRECT_HOPS.
-async function probeEndpoint(url, { allowMissing = false } = {}) {
+async function probeEndpoint(url, { allowMissing = false, headers = {} } = {}) {
   let current = url;
   for (let hop = 0; hop <= MAX_REDIRECT_HOPS; hop++) {
     let res;
     try {
-      res = await fetchShell(current);
+      res = await fetchShell(current, headers);
     } catch {
       return 'unknown';
     }
@@ -124,13 +135,29 @@ async function probeEndpoint(url, { allowMissing = false } = {}) {
 // A successful document alone does not establish anonymous usability.
 // Keep this check in the probe, so every directory consumer gets the same
 // verdict and previously misclassified apps converge on the regular sweep.
-async function probeUrl(url) {
-  const shell = await probeEndpoint(url);
+async function probeUrl(url, { headers = {} } = {}) {
+  const shell = await probeEndpoint(url, { headers });
   if (shell !== 'public') return shell;
-  return probeEndpoint(new URL('/api/', url).toString(), { allowMissing: true });
+  return probeEndpoint(new URL('/api/', url).toString(), { allowMissing: true, headers });
 }
 
-async function probeApp(pool, app, config) {
+// The guest pass (see the header): null when there are no guests to ask
+// about, so the stored verdict is left alone.
+async function probeGuest(url, app, anonVerdict, { guestsOn = require('./edge-gate').signinEnabled() } = {}) {
+  if (!guestsOn) return null;
+  if (anonVerdict === 'public') return 'public';
+  let token;
+  try {
+    token = platformJwt.signGuestToken({ appId: app.id });
+  } catch (err) {
+    log.warn('shell-probe', 'Could not mint a guest token; guest pass skipped', { slug: app.slug, err: err.message });
+    return null;
+  }
+  return probeUrl(url, { headers: { 'x-usernode-token': token } });
+}
+
+// `guestsOn` defaults to the app-host sign-in switch (probeGuest).
+async function probeApp(pool, app, config, { guestsOn } = {}) {
   const url = appShellUrl(app, config);
   // No address to ask means no evidence either way. Leave the stored verdict
   // and its timestamp alone rather than writing 'unknown' over a good one.
@@ -139,13 +166,21 @@ async function probeApp(pool, app, config) {
     return app.anon_shell;
   }
   const verdict = await probeUrl(url);
+  const guest = await probeGuest(url, app, verdict, guestsOn === undefined ? undefined : { guestsOn });
   await pool.query(
-    `UPDATE apps SET anon_shell = $1, anon_shell_checked_at = NOW() WHERE id = $2`,
-    [verdict, app.id]
+    `UPDATE apps SET anon_shell = $1, anon_shell_checked_at = NOW(),
+            guest_shell = COALESCE($3, guest_shell)
+      WHERE id = $2`,
+    [verdict, app.id, guest]
   );
   if (verdict !== app.anon_shell) {
     log.info('shell-probe', 'App anon-shell classification changed', {
       slug: app.slug, from: app.anon_shell, to: verdict,
+    });
+  }
+  if (guest !== null && guest !== app.guest_shell) {
+    log.info('shell-probe', 'App guest-shell classification changed', {
+      slug: app.slug, from: app.guest_shell, to: guest,
     });
   }
   return verdict;
@@ -156,7 +191,7 @@ async function probeApp(pool, app, config) {
 // view-private apps never appear on the landing page anyway.
 async function selectDueApps(pool, refreshPublic = false) {
   const { rows } = await pool.query(
-    `SELECT id, slug, anon_shell, runtime_kind, runtime_name FROM apps
+    `SELECT id, slug, anon_shell, guest_shell, runtime_kind, runtime_name FROM apps
       WHERE status = 'running'
         AND self_hosted IS NOT TRUE
         AND view_visibility = 'public'
@@ -164,7 +199,7 @@ async function selectDueApps(pool, refreshPublic = false) {
           anon_shell_checked_at IS NULL
           OR last_deploy_at > anon_shell_checked_at
           OR anon_shell_checked_at < NOW() - ($1 * INTERVAL '1 millisecond')
-          OR ($2::boolean AND anon_shell = 'public' AND anon_shell_checked_at <= NOW())
+          OR ($2::boolean AND (anon_shell = 'public' OR guest_shell = 'public') AND anon_shell_checked_at <= NOW())
         )
       ORDER BY anon_shell_checked_at ASC NULLS FIRST`,
     // Future stamps belong to the container-free staging fixtures. Do not
@@ -174,63 +209,38 @@ async function selectDueApps(pool, refreshPublic = false) {
   return rows;
 }
 
-async function sweep(config) {
-  if (sweepInFlight) return;
-  sweepInFlight = true;
-  try {
-    const pool = getPool(config);
-    const due = await selectDueApps(pool, lastSweepAt === null);
-    if (due.length) {
-      log.info('shell-probe', 'Probing app shells', { count: due.length });
-    }
-    // Simple bounded worker pool over the due list.
-    let idx = 0;
-    const workers = Array.from({ length: Math.min(SWEEP_CONCURRENCY, due.length) }, async () => {
-      while (idx < due.length) {
-        const app = due[idx++];
-        try {
-          await probeApp(pool, app, config);
-        } catch (err) {
-          log.warn('shell-probe', 'Probe failed', { slug: app.slug, err: err.message });
-        }
-      }
-    });
-    await Promise.all(workers);
-    lastSweepAt = new Date();
-    lastError = null;
-  } catch (err) {
-    lastError = err.message;
-    log.warn('shell-probe', 'Sweep failed', { err: err.message });
-  } finally {
-    sweepInFlight = false;
+// `refreshPublic`: re-probe every app that read public (the first sweep of
+// a new build). Returns what it probed.
+async function sweep(config, { refreshPublic = false, shouldStop = () => false } = {}) {
+  const pool = getPool(config);
+  const due = await selectDueApps(pool, refreshPublic);
+  if (due.length) {
+    log.info('shell-probe', 'Probing app shells', { count: due.length });
   }
-}
-
-function start(config) {
-  if (intervalHandle) return;
-  // First pass shortly after boot (give app containers a moment to come
-  // up alongside the platform), then steady-state ticks.
-  setTimeout(() => { sweep(config); }, 15 * 1000);
-  intervalHandle = setInterval(() => { sweep(config); }, SWEEP_INTERVAL_MS);
-  intervalHandle.unref?.();
-}
-
-function stop() {
-  if (intervalHandle) { clearInterval(intervalHandle); intervalHandle = null; }
-}
-
-function getStatus() {
-  return { lastSweepAt, lastError, sweepInFlight };
+  let failed = 0;
+  // Simple bounded worker pool over the due list.
+  let idx = 0;
+  const workers = Array.from({ length: Math.min(SWEEP_CONCURRENCY, due.length) }, async () => {
+    while (idx < due.length && !shouldStop()) {
+      const app = due[idx++];
+      try {
+        await probeApp(pool, app, config);
+      } catch (err) {
+        failed += 1;
+        log.warn('shell-probe', 'Probe failed', { slug: app.slug, err: err.message });
+      }
+    }
+  });
+  await Promise.all(workers);
+  return { probed: due.length, failed, refreshedPublic: !!refreshPublic };
 }
 
 module.exports = {
-  start,
-  stop,
   sweep,
-  getStatus,
   // Exported for tests:
   classifyResponse,
   probeUrl,
+  probeGuest,
   probeApp,
   selectDueApps,
   appShellUrl,

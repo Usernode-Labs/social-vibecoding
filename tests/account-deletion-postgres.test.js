@@ -39,6 +39,12 @@ test('account deletion against the full PostgreSQL schema', { timeout: 120000 },
   const schema = fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8');
   await pool.query(schema);
   await pool.query(schema); // migration is boot-idempotent, including retained FKs
+  // #5104: accounts start out reachable only by people they share a project
+  // with, and out of searches. This file's people are strangers who write
+  // to, invite and find each other, which is what it pins, so here they
+  // start out open; tests/contact-privacy-postgres.test.js pins the defaults.
+  await pool.query(`ALTER TABLE users ALTER COLUMN contact_policy SET DEFAULT 'anyone',
+                                      ALTER COLUMN profile_discoverable SET DEFAULT TRUE`);
   const password = 'disposable-fixture-password';
   const hash = await bcrypt.hash(password, 4);
   let seq = 0;
@@ -379,14 +385,12 @@ test('account deletion against the full PostgreSQL schema', { timeout: 120000 },
     }
   });
 
-  await t.test("the Homeroom bot forgets a deleted person's words and their name on its list", async () => {
+  await t.test("the Homeroom bot forgets a deleted person's words", async () => {
     const target = await user();
     const peer = await user();
     await pool.query(`INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, asked_text) VALUES ($1, 9101, $2, 'their own words'), ($1, 9102, $3, 'a peer''s words')`, [app.id, target.id, peer.id]);
     const runs = (await pool.query(`INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, plan_change)
       VALUES ($1, 9101, 'live', 'question', 'make it blue'), ($1, 9102, 'live', 'question', 'make it red') RETURNING id`, [app.id])).rows;
-    await pool.query(`INSERT INTO platform_settings (key, value) VALUES ('homeroom_bot_dm_users', $1)
-      ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`, [JSON.stringify([target.username.toUpperCase(), peer.username])]);
     await erase(target);
     await assertAnonymised(target.id);
     const planChange = async id => (await pool.query('SELECT plan_change FROM homeroom_bot_runs WHERE id = $1', [id])).rows[0].plan_change;
@@ -394,8 +398,71 @@ test('account deletion against the full PostgreSQL schema', { timeout: 120000 },
     assert.equal(await planChange(runs[1].id), 'make it red', "somebody else's request keeps its words");
     assert.equal(await count('homeroom_bot_requesters', 'user_id', target.id), 0, 'their requester rows and asked_text go with them');
     assert.equal(await count('homeroom_bot_requesters', 'user_id', peer.id), 1);
-    const list = (await pool.query(`SELECT value FROM platform_settings WHERE key = 'homeroom_bot_dm_users'`)).rows[0].value;
-    assert.deepEqual(JSON.parse(list), [peer.username], 'their name leaves the opt-in list, whatever its case; the others stay');
+  });
+
+  // #5118: every app the person touched is asked to erase their rows in its
+  // own database, through the receipt's durable tasks.
+  await t.test('each app that has seen the person gets a durable app_data task; the platform app and member-only apps do not', async () => {
+    const target = await user();
+    await pool.query("UPDATE users SET usernode_pubkey = 'ut1fixturewallet' WHERE id = $1", [target.id]);
+    const mk = async (slug, extra = '') => (await pool.query(
+      `INSERT INTO apps (name, slug, created_by${extra ? ', self_hosted' : ''}) VALUES ($1, $1, $2${extra ? ', TRUE' : ''}) RETURNING id`,
+      [slug, owner.id])).rows[0].id;
+    const opened = await mk('deletion-opened'), built = await mk('deletion-built'), uploaded = await mk('deletion-uploaded');
+    const untouched = await mk('deletion-untouched'), platform = await mk('deletion-platform', 'self');
+    const memberOnly = await mk('deletion-member-only'), pinnedOnly = await mk('deletion-pinned-only');
+    await pool.query('INSERT INTO app_activity (app_id, user_id, seconds_spent) VALUES ($1, $2, 30)', [opened, target.id]);
+    await pool.query('INSERT INTO app_collaborators (app_id, user_id) VALUES ($1, $2), ($3, $2)', [built, target.id, platform]);
+    await pool.query(`INSERT INTO app_files (id, app_id, user_id, filename, content_type, size_bytes, visibility)
+      VALUES ($1, $2, $3, 'a.png', 'image/png', 1, 'public')`, [crypto.randomBytes(16).toString('hex'), uploaded, target.id]);
+    // Joining a project's community or pinning an app never handed it the
+    // person's identity: those apps must not learn it from a deletion.
+    const community = (await pool.query("INSERT INTO communities DEFAULT VALUES RETURNING id")).rows[0].id;
+    await pool.query('UPDATE apps SET community_id = $1 WHERE id = $2', [community, memberOnly]);
+    await pool.query('INSERT INTO community_members (community_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [community, target.id]);
+    await pool.query('INSERT INTO app_favorites (app_id, user_id) VALUES ($1, $2)', [pinnedOnly, target.id]);
+    const { deletionId } = await erase(target);
+    const tasks = (await pool.query(
+      "SELECT * FROM account_deletion_tasks WHERE deletion_id = $1 AND kind = 'app_data' ORDER BY target", [deletionId])).rows;
+    assert.deepEqual(tasks.map(r => r.target).sort(),
+      [opened, built, uploaded].map(id => `${id}:ut1fixturewallet`).sort());
+    for (const id of [untouched, platform, memberOnly, pinnedOnly]) {
+      assert.ok(!tasks.some(r => r.target.startsWith(`${id}:`)), `app ${id} is not asked`);
+    }
+    assert.equal((await cleanup.list(pool)).find(r => r.id === deletionId).completed_at, null, 'open until the apps confirm');
+
+    // An app with no handler is recorded for review, never retried blindly.
+    const appUserData = require('../src/services/app-user-data');
+    const byApp = id => tasks.find(r => r.target.startsWith(`${id}:`)).id;
+    await pool.query(`UPDATE account_deletion_tasks SET next_attempt_at = NOW() + INTERVAL '1 day'
+      WHERE state = 'pending' AND NOT (id = ANY($1::bigint[]))`, [tasks.map(r => r.id)]);
+    await cleanup.sweep(pool, {}, { run: async task => {
+      if (task.id === byApp(opened)) throw new appUserData.SettleForReview('app_unsupported');
+      if (task.id === byApp(built)) throw new Error('ECONNREFUSED: detail that must not be kept');
+    } });
+    const state = async id => (await pool.query('SELECT state, error_code, target, attempts, next_attempt_at - NOW() AS wait FROM account_deletion_tasks WHERE id = $1', [id])).rows[0];
+    const unsupported = await state(byApp(opened));
+    assert.equal(unsupported.state, 'review'); assert.equal(unsupported.error_code, 'app_unsupported');
+    const retried = await state(byApp(built));
+    assert.equal(retried.state, 'pending'); assert.equal(retried.error_code, 'cleanup_failed');
+    assert.ok(retried.wait.minutes >= 4 || retried.wait.hours >= 1, 'retried later, not at once');
+    const done = await state(byApp(uploaded));
+    assert.equal(done.state, 'completed');
+    assert.equal(done.target, `erased:${byApp(uploaded)}`, 'the wallet address goes once the app confirms');
+
+    // A doubling interval: the third failure waits about twenty minutes.
+    await pool.query("UPDATE account_deletion_tasks SET attempts = 2, next_attempt_at = NOW() WHERE id = $1", [byApp(built)]);
+    await cleanup.sweep(pool, {}, { run: async () => { throw new Error('still down'); } });
+    const third = await state(byApp(built));
+    assert.equal(third.attempts, 3);
+    assert.ok(third.wait.minutes >= 19 && third.wait.minutes <= 20, JSON.stringify(third.wait));
+    // After about a week of failures the app goes to review.
+    await pool.query('UPDATE account_deletion_tasks SET attempts = $2, next_attempt_at = NOW() WHERE id = $1',
+      [byApp(built), appUserData.MAX_ATTEMPTS - 1]);
+    await cleanup.sweep(pool, {}, { run: async () => { throw new Error('still down'); } });
+    const given = await state(byApp(built));
+    assert.equal(given.state, 'review'); assert.equal(given.error_code, 'app_unreachable');
+    assert.equal((await cleanup.list(pool)).find(r => r.id === deletionId).completed_at, null);
   });
 
   await t.test('concurrent deletions cannot remove the last full administrator', async () => {

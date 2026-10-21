@@ -133,6 +133,47 @@ async function readHistory(pool, { kind, to }) {
   }
 }
 
+// The sweep below, in one statement. Before a batch of deliveries goes, a
+// released waitlist row keeps what the admin Journey's first mile reads
+// from them (services/journey.js PERSON_FACTS): its admit mail's first
+// send, whether one was tracked, the first open and first followed link
+// (never a scanner's or prefetcher's request), and the first sign-in code
+// asked for after the admit. Each is the earliest seen, so batches and a
+// second run keep the same values. Matched on the address exactly, as the
+// first mile reads it. Every sub-statement reads the same snapshot, so the
+// events are read before the delete cascades to them.
+const PRUNE_SQL = `WITH doomed AS (
+    SELECT id FROM mail_deliveries
+     WHERE created_at < NOW() - INTERVAL '${RETENTION_DAYS} days'
+     LIMIT ${PRUNE_LIMIT}
+  ), seen AS (
+    SELECT w.id,
+           MIN(d.created_at) FILTER (WHERE d.kind = 'waitlist_released' AND d.status = 'sent') AS sent_at,
+           bool_or(d.kind = 'waitlist_released' AND d.engagement_tracked) AS tracked,
+           MIN(e.created_at) FILTER (WHERE e.type = 'opened') AS opened_at,
+           MIN(e.created_at) FILTER (WHERE e.type = 'clicked') AS clicked_at,
+           MIN(d.created_at) FILTER (WHERE d.kind = 'otp' AND d.created_at >= w.released_at) AS code_at
+      FROM mail_deliveries d
+      JOIN waitlist_signups w ON w.email = d.recipient AND w.released_at IS NOT NULL
+      LEFT JOIN mail_events e ON e.delivery_id = d.id AND d.kind = 'waitlist_released'
+       AND e.type IN ('opened', 'clicked')
+       AND e.user_agent_class IS DISTINCT FROM 'scanner_or_prefetch'
+     WHERE d.id IN (SELECT x.id FROM doomed x) AND d.kind IN ('waitlist_released', 'otp')
+     GROUP BY w.id
+  ), kept AS (
+    UPDATE waitlist_signups w
+       SET release_mail_sent_at = LEAST(w.release_mail_sent_at, s.sent_at),
+           release_mail_tracked = (COALESCE(w.release_mail_tracked, FALSE) OR COALESCE(s.tracked, FALSE)),
+           release_mail_opened_at = LEAST(w.release_mail_opened_at, s.opened_at),
+           release_mail_clicked_at = LEAST(w.release_mail_clicked_at, s.clicked_at),
+           release_code_asked_at = LEAST(w.release_code_asked_at, s.code_at)
+      FROM seen s
+     WHERE w.id = s.id
+    RETURNING w.id
+  )
+  DELETE FROM mail_deliveries
+   WHERE id IN (SELECT id FROM doomed)`;
+
 // Events are deleted by the delivery FK’s ON DELETE CASCADE. Suppressions
 // intentionally survive retention so blocked addresses stay blocked.
 // Retention sweep, called opportunistically (never on a timer of its
@@ -140,14 +181,7 @@ async function readHistory(pool, { kind, to }) {
 async function pruneDeliveries(pool) {
   if (!pool) return 0;
   try {
-    const { rowCount } = await pool.query(
-      `DELETE FROM mail_deliveries
-        WHERE id IN (
-          SELECT id FROM mail_deliveries
-           WHERE created_at < NOW() - INTERVAL '${RETENTION_DAYS} days'
-           LIMIT ${PRUNE_LIMIT}
-        )`
-    );
+    const { rowCount } = await pool.query(PRUNE_SQL);
     return rowCount || 0;
   } catch (err) {
     log.error('platform-mail', 'mail_deliveries prune failed', { message: err.message });
@@ -491,7 +525,8 @@ async function sendPasswordResetMail(config, email, token) {
  * link pointed. The fragment spelling still works for anything that already
  * has one.
  */
-async function sendWaitlistReleaseMail(config, email, { hasAccount = false, moreToken = null, mobile = null } = {}) {
+async function sendWaitlistReleaseMail(config, email, { hasAccount = false, moreToken = null, signInToken = null, mobile = null } = {}) {
+  const { CREDENTIAL_PARAM } = require('./tracking');
   await send(config, {
     kind: 'waitlist_released',
     to: email,
@@ -516,10 +551,20 @@ async function sendWaitlistReleaseMail(config, email, { hasAccount = false, more
     // (rate-limited, scan-limited) and already returns the email. So this
     // needs no new endpoint and no new secret: the query survives the
     // rewriter, and what travels is a token the recipient already holds.
+    //
+    // #4594: `key` is a SEPARATE one-time sign-in link (services/
+    // release-links.js): random, stored hashed, single use, 7 days, bound to
+    // this row and address. The page spends it with a POST, so opening the
+    // link (a scanner's prefetch included) spends nothing, and the mail
+    // leaves it out of click tracking (./tracking.js). `t` stays alongside
+    // it as the prefill for when the key no longer works.
     url: hasAccount
       ? `${PRODUCTION_ORIGIN}/?login=1`
-      : `${PRODUCTION_ORIGIN}/?signup=1${moreToken ? `&t=${encodeURIComponent(moreToken)}` : ''}`,
+      : `${PRODUCTION_ORIGIN}/?signup=1${moreToken ? `&t=${encodeURIComponent(moreToken)}` : ''}`
+        + (signInToken ? `&${CREDENTIAL_PARAM}=${encodeURIComponent(signInToken)}` : ''),
     hasAccount,
+    // Which note goes under the button: the one-time link's, or the code's.
+    signInLink: !hasAccount && !!signInToken,
     // { ios, android } store listings from services/mobile-store-links.js; a
     // platform with no published link gets no install steps.
     mobile,
@@ -546,6 +591,7 @@ module.exports = {
   sendWaitlistCodeMail,
   sendWaitlistReleaseMail,
   pruneDeliveries,
+  PRUNE_SQL,
   buildMessage,
   KINDS,
   chooseTransport: select.chooseTransport,

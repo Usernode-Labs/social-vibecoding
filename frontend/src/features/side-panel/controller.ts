@@ -4,10 +4,12 @@
  *
  * ── What it is ─────────────────────────────────────────────────────────
  *
- * While an app runs on its App tab, the pages ABOUT it — its Workshop, its
- * discussion, a proposal, an issue, a change — and the conversations a
- * notification points at open in a panel beside it instead of replacing it.
- * The app keeps running next to the panel and is never reloaded.
+ * While an app runs on its App tab, the pieces of its work — a proposal, an
+ * issue, a change — and the conversations a notification points at open in a
+ * panel beside it instead of replacing it. The app keeps running next to the
+ * panel and is never reloaded. A community's page is never one of them: it is
+ * a place of its own, and a link to it replaces the app, full screen
+ * (./routes.ts).
  *
  * ── Why the panel is the platform, framed ─────────────────────────────
  *
@@ -376,8 +378,9 @@ export function drop(): void {
 
 /**
  * Back: the page opened before this one, and once those are spent, the list
- * this page belongs to — a thread to Messages, a proposal, an issue or a
- * change to its app's Workshop. The control is hidden when there is neither.
+ * this page belongs to — a thread to Messages (a piece of work has none here:
+ * its community is never the panel's). The control is hidden when there is
+ * neither.
  */
 export function back(): void {
   const s = sidePanelStore.get();
@@ -581,7 +584,10 @@ export function onClickCapture(e: MouseEvent): void {
   // for a modified click — a thread or a Workshop card as often as not, which
   // is a panel page. Taken here, closing the app would open that page BESIDE
   // it instead. The rail's tabs and the ✕ are the two ways out (#2854).
-  if (a.id === 'back-btn') return;
+  // The app menu's "Go to community" is a third, and needs nothing here: a
+  // community's page is never the panel's (./routes.ts), so its link is
+  // followed full width like any other.
+  if (a.id === 'back-btn' || a.id === 'app-menu-row-workshop') return;
   if (a.target && a.target !== '_self') return;
   if (a.hasAttribute('download')) return;
   if (!isShellAddress(a.href, origin)) return;

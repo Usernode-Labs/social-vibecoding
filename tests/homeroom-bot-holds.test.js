@@ -49,7 +49,7 @@ test('a mention after that answer is the go-ahead, and it covers the holds that 
   assert.deepEqual(asked.others.map((h) => h.username), ['chinchan8']);
   assert.equal(holds.goingText({ asker: 'evan', holders: ['chinchan8'] }),
     'evan asked Homeroom bot to build this anyway, so it is taking it up now. '
-    + 'It will reply here with a question, a note or a proposal.');
+    + 'It will reply here with a question, a note or a change to vote on.');
 
   // From then on the request is the bot's to work on...
   const after = { notes: [note(holds.LEAVING_KIND, 6), note(holds.GOING_KIND, 1)] };
@@ -67,7 +67,20 @@ test('holding it yourself and mentioning the bot is asking it to go ahead', () =
   assert.equal(verdict.action, 'go');
   assert.deepEqual(verdict.others, []);
   assert.equal(holds.goingText({ asker: 'evan', holders: [] }),
-    'Homeroom bot is taking this up now, as asked. It will reply here with a question, a note or a proposal.');
+    'Homeroom bot is taking this up now, as asked. It will reply here with a question, a note or a change to vote on.');
+});
+
+test('a mention asking to close the request is not a go-ahead: the voice offers the close (#4572)', () => {
+  const closing = { ...mention('evan', 2), content: '@Homeroom bot I think this is done, and can be closed' };
+  assert.deepEqual(holds.decide({ holds: [claim('evan', 30)], mentions: [closing] }), { action: 'none', closing: true });
+  for (const said of ['@homeroom_bot please close this', 'this was already fixed in #4925', 'no longer needed, close it', 'it\'s shipped now']) {
+    assert.equal(holds.asksToClose(said), true, said);
+  }
+  for (const said of ['@homeroom_bot please build this', 'go ahead, the earlier one closed', 'can you make it so the dialog closes on Escape? build it', '']) {
+    assert.equal(holds.asksToClose(said), false, said);
+  }
+  const src = require('node:fs').readFileSync(require.resolve('../src/services/homeroom-bot-holds.js'), 'utf8');
+  assert.match(src, /SELECT m\.thread_ref AS n, m\.id, m\.created_at, u\.username, m\.content/, 'the words are read with the mention');
 });
 
 test('a proposal up for a vote is left to the vote, however often the bot is asked', () => {
@@ -112,12 +125,15 @@ function fakePool({ mentions = [], notes = [], optouts = [] }) {
     async query(sql, params) {
       const s = String(sql);
       if (/FROM chat_messages m/.test(s)) {
-        assert.match(params[2], /@homeroom_bot/);
+        assert.match(params[2], /@\(homeroom_bot\|/);
         return { rows: mentions };
       }
       if (/SELECT issue_number, kind, created_at FROM homeroom_bot_posts/.test(s)) return { rows: notes };
       if (/FROM homeroom_bot_mention_optouts/.test(s)) return { rows: optouts.map((username) => ({ username })) };
       if (/INSERT INTO homeroom_bot_posts/.test(s)) { posts.push(params[3]); return { rows: [{ id: posts.length }] }; }
+      // sayHeld: the app, and the pending row the machine wrote (none here).
+      if (/SELECT \* FROM apps WHERE id/.test(s)) return { rows: [{ ...APP, repo_url: `https://github.com/${REPO.owner}/${REPO.repo}` }] };
+      if (/run_id IS NULL AND pending IS TRUE/.test(s)) return { rows: [] };
       if (/UPDATE homeroom_bot_posts/.test(s)) return { rows: [] };
       throw new Error(`unexpected query: ${s.slice(0, 80)}`);
     },
@@ -127,13 +143,28 @@ function fakePool({ mentions = [], notes = [], optouts = [] }) {
 function fakes() {
   const comments = [];
   const messages = [];
-  return {
+  const owed = [];
+  const f = {
     comments,
     messages,
+    owed,
     github: { async createIssueComment(owner, repo, n, text) { comments.push({ n, text }); return { id: comments.length }; } },
     ws: { async sendBotMessage(pool, appId, { content, thread }) { messages.push({ content, thread }); return { id: 100 + messages.length }; } },
     notifications: { async createMentionNotifications() { return []; }, async hydrateAndPush() {} },
   };
+  // The refresh owes the answer to the request's place (bot-voice), whose
+  // work then says it (sayHeld): both, here, one after the other.
+  f.owe = (pool) => async (args) => {
+    owed.push(args);
+    await holds.sayHeld(pool, {
+      ...args,
+      deps: {
+        botSvc: { parseRepo: () => REPO }, dm: { async botAccount() { return BOT; } },
+        github: f.github, ws: f.ws, notifications: f.notifications,
+      },
+    });
+  };
+  return f;
 }
 
 const APP = { id: 9, slug: 'todo-list-b91765' };
@@ -146,11 +177,14 @@ test('answerMentions posts the answer, tagging the person who asked, and keeps t
   const cleared = await holds.answerMentions(pool, {
     app: APP, repo: REPO, github: f.github, bot: BOT, now: NOW,
     holders: new Map([[75, [claim('chinchan8', DAYS3)]], [76, [claim('sam', 10)]]]),
-    deps: { ws: f.ws, notifications: f.notifications },
+    deps: { ws: f.ws, notifications: f.notifications, owe: f.owe(pool) },
   });
   assert.deepEqual([...cleared], []);
+  assert.deepEqual(f.owed.map((o) => [o.issueNumber, o.kind, o.mentionId, o.mention]), [[75, holds.LEAVING_KIND, 1, 'evan']],
+    'owed to the request\'s place, keyed by the mention it answers');
   assert.deepEqual(pool.posts, [holds.LEAVING_KIND], 'one answer, on the request that was mentioned');
-  assert.match(f.messages[0].content, /^@evan chinchan8 claimed this request 3 days ago, so Homeroom bot is leaving it to them\./);
+  // The thread copy is the bot's own words (homeroom-bot-words.js); GitHub keeps the note as written.
+  assert.match(f.messages[0].content, /^@evan chinchan8 claimed this request 3 days ago, so I'm leaving it to them\./);
   assert.deepEqual(f.messages[0].thread, { type: 'issue', ref: 75 });
   assert.match(f.comments[0].text, /^chinchan8 claimed this request/, 'on GitHub too, with nobody @-tagged');
 });
@@ -163,20 +197,20 @@ test('answerMentions goes ahead on the second mention, tagging whoever held it u
   const cleared = await holds.answerMentions(pool, {
     app: APP, repo: REPO, github: f.github, bot: BOT, now: NOW,
     holders: new Map([[75, [claim('chinchan8', DAYS3), claim('evan', 3)]]]),
-    deps: { ws: f.ws, notifications: f.notifications },
+    deps: { ws: f.ws, notifications: f.notifications, owe: f.owe(pool) },
   });
   assert.deepEqual([...cleared], [75]);
   assert.deepEqual(pool.posts, [holds.GOING_KIND]);
-  assert.match(f.messages[0].content, /^@chinchan8 evan asked Homeroom bot to build this anyway, so it is taking it up now\./);
+  assert.match(f.messages[0].content, /^@chinchan8 evan asked me to build this anyway, so I'm taking it up now\./);
 
   const quiet = fakes();
   const optedOut = fakePool({ mentions, notes, optouts: ['chinchan8'] });
   await holds.answerMentions(optedOut, {
     app: APP, repo: REPO, github: quiet.github, bot: BOT, now: NOW,
     holders: new Map([[75, [claim('chinchan8', DAYS3)]]]),
-    deps: { ws: quiet.ws, notifications: quiet.notifications },
+    deps: { ws: quiet.ws, notifications: quiet.notifications, owe: quiet.owe(optedOut) },
   });
-  assert.match(quiet.messages[0].content, /^evan asked Homeroom bot/, 'somebody who asked not to be tagged is not');
+  assert.match(quiet.messages[0].content, /^evan asked me/, 'somebody who asked not to be tagged is not');
 });
 
 test('answerMentions never throws: a failure leaves every hold in place', async () => {
@@ -190,8 +224,10 @@ test('answerMentions never throws: a failure leaves every hold in place', async 
 test('the refresh answers mentions on live apps only, and lets a go-ahead through (homeroom-bot.js)', () => {
   const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '../src/services/homeroom-bot.js'), 'utf8');
   const refresh = src.slice(src.indexOf('async function refreshApp('), src.indexOf('async function refreshQueue('));
-  assert.match(refresh, /if \(capRoom && bot && busy\.size\) \{\s*const cleared = await require\('\.\/homeroom-bot-holds'\)\.answerMentions\(/);
+  assert.match(refresh, /if \(capRoom && bot && busy\.size\) \{\s*const holds = require\('\.\/homeroom-bot-holds'\);\s*const cleared = await holds\.answerMentions\(/);
   assert.match(refresh, /for \(const n of cleared\) busy\.delete\(n\);/);
+  // 16 Oct 2026: and a requester whose promised request a person took on is told, once.
+  assert.match(refresh, /const taken = new Map\(\[\.\.\.holders\]\.filter\(\(\[n\]\) => busy\.has\(n\)\)\);\s*if \(taken\.size\) await holds\.tellTaken\(pool, \{ app, bot, holders: taken, deps: \{ dm \} \}\);/);
   assert.match(refresh, /busy: busy\.has\(n\),/);
   const again = src.slice(src.indexOf('async function retriageApp('), src.indexOf("log.info('homeroom-bot', 'App queued to be triaged again'"));
   assert.match(again, /goneAhead\(pool, app\.id, holders\)/, 'Triage again respects a go-ahead too');

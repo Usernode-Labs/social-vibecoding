@@ -11,6 +11,10 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+
+// The scripts under test read their text from the language runtime's
+// global; give them the real English one.
+globalThis.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -57,6 +61,9 @@ test('resetWhen names the local moment: New York', () => {
     // Monday 00:00 UTC is Sunday 8 PM in New York (EDT).
     assert.equal(norm(RT.resetWhen('weekly', OPTS)), 'Sunday at 8:00 PM');
     assert.equal(norm(RT.resetWhen('daily', OPTS)), 'at 8:00 PM');
+    // The same moment as the values a whole sentence takes.
+    const moment = RT.resetMoment('weekly', OPTS);
+    assert.deepEqual([moment.day, norm(moment.time)], ['Sunday', '8:00 PM']);
   });
 });
 

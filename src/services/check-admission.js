@@ -9,7 +9,7 @@
 // in check_state. The preview is for the people reviewing the change; the
 // verdict is for the merge gate.
 //
-// Under direct-merge lanes (services/merge-queue.js) a proposal merges as it
+// Under direct-merge lanes (the merge-queue machine, src/workflow/merge-queue/) a proposal merges as it
 // stands the moment it is approved and merges cleanly with main. A proposal
 // that CONFLICTS with main cannot merge as it stands: the tree the group
 // would test today is not the tree that lands after the resolution, so a
@@ -17,9 +17,9 @@
 // most expensive one, spent on every promoted head whether or not it could
 // ever merge. So a promoted head that conflicts gets the preview and no
 // verdict: check_state stays 'pending' with check_phase 'deferred', and the
-// verdict runs once the head measures clean (services/integration.js fires
-// onBecameClean; the conflict lane's resolution pushes a new head that gets
-// its own run).
+// verdict runs once the head measures clean (services/integration.js tells
+// the preview machine in the measurement's own statement; the conflict
+// lane's resolution pushes a new head that gets its own run).
 //
 // Two things keep this from being a way to skip the checks:
 //

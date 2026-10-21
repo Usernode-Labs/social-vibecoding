@@ -4,14 +4,22 @@ const { queueTestAlert } = require('../services/test-alert');
 const { getPool } = require('../db/pool');
 const notifications = require('../services/notifications');
 const messageBookmarks = require('../services/message-bookmarks');
+const notificationBookmarks = require('../services/notification-bookmarks');
+const { notificationBookmarkLimiter } = require('../middleware/rate-limits');
 const mobilePushPreferences = require('../services/mobile-push-preferences');
+const notificationAsks = require('../services/notification-asks');
 const notificationPreferences = require('../services/notification-preferences');
 const groupChannelNotify = require('../services/group-channel-notify');
+const channelMutes = require('../services/channel-mutes');
 const log = require('../services/logger');
 const appAccess = require('../services/app-access');
+const storyHistory = require('../services/story-history');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 
 const IS_STAGING = process.env.USERNODE_ENV === 'staging';
+// The most notification ids one `{ ids }` mark-read takes: what the sheet can
+// hold (the first page and the five Unread batches it fills itself with).
+const MAX_MARK_READ_IDS = 600;
 
 // ── Staging mock data ──────────────────────────────────────────────────
 // Request-time (?demo=1) injection of the session-related notification
@@ -51,6 +59,10 @@ function stagingMockNotifications() {
   const now = Date.now();
   const base = {
     readAt: null,
+    // #4769: every mock starts unsaved; the check_failed row below opts in,
+    // so a preview can show both bookmark states and the Saved section's
+    // notification row.
+    saved: false,
     appId: 0,
     appSlug: 'staging-demo',
     appName: 'Staging demo app',
@@ -115,6 +127,28 @@ function stagingMockNotifications() {
       sessionId: null, sessionTitle: null,
       prTitle: null, prNumber: null, headlessIssueNumber: null,
     },
+    // #5580: one request's story, from Homeroom bot: it says the change is
+    // live here, and (990215, further down) that it was ready to try before
+    // that. Both are about the same mock request (storyIssueNumber 990301),
+    // so the Unread tab folds them into one card at the top of the demo
+    // project's stack, and the card's history is stagingMockHistory's. The
+    // bot's news about a project carries that project now, so these keep
+    // `base`'s app fields, unlike the person's messages above.
+    {
+      ...base,
+      id: 990214, kind: 'build_live',
+      createdAt: new Date(now - 3.5 * 60 * 1000).toISOString(),
+      sourceUsername: 'homeroom_bot',
+      conversationId: 990402,
+      conversationKind: 'direct',
+      conversationTitle: 'Homeroom bot',
+      conversationMessageId: 990503,
+      messageContent: '[Mock] The pause button is live.',
+      detail: `hrbot2:${JSON.stringify({ m: 'live', a: 'Staging demo app', t: '[Mock] A pause button for the game', i: 990301 })}`,
+      storyIssueNumber: 990301,
+      sessionId: null, sessionTitle: null,
+      prTitle: null, prNumber: null, headlessIssueNumber: null,
+    },
     // #971: the issue's exact case — a session that finished BEFORE it was
     // promoted, so it has a session title but no PR title. The row must show
     // the title, never the `dev/…` branch name beside it.
@@ -162,6 +196,24 @@ function stagingMockNotifications() {
       sessionId: null, prTitle: null, prNumber: null,
       headlessIssueNumber: 900002,
     },
+    // #5580: the bot's earlier news on the same mock request as 990214.
+    {
+      ...base,
+      id: 990215, kind: 'build_ready',
+      createdAt: new Date(now - 25 * 60 * 1000).toISOString(),
+      sourceUsername: 'homeroom_bot',
+      conversationId: 990402,
+      conversationKind: 'direct',
+      conversationTitle: 'Homeroom bot',
+      conversationMessageId: 990504,
+      messageContent: '[Mock] The pause button is ready to try.',
+      detail: `hrbot2:${JSON.stringify({ m: 'ready', a: 'Staging demo app', t: '[Mock] A pause button for the game', i: 990301 })}`,
+      storyIssueNumber: 990301,
+      sessionId: null, sessionTitle: null,
+      prTitle: null, prNumber: null, headlessIssueNumber: null,
+    },
+    // #5580: a proposal of its own, with the story fields serialize gives a
+    // real row, so its card opens to a history (stagingMockHistory).
     {
       ...base,
       id: 990203, kind: 'stale_pr',
@@ -170,10 +222,13 @@ function stagingMockNotifications() {
       sessionTitle: '[Mock] Stale proposal going quiet',
       prTitle: '[Mock] Stale proposal going quiet',
       prNumber: 9901, headlessIssueNumber: null,
+      storySessionId: 990103, storyPrNumber: 9901, storyTitle: '[Mock] Stale proposal going quiet',
     },
     {
       ...base,
       id: 990204, kind: 'check_failed',
+      saved: true,
+      savedAt: new Date(now - 1 * 60 * 1000).toISOString(),
       createdAt: new Date(now - 55 * 60 * 1000).toISOString(),
       sessionId: 990104,
       sessionTitle: "[Mock] Proposal whose preview won't boot",
@@ -192,19 +247,10 @@ function stagingMockNotifications() {
       branchName: 'dev/mockuser-1700000000001',
       prNumber: null, headlessIssueNumber: null,
     },
-    // #3227: a kudos row, so a preview shows the line that says what kudos
-    // are and the button to the Kudos leaderboard. Its session id matches no
-    // row, so opening it lands where any missing proposal does.
-    {
-      ...base,
-      id: 990213, kind: 'kudos',
-      createdAt: new Date(now - 90 * 60 * 1000).toISOString(),
-      sourceUsername: 'mockfriend',
-      sessionId: 990113,
-      sessionTitle: '[Mock] A change somebody thanked you for',
-      prTitle: '[Mock] A change somebody thanked you for',
-      prNumber: 9903, headlessIssueNumber: null,
-    },
+    // #3227 put a kudos row (990213) here. #5249: kudos is parked, so no
+    // preview shows one; the server's list skips the kind for real rows too
+    // (services/kudos-parked.js), and the declared check that no kudos row is
+    // drawn keeps holding with this one gone.
     // An ALREADY-READ row. The drawer lists unread notifications and parks the
     // read ones behind "See N older notifications", so without one of these a
     // staging preview has nothing behind that button — it does not render at
@@ -248,15 +294,67 @@ function stagingMockNotifications() {
       detail: '0:2',
       sessionId: null, prTitle: null, prNumber: null, headlessIssueNumber: null,
     },
+    //
+    // #5289: in a project of its own. The sheet's Unread tab folds a
+    // project's unread notifications of one kind into one row, so in the
+    // demo project this row would fold into 990201's "2 sessions finished"
+    // (990205 does, which is how a preview shows the fold) and the date it
+    // exists to show would never be on screen. It also shows a second
+    // project's group on the Unread tab.
     {
       ...base,
       id: 990209, kind: 'session_done',
       createdAt: '2024-05-21T14:05:00Z',
       readAt: null,
+      appId: 990003, appSlug: 'staging-demo-archive', appName: 'Staging demo archive',
       sessionId: 990108,
       sessionTitle: '[Mock] Something from an earlier year',
       prTitle: null, branchName: 'dev/mockuser-1700000000003',
       prNumber: null, headlessIssueNumber: null,
+    },
+    // The older rows Unread shows once "See older notifications" is tapped:
+    // one card per change, in Today / Yesterday / Last 7 days / Older. Four
+    // more read rows, newest first, so a preview has a card in each section
+    // besides 990206's in Last 7 days, and one request's story (990217 and
+    // 990218, both about mock request 990302) folded into one card there.
+    // Read, so they never touch the bell's count or the Unread stacks.
+    {
+      ...base,
+      id: 990216, kind: 'pr_proposed',
+      createdAt: new Date(now - 2 * 60 * 60 * 1000).toISOString(),
+      readAt: new Date(now - 90 * 60 * 1000).toISOString(),
+      sourceUsername: 'staging-demo-user',
+      sessionId: 990110,
+      prTitle: '[Mock] A dark mode for the board', prNumber: 9902, headlessIssueNumber: null,
+    },
+    {
+      ...base,
+      id: 990217, kind: 'issue_mention',
+      createdAt: new Date(now - 26 * 60 * 60 * 1000).toISOString(),
+      readAt: new Date(now - 25 * 60 * 60 * 1000).toISOString(),
+      sourceUsername: 'staging-demo-reviewer',
+      detail: '990302',
+      storyTitle: '[Mock] A high-score table',
+      sessionId: null, prTitle: null, prNumber: null, headlessIssueNumber: null,
+    },
+    {
+      ...base,
+      id: 990218, kind: 'issue_opened',
+      createdAt: new Date(now - 29 * 60 * 60 * 1000).toISOString(),
+      readAt: new Date(now - 25 * 60 * 60 * 1000).toISOString(),
+      sourceUsername: 'staging-demo-user',
+      detail: '990302',
+      storyTitle: '[Mock] A high-score table',
+      sessionId: null, prTitle: null, prNumber: null, headlessIssueNumber: null,
+    },
+    {
+      ...base,
+      id: 990219, kind: 'pr_proposed',
+      createdAt: new Date(now - 12 * 24 * 60 * 60 * 1000).toISOString(),
+      readAt: new Date(now - 11 * 24 * 60 * 60 * 1000).toISOString(),
+      sourceUsername: 'staging-demo-reviewer',
+      sessionId: 990111,
+      prTitle: '[Mock] Bigger buttons on phones', prNumber: 9903, headlessIssueNumber: null,
     },
   ];
 }
@@ -302,6 +400,67 @@ function stagingMockSavedMessages() {
   ];
 }
 
+// #4769: staging demo row for the Saved section's notification half. The
+// notification_bookmarks table is `staging:private` like everything else
+// here, so a clone has the table and none of the rows — same problem
+// stagingMockSavedMessages above solves, solved the same way: the mock
+// that ships already-saved (990204, `saved: true`) is what the section
+// shows, prepended at request time. Saving another mock hits a
+// notification id that matches no DB row, the PUT answers 404, and the
+// client rolls its optimistic flip back — visible, and harmless.
+// Unsaving one of these DELETEs nothing and answers 200 with removed: 0,
+// exactly like a mark-read on a mock.
+function stagingMockSavedNotifications() {
+  return stagingMockNotifications().filter((m) => m.saved);
+}
+
+// #5580: the history the staging demo's stories open to (?demo=1, staging
+// only, like the mock feed above): what happened on the mock request the
+// bot's two mock rows are about, and on the mock proposal going quiet.
+// Nothing here is a real row; the names are the demo's own.
+function stagingMockHistory(id) {
+  const now = Date.now();
+  const ago = (minutes) => new Date(now - minutes * 60 * 1000).toISOString();
+  if (id === 990214 || id === 990215) {
+    return {
+      issueNumber: 990301,
+      sessionIds: [990109],
+      steps: [
+        { at: ago(3), kind: 'live' },
+        { at: ago(20), kind: 'vote', actor: 'staging-demo-reviewer', vote: 'yes' },
+        { at: ago(26), kind: 'updated' },
+        { at: ago(48), kind: 'comment', actor: 'staging-demo-reviewer', words: '[Mock] Works on my phone. Could the button be a little bigger?' },
+        { at: ago(70), kind: 'proposed', actor: 'homeroom_bot' },
+        { at: ago(95), kind: 'plan', actor: 'homeroom_bot', words: '[Mock] A pause button in the corner, on phones only' },
+        { at: ago(120), kind: 'asked', actor: 'staging-demo-user' },
+      ],
+    };
+  }
+  if (id === 990203) {
+    return {
+      issueNumber: null,
+      sessionIds: [990103],
+      steps: [
+        { at: ago(180), kind: 'vote', actor: 'staging-demo-reviewer', vote: 'yes' },
+        { at: ago(300), kind: 'proposed', actor: 'staging-demo-user' },
+      ],
+    };
+  }
+  // The older rows' story: mock request 990302, asked, planned, then a
+  // mention (the two notifications stand for the ask and the mention).
+  if (id === 990217 || id === 990218) {
+    return {
+      issueNumber: 990302,
+      sessionIds: [],
+      steps: [
+        { at: ago(27.5 * 60), kind: 'plan', actor: 'homeroom_bot', words: '[Mock] The ten best scores, reset every Monday' },
+        { at: ago(29 * 60), kind: 'asked', actor: 'staging-demo-user' },
+      ],
+    };
+  }
+  return null;
+}
+
 // Routes for the top-right notifications dropdown. All routes assume
 // authMiddleware has already attached `req.user`.
 function notificationsRoutes(config) {
@@ -341,6 +500,38 @@ function notificationsRoutes(config) {
       return res.json({ preferences });
     } catch (err) {
       log.error('mobile-push-preferences', 'read failed', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // The notification ask (services/notification-asks.js): what this account
+  // was asked at each moment and answered, whether a phone of theirs can take
+  // a push, and whether Homeroom would email them instead. The client decides
+  // from it whether to ask (frontend/src/features/notify-ask/decide.ts).
+  router.get('/api/me/notification-asks', async (req, res) => {
+    res.set('Cache-Control', 'private, no-store');
+    if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
+    try {
+      return res.json(await notificationAsks.readAsks(pool, req.user.id));
+    } catch (err) {
+      log.error('notification-asks', 'read failed', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.post('/api/me/notification-asks', (req, res, next) => {
+    res.set('Cache-Control', 'no-store');
+    if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
+    return next();
+  }, sameOriginBrowserOnly, async (req, res) => {
+    const { details, value } = notificationAsks.validateAsk(req.body);
+    if (!value) {
+      return res.status(422).json({ error: 'The given data was invalid.', details });
+    }
+    try {
+      return res.json(await notificationAsks.recordAsk(pool, req.user.id, value));
+    } catch (err) {
+      log.error('notification-asks', 'record failed', { message: err.message });
       return res.status(500).json({ error: 'Internal server error' });
     }
   });
@@ -469,6 +660,34 @@ function notificationsRoutes(config) {
     }
   });
 
+  // ── A channel's Mute (#5303) ────────────────────────────────────────
+  //
+  // The viewer's own: their unread in the channel stops counting and a small
+  // group's "every message" ring passes them by; mentions and replies still
+  // reach them (services/channel-mutes.js). #general only for now, so any
+  // other handle is a 404. For anyone who may see the project: muting is
+  // not taking part, so it needs no membership.
+  router.put('/api/apps/:slug/channels/:handle/mute', sameOriginBrowserOnly, async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
+    try {
+      if (req.params.handle !== 'general') return res.status(404).json({ error: 'Channel not found' });
+      const muted = req.body ? req.body.muted : undefined;
+      if (typeof muted !== 'boolean') {
+        return res.status(422).json({ error: 'The given data was invalid.', details: { muted: 'must be true or false' } });
+      }
+      const app = await resolveApp(req.params.slug, req.user);
+      if (!app) return res.status(404).json({ error: 'App not found' });
+      const now = await channelMutes.setMuted(pool, {
+        userId: req.user.id, appId: app.id, ref: channelMutes.GENERAL, muted,
+      });
+      return res.json({ handle: 'general', muted: now });
+    } catch (err) {
+      log.error('channel-mutes', 'write failed', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   // The account-wide layer plus every per-app exception, for the Settings
   // roll-up. The exceptions are what make the roll-up worth having: without
   // them there is no way to find an app you muted months ago short of
@@ -561,8 +780,9 @@ function notificationsRoutes(config) {
     }
   });
 
-  // Full dropdown payload: recent notifications (read and unread) + an
-  // unread count so the badge and list stay in sync on initial page load.
+  // Full dropdown payload: recent notifications (read and unread; asks about
+  // a merged change are left out — #4795) + an unread count so the badge and
+  // list stay in sync on initial page load.
   //
   // Pagination (#84 scroll-to-load-more): the client passes
   // `?before=<createdAt>&before_id=<id>&limit=<n>` to fetch the page
@@ -571,6 +791,17 @@ function notificationsRoutes(config) {
   // hand back `nextBefore` (the cursor for the next page) and `hasMore`.
   // The unread count is omitted on paginated follow-up requests (it's a
   // whole-account aggregate the client already has from the first page).
+  //
+  // #5527: `?unread=1` pages UNREAD rows only, on the same keyset cursor.
+  // The bell's Unread tab walks it to fill its list up to the badge, and
+  // the query's filters are exactly countUnread's (see listForUser) — so a
+  // page of "what the bell is counting" can never disagree with the badge.
+  // With it set, `kind` is ignored (the Unread list spans every kind) and
+  // the response is a follow-up page: notifications, hasMore and
+  // nextBefore only. The aggregate block below changes from `if (!before)`
+  // to `if (!before && !unreadOnly)` — no unread, invites, saved lists,
+  // badge sync or staging mocks, which are first-page concerns and here
+  // would only re-send what the client already has.
   router.get('/api/notifications', async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
     res.set('Cache-Control', 'private, no-store');
@@ -596,11 +827,12 @@ function notificationsRoutes(config) {
       // rather than a free list of kinds: the client does not get to select
       // arbitrary rows out of its own feed, and the grouping stays defined in
       // one place (services/notifications.js).
-      const kinds = req.query.kind === 'conversation'
+      const unreadOnly = req.query.unread === '1';
+      const kinds = !unreadOnly && req.query.kind === 'conversation'
         ? [...notifications.CONVERSATION_NOTIFICATION_KINDS]
         : null;
 
-      const rows = await notifications.listForUser(pool, req.user.id, { limit, before, kinds });
+      const rows = await notifications.listForUser(pool, req.user.id, { limit, before, kinds, unreadOnly });
       const serialized = rows.map(notifications.serialize);
 
       const hasMore = rows.length === limit;
@@ -616,8 +848,10 @@ function notificationsRoutes(config) {
         hasMore,
         nextBefore,
       };
-      if (!before) {
-        payload.unread = await notifications.countUnread(pool, req.user.id);
+      if (!before && !unreadOnly) {
+        // #18: and how many of those are plain messages, which the bell
+        // leaves to the Messages tab (services/notifications.js).
+        Object.assign(payload, await notifications.countUnreadSplit(pool, req.user.id));
         // #3050: the bell just learned the true total, so re-badge the
         // iPhone to it. The icon changes only when a push carries
         // `aps.badge` — the native shell does not implement the WebView's
@@ -656,6 +890,14 @@ function notificationsRoutes(config) {
         payload.savedMessages = [...appSaved, ...conversationSaved]
           .sort((a, b) => new Date(b.savedAt) - new Date(a.savedAt))
           .slice(0, messageBookmarks.MAX_SAVED);
+        // #4769: this user's saved notifications, for the same pinned
+        // section as the saved messages just above. First page only and
+        // best-effort for the same reasons: the section is pinned, not
+        // paginated, and must never be the reason the dropdown 500s. The
+        // 50-save cap is applied client-side across the merged list —
+        // see the client's _renderSaved.
+        payload.savedNotifications = (await notifications.listSavedForUserSafe(pool, req.user.id))
+          .map(notifications.serialize);
         // Staging-only demo rows (?demo=1) — see stagingMockNotifications.
         // First page only (they'd duplicate on cursor follow-ups), unread
         // count bumped to match so the bell's number counts the mocks it is
@@ -665,15 +907,19 @@ function notificationsRoutes(config) {
         // is simply the total now.)
         //
         // Only the UNREAD mocks are counted. This used to add `mocks.length`
-        // outright, which was right while every mock was unread; one of them
-        // now ships with a `readAt` (so the drawer's "older notifications"
-        // view has something behind it), and counting that one would claim an
-        // already-read row as unread — inflating the red badge by one and
-        // leaving "Mark all read" enabled with nothing left to mark.
+        // outright, which was right while every mock was unread; five of them
+        // now ship with a `readAt` (so the drawer's "older notifications"
+        // view has something behind it), and counting those would claim
+        // already-read rows as unread — inflating the red badge and leaving
+        // "Mark all read" enabled with nothing left to mark.
         if (IS_STAGING && req.query.demo === '1') {
           const mocks = stagingMockNotifications();
           payload.notifications = [...mocks, ...payload.notifications];
-          payload.unread += mocks.filter((m) => !m.readAt).length;
+          const unreadMocks = mocks.filter((m) => !m.readAt);
+          payload.unread += unreadMocks.length;
+          // #18: the mock messages are messages, which the bell leaves out.
+          payload.messageUnread = (payload.messageUnread || 0)
+            + unreadMocks.filter((m) => notifications.MESSAGE_KINDS.includes(m.kind)).length;
           // Pinned-invite demo row: drives the drawer's Invites section
           // and its swipe Accept/Decline path in a staging preview.
           // Obviously fake (staging-demo-*); acting on it hits a
@@ -695,6 +941,14 @@ function notificationsRoutes(config) {
           payload.savedMessages = [
             ...stagingMockSavedMessages(),
             ...(payload.savedMessages || []),
+          ];
+          // Pinned saved-notification demo rows (#4769) — see
+          // stagingMockSavedNotifications. Prepended like the message
+          // mocks above; the 990204 mock also carries `saved: true` in the
+          // feed itself, so its row shows the filled bookmark in place.
+          payload.savedNotifications = [
+            ...stagingMockSavedNotifications(),
+            ...(payload.savedNotifications || []),
           ];
         }
       }
@@ -734,14 +988,108 @@ function notificationsRoutes(config) {
     }
   });
 
+  // #5580: what happened on the request or proposal one of your notifications
+  // is about, for the history its card in the sheet opens to
+  // (services/story-history.js). The row must be the caller's, and its
+  // project one they can view, the gate the Discussion threads it reads
+  // from use (src/routes/chat.js). 404 for anything else, including a row
+  // about no request or proposal, so nothing is enumerable through it.
+  router.get('/api/notifications/:id/history', async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
+    res.set('Cache-Control', 'private, no-store');
+    const rawId = String(req.params.id || '');
+    if (!/^[1-9]\d{0,9}$/.test(rawId)) return res.status(404).json({ error: 'No history' });
+    const id = Number(rawId);
+    if (!Number.isSafeInteger(id) || id > 2147483647) return res.status(404).json({ error: 'No history' });
+    if (IS_STAGING && req.query.demo === '1' && stagingMockHistory(id)) {
+      return res.json(stagingMockHistory(id));
+    }
+    try {
+      const row = await notifications.getForUser(pool, req.user.id, id);
+      if (!row || row.app_id == null || !row.app_slug) return res.status(404).json({ error: 'No history' });
+      const app = await appAccess.getAppForUser(pool, row.app_slug, req.user, 'view', appAccess.ACCESS_COLUMNS);
+      if (!app || Number(app.id) !== Number(row.app_id)) return res.status(404).json({ error: 'No history' });
+      const story = await storyHistory.storyOf(pool, row);
+      const history = await storyHistory.historyFor(pool, { appId: Number(row.app_id), ...story });
+      if (!history) return res.status(404).json({ error: 'No history' });
+      return res.json(history);
+    } catch (err) {
+      log.error('notifications', 'history lookup failed', { id, message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // #4769: save one notification to the drawer's pinned Saved section.
+  // Same shape as the message bookmark toggles in src/routes/chat.js: an
+  // idempotent save, the same id validation as the GET above, and the
+  // same deliberate 404 for a row that is absent or another user's — the
+  // service's INSERT only lands when the notification already has the
+  // caller as its user, so there is nothing to hide behind an
+  // authorization check. Per-user rate limit (the message-bookmark
+  // bucket's twin) and no caching, like every route here.
+  router.put('/api/notifications/:id/save', notificationBookmarkLimiter, sameOriginBrowserOnly, async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
+    res.set('Cache-Control', 'private, no-store');
+    const rawId = String(req.params.id || '');
+    if (!/^[1-9]\d{0,9}$/.test(rawId)) {
+      return res.status(404).json({ error: 'Notification not found' });
+    }
+    const id = Number(rawId);
+    if (!Number.isSafeInteger(id) || id > 2147483647) {
+      return res.status(404).json({ error: 'Notification not found' });
+    }
+    try {
+      const saved = await notificationBookmarks.save(pool, req.user.id, id);
+      if (!saved) {
+        return res.status(404).json({ error: 'Notification not found' });
+      }
+      return res.json({ saved: true });
+    } catch (err) {
+      log.error('notifications', 'save failed', { id, message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Unsave one. Idempotent from the client's point of view: an id that was
+  // never saved (or was already unsaved) answers 200 with removed: 0, so
+  // a double-tap or a stale row cannot error.
+  router.delete('/api/notifications/:id/save', notificationBookmarkLimiter, sameOriginBrowserOnly, async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
+    res.set('Cache-Control', 'private, no-store');
+    const rawId = String(req.params.id || '');
+    if (!/^[1-9]\d{0,9}$/.test(rawId)) {
+      return res.status(404).json({ error: 'Notification not found' });
+    }
+    const id = Number(rawId);
+    if (!Number.isSafeInteger(id) || id > 2147483647) {
+      return res.status(404).json({ error: 'Notification not found' });
+    }
+    try {
+      const removed = await notificationBookmarks.remove(pool, req.user.id, id);
+      return res.json({ saved: false, removed });
+    } catch (err) {
+      log.error('notifications', 'unsave failed', { id, message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   router.post('/api/notifications/read', sameOriginBrowserOnly, async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
     res.set('Cache-Control', 'private, no-store');
     const {
-      id, all, chat_message_id: chatMessageId, app_id: appId,
+      id, ids, all, chat_message_id: chatMessageId, app_id: appId,
       conversation_id: conversationId, session_id: sessionId,
       kinds, exclude_kinds: excludeKinds,
     } = req.body || {};
+    // `{ ids }`: one clear that is several notifications, read in one
+    // statement (markRead). Positive int4 ids only, at most a page's worth.
+    let idList = null;
+    if (ids != null) {
+      const valid = Array.isArray(ids) && ids.length > 0 && ids.length <= MAX_MARK_READ_IDS
+        && ids.every((value) => Number.isSafeInteger(value) && value > 0 && value <= 2147483647);
+      if (!valid) return res.status(400).json({ error: 'Invalid notification ids' });
+      idList = [...new Set(ids)];
+    }
     // Kind scoping for the split drawers (cog vs bell). Sanitize to
     // string arrays; anything else is treated as absent.
     const kindList = Array.isArray(kinds) ? kinds.filter((k) => typeof k === 'string') : null;
@@ -762,7 +1110,7 @@ function notificationsRoutes(config) {
         const cleared = await notifications.markReadForConversation(
           pool, req.user.id, parsedConversationId
         );
-        const unread = await notifications.countUnread(pool, req.user.id);
+        const { unread, messageUnread } = await notifications.countUnreadSplit(pool, req.user.id);
         if (cleared > 0) {
           try {
             const { pushNotificationToUser } = require('../services/ws');
@@ -771,7 +1119,7 @@ function notificationsRoutes(config) {
             log.warn('notifications', 'cross-tab push failed', { message: err.message });
           }
         }
-        return res.json({ unread, cleared });
+        return res.json({ unread, messageUnread, cleared });
       }
 
       // `{ session_id }` (#2847): the viewer opened or touched a proposal card
@@ -787,7 +1135,7 @@ function notificationsRoutes(config) {
         const cleared = await notifications.markReadForAction(
           pool, req.user.id, 'proposal_opened', parsedSessionId
         );
-        const unread = await notifications.countUnread(pool, req.user.id);
+        const { unread, messageUnread } = await notifications.countUnreadSplit(pool, req.user.id);
         if (cleared > 0) {
           try {
             const { pushNotificationToUser } = require('../services/ws');
@@ -796,7 +1144,7 @@ function notificationsRoutes(config) {
             log.warn('notifications', 'cross-tab push failed', { message: err.message });
           }
         }
-        return res.json({ unread, cleared });
+        return res.json({ unread, messageUnread, cleared });
       }
 
       // `{ app_id }` is the per-group "Mark read" path (#84 grouping):
@@ -808,7 +1156,7 @@ function notificationsRoutes(config) {
         const cleared = await notifications.markReadForApp(
           pool, req.user.id, Number(appId)
         );
-        const unread = await notifications.countUnread(pool, req.user.id);
+        const { unread, messageUnread } = await notifications.countUnreadSplit(pool, req.user.id);
         if (cleared > 0) {
           try {
             const { pushNotificationToUser } = require('../services/ws');
@@ -817,7 +1165,7 @@ function notificationsRoutes(config) {
             log.warn('notifications', 'cross-tab push failed', { message: err.message });
           }
         }
-        return res.json({ unread, cleared });
+        return res.json({ unread, messageUnread, cleared });
       }
 
       // `{ chat_message_id }` is the in-chat "click a dotted message" path:
@@ -828,7 +1176,7 @@ function notificationsRoutes(config) {
         const cleared = await notifications.markReadForMessage(
           pool, req.user.id, Number(chatMessageId)
         );
-        const unread = await notifications.countUnread(pool, req.user.id);
+        const { unread, messageUnread } = await notifications.countUnreadSplit(pool, req.user.id);
         // Sync this user's other tabs (bell badge + the same message's dot
         // in another open chat tab) only when something actually changed.
         if (cleared > 0) {
@@ -839,7 +1187,7 @@ function notificationsRoutes(config) {
             log.warn('notifications', 'cross-tab push failed', { message: err.message });
           }
         }
-        return res.json({ unread, cleared });
+        return res.json({ unread, messageUnread, cleared });
       }
 
       // Single-id / mark-all path. Mark-all (#449) previously skipped the
@@ -849,9 +1197,9 @@ function notificationsRoutes(config) {
       // making "Mark all read" look like it did nothing. Fan out exactly
       // like the branches above whenever something actually changed.
       const cleared = await notifications.markRead(pool, req.user.id, {
-        id, all: !!all, kinds: kindList, excludeKinds: excludeList,
+        id, ids: idList, all: !!all, kinds: kindList, excludeKinds: excludeList,
       });
-      const unread = await notifications.countUnread(pool, req.user.id);
+      const { unread, messageUnread } = await notifications.countUnreadSplit(pool, req.user.id);
       if (cleared > 0) {
         try {
           const { pushNotificationToUser } = require('../services/ws');
@@ -860,7 +1208,7 @@ function notificationsRoutes(config) {
           log.warn('notifications', 'cross-tab push failed', { message: err.message });
         }
       }
-      res.json({ unread, cleared });
+      res.json({ unread, messageUnread, cleared });
     } catch (err) {
       log.error('notifications', 'markRead failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
@@ -872,4 +1220,5 @@ function notificationsRoutes(config) {
 
 module.exports = {
   notificationsRoutes, stagingMockNotifications, stagingMockSavedMessages,
+  stagingMockSavedNotifications, stagingMockHistory,
 };

@@ -107,6 +107,8 @@ function loadSyncMain({ execImpl }) {
 
   delete require.cache[ids.subject];
   const subject = require(ids.subject);
+  // The proposal machine's branch.sync work, called as runSyncMain was.
+  subject.runSyncMain = require('./lib/sync-work-shim').shim(subject);
 
   const restore = () => {
     for (const [k, id] of Object.entries(ids)) {
@@ -151,16 +153,15 @@ test('runSyncMain records the turn cost to system_token_usage, never llm_usage',
   }
 });
 
-test('runSyncMain skips + throws the system-budget message when the budget is exhausted', async () => {
+test('runSyncMain skips with the system-budget message when the budget is exhausted (an answer, not a failure)', async () => {
   const { subject, execCalls, restore } = loadSyncMain({
     execImpl: async () => ({ syncResult: 'clean', behind: 0, sha: 'abc', pushOk: true, exitCode: 0, costUsd: 0.1 }),
   });
   try {
     const pool = makePool({ sysCap: 2500, sysSpent: 2500 }); // at cap
-    await assert.rejects(
-      () => subject.runSyncMain({ jwtSecret: 's' }, pool, 7, { sessionRow: ownerRow() }),
-      /System token budget reached/
-    );
+    const res = await subject.runSyncMain({ jwtSecret: 's' }, pool, 7, { sessionRow: ownerRow() });
+    assert.equal(res.outcome, 'over_budget');
+    assert.match(res.message, /System token budget reached/);
     assert.equal(execCalls.length, 0, 'no worker turn runs when over budget');
     assert.equal(sysSpendInserts(pool).length, 0, 'nothing recorded when the gate fails');
   } finally {
@@ -196,6 +197,107 @@ test('runSyncMain persists merge_conflict_state=clean with no files on a resolve
     assert.equal(upd.length, 1);
     assert.equal(upd[0].params[0], 'clean');
     assert.deepEqual(JSON.parse(upd[0].params[1]), []);
+  } finally {
+    restore();
+  }
+});
+
+// ── The sync as the proposal machine's work, after the adversarial review ──
+
+// A durable context kept in memory, so a second run reads what the first saved.
+function memorySteps() {
+  const base = require('../src/services/durable-steps').none();
+  const kept = new Map();
+  return {
+    ...base, kept,
+    has: (k) => kept.has(k),
+    get: (k) => kept.get(k),
+    set: async (k, v) => { kept.set(k, v); },
+    once: async (k, fn) => { if (kept.has(k)) return kept.get(k); const v = await fn(); kept.set(k, v === undefined ? null : v); return kept.get(k); },
+  };
+}
+function direct(subject, pool, row, opts, injected = {}) {
+  const wrapped = {
+    calls: pool.calls,
+    query: (sql, params) => (/FROM chat_sessions cs JOIN apps a ON cs\.app_id = a\.id/.test(sql)
+      ? Promise.resolve({ rows: [row] }) : pool.query(sql, params)),
+  };
+  return subject.runSyncWork({ jwtSecret: 's' }, wrapped, { sessionId: row.id, steps: memorySteps(), ...opts }, {
+    integration: { measure: async () => ({ error: 'not measured here' }) },
+    votes: () => ({ reconcileNativeReviewedHead: async () => ({}) }),
+    prImportSync: () => ({ reconcileImportedHead: async () => ({}) }),
+    ...injected,
+  });
+}
+
+test('a platform sync waits for whoever works on the session, and does nothing if it never frees (review: sync 7)', async () => {
+  const { subject, execCalls, restore } = loadSyncMain({
+    execImpl: async () => ({ syncResult: 'clean', behind: 0, sha: 'abc1234', pushOk: true, exitCode: 0, costUsd: 0 }),
+  });
+  try {
+    let asks = 0;
+    const sleeps = [];
+    const freed = await direct(subject, makePool(), ownerRow(), { reason: 'boot_failure', waitForIdle: true }, {
+      sessionBusy: async () => ++asks < 3, sleep: async (ms) => { sleeps.push(ms); },
+    });
+    assert.equal(freed.outcome, 'clean', 'ran once the turn ended');
+    assert.equal(sleeps.length, 2);
+    assert.equal(execCalls.length, 1);
+    let clock = 0;
+    const never = await direct(subject, makePool(), ownerRow(), { reason: 'boot_failure', waitForIdle: true }, {
+      sessionBusy: async () => true, sleep: async () => { clock += subject.IDLE_WAIT_MS; }, now: () => clock,
+    });
+    assert.equal(never.outcome, 'busy', 'nothing ran: the machine gives its once-record back');
+    assert.equal(execCalls.length, 1, 'no second dispatch');
+  } finally {
+    restore();
+  }
+});
+
+test('a conflict GitHub reported runs the turn although the mirror measures clean (review: queue 4)', async () => {
+  const { subject, execCalls, restore } = loadSyncMain({
+    execImpl: async () => ({ syncResult: 'clean', behind: 0, sha: 'abc1234', pushOk: true, exitCode: 0, costUsd: 0 }),
+  });
+  try {
+    const clean = { integration: { measure: async () => ({ behindBy: 1, mergesClean: true, headSha: 'a'.repeat(40), mainSha: 'b'.repeat(40) }) } };
+    const mirror = await direct(subject, makePool(), ownerRow(), { reason: 'conflict' }, clean);
+    assert.equal(mirror.outcome, 'clean_now', 'the direct lane\'s, as measured');
+    assert.equal(execCalls.length, 0);
+    const github = await direct(subject, makePool(), ownerRow(), { reason: 'conflict', githubConflict: true }, clean);
+    assert.equal(github.outcome, 'clean');
+    assert.equal(execCalls.length, 1);
+  } finally {
+    restore();
+  }
+});
+
+test('an after-block run again bills and says it once; the timeline\'s progress lines are not repeated (review: sync 4, 9)', async () => {
+  const { subject, restore } = loadSyncMain({
+    execImpl: async (opts) => {
+      opts.onProgress('[sync_fetch_main]');
+      opts.onProgress('[sync_fetch_main]');
+      opts.onProgress('[sync_merge]');
+      return { syncResult: 'clean', behind: 2, sha: 'abc1234', pushOk: true, exitCode: 0, costUsd: 0.2 };
+    },
+  });
+  try {
+    const pool = makePool();
+    const steps = memorySteps();
+    const row = ownerRow({ source: 'cli_handoff' });
+    let adopt = 0;
+    const cliId = require.resolve('../src/services/cli-handoff-sync');
+    const origCli = require.cache[cliId];
+    stub(cliId, { reconcileCliHandoffSync: async () => (++adopt === 1 ? { ok: false, reason: 'blip' } : { ok: true }) });
+    try {
+      await assert.rejects(direct(subject, pool, row, { reason: 'person', steps }), /could not adopt/);
+      const again = await direct(subject, pool, row, { reason: 'person', steps });
+      assert.equal(again.outcome, 'clean');
+    } finally {
+      if (origCli) require.cache[cliId] = origCli; else delete require.cache[cliId];
+    }
+    assert.equal(sysSpendInserts(pool).length, 1, 'billed once across both runs');
+    const progress = pool.calls.filter((c) => /SET metadata = jsonb_set/.test(c.sql)).map((c) => JSON.parse(c.params[0])[0]);
+    assert.deepEqual(progress, ['Fetching main…', 'Merging origin/main…'], 'each line once');
   } finally {
     restore();
   }

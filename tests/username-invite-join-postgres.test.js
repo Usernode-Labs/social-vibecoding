@@ -49,6 +49,12 @@ test('an invite by username joins a group the way its link does, against the ful
   // that failed the file on its teardown (5 of 6 runs). Expected here.
   pool.on('error', () => {});
   await pool.query(fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8'));
+  // #5104: accounts start out reachable only by people they share a project
+  // with, and out of searches. This file's people are strangers who write
+  // to, invite and find each other, which is what it pins, so here they
+  // start out open; tests/contact-privacy-postgres.test.js pins the defaults.
+  await pool.query(`ALTER TABLE users ALTER COLUMN contact_policy SET DEFAULT 'anyone',
+                                      ALTER COLUMN profile_discoverable SET DEFAULT TRUE`);
   const config = {
     databaseUrl: String(url), selfAppSlug: 'no-such-self-app', selfAppPublicVoting: true,
     challengeScorer: { intervalMinutes: 0 },
@@ -176,6 +182,7 @@ test('an invite by username joins a group the way its link does, against the ful
     assert.deepEqual(rest, {
       kind: 'collab', appId: turners.id, appSlug: 'page-turners', appName: 'Page Turners',
       invitedBy: 'alex_t1005', joins: true, note: 'Come read with us!', memberCount: 2,
+      inCommunity: false,
     });
   });
 
@@ -222,6 +229,9 @@ test('an invite by username joins a group the way its link does, against the ful
     assert.deepEqual(notif, { detail: null, invite_note: null }, 'no note was written, and it is not a join');
     const [pending] = await notifications.listPendingInvites(pool, reader.id);
     assert.equal(pending.joins, false);
+    // #4740: they joined the project's community before the invite arrived,
+    // so the drawer says so instead of a headcount they are part of.
+    assert.equal(pending.inCommunity, true);
     const got = await call(reader, 'POST', `/api/invites/${lib.id}/accept`);
     assert.deepEqual(got.body, { ok: true, appSlug: 'open-library' }, 'already in its community: no "You joined"');
   });

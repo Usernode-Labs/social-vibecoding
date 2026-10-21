@@ -11,12 +11,17 @@
 // pushed number indefinitely while the bell said zero.
 //
 // Every read path already fans out `notifications_changed` to the user's
-// sockets (see pushToUser in ./ws.js), so that is the hook: schedule a
-// debounced sync for the user, recount with the same countUnread the bell
-// and the alert payload use, and send a badge-only push to each of the
-// user's live iOS registrations. Best-effort throughout — a sync failure
-// is logged and dropped, never retried or surfaced; the next change or
-// alert push carries the right number again.
+// sockets (see pushToUser in ./ws.js), so that is the hook: the user is owed
+// a re-badge, a row of mobile_push_badge_syncs that the push sender drains
+// once it has settled for the debounce (mobile-push-worker.js drainBadges,
+// on whichever process runs the push-drain clock), recounting with the same
+// countUnread the bell and the alert payload use, and sending a badge-only
+// push to each of the user's live iOS registrations. The workflow machines'
+// pushes write the same row (platform.ts publishPushes). It was a timer in
+// the process that heard the change: lost to a restart, and one per process
+// that heard it. Best-effort throughout — a sync failure is logged and
+// dropped, never retried or surfaced; the next change or alert push carries
+// the right number again.
 //
 // #3050: not every clear announced itself (a kudos retraction, leaving or
 // being removed from a conversation, an un-reaction, cascades), and the app
@@ -39,25 +44,21 @@ class MobilePushBadgeSync {
     this.provider = provider;
     this.debounceMs = options.debounceMs ?? DEFAULT_DEBOUNCE_MS;
     this.sendTimeoutMs = options.sendTimeoutMs ?? DEFAULT_SEND_TIMEOUT_MS;
-    this.timers = new Map();
   }
 
-  // Coalesce a burst (mark-all, several tabs clearing at once) into one
-  // push per user carrying the settled count.
+  // The user is owed a re-badge: their row, queued now. A burst (mark-all,
+  // several tabs clearing at once) is one row, and one push carrying the
+  // settled count once it has gone quiet for the debounce.
   schedule(userId) {
     const id = Number(userId);
     if (!Number.isSafeInteger(id) || id <= 0) return false;
-    if (this.timers.has(id)) clearTimeout(this.timers.get(id));
-    const timer = setTimeout(() => {
-      this.timers.delete(id);
-      this.syncUser(id).catch((err) => {
-        log.warn('mobile-push', 'badge sync failed', {
-          code: typeof err?.code === 'string' ? err.code : 'unknown',
-        });
-      });
-    }, this.debounceMs);
-    timer.unref?.();
-    this.timers.set(id, timer);
+    this.pool.query(
+      `INSERT INTO mobile_push_badge_syncs (user_id) SELECT id FROM users WHERE id = $1
+       ON CONFLICT (user_id) DO UPDATE SET queued_at = now(), claimed_until = NULL`,
+      [id]
+    ).catch((err) => {
+      log.warn('mobile-push', 'badge sync not queued', { code: typeof err?.code === 'string' ? err.code : 'unknown' });
+    });
     return true;
   }
 
@@ -118,10 +119,7 @@ class MobilePushBadgeSync {
     ]).finally(() => clearTimeout(timer));
   }
 
-  stop() {
-    for (const timer of this.timers.values()) clearTimeout(timer);
-    this.timers.clear();
-  }
+  stop() {}
 }
 
 module.exports = { MobilePushBadgeSync, DEFAULT_DEBOUNCE_MS };

@@ -48,7 +48,7 @@ export const AppContext = Object.assign(
   {
     /** Show the facts about the app in context — the sheet's second pane. */
     showAbout() {
-      appContextStore.set({ view: 'about' });
+      appContextStore.set({ view: 'about', back: 'menu' });
     },
     /**
      * The invite pane, in a sheet that is already open. To OPEN onto it,
@@ -72,8 +72,13 @@ export const AppContext = Object.assign(
      * So the pane's state is read first, for up to INVITE_WAIT_MS, and the
      * pane is chosen before the sheet opens (openAt), so the first thing the
      * kit measures is the pane as it will stay.
+     *
+     * From About's Invite the sheet is already open, and `back: 'about'`
+     * makes its back disc return there.
+     *
+     * @param {{ back?: 'menu' | 'about' }} [opts]
      */
-    openInvite() {
+    openInvite(opts = {}) {
       const { slug } = improveStore.get();
       const ready = slug
         ? Promise.race([
@@ -84,12 +89,18 @@ export const AppContext = Object.assign(
       return ready.then(() => {
         // Somewhere else by now (a tab, Back): its project is not in context.
         if (improveStore.get().slug !== slug) return;
+        appContextStore.set({ back: opts.back === 'about' ? 'about' : 'menu' });
         openAt('invite');
       });
     },
     /** Back to the app's options. */
     showMenu() {
-      appContextStore.set({ view: 'menu' });
+      appContextStore.set({ view: 'menu', back: 'menu' });
+    },
+    /** The header's back disc: one step back, to the pane this one came from. */
+    goBack() {
+      const { view, back } = appContextStore.get();
+      appContextStore.set({ view: view === 'invite' && back === 'about' ? 'about' : 'menu', back: 'menu' });
     },
   },
 );
@@ -134,7 +145,7 @@ function openAt(view) {
 let wasOpen = appContextStore.get().open;
 appContextStore.subscribe(() => {
   const { open } = appContextStore.get();
-  if (wasOpen && !open) appContextStore.set({ view: 'menu' });
+  if (wasOpen && !open) appContextStore.set({ view: 'menu', back: 'menu' });
   wasOpen = open;
 });
 

@@ -39,6 +39,11 @@
 const log = require('./logger');
 const mirror = require('./repo-mirror');
 
+// The preview machine's instance of a session (preview/machine.ts MACHINE,
+// sessionKey), which a measurement tells when a deferred head merges cleanly.
+const PREVIEW_MACHINE = 'preview';
+const PREVIEW_KEY_PREFIX = 'session:';
+
 const SHA_RE = /^[0-9a-f]{40}$/;
 
 // How long a measurement is good enough on a read path a voter is waiting on.
@@ -100,6 +105,27 @@ function readIntegration(session) {
       && normalizeSha(s.reviewed_head_sha)
       && normalizeSha(s.integration_head_sha) !== normalizeSha(s.reviewed_head_sha)),
   };
+}
+
+// The commits a measurement of this proposal asks the mirror about.
+function knownShas(s) {
+  return [s.reviewed_head_sha, s.checks_base_sha, s.checks_commit_sha].map(normalizeSha).filter(Boolean);
+}
+
+/**
+ * One fetch of an app's mirror for every open proposal on it, with all the
+ * commits they will ask about, for the sweep that measures them in turn
+ * (`measure(..., { mirrorDir })`). Each measurement used to fetch the whole
+ * repository again: on 19 Oct 2026 a pass measured about 126 proposals with
+ * a full `git fetch` each, every two minutes, and the session sweeper the
+ * pass lived in took two to ten minutes. Throws as ensureMirror does.
+ */
+async function fetchAppMirror(sessions) {
+  const list = (sessions || []).filter(Boolean);
+  const parsed = list.length ? parseRepo(list[0].repo_url) : null;
+  if (!parsed) return null;
+  const refs = [...new Set(list.flatMap(knownShas))];
+  return mirror.ensureMirror(parsed.owner, parsed.repo, { refs });
 }
 
 /** Is this measurement young enough that a read path should not re-take it? */
@@ -230,9 +256,10 @@ async function measure({ pool, session }, options = {}) {
   };
 
   try {
-    const known = [s.reviewed_head_sha, s.checks_base_sha, s.checks_commit_sha]
-      .map(normalizeSha).filter(Boolean);
-    const dir = await mirror.ensureMirror(parsed.owner, parsed.repo, { refs: known });
+    // `mirrorDir`: the sweep fetched this app's mirror once for every open
+    // proposal on it (fetchAppMirror), so this one reads it as it is.
+    const dir = options.mirrorDir
+      || await mirror.ensureMirror(parsed.owner, parsed.repo, { refs: knownShas(s) });
 
     const mainSha = await mirror.defaultBranchSha(dir);
     if (!mainSha) throw new Error(`${parsed.owner}/${parsed.repo} has no default-branch commit`);
@@ -276,22 +303,45 @@ async function measure({ pool, session }, options = {}) {
     return { ...answer, measuredAt: new Date().toISOString(), error: next.error };
   }
 
-  const blockReasons = options.blockReasons === undefined
-    ? (Array.isArray(s.integration_block_reasons) ? s.integration_block_reasons : [])
+  // Without `blockReasons` the stored ones stay as their writer (the merge
+  // gate) left them: a measurement that copied the caller's row back wrote
+  // a stale copy over the gate's newer answer.
+  const blockReasons = options.blockReasons === undefined ? null
     : (Array.isArray(options.blockReasons) ? options.blockReasons
       : [options.blockReasons].filter(Boolean));
 
   // What the row said before this write, read in the same statement so the
   // comparison is against the STORED answer rather than the caller's copy of
   // the session, which may be minutes and several measurements old.
+  //
+  // The one transition that starts work rides the same statement: a head
+  // that conflicted and now merges cleanly is a head whose checks were held
+  // back (check-admission) and can run, so the preview machine is told
+  // (`ConflictResolved`, preview/machine.ts) in the write that records it.
+  // Same head only: a NEW head that measures clean gets its checks from the
+  // build its push started. The machine runs the checks only while that
+  // head is deferred; a session it does not hold has nothing deferred. Told
+  // after the commit instead, a restart in between lost it for good, as the
+  // row already said clean.
   let wasClean = null;
   let wasHead = null;
+  let storedReasons = null;
   try {
     const { rows } = await pool.query(
       `WITH prev AS (
          SELECT integration_merges_clean AS was_clean, integration_head_sha AS was_head
            FROM chat_sessions WHERE id = $1
-       )
+       ),
+       resolved AS (
+         INSERT INTO wf_events (machine, key, app_id, type, payload, source, actor, request_key, caused_by)
+         SELECT wi.machine, wi.key, wi.app_id, 'ConflictResolved', jsonb_build_object('head', $2::text),
+                '{"kind":"system","name":"conflict-resolved"}'::jsonb, NULL,
+                'clean:' || $2 || ':v' || wi.version, NULL
+           FROM prev JOIN wf_instances wi ON wi.machine = '${PREVIEW_MACHINE}' AND wi.key = '${PREVIEW_KEY_PREFIX}' || $1::int
+          WHERE prev.was_clean = FALSE AND $7::boolean IS TRUE AND lower(prev.was_head) = lower($2::text)
+         RETURNING id
+       ),
+       u AS (
        UPDATE chat_sessions
           SET integration_measured_at = NOW(),
               integration_head_sha = $2,
@@ -303,43 +353,31 @@ async function measure({ pool, session }, options = {}) {
               integration_conflict_paths = $8::jsonb,
               integration_merged_tree = $9,
               integration_checks_base_current = $10,
-              integration_block_reasons = $11::jsonb,
+              integration_block_reasons = COALESCE($11::jsonb, integration_block_reasons),
               integration_error = NULL
         WHERE id = $1
     RETURNING (SELECT was_clean FROM prev) AS was_clean,
-              (SELECT was_head FROM prev) AS was_head`,
+              (SELECT was_head FROM prev) AS was_head,
+              integration_block_reasons AS block_reasons
+       )
+       SELECT u.*, (SELECT pg_notify('wf_events', '${PREVIEW_MACHINE}') FROM resolved LIMIT 1) IS NOT NULL AS resolved
+         FROM u`,
       [
         s.id, next.headSha, next.mainSha, next.baseSha,
         next.behindBy, next.aheadBy, next.mergesClean,
         JSON.stringify(next.conflictPaths), next.mergedTree,
-        next.checksBaseCurrent, JSON.stringify(blockReasons),
+        next.checksBaseCurrent, blockReasons == null ? null : JSON.stringify(blockReasons),
       ]
     );
     wasClean = rows[0] ? rows[0].was_clean : null;
     wasHead = rows[0] ? rows[0].was_head : null;
+    storedReasons = rows[0] && Array.isArray(rows[0].block_reasons) ? rows[0].block_reasons : null;
+    if (rows[0] && rows[0].resolved) {
+      log.info('integration', 'proposal now merges cleanly with main', { sessionId: s.id, headSha: next.headSha });
+    }
   } catch (err) {
     log.warn('integration', 'write failed', { sessionId: s.id, err: err.message });
     return { ...answer, error: err.message };
-  }
-
-  // The one transition that starts work: a head that conflicted and now
-  // merges cleanly is a head whose checks were held back (check-admission)
-  // and can run. Same head only — a NEW head that measures clean gets its
-  // checks from the build its push started, and a hook here would run them
-  // twice. The hook is registered at boot, since this module has no config
-  // of its own; unregistered, the transition is simply logged.
-  if (wasClean === false && next.mergesClean === true
-      && wasHead && normalizeSha(wasHead) === normalizeSha(next.headSha)) {
-    log.info('integration', 'proposal now merges cleanly with main', {
-      sessionId: s.id, headSha: next.headSha,
-    });
-    if (typeof _onBecameClean === 'function') {
-      Promise.resolve()
-        .then(() => _onBecameClean({ ...s, integration_head_sha: next.headSha }))
-        .catch((err) => log.warn('integration', 'became-clean hook failed', {
-          sessionId: s.id, err: err && err.message,
-        }));
-    }
   }
 
   const written = readIntegration({
@@ -354,7 +392,7 @@ async function measure({ pool, session }, options = {}) {
     integration_conflict_paths: next.conflictPaths,
     integration_merged_tree: next.mergedTree,
     integration_checks_base_current: next.checksBaseCurrent,
-    integration_block_reasons: blockReasons,
+    integration_block_reasons: blockReasons ?? storedReasons ?? [],
     integration_error: null,
   });
 
@@ -426,60 +464,20 @@ async function setBlockReasons(pool, sessionId, reasons) {
  * statement, atomically, with no window in which a tally is half-cleared —
  * and the rows survive as a record of what was approved and when.
  *
- * Returns the new epoch, or null when the row was gone.
+ * Returns the new epoch, or null when nothing moved (the row gone, closed or
+ * merged).
  */
 async function clearApprovals(pool, sessionId, reason) {
-  const { rows } = await pool.query(
-    `UPDATE chat_sessions
-        SET approval_epoch = approval_epoch + 1
-      WHERE id = $1
-      RETURNING approval_epoch`,
-    [sessionId]
-  );
-  const epoch = rows[0] ? parseInt(rows[0].approval_epoch, 10) : null;
+  // The proposal machine's move (Q3): refused for a proposal that has closed
+  // or merged, whose votes are a record now (bug 6).
+  void pool;
+  const out = await require('../workflow/platform.ts').clearProposalApprovals({ sessionId: Number(sessionId), reason: reason || null });
+  const epoch = out && (out.status === 'accepted' || out.status === 'replayed') && out.reply?.epoch != null
+    ? parseInt(out.reply.epoch, 10) : null;
   if (epoch != null) {
     log.info('integration', 'Approvals cleared', { sessionId, epoch, reason: reason || null });
   }
   return epoch;
-}
-
-// ── The conflict lane's one pre-approval resolution ─────────────────────
-
-/**
- * Record that the queue spent a resolution on this proposal's current
- * authored head. "Current authored head" IS the approval epoch: an authored
- * push bumps it, the platform's own mechanical or resolved moves do not
- * (routes/votes.js reconcileNativeReviewedHead), so stamping the epoch ties
- * the resolution to the author's work rather than to a commit that the
- * resolution itself is about to replace. Never throws.
- */
-async function markResolutionSpent(pool, sessionId) {
-  try {
-    await pool.query(
-      `UPDATE chat_sessions SET integration_resolved_epoch = approval_epoch WHERE id = $1`,
-      [sessionId]
-    );
-  } catch (err) {
-    log.warn('integration', 'resolution stamp failed', { sessionId, err: err.message });
-  }
-}
-
-/**
- * Has this authored head already had its pre-approval resolution?
- * Reads the two columns off a row; a row that predates the stamp has not.
- */
-function resolutionSpent(session) {
-  const s = session || {};
-  const spent = intOrNull(s.integration_resolved_epoch);
-  if (spent == null) return false;
-  return spent === (intOrNull(s.approval_epoch) ?? 0);
-}
-
-// Registered once at boot (server.js) with the platform config in scope; see
-// measure() for the one transition that calls it.
-let _onBecameClean = null;
-function onBecameClean(fn) {
-  _onBecameClean = typeof fn === 'function' ? fn : null;
 }
 
 // The SQL predicate for "this vote still counts" is owned by
@@ -492,13 +490,11 @@ module.exports = {
   readIntegration,
   isFresh,
   measure,
+  fetchAppMirror,
   measureDeduped,
   setBlockReasons,
   classifyHeadMove,
   clearApprovals,
-  markResolutionSpent,
-  resolutionSpent,
-  onBecameClean,
   currentVotePredicateSql,
   MEASURE_TTL_MS,
   _normalizeSha: normalizeSha,

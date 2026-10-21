@@ -1,7 +1,9 @@
 'use strict';
 
 /**
- * Fleet maintenance campaign API (services/fleet-maintenance.js).
+ * Fleet maintenance campaign API. A campaign is the campaign machine's
+ * (src/workflow/campaign/): these routes read its projections and append an
+ * admin's moves, answering with the machine's outcome.
  *
  * - GET  /api/campaigns                      — admin: list campaigns w/
  *                                              counts
@@ -10,9 +12,17 @@
  *                                              so never read-open)
  * - POST /api/campaigns/:id/merge-green      — admin: force-merge every
  *                                              campaign proposal whose
- *                                              checks pass
+ *                                              checks pass now
  * - POST /api/campaigns/:id/apps/:appId/retry — admin: re-run one
  *                                              failed/skipped app
+ * - POST /api/campaigns/:id/stop             — admin: open no further
+ *                                              proposals
+ * - POST /api/campaigns/:id/resume           — admin: a stopped campaign
+ *                                              goes on with the apps it
+ *                                              never reached
+ * - POST /api/campaigns/:id/auto-merge       — admin: { on } merge each
+ *                                              campaign proposal as soon
+ *                                              as its checks pass
  *
  * Campaign CREATION is not here — a campaign starts life as a
  * kind='maintenance_campaign' governance proposal on the self-hosted app
@@ -24,7 +34,28 @@ const { Router } = require('express');
 const { getPool } = require('../db/pool');
 const log = require('../services/logger');
 const fleetMaintenance = require('../services/fleet-maintenance');
+const platform = () => require('../workflow/platform.ts');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
+
+// What the machine's refusal of an admin's move answers.
+const REFUSALS = new Map([
+  ['not_found', [404, 'Campaign not found']],
+  ['not_in_campaign', [404, 'Campaign app not found']],
+  ['not_retryable', [409, 'App is not in a retryable state (failed/skipped)']],
+  ['stopped', [409, 'The campaign was stopped']],
+  ['done', [409, 'The campaign is already done']],
+  ['running', [409, 'The campaign is already running']],
+  ['nothing_to_resume', [409, 'Every app was reached before the stop: there is nothing to resume']],
+  // A campaign whose Start the machine has not applied yet (the moment after
+  // its governance apply inserted it).
+  ['no_instance', [409, 'The campaign is starting. Try again in a moment.']],
+]);
+function refused(res, outcome) {
+  if (outcome.status === 'faulted') return res.status(500).json({ error: 'Internal server error' });
+  const [status, error] = REFUSALS.get(outcome.reason) || [409, outcome.reason || 'refused'];
+  return res.status(status).json({ error, reason: outcome.reason || null });
+}
+const settled = (outcome) => outcome.status === 'accepted' || outcome.status === 'replayed';
 
 // A campaign or app id from the path, or null when it is not a positive
 // integer — answered as 404 rather than handed to Postgres as a bad cast.
@@ -35,6 +66,7 @@ function positiveId(raw) {
 function campaignRoutes(config) {
   const router = Router();
   const pool = getPool(config);
+  const exists = async (id) => (await pool.query('SELECT 1 FROM maintenance_campaigns WHERE id = $1', [id])).rows.length > 0;
 
   // Where does a campaign proposal get created? On the self-hosted
   // app's issues surface (kind='maintenance_campaign'). The admin
@@ -110,13 +142,13 @@ function campaignRoutes(config) {
       log.info('campaigns', 'Merge-green requested', {
         campaignId: status.id, by: req.user.username,
       });
-      // Merges run sequentially with a delay per merge (each triggers a
-      // production rebuild) — for a large fleet this response can take a
-      // while; the dashboard polls GET /:id for live per-app state anyway.
-      const results = await fleetMaintenance.mergeGreen(config, pool, status.id, {
-        forceBy: req.user,
-      });
-      res.json({ ok: true, results });
+      // Every green proposal is forced at once, in the machine's transaction
+      // (Q4); each merges through its app's queue as soon as it can, and the
+      // dashboard's poll shows them land. App delivery paces the rebuilds.
+      const outcome = await platform().campaignEvent(status.id, 'MergeGreen', {}, req.user);
+      if (outcome.status === 'pending') return res.status(202).json({ ok: true, pending: true });
+      if (!settled(outcome)) return refused(res, outcome);
+      res.json({ ok: true, forced: (outcome.reply && outcome.reply.asked) || [] });
     } catch (err) {
       log.error('campaigns', 'Merge-green failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
@@ -130,14 +162,76 @@ function campaignRoutes(config) {
       }
       const id = positiveId(req.params.id);
       const appId = positiveId(req.params.appId);
-      if (!id || !appId) return res.status(404).json({ error: 'Campaign app not found' });
-      const retried = await fleetMaintenance.retryCampaignApp(config, pool, id, appId);
-      if (!retried) {
-        return res.status(409).json({ error: 'App is not in a retryable state (failed/skipped)' });
-      }
+      if (!id || !appId || !(await exists(id))) return res.status(404).json({ error: 'Campaign app not found' });
+      const outcome = await platform().campaignEvent(id, 'RetryApp', { appId }, req.user);
+      if (outcome.status === 'pending') return res.status(202).json({ ok: true, pending: true });
+      if (!settled(outcome)) return refused(res, outcome);
       res.json({ ok: true });
     } catch (err) {
       log.error('campaigns', 'Retry failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Stop: no further app is changed, the change under way is abandoned, and
+  // the proposals already opened stay up for their vote (Q3).
+  router.post('/api/campaigns/:id/stop', sameOriginBrowserOnly, async (req, res) => {
+    try {
+      if (!req.user?.canAdminWrite) {
+        return res.status(403).json({ error: 'Full admin access required' });
+      }
+      const id = positiveId(req.params.id);
+      if (!id || !(await exists(id))) return res.status(404).json({ error: 'Campaign not found' });
+      log.info('campaigns', 'Stop requested', { campaignId: id, by: req.user.username });
+      const outcome = await platform().campaignEvent(id, 'Stop', {}, req.user);
+      if (outcome.status === 'pending') return res.status(202).json({ ok: true, pending: true });
+      if (!settled(outcome)) return refused(res, outcome);
+      res.json({ ok: true });
+    } catch (err) {
+      log.error('campaigns', 'Stop failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Resume: a stopped campaign goes on with the apps the stop never reached,
+  // at the pace its room allows (src/workflow/campaign/machine.ts holdFor).
+  router.post('/api/campaigns/:id/resume', sameOriginBrowserOnly, async (req, res) => {
+    try {
+      if (!req.user?.canAdminWrite) {
+        return res.status(403).json({ error: 'Full admin access required' });
+      }
+      const id = positiveId(req.params.id);
+      if (!id || !(await exists(id))) return res.status(404).json({ error: 'Campaign not found' });
+      log.info('campaigns', 'Resume requested', { campaignId: id, by: req.user.username });
+      const outcome = await platform().campaignEvent(id, 'Resume', {}, req.user);
+      if (outcome.status === 'pending') return res.status(202).json({ ok: true, pending: true });
+      if (!settled(outcome)) return refused(res, outcome);
+      res.json({ ok: true });
+    } catch (err) {
+      log.error('campaigns', 'Resume failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Auto-merge: { on: true } and the campaign merges each of its proposals
+  // whose checks pass as they come in (every check, and at once), in this
+  // admin's name; { on: false } stops that.
+  router.post('/api/campaigns/:id/auto-merge', sameOriginBrowserOnly, async (req, res) => {
+    try {
+      if (!req.user?.canAdminWrite) {
+        return res.status(403).json({ error: 'Full admin access required' });
+      }
+      const id = positiveId(req.params.id);
+      if (!id || !(await exists(id))) return res.status(404).json({ error: 'Campaign not found' });
+      const on = req.body && req.body.on;
+      if (typeof on !== 'boolean') return res.status(400).json({ error: 'Provide on: true or false.' });
+      log.info('campaigns', 'Auto-merge set', { campaignId: id, on, by: req.user.username });
+      const outcome = await platform().campaignEvent(id, 'AutoMerge', { on }, req.user);
+      if (outcome.status === 'pending') return res.status(202).json({ ok: true, pending: true });
+      if (!settled(outcome)) return refused(res, outcome);
+      res.json({ ok: true, on });
+    } catch (err) {
+      log.error('campaigns', 'Auto-merge failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });

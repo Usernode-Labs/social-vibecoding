@@ -57,12 +57,23 @@ const COMPONENTS = new Set([
   // helperMessage), each named so its speed and fallback rate read on their own.
   'short_description',
   'app_sketch',
+  // A first version's plan at Make it (services/first-version-plan.js).
+  'first_version_plan',
+  // And its early first look, drawn from that plan (services/first-version-early-look.js).
+  'first_version_look',
   'challenge_grade',
   'challenge_grade_feedback',
   'challenge_grade_proposal',
+  // A failed run's checks in plain words, on the change's page
+  // (services/checks-explanation.js).
+  'checks_explanation',
   'chat_ask',
   'workshop_ask',
   'content_review',
+  // The translation step's catalog requests (services/language-sync.js), sent
+  // one by one or as a Message Batch.
+  'language_sync',
+  'dictation',
   'other_helper',
 ]);
 const BILLING_PATHS = new Set([
@@ -87,6 +98,12 @@ const ERROR_CLASSES = new Set([
   'cancelled', 'timeout', 'rate_limited', 'authentication', 'permission',
   'billing', 'invalid_request', 'not_found', 'overloaded', 'network',
   'provider', 'worker', 'unknown',
+]);
+// How a coding turn's process went when it left no exit marker (worker.js
+// markerlessCause): its worker was OOM-killed, its container went, its
+// process went, or the platform lost sight of it.
+const MARKERLESS_CAUSES = new Set([
+  'oom_killed', 'container_gone', 'turn_process_gone', 'probe_unobservable',
 ]);
 
 let configuredPoolSource = null;
@@ -128,6 +145,13 @@ function safeString(value, max = 255) {
 function safeReason(value) {
   const text = safeString(value, 64);
   return text && /^[a-zA-Z0-9_.:-]+$/.test(text) ? text : null;
+}
+
+// A routed host's display name, as OpenRouter reports it ("Together",
+// "Google Vertex"): words, never free text.
+function safeHostName(value) {
+  const text = safeString(value, 80);
+  return text && /^[A-Za-z0-9][A-Za-z0-9 ._-]*$/.test(text) ? text : null;
 }
 
 function safeOpaqueId(value, max = 180) {
@@ -199,12 +223,26 @@ function normalizeEvent(event = {}) {
     attempt_number: attempt && attempt > 0 ? attempt : null,
     correlation_id: safeOpaqueId(event.correlationId),
   };
+  // Which of OpenRouter's providers served (or refused) a helper call
+  // (llm.js askHelperModel), beside `provider`, which names the ledger's
+  // route ('openrouter'), not its host. A provider's name, never content;
+  // absent when unknown, so older rows and other callers are unchanged.
+  addOptional(normalized, { routed_provider: safeProviderName(event.routedProvider) });
 
   return Object.assign(normalized, normalizeDiagnostics(event));
 }
 
+// An OpenRouter provider's name as OpenRouter gives it ("Z.AI",
+// "DeepInfra", "Together"): a few plain characters, else nothing.
+function safeProviderName(value) {
+  const text = safeString(value, 80);
+  return text && /^[\w .-]+$/.test(text) ? text : null;
+}
+
 // Complete content-free diagnostic contract. Every value below is either a
-// bounded number, a strict enum, a model/region slug, or a boolean. Free-form
+// bounded number, a strict enum, a model/region slug, a boolean, or (one
+// field, tool_sequence) a bounded list of names from a closed set
+// (toolSequenceName). Free-form
 // request/response/error data is never accepted, and unknown optional values
 // are omitted so old/new provider shapes remain distinguishable from zero.
 // Exported for agent_turns, whose OpenRouter rows are the authoritative ledger
@@ -219,6 +257,9 @@ function normalizeDiagnostics(event = {}) {
     service_tier: enumOrNull(event.serviceTier, SERVICE_TIERS),
     requested_inference_region: safeReason(event.requestedInferenceRegion),
     inference_region: safeReason(event.inferenceRegion),
+    // The host OpenRouter routed the call to (its `provider`), which
+    // `provider` ('openrouter') cannot say (run five, 13 Oct 2026).
+    served_provider: safeHostName(event.servedProvider),
     reasoning_effort: enumOrNull(event.reasoningEffort, REASONING_EFFORTS),
     error_class: enumOrNull(event.errorClass, ERROR_CLASSES),
 
@@ -304,6 +345,12 @@ function normalizeDiagnostics(event = {}) {
     image_sent_count: tokenCount(event.imageSentCount),
     image_moved_count: tokenCount(event.imageMovedCount),
     image_omitted_count: tokenCount(event.imageOmittedCount),
+    image_pruned_count: tokenCount(event.imagePrunedCount),
+    // Under a first version's lean_turns tweak (worker.js
+    // noteCodingProviderToolOutput): the older browser and shell results its
+    // requests shortened, and the characters they left out.
+    tool_output_pruned_count: tokenCount(event.toolOutputPrunedCount),
+    tool_output_pruned_chars: tokenCount(event.toolOutputPrunedChars),
     // Where an OpenRouter coding turn's time went (worker.js
     // noteCodingRequestClock): the time a model request was open, the time
     // between requests split by the kind of tool that ran in it, and when
@@ -319,12 +366,95 @@ function normalizeDiagnostics(event = {}) {
     first_app_boot_ms: finiteNonnegative(event.firstAppBootMs),
     first_browser_call_ms: finiteNonnegative(event.firstBrowserCallMs),
     last_browser_call_ms: finiteNonnegative(event.lastBrowserCallMs),
+    // What the turn's own look-and-fix loop changed (worker.js
+    // noteFileChangeAfterBrowser): its edits after its first browser call,
+    // and how many files they touched. Counts only; absent for a turn that
+    // never used the browser. The paths themselves are kept on the turn's
+    // own agent_turns row (agent-turn.js), never in this ledger.
+    file_change_after_first_browser_count: tokenCount(event.fileChangeAfterFirstBrowserCount),
+    distinct_file_change_after_first_browser_count: tokenCount(event.distinctFileChangeAfterFirstBrowserCount
+      ?? (event.browserCallSeen === true && event.telemetryFileChangesAfterBrowser instanceof Set
+        ? event.telemetryFileChangesAfterBrowser.size : null)),
     // The Homeroom bot's build turns in Claude Code: how many times the stop
     // guard (worker/build-stop-hook.js) sent the agent back to work after it
     // tried to end a turn that had changed nothing. Absent without the guard.
     stop_hook_blocks: tokenCount(event.stopHookBlocks),
+    // And how many servers it left running in its workspace that the guard
+    // stopped as its turn ended (a server left running held run 190's turn
+    // open nine minutes). Absent without the guard.
+    stop_hook_servers_stopped: tokenCount(event.stopHookServersStopped),
+    // Why a turn that left no exit marker ended (worker.js markerlessCause),
+    // and the memory its worker's container used: the most it had used by
+    // the turn's end, its limit, and how many processes the kernel killed
+    // for memory, all read from its cgroup by the runner (run-cc.sh,
+    // run-codex-agent.sh). 17 Oct 2026: the bot's builds that died of
+    // memory were recorded as provider failures that changed nothing.
+    markerless_cause: enumOrNull(event.markerlessCause, MARKERLESS_CAUSES),
+    worker_memory_peak_mib: tokenCount(event.workerMemoryPeakMib),
+    worker_memory_limit_mib: tokenCount(event.workerMemoryLimitMib),
+    worker_oom_kill_count: tokenCount(event.workerOomKillCount),
     usage_reset_detected: booleanOrNull(event.usageResetDetected),
+    // What a coding turn's first and last model requests carried, in bytes of
+    // the wire request, as its request listener measured them (worker.js
+    // noteRequestSize): the whole payload, the conversation, the
+    // instructions, and how many conversation items. Sizes only.
+    ...requestSizeFields('first_request', event.firstRequestSize),
+    ...requestSizeFields('last_request', event.lastRequestSize),
+    // The tools a coding turn called, in order, by name alone (worker.js
+    // noteToolSequence), and how many past its bound were not kept.
+    tool_sequence: toolSequence(event.toolSequence),
+    tool_sequence_dropped: tokenCount(event.toolSequenceDropped),
   });
+}
+
+function requestSizeFields(prefix, size) {
+  if (!size || typeof size !== 'object') return {};
+  return {
+    [`${prefix}_payload_bytes`]: tokenCount(size.payloadBytes),
+    [`${prefix}_input_bytes`]: tokenCount(size.inputBytes),
+    [`${prefix}_instruction_bytes`]: tokenCount(size.instructionBytes),
+    [`${prefix}_input_items`]: tokenCount(size.inputItems),
+    // Claude Code's adapter says what the tool definitions weigh.
+    ...(size.toolBytes != null ? { [`${prefix}_tool_bytes`]: tokenCount(size.toolBytes) } : {}),
+  };
+}
+
+// A tool-name list, at most TOOL_SEQUENCE_MAX of them, each one the
+// platform knows (toolSequenceName); null for none.
+const TOOL_SEQUENCE_MAX = 400;
+function toolSequence(value) {
+  if (!Array.isArray(value) || !value.length) return null;
+  return value.slice(0, TOOL_SEQUENCE_MAX).map(toolSequenceName);
+}
+
+// The names a tool sequence may hold: the coding agents' own tools, and the
+// tools of the MCP servers the platform itself gives a turn (the in-loop
+// browser's browser_*, the Homeroom read tools, visible_changes), each by its
+// bare tool name. Anything else, a repository's or a person's own MCP server
+// above all, is `mcp` or `other`: its name is theirs, and this ledger is
+// content-free (no server name, no path, no command).
+const SEQUENCE_TOOL_NAMES = new Set([
+  'Bash', 'BashOutput', 'KillShell', 'KillBash', 'Read', 'Write', 'Edit', 'MultiEdit', 'Glob', 'Grep', 'LS',
+  'NotebookEdit', 'NotebookRead', 'TodoWrite', 'Task', 'Agent', 'WebFetch', 'WebSearch', 'Skill', 'ToolSearch',
+  'ExitPlanMode',
+  // Codex's own items (src/agents/codex-openrouter.js).
+  'command', 'file_change', 'file_read',
+  'get_platform_conventions', 'get_app', 'list_requests', 'get_request', 'get_proposal', 'get_change',
+  'declare_visible_changes', 'declare_diagram',
+  'mcp', 'other',
+]);
+const PLATFORM_MCP_SERVER_RE = /^(?:playwright|homeroom|visible_changes|browser_[a-z_]{1,40})$/;
+const PLATFORM_BROWSER_TOOL_RE = /^browser_[a-z_]{1,40}$/;
+function toolSequenceName(name) {
+  const n = typeof name === 'string' ? name : '';
+  const known = (t) => SEQUENCE_TOOL_NAMES.has(t) || PLATFORM_BROWSER_TOOL_RE.test(t);
+  if (n.startsWith('mcp__')) {
+    const at = n.lastIndexOf('__');
+    const server = n.slice(5, at);
+    const tool = n.slice(at + 2);
+    return PLATFORM_MCP_SERVER_RE.test(server) && known(tool) ? tool : 'mcp';
+  }
+  return known(n) ? n : 'other';
 }
 
 function resolvePool(poolOrConfig) {
@@ -442,15 +572,16 @@ const DIAGNOSTIC_METRIC_NAMES = Object.freeze([
   'image_sent_count', 'image_moved_count', 'image_omitted_count',
   'model_request_ms', 'browser_tool_ms', 'shell_tool_ms', 'edit_tool_ms', 'read_tool_ms',
   'other_tool_ms', 'first_file_change_ms', 'first_app_boot_ms', 'first_browser_call_ms',
-  'last_browser_call_ms', 'stop_hook_blocks',
+  'last_browser_call_ms', 'stop_hook_blocks', 'stop_hook_servers_stopped',
+  'worker_memory_peak_mib', 'worker_memory_limit_mib', 'worker_oom_kill_count',
   'turn_duration_ms', 'turn_invocation_count', 'turn_result_count',
 ]);
 
 const CATEGORY_NAMES = Object.freeze([
   'request_mode', 'tool_choice_mode', 'output_format', 'thinking_mode',
   'requested_service_tier', 'service_tier', 'inference_region',
-  'requested_inference_region',
-  'reasoning_effort', 'error_class', 'usage_reset_detected',
+  'requested_inference_region', 'served_provider',
+  'reasoning_effort', 'error_class', 'usage_reset_detected', 'markerless_cause',
   'turn_outcome', 'turn_error_code',
 ]);
 
@@ -1077,12 +1208,119 @@ function collectionComponent(value, fallback = null) {
   return COMPONENTS.has(fallback) ? fallback : null;
 }
 
+// ── The helper calls, per helper (Admin → Homeroom bot → Calls) ─────────
+//
+// The short calls llm.js helperMessage and small-change.js make, each one
+// logical call under its correlation id: attempt 1 is the helper model
+// (services/helper-model.js) and attempt 2, when there is one, the Haiku
+// fallback that answered in its place (llm.js), so a call whose first
+// attempt failed, was late or could not be used shows as fallen back.
+// Grouped by the helper and the model its first attempt asked, so a switch
+// of the helper model reads as two rows, before and after. Content-free:
+// the same counts, times and costs the ledger already holds.
+const HELPER_CALL_COMPONENTS = Object.freeze([
+  'issue_title', 'quick_replies', 'short_description', 'chat_ask', 'workshop_ask',
+  'app_sketch', 'first_version_plan', 'first_version_look', 'session_title',
+  'progress_estimate', 'challenge_grade', 'challenge_grade_feedback', 'challenge_grade_proposal',
+  'report_summary', 'content_review', 'small_change', 'checks_explanation',
+]);
+
+const HELPER_CALLS_SQL = `
+  WITH calls AS (
+    SELECT e.metadata->>'component' AS component,
+           COALESCE(NULLIF(e.metadata->>'correlation_id', ''), 'event:' || e.id::text) AS run,
+           COALESCE(NULLIF(e.metadata->>'attempt_number', '')::int, 1) AS attempt,
+           e.metadata->>'requested_model' AS model,
+           e.metadata->>'outcome' AS outcome,
+           e.metadata->>'error_class' AS error_class,
+           NULLIF(e.metadata->>'duration_ms', '')::float8 AS ms,
+           NULLIF(e.metadata->>'cost_usd', '')::float8 AS cost
+      FROM events e
+     WHERE e.event_type = $1
+       AND e.created_at >= NOW() - make_interval(days => $2::int)
+       AND e.metadata->>'component' = ANY($3::text[])
+  ), runs AS (
+    SELECT component, run,
+           (ARRAY_AGG(model ORDER BY attempt))[1] AS first_model,
+           MAX(attempt) AS attempts,
+           BOOL_OR(attempt = 1 AND outcome = 'success') AS first_ok,
+           BOOL_OR(attempt = 1 AND error_class = 'timeout') AS first_late,
+           BOOL_OR(outcome = 'success') AS answered,
+           MAX(ms) FILTER (WHERE attempt = 1) AS first_ms,
+           SUM(ms) AS total_ms,
+           SUM(cost) AS total_cost
+      FROM calls
+     GROUP BY component, run
+  )
+  SELECT component, first_model,
+         COUNT(*)::int AS calls,
+         COUNT(*) FILTER (WHERE first_ok)::int AS first_ok,
+         COUNT(*) FILTER (WHERE first_late)::int AS first_late,
+         COUNT(*) FILTER (WHERE attempts > 1)::int AS fell_back,
+         COUNT(*) FILTER (WHERE NOT answered)::int AS unanswered,
+         percentile_cont(0.5) WITHIN GROUP (ORDER BY first_ms) AS first_p50,
+         percentile_cont(0.9) WITHIN GROUP (ORDER BY first_ms) AS first_p90,
+         percentile_cont(0.5) WITHIN GROUP (ORDER BY total_ms) AS total_p50,
+         percentile_cont(0.9) WITHIN GROUP (ORDER BY total_ms) AS total_p90,
+         AVG(total_cost) AS avg_cost,
+         COALESCE(SUM(total_cost), 0) AS cost
+    FROM runs
+   GROUP BY component, first_model
+   ORDER BY component, calls DESC, first_model`;
+
+const roundMs = (v) => (v == null || !Number.isFinite(Number(v)) ? null : Math.round(Number(v)));
+const share = (n, of) => (of > 0 ? n / of : null);
+
+/**
+ * The helper calls over the last `days` days, per helper and the model its
+ * first attempt asked: how many, how many its first attempt answered, were
+ * late or fell back to Haiku, none answered, the first attempt's time and
+ * the whole call's (p50, p90), and what they cost. Read-only.
+ */
+async function helperCallsReport(pool, { days = 7 } = {}) {
+  const n = Math.min(Math.max(Math.floor(Number(days)) || 7, 1), MAX_REPORT_DAYS);
+  const { rows } = await pool.query(HELPER_CALLS_SQL, [EVENT_TYPE, n, HELPER_CALL_COMPONENTS]);
+  const helpers = [];
+  for (const r of rows) {
+    let h = helpers.find((x) => x.component === r.component);
+    if (!h) { h = { component: r.component, calls: 0, costUsd: 0, models: [] }; helpers.push(h); }
+    const calls = Number(r.calls) || 0;
+    h.calls += calls;
+    h.costUsd += Number(r.cost) || 0;
+    h.models.push({
+      model: r.first_model || null,
+      calls,
+      firstOkRate: share(Number(r.first_ok) || 0, calls),
+      lateRate: share(Number(r.first_late) || 0, calls),
+      fallbackRate: share(Number(r.fell_back) || 0, calls),
+      unanswered: Number(r.unanswered) || 0,
+      firstMs: { p50: roundMs(r.first_p50), p90: roundMs(r.first_p90) },
+      totalMs: { p50: roundMs(r.total_p50), p90: roundMs(r.total_p90) },
+      avgCostUsd: r.avg_cost == null ? null : Number(r.avg_cost),
+      costUsd: Number(r.cost) || 0,
+    });
+  }
+  helpers.sort((a, b) => b.calls - a.calls || a.component.localeCompare(b.component));
+  return {
+    days: n,
+    to: new Date().toISOString(),
+    helpers,
+    totals: {
+      calls: helpers.reduce((t, h) => t + h.calls, 0),
+      costUsd: helpers.reduce((t, h) => t + h.costUsd, 0),
+    },
+  };
+}
+
 module.exports = {
+  toolSequenceName,
   EVENT_TYPE,
   MAX_REPORT_DAYS,
   init,
   record,
   aggregateReport,
+  helperCallsReport,
+  HELPER_CALL_COMPONENTS,
   normalizeEvent,
   normalizeDiagnostics,
   collectionComponent,

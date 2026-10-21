@@ -4,7 +4,7 @@
 //
 // The Caddyfile's wildcard site routes every `<slug>.<domain>` request to
 // the container named `usernode-app-<slug>`. When that container is down
-// (crashed, stopped, or mid-redeploy — rebuildProduction stops the old
+// (crashed, stopped, or mid-redeploy — deployProduction stops the old
 // container before the new one passes its healthcheck), the proxy fails
 // and Caddy's handle_errors used to answer with the raw text "502 Bad
 // Gateway". Now the wildcard site's handle_errors rewrites 502/503/504 to
@@ -18,10 +18,11 @@
 //      itself every ~5s and reloads the moment the app answers; after ~2
 //      minutes it switches to the honest "Still not responding — the team
 //      has been notified" escalation and slows down.
-//   2. Kicks the production watchdog's on-demand heal for the slug
-//      (services/app-heal.js requestHeal), so a visitor landing on a dead
-//      app starts its recovery immediately instead of waiting for the
-//      next sweep tick.
+//   2. Tells app delivery the app could not be reached
+//      (services/app-heal.js reportVisit), so a visitor landing on a dead
+//      app starts its recovery now instead of at the next look of the
+//      app-health clock, and one up but not answering is probed. App
+//      delivery decides whether to heal it (src/workflow/app-delivery/).
 //
 // Mounted in server.js BEFORE authMiddleware: the request arrives
 // host-routed from Caddy carrying the original app-subdomain Host and no
@@ -36,6 +37,7 @@ const { getPool } = require('../db/pool');
 const log = require('../services/logger');
 const appAccess = require('../services/app-access');
 const appHeal = require('../services/app-heal');
+const appOutages = require('../services/app-outages');
 
 // How long the page keeps showing the calm "restarting" copy before
 // escalating to "still not responding" (client-side; keep in sync with
@@ -144,13 +146,16 @@ function appErrorRoutes(config) {
     const rawHost = req.headers['x-forwarded-host'] || req.headers.host;
 
     let displayName = null;
+    let productionSlug = null;
     try {
-      const parsed = appAccess.parseAppHost(rawHost);
+      // A Homeroom host or a live custom domain (#4405).
+      const parsed = await require('../services/app-domains').resolveAppHost(pool, rawHost);
       if (parsed) {
-        // Only production hosts get the on-demand heal — staging previews
-        // are owned by the staging heal sweep (server.js Pass 3).
+        // Only production hosts: a staging preview's runtime is its
+        // preview machine's (src/workflow/preview/).
         if (parsed.label === parsed.slug) {
-          appHeal.requestHeal(parsed.slug, config);
+          productionSlug = parsed.slug;
+          appHeal.reportVisit(pool, parsed.slug);
         }
         // Existence-hiding: name only for view-PUBLIC apps. The generic
         // fallback copy is used for private (or unknown) hosts.
@@ -181,6 +186,10 @@ function appErrorRoutes(config) {
     if (!isDocument) {
       return res.json({ error: 'app_unavailable' });
     }
+    // Somebody opening a production app got this page, not the app: the
+    // Infra topic's "App opens that worked" counts it. The page's own
+    // retries are fetches, so they never land here.
+    if (productionSlug) appOutages.recordUnavailable(pool, productionSlug);
     res.set('Content-Type', 'text/html; charset=utf-8');
     return res.send(renderPage(displayName));
   });

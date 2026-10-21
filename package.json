@@ -14,6 +14,8 @@
     "dev": "node --watch server.js",
     "pretest": "node scripts/ensure-shell-artifacts.js --html-only",
     "test": "node --require ./tests/lib/test-net.js --test --test-force-exit --test-timeout=180000 tests/*.test.js",
+    "test:shard": "node scripts/test-shard.js",
+    "test:durations": "node scripts/test-durations.js",
     "pretest:changed": "node scripts/ensure-shell-artifacts.js --html-only",
     "test:changed": "node scripts/test-changed.js",
     "shots:dry-run": "node scripts/shots-dry-run.js",
@@ -35,6 +37,7 @@
     "@types/node": "26.1.2",
     "dompurify": "3.4.4",
     "marked": "15.0.12",
+    "mermaid": "11.17.2",
     "postgres": "3.4.9",
     "qrcodejs": "1.0.0",
     "tailwindcss": "3.4.17",
@@ -60,6 +63,7 @@
     "negotiator": "1.0.0",
     "pg": "^8.13.0",
     "pngjs": "7.0.0",
+    "rrweb": "2.1.3",
     "ws": "^8.18.0",
     "zod": "3.25.76"
   }

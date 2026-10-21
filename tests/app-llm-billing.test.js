@@ -59,7 +59,7 @@ function makePool({
       }
       // Week-to-date for one user. Matched BEFORE the global sum below,
       // which is the same aggregate without the user predicate.
-      if (/COALESCE\(SUM\(total_cost_cents\), 0\) AS total/.test(sql)) {
+      if (/llm_usage WHERE user_id = \$1 AND date >= \$2/.test(sql)) {
         return { rows: [{ total: weeklySpent, byok: 0 }] };
       }
       if (/SELECT SUM\(total_cost_cents\)/.test(sql)) {
@@ -176,7 +176,7 @@ test('weekly cap exhausted → the app-facing refusal names the week', async () 
   const payer = await resolveAppPayer(pool, DATA_KEY, 7, GRANT_NO_BYOK);
   assert.match(payer.error, /Weekly limit reached \(\$175\.00\)\. Resets Monday 00:00 UTC\./);
   assert.equal(payer.byok, undefined);
-  assert.ok(pool.issued(/COALESCE\(SUM\(total_cost_cents\), 0\) AS total/),
+  assert.ok(pool.issued(/llm_usage WHERE user_id = \$1 AND date >= \$2/),
     'the week was actually read, not inferred from today');
 });
 
@@ -197,7 +197,7 @@ test('weekly headroom left → platform path, and the ledger read is the only ex
 test('no weekly cap → the app proxy never queries the weekly ledger', async () => {
   const pool = makePool({ weeklyLimit: 0, weeklyOverride: 0 });
   await resolveAppPayer(pool, DATA_KEY, 7, GRANT_NO_BYOK);
-  assert.equal(pool.issued(/COALESCE\(SUM\(total_cost_cents\), 0\) AS total/), false);
+  assert.equal(pool.issued(/llm_usage WHERE user_id = \$1 AND date >= \$2/), false);
 });
 
 test('the weekly cap switched off → refused, pointing at the admin console', async () => {

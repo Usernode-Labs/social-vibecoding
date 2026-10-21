@@ -85,6 +85,7 @@ const CONFIG_HOSTED = {
   platform_origin: 'https://app.onhomeroom.com',
   apps_domain: 'onhomeroom.com',
   site_url: 'https://onhomeroom.com',
+  privacy_url: 'https://onhomeroom.com/legal/privacy-notice',
 };
 
 const tick = () => new Promise((resolve) => setImmediate(resolve));
@@ -104,6 +105,7 @@ async function render(block, {
   title = 'Bread Bot',
   runs = 1,
   noShadow = false,
+  appHost,
 } = {}) {
   const origin = `https://${host}`;
   const head = makeElement('head');
@@ -133,6 +135,14 @@ async function render(block, {
 
   const fetch = (url, init) => {
     fetched.push({ url, init });
+    // The platform's answer for a custom domain (#4405): `appHost` is the
+    // JSON, or a status number for a refusal; absent, the path 404s.
+    if (String(url).includes('/api/public/app-host')) {
+      if (appHost === undefined || typeof appHost === 'number') {
+        return Promise.resolve({ ok: false, status: appHost === undefined ? 404 : appHost, json: async () => ({}) });
+      }
+      return Promise.resolve({ ok: true, status: 200, json: async () => JSON.parse(JSON.stringify(appHost)) });
+    }
     if (typeof config === 'number') return Promise.resolve({ ok: false, status: config, json: async () => ({}) });
     return Promise.resolve({ ok: true, status: 200, json: async () => JSON.parse(JSON.stringify(config)) });
   };
@@ -162,8 +172,10 @@ async function render(block, {
   const all = shadow ? shadow.children.flatMap((c) => [c, ...descendants(c)]) : [];
   const byClass = (cls) => all.find((el) => el.className === cls) || null;
   const rows = all.filter((el) => el.className === 'row');
+  const foot = byClass('foot');
+  const footLinks = foot ? foot.children.filter((el) => el.tagName === 'A') : [];
   return {
-    host: hostEl, shadow, all, byClass, rows, body, head, document, listeners, fetched,
+    host: hostEl, shadow, all, byClass, rows, foot, footLinks, body, head, document, listeners, fetched,
     fab: byClass('fab'), panel: byClass('panel'), bar: byClass('bar'),
   };
 }
@@ -192,7 +204,7 @@ for (const [name, file] of [['versioned', versioned], ['legacy flat', unversione
   });
 }
 
-test('the panel: the app’s name, one line about Homeroom, and three rows', async () => {
+test('the panel: the app’s name, one line about Homeroom, two rows and the footer', async () => {
   const r = await render(platformLinkBlock(versioned), SHARED_APP);
   assert.equal(r.panel.hidden, true, 'closed until asked for');
 
@@ -202,21 +214,66 @@ test('the panel: the app’s name, one line about Homeroom, and three rows', asy
   assert.equal(r.byClass('name').textContent, 'Bread Bot', 'the app’s name');
   assert.equal(r.byClass('about').textContent, 'A Homeroom app, built and voted on by its community.');
 
-  const [open, toggle, what] = r.rows;
+  assert.equal(r.rows.length, 2);
+  const [open, toggle] = r.rows;
   assert.equal(open.tagName, 'A');
   assert.equal(open.textContent, 'Open in Homeroom');
   assert.equal(open.href, 'https://app.onhomeroom.com/#app/bread-bot-3e3f5c',
     'the app inside the platform, on the PLATFORM host');
   assert.equal(toggle.tagName, 'BUTTON');
   assert.equal(toggle.textContent, 'Show the Homeroom header');
-  assert.equal(what.tagName, 'A');
-  assert.equal(what.textContent, 'What is Homeroom?');
-  assert.equal(what.href, 'https://onhomeroom.com/');
-  assert.equal(what.target, '_blank');
-  assert.equal(what.rel, 'noopener');
 
   r.fab.click();
   assert.equal(r.panel.hidden, true, 'the button closes it again');
+});
+
+// #5116: "Built on Homeroom · Privacy · Report", so a person using the app at
+// its own address can find the notice and report the app.
+test('the footer: Built on Homeroom · Privacy · Report, each in a new tab', async () => {
+  const r = await render(platformLinkBlock(versioned), SHARED_APP);
+  assert.equal(r.foot.parentNode, r.panel, 'the footer is the panel’s last line');
+  assert.equal(r.panel.children[r.panel.children.length - 1], r.foot);
+  assert.equal(r.foot.getAttribute('role'), 'navigation');
+  assert.equal(r.foot.getAttribute('aria-label'), 'Built on Homeroom');
+  assert.deepEqual(r.foot.children.map((el) => el.textContent),
+    ['Built on Homeroom', '·', 'Privacy', '·', 'Report']);
+  for (const dot of r.foot.children.filter((el) => el.tagName === 'SPAN')) {
+    assert.equal(dot.getAttribute('aria-hidden'), 'true', 'the separators are not read out');
+  }
+  const [built, privacy, report] = r.footLinks;
+  assert.equal(built.href, 'https://onhomeroom.com/', 'the site’s front door');
+  assert.equal(privacy.href, 'https://onhomeroom.com/legal/privacy-notice', 'Homeroom’s privacy notice');
+  assert.equal(report.href, 'https://app.onhomeroom.com/?report=app#app/bread-bot-3e3f5c',
+    'the platform’s report dialog for THIS app');
+  for (const a of r.footLinks) {
+    assert.equal(a.target, '_blank', `${a.textContent}: the app stays where it was`);
+    assert.equal(a.rel, 'noopener');
+  }
+});
+
+test('the footer’s privacy link falls back to the site’s notice path, never to a bad URL', async () => {
+  const { privacy_url: _omit, ...older } = CONFIG_HOSTED;
+  const fallback = await render(platformLinkBlock(versioned), { ...SHARED_APP, config: older });
+  assert.equal(fallback.footLinks[1].href, 'https://onhomeroom.com/legal/privacy-notice',
+    'an older platform.json without privacy_url');
+  const bad = await render(platformLinkBlock(versioned), {
+    ...SHARED_APP, config: { ...CONFIG_HOSTED, privacy_url: 'javascript:alert(1)', site_url: 'https://example.org/site/' },
+  });
+  assert.equal(bad.footLinks[1].href, 'https://example.org/site/legal/privacy-notice');
+  const none = await render(platformLinkBlock(versioned), {
+    ...SHARED_APP, config: { ...CONFIG_HOSTED, privacy_url: 'http://x.test/p', site_url: 'nope' },
+  });
+  assert.deepEqual(none.footLinks.map((a) => a.textContent), ['Built on Homeroom', 'Report'],
+    'no https notice to name: the link is left out, not pointed anywhere');
+  assert.deepEqual(none.foot.children.map((el) => el.textContent), ['Built on Homeroom', '·', 'Report']);
+});
+
+test('the footer is never drawn inside the platform’s frame or the native app', async () => {
+  const block = platformLinkBlock(versioned);
+  for (const opts of [{ inIframe: true }, { hasNativeChannel: true }, { platformShell: true }]) {
+    const r = await render(block, { ...SHARED_APP, ...opts });
+    assert.equal(r.foot, null, JSON.stringify(opts));
+  }
 });
 
 test('the header row toggles a slim bar with the wordmark and the app’s name', async () => {
@@ -310,7 +367,7 @@ test('a bad site_url falls back to the platform rather than linking anywhere', a
   const r = await render(platformLinkBlock(versioned), {
     ...SHARED_APP, config: { ...CONFIG_HOSTED, site_url: 'javascript:alert(1)' },
   });
-  assert.equal(r.rows[2].href, 'https://app.onhomeroom.com/');
+  assert.equal(r.footLinks[0].href, 'https://app.onhomeroom.com/');
 });
 
 test('a tag that names some other host gets nothing', async () => {
@@ -352,6 +409,48 @@ test('only a production app host qualifies', async () => {
   assert.ok(!(await drawn('localhost:3000')), 'plain local dev');
   assert.ok(!(await drawn('bread-bot.localhost:3000')), 'a single-label dev host');
   assert.ok(!(await drawn('a.b.onhomeroom.com')), 'deeper than one label under the apps domain');
+});
+
+// ── Custom domains (#4405) ───────────────────────────────────────────────
+
+test('an app at its custom domain gets the button once the platform names the app', async () => {
+  const block = platformLinkBlock(versioned);
+  const r = await render(block, { host: 'app.example.com', appHost: { slug: 'bread-bot-3e3f5c', name: 'Bread Bot' } });
+  assert.ok(r.host, 'drawn');
+  assert.equal(r.host.shadowMode, 'closed');
+  assert.equal(r.fetched.length, 2, 'platform.json from this origin, then the platform asked which app this is');
+  assert.equal(r.fetched[0].url, '/usernode-bridge/v1/platform.json');
+  assert.equal(r.fetched[1].url, 'https://app.onhomeroom.com/api/public/app-host?host=app.example.com');
+  assert.equal(r.fetched[1].init.credentials, 'omit');
+  r.fab.click();
+  assert.equal(r.rows[0].href, 'https://app.onhomeroom.com/#app/bread-bot-3e3f5c', 'Open in Homeroom opens THAT app');
+  assert.equal(r.footLinks[0].href, 'https://onhomeroom.com/');
+  assert.equal(r.footLinks[1].href, 'https://onhomeroom.com/legal/privacy-notice', 'Privacy on a custom domain too');
+  assert.equal(r.footLinks[2].href, 'https://app.onhomeroom.com/?report=app#app/bread-bot-3e3f5c',
+    'Report names the app the platform said this host serves');
+  assert.equal(r.byClass('name').textContent, 'Bread Bot');
+  // The legacy flat copy behaves the same.
+  assert.ok((await render(platformLinkBlock(unversioned), { host: 'app.example.com', appHost: { slug: 'bread-bot-3e3f5c' } })).host);
+});
+
+test('a host the platform does not know, or a bad answer, draws nothing and asks nothing it should not', async () => {
+  const block = platformLinkBlock(versioned);
+  const drawn = async (opts) => !!(await render(block, opts)).host;
+  assert.ok(!(await drawn({ host: 'app.example.com' })), 'the platform answers 404');
+  assert.ok(!(await drawn({ host: 'app.example.com', appHost: 500 })));
+  assert.ok(!(await drawn({ host: 'app.example.com', appHost: { slug: 'Not A Slug!' } })), 'a slug that is not one');
+  assert.ok(!(await drawn({ host: 'app.example.com', appHost: {} })));
+  assert.ok(!(await drawn({ host: 'app.example.com', appHost: { slug: 'x' }, config: 404 })), 'no platform.json, no platform to ask');
+  assert.ok(!(await drawn({ host: 'app.example.com', appHost: { slug: 'x' }, config: { ...CONFIG_HOSTED, platform_origin: 'http://app.onhomeroom.com' } })), 'not https');
+  // Never asked: an apex-looking host, the platform's own hosts, the shell, a frame.
+  const asked = async (opts) => (await render(block, opts)).fetched.some((f) => String(f.url).includes('/api/public/app-host'));
+  assert.ok(!(await asked({ host: 'example.com', appHost: { slug: 'x' } })), 'two labels is never a custom domain');
+  assert.ok(!(await asked({ host: 'app.onhomeroom.com', appHost: { slug: 'x' } })), 'the platform itself');
+  assert.ok(!(await asked({ host: 'a.b.onhomeroom.com', appHost: { slug: 'x' } })), 'under the apps domain');
+  assert.ok(!(await asked({ host: 'app.example.com', appHost: { slug: 'x' }, inIframe: true })), 'inside the platform’s frame');
+  assert.ok(!(await asked({ host: 'app.example.com', appHost: { slug: 'x' }, platformShell: true })), 'the shell');
+  assert.ok(!(await asked({ host: 'app.example.com', appHost: { slug: 'x' }, scriptSrc: 'https://cdn.example.com/usernode-bridge/v1/bridge.js' })), 'a tag naming another host');
+  assert.ok(await asked({ host: 'app.example.com', appHost: { slug: 'x' }, scriptSrc: 'https://app.onhomeroom.com/usernode-bridge/v1/bridge.js' }), 'naming the platform is fine');
 });
 
 test('no shadow DOM, no button (never an unprotected one)', async () => {
@@ -402,7 +501,10 @@ test('both servers answer platform.json from deployment settings', () => {
     platform_origin: 'https://app.onhomeroom.com',
     apps_domain: 'onhomeroom.com',
     site_url: 'https://onhomeroom.com',
+    privacy_url: 'https://onhomeroom.com/legal/privacy-notice',
   });
+  assert.equal(cfg.appHostConfig({ platformDomain: 'example.org', marketingBaseUrl: 'https://site.example.org/' }).privacy_url,
+    'https://site.example.org/legal/privacy-notice', 'the notice follows MARKETING_BASE_URL');
   // Single-domain: apps sit under the platform's own domain.
   assert.equal(cfg.appHostConfig({ platformDomain: 'example.org' }).apps_domain, 'example.org');
   // A dev box (or a missing setting) yields no document at all.

@@ -118,7 +118,7 @@ test('a coding-agent run is one card named for the agent that ran, and a drafted
     // Every agent writes this row's content as "Claude Code progress"; only
     // its metadata says which one ran, so its words are never shown.
     row(4, 'system', 'Claude Code progress', { progressLog: ['Reading src/feed.js', 'Drafting the spec'], ...codex }, 12),
-    row(5, 'system', 'Scout drafted a 93-line spec from the codebase.', {
+    row(5, 'system', 'Scout drafted a 93-line plan from the codebase.', {
       specPreview: '## Thumbnails\nShow an image per item.', specLines: 93, specVersion: 2, durationMs: 81000, ...codex,
     }, 12),
     row(6, 'assistant', 'The spec is drafted.'),
@@ -129,7 +129,7 @@ test('a coding-agent run is one card named for the agent that ran, and a drafted
   assert.equal(run.status, 'done');
   assert.equal(run.agent, 'Codex · glm-5.3-flash', 'an OpenRouter change runs Codex, and says so');
   assert.deepEqual(run.log, ['Reading src/feed.js', 'Drafting the spec']);
-  assert.equal(transcript.runHeading(run), 'Wrote the spec');
+  assert.equal(transcript.runHeading(run), 'Wrote the plan');
   assert.equal(transcript.durationLabel(run.durationMs), '1m 21s');
   assert.ok(!JSON.stringify(scout).includes('Claude Code progress'));
   assert.deepEqual([spec.changeId, spec.version, spec.lines], [12, 2, 93]);
@@ -179,7 +179,7 @@ test('the screen draws a run as the dev chat\'s run card and a spec as a card th
     row(2, 'system', 'Scouting the repo for context (z-ai/glm-5.3-flash)...', codex, 12),
     row(3, 'system', 'Scout reading the codebase...', codex, 12),
     row(4, 'system', 'Claude Code progress', { progressLog: ['Reading src/feed.js'], ...codex }, 12),
-    row(5, 'system', 'Scout drafted a 93-line spec from the codebase.', { specPreview: 'Show an image per item.', specLines: 93, specVersion: 2, ...codex }, 12),
+    row(5, 'system', 'Scout drafted a 93-line plan from the codebase.', { specPreview: 'Show an image per item.', specLines: 93, specVersion: 2, ...codex }, 12),
   ];
   const requests = [];
   globalThis.window = { location: { hash: '#agent/7' }, App: {}, UsernodeReact: {}, PlatformUI: { toast: () => {} } };
@@ -203,11 +203,11 @@ test('the screen draws a run as the dev chat\'s run card and a spec as a card th
       : createElement(api.SpecCard, { item }))).join('');
     assert.match(html, /class="dc-cc-attached"/, 'the dev chat\'s own run card');
     assert.match(html, /data-agent-session-run="done"/);
-    assert.match(html, /Wrote the spec/);
+    assert.match(html, /Wrote the plan/);
     assert.match(html, /Codex · glm-5\.3-flash/, 'captioned with the agent that ran');
     assert.doesNotMatch(html, /Claude Code progress|Scout reading the codebase/, 'no loose lines');
     assert.match(html, /class="dc-spec-preview-card"[^>]*data-agent-session-spec="2"/);
-    assert.match(html, /Spec v2 · 93 lines/);
+    assert.match(html, /Plan v2 · 93 lines/);
 
     // The card opens the version it names, over the conversation.
     await api.openSpec(12, 2);
@@ -245,20 +245,17 @@ test('the header pill and the live line say where things stand in words', () => 
   assert.equal(transcript.toolActivity('start_change'), 'Preparing a confirmation');
 });
 
-test('an agent session is an agent conversation in the inbox: under Agents on the one clock, never under People', () => {
+test('an agent session is an agent conversation in the inbox: under Agents on its clock, never under People', () => {
   const base = {
     conversations: [{ id: 1, lastActivityAt: '2026-09-01T10:00:00Z' }],
-    discussions: [],
     agents: [],
     sessions: [{ key: 's1', lastActivityAt: '2026-09-01T09:00:00Z' }],
     mayors: [{ id: 7, lastActivityAt: '2026-09-01T11:00:00Z' }, { id: 8, lastActivityAt: null }],
   };
-  const all = inbox.buildInbox({ ...base, filter: 'all' });
-  assert.deepEqual(all.map((e) => e.key), ['mayor:7', 'person:1', 'session:s1', 'mayor:8']);
-  assert.ok(all.filter((e) => e.kind === 'mayor').every((e) => e.section === 'chats'));
-  assert.deepEqual(inbox.buildInbox({ ...base, filter: 'agents' }).map((e) => e.key), ['mayor:7', 'session:s1', 'mayor:8']);
-  assert.deepEqual(inbox.buildInbox({ ...base, filter: 'people' }).map((e) => e.key), ['person:1']);
-  assert.equal(inbox.admits('channels', 'mayor'), false);
+  const all = inbox.buildInbox(base);
+  assert.deepEqual(all.map((e) => e.key), ['mayor:7', 'session:s1', 'mayor:8', 'person:1']);
+  assert.ok(all.filter((e) => e.kind === 'mayor').every((e) => e.section === 'agents'));
+  assert.deepEqual(all.filter((e) => e.section === 'people').map((e) => e.key), ['person:1']);
 });
 
 test('the screen is reachable by address, on a phone and in the desktop Messages pane', () => {

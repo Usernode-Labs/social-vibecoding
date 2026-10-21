@@ -51,7 +51,10 @@ function load() {
       openAppTab: (slug, tab, opts) => { calls.push(['openAppTab', slug, tab, opts || null]); },
       _isScreenVisible: () => false,
     },
-    UsernodeReact: { workshop: { setTab: (tab) => calls.push(['setTab', tab]) } },
+    UsernodeReact: {
+      workshop: { setTab: (tab) => calls.push(['setTab', tab]) },
+      devBoard: { showVotes: (id) => calls.push(['showVotes', id]) },
+    },
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
@@ -72,8 +75,32 @@ test('a digest of one change opens that change', () => {
   const { N, calls } = load();
   N.items = [{ id: 1, readAt: null, kind: 'vote_digest', detail: '1', appSlug: 'flat-4b-chores', sessionId: 40 }];
   N._onItemClick(1);
-  assert.deepEqual(nav(calls), [['openAppTab', 'flat-4b-chores', 'dev', { subTab: 'proposals', ref: 40 }]]);
+  // Run four (13 Oct): at its Votes card (tests/change-votes-in-view.test.js).
+  assert.deepEqual(nav(calls), [['showVotes', 40], ['openAppTab', 'flat-4b-chores', 'dev', { subTab: 'proposals', ref: 40 }]]);
   assert.equal(calls[0][0], 'dismiss', 'the sheet gets out of the way first');
+});
+
+// Run four (13 Oct 2026): every row that asks for the reader's vote opens the
+// change at its Votes card; a row about anything else opens it as before.
+test('a row that asks for a vote opens the change at its Votes card', () => {
+  for (const kind of ['pr_proposed', 'stale_pr', 'revision_recheck', 'change_ready']) {
+    const { N, calls } = load();
+    N.items = [{ id: 3, readAt: null, kind, appSlug: 'club-votes', sessionId: 7, prNumber: 4, sessionStatus: 'promoted' }];
+    N._onItemClick(3);
+    assert.deepEqual(nav(calls)[0], ['showVotes', 7], kind);
+    assert.equal(nav(calls)[1][0], 'openAppTab', kind);
+  }
+  for (const kind of ['pr_merged', 'kudos', 'check_failed', 'voted_change_merged']) {
+    const { N, calls } = load();
+    N.items = [{ id: 4, readAt: null, kind, appSlug: 'club-votes', sessionId: 7 }];
+    N._onItemClick(4);
+    assert.equal(nav(calls).some((c) => c[0] === 'showVotes'), false, kind);
+  }
+  // A ready-to-try whose change went live opens the app: nothing to vote on.
+  const { N, calls } = load();
+  N.items = [{ id: 5, readAt: null, kind: 'change_ready', appSlug: 'club-votes', sessionId: 7, sessionStatus: 'merged' }];
+  N._onItemClick(5);
+  assert.deepEqual(nav(calls), [['openAppTab', 'club-votes', 'app', null]]);
 });
 
 test('a digest of several opens Needs you, which lists them, instead of nothing', () => {
@@ -95,25 +122,28 @@ test('the digest names its change when there is exactly one, and nothing when th
   prefs.filterUsersByCategory = async (_pool, { userIds }) => userIds;
   notifications.hydrateAndPush = async () => {};
   const inserted = [];
+  // Each digest is written in a transaction of its own, under its person's
+  // lock, by an INSERT that checks again that none went out lately.
   const client = {
-    async query(text) {
-      if (/pg_try_advisory_lock/.test(text)) return { rows: [{ acquired: true }] };
-      if (/pg_advisory_unlock/.test(text)) return { rows: [] };
+    async query(text, params) {
+      if (/^(BEGIN|COMMIT|ROLLBACK)$/.test(text) || /pg_advisory_xact_lock/.test(text)) return { rows: [] };
+      // Its email is owed by the notice (mailed_at NULL, the notice-mail clock).
+      assert.match(text, /INSERT INTO notifications \(user_id, app_id, session_id, source_user_id, kind, detail, mailed_at\)/);
+      assert.match(text, /NOT EXISTS/);
+      inserted.push(params.slice(0, 4));
+      return { rows: [{ id: inserted.length, user_id: params[0] }] };
+    },
+    release() {},
+  };
+  const pool = {
+    connect: async () => client,
+    async query() {
       return {
         rows: [
           { user_id: 1, pending: '1', only_session_id: 40, only_app_id: 5 },
           { user_id: 2, pending: '3', only_session_id: null, only_app_id: null },
         ],
       };
-    },
-    release() {},
-  };
-  const pool = {
-    connect: async () => client,
-    async query(text, params) {
-      assert.match(text, /INSERT INTO notifications \(user_id, app_id, session_id, source_user_id, kind, detail\)/);
-      inserted.push(params);
-      return { rows: [{ id: inserted.length, user_id: params[0] }] };
     },
   };
   try {

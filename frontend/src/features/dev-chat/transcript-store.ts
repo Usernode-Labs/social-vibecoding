@@ -209,7 +209,7 @@ export type TranscriptRow =
     prNumber: number | null;
     title: string;
     /** #3605: the requests this change closes, each opening in Homeroom. */
-    closes: { n: number; verb: 'Closes' | 'Closed' }[];
+    closes: { n: number; closed: boolean }[];
     /** #3605: the session id whose vote page the status opens, once proposed. */
     proposalId: number | null;
     stamp: string;
@@ -237,11 +237,17 @@ export type TranscriptRow =
     model: string;
     stamp: string;
     contentHtml: string;
+    /**
+     * #5728: the project the AI's reply is about (`DevChat._appSlug()` when
+     * the row was built). Its `#N` / `PR#N` chips open that project's board
+     * when it is set; user and Claude Code rows carry none.
+     */
+    appSlug?: string | null;
     /** True on the one row a live turn is writing into — see the header. */
     live?: boolean;
     /** A user row's attachment strip. */
     attachments?: {
-      kind: 'image' | 'file'; href: string; name: string;
+      kind: 'image' | 'file'; href: string; name: string; unnamed?: boolean;
       download?: boolean; badgeHtml?: string; size?: string;
     }[];
     /** The `[CHAT_ONLY]` raw-output disclosure. */

@@ -115,6 +115,7 @@
     setSocialBadgeCount: true,
     manageStaking: true,
     signInWithProvider: true,
+    setBuildActivity: true,
   };
   var _REALM_SESSION_METHODS = {
     getNodeAddress: true,
@@ -5244,6 +5245,19 @@
     );
   };
 
+  // requestNotificationPermission() → refreshed settings state plus
+  // { granted }. The notification permission alone: on Android the
+  // POST_NOTIFICATIONS dialog, where requestPermissions() is the
+  // block-production chain (exact alarms, battery). The app has served it
+  // since the granular permission surface; SV asks it at its own moments
+  // (NativeChrome.notifyWhenReady, frontend/src/features/notify-ask/).
+  // May pend on the OS dialog.
+  window.usernode.requestNotificationPermission = function () {
+    return callNativeChromeAction(
+      "requestNotificationPermission", {}, _PERMISSION_REQUEST_TIMEOUT_MS
+    );
+  };
+
   // signInWithProvider({ provider, nonce }) → { idToken }. The app's own
   // Sign in with Apple or Google sheet, for the sign-in sheet's buttons
   // inside the app, whose web view the providers' own pages refuse.
@@ -5604,6 +5618,91 @@
     );
   };
 
+  // setBuildActivity(activity) → { supported, started?, pushToken? }. The
+  // iOS Live Activity for a project's first version being built: its name,
+  // the stage and the time left on the Lock Screen and in the Dynamic
+  // Island, ending with "<name> is live". The caller is the maker's App tab
+  // and made screen (frontend/src/features/app-frame/build-activity.ts);
+  // the contract is NATIVE-BRIDGE.md, "Build Live Activity".
+  //
+  // Privileged and top-frame only: it puts the page's words on the Lock
+  // Screen, which no hosted app may do. It touches no native session, so it
+  // carries no realm claim.
+  //
+  // Additive capability, and fail-safe rather than fail-closed: nothing
+  // waits on it, so every way of not showing anything resolves
+  // `{ supported: false }`. Outside the app, on a build that does not
+  // advertise `setBuildActivity` (iOS before 16.1, Android, an older
+  // build), or when the call is dropped and the timeout passes. A native
+  // answer that refuses the call (`errorInfo.code` `invalid_args` or
+  // `failed`) rejects with that code as `err.usernodeCode`, for the caller
+  // to log. Only the contract's keys cross, in both directions.
+  var _BUILD_ACTIVITY_TIMEOUT_MS = 10000;
+  var _BUILD_ACTIVITY_KEYS = [
+    "activityId", "state", "title", "stage", "detail",
+    "startedAt", "etaAt", "deepLink", "endedTitle",
+  ];
+
+  function buildActivityReply(value) {
+    if (!value || value.supported !== true) return { supported: false };
+    var reply = { supported: true, started: value.started === true };
+    if (typeof value.pushToken === "string" && value.pushToken) {
+      reply.pushToken = value.pushToken;
+    }
+    return reply;
+  }
+
+  window.usernode.setBuildActivity = function (activity) {
+    if (!window.usernode.isNative || _inIframe) {
+      return Promise.resolve({ supported: false });
+    }
+    var args = {};
+    for (var i = 0; i < _BUILD_ACTIVITY_KEYS.length; i++) {
+      var key = _BUILD_ACTIVITY_KEYS[i];
+      if (activity && activity[key] !== undefined) args[key] = activity[key];
+    }
+    var known = _lastBridgeInfo
+      ? Promise.resolve(_lastBridgeInfo)
+      : window.usernode.getBridgeInfo();
+    return known.then(function (info) {
+      var capabilities = info && info.capabilities;
+      if (!Array.isArray(capabilities) ||
+          capabilities.indexOf("setBuildActivity") === -1) {
+        return { supported: false };
+      }
+      return new Promise(function (resolve, reject) {
+        var done = false;
+        var timer = setTimeout(function () {
+          if (done) return;
+          done = true;
+          recordNativeReadError(
+            "setBuildActivity", "timeout",
+            "setBuildActivity is not supported by this app build"
+          );
+          resolve({ supported: false });
+        }, _BUILD_ACTIVITY_TIMEOUT_MS);
+        callNative("setBuildActivity", args).then(
+          function (value) {
+            if (done) return;
+            done = true;
+            clearTimeout(timer);
+            delete _lastNativeReadErrors.setBuildActivity;
+            resolve(buildActivityReply(value));
+          },
+          function (err) {
+            if (done) return;
+            done = true;
+            clearTimeout(timer);
+            recordNativeReadError(
+              "setBuildActivity", nativeReadErrorKind(err), err && err.message
+            );
+            reject(err);
+          }
+        );
+      });
+    });
+  };
+
   // setAppearance({ scheme, background }) → tells the native shell which
   // appearance the page settled on, so the NEXT cold launch can paint that
   // colour before this document exists.
@@ -5672,6 +5771,24 @@
     return callNativeChromeAction(
       "setStatusBarTone", { tone: tone }, _APPEARANCE_TIMEOUT_MS
     );
+  };
+
+  // shellPainted() → tells the native shell that this document's first
+  // screen is drawn, so it can fade out the cover it keeps over the web view
+  // on a cold launch. It takes no arguments and is sent at most once per
+  // document (NativeChrome._initShellPainted decides when).
+  //
+  // UNPRIVILEGED, like setStatusBarTone: presentation state with no account
+  // in it, and the launch it is for is often the one before sign-in. Same
+  // short timeout: nothing waits on the answer.
+  //
+  // Additive capability: feature-detect `shellPainted` via
+  // getBridgeInfo().capabilities before calling (NativeChrome does). Older
+  // builds drop the unknown method, the call rejects after the timeout, and
+  // they keep the launch they had; producer requirements live in
+  // NATIVE-BRIDGE.md.
+  window.usernode.shellPainted = function () {
+    return callNativeChromeAction("shellPainted", {}, _APPEARANCE_TIMEOUT_MS);
   };
 
   // =====================================================================
@@ -5993,8 +6110,14 @@
         delete _stPending[data.id];
         if (entry.ackTimer) clearTimeout(entry.ackTimer);
         if (entry.timer) clearTimeout(entry.timer);
-        if (data.error) entry.reject(new Error(data.error));
-        else entry.resolve(data.value);
+        if (data.error) {
+          // The platform's structured code rides along as err.code
+          // (file_too_large, app_quota_exceeded, storage_unavailable, …),
+          // so an app can tell a full quota from an outage (#5028).
+          var err = new Error(data.error);
+          if (typeof data.code === "string" && data.code) err.code = data.code;
+          entry.reject(err);
+        } else entry.resolve(data.value);
       }
     });
 
@@ -6704,6 +6827,44 @@
     } catch (_) {}
   })();
   /* __USERNODE_BACKGROUND_END__ */
+
+  // The app's first screen, drawn. Homeroom opens an app behind a cover that
+  // shows its icon and name, and lifts the cover once the frame's document
+  // has loaded, which is usually before the app's own data has arrived: the
+  // viewer then watches the page assemble itself, a skeleton and then the
+  // real screen. `usernode.ready()` lets an app keep the cover up until its
+  // first real screen is drawn, so it opens in one step:
+  //
+  //   usernode.ready(load());  // a promise that settles after the first render
+  //   usernode.ready();        // or "drawn now", called once after rendering
+  //
+  // With a promise, the cover waits for it to settle, fulfilled or rejected
+  // (an error screen is a first screen too). Homeroom lifts the cover after a
+  // few seconds regardless (AppView.LAUNCH_READY_CAP_MS), so an app whose
+  // promise never settles is never hidden for long. Only the first call
+  // counts, and outside a Homeroom frame it does nothing.
+  /* __USERNODE_READY_BEGIN__ */
+  (function () {
+    var called = false;
+    function post(state) {
+      if (window === window.parent) return;
+      try { window.parent.postMessage({ __usernode_ready: state }, "*"); } catch (_) {}
+    }
+    window.usernode.ready = function (firstRender) {
+      if (called) return;
+      called = true;
+      if (firstRender && typeof firstRender.then === "function") {
+        // Said at once, while the page is still loading, so the shell knows
+        // to wait past the frame's load event for the "drawn" that follows.
+        post("waiting");
+        var drawn = function () { post("drawn"); };
+        firstRender.then(drawn, drawn);
+        return;
+      }
+      post("drawn");
+    };
+  })();
+  /* __USERNODE_READY_END__ */
 
 
   // Engaged-use readiness and input lease.  A parent frame load alone cannot
@@ -7610,10 +7771,14 @@
   // it IS a Homeroom app, and there is no way back to it inside Homeroom.
   // The bridge is the one piece of platform code every app loads, so it
   // draws a small Homeroom button in the bottom-right corner (#3657). Tapping
-  // it opens a small panel: the app's name, one line about Homeroom, and
-  // three rows: "Open in Homeroom" (the app inside the platform), "Show the
-  // Homeroom header" (a slim bar with the wordmark and the app's name) and
-  // "What is Homeroom?" (the site's front door).
+  // it opens a small panel: the app's name, one line about Homeroom, two
+  // rows, "Open in Homeroom" (the app inside the platform) and "Show the
+  // Homeroom header" (a slim bar with the wordmark and the app's name), and
+  // a footer line, "Built on Homeroom · Privacy · Report" (#5116): the
+  // site's front door, Homeroom's privacy notice, and the platform's report
+  // dialog for this app, so a person using the app at its own address or on
+  // a custom domain can find the notice and report it. Inside the platform
+  // the app menu carries the same Privacy and Report links.
   //
   // Shown ONLY when ALL of these hold:
   //   * top frame         : inside the platform an app renders in an
@@ -7665,6 +7830,12 @@
     var HOST_ID = "__un-platform-link";
 
     var ABOUT_LINE = "A Homeroom app, built and voted on by its community.";
+    var BUILT_ON = "Built on Homeroom";
+    var PRIVACY = "Privacy";
+    var REPORT = "Report";
+    // Where the privacy notice lives on the site when platform.json does not
+    // name it (src/services/marketing-links.js PRIVACY_NOTICE_PATH).
+    var PRIVACY_PATH = "/legal/privacy-notice";
     var SHOW_HEADER = "Show the Homeroom header";
     var HIDE_HEADER = "Hide the Homeroom header";
 
@@ -7679,11 +7850,19 @@
       return host && host !== String(location.hostname).toLowerCase() ? host : null;
     }
 
+    // Could this page be an app at its own address at all? Inside the
+    // platform's frame, the native shell or the platform's own document,
+    // never.
+    function pageEligible() {
+      if (_inIframe || _hasNativeChannel || window.Usernode) return false;
+      if (window.__usernodePlatformShell) return false;
+      return true;
+    }
+
     // Gate 1, synchronous: could this page be an app at its own address?
     // Returns the single label (the app's slug) or null.
     function candidateSlug() {
-      if (_inIframe || _hasNativeChannel || window.Usernode) return null;
-      if (window.__usernodePlatformShell) return null;
+      if (!pageEligible()) return null;
       var host = String(location.hostname || "").toLowerCase();
       var dot = host.indexOf(".");
       if (dot <= 0) return null;
@@ -7716,6 +7895,27 @@
       return u;
     }
 
+    // Every address the button links to, from the platform's own document.
+    // The privacy notice is platform.json's privacy_url when it is a clean
+    // https URL, else the site's own notice path. Report opens this app in
+    // the platform with ?report=app, which the shell turns into its report
+    // dialog for the app (public/js/app-view.js); reporting needs an account,
+    // and the platform is where that is.
+    function linksFor(config, platform, slug) {
+      var site = httpsUrl(config.site_url);
+      var origin = platform.protocol + "//" + platform.host;
+      var privacy = httpsUrl(config.privacy_url);
+      var privacyHref = privacy ? privacy.href
+        : (site ? site.protocol + "//" + site.host + site.pathname.replace(/\/+$/, "") + PRIVACY_PATH : null);
+      return {
+        slug: slug,
+        openHref: origin + "/#app/" + slug,
+        siteHref: site ? site.href : origin + "/",
+        privacyHref: privacyHref,
+        reportHref: origin + "/?report=app#app/" + slug,
+      };
+    }
+
     // Gate 2: the platform's own answer, checked against this page's host.
     // Returns the targets, or null for "draw nothing".
     function targetsFrom(config, slug) {
@@ -7736,13 +7936,37 @@
       // A tag that names a host must name this deployment's platform.
       var tagged = taggedHost();
       if (tagged && tagged !== platformHost) return null;
-      var site = httpsUrl(config.site_url);
-      var origin = platform.protocol + "//" + platform.host;
-      return {
-        slug: slug,
-        openHref: origin + "/#app/" + slug,
-        siteHref: site ? site.href : origin + "/",
-      };
+      return linksFor(config, platform, slug);
+    }
+
+    // A CUSTOM DOMAIN (#4405): an app served at an address its manager owns,
+    // say app.example.com, which is under neither the apps domain nor the
+    // platform's. The hostname says nothing about which app it is, so the
+    // platform is asked: GET <platform_origin>/api/public/app-host?host=<this
+    // host>, anonymous and CORS-open, answers the slug for a LIVE custom
+    // domain and 404 for anything else. Only a host that could be one is
+    // asked about (two or more dots, not under this deployment's domains),
+    // and the same tagged-host rule applies.
+    function customCandidateHost(config) {
+      if (!pageEligible()) return null;
+      if (!config || typeof config !== "object") return null;
+      var apps = typeof config.apps_domain === "string" ? config.apps_domain.toLowerCase() : "";
+      if (!isDomain(apps)) return null;
+      var platform = httpsUrl(config.platform_origin);
+      if (!platform) return null;
+      var host = String(location.hostname || "").toLowerCase();
+      if (!isDomain(host) || host.split(".").length < 3) return null;
+      if (under(host, apps) || under(host, platform.hostname.toLowerCase())) return null;
+      var tagged = taggedHost();
+      if (tagged && tagged !== platform.hostname.toLowerCase()) return null;
+      return host;
+    }
+
+    function customTargetsFrom(config, slug) {
+      if (typeof slug !== "string" || !/^[a-z0-9-]+$/.test(slug)) return null;
+      var platform = httpsUrl(config.platform_origin);
+      if (!platform) return null;
+      return linksFor(config, platform, slug);
     }
 
     // The app's name: what its page calls itself, trimmed and clamped, or a
@@ -7773,6 +7997,11 @@
       ".about{margin:0 10px 8px;font-size:13px;color:#52525b}",
       ".row{display:flex;align-items:center;width:100%;min-height:44px;padding:0 10px;margin:0;border:0;border-radius:10px;background:transparent;color:inherit;font:inherit;font-weight:550;text-align:left;text-decoration:none;cursor:pointer}",
       ".row:hover,.row:focus-visible{background:#f4f4f5;outline:none}",
+      // The footer line: small, muted, wraps on a narrow panel, each link a
+      // 32px-tall target.
+      ".foot{display:flex;flex-wrap:wrap;align-items:center;gap:0 6px;margin:6px 10px 2px;padding-top:6px;border-top:1px solid rgba(0,0,0,0.08);font-size:12px;color:#71717a}",
+      ".foot a{display:inline-flex;align-items:center;min-height:32px;color:inherit;text-decoration:none}",
+      ".foot a:hover,.foot a:focus-visible{color:#18181b;text-decoration:underline;outline:none}",
       ".bar{position:fixed;left:0;right:0;top:0;z-index:999998;display:flex;align-items:center;gap:8px;min-height:calc(40px + env(safe-area-inset-top,0px));padding:env(safe-area-inset-top,0px) calc(8px + env(safe-area-inset-right,0px)) 0 calc(12px + env(safe-area-inset-left,0px));background:#fff;color:#18181b;box-shadow:0 1px 0 rgba(0,0,0,0.08);font:14px/1.2 system-ui,-apple-system,'Segoe UI',Roboto,sans-serif}",
       ".bar img{display:block;width:22px;height:22px}",
       ".brand{font-weight:700}",
@@ -7780,7 +8009,7 @@
       ".title{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#52525b}",
       ".close{width:32px;height:32px;padding:0;margin:0;border:0;border-radius:8px;background:transparent;color:#52525b;font:20px/1 system-ui,sans-serif;cursor:pointer}",
       ".close:hover,.close:focus-visible{background:#f4f4f5;outline:none}",
-      "@media (prefers-color-scheme: dark){.panel,.bar{background:#18181b;color:#f4f4f5;box-shadow:0 10px 30px rgba(0,0,0,0.5),0 0 0 1px rgba(255,255,255,0.08)}.about,.title,.close{color:#a1a1aa}.row:hover,.row:focus-visible,.close:hover,.close:focus-visible{background:#27272a}}",
+      "@media (prefers-color-scheme: dark){.panel,.bar{background:#18181b;color:#f4f4f5;box-shadow:0 10px 30px rgba(0,0,0,0.5),0 0 0 1px rgba(255,255,255,0.08)}.about,.title,.close,.foot{color:#a1a1aa}.foot{border-top-color:rgba(255,255,255,0.1)}.foot a:hover,.foot a:focus-visible{color:#f4f4f5}.row:hover,.row:focus-visible,.close:hover,.close:focus-visible{background:#27272a}}",
     ].join("\n");
 
     function el(tag, cls, text) {
@@ -7842,15 +8071,33 @@
       var toggle = el("button", "row", SHOW_HEADER);
       toggle.type = "button";
       toggle.setAttribute("aria-pressed", "false");
-      var what = el("a", "row", "What is Homeroom?");
-      what.href = t.siteHref;
-      what.target = "_blank";
-      what.rel = "noopener";
+      // Built on Homeroom · Privacy · Report. Each opens in a new tab, so
+      // the app stays where it was.
+      var foot = el("div", "foot");
+      foot.setAttribute("role", "navigation");
+      foot.setAttribute("aria-label", BUILT_ON);
+      function footLink(text, href) {
+        if (!href) return null;
+        var a = el("a", null, text);
+        a.href = href;
+        a.target = "_blank";
+        a.rel = "noopener";
+        if (foot.children && foot.children.length) {
+          var dot = el("span", null, "·");
+          dot.setAttribute("aria-hidden", "true");
+          foot.appendChild(dot);
+        }
+        foot.appendChild(a);
+        return a;
+      }
+      var what = footLink(BUILT_ON, t.siteHref);
+      var privacy = footLink(PRIVACY, t.privacyHref);
+      var report = footLink(REPORT, t.reportHref);
       panel.appendChild(name);
       panel.appendChild(about);
       panel.appendChild(open);
       panel.appendChild(toggle);
-      panel.appendChild(what);
+      panel.appendChild(foot);
 
       // The button.
       var fab = el("button", "fab");
@@ -7905,13 +8152,13 @@
       }, true);
 
       document.body.appendChild(host);
-      return { host: host, root: root, fab: fab, panel: panel, bar: bar, toggle: toggle, close: close, name: name, title: title, open: open, what: what };
+      return { host: host, root: root, fab: fab, panel: panel, bar: bar, toggle: toggle, close: close, name: name, title: title, open: open, what: what, privacy: privacy, report: report };
     }
 
     function start() {
-      var slug = candidateSlug();
-      if (!slug) return;
+      if (!pageEligible()) return;
       if (typeof window.fetch !== "function") return;
+      var slug = candidateSlug();
       var request;
       try {
         request = window.fetch(CONFIG_SRC, { credentials: "omit", cache: "no-cache" });
@@ -7920,8 +8167,21 @@
         if (!res || !res.ok) return null;
         return res.json();
       }).then(function (config) {
-        var t = targetsFrom(config, slug);
-        if (t) draw(t);
+        var t = slug ? targetsFrom(config, slug) : null;
+        if (t) { draw(t); return null; }
+        // Not <slug>.<apps domain>: a custom domain, if the platform says so.
+        var host = customCandidateHost(config);
+        if (!host) return null;
+        var platform = httpsUrl(config.platform_origin);
+        var url = platform.protocol + "//" + platform.host + "/api/public/app-host?host=" + encodeURIComponent(host);
+        return Promise.resolve(window.fetch(url, { credentials: "omit", cache: "no-cache" })).then(function (res) {
+          if (!res || !res.ok) return null;
+          return res.json();
+        }).then(function (answer) {
+          var ct = answer && typeof answer === "object" ? customTargetsFrom(config, answer.slug) : null;
+          if (ct) draw(ct);
+          return null;
+        });
       }).catch(function () { /* no config, no button */ });
     }
 

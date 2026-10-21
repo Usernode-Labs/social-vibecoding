@@ -8,9 +8,9 @@
 // 1.6:1 on the light sheet. Pinned here:
 //
 //   1. A message that names its project (a Homeroom bot message carries its
-//      request's app) chips `#N` as a real link to that project's request,
-//      at the address the server's own cards use; every other chip stays a
-//      span, and a `PR#N` is never a link.
+//      request's app) chips `#N` as a real link to that project's request and
+//      `PR#N` as one to its proposal page (#5728), at the addresses the
+//      server's own cards use; every other chip stays a span.
 //   2. The row hands the bot message's project to the markdown, and a press
 //      on a chip records the conversation as where it was opened from, as a
 //      shared card does.
@@ -102,7 +102,7 @@ function body(doc, text) {
 
 // ── 1. The chips ────────────────────────────────────────────────────────
 
-test('in a message that names its project, #N is a link to that project\'s request; PR#N and every other chip are not', () => {
+test('in a message that names its project, #N is a link to that project\'s request and PR#N to its proposal; with no project every chip is text', () => {
   const { decorateRefs, issueRefHref } = loadTsx(CHANNELS);
   assert.equal(issueRefHref('ear-trainer-9aee0d', '14'), '#app/ear-trainer-9aee0d/dev/issues/14',
     'the address the server\'s object cards give a request');
@@ -113,17 +113,49 @@ test('in a message that names its project, #N is a link to that project\'s reque
   decorateRefs(bot, new Set(), 'ada', 'ear-trainer-9aee0d');
   assert.equal(html(bot),
     '<p>Filed as <a href="#app/ear-trainer-9aee0d/dev/issues/14" class="gc-ref gc-ref-issue" data-ref-type="issue" data-ref-number="14">#14</a>, '
-    + 'beside <span class="gc-ref gc-ref-pr" data-ref-type="pr" data-ref-number="9">PR#9</span> and '
+    + 'beside <a href="#app/ear-trainer-9aee0d/dev/changes/9" class="gc-ref gc-ref-pr" data-ref-type="pr" data-ref-number="9">PR#9</a> and '
     + '<a class="gc-mention gc-mention-self" href="#leaderboard/users/ada" data-mention="ada">@ada</a>. <code>#3</code><a href="https://example.test/">#4</a></p>',
-    'a real link, the chip\'s classes and data kept; a PR stays text; code and links are left alone');
+    'real links, the chips\' classes and data kept; code and links are left alone');
 
-  const person = body(doc, 'see #14');
+  const spaced = body(doc, 'see PR #9');
+  decorateRefs(spaced, new Set(), 'ada', 'ear-trainer-9aee0d');
+  assert.match(html(spaced), /<a href="#app\/ear-trainer-9aee0d\/dev\/changes\/9" class="gc-ref gc-ref-pr" data-ref-type="pr" data-ref-number="9">PR#9<\/a>/,
+    '"PR #9" opens the same proposal page');
+
+  const person = body(doc, 'see #14 and PR#9');
   decorateRefs(person, new Set(), 'ada');
-  assert.match(html(person), /<p>see <span class="gc-ref gc-ref-issue" data-ref-type="issue" data-ref-number="14">#14<\/span>/,
+  assert.match(html(person), /<p>see <span class="gc-ref gc-ref-issue" data-ref-type="issue" data-ref-number="14">#14<\/span> and <span class="gc-ref gc-ref-pr" data-ref-type="pr" data-ref-number="9">PR#9<\/span>/,
     'with no project named, the chip names the ref without pretending to navigate');
-  const none = body(doc, 'see #14');
+  const none = body(doc, 'see #14 and PR#9');
   decorateRefs(none, new Set(), 'ada', null);
   assert.doesNotMatch(html(none), /<a href="#app/);
+});
+
+test('#5728: linkRefsInHtml chips a rendered reply when it names its project, and changes nothing when it does not', () => {
+  const { makeHtmlDocument } = require('./lib/html-dom');
+  const { linkRefsInHtml } = loadTsx(CHANNELS);
+
+  assert.equal(linkRefsInHtml('<p>see #34</p>', null), '<p>see #34</p>', 'no project: untouched');
+  assert.equal(linkRefsInHtml('<p>see #34</p>', ''), '<p>see #34</p>', 'no project: untouched');
+  assert.equal(linkRefsInHtml('', 'goal-champions'), '', 'nothing to decorate');
+  // Off a browser there is no document to parse with, and nothing to change.
+  assert.equal(linkRefsInHtml('<p>see #34</p>', 'goal-champions'), '<p>see #34</p>');
+
+  globalThis.document = makeHtmlDocument();
+  globalThis.window = { App: { user: { username: 'Ada' } } };
+  try {
+    assert.equal(linkRefsInHtml('<p>see #34 and PR #118, and <code>#3</code>, and <a href="https://x.test/">#5</a></p>', 'goal-champions'),
+      '<p>see <a href="#app/goal-champions/dev/issues/34" class="gc-ref gc-ref-issue" data-ref-type="issue" data-ref-number="34">#34</a> and '
+      + '<a href="#app/goal-champions/dev/changes/118" class="gc-ref gc-ref-pr" data-ref-type="pr" data-ref-number="118">PR#118</a>, and '
+      + '<code>#3</code>, and <a href="https://x.test/">#5</a></p>',
+      'a request opens its board page, a PR its proposal page; code and links keep their text');
+    assert.match(linkRefsInHtml('<p>ping @ada</p>', 'goal-champions'),
+      /<a class="gc-mention gc-mention-self" href="#leaderboard\/users\/ada" data-mention="ada">@ada<\/a>/,
+      'the reader\'s own mention wears the shared decoration');
+  } finally {
+    delete globalThis.document;
+    delete globalThis.window;
+  }
 });
 
 test('#4029: @name is a link to the person\'s page in Messages; Homeroom bot\'s stays text', () => {
@@ -143,15 +175,15 @@ test('#4029: @name is a link to the person\'s page in Messages; Homeroom bot\'s 
 
 test('the row hands a bot message\'s project to its markdown, and a chip press records where it was opened from', () => {
   const row = read('frontend/src/features/messages/message-row.tsx');
-  assert.match(row, /<MessageMarkdown content=\{message\.content\} channels=\{channels\} appSlug=\{botMeta\(message\)\?\.appSlug\} \/>/,
-    'only the bot\'s own message (botMeta reads it off a bot sender only)');
+  assert.match(row, /<MessageMarkdown content=\{message\.content\} channels=\{channels\} appSlug=\{botMeta\(message\)\?\.appSlug\} requestColors=\{!!botMeta\(message\)\} \/>/,
+    'only the bot\'s own message (botMeta reads it off a bot sender only), whose request numbers wear their tag colour');
   assert.match(read('frontend/src/features/messages/bot-question.tsx'),
     /export function botMeta\(message: ConversationMessage\): HomeroomBotMeta \| null \{\s*if \(!message\.sender\.bot\) return null;/);
 
   const format = read('frontend/src/features/messages/format.tsx');
   const fn = format.slice(format.indexOf('export function MessageMarkdown('), format.indexOf('\n}\n', format.indexOf('export function MessageMarkdown(')));
-  assert.match(fn, /decorateRefs\(root, channels \|\| NO_CHANNELS, me, appSlug\);\s*return root\.innerHTML;\s*\}, \[content, channels, appSlug\]\);/,
-    'the chips are rebuilt when the project changes');
+  assert.match(fn, /decorateRefs\(root, channels \|\| NO_CHANNELS, me, appSlug\);[\s\S]*?return root\.innerHTML;\s*\}, \[content, channels, appSlug, requestColors\]\);/,
+    'the chips are rebuilt when the project changes, or whether they wear their request colours');
   assert.match(fn, /const chip = \(event\.target as Element \| null\)\?\.closest\?\.\('a\.gc-ref\[href\]'\);/);
   assert.match(fn, /\n    recordObjectOrigin\(event, href\);\n  \};/, 'any chip it does not handle in place (#4241) records its origin');
   assert.match(fn, /onClick=\{appSlug \? openRef : undefined\} dangerouslySetInnerHTML=\{inner\}/,

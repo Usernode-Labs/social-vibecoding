@@ -16,14 +16,14 @@
 //
 // ── Why this is a spec plus a stop point, and not a second evaluator ──
 //
-// routes/votes.js's checkAndMerge IS the gate. Re-deriving its conditions here
+// routes/votes.js's evaluateMergeGate IS the gate. Re-deriving its conditions here
 // would mean two implementations of "can this merge", drifting apart, with the
 // describing one eventually lying about the deciding one.
 //
 // It does not need re-deriving. The gate is a fixed, ordered list, and
 // evaluation only ever has to reach the FIRST refusal: everything before it
 // passed, the refusal is where the proposal is now, and everything after it is
-// simply not reached yet. So checkAndMerge records what it actually did, from
+// simply not reached yet. So evaluateMergeGate records what it actually did, from
 // the same call sites that already narrate it into merge_debug_runs, and this
 // module holds the static order and turns the two into a list.
 //
@@ -35,7 +35,7 @@
 // already exports a mergeGate(), and it is only the first of the seven steps
 // below — the vote threshold. Two things called the same would be read as one.
 
-// The gates, in the order checkAndMerge evaluates them. `key` matches the
+// The gates, in the order evaluateMergeGate evaluates them. `key` matches the
 // phase its dstep() already reports.
 //
 // `actor` is the half that makes the list worth showing. Most steps are
@@ -67,7 +67,7 @@ const GATES = [
     applies: (c) => !!c.locked,
   },
   {
-    // Under direct-merge lanes (services/merge-queue.js) this asks one thing:
+    // Under direct-merge lanes (the merge-queue machine, src/workflow/merge-queue/) this asks one thing:
     // does the head merge cleanly with main? Being behind is not a step —
     // a clean head merges as it stands — so the step is DONE for any clean
     // head, however far behind, and the drift is a note on it. A conflict
@@ -86,7 +86,7 @@ const GATES = [
   },
   {
     key: 'shots',
-    label: 'Before & after shots',
+    label: 'Before & after screenshots',
     actor: 'author',
     // Independently reversible rollout gate. Proposals created before v2
     // enrollment do not acquire a fictional requirement merely because the
@@ -143,7 +143,7 @@ function intOrNull(v) {
 const STATES = new Set(['done', 'active', 'waiting', 'blocked', 'pending']);
 
 /**
- * Collects what a single checkAndMerge run actually did.
+ * Collects what a single evaluateMergeGate run actually did.
  *
  * The gate calls pass() as it clears each condition and stop() at the one that
  * refuses, beside the dstep() already there. Nothing here decides anything —
@@ -274,6 +274,20 @@ function integrationStep(session) {
       return {
         state: 'waiting', actor: 'group',
         note: `conflicts with main${files}; the platform resolves it once the group approves`,
+      };
+    }
+    // The conflict lane resolves no head whose checks fail or could not run
+    // (merge-queue admission): those come first, then the platform's merge.
+    if (has('checks_failing')) {
+      return {
+        state: 'blocked', actor: 'author',
+        note: `conflicts with main${files}, and its checks are failing; the author fixes them first, then the platform resolves the conflict`,
+      };
+    }
+    if (has('checks_error')) {
+      return {
+        state: 'blocked', actor: 'author',
+        note: `conflicts with main${files}, and its checks could not run; once they are re-run and pass, the platform resolves the conflict`,
       };
     }
     if (has('budget')) {
@@ -504,7 +518,7 @@ function explicitStep(session) {
 /**
  * The list before the gate has ever run against this proposal.
  *
- * The recording only happens when checkAndMerge runs, and checkAndMerge runs
+ * The recording only happens when evaluateMergeGate runs, and evaluateMergeGate runs
  * on a vote or on the sweep for proposals ALREADY at threshold. So a proposal
  * below threshold — the case the checklist is most useful for, where the
  * honest answer is "your vote is the only thing missing" — would have shown
@@ -565,8 +579,12 @@ function provisional(session) {
   // An 'error' because the repo unit suite could not run (its Job was
   // refused, its setup stopped before any test): the preview was fine.
   const unitNotRun = check === 'error' && !!require('./unit-suite-row').notRunError(s);
+  // An 'error' that is the platform's fault (a check Job refused, or a test
+  // Pod that never started) and that the error lane still runs again on its
+  // own: nobody has to act on it (platformRetry).
+  const platformRetry = check === 'error' && platformFaultWillRetry(s);
   const checkState = (check === 'passing' || check === 'skipped') ? 'done'
-    : rolloutRetry ? 'active'
+    : (rolloutRetry || platformRetry) ? 'active'
       : (check === 'failing' || check === 'error') ? 'blocked'
         : check === 'pending' ? 'active' : 'pending';
   out.push({
@@ -576,6 +594,7 @@ function provisional(session) {
     state: checkState,
     detail: check === 'failing' ? { note: 'some checks are failing' }
       : rolloutRetry ? { note: 'they ran while Homeroom was updating and will run again' }
+        : platformRetry ? { note: PLATFORM_RETRY_NOTE }
         : unitNotRun ? { note: 'the unit suite could not run, so there is no verdict yet' }
           : check === 'error' ? { note: 'the staging preview could not start, so the tests could not run' }
             : deferred ? { note: 'waiting for the head to merge cleanly; the preview is built, the tests run then' }
@@ -593,14 +612,14 @@ function provisional(session) {
     const accepted = exactHead && ['verified', 'not_required', 'overridden'].includes(shotsState);
     out.push({
       key: 'shots',
-      label: 'Before & after shots',
+      label: 'Before & after screenshots',
       actor: 'author',
       state: accepted ? 'done' : shotsState === 'failed' ? 'blocked' : 'active',
       detail: accepted
         ? { state: shotsState }
         : { state: shotsState, note: exactHead
-          ? (detail.failureReason || `the before/after shots are ${String(shotsState).replace(/_/g, ' ')}`)
-          : 'the before/after shots have not been taken for the current commit' },
+          ? (detail.failureReason || `the before/after screenshots are ${String(shotsState).replace(/_/g, ' ')}`)
+          : 'the before/after screenshots have not been taken for the current commit' },
     });
   }
 
@@ -629,7 +648,7 @@ function provisional(session) {
  *
  * A run is a statement about one (reviewed head, approval epoch) pair: the
  * approvals it counted are the epoch's, and the commit it measured, checked
- * and offered GitHub is the head's. checkAndMerge stamps both into the
+ * and offered GitHub is the head's. evaluateMergeGate stamps both into the
  * record's context. When either has moved since, every line of the record is
  * about a proposal that no longer exists — "enough approvals" after the
  * epoch was bumped, "merging now" after the claim was released because the
@@ -676,13 +695,46 @@ function readRequirements(session) {
   }
   return {
     measuredAt: s.merge_requirements_at ? new Date(s.merge_requirements_at).toISOString() : null,
-    gates: withLiveExplicit(withLiveApprovals(withLiveMainPause(describe(record), s), s), s),
+    gates: withLivePlatformRetry(withLiveExplicit(withLiveApprovals(withLiveMainPause(describe(record), s), s), s), s),
     evaluated: true,
     provisional: false,
   };
 }
 
-// A record says what one checkAndMerge run did. The main-health step is the
+// A checks 'error' that is the platform's fault (check_error_platform: a
+// check Job refused, or a test Pod that never started its container) runs
+// again on its own while the error lane still covers it
+// (staging-recovery.errorWithinAutoRetries: up to a day from the streak's
+// first failure). Needs the row's check_error_platform,
+// consecutive_check_failures and first_check_failure_at; a row without
+// them is not read as one.
+const PLATFORM_RETRY_NOTE = 'the checks could not start, so they will run again';
+function platformFaultWillRetry(s) {
+  if (!s || s.check_state !== 'error' || s.check_error_platform !== true) return false;
+  return require('./staging-recovery').errorWithinAutoRetries(s);
+}
+
+// The record says what evaluateMergeGate saw when it ran; a platform fault
+// stored since, or one whose retries have since run out, is the row's
+// news. While the row says the error lane will run the checks again, the
+// step is in progress for nobody; once it no longer does, a step the record
+// left in progress for that reason is blocked on the author again.
+function withLivePlatformRetry(gates, s) {
+  if (!s || s.check_state !== 'error' || s.check_error_platform !== true) return gates;
+  const idx = Array.isArray(gates) ? gates.findIndex((g) => g && g.key === 'checks') : -1;
+  if (idx < 0 || !gates[idx]) return gates;
+  const retry = platformFaultWillRetry(s);
+  const entry = gates[idx];
+  if (retry && entry.state === 'active') return gates;
+  if (!retry && entry.state !== 'active') return gates;
+  return gates.map((g, i) => (i === idx
+    ? retry
+      ? { ...g, state: 'active', detail: { ...(g.detail || {}), checkState: 'error', note: PLATFORM_RETRY_NOTE } }
+      : { ...g, state: 'blocked', detail: { ...(g.detail || {}), checkState: 'error', note: 'the checks could not start' } }
+    : g));
+}
+
+// A record says what one evaluateMergeGate run did. The main-health step is the
 // app's state, not that run's: merges paused after the record was written
 // (or the last run never reached that gate and left it 'pending') are still
 // paused for this proposal, and a board that hid that behind a stale record
@@ -697,7 +749,7 @@ function withLiveMainPause(gates, s) {
 }
 
 // #3669: the same class of staleness on the approvals step, from the other
-// direction. A vote cast after a checkAndMerge run neither bumps the approval
+// direction. A vote cast after a evaluateMergeGate run neither bumps the approval
 // epoch nor moves the head, so the run's record ("Votes waiting, 0 of 1")
 // stays current by every test recordIsSuperseded knows — and keeps being
 // served until the background run re-stamps and another refresh reads it.

@@ -71,23 +71,52 @@ poolMod.getPool = () => ({
       a.db_size_measured_at = params[1];
       return { rows: [] };
     }
-    if (/^UPDATE apps SET db_storage_frozen_at = \$1, db_storage_warned_at = COALESCE/.test(q)) {
+    // A transition runs under the app row's lock (a transaction).
+    if (/^(BEGIN|COMMIT|ROLLBACK)$/.test(q)) return { rows: [] };
+    if (/^SELECT db_storage_frozen_at, db_storage_grace_until, db_storage_cap_bytes FROM apps WHERE id = \$1 FOR UPDATE$/.test(q)) {
+      const a = byId(params[0]);
+      return { rows: a ? [{ db_storage_frozen_at: a.db_storage_frozen_at, db_storage_grace_until: a.db_storage_grace_until, db_storage_cap_bytes: a.db_storage_cap_bytes }] : [] };
+    }
+    if (/^UPDATE apps SET db_storage_frozen_at = \$1, db_storage_warned_at = COALESCE\(db_storage_warned_at, \$1\) WHERE id = \$2$/.test(q)) {
       const a = byId(params[1]);
       a.db_storage_frozen_at = params[0];
       if (!a.db_storage_warned_at) a.db_storage_warned_at = params[0];
-      return { rows: [] };
+      return { rows: [], rowCount: 1 };
+    }
+    // The sweep's transitions are compare-and-sets on what it read: each
+    // answers how many rows it changed.
+    if (/^UPDATE apps SET db_storage_frozen_at = \$1, db_storage_warned_at = COALESCE/.test(q)) {
+      const a = byId(params[1]);
+      if (a.db_storage_frozen_at || (a.db_storage_grace_until ?? null) !== params[2] || (a.db_storage_cap_bytes ?? null) !== params[3]) return { rows: [], rowCount: 0 };
+      a.db_storage_frozen_at = params[0];
+      if (!a.db_storage_warned_at) a.db_storage_warned_at = params[0];
+      return { rows: [], rowCount: 1 };
+    }
+    if (/^SELECT db_storage_frozen_at FROM apps WHERE id = \$1$/.test(q)) {
+      const a = byId(params[0]);
+      return { rows: a ? [{ db_storage_frozen_at: a.db_storage_frozen_at }] : [] };
+    }
+    if (/^UPDATE apps SET db_storage_frozen_at = NULL WHERE id = \$1 AND db_storage_frozen_at IS NOT NULL$/.test(q)) {
+      const a = byId(params[0]);
+      if (!a.db_storage_frozen_at) return { rows: [], rowCount: 0 };
+      a.db_storage_frozen_at = null;
+      return { rows: [], rowCount: 1 };
     }
     if (/^UPDATE apps SET db_storage_frozen_at = NULL WHERE id = \$1$/.test(q)) {
       byId(params[0]).db_storage_frozen_at = null;
-      return { rows: [] };
+      return { rows: [], rowCount: 1 };
     }
-    if (/^UPDATE apps SET db_storage_warned_at = \$1 WHERE id = \$2$/.test(q)) {
-      byId(params[1]).db_storage_warned_at = params[0];
-      return { rows: [] };
+    if (/^UPDATE apps SET db_storage_warned_at = \$1 WHERE id = \$2 AND db_storage_warned_at IS NULL$/.test(q)) {
+      const a = byId(params[1]);
+      if (a.db_storage_warned_at) return { rows: [], rowCount: 0 };
+      a.db_storage_warned_at = params[0];
+      return { rows: [], rowCount: 1 };
     }
-    if (/^UPDATE apps SET db_storage_warned_at = NULL WHERE id = \$1$/.test(q)) {
-      byId(params[0]).db_storage_warned_at = null;
-      return { rows: [] };
+    if (/^UPDATE apps SET db_storage_warned_at = NULL WHERE id = \$1 AND db_storage_warned_at IS NOT NULL$/.test(q)) {
+      const a = byId(params[0]);
+      if (!a.db_storage_warned_at) return { rows: [], rowCount: 0 };
+      a.db_storage_warned_at = null;
+      return { rows: [], rowCount: 1 };
     }
     return { rows: [] };
   },
@@ -101,6 +130,9 @@ let sizes = [];
 const roleCalls = [];
 const notifyCalls = [];
 dbManager.listAppDatabaseSizes = async () => sizes.map(([dbName, bytes]) => ({ dbName, bytes }));
+// Whether a frozen app's role is read-only already: the fixture's frozen
+// apps are, so holding them changes nothing.
+dbManager.isAppDatabaseReadOnly = async () => true;
 dbManager.setAppDatabaseWritable = async (dbName, writable) => {
   roleCalls.push([dbName, writable]);
   return { dbName, role: `${dbName}_owner`, writable };
@@ -108,6 +140,16 @@ dbManager.setAppDatabaseWritable = async (dbName, writable) => {
 notifications.createAppHealthNotification = async (_pool, args) => { notifyCalls.push(args); return []; };
 
 const appStorageCap = require('../src/services/app-storage-cap');
+// The storage clock (src/workflow/clock/) stood in for: a run now runs the
+// real sweep against the stub pool, and its result is the job's last run.
+const clocks = require('../src/services/clocks');
+let lastRun = null;
+clocks.runNow = async (job) => {
+  assert.equal(job, 'app-storage-cap');
+  lastRun = await appStorageCap.sweep(poolMod.getPool());
+  return { result: lastRun };
+};
+clocks.status = async (_db, job) => ({ lastSweepAt: null, lastError: null, sweepInFlight: false, result: job === 'app-storage-cap' ? lastRun : null, nextDueAt: null });
 const { adminRoutes } = require('../src/routes/admin');
 const express = require('express');
 
@@ -356,5 +398,23 @@ test('POST sweep answers 200 with the failure in the summary when measuring fail
     assert.deepEqual(sweep.errors, ['measure: psql: connection refused']);
   } finally {
     dbManager.listAppDatabaseSizes = original;
+  }
+});
+
+test('POST sweep where no clock runs it (a staging preview) measures on the spot; a failed run says why', async () => {
+  const saved = clocks.runNow;
+  try {
+    clocks.runNow = async () => { throw Object.assign(new Error('The job app-storage-cap cannot run now (not_armed)'), { status: 409, code: 'not_armed' }); };
+    sizes = [['app_notes', GIB]];
+    let res = await fetch(`${bases.full}/api/admin/storage/sweep`, { method: 'POST' });
+    assert.equal(res.status, 200);
+    assert.equal((await res.json()).sweep.measured, 1);
+
+    clocks.runNow = async () => ({ result: null, lastError: 'psql: connection refused' });
+    res = await fetch(`${bases.full}/api/admin/storage/sweep`, { method: 'POST' });
+    assert.equal(res.status, 500);
+    assert.deepEqual(await res.json(), { error: 'psql: connection refused' });
+  } finally {
+    clocks.runNow = saved;
   }
 });

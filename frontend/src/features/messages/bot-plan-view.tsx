@@ -1,9 +1,10 @@
 import { useId, useState, type ReactNode } from 'react';
 
-import { CheckIcon } from '@/components/ui/icons';
+import { CheckIcon, InfoCircleIcon } from '@/components/ui/icons';
 import { ProgressRing } from '@/components/ui/progress-ring';
 
-import type { HomeroomBotPlan } from './types';
+import { useMessages } from '../../lib/i18n/react';
+import type { HomeroomBotPlan, HomeroomBotPlanQuestion } from './types';
 
 /*
  * B6: a first version's plan, before anything is built.
@@ -48,17 +49,31 @@ import type { HomeroomBotPlan } from './types';
  * host may add a `footer`: the chat's "Notify me when it's ready", right
  * after Build it is pressed there (./notify-me.tsx).
  *
+ * #4488: THE SAME CARD ASKS ABOUT A COMPLICATED CHANGE (`plan.complicated`)
+ * to a project that already exists: its requester sees the plan before it
+ * is built. Its spec, with the before and after screens, is on the request,
+ * whose card the chat draws under this one, and what they ask to change is
+ * posted there for the group to see; one quiet note says both. 20 Oct
+ * 2026: the chat's card shows that spec itself (`planSpec`, drawn under its
+ * lines: ./bot-plan-spec.tsx), and its note then says only where changes
+ * go.
+ *
  * Pure: no store, so the App tab draws it without the Messages screen.
  */
+
+/** #4488: the note under a complicated change's plan while it waits. */
+export const COMPLICATED_PLAN_NOTE = 'messages:bot.plan.complicatedNote';
+/** 20 Oct 2026: the same note, under a card that shows its plan itself. */
+export const COMPLICATED_PLAN_NOTE_SHOWN = 'messages:bot.plan.complicatedNoteShown';
 
 export type PlanCardState = 'open' | 'built' | 'replaced' | 'stopped' | 'changing' | 'closed';
 
 /** What the line under a card that is no longer open says. */
 export const PLAN_STATE_LINES: Record<Exclude<PlanCardState, 'open' | 'replaced'>, string> = {
-  built: 'Building it',
-  stopped: 'I stopped waiting on this plan. Reply to pick it up again.',
-  changing: 'You asked for changes. A new plan is on its way.',
-  closed: 'No longer needed.',
+  built: 'messages:bot.plan.state.built',
+  stopped: 'messages:bot.plan.state.stopped',
+  changing: 'messages:bot.plan.state.changing',
+  closed: 'messages:bot.plan.state.closed',
 };
 
 /**
@@ -90,6 +105,18 @@ export interface PlanCardViewProps {
   progress?: PlanProgress | null;
   /** Drawn last, inside the card. */
   footer?: ReactNode;
+  /**
+   * 16 Oct 2026: a plan for a request on a project that already runs is
+   * titled by the request, not the project ("My plan for Homeroom" read as
+   * a plan for all of it). Its title, '' when unknown; null for a first
+   * version, titled by its project.
+   */
+  request?: string | null;
+  /**
+   * 20 Oct 2026: a complicated change's plan itself (its screens, and the whole
+   * plan to open), drawn under its lines; the chat's card only.
+   */
+  planSpec?: ReactNode;
 }
 
 /** #4197: a question that was answered, and the answer it went with. */
@@ -120,10 +147,11 @@ export function AnsweredChoices({ items, className = '' }: { items: AnsweredChoi
 
 /** #4197: the line under a plan once Build it is pressed: a check, or the spinner while it builds, then its words. */
 export function DoneLine({ children, spinning = false }: { children: ReactNode; spinning?: boolean }) {
+  const t = useMessages('messages');
   return (
     <p className="messages-bot-answered messages-bot-done" role="status" data-bot-plan-building={spinning ? '' : undefined}>
       {spinning ? (
-        <ProgressRing pct={0} title="Building" spinning className="h-4 w-4" trackClassName="dark:stroke-zinc-700" aria-hidden="true" />
+        <ProgressRing pct={0} title={t('messages:bot.plan.building')} spinning className="h-4 w-4" trackClassName="dark:stroke-zinc-700" aria-hidden="true" />
       ) : (
         <CheckIcon className="h-4 w-4 shrink-0" aria-hidden="true" />
       )}
@@ -144,8 +172,8 @@ const SURFACES = {
 // plan page for members. No side padding, so the rows line up with the
 // card's text. The App tab's card keeps its dots (#4053).
 const PLAN_ROW = {
-  first: 'py-3 text-[0.9375rem] leading-[22px] text-zinc-900 dark:text-zinc-100',
-  next: 'py-3 text-[0.9375rem] leading-[22px] text-zinc-900 shadow-[inset_0_1px_0_var(--app-sheet-line)] dark:text-zinc-100',
+  first: 'text-pretty py-3 text-[0.9375rem] leading-[22px] text-zinc-900 dark:text-zinc-100',
+  next: 'text-pretty py-3 text-[0.9375rem] leading-[22px] text-zinc-900 shadow-[inset_0_1px_0_var(--app-sheet-line)] dark:text-zinc-100',
 } as const;
 
 // One answer of a choice, picked or not: a 44px row with no side padding, so
@@ -155,9 +183,71 @@ const ANSWER_ROW = {
   next: 'flex min-h-[44px] cursor-pointer items-center gap-2.5 py-2 text-[0.9375rem] leading-5 text-zinc-900 shadow-[inset_0_1px_0_var(--app-sheet-line)] has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-inset has-[:focus-visible]:ring-[color:var(--accent)] dark:text-zinc-100',
 } as const;
 
+// Where a plan's first question begins: under a hairline when lines of the
+// plan are above it (its card), or at the top of a card of its own (the made
+// screen's quick questions, ../first-session/made.tsx). #5224: the hairline
+// sits halfway between the last line and the question, so the plan and the
+// question no longer run together.
+const QUESTION_TOP = {
+  divided: 'mt-2 pt-5 shadow-[inset_0_1px_0_var(--app-sheet-line)]',
+  plain: 'pt-3',
+} as const;
+
+/**
+ * A plan's questions, each one quiet single choice with its suggested
+ * answer picked until another is: the plan card's (PlanCardView) and the
+ * made screen's quick questions (13 Oct 2026). `picked` holds the answer
+ * picked for each question, null for one left alone.
+ */
+export function PlanChoices({ questions, picked, onPick, idBase, top = 'divided' }: {
+  questions: HomeroomBotPlanQuestion[];
+  picked: Array<string | null>;
+  onPick: (index: number, answer: string) => void;
+  /** Unique per card, so each question's radios are a group of their own. */
+  idBase: string;
+  top?: keyof typeof QUESTION_TOP;
+}) {
+  return (
+    <>
+      {questions.map((q, index) => (
+        <div key={q.question} className={index === 0 ? QUESTION_TOP[top] : 'mt-3'}>
+          <p id={`${idBase}-q${index}`} className="text-[0.9375rem] font-[650] leading-5 text-zinc-900 dark:text-zinc-100">{q.question}</p>
+          <div role="radiogroup" aria-labelledby={`${idBase}-q${index}`} className="mt-1 flex flex-col">
+            {q.answers.map((answer, j) => {
+              const on = (picked[index] || q.answers[0]) === answer;
+              return (
+                <label key={answer} className={j === 0 ? ANSWER_ROW.first : ANSWER_ROW.next} data-bot-answer={j === 0 ? 'default' : 'other'}>
+                  <input
+                    type="radio"
+                    className="sr-only"
+                    name={`${idBase}-q${index}`}
+                    value={answer}
+                    checked={on}
+                    onChange={() => onPick(index, answer)}
+                  />
+                  {on ? (
+                    <span aria-hidden="true" className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[color:var(--accent)]">
+                      <span className="h-2 w-2 rounded-full bg-[color:var(--accent-ink)]" />
+                    </span>
+                  ) : (
+                    <span aria-hidden="true" className="h-5 w-5 shrink-0 rounded-full ring-[1.5px] ring-inset ring-zinc-300 dark:ring-zinc-600" />
+                  )}
+                  <span className={on ? 'font-semibold' : 'font-normal'}>{answer}</span>
+                </label>
+              );
+            })}
+          </div>
+        </div>
+      ))}
+    </>
+  );
+}
+
 export function PlanCardView({
   appName, plan, state, choices = [], busy = false, building, onBuild, onChange, surface = 'messages', progress = null, footer = null,
+  request = null, planSpec = null,
 }: PlanCardViewProps) {
+  const t = useMessages('messages');
   const [picked, setPicked] = useState<Array<string | null>>(() => plan.questions.map(() => null));
   // Build it pressed on this card: its picks stand in until `choices` land.
   const [builtHere, setBuiltHere] = useState(false);
@@ -170,14 +260,19 @@ export function PlanCardView({
     ? plan.questions.flatMap((q, i) => (went[i] ? [{ question: q.question, answer: went[i] }] : []))
     : [];
   // The App tab's card keeps its words until it goes (#4053).
-  const title = surface === 'app' ? `Here’s my plan for ${appName}:` : `My plan for ${appName}`;
+  // An empty `appName` is a project whose name is not known: its own messages.
+  const title = surface === 'app'
+    ? (appName ? t('messages:bot.plan.titleInApp', { project: appName }) : t('messages:bot.plan.titleInAppUnnamed'))
+    : request !== null
+      ? (request ? t('messages:bot.plan.titleRequest', { title: request }) : t('messages:bot.plan.titleRequestUntitled'))
+      : (appName ? t('messages:bot.plan.title', { project: appName }) : t('messages:bot.plan.titleUnnamed'));
 
   function choose(index: number, answer: string) {
     setPicked((current) => current.map((value, i) => (i === index ? answer : value)));
   }
 
   return (
-    <div className={SURFACES[surface]} role="group" aria-label={`Plan for ${appName}`} data-bot-plan={shown}>
+    <div className={SURFACES[surface]} role="group" aria-label={appName ? t('messages:bot.plan.name', { project: appName }) : t('messages:bot.plan.nameUnnamed')} data-bot-plan={shown}>
       <div className={`text-[1.0625rem] font-bold leading-[1.375rem] ${shown === 'replaced' ? 'text-zinc-500 dark:text-zinc-400' : 'text-zinc-900 dark:text-zinc-100'}`}>
         {title}
       </div>
@@ -189,7 +284,7 @@ export function PlanCardView({
         </div>
       ) : null}
       {shown === 'replaced' ? (
-        <p className="messages-bot-answered">Replaced by a newer plan</p>
+        <p className="messages-bot-answered">{t('messages:bot.plan.replaced')}</p>
       ) : shown === 'built' ? (
         <AnsweredChoices items={answered} className="mt-2" />
       ) : surface === 'messages' ? (
@@ -208,36 +303,14 @@ export function PlanCardView({
           ))}
         </ul>
       )}
-      {open ? plan.questions.map((q, index) => (
-        <div key={q.question} className={index === 0 ? 'mt-3.5 pt-3 shadow-[inset_0_1px_0_var(--app-sheet-line)]' : 'mt-3'}>
-          <p id={`${uid}-q${index}`} className="text-[0.9375rem] font-[650] leading-5 text-zinc-900 dark:text-zinc-100">{q.question}</p>
-          <div role="radiogroup" aria-labelledby={`${uid}-q${index}`} className="mt-1 flex flex-col">
-            {q.answers.map((answer, j) => {
-              const on = (picked[index] || q.answers[0]) === answer;
-              return (
-                <label key={answer} className={j === 0 ? ANSWER_ROW.first : ANSWER_ROW.next} data-bot-answer={j === 0 ? 'default' : 'other'}>
-                  <input
-                    type="radio"
-                    className="sr-only"
-                    name={`${uid}-q${index}`}
-                    value={answer}
-                    checked={on}
-                    onChange={() => choose(index, answer)}
-                  />
-                  {on ? (
-                    <span aria-hidden="true" className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[color:var(--accent)]">
-                      <span className="h-2 w-2 rounded-full bg-[color:var(--accent-ink)]" />
-                    </span>
-                  ) : (
-                    <span aria-hidden="true" className="h-5 w-5 shrink-0 rounded-full ring-[1.5px] ring-inset ring-zinc-300 dark:ring-zinc-600" />
-                  )}
-                  <span className={on ? 'font-semibold' : 'font-normal'}>{answer}</span>
-                </label>
-              );
-            })}
-          </div>
-        </div>
-      )) : null}
+      {shown !== 'replaced' && shown !== 'built' ? planSpec : null}
+      {open ? <PlanChoices questions={plan.questions} picked={picked} onPick={choose} idBase={uid} /> : null}
+      {open && plan.complicated ? (
+        <p className="messages-bot-note mt-2.5" data-bot-plan-note="">
+          <InfoCircleIcon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+          <span>{t(planSpec ? COMPLICATED_PLAN_NOTE_SHOWN : COMPLICATED_PLAN_NOTE)}</span>
+        </p>
+      ) : null}
       {open ? (
         <>
           <button
@@ -245,17 +318,17 @@ export function PlanCardView({
             className="mt-3 h-[50px] w-full rounded-full bg-[color:var(--accent)] text-[1.0625rem] font-semibold text-[color:var(--accent-ink)] hover:bg-[color:var(--accent-light)]"
             data-bot-plan-build=""
             onClick={() => { setBuiltHere(true); onBuild?.(picked); }}
-          >Build it</button>
+          >{t('messages:bot.plan.build')}</button>
           <button
             type="button"
             className="mt-0.5 h-9 w-full text-[0.9375rem] font-medium text-violet-700 hover:underline dark:text-violet-300"
             data-bot-plan-change=""
             onClick={() => onChange?.()}
-          >Change something</button>
+          >{t('messages:bot.plan.change')}</button>
         </>
       ) : null}
-      {shown === 'built' ? (progress ? null : <DoneLine spinning={building ?? busy}>{PLAN_STATE_LINES.built}</DoneLine>)
-        : shown !== 'open' && shown !== 'replaced' ? <p className="messages-bot-answered" role="status">{PLAN_STATE_LINES[shown]}</p> : null}
+      {shown === 'built' ? (progress ? null : <DoneLine spinning={building ?? busy}>{t(PLAN_STATE_LINES.built)}</DoneLine>)
+        : shown !== 'open' && shown !== 'replaced' ? <p className="messages-bot-answered" role="status">{t(PLAN_STATE_LINES[shown])}</p> : null}
       {footer}
     </div>
   );

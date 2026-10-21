@@ -128,7 +128,8 @@ test('a window whose reset has passed reads as the whole budget again', () => {
   assert.equal(c.expired, true);
   assert.equal(c.remaining, 5000);
   assert.equal(c.used, 0);
-  assert.deepEqual(budget.alertFigures('pat', { now: later }), { used: 0, cap: 5000 });
+  // A window this process has not heard of yet: no reset to name.
+  assert.deepEqual(budget.alertFigures('pat', { now: later }), { used: 0, cap: 5000, resetAt: null });
 });
 
 test('the search and graphql budgets are kept apart from core', () => {
@@ -186,12 +187,15 @@ test('without a bot token, background work asks the App installation it would us
 });
 
 test('alertFigures: the bot token, and the most-used App installation', () => {
-  assert.deepEqual(budget.alertFigures('pat', { now: NOW }), { used: 0, cap: 0 });
+  assert.deepEqual(budget.alertFigures('pat', { now: NOW }), { used: 0, cap: 0, resetAt: null });
   budget.record('pat', headers({ remaining: 900, used: 4100 }), { now: NOW });
   budget.record('installation:a', headers({ limit: 12500, remaining: 12000 }), { now: NOW });
   budget.record('installation:b', headers({ limit: 5000, remaining: 1000 }), { now: NOW });
-  assert.deepEqual(budget.alertFigures('pat', { now: NOW }), { used: 4100, cap: 5000 });
-  assert.deepEqual(budget.alertFigures('installation', { now: NOW }), { used: 4000, cap: 5000 });
+  // With the window the figures are about (its reset), which the alert's
+  // level belongs to (platform-limit-alerts.js).
+  const window = Number(inMin(30)) * 1000;
+  assert.deepEqual(budget.alertFigures('pat', { now: NOW }), { used: 4100, cap: 5000, resetAt: window });
+  assert.deepEqual(budget.alertFigures('installation', { now: NOW }), { used: 4000, cap: 5000, resetAt: window });
 });
 
 // ─── 3. Saying what happened ────────────────────────────────────────────
@@ -229,6 +233,14 @@ test('an error that lost its headers still reads, from the recorded window or "w
 test('other refusals are not called a used-up budget', () => {
   const secondary = rateLimited({ remaining: '17', message: 'You have exceeded a secondary rate limit.' });
   assert.equal(budget.isRateLimitError(secondary), false, 'a per-minute limit is not the hourly one');
+  // It is GitHub's secondary limit, temporary all the same (the merge reads
+  // it so, routes/votes.js attemptMerge): by Retry-After or by its wording.
+  assert.equal(budget.isSecondaryRateLimitError(secondary), true);
+  const retryAfter = Object.assign(new Error('Forbidden'), { status: 403, response: { headers: { 'retry-after': '30', 'x-ratelimit-remaining': '900' } } });
+  assert.equal(budget.isSecondaryRateLimitError(retryAfter), true);
+  assert.equal(budget.isSecondaryRateLimitError(Object.assign(new Error('Resource not accessible by integration'), { status: 403 })), false,
+    'a 403 that is a permission is no limit');
+  assert.equal(budget.isSecondaryRateLimitError(null), false);
   const notFound = Object.assign(new Error('Not Found'), { status: 404 });
   assert.equal(budget.rateLimitNotice(notFound), null);
   assert.equal(budget.rateLimitNotice(null), null);
@@ -335,6 +347,8 @@ test('checkRepoPublic says the budget is used up instead of passing GitHub\'s wo
   assert.equal(out.ok, false);
   assert.equal(out.code, 'rate_limited');
   assert.match(out.message, /^GitHub's hourly limit for Homeroom is used up\. It resets in about (9|10) minutes\.$/);
+  // When, for a caller that tries again then (the before & after shots).
+  assert.ok(out.retryAfterSeconds > 8 * 60 && out.retryAfterSeconds <= 10 * 60, String(out.retryAfterSeconds));
 
   github._setOctokitFactoryForTests(() => ({
     rest: { repos: { get: async () => { throw Object.assign(new Error('Server Error'), { status: 502 }); } } },
@@ -349,6 +363,8 @@ test('a worker that cannot start for the budget says so in words a person reads'
   const block = src.slice(at, at + 800);
   assert.match(block, /Homeroom could not start working on \$\{repoOwner\}\/\$\{repoName\}\. \$\{privacy\.message\} Nothing was changed\./);
   assert.match(block, /err\.code = 'github_rate_limited'/);
+  assert.match(block, /if \(privacy\.retryAfterSeconds > 0\) err\.retryAfterMs = privacy\.retryAfterSeconds \* 1000;/,
+    'and when it resets, so the shots sweep waits for that');
   assert.ok(src.indexOf("privacy.code === 'rate_limited'") < src.indexOf('Cannot bootstrap worker for'),
     'before the generic "Cannot bootstrap worker" refusal');
 });
@@ -356,45 +372,86 @@ test('a worker that cannot start for the budget says so in words a person reads'
 // ─── 5. Who asks, and the admin read ────────────────────────────────────
 
 test('the timer-driven GitHub callers ask before they spend', () => {
-  const asks = /githubBudget\.(budgetAllows\('background'\)|backgroundHold\()|require\('\.\/github-budget'\)\.budgetAllows\('background'\)/;
+  const asks = /githubBudget\)?\.(budgetAllows\('background'\)|backgroundHold\()|require\('\.\/github-budget'\)\.budgetAllows\('background'\)/;
   for (const rel of [
     'src/services/main-drift-poller.js',
-    'src/services/merge-followup-recovery.js',
     'src/services/homeroom-bot.js',
     'src/services/workshop-themes.js',
-    'src/services/app-heal.js',
+    'src/services/bench/lane.js',
   ]) {
     assert.match(read(rel), asks, `${rel} asks services/github-budget.js`);
   }
-  const server = read('server.js');
-  const audit = server.slice(server.indexOf('async function auditExistingRepoPrivacy'));
-  assert.match(audit.slice(0, audit.indexOf('\n}\n')), /githubBudget\.budgetAllows\('background'\)/, 'the boot privacy audit');
-  const headSync = server.slice(server.indexOf('// Pass 6: imported-PR head sync'));
-  assert.match(headSync.slice(0, 1800), /if \(!githubBudget\.budgetAllows\('background'\)\) break;/, 'the imported-PR head sync');
+  assert.match(read('src/services/repo-privacy-audit.js'), /githubBudget\.budgetAllows\('background'\)/, 'the daily privacy audit');
+  // The imported-PR look and the six-hourly merged-by-hand lookup, each a
+  // clock's target (services/proposal-scans.js): a spent budget is a look
+  // skipped, which the next run makes again.
+  const scans = read('src/services/proposal-scans.js');
+  assert.match(scans, /function budgetAllows\(\) \{\n\s+return require\('\.\/github-budget'\)\.budgetAllows\('background'\);/);
+  const fn = (name) => scans.slice(scans.indexOf(`async function ${name}(`), scans.indexOf('\n}\n', scans.indexOf(`async function ${name}(`)));
+  const imported = fn('lookImported');
+  assert.ok(imported.indexOf("if (!budgetAllows()) return { skipped: 'budget' };") !== -1
+    && imported.indexOf("if (!budgetAllows()) return { skipped: 'budget' };") < imported.indexOf('syncImportedProposal('),
+  'the imported-PR head sync asks before it reads');
+  const byHand = fn('lookMergedByHand');
+  assert.ok(byHand.indexOf("if (!budgetAllows()) return { skipped: 'budget' };") !== -1
+    && byHand.indexOf("if (!budgetAllows()) return { skipped: 'budget' };") < byHand.indexOf('github.getPR('),
+  'the six-hourly merged-by-hand lookup asks before it reads');
+  assert.match(byHand, /if \(githubBudget\.isRateLimitError\(err\)\) return \{ skipped: 'budget' \};/,
+    'and a rate limit GitHub answered is a look skipped, not a failure');
 });
 
-test('the Homeroom bot\'s pass waits for the reset, with the wait as its retry', async (t) => {
+// 19 Oct 2026: some twenty leader changes, eight in one hour, and each
+// election read every app's repository (~150) and every proposal up for a
+// vote from GitHub again: an audit whose result is only logged, while every
+// worker start checks privacy itself, and a look for merges made by hand.
+// Neither runs at a release now: there is no election, and both are clocks
+// of the workflow (src/workflow/clock/services.ts), whose due times outlive
+// every release.
+test('a release does not re-run the privacy audit or the merged-by-hand lookup', () => {
+  const server = read('server.js');
+  assert.ok(!/becomeLeader|createLeadership/.test(server), 'no process is elected');
+
+  const clocks = read('src/workflow/clock/services.ts');
+  assert.match(clocks, /name: 'repo-privacy-audit', everyMs: 24 \* HOUR,/, 'the privacy audit: a daily clock');
+  assert.ok(!/auditExistingRepoPrivacy|repo-privacy/.test(server), 'and no process runs it on its own');
+  assert.match(clocks, /name: 'merged-by-hand', everyMs: 6 \* HOUR,/, 'the merged-by-hand lookup: every six hours');
+  assert.ok(!/observeMergedOnGithub|merged-by-hand/.test(server), 'and no process runs it on its own');
+  // Each proposal is a target of its own: a run stopped part way leaves the
+  // rest to be looked at, rather than the whole lookup to run again.
+  const job = clocks.slice(clocks.indexOf("name: 'merged-by-hand'"), clocks.indexOf("name: 'proposal-revisions'"));
+  assert.match(job, /legacy\('services\/proposal-scans'\)\.mergedByHandTargets\(pool, page\(ctx\)\)/);
+  assert.match(job, /item: \{\n\s+concurrency: \d+,\n\s+run: [^\n]*legacy\('services\/proposal-scans'\)\.lookMergedByHand\(pool, Number\(ctx\.input\.input\?\.sessionId\)\)/);
+
+  // The audit stops at its next row once its run is stopped, so it never
+  // holds a drain; a run stopped before the end fails, and the clock tries
+  // again sooner.
+  const audit = read('src/services/repo-privacy-audit.js');
+  assert.match(audit, /while \(queue\.length && !shouldStop\(\)\) \{/);
+  assert.match(audit, /if \(queue\.length && !held\) throw new Error/);
+});
+
+// The bot's refresh, a look and a build's start read GitHub, and they are
+// background work: each waits for the reset, says when (its lane pauses its
+// grants and its refresh until then), and reads nothing meanwhile.
+test('the Homeroom bot\'s refresh, looks and builds wait for the reset, and say when', async (t) => {
   withEnv(t, 'GITHUB_BOT_TOKEN', 'test-token');
   const bot = require('../src/services/homeroom-bot');
-  bot._resetForTests();
   const queries = [];
   const pool = {
-    async connect() {
-      return { async query() { return { rows: [{ acquired: true }] }; }, release() {} };
-    },
     async query(sql) {
       queries.push(String(sql));
-      if (/SELECT key, value FROM platform_settings/.test(sql)) return { rows: [{ key: bot.KEY_MODE, value: 'shadow' }] };
+      if (/FROM platform_settings/.test(sql)) return { rows: [{ key: bot.KEY_MODE, value: 'live' }] };
       return { rows: [] };
     },
   };
   budget.record('pat', headers({ remaining: 20 }), { now: NOW });
-  const out = await bot.runOnce(pool, {}, { now: () => NOW, drain: false });
-  assert.equal(out.paused, 'github');
-  assert.equal(out.retryInMs, 30 * 60 * 1000);
-  assert.equal(out.dispatched, undefined, 'nothing was started');
-  assert.ok(!queries.some((q) => /homeroom_bot_queue q/.test(q) && /started_at IS NULL/.test(q)), 'no candidates were read');
-  bot._resetForTests();
+  const deps = { now: () => NOW };
+  const resetAt = new Date(NOW + 30 * 60 * 1000).toISOString();
+  assert.deepEqual(await bot.refresh({}, pool, { n: 1, deps }), { github: resetAt });
+  assert.deepEqual(await bot.sweep({}, pool, { deps }), { github: resetAt });
+  assert.deepEqual(await bot.lookAt({}, pool, { input: { appId: 9, issueNumber: 3, n: 1 }, steps: null, deps }), { outcome: 'github', until: resetAt });
+  assert.deepEqual(await bot.startBuild({}, pool, { appId: 9, issueNumber: 3, runId: 5, replyTo: null, deps }), { outcome: 'github', until: resetAt });
+  assert.ok(!queries.some((q) => /homeroom_bot_queue|homeroom_bot_runs|FROM apps/.test(q)), 'nothing was read past the settings');
 });
 
 test('GET /api/admin/github-budget is an admin-only read of the figures', async (t) => {
@@ -438,7 +495,7 @@ test('Admin, Limits draws the figures from the AdminUI registry, read-only', () 
   assert.match(card, /id="admin-github-budget" className=\{`\$\{AdminUI\.card\} p-4 mt-4`\}/);
   assert.match(card, /AdminUI\.cardTitle/);
   assert.doesNotMatch(card, /<button|<input|method: 'PUT'/, 'nothing on it writes');
-  assert.match(src, /<AppLimitCard canWrite=\{canWrite\} \/>\s*<GithubBudgetCard \/>/);
+  assert.match(src, /<AppLimitCard canWrite=\{canWrite\} \/>\s*<SessionLimitCard canWrite=\{canWrite\} \/>\s*<GithubBudgetCard \/>/);
 });
 
 test('a 503 github_unavailable carries the reason, and the CLI prints it', () => {

@@ -85,6 +85,12 @@ async function openDatabase(t) {
   const schema = fs.readFileSync(path.join(__dirname, '../src/db/schema.sql'), 'utf8');
   await pool.query(schema);
   await pool.query(schema); // boot-idempotent, including the new FK and index
+  // #5104: accounts start out reachable only by people they share a project
+  // with, and out of searches. This file's people are strangers who write
+  // to, invite and find each other, which is what it pins, so here they
+  // start out open; tests/contact-privacy-postgres.test.js pins the defaults.
+  await pool.query(`ALTER TABLE users ALTER COLUMN contact_policy SET DEFAULT 'anyone',
+                                      ALTER COLUMN profile_discoverable SET DEFAULT TRUE`);
   return pool;
 }
 
@@ -515,6 +521,128 @@ test('conversation threads, soft delete, permalinks and mark-unread on the real 
     assert.equal(after.root.thread.replyCount, 1, 'a deleted reply is not counted');
   });
 
+  await t.test('#5219: the request\'s public discussion rides along on a bot card\'s thread', async () => {
+    const bot = (await pool.query(
+      // threadsAllowed names the bot's account, so the DM is with it.
+      `INSERT INTO users (username, password, is_synthetic, display_name)
+        VALUES ('homeroom_bot', 'x', TRUE, 'Homeroom bot') RETURNING id`
+    )).rows[0];
+    const viewer = await user('watcher');
+    const dm = (await conversations.createDirect(pool, viewer, bot.id)).conversationId;
+
+    // The request the card is about, public so any member can read it, plus
+    // one the viewer cannot see.
+    const app = (await pool.query(
+      `INSERT INTO apps (name, slug, created_by, status, view_visibility, collab_visibility)
+        VALUES ('Demo app', 'demo-app-5219', $1, 'running', 'public', 'public')
+        RETURNING id, slug`, [bot.id]
+    )).rows[0];
+    const hiddenApp = (await pool.query(
+      `INSERT INTO apps (name, slug, created_by, status, view_visibility, collab_visibility)
+        VALUES ('Hidden app', 'hidden-app-5219', $1, 'running', 'private', 'private')
+        RETURNING id, slug`, [bot.id]
+    )).rows[0];
+    const fan = await user('fan');
+    const quiet = await user('quiet');
+
+    async function discuss(appId, userId, content) {
+      return (await pool.query(
+        `INSERT INTO chat_messages (app_id, user_id, content, msg_type, thread_type, thread_ref)
+          VALUES ($1, $2, $3, 'message', 'issue', 18) RETURNING id, created_at`,
+        [appId, userId, content]
+      )).rows[0];
+    }
+
+    const card = await send(bot, dm, { content: 'Demo app request #18 card' });
+    assert.ok(card && card.messageId);
+    await pool.query(`UPDATE conversation_messages SET metadata = $2 WHERE id = $1`, [
+      card.messageId, JSON.stringify({ homeroomBot: { appSlug: 'demo-app-5219', issueNumber: 18, kind: 'activity' } }),
+    ]);
+
+    const visible = [];
+    visible.push(await discuss(app.id, fan.id, 'first word'));
+    visible.push(await discuss(app.id, viewer.id, 'my own line'));
+    // A reply copied from the chat carries the mirror suffix and is left out
+    // here: the thread shows the reply itself.
+    const mirrored = await discuss(app.id, viewer.id, 'ignored');
+    await pool.query(`UPDATE chat_messages SET content = $2 WHERE id = $1`, [
+      mirrored.id,
+      `the same reply\n\n(Sent ${require('../src/services/homeroom-bot-dm').MIRRORED_FROM_DM}`,
+    ]);
+    // Rows a real discussion carries but the thread must not.
+    await discuss(app.id, bot.id, 'the bot is synthetic, so never shown');
+    const moderated = await discuss(app.id, fan.id, 'moderated away');
+    await pool.query(`UPDATE chat_messages SET moderation_hidden_at = NOW() WHERE id = $1`, [moderated.id]);
+    const deletedDisc = await discuss(app.id, fan.id, 'deleted away');
+    await pool.query(`UPDATE chat_messages SET deleted_at = NOW() WHERE id = $1`, [deletedDisc.id]);
+    await discuss(app.id, fan.id, 'not a message');
+    await pool.query(`UPDATE chat_messages SET msg_type = 'system' WHERE app_id = $1 AND content = 'not a message'`, [app.id]);
+    await pool.query(`INSERT INTO user_blocks (blocker_id, blocked_user_id) VALUES ($1, $2)`, [viewer.id, quiet.id]);
+    await discuss(app.id, quiet.id, 'blocked author');
+
+    // The bot's quiet note about a reply it mirrored repeats the discussion
+    // message the thread now shows in full; its key names that message.
+    await send(bot, dm, {
+      content: 'You replied on the request\'s discussion: “first word”',
+      thread_root_id: card.messageId,
+      idempotency_key: `hrbot-replied-${visible[0].id}`,
+    });
+    // A note whose key names a message the page does not return stays.
+    await send(bot, dm, {
+      content: 'someone else replied on the request\'s discussion: “x”',
+      thread_root_id: card.messageId,
+      idempotency_key: 'hrbot-replied-999999999',
+    });
+    // The person's own answer, still in the private thread as today.
+    await send(viewer, dm, { content: 'my own reply', thread_root_id: card.messageId });
+
+    const thread = await conversations.listThread(pool, viewer, dm, card.messageId);
+    assert.equal(thread.error, undefined);
+    assert.deepEqual(thread.discussion, {
+      appSlug: 'demo-app-5219', issueNumber: 18, more: false,
+      messages: [
+        { id: visible[0].id, source: 'discussion', sender: { id: fan.id, username: fan.username, avatarUrl: null },
+          content: 'first word', createdAt: visible[0].created_at, editedAt: null },
+        { id: visible[1].id, source: 'discussion', sender: { id: viewer.id, username: viewer.username, avatarUrl: null },
+          content: 'my own line', createdAt: visible[1].created_at, editedAt: null },
+      ],
+    }, 'people only, oldest first, with the mirror copy and the keyed note dropped');
+    const ids = thread.messages.map((x) => x.id);
+    assert.equal(ids.filter((id) => ids.indexOf(id) !== ids.lastIndexOf(id)).length, 0, 'no duplicate rows');
+    assert.ok(thread.messages.some((x) => x.content.includes('my own reply')), 'the viewer\'s DM reply stays in the thread');
+    assert.ok(!thread.messages.some((x) => /first word/.test(x.content)),
+      'the note that repeated a shown discussion message is dropped');
+
+    // Not a bot card: no discussion, and nothing else about the reply changes.
+    const plain = await send(viewer, dm, { content: 'a person\'s line' });
+    const plainThread = await conversations.listThread(pool, viewer, dm, plain.messageId);
+    assert.equal(plainThread.discussion, null);
+
+    // Later pages of the same thread carry no discussion.
+    await send(viewer, dm, { content: 'second reply', thread_root_id: card.messageId });
+    const later = await conversations.listThread(pool, viewer, dm, card.messageId, {
+      before: thread.messages[0].id,
+    });
+    assert.equal(later.discussion, null);
+
+    // An app the viewer cannot view contributes nothing.
+    const secretCard = await send(bot, dm, { content: 'Hidden app request #18 card' });
+    await pool.query(`UPDATE conversation_messages SET metadata = $2 WHERE id = $1`, [
+      secretCard.messageId,
+      JSON.stringify({ homeroomBot: { appSlug: 'hidden-app-5219', issueNumber: 18, kind: 'activity' } }),
+    ]);
+    const secretThread = await conversations.listThread(pool, viewer, dm, secretCard.messageId);
+    assert.equal(secretThread.discussion, null);
+
+    // `more` is set when the discussion has more than the newest 50.
+    for (let i = 0; i < 60; i += 1) await discuss(app.id, fan.id, `filler ${i}`);
+    const wide = await conversations.listThread(pool, viewer, dm, card.messageId);
+    assert.equal(wide.discussion.more, true);
+    assert.equal(wide.discussion.messages.length, 50, 'the newest 50');
+    assert.equal(wide.discussion.messages[0].content, 'filler 10', 'still oldest first');
+    assert.equal(wide.discussion.messages[49].content, 'filler 59', 'the newest ends the page');
+  });
+
   await t.test('the HTTP contract: status codes, bodies and realtime envelopes', async () => {
     const app = express();
     app.use(express.json());
@@ -561,7 +689,10 @@ test('conversation threads, soft delete, permalinks and mark-unread on the real 
     assert.deepEqual(direct400.body, { error: 'threads_not_supported' });
     const threadGet = await call(carol, 'GET', `/api/conversations/${crew}/threads/${root.body.message.id}`);
     assert.equal(threadGet.status, 200);
-    assert.deepEqual(Object.keys(threadGet.body).sort(), ['messages', 'nextBefore', 'root']);
+    // #5219: the response shape now carries the request's discussion (null
+    // here — this root is not one of the bot's cards).
+    assert.deepEqual(Object.keys(threadGet.body).sort(), ['discussion', 'messages', 'nextBefore', 'root']);
+    assert.equal(threadGet.body.discussion, null);
     assert.equal(threadGet.body.root.thread.replyCount, 1);
     const directThread = await call(bob, 'GET',
       `/api/conversations/${direct.conversationId}/threads/${root.body.message.id}`);

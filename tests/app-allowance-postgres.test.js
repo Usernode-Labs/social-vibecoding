@@ -21,12 +21,13 @@ const pool = {
     if (failNotifications && /INSERT INTO notifications/.test(sql)) throw new Error('Notification write failed');
     return client.query(sql, params);
   },
+  // The create route writes a project in one transaction: on the one
+  // connection this test has, one statement after another.
+  async connect() { return { query: (sql, params) => pool.query(sql, params), release() {} }; },
 };
 require('../src/db/pool').getPool = () => pool;
 require('../src/services/notifications').hydrateAndPush = async (_pool, row) => { pushes.push(row); };
 require('../src/services/ws').pushNotificationToUser = (id, event) => { pushes.push({ userId: id, ...event }); };
-require('../src/services/app-creator').createApp = async () => {};
-require('../src/services/app-forker').forkApp = async () => {};
 require('../src/services/events').record = async () => {};
 const allowance = require('../src/services/app-allowance');
 const { appRoutes } = require('../src/routes/apps');
@@ -60,7 +61,11 @@ test('app allowances: migration, create/fork, requests and admin review', async 
       CREATE TABLE apps (id SERIAL PRIMARY KEY, name TEXT, slug TEXT, repo_url TEXT,
         created_by INTEGER REFERENCES users(id), status VARCHAR(32),
         collab_visibility VARCHAR(16) DEFAULT 'public', view_visibility VARCHAR(16) DEFAULT 'public',
-        self_hosted BOOLEAN DEFAULT FALSE, forked_from JSONB);
+        self_hosted BOOLEAN DEFAULT FALSE, forked_from JSONB,
+        -- #4666: a new project's approval rule (You or the group) is written on create.
+        governance_rules JSONB,
+        -- The workflow makes a new project (src/workflow/app-creation/).
+        creating_owner TEXT, creating_heartbeat_at TIMESTAMPTZ);
       CREATE TABLE user_app_blocks (user_id INTEGER, app_id INTEGER, PRIMARY KEY (user_id, app_id));
       CREATE TABLE app_collaborators (app_id INTEGER, user_id INTEGER, status TEXT,
         accepted_at TIMESTAMPTZ, PRIMARY KEY(app_id, user_id));
@@ -101,6 +106,7 @@ test('app allowances: migration, create/fork, requests and admin review', async 
     const alice = { id: 2, username: 'alice', appQuota: 0, isAdmin: false, canAdminWrite: false };
     const admin = { id: 1, username: 'admin', isAdmin: true, canAdminWrite: true };
     const viewer = { id: 5, username: 'viewer', isAdmin: true, canAdminWrite: false };
+    const trusted = { id: 4, username: 'trusted', appQuota: 7, isAdmin: false, canAdminWrite: false };
 
     await t.test('a stale zero allowance on the session cannot block two available slots', async () => {
       user = alice;
@@ -171,6 +177,43 @@ test('app allowances: migration, create/fork, requests and admin review', async 
       await request('DELETE', '/api/admin/users/2/app-quota-request');
       assert.equal((await allowance.read(pool, alice)).requestedAt, null);
       assert.equal((await client.query("SELECT * FROM notifications WHERE kind = 'app_quota_request_declined'")).rows.length, 1);
+    });
+
+    // #5737: somebody who pressed "Request more" before filling the form in
+    // takes the request back, then asks again with the right details.
+    await t.test('a person can take their own pending request back, and ask again', async () => {
+      user = trusted;
+      await client.query('UPDATE users SET app_quota_requested_at = NULL WHERE id = 4');
+      await client.query('DELETE FROM notifications');
+      const made = await request('POST', '/api/me/app-allowance/request');
+      assert.ok(made.data.requestedAt);
+      const seen = pushes.length;
+      const undone = await request('DELETE', '/api/me/app-allowance/request');
+      assert.equal(undone.status, 200, JSON.stringify(undone.data));
+      assert.equal(undone.data.requestedAt, null);
+      assert.equal((await allowance.read(pool, trusted)).requestedAt, null);
+      assert.ok(pushes.slice(seen).some((p) => p.userId === 4 && p.type === 'app_allowance_changed'),
+        'the person\'s other tabs refresh');
+      assert.equal((await client.query("SELECT * FROM notifications WHERE kind = 'app_quota_requested'")).rows.length, 2,
+        'the admins\' original notice stays, and the undo inserts none');
+      // Nothing pending is the current allowance, not an error (a second tab,
+      // or an admin who already answered).
+      const again = await request('DELETE', '/api/me/app-allowance/request');
+      assert.equal(again.status, 200);
+      assert.equal(again.data.requestedAt, null);
+      // An admin approving after the undo meets the existing 409.
+      user = admin;
+      assert.equal((await request('POST', '/api/admin/users/4/app-quota-request/approve')).status, 409);
+      // Asking again works straight away, with a fresh set of notices.
+      user = trusted;
+      const remade = await request('POST', '/api/me/app-allowance/request');
+      assert.ok(remade.data.requestedAt);
+      assert.equal((await client.query("SELECT * FROM notifications WHERE kind = 'app_quota_requested'")).rows.length, 4);
+      // A full admin has no request to undo.
+      user = admin;
+      assert.equal((await request('DELETE', '/api/me/app-allowance/request')).status, 400);
+      user = null;
+      assert.equal((await request('DELETE', '/api/me/app-allowance/request')).status, 401);
     });
 
     await t.test('bulk changes notify each changed user and reject malformed allowance values', async () => {

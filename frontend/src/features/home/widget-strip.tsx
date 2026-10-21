@@ -27,6 +27,7 @@ import { useEffect, useRef } from 'react';
 
 import { CheckIcon, InfoCircleIcon } from '@/components/ui/icons';
 
+import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
 import { chromeStore, type WidgetStripState, type WidgetTileView } from './chrome-store';
 import type { IconView } from './grid-store';
@@ -35,9 +36,9 @@ function controller(): any {
   return (typeof window !== 'undefined' ? (window as any).Home : null) || null;
 }
 
-const HINT_WITH_TILES = 'Drag tiles to reorder. Drag cards from My apps here to add them.';
-const HINT_EMPTY = 'Drag a card from My apps here (or use its menu) to add it to the '
-  + 'Homeroom widget on your home screen.';
+// The line under the tiles, as message ids: read when the strip renders.
+const HINT_WITH_TILES = 'home:widget.hint.withTiles';
+const HINT_EMPTY = 'home:widget.hint.empty';
 
 function TileIcon({ icon }: { icon: IconView }) {
   if (icon.kind === 'image') {
@@ -63,6 +64,7 @@ function TileIcon({ icon }: { icon: IconView }) {
  * home card and this tile, and it was executed coverage before the conversion.
  */
 export function WidgetTile({ tile }: { tile: WidgetTileView }) {
+  const t = useMessages('home');
   return (
     <div
       // touch-pan-y + select-none for the same reason as app cards: keep
@@ -83,8 +85,8 @@ export function WidgetTile({ tile }: { tile: WidgetTileView }) {
         type="button"
         className="widget-remove-btn absolute -top-1.5 right-0 w-5 h-5 flex items-center justify-center rounded-full bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-600 shadow-sm text-[0.6rem] text-zinc-500 dark:text-zinc-300 hover:text-red-500"
         data-wid={tile.id}
-        title="Remove from widget"
-        aria-label={`Remove ${tile.name} from widget`}
+        title={t('home:widget.tile.remove')}
+        aria-label={t('home:widget.tile.removeNamed', { app: tile.name })}
         onClick={(e) => {
           e.stopPropagation();
           controller()?._removeWidgetItem?.(tile.id);
@@ -107,18 +109,20 @@ export function WidgetTile({ tile }: { tile: WidgetTileView }) {
  * pair of calls the browser makes.
  */
 export function WidgetStripBody({ strip }: { strip: WidgetStripState }) {
+  const t = useMessages('home');
   if (!strip.active) return null;
+  const strong = <span className="font-medium" />;
   return (
     <>
       <div className="home-section-header flex items-center justify-between">
         <span className="flex items-center gap-1.5">
-          {'Homeroom widget'}
+          {t('home:widget.heading')}
           <button
             type="button"
             id="widget-section-help"
             className="w-4 h-4 flex items-center justify-center rounded-full text-zinc-500 dark:text-zinc-500 hover:text-violet-500 dark:hover:text-violet-400 transition-colors"
-            title="How to add the widget to your home screen"
-            aria-label="How to add the widget to your home screen"
+            title={t('home:widget.help.toggle')}
+            aria-label={t('home:widget.help.toggle')}
             aria-expanded={strip.helpVisible}
             onClick={(e) => {
               e.stopPropagation();
@@ -135,8 +139,8 @@ export function WidgetStripBody({ strip }: { strip: WidgetStripState }) {
           type="button"
           id="widget-section-close"
           className="flex items-center gap-1 text-xs font-normal normal-case tracking-normal text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 transition-colors"
-          title="Close the widget section"
-          aria-label="Close the widget section"
+          title={t('home:widget.close')}
+          aria-label={t('home:widget.close')}
           onClick={(e) => {
             e.stopPropagation();
             const home = controller();
@@ -148,7 +152,7 @@ export function WidgetStripBody({ strip }: { strip: WidgetStripState }) {
             home.render();
           }}
         >
-          {'Done'}
+          {t('core:common.done')}
           <CheckIcon className="w-3.5 h-3.5" aria-hidden="true" />
         </button>
       </div>
@@ -161,18 +165,10 @@ export function WidgetStripBody({ strip }: { strip: WidgetStripState }) {
             id="widget-help-panel"
             className="w-full text-[0.7rem] leading-relaxed text-zinc-600 dark:text-zinc-300 rounded-lg bg-violet-500/5 dark:bg-violet-500/10 border border-violet-500/20 px-3 py-2"
           >
-            <span className="font-medium">Add the widget to your home screen:</span>
-            {' touch and hold an empty area of your iPhone home screen, tap '}
-            <span className="font-medium">Edit</span>
-            {' → '}
-            <span className="font-medium">Add Widget</span>
-            {' (or the '}
-            <span className="font-medium">+</span>
-            {'), search for '}
-            <span className="font-medium">Homeroom</span>
-            {', pick a size and tap '}
-            <span className="font-medium">Add Widget</span>
-            {'. The apps below appear on it automatically.'}
+            <RichMessage
+              id="home:widget.help.steps"
+              components={[strong, strong, strong, strong, strong, strong]}
+            />
           </div>
         ) : null}
         {strip.tiles.map((tile) => <WidgetTile key={tile.id} tile={tile} />)}
@@ -181,7 +177,7 @@ export function WidgetStripBody({ strip }: { strip: WidgetStripState }) {
             strip.tiles.length ? '' : 'py-3 text-center'
           }`}
         >
-          {strip.tiles.length ? HINT_WITH_TILES : HINT_EMPTY}
+          {strip.tiles.length ? t(HINT_WITH_TILES) : t(HINT_EMPTY)}
         </div>
       </div>
     </>

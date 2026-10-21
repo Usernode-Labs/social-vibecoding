@@ -388,6 +388,27 @@ test('a cap query that cannot run refuses rather than waving the write through',
   assert.ok(err, 'an unavailable limiter is a reason to stop');
 });
 
+test('a slot Homeroom has not freed in time is retryable, not at capacity', async () => {
+  const lifecycle = require('../src/services/session-lifecycle');
+  const real = lifecycle.freeUserSlot;
+  const recorded = [];
+  const realRecord = lifecycle.recordCapacityRefusal;
+  lifecycle.freeUserSlot = async () => ({ freed: false, notDecided: true });
+  lifecycle.recordCapacityRefusal = (...args) => { recorded.push(args); };
+  try {
+    const pool = { async query() { return { rows: [{ cnt: '3' }] }; } };
+    const err = await limits.checkActiveCap(pool, {}, { id: 3 });
+    assert.deepEqual(err, { code: 'not_decided', message: lifecycle.SLOT_NOT_DECIDED });
+    assert.deepEqual(recorded, [], 'no capacity refusal is recorded');
+  } finally {
+    lifecycle.freeUserSlot = real;
+    lifecycle.recordCapacityRefusal = realRecord;
+  }
+  // The route answers it 503 with Retry-After; a cap stays a 429.
+  const route = ROUTE_SRC.slice(ROUTE_SRC.indexOf("router.post('/api/apps/:slug/work/share-in-progress'"));
+  assert.match(route, /const undecided = capError\.code === 'not_decided';\n\s*if \(undecided\) res\.set\('Retry-After', String\(sessionLifecycle\.NOT_DECIDED_RETRY_AFTER_S\)\);\n\s*return res\.status\(undecided \? 503 : 429\)/);
+});
+
 // ── 5. The route: same machinery, and no litter ────────────────────────
 
 function shareRoute() {

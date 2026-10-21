@@ -33,6 +33,11 @@ agent process between calls, and the trace alone cannot prove what it was
 thinking. Compare those events with `agent_deadline` and `worker_stop_requested`
 to distinguish the platform's timeout from an external interruption.
 
+A browser call made in a persona's phone browser (a phone screen's, see
+"Phone screens" in `before-after-shots.md`) carries `phone: true` beside its
+`persona`, and `provider_init` counts the phone browsers' tools together as
+`browserPhoneToolCount`, so a phone browser that did not start shows there.
+
 `routeHint` reports whether a browser navigation matches an accepted intent
 start or a declared check, with only an ordinal for its route. Browser result
 shape counts headings, buttons, links, image blocks, and response size. These

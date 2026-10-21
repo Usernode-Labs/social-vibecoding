@@ -34,6 +34,7 @@
 
 import { useEffect, useState } from 'react';
 
+import { owedWalk } from '../first-session/first-visit';
 import { PlatformTarget } from './platform-target.js';
 import type { AppRow } from './about-model';
 
@@ -51,7 +52,7 @@ type G = {
   Home?: { _apps?: AppRow[]; _appsLoaded?: boolean; load?: () => Promise<unknown> } & Record<string, any>;
   Browse?: { _apps?: AppRow[] };
   AppView?: { appData?: AppRow | null };
-  App?: { _privateHomeVisited?: () => boolean };
+  App?: { _privateHomeVisited?: () => boolean; user?: { id?: number | string | null; homeWalkOwed?: boolean } | null };
 };
 
 function g(): G {
@@ -70,10 +71,10 @@ function demoQS(): string {
  * Whether the mark menu is still offering a PRIVATE MEMBER "Go to Homeroom"
  * as their way on: they came in by an invite link before they were let in,
  * and have not used it yet on this device (App._privateNoClose,
- * public/js/app.js). While it is, the menu hides "Go to community" and
- * About hides Share (#4216): one way onward, and no handing out the app's
- * address before they have gone to Homeroom. Both come back once they have
- * used it, or are let in (`privateMember` goes false).
+ * public/js/app.js). While it is, the menu hides "Go to community" (#4216):
+ * one way onward. It comes back once they have used it, or are let in
+ * (`privateMember` goes false). About hid its Share too; Share is gone, and
+ * the Invite that took its place is every member's, as the hub's is.
  *
  * Read during a render that runs after mount only: the visit is remembered
  * in this device's storage, which the prerender cannot see. The sheet
@@ -85,6 +86,38 @@ export function offeringGoToHomeroom(privateMember: boolean): boolean {
     return !g().App?._privateHomeVisited?.();
   } catch {
     return true;
+  }
+}
+
+/**
+ * Whether this person is still owed the first session's walk on Home
+ * (../first-session/first-visit.ts): a newcomer who made their first project
+ * or came in by an invite, and has not yet reached Homeroom since. While it
+ * is, the mark menu's way on is "Go to Homeroom" alone, which takes them
+ * Home and runs the walk (firstSession.goHome), not "Go to community", which
+ * opens the project's hub inside the app, where the walk does not run (Evan,
+ * sign-up test, 19 Oct 2026). The tip under the mark says the same, and the
+ * menu holds back news of a Homeroom update meanwhile (../improve/
+ * actions.tsx): somebody who has not reached Homeroom yet has nothing to
+ * update.
+ *
+ * Kept by the account too (App.user.homeWalkOwed, POST /api/me/home-walk),
+ * so a second device agrees; read with this device's record. Read after
+ * mount only, as offeringGoToHomeroom: the record is in this device's
+ * storage, which the prerender cannot see.
+ */
+export function owedHomeWalk(): boolean {
+  try {
+    const app = g().App;
+    const uid = app?.user?.id;
+    if (uid == null) return false;
+    // Owed on the account (App.user.homeWalkOwed) or on this device, and not
+    // once they have reached Homeroom on any device (App._privateHomeVisited
+    // reads the account's mark with this device's).
+    const owed = owedWalk(uid) != null || app?.user?.homeWalkOwed === true;
+    return owed && !app?._privateHomeVisited?.();
+  } catch {
+    return false;
   }
 }
 

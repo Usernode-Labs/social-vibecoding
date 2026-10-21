@@ -3,7 +3,7 @@
 
 import { createHash } from 'node:crypto';
 import type {
-  Authorize, Check, Decoder, Event, Ignored, Json, MachineDefinition, Notifier, Rejection, State,
+  Authorize, Check, Decoder, Event, Ignored, Json, MachineDefinition, Rejection, State,
   TableEntry, Transition, WriteHandler,
 } from './types.ts';
 
@@ -58,7 +58,8 @@ export interface Machine<S extends State = State, F = unknown> {
   readonly authorize: ReadonlyMap<string, Authorize<S, F>>;
   readonly transitions: ReadonlyMap<string, ReadonlyMap<string, TableEntry<S, F>>>;
   readonly writes: ReadonlyMap<string, WriteHandler>;
-  readonly notifiers: ReadonlyMap<string, Notifier>;
+  readonly attention: ReadonlyMap<string, string>;
+  readonly retainDays: number | null;
   readonly decode: MachineDefinition<S, F>['decode'];
   readonly facts?: MachineDefinition<S, F>['facts'];
   readonly project?: MachineDefinition<S, F>['project'];
@@ -74,6 +75,8 @@ export function defineMachine<S extends State, F>(def: MachineDefinition<S, F>):
   const fail = (msg: string): never => { throw new Error(`defineMachine(${def.name}): ${msg}`); };
   if (!NAME.test(def.name)) fail('name must be kebab-case');
   if (!Number.isInteger(def.version) || def.version < 1) fail('version must be a positive integer');
+  // Nothing runs after a transition commits: there are no notifiers.
+  if ((def as { notifiers?: unknown }).notifiers !== undefined) fail('notifiers are gone: use a push, work or a message');
 
   // The boundary: authoring objects become Maps and Sets here, once.
   const own = toMap(def.events);
@@ -109,6 +112,9 @@ export function defineMachine<S extends State, F>(def: MachineDefinition<S, F>):
       for (const type of own.keys()) if (!row.has(type)) fail(`state ${state} neither handles nor ignores ${type}`);
     }
   }
+  const attention = toMap(def.attention);
+  for (const state of attention.keys()) if (!states.has(state)) fail(`attention state ${state} is not declared`);
+  if (def.retainDays !== undefined && !(Number.isInteger(def.retainDays) && def.retainDays >= 1)) fail('retainDays must be a positive integer');
   for (const c of create) {
     const entry = transitions.get(NONE)?.get(c);
     if (!entry || isIgnored(entry)) fail(`creating event ${c} has no transition from ${NONE}`);
@@ -119,7 +125,8 @@ export function defineMachine<S extends State, F>(def: MachineDefinition<S, F>):
     version: def.version,
     states, create, terminal, events, authorize, transitions,
     writes: toMap(def.writes),
-    notifiers: toMap(def.notifiers),
+    attention,
+    retainDays: def.retainDays ?? null,
     decode: def.decode,
     facts: def.facts,
     project: def.project,
@@ -161,6 +168,32 @@ export function assertJson(value: unknown, path = '$'): asserts value is Json {
     return;
   }
   throw new WorkflowInputError('invalid_payload', `${path} is not JSON data`);
+}
+
+// A value as the JSON text the kernel writes to a json or jsonb column.
+// PostgreSQL refuses two strings JavaScript holds: one with a lone UTF-16
+// surrogate ("invalid input syntax for type json", e.g. a check's output cut
+// in the middle of an emoji) and one with \u0000 ("unsupported Unicode
+// escape sequence"). Each such character is stored as U+FFFD, in keys too:
+// a value the kernel accepted (assertJson) is always one it can write.
+// JSON.stringify escapes exactly these characters, so a text with no such
+// escape needs no second pass; the second pass reads the text back, so what
+// it repairs is what JSON.stringify wrote (a Date's toJSON included).
+const UNSTORABLE = /\\u(0000|d[89a-f])/i;
+export function jsonText(value: unknown): string {
+  const text = JSON.stringify(value);
+  return UNSTORABLE.test(text) ? JSON.stringify(storable(JSON.parse(text))) : text;
+}
+// (String.prototype.toWellFormed is ES2024, past this tree's lib.)
+const UNSTORABLE_CHAR = /\u0000|[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
+const storableString = (s: string) => s.replace(UNSTORABLE_CHAR, '\uFFFD');
+function storable(value: unknown): unknown {
+  if (typeof value === 'string') return storableString(value);
+  if (Array.isArray(value)) return value.map(storable);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [storableString(k), storable(v)]));
+  }
+  return value;
 }
 
 function canonical(value: Json): string {

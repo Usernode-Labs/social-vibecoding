@@ -3,6 +3,13 @@
  * three things the signed-out story (../auth/story.tsx) says groups make.
  * They live here so the two screens say the same three things.
  *
+ * Evan, 15 October 2026: the grid stays two by two, the front three
+ * (FRONT_KEYS: a tier list, a game, an organizer) and "Something else…",
+ * which opens a sheet with Your own idea and the rest (MORE): a poll, find a
+ * time, a sign-up sheet and a group challenge. Those four are ready-made
+ * apps too. The organizer's potluck moved to the sign-up sheet, where it is
+ * still the potluck planner.
+ *
  * Evan, 8 October 2026: the three examples (a running club's tracker, a
  * movie night's poll, a weekend's planner) became sentences to finish. Each
  * one is something a group needs more than once, and each is filled in with
@@ -11,40 +18,60 @@
  * itself, because the fun of a game is in what you build. The make screen's
  * fourth tile, Your own idea, is the plain description box.
  *
- * A template is a sentence with one blank: `head`, then the chosen choice's
- * `fill` (or the maker's own words), then that choice's `tail` or the
- * template's. A `finish` template (the game) always ends in the maker's own
- * words, typed in a box under the sentence, and its Your own comes first.
+ * A template is a sentence with one blank. Every choice's sentence is one
+ * whole message (frontend/locales/en/onboarding.json), with `<0>…</0>`
+ * around what stands in the blank: the choice's own words, or `{{words}}`,
+ * the maker's. `sentence()` splits it there into what is drawn before the
+ * blank, in it and after it, so the code never joins a sentence from parts.
+ * A `finish` template (the game) always ends in the maker's own words
+ * (`{{words}}`), typed in a box under the sentence, and its Your own comes
+ * first.
  *
- * READY-MADE. Every choice that needs no typing (the tier list's four, the
- * organizer's four) names a `template`: one of Homeroom's ready-made apps
+ * Everything a person reads here is a message id, read with `t` when it is
+ * shown, so the words follow the language on screen.
+ *
+ * READY-MADE. Every choice that needs no typing (all but the game's) names
+ * a `template`: one of Homeroom's ready-made apps
  * (services/app-templates.js), which Make it makes instead of asking
  * Homeroom bot to build a first version, so the project is usable as soon
  * as it runs. Its `emoji` is that app's icon. Your own words, and every
  * game, still go to Homeroom bot.
+ *
+ * GAME STARTERS. Each game preset (board game, space shooter, 3D blocks,
+ * trivia) names a `starter` too: a working multiplayer game the project is
+ * made from (services/app-templates.js, `kind: 'game'`), so Homeroom bot
+ * builds the maker's own idea as changes to a game that already plays,
+ * instead of from an empty page. Make it sends it as the create's
+ * `template` beside their words, the brief.
  */
+
+import { t as translate } from '../../lib/i18n/runtime';
 
 /** The choice that puts the maker's own words in the blank. */
 export const OWN = 'own';
 
 export type Choice = {
   key: string;
-  /** On its chip. */
+  /** On its chip. A message id. */
   label: string;
-  /** What it puts in the blank: "hikes", or a finishing template's starter, "a board game where". */
-  fill: string;
-  /** In place of the template's tail. */
-  tail?: string;
-  /** A finishing template's example of the rest, in its box. */
+  /**
+   * Its whole sentence, a message id: `<0>…</0>` holds what it puts in the
+   * blank ("hikes", or a finishing template's starter, "a board game
+   * where"), and a finishing template's has `{{words}}` for the rest.
+   */
+  sentence: string;
+  /** A finishing template's example of the rest, in its box. A message id. */
   example?: string;
-  /** Suggested for "What should we call it?". */
+  /** Suggested for "What should we call it?". A message id. */
   name: string;
-  /** The project's one-line description (create-options DESCRIPTION_MAX, 90). */
+  /** The project's one-line description (create-options DESCRIPTION_MAX, 90). A message id. */
   description: string;
   /** The ready-made app it makes (services/app-templates.js READY_IDS), with nothing to build. */
   template?: string;
   /** That app's icon (its entry's `icon`), where it is not the template's own emoji. */
   emoji?: string;
+  /** A game starter (services/app-templates.js): the project starts from it, and the bot builds their idea on it. */
+  starter?: string;
 };
 
 export type Template = {
@@ -53,27 +80,30 @@ export type Template = {
   emoji: string;
   /** Drawn in place of the emoji: the tier list's mini tier chart (./tier-chart.tsx). */
   chart?: boolean;
-  /** "A tier list", on the story. */
+  /** "A tier list", on the story. A message id. */
   title: string;
-  /** What it is for, under the title on the story. */
+  /** What it is for, under the title on the story. A message id. */
   line: string;
-  /** "Tier list", on the make screen's tile. */
+  /** "Tier list", on the make screen's tile. A message id. */
   short: string;
-  /** The sentence up to its blank. */
-  head: string;
-  /** The sentence after its blank, unless the choice has its own. */
-  tail: string;
   choices: readonly Choice[];
   /**
-   * Your own: the example in its blank, the name it suggests (`{words}` is
-   * theirs; empty suggests none) and the project's description.
+   * Your own, each a message id: its whole sentence (`{{words}}` is theirs),
+   * the example in its blank, the name it suggests (`{{words}}` is theirs;
+   * empty suggests none) and the project's description.
    */
-  own: { example: string; name: string; description: string };
+  own: { sentence: string; example: string; name: string; description: string };
+  /**
+   * The name field's example while it is empty, a name of this idea's kind
+   * (Evan, 10 Oct 2026: a game's was "Hiking Tier List"). A message id.
+   */
+  namePlaceholder: string;
   /** Always finished in the maker's own words; Your own comes first and is picked first. */
   finish?: boolean;
   /**
-   * Suggested for the invite's note. It is sent while the app is still being
-   * made, so it says "I'm making", never "Made us", and it has no "!" (#4042).
+   * Suggested for the invite's note. A message id. It is sent while the app
+   * is still being made, so it says "I'm making", never "Made us", and it
+   * has no "!" (#4042).
    */
   note: string;
 };
@@ -83,56 +113,131 @@ export const TEMPLATES: readonly Template[] = [
     key: 'tier',
     emoji: '📊',
     chart: true,
-    title: 'A tier list',
-    line: 'Rank your favorite spots, games, anything',
-    short: 'Tier list',
-    head: 'A tier list for our favorite ',
-    tail: '. Anyone can add items, everyone sorts them, and we can see where they land.',
+    title: 'onboarding:firstSession.template.tier.title',
+    namePlaceholder: 'onboarding:firstSession.make.namePlaceholder',
+    line: 'onboarding:firstSession.template.tier.line',
+    short: 'onboarding:firstSession.template.tier.short',
     choices: [
-      { key: 'restaurants', label: 'Restaurants', fill: 'restaurants', name: 'Restaurant Tier List', description: 'A restaurant tier list', template: 'tier-list-restaurants' },
-      { key: 'hikes', label: 'Hikes', fill: 'hikes', name: 'Hiking Tier List', description: 'A hiking tier list', template: 'tier-list-hikes' },
-      { key: 'cities', label: 'Cities', fill: 'cities', name: 'City Tier List', description: 'A city tier list', template: 'tier-list-cities' },
-      { key: 'games', label: 'Games', fill: 'games', name: 'Game Tier List', description: 'A game tier list', template: 'tier-list-games' },
+      { key: 'restaurants', label: 'onboarding:firstSession.template.tier.restaurants.label', sentence: 'onboarding:firstSession.template.tier.restaurants.sentence', name: 'onboarding:firstSession.template.tier.restaurants.name', description: 'onboarding:firstSession.template.tier.restaurants.description', template: 'tier-list-restaurants' },
+      { key: 'hikes', label: 'onboarding:firstSession.template.tier.hikes.label', sentence: 'onboarding:firstSession.template.tier.hikes.sentence', name: 'onboarding:firstSession.template.tier.hikes.name', description: 'onboarding:firstSession.template.tier.hikes.description', template: 'tier-list-hikes' },
+      { key: 'cities', label: 'onboarding:firstSession.template.tier.cities.label', sentence: 'onboarding:firstSession.template.tier.cities.sentence', name: 'onboarding:firstSession.template.tier.cities.name', description: 'onboarding:firstSession.template.tier.cities.description', template: 'tier-list-cities' },
+      { key: 'games', label: 'onboarding:firstSession.template.tier.games.label', sentence: 'onboarding:firstSession.template.tier.games.sentence', name: 'onboarding:firstSession.template.tier.games.name', description: 'onboarding:firstSession.template.tier.games.description', template: 'tier-list-games' },
     ],
-    own: { example: 'taco spots', name: '{words} Tier List', description: 'A tier list' },
-    note: 'I\'m making us a tier list. Join and tell me what it needs.',
+    own: { sentence: 'onboarding:firstSession.template.tier.own.sentence', example: 'onboarding:firstSession.template.tier.own.example', name: 'onboarding:firstSession.template.tier.own.name', description: 'onboarding:firstSession.template.tier.own.description' },
+    note: 'onboarding:firstSession.template.tier.note',
+  },
+  {
+    key: 'poll',
+    emoji: '🗳️',
+    title: 'onboarding:firstSession.template.poll.title',
+    namePlaceholder: 'onboarding:firstSession.template.poll.namePlaceholder',
+    line: 'onboarding:firstSession.template.poll.line',
+    short: 'onboarding:firstSession.template.poll.short',
+    choices: [
+      { key: 'dinner', label: 'onboarding:firstSession.template.poll.dinner.label', sentence: 'onboarding:firstSession.template.poll.dinner.sentence', name: 'onboarding:firstSession.template.poll.dinner.name', description: 'onboarding:firstSession.template.poll.dinner.description', template: 'poll-dinner' },
+      { key: 'spending', label: 'onboarding:firstSession.template.poll.spending.label', sentence: 'onboarding:firstSession.template.poll.spending.sentence', name: 'onboarding:firstSession.template.poll.spending.name', description: 'onboarding:firstSession.template.poll.spending.description', template: 'poll-spending' },
+      { key: 'movies', label: 'onboarding:firstSession.template.poll.movies.label', sentence: 'onboarding:firstSession.template.poll.movies.sentence', name: 'onboarding:firstSession.template.poll.movies.name', description: 'onboarding:firstSession.template.poll.movies.description', template: 'poll-movies' },
+    ],
+    own: { sentence: 'onboarding:firstSession.template.poll.own.sentence', example: 'onboarding:firstSession.template.poll.own.example', name: '', description: 'onboarding:firstSession.template.poll.own.description' },
+    note: 'onboarding:firstSession.template.poll.note',
   },
   {
     key: 'game',
     emoji: '🎮',
-    title: 'A game',
-    line: 'A new one, built and played together',
-    short: 'A game',
-    head: 'A new game we build together. For the first version, ',
-    tail: '',
+    title: 'onboarding:firstSession.template.game.title',
+    namePlaceholder: 'onboarding:firstSession.template.game.namePlaceholder',
+    line: 'onboarding:firstSession.template.game.line',
+    short: 'onboarding:firstSession.template.game.short',
     finish: true,
     choices: [
-      { key: 'board', label: 'Board game', fill: 'a board game where', example: 'we roll dice and race each other around the board', name: 'Board Game Night', description: 'A board game' },
-      { key: 'shooter', label: 'Space shooter', fill: 'an arcade space shooter where', example: 'we fly together against waves of asteroids', name: 'Space Shooter', description: 'An arcade space shooter' },
-      { key: 'blocks', label: '3D blocks', fill: 'a 3D block game where', example: 'we build whatever we want together', name: 'Block World', description: 'A 3D block game' },
-      { key: 'trivia', label: 'Trivia', fill: 'a trivia game where', example: 'every question is about one of us', name: 'Trivia Night', description: 'A trivia game' },
+      { key: 'board', label: 'onboarding:firstSession.template.game.board.label', sentence: 'onboarding:firstSession.template.game.board.sentence', example: 'onboarding:firstSession.template.game.board.example', name: 'onboarding:firstSession.template.game.board.name', description: 'onboarding:firstSession.template.game.board.description', starter: 'game-board' },
+      { key: 'shooter', label: 'onboarding:firstSession.template.game.shooter.label', sentence: 'onboarding:firstSession.template.game.shooter.sentence', example: 'onboarding:firstSession.template.game.shooter.example', name: 'onboarding:firstSession.template.game.shooter.name', description: 'onboarding:firstSession.template.game.shooter.description', starter: 'game-space' },
+      { key: 'blocks', label: 'onboarding:firstSession.template.game.blocks.label', sentence: 'onboarding:firstSession.template.game.blocks.sentence', example: 'onboarding:firstSession.template.game.blocks.example', name: 'onboarding:firstSession.template.game.blocks.name', description: 'onboarding:firstSession.template.game.blocks.description', starter: 'game-blocks' },
+      { key: 'trivia', label: 'onboarding:firstSession.template.game.trivia.label', sentence: 'onboarding:firstSession.template.game.trivia.sentence', example: 'onboarding:firstSession.template.game.trivia.example', name: 'onboarding:firstSession.template.game.trivia.name', description: 'onboarding:firstSession.template.game.trivia.description', starter: 'game-trivia' },
     ],
-    own: { example: 'a drawing game where one of us draws and everyone guesses', name: '', description: 'A game' },
-    note: 'I\'m making us a game. Join and tell me what it needs.',
+    own: { sentence: 'onboarding:firstSession.template.game.own.sentence', example: 'onboarding:firstSession.template.game.own.example', name: '', description: 'onboarding:firstSession.template.game.own.description' },
+    note: 'onboarding:firstSession.template.game.note',
   },
   {
     key: 'organizer',
     emoji: '📋',
-    title: 'An organizer',
-    line: 'Groceries, chores, a shared library',
-    short: 'Organizer',
-    head: 'An app to organize our ',
-    tail: ', so everyone can see what\'s where and who\'s on it.',
+    title: 'onboarding:firstSession.template.organizer.title',
+    namePlaceholder: 'onboarding:firstSession.template.organizer.namePlaceholder',
+    line: 'onboarding:firstSession.template.organizer.line',
+    short: 'onboarding:firstSession.template.organizer.short',
     choices: [
-      { key: 'groceries', label: 'Groceries', fill: 'groceries', tail: ': one shared list, and whoever\'s at the store checks things off.', name: 'Grocery List', description: 'A grocery list', template: 'grocery-list', emoji: '🛒' },
-      { key: 'chores', label: 'Chores', fill: 'chores', tail: ': who\'s on what this week, and whose turn it is next.', name: 'Chore List', description: 'A chore list', template: 'chore-list', emoji: '🧹' },
-      { key: 'library', label: 'Shared library', fill: 'shared library', tail: ': what we can borrow, who has it now, and who\'s asking for it next.', name: 'Lending Library', description: 'A lending library', template: 'lending-library', emoji: '📚' },
-      { key: 'potlucks', label: 'Potlucks', fill: 'potlucks', tail: ': who\'s bringing what, so we don\'t end up with six salads.', name: 'Potluck Planner', description: 'A potluck planner', template: 'potluck-planner', emoji: '🍲' },
+      { key: 'groceries', label: 'onboarding:firstSession.template.organizer.groceries.label', sentence: 'onboarding:firstSession.template.organizer.groceries.sentence', name: 'onboarding:firstSession.template.organizer.groceries.name', description: 'onboarding:firstSession.template.organizer.groceries.description', template: 'grocery-list', emoji: '🛒' },
+      { key: 'chores', label: 'onboarding:firstSession.template.organizer.chores.label', sentence: 'onboarding:firstSession.template.organizer.chores.sentence', name: 'onboarding:firstSession.template.organizer.chores.name', description: 'onboarding:firstSession.template.organizer.chores.description', template: 'chore-list', emoji: '🧹' },
+      { key: 'library', label: 'onboarding:firstSession.template.organizer.library.label', sentence: 'onboarding:firstSession.template.organizer.library.sentence', name: 'onboarding:firstSession.template.organizer.library.name', description: 'onboarding:firstSession.template.organizer.library.description', template: 'lending-library', emoji: '📚' },
+      { key: 'study', label: 'onboarding:firstSession.template.organizer.study.label', sentence: 'onboarding:firstSession.template.organizer.study.sentence', name: 'onboarding:firstSession.template.organizer.study.name', description: 'onboarding:firstSession.template.organizer.study.description', template: 'study-timer', emoji: '⏱️' },
     ],
-    own: { example: 'camping gear', name: '{words} List', description: 'An organizer' },
-    note: 'I\'m making us an organizer. Join and tell me what it needs.',
+    own: { sentence: 'onboarding:firstSession.template.organizer.own.sentence', example: 'onboarding:firstSession.template.organizer.own.example', name: 'onboarding:firstSession.template.organizer.own.name', description: 'onboarding:firstSession.template.organizer.own.description' },
+    note: 'onboarding:firstSession.template.organizer.note',
+  },
+  {
+    key: 'findtime',
+    emoji: '📅',
+    title: 'onboarding:firstSession.template.findtime.title',
+    namePlaceholder: 'onboarding:firstSession.template.findtime.namePlaceholder',
+    line: 'onboarding:firstSession.template.findtime.line',
+    short: 'onboarding:firstSession.template.findtime.short',
+    choices: [
+      { key: 'bookclub', label: 'onboarding:firstSession.template.findtime.bookclub.label', sentence: 'onboarding:firstSession.template.findtime.bookclub.sentence', name: 'onboarding:firstSession.template.findtime.bookclub.name', description: 'onboarding:firstSession.template.findtime.bookclub.description', template: 'find-a-time-book-club' },
+      { key: 'gamenight', label: 'onboarding:firstSession.template.findtime.gamenight.label', sentence: 'onboarding:firstSession.template.findtime.gamenight.sentence', name: 'onboarding:firstSession.template.findtime.gamenight.name', description: 'onboarding:firstSession.template.findtime.gamenight.description', template: 'find-a-time-game-night' },
+      { key: 'trip', label: 'onboarding:firstSession.template.findtime.trip.label', sentence: 'onboarding:firstSession.template.findtime.trip.sentence', name: 'onboarding:firstSession.template.findtime.trip.name', description: 'onboarding:firstSession.template.findtime.trip.description', template: 'find-a-time-trip' },
+    ],
+    own: { sentence: 'onboarding:firstSession.template.findtime.own.sentence', example: 'onboarding:firstSession.template.findtime.own.example', name: 'onboarding:firstSession.template.findtime.own.name', description: 'onboarding:firstSession.template.findtime.own.description' },
+    note: 'onboarding:firstSession.template.findtime.note',
+  },
+  {
+    key: 'signup',
+    emoji: '✋',
+    title: 'onboarding:firstSession.template.signup.title',
+    namePlaceholder: 'onboarding:firstSession.template.signup.namePlaceholder',
+    line: 'onboarding:firstSession.template.signup.line',
+    short: 'onboarding:firstSession.template.signup.short',
+    choices: [
+      { key: 'potluck', label: 'onboarding:firstSession.template.signup.potluck.label', sentence: 'onboarding:firstSession.template.signup.potluck.sentence', name: 'onboarding:firstSession.template.signup.potluck.name', description: 'onboarding:firstSession.template.signup.potluck.description', template: 'potluck-planner', emoji: '🍲' },
+      { key: 'shifts', label: 'onboarding:firstSession.template.signup.shifts.label', sentence: 'onboarding:firstSession.template.signup.shifts.sentence', name: 'onboarding:firstSession.template.signup.shifts.name', description: 'onboarding:firstSession.template.signup.shifts.description', template: 'signup-shifts' },
+      { key: 'rsvp', label: 'onboarding:firstSession.template.signup.rsvp.label', sentence: 'onboarding:firstSession.template.signup.rsvp.sentence', name: 'onboarding:firstSession.template.signup.rsvp.name', description: 'onboarding:firstSession.template.signup.rsvp.description', template: 'signup-rsvp', emoji: '🙋' },
+    ],
+    own: { sentence: 'onboarding:firstSession.template.signup.own.sentence', example: 'onboarding:firstSession.template.signup.own.example', name: 'onboarding:firstSession.template.signup.own.name', description: 'onboarding:firstSession.template.signup.own.description' },
+    note: 'onboarding:firstSession.template.signup.note',
+  },
+  {
+    key: 'challenge',
+    emoji: '🏃',
+    title: 'onboarding:firstSession.template.challenge.title',
+    namePlaceholder: 'onboarding:firstSession.template.challenge.namePlaceholder',
+    line: 'onboarding:firstSession.template.challenge.line',
+    short: 'onboarding:firstSession.template.challenge.short',
+    choices: [
+      { key: 'miles', label: 'onboarding:firstSession.template.challenge.miles.label', sentence: 'onboarding:firstSession.template.challenge.miles.sentence', name: 'onboarding:firstSession.template.challenge.miles.name', description: 'onboarding:firstSession.template.challenge.miles.description', template: 'challenge-miles' },
+      { key: 'steps', label: 'onboarding:firstSession.template.challenge.steps.label', sentence: 'onboarding:firstSession.template.challenge.steps.sentence', name: 'onboarding:firstSession.template.challenge.steps.name', description: 'onboarding:firstSession.template.challenge.steps.description', template: 'challenge-steps' },
+      { key: 'books', label: 'onboarding:firstSession.template.challenge.books.label', sentence: 'onboarding:firstSession.template.challenge.books.sentence', name: 'onboarding:firstSession.template.challenge.books.name', description: 'onboarding:firstSession.template.challenge.books.description', template: 'challenge-books' },
+    ],
+    own: { sentence: 'onboarding:firstSession.template.challenge.own.sentence', example: 'onboarding:firstSession.template.challenge.own.example', name: 'onboarding:firstSession.template.challenge.own.name', description: 'onboarding:firstSession.template.challenge.own.description' },
+    note: 'onboarding:firstSession.template.challenge.note',
   },
 ];
+
+/**
+ * THE FRONT THREE (Evan, 15 Oct 2026). The make screen's grid stays two by
+ * two: these three, in this order, then "Something else…", which opens a
+ * sheet with Your own idea and every other starting point (MORE, in the
+ * catalog's order). The signed-out story names the same three. It is one
+ * list so that a test of what shows first changes this and nothing else.
+ */
+export const FRONT_KEYS: readonly string[] = ['tier', 'game', 'organizer'];
+
+export const FRONT: readonly Template[] = FRONT_KEYS.map((key) => {
+  const t = TEMPLATES.find((x) => x.key === key);
+  if (!t) throw new Error(`No starting point called ${key}`);
+  return t;
+});
+
+/** Every other starting point, behind "Something else…". */
+export const MORE: readonly Template[] = TEMPLATES.filter((t) => !FRONT_KEYS.includes(t.key));
 
 /** The choice a tap on the template's tile picks: its first, or Your own for a game. */
 export function firstChoice(t: Template): string {
@@ -148,6 +253,21 @@ function tidy(words: string): string {
   return words.trim().replace(/\s+/g, ' ');
 }
 
+const WORDS = '{{words}}';
+
+/**
+ * A sentence's message as the catalog holds it, `{{words}}` still in place,
+ * cut at its blank: what comes before `<0>`, what the tag holds, and what
+ * follows `</0>`. A message with no tag is all `before`.
+ */
+function parts(id: string): { before: string; held: string; after: string } {
+  // Leave {{words}} in place: the maker's words go in after the cut, so
+  // nothing they type is read as a tag.
+  const raw = translate(id, { interpolation: { prefix: '[[unused:', suffix: ']]' } });
+  const cut = /^([\s\S]*?)<0>([\s\S]*?)<\/0>([\s\S]*)$/.exec(raw);
+  return cut ? { before: cut[1], held: cut[2], after: cut[3] } : { before: raw, held: '', after: '' };
+}
+
 export type Sentence = {
   head: string;
   /** What stands in the blank: the choice's words, or theirs. */
@@ -160,27 +280,49 @@ export type Sentence = {
 };
 
 /**
- * The description a template, a choice and the maker's own words make. A
- * finishing template is its head, the choice's starter and their words,
- * with a full stop if they left one off.
+ * The description a template, a choice and the maker's own words make, in
+ * the language on screen. A finishing template's is its sentence with their
+ * words where `{{words}}` stands, closed by the catalog's own punctuation if
+ * they left it off. Nothing the catalog writes around the blank is dropped.
  */
 export function sentence(t: Template, key: string, words: string): Sentence {
   const c = key === OWN ? null : choiceOf(t, key);
   const own = tidy(words);
+  const { before, held, after } = parts(c ? c.sentence : t.own.sentence);
   if (t.finish) {
-    const end = own && !/[.!?]$/.test(own) ? '.' : '';
-    return { head: t.head, fill: c ? c.fill : '', tail: '', text: `${t.head}${c ? `${c.fill} ` : ''}${own}${end}`, blank: !own };
+    // Their words end the sentence. Where they left the punctuation off, the
+    // catalog supplies it (a language closes a sentence its own way).
+    // Which last characters count as "already ended" is the catalog's too:
+    // in English `.`, `!` and `?`, exactly as before this text moved (so
+    // words ending in an ellipsis still get their full stop).
+    const enders = translate('onboarding:firstSession.make.sentenceEnders');
+    const ended = !own || enders.includes(own.slice(-1))
+      ? own : translate('onboarding:firstSession.make.wordsWithStop', { words: own });
+    // What is drawn is the WHOLE message: everything the catalog puts before
+    // and after `{{words}}` stays, and where their words will go stands the
+    // catalog's own mark for it, beside a highlighted starter. The box under
+    // the sentence holds what they type.
+    const mark = held ? translate('onboarding:firstSession.make.wordsBlank') : '';
+    return {
+      head: before.replace(WORDS, mark),
+      fill: held,
+      tail: after.replace(WORDS, mark),
+      text: `${before}${held}${after}`.replace(WORDS, ended),
+      blank: !own,
+    };
   }
-  const fill = c ? c.fill : own;
-  const tail = (c && c.tail) || t.tail;
-  return { head: t.head, fill, tail, text: `${t.head}${fill}${tail}`, blank: !fill };
+  const fill = c ? held : own;
+  return { head: before, fill, tail: after, text: `${before}${fill}${after}`, blank: !fill };
 }
 
 /** The name a choice suggests: "Hiking Tier List", or theirs in the template's pattern. */
 export function suggestedName(t: Template, key: string, words: string): string {
-  if (key !== OWN) return choiceOf(t, key)?.name || '';
+  if (key !== OWN) {
+    const c = choiceOf(t, key);
+    return c ? translate(c.name) : '';
+  }
   const own = tidy(words).split(' ').map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
-  return own && t.own.name ? t.own.name.replace('{words}', own) : '';
+  return own && t.own.name ? translate(t.own.name, { words: own }) : '';
 }
 
 /**
@@ -192,7 +334,18 @@ export function readyMadeOf(t: Template, key: string): { template: string; emoji
   return c && c.template ? { template: c.template, emoji: c.emoji || t.emoji } : null;
 }
 
-/** The project's one-line description for a choice. */
+/**
+ * The game starter a choice makes its project from, or null: for Your own
+ * words, or a choice with none. Unlike a ready-made app, Homeroom bot still
+ * builds the first version, on it.
+ */
+export function starterOf(t: Template, key: string): { template: string } | null {
+  const c = key === OWN ? null : choiceOf(t, key);
+  return c && c.starter ? { template: c.starter } : null;
+}
+
+/** The project's one-line description for a choice, in the language on screen. */
 export function descriptionOf(t: Template, key: string): string {
-  return (key !== OWN && choiceOf(t, key)?.description) || t.own.description;
+  const c = key === OWN ? null : choiceOf(t, key);
+  return translate(c ? c.description : t.own.description);
 }

@@ -9,8 +9,9 @@
 //      ISSUE guard the refused write says so plainly (#3410): a viewer
 //      without the collab bar can see the open issue they tried to vote
 //      on, so the answer is 403 "only its collaborators can take part",
-//      never the misleading "Issue not found". The session guard keeps
-//      its 404 on both sides (its routes were not part of that report).
+//      never the misleading "Issue not found". The session guard says the
+//      same since #5506: a ready card's Approve on a project the requester
+//      could see but not build on read "Session not found".
 //   3. ws.handleMessage — mutating message types (chat/edit/react/typing)
 //      from a non-collaborator are dropped before any write; a member's
 //      chat message still reaches the INSERT.
@@ -85,8 +86,13 @@ test.after(() => server && server.close());
 test('sessionCollabGuard: outsider reads an invite-only app, cannot write', async () => {
   const get = await fetch(`${base}/api/sessions/1/thing`);
   assert.equal(get.status, 200);
+  // #5506: the refused write names the real rule, not a missing change.
   const post = await fetch(`${base}/api/sessions/1/thing`, { method: 'POST' });
-  assert.equal(post.status, 404);
+  assert.equal(post.status, 403);
+  assert.deepEqual(await post.json(), {
+    error: 'You can view this project, but only its collaborators can take part in it.',
+    code: 'collab_required',
+  });
 });
 
 test('sessionCollabGuard: fully view-private app 404s reads and writes', async () => {
@@ -258,10 +264,12 @@ test("session/proposal/issue/board list routes read at 'view' level", () => {
     ['src/routes/votes.js', "'/api/apps/:slug/promoted'"],
     ['src/routes/votes.js', "'/api/apps/:slug/merged'"],
     ['src/routes/votes.js', "'/api/apps/:slug/proposals/:id'"],
+    ['src/routes/votes.js', "'/api/apps/:slug/changes/:number'"],
     ['src/routes/issues.js', "'/api/apps/:slug/issues'"],
     ['src/routes/issues.js', "'/api/apps/:slug/github-issues'"],
     ['src/routes/issues.js', "'/api/apps/:slug/github-issues/:number'"],
     ['src/routes/issues.js', "'/api/apps/:slug/github-issues/:number/comments'"],
+    ['src/routes/issues.js', "'/api/apps/:slug/homeroom-bot/slots'"],
     ['src/routes/topic-attributes.js', "router.get('/api/apps/:slug/topics"],
     ['src/routes/board-order.js', "router.get('/api/apps/:slug/board-order'"],
   ];

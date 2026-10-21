@@ -1,8 +1,9 @@
 'use strict';
 
 // Test accounts (services/test-accounts.js), for a full platform admin's
-// connector session: create_test_account, list_test_accounts and
-// retire_test_account in services/mcp-tools.js.
+// connector session: create_test_account, create_test_phone_sign_in,
+// send_test_release_email, list_test_accounts, retire_test_account,
+// get_run_report and send_test_notifications in services/mcp-tools.js.
 //
 // They live at their own prefix, outside /api/admin and /api/auth, because a
 // connector token can reach neither (services/cli-api-policy.js) — the same
@@ -24,6 +25,7 @@ const { testAccountLimiter } = require('../middleware/rate-limits');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 const log = require('../services/logger');
 const testAccounts = require('../services/test-accounts');
+const testNotifications = require('../services/test-notifications');
 
 function idParam(value) {
   const n = Number(value);
@@ -61,6 +63,7 @@ function testAccountRoutes(config) {
 
   router.get('/api/test-accounts', requireAdminWrite, testAccountLimiter, sameOriginBrowserOnly, handler('List test accounts', async () => ({
     accounts: await testAccounts.list(pool),
+    releases: await testAccounts.listReleases(pool),
     max: testAccounts.MAX_LIVE,
   })));
 
@@ -75,6 +78,27 @@ function testAccountRoutes(config) {
     return { signIn };
   }));
 
+  // The waitlist's "you're in" mail, sent to a test address (services/
+  // test-accounts.js sendRelease). It hands back no credential: the link in
+  // the mail is the address's own, and the delivery's outcome rides back so
+  // the admin knows whether it went out.
+  router.post('/api/test-accounts/release-emails', requireAdminWrite, testAccountLimiter, sameOriginBrowserOnly, handler('Send test release email', async (req) => {
+    const release = await testAccounts.sendRelease(pool, req.body || {}, { actorId: req.user.id, config });
+    return { release };
+  }));
+
+  // What was recorded about a test project's first version (services/
+  // run-report.js), for get_run_report: built now while the app is live, or
+  // the copy retire kept once it is gone; with a username, that account's
+  // kept reports. A read: it has the list's room in the limiter.
+  router.get('/api/test-accounts/run-report', requireAdminWrite, testAccountLimiter, sameOriginBrowserOnly, handler('Read run report', async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    return testAccounts.runReportFor(pool, {
+      slug: typeof req.query.slug === 'string' ? req.query.slug : null,
+      username: typeof req.query.username === 'string' ? req.query.username : null,
+    });
+  }));
+
   router.post('/api/test-accounts/:id/retire', requireAdminWrite, testAccountLimiter, sameOriginBrowserOnly, handler('Retire test account', async (req) => {
     const userId = idParam(req.params.id);
     if (!userId) throw new testAccounts.TestAccountError(400, 'invalid_request', 'Invalid account id.');
@@ -82,6 +106,19 @@ function testAccountRoutes(config) {
       userId, confirmation: req.body && req.body.confirm,
     }, { actorId: req.user.id, config });
     return { retired };
+  }));
+
+  // One notification of every kind (or the kinds named) to a test account,
+  // for seeing each one in its bell and on its phone
+  // (services/test-notifications.js). Only a test account: the rows are fake.
+  router.post('/api/test-accounts/:id/notifications', requireAdminWrite, testAccountLimiter, sameOriginBrowserOnly, handler('Send test notifications', async (req) => {
+    const userId = idParam(req.params.id);
+    if (!userId) throw new testAccounts.TestAccountError(400, 'invalid_request', 'Invalid account id.');
+    const b = req.body && typeof req.body === 'object' ? req.body : {};
+    const notifications = await testNotifications.send(pool, {
+      userId, kinds: b.kinds, allPushCategories: b.allPushCategories == null ? true : b.allPushCategories,
+    }, { actorId: req.user.id });
+    return { notifications };
   }));
 
   return router;

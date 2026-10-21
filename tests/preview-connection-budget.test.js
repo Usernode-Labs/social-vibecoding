@@ -86,37 +86,34 @@ test('#1771: runsClusterMaintenance is false in a preview and true everywhere el
   }
 });
 
-test('#1771: the guard sits at the election, not at each of the fifteen duties', () => {
+test('#1771: a preview runs no fleet duty: there is no leader, and the clocks and process duties are gated where they start', () => {
   const src = read('server.js');
-  // One decision, at the one seam every duty is already behind. Guarding
-  // each starter instead would leave the next one added unguarded.
-  assert.match(src, /if \(!runsClusterMaintenance\(\)\) \{/,
-    'the election is gated on whether this process runs cluster maintenance');
-  assert.match(src, /\} else \{\n\s*leadership = createLeadership\(/,
-    'and the coordinator is created only in the other arm');
-  assert.equal((src.match(/leadership = createLeadership\(/g) || []).length, 1,
-    'exactly one place elects a leader, so exactly one guard covers it');
+  // No election: a preview cannot win a lock it would hold on a copy of
+  // production's rows, because there is none to stand for.
+  assert.ok(!/becomeLeader|createLeadership|leaderTimers/.test(src), 'no leader, no leader timers');
   assert.match(src, /const \{ load: loadConfig, runsClusterMaintenance \} = require\('\.\/src\/config'\);/);
-  // Shutdown already tolerates a null coordinator; a preview now relies on
-  // that, so it must not regress into an unguarded call.
-  assert.match(src, /if \(leadership\) \{\s*\n\s*await leadership\.stop\(\)/,
-    'stop() stays guarded — a preview never assigns `leadership`');
-});
-
-test('#1771: becomeLeader is still where the fleet duties live', () => {
-  // If a sweeper ever starts outside becomeLeader, the one guard above stops
-  // covering it. This is the tripwire for that.
-  const src = read('server.js');
-  const body = src.slice(src.indexOf('async function becomeLeader()'), src.indexOf('async function start()'));
-  assert.ok(body.length > 1000, 'becomeLeader must still exist');
-  for (const starter of [
-    'startIdleEvictionSweeper', 'startConversationAttachmentSweeper',
-    'startSessionAutoPauseSweeper', 'startStalePrSweeper', 'startWorkshopThemeSweeper',
-    'startLocalAgentLeaseSweeper', 'startGovernanceApplyTicker', 'startEligibleMergeSweeper',
-    'startTitleHealSweeper',
-  ]) {
-    assert.ok(body.includes(`${starter}(`), `${starter} is started under the leader gate`);
+  // The session sweeper's passes, the stale-PR and stuck-checks sweepers, the
+  // orphan sweeps and the watchdog are gone: what they did is the machines'
+  // own deadlines, a turn's work item, or a clock (below).
+  for (const retired of ['startSessionAutoPauseSweeper', 'startStalePrSweeper', 'startStuckChecksSweeper',
+    'startTurnWatchdog', 'startLocalAgentLeaseSweeper', 'sweepOrphanTurns']) {
+    assert.ok(!src.includes(`function ${retired}(`), `${retired} no longer exists`);
   }
+  // The platform's scheduled jobs are clocks of the workflow, which a
+  // preview runs: the release's work arms none of them there
+  // (src/workflow/platform.ts armClocks).
+  const platform = read('src/workflow/platform.ts');
+  const arm = platform.slice(platform.indexOf('async function armClocks('));
+  const armed = arm.slice(0, arm.indexOf('\n}\n'));
+  assert.match(armed, /const runs = legacy\('config'\)\.runsClusterMaintenance\(\);/);
+  assert.match(armed, /if \(runs && CLOCK_JOB_NAMES\.has\(job\)\) continue;/, 'one armed there before is retired');
+  assert.match(armed, /if \(!runs\) return 0;/, 'no clock is armed on a staging preview');
+  // What each process sweeps of its own never runs on a preview either. Idle
+  // workers are a clock's, not a process's (services/worker-eviction.js).
+  assert.match(src, /if \(runsClusterMaintenance\(\)\) startProcessDuties\(\);/);
+  const duties = src.slice(src.indexOf('function startProcessDuties()'), src.indexOf('async function start()'));
+  assert.ok(!/startIdleEvictionSweeper\(/.test(stripComments(duties)), 'no process evicts idle workers of its own');
+  assert.match(read('src/workflow/clock/services.ts'), /name: 'worker-eviction', everyMs: 2 \* MIN/, 'the eviction clock does');
 });
 
 // ─── a preview's pool ceiling ───────────────────────────────────────
@@ -297,7 +294,9 @@ test('#1771: a non-passing check run says whether the server was starved', () =>
   assert.ok(block.slice(0, flip).includes('connectionExhaustionDetail('),
     'and only ever behind the every-row rule, never on the census alone');
   // And storeChecks stays a pure write.
-  const store = src.slice(src.indexOf('async function storeChecks('), src.indexOf('async function storeChecksSkipped'));
+  const writers = read('src/workflow/preview/check-store.ts');
+  const store = writers.slice(writers.indexOf('async function storeChecks('), writers.indexOf('async function storeChecksSkipped'));
+  assert.ok(store.length > 0, 'the verdict writer is where it is read from');
   assert.doesNotMatch(store, /connectionCensus/,
     'the persistence path gains no query');
 });
@@ -363,11 +362,15 @@ test('#1771: both clone paths converge on one place that sets the ceiling', () =
   const src = stripComments(read('src/services/db-manager.js'));
   const fn = src.slice(src.indexOf('async function cloneDatabase(sourceDb'));
   const body = fn.slice(0, fn.indexOf('\nasync function cloneDatabaseDirect'));
-  assert.equal((body.match(/applyStagingConnectionLimit\(targetDb\)/g) || []).length, 2,
+  // Each call names the server the clone was made on (the main one unless
+  // STAGING_DB_ADMIN_URL names a preview server): the ceiling is set where
+  // the database is.
+  assert.equal((body.match(/applyStagingConnectionLimit\(targetDb, \{ server \}\)/g) || []).length, 2,
     'the template path and the direct path each land on it');
   // After the copy, never before: pg_restore opens its own connections and a
   // ceiling applied mid-restore would cap the restore itself.
-  assert.ok(body.indexOf('cloneDatabaseDirect(sourceDb, targetDb)') < body.lastIndexOf('applyStagingConnectionLimit'));
+  const direct = body.indexOf('cloneDatabaseDirect(sourceDb, targetDb, { server })');
+  assert.ok(direct > 0 && direct < body.lastIndexOf('applyStagingConnectionLimit'));
 });
 
 test('#1771: pressure reclaim skips every preview somebody is using', () => {
@@ -377,32 +380,38 @@ test('#1771: pressure reclaim skips every preview somebody is using', () => {
     { id: 2, status: 'promoted', last_activity_at: '2026-09-02T00:00:00Z' }, // backs a live vote
     { id: 3, status: 'merging', last_activity_at: '2026-09-03T00:00:00Z' },  // mid-merge
     { id: 4, status: 'active', last_activity_at: '2026-09-04T00:00:00Z' },   // a turn in flight
-    { id: 5, status: 'paused', last_activity_at: '2026-09-05T00:00:00Z' },   // building
+    // A preview the machine is building is not excluded here: the machine
+    // refuses the retirement itself (staging.teardownStaging reports it busy).
+    { id: 5, status: 'paused', last_activity_at: '2026-09-05T00:00:00Z' },
     { id: 6, status: 'active', last_activity_at: '2026-09-06T00:00:00Z' },
   ];
   const victims = selectPressureVictims({
     rows,
     isBusy: (id) => id === 4,
-    hasInFlightBuild: (id) => id === 5,
   });
-  assert.deepEqual(victims.map((v) => v.id), [1, 6],
+  assert.deepEqual(victims.map((v) => v.id), [1, 5, 6],
     'a reviewer arriving at a dead link is worse than a tight connection budget');
   assert.equal(victims[0].id, 1, 'idle-longest first');
 });
 
-test('#1771: the reclaim acts on a reading, stops on a reading, and kills nothing', () => {
+test('#1771: the reclaim acts on a reading, one preview at a time, and kills nothing', () => {
   const src = stripComments(read('src/services/staging-reap.js'));
   const fn = src.slice(src.indexOf('async function sweepConnectionPressure('));
   const body = fn.slice(0, fn.indexOf('\n}\n') + 3);
   assert.match(body, /if \(!before \|\| !before\.saturated\) return summary;/,
     'on an ordinary day this is one cheap query and nothing else');
-  assert.match(body, /if \(!now\.saturated\) break;/,
-    're-census after each teardown: freeing the budget is the goal, tearing down is the means');
   assert.match(body, /if \(isStagingEnv\(\)\) return summary;/,
     'a preview computing victims from its own stale clone would be fiction');
-  assert.match(body, /reason: 'connection-pressure'/);
-  assert.match(body, /teardownStagingForSession/,
-    'through the one chokepoint that also drops the DB and nulls staging_url');
+  // A retirement is asynchronous, so a census right after the ask sees
+  // nothing freed: while the last one asked for is still retiring, no other
+  // is asked for. Freeing the budget is the goal, tearing down the means.
+  assert.match(body, /if \(await previewWorkflow\.retiring\(Number\(id\)\)\) summary\.asked\.push\(Number\(id\)\);/);
+  assert.match(body, /if \(summary\.asked\.length\) \{\s*summary\.waiting = summary\.asked\.length;\s*return summary;/);
+  // Through the preview machine, which refuses one under review, worked on,
+  // building or checking, and drops its database and nulls staging_url.
+  assert.match(body, /previewWorkflow\.retire\(\{ session: \{ id: Number\(victim\.id\), app_id: victim\.app_id \}, reason: 'pressure', terminal: false \}\)/);
+  assert.match(body, /summary\.asked\.push\(Number\(victim\.id\)\);\s*break;/, 'one a pass');
+  assert.ok(!/teardownStagingForSession/.test(body), 'never around the machine');
   // The fast way to free connections is the wrong one: node-postgres
   // surfaces a killed idle client as a pool 'error' event, and a pool with
   // no listener takes the process down. Generated apps frequently have none,
@@ -414,7 +423,12 @@ test('#1771: the reclaim acts on a reading, stops on a reading, and kills nothin
     assert.match(line.trim(), /^(\/\/|\*)/,
       'never terminate another database\'s backends to make room');
   }
-  // Wired next to the passes it belongs with, behind its own throttle.
-  const server = stripComments(read('server.js'));
-  assert.match(server, /if \(stagingReap\.pressureSweepDue\(\)\) \{\s*await stagingReap\.sweepConnectionPressure\(config\);/);
+  // A clock of the workflow, which carries each server's asks from its last
+  // run (src/workflow/clock/services.ts), and nothing in server.js.
+  const clocks = read('src/workflow/clock/services.ts');
+  const job = clocks.slice(clocks.indexOf("name: 'preview-pressure'"));
+  const run = job.slice(0, job.indexOf('\n  },\n'));
+  assert.match(run, /reap\.sweepConnectionPressure\(config, \{ asked: previous\.main\?\.asked \?\? \[\] \}\)/);
+  assert.match(run, /reap\.sweepConnectionPressure\(config, \{ server: 'preview', asked: previous\.preview\?\.asked \?\? \[\] \}\)/);
+  assert.ok(!/sweepConnectionPressure/.test(stripComments(read('server.js'))), 'the leader runs no pressure pass of its own');
 });

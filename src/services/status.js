@@ -10,17 +10,18 @@ const workerSvc = require('./worker');
 const applicationRuntime = require('./application-runtime');
 const runtimeStatus = require('./runtime-status');
 const activeWorkers = require('./active-workers');
-const stagingSvc = require('./staging');
+const checksQueue = require('./checks-queue');
 
 const WORKER_PREFIX = 'usernode-worker-';
 const APP_PREFIX = 'usernode-app-';
 const STAGING_PREFIX = 'usernode-staging-';
 
-// Fallbacks only — the live caps come from config (MAX_GLOBAL_SESSIONS /
-// MAX_USER_SESSIONS). Native coding sessions are 1:1 with workers. Imported
-// PRs are produced externally and are excluded from this worker budget even
-// though Homeroom may build them a staging preview. These constants are kept
-// so the dashboard still renders if config is absent.
+// Fallbacks only — the live caps come from the session limit
+// (services/session-limit.js: Admin → Limits, else MAX_GLOBAL_SESSIONS) and
+// config (MAX_USER_SESSIONS). Native coding sessions are 1:1 with workers.
+// Imported PRs are produced externally and are excluded from this worker
+// budget even though Homeroom may build them a staging preview. These
+// constants are kept so the dashboard still renders if config is absent.
 const MAX_STAGING_GLOBAL = 25;
 const MAX_STAGING_PER_USER = 3;
 const WORKER_ORPHAN_THRESHOLD_MS = 20 * 60 * 1000;
@@ -57,7 +58,7 @@ async function gatherFull(config) {
   const pool = getPool(config);
   const isAdmin = true; // Always build the full payload; redact at serve time.
 
-  const [appsQ, sessionsQ, llmQ, sessionCountsQ, runtimeQ] = await Promise.all([
+  const [appsQ, sessionsQ, llmQ, sessionCountsQ, runtimeQ, checksQueueSnapshot] = await Promise.all([
     pool.query(
       `SELECT a.id, a.name, a.slug, a.repo_url, a.container_id, a.status, a.created_at,
               a.image_ref, a.build_ref, a.runtime_kind, a.runtime_name, a.self_hosted,
@@ -75,6 +76,7 @@ async function gatherFull(config) {
               cs.session_title, cs.staging_container_id, cs.staging_url, cs.status, cs.created_at,
               cs.active_turn IS NOT NULL AS has_active_turn, cs.last_activity_at,
               cs.staging_image_ref, cs.staging_build_ref, cs.staging_runtime_kind, cs.staging_runtime_name,
+              (cs.check_state = 'pending' AND cs.check_phase = 'building') AS building,
               u.username, u.id AS user_id, a.slug AS app_slug
        FROM chat_sessions cs
        LEFT JOIN users u ON cs.user_id = u.id
@@ -104,6 +106,10 @@ async function gatherFull(config) {
        FROM chat_sessions`
     ),
     runtimeStatus.snapshot(config),
+    // The checks queue: who holds the CHECKS_MAX_CONCURRENT_RUNS slots, who
+    // waits, and how the last day's slots went. Null when it could not be
+    // read; it never costs the rest of the payload.
+    checksQueue.snapshot(pool).catch(() => null),
   ]);
 
   const apps = appsQ.rows;
@@ -131,6 +137,11 @@ async function gatherFull(config) {
     warmByName.set(meta.containerName, meta);
   }
 
+  // Workers some process used lately (session_workers: what the
+  // worker-eviction clock reads), for a worker this process has not
+  // registered.
+  const usedElsewhere = new Set((await pool.query('SELECT session_id FROM session_workers').catch(() => ({ rows: [] })))
+    .rows.map((r) => Number(r.session_id)));
   const workerContainers = containers.filter((c) =>
     c.resourceType === 'worker' || c.name.startsWith(WORKER_PREFIX)
   );
@@ -155,8 +166,8 @@ async function gatherFull(config) {
     // workerMode classifies what the worker is doing right now:
     //   - 'in-flight'  : a `docker exec` is running run-cc.sh
     //   - 'warm-idle'  : sleep wrapper is alive, waiting for the next
-    //                    dispatch. Costs ~256MB until the idle sweeper
-    //                    evicts it.
+    //                    dispatch. Costs ~256MB until the
+    //                    worker-eviction clock evicts it.
     //   - 'bootstrapping' : ensureWorker is racing through clone +
     //                       checkout + warm-ready
     //   - 'unregistered'  : container exists but isn't in the warm
@@ -167,6 +178,13 @@ async function gatherFull(config) {
       if (warm.bootstrapping) workerMode = 'bootstrapping';
       else if (warm.inFlight) workerMode = 'in-flight';
       else workerMode = 'warm-idle';
+    } else if (sessionId != null) {
+      // Another process's worker (a workflow process's, where a person's
+      // turn runs: docs/plans/web-and-conductor.md), not an orphan: its
+      // session's turn record says it is running, session_workers that it
+      // was used.
+      if (sess && sess.has_active_turn) workerMode = 'in-flight';
+      else if (usedElsewhere.has(Number(sessionId))) workerMode = 'warm-idle';
     }
     const idleMs = warm && !warm.inFlight ? Date.now() - warm.lastUsedMs : null;
     return {
@@ -311,14 +329,17 @@ async function gatherFull(config) {
   // handoffs normally have one before submitting anything. Report missing
   // previews only after a PR/build exists and work has stopped. Keep the
   // legacy payload key for clients, but never call this worker liveness.
+  // Worked on by any process (a turn's record, a running turn instance, ...:
+  // session-work.ts workedOnSql), not only this one.
+  const working = await activeWorkers.busySessionsAnywhere(sessions.map((s) => s.id), { pool });
   const stuckSessions = sessions
     .filter((s) =>
       runtimeAvailable && s.branch_name &&
       !s.staging_url &&
       (s.pr_number || s.staging_build_ref || s.staging_runtime_name || s.staging_container_id) &&
       !s.has_active_turn &&
-      !activeWorkers.isSessionBusy(s.id) &&
-      !stagingSvc.hasInFlightBuild(s.id) &&
+      !working.has(Number(s.id)) &&
+      !s.building &&
       Date.now() - new Date(s.last_activity_at || s.created_at).getTime() > MISSING_PREVIEW_THRESHOLD_MS
     )
     .map((s) => ({
@@ -367,14 +388,15 @@ async function gatherFull(config) {
   //   db                    — pg pool saturation; `waiting > 0` means
   //                           handlers are queuing on connections. `server`
   //                           is the figure the pool is competing FOR
-  //                           (#1771): one Postgres backs the platform,
-  //                           every app and every preview, and its
-  //                           max_connections is the stock 100. A pool
+  //                           (#1771): the server's max_connections,
+  //                           shared with every app (and, on a preview's
+  //                           server, every other preview). A pool
   //                           reporting `total: 3, max: 60` looks healthy
   //                           right up to the server refusing the fourth.
   const sc = sessionCountsQ.rows[0] || {};
   const num = (v) => parseInt(v, 10) || 0;
-  const globalCap = config.maxGlobalSessions || MAX_STAGING_GLOBAL;
+  // The session limit as every refusal reads it (services/session-limit.js).
+  const globalCap = (await require('./session-limit').effective(pool, config)) || MAX_STAGING_GLOBAL;
   const capacity = {
     globalUsed: num(sc.global_used),
     globalCap,
@@ -472,6 +494,7 @@ async function gatherFull(config) {
     capacity,
     host,
     db: dbPool,
+    checksQueue: checksQueueSnapshot,
     apps: appTree,
     workers,
     stuckSessions,
@@ -506,9 +529,12 @@ function redact(full, { isAdmin }) {
     const { lastProgress, lastProgressAt, model, ...rest } = w;
     return rest;
   };
-  // Drop host RAM/load + pg pool internals (operational signal we only
-  // want admins to see) along with the existing admin-only blocks.
-  const { llmUsage, events, summary, limits, apps, workers, host, db, capacity, ...rest } = full;
+  // Drop host RAM/load + pg pool internals and the checks queue (operational
+  // signal we only want admins to see; the queue names sessions and pull
+  // requests) along with the existing admin-only blocks.
+  const {
+    llmUsage, events, summary, limits, apps, workers, host, db, capacity, checksQueue: _queue, ...rest
+  } = full;
   const {
     globalSpendCents, globalSpendCap,
     hostMemUsedPct, hostLoadAvg1, dbPoolWaiting,

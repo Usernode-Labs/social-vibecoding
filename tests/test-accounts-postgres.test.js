@@ -189,6 +189,60 @@ test('test accounts against the full PostgreSQL schema', { timeout: 180000 }, as
     assert.equal(JSON.stringify(body).includes('"password"'), false);
   });
 
+  await t.test('everyTemplate: one private project from each template, made as a maker makes one, all or none', async () => {
+    const appTemplates = require('../src/services/app-templates');
+    const picks = testAccounts.everyTemplatePicks();
+    // Each starter once: every ready-made app and game starter, no variant.
+    const dirs = new Set(appTemplates.TEMPLATES.filter((tpl) => tpl.id !== appTemplates.DEFAULT_TEMPLATE).map((tpl) => appTemplates.dirOf(tpl.id)));
+    assert.deepEqual(picks.map((p) => appTemplates.dirOf(p.id)).sort(), [...dirs].sort());
+    assert.ok(picks.some((p) => !appTemplates.isReadyMade(p.id)), 'the game starters too');
+
+    // Within the server's app limit, all of them or none, before anything is made.
+    const { rows: [{ n: before }] } = await pool.query("SELECT COUNT(*)::int AS n FROM apps WHERE status <> 'error'");
+    const { rows: [{ n: liveBefore }] } = await pool.query('SELECT COUNT(*)::int AS n FROM users WHERE test_account_created_at IS NOT NULL');
+    await assert.rejects(
+      testAccounts.create(pool, { everyTemplate: true }, { actorId: owner.id, config: { ...config, maxApps: before + picks.length - 1 } }),
+      (err) => err.status === 429 && err.code === 'app_limit' && err.extra.needed === picks.length
+    );
+    assert.equal((await pool.query('SELECT COUNT(*)::int AS n FROM users WHERE test_account_created_at IS NOT NULL')).rows[0].n, liveBefore, 'no account either');
+
+    // Through the service: the route hands it the body as it came, and the
+    // limiter's count below is of the route's own creates.
+    const account = await make({ everyTemplate: true, note: 'Every template' });
+    assert.deepEqual(account.projects.map((p) => p.template), picks.map((p) => p.id));
+    assert.deepEqual(account.projects.map((p) => p.kind), picks.map((p) => (appTemplates.isReadyMade(p.id) ? 'ready-made' : 'game')));
+    const { rows: apps } = await pool.query(
+      `SELECT a.*, EXISTS (SELECT 1 FROM app_collaborators c WHERE c.app_id = a.id AND c.user_id = a.created_by AND c.status = 'member') AS maker_member
+         FROM apps a WHERE a.created_by = $1 ORDER BY a.id`,
+      [account.userId]
+    );
+    assert.equal(apps.length, picks.length);
+    apps.forEach((a, i) => {
+      const pick = picks[i];
+      assert.equal(a.slug, account.projects[i].slug);
+      assert.equal(a.name, pick.title);
+      assert.equal(a.template, pick.id);
+      // Being made by the app-creation machine, as a create's insert starts it.
+      assert.equal(a.status, 'creating');
+      assert.deepEqual([a.collab_visibility, a.view_visibility], ['private', 'private'], 'Just you');
+      assert.equal(a.icon_emoji, appTemplates.isReadyMade(pick.id) ? pick.icon : null);
+      assert.ok(a.community_id, 'its community, made by the insert\'s trigger');
+      assert.equal(a.maker_member, true);
+    });
+    // The first session is answered by making, so it opens on Home with them.
+    assert.equal((await row(account.userId)).needs_communities_choice, false);
+    const { rows: [audit] } = await pool.query(
+      "SELECT payload FROM support_actions WHERE target_user_id = $1 AND action = 'test_account_create'",
+      [account.userId]
+    );
+    assert.deepEqual(audit.payload.everyTemplate, account.projects.map((p) => p.slug));
+    // An ordinary create makes none, and is asked what to make as before.
+    const plain = await make();
+    assert.deepEqual(plain.projects, []);
+    assert.equal((await row(plain.userId)).needs_communities_choice, true);
+    await assert.rejects(make({ everyTemplate: 'yes' }), { status: 400, code: 'invalid_request' });
+  });
+
   await t.test('the welcome DM skips a test account unless it was asked for', async () => {
     await pool.query(`INSERT INTO platform_settings (key, value) VALUES ('welcome_dm_enabled', 'on')
       ON CONFLICT (key) DO UPDATE SET value = 'on'`);
@@ -203,19 +257,16 @@ test('test accounts against the full PostgreSQL schema', { timeout: 180000 }, as
     await pool.query("UPDATE platform_settings SET value = 'off' WHERE key = 'welcome_dm_enabled'");
   });
 
-  await t.test('the bot DM place follows a first-run rename and is cleared on retire', async () => {
-    const dm = await make({ homeroomBotDm: true });
-    const members = async () => JSON.parse((await pool.query("SELECT value FROM platform_settings WHERE key = 'homeroom_bot_dm_users'")).rows[0].value);
-    assert.ok((await members()).includes(dm.username));
-    const usernames = require('../src/services/usernames');
-    const chosen = await usernames.chooseFirstUsername(pool, dm.userId, 'Fresh_Tester');
-    assert.equal(chosen.username, 'Fresh_Tester');
-    const after = await members();
-    assert.ok(after.includes('fresh_tester'), 'the place moved to the new name');
-    assert.equal(after.includes(dm.username), false, 'and left the old one');
-    const retired = await testAccounts.retire(pool, { userId: dm.userId, confirmation: 'RETIRE' }, { actorId: owner.id, config });
-    assert.equal(retired.homeroomBotDm, true);
-    assert.equal((await members()).includes('fresh_tester'), false, 'retiring frees the place');
+  await t.test('the Homeroom bot works for a test account let in, with nothing to switch', async () => {
+    const tester = await make();
+    assert.equal(Object.hasOwn(tester, 'homeroomBotDm'), false);
+    const { rows: [row] } = await pool.query('SELECT username, is_synthetic, has_platform_access FROM users WHERE id = $1', [tester.userId]);
+    const settings = await require('../src/services/homeroom-bot').readSettings(pool);
+    assert.equal(require('../src/services/homeroom-bot-dm').hasBot(settings, {
+      username: row.username, isSynthetic: row.is_synthetic, hasPlatformAccess: row.has_platform_access,
+    }), true);
+    const retired = await testAccounts.retire(pool, { userId: tester.userId, confirmation: 'RETIRE' }, { actorId: owner.id, config });
+    assert.equal(Object.hasOwn(retired, 'homeroomBotDm'), false);
   });
 
   await t.test('retire refuses a real account, takes the apps down first, then anonymises', async () => {

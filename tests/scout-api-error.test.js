@@ -214,9 +214,15 @@ function loadSessions(mockPool, overrides = {}) {
   delete require.cache[paths.sessions];
   delete require.cache[paths.notifications];
 
+  // The route asks the turn machine for the run; its real handler
+  // (services/turns.js) runs here, as a workflow process would run it.
+  const turns = require('./lib/turn-platform').installTurnPlatform({
+    run: { config: { jwtSecret: 'test', dataEncryptionKey: 'k' }, pool: mockPool },
+  });
   const subject = require('../src/routes/sessions');
 
   const restore = () => {
+    turns.restore();
     for (const [id, original] of originals) {
       if (original) require.cache[id] = original; else delete require.cache[id];
     }
@@ -278,13 +284,19 @@ function makeMockPool() {
       return { rows: [] };
     }
     if (/INSERT INTO chat_sessions/i.test(s)) {
-      return {
-        rows: [{
-          id: state.nextId++, app_id: params[0], user_id: params[1],
-          branch_name: params[2], status: 'active', is_headless: true,
-          headless_status: 'generating', headless_issue_number: params[3],
-        }],
+      state.session = {
+        id: state.nextId++, app_id: params[0], user_id: params[1],
+        branch_name: params[2], status: 'active', is_headless: true,
+        headless_status: 'generating', headless_step: 'planning', headless_issue_number: params[3],
       };
+      return { rows: [{ ...state.session }] };
+    }
+    // The run reads its row back as it starts (services/turns.js).
+    if (/FROM chat_sessions cs/i.test(s) && /JOIN users u/i.test(s) && /cs\.id = \$1/.test(s)) {
+      return { rows: state.session ? [{
+        ...state.session, app_slug: 'my-app', app_name: 'My App', repo_url: 'https://github.com/owner/repo',
+        app_self_hosted: false, username: 'alice',
+      }] : [] };
     }
     if (/INSERT INTO chat_session_specs/i.test(s)) {
       state.specVersions.push(params[1]);
@@ -315,7 +327,7 @@ function makeMockPool() {
     return { rows: [], rowCount: 0 };
   }
 
-  return { query, state };
+  return { query, state, connect: async () => ({ query, release() {} }) };
 }
 
 async function startTestServer(loaded, user = { id: 1, username: 'alice' }) {
@@ -407,7 +419,7 @@ test('scout: a dropped stream re-dispatches once and the retry\'s spec is stored
     ));
     // The notice never reaches the user as a spec.
     assert.ok(!pool.state.messages.some(
-      (m) => /Scout drafted a 1-line spec/.test(m.content || '')
+      (m) => /Scout drafted a 1-line plan/.test(m.content || '')
     ));
   } finally {
     await srv.close();
@@ -444,7 +456,7 @@ test('scout: when the retry drops too, the notice is never stored as a spec', as
     // The chat says what actually happened, in plain terms.
     assert.ok(pool.state.messages.some(
       (m) => /API connection failed/.test(m.content || '')
-        && /spec doc was not updated/.test(m.content || '')
+        && /plan was not updated/.test(m.content || '')
     ));
     // A produced-nothing scout finalizes as 'question' — a human picks it up.
     assert.deepEqual(pool.state.terminal, { status: 'ready', outcome: 'question' });

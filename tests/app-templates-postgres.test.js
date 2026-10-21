@@ -18,8 +18,11 @@
 // platform conventions' "Members"): a stand-in platform answers it here,
 // for members only, as the real one does.
 //
-// The app's dependencies (express, pg, jsonwebtoken) resolve from this
-// repository's node_modules through NODE_PATH. Skipped when no server is
+// The game starters play over a WebSocket (game/live.js): their flows open
+// real ones, as a page does, beside the plain requests.
+//
+// The app's dependencies (express, pg, jsonwebtoken, and ws for a game)
+// resolve from this repository's node_modules through NODE_PATH. Skipped when no server is
 // reachable, required when TEST_DATABASE_URL is set.
 
 const test = require('node:test');
@@ -54,6 +57,96 @@ const ada = token(101, 'ada');
 const grace = token(102, 'grace');
 const sam = token(103, 'sam');
 const DAY = 24 * 60 * 60 * 1000;
+
+/**
+ * A game's live connection, as its page opens one (/api/live?token=):
+ * `opened` resolves once connected, or rejects with the refusal's status;
+ * `next(test)` reads on from the last message it returned and resolves with
+ * the first that passes `test`, skipping the rest.
+ *
+ * A message that arrives while nobody is waiting is kept until it is read.
+ * The ws client hands over every frame of one socket read in a single
+ * synchronous run, before the code awaiting the first of them resumes, so
+ * two messages sent back to back (a winning roll's view, then the room's
+ * "over") both land before the test asks for the second whenever the test
+ * process reads late, as it does on a loaded runner. Dropping them timed the
+ * board game out there.
+ */
+function liveOf(app, tok) {
+  const WebSocket = require('ws');
+  const ws = new WebSocket(`${app.base.replace(/^http/, 'ws')}/api/live${tok ? `?token=${encodeURIComponent(tok)}` : ''}`);
+  const unread = [];
+  let waiter = null;
+  ws.on('message', (data) => {
+    const msg = JSON.parse(String(data));
+    if (!waiter) unread.push(msg);
+    else if (waiter.test(msg)) { const w = waiter; waiter = null; w.resolve(msg); }
+  });
+  const opened = new Promise((resolve, reject) => {
+    ws.once('open', resolve);
+    ws.once('unexpected-response', (_req, res) => reject(Object.assign(new Error('refused'), { status: res.statusCode })));
+    ws.once('error', (err) => reject(err));
+  });
+  opened.catch(() => {});
+  return {
+    opened,
+    send: (msg) => ws.send(JSON.stringify(msg)),
+    next(test, ms = 6000) {
+      assert.equal(waiter, null, 'one next() at a time on a live connection');
+      while (unread.length) {
+        const msg = unread.shift();
+        if (test(msg)) return Promise.resolve(msg);
+      }
+      return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => { waiter = null; reject(new Error('no such message in time')); }, ms);
+        waiter = { test, resolve: (m) => { clearTimeout(timer); resolve(m); } };
+      });
+    },
+    close: () => ws.close(),
+  };
+}
+const isView = (test = () => true) => (m) => m.t === 'view' && test(m.view);
+
+/**
+ * A ready-made app's live updates, as its page listens (GET /api/changes,
+ * live-updates.js): the stream's status and type, how many `change` events
+ * it has had, `until(check)` to wait for more, and `close()`. A stream the
+ * server ends, or a server that goes away, just ends it.
+ */
+async function listen(app, tok) {
+  const controller = new AbortController();
+  const res = await fetch(`${app.base}/api/changes${tok ? `?token=${encodeURIComponent(tok)}` : ''}`, { signal: controller.signal });
+  let text = '';
+  let ended = false;
+  const reading = (async () => {
+    try {
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        text += decoder.decode(value, { stream: true });
+      }
+    } catch { /* closed here, or the server went away */ }
+    ended = true;
+  })();
+  const s = {
+    status: res.status,
+    type: res.headers.get('content-type'),
+    text: () => text,
+    ended: () => ended,
+    events: () => (text.match(/^event: change$/gm) || []).length,
+    async until(check, ms = 5000) {
+      const end = Date.now() + ms;
+      while (!check(s)) {
+        if (Date.now() > end) throw new Error(`not in time; the stream had: ${JSON.stringify(text)}`);
+        await new Promise((r) => setTimeout(r, 20));
+      }
+    },
+    close: () => { controller.abort(); return reading; },
+  };
+  return s;
+}
 
 function freePort() {
   return new Promise((resolve, reject) => {
@@ -167,17 +260,29 @@ test('every ready-made app runs: seeds in staging only, serves its screen, refus
 
   // What every app shares: the screen for a signed-in visitor, nothing for
   // anyone else, and a clean exit on SIGTERM.
-  async function common(app, apiPath) {
+  async function common(app, apiPath, ready) {
     const page = await app.call('GET', `/?token=${encodeURIComponent(ada)}`, { raw: true });
     assert.equal(page.status, 200);
     assert.match(page.headers.get('content-type'), /text\/html/);
-    assert.match(await page.text(), /<script src="\/app\.js"><\/script>/);
+    assert.match(await page.text(), /<script (?:type="module" )?src="\/app\.js"><\/script>/);
     const script = await app.call('GET', '/app.js', { raw: true });
     assert.equal(script.status, 200, 'the screen\'s script is served as a static file');
     assert.equal((await app.call('GET', apiPath)).status, 401, 'no token, no data');
     assert.equal((await app.call('GET', apiPath, { as: token(101, 'ada', 'usernode:app:999') })).status, 401,
       'a token minted for another app is refused');
     assert.equal((await app.call('GET', '/health')).status, 200);
+    // A ready-made app's live updates (a game has its own live connection):
+    // the page's half is served, and the stream is behind the sign-in check.
+    if (!ready) return;
+    assert.equal((await app.call('GET', '/live-updates.js', { raw: true })).status, 200);
+    const stranger = await listen(app, null);
+    assert.equal(stranger.status, 401, 'no token, no stream');
+    await stranger.close();
+    const stream = await listen(app, ada);
+    assert.equal(stream.status, 200);
+    assert.equal(stream.type, 'text/event-stream');
+    await stream.until((x) => x.text().includes(':ok'));
+    await stream.close();
   }
 
   async function run(template, apiPath, seeded, flows) {
@@ -198,7 +303,7 @@ test('every ready-made app runs: seeds in staging only, serves its screen, refus
     assert.equal(await app.stop(), 0);
     app = await boot(dir, stagingDb, 'staging', env);
     assert.equal(seeded((await app.call('GET', apiPath, { as: ada })).data), first, 'a second boot does not seed again');
-    await common(app, apiPath);
+    await common(app, apiPath, require('../src/services/app-templates').isReadyMade(template));
     await flows(app);
     assert.equal(await app.stop(), 0, app.output());
   }
@@ -208,8 +313,26 @@ test('every ready-made app runs: seeds in staging only, serves its screen, refus
   await t.test('a tier list: anyone adds, each ranks, the group\'s tier is where the average lands', async () => {
     await run('tier-list-restaurants', '/api/items', (d) => demo(d.items), async (app) => {
       const seeded = (await app.call('GET', '/api/items', { as: ada })).data;
-      assert.deepEqual(seeded.items.find((i) => i.id === 900001).tier, 'S', 'the check\'s S row has an item');
+      assert.deepEqual(seeded.items.find((i) => i.id === 900001).tier, 'S', 'the group\'s S row has an item');
       assert.equal(seeded.items.find((i) => i.id === 900005).tier, null, 'one nobody has ranked yet');
+      // The board opens on Yours: whoever the check signs in as has ranked
+      // nothing, so every item waits in the tray as a chip to drag.
+      assert.ok(seeded.items.length > 0 && seeded.items.every((i) => i.yours === null), 'the check\'s tray has items');
+
+      // Who ranked a seeded item what: best tier first, then by name.
+      const demoItem = (await app.call('GET', '/api/items/900001', { as: ada })).data;
+      assert.deepEqual([demoItem.item.name, demoItem.item.tier, demoItem.item.votes], ['Staging demo one', 'S', 3]);
+      assert.deepEqual(demoItem.raters, [
+        { name: 'staging-demo-ana', you: false, tier: 'S' },
+        { name: 'staging-demo-ben', you: false, tier: 'S' },
+        { name: 'staging-demo-cy', you: false, tier: 'A' },
+      ]);
+      assert.equal((await app.call('GET', '/api/items/999999', { as: ada })).status, 404);
+      assert.equal((await app.call('GET', '/api/items/900001')).status, 401, 'no token, no names');
+
+      // Grace's screen is open while Ada adds and ranks: each change reaches it.
+      const graces = await listen(app, grace);
+      await graces.until((x) => x.text().includes(':ok'));
 
       assert.equal((await app.call('POST', '/api/items', { as: ada, body: { name: '   ' } })).status, 400);
       const added = await app.call('POST', '/api/items', { as: ada, body: { name: '  Noodle   Bar ' } });
@@ -221,11 +344,19 @@ test('every ready-made app runs: seeds in staging only, serves its screen, refus
 
       assert.equal((await app.call('PUT', `/api/items/${id}/tier`, { as: ada, body: { tier: 'Z' } })).status, 400);
       assert.equal((await app.call('PUT', '/api/items/999999/tier', { as: ada, body: { tier: 'S' } })).status, 404);
+      await graces.until((x) => x.events() >= 1);
+      const heard = graces.events();
       await app.call('PUT', `/api/items/${id}/tier`, { as: ada, body: { tier: 'S' } });
+      await graces.until((x) => x.events() > heard);
+      assert.doesNotMatch(graces.text(), /Noodle|ada/, 'the stream says only that something changed');
       await app.call('PUT', `/api/items/${id}/tier`, { as: grace, body: { tier: 'B' } });
       let item = (await app.call('GET', '/api/items', { as: grace })).data.items.find((i) => i.id === id);
       assert.deepEqual([item.name, item.by, item.mine, item.votes, item.average, item.tier, item.yours],
         ['Noodle Bar', 'ada', false, 2, 4, 'A', 'B']);
+      // Tapping it: who ranked it what, by name, with the viewer marked.
+      const sheet = (await app.call('GET', `/api/items/${id}`, { as: grace })).data;
+      assert.deepEqual(sheet.item, item, 'the same item as on the board');
+      assert.deepEqual(sheet.raters, [{ name: 'ada', you: false, tier: 'S' }, { name: 'grace', you: true, tier: 'B' }]);
       // A tie goes up: 4.5 is S.
       await app.call('PUT', `/api/items/${id}/tier`, { as: grace, body: { tier: 'A' } });
       item = (await app.call('GET', '/api/items', { as: ada })).data.items.find((i) => i.id === id);
@@ -235,9 +366,30 @@ test('every ready-made app runs: seeds in staging only, serves its screen, refus
       item = (await app.call('GET', '/api/items', { as: ada })).data.items.find((i) => i.id === id);
       assert.deepEqual([item.votes, item.tier, item.yours], [1, 'A', null]);
 
+      // Want to: a place, not a tier. Grace moves hers there: it counts
+      // toward no average, no "ranked it" and no "From N people's
+      // rankings", and her name moves from the sheet's tiers to who wants to.
+      assert.equal((await app.call('GET', '/api/items', { as: ada })).data.rankers, 4);
+      assert.deepEqual((await app.call('PUT', `/api/items/${id}/tier`, { as: grace, body: { tier: 'W' } })).data, { tier: 'W' });
+      item = (await app.call('GET', '/api/items', { as: grace })).data.items.find((i) => i.id === id);
+      assert.deepEqual([item.votes, item.wants, item.average, item.tier, item.yours], [0, 1, null, null, 'W']);
+      assert.equal((await app.call('GET', '/api/items', { as: ada })).data.rankers, 3, 'the three staging fakes');
+      const wanted = (await app.call('GET', `/api/items/${id}`, { as: grace })).data;
+      assert.deepEqual([wanted.raters, wanted.wanters], [[], [{ name: 'grace', you: true }]]);
+      await app.call('PUT', `/api/items/${id}/tier`, { as: ada, body: { tier: 'S' } });
+      item = (await app.call('GET', '/api/items', { as: ada })).data.items.find((i) => i.id === id);
+      assert.deepEqual([item.votes, item.wants, item.average, item.tier, item.yours], [1, 1, 5, 'S', 'S']);
+      // The staging fakes: two want to get to one nobody has ranked.
+      const seededWants = (await app.call('GET', '/api/items', { as: ada })).data.items.find((i) => i.id === 900005);
+      assert.deepEqual([seededWants.votes, seededWants.wants, seededWants.tier], [0, 2, null]);
+
       assert.equal((await app.call('DELETE', `/api/items/${id}`, { as: grace })).status, 403, 'only whoever added it removes it');
+      const before = graces.events();
       assert.equal((await app.call('DELETE', `/api/items/${id}`, { as: ada })).status, 200);
       assert.ok(!(await app.call('GET', '/api/items', { as: ada })).data.items.some((i) => i.id === id));
+      await graces.until((x) => x.events() > before);
+      assert.equal((await app.call('GET', `/api/items/${id}`, { as: grace })).status, 404, 'its sheet is gone with it');
+      // Grace's stream stays open: SIGTERM still drains and exits (run() checks).
     });
   });
 
@@ -522,6 +674,882 @@ test('every ready-made app runs: seeds in staging only, serves its screen, refus
       assert.equal((await app.call('DELETE', `/api/potlucks/${id}`, { as: ada })).status, 200);
       p = (await app.call('GET', '/api/potlucks', { as: ada, now })).data.upcoming.find((x) => x.id === id);
       assert.equal(p, undefined);
+    });
+  });
+
+  // A study timer through its own flow, not run(): it seeds nothing, so
+  // `run`'s staging assertions do not apply. Its only data is each viewer's
+  // own count of finished sessions (its table is staging:private), which
+  // the staging conventions keep out of a preview: a preview's Today card
+  // starts empty, which is the honest state for it.
+  await t.test('a study timer: one count per person, a retried session counts once, the day where the person is', async () => {
+    const dir = writeRepo('study-timer');
+    dirs.push(dir);
+
+    // The zone's wall-clock "yesterday 23:30" as of PINNED NOW, as an ISO
+    // instant: what x-usernode-now sends, and what finished_at then stores.
+    const PINNED_NOW = '2026-10-11T12:00:00Z';
+    function yesterdayEnd(zone) {
+      const offsetOf = (at) => {
+        const part = new Intl.DateTimeFormat('en-US', { timeZone: zone, timeZoneName: 'longOffset' })
+          .formatToParts(at).find((p) => p.type === 'timeZoneName').value; // "GMT+02:00"
+        const sign = part.startsWith('GMT-') ? -1 : 1;
+        const [h, m] = part.replace(/^GMT[+-]/, '').split(':').map(Number);
+        return sign * (h * 60 + m) * 60000;
+      };
+      const parts = new Intl.DateTimeFormat('en-US', {
+        timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit',
+      }).formatToParts(new Date(Date.parse(PINNED_NOW) - DAY));
+      const get = (type) => parts.find((p) => p.type === type).value;
+      const wall = `${get('year')}-${get('month')}-${get('day')}T23:30:00Z`;
+      const first = Date.parse(wall);
+      return new Date(first - offsetOf(new Date(first))).toISOString();
+    }
+
+    // Production: the table, and nothing in it.
+    const prodDb = await database();
+    let app = await boot(dir, prodDb, 'production', env);
+    let today = (await app.call('GET', '/api/today?tz=Europe/Berlin', { as: ada })).data;
+    assert.deepEqual([today.me.id, today.me.username, today.count], [101, 'ada', 0], 'production seeds nothing');
+    assert.match(today.day, /^\d{4}-\d{2}-\d{2}$/, 'the day is the viewer’s own');
+    assert.equal(await app.stop(), 0, `SIGTERM drains and exits 0:\n${app.output()}`);
+    assert.match(app.output(), /\[shutdown\] SIGTERM received, draining/);
+
+    // Staging: no seed, and the app still works for whoever opens it.
+    const stagingDb = await database();
+    app = await boot(dir, stagingDb, 'staging', env);
+    await common(app, '/api/today', true);
+    assert.equal((await app.call('GET', '/api/today', { as: ada })).data.count, 0, 'a preview starts empty');
+
+    // A session that runs out is counted once, however many times the same
+    // key arrives; each person's count is their own. Posted and read as of
+    // the pinned "now", so every session lands on Oct 11 in every zone
+    // named below.
+    let posted = await app.call('POST', '/api/sessions', { as: ada, body: { key: 'session-ada-1', tz: 'Europe/Berlin' }, now: PINNED_NOW });
+    assert.equal(posted.status, 201);
+    assert.equal(posted.data.count, 1);
+    posted = await app.call('POST', '/api/sessions', { as: ada, body: { key: 'session-ada-1', tz: 'Europe/Berlin' }, now: PINNED_NOW });
+    assert.equal(posted.status, 201, 'the same key again is accepted, and counts no more');
+    assert.equal(posted.data.count, 1);
+    await app.call('POST', '/api/sessions', { as: ada, body: { key: 'session-ada-2', tz: 'Europe/Berlin' }, now: PINNED_NOW });
+    assert.equal((await app.call('GET', '/api/today?tz=Europe/Berlin', { as: ada, now: PINNED_NOW })).data.count, 2);
+    assert.equal((await app.call('GET', '/api/today', { as: grace })).data.count, 0, 'nobody else’s sessions');
+    assert.equal((await app.call('POST', '/api/sessions', { as: ada, body: { key: 'short' } })).status, 400, 'a key that is not a key');
+    assert.equal((await app.call('POST', '/api/sessions', { as: ada, body: {} })).status, 400);
+
+    // The day is the viewer's own. The reads are pinned to a fixed "now"
+    // (Oct 11, midday UTC) so the day each session lands in is the same
+    // whenever this runs.
+    const berlin = yesterdayEnd('Europe/Berlin');
+    await app.call('POST', '/api/sessions', { as: ada, body: { key: 'session-berlin-late', tz: 'Europe/Berlin' }, now: berlin });
+    assert.equal((await app.call('GET', '/api/today?tz=Europe/Berlin', { as: ada, now: PINNED_NOW })).data.count, 2, 'not today where they are');
+    assert.equal((await app.call('GET', '/api/today?tz=Not/AZone', { as: ada, now: PINNED_NOW })).data.count, 2, 'an unknown zone falls back to UTC');
+
+    // And one that is yesterday on the US west coast is already today in
+    // UTC: the fallback really does count by UTC.
+    const angeles = yesterdayEnd('America/Los_Angeles');
+    await app.call('POST', '/api/sessions', { as: ada, body: { key: 'session-angeles-late', tz: 'America/Los_Angeles' }, now: angeles });
+    assert.equal((await app.call('GET', '/api/today?tz=America/Los_Angeles', { as: ada, now: PINNED_NOW })).data.count, 2, 'yesterday there');
+    assert.equal((await app.call('GET', '/api/today?tz=Not/AZone', { as: ada, now: PINNED_NOW })).data.count, 3, 'and today in UTC');
+    assert.equal(await app.stop(), 0, app.output());
+  });
+
+  await t.test('a group poll: options from anyone, ticks or one pick, closing by time or by hand, and the winner kept', async () => {
+    const polls = (d) => d.open.concat(d.decided);
+    await run('poll-dinner', '/api/polls', (d) => demo(polls(d), 'question'), async (app) => {
+      const get = async (as = ada, now) => (await app.call('GET', '/api/polls', { as, now })).data;
+      const find = (d, id) => polls(d).find((p) => p.id === id);
+      const opt = (p, label) => p.options.find((o) => o.label === label);
+
+      // The seed: an open poll whose bars differ, and a decided one with a winner.
+      let d = await get();
+      const seeded = find(d, 900001);
+      assert.deepEqual([seeded.closed, seeded.closesAt, seeded.mode], [false, null, 'approval'], 'open whenever a preview is opened');
+      assert.deepEqual(seeded.options.map((o) => [o.votes, o.leading]), [[4, true], [3, false], [2, false], [1, false]]);
+      assert.deepEqual([seeded.turnout.voted, seeded.turnout.of, seeded.turnout.ofVoted, seeded.turnout.waitingOn],
+        [5, 2, 0, ['ada', 'grace']], 'the platform\'s members, none of whom voted');
+      assert.deepEqual(d.decided.find((p) => p.id === 900002).winners, ['Staging demo winner']);
+      // Somebody the platform does not count as a member (the check runner) gets a plain count.
+      const outside = await get(sam);
+      assert.equal(outside.members, 'not_member');
+      assert.deepEqual([find(outside, 900001).turnout.voted, find(outside, 900001).turnout.of], [5, null]);
+
+      // Starting one: a question, two different options at least, a mode, a closing time still to come.
+      const now = '2026-10-15T12:00:00.000Z';
+      const start = (body, as = ada) => app.call('POST', '/api/polls', { as, body, now });
+      assert.equal((await start({ question: ' ', options: ['A', 'B'] })).status, 400);
+      assert.equal((await start({ question: 'Lunch?', options: ['Tacos', '  '] })).status, 400, 'two options at least');
+      assert.equal((await start({ question: 'Lunch?', options: ['Tacos', ' tacos '] })).status, 400, 'each once');
+      assert.equal((await start({ question: 'Lunch?', options: 'Tacos, Pho' })).status, 400);
+      assert.equal((await start({ question: 'Lunch?', options: ['Tacos', 'Pho'], mode: 'ranked' })).status, 400);
+      assert.equal((await start({ question: 'Lunch?', options: ['Tacos', 'Pho'], closesAt: 'tonight' })).status, 400);
+      assert.equal((await start({ question: 'Lunch?', options: ['Tacos', 'Pho'], closesAt: '2026-10-15T11:59:00.000Z' })).status, 400, 'not in the past');
+      assert.equal((await start({ question: 'Lunch?', options: ['Tacos', 'Pho'], closesAt: '2028-10-15T12:00:00.000Z' })).status, 400, 'not years away');
+      const closesAt = '2026-10-15T21:00:00.000Z';
+      const lunch = await start({ question: '  Where   for lunch? ', options: ['Tacos', 'Pho', ''], closesAt });
+      assert.equal(lunch.status, 201);
+      const id = lunch.data.id;
+      let p = find(await get(grace, now), id);
+      assert.deepEqual([p.question, p.mode, p.secret, p.closesAt, p.closed, p.by, p.mine, p.canClose],
+        ['Where for lunch?', 'approval', false, closesAt, false, 'ada', false, false]);
+      assert.deepEqual(p.options.map((o) => [o.label, o.by, o.votes, o.canRemove]), [['Tacos', 'ada', 0, false], ['Pho', 'ada', 0, false]]);
+
+      // Anyone adds options; the same one twice, whatever its case or spacing, is refused.
+      assert.equal((await app.call('POST', `/api/polls/${id}/options`, { as: grace, body: { label: ' Ramen  bar ' }, now })).status, 201);
+      const dup = await app.call('POST', `/api/polls/${id}/options`, { as: sam, body: { label: 'RAMEN bar' }, now });
+      assert.equal(dup.status, 409);
+      assert.match(dup.data.error, /already an option/);
+      assert.equal((await app.call('POST', `/api/polls/${id}/options`, { as: sam, body: { label: '  ' }, now })).status, 400);
+      assert.equal((await app.call('POST', '/api/polls/999999/options', { as: sam, body: { label: 'Sushi' }, now })).status, 404);
+
+      // Tick any they like: every option you would be happy with, and take a tick back.
+      p = find(await get(ada, now), id);
+      const [tacos, pho, ramen] = ['Tacos', 'Pho', 'Ramen bar'].map((l) => opt(p, l));
+      const vote = (as, optionId, on) => app.call('PUT', `/api/options/${optionId}/vote`, { as, body: { on }, now });
+      assert.deepEqual((await vote(ada, tacos.id, true)).data, { on: true });
+      await vote(ada, pho.id, true);
+      await vote(grace, pho.id, true);
+      await vote(ada, pho.id, true);
+      p = find(await get(ada, now), id);
+      assert.deepEqual(p.options.map((o) => [o.label, o.votes, o.yours, o.leading]),
+        [['Tacos', 1, true, false], ['Pho', 2, true, true], ['Ramen bar', 0, false, false]]);
+      assert.deepEqual(opt(p, 'Pho').voters, ['ada', 'grace'], 'not secret: who voted for what');
+      assert.deepEqual([p.turnout.voted, p.turnout.of, p.turnout.ofVoted, p.turnout.waitingOn], [2, 2, 2, []]);
+      await vote(ada, tacos.id, false);
+      assert.equal(opt(find(await get(ada, now), id), 'Tacos').votes, 0);
+      assert.equal((await vote(ada, 999999, true)).status, 404);
+
+      // Taking an option off: whoever added it, while two are left.
+      assert.equal((await app.call('DELETE', `/api/options/${ramen.id}`, { as: ada, now })).status, 403);
+      assert.equal(opt(find(await get(grace, now), id), 'Ramen bar').canRemove, true);
+      assert.equal((await app.call('DELETE', `/api/options/${ramen.id}`, { as: grace, now })).status, 200);
+      assert.equal((await app.call('DELETE', `/api/options/${ramen.id}`, { as: grace, now })).status, 404);
+      assert.equal((await app.call('DELETE', `/api/options/${tacos.id}`, { as: ada, now })).status, 409, 'a poll keeps two options');
+
+      // The closing time decides, read at "now": open before it, decided from it, and nothing changes after.
+      assert.ok((await get(ada, '2026-10-15T20:59:00.000Z')).open.some((x) => x.id === id));
+      const later = closesAt;
+      d = await get(ada, later);
+      assert.ok(!d.open.some((x) => x.id === id));
+      p = d.decided.find((x) => x.id === id);
+      assert.deepEqual([p.closed, p.decidedAt, p.winners, p.canClose], [true, closesAt, ['Pho'], false]);
+      assert.equal((await app.call('PUT', `/api/options/${pho.id}/vote`, { as: grace, body: { on: false }, now: later })).status, 409);
+      assert.equal((await app.call('POST', `/api/polls/${id}/options`, { as: grace, body: { label: 'Sushi' }, now: later })).status, 409);
+      assert.equal((await app.call('POST', `/api/polls/${id}/close`, { as: ada, now: later })).status, 409);
+
+      // Pick one, secret, closed by its starter: a pick moves, no names show, a tie names both.
+      const film = await start({ question: 'Which film?', options: ['Arrival', 'Heat', 'Up'], mode: 'single', secret: true, closesAt: null }, grace);
+      assert.equal(film.status, 201);
+      const fid = film.data.id;
+      p = find(await get(grace, now), fid);
+      assert.deepEqual([p.mode, p.secret, p.closesAt, p.canClose], ['single', true, null, true], 'open until its starter closes it');
+      const [arrival, heat, up] = p.options;
+      await vote(ada, arrival.id, true);
+      await vote(ada, heat.id, true);
+      await vote(grace, arrival.id, true);
+      await vote(sam, up.id, true);
+      p = find(await get(ada, now), fid);
+      assert.deepEqual(p.options.map((o) => [o.votes, o.yours]), [[1, false], [1, true], [1, false]], 'a pick moves');
+      assert.ok(p.options.every((o) => o.voters === null), 'no names by an option');
+      assert.deepEqual([p.turnout.voted, p.turnout.ofVoted, p.turnout.votedBy, p.turnout.waitingOn], [3, 2, null, null], 'counts only');
+      assert.ok(!JSON.stringify(await get(grace, now)).includes('"sam"'), 'not even who has voted');
+      await vote(sam, up.id, false);
+      assert.equal((await app.call('POST', `/api/polls/${fid}/close`, { as: ada, now })).status, 403, 'only its starter closes it');
+      assert.equal((await app.call('POST', `/api/polls/${fid}/close`, { as: grace, now })).status, 200);
+      p = (await get(ada, now)).decided.find((x) => x.id === fid);
+      assert.deepEqual([p.decidedAt, p.winners], [now, ['Arrival', 'Heat']], 'a tie names every option on top');
+      assert.equal((await vote(ada, arrival.id, true)).status, 409);
+      assert.equal((await app.call('POST', '/api/polls/999999/close', { as: grace, now })).status, 404);
+
+      // Its starter deletes a poll, open or decided.
+      assert.equal((await app.call('DELETE', `/api/polls/${fid}`, { as: ada })).status, 403);
+      assert.equal((await app.call('DELETE', `/api/polls/${fid}`, { as: grace })).status, 200);
+      assert.equal((await app.call('DELETE', `/api/polls/${fid}`, { as: grace })).status, 404);
+      assert.equal(find(await get(ada, now), fid), undefined);
+      assert.equal((await app.call('DELETE', `/api/polls/${id}`, { as: ada })).status, 200);
+    });
+  });
+
+  await t.test('find a time: suggested times, everyone\'s marks, the best rising, the starter setting it, and past by "now"', async () => {
+    // The dates mode: game night and the trip. The book club finds a weekly
+    // time instead (below).
+    await run('find-a-time-game-night', '/api/plans', (d) => demo(d.plans), async (app) => {
+      const get = async (as = ada, now) => (await app.call('GET', '/api/plans', { as, now })).data;
+      const plan = async (id, as = ada, now) => (await get(as, now)).plans.find((p) => p.id === id);
+      const slotAt = (p, iso) => p.slots.find((s) => s.startsAt === iso);
+
+      // The seed: an open plan with its grid filled in and a best time.
+      let d = await get();
+      const seeded = d.plans.find((p) => p.id === 900001);
+      assert.deepEqual([seeded.open, seeded.answered, seeded.slots.length, seeded.best], [true, 5, 4, 900002]);
+      assert.deepEqual(seeded.people.map((p) => p.username),
+        ['staging-demo-user', 'staging-demo-ana', 'staging-demo-ben', 'staging-demo-cy', 'staging-demo-dee'], 'in the order they answered');
+      assert.ok(seeded.slots.every((s) => Object.keys(s.marks).length === 5), 'every cell of the check\'s grid is marked');
+      assert.match(seeded.slots.find((s) => s.allDay).startsAt, /T00:00:00\.000Z$/, 'a whole day is its date\'s midnight UTC');
+      // Who still has to answer is the platform's member list, never the fake people.
+      assert.equal(d.members, 'ok');
+      assert.deepEqual(seeded.waiting.map((w) => [w.username, w.me]), [['ada', true], ['grace', false]]);
+      const outsider = await get(sam);
+      assert.equal(outsider.members, 'not_member');
+      assert.equal(outsider.plans.find((p) => p.id === 900001).waiting, null, 'not a member: no list, and the grid all the same');
+
+      // Starting a plan: a name and two to eight times, none of them passed.
+      const now = '2030-03-02T12:00:00.000Z';
+      const t1 = '2030-03-05T19:00:00.000Z';
+      const t2 = '2030-03-06T19:00:00.000Z';
+      const day = '2030-03-07T00:00:00.000Z';
+      const start = (body, as = ada) => app.call('POST', '/api/plans', { as, body, now });
+      const many = Array.from({ length: 9 }, (_, i) => ({ startsAt: `2030-03-1${i}T10:00:00.000Z` }));
+      for (const [body, why] of [
+        [{ name: ' ', times: [{ startsAt: t1 }, { startsAt: t2 }] }, 'a name'],
+        [{ name: 'x', times: [{ startsAt: t1 }] }, 'two times at least'],
+        [{ name: 'x', times: many }, 'eight at most'],
+        [{ name: 'x', times: [{ startsAt: t1 }, { startsAt: 'soon' }] }, 'a real time'],
+        [{ name: 'x', times: [{ startsAt: t1 }, { startsAt: '2030-03-01T19:00:00Z' }] }, 'not passed'],
+        [{ name: 'x', times: [{ startsAt: t1 }, { startsAt: '2030-03-05T20:00:00+01:00' }] }, 'two different times'],
+      ]) assert.equal((await start(body)).status, 400, why);
+      // A whole day is kept as its date, whatever time came with it.
+      const made = await start({ name: '  November   book club ', times: [{ startsAt: t2 }, { startsAt: t1 }, { startsAt: '2030-03-07T13:45:00.000Z', allDay: true }] });
+      assert.equal(made.status, 201);
+      const id = made.data.id;
+      let p = await plan(id, grace, now);
+      assert.deepEqual([p.name, p.by, p.mine, p.open, p.answered, p.best, p.set], ['November book club', 'ada', false, true, 0, null, null]);
+      assert.deepEqual(p.slots.map((s) => [s.startsAt, s.allDay, s.passed]), [[t1, false, false], [t2, false, false], [day, true, false]], 'earliest first');
+      assert.ok(p.slots.every((s) => !s.canRemove), 'grace started none of it');
+      assert.ok((await plan(id, ada, now)).slots.every((s) => s.canRemove), 'its starter may take any time off');
+      const [s1, s2, s3] = p.slots.map((s) => s.id);
+
+      // Marking: free, maybe (if needed) or no (can't), changed any time.
+      const mark = (as, marks, at = now, planId = id) => app.call('PUT', `/api/plans/${planId}/marks`, { as, body: { marks }, now: at });
+      assert.equal((await mark(ada, [])).status, 400);
+      assert.equal((await mark(ada, [{ slotId: s1, mark: 'yes' }])).status, 400);
+      assert.equal((await mark(ada, [{ slotId: 900001, mark: 'free' }])).status, 400, 'only this plan\'s times');
+      assert.equal((await mark(ada, [{ slotId: s1, mark: 'free' }], now, 999999)).status, 404);
+      assert.equal((await mark(ada, [{ slotId: s1, mark: 'free' }, { slotId: s2, mark: 'maybe' }, { slotId: s3, mark: 'free' }])).status, 200);
+      await mark(grace, [{ slotId: s1, mark: 'maybe' }, { slotId: s2, mark: 'free' }, { slotId: s3, mark: 'free' }], '2030-03-02T12:01:00.000Z');
+      await mark(sam, [{ slotId: s1, mark: 'no' }, { slotId: s2, mark: 'free' }], '2030-03-02T12:02:00.000Z');
+      p = await plan(id, grace, now);
+      assert.deepEqual(p.people.map((x) => [x.username, x.me]), [['grace', true], ['ada', false], ['sam', false]], 'you first, then in the order they answered');
+      assert.deepEqual(p.slots.map((s) => [s.free, s.maybe]), [[1, 1], [2, 1], [2, 0]]);
+      assert.deepEqual(slotAt(p, t1).marks, { 101: 'free', 102: 'maybe', 103: 'no' });
+      assert.deepEqual(slotAt(p, day).marks, { 101: 'free', 102: 'free' }, 'sam has not marked the whole day');
+      assert.deepEqual(slotAt(p, t2).maybeNames, ['ada']);
+      assert.equal(p.best, s2, 'the most free, then the most if needed');
+      assert.deepEqual(p.waiting, [], 'every member has answered');
+      // Everyone changes their mind, until two times tie: the earliest wins.
+      await mark(ada, [{ slotId: s1, mark: 'free' }, { slotId: s2, mark: 'free' }, { slotId: s3, mark: 'maybe' }], '2030-03-02T13:00:00.000Z');
+      p = await plan(id, ada, now);
+      assert.deepEqual(p.slots.map((s) => [s.free, s.maybe]), [[1, 1], [3, 0], [1, 1]]);
+      assert.equal(p.best, s2);
+      await mark(grace, [{ slotId: s1, mark: 'free' }, { slotId: s3, mark: 'free' }], '2030-03-02T14:00:00.000Z');
+      await mark(sam, [{ slotId: s1, mark: 'free' }, { slotId: s3, mark: 'free' }], '2030-03-02T14:01:00.000Z');
+      p = await plan(id, ada, now);
+      assert.deepEqual(p.slots.map((s) => s.free), [3, 3, 2]);
+      assert.equal(p.best, s1, 'a tie goes to the earliest');
+      assert.deepEqual(p.people.map((x) => x.username), ['ada', 'grace', 'sam'], 'changing a mark keeps your place');
+      // A time that has passed is never the best.
+      assert.equal((await plan(id, ada, '2030-03-05T20:00:00.000Z')).best, s2);
+      assert.equal(slotAt(await plan(id, ada, '2030-03-05T20:00:00.000Z'), t1).passed, true);
+
+      // Anyone suggests another time while it is open; its suggester or the
+      // plan's starter can take one off; a plan keeps at least two.
+      const suggest = (as, body, planId = id) => app.call('POST', `/api/plans/${planId}/slots`, { as, body, now });
+      assert.equal((await suggest(grace, { startsAt: '2030-03-01T18:30:00.000Z' })).status, 400, 'not passed');
+      assert.equal((await suggest(grace, { startsAt: 'later' })).status, 400);
+      assert.equal((await suggest(grace, { startsAt: t1 })).status, 409, 'already suggested');
+      assert.equal((await suggest(grace, { startsAt: '2030-03-07T09:00:00.000Z', allDay: true })).status, 409, 'that whole day is already suggested');
+      assert.equal((await suggest(grace, { startsAt: t1 }, 999999)).status, 404);
+      const t4 = '2030-03-08T18:30:00.000Z';
+      const added = await suggest(grace, { startsAt: t4 });
+      assert.equal(added.status, 201);
+      p = await plan(id, grace, now);
+      assert.deepEqual([slotAt(p, t4).by, slotAt(p, t4).canRemove, slotAt(p, t4).free, slotAt(p, t1).canRemove], ['grace', true, 0, false]);
+      assert.equal((await app.call('DELETE', `/api/slots/${added.data.id}`, { as: sam })).status, 403, 'not sam\'s to take off');
+      assert.equal((await app.call('DELETE', `/api/slots/${added.data.id}`, { as: grace })).status, 200);
+      assert.equal((await app.call('DELETE', `/api/slots/${added.data.id}`, { as: grace })).status, 404);
+      assert.equal((await app.call('DELETE', `/api/slots/${s3}`, { as: ada })).status, 200, 'the starter can');
+      assert.equal((await app.call('DELETE', `/api/slots/${s2}`, { as: ada })).status, 400, 'two left');
+      p = await plan(id, ada, now);
+      assert.deepEqual([p.slots.map((s) => s.id), p.slots.some((s) => s.canRemove)], [[s1, s2], false]);
+
+      // Only the starter sets the time (any of its times), which closes it.
+      const set = (as, slotId, planId = id) => app.call('PUT', `/api/plans/${planId}/set`, { as, body: { slotId }, now });
+      assert.equal((await set(grace, s1)).status, 403);
+      assert.equal((await set(ada, 900001)).status, 400, 'one of its own times');
+      assert.equal((await set(ada, s1, 999999)).status, 404);
+      assert.deepEqual((await set(ada, s2)).data, { set: s2 }, 'not only the best');
+      p = await plan(id, grace, now);
+      assert.deepEqual([p.open, p.set, p.waiting], [false, s2, null]);
+      assert.equal((await mark(grace, [{ slotId: s1, mark: 'no' }])).status, 409, 'closed: no more marks');
+      assert.equal((await suggest(grace, { startsAt: t4 })).status, 409, 'nor times');
+      assert.equal((await app.call('DELETE', `/api/slots/${s1}`, { as: ada })).status, 409);
+      assert.deepEqual((await set(ada, null)).data, { set: null }, 'reopened');
+      assert.equal((await mark(grace, [{ slotId: s1, mark: 'maybe' }])).status, 200);
+      assert.equal((await set(ada, s1)).status, 200);
+
+      // Past by "now": a set plan once its time has passed; an open one once
+      // every time has, a whole day once that date is over everywhere.
+      assert.ok((await get(ada, '2030-03-05T18:59:00.000Z')).plans.some((x) => x.id === id), 'coming up');
+      let later = await get(ada, '2030-03-05T19:01:00.000Z');
+      assert.ok(!later.plans.some((x) => x.id === id));
+      assert.deepEqual(later.past.find((x) => x.id === id), { id, name: 'November book club', by: 'ada', mine: true, set: { id: s1, startsAt: t1, allDay: false } });
+      const trip = await start({ name: 'Lake weekend', times: [{ startsAt: '2030-03-31T10:00:00.000Z' }, { startsAt: '2030-04-01T00:00:00.000Z', allDay: true }] }, grace);
+      assert.ok((await get(ada, '2030-04-02T11:59:00.000Z')).plans.some((x) => x.id === trip.data.id), 'that day still goes on in UTC-12');
+      later = await get(ada, '2030-04-02T12:01:00.000Z');
+      assert.deepEqual(later.past.find((x) => x.id === trip.data.id), { id: trip.data.id, name: 'Lake weekend', by: 'grace', mine: false, set: null });
+      assert.ok(later.past.findIndex((x) => x.id === trip.data.id) < later.past.findIndex((x) => x.id === id), 'the latest first');
+
+      // Only the starter deletes a plan, with its times and marks.
+      assert.equal((await app.call('DELETE', `/api/plans/${id}`, { as: grace })).status, 403);
+      assert.equal((await app.call('DELETE', `/api/plans/${id}`, { as: ada })).status, 200);
+      assert.equal((await app.call('DELETE', `/api/plans/${id}`, { as: ada })).status, 404);
+      assert.equal((await app.call('PUT', `/api/plans/${id}/marks`, { as: ada, body: { marks: [{ slotId: s1, mark: 'free' }] } })).status, 404);
+      assert.equal((await app.call('DELETE', `/api/plans/${trip.data.id}`, { as: grace })).status, 200);
+      d = await get();
+      assert.deepEqual(d.plans.map((x) => x.id), [900001], 'the seed is still there');
+    });
+  });
+
+  // Evan, 21 Oct 2026: "Book club times: shouldn't this be a weekly time?
+  // Not just a few times to choose between?"
+  await t.test('find a weekly time: everyone marks the hours of every week, and the hour most can make is named', async () => {
+    const fakes = (d) => d.people.filter((p) => p.username.startsWith('staging-demo-')).length;
+    await run('find-a-time-book-club', '/api/week', fakes, async (app) => {
+      const get = async (as = ada) => (await app.call('GET', '/api/week', { as })).data;
+      const mine = (as, hours) => app.call('PUT', '/api/week/mine', { as, body: { hours } });
+      const key = (b) => `${b.day}-${b.hour}`;
+
+      // The seed: five made-up people's weeks, Tuesday at 7 PM the best.
+      let d = await get();
+      assert.deepEqual([d.days, d.firstHour, d.lastHour], [7, 8, 22]);
+      assert.equal(fakes(d), 5);
+      assert.deepEqual(key(d.best[0]), '1-19');
+      assert.equal(d.free['1-19'].length, 4, 'four of the five');
+      // No plans in a weekly app: only its own mode's routes are there.
+      const plans = await app.call('GET', '/api/plans', { as: ada });
+      assert.ok(!(plans.data && plans.data.plans), 'no plans in a weekly app');
+      // Who still has to answer is the platform's member list.
+      assert.equal(d.members, 'ok');
+      assert.deepEqual(d.waiting.map((w) => [w.username, w.me]), [['ada', true], ['grace', false]]);
+
+      // Your week: hours of the grid only, replaced whole, an empty list
+      // taking your answer back.
+      for (const [hours, why] of [
+        [null, 'a list'],
+        [[[7, 19]], 'a day of the week'],
+        [[[1, 7]], 'from 8 AM'],
+        [[[1, 22]], 'until 10 PM'],
+        [[[1, 19.5]], 'whole hours'],
+        [[['1', 19]], 'numbers'],
+      ]) assert.equal((await mine(ada, hours)).status, 400, why);
+      assert.equal((await app.call('PUT', '/api/week/mine', { body: { hours: [[1, 19]] } })).status, 401, 'signed in to answer');
+      const graces = await listen(app, grace);
+      await graces.until((x) => x.text().includes(':ok'));
+      assert.deepEqual((await mine(ada, [[1, 19], [1, 20], [1, 19], [4, 18]])).data, { ok: true, hours: 3 }, 'each hour once');
+      await graces.until((x) => x.events() >= 1);
+      assert.doesNotMatch(graces.text(), /ada|19/, 'the stream says only that something changed');
+      await graces.close();
+      d = await get(grace);
+      assert.deepEqual(d.people[d.people.length - 1], { id: 101, username: 'ada', me: false }, 'the latest to answer is last');
+      assert.equal(d.free['1-19'].length, 5);
+      assert.ok(d.free['1-19'].includes(101) && d.free['4-18'].includes(101));
+      assert.deepEqual(key(d.best[0]), '1-19', 'now all five');
+      assert.deepEqual(d.waiting.map((w) => w.username), ['grace']);
+
+      // Grace answers first in a fresh week of her own; changing your week
+      // keeps your place.
+      await mine(grace, [[2, 18], [2, 19]]);
+      await mine(ada, [[1, 19], [2, 18], [2, 19]]);
+      d = await get(ada);
+      assert.deepEqual(d.people[0], { id: 101, username: 'ada', me: true }, 'you first');
+      assert.ok(!d.free['4-18'], 'an hour you took off is not yours any more');
+      assert.ok(d.people.findIndex((p) => p.username === 'grace') > 0);
+      assert.deepEqual(d.waiting, [], 'every member has answered');
+
+      // The best hours: the most free, then the hour after, then the
+      // earliest; an hour beside one already named is the same evening.
+      d = await get();
+      assert.ok(d.best.length <= 3);
+      for (let i = 1; i < d.best.length; i += 1) {
+        for (let j = 0; j < i; j += 1) {
+          assert.ok(!(d.best[i].day === d.best[j].day && Math.abs(d.best[i].hour - d.best[j].hour) <= 1), 'not the same evening twice');
+        }
+        assert.ok(d.free[key(d.best[i])].length <= d.free[key(d.best[i - 1])].length, 'most first');
+      }
+
+      // Taking your answer back.
+      assert.deepEqual((await mine(ada, [])).data, { ok: true, hours: 0 });
+      d = await get(ada);
+      assert.ok(!d.people.some((p) => p.id === 101));
+      assert.deepEqual(d.waiting.map((w) => w.username), ['ada']);
+    });
+  });
+
+  // One app, two ways to answer (SHEET_MODE): each entry seeds and makes
+  // events of its own kind. Its events are counted by their names.
+  const sheets = (d) => demo(d.upcoming.concat(d.past));
+
+  await t.test('a sign-up sheet: slots with a size, one spot each, a full slot closes, coming up by "now"', async () => {
+    await run('signup-shifts', '/api/events', sheets, async (app) => {
+      const get = async (as, now) => (await app.call('GET', '/api/events', { as, now })).data;
+      // The seed: a sheet coming up with five slots of different sizes, some
+      // taken by fake people and one full, and one sheet that is past.
+      const seeded = await get(sam);
+      assert.equal(seeded.mode, 'slots');
+      const park = seeded.upcoming.find((e) => e.id === 900001);
+      assert.equal(park.kind, 'slots');
+      assert.equal(park.slots.length, 5);
+      assert.equal(new Set(park.slots.map((s) => s.size)).size, 5, 'five different sizes');
+      assert.ok(park.slots.some((s) => s.taken && !s.full) && park.slots.some((s) => !s.taken), 'some taken, some not');
+      assert.deepEqual(park.slots.filter((s) => s.full).map((s) => s.id), [900005], 'one full');
+      assert.ok(seeded.past.some((e) => e.id === 900002 && e.over), 'and one past');
+      assert.equal((await app.call('PUT', '/api/slots/900005/signup', { as: ada })).status, 409, 'a full slot is closed');
+
+      // Making one: a name and a time that has not passed; a place if known.
+      const now = '2026-10-08T12:00:00.000Z';
+      const startsAt = '2026-10-10T09:00:00.000Z';
+      const post = (body, as = ada) => app.call('POST', '/api/events', { as, body, now });
+      assert.equal((await post({ name: '  ', startsAt })).status, 400);
+      assert.equal((await post({ name: 'Cleanup', startsAt: 'soon' })).status, 400);
+      assert.equal((await post({ name: 'Cleanup', startsAt: '2026-10-01T09:00:00Z' })).status, 400, 'not in the past');
+      assert.equal((await post({ name: 'Cleanup', startsAt, kind: 'potluck' })).status, 400);
+      const made = await post({ name: '  River   cleanup ', startsAt, place: 'The boat ramp' });
+      assert.equal(made.status, 201);
+      assert.equal(made.data.kind, 'slots', 'a new event is the app\'s kind');
+      const id = made.data.id;
+
+      // Anyone adds a slot: a name and a size from 1 to 50.
+      const slot = (body, as = ada, event = id) => app.call('POST', `/api/events/${event}/slots`, { as, body, now });
+      assert.equal((await slot({ name: '', size: 2 })).status, 400);
+      for (const size of [0, 51, 2.5, 'two']) assert.equal((await slot({ name: 'Bags', size })).status, 400, String(size));
+      assert.equal((await slot({ name: 'Bags', size: 2 }, ada, 999999)).status, 404);
+      const morning = (await slot({ name: 'Morning shift', size: 2 }, grace)).data.id;
+      const van = (await slot({ name: 'Drive the van', size: 1 })).data.id;
+      assert.ok(morning && van);
+
+      // One spot per person per slot; the last spot closes it.
+      const signUp = (slotId, as) => app.call('PUT', `/api/slots/${slotId}/signup`, { as, now });
+      assert.equal((await signUp(morning, ada)).status, 201);
+      const again = await signUp(morning, ada);
+      assert.deepEqual([again.status, again.data], [200, { on: true }], 'asking again takes no second spot');
+      assert.equal((await signUp(morning, grace)).status, 201);
+      const full = await signUp(morning, sam);
+      assert.equal(full.status, 409);
+      assert.match(full.data.error, /full/);
+      let sheet = (await get(ada, now)).upcoming.find((e) => e.id === id);
+      assert.deepEqual([sheet.name, sheet.place, sheet.startsAt, sheet.by, sheet.mine], ['River cleanup', 'The boat ramp', startsAt, 'ada', true]);
+      let m = sheet.slots.find((s) => s.id === morning);
+      assert.deepEqual([m.size, m.taken, m.open, m.full, m.mine], [2, 2, 0, true, true]);
+      assert.deepEqual(m.people.map((p) => [p.username, p.mine]), [['ada', true], ['grace', false]], 'in the order they signed up');
+      assert.deepEqual([sheet.spots, sheet.open, sheet.yours], [3, 1, ['Morning shift']], 'the line at the top');
+      sheet = (await get(sam, now)).upcoming.find((e) => e.id === id);
+      assert.deepEqual([sheet.mine, sheet.yours, sheet.slots[0].mine], [false, [], false]);
+
+      // Leaving opens the spot again.
+      assert.deepEqual((await app.call('DELETE', `/api/slots/${morning}/signup`, { as: ada, now })).data, { on: false });
+      assert.equal((await signUp(morning, sam)).status, 201);
+      assert.equal((await signUp(999999, ada)).status, 404);
+      assert.equal((await app.call('DELETE', '/api/slots/999999/signup', { as: ada, now })).status, 404);
+      assert.equal((await app.call('PUT', `/api/events/${id}/answer`, { as: ada, body: { answer: 'going' }, now })).status, 400,
+        'a sheet of slots asks no question');
+      // Two people tapping the last spot at once: one of them gets it.
+      const race = await Promise.all([signUp(van, grace), signUp(van, sam)]);
+      assert.deepEqual(race.map((r) => r.status).sort(), [201, 409]);
+
+      // Only whoever made the event removes a slot, or the event.
+      assert.equal((await app.call('DELETE', `/api/slots/${van}`, { as: grace })).status, 403);
+      assert.equal((await app.call('DELETE', `/api/slots/${van}`, { as: ada })).status, 200);
+      assert.equal((await app.call('DELETE', `/api/slots/${van}`, { as: ada })).status, 404);
+
+      // Coming up until twelve hours after it starts, then past and closed.
+      assert.ok((await get(ada, '2026-10-10T20:00:00.000Z')).upcoming.some((e) => e.id === id), 'still on that evening');
+      const later = '2026-10-11T12:00:00.000Z';
+      const gone = await get(ada, later);
+      assert.ok(!gone.upcoming.some((e) => e.id === id) && gone.past.some((e) => e.id === id && e.over), 'then past');
+      assert.equal((await app.call('PUT', `/api/slots/${morning}/signup`, { as: grace, now: later })).status, 409, 'too late to sign up');
+      assert.equal((await app.call('POST', `/api/events/${id}/slots`, { as: grace, body: { name: 'Late', size: 1 }, now: later })).status, 409);
+
+      assert.equal((await app.call('DELETE', `/api/events/${id}`, { as: grace })).status, 403, 'only whoever made it deletes it');
+      assert.equal((await app.call('DELETE', `/api/events/${id}`, { as: ada })).status, 200);
+      assert.equal((await app.call('DELETE', `/api/events/${id}`, { as: ada })).status, 404);
+      assert.equal((await app.call('PUT', `/api/slots/${morning}/signup`, { as: grace, now })).status, 404, 'its slots went with it');
+    });
+  });
+
+  await t.test('who\'s coming: going, maybe or can\'t with a note, and who has not said from the member list', async () => {
+    await run('signup-rsvp', '/api/events', sheets, async (app) => {
+      const get = async (as, now) => (await app.call('GET', '/api/events', { as, now })).data;
+      // The seed: an event coming up that fake people answered every way.
+      const seeded = await get(sam);
+      assert.equal(seeded.mode, 'rsvp');
+      const night = seeded.upcoming.find((e) => e.id === 900001);
+      assert.equal(night.kind, 'rsvp');
+      assert.deepEqual([night.counts.going, night.counts.maybe, night.counts.cant], [5, 2, 1]);
+      assert.ok(night.going.some((p) => p.note), 'with notes');
+      // Somebody the platform does not count as a member sees no "hasn't said".
+      assert.deepEqual([seeded.members, night.counts.unsaid, night.answer], ['not_member', null, null]);
+      assert.equal((await get(ada)).upcoming.find((e) => e.id === 900001).counts.unsaid, 2, 'neither member has answered');
+
+      const now = '2026-10-08T12:00:00.000Z';
+      const startsAt = '2026-10-10T19:00:00.000Z';
+      const made = await app.call('POST', '/api/events', { as: ada, body: { name: 'Game night', startsAt, place: 'Jo\'s' }, now });
+      assert.deepEqual([made.status, made.data.kind], [201, 'rsvp']);
+      const id = made.data.id;
+      assert.equal((await app.call('POST', `/api/events/${id}/slots`, { as: ada, body: { name: 'Snacks', size: 2 }, now })).status, 400,
+        'an event that asks who is coming has no slots');
+
+      const answer = (body, as, event = id) => app.call('PUT', `/api/events/${event}/answer`, { as, body, now });
+      assert.equal((await answer({ answer: 'yes' }, ada)).status, 400);
+      assert.equal((await answer({ answer: 'going' }, ada, 999999)).status, 404);
+      assert.deepEqual((await answer({ answer: 'going', note: ' +1 ' }, ada)).data, { answer: 'going', note: '+1' });
+      // Changing the answer keeps the note unless it is sent too.
+      assert.deepEqual((await answer({ answer: 'maybe' }, ada)).data, { answer: 'maybe', note: '+1' });
+      assert.deepEqual((await answer({ answer: 'going', note: '' }, ada)).data, { answer: 'going', note: null });
+      let ev = (await get(ada, now)).upcoming.find((e) => e.id === id);
+      assert.deepEqual(ev.answer, { answer: 'going', note: null });
+      assert.deepEqual(ev.counts, { going: 1, maybe: 0, cant: 0, unsaid: 1 }, 'grace has not said');
+      assert.deepEqual(ev.going.map((p) => [p.username, p.mine]), [['ada', true]]);
+
+      await answer({ answer: 'cant', note: 'Away that weekend' }, grace);
+      await answer({ answer: 'going', note: 'Bringing snacks' }, sam);
+      ev = (await get(grace, now)).upcoming.find((e) => e.id === id);
+      assert.deepEqual(ev.counts, { going: 2, maybe: 0, cant: 1, unsaid: 0 }, 'everyone in the project has said');
+      assert.deepEqual(ev.answer, { answer: 'cant', note: 'Away that weekend' });
+      assert.deepEqual(ev.going.map((p) => [p.username, p.note, p.mine]), [['ada', null, false], ['sam', 'Bringing snacks', false]]);
+      assert.deepEqual(ev.cant.map((p) => [p.username, p.mine]), [['grace', true]]);
+
+      // Answers close once it is past.
+      const later = '2026-10-11T12:00:00.000Z';
+      assert.equal((await app.call('PUT', `/api/events/${id}/answer`, { as: grace, body: { answer: 'going' }, now: later })).status, 409);
+      const gone = await get(ada, later);
+      assert.ok(gone.past.some((e) => e.id === id && e.counts.going === 2 && e.counts.unsaid === null));
+
+      assert.equal((await app.call('DELETE', `/api/events/${id}`, { as: sam })).status, 403);
+      assert.equal((await app.call('DELETE', `/api/events/${id}`, { as: ada })).status, 200);
+      assert.ok(!(await get(ada, now)).upcoming.some((e) => e.id === id));
+    });
+  });
+
+  await t.test('a group challenge: logged by hand, a leaderboard and a group goal, a fresh start every month', async () => {
+    const seededLately = (d) => d.lately.filter((e) => /^Staging demo /.test(e.note || '')).length;
+    await run('challenge-miles', '/api/challenge', seededLately, async (app) => {
+      // The staging seed: this month's board, goal bar and Lately, from made-up
+      // people, readable by somebody who is not a member (the check runner).
+      const seeded = (await app.call('GET', '/api/challenge', { as: sam })).data;
+      assert.ok(seeded.current && seeded.leaderboard.length >= 4, 'the check\'s leaderboard');
+      assert.ok(seeded.leaderboard.every((p) => p.username.startsWith('staging-demo-') && p.total > 0));
+      assert.ok(seeded.total > 0 && seeded.progress > 0, 'and the goal bar');
+      assert.deepEqual(seeded.goal, { amount: 200, custom: false, setBy: null }, 'the entry\'s default goal');
+      assert.ok(seeded.pastMonths.length >= 1, 'last month is kept as a past month');
+      assert.deepEqual([seeded.members, seeded.notYet], ['not_member', null], 'no member list for a stranger');
+
+      // March 2025, UTC: far from the seed, which is relative to the real clock.
+      const MARCH = '2025-03-20T12:00:00.000Z';
+      const get = async (as, now, query = '') => (await app.call('GET', `/api/challenge?tz=UTC${query}`, { as, now })).data;
+      const log = (as, body, now = MARCH) => app.call('POST', '/api/entries?tz=UTC', { as, body, now });
+      let d = await get(ada, MARCH);
+      assert.deepEqual([d.month, d.today, d.daysInMonth, d.dayOfMonth, d.daysLeft], ['2025-03', '2025-03-20', 31, 20, 11]);
+      assert.deepEqual([d.total, d.progress, d.leaderboard, d.lately, d.yours, d.pace, d.results], [0, 0, [], [], [], null, null]);
+      assert.deepEqual(d.notYet, [{ username: 'ada', me: true }, { username: 'grace', me: false }], 'the platform\'s member list');
+      assert.equal(d.maxAmount, 100, 'half the usual goal per entry');
+
+      // An amount: positive, a number, at most the maximum; a day this month, up to today.
+      for (const bad of [{}, { amount: '' }, { amount: 'lots' }, { amount: 0 }, { amount: -2 }, { amount: '1e3' }, { amount: 100.5 }]) {
+        assert.equal((await log(ada, bad)).status, 400, JSON.stringify(bad));
+      }
+      assert.match((await log(ada, { amount: 150 })).data.error, /^One entry can be up to 100 miles\./);
+      assert.match((await log(ada, { amount: 0 })).data.error, /^Log more than zero miles\.$/);
+      for (const day of ['2025-03-21', '2025-02-28', '2025-02-30', 'yesterday']) {
+        assert.equal((await log(ada, { amount: 1, day })).status, 400, day);
+      }
+      assert.equal((await get(ada, MARCH)).leaderboard.length, 0, 'nothing refused was logged');
+
+      const first = await log(ada, { amount: '5.2', note: '  Lunch   walk ' }, '2025-03-20T08:00:00.000Z');
+      assert.equal(first.status, 201);
+      assert.deepEqual([first.data.entry.amount, first.data.entry.day, first.data.entry.note, first.data.entry.mine], [5.2, '2025-03-20', 'Lunch walk', true]);
+      await log(grace, { amount: 3.1, day: '2025-03-18' }, '2025-03-20T09:00:00.000Z');
+      await log(ada, { amount: 4, day: '2025-03-01' }, '2025-03-20T10:00:00.000Z');
+      assert.equal((await log(sam, { amount: 2.555 }, '2025-03-20T11:00:00.000Z')).data.entry.amount, 2.56, 'two decimals at most');
+
+      d = await get(ada, MARCH);
+      assert.deepEqual(d.leaderboard.map((p) => [p.username, p.total, p.days, p.rank, p.me]),
+        [['ada', 9.2, 2, 1, true], ['grace', 3.1, 1, 2, false], ['sam', 2.56, 1, 3, false]]);
+      assert.deepEqual([d.total, d.progress, d.beaten], [14.86, 7, false]);
+      assert.ok(Math.abs(d.pace.projected - (14.86 / 20) * 31) < 1e-9, 'where the group finishes at this rate');
+      assert.ok(Math.abs(d.pace.perDay - (200 - 14.86) / 12) < 1e-9, 'and what it takes a day, today included');
+      assert.deepEqual(d.lately.map((e) => [e.username, e.amount, e.day, e.mine]),
+        [['sam', 2.56, '2025-03-20', false], ['ada', 4, '2025-03-01', true], ['grace', 3.1, '2025-03-18', false], ['ada', 5.2, '2025-03-20', true]],
+        'newest logged first');
+      assert.deepEqual(d.yours.map((e) => e.amount), [5.2, 4], 'your own, by day');
+      assert.deepEqual(d.notYet, [], 'both members are on the board');
+      // A tie shares its rank.
+      await log(grace, { amount: 6.1 }, MARCH);
+      d = await get(grace, MARCH);
+      assert.deepEqual(d.leaderboard.map((p) => [p.username, p.total, p.rank, p.me]),
+        [['ada', 9.2, 1, false], ['grace', 9.2, 1, true], ['sam', 2.56, 3, false]]);
+
+      // Only whoever logged an entry removes it.
+      const oops = (await log(ada, { amount: 50 }, '2025-03-20T12:30:00.000Z')).data.id;
+      assert.equal((await app.call('DELETE', `/api/entries/${oops}?tz=UTC`, { as: grace, now: MARCH })).status, 403);
+      assert.equal((await app.call('DELETE', `/api/entries/${oops}?tz=UTC`, { as: ada, now: MARCH })).status, 200);
+      assert.equal((await app.call('DELETE', `/api/entries/${oops}?tz=UTC`, { as: ada, now: MARCH })).status, 404);
+      assert.equal((await app.call('DELETE', '/api/entries/nope', { as: ada })).status, 404);
+      assert.equal((await get(ada, MARCH)).total, 20.96);
+
+      // Anyone changes this month's goal, for this month only; null is the usual one again.
+      const setGoal = (as, goal, now = MARCH) => app.call('PUT', '/api/goal?tz=UTC', { as, body: { goal }, now });
+      for (const bad of ['x', 0, -5, 2e9]) assert.equal((await setGoal(grace, bad)).status, 400, String(bad));
+      assert.equal((await setGoal(grace, null)).data.goal.custom, false);
+      const changed = await setGoal(grace, '20');
+      assert.deepEqual([changed.status, changed.data.month, changed.data.goal], [200, '2025-03', { amount: 20, custom: true, setBy: 'grace' }]);
+      d = await get(ada, MARCH);
+      assert.deepEqual([d.goal.amount, d.progress, d.beaten], [20, 100, true]);
+
+      // April: a fresh start at zero with the usual goal, and March's results
+      // on its first days.
+      const APRIL = '2025-04-02T09:00:00.000Z';
+      d = await get(ada, APRIL);
+      assert.deepEqual([d.month, d.total, d.leaderboard, d.goal.amount, d.goal.custom], ['2025-04', 0, [], 200, false]);
+      const r = d.results;
+      assert.deepEqual([r.month, r.total, r.goal, r.beaten, r.people], ['2025-03', 20.96, 20, true, 3]);
+      assert.deepEqual(r.top.map((p) => [p.username, p.rank]), [['ada', 1], ['grace', 1], ['sam', 3]]);
+      assert.deepEqual(r.mostDays, { days: 2, of: 31, people: [{ username: 'ada', me: true }, { username: 'grace', me: false }] });
+      assert.deepEqual(d.pastMonths, [{ month: '2025-03', total: 20.96, goal: 20, beaten: true }]);
+      assert.equal((await get(ada, '2025-04-08T09:00:00.000Z')).results, null, 'the card is for the first week');
+      assert.equal((await get(ada, '2025-04-07T09:00:00.000Z')).results.month, '2025-03');
+
+      // A past month can be looked at, and stays as it was.
+      d = await get(ada, APRIL, '&month=2025-03');
+      assert.deepEqual([d.current, d.month, d.results.month, d.leaderboard.length, d.lately, d.yours], [false, '2025-03', '2025-03', 3, [], []]);
+      assert.equal((await app.call('GET', '/api/challenge?tz=UTC&month=2025-05', { as: ada, now: APRIL })).status, 400, 'not yet');
+      assert.equal((await app.call('GET', '/api/challenge?month=March', { as: ada, now: APRIL })).status, 400);
+      const march = d.leaderboard.find((p) => p.username === 'ada');
+      assert.ok(march);
+      const adaMarch = (await get(ada, MARCH)).yours[0].id;
+      assert.equal((await app.call('DELETE', `/api/entries/${adaMarch}?tz=UTC`, { as: ada, now: APRIL })).status, 403, 'a month that is over keeps its entries');
+      assert.equal((await log(ada, { amount: 1, day: '2025-03-31' }, APRIL)).status, 400);
+      await setGoal(ada, 300, APRIL);
+      assert.equal((await get(ada, APRIL)).goal.amount, 300);
+      assert.equal((await get(ada, APRIL, '&month=2025-03')).goal.amount, 20, 'each month keeps its own goal');
+
+      // "This month" is where the viewer is: 23:30 on March 31 in Los
+      // Angeles is already April in UTC. An unknown zone is UTC.
+      const lateMarch = '2025-04-01T06:30:00.000Z';
+      const la = (await app.call('GET', '/api/challenge?tz=America/Los_Angeles', { as: ada, now: lateMarch })).data;
+      assert.deepEqual([la.month, la.today, la.daysLeft], ['2025-03', '2025-03-31', 0]);
+      assert.equal((await app.call('GET', '/api/challenge?tz=Not/AZone', { as: ada, now: lateMarch })).data.month, '2025-04');
+      const late = await app.call('POST', '/api/entries?tz=America/Los_Angeles', { as: ada, body: { amount: 1 }, now: lateMarch });
+      assert.equal(late.data.entry.day, '2025-03-31', 'today, where they are');
+    });
+  });
+
+  // ── The game starters ──────────────────────────────────────────────────
+
+  // Nobody without a token, nor with another app's, gets a live connection.
+  async function refusesStrangers(app) {
+    for (const bad of [null, token(101, 'ada', 'usernode:app:999'), 'not-a-token']) {
+      await assert.rejects(liveOf(app, bad).opened, (err) => err.status === 401, String(bad && bad.slice(0, 8)));
+    }
+  }
+
+  await t.test('a board game: the lobby, turns over the live connection, a roll made for somebody away, a winner kept', async () => {
+    const roomCount = (d) => d.players.length + d.leaders.length;
+    await run('game-board', '/api/room', roomCount, async (app) => {
+      await refusesStrangers(app);
+      const a = liveOf(app, ada);
+      let first = a.next(isView());
+      await a.opened;
+      let v = (await first).view;
+      assert.deepEqual([v.phase, v.players.map((p) => p.username), v.you.joined], ['lobby', ['staging-demo-ana'], false]);
+      assert.deepEqual(v.leaders.map((l) => [l.username, l.wins]), [['staging-demo-ana', 1], ['staging-demo-user', 1]]);
+      let p = a.next(isView((x) => x.players.length === 2));
+      a.send({ t: 'join' });
+      await p;
+      // A plain request is the same room, and the socket hears it.
+      p = a.next(isView((x) => x.players.length === 3));
+      assert.equal((await app.call('POST', '/api/room/join', { as: grace })).status, 200);
+      v = (await p).view;
+      assert.deepEqual(v.players.map((x) => [x.username, x.here]), [['staging-demo-ana', false], ['ada', true], ['grace', true]]);
+      p = a.next(isView((x) => x.phase === 'playing'));
+      a.send({ t: 'start' });
+      v = (await p).view;
+      assert.equal(v.game.order[v.game.turn], 900001, 'the first seat starts');
+      p = a.next((m) => m.t === 'error');
+      a.send({ t: 'act', action: { type: 'roll' } });
+      assert.equal((await p).error, 'It is not your turn yet.');
+      // The roll for an away player fires 2.5 s after her turn, checked on a
+      // 1 s update tick; the default 6 s left a loaded runner little room.
+      v = (await a.next(isView((x) => x.game && x.game.rollNo >= 1), 15000)).view;
+      assert.match(v.game.log[0].text, /^@staging-demo-ana rolled \d \(rolled for them\)/, 'away: rolled for her');
+      assert.equal((await app.call('POST', '/api/room/act', { as: sam, body: { action: { type: 'roll' } } })).status, 409, 'watching, not playing');
+      a.close();
+    });
+    // A game to its winner, on a fresh production room, kept across a restart.
+    const dir = writeRepo('game-board');
+    dirs.push(dir);
+    const db = await database();
+    let prod = await boot(dir, db, 'production', env);
+    const a = liveOf(prod, ada);
+    await a.opened;
+    let p = a.next(isView((x) => x.players.length === 1));
+    a.send({ t: 'join' });
+    await p;
+    p = a.next(isView((x) => x.phase === 'playing'));
+    a.send({ t: 'start' });
+    await p;
+    let over = null;
+    for (let i = 0; i < 80 && !over; i += 1) {
+      p = a.next(isView((x) => x.game && x.game.rollNo === i + 1));
+      a.send({ t: 'act', action: { type: 'roll' } });
+      const after = (await p).view;
+      if (after.phase === 'over') over = after;
+      else if (after.game.winner != null) over = (await a.next(isView((x) => x.phase === 'over'))).view;
+    }
+    assert.ok(over, 'somebody reaches the finish');
+    assert.deepEqual(over.results.map((r) => [r.username, r.place, r.score]), [['ada', 1, 30]]);
+    const leaders = (await a.next(isView((x) => x.leaders.length === 1))).view.leaders;
+    assert.deepEqual(leaders.map((l) => [l.username, l.wins, l.played]), [['ada', 1, 1]]);
+    a.close();
+    await new Promise((r) => setTimeout(r, 600)); // the room saves a moment after a change
+    assert.equal(await prod.stop(), 0, prod.output());
+    prod = await boot(dir, db, 'production', env);
+    const back = (await prod.call('GET', '/api/room', { as: ada })).data;
+    assert.deepEqual([back.phase, back.players.map((x) => x.username), back.leaders.length], ['over', ['ada'], 1], 'saved across a restart');
+    assert.equal((await prod.call('POST', '/api/room/again', { as: ada })).data.phase, 'lobby');
+    assert.equal(await prod.stop(), 0);
+  });
+
+  await t.test('trivia: questions about each other, the answer hidden until it shows, scored live', async () => {
+    const roomCount = (d) => d.players.length + d.leaders.length;
+    await run('game-trivia', '/api/room', roomCount, async (app) => {
+      await refusesStrangers(app);
+      // The bank: your own questions in full, everyone else's only counted.
+      assert.equal((await app.call('POST', '/api/questions', { as: grace, body: { text: 'My first job?', answer: 'Baker', wrong: [] } })).status, 400);
+      assert.equal((await app.call('POST', '/api/questions', { as: grace, body: { text: 'My first job?', answer: 'Baker', wrong: ['baker'] } })).status, 400, 'every answer different');
+      const q = await app.call('POST', '/api/questions', { as: grace, body: { text: 'My first job?', answer: 'Baker', wrong: ['Lifeguard', 'Paper round'] } });
+      assert.equal(q.status, 201);
+      const graceBank = (await app.call('GET', '/api/questions', { as: grace })).data;
+      assert.deepEqual(graceBank.mine.map((x) => [x.text, x.answer, x.wrong]), [['My first job?', 'Baker', ['Lifeguard', 'Paper round']]]);
+      const adaBank = (await app.call('GET', '/api/questions', { as: ada })).data;
+      assert.deepEqual(adaBank.mine, []);
+      assert.ok(!JSON.stringify(adaBank).includes('Baker'), 'nobody else sees the answer');
+      assert.equal((await app.call('GET', '/api/questions')).status, 401);
+      // A game: everyone here answers, then the answer shows with the points.
+      const a = liveOf(app, ada);
+      const g = liveOf(app, grace);
+      await Promise.all([a.opened, g.opened]);
+      let p = a.next(isView((x) => x.players.length === 3));
+      a.send({ t: 'join' });
+      g.send({ t: 'join' });
+      await p;
+      p = a.next(isView((x) => x.phase === 'playing'));
+      a.send({ t: 'start' });
+      let v = (await p).view;
+      assert.equal(v.game.of, 6, 'every question in the bank, up to eight');
+      assert.equal(v.game.question.correct, null, 'not before it shows');
+      const author = v.game.question.authorId;
+      const answers = [[a, 101], [g, 102]].filter(([, id]) => id !== author);
+      if (answers.length < 2) {
+        p = g.next((m) => m.t === 'error');
+        g.send({ t: 'act', action: { type: 'answer', choice: 0 } });
+        assert.match((await p).error, /about you/);
+      }
+      p = a.next(isView((x) => x.game && x.game.stage === 'reveal'));
+      for (const [s] of answers) s.send({ t: 'act', action: { type: 'answer', choice: 0 } });
+      v = (await p).view;
+      assert.equal(typeof v.game.question.correct, 'number', 'it shows once everyone here answered');
+      assert.equal(Object.keys(v.game.picks).length, answers.length);
+      const right = Object.entries(v.game.picks).filter(([, c]) => c === v.game.question.correct).map(([id]) => Number(id));
+      for (const id of right) assert.ok(v.game.points[id] >= 100, 'a right answer scores');
+      a.close();
+      g.close();
+      assert.equal((await app.call('DELETE', `/api/questions/${q.data.id}`, { as: ada })).status, 404, 'only its author');
+      assert.equal((await app.call('DELETE', `/api/questions/${q.data.id}`, { as: grace })).status, 200);
+    });
+  });
+
+  await t.test('the space game: a run ticks live, ships fly by their own page, and the run is kept when it ends', async () => {
+    await run('game-space', '/api/room', (d) => d.leaders.length, async (app) => {
+      await refusesStrangers(app);
+      const a = liveOf(app, ada);
+      await a.opened;
+      let p = a.next(isView((x) => x.players.length === 1));
+      a.send({ t: 'join' });
+      await p;
+      p = a.next(isView((x) => x.phase === 'playing'));
+      a.send({ t: 'start' });
+      const v = (await p).view;
+      const ship = v.game.ships.find((s) => s[0] === 101);
+      // Frames come one 50 ms tick apart, twenty a second, by the server's
+      // own clock: how fast this process reads them cannot change that.
+      const nows = [];
+      for (let i = 0; i < 10; i += 1) {
+        // eslint-disable-next-line no-await-in-loop
+        nows.push((await a.next((m) => m.t === 'frame')).frame.now);
+      }
+      const steps = nows.slice(1).map((now, i) => now - nows[i]);
+      assert.ok(steps.every((step) => step > 0), `time moves forward: ${steps.join(', ')} ms`);
+      const closest = Math.min(...steps);
+      assert.ok(closest >= 25 && closest <= 150, `frames every ${steps.join(', ')} ms`);
+      // A storm is the numbers every page works its sparks out from.
+      const stormy = await a.next((m) => m.t === 'frame' && m.frame.storms.length);
+      assert.ok(['interval', 'n', 'v', 'a0'].every((k) => k in stormy.frame.storms[0]));
+      a.send({ t: 'input', input: { x: ship[1] + 15, y: ship[2] - 5 } });
+      const moved = await a.next((m) => m.t === 'frame' && m.frame.ships.some((s) => s[0] === 101 && s[1] === ship[1] + 15 && s[2] === ship[2] - 5));
+      assert.ok(moved, 'the server takes the page\'s word for where its ship is');
+      a.send({ t: 'input', input: { x: ship[1] + 315, y: ship[2] - 5 } });
+      const later = await a.next((m) => m.t === 'frame');
+      assert.equal(later.frame.ships.find((s) => s[0] === 101)[1], ship[1] + 15, 'but not a jump');
+      // Its page saw a spark touch it: a shield goes, and everyone hears.
+      await a.next((m) => m.t === 'frame' && m.frame.now > m.frame.ships.find((s) => s[0] === 101)[5]);
+      const p2 = a.next((m) => m.t === 'event');
+      a.send({ t: 'act', action: { type: 'hit' } });
+      assert.deepEqual((await p2).event, { type: 'hit', id: 101, shields: 2 });
+      // Grace drops in mid-run; then both leave and the run is over and kept.
+      assert.equal((await app.call('POST', '/api/room/join', { as: grace })).status, 200);
+      const both = await a.next((m) => m.t === 'frame' && m.frame.ships.length === 2);
+      assert.ok(both);
+      p = a.next(isView((x) => x.phase === 'over'));
+      await app.call('POST', '/api/room/leave', { as: grace });
+      a.send({ t: 'leave' });
+      const over = (await p).view;
+      assert.deepEqual(over.results.map((r) => r.username).sort(), ['ada', 'grace'], 'everyone who flew');
+      const kept = await a.next(isView((x) => x.leaders.some((l) => l.username === 'ada')));
+      assert.ok(kept);
+      a.close();
+    });
+  });
+
+  await t.test('the block world: always on, every block sent to everyone as it is placed, and checked', async () => {
+    await run('game-blocks', '/api/room', (d) => (d.game ? d.game.count : 0), async (app) => {
+      await refusesStrangers(app);
+      const a = liveOf(app, ada);
+      const g = liveOf(app, grace);
+      const first = a.next(isView());
+      await Promise.all([a.opened, g.opened]);
+      const v = (await first).view;
+      assert.equal(v.phase, 'playing', 'no lobby');
+      assert.ok(v.game.blocks.length > 50, 'the staging demo world');
+      const empty = [5, 0, 25];
+      assert.ok(!v.game.blocks.some((b) => b[0] === empty[0] && b[1] === empty[1] && b[2] === empty[2]));
+      let p = g.next((m) => m.t === 'event');
+      a.send({ t: 'act', action: { type: 'place', x: empty[0], y: empty[1], z: empty[2], c: 4 } });
+      assert.deepEqual((await p).event, { type: 'place', x: 5, y: 0, z: 25, c: 4, by: 'ada' }, 'grace sees it at once');
+      p = g.next((m) => m.t === 'error');
+      g.send({ t: 'act', action: { type: 'place', x: 5, y: 0, z: 25, c: 1 } });
+      assert.match((await p).error, /already/);
+      g.send({ t: 'act', action: { type: 'place', x: 99, y: 0, z: 0, c: 1 } });
+      assert.match((await g.next((m) => m.t === 'error')).error, /outside/);
+      // Where ada is flying shows on grace's screen.
+      a.send({ t: 'input', input: { x: 6.5, y: 3, z: 25, yaw: 1.25, c: 2 } });
+      const there = await g.next((m) => m.t === 'frame' && m.frame.builders.length);
+      assert.deepEqual(there.frame.builders[0], [101, 'ada', 6.5, 3, 25, 1.25, 2]);
+      const room = (await app.call('GET', '/api/room', { as: grace })).data;
+      assert.ok(room.game.blocks.some((b) => b.join() === '5,0,25,4'), 'a plain request sees the same world');
+      assert.equal((await app.call('POST', '/api/room/act', { as: grace, body: { action: { type: 'remove', x: 5, y: 0, z: 25 } } })).status, 200);
+      assert.equal((await app.call('POST', '/api/room/act', { body: { action: { type: 'remove', x: 6, y: 0, z: 25 } } })).status, 401, 'no account, no building');
+      a.close();
+      g.close();
     });
   });
 });

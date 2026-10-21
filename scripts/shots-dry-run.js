@@ -28,7 +28,15 @@ const PERSONAS = Object.freeze({
   read_only_admin: { dir: 'admin', server: 'browser_admin' },
   full_admin: { dir: 'full_admin', server: 'browser_full_admin' },
   guest: { dir: 'guest', server: 'browser_guest' },
+  // The invited fixtures' personas (#4437): a dry run has no such fixture
+  // account, so these browsers start signed out unless the author drops
+  // their own storage state for one in --state-dir.
+  invited_member: { dir: 'invited_member', server: 'browser_invited_member' },
+  invited_member_listed: { dir: 'invited_member_listed', server: 'browser_invited_member_listed' },
 });
+// A phone screen's browser presents as this device, as a hosted turn's does
+// (worker/write-shots-mcp-config.js); tests/shots-dry-run.test.js pins the pair.
+const PHONE_DEVICE = 'iPhone 15';
 // The same MCP browser tools a hosted turn is denied (worker/run-cc.sh).
 const DENIED_BROWSER_TOOLS = ['browser_evaluate', 'browser_run_code', 'browser_file_upload', 'browser_install'];
 
@@ -152,7 +160,9 @@ function localBridge(runtimeDir) {
     .replace("require('./shots-hosted-origins')",
       `require(${JSON.stringify(path.join(ROOT, 'worker', 'shots-hosted-origins.js'))})`)
     .replace("require('./shots-boundary')",
-      `require(${JSON.stringify(path.join(ROOT, 'worker', 'shots-boundary.js'))})`);
+      `require(${JSON.stringify(path.join(ROOT, 'worker', 'shots-boundary.js'))})`)
+    .replace("require('./shots-samples')",
+      `require(${JSON.stringify(path.join(ROOT, 'worker', 'shots-samples.js'))})`);
   const file = path.join(runtimeDir, 'shots-mcp.js');
   fs.writeFileSync(file, source, { mode: 0o600 });
   return file;
@@ -160,16 +170,21 @@ function localBridge(runtimeDir) {
 
 // Each browser runs inside the same observer the worker uses, so a dry run's
 // screenshots carry the page-site stamps the shots bridge requires before it
-// publishes one (worker/shots-boundary.js).
-function browserServer(options, persona, shotsDir, clipSize) {
+// publishes one (worker/shots-boundary.js). A persona's phone browser has the
+// same sign-in and presents as a phone, saving beside the persona's.
+// `control` is where its observer answers the shots bridge's upload_file
+// (worker/shots-browser-observer.js startControl), as a hosted turn's does.
+function browserServer(options, persona, shotsDir, clipSize, { phone = false, control = null } = {}) {
   // The guest is the browser that is not signed in, whatever the directory holds.
   const statePath = options.stateDir && persona !== 'guest'
     ? path.join(options.stateDir, `${persona}.json`) : null;
+  const dir = `${PERSONAS[persona].dir}${phone ? '_phone' : ''}`;
   return {
     command: process.execPath,
     args: [
-      path.join(ROOT, 'worker', 'shots-browser-observer.js'), PERSONAS[persona].dir,
+      path.join(ROOT, 'worker', 'shots-browser-observer.js'), dir,
       '--browser', options.browser, '--headless', '--isolated', '--no-sandbox', '--caps', 'vision',
+      ...(phone ? ['--device', PHONE_DEVICE] : []),
       ...(statePath && fs.existsSync(statePath) ? ['--storage-state', statePath] : []),
       // No shots proxy runs here to keep a page off this machine's own
       // network, so the dry run's browsers keep to the pair (the worker's
@@ -177,7 +192,7 @@ function browserServer(options, persona, shotsDir, clipSize) {
       '--allowed-origins', `${options.before};${options.after}`,
       '--block-service-workers', '--image-responses', 'allow',
       '--timeout-action', '10000', '--timeout-navigation', '30000',
-      '--output-dir', path.join(shotsDir, PERSONAS[persona].dir),
+      '--output-dir', path.join(shotsDir, dir),
       ...(clipSize ? [`--save-video=${clipSize}`] : []),
       ...(options.executablePath ? ['--executable-path', options.executablePath] : []),
     ],
@@ -185,6 +200,11 @@ function browserServer(options, persona, shotsDir, clipSize) {
       PATH: process.env.PATH || '',
       SHOTS_BROWSER_MCP_COMMAND: JSON.stringify(options.playwrightMcp),
       SHOTS_ALLOWED_ORIGINS: JSON.stringify([options.before, options.after]),
+      ...(control ? {
+        SHOTS_BROWSER_CONTROL_DIR: control.dir,
+        SHOTS_BROWSER_CONTROL_TOKEN: control.token,
+        SHOTS_SAMPLES_DIR: control.samplesDir,
+      } : {}),
     },
   };
 }
@@ -272,6 +292,10 @@ function contactSheet(intent, summary, fileNames, meta) {
       ${result.note ? `<p class="reason">Not in these shots: ${escapeHtml(result.note)}</p>` : ''}
       <p class="steps">${story.intent.steps.map(escapeHtml).join(' → ')}</p>${rows}</section>`;
   }).join('');
+  // What the agent noticed broken on the after build (note_problem).
+  const notices = (summary.notices || []).map((entry) => `<li>${escapeHtml(entry.text)}
+      <span class="meta">· ${escapeHtml(entry.change)} · ${escapeHtml(entry.screen)}${entry.shot ? ` · ${escapeHtml(entry.shot)} shot` : ''}
+      · ${entry.alsoBefore === true ? 'also on the before build' : entry.alsoBefore === false ? 'not on the before build' : 'before build not checked'}</span></li>`).join('');
   return `<!doctype html><meta charset="utf-8"><title>Before/after shots dry run</title>
 <style>body{font:14px system-ui,sans-serif;margin:24px;background:#fafafa;color:#18181b}
 section{background:#fff;border:1px solid #e4e4e7;border-radius:12px;padding:16px;margin:0 0 20px}
@@ -285,6 +309,7 @@ img,video{width:100%;border:1px solid #e4e4e7;border-radius:8px;background:#2727
 <h1>Before/after shots dry run</h1>
 <p>${escapeHtml(meta.before)} → ${escapeHtml(meta.after)} · ${summary.readyCount} of ${intent.stories.length} ready · agent ${escapeHtml(meta.agentOutcome)} in ${Math.round(meta.agentMs / 1000)} s</p>
 ${changes}
+${notices ? `<section><h2>Also noticed</h2><ul>${notices}</ul></section>` : ''}
 <h2>Agent's last words</h2><pre>${escapeHtml(meta.finalText || '(none)')}</pre>
 <h2>Tool calls</h2><pre>${escapeHtml(JSON.stringify(meta.toolCounts, null, 2))}</pre>`;
 }
@@ -312,13 +337,29 @@ async function main() {
   if (intent.impact === 'none' || !intent.stories.length) {
     throw new Error('This declaration has no visible change, so there is nothing to shoot.');
   }
-  const clipSize = planContract.clipSize(intent);
+  // Every browser records when a change is motion: the desktop ones at the
+  // other motion screens' size, the phone ones at the phone screens'.
+  const recording = planContract.clipSize(intent) != null;
+  const clipSize = recording ? planContract.clipSize(intent, { phone: false }) || '1280x800' : null;
+  const phoneClipSize = recording ? planContract.clipSize(intent, { phone: true }) || clipSize : null;
+  const phonePersonas = planContract.phonePersonas(intent);
   const runtimeDir = path.join(options.out, 'runtime');
   const shotsDir = path.join(runtimeDir, 'shots');
-  for (const persona of Object.values(PERSONAS)) {
-    fs.mkdirSync(path.join(shotsDir, persona.dir), { recursive: true, mode: 0o700 });
+  for (const [persona, { dir }] of Object.entries(PERSONAS)) {
+    fs.mkdirSync(path.join(shotsDir, dir), { recursive: true, mode: 0o700 });
+    if (phonePersonas.includes(persona)) {
+      fs.mkdirSync(path.join(shotsDir, `${dir}_phone`), { recursive: true, mode: 0o700 });
+    }
   }
   fs.mkdirSync(path.join(options.out, 'shots'), { recursive: true });
+  // The sample files upload_file may choose, and the observers' sockets: in
+  // the system's temporary directory, since a socket's path is short.
+  const browserControl = {
+    dir: fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'shots-ctl-')),
+    token: crypto.randomBytes(32).toString('hex'),
+    samplesDir: path.join(runtimeDir, 'samples'),
+  };
+  require('../worker/shots-samples').writeSamples(browserControl.samplesDir);
 
   const runId = crypto.randomBytes(16).toString('hex');
   const sessionId = 1;
@@ -360,10 +401,14 @@ async function main() {
         SHOTS_JWT: platformJwt.signShotsToken({ runId, sessionId }),
         SHOTS_DIR: shotsDir,
         SHOTS_HOSTED_ORIGINS_FILE: hostedFile,
+        SHOTS_BROWSER_CONTROL_DIR: browserControl.dir,
+        SHOTS_BROWSER_CONTROL_TOKEN: browserControl.token,
       },
     },
     ...Object.fromEntries(Object.entries(PERSONAS).map(([persona, { server: name }]) =>
-      [name, browserServer(options, persona, shotsDir, clipSize)])),
+      [name, browserServer(options, persona, shotsDir, clipSize, { control: browserControl })])),
+    ...Object.fromEntries(phonePersonas.map((persona) => [`${PERSONAS[persona].server}_phone`,
+      browserServer(options, persona, shotsDir, phoneClipSize, { phone: true, control: browserControl })])),
   } }, null, 2)}\n`, { mode: 0o600 });
 
   const streamFile = path.join(options.out, 'agent.jsonl');
@@ -376,7 +421,8 @@ async function main() {
     // An empty working directory keeps any project CLAUDE.md, settings or
     // .mcp.json out of the turn; --strict-mcp-config loads only ours.
     const cwd = fs.mkdtempSync(path.join(runtimeDir, 'cwd-'));
-    const servers = Object.values(PERSONAS).map((p) => p.server);
+    const servers = [...Object.values(PERSONAS).map((p) => p.server),
+      ...phonePersonas.map((persona) => `${PERSONAS[persona].server}_phone`)];
     const args = [
       '--print', '--verbose', '--output-format', 'stream-json',
       '--mcp-config', mcpConfig, '--strict-mcp-config',
@@ -436,6 +482,7 @@ async function main() {
     published: summary.verdict.passed,
     readyCount: summary.readyCount,
     changes: summary.stories,
+    notices: summary.notices,
     savedFiles: [...fileNames.values()],
     manifestHash: summary.manifestHash,
     mode: shots.SHOTS_MODE,
@@ -445,6 +492,7 @@ async function main() {
     { before: options.before, after: options.after, agentOutcome, agentMs, finalText, toolCounts }));
   registration.unregister();
   server.close();
+  fs.rmSync(browserControl.dir, { recursive: true, force: true });
   process.stdout.write(`${JSON.stringify({ published: result.published, ready: result.readyCount,
     of: intent.stories.length, agent: agentOutcome, seconds: Math.round(agentMs / 1000),
     changes: summary.stories.map((s) => `${s.id}: ${s.status}${s.reason ? ` (${s.reason})` : ''}`),
@@ -459,5 +507,5 @@ if (require.main === module) {
 }
 
 module.exports = {
-  PERSONAS, parseArgs, revisionContext, contactSheet, agentEnv, watchAgentStream, browserServer,
+  PERSONAS, PHONE_DEVICE, parseArgs, revisionContext, contactSheet, agentEnv, watchAgentStream, browserServer,
 };

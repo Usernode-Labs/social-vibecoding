@@ -56,7 +56,8 @@ test('Settings is the one entrance, readouts and all', () => {
 test('and the Me tab is what makes one entrance enough', () => {
   // #2382's complaint was the distance from inside an app, not the number of
   // doors. The bar answers it: Me is a tab on every platform screen, and its
-  // Settings row is the way in.
+  // Settings row is the way in — the only one on a phone, where the sidebar
+  // has no gear.
   const html = read('public/index.html');
   assert.match(html, /id="platform-tab-me"[^>]*href="#profile"/);
   assert.match(mePanel, /id="profile-row-settings"[\s\S]{0,120}href="#settings"/);

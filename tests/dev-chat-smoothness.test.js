@@ -29,6 +29,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 const { Marked } = require('marked');
 
 const { loadTsx, FRONTEND } = require('./lib/render-tsx');
@@ -144,6 +145,7 @@ function loadDevChat({ raf = null, markdown = true, els = {} } = {}) {
       publishStream: (s) => { counts.publishStream += 1; published.stream = s; },
     },
   };
+  sandbox.PlatformI18n = englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(`${STREAMING_SRC}\n${DEV_CHAT_SRC}\n;globalThis.__DevChat = DevChat;`, sandbox);
   const DevChat = sandbox.__DevChat;
@@ -313,7 +315,10 @@ test('every html sink in the transcript goes through one wrapper-memoizing compo
   // The live bubble included: a republish mid-turn must not rewrite the frame
   // the stream just painted.
   const live = code.slice(code.indexOf('function LiveContent('), code.indexOf('function Bubble('));
-  assert.match(live, /<Html className="dc-msg-content" html=\{live \|\| html\} \/>/);
+  // #5728 decorates the reply's refs inside LiveContent, so the sink takes
+  // the decorated string; it is still the one memoising wrapper.
+  assert.match(live, /const shown = useMemo\(\(\) => linkRefsInHtml\(live \|\| html, appSlug\)/);
+  assert.match(live, /<Html className="dc-msg-content" html=\{shown\} \/>/);
   assert.match(code, /const Row = memo\(function Row\(/);
   assert.match(code, /\}, sameRowProps\);/);
 });

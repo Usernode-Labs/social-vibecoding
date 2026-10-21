@@ -3,6 +3,7 @@ const { rateLimit, ipKeyGenerator } = require('express-rate-limit');
 const log = require('../services/logger');
 const { clientIp } = require('../services/client-ip');
 const uiTelemetry = require('../services/ui-telemetry');
+const { SharedStore } = require('../services/rate-limit-store');
 
 // Retry-delay phrase for throttle messages: minutes rounded up, with
 // anything ≤ 60s collapsing to "in under a minute".
@@ -32,10 +33,19 @@ function retryPhrase(seconds) {
 // a falsy value to fall through to the keyByUser / IP default below. That
 // fallthrough is load-bearing: the waitlist token bucket keys on the path
 // token, and one route in the same family carries no token.
-function makeLimiter({ windowMs, max, name, keyByUser = false, message, skipFailedRequests = false, skipSuccessfulRequests = false, exemptAdmins = false, skip = null, key = null, v4Envelope = false }) {
+//
+// `shared`: counted in Postgres (services/rate-limit-store.js), one budget
+// for every process that survives a deploy. Only a limiter that gates a send
+// (a mail, a billed SMS), a bill (a paid model call) or a guess (a password,
+// a code, a token) is: the rest bound a runaway client, where this process's
+// own count is enough.
+function makeLimiter({ windowMs, max, name, keyByUser = false, message, skipFailedRequests = false, skipSuccessfulRequests = false, exemptAdmins = false, skip = null, key = null, v4Envelope = false, shared = false }) {
   const options = {
     windowMs,
     max,
+    // A shared count the database cannot give lets the request through (the
+    // route reads the database too): never a 500 for every request behind it.
+    ...(shared ? { store: new SharedStore(name), passOnStoreError: true } : {}),
     standardHeaders: 'draft-7',
     legacyHeaders: false,
     skipFailedRequests,
@@ -157,7 +167,7 @@ function identifierKey(prefix, value) {
 const loginBurstLimiter = makeLimiter({
   windowMs: 60 * 1000,
   max: 5,
-  name: 'login-burst',
+  name: 'login-burst', shared: true,
   skipSuccessfulRequests: true,
   message: (s) => `Too many sign-in attempts. Try again ${retryPhrase(s)}.`,
 });
@@ -169,7 +179,7 @@ const loginBurstLimiter = makeLimiter({
 const loginSustainedLimiter = makeLimiter({
   windowMs: 60 * 60 * 1000,
   max: 30,
-  name: 'login-sustained',
+  name: 'login-sustained', shared: true,
   skipSuccessfulRequests: true,
   message: (s) => `Too many sign-in attempts from this address. Try again ${retryPhrase(s)}.`,
 });
@@ -203,7 +213,7 @@ const loginSustainedLimiter = makeLimiter({
 const loginIdentityLimiter = makeLimiter({
   windowMs: AUTH_WINDOW_MS,
   max: 10,
-  name: 'login-identity',
+  name: 'login-identity', shared: true,
   skipSuccessfulRequests: true,
   key: (req) => identifierKey('login', req.body?.username),
   message: (s) => `Too many sign-in attempts for that account. Try again ${retryPhrase(s)}.`,
@@ -214,7 +224,7 @@ const loginIdentityLimiter = makeLimiter({
 const registerLimiter = makeLimiter({
   windowMs: AUTH_WINDOW_MS,
   max: 10,
-  name: 'register',
+  name: 'register', shared: true,
   skipSuccessfulRequests: true,
   message: (s) => `Too many registration attempts. Try again ${retryPhrase(s)}.`,
 });
@@ -227,14 +237,14 @@ const registerLimiter = makeLimiter({
 const otpRequestLimiter = makeLimiter({
   windowMs: AUTH_WINDOW_MS,
   max: 10,
-  name: 'otp-request',
+  name: 'otp-request', shared: true,
   message: (s) => `Too many code requests. Try again ${retryPhrase(s)}.`,
 });
 
 const otpRequestEmailLimiter = makeLimiter({
   windowMs: AUTH_WINDOW_MS,
   max: 5,
-  name: 'otp-request-email',
+  name: 'otp-request-email', shared: true,
   key: (req) => identifierKey('otp', req.body?.email),
   message: (s) => `A code was just sent to that address. Try again ${retryPhrase(s)}.`,
 });
@@ -258,9 +268,34 @@ const oauthSignInLimiter = makeLimiter({
 const otpVerifyLimiter = makeLimiter({
   windowMs: AUTH_WINDOW_MS,
   max: 15,
-  name: 'otp-verify',
+  name: 'otp-verify', shared: true,
   skipSuccessfulRequests: true,
   message: (s) => `Too many code attempts. Try again ${retryPhrase(s)}.`,
+});
+
+// The account step's live "✓ Available" (#5255, GET
+// /api/auth/username-available): one read per pause in typing, so a
+// person trying a few names stays far below it. Per IP, never per signup
+// cookie: the cookie is the client's to choose, so a bucket keyed on it
+// would be a fresh bucket per request. The route itself answers nobody
+// without a live signup session.
+const usernameCheckLimiter = makeLimiter({
+  windowMs: AUTH_WINDOW_MS,
+  max: 120,
+  name: 'username-check',
+  message: (s) => `Too many username checks. Try again ${retryPhrase(s)}.`,
+});
+
+// The release mail's one-time sign-in link (#4594, POST
+// /api/auth/release-link). 256 random bits leave nothing to guess, so the
+// budget bounds scanning and lookup work; failures only, so a real
+// recipient's one spend never counts.
+const releaseLinkLimiter = makeLimiter({
+  windowMs: AUTH_WINDOW_MS,
+  max: 10,
+  name: 'release-link', shared: true,
+  skipSuccessfulRequests: true,
+  message: (s) => `Too many sign-in link attempts. Try again ${retryPhrase(s)}.`,
 });
 
 // Phone code requests (routes/phone-auth.js), the email code's pair:
@@ -270,14 +305,14 @@ const otpVerifyLimiter = makeLimiter({
 const phoneOtpRequestLimiter = makeLimiter({
   windowMs: AUTH_WINDOW_MS,
   max: 10,
-  name: 'phone-otp-request',
+  name: 'phone-otp-request', shared: true,
   message: (s) => `Too many code requests. Try again ${retryPhrase(s)}.`,
 });
 
 const phoneOtpRequestPhoneLimiter = makeLimiter({
   windowMs: AUTH_WINDOW_MS,
   max: 5,
-  name: 'phone-otp-request-phone',
+  name: 'phone-otp-request-phone', shared: true,
   key: (req) => identifierKey('phone', req.body?.phoneNumber),
   message: (s) => `A code was just sent to that number. Try again ${retryPhrase(s)}.`,
 });
@@ -289,7 +324,7 @@ const phoneOtpRequestPhoneLimiter = makeLimiter({
 const phoneVerifyLimiter = makeLimiter({
   windowMs: AUTH_WINDOW_MS,
   max: 15,
-  name: 'phone-verify',
+  name: 'phone-verify', shared: true,
   skipSuccessfulRequests: true,
   message: (s) => `Too many code attempts. Try again ${retryPhrase(s)}.`,
 });
@@ -301,14 +336,14 @@ const phoneVerifyLimiter = makeLimiter({
 const passwordResetRequestLimiter = makeLimiter({
   windowMs: AUTH_WINDOW_MS,
   max: 10,
-  name: 'password-reset-request',
+  name: 'password-reset-request', shared: true,
   message: (s) => `Too many reset requests. Try again ${retryPhrase(s)}.`,
 });
 
 const passwordResetRequestEmailLimiter = makeLimiter({
   windowMs: AUTH_WINDOW_MS,
   max: 5,
-  name: 'password-reset-request-email',
+  name: 'password-reset-request-email', shared: true,
   key: (req) => identifierKey('reset', req.body?.email),
   message: (s) => `A reset link was just sent to that address. Try again ${retryPhrase(s)}.`,
 });
@@ -319,7 +354,7 @@ const passwordResetRequestEmailLimiter = makeLimiter({
 const passwordResetConfirmLimiter = makeLimiter({
   windowMs: AUTH_WINDOW_MS,
   max: 20,
-  name: 'password-reset-confirm',
+  name: 'password-reset-confirm', shared: true,
   skipSuccessfulRequests: true,
   message: (s) => `Too many reset attempts. Try again ${retryPhrase(s)}.`,
 });
@@ -332,7 +367,7 @@ const passwordResetConfirmLimiter = makeLimiter({
 const walletAuthLimiter = makeLimiter({
   windowMs: AUTH_WINDOW_MS,
   max: 20,
-  name: 'wallet-auth',
+  name: 'wallet-auth', shared: true,
   skipSuccessfulRequests: true,
   message: (s) => `Too many wallet attempts. Try again ${retryPhrase(s)}.`,
 });
@@ -346,7 +381,7 @@ const walletAuthLimiter = makeLimiter({
 const mobileWalletClaimLimiter = makeLimiter({
   windowMs: AUTH_WINDOW_MS,
   max: 10,
-  name: 'mobile-wallet-claim',
+  name: 'mobile-wallet-claim', shared: true,
   // /api/v4 answers every other error with the envelope (#2526 follow-up).
   v4Envelope: true,
   keyByUser: true,
@@ -374,7 +409,7 @@ const walletCheckLimiter = makeLimiter({
 const appCreateLimiter = makeLimiter({
   windowMs: 60 * 60 * 1000,
   max: 5,
-  name: 'app-create',
+  name: 'app-create', shared: true,
   keyByUser: true,
   message: 'You\'ve created a lot of apps recently. Try again in a bit',
 });
@@ -647,13 +682,13 @@ const partnerActivityLimiter = makeLimiter({
 const benchGradingLimiter = makeLimiter({
   windowMs: 60 * 1000,
   max: 120,
-  name: 'bench-grading',
+  name: 'bench-grading', shared: true,
   keyByUser: true,
   message: (s) => `Too many benchmark grades at once. Try again ${retryPhrase(s)}.`,
 });
 
-// #3654: launching and cancelling benchmark runs through the connector
-// (routes/homeroom-bench.js /api/bot-bench/runs). A launch spends the
+// #3654: launching, cancelling and regrading benchmark runs through the
+// connector (routes/homeroom-bench.js /api/bot-bench/runs). A launch spends the
 // platform's money up to its cap, so a session that loops on it is stopped
 // well before many runs are queued. A refused launch spends nothing, so only
 // the ones that went through count. Admins are NOT exempt, for the reason
@@ -661,10 +696,10 @@ const benchGradingLimiter = makeLimiter({
 const benchRunLimiter = makeLimiter({
   windowMs: 10 * 60 * 1000,
   max: 10,
-  name: 'bench-runs',
+  name: 'bench-runs', shared: true,
   keyByUser: true,
   skipFailedRequests: true,
-  message: (s) => `Too many benchmark launches or cancels at once. Try again ${retryPhrase(s)}.`,
+  message: (s) => `Too many benchmark launches, cancels or regrades at once. Try again ${retryPhrase(s)}.`,
 });
 
 // The App bench studio's writes through the connector (routes/bench-studio.js):
@@ -675,15 +710,31 @@ const benchRunLimiter = makeLimiter({
 const benchStudioLimiter = makeLimiter({
   windowMs: 60 * 1000,
   max: 60,
-  name: 'bench-studio',
+  name: 'bench-studio', shared: true,
   keyByUser: true,
   skipFailedRequests: true,
   message: (s) => `Too many benchmark studio changes at once. Try again ${retryPhrase(s)}.`,
 });
 
+// The programme's challenges through the admin connector
+// (routes/challenge-admin.js /api/challenge-admin): a session setting up a
+// week's events adds, edits and reorders challenges and templates in bursts,
+// one call each, so the limit is per minute and well above a session working
+// through a whole programme. Only writes that went through count. Admins are
+// NOT exempt, for the reason given above.
+const challengeAdminLimiter = makeLimiter({
+  windowMs: 60 * 1000,
+  max: 120,
+  name: 'challenge-admin',
+  keyByUser: true,
+  skipFailedRequests: true,
+  message: (s) => `Too many challenge changes at once. Try again ${retryPhrase(s)}.`,
+});
+
 // Test accounts (routes/test-accounts.js /api/test-accounts), reached by a
 // full admin's connector session. Each admin gets 10 creates, 10 one-time
-// phone sign-ins and 10 retires an hour, counted apart so retiring
+// phone sign-ins, 10 test release emails and 10 retires an hour, counted
+// apart so retiring
 // yesterday's accounts never spends today's creates; the list is a read and
 // gets more room. Only requests that went
 // through count (the live cap's own refusal is a 429 that spends nothing).
@@ -692,6 +743,7 @@ const benchStudioLimiter = makeLimiter({
 function testAccountAction(req) {
   if (req.method === 'GET') return 'list';
   if (/\/phone-sign-ins\/?$/.test(req.path || '')) return 'phone';
+  if (/\/release-emails\/?$/.test(req.path || '')) return 'release';
   return /\/retire\/?$/.test(req.path || '') ? 'retire' : 'create';
 }
 const testAccountLimiter = makeLimiter({
@@ -753,8 +805,18 @@ const inviteRedeemLimiter = makeLimiter({
 const invitePreviewLimiter = makeLimiter({
   windowMs: 60 * 1000,
   max: 60,
-  name: 'invite-preview',
+  name: 'invite-preview', shared: true,
   message: 'Too many invite lookups, slow down for a minute',
+});
+
+// An app's emoji drawn as its home-screen icon (/app-icons/emoji/…,
+// routes/app-icons.js). Public and drawn on the server, so a client cannot
+// run through colours faster than this; a phone asks for one once.
+const emojiTileLimiter = makeLimiter({
+  windowMs: 60 * 1000,
+  max: 60,
+  name: 'emoji-tile',
+  message: 'Too many icons, slow down for a minute',
 });
 
 // Close-issue proposals (#522): own 20 / hour / user bucket, so proposing
@@ -902,6 +964,17 @@ const messageBookmarkLimiter = makeLimiter({
   message: 'Too many saves. Slow down for a minute.',
 });
 
+// #4769: saving/unsaving a notification in the drawer. Sized like the
+// message-bookmark limiter above — same honest gesture, same skimming
+// backlog, own name so the two buckets cannot starve each other.
+const notificationBookmarkLimiter = makeLimiter({
+  windowMs: 60 * 1000,
+  max: 120,
+  name: 'notification-bookmark',
+  keyByUser: true,
+  message: 'Too many saves. Slow down for a minute.',
+});
+
 // #2387: moving one's own read position in an app's chat (mark read, mark
 // unread). The client marks read as a channel opens and as the reader
 // reaches the bottom, so a busy session posts this often; it is one indexed
@@ -945,7 +1018,7 @@ const friendshipLimiter = makeLimiter({
 const feedbackTitleLimiter = makeLimiter({
   windowMs: 60 * 1000,
   max: 20,
-  name: 'feedback-title',
+  name: 'feedback-title', shared: true,
   keyByUser: true,
   message: 'Too many title previews. Slow down for a minute.',
 });
@@ -990,7 +1063,7 @@ const requestSpecLimiter = makeLimiter({
   max: 20,
   name: 'request-spec-post',
   keyByUser: true,
-  message: 'Too many specs posted. Try again later this hour.',
+  message: 'Too many plans posted. Try again later this hour.',
 });
 
 const issueScreenshotLimiter = makeLimiter({
@@ -1070,6 +1143,18 @@ const profileWriteLimiter = makeLimiter({
   message: 'Too many profile updates. Slow down for a minute.',
 });
 
+// The waiting room's two optional questions (#5261): POST
+// /api/auth/waiting/about, which writes the account's own waitlist row. A
+// person answers once, maybe twice; 10 per 15 minutes per user leaves room
+// for a change of mind and none for a loop.
+const waitlistAnswersLimiter = makeLimiter({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  name: 'waitlist-answers',
+  keyByUser: true,
+  message: 'Too many saves. Try again in a few minutes.',
+});
+
 // Username changes: 5 / hour / user. The 30-day cooldown in
 // src/services/usernames.js is the real policy — this bucket exists for the
 // REJECTED attempts the cooldown never reaches. Every call bcrypt-compares
@@ -1114,7 +1199,10 @@ const attributeVoteLimiter = makeLimiter({
 });
 
 // #2525: GOVERNANCE votes — POST /api/sessions/:id/vote and
-// POST /api/issues/:id/vote. 30 / minute / user.
+// POST /api/issues/:id/vote. 30 / minute / user. DELETE
+// /api/sessions/:id/vote (taking a vote back, the review flow's Undo)
+// shares the bucket: it posts a thread line too, and vote, undo, vote is
+// the flip loop by another road.
 //
 // These had no limiter at all, and unlike the attribute vote above a
 // governance vote is not a quiet field update: every CHANGED vote posts a
@@ -1243,7 +1331,7 @@ const MORE_TOKEN_RE = /^[a-f0-9]{48}$/;
 const waitlistJoinAnonLimiter = makeLimiter({
   windowMs: WAITLIST_WINDOW_MS,
   max: 5,
-  name: 'waitlist-join',
+  name: 'waitlist-join', shared: true,
   message: 'Too many signups from this address. Try again in a few minutes.',
 });
 
@@ -1263,7 +1351,7 @@ const waitlistJoinAnonLimiter = makeLimiter({
 const waitlistJoinClientLimiter = makeLimiter({
   windowMs: WAITLIST_WINDOW_MS,
   max: 200,
-  name: 'waitlist-join-client',
+  name: 'waitlist-join-client', shared: true,
   key: (req) => `wl:${req.waitlistIntegrator?.label || 'unknown'}`,
   message: 'Too many signups from this integration. Try again in a few minutes.',
 });
@@ -1271,7 +1359,7 @@ const waitlistJoinClientLimiter = makeLimiter({
 const waitlistJoinClientUserLimiter = makeLimiter({
   windowMs: WAITLIST_WINDOW_MS,
   max: 5,
-  name: 'waitlist-join-client-user',
+  name: 'waitlist-join-client-user', shared: true,
   key: (req) => (req.waitlistEndUserIp
     ? `wl:${req.waitlistIntegrator?.label || 'unknown'}:${req.waitlistEndUserIp}`
     : null),
@@ -1307,7 +1395,7 @@ function waitlistJoinLimiter(req, res, next) {
 const waitlistTokenLimiter = makeLimiter({
   windowMs: WAITLIST_WINDOW_MS,
   max: 240,
-  name: 'waitlist-token',
+  name: 'waitlist-token', shared: true,
   key: (req) => (MORE_TOKEN_RE.test(req.params?.token || '') ? `token:${req.params.token}` : null),
   message: 'Too many requests for this link. Try again in a few minutes.',
 });
@@ -1323,7 +1411,7 @@ const waitlistTokenLimiter = makeLimiter({
 const waitlistTokenScanLimiter = makeLimiter({
   windowMs: WAITLIST_WINDOW_MS,
   max: 40,
-  name: 'waitlist-token-scan',
+  name: 'waitlist-token-scan', shared: true,
   skipSuccessfulRequests: true,
   message: 'Too many waitlist requests from this address. Try again in a few minutes.',
 });
@@ -1339,7 +1427,7 @@ const waitlistTokenScanLimiter = makeLimiter({
 const waitlistCodeConfirmLimiter = makeLimiter({
   windowMs: WAITLIST_WINDOW_MS,
   max: 10,
-  name: 'waitlist-code-confirm',
+  name: 'waitlist-code-confirm', shared: true,
   key: (req) => {
     const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
     if (!email) return null;
@@ -1372,7 +1460,7 @@ const waitlistCodeConfirmLimiter = makeLimiter({
 const waitlistResendLimiter = makeLimiter({
   windowMs: WAITLIST_WINDOW_MS,
   max: 5,
-  name: 'waitlist-resend',
+  name: 'waitlist-resend', shared: true,
   key: (req) => {
     const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
     if (!email) return null;
@@ -1384,7 +1472,7 @@ const waitlistResendLimiter = makeLimiter({
 const waitlistResendIpLimiter = makeLimiter({
   windowMs: WAITLIST_WINDOW_MS,
   max: 10,
-  name: 'waitlist-resend-ip',
+  name: 'waitlist-resend-ip', shared: true,
   message: 'Too many code requests from this address. Try again in a few minutes.',
 });
 
@@ -1435,6 +1523,17 @@ const publicProfileReadLimiter = makeLimiter({
   message: 'Too many profile lookups. Slow down for a minute.',
 });
 
+// A public project's read-only page for somebody with no account
+// (GET /api/public/apps/:slug/overview, services/public-project.js). Public
+// and a few queries plus a cached GitHub read each, so a scraper cannot walk
+// every project faster than this; a person opens a handful a minute.
+const publicProjectReadLimiter = makeLimiter({
+  windowMs: 60 * 1000,
+  max: 60,
+  name: 'public-project-read',
+  message: 'Too many project lookups. Slow down for a minute.',
+});
+
 const profileReportLimiter = makeLimiter({
   windowMs: 60 * 60 * 1000,
   max: 10,
@@ -1460,7 +1559,7 @@ const profileReportLimiter = makeLimiter({
 const mailTestLimiter = makeLimiter({
   windowMs: 60 * 60 * 1000,
   max: 10,
-  name: 'mail-test',
+  name: 'mail-test', shared: true,
   keyByUser: true,
   skipFailedRequests: true,
   message: (s) => `Rate limit reached: up to 10 test emails per hour. You can try again ${retryPhrase(s)}.`,
@@ -1477,7 +1576,7 @@ const mailTestLimiter = makeLimiter({
 const smsTestLimiter = makeLimiter({
   windowMs: 60 * 60 * 1000,
   max: 5,
-  name: 'sms-test',
+  name: 'sms-test', shared: true,
   keyByUser: true,
   skipFailedRequests: true,
   message: (s) => `Rate limit reached: up to 5 test texts per hour. You can try again ${retryPhrase(s)}.`,
@@ -1488,7 +1587,7 @@ const smsTestLimiter = makeLimiter({
 const smsTestNumberLimiter = makeLimiter({
   windowMs: 60 * 1000,
   max: 1,
-  name: 'sms-test-number',
+  name: 'sms-test-number', shared: true,
   skipFailedRequests: true,
   key: (req) => identifierKey('sms-test',
     typeof req.body?.phoneNumber === 'string' ? req.body.phoneNumber.replace(/[^\d+]/g, '') : ''),
@@ -1502,7 +1601,7 @@ const smsTestNumberLimiter = makeLimiter({
 const reportAiLimiter = makeLimiter({
   windowMs: 60 * 1000,
   max: 4,
-  name: 'report-ai',
+  name: 'report-ai', shared: true,
   keyByUser: true,
   message: 'Please wait a minute before regenerating the report.',
 });
@@ -1526,6 +1625,22 @@ const uiTelemetryLimiter = makeLimiter({
   message: 'Telemetry is arriving too quickly. It will retry shortly.',
 });
 
+// The made screen's moments (services/first-session-moments.js): one small
+// POST per thing it showed or was tapped, from a maker's own first session.
+// A whole session sends a dozen or two, the tour's cards a few seconds
+// apart at the quickest, so 60 a minute per account is far past it and
+// short of a client stuck in a loop. Refused requests (a malformed moment,
+// a non-member) are refunded. The screen never waits on it: a 429 is a lost
+// row, never a stalled tap.
+const firstSessionMomentLimiter = makeLimiter({
+  windowMs: 60 * 1000,
+  max: 60,
+  name: 'first-session-moments',
+  keyByUser: true,
+  skipFailedRequests: true,
+  message: 'Too many at once. Give it a minute.',
+});
+
 // The Needs-you deck's ask box (services/workshop-ask.js): 12 / minute /
 // user. Every press is an LLM call billed to the asker, and unlike the
 // report there is no shared cache to fall back on — each question is its
@@ -1536,7 +1651,7 @@ const uiTelemetryLimiter = makeLimiter({
 const workshopAskLimiter = makeLimiter({
   windowMs: 60 * 1000,
   max: 12,
-  name: 'workshop-ask',
+  name: 'workshop-ask', shared: true,
   keyByUser: true,
   message: 'Too many questions at once. Give it a minute.',
 });
@@ -1579,4 +1694,7 @@ const linkCardLimiter = makeLimiter({
   message: 'Too many link previews. Please slow down.',
 });
 
-module.exports = { FEEDBACK_SUBMITS_PER_HOUR, linkCardLimiter, benchGradingLimiter, benchRunLimiter, benchStudioLimiter, testAccountLimiter, inviteLinkCreateLimiter, inviteRedeemLimiter, invitePreviewLimiter, agentSessionCreateLimiter, appAllowanceRequestLimiter, topochainMobileReadLimiter, partnerActivityLimiter, partnerActivityParticipantLimiter, explorerProxyLimiter, githubLookupLimiter, userDirectoryLimiter, dbExportLimiter, loginBurstLimiter, loginSustainedLimiter, loginIdentityLimiter, registerLimiter, otpRequestLimiter, otpRequestEmailLimiter, otpVerifyLimiter, phoneOtpRequestLimiter, phoneOtpRequestPhoneLimiter, phoneVerifyLimiter, oauthSignInLimiter, passwordResetRequestLimiter, passwordResetRequestEmailLimiter, passwordResetConfirmLimiter, walletAuthLimiter, mobileWalletClaimLimiter, homeLayoutLimiter, draftWriteLimiter, walletCheckLimiter, appCreateLimiter, issueCreateLimiter, closeProposalLimiter, issueKindLimiter, agentFileWriteLimiter, chatLimiter, groupChatWriteLimiter, conversationMessageLimiter, conversationActionLimiter, conversationSafetyLimiter, conversationInviteLimiter, conversationReactionLimiter, conversationReportLimiter, friendshipLimiter, messageBookmarkLimiter, appChatReadLimiter, attributeVoteLimiter, governanceVoteLimiter, attachmentUploadLimiter, appFileUploadLimiter, feedbackTitleLimiter, feedbackSubmitLimiter, boardOrderLimiter, issueScreenshotLimiter, requestSpecLimiter, feedbackVideoLimiter, profileWriteLimiter, usernameChangeLimiter, usernameChooseLimiter, publicProfileReadLimiter, profileReportLimiter, topochainMobilePushRegistrationLimiter, reportAiLimiter, uiTelemetryLimiter, workshopAskLimiter, reportSnapshotLimiter, waitlistJoinLimiter, waitlistJoinAnonLimiter, waitlistJoinClientLimiter, waitlistJoinClientUserLimiter, waitlistTokenLimiter, waitlistTokenScanLimiter, waitlistCodeConfirmLimiter, waitlistResendLimiter, waitlistResendIpLimiter, waitlistStatusLimiter, waitlistStatusIpLimiter, smsTestLimiter, smsTestNumberLimiter, mailTestLimiter };
+const dictationLimiter = makeLimiter({ windowMs: 60000, max: 12, name: 'dictation', shared: true, keyByUser: true,
+  message: 'Too many recordings. Try again in a minute.' });
+
+module.exports = { dictationLimiter, FEEDBACK_SUBMITS_PER_HOUR, linkCardLimiter, benchGradingLimiter, benchRunLimiter, benchStudioLimiter, challengeAdminLimiter, testAccountLimiter, inviteLinkCreateLimiter, inviteRedeemLimiter, invitePreviewLimiter, emojiTileLimiter, agentSessionCreateLimiter, appAllowanceRequestLimiter, topochainMobileReadLimiter, partnerActivityLimiter, partnerActivityParticipantLimiter, explorerProxyLimiter, githubLookupLimiter, userDirectoryLimiter, dbExportLimiter, loginBurstLimiter, loginSustainedLimiter, loginIdentityLimiter, registerLimiter, otpRequestLimiter, otpRequestEmailLimiter, otpVerifyLimiter, usernameCheckLimiter, releaseLinkLimiter, phoneOtpRequestLimiter, phoneOtpRequestPhoneLimiter, phoneVerifyLimiter, oauthSignInLimiter, passwordResetRequestLimiter, passwordResetRequestEmailLimiter, passwordResetConfirmLimiter, walletAuthLimiter, mobileWalletClaimLimiter, homeLayoutLimiter, draftWriteLimiter, walletCheckLimiter, appCreateLimiter, issueCreateLimiter, closeProposalLimiter, issueKindLimiter, agentFileWriteLimiter, chatLimiter, groupChatWriteLimiter, conversationMessageLimiter, conversationActionLimiter, conversationSafetyLimiter, conversationInviteLimiter, conversationReactionLimiter, conversationReportLimiter, friendshipLimiter, messageBookmarkLimiter, notificationBookmarkLimiter, appChatReadLimiter, attributeVoteLimiter, governanceVoteLimiter, attachmentUploadLimiter, appFileUploadLimiter, feedbackTitleLimiter, feedbackSubmitLimiter, boardOrderLimiter, issueScreenshotLimiter, requestSpecLimiter, feedbackVideoLimiter, profileWriteLimiter, usernameChangeLimiter, usernameChooseLimiter, publicProfileReadLimiter, publicProjectReadLimiter, profileReportLimiter, topochainMobilePushRegistrationLimiter, reportAiLimiter, uiTelemetryLimiter, firstSessionMomentLimiter, workshopAskLimiter, reportSnapshotLimiter, waitlistJoinLimiter, waitlistJoinAnonLimiter, waitlistJoinClientLimiter, waitlistJoinClientUserLimiter, waitlistTokenLimiter, waitlistTokenScanLimiter, waitlistCodeConfirmLimiter, waitlistResendLimiter, waitlistResendIpLimiter, waitlistStatusLimiter, waitlistStatusIpLimiter, waitlistAnswersLimiter, smsTestLimiter, smsTestNumberLimiter, mailTestLimiter };

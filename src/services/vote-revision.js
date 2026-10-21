@@ -32,6 +32,13 @@
 
 const log = require('./logger');
 
+// How many times the head move is asked of the proposal machine while it
+// did not decide it in time (the conductor slow or restarting): refused as
+// `expired`, which changed nothing (platform.ts refuses a move nobody
+// decided once its caller stops waiting).
+const MOVE_ATTEMPTS = 3;
+const undecided = (out) => !!out && (out.status === 'pending' || out.reason === 'expired');
+
 /**
  * Retire the votes counted against `session` and pin it to `commitHash`.
  *
@@ -51,23 +58,35 @@ async function retireVotesAfterAuthoredPush(pool, session, commitHash) {
         AND pv.approval_epoch = cs.approval_epoch`,
     [sessionId]
   );
-  const { rows: bumped } = await pool.query(
-    `UPDATE chat_sessions
-        SET reviewed_head_sha = COALESCE($2, reviewed_head_sha),
-            stale_notified_at = NULL,
-            approval_epoch = approval_epoch + 1
-      WHERE id = $1
-        AND ($2::varchar IS NULL OR reviewed_head_sha IS DISTINCT FROM $2::varchar)
-      RETURNING approval_epoch`,
-    [sessionId, head]
-  );
-  if (!bumped.length) {
-    // The head is already this commit: a vote-time reconcile got here first
-    // and moved the epoch itself, or the tail is being resumed. Nothing to
-    // retire twice, nobody to ask twice.
+  // The move is the proposal machine's (Q3): the head installed and the
+  // epoch moved on in one statement, from the head read here. A head that is
+  // already this commit (a vote-time reconcile got here first and moved the
+  // epoch itself, or the tail is being resumed), or that another move
+  // changed meanwhile, retires nothing twice and asks nobody twice.
+  const { rows: [now] = [] } = await pool.query(
+    'SELECT reviewed_head_sha, app_id FROM chat_sessions WHERE id = $1', [sessionId]);
+  const from = now?.reviewed_head_sha ? String(now.reviewed_head_sha).toLowerCase() : null;
+  if (!now || !head || from === head) return { bumped: false, epoch: null, retired: 0, priorYes: [] };
+  // A move the machine did not decide in time is not a "nothing moved": it
+  // was refused as expired, and the votes would never be retired. Each try
+  // is a fresh event (a fresh request key), so asking again is safe; a head
+  // another pass moved meanwhile is refused on `from`, as above.
+  let moved = null;
+  for (let attempt = 0; attempt < MOVE_ATTEMPTS; attempt++) {
+    moved = await require('../workflow/platform.ts').moveReviewHead({
+      sessionId, appId: now.app_id, column: 'reviewed', from, to: head, keepVotes: false, reason: 'authored-push',
+    });
+    if (!undecided(moved)) break;
+  }
+  if (undecided(moved)) {
+    log.error('vote-revision', 'The proposal machine never answered the head move; the votes on the old version still count', {
+      sessionId, from, to: head, attempts: MOVE_ATTEMPTS,
+    });
+  }
+  if (moved.status !== 'accepted' && moved.status !== 'replayed') {
     return { bumped: false, epoch: null, retired: 0, priorYes: [] };
   }
-  const epoch = parseInt(bumped[0].approval_epoch, 10);
+  const epoch = parseInt(moved.reply?.epoch, 10);
   const priorYes = counted
     .filter((r) => r.vote === 'yes' && r.user_id != null && r.user_id !== session.user_id)
     .map((r) => r.user_id);

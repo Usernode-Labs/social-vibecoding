@@ -13,9 +13,9 @@
 // error) is redacted the same way the /status ring buffer redacts it.
 //
 // Threading model: startRun() returns a numeric runId (the row's BIGSERIAL
-// id). Callers thread that id into step()/endRun() and — for the resolver →
-// checkAndMerge re-entry — down through the options objects as `debugRunId`
-// so a conflict-resolution sync and its retried merge land in ONE run.
+// id). Callers thread that id into step()/endRun() and — for a gate run
+// inside a larger one — down through the options objects as `debugRunId`
+// so nested steps land in ONE run.
 
 const { getPool } = require('../db/pool');
 const log = require('./logger');
@@ -40,14 +40,17 @@ function resolvePool(poolOrConfig) {
 // Start a run. Returns a Promise<number|null> — the new run's id, or null
 // if the insert failed (callers treat null as "debug capture is off" and
 // simply pass it to step()/endRun(), which no-op on a null runId). Cheap
-// single INSERT; the two top-level entry points (checkAndMerge and the
-// resolver's per-PR resolve) await it once to obtain the id to thread.
-async function startRun(poolOrConfig, { appId, sessionId, prNumber, kind, trigger } = {}) {
+// single INSERT; the top-level entry point (the merge gate,
+// routes/votes.js evaluateMergeGate) awaits it once to obtain the id to thread.
+// `startedAt` (a Date) backdates the run to work it covers that began before
+// it was opened: a checks run's preview build (#4696). Absent, it is now.
+async function startRun(poolOrConfig, { appId, sessionId, prNumber, kind, trigger, startedAt } = {}) {
   try {
     const pool = resolvePool(poolOrConfig);
+    const from = startedAt instanceof Date && Number.isFinite(startedAt.getTime()) ? startedAt.toISOString() : null;
     const { rows } = await pool.query(
-      `INSERT INTO merge_debug_runs (app_id, session_id, pr_number, kind, trigger, status)
-       VALUES ($1, $2, $3, $4, $5, 'running')
+      `INSERT INTO merge_debug_runs (app_id, session_id, pr_number, kind, trigger, status, started_at)
+       VALUES ($1, $2, $3, $4, $5, 'running', COALESCE($6::timestamptz, NOW()))
        RETURNING id`,
       [
         appId ?? null,
@@ -55,6 +58,7 @@ async function startRun(poolOrConfig, { appId, sessionId, prNumber, kind, trigge
         prNumber ?? null,
         kind || 'merge',
         trigger || null,
+        from,
       ]
     );
     const runId = rows[0]?.id != null ? Number(rows[0].id) : null;
@@ -123,22 +127,18 @@ function endRun(poolOrConfig, runId, { status, summary } = {}) {
 }
 
 // Retention sweep — delete runs older than `days` (steps cascade). Bounds
-// table growth on a busy platform. Best-effort; logs the row count. Called
-// at boot and on a slow timer from server.js.
+// table growth on a busy platform. One pass of the `merge-debug-prune`
+// clock (src/workflow/clock/services.ts): a failure throws, so the clock records
+// it and tries again sooner.
 async function pruneOldRuns(poolOrConfig, days = 30) {
-  try {
-    const pool = resolvePool(poolOrConfig);
-    const n = Math.max(1, parseInt(days, 10) || 30);
-    const { rowCount } = await pool.query(
-      `DELETE FROM merge_debug_runs WHERE started_at < NOW() - ($1 || ' days')::interval`,
-      [String(n)]
-    );
-    if (rowCount) log.info('merge-debug', 'Pruned old merge-debug runs', { deleted: rowCount, olderThanDays: n });
-    return rowCount || 0;
-  } catch (err) {
-    log.warn('merge-debug', 'pruneOldRuns failed', { err: err.message });
-    return 0;
-  }
+  const pool = resolvePool(poolOrConfig);
+  const n = Math.max(1, parseInt(days, 10) || 30);
+  const { rowCount } = await pool.query(
+    `DELETE FROM merge_debug_runs WHERE started_at < NOW() - ($1 || ' days')::interval`,
+    [String(n)]
+  );
+  if (rowCount) log.info('merge-debug', 'Pruned old merge-debug runs', { deleted: rowCount, olderThanDays: n });
+  return rowCount || 0;
 }
 
 module.exports = { startRun, step, endRun, pruneOldRuns };

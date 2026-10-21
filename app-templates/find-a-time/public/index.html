@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  {{DEV_CONSOLE_FORWARDER}}
+  <title>{{APP_NAME}}</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='45' fill='%237c3aed'/><circle cx='50' cy='50' r='18' fill='white'/></svg>">
+  <!-- Homeroom's native UI kit, centrally hosted and loaded by RELATIVE path
+       like the bridge (never vendor it): native pressed states, no grey tap
+       highlight, and a tap outside a text field closes the keyboard, which
+       iOS does not do by itself. Before this app's own styles, so they win. -->
+  <link rel="stylesheet" href="/usernode-native/v1/native.css">
+  <!-- This app's precompiled Tailwind (npm run build writes it on every
+       image build; tailwind.config.js says which files it scans). -->
+  <link rel="stylesheet" href="/tailwind.css">
+  <!-- The platform bridge, centrally hosted and loaded by RELATIVE path.
+       Never vendor it and never write a hostname in front of it. It is also
+       how the app answers the shell, so keep it even if no bridge API is
+       called. -->
+  <script src="/usernode-bridge/v1/bridge.js"></script>
+  <!-- Follow the viewer's Homeroom theme (the bridge reports it), with the
+       OS preference as the fallback outside Homeroom. -->
+  <script>
+    (function () {
+      var media = window.matchMedia('(prefers-color-scheme: dark)');
+      function applyTheme() {
+        var theme = (window.usernode && window.usernode.theme) || (media.matches ? 'dark' : 'light');
+        document.documentElement.classList.toggle('dark', theme === 'dark');
+        document.documentElement.style.colorScheme = theme;
+      }
+      applyTheme();
+      window.addEventListener('usernode:theme-changed', applyTheme);
+      media.addEventListener('change', applyTheme);
+    })();
+  </script>
+  <!-- The native kit's script (its stylesheet is above). After the theme
+       script, which runs first so the page never paints in the wrong look. -->
+  <script src="/usernode-native/v1/native.js"></script>
+  <!-- What takes the loading shapes' place fades in, briefly, rather than
+       cutting over: an animation replays whenever [hidden] comes off, so
+       nothing has to start it. None under reduced motion. -->
+  <style>
+    @keyframes appear { from { opacity: 0; } to { opacity: 1; } }
+    @media (prefers-reduced-motion: no-preference) { .appear { animation: appear 200ms ease-out; } }
+    /* The page scrolls up and down in place like a phone's own screen: a
+       pull at the top or the bottom stays in the app (app.js adds pull to
+       refresh) instead of dragging Homeroom's header along, and it never
+       slides sideways. clip, not hidden: hidden would make the body a
+       second scroller. */
+    html { overscroll-behavior-y: contain; overscroll-behavior-x: none; touch-action: pan-y pinch-zoom; }
+    body { overflow-x: clip; }
+    input, textarea, button { touch-action: manipulation; }
+    /* A phone zooms the page into a field whose text is under 16px. */
+    @media (hover: none) and (pointer: coarse) { input, textarea, select { font-size: 16px; } }
+    /* One mode's screen, the one this project was made with (data-mode on
+       <main>): the other's parts never show. */
+    [data-mode="weekly"] [data-dates-only], [data-mode="dates"] [data-weekly-only] { display: none !important; }
+    /* Holding an hour to drag across several is a gesture, never a text
+       selection or the long-press menu. */
+    #week-grid { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+  </style>
+</head>
+<body class="min-h-screen bg-ground text-fg">
+  <!-- What the times are for, how this app finds one, and the new plan's
+       example name were filled in when the project was made. data-mode is
+       the mode: 'dates' (a plan's suggested days and times) or 'weekly'
+       (the hours of every week). Only that mode's parts show. -->
+  <main id="app" class="page-column flex flex-col px-4 py-8" data-mode="{{TIME_MODE}}">
+    <!-- Home: the open plans, each with its grid of who is free when; or,
+         weekly, the week. -->
+    <div id="home" class="flex flex-col gap-8">
+      <header class="flex flex-col gap-1">
+        <h1 class="text-title">{{APP_NAME}}</h1>
+        <p class="text-body text-muted">{{TIME_INTRO}}</p>
+      </header>
+
+      <button id="new-plan" type="button" class="btn-secondary w-full" data-dates-only>
+        <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14"></path><path d="M5 12h14"></path></svg>
+        Start a plan
+      </button>
+
+      <!-- A new plan: a name and two to eight times (rows added by app.js). -->
+      <form id="plan-form" class="flex flex-col gap-4" autocomplete="off" data-dates-only hidden>
+        <h2 class="text-heading">Start a plan</h2>
+        <div class="flex flex-col gap-1">
+          <label for="plan-name" class="px-1 text-small text-muted">What is it for?</label>
+          <input id="plan-name" name="name" type="text" maxlength="80" required class="field"
+            enterkeyhint="done" placeholder="{{PLAN_EXAMPLE}}">
+        </div>
+        <fieldset class="flex flex-col gap-2">
+          <legend class="section-label">Suggest some times</legend>
+          <p class="px-1 text-small text-muted">Two to eight. Leave the time empty for a whole day.</p>
+          <div class="flex gap-2 px-1 text-small text-muted" aria-hidden="true">
+            <span class="min-w-0 flex-1">Day</span>
+            <span class="min-w-0 flex-1">Time, if any</span>
+            <span class="w-11 shrink-0"></span>
+          </div>
+          <div id="plan-times" class="flex flex-col gap-2"></div>
+          <button id="plan-add-time" type="button" class="btn-secondary self-start">
+            <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14"></path><path d="M5 12h14"></path></svg>
+            Another time
+          </button>
+        </fieldset>
+        <div class="flex gap-2">
+          <button type="submit" class="btn-primary flex-1">Start the plan</button>
+          <button id="plan-cancel" type="button" class="btn-secondary">Cancel</button>
+        </div>
+        <p id="plan-status" class="text-small text-danger" role="alert" hidden></p>
+      </form>
+
+      <p id="status" class="text-small text-danger" role="alert" hidden></p>
+
+      <!-- Loading: shapes where a plan and its grid will be. -->
+      <div id="loading" class="flex flex-col gap-3" aria-label="Loading">
+        <div class="skeleton h-6 w-2/3"></div>
+        <div class="skeleton h-4 w-1/3"></div>
+        <div class="skeleton mt-1 h-24 w-full"></div>
+        <div class="skeleton h-48 w-full"></div>
+      </div>
+
+      <!-- Error: only when the load failed. -->
+      <div id="error" class="state-error card" hidden>
+        <p class="text-heading"><span data-dates-only>The plans did not load</span><span data-weekly-only>The week did not load</span></p>
+        <p class="text-body text-muted">Nothing you marked is lost. Check your connection and try again.</p>
+        <button id="retry" type="button" class="btn-secondary">Retry</button>
+      </div>
+
+      <!-- Empty: only when the load worked and no plan is open. -->
+      <div id="empty" class="state-empty card" data-dates-only hidden>
+        <p class="text-heading">No plans yet</p>
+        <p class="text-body text-muted">Start one: give it a name and suggest a few times, and everyone marks when they're free.</p>
+      </div>
+
+      <div id="plans" class="flex flex-col gap-12 appear" data-dates-only hidden></div>
+
+      <section id="past-section" class="flex flex-col appear" data-dates-only hidden>
+        <h2 class="section-label">Past plans</h2>
+        <ul id="past" class="list"></ul>
+      </section>
+
+      <!-- The week (weekly mode): the best weekly hours, then one grid of
+           the days and the hours, either everyone's (each hour shaded by how
+           many can make it; tap one for who) or yours (tap the hours that
+           work for you, or hold and drag across several). app.js draws it. -->
+      <section id="week" class="flex flex-col gap-4 appear" data-weekly-only hidden>
+        <div id="week-best" class="card flex flex-col gap-1"></div>
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <div id="week-toggle" role="radiogroup" aria-label="Whose week" class="inline-flex rounded-xl border border-line bg-surface p-1">
+            <button type="button" role="radio" data-view="group" aria-checked="true" class="min-h-11 rounded-lg px-4 text-body font-medium">Everyone's</button>
+            <button type="button" role="radio" data-view="yours" aria-checked="false" class="min-h-11 rounded-lg px-4 text-body font-medium">Yours</button>
+          </div>
+          <p id="week-saved" class="px-1 text-small text-muted" aria-live="polite"></p>
+        </div>
+        <p id="week-hint" class="-mt-1 px-1 text-small text-muted"></p>
+        <div id="week-grid" class="grid grid-cols-[3.25rem_repeat(7,minmax(0,1fr))] overflow-hidden rounded-xl border border-line bg-surface"></div>
+        <div id="week-legend" class="flex items-center gap-2 px-1 text-small text-muted" aria-hidden="true"></div>
+        <!-- The hour tapped on everyone's: who can make it and who can't, on a
+             card held at the bottom of the screen so it shows wherever the
+             hour is. -->
+        <div id="week-detail" class="fixed inset-x-0 bottom-0 z-20 mx-auto w-full max-w-2xl px-4 pb-[max(1rem,var(--un-safe-inset-bottom,env(safe-area-inset-bottom,0px)))]" aria-live="polite" hidden>
+          <div class="card flex items-start gap-3 shadow-lg">
+            <div id="week-detail-text" class="flex min-w-0 flex-1 flex-col gap-1"></div>
+            <button id="week-detail-close" type="button" class="btn-secondary -mr-2 -mt-2 shrink-0 border-0 bg-transparent px-0 text-muted" aria-label="Close">
+              <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12"></path><path d="M18 6L6 18"></path></svg>
+            </button>
+          </div>
+        </div>
+        <p id="week-waiting" class="px-1 text-small text-muted" hidden></p>
+        <p id="week-status" class="text-small text-danger" role="alert" hidden></p>
+      </section>
+    </div>
+
+    <!-- Marking your times on one plan: Free, If needed or Can't for each. -->
+    <section id="mark-view" class="flex flex-col gap-6" data-dates-only hidden>
+      <div class="flex flex-col gap-2">
+        <button id="mark-back" type="button" class="-ml-1 inline-flex min-h-11 items-center gap-1 self-start rounded-lg pr-2 text-body font-medium text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus">
+          <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 6l-6 6 6 6"></path></svg>
+          Back
+        </button>
+        <div class="flex flex-col gap-1">
+          <h2 class="text-title focus:outline-none" tabindex="-1">When are you free?</h2>
+          <p id="mark-plan" class="text-body font-medium break-words"></p>
+          <p class="text-body text-muted">Mark each time, and everyone sees the grid fill in.</p>
+        </div>
+      </div>
+
+      <ul id="mark-list" class="list"></ul>
+
+      <button id="suggest-open" type="button" class="btn-secondary w-full">
+        <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14"></path><path d="M5 12h14"></path></svg>
+        Suggest another time
+      </button>
+
+      <form id="suggest-form" class="flex flex-col gap-2" autocomplete="off" hidden>
+        <h3 class="section-label mb-0">Suggest another time</h3>
+        <div class="flex gap-2">
+          <div class="flex min-w-0 flex-1 flex-col gap-1">
+            <label for="suggest-date" class="px-1 text-small text-muted">Day</label>
+            <input id="suggest-date" name="date" type="date" required class="field">
+          </div>
+          <div class="flex min-w-0 flex-1 flex-col gap-1">
+            <label for="suggest-time" class="px-1 text-small text-muted">Time, if any</label>
+            <input id="suggest-time" name="time" type="time" class="field">
+          </div>
+        </div>
+        <p class="px-1 text-small text-muted">Leave the time empty for a whole day.</p>
+        <div class="flex gap-2">
+          <button type="submit" class="btn-secondary flex-1">Add this time</button>
+          <button id="suggest-cancel" type="button" class="btn-secondary">Cancel</button>
+        </div>
+        <p id="suggest-status" class="text-small text-danger" role="alert" hidden></p>
+      </form>
+
+      <div class="flex flex-col gap-2">
+        <button id="mark-save" type="button" class="btn-primary w-full">Save my times</button>
+        <p id="mark-status" class="text-small text-danger" role="alert" hidden></p>
+      </div>
+    </section>
+  </main>
+
+  <script src="/live-updates.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>

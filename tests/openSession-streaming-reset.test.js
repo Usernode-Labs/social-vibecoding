@@ -23,6 +23,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 
 const { makeComposerBridge } = require('./lib/dev-composer-html');
 
@@ -166,6 +167,7 @@ function makeHarness() {
   sandbox.globalThis = sandbox;
   sandbox.UsernodeReact = { devChat: composer.bridge };
 
+  sandbox.PlatformI18n = englishPlatformI18n();
   vm.createContext(sandbox);
   // Expose the file-scoped `const DevChat` to the test.
   vm.runInContext(`${SRC}\n;globalThis.__DevChat = DevChat;`, sandbox);

@@ -18,9 +18,14 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+
+// The scripts under test read their text from the language runtime's
+// global; give them the real English one.
+globalThis.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { englishPlatformI18n, message } = require('./lib/platform-i18n');
 const { renderComponent } = require('./lib/render-tsx');
 
 const root = path.join(__dirname, '..');
@@ -236,6 +241,7 @@ function makeDevChat({ hasApiKey = false, search = '' } = {}) {
       publishAttachStrip: () => {},
     },
   };
+  sandbox.PlatformI18n = englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(fs.readFileSync(path.join(root, 'public/js/build-venues.js'), 'utf8'), sandbox);
   vm.runInContext(fs.readFileSync(path.join(root, 'public/js/credit-options.js'), 'utf8'), sandbox);
@@ -364,8 +370,13 @@ test('the drawer row renders the remainder and shares the reset wording', () => 
     fs.readFileSync(path.join(root, 'frontend/src/features/header/ai-budget.tsx'), 'utf8'),
     /'data-credits-remaining': '1'/,
   );
-  assert.match(AI_CREDIT_SRC, /money\(remaining\) \+ ' left'/, 'rendered, not tooltip-only');
-  assert.match(AI_CREDIT_SRC, /CO\.resetSentence\(state\)/,
+  assert.match(AI_CREDIT_SRC, /runs\(weeklyWindow \? 'wallet:credit\.meter\.leftWeekly' : 'wallet:credit\.meter\.leftToday',\s+brief, \[leftTone\]\)/,
+    'rendered, not tooltip-only');
+  assert.match(AI_CREDIT_SRC, /remaining: wholeMoney\(remaining\)/);
+  // #5284: one sentence, the amount left first.
+  assert.equal(message('wallet:credit.meter.leftWeekly', { remaining: '$839.99', limit: '$840' }), '<0>$839.99</0> of $840 left this week');
+  assert.equal(message('wallet:credit.meter.leftToday', { remaining: '$19', limit: '$20' }), '<0>$19</0> of $20 left today');
+  assert.match(AI_CREDIT_SRC, /CO\.resetSentence\(state, undefined, \{ withUtc: true \}\)/,
     'one wording for the boundary, shared with the dev chat');
   assert.ok(!/Resets at midnight UTC/.test(AI_CREDIT_SRC),
     'no second, hand-written copy of the reset sentence');

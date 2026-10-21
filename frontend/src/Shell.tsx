@@ -98,6 +98,7 @@ import { StagingOverlay, VisualCompareOverlay } from './features/staging';
 import { OfflineBanner, ViewAsNonAdminBanner } from './features/shell/banners';
 import { LanguageNotice } from './features/shell/language-notice';
 import { LegacyPortals } from './lib/legacy-portals';
+import { NavDrawer } from './features/nav-drawer/nav-drawer';
 import { Island } from './lib/island-boundary';
 import { assetUrl } from './lib/asset-url';
 
@@ -477,6 +478,13 @@ export function Shell() {
       <Island name="ParkedStrip"><ParkedStrip /></Island>
       <Island name="PlatformTabs"><PlatformTabs /></Island>
       {/*
+          The phone's navigation drawer (features/nav-drawer/): under 768px,
+          on a community's page, your communities and the community's places
+          as levels beside the page, panned between. Ships nothing: it draws
+          into document.body once the width and the route are known.
+      */}
+      <Island name="NavDrawer"><NavDrawer /></Island>
+      {/*
           #notifications-panel (the bell dropdown) and #work-drawer-panel (the
           header-cog "your work" drawer) both used to be islands here — same
           chrome, same top-right position, one icon apart. THE UI OVERHAUL
@@ -572,10 +580,11 @@ export function Shell() {
       */}
       <Island name="OnboardingTour"><OnboardingTour /></Island>
       {/*
-          "You're in" and the first-session tour after an invite
-          (features/first-session). Renders nothing until
-          App._followInvite opens it, so it adds nothing to the
-          prerendered document.
+          The first session's screens, the tip in a newcomer's first app
+          and the walk on Home after it (features/first-session). Renders
+          nothing until one of them is opened (App._followInvite, the
+          make screen's hand-off), so it adds nothing to the prerendered
+          document.
       */}
       <Island name="FirstSession"><FirstSession /></Island>
       {/*

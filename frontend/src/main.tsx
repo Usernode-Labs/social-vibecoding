@@ -67,8 +67,11 @@ import './lib/overlay-scrim-bridge';
 import { bootStep } from './lib/boot-guard';
 import { initOffline } from './lib/offline';
 import { registerServiceWorker } from './lib/service-worker';
-import { applyShellSnapshot } from './lib/shell-snapshot-apply';
+import { applyNavSnapshot, applyShellSnapshot } from './lib/shell-snapshot-apply';
+import { installFirstPaintReserve } from './lib/first-paint-reserve';
 import { installJoinRequired } from './lib/join-required';
+import { installAdultGate } from './features/auth/adult-gate';
+import { installSessionRenewalRetry } from './lib/session-renewal-retry';
 // Publishes window.UsernodeReact.devBoard at module scope. Imported for the
 // side effect, and imported HERE (rather than reached from a Shell island)
 // because the Dev surfaces are runtime-injected into an empty #app-content and
@@ -145,6 +148,10 @@ import './lib/transition-ground';
 // Publishes window.ResetTime: allowance resets worded in the viewer's own
 // clock, for the classic scripts that cannot import it (#3230).
 import './lib/reset-time';
+// Publishes window.ReleaseEta: when a merged change of the platform's own
+// app goes live, in the one sentence every surface says it in, for the board
+// and the change page's classic script (public/js/app-view.js).
+import './lib/release-eta';
 // #4177: the one place that re-reads what is on screen after a gap
 // (window.UsernodeReact.liveReads). Before DOMContentLoaded, because the
 // group chat registers with it the first time a channel connects.
@@ -154,11 +161,14 @@ import './lib/live-reads';
 // file dropped where nothing takes it no longer opens in place of the app.
 import './features/attachments/file-drag';
 import './lib/file-drop-guard';
-// #4289: the C key comments on the page (a pin where the pointer is), behind
-// Settings, Experimental's switch (off by default). Listeners on the document
-// (the shell's own keys and pointer, and the bridge's message from inside an
-// app); the comment itself (features/comment-pin/) loads on the first C.
+// #4289: the C key comments on the page (a pin where the pointer is).
+// Listeners on the document (the shell's own keys and pointer, and the
+// bridge's message from inside an app); the comment itself
+// (features/comment-pin/) loads on the first C.
 import './features/improve/suggest-shortcut';
+// New Needs you (an experiment, Settings, Experimental): the switch's bridge
+// for settings.js, window.UsernodeReact.reviewFlow.
+import './features/review-flow/settings';
 // #1084 chunk G: the retired public/js/dev-chat.js, moved into the bundle
 // verbatim. Imported HERE rather than from a Shell island for the same reason
 // as the dev board above — #dc-view is written into an empty #app-content at
@@ -198,6 +208,14 @@ bootStep('initOffline', initOffline);
 // refused with `join_required` becomes a Join prompt and a retry
 // (./lib/join-required.ts), for every caller in both bundles.
 bootStep('installJoinRequired', () => installJoinRequired());
+// Same seam for the 18+ check (#5095): a wallet, staking, node or passport
+// write refused `adult_attestation_required` asks "Are you 18 or older?"
+// and is sent again on a yes (./features/auth/adult-gate.tsx).
+bootStep('installAdultGate', () => installAdultGate());
+// Before app.js's init (DOMContentLoaded) sends the boot's first reads: in the
+// mobile app a request refused 401 while the native bridge renewed the web
+// session is sent again once it lands (./lib/session-renewal-retry.ts, #5049).
+bootStep('installSessionRenewalRetry', () => installSessionRenewalRetry());
 
 // document.body is the hydration container, not a wrapper <div>, because the
 // body element itself is the flex column the layout depends on
@@ -235,3 +253,17 @@ bootStep('hydrate', () => {
 // on screen in between. See ./lib/shell-snapshot.ts for the storage contract
 // and why it is display-only.
 bootStep('applyShellSnapshot', applyShellSnapshot);
+// …and the tab bar's: the viewer's name from the session snapshot, and the
+// list of their communities the desktop sidebar draws its rows from. Same
+// reasoning, same moment. flushSync commits it before this task ends, so the
+// first frame after hydration already has both. (A frame painted BEFORE
+// hydration still shows the prerender; in the app the launch cover hides
+// those, and lifts on what is drawn here: public/js/native-chrome.js,
+// `shellPainted`.)
+bootStep('applyNavSnapshot', () => {
+  flushSync(applyNavSnapshot);
+});
+// What this device draws Home's areas and the sidebar's community rows at,
+// kept for the next cold load, whose head script holds their skeletons at
+// those heights (./lib/first-paint-reserve.ts).
+bootStep('installFirstPaintReserve', installFirstPaintReserve);

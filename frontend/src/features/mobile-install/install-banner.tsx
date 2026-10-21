@@ -2,9 +2,11 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { XIcon } from '@/components/ui/icons';
+import { useMessages } from '../../lib/i18n/react';
 import { useHiddenClass } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
 import { offeringGoToHomeroom } from '../app-context/about-data';
+import { useFirstSessionVisit, useTourRunning } from '../first-session/tour-running';
 import { navStore } from '../nav/nav-store.js';
 import { hasPlatformViewer, whenPlatformViewer } from '../../lib/platform-viewer';
 import { isEmbeddedPanel } from '../../lib/side-panel-mode';
@@ -51,6 +53,8 @@ import { InstallStepsSheet } from './install-steps-sheet';
  * the day an admin pastes a URL into App version.
  */
 
+// The shots worker writes this same key before every page it shoots
+// (worker/shots-page-init.js, #4087); tests/shots-page-init.test.js pins the pair.
 const DISMISS_KEY = 'mobileInstallBannerDismissed';
 const BODY_CLASS = 'has-install-strip';
 
@@ -84,6 +88,7 @@ function writeDismissed(): void {
 }
 
 export function MobileInstallBanner() {
+  const t = useMessages('agent');
   const ref = useRef<HTMLDivElement>(null);
   const [urls, setUrls] = useState<StoreUrls | null>(null);
   const [dismissed, setDismissed] = useState(false);
@@ -97,6 +102,14 @@ export function MobileInstallBanner() {
   // it does for everyone. `tab` is read so the offer is recomputed when they
   // get there, which is when the remembered visit changes.
   const { privateMember, tab } = useStoreState(navStore);
+  // #4899: held while a first-session tour is on screen. And for the rest of
+  // a first visit (../first-session/tour-running.ts A FIRST VISIT STAYS ONE):
+  // offered as the tour ended, it pushed the app the tour had just opened
+  // down under the reader's finger. False whenever neither holds, so
+  // somebody who never has a first session here is never held.
+  const touringNow = useTourRunning();
+  const firstVisit = useFirstSessionVisit();
+  const touring = touringNow || firstVisit;
   const [offer, setOffer] = useState<InstallOffer | null>(null);
   // #1513: the home-screen instructions are one tap away rather than always
   // on. #4400: that tap opens a sheet (./install-steps-sheet.tsx) rather than
@@ -147,20 +160,27 @@ export function MobileInstallBanner() {
       native: isNativeApp(),
       standalone: isStandalone(),
       member: member && hasPlatformViewer(),
+      touring,
       dismissed: dismissed || readDismissed(),
       urls,
     }));
-  }, [urls, dismissed, member, privateMember, tab]);
+  }, [urls, dismissed, member, privateMember, tab, touring]);
 
-  useHiddenClass(ref, !offer);
+  // #4899: `touring` is read here as well as in the decision above. That is
+  // an effect, settled a render after the tour comes up; this takes the strip
+  // down in the frame the tour's first card is drawn, rather than one frame
+  // later with the page jumping up under the card.
+  const up = !!offer && !touring;
+
+  useHiddenClass(ref, !up);
 
   // The strip is fixed, so it covers the top of the document while it is up.
   useEffect(() => {
     const { body } = document;
     if (!body) return undefined;
-    body.classList.toggle(BODY_CLASS, !!offer);
+    body.classList.toggle(BODY_CLASS, up);
     return () => body.classList.remove(BODY_CLASS);
-  }, [offer]);
+  }, [up]);
 
   const dismiss = useCallback(() => {
     writeDismissed();
@@ -181,10 +201,10 @@ export function MobileInstallBanner() {
               store listing published this used to read "Get the app" over a
               link to nowhere. */}
           {offer === null
-            ? 'Get the app'
+            ? t('agent:install.banner.getApp')
             : offer.kind === 'store'
-              ? `Get the app on ${storeLabel(offer.os, offer.url)}`
-              : 'Add it to your home screen'}
+              ? t(storeLabel(offer.os, offer.url))
+              : t('agent:install.banner.addToHomeScreen')}
         </div>
       </div>
       {offer && offer.kind === 'a2hs' ? (
@@ -208,7 +228,7 @@ export function MobileInstallBanner() {
           ink="solid"
           className="inline-flex items-center h-7 un-touch-target"
         >
-          How
+          {t('agent:install.banner.how')}
         </Button>
       ) : (
         <a
@@ -218,14 +238,14 @@ export function MobileInstallBanner() {
           rel="noopener noreferrer"
           className="shrink-0 inline-flex items-center h-7 px-3 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-xs font-medium transition-colors un-touch-target"
         >
-          Get
+          {t('agent:install.banner.get')}
         </a>
       )}
       <button
         id="mobile-install-dismiss"
         type="button"
         onClick={dismiss}
-        aria-label="Dismiss install banner"
+        aria-label={t('agent:install.banner.dismiss')}
         className="shrink-0 w-7 h-7 flex items-center justify-center rounded-full text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100 transition-colors un-touch-target"
       >
         <XIcon className="w-4 h-4" aria-hidden="true" />

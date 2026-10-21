@@ -18,6 +18,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -32,6 +33,7 @@ const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 const bot = require('../src/services/homeroom-bot');
 const dm = require('../src/services/homeroom-bot-dm');
 const live = require('../src/services/homeroom-bot-live');
+const { tapsNow } = require('./lib/bot-replies');
 
 const fence = (obj) => `Done.\n\n\`\`\`json\n${JSON.stringify(obj)}\n\`\`\``;
 
@@ -189,9 +191,38 @@ test('the look reads a live first version\'s people into its prompt and its snap
   const src = read('src/services/homeroom-bot.js');
   assert.match(src, /const members = liveMode && requester\?\.firstVersion\s+\? await projectMembers\(pool, app\)\.catch\(/);
   assert.match(src, /seed, issueNumber, firstVersion: !!requester\?\.firstVersion, decider,\s+\.\.\.\(members \? \{ members \} : \{\}\),/);
-  assert.match(src, /\.\.\.\(decider\?\.requesterDecides \? \{ decider \} : \{\}\),[\s\S]{0,120}\.\.\.\(members \? \{ members \} : \{\}\),\s+\},/,
+  assert.match(src, /\.\.\.\(deciderNote\(decider\) \? \{ decider \} : \{\}\),[\s\S]{0,120}\.\.\.\(members \? \{ members \} : \{\}\),\s+(?:\.\.\.\(starter \? \{ starter \} : \{\}\),\s+)?\},/,
     'kept in the snapshot');
   assert.match(read('src/services/bench/runner.js'), /members: snapshot\.extra\?\.members \|\| null,/);
+});
+
+// Evan, 8 Oct 2026: a project made from a game starter (services/
+// app-templates.js `bot`) is planned, specced and built ON that working game.
+// The look reads its starter off the app's row, keeps it in the snapshot,
+// and the benchmark replays it, as it does the project's people.
+test('a first version made from a game starter is planned on it, and the benchmark replays the starter', () => {
+  const src = read('src/services/homeroom-bot.js');
+  assert.match(src, /const starter = liveMode && requester\?\.firstVersion\s+\? await starterOfApp\(pool, app\.id\)\.catch\(/);
+  assert.match(src, /seed, issueNumber, firstVersion: !!requester\?\.firstVersion, decider,\s+\.\.\.\(members \? \{ members \} : \{\}\),\s+\.\.\.\(starter \? \{ starter \} : \{\}\),/,
+    'in the prompt');
+  assert.match(src, /\.\.\.\(members \? \{ members \} : \{\}\),\s+\.\.\.\(starter \? \{ starter \} : \{\}\),\s+\},\n  \};/, 'kept in the snapshot');
+  const runner = read('src/services/bench/runner.js');
+  assert.match(runner, /members: snapshot\.extra\?\.members \|\| null,\n[^\n]*\n    starter: snapshot\.extra\?\.starter \|\| null,/, 'the replayed triage');
+  assert.match(runner, /firstVersion: !!snapshot\.extra\?\.firstVersion,\n    starter: snapshot\.extra\?\.starter \|\| null,/, 'the replayed build');
+  assert.match(runner, /botStarter\(input\.template\) \? \{ starter: input\.template \} : \{\}/, 'a taste task from a starter');
+
+  const bot = require('../src/services/homeroom-bot');
+  const plain = bot.firstVersionNote(null);
+  for (const notStarter of ['empty', 'grocery-list', 'tier-list-hikes', 'nope']) assert.equal(bot.firstVersionNote(notStarter), plain, notStarter);
+  for (const id of ['game-board', 'game-space', 'game-blocks', 'game-trivia']) {
+    const note = bot.firstVersionNote(id);
+    assert.doesNotMatch(note, /still the platform's starter template|the starter's screen is placeholder/, `${id}: no empty-scaffold wording`);
+    assert.match(note, /built ON that starter by changing it, never by starting\nover\./);
+    assert.match(note, /^STARTER: /m);
+    assert.ok(note.includes(require('../src/services/app-templates').get(id).title), `${id}: names its starter`);
+    assert.ok(bot.triagePromptFor({ seed: 'x', issueNumber: 1, firstVersion: true, starter: id }).includes(note));
+  }
+  assert.ok(!bot.triagePromptFor({ seed: 'x', issueNumber: 1, firstVersion: false, starter: 'game-board' }).includes('STARTER:'), 'a later change has no first-version note');
 });
 
 test('B6: what a plan falls back to, and the answer each choice goes with', () => {
@@ -215,10 +246,22 @@ test('B6: the words of a plan, two questions and the setup message', () => {
     question: 'What time?', questions: [{ question: 'What time?', answers: ['9', '8'] }, { question: 'How?', answers: ['a', 'b'] }],
   }, { appName: 'Plant Pal', issueNumber: 2, issueTitle: 'Reminder' });
   assert.equal(two, '**Plant Pal** · request #2: Reminder\n\nI have two questions before I build this:\n\n1. What time?\n2. How?');
+  // The setup message (run six, 14 Oct 2026): made from the made screen, the
+  // plan's questions are answered there and the first version goes live
+  // without a vote, so it says what comes next and that it tells them here
+  // once it is live; made anywhere else, the plan still comes here first.
+  const early = dm.firstVersionStartedText({ name: 'Plant Pal', earlyPlan: true });
+  assert.equal(early, '**Plant Pal**\n\nThanks! I\'m setting up Plant Pal now. '
+    + 'I\'ll draw its screens, build the first version and tell you here when it\'s live.');
+  const elsewhere = dm.firstVersionStartedText({ name: 'Plant Pal' });
+  assert.equal(elsewhere, '**Plant Pal**\n\nThanks! I\'m setting up Plant Pal now. '
+    + 'Once it\'s ready I\'ll send you my plan here first, then build its first version and tell you here when it\'s live.');
+  for (const said of [early, elsewhere]) assert.doesNotMatch(said, /for you to try/, 'nothing waits on a vote');
+  assert.doesNotMatch(early, /plan/, 'the plan is asked about on the made screen, not here');
   const start = read('src/services/homeroom-bot-dm.js');
-  assert.match(start, /Once it's ready I'll send you my plan here first, `\s*\+ `then build its first version for you to try\./);
   assert.ok(!/I'll build its first version from your/.test(start));
-  for (const s of [text, two]) assert.ok(!/—/.test(s));
+  assert.ok(!/send you my plan here first, `\s*\+ `then build its first version for you to try/.test(start));
+  for (const s of [text, two, early, elsewhere]) assert.ok(!/—/.test(s));
   assert.equal(dm.MOMENTS.plan, 'question', 'a plan needs their answer, and rings once');
 });
 
@@ -233,7 +276,7 @@ test('B6: the plan card, drawn in every state', () => {
   assert.match(open, />My plan for Plant Pal<\/div>/, '#4046: its title, not a sentence ending in a colon');
   // Owner, 7 October: each line a row of its own, as PR 5's plan page draws
   // them: 15px over 22px, 12px above and below, a hairline between, no dot.
-  assert.match(open, /<ul class="mt-1 flex flex-col" data-bot-plan-lines=""><li class="py-3 text-\[0\.9375rem\] leading-\[22px\] text-zinc-900 dark:text-zinc-100">A list of your plants<\/li><li class="py-3 text-\[0\.9375rem\] leading-\[22px\] text-zinc-900 shadow-\[inset_0_1px_0_var\(--app-sheet-line\)\] dark:text-zinc-100">A Today view<\/li><\/ul>/);
+  assert.match(open, /<ul class="mt-1 flex flex-col" data-bot-plan-lines=""><li class="text-pretty py-3 text-\[0\.9375rem\] leading-\[22px\] text-zinc-900 dark:text-zinc-100">A list of your plants<\/li><li class="text-pretty py-3 text-\[0\.9375rem\] leading-\[22px\] text-zinc-900 shadow-\[inset_0_1px_0_var\(--app-sheet-line\)\] dark:text-zinc-100">A Today view<\/li><\/ul>/);
   assert.doesNotMatch(open, /rounded-full bg-zinc-400/, 'no dot before a line in the chat');
   assert.match(draw({ surface: 'app' }), /<li class="flex items-start gap-2\.5"><span aria-hidden="true" class="[^"]*rounded-full[^"]*"><\/span><span>A list of your plants<\/span><\/li>/,
     'the App tab\'s card keeps its dots');
@@ -244,6 +287,9 @@ test('B6: the plan card, drawn in every state', () => {
   assert.match(open, /<label class="flex min-h-\[44px\] cursor-pointer items-center gap-2\.5 py-2 [^"]*" data-bot-answer="default">/, '44px rows with no side padding');
   assert.match(open, /data-bot-answer="default"><input type="radio" class="sr-only" name="[^"]+" checked="" value="In the app"\/>/);
   assert.match(open, /data-bot-answer="other"><input type="radio" class="sr-only" name="[^"]+" value="Phone alert"\/>/);
+  // #5224: a clearer break before the first question, the hairline halfway
+  // between the last plan line and it.
+  assert.match(open, /class="mt-2 pt-5 shadow-\[inset_0_1px_0_var\(--app-sheet-line\)\]"/, 'the first question sits 20px under the hairline');
   assert.match(open, /<span class="font-semibold">In the app<\/span>/);
   assert.doesNotMatch(open, /suggested|aria-pressed/);
   // Build it is the one strong action, the width of the card; Change
@@ -321,7 +367,12 @@ test('B6: which bot messages draw a plan or two questions, and what state a plan
   assert.match(css, /\.messages-bot-answers button\[aria-pressed="true"\] \{ color: var\(--accent-ink\); background: var\(--accent\); \}/);
   assert.match(css, /\.messages-bot-chosen \{[^}]*color: var\(--accent-ink\);\s*background: var\(--accent\);/, '#4197: an answered chip wears the tapped answer\'s fill');
   const composer = read('frontend/src/features/messages/composer.tsx');
-  assert.match(composer, /Say what to change, and Homeroom bot sends a new plan\. Only you see this\./);
+  // One request, one story: a first version's plan is answered to the bot
+  // alone (its next look reads the reply), so its note stays private; a
+  // request's plan's reply is posted on the request, and its note says so.
+  assert.match(composer, /\{planReply\.firstVersion \? t\('messages:composer\.planReplyNote'\) : t\('messages:composer\.planReplyNotePublic'\)\}/);
+  assert.equal(message('messages:composer.planReplyNote'), 'Say what to change, and Homeroom bot sends a new plan. Only you see this.');
+  assert.equal(message('messages:composer.planReplyNotePublic'), 'What you write is posted on the request, where the group can see it.');
 });
 
 test('B6: the plan is answered in the chat; #4043: the App tab no longer draws it', () => {
@@ -358,12 +409,23 @@ test('B6: a first version\'s plan, end to end, against the full PostgreSQL schem
   await admin.query(`CREATE DATABASE ${name}`);
   const url = new URL(DSN); url.pathname = `/${name}`;
   const pool = new Pool({ connectionString: String(url), max: 4 });
+  // A changed plan owes its request a look (bot-request's Owed), which the
+  // workflow runtime applies: it runs here, on this database, its pipeline
+  // only (no timers, no work), so the queue row its instance holds appears.
+  // Its legacy side reads the platform's pool, which is this one.
+  const platform = require('../src/workflow/platform.ts');
+  const dbPool = require('../src/db/pool');
+  const realGetPool = dbPool.getPool;
+  dbPool.getPool = () => pool;
   t.after(async () => {
+    await platform.stopWorkflow();
+    dbPool.getPool = realGetPool;
     await pool.end();
     await admin.query(`DROP DATABASE ${name}`);
     await admin.end();
   });
   await pool.query(read('src/db/schema.sql'));
+  await platform.startWorkflow({ databaseUrl: String(url), dataEncryptionKey: 'synthetic-key', wfPoolMax: 4, wfSlots: 2 }, { loops: false });
   const mayor = require('../src/services/homeroom-bot-mayor');
   const progress = require('../src/services/homeroom-bot-progress');
   const conversations = require('../src/services/conversations');
@@ -385,9 +447,9 @@ test('B6: a first version\'s plan, end to end, against the full PostgreSQL schem
     `INSERT INTO platform_settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
     [key, value],
   );
-  await set('homeroom_bot_dm_users', JSON.stringify(['maya']));
+  // The bot works for everyone with platform access, on every app but a
+  // paused one.
   await set('homeroom_bot_mode', 'live');
-  await set('homeroom_bot_live_apps', JSON.stringify(['plant-pal']));
   await pool.query(
     `INSERT INTO homeroom_bot_first_versions (app_id, user_id, brief, bot_builds, status, issue_number)
      VALUES ($1, $2, 'A plant watering app', TRUE, 'filed', 1)`,
@@ -434,7 +496,9 @@ test('B6: a first version\'s plan, end to end, against the full PostgreSQL schem
     const { rows: [action] } = await pool.query('SELECT * FROM homeroom_bot_dm_actions WHERE id = $1', [card.meta.actionId]);
     assert.deepEqual([action.kind, action.status, Number(action.message_id)], ['build_plan', 'open', Number(card.id)]);
     const { rows: [rang] } = await pool.query('SELECT detail FROM notifications WHERE user_id = $1 ORDER BY id DESC LIMIT 1', [maya.id]);
-    assert.equal(rang.detail, 'hrbot:question:Plant Pal');
+    // "One story": a first version's plan rings as needs you, worded as its plan.
+    const rung = require('../src/services/homeroom-bot-notify-copy').parseBotDetail(rang.detail);
+    assert.deepEqual([rung.moment, rung.said, rung.appName], ['needs_you', 'plan_first', 'Plant Pal']);
   });
 
   await t.test('its progress waits on her, and the App tab carries the plan to build from', async () => {
@@ -453,7 +517,7 @@ test('B6: a first version\'s plan, end to end, against the full PostgreSQL schem
 
   await t.test('Build it, from any device, builds once, with the choices tapped and the rest suggested', async () => {
     const card = await planMessage(first);
-    const tapped = await mayor.decideOfferTap(pool, {}, { user: maya, actionId: card.meta.actionId, choice: 'build', answers: ['Phone alert', ''] });
+    const tapped = await mayor.decideOfferTap(pool, {}, { deps: { replies: tapsNow(pool) }, user: maya, actionId: card.meta.actionId, choice: 'build', answers: ['Phone alert', ''] });
     assert.deepEqual(tapped, { ok: true, choice: 'build', label: 'Build it' });
     const run = await runRow(first);
     assert.equal(run.awaiting_go_at, null);
@@ -464,11 +528,22 @@ test('B6: a first version\'s plan, end to end, against the full PostgreSQL schem
     // bullets reached neither the spec nor the build.
     assert.match(run.build_note, /\n\nApproved by the creator, who tapped Build it under this plan:\n- A list of your plants\n- A Today view\nThe creator chose/);
     assert.deepEqual(live.splitApprovedPlan(run.build_note).approved.split('\n').slice(1, 3), ['- A list of your plants', '- A Today view']);
+    // Newcomer run seven (14 Oct 2026): Build it under the card is the one
+    // go-ahead whose bullets were shown, so only it says they were approved;
+    // the made screen's Submit writes them as the plan's own lines.
+    assert.equal(run.plan.planShown, undefined);
+    assert.ok(!run.build_note.includes(live.PLAN_LINES_HEAD) && !run.build_note.includes(live.MADE_SCREEN_CHOICES_HEAD));
     const after = await planMessage(first);
     assert.deepEqual([after.meta.status, after.meta.chosen, after.meta.choices], ['answered', 'build', ['Phone alert', 'Just me']]);
-    const again = await mayor.decideOfferTap(pool, {}, { user: maya, actionId: card.meta.actionId, choice: 'build' });
+    const again = await mayor.decideOfferTap(pool, {}, { deps: { replies: tapsNow(pool) }, user: maya, actionId: card.meta.actionId, choice: 'build' });
     assert.deepEqual([again.ok, again.status, again.error], [false, 409, 'already_decided']);
-    assert.equal((await mayor.decideOfferTap(pool, {}, { user: maya, actionId: card.meta.actionId, choice: 'maybe' })).status, 400);
+    assert.equal((await mayor.decideOfferTap(pool, {}, { deps: { replies: tapsNow(pool) }, user: maya, actionId: card.meta.actionId, choice: 'maybe' })).status, 400);
+    // Its act retried after it went ahead (a restart before it reported):
+    // it went, and stays done, never "plan gone".
+    const retried = await mayor.actOnTap(pool, {}, { userId: maya.id, actionId: card.meta.actionId, choice: 'build', key: `action:${card.meta.actionId}` });
+    assert.deepEqual(retried, { done: true, why: null });
+    const { rows: [action] } = await pool.query('SELECT status, error FROM homeroom_bot_dm_actions WHERE id = $1', [card.meta.actionId]);
+    assert.deepEqual([action.status, action.error], ['done', null]);
     await pool.query('UPDATE homeroom_bot_runs SET live_build_waiting_at = NULL, build_ok = FALSE, build_error = $2 WHERE id = $1', [first, 'test: done']);
   });
 
@@ -517,7 +592,7 @@ test('B6: a first version\'s plan, end to end, against the full PostgreSQL schem
     assert.equal(card.meta.status, 'closed');
     const { rows: [action] } = await pool.query('SELECT status FROM homeroom_bot_dm_actions WHERE id = $1', [card.meta.actionId]);
     assert.equal(action.status, 'declined');
-    const late = await mayor.decideOfferTap(pool, {}, { user: maya, actionId: card.meta.actionId, choice: 'build' });
+    const late = await mayor.decideOfferTap(pool, {}, { deps: { replies: tapsNow(pool) }, user: maya, actionId: card.meta.actionId, choice: 'build' });
     assert.equal(late.status, 409, 'a closed plan builds nothing');
   });
 
@@ -535,6 +610,21 @@ test('B6: a first version\'s plan, end to end, against the full PostgreSQL schem
     assert.deepEqual([run.awaiting_go_at, run.build_ok, run.build_error], [null, false, 'skipped: nobody tapped Build it within a week']);
     const card = await planMessage(stale);
     assert.deepEqual([card.meta.status, card.meta.stopped], ['closed', true]);
+    // Said once, under the card, without ringing: the card changing a week
+    // up the conversation was the only sign it had gone quiet.
+    const stoppedNotes = async () => (await pool.query(
+      `SELECT m.id, m.content, m.metadata->'homeroomBot' AS meta
+         FROM conversation_messages m
+        WHERE m.conversation_id = $1 AND m.metadata->'homeroomBot'->>'kind' = 'plan_stopped'`,
+      [card.conversation_id],
+    )).rows;
+    const [note] = await stoppedNotes();
+    assert.equal(note.content, dm.planStoppedText(app.name));
+    assert.match(note.content, /^Nobody tapped Build it on the plan for .+ for a week, so I put it away and built nothing\. Reply to the plan above to pick it up again\.$/);
+    assert.ok(Number(note.id) > Number(card.id), 'after the plan it is about');
+    assert.equal(note.meta.issueNumber, 1);
+    await dm.closePlanCards(pool, [stale], { stopped: true });
+    assert.equal((await stoppedNotes()).length, 1, 'once');
 
     const go = await readyRun();
     await bot.awaitGo(pool, { runId: go, app, issueNumber: 1, parsed: { plan: PLAN }, bot: homeroomBot });
@@ -548,7 +638,8 @@ test('B6: a first version\'s plan, end to end, against the full PostgreSQL schem
       `SELECT content, metadata->'homeroomBot' AS meta FROM conversation_messages WHERE id = $1`, [out.messageId],
     )).rows[0];
     // #4392: typed, the answer is the same thanks Build it sends, with its card, and said once.
-    assert.equal(said.content, 'Thanks for answering about the plan. I\'ll let you know when Plant Pal is ready to try.');
+    // One story: what is next, not a thanks.
+    assert.equal(said.content, 'Building it now. I\'ll tell you when it\'s ready to try.');
     assert.deepEqual([said.meta.kind, said.meta.thanks], ['activity', true]);
     const { rows: [{ n: after }] } = await pool.query(
       'SELECT COUNT(*)::int AS n FROM conversation_messages WHERE conversation_id = $1 AND id > $2 AND sender_id = $3',
@@ -627,7 +718,8 @@ test('B6: a first version\'s plan, end to end, against the full PostgreSQL schem
   });
 
   await t.test('#4175: a first version for someone the bot no longer works for stops at once, and is never built', async () => {
-    await set('homeroom_bot_dm_users', '[]');
+    // Maya no longer has platform access, so the bot no longer works for her.
+    await pool.query('UPDATE users SET has_platform_access = FALSE WHERE id = $1', [maya.id]);
     const lone = await readyRun();
     assert.equal(await bot.awaitGo(pool, { runId: lone, app, issueNumber: 1, parsed: { plan: PLAN }, bot: homeroomBot }), 'stopped');
     const row = await runRow(lone);
@@ -635,7 +727,7 @@ test('B6: a first version\'s plan, end to end, against the full PostgreSQL schem
       [row.awaiting_go_at, row.plan_unsent_at, row.build_ok, row.build_error, await queued(lone)],
       [null, null, false, 'skipped: nobody to send the plan to: its creator no longer has Homeroom bot', null],
     );
-    await set('homeroom_bot_dm_users', JSON.stringify(['maya']));
+    await pool.query('UPDATE users SET has_platform_access = TRUE WHERE id = $1', [maya.id]);
     // And one whose requester cannot be found.
     const orphan = await readyRun();
     await pool.query('UPDATE homeroom_bot_runs SET issue_number = 99 WHERE id = $1', [orphan]);
@@ -661,36 +753,37 @@ test('B6: a first version\'s plan, end to end, against the full PostgreSQL schem
 
   // First session, 4 October: Build it collapsed the plan and nothing
   // appeared under it; the build's progress was in a card above the plans.
-  await t.test('Build it moves the request\'s card under the plan, silently, and the card above stops being the request\'s', async () => {
+  // One story per request: the plan is said in its request's thread, under
+  // the request's card, so Build it is answered there: the card stays the
+  // thread's first message, and a quiet line under the plan says what comes
+  // next. (Before threads, the card moved under the plan; that path is
+  // homeroom-bot-activity.test.js's, for a plan said in the main chat.)
+  await t.test('Build it is answered in the request\'s thread: the card stays, silently, and a quiet line says what is next', async () => {
     const activity = require('../src/services/homeroom-bot-activity');
     const requester = await dm.requesterOf(pool, app.id, 1);
     // Its card, from when it was queued (or the one an earlier Build it moved).
-    await activity.startCard(pool, { app, issueNumber: 1, requester, bot: homeroomBot, jobKey: 'plan-under', queued: true });
+    await activity.startCard(pool, { inDm: true, app, issueNumber: 1, requester, bot: homeroomBot, jobKey: 'plan-under', queued: true });
     const run = await readyRun();
     assert.equal(await bot.awaitGo(pool, { runId: run, app, issueNumber: 1, parsed: { plan: PLAN }, bot: homeroomBot }), 'waiting');
     const plan = await planMessage(run);
     const above = await activity.requestCard(pool, { userId: maya.id, appId: app.id, issueNumber: 1 });
     assert.ok(above && above.messageId < Number(plan.id), 'the request\'s card sits above its plan');
+    const { rows: [planRow] } = await pool.query('SELECT thread_root_id FROM conversation_messages WHERE id = $1', [plan.id]);
+    assert.equal(Number(planRow.thread_root_id), above.messageId, 'the plan is in the card\'s thread');
 
-    const tapped = await mayor.decideOfferTap(pool, {}, { user: maya, actionId: plan.meta.actionId, choice: 'build' });
+    const tapped = await mayor.decideOfferTap(pool, {}, { deps: { replies: tapsNow(pool) }, user: maya, actionId: plan.meta.actionId, choice: 'build' });
     assert.equal(tapped.ok, true);
     const under = await activity.requestCard(pool, { userId: maya.id, appId: app.id, issueNumber: 1 });
-    assert.ok(under.messageId > Number(plan.id), 'it follows the build from under the plan');
-    const message = async (id) => (await pool.query(
-      `SELECT content, metadata->'homeroomBot' AS meta FROM conversation_messages WHERE id = $1`, [id],
-    )).rows[0];
-    const card = await message(under.messageId);
-    assert.equal(card.meta.kind, 'activity');
-    assert.equal(card.meta.lookAt, (await runRow(run)).created_at.toISOString(), 'read from the run the plan came from');
-    assert.equal(card.meta.startedAt, undefined, 'its time counts from the tap');
-    assert.equal(card.content, 'Thanks for answering about the plan. I\'ll let you know when Plant Pal is ready to try.',
-      '#4392: the bot\'s thanks, drawn over the app\'s card');
-    assert.equal(card.meta.thanks, true);
-    const { rows: rang } = await pool.query('SELECT 1 FROM notifications WHERE conversation_message_id = $1', [under.messageId]);
-    assert.equal(rang.length, 0, 'a progress card rings nothing');
-    assert.equal(Number((await message(above.messageId)).meta.movedTo), under.messageId, 'the card above says where it went');
-    const { rows: record } = await pool.query('SELECT 1 FROM homeroom_bot_dm_messages WHERE message_id = $1', [above.messageId]);
-    assert.equal(record.length, 0, 'and is not the request\'s card any more');
+    assert.equal(under.messageId, above.messageId, 'the same card: the thread\'s first message');
+    const { rows: [line] } = await pool.query(
+      `SELECT id, content, thread_root_id, metadata->'homeroomBot' AS meta FROM conversation_messages
+        WHERE thread_root_id = $1 AND id > $2 ORDER BY id DESC LIMIT 1`,
+      [above.messageId, Number(plan.id)],
+    );
+    assert.equal(line.content, 'Building it now. I\'ll tell you when it\'s ready to try.');
+    assert.equal(line.meta.kind, 'step');
+    const { rows: rang } = await pool.query('SELECT 1 FROM notifications WHERE conversation_message_id = $1', [line.id]);
+    assert.equal(rang.length, 0, 'a quiet line rings nothing');
     // Her project, as creating it makes her (cards are read for projects she can view).
     await pool.query(
       `INSERT INTO app_collaborators (app_id, user_id, status, accepted_at) VALUES ($1, $2, 'member', NOW())
@@ -700,10 +793,9 @@ test('B6: a first version\'s plan, end to end, against the full PostgreSQL schem
     const { cards } = await activity.cardsFor(pool, {
       user: { id: maya.id, username: maya.username, isAdmin: false }, settings: await bot.readSettings(pool),
     });
-    assert.equal(cards.find((c) => c.messageId === under.messageId)?.state, 'working', 'its build, waiting its turn');
-    assert.ok(!cards.some((c) => c.messageId === above.messageId), 'and the card above is not read as one');
+    assert.ok(cards.some((c) => c.messageId === under.messageId), 'its card is still read');
 
-    const again = await mayor.decideOfferTap(pool, {}, { user: maya, actionId: plan.meta.actionId, choice: 'build' });
+    const again = await mayor.decideOfferTap(pool, {}, { deps: { replies: tapsNow(pool) }, user: maya, actionId: plan.meta.actionId, choice: 'build' });
     assert.equal(again.status, 409);
     assert.equal((await activity.requestCard(pool, { userId: maya.id, appId: app.id, issueNumber: 1 })).messageId, under.messageId,
       'a second tap moves nothing');
@@ -713,10 +805,14 @@ test('B6: a first version\'s plan, end to end, against the full PostgreSQL schem
 test('B6: where the waiting state is read, and where it ends', () => {
   const src = read('src/services/homeroom-bot.js');
   assert.match(src, /\} else if \(firstVersion\) \{\s*acted = PLAN_ACTED\[await awaitGo\(pool, \{ runId, app, issueNumber, parsed, bot, deps \}\)\];/);
-  // #4175: a plan that could not be sent is sent again on the sweep's cadence.
-  assert.match(src, /const resent = await retryUnsentPlans\(pool, bot, \{ dm: deps\.dm, ws: deps\.ws \|\| null \}\);/);
-  assert.match(src, /await retireWaitingPlans\(pool, \{ appId: app\.id, issueNumber, why: 'the request was read again', deps: \{ dm: deps\.dm \} \}\);/);
-  assert.match(src, /const stalePlans = await settleStalePlans\(pool, \{ dm: deps\.dm \}\);/);
+  // #4175: a plan that could not be sent is sent again on the sweep's
+  // cadence (the bot lane's bot.sweep work), and a week-old one is stopped
+  // there.
+  const sweep = src.slice(src.indexOf('async function sweep('), src.indexOf('\n}\n', src.indexOf('async function sweep(')));
+  assert.match(sweep, /const r = await retryUnsentPlans\(pool, bot, \{ dm: deps\.dm, ws: deps\.ws \|\| null \}\);/);
+  assert.match(sweep, /await each\('plansStopped', \(\) => settleStalePlans\(pool, \{ dm: deps\.dm \}\)\);/);
+  // Papote #3: and its row on the request says a newer plan replaced it.
+  assert.match(src, /await retireWaitingPlans\(pool, \{\s*appId: app\.id, issueNumber, why: 'the request was read again', note: 'replaced', deps: \{ dm: deps\.dm, ws: liveD\.ws \},\s*\}\);/);
   assert.match(src, /out\.skipped \+= \(await retireWaitingPlans\(pool, \{ appId, issues, why: why\.replace/);
   assert.match(src, /\.\.\.\(planChange \? \{ planChange: \{ \.\.\.planChange, requester: requester\.username \} \} : \{\}\),/);
   const progressSrc = read('src/services/homeroom-bot-progress.js');
@@ -728,4 +824,54 @@ test('B6: where the waiting state is read, and where it ends', () => {
     assert.ok(schema.includes(`ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS ${column};`), column);
   }
   assert.equal(live.questionText({ question: 'Q?' }).includes('If nobody answers'), false);
+});
+
+test('a first version made from a game starter is specced and built on it; without one, nothing changes', () => {
+  const live = require('../src/services/homeroom-bot-live');
+  const prompts = require('../src/services/prompts');
+  const appTemplates = require('../src/services/app-templates');
+  // Without a starter (or with one that is not a game's), every line is as it was.
+  for (const none of [null, 'empty', 'grocery-list']) {
+    assert.deepEqual(live.specScopeLines(true, none), live.specScopeLines(true), String(none));
+    assert.equal(live.specDesignBrief(true, none), prompts.FIRST_VERSION_SPEC_DESIGN_BRIEF ?? live.specDesignBrief(true), String(none));
+    assert.deepEqual(live.firstVersionDesignLines(none), live.firstVersionDesignLines(), String(none));
+    assert.match(live.firstVersionDesignLines(none).join('\n'), /Each screen is one centred column on a window wider than a phone \(the kit's `page-column`\)/);
+  }
+  assert.deepEqual(live.specScopeLines(false, 'game-board'), live.specScopeLines(false), 'a later change is as small as asked');
+  for (const id of ['game-board', 'game-space', 'game-blocks', 'game-trivia']) {
+    const s = appTemplates.get(id);
+    const scope = live.specScopeLines(true, id).join('\n');
+    assert.ok(scope.includes(`Built ON the repository's ${s.title}`), `${id}: the spec builds on it`);
+    assert.ok(scope.includes(s.bot.build));
+    assert.match(scope, /never plan to start over/);
+    const brief = live.specDesignBrief(true, id);
+    assert.doesNotMatch(brief, /the starter template's is placeholder/);
+    assert.match(brief, /the game starter's screens \(a title screen, then the game filling the screen\) work and wear the example game's scene/);
+    const lines = live.firstVersionDesignLines(id).join('\n');
+    assert.ok(lines.includes(`This repository starts as Homeroom's ${s.title}`), `${id}: the build is told`);
+    assert.match(lines, /never by deleting it to start over/);
+    assert.doesNotMatch(lines, /the starter's screen and default colours are placeholder/);
+    assert.match(lines, /keeps its look in `public\/scene\.css`/, `${id}: the scene is restyled, not replaced`);
+    // App bench run 193: other first versions keep each screen one centred
+    // column on a wide window; a game's scene fills the window.
+    assert.doesNotMatch(lines, /page-column/, `${id}: no column for a game's scene`);
+    assert.match(lines, /loading state has the content's own shape/, `${id}: the loading rule stays`);
+    const spec = live.specPrompt({ seed: 'seed', buildNote: 'plan', firstVersion: true, starter: id });
+    assert.ok(spec.includes(scope) && spec.includes(brief));
+    const html = live.specPrompt({ seed: 'seed', buildNote: 'plan', firstVersion: true, starter: id, html: true });
+    assert.ok(html.includes(scope) && html.includes(brief), `${id}: the HTML spec too`);
+    assert.ok(live.buildPrompt({ seed: 'seed', buildNote: 'plan', firstVersion: true, starter: id }).includes(lines));
+  }
+  // The starter reaches both turns of a build.
+  const src = read('src/services/homeroom-bot-live.js');
+  assert.match(src, /firstVersion, starter, guidance: specGuidance, onProgress,/);
+  assert.match(src, /platformRepo, readsImages, firstVersion, starter, guidance: buildGuidance,/);
+  assert.match(src, /seed, buildNote, firstVersion, guidance, starter,/);
+  const bot = read('src/services/homeroom-bot.js');
+  // The live build is the one that builds a first version: the shadow build
+  // that read it too is gone with its lane (design D2).
+  assert.equal((bot.match(/const starter = firstVersion \? await starterOfApp\(pool, app\.id\)\.catch\(\(\) => null\) : null;/g) || []).length, 1,
+    'the live build');
+  assert.equal((bot.match(/firstVersion, platformRepo: isPlatformRepo\(app, config\), model, specModel, starter,\n\s+\}\)\);/g) || []).length, 1,
+    'and its snapshot (recordBuildSnapshot), a durable step of its own');
 });

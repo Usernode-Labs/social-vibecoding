@@ -44,7 +44,11 @@ function fixtureServer(side, hostedOrigin) {
     }
     response.statusCode = matched ? 200 : 401;
     response.setHeader('Content-Type', 'text/html');
-    response.end(`<!doctype html><h1>${matched ? `Signed in as ${matched} on ${side}` : 'Sign in'}</h1>${matched && url.pathname === '/status' ? `<iframe id="app-iframe" title="Public app" src="${hostedOrigin()}/frame"></iframe>` : ''}`);
+    // What the page can tell of the device: a phone browser's user agent is
+    // an iPhone's, and its page has touch (write-shots-mcp-config.js).
+    const device = /\biPhone\b/.test(request.headers['user-agent'] || '') ? 'on an iPhone' : 'not on a phone';
+    const touch = '<p id="touch"></p><script>document.getElementById("touch").textContent = navigator.maxTouchPoints > 0 ? "With touch" : "Without touch";</script>';
+    response.end(`<!doctype html><h1>${matched ? `Signed in as ${matched} on ${side}` : 'Sign in'}</h1><p>Browsing ${device}</p>${touch}${matched && url.pathname === '/status' ? `<iframe id="app-iframe" title="Public app" src="${hostedOrigin()}/frame"></iframe>` : ''}`);
   });
   return new Promise((resolve, reject) => {
     server.once('error', reject);
@@ -132,6 +136,7 @@ async function main() {
       SHOTS_MEMBER_TOKEN: 'member.jwt', SHOTS_ADMIN_TOKEN: 'admin.jwt',
       SHOTS_FULL_ADMIN_TOKEN: 'full-admin.jwt',
       SHOTS_DIR: path.join(dir, 'shots'),
+      SHOTS_PHONE_PERSONAS: '["member"]',
     };
     const bootstrap = await execFileAsync(process.execPath, [path.join(__dirname, 'shots-browser-bootstrap.js')], {
       env, timeout: 90_000,
@@ -156,18 +161,22 @@ async function main() {
     const configPath = path.join(dir, 'mcp.json');
     execFileSync(process.execPath, [path.join(__dirname, 'write-shots-mcp-config.js'), configPath], { env });
     const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    // The member's phone browser shares the member's sign-in, and its pages
+    // see a phone; the desktop browsers' pages do not.
     for (const [persona, serverName] of [
       ['member', 'browser_member'], ['admin', 'browser_admin'],
-      ['full_admin', 'browser_full_admin'],
+      ['full_admin', 'browser_full_admin'], ['member', 'browser_member_phone'],
     ]) {
+      const phone = serverName.endsWith('_phone');
       const checks = origins.map((origin, index) => ({
         url: `${origin}/status`,
         expectedText: `Signed in as ${persona} on ${index === 0 ? 'base' : 'head'}`,
         iframeText: 'Deployed child frame loaded',
+        presentText: phone ? ['Browsing on an iPhone', 'With touch'] : ['Browsing not on a phone', 'Without touch'],
       }));
       try { await verifyBrowser(config.mcpServers[serverName], checks); }
       catch (error) {
-        throw new Error(`${persona} browser failed (${error.message}); proxy exit=${proxy.exitCode}; ${proxyError}`);
+        throw new Error(`${serverName} failed (${error.message}); proxy exit=${proxy.exitCode}; ${proxyError}`);
       }
     }
     // The guest browser was never signed in: on both revisions it gets the
@@ -186,7 +195,7 @@ async function main() {
     catch (error) {
       throw new Error(`guest browser failed (${error.message}); proxy exit=${proxy.exitCode}; ${proxyError}`);
     }
-    process.stdout.write('All planner personas retained authenticated sessions and loaded an approved child frame on both private revisions; the guest stayed signed out.\n');
+    process.stdout.write('All planner personas retained authenticated sessions and loaded an approved child frame on both private revisions; the member\'s phone browser did too, as a phone; the guest stayed signed out.\n');
   } finally {
     if (proxy && proxy.exitCode === null) {
       proxy.kill('SIGTERM');

@@ -56,6 +56,7 @@ function makeAppView(userId) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(`${MERGE_STATUS_SRC}\n${APP_VIEW_SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;
@@ -343,6 +344,30 @@ test('detail: the remedy follows the conflict lane\'s own verdict on the head', 
   ).text;
   assert.match(text(['unresolvable']), /^The platform tried to resolve it and could not\. me needs to bring it up to date/);
   assert.match(text([]), /^The platform resolves it automatically\. me can also/);
+});
+
+test('the conflict note\'s two sentences go where the joining message puts them', () => {
+  const AppView = makeAppView(ME);
+  const note = () => AppView._conflictRemedy(
+    baseProposal({ freshness: FRESH(), integration: { blockReasons: [] } }), 'predicted'
+  );
+  // The parts come from another realm, so they are compared as plain data.
+  const plain = (value) => JSON.parse(JSON.stringify(value));
+  // English, as it has always read: the lead, a space, then the rest's parts.
+  const english = note();
+  assert.equal(english.parts[0], 'The platform resolves it automatically. ');
+  assert.deepEqual(plain(english.parts.slice(1)), plain(english.followUp), 'the rest keeps its own parts, bold runs included');
+  assert.deepEqual(plain(AppView._joinLeadAndRest('LEAD.', ['a ', { b: 'B' }, ' c'])), ['LEAD. ', 'a ', { b: 'B' }, ' c']);
+  // A language that says the second sentence first: the catalog decides.
+  const real = require('./lib/platform-i18n').englishPlatformI18n().t;
+  const swapped = (id, options) => (id === 'changes:remedy.leadThenRest' ? '{{rest}} / {{lead}}!' : real(id, options));
+  const vm = require('node:vm');
+  const joined = vm.runInNewContext(
+    `(${AppView._joinLeadAndRest.toString().replace(/^_joinLeadAndRest/, 'function')})`,
+    { PlatformI18n: { t: swapped } },
+  )('LEAD.', ['a ', { b: 'B' }, ' c']);
+  assert.deepEqual(plain(joined), ['a ', { b: 'B' }, ' c', ' / LEAD.!'],
+    'the rest is placed first and the lead after it, with the message\'s own text between and after');
 });
 
 test('detail: a capped file list is described as a sample', () => {

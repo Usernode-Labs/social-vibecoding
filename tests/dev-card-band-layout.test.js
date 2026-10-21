@@ -90,6 +90,7 @@ function makeAppView() {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(`${SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;
@@ -246,7 +247,7 @@ test('#1139: each thing a card can say has one home — the bar in the status ro
   const bar = BANDS({ pill: { state: { tier: 6, key: 't', label: '2/3', tone: 'progress', yes: 2, no: 0, majority: 3, advisory: 0, lock: false }, inline: false } });
   assert.doesNotMatch(bar, /data-empty/, 'a state bar fills the status row');
   assert.doesNotMatch(bar, /dev-card-facts/);
-  const closes = BANDS({ linked: [{ t: 'issueChip', key: 'i4', n: 4, prefix: 'Closes ', cls: 'dev-badge', title: 'i' }] });
+  const closes = BANDS({ linked: [{ t: 'issueChip', key: 'i4', n: 4, label: 'Closes #4', cls: 'dev-badge', title: 'i' }] });
   assert.match(closes, /<div class="dev-card-meta">[\s\S]*?data-issue-chip="4"[\s\S]*?<\/div><div class="dev-card-badges dev-card-status" data-empty="1">/,
     'Closes #N is the meta line\'s — what the item IS — and leaves the status row bare');
   assert.doesNotMatch(closes, /dev-card-facts/);

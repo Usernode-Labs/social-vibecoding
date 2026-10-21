@@ -1,11 +1,11 @@
 /**
- * The bordered block every home panel is drawn in, and the controls its bar
- * and footer carry.
+ * The bordered block every home panel is drawn in, its section heading, and
+ * the links that heading carries.
  *
- * A like-for-like port of `HomePanels._panelShell` / `_leaderboardLink` /
- * `_panelFooter` — same classes, same `data-*`, same order —
- * so app.css's `--home-panel-max-h` cap, the dapp.json checks and the
- * screenshot assertions all keep matching. What changed is who owns the
+ * Began as a like-for-like port of `HomePanels._panelShell` /
+ * `_leaderboardLink` / `_panelFooter` — same classes, same `data-*`, same
+ * order — so the dapp.json checks and the screenshot assertions kept
+ * matching. What changed is who owns the
  * listeners: they were eight `querySelectorAll` sweeps in `HomePanels._wire`,
  * re-run after every paint because the paint had just destroyed the nodes they
  * were on, and they are props here.
@@ -18,8 +18,8 @@
 
 import type { ReactNode } from 'react';
 
-import { ChevronDownIcon } from '@/components/ui/icons';
-
+import { useMessages } from '../../../lib/i18n/react';
+import { t as message } from '../../../lib/i18n/runtime';
 import type { PanelStamps } from '../panels-store';
 
 export function panels(): any {
@@ -119,9 +119,25 @@ const TINT_CLASS: Record<LegacyTint, string> = {
   1: 'home-tint-1', 2: 'home-tint-2', 3: 'home-tint-3', 4: 'home-tint-4', 5: 'home-tint-5',
 };
 
-/** A tone's own name, title-cased for a label. */
+/** Each tone's name as a swatch is labelled: a message id per tone. */
+const TONE_LABEL: Record<Tone, string> = {
+  cream: 'home:tone.cream',
+  yellow: 'home:tone.yellow',
+  orange: 'home:tone.orange',
+  coral: 'home:tone.coral',
+  pink: 'home:tone.pink',
+  purple: 'home:tone.purple',
+  indigo: 'home:tone.indigo',
+  blue: 'home:tone.blue',
+  teal: 'home:tone.teal',
+  mint: 'home:tone.mint',
+  sage: 'home:tone.sage',
+  gray: 'home:tone.gray',
+};
+
+/** A tone's own name, for a swatch's label. */
 export function toneLabel(tone: Tone): string {
-  return tone.charAt(0).toUpperCase() + tone.slice(1);
+  return message(TONE_LABEL[tone]);
 }
 
 /**
@@ -164,7 +180,7 @@ export function cardTint(key: string, tint?: unknown): string {
  * ── …and why the CONTROLS followed it out ─────────────────────────────
  *
  * They did not, at first, and that was worse than leaving the title in. The
- * bar's remaining occupants — Discover's "Browse all apps", Challenges' "Open
+ * bar's remaining occupants — Discover's "See all", Challenges' "Open
  * leaderboard", the ⋮ every block carries — are all `shrink-0`, so with the
  * title gone the first row of every card was a strip of white with three
  * quarters of it empty and one link floating at the right. The card opened on
@@ -215,13 +231,14 @@ export function SectionHeading({ children, action }: {
  * hash navigation: `#home-browse-btn` is selected on from dapp.json.
  */
 export function BrowseLink() {
+  const t = useMessages('home');
   return (
     <button
       type="button"
       id="home-browse-btn"
       className="home-panel-browse shrink-0 flex items-center gap-1 text-[14px] font-semibold text-[color:var(--accent)] hover:underline whitespace-nowrap un-touch-target"
-      title="Browse every app in the directory"
-      aria-label="Browse all apps"
+      title={t('home:discover.browseAll.tip')}
+      aria-label={t('home:discover.browseAll.label')}
       onClick={(e) => {
         e.stopPropagation();
         // Through the hash, so the browse screen gets a real history entry and
@@ -229,13 +246,13 @@ export function BrowseLink() {
         window.location.hash = '#apps';
       }}
     >
-      <span className="whitespace-nowrap">Browse all apps</span>
+      <span className="whitespace-nowrap">{t('home:discover.browseAll.text')}</span>
     </button>
   );
 }
 
 /**
- * The bordered block: body, optional footer, and nothing else.
+ * The bordered block: its body, and nothing else.
  *
  * IT HAS NO TITLE BAR ANY MORE. The bar held the block's title until the
  * heading moved out above the card, and then its controls followed (see
@@ -243,17 +260,16 @@ export function BrowseLink() {
  * is gone with it, along with the `user-select` and cursor rules app.css kept
  * for a strip that was once a drag handle.
  *
- * `flex-none` on the footer and `.home-panel-rows` on the list are what made
- * app.css's height cap clip rather than grow; `.home-panel--expanded` lifts
- * the cap entirely.
+ * The footer went too: it held Challenges' "See all N challenges" toggle,
+ * and "See all" is a link in that section's heading now. So did the
+ * `expanded` flag and its `home-panel--expanded` class, with the in-place
+ * expansion they drew.
  */
 export function PanelShell({
-  panelKey, expanded, stamps, footer, plate = 'card', children,
+  panelKey, stamps, plate = 'card', children,
 }: {
   panelKey: string;
-  expanded: boolean;
   stamps?: PanelStamps;
-  footer?: ReactNode;
   /**
    * WHAT THE BLOCK SITS ON. Two answers:
    *
@@ -279,97 +295,45 @@ export function PanelShell({
     : '';
   return (
     <article
-      className={`home-panel${expanded ? ' home-panel--expanded' : ''}${plateClass}`}
+      className={`home-panel${plateClass}`}
       data-panel={panelKey}
       {...stampProps(stamps)}
     >
       {children}
-      {footer || null}
     </article>
   );
 }
 
 /**
- * THE AREA'S WAY IN (#980, renamed #1916). `BrowseLink` verbatim — same 12px
- * link, same seat in the section heading — because it answers the same
- * question on the same screen. It renders in EVERY branch and at every width:
- * between seasons, where the block draws no footer at all, it is the only
- * control the area has.
+ * THE AREA'S WAY IN: "See all", at the right end of the Challenges heading,
+ * to the Challenges tab of the Leaderboard screen. It replaced two controls
+ * (the Semi design, 2026-10-16): the heading's "Open challenges" (#980,
+ * #1916), and the footer's "See all N challenges" / "Show less", which grew
+ * the block in place. The block now shows a short pick, and everything else
+ * is on the tab.
  *
- * It reads "Open challenges" and lands on the Challenges tab of the
- * Leaderboard screen (#1916): the area is called Challenges, so a link out of
- * it that named a different thing read as a way somewhere else. It is still
- * the home screen's door to that screen — the standings are one tab over.
+ * A REAL LINK, `<a href="#leaderboard/challenges">`: it goes somewhere, so
+ * it is announced as a link, opens in a new tab on a modified click, and its
+ * hash navigation gives the tab a history entry the device's back gesture
+ * returns from. The visible "See all" leans on the heading beside it, so the
+ * accessible name says what it is all of ("See all challenges") and starts
+ * with the visible words, which keeps a voice command that reads them
+ * working. Drawn as `BrowseLink` is, the other section heading's link on this
+ * screen, with no glyph, so the two line up.
  *
- * NO CHEVRON, as `BrowseLink` has none: the two links sit at the right end of
- * two section headings on one screen, and a glyph behind only one of them
- * pushed its label out of line with the other's. And it is the area's ONLY
- * way out: the footer's second "Open challenges" is gone (see `PanelFooter`).
+ * ChallengesSectionView renders it only when the view says `seeAll`: never
+ * while loading, and not under "No challenges right now", where there is
+ * nothing behind it.
  */
-export function LeaderboardLink() {
+export function SeeAllLink() {
+  const t = useMessages('home');
   return (
-    <button
-      type="button"
-      className="home-panel-lb-browse shrink-0 flex items-center gap-1 text-[14px] font-semibold text-[color:var(--accent)] hover:underline whitespace-nowrap un-touch-target"
-      title="Go to the Challenges tab on the Leaderboard screen"
-      aria-label="Open challenges"
-      onClick={(e) => {
-        e.stopPropagation();
-        panels()?.goToChallenges?.();
-      }}
+    <a
+      href="#leaderboard/challenges"
+      className="home-panel-see-all shrink-0 flex items-center gap-1 text-[14px] font-semibold text-[color:var(--accent)] hover:underline whitespace-nowrap un-touch-target"
+      aria-label={t('home:challenges.seeAll.label')}
     >
-      <span className="whitespace-nowrap">Open challenges</span>
-    </button>
-  );
-}
-
-/**
- * The Challenges footer: the expand/collapse toggle, and nothing else.
- *
- * It used to carry a second control at its right end, "Open challenges",
- * landing on the same `#leaderboard/challenges` as the heading's link. Two
- * doors to one tab, one card apart, read as two destinations, so the footer's
- * went and the heading's `LeaderboardLink` is the area's one way out.
- *
- * THE FOOTER IS CONDITIONAL (#1824). The toggle used to render whenever the
- * block had any rows, so a season with three challenges drew "See all 3
- * challenges" under all three of them — a control whose label was false and
- * whose click refetched the same list. `expandable` is the view's answer to
- * "would expanding show a row that is not already on screen?", and when it is
- * no, ChallengesPanel draws no footer at all: with the door gone, the toggle
- * is all a footer would hold. The count in the label is `total` for the same
- * reason it always was: the toggle only appears when there is more than is
- * drawn, so the number is never the number already on screen.
- */
-export function PanelFooter({
-  panelKey, total, expanded,
-}: { panelKey: string; total: number; expanded: boolean }) {
-  const label = expanded
-    ? 'Show less'
-    : (total ? `See all ${total} challenges` : 'See all challenges');
-  // No side inset and no rule above: the block sits on the page ground, so
-  // the toggle starts at the heading's left edge like the cards above it, and
-  // `pt-2` is the second half of the 14px step from the body's `pb-1.5`.
-  return (
-    <div className="home-panel-footer flex-none flex items-center gap-2 pt-2">
-      <button
-        type="button"
-        className="home-panel-expand flex items-center gap-1 text-[12px] font-medium text-violet-700 dark:text-violet-400 hover:underline whitespace-nowrap un-touch-target"
-        data-panel-key={panelKey}
-        aria-expanded={expanded}
-        title={expanded ? 'Collapse this widget' : 'Show every challenge in this widget'}
-        onClick={(e) => {
-          e.stopPropagation();
-          panels()?.toggleExpanded?.(panelKey);
-        }}
-      >
-        <ChevronDownIcon
-          className={`w-3 h-3 shrink-0 transition-transform${expanded ? ' rotate-180' : ''}`}
-          strokeWidth="2.5"
-          aria-hidden="true"
-        />
-        <span className="whitespace-nowrap">{label}</span>
-      </button>
-    </div>
+      <span className="whitespace-nowrap">{t('home:challenges.seeAll.text')}</span>
+    </a>
   );
 }

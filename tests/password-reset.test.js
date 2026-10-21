@@ -22,6 +22,7 @@ const bcrypt = require('bcrypt');
 // ── Pool stub: query-aware, captures everything ────────────────────
 const poolMod = require('../src/db/pool');
 let capturedQueries = [];
+const walletChallengeRows = new Map(); // challenge hash -> address
 // Row returned for SELECT ... WHERE usernode_pubkey = $1. It carries
 // usernode_pubkey because the wallet handlers verify the signature against
 // the stored column rather than the request field (issue #2502), so a
@@ -37,14 +38,28 @@ let updateReturns = [];     // rows returned for UPDATE ... RETURNING
 poolMod.getPool = () => ({
   query: async (sql, params) => {
     capturedQueries.push({ sql, params });
+    // wallet_challenges, as the table answers: minted, then taken once by
+    // the address it was minted for.
+    if (/INSERT INTO wallet_challenges/.test(sql)) {
+      walletChallengeRows.set(params[0], params[1]);
+      return { rows: [], rowCount: 1 };
+    }
+    if (/DELETE FROM wallet_challenges WHERE challenge_hash/.test(sql)) {
+      if (walletChallengeRows.get(params[0]) !== params[1]) return { rows: [], rowCount: 0 };
+      walletChallengeRows.delete(params[0]);
+      return { rows: [{ '?column?': 1 }], rowCount: 1 };
+    }
     if (/SELECT usernode_pubkey FROM users WHERE id/.test(sql)) {
       return { rows: userLinkedPubkeyRow ? [userLinkedPubkeyRow] : [] };
     }
     if (/SELECT .*usernode_pubkey = \$1/s.test(sql)) {
       return { rows: userByPubkey ? [userByPubkey] : [] };
     }
-    if (/SELECT password FROM users WHERE id/.test(sql)) {
-      return { rows: userPasswordRow ? [userPasswordRow] : [] };
+    if (/SELECT password(, password_set)? FROM users WHERE id/.test(sql)) {
+      return { rows: userPasswordRow ? [{ password_set: true, ...userPasswordRow }] : [] };
+    }
+    if (/UPDATE users SET password = \$1, password_set = TRUE WHERE id = \$2 AND password_set = FALSE/.test(sql)) {
+      return { rows: [], rowCount: userPasswordRow && userPasswordRow.password_set === false ? 1 : 0 };
     }
     if (/SELECT .*password_reset_token_hash = \$1/s.test(sql)) {
       return { rows: userByResetHash ? [userByResetHash] : [] };
@@ -182,6 +197,32 @@ test('change-password: requires current password and verifies it', async () => {
   }
 });
 
+// #4595: an account with no password yet (it signs in with an email code)
+// sets its first one without a current password; the write is conditional,
+// so it cannot overwrite one set meanwhile.
+test('change-password: an account with no password sets its first one without a current password', async () => {
+  reset();
+  userPasswordRow = { password: await bcrypt.hash('unusable-random', 4), password_set: false };
+  currentUser = { id: 6, username: 'bea', isAdmin: false };
+  const server = await startApp(authRoutes, { nodeRpcUrl: 'http://unused' });
+  try {
+    let r = await post(server, '/api/me/password', { newPassword: 'short' });
+    assert.strictEqual(r.res.status, 400, 'still held to the policy');
+    r = await post(server, '/api/me/password', { newPassword: 'brand-new-pw' });
+    assert.strictEqual(r.res.status, 200);
+    assert.strictEqual(r.body.first, true);
+    const upd = capturedQueries.find((q) => /password_set = TRUE WHERE id = \$2 AND password_set = FALSE/.test(q.sql));
+    assert.ok(upd, 'the first password is a conditional write');
+    assert.ok(await bcrypt.compare('brand-new-pw', upd.params[0]));
+    // Once it has one, the current password is asked for again.
+    userPasswordRow.password_set = true;
+    r = await post(server, '/api/me/password', { newPassword: 'brand-new-pw' });
+    assert.strictEqual(r.res.status, 400);
+  } finally {
+    server.close();
+  }
+});
+
 // ── POST /api/auth/wallet-reset-verify ─────────────────────────────
 test('wallet-reset: rejects an invalid/expired challenge before touching the DB', async () => {
   reset();
@@ -258,7 +299,9 @@ test('wallet-reset: a linked NON-genesis wallet is accepted (no genesis gate)', 
   // Force the genesis check to report this address as NOT in the ledger.
   // The reset path must not consult it, so the reset still succeeds.
   const origIsGenesis = genesisAccounts.isGenesisAddress;
+  const origIsLoaded = genesisAccounts.isLoaded;
   genesisAccounts.isGenesisAddress = () => false;
+  genesisAccounts.isLoaded = () => true;
   const rpc = await startRpc();
   const server = await startApp(authRoutes, { nodeRpcUrl: `http://127.0.0.1:${rpc.address().port}` });
   try {
@@ -274,6 +317,7 @@ test('wallet-reset: a linked NON-genesis wallet is accepted (no genesis gate)', 
     assert.ok(capturedQueries.some((q) => /UPDATE users SET password/.test(q.sql)), 'password written for non-genesis linked wallet');
   } finally {
     genesisAccounts.isGenesisAddress = origIsGenesis;
+    genesisAccounts.isLoaded = origIsLoaded;
     server.close();
     rpc.close();
   }
@@ -413,7 +457,9 @@ test('wallet-change: a NON-genesis matching pubkey is accepted (no genesis gate)
   userLinkedPubkeyRow = { usernode_pubkey: 'ut1carol' };
   userByPubkey = { id: 12, username: 'carol', is_admin: false, usernode_pubkey: 'ut1carol' };
   const origIsGenesis = genesisAccounts.isGenesisAddress;
+  const origIsLoaded = genesisAccounts.isLoaded;
   genesisAccounts.isGenesisAddress = () => false;
+  genesisAccounts.isLoaded = () => true;
   const rpc = await startRpc();
   const server = await startApp(authRoutes, { nodeRpcUrl: `http://127.0.0.1:${rpc.address().port}` });
   try {
@@ -426,6 +472,7 @@ test('wallet-change: a NON-genesis matching pubkey is accepted (no genesis gate)
     assert.ok(capturedQueries.some((q) => /UPDATE users SET password/.test(q.sql)), 'password written for non-genesis linked wallet');
   } finally {
     genesisAccounts.isGenesisAddress = origIsGenesis;
+    genesisAccounts.isLoaded = origIsLoaded;
     server.close();
     rpc.close();
   }
@@ -680,4 +727,34 @@ test('email-reset request: a concurrently replaced email receives no recovery li
     assert.deepStrictEqual(r.body, { ok: true });
     assert.strictEqual(sentResetMails.length, 0);
   } finally { server.close(); }
+});
+
+// ── The genesis gate fails closed until the genesis set is loaded ──
+// A freshly started process used to answer every address as genesis until
+// it had read the ledger, so in that window any address could register or
+// link a wallet.
+
+test('genesis: an address is not genesis before the set is loaded', () => {
+  assert.strictEqual(genesisAccounts.isLoaded(), false, 'nothing loads the set in this test');
+  assert.strictEqual(genesisAccounts.isGenesisAddress('ut1anyone'), false);
+});
+
+test('genesis: wallet register and link answer 503 while the set is loading, and write nothing', async () => {
+  reset();
+  const server = await startApp(authRoutes, {});
+  try {
+    for (const path of ['/api/auth/wallet-register', '/api/auth/wallet-link-login']) {
+      const r = await post(server, path, { username: 'mallory', password: 'pw-123456789', pubkey: 'ut1mallory' });
+      assert.strictEqual(r.res.status, 503, path);
+      assert.strictEqual(r.body.code, 'genesis_loading', path);
+    }
+    assert.ok(!capturedQueries.some((q) => /INSERT INTO users|UPDATE users/.test(q.sql)), 'no account written');
+
+    userByPubkey = { id: 12, username: 'carol', is_admin: false, usernode_pubkey: 'ut1carol' };
+    const chk = await post(server, '/api/auth/wallet-check', { pubkey: 'ut1carol' });
+    assert.strictEqual(chk.body.isGenesis, null, 'not known yet, so not "not genesis"');
+    assert.ok(chk.body.challenge, 'a linked wallet still gets its sign-in challenge');
+  } finally {
+    server.close();
+  }
 });

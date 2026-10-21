@@ -5,9 +5,9 @@
 //   - who a project is for can grow from its page: "Make it public" on the
 //     hero, or "Make it private" in its ⋯, opens the visibility proposal
 //     (dev-board/workshop/community-card.tsx);
-//   - the hub's channel card posts from its own composer, Members & activity
-//     draws fourteen days, Needs you counts the votes you owe, and a person
-//     who has not joined sees "Recently" (dev-board/workshop/);
+//   - the hub's head names the project and who is around this week (and
+//     draws no chart), For you's Needs you counts the votes you owe, and a
+//     person who has not joined sees "Recently" (dev-board/workshop/);
 //   - a Mayor card refused for membership offers Join (features/agent-session);
 //   - a Homeroom line kept in #general is drawn as Homeroom's (Homeroom
 //     writes none into a channel now: tests/channel-activity.test.js);
@@ -17,6 +17,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -47,121 +48,197 @@ const community = (over = {}) => ({
 
 const days = (counts) => counts.map((n, i) => ({ day: `2026-09-${String(10 + i).padStart(2, '0')}`, n }));
 
-test('#3268: the hero carries who is here and the fortnight, and who it is for rides the count (#852)', () => {
-  const { HeroPeople, HeroPulse, HERO_FACES, sparkTip } = loadTsx(CARD);
+test('#3268: the hub\'s head is what it is and who is around this week', async () => {
+  const { HeroPeople, HeroActive, HERO_FACES, CommunityCard, reloadCommunity } = loadTsx(CARD);
   const members = ['ada', 'lin', 'kai', 'mia', 'sam', 'zoe', 'raj'].map((u, i) => ({ id: i + 1, username: u }));
   const people = renderToHtml(createElement(HeroPeople, { members, count: 19 },
     createElement('span', { className: 'dev-ws-hero-actions' }, 'Invite')));
   assert.equal(HERO_FACES, 5);
   assert.equal([...people.matchAll(/class="dev-ws-hero-face"/g)].length, 5, 'five faces, then the count says the rest');
   assert.match(people, /<span class="dev-ws-hero-count" data-ws-members-cell="members">19 members<\/span><span class="dev-ws-hero-actions">Invite<\/span>/,
-    'the count, then the actions at the far end of the same row');
+    'the invite preview\'s people row: the count, then what it holds');
 
-  // WHO IS HERE AND HOW LIVELY, ONE BLOCK: the faces, the count over this
-  // week in words, and the chart across from both. "Changes shipped" says
-  // what the number counts; the no-break space keeps the dot off the start
-  // of a wrapped line.
-  const counts = [0, 1, 2, 0, 0, 3, 4, 0, 1, 0, 0, 2, 0, 4];
-  const pulse = (activity, over = {}) => renderToHtml(createElement(HeroPulse, {
-    members, count: 19, audience: 'open', audienceLabel: 'Public community', activity, ...over,
-  }));
-  const html = pulse({ active_week: 4, shipped_month: 3, daily: days(counts) });
-  assert.match(html, /^<div class="dev-ws-hero-pulse" data-ws-members=""><span class="dev-ws-hero-faces" aria-hidden="true">/, 'the faces lead the block');
-  assert.equal([...html.matchAll(/class="dev-ws-hero-face"/g)].length, 5);
-  assert.match(html, /<span class="dev-ws-hero-pulse-words"><span class="dev-ws-hero-count" data-ws-members-cell="members">[\s\S]*?<b>Public community<\/b><\/span> · 19 members<\/span><span class="dev-ws-hero-activity-line" data-ws-members-stats="">/,
-    'who it is for and the count, over the activity line');
-  assert.match(html, /<span data-ws-members-cell="active"><b>4<\/b> active this week<\/span>\u00a0· <span data-ws-members-cell="shipped"><b>3<\/b> changes shipped this month<\/span><\/span><\/span><span class="dev-ws-hero-spark-wrap">/,
-    'then the chart, across from both lines');
-  // No caption under the line and no native tooltip on a bar: the chart's
-  // own tip carries both, and it is not drawn until a bar is pointed at.
-  assert.doesNotMatch(html, /Who took part, last 14 days/);
-  assert.doesNotMatch(html, /data-ws-spark-tip/);
-  const bars = [...html.matchAll(/<span class="(dev-ws-hero-spark-bar[^"]*)" style="height:(\d+)%"><\/span>/g)];
-  assert.equal(bars.length, 14);
-  assert.deepEqual(bars.map((b) => Number(b[2])), counts.map((n) => (n ? Math.max(12, Math.round((n / 4) * 100)) : 8)));
-  assert.ok(bars.every((b, i) => counts[i] ? !/quiet/.test(b[1]) : /quiet/.test(b[1])), 'a quiet day is a sliver in the rule colour');
-  assert.match(sparkTip({ day: '2026-09-11', n: 1 }), / · 1 person$/);
-  assert.match(sparkTip({ day: '2026-09-26', n: 21 }), /Sep 26 · 21 people$/);
-  assert.match(html, /data-ws-members-trend="" role="img" aria-label="People taking part each day, last 14 days: 0, 1, 2/);
-  // The tip follows a mouse and a finger alike, and lingers after a tap.
-  assert.match(CARD_SRC, /onPointerMove=\{\(e\) => \{\s*if \(e\.pointerType === 'mouse' \|\| at != null\) pick\(e\.clientX\);/);
-  assert.match(CARD_SRC, /e\.currentTarget\.setPointerCapture\(e\.pointerId\)/);
-  assert.match(CARD_SRC, /linger\.current = setTimeout\(\(\) => setAt\(null\), TIP_LINGER_MS\);/);
-  assert.match(CSS, /\.dev-ws-hero-spark \{ touch-action: pan-y;/, 'a sideways drag is the chart\'s, a vertical one still scrolls');
-  assert.match(CSS, /\.dev-ws-hero-spark-tip \{\s*position: absolute; right: 0; bottom: calc\(100% \+ 8px\);/, 'against the chart\'s right edge, so it never leaves the screen');
+  // WHO IS AROUND, BY NAME: this week's people (activitySummary
+  // `active_people`, most recent first), "+N" for the rest of the week's
+  // count, "40 active this week" over their names. 15 over 13.
+  const active = (activity) => renderToHtml(createElement(HeroActive, { activity }));
+  const five = ['evan', 'talha', 'zura', 'scraido2', 'kempis'].map((u, i) => ({ id: i + 1, username: u, display_name: null }));
+  const html = active({ active_week: 40, shipped_month: 0, daily: [], active_people: five });
+  assert.match(html, /^<div class="dev-ws-hero-active" data-ws-members="" data-ws-active-people="40"><span class="dev-ws-hero-faces" aria-hidden="true">/, 'the faces lead the row');
+  assert.deepEqual([...html.matchAll(/class="dev-ws-hero-face"[^>]*title="@([^"]+)">([A-Z])</g)].map((m) => [m[1], m[2]]),
+    [['evan', 'E'], ['talha', 'T'], ['zura', 'Z'], ['scraido2', 'S'], ['kempis', 'K']], 'a face each, in the order the server gave');
+  assert.match(html, /<span class="dev-ws-hero-face dev-ws-hero-face-more">\+35<\/span><\/span>/, 'then the rest, counted');
+  assert.match(html, /<span class="dev-ws-hero-active-n" data-ws-members-cell="active">40 active this week<\/span><span class="dev-ws-hero-active-names" data-ws-active-names="">evan, talha, zura, scraido2, kempis and 35 more<\/span>/);
+  const few = active({ active_week: 2, active_people: five.slice(0, 2) });
+  assert.match(few, />2 active this week<\/span><span class="dev-ws-hero-active-names" data-ws-active-names="">evan, talha<\/span>/, 'everyone named: no "and 0 more"');
+  assert.doesNotMatch(few, /dev-ws-hero-face-more/);
+  assert.equal(active({ active_week: 0, active_people: [] }), '', 'a quiet week says nothing');
+  assert.match(active({ active_week: 3 }), /^<div class="dev-ws-hero-active"[^>]*><span class="dev-ws-hero-active-words"><span[^>]*>3 active this week<\/span><\/span><\/div>$/,
+    'an older server without the names: the count alone');
 
-  // A shared tip, not a second way to lose the numbers.
-  const quiet = pulse({ active_week: 0, shipped_month: 0, daily: days(Array(14).fill(0)) });
-  assert.match(quiet, /data-ws-members-trend="" data-ws-trend-empty="">Nobody has been around in the last 14 days\./);
-  assert.doesNotMatch(quiet, /dev-ws-hero-spark/, 'no chart of fourteen slivers');
-  assert.match(quiet, /19 members/, 'who is here still says so');
-  const shippedOnly = pulse({ active_week: 0, shipped_month: 2, daily: days(counts) });
-  assert.doesNotMatch(shippedOnly, /active this week/);
-  assert.doesNotMatch(shippedOnly, /\u00a0· /, 'no separator for one cell');
-  assert.match(shippedOnly, /<b>2<\/b> changes shipped this month/);
-
-  // WHO IT IS FOR rides the count: "Public community · 19 members", its
-  // glyph leading, and Just you is the label alone (#852: the label was a
-  // chip under the name, and the name is the coloured header's now).
-  const labelled = renderToHtml(createElement(HeroPeople, { members, count: 19, audience: 'open', audienceLabel: 'Public community' }));
-  assert.match(labelled, /<span class="dev-ws-hero-count" data-ws-members-cell="members"><span class="dev-ws-hero-audience" data-ws-community-audience=""><svg[^>]*>[\s\S]*?<\/svg><b>Public community<\/b><\/span> · 19 members<\/span>/);
-  const alone = renderToHtml(createElement(HeroPeople, { members: [], count: 1, audience: 'solo', audienceLabel: 'Just you' }));
-  assert.match(alone, /<b>Just you<\/b><\/span><\/span>/);
-  assert.doesNotMatch(alone, /\d+ members?/, 'Just you counts nobody');
-
-  // What it is first, then who is here and how lively it has been, then one
-  // row of what you can do. Just you is the label alone: nobody to show and
-  // no fortnight to count.
-  const src = CARD_SRC;
-  // #4045: in a project's first week (`week`) the fortnight is left out and
-  // the people line is the row's own (WeekPeople, below); the description
-  // sits under that row instead of above it.
-  const hero = src.slice(src.indexOf('export function CommunityCard('), src.indexOf('export function ApprovalRules('));
-  assert.match(hero, /\{week \? null : solo \? \(\s*<HeroPeople members=\{\[\]\} count=\{Number\(data\.member_count\) \|\| 0\} audience=\{data\.audience\} audienceLabel=\{data\.audience_label\} \/>\s*\) : \(\s*<HeroPulse\s+members=\{data\.members\}\s+count=\{Number\(data\.member_count\) \|\| 0\}\s+audience=\{data\.audience\}\s+audienceLabel=\{data\.audience_label\}\s+activity=\{data\.activity\}\s+\/>\s*\)\}/);
-  assert.ok(hero.indexOf('{data.description && !week ? descLine : null}') < hero.indexOf('<HeroPulse'), 'what it is, then who is here');
-  assert.ok(hero.indexOf('<HeroPulse') < hero.lastIndexOf('<div className="dev-ws-hero-row">'), 'then what you can do');
-  assert.ok(hero.indexOf('<div className="dev-ws-hero-row">') < hero.indexOf('{data.description && week ? descLine : null}'), 'in the first week the row comes first, then what it is');
-  assert.doesNotMatch(src, /HeroActivity/, 'the activity is the pulse\'s second line, not a row of its own');
+  // THE HEAD, rendered from the shared read: the tile and the name (the
+  // page's one large heading) over "Public community · 266 members", the
+  // description, who is around, then the row of actions with the ⋯ last.
+  const payload = (over = {}) => ({
+    slug: 'garden-head', name: 'Garden', description: 'Seeds, swaps and Sunday digs.',
+    member_count: 266, is_member: true, is_creator: false, audience: 'open', audience_label: 'Public community',
+    members, channel: null,
+    activity: { active_week: 40, shipped_month: 9, daily: days(Array(14).fill(1)), active_people: five },
+    approval: { policy: 'anyone', approvals_required: null, electorate: 12, required: 5 },
+    ...over,
+  });
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    const slug = String(url).match(/\/api\/apps\/([^/]+)\/community/)[1];
+    return { ok: true, json: async () => (slug === 'garden-solo'
+      ? payload({ slug, audience: 'solo', audience_label: 'Just you', member_count: 1 })
+      : slug === 'garden-solo-outside'
+        ? payload({ slug, audience: 'solo', audience_label: 'Just you', member_count: 1, is_member: false })
+        : payload({ slug })) };
+  };
+  try {
+    await reloadCommunity('garden-head');
+    await reloadCommunity('garden-solo');
+    const menu = createElement('span', { className: 'dev-ws-plus' }, createElement('button', { id: 'dev-plus-btn' }));
+    const hero = renderToHtml(createElement(CommunityCard, { slug: 'garden-head', name: 'Garden', iconEmoji: '🌱', menu }));
+    assert.match(hero, /^<section class="dev-ws-hero dev-ws-hero-summary" data-ws-community="" data-audience="open">/);
+    assert.match(hero, /<div class="dev-ws-hero-id" data-ws-community-id=""><span class="app-icon-tile dev-ws-hero-tile" data-icon="emoji" aria-hidden="true"><span[^>]*>🌱<\/span><\/span><span class="dev-ws-hero-id-text"><h1 class="dev-ws-hero-name" data-ws-community-name="">Garden<\/h1><span class="dev-ws-hero-id-sub" data-ws-members-cell="members"><span class="dev-ws-hero-audience" data-ws-community-audience="">Public community<\/span> · 266 members<\/span><\/span><\/div>/,
+      'the tile and the name over who it is for and how many are in it');
+    const at = (needle) => hero.indexOf(needle);
+    const order = ['data-ws-community-id=""', 'data-ws-community-description=""', 'data-ws-active-people="40"', 'class="dev-ws-hero-row"'].map(at);
+    assert.ok(order.every((n) => n > 0), JSON.stringify(order));
+    assert.deepEqual([...order].sort((a, b) => a - b), order, 'what it is, what it is for, who is around, then what you can do');
+    assert.match(hero, /<div class="dev-ws-hero-actions"><button[^>]*data-ws-community-invite=""[^>]*>Invite<\/button><span class="dev-ws-plus"><button id="dev-plus-btn"><\/button><\/span><\/div>/,
+      'Invite, then the ⋯, last');
+    assert.doesNotMatch(hero, /data-ws-members-trend|shipped this month/, 'no chart and nothing about what shipped');
+    // Just you: the label alone under the name, and nobody else to name.
+    // #4896: to its one member it is "Just you so far", and Invite is in
+    // the row of what they can do (it was the Share it card's alone).
+    const solo = renderToHtml(createElement(CommunityCard, { slug: 'garden-solo', name: 'Garden', menu }));
+    assert.match(solo, /<h1 class="dev-ws-hero-name" data-ws-community-name="">Garden<\/h1><span class="dev-ws-hero-id-sub" data-ws-members-cell="members"><span class="dev-ws-hero-audience" data-ws-community-audience="">Just you so far<\/span><\/span>/);
+    assert.match(solo, /<div class="dev-ws-hero-actions"><button[^>]*data-ws-community-invite=""[^>]*>Invite<\/button><span class="dev-ws-plus"><button id="dev-plus-btn"><\/button><\/span><\/div>/,
+      'Invite, then the ⋯');
+    assert.doesNotMatch(solo, /data-ws-active-people/, 'no faces: nobody else to name');
+    // Somebody outside it (an admin's look) reads the audience's name, and
+    // is offered no Invite: making a link is a member's.
+    await reloadCommunity('garden-solo-outside');
+    const outside = renderToHtml(createElement(CommunityCard, { slug: 'garden-solo-outside', name: 'Garden', menu }));
+    assert.match(outside, /data-ws-community-audience="">Just you<\/span>/);
+    assert.doesNotMatch(outside, /Just you so far|data-ws-community-invite/);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+  const hero = CARD_SRC.slice(CARD_SRC.indexOf('export function CommunityCard('), CARD_SRC.indexOf('export function shareItLine('));
+  // One hub from the first day (15 Oct 2026): what it is, its description,
+  // who is around when anybody else is, then what you can do.
+  assert.match(hero, /<HeroIdentity slug=\{slug\} name=\{displayName\} iconUrl=\{iconUrl\} iconEmoji=\{iconEmoji\} data=\{data\} member=\{member\} \/>\s*\{data\.description \? \(\s*<p className="dev-ws-hero-desc" data-ws-community-description="">\{data\.description\}<\/p>\s*\) : null\}/);
+  assert.match(hero, /const others = !solo && \(Number\(data\.member_count\) \|\| 0\) > 1;/);
+  assert.match(hero, /\{others \? <HeroActive activity=\{data\.activity\} \/> : null\}/);
+  assert.match(hero, /className="dev-ws-hero dev-ws-hero-summary"/, 'the hub\'s head, always');
+  assert.ok(hero.indexOf('<HeroActive') < hero.lastIndexOf('<div className="dev-ws-hero-row">'), 'then what you can do');
+  assert.doesNotMatch(CARD_SRC, /HeroActivity|HeroPulse/, 'who is around is one row');
   // The people, Invite and the ⋯ lead the row; Join is across from them at
   // its far end. "Make it public" and Leave are the ⋯'s now (#4045), and
   // Open app gives way to the First version card while it shows.
-  // the people line is the row's own (WeekPeople, below); the description
-  assert.match(src, /const appButton = data\.first_version \? null : openApp;/);
-  const row = src.slice(src.indexOf('<div className="dev-ws-hero-row">'), src.indexOf('{data.description && week ? descLine : null}'));
+  assert.match(CARD_SRC, /const appButton = data\.first_version \? null : openApp;/);
+  const row = CARD_SRC.slice(CARD_SRC.indexOf('<div className="dev-ws-hero-row">'), CARD_SRC.indexOf('{data.audience_change ? ('));
   assert.doesNotMatch(row, /<MakePublic|data-ws-community-leave/);
-  // How a change gets in is the Workshop page's Approval rules card now.
+  // How a change gets in is the last line of the Workshop's Overview card now.
   assert.doesNotMatch(hero, /data-ws-community-rule/);
-  assert.match(src, /export function ApprovalRules\([\s\S]*?data-ws-approval-rules=""[\s\S]*?data-ws-community-rule="">\{approvalLine\(data\.approval, data\)\}/);
+  // After-Workshop-B: one line, the whole rule in one sentence its tooltip.
+  assert.match(CARD_SRC, /export function ApprovalLine\([\s\S]*?<p className="dev-ws-ov-rule" data-ws-approval-rules="" title=\{approvalLine\(data\.approval, data\)\}>[\s\S]*?<span className="dev-ws-ov-rule-text" data-ws-community-rule="">/);
   assert.doesNotMatch(read(HUB), /export function MembersCard/, 'the hub has no Members & activity card any more');
 });
 
-test('#4045: the first week\'s people row is the lock over "N people", or your face between open seats', () => {
-  const { WeekPeople, WEEK_FACES } = loadTsx(CARD);
-  const members = ['ada', 'lin', 'kai', 'mia'].map((u, i) => ({ id: i + 1, username: u }));
-  const three = renderToHtml(createElement(WeekPeople, { members, count: 4, audience: 'invited', audienceLabel: 'Private community' }));
-  assert.equal(WEEK_FACES, 3);
-  assert.equal([...three.matchAll(/class="dev-ws-hero-face"/g)].length, 3, 'three faces, then the count says the rest');
-  assert.match(three, /data-ws-community-audience=""><svg[^>]*>[\s\S]*?<\/svg><b>Private community<\/b><\/span><span class="dev-ws-hero-week-count">4 people<\/span>/,
-    'the audience with its glyph, "4 people" under it');
-  assert.doesNotMatch(three, /\d+ members/);
-  // A public community says so the same way.
-  const open = renderToHtml(createElement(WeekPeople, { members, count: 12, audience: 'open', audienceLabel: 'Public community' }));
-  assert.match(open, /<b>Public community<\/b><\/span><span class="dev-ws-hero-week-count">12 people<\/span>/);
-  // Just you: the label alone, no faces and no count.
-  const solo = renderToHtml(createElement(WeekPeople, { members: [members[0]], count: 1, audience: 'solo', audienceLabel: 'Just you' }));
-  assert.match(solo, /<b>Just you<\/b><\/span><\/span>/);
-  assert.doesNotMatch(solo, /dev-ws-hero-face|\d+ (people|person)/);
-  // An invite link is out: your face between two open seats, and the audience
-  // it is about to be, with no count of one.
-  const seats = renderToHtml(createElement(WeekPeople, { members: [members[0]], count: 1, audience: 'solo', audienceLabel: 'Just you', seats: true }));
-  assert.match(seats, /data-ws-seats=""/);
-  assert.match(seats, /<span class="dev-ws-hero-faces dev-ws-hero-seats" aria-hidden="true"><span class="dev-ws-hero-face dev-ws-hero-seat"[^>]*><svg[\s\S]*?<\/svg><\/span><span class="dev-ws-hero-face"[^>]*>A<\/span><span class="dev-ws-hero-face dev-ws-hero-seat"/,
-    'a seat, you, a seat');
-  assert.match(seats, /<b>Private community<\/b>/);
-  assert.doesNotMatch(seats, /Just you|\d+ (people|person)|dev-ws-hero-week-count/);
-  // The seats are the link's: only a member of a Just you project with one out.
-  assert.match(CARD_SRC, /const seats = member && solo && !!data\.invite_link;/);
-  assert.match(CSS, /\.dev-ws-hero-row > \.dev-ws-hero-week-people \+ \.dev-ws-hero-actions \{ flex: none;/);
+test('the hub draws no charts: who is around is faces, a count and names, and nothing on the hub is a dashboard', () => {
+  const { HeroActive } = loadTsx(CARD);
+  const counts = [0, 1, 2, 0, 0, 3, 4, 0, 1, 0, 0, 2, 0, 4];
+  const five = ['evan', 'talha', 'zura', 'scraido2', 'kempis'].map((u, i) => ({ id: i + 1, username: u }));
+  const active = (activity) => renderToHtml(createElement(HeroActive, { activity }));
+  // A fortnight of activity is in the record, and the row still ends on the
+  // names: no bars, no tip, no trend hook.
+  const html = active({ active_week: 40, daily: days(counts), active_people: five });
+  assert.match(html, /<span class="dev-ws-hero-active-names" data-ws-active-names="">evan, talha, zura, scraido2, kempis and 35 more<\/span><\/span><\/div>$/,
+    'the faces, the count and the names, and nothing after them');
+  assert.doesNotMatch(html, /data-ws-members-trend|role="img"|spark|trend/);
+  // A zero says nothing: a quiet week is no row, whatever came before it.
+  assert.equal(active({ active_week: 0, daily: days(counts), active_people: [] }), '');
+  // No chart code is left for the hero or the hub, and none of its styles
+  // or words: How it's going and the hero's sparkline are both gone.
+  assert.doesNotMatch(CARD_SRC, /function Spark|sparkTip|sparkDay|TIP_LINGER_MS|data-ws-members-trend/);
+  assert.doesNotMatch(read(HUB), /GoingCard|TrendBars|data-ws-hub-going|data-ws-members-trend|hub\.going\./);
+  assert.doesNotMatch(LANDER, /<GoingCard/);
+  assert.doesNotMatch(CSS, /\.dev-ws-hero-spark|\.dev-ws-going|\.dev-ws-trend|\.dev-ws-stat-(?:n|label|sub|figure|words)/);
+  for (const id of ['project:communityCard.spark.caption', 'project:communityCard.spark.tip_other', 'project:hub.going.title']) {
+    assert.throws(() => message(id), undefined, `${id} is gone from the catalog`);
+  }
+  // The declared check that read the trend reads who is around instead.
+  // (#4729 removed three checks above it, so its index moved 290 → 288;
+  // #3969 added the Accessibility settings check above it, so it moved
+  // 288 → 289.)
+  const declared = JSON.parse(read('dapp.json')).tests[289];
+  assert.match(declared.expectSelector, /:has\(\.dev-ws-hero \[data-ws-active-people\]\) > \.dev-ws-tabbody > \[data-ws-hub-for-you\] > \.dev-ws-foryou > \[data-ws-hub-needs-votes\] > button\[data-ws-hub-needs-open\]$/);
+  assert.equal(declared.expectText, 'to vote');
+});
+
+test('one hub from the first day: a new project leads with its tile and name, and a link out is still "Just you so far" (15 Oct 2026)', async () => {
+  // A project's first week had a hero of its own (#4045): no tile or name,
+  // which the First version card was to draw, so a ready-made app's hub had
+  // no name at all, and a link out read "Private community" between open
+  // seats. Now every hub leads the same way, from its first day.
+  const { CommunityCard, reloadCommunity } = loadTsx(CARD);
+  const record = (over = {}) => community({
+    slug: 'garden-new', audience: 'solo', audience_label: 'Just you', member_count: 1,
+    description: 'Seeds, swaps and Sunday digs.', is_creator: true, members: [{ id: 1, username: 'ada' }],
+    activity: { active_week: 1, shipped_month: 0, active_people: [{ id: 1, username: 'ada' }] }, first_version: null, ...over,
+  });
+  const records = {
+    'garden-new': record(),
+    'garden-new-link': record({
+      slug: 'garden-new-link', invite_link: true,
+      invite_summary: { links: 1, joined: 0, waiting: 0, expires_at: '2026-10-22T12:00:00.000Z' },
+    }),
+    'garden-new-group': record({
+      slug: 'garden-new-group', audience: 'invited', audience_label: 'Private community', member_count: 3, is_creator: false,
+      members: [{ id: 1, username: 'ada' }, { id: 2, username: 'lin' }, { id: 3, username: 'kai' }],
+      activity: { active_week: 3, shipped_month: 0, active_people: [{ id: 1, username: 'ada' }, { id: 2, username: 'lin' }, { id: 3, username: 'kai' }] },
+    }),
+    'garden-new-alone': record({
+      slug: 'garden-new-alone', audience: 'open', audience_label: 'Public community', member_count: 1,
+    }),
+  };
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    const slug = String(url).match(/\/api\/apps\/([^/]+)\/community/)[1];
+    return { ok: true, json: async () => records[slug] };
+  };
+  try {
+    for (const slug of Object.keys(records)) await reloadCommunity(slug);
+    const menu = createElement('span', { className: 'dev-ws-plus' }, createElement('button', { id: 'dev-plus-btn' }));
+    const draw = (slug) => renderToHtml(createElement(CommunityCard, { slug, name: 'Garden', iconEmoji: '🌱', menu, canOpenApp: true }));
+    const fresh = draw('garden-new');
+    assert.match(fresh, /^<section class="dev-ws-hero dev-ws-hero-summary" data-ws-community="" data-audience="solo">/,
+      'the hub\'s head, as on every project');
+    assert.match(fresh, /<div class="dev-ws-hero-id" data-ws-community-id=""><span class="app-icon-tile dev-ws-hero-tile" data-icon="emoji" aria-hidden="true">[\s\S]*?<h1 class="dev-ws-hero-name" data-ws-community-name="">Garden<\/h1><span class="dev-ws-hero-id-sub" data-ws-members-cell="members"><span class="dev-ws-hero-audience" data-ws-community-audience="">Just you so far<\/span><\/span><\/span><\/div><p class="dev-ws-hero-desc" data-ws-community-description="">Seeds, swaps and Sunday digs\.<\/p><div class="dev-ws-hero-row"><div class="dev-ws-hero-actions"><button[^>]*data-ws-community-open-app=""[\s\S]*?<\/button><button[^>]*data-ws-community-invite=""[^>]*>Invite<\/button><span class="dev-ws-plus">/,
+      'its tile and name over "Just you so far", its description, then Open app, Invite and the ⋯');
+    assert.doesNotMatch(fresh, /data-ws-active-people|dev-ws-hero-week|data-ws-seats/, 'nobody else to name, and no first week\'s row');
+    // A link out does not make it a private community: somebody joining does.
+    const link = draw('garden-new-link');
+    assert.match(link, /data-ws-community-audience="">Just you so far<\/span>[\s\S]*data-ws-community-invite=""/);
+    assert.doesNotMatch(link, /Private community|data-ws-seats|dev-ws-hero-seat/);
+    // A group in its first week reads as any group does: who is around too.
+    const group = draw('garden-new-group');
+    assert.match(group, /data-ws-community-audience="">Private community<\/span> · 3 members<\/span>/);
+    assert.match(group, /data-ws-active-people="3"/, 'who is around, with other people in it');
+    // Nobody else in it yet: nobody else to name, whatever its audience.
+    assert.doesNotMatch(draw('garden-new-alone'), /data-ws-active-people/);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+  // Invite is the same button and the same pane a community's hero opens.
+  assert.match(CARD_SRC, /data-ws-community-invite=""\s+title=\{t\('project:communityCard\.invite\.title'\)\}\s+onClick=\{openInviteLinks\}/);
+  assert.doesNotMatch(CARD_SRC, /first_week|WeekPeople|WEEK_FACES|const seats = |dev-ws-hero-week/, 'the first week\'s own hero is gone');
+  assert.doesNotMatch(CSS, /dev-ws-hero-week|dev-ws-hero-seat/, 'and its styles with it');
 });
 
 test('#3276: the hero\'s rows wrap instead of running past a phone\'s edge', () => {
@@ -179,158 +256,249 @@ test('#3276: the hero\'s rows wrap instead of running past a phone\'s edge', () 
   assert.match(rule('.dev-ws-hero-member'), /margin-left: auto; flex: none;/);
   // The Join popup hangs from the right of its button, which ends the row.
   assert.match(CSS, /\.dev-ws-hero \.dev-ws-hero-member \.dev-ws-join-pop \{ left: auto; right: -6px; \}/);
-  // The pulse: faces, words, chart in one row on a wide window; under 768px
-  // the chart moves up across from the faces and the words take the width.
-  assert.match(CSS, /\.dev-ws-hero-pulse \{\s*display: grid; grid-template-columns: auto minmax\(0, 1fr\) auto;\s*grid-template-areas: "faces words chart";/);
-  assert.match(CSS, /@media \(max-width: 767\.98px\) \{\s*\.dev-ws-hero-pulse \{\s*grid-template-columns: minmax\(0, 1fr\) auto;\s*grid-template-areas: "faces chart" "words words";/);
-  assert.match(rule('.dev-ws-hero-pulse-words'), /grid-area: words; min-width: 0;/);
-  assert.match(CSS, /\.dev-ws-hero-activity-line > \[data-ws-members-cell\] \{ white-space: nowrap; \}/, 'a narrow phone breaks the line at its separator');
+  // THE HUB'S HEAD stacks on a phone: name, description, who is around, then
+  // the actions. From 768px the actions sit across from the name, packed
+  // into the hole beside it, and the ⋯'s menu opens leftward into the column.
+  assert.match(CSS, /@media \(min-width: 768px\) \{\s*\.dev-ws-hero-summary \{\s*display: grid; grid-template-columns: minmax\(0, 1fr\) auto; grid-auto-flow: row dense;/);
+  assert.match(CSS, /\.dev-ws-hero-summary > \* \{ grid-column: 1 \/ -1; \}\s*\.dev-ws-hero-summary > \.dev-ws-hero-id \{ grid-column: 1; \}\s*\.dev-ws-hero-summary > \.dev-ws-hero-row \{ grid-column: 2; align-self: center; \}\s*\.dev-ws-hero-summary #dev-plus-menu \{ left: auto; right: 0; \}/);
+  assert.ok(CSS.indexOf('.dev-ws-hero-summary #dev-plus-menu') > CSS.indexOf('.dev-ws-hero #dev-plus-menu { left: 0; right: auto; }'),
+    'after the phone\'s rule, so it wins on a wide window');
+  // Who is around keeps its names to one line, cut short on a narrow phone.
+  assert.match(rule('.dev-ws-hero-active'), /display: flex; align-items: center; gap: 12px; min-width: 0;/);
+  assert.match(CSS, /\.dev-ws-hero-active-names \{\s*font-size: 13px; line-height: 18px; color: var\(--text-muted\);\s*overflow: hidden; text-overflow: ellipsis; white-space: nowrap;/);
+  assert.match(rule('.dev-ws-hero-name'), /overflow-wrap: anywhere;/, 'a long name wraps rather than widening the page');
 });
 
-test('Needs you counts the votes you owe, not the requests nobody has claimed', () => {
-  const { NeedsCard } = loadTsx(HUB);
+test('For you: Needs you counts the votes you owe, not the requests nobody has claimed', () => {
+  const { ForYouCard, NothingToVote, owesVote } = loadTsx(HUB);
   const row = (key, title, kind) => ({ t: 'card', key, card: { title: { text: title } }, who: 'ada', kind });
-  const mixed = renderToHtml(createElement(NeedsCard, {
-    queue: [row('c1', 'Fix login', 'claim'), row('v1', 'Dark mode', 'vote'), row('c2', 'Tags', 'claim')],
-    canPost: true,
-    onOpen: () => {},
+  const card = (queue, over = {}) => renderToHtml(createElement(ForYouCard, {
+    slug: 'garden', queue, mine: null, alone: false,
+    data: community(), canPost: true, onNeeds: () => {}, onWork: () => {}, onDiscussion: () => {}, ...over,
   }));
+  const mixed = card([row('c1', 'Fix login', 'claim'), row('v1', 'Dark mode', 'vote'), row('c2', 'Tags', 'claim')]);
   assert.match(mixed, /data-ws-hub-needs-votes="1"/);
-  assert.match(mixed, /<span class="dev-ws-head-n">1 to vote<\/span>/);
-  assert.match(mixed, /<span class="dev-ws-hub-needs-title">Dark mode<\/span>/, 'the first VOTE leads, not the first row');
+  assert.match(mixed, /<span class="dev-ws-foryou-pill">1 to vote<\/span>/);
+  assert.match(mixed, /<span data-ws-hub-needs-first="">Dark mode<\/span>/, 'the first VOTE leads, not the first row');
   assert.doesNotMatch(mixed, /Fix login/);
-  // #3408: requests alone owe no vote, so the hub draws no card, only the
-  // line, and its count of requests is the way into the queue.
-  const { NothingToVote, owesVote } = loadTsx(HUB);
+  // #3408: requests owe no vote, so the hub draws no Needs you row, only
+  // the line, and its count of requests (the view model's open unclaimed
+  // count, now that the queue is votes alone) is the way to them.
   const claims = [row('c1', 'Fix login', 'claim'), row('c2', 'Tags', 'claim')];
   assert.equal(owesVote(claims), false, 'requests alone owe no vote');
   assert.equal(owesVote([...claims, row('v1', 'Dark mode', 'vote')]), true);
-  const claimsOnly = renderToHtml(createElement(NothingToVote, { queue: claims, onOpen: () => {} }));
+  const claimsOnly = renderToHtml(createElement(NothingToVote, { unclaimed: 2, onOpen: () => {} }));
   assert.match(claimsOnly, /^<p class="dev-ws-week-note" data-ws-hub-needs-none="">Nothing more to vote on · <button type="button" class="dev-ws-link un-touch-target" data-ws-hub-needs-requests="">2 requests nobody has picked up<\/button><\/p>$/);
-  assert.doesNotMatch(claimsOnly, /dev-ws-head-n|Needs you/, 'no card, no count');
-  const one = renderToHtml(createElement(NothingToVote, { queue: [claims[0]], onOpen: () => {} }));
+  assert.doesNotMatch(claimsOnly, /dev-ws-foryou-pill|Needs you/, 'no row, no count');
+  const one = renderToHtml(createElement(NothingToVote, { unclaimed: 1, onOpen: () => {} }));
   assert.match(one, />1 request nobody has picked up</);
+  assert.match(renderToHtml(createElement(NothingToVote, { unclaimed: 0, onOpen: () => {} })), />Nothing more to vote on\.</);
+  // In the card, that line is the Needs you place's own, counted from
+  // `unclaimed` and opening the Workshop, where the requests are.
+  assert.match(card([], { unclaimed: 2 }), /<div class="dev-ws-strip dev-ws-foryou"><p class="dev-ws-week-note" data-ws-hub-needs-none="">Nothing more to vote on · <button[^>]*data-ws-hub-needs-requests="">2 requests nobody has picked up</);
+  assert.doesNotMatch(card(claims), /requests? nobody has picked up/, 'queue rows are not requests any more');
 });
 
 test('#3489: Your work stays on the hub with nothing in progress, and says so', () => {
-  const { YourWorkCard } = loadTsx(HUB);
-  const props = { slug: 'garden', canPost: true, openKey: null, onToggleRow: () => {}, all: false, onAll: () => {} };
-  const empty = renderToHtml(createElement(YourWorkCard, { ...props, rows: [] }));
-  assert.match(empty, /^<section class="dev-ws-strip dev-ws-hub-work" data-ws-mine-card="">/);
-  assert.match(empty, /<span class="dev-ws-head-title">Your work<\/span>/);
-  assert.match(empty, /<p class="text-xs text-zinc-500 dark:text-zinc-400" data-ws-mine-empty="">No work in progress\.<\/p>/);
-  assert.doesNotMatch(empty, /dev-ws-head-n|data-ws-lane|data-ws-mine-more/, 'no count of zero, no empty lane, no reveal');
+  const { ForYouCard } = loadTsx(HUB);
+  const card = (mine, over = {}) => renderToHtml(createElement(ForYouCard, {
+    slug: 'garden', queue: [], mine, alone: false,
+    data: community(), canPost: true, onNeeds: () => {}, onWork: () => {}, onDiscussion: () => {}, ...over,
+  }));
+  const empty = card({ viewer: true, count: 0, shown: 3, rows: [] });
+  assert.match(empty, /<button type="button" class="[^"]*dev-ws-foryou-row[^"]*" data-ws-mine-card="" data-ws-mine-open="workshop">/,
+    'a door to the Workshop, where your work is listed in full');
+  assert.match(empty, /<div class="[^"]*">Your work<\/div><div class="[^"]*"><span data-ws-mine-empty="">No work in progress\.<\/span><\/div>/);
+  assert.doesNotMatch(empty, /dev-ws-foryou-count|in progress<\/span>/, 'no count of zero');
   // Only a signed-in viewer's hub draws it: a visitor has no work to list.
-  // A project nobody else is in may leave it out (tests/hub-just-you.test.js).
-  assert.match(LANDER, /\{v\.mine && \(v\.mine\.rows\.length \|\| \(v\.mine\.viewer && workEmpty\)\) \? \(\s*<YourWorkCard/);
+  // A project nobody else is in says it the same way, from its first day
+  // (15 Oct 2026, tests/hub-just-you.test.js).
+  assert.doesNotMatch(card({ viewer: false, count: 0, shown: 3, rows: [] }), /data-ws-mine-card/);
+  assert.match(card({ viewer: true, count: 0, shown: 3, rows: [] }, { alone: true, data: community({ audience: 'solo', member_count: 1 }) }),
+    /data-ws-mine-open="workshop"[\s\S]*<span data-ws-mine-empty="">No work in progress\.<\/span>/);
+  // With work: the first of it, and how many, in words.
+  const work = (key, title, attrs = {}) => ({ t: 'card', key, card: { title: { text: title }, attrs } });
+  const busy = card({ viewer: true, count: 2, shown: 3, rows: [work('mine:proposal:7', 'Add multi-language support across platform and apps'), work('mine:issue:9', 'Tags')] });
+  assert.match(busy, /<span data-ws-mine-first="mine:proposal:7">Add multi-language support across platform and apps<\/span>/);
+  assert.match(busy, /<span class="dev-ws-foryou-count">2 in progress<\/span>/);
+  assert.doesNotMatch(busy, />Tags</, 'the rest are the Workshop\'s');
+  assert.match(LANDER, /<ForYouCard\s+slug=\{slug\}\s+queue=\{v\.queue\}\s+unclaimed=\{v\.dashboard \? v\.dashboard\.unclaimed : 0\}\s+mine=\{v\.mine\}\s+alone=\{alone\}\s+data=\{community\}\s+canPost=\{canPost\}\s+onNeeds=\{\(\) => openTab\('needs'\)\}\s+onWork=\{\(\) => openTab\('workshop'\)\}\s+onDiscussion=\{\(\) => openTab\('discussion'\)\}\s+\/>/);
 });
 
-test('the channel card\'s composer sends to the room and re-reads the hub', () => {
-  const src = read(HUB);
-  const composer = src.slice(src.indexOf('function HubComposer('), src.indexOf('export function NeedsCard('));
-  assert.match(composer, /await fetch\(url, \{\s*method: 'POST',\s*headers: \{ 'Content-Type': 'application\/json' \},\s*body: JSON\.stringify\(\{ content \}\),/);
-  assert.match(composer, /if \(body && body\.code === 'join_required'\) return;/,
-    'a membership refusal is the fetch wrapper\'s question, and the draft stays');
-  assert.match(composer, /setText\(''\);\s*await reloadCommunity\(slug\);/);
-  // #general's placeholder names the channel.
-  const { ChannelCard } = loadTsx(HUB);
-  const html = renderToHtml(createElement(ChannelCard, {
-    slug: 'homeroom', name: 'Homeroom',
-    data: community({ channel: { last_message: null, last_at: null, last_by: null, unread_count: 0, recent: [], href: '#messages/1', handle: 'general', post_url: '/api/conversations/1/messages' } }),
-  }));
-  assert.match(html, /placeholder="Message #general…"/);
-  // The server hands the composer each room's own write route.
+test('the hub\'s channel record names each room\'s own write route, which the Discussion reads', () => {
+  // The hub's composer is gone with its channel card; the record still names
+  // where a message goes, and the Discussion place reads it to say whether it
+  // can be written in.
+  assert.doesNotMatch(read(HUB), /function HubComposer|data-ws-channel-compose/, 'no composer on the hub');
+  assert.match(read('frontend/src/features/dev-board/workshop/project-discussion.tsx'), /const readOnly = !channel\?\.post_url;/);
   const route = read('src/routes/apps.js');
   assert.match(route, /post_url: `\/api\/conversations\/\$\{conversationId\}\/messages`,/);
   assert.match(route, /post_url: `\/api\/apps\/\$\{encodeURIComponent\(app\.slug\)\}\/messages`,/);
 });
 
-test('a person who has not joined sees "Recently" over the same rows', () => {
-  assert.match(LANDER, /const outsider = !!community && !community\.is_member;/);
-  // A first visit, with no last visit to be since, reads "Recently" too.
-  assert.match(LANDER, /<span className="dev-ws-since-label">\{v\.since && !outsider \? 'Since your last visit' : 'Recently'\}<\/span>/);
-  // The rows and Clear are the same for everyone (declared checks select on
-  // Clear on Homeroom's page); only the heading's words change.
-  assert.doesNotMatch(LANDER, /outsider \? null/);
+test('#4457, After-Workshop-B: the approval rule is one line: its checks pass, and who says yes, by name where there are names', () => {
+  const { approvalStep, ruleSentence, RuleWords, ApprovalLine } = loadTsx(CARD);
+  const member = { audience: 'invited', is_member: true };
+  // Each regime is one whole sentence, in two wordings: the wide card's, and
+  // the narrow card's without "A change".
+  const say = (approval, viewer, approvers) => {
+    const r = ruleSentence({ approvals_required: null, ...approval }, viewer, approvers);
+    const long = message(r.long, r.values);
+    assert.equal(message(r.short, r.values), long.replace(/^A change goes live/, 'Goes live'), `${r.long}: the short wording is the long one less "A change"`);
+    return [long, r.names];
+  };
+  const L = 'A change goes live when its checks pass and ';
+  // Invited approvers, named where either one or all of them is what it
+  // takes and the names are the whole electorate (at most three of them).
+  assert.deepEqual(say({ policy: 'invited', electorate: 2, required: 1 }, member, ['evan', 'snait']),
+    [`${L}<0></0><1>evan or snait</1> says yes.`, ['evan', 'snait']]);
+  assert.deepEqual(say({ policy: 'invited', electorate: 2, required: 2 }, member, ['evan', 'snait']),
+    [`${L}<0></0><1>evan and snait</1> say yes.`, ['evan', 'snait']]);
+  assert.deepEqual(say({ policy: 'invited', electorate: 1, required: 1 }, member, ['evan']), [`${L}<0></0><1>evan</1> says yes.`, ['evan']]);
+  // Otherwise counted, as the steps counted them.
+  assert.deepEqual(say({ policy: 'invited', electorate: 5, required: 1 }, member, ['a', 'b', 'c', 'd', 'e']),
+    [`${L}1 of the 5 approvers says yes.`, null], 'past three names, a count');
+  assert.deepEqual(say({ policy: 'invited', electorate: 3, required: 2 }, member, ['a', 'b', 'c']),
+    [`${L}2 of the 3 approvers say yes.`, null], 'some of the named is a count, not a list');
+  assert.deepEqual(say({ policy: 'invited', electorate: 2, required: 1 }, member, null), [`${L}1 of the 2 approvers says yes.`, null],
+    'and a viewer the approvers route refuses reads the count');
+  assert.deepEqual(say({ policy: 'invited', electorate: 1, required: 1 }, member, null), [`${L}the approver says yes.`, null]);
+  assert.deepEqual(say({ policy: 'invited', electorate: 2, required: 2 }, member, null), [`${L}both approvers say yes.`, null]);
+  assert.deepEqual(say({ policy: 'invited', electorate: 4, required: 4 }, member, null), [`${L}all 4 approvers say yes.`, null]);
+  assert.deepEqual(say({ policy: 'invited', electorate: 2, required: 3 }, member, null), [`${L}3 approvers (there are 2) say yes.`, null]);
+  // Members vote: the eased threshold; the wait rule is approvalStep's line.
+  const open = { audience: 'open', is_member: true };
+  assert.deepEqual(say({ policy: 'anyone', electorate: 12, required: 2 }, open, null), [`${L}2 of the 12 active members approve it.`, null]);
+  assert.equal(approvalStep({ policy: 'anyone', approvals_required: null, electorate: 12, required: 2 }, open, null).wait,
+    'Or after a wait, if one approves and nobody objects');
+  assert.deepEqual(say({ policy: 'anyone', electorate: 12, required: 1 }, open, null), [`${L}1 of the 12 active members approves it.`, null]);
+  assert.deepEqual(say({ policy: 'anyone', electorate: 2, required: 3 }, open, null), [`${L}3 active members (there are 2) approve it.`, null]);
+  assert.deepEqual(say({ policy: 'anyone', electorate: 1, required: 1 }, open, null), [`${L}the only active member approves it.`, null]);
+  assert.deepEqual(say({ policy: 'anyone', electorate: 2, required: 2 }, open, null), [`${L}both active members approve it.`, null]);
+  assert.deepEqual(say({ policy: 'anyone', electorate: 3, required: 3 }, open, null), [`${L}all 3 active members approve it.`, null]);
+  // At least N: no clock, so no wait line.
+  assert.deepEqual(say({ policy: 'anyone', approvals_required: 3, electorate: 9, required: 3 }, member, null), [`${L}3 members approve it.`, null]);
+  assert.equal(approvalStep({ policy: 'anyone', approvals_required: 3, electorate: 9, required: 3 }, member, null).wait, '');
+  // A project that is just you.
+  assert.deepEqual(say({ policy: 'anyone', electorate: 1, required: 1 }, { audience: 'solo', is_member: true }, null), [`${L}you approve it.`, null]);
+  // The names' faces lead them, then the names in bold, in both wordings.
+  const words = renderToHtml(createElement(RuleWords, { line: ruleSentence({ policy: 'invited', approvals_required: null, electorate: 2, required: 1 }, member, ['evan', 'snait']) }));
+  assert.match(words, /^<span class="dev-ws-ov-wide">A change goes live when its checks pass and <span class="dev-ws-ov-faces" aria-hidden="true"><span class="dev-ws-ov-face" style="background:[^"]+">E<\/span><span class="dev-ws-ov-face" style="background:[^"]+">S<\/span><\/span><b class="dev-ws-ov-names">evan or snait<\/b> says yes\.<\/span><span class="dev-ws-ov-narrow">Goes live when its checks pass and <span class="dev-ws-ov-faces"/);
+  // Polish board #13: the names come with the community record, so the line
+  // is drawn once; only an older server's record, without them, asks their
+  // own route.
+  assert.match(CARD_SRC, /fetch\(`\/api\/apps\/\$\{encodeURIComponent\(slug\)\}\/approvers`\)/, 'the approvers\' own route, for an older server');
+  const line = CARD_SRC.slice(CARD_SRC.indexOf('export function ApprovalLine('));
+  assert.match(line, /const given = data && data\.approval \? data\.approval\.approvers : undefined;/);
+  assert.match(line, /const approvers = given !== undefined \? given : asked;/);
+  assert.equal(typeof ApprovalLine, 'function');
+  // The three steps went: no step tiles, no joins, no faces' step.
+  assert.doesNotMatch(CARD_SRC, /dev-ws-rule-step|dev-ws-rule-join|data-ws-rule-people|export function ApprovalRules/);
 });
 
-test('Make it public and Make it private are the ⋯\'s (Make it public stays on Share it), and both are a proposal', () => {
-  const { audienceChangeLine, canMakePrivate, canMakePublic, canLeave, MAKE_PRIVATE_LINE, MAKE_PUBLIC_LINE } = loadTsx(CARD);
+test('#4527: the approval rule\'s line carries Rules, for exactly whom the rule lets propose', async () => {
+  const { ApprovalLine, reloadCommunity } = loadTsx(CARD);
+  const payload = (over = {}) => ({
+    slug: 'rules-card', name: 'Rules', member_count: 11, is_member: true, is_creator: true,
+    audience: 'open', audience_label: 'Public community',
+    members: [1, 2, 3].map((i) => ({ id: i, username: `u${i}` })),
+    channel: null,
+    approval: { policy: 'anyone', approvals_required: null, electorate: 11, required: 4 },
+    ...over,
+  });
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    const slug = String(url).match(/\/api\/apps\/([^/]+)\/community/)[1];
+    return {
+      ok: true,
+      json: async () => payload({ slug, ...(slug === 'rules-manager' ? { can_manage: true } : {}) }),
+    };
+  };
+  try {
+    await reloadCommunity('rules-manager');
+    await reloadCommunity('rules-viewer');
+    // A manager sees Rules at the line's end, drawn like "See all"; the
+    // line is the rule in words, the wait rule after it, the whole rule in
+    // one sentence its tooltip.
+    const managed = renderToHtml(createElement(ApprovalLine, { slug: 'rules-manager' }));
+    assert.match(managed, /^<p class="dev-ws-ov-rule" data-ws-approval-rules="" title="A change goes live when 4 of the 11 active members approve it, or after a wait if one approves and nobody objects\."><svg class="dev-ws-ov-rule-icon"[^>]*aria-hidden="true"[\s\S]*?<\/svg><span class="dev-ws-ov-rule-text" data-ws-community-rule=""><span class="dev-ws-ov-wide">A change goes live when its checks pass and 4 of the 11 active members approve it\.<\/span><span class="dev-ws-ov-narrow">Goes live when its checks pass and 4 of the 11 active members approve it\.<\/span><span class="dev-ws-ov-rule-wait">Or after a wait, if one approves and nobody objects<\/span><\/span><button type="button" class="dev-ws-hub-open dev-ws-ov-rule-edit un-touch-target" data-ws-rules-edit="" aria-label="Edit approval rules">Rules<\/button><\/p>$/);
+    // Everyone else sees the line alone, with no button.
+    const viewer = renderToHtml(createElement(ApprovalLine, { slug: 'rules-viewer' }));
+    assert.doesNotMatch(viewer, /data-ws-rules-edit/);
+    assert.match(viewer, /data-ws-community-rule="">/);
+    // #4666: the click opens the Who can see & change it sheet, where the
+    // rule is proposed alongside who can see the project.
+    const src = CARD_SRC.slice(CARD_SRC.indexOf('export function ApprovalLine('));
+    assert.match(src, /window\.UsernodeReact\?\.dialogs\?\.whoDecides\?\.open\(\{ slug \}\)/);
+    assert.equal(message('project:communityCard.rule.rules'), 'Rules');
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test('a person who has not joined reads the same What happened, its rows and Mark all seen', () => {
+  // "Recently" over the rows for a visitor, and "Since your last visit" for
+  // a member, went with the since list: the part is What happened for
+  // everyone, and only its rows depend on the visitor's last visit.
+  assert.doesNotMatch(LANDER, /outsider|project:since\.title\./);
+  assert.match(LANDER, /<SectionHeader className="px-1\.5 pb-0 pt-3\.5" data-ws-part="happened">\{t\('project:workshop\.part\.happened'\)\}<\/SectionHeader>/);
+  assert.equal(message('project:workshop.part.happened'), 'What happened');
+  // The rows and Mark all seen are the same for everyone (declared checks
+  // select on it on Homeroom's page).
+  assert.match(LANDER, /\{v\.since \? \(\s*<button\s+type="button"\s+className="dev-ws-since-clear un-touch-target"\s+data-ws-since-clear=""/);
+});
+
+test('Make it public stays on Share it; who can see a project otherwise is the Who can see & change it sheet, from the ⋯ (#4666)', () => {
+  const { audienceChangeLine, canLeave, MAKE_PUBLIC_LINE } = loadTsx(CARD);
   assert.equal(audienceChangeLine('Make this app public'), 'Making it a public community is waiting for approval');
   assert.equal(audienceChangeLine('Make this app private (collaborators only)'), 'Making it a private community is waiting for approval');
   assert.equal(audienceChangeLine('Make this app invite-only build, public to view'), 'A change to who it is for is waiting for approval');
   assert.equal(audienceChangeLine(null), 'A change to who it is for is waiting for approval');
 
-  // One proposal for both directions.
-  const propose = CARD_SRC.slice(CARD_SRC.indexOf('export async function proposeAudience('), CARD_SRC.indexOf('export const MAKE_PRIVATE_LINE'));
+  // Share it's popup still proposes it, through the visibility PR.
+  const propose = CARD_SRC.slice(CARD_SRC.indexOf('export async function proposeAudience('), CARD_SRC.indexOf('export const MAKE_PUBLIC_LINE'));
   assert.match(propose, /fetch\(`\/api\/apps\/\$\{encodeURIComponent\(slug\)\}\/visibility-pr`/);
-  assert.match(propose, /to === 'private'\s*\? \{ collabVisibility: 'private', viewVisibility: 'private' \}\s*: \{ collabVisibility: 'public', viewVisibility: 'public' \}/,
-    'a public community is public to use and to build; a private community is private to both, as the create dialog maps them');
   assert.match(propose, /if \(!res\.ok && res\.status !== 409\)/, 'one already up is not an error: the hero shows it');
 
   // MAKE IT PUBLIC (it was "Open it up"): a button on a just-yours project's
-  // Share it card, asking under itself; on a private community's hub it is a
-  // row of the ⋯ (#4045, decision D), asking through the platform's confirm.
-  const pub = CARD_SRC.slice(CARD_SRC.indexOf('function MakePublic('), CARD_SRC.indexOf('export function canMakePrivate('));
-  assert.match(pub, />\s*Make it public\s*</);
+  // Share it card, asking under itself.
+  const pub = CARD_SRC.slice(CARD_SRC.indexOf('function MakePublic('), CARD_SRC.indexOf('export function InviteCard('));
+  assert.match(pub, />\s*\{t\('project:communityCard\.share\.makePublic'\)\}\s*</);
+  assert.equal(message('project:communityCard.share.makePublic'), 'Make it public');
   assert.match(pub, /const proposed = await proposeAudience\(slug, 'public'\);/);
-  assert.match(pub, /<p className="dev-ws-vote-sub">\{MAKE_PUBLIC_LINE\}<\/p>/);
-  assert.equal(MAKE_PUBLIC_LINE, 'Anyone can find it on Discover, join, and propose changes. '
+  assert.match(pub, /<p className="dev-ws-vote-sub">\{t\(MAKE_PUBLIC_LINE\)\}<\/p>/);
+  assert.equal(MAKE_PUBLIC_LINE, 'project:communityCard.makePublic.explain');
+  assert.equal(message(MAKE_PUBLIC_LINE), 'Anyone can find it on Discover, join, and propose changes. '
     + 'Members vote on this first, and it applies once it merges.', 'it says it is a proposal, not a switch');
-  assert.doesNotMatch(CARD_SRC, /Open it up'|>Open it up<|opening it up/i, 'the old words are gone from what is drawn');
   const hero = CARD_SRC.slice(CARD_SRC.indexOf('export function CommunityCard('), CARD_SRC.indexOf('export function shareItLine('));
-  assert.doesNotMatch(hero, /<MakePublic /, 'not a button in the hero any more');
+  assert.doesNotMatch(hero, /<MakePublic /, 'not a button in the hero');
   assert.match(CARD_SRC, /\{canOpenUp \? \(\s*<MakePublic /);
-  assert.match(CARD_SRC, /or make it public so anyone can join\./);
-  assert.equal(canMakePublic({ audience: 'invited', can_manage: true, audience_change: null }), true);
-  assert.equal(canMakePublic({ audience: 'open', can_manage: true, audience_change: null }), false);
-  assert.equal(canMakePublic({ audience: 'solo', can_manage: true, audience_change: null }), false, 'Share it has its own');
-  assert.equal(canMakePublic({ audience: 'invited', can_manage: false, audience_change: null }), false);
-  assert.equal(canMakePublic({ audience: 'invited', can_manage: true, audience_change: { session_id: 4 } }), false);
-  const conf = CARD_SRC.slice(CARD_SRC.indexOf('export async function confirmMakePublic('), CARD_SRC.indexOf('export function canMakePublic('));
-  assert.match(conf, /ui\.confirm\(\{\s*title: `Make \$\{name\} a public community\?`,\s*message: MAKE_PUBLIC_LINE,\s*confirmLabel: 'Propose making it public',\s*cancelLabel: 'Not now',/);
-  // #4378: an owner still to verify is asked first; Not now (false) leaves it private.
-  assert.match(conf, /if \(!ok\) return;\s*try \{\s*if \(!\(await proposeAudience\(slug, 'public'\)\)\) return;/);
+
+  // The ⋯'s Make it public and Make it private rows are one row now.
+  assert.doesNotMatch(CARD_SRC, /export (async )?function (confirmMakePrivate|confirmMakePublic|canMakePrivate|canMakePublic)\(/);
+  const menu = read('frontend/src/features/dev-board/actions-row.tsx');
+  assert.doesNotMatch(menu, /data-plus="make-(public|private)"/);
+  assert.match(menu, /\{onWhoDecides \? \(\s*<PlusRow\s+data-plus="who-decides"[\s\S]{0,140}title=\{t\('project:menu\.whoDecides\.title'\)\}\s+sub=\{t\('project:menu\.whoDecides\.sub'\)\}[\s\S]{0,300}onClick=\{\(\) => \{ callAppView\('_closePlusMenu'\); onWhoDecides\(\); \}\}/);
+  assert.equal(message('project:menu.whoDecides.title'), 'Who can see & change it');
+  assert.ok(menu.indexOf('data-plus="who-decides"') > menu.indexOf('id="dev-plus-settings"'), 'in the Settings & rules panel');
+
   // LEAVE (#4045): the Joined pill's way out, as a row of the ⋯, for a
   // member who did not start it.
   assert.equal(canLeave({ is_member: true, is_creator: false }), true);
   assert.equal(canLeave({ is_member: true, is_creator: true }), false);
   assert.equal(canLeave({ is_member: false, is_creator: false }), false);
   assert.equal(canLeave(null), false);
+  assert.match(menu, /\{onLeave \? \(\s*<PlusRow\s+data-plus="leave"[\s\S]{0,140}title=\{appName \? t\('project:menu\.leave\.named', \{ project: appName \}\) : t\('project:menu\.leave\.plain'\)\}[\s\S]{0,200}onClick=\{\(\) => \{ callAppView\('_closePlusMenu'\); onLeave\(\); \}\}/);
+  assert.ok(menu.indexOf('data-plus="leave"') > menu.indexOf('data-plus="who-decides"'), 'Leave follows it');
 
-  // MAKE IT PRIVATE: not a hero button, a row of the ⋯, for a public
-  // community, to whoever may open the proposal, while none is up.
-  assert.equal(canMakePrivate({ audience: 'open', can_manage: true, audience_change: null }), true);
-  assert.equal(canMakePrivate({ audience: 'invited', can_manage: true, audience_change: null }), false);
-  assert.equal(canMakePrivate({ audience: 'open', can_manage: false, audience_change: null }), false);
-  assert.equal(canMakePrivate({ audience: 'open', can_manage: true, audience_change: { session_id: 4 } }), false);
-  assert.equal(canMakePrivate(null), false);
-  const priv = CARD_SRC.slice(CARD_SRC.indexOf('export async function confirmMakePrivate('), CARD_SRC.indexOf('export async function confirmMakePublic('));
-  assert.match(priv, /ui\.confirm\(\{\s*title: `Make \$\{name\} a private community\?`,\s*message: MAKE_PRIVATE_LINE,\s*confirmLabel: 'Propose making it private',/);
-  assert.match(priv, /if \(!ok\) return;\s*try \{\s*await proposeAudience\(slug, 'private'\);/);
-  assert.match(priv, /await reloadCommunity\(slug\);/, 'and the hero shows it up for a vote');
-  const menu = read('frontend/src/features/dev-board/actions-row.tsx');
-  assert.match(menu, /\{onMakePrivate \? \(\s*<PlusRow\s+data-plus="make-private"[\s\S]{0,120}title="Make it private"[\s\S]{0,300}onClick=\{\(\) => \{ callAppView\('_closePlusMenu'\); onMakePrivate\(\); \}\}/);
-  assert.ok(menu.indexOf('data-plus="make-private"') > menu.indexOf('id="dev-plus-settings"'), 'in the Settings & rules panel');
-  assert.match(menu, /\{onMakePublic \? \(\s*<PlusRow\s+data-plus="make-public"[\s\S]{0,140}title="Make it public"\s+sub="Anyone can find it on Discover and join\."[\s\S]{0,300}onClick=\{\(\) => \{ callAppView\('_closePlusMenu'\); onMakePublic\(\); \}\}/);
-  assert.ok(menu.indexOf('data-plus="make-public"') > menu.indexOf('id="dev-plus-settings"')
-    && menu.indexOf('data-plus="make-public"') < menu.indexOf('data-plus="make-private"'), 'the first of Settings & rules, beside Make it private');
-  assert.match(menu, /\{onLeave \? \(\s*<PlusRow\s+data-plus="leave"[\s\S]{0,140}title=\{appName \? `Leave \$\{appName\}` : 'Leave'\}[\s\S]{0,200}onClick=\{\(\) => \{ callAppView\('_closePlusMenu'\); onLeave\(\); \}\}/);
-  assert.ok(menu.indexOf('data-plus="leave"') > menu.indexOf('data-plus="make-private"'), 'Leave follows them');
-  // Private decides who can OPEN it. Every repository is public on GitHub
-  // (services/github.js createRepo), so both say the code stays public.
-  assert.equal(MAKE_PRIVATE_LINE, 'Only people who are invited can open it and build it. '
-    + 'Its code stays public on GitHub. Members vote on this first, and it applies once it merges.');
-  assert.match(menu, /data-plus="make-private"[\s\S]{0,200}sub="Only invited people can open and build it\. Code stays public on GitHub\."/);
   const lander = read('frontend/src/features/dev-board/workshop/workshop.tsx');
-  assert.match(lander, /onMakePrivate=\{canMakePrivate\(community\)\s*\? \(\) => \{ void confirmMakePrivate\(slug, app\.name \|\| community\?\.name \|\| slug\); \}\s*: null\}/);
-  assert.match(lander, /onMakePublic=\{canMakePublic\(community\)\s*\? \(\) => \{ void confirmMakePublic\(slug, app\.name \|\| community\?\.name \|\| slug\); \}\s*: null\}/);
+  assert.match(lander, /onWhoDecides=\{community\?\.can_manage\s*\? \(\) => \{ window\.UsernodeReact\?\.dialogs\?\.whoDecides\?\.open\(\{ slug \}\); \}\s*: null\}/);
   assert.match(lander, /onLeave=\{canLeave\(community\) \? \(\) => \{ void leaveCommunity\(slug\); \} : null\}/);
   // The row appears once the read answers, after the menu was wired, so it
   // closes the menu through the close the wiring publishes.
   assert.match(read('public/js/app-view.js'), /AppView\._closePlusMenu = close;/);
-  assert.match(CARD_SRC, /href=\{`#app\/\$\{encodeURIComponent\(slug\)\}\/dev\/proposals\/\$\{data\.audience_change\.session_id\}`\}/);
-  // The server offers it to exactly whom POST /visibility-pr accepts.
+  assert.match(CARD_SRC, /href=\{changeHref\(slug, data\.audience_change\.session_id, data\.audience_change\.pr_number\)\}/);
+  // The server offers it to exactly whom the proposal routes accept.
   const route = read('src/routes/apps.js');
   assert.match(route, /const canManage = !app\.self_hosted && !!app\.repo_url\s*&& await appAdmins\.canManageApp\(pool, app, req\.user\);/);
   assert.match(route, /await renamePr\.findVisibilityPr\(pool, app\.id\)/);
@@ -353,7 +521,9 @@ test('a Mayor card refused for membership offers Join, then asks the Mayor to tr
   const screen = read('frontend/src/features/agent-session/index.tsx');
   const join = screen.slice(screen.indexOf('function JoinToRetry('), screen.indexOf('function Card('));
   assert.match(join, /home\.setMembership\(join\.slug, true, undefined, \{ name: join\.name \}\)/, 'the one join path');
-  assert.match(join, /void sendAgentMessage\(`I joined \$\{join\.name\}\. Please try "\$\{card\.title\}" again\.`\);/);
+  assert.match(join, /void sendAgentMessage\(t\('agent:session\.join\.joinedMessage', \{ community: join\.name, action: card\.title \}\)\);/);
+  assert.equal(message('agent:session.join.joinedMessage', { community: 'Notes', action: 'File a request' }),
+    'I joined Notes. Please try "File a request" again.');
   assert.match(screen, /\{card\.status === 'failed' && card\.join \? \(\s*<JoinToRetry card=\{card\} join=\{card\.join\} \/>/);
   // No prose from the Mayor under the Join button: the card asks.
   const routes = read('src/routes/agent-sessions.js');
@@ -391,7 +561,7 @@ test('the Communities screen has no toggle: Needs you is a row that opens a page
 
 test('Home\'s Browse all links carry the accent, not the header\'s periwinkle', () => {
   const ui = read('frontend/src/features/home/panels/ui.tsx');
-  for (const cls of ['home-panel-browse', 'home-panel-lb-browse']) {
+  for (const cls of ['home-panel-browse', 'home-panel-see-all']) {
     const tag = ui.slice(ui.indexOf(`className="${cls} `), ui.indexOf('"', ui.indexOf(`className="${cls} `) + 12));
     assert.match(tag, /text-\[color:var\(--accent\)\]/, `${cls} is the accent`);
     assert.doesNotMatch(tag, /brand-ink/);

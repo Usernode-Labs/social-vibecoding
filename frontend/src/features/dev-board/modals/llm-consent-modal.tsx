@@ -26,6 +26,7 @@ import { DialogCard } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 
+import { RichMessage, useMessages } from '../../../lib/i18n/react';
 import { useStoreState } from '../../../lib/use-store-state';
 import { llmConsentModalStore } from './modals-store';
 import type { LlmConsentModalView } from './model';
@@ -36,34 +37,35 @@ function call(fn: string, ...args: unknown[]): void {
 }
 
 export function LlmConsentCard({ view }: { view: LlmConsentModalView }): ReactNode {
+  const t = useMessages('project');
   const blocked = view.capacity.t === 'blocked';
   return (
     <DialogCard size="md" relative>
       <h2 className="text-lg font-bold mb-2 text-zinc-900 dark:text-zinc-100">
-        {`Allow ${view.appName} to use AI?`}
+        {view.appUnnamed ? t('project:modals.aiConsent.titleUnnamed') : t('project:modals.aiConsent.title', { app: view.appName })}
       </h2>
       {view.purpose ? (
-        <p className="text-sm text-zinc-600 dark:text-zinc-400 mb-3 italic">{`“${view.purpose}”`}</p>
+        <p className="text-sm text-zinc-600 dark:text-zinc-400 mb-3 italic">{t('project:modals.aiConsent.purposeQuote', { purpose: view.purpose })}</p>
       ) : null}
       <p className="text-sm text-zinc-600 dark:text-zinc-400 mb-3">{view.intro}</p>
       {view.capacity.t === 'blocked' ? (
         <Alert variant="notice" density="compact">
           {view.capacity.eligibilityUnavailable
-            ? 'Credit eligibility could not be checked. Close this dialog and try again shortly.'
+            ? t('project:modals.aiConsent.eligibilityUnavailable')
             : (
-              <>
-                {'No AI payer is available yet. '}
-                <a className="underline font-medium" href="#settings/linked-accounts">Connect GitHub or X</a>
-                {' to unlock $10/day, or '}
-                <a className="underline font-medium" href="#settings/api-key">add your own Anthropic API key</a>
-                {'.'}
-              </>
+              <RichMessage
+                id="project:modals.aiConsent.noPayer"
+                components={[
+                  <a className="underline font-medium" href="#settings/linked-accounts" />,
+                  <a className="underline font-medium" href="#settings/api-key" />,
+                ]}
+              />
             )}
         </Alert>
       ) : (
         <>
           <Label htmlFor="llm-consent-cap" className="mb-1">
-            Daily cap for this app ($ per day)
+            {t('project:modals.aiConsent.capLabel')}
           </Label>
           <Input
             id="llm-consent-cap"
@@ -98,7 +100,7 @@ export function LlmConsentCard({ view }: { view: LlmConsentModalView }): ReactNo
           ink="neutral"
           onClick={() => call('_llmConsentDecline')}
         >
-          Not now
+          {t('project:modals.aiConsent.notNow')}
         </Button>
         <Button
           type="button"
@@ -107,7 +109,7 @@ export function LlmConsentCard({ view }: { view: LlmConsentModalView }): ReactNo
           disabledStyle="block"
           onClick={() => call('_llmConsentAllow')}
         >
-          {blocked ? 'Unavailable' : 'Allow'}
+          {blocked ? t('project:modals.aiConsent.unavailable') : t('project:modals.aiConsent.allow')}
         </Button>
       </div>
     </DialogCard>

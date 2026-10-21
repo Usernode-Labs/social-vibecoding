@@ -18,6 +18,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { englishPlatformI18n, message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
@@ -33,11 +34,14 @@ function realTitles() {
   const start = appJs.indexOf('  LEADERBOARD_TITLES: {');
   const end = appJs.indexOf('  _routeLeaderboard(', start);
   assert.ok(start > 0 && end > start, 'LEADERBOARD_TITLES and _leaderboardTitle located');
-  return vm.runInNewContext(`(function(){ const App = { ${appJs.slice(start, end)} }; return App; })()`);
+  return vm.runInNewContext(`(function(){ const App = { ${appJs.slice(start, end)} }; return App; })()`,
+    { PlatformI18n: englishPlatformI18n() });
 }
 
 /** The real Leaderboard module, run as a script against a small DOM. */
-function loadLeaderboard(App, { hash = '#leaderboard/challenges', detail = null } = {}) {
+// `kudos`: whether kudos is on (#5249). The module hears the switch as the
+// presence of `window.Kudos`; without it, kudos is parked.
+function loadLeaderboard(App, { hash = '#leaderboard/challenges', detail = null, kudos = false } = {}) {
   const classes = new Map();
   const el = (id) => {
     if (!classes.has(id)) classes.set(id, new Set());
@@ -52,15 +56,16 @@ function loadLeaderboard(App, { hash = '#leaderboard/challenges', detail = null 
     TopochainChallenges: { open() {}, close() {}, _detailChallenge: detail },
     TopochainLeaderboard: { open() {}, close() {} },
     TopochainEventContext: { open() {}, close() {} },
-    LeaderboardHistory: { open() {}, close() {} },
     location,
     history: { replaceState: (_s, _t, url) => { location.hash = url; } },
     document: { getElementById: el },
     console,
     fetch: async () => ({ ok: true, json: async () => ({ items: [] }) }),
   };
+  if (kudos) ctx.Kudos = {};
   ctx.window = ctx;
   vm.createContext(ctx);
+  ctx.PlatformI18n = englishPlatformI18n();
   // The module is a plain object literal; only its trailing publish needs a
   // tweak to run as a script, and its store accessor reads `window`.
   const code = lbSrc.replace(/^export .*$/gm, '');
@@ -79,36 +84,67 @@ test('every address titles the bar with the label of the tab it shows', () => {
   const App = realTitles();
   const labels = Object.fromEntries([...island.matchAll(/\{ key: '([a-z]+)', label: '([^']+)' \}/g)]
     .map((m) => [m[1], m[2]]));
-  assert.deepEqual(labels, { challenges: 'Challenges', kudos: 'Kudos', topochain: 'Standings', seasons: 'History' });
-  for (const [key, label] of Object.entries(labels)) {
-    assert.equal(App._leaderboardTitle(key), label, `#leaderboard/${key} says "${label}"`);
+  // The strip's labels are catalog entries; the table holds their ids.
+  assert.deepEqual(labels, {
+    challenges: 'leaderboard:tabs.challenges', topochain: 'leaderboard:tabs.standings',
+    kudos: 'leaderboard:tabs.kudos',
+  });
+  assert.deepEqual(Object.values(labels).map((id) => message(id)), ['Challenges', 'Standings', 'Kudos']);
+  for (const [key, id] of Object.entries(labels)) {
+    assert.equal(App._leaderboardTitle(key), message(id), `#leaderboard/${key} says "${message(id)}"`);
   }
   // The Kudos pane's own sub-views are the Kudos tab.
   for (const sub of ['prs', 'users', 'history']) assert.equal(App._leaderboardTitle(sub), 'Kudos');
   assert.equal(App._leaderboardTitle(undefined), 'Challenges', 'a bare #leaderboard is Challenges (#2374)');
   assert.equal(App._leaderboardTitle('users', 'dana'), '@dana', 'a person outranks the section');
   assert.ok(!/topochain: 'Topochain'/.test(appJs), 'no word the strip does not use');
+  // The History tab retired (the Semi design, 2026-10-16): its address lands
+  // on Challenges, so nothing titles a page "History" any more.
+  assert.equal(App._leaderboardTitle('seasons'), 'Challenges', 'the retired History address says Challenges');
+  assert.doesNotMatch(appJs, /seasons: 'shell:title\.leaderboard\.history'/);
 });
 
 test('a tab press re-titles the bar, although it never reaches the router', async () => {
   const App = recordingApp();
-  const { Leaderboard, location } = loadLeaderboard(App);
+  // With kudos on, so the Kudos tab is one of the presses.
+  const { Leaderboard, location } = loadLeaderboard(App, { kudos: true });
   await Leaderboard.open();
   assert.equal(App.titles.at(-1), 'Challenges');
   for (const [section, title, hash] of [
     ['kudos', 'Kudos', '#leaderboard/prs'],
     ['topochain', 'Standings', '#leaderboard/topochain'],
-    ['seasons', 'History', '#leaderboard/seasons'],
     ['challenges', 'Challenges', '#leaderboard/challenges'],
   ]) {
     Leaderboard._setSection(section);
     assert.equal(App.titles.at(-1), title, `${section}: the bar follows the tab`);
     assert.equal(location.hash, hash, 'and the address is rewritten in place, as before');
   }
+  const before = App.titles.length;
+  Leaderboard._setSection('seasons');
+  assert.equal(App.titles.length, before, 'the retired History section is not a section: nothing changes');
+  assert.equal(Leaderboard.section, 'challenges');
   Leaderboard._setSub('users');
   assert.equal(App.titles.at(-1), 'Kudos');
   Leaderboard.openProfile('dana');
   assert.equal(App.titles.at(-1), '@dana');
+});
+
+test('parked (#5249), a Kudos press is Challenges, and a person\u2019s page keeps its name', async () => {
+  const App = recordingApp();
+  const { Leaderboard, location } = loadLeaderboard(App);
+  await Leaderboard.open();
+  Leaderboard._setSection('topochain');
+  assert.equal(App.titles.at(-1), 'Standings');
+  Leaderboard._setSection('kudos');
+  assert.equal(App.titles.at(-1), 'Challenges', 'the Kudos section lands on Challenges');
+  assert.equal(location.hash, '#leaderboard/challenges');
+  Leaderboard._setSection('topochain');
+  Leaderboard._setSub('users');
+  assert.equal(App.titles.at(-1), 'Challenges', 'and so does a Kudos sub-view');
+  assert.equal(location.hash, '#leaderboard/challenges');
+  Leaderboard.openProfile('dana');
+  assert.equal(App.titles.at(-1), '@dana');
+  assert.equal(location.hash, '#leaderboard/users/dana');
 });
 
 test('a closed screen and an open challenge page keep their own titles', () => {

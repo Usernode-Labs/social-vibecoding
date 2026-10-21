@@ -265,8 +265,13 @@ pgTest('the closed kind policy and account preferences gate enqueue at insert ti
   // channel_message (a small private group's discussion, under messages).
   // 44 → 45 with #3952's issue_mention (named with @ in a request, under
   // direct_interactions beside mention). 45 → 46 with #4296's
-  // platform_incident (unexpected events alerts, app_alerts).
-  assert.equal(policy.length, 46, 'the seed carries the reviewed closed set');
+  // platform_incident (unexpected events alerts, app_alerts). 46 → 47 with
+  // #4535's issue_thread_reply (a message in a request's discussion you
+  // filed or posted in, direct_interactions beside thread_reply). 47 → 48
+  // with #4787's voted_change_merged (a change the person voted on going
+  // live, proposal_alerts). 48 → 49 with #4396's project_opened (a project
+  // the person joined while it was made going live, proposal_alerts).
+  assert.equal(policy.length, 49, 'the seed carries the reviewed closed set');
   for (const { kind, default_enabled: enabled } of policy) {
     const row = await notify(client, { userId: alice, kind });
     assert.equal((await deliveriesFor(client, row.id)).length, enabled ? 1 : 0,

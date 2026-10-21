@@ -18,11 +18,12 @@ const stage = (row) => progress.stageOf(row, { now: NOW });
 
 test('the steps a request and a first version go through, and which step each stage is', () => {
   // #4053: a first version's steps say what is happening, never what to do
-  // ("Build it" read as an instruction). A request's steps keep their names.
+  // ("Build it" read as an instruction). One story: a request's steps are
+  // named the same way (contract 2.3).
   assert.deepEqual(progress.FIRST_VERSION_STEPS, [
-    'Setting up the project', 'Reading the description', 'Planning it', 'Building it', 'Testing it', 'Ready to try', 'Live',
+    'Setting up', 'Reading', 'Planning', 'Building', 'Testing', 'Ready to try', 'Live',
   ]);
-  assert.deepEqual(progress.REQUEST_STEPS, ['Read the request', 'Write a plan', 'Build it', 'Test it', 'Approval', 'Live']);
+  assert.deepEqual(progress.REQUEST_STEPS, ['Reading', 'Planning', 'Building', 'Testing', 'Ready to try', 'Live']);
   assert.equal(progress.stepNumber('setting_up', true), 1);
   assert.equal(progress.stepNumber('reading', true), 2);
   assert.equal(progress.stepNumber('reading', false), 1);
@@ -53,12 +54,18 @@ test('#4053: the build line a first version\'s thumbnail shows, for its creator 
   for (const s of ['checks', 'checks_failed', 'fix_queued', 'fixing']) assert.equal(line(s), 'testing', s);
   for (const s of ['vote', 'merging', 'followup_queued', 'revising']) assert.equal(line(s), 'ready', s);
   assert.equal(line('nonsense'), null);
-  assert.deepEqual(progress.BUILD_LINE_STATES, ['planning', 'plan', 'plan-member', 'question', 'building', 'testing', 'ready', 'live']);
-  // The chat's step names for steps 4 to 7 are the line's own words
-  // (frontend/src/features/first-session/build-line-words.js).
+  // 14 Oct 2026: and `stopped`, which no stage is (firstVersionStopped).
+  assert.deepEqual(progress.BUILD_LINE_STATES, ['planning', 'plan', 'plan-member', 'question', 'building', 'testing', 'ready', 'live', 'stopped']);
+  // The chat's step names for steps 4 to 7 lead the line's own words
+  // (frontend/src/features/first-session/build-line-words.js): one story
+  // names a step in a word ("Building"), the thumbnail's line in a phrase
+  // ("Building it").
   const words = require('node:fs').readFileSync(require('node:path').join(__dirname, '../frontend/src/features/first-session/build-line-words.js'), 'utf8');
   for (const [state, step] of [['building', 4], ['testing', 5], ['ready', 6], ['live', 7]]) {
-    assert.ok(words.includes(`${/-/.test(state) ? `'${state}'` : state}: '${progress.FIRST_VERSION_STEPS[step - 1]}',`), state);
+    // The table holds each line's message id; its English is the step's name.
+    const id = new RegExp(`\\b${state}: '(onboarding:buildLine\\.[A-Za-z]+)',`).exec(words);
+    assert.ok(id, state);
+    assert.ok(require('./lib/platform-i18n').message(id[1]).startsWith(progress.FIRST_VERSION_STEPS[step - 1]), state);
   }
 });
 
@@ -137,6 +144,21 @@ test('a proposal: its checks, then the group\'s vote', () => {
   assert.equal(progress.outcomeOf({ mode: 'shadow', verdict: 'person' }), null);
 });
 
+// 13 Oct 2026 (D1): a project's first version goes live without a vote, so
+// once its tests pass it waits on nobody, and while they run the bot does
+// not say it is waiting for approval.
+test('D1: a first version up for testing waits on nobody\'s approval', () => {
+  const open = { proposal_status: 'promoted', proposal_at: ago(20), first_version: true };
+  assert.deepEqual(stage({ ...open, check_state: 'passing' }), {
+    stage: 'vote', since: ago(20), doing: 'its tests passed, and as the project\'s first version it goes live without a vote in a minute or two',
+  });
+  assert.equal(stage({ ...open, check_state: 'pending', check_phase: 'building' }).doing,
+    'it goes live without a vote once its tests pass, and its tests are running: building the preview first');
+  const failing = stage({ ...open, check_state: 'failing', test_results: [{ status: 'fail' }] });
+  assert.equal(failing.doing, 'it goes live without a vote once its tests pass, and its tests failed (1 test did not pass)');
+  assert.equal(progress.inFlight({ stage: 'vote' }), false, 'nor is it the bot\'s work in flight');
+});
+
 test('#3734: in flight is what the bot is doing now or has in its queue, never what waits on others', () => {
   for (const name of ['setting_up', 'queued', 'reading', 'starting', 'planning', 'building', 'proposing',
     'followup_queued', 'revising', 'fix_queued', 'fixing', 'merging']) {
@@ -201,11 +223,14 @@ test('the records, said in plain words when the model could not answer', () => {
 test('#3771: a request in the queue says what it waits for', () => {
   const row = { app_id: 7, issue_number: 14, name: 'Ear Trainer', slug: 'ear-trainer' };
   const now = new Date('2026-10-03T12:40:00Z');
-  const busy = new Map([[7, [{ issueNumber: 12, since: '2026-10-03T12:26:00Z', what: 'building' }]]]);
+  const busy = new Map([[7, [{ issueNumber: 12, since: '2026-10-03T12:26:00Z', what: 'reading' }]]]);
   assert.deepEqual(progress.queuedWait(row, { busy, now }), {
-    doing: 'waiting its turn: Ear Trainer is building request #12 first (one request per project at a time)',
-    waitingFor: { reason: 'project_busy', number: 12, doing: 'building', minutesSoFar: 14 },
+    doing: 'waiting its turn: Ear Trainer is reading request #12 first (one read per project at a time)',
+    waitingFor: { reason: 'project_busy', number: 12, doing: 'reading', minutesSoFar: 14 },
   });
+  // A build runs on a session of its own: it holds no read up.
+  const building = new Map([[7, [{ issueNumber: 12, since: '2026-10-03T12:26:00Z', what: 'building' }]]]);
+  assert.equal(progress.queuedWait(row, { busy: building, queuePosition: 1 }).doing, 'next in line for a free builder');
   // Its own row being read is not something it waits for.
   const self = new Map([[7, [{ issueNumber: 14, since: '2026-10-03T12:39:00Z', what: 'reading' }]]]);
   assert.equal(progress.queuedWait(row, { busy: self, queuePosition: 1 }).doing, 'next in line for a free builder');
@@ -231,17 +256,55 @@ test('a ready request waiting for its build slot says so, and what it waits for'
   // Its session exists: it is under way, not waiting.
   assert.notEqual(progress.stageOf({ ...row, build_session_id: 5001, build_status: 'active' }, { now }).stage, 'build_queued');
 
-  const busy = new Map([[7, [{ issueNumber: 12, since: '2026-10-03T12:26:00Z', what: 'building' }, { issueNumber: 15, since: '2026-10-03T12:39:00Z', what: 'reading' }]]]);
+  // Newest first, as projectsBusy lists them.
+  const three = [
+    { issueNumber: 13, since: '2026-10-03T12:35:00Z', what: 'building' },
+    { issueNumber: 11, since: '2026-10-03T12:30:00Z', what: 'building' },
+    { issueNumber: 12, since: '2026-10-03T12:26:00Z', what: 'building' },
+  ];
+  const busy = new Map([[7, [...three, { issueNumber: 15, since: '2026-10-03T12:39:00Z', what: 'reading' }]]]);
   assert.deepEqual(progress.buildWait(row, { busy, now }), {
-    doing: 'ready to build; Ear Trainer is building request #12 first (one build per project at a time)',
-    waitingFor: { reason: 'project_building', number: 12, minutesSoFar: 14 },
-  });
+    doing: 'ready to build; Ear Trainer is building requests #12, #11, #13 first (up to 3 builds per project at a time)',
+    waitingFor: { reason: 'project_building', number: 12, building: 3, most: 3, minutesSoFar: 14 },
+  }, 'three under way hold the next; the one started first is the one it waits on');
+  const two = new Map([[7, three.slice(0, 2)]]);
+  assert.equal(progress.buildWait(row, { busy: two, now }).doing, 'ready to build; its build starts next',
+    'two under way leave room for a third');
+  assert.equal(progress.buildWait(row, { busy: new Map([[7, three.slice(2)]]), now, perProject: 1 }).doing,
+    'ready to build; Ear Trainer is building request #12 first (up to 1 build per project at a time)');
   const reading = new Map([[7, [{ issueNumber: 15, since: '2026-10-03T12:39:00Z', what: 'reading' }]]]);
   assert.equal(progress.buildWait(row, { busy: reading, now }).doing, 'ready to build; its build starts next',
     'a request being read on the project does not hold a build');
   assert.equal(progress.buildWait(row, { working: 2, perPerson: 2 }).waitingFor.reason, 'person_limit');
   const tray = require('node:fs').readFileSync(require.resolve('../src/services/homeroom-bot-tray.js'), 'utf8');
   assert.match(tray, /build_queued: 'queued',/, 'the tray draws it as waiting its turn');
+});
+
+// #4539: a request closed while its plan waited for Build it, or while the
+// question about it was still open, no longer waits on the person: the
+// answer read from the records says it was not built because the request
+// was closed. Its stage is null, so the tray moves it out of Needs you.
+test('#4539: on a closed request the plan and the question stop waiting, and the outcome names the closure', () => {
+  // The plan is ready and waits for Build it.
+  const waiting = { mode: 'live', verdict: 'ready', build_ok: null, run_at: ago(50), plan_waiting_at: ago(49) };
+  assert.deepEqual(stage({ ...waiting }), {
+    stage: 'plan', since: ago(49), waitingOn: 'them', doing: 'the plan is ready and waits for Build it',
+  });
+  assert.equal(stage({ ...waiting, request_closed: true }), null, 'closed: the plan is not in progress any more');
+  // The question the bot asked about it stops waiting too.
+  assert.equal(stage({ question_at: ago(9), request_closed: true }), null);
+  // With a proposal still open, only the question yields: the proposal's
+  // own state is what shows.
+  assert.equal(stage({ proposal_status: 'promoted', check_state: 'passing', proposal_at: ago(20), question_at: ago(9) }).stage, 'question');
+  assert.equal(stage({ proposal_status: 'promoted', check_state: 'passing', proposal_at: ago(20), question_at: ago(9), request_closed: true }).stage,
+    'vote', 'the closed request\'s open proposal still shows its state');
+  // A build already begun, or held back by a limit, is unchanged.
+  assert.equal(stage({ ...waiting, request_closed: true, build_session_id: 7, build_status: 'active', build_started_at: ago(40) }).stage,
+    'planning', 'a build under way builds on');
+  assert.equal(stage({ ...waiting, request_closed: true, cap_suppressed: 'proposals_per_app' }).stage, 'held');
+  // What it came to, for finishedLately and the DM's answer.
+  assert.equal(progress.outcomeOf({ ...waiting, request_closed: true }), 'not built: the request was closed');
+  assert.equal(progress.outcomeOf({ ...waiting }), null, 'open: nothing has come of it yet');
 });
 
 // WP1 (#10): a second build of one request was invisible to the bot's

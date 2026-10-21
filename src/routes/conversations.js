@@ -8,6 +8,7 @@ const { adminMiddleware, requireAdminWrite } = require('../middleware/admin');
 const log = require('../services/logger');
 const conversations = require('../services/conversations');
 const communities = require('../services/communities');
+const contactPrivacy = require('../services/contact-privacy');
 const messageBookmarks = require('../services/message-bookmarks');
 const attachments = require('../services/attachments');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
@@ -41,13 +42,22 @@ function sendNotFound(res) {
 }
 
 // #2387's two refusals that are not "not found": a thread in a direct
-// conversation (400) and a change to a deleted message (409).
+// conversation other than the chat with the Homeroom bot (400,
+// services/conversations.js threadsAllowed) and a change to a deleted
+// message (409).
 const THREADS_NOT_SUPPORTED = Object.freeze({ error: 'threads_not_supported' });
 const MESSAGE_DELETED = Object.freeze({ error: 'message_deleted' });
 // QA 2026-09-24 Q2: a second message into a direct request the other person
 // has not accepted yet. The conversation exists and the sender is in it; the
 // send is refused until they accept, so it is a conflict, not a 404.
 const AWAITING_ACCEPTANCE = Object.freeze({ error: 'awaiting_acceptance' });
+
+// #5104: a new direct message or invitation to someone who takes them only
+// from people in projects with them (users.contact_policy). 403 with a code
+// the Messages screen words itself; the body says nothing about the person.
+function sendContactRestricted(res) {
+  return res.status(403).json(contactPrivacy.CONTACT_RESTRICTED);
+}
 
 function sendMessageError(res, error) {
   if (error === 'threads_not_supported') return res.status(400).json(THREADS_NOT_SUPPORTED);
@@ -121,7 +131,7 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
   router.get('/api/conversations/homeroom-bot/work', async (req, res) => {
     try {
       const tray = require('../services/homeroom-bot-tray');
-      if (isDemo(req)) return res.json(tray.demoWork());
+      if (isDemo(req)) return res.json(await tray.demoWorkFor(pool, req.user));
       return res.json(await tray.workFor(pool, { user: req.user }));
     } catch (err) {
       log.error('conversations', 'homeroom bot work failed', { err: err.message, userId: req.user?.id });
@@ -214,6 +224,68 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
     }
   });
 
+  // #5506: Withdraw it, from a ready card in the person's DM with the bot
+  // (frontend/src/features/messages/bot-ready.tsx): one of the bot's own
+  // proposals, still up for a vote, that they asked for or whose project
+  // they own (homeroom-bot-mayor.js withdrawFromCard, the gates the DM's
+  // "Withdraw it" offer keeps). Their tap only, as the route above.
+  //
+  //   POST /api/conversations/homeroom-bot/withdraw/:sessionId
+  //   → 200 { ok } | 409 { error, code } (not theirs, or past withdrawing) | 404
+  router.post('/api/conversations/homeroom-bot/withdraw/:sessionId', conversationActionLimiter, sameOriginBrowserOnly, async (req, res) => {
+    try {
+      const sessionId = Number(req.params.sessionId);
+      if (!Number.isInteger(sessionId) || sessionId <= 0 || sessionId > 2147483647) return res.status(404).json({ error: 'No such change' });
+      if (!req.user?.id || req.user.isSynthetic) return res.status(403).json({ error: 'forbidden' });
+      // The staging demo's cards are fixtures: there is nothing to withdraw.
+      if (isDemo(req)) return res.json({ ok: true, demo: true });
+      const out = await require('../services/homeroom-bot-mayor').withdrawFromCard(pool, { user: req.user, sessionId });
+      if (!out.ok) {
+        return res.status(out.code === 'not_found' ? 404 : 409).json({ error: `Couldn't withdraw it: ${out.error}`, code: out.code });
+      }
+      return res.json({ ok: true });
+    } catch (err) {
+      log.error('conversations', 'homeroom bot withdraw failed', { err: err.message, userId: req.user?.id });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Run six (14 Oct 2026): "We'll tell you when it's live" under a first
+  // version's plan (frontend/src/features/messages/notify-me.tsx): whether
+  // its maker is told when it is ready and live, on from Make it
+  // (services/homeroom-bot-dm.js firstVersionNotify). The signed-in
+  // person's own first version only: anybody else's, or a project with
+  // none, is not found.
+  //
+  //   GET /api/conversations/homeroom-bot/first-versions/:slug/notify  → { on }
+  //   PUT /api/conversations/homeroom-bot/first-versions/:slug/notify  { on } → { on }
+  router.get('/api/conversations/homeroom-bot/first-versions/:slug/notify', async (req, res) => {
+    try {
+      // The staging demo's plan is a fixture: on, as every new one is.
+      if (isDemo(req)) return res.json({ on: true, demo: true });
+      const on = await require('../services/homeroom-bot-dm').firstVersionNotify(pool, { appSlug: req.params.slug, userId: req.user?.id });
+      if (on === null) return res.status(404).json({ error: 'No such first version' });
+      return res.json({ on });
+    } catch (err) {
+      log.error('conversations', 'first version notify read failed', { err: err.message, userId: req.user?.id });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.put('/api/conversations/homeroom-bot/first-versions/:slug/notify', conversationActionLimiter, sameOriginBrowserOnly, async (req, res) => {
+    try {
+      const on = req.body?.on;
+      if (typeof on !== 'boolean') return res.status(400).json({ error: 'on must be true or false' });
+      if (isDemo(req)) return res.json({ on, demo: true });
+      const now = await require('../services/homeroom-bot-dm').setFirstVersionNotify(pool, { appSlug: req.params.slug, userId: req.user?.id, on });
+      if (now === null) return res.status(404).json({ error: 'No such first version' });
+      return res.json({ on: now });
+    } catch (err) {
+      log.error('conversations', 'first version notify write failed', { err: err.message, userId: req.user?.id });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   // #3660: what the Homeroom links in a message are, for this viewer.
   //
   //   POST /api/link-cards  { refs: [{ type, app_slug, issue_number |
@@ -248,13 +320,14 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
       const result = req.body?.kind === 'direct'
         ? await conversations.createDirect(pool, req.user, conversations.strictId(req.body.user_id))
         : req.body?.kind === 'group'
-          ? await conversations.createGroup(pool, req.user, req.body.title, req.body.member_ids)
+          ? await conversations.createGroup(pool, req.user, req.body.title, req.body.member_ids, req.body?.invite_note)
           : null;
       if (!result) return sendNotFound(res);
       await pushNotifications(pool, result.notifications);
       pushAudience(result.memberIds, { type: 'conversation_membership_changed', conversationId: result.conversationId });
       return res.status(201).json({ conversation: result.conversation });
     } catch (err) {
+      if (err instanceof contactPrivacy.ContactRestrictedError) return sendContactRestricted(res);
       log.error('conversations', 'create failed', { err: err.message, userId: req.user.id });
       return res.status(500).json({ error: 'Internal server error' });
     }
@@ -309,12 +382,13 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
     const id = conversations.strictId(req.params.id);
     if (!id) return sendNotFound(res);
     try {
-      const result = await conversations.addMembers(pool, req.user, id, req.body?.user_ids);
+      const result = await conversations.addMembers(pool, req.user, id, req.body?.user_ids, req.body?.invite_note);
       if (!result) return sendNotFound(res);
       await pushNotifications(pool, result.notifications);
       pushAudience(result.memberIds, { type: 'conversation_membership_changed', conversationId: id });
       return res.json({ conversation: result.conversation });
     } catch (err) {
+      if (err instanceof contactPrivacy.ContactRestrictedError) return sendContactRestricted(res);
       log.error('conversations', 'add members failed', { id, err: err.message });
       return res.status(500).json({ error: 'Internal server error' });
     }
@@ -441,7 +515,15 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
       // thread included, is for that community's members (reading is not).
       const join = await communities.generalNeedsJoin(pool, id, req.user, config?.selfAppSlug);
       if (join) return res.status(403).json(join);
-      const result = await conversations.sendMessage(pool, req.user, id, input);
+      // #3624: a message to the Homeroom bot is owed an answer: the person's
+      // DM machine hears it in the message's own transaction
+      // (src/workflow/bot-dm/), and its work answers, wherever it runs. The
+      // message is sent whatever the bot does with it.
+      const result = await conversations.sendMessage(pool, req.user, id, input, {
+        afterInsert: (db, sent) => require('../services/homeroom-bot-dm').heardInDm(db, {
+          user: req.user, conversationId: id, messageId: sent.messageId, membership: sent.membership, memberIds: sent.memberIds,
+        }),
+      });
       if (result?.error) return sendMessageError(res, result.error);
       if (!result) return sendNotFound(res);
       if (!result.duplicate) {
@@ -455,14 +537,6 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
             // #2387: which thread it joined (null: the main stream).
             threadRootId: result.message.threadRootId,
           });
-        });
-        // #3624: a message to the Homeroom bot is an answer to its question
-        // (or a reply about a request). Handled after the response, never
-        // into it: the message is sent whatever the bot does with it.
-        setImmediate(() => {
-          require('../services/homeroom-bot-dm').noteUserMessage(pool, config, {
-            user: req.user, conversationId: id, message: result.message,
-          }).catch((err) => log.warn('conversations', 'Homeroom bot DM handling failed', { id, err: err.message }));
         });
       }
       return res.status(result.duplicate ? 200 : 201).json({ message: result.message, duplicate: result.duplicate });

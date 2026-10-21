@@ -20,6 +20,11 @@ const path = require('node:path');
 const { Pool } = require('pg');
 
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
+const { message } = require('./lib/platform-i18n');
+
+// The card's two fixed lines, as the catalog holds them (bot-request.tsx reads them by id).
+const STAYS_LINE = 'It stays in the project’s requests with your name on it.';
+const SHARED_LINE = message('chat:group.botCard.shared');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL
   || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
@@ -28,7 +33,7 @@ const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 const botChat = require('../src/services/homeroom-bot-chat');
 
 test('WP-C: the offer card, and the line under a first request', () => {
-  const { BotRequestCardView, cardWords, STAYS_LINE } = loadTsx('frontend/src/features/group-chat/bot-request.tsx');
+  const { BotRequestCardView, cardWords } = loadTsx('frontend/src/features/group-chat/bot-request.tsx');
   assert.equal(cardWords({ kind: 'offer', title: 'Add a Sunday reminder' }),
     'Suggest this to the group? It goes in the project’s requests as “Add a Sunday reminder”, in your name.');
   const offer = renderToHtml(createElement(BotRequestCardView, { card: { messageId: 5, kind: 'offer', title: 'Add tags', issueNumber: null } }));
@@ -36,8 +41,10 @@ test('WP-C: the offer card, and the line under a first request', () => {
   assert.match(offer, /data-bot-request-action="file"><span>Suggest it/);
   assert.match(offer, /data-bot-request-action="not-now"><span>Not now/);
   assert.equal(cardWords({ kind: 'group', title: 'Add tags', first: true }), `Filed as a request for the group: Add tags. ${STAYS_LINE}`);
+  // The line is the end of a whole catalog message that follows what the card already said.
+  assert.equal(cardWords({ kind: 'group', title: 'Add tags', first: true }), message('chat:group.botCard.withStays', { words: 'Filed as a request for the group: Add tags.' }));
   assert.equal(cardWords({ kind: 'group', title: 'Add tags' }), 'Filed as a request for the group: Add tags.', 'only the first says it');
-  assert.equal(STAYS_LINE, 'It stays in the project’s requests with your name on it.');
+  assert.equal(message('chat:group.botCard.withStays', { words: 'X.' }), `X. ${STAYS_LINE}`);
 });
 
 // 5 October 2026 (Evan, on his phone): "if you choose to submit it an idea,
@@ -48,7 +55,7 @@ test('WP-C: the offer card, and the line under a first request', () => {
 // say in words that Homeroom bot has it. Without PostgreSQL: the pool answers
 // the path's own queries, and nothing but Suggest it runs.
 test('WP-C: Suggest it puts the chip on the message for the whole room at once, saying Homeroom bot has it', async (t) => {
-  const { BotStatusChip, BotRequestCardView, cardWords, sharedNow, SHARED_LINE } = loadTsx('frontend/src/features/group-chat/bot-request.tsx');
+  const { BotStatusChip, BotRequestCardView, cardWords, sharedNow } = loadTsx('frontend/src/features/group-chat/bot-request.tsx');
   const APP = { id: 7, slug: 'page-turners', name: 'Page Turners', repo_url: 'https://github.com/example/page-turners' };
   const priya = { id: 21, username: 'priya', hasPlatformAccess: true };
   const MSG = 501;
@@ -147,8 +154,10 @@ test('WP-C: Suggest it puts the chip on the message for the whole room at once, 
 });
 
 test('WP-C: the card says the room can see it only while the bot has it and has not started building', () => {
-  const { sharedNow, SHARED_LINE, BotRequestCardView } = loadTsx('frontend/src/features/group-chat/bot-request.tsx');
+  const { sharedNow, BotRequestCardView } = loadTsx('frontend/src/features/group-chat/bot-request.tsx');
   assert.equal(SHARED_LINE, 'Everyone here can see Homeroom bot has it.');
+  assert.match(fs.readFileSync(path.join(__dirname, '..', 'frontend/src/features/group-chat/bot-request.tsx'), 'utf8'),
+    /data-bot-request-shared="">\{t\('chat:group\.botCard\.shared'\)\}<\/p>/);
   const filed = (stage) => ({ messageId: 5, kind: 'filed', title: 'Add tags', issueNumber: 3, ...(stage ? { state: { stage } } : {}) });
   for (const stage of [null, 'reading', 'waiting', 'waiting_first_version']) assert.equal(sharedNow(filed(stage)), true, String(stage));
   for (const stage of ['building', 'checking', 'proposed', 'live', 'stopped', 'question']) assert.equal(sharedNow(filed(stage)), false, stage);
@@ -160,16 +169,7 @@ test('WP-C: the card says the room can see it only while the bot has it and has 
   assert.doesNotMatch(SHARED_LINE, /—/);
 });
 
-test('WP-C: the reads behind offers are budgeted per person and per hour', () => {
-  const budget = { people: new Map(), hour: { at: 0, n: 0 } };
-  const t0 = 1_000_000_000;
-  for (let i = 0; i < botChat.OFFER_READS_PER_DAY; i += 1) assert.equal(botChat.takeOfferRead(1, t0 + i, budget), true);
-  assert.equal(botChat.takeOfferRead(1, t0 + 10, budget), false, 'their day is spent');
-  assert.equal(botChat.takeOfferRead(2, t0 + 10, budget), true, 'somebody else\'s is not');
-  assert.equal(botChat.takeOfferRead(1, t0 + 25 * 60 * 60 * 1000, budget), true, 'a new day');
-  const busy = { people: new Map(), hour: { at: t0, n: botChat.OFFER_READS_PER_HOUR } };
-  assert.equal(botChat.takeOfferRead(3, t0 + 1000, busy), false, 'everybody\'s hour is spent');
-  assert.equal(botChat.takeOfferRead(3, t0 + 61 * 60 * 1000, busy), true, 'a new hour');
+test('WP-C: a message is counted in words', () => {
   assert.equal(botChat.wordCount('  could it   show the weather '), 5);
 });
 
@@ -179,11 +179,10 @@ test('WP-C: an unaddressed message is read as an idea, not as something said to 
   assert.match(llm, /'Somebody new to the group wrote this'/);
   const schema = read('src/db/schema.sql');
   assert.match(schema, /CHECK \(kind IN \('filed', 'group', 'unsure', 'question', 'dismissed', 'offer', 'revise'\)\)/);
-  // The invited person's tour ends where this happens, in Discussion, and
-  // says who decides; one sentence per card (#4044), so the offer is the
-  // bot's own to make there, not the card's to describe.
-  assert.match(read('frontend/src/features/first-session/tour-steps.ts'),
-    /title: 'Say hi, or share an idea',\s+text: 'The people using the app decide what goes in\.',/);
+  // No first-session card describes the offer: it is the bot's own to make
+  // in Discussion (the invited person's tour that ended there is gone, 15
+  // Oct 2026).
+  assert.doesNotMatch(read('frontend/src/features/first-session/tour-steps.ts'), /sayHi|Discussion/);
 });
 
 test('WP-C: offers against the full PostgreSQL schema', { timeout: 180000 }, async (t) => {
@@ -321,5 +320,23 @@ test('WP-C: offers against the full PostgreSQL schema', { timeout: 180000 }, asy
     // An offer is only ever its own maker's to take.
     const taken = await botChat.requestFromMessage(pool, null, { app, user: { id: sam.id, username: 'sam' }, messageId: second, deps: deps(null) });
     assert.equal(taken.status, 403);
+  });
+
+  // 17 Oct 2026: counted from rows, so the budget holds across processes
+  // and restarts (it was a counter in each process's memory).
+  await t.test('the reads behind offers are budgeted per person a day and for everybody an hour, from rows', async () => {
+    await pool.query('DELETE FROM homeroom_bot_offer_reads');
+    for (let i = 0; i < botChat.OFFER_READS_PER_DAY; i += 1) assert.equal(await botChat.takeOfferRead(pool, sam.id, 900000 + i), true);
+    assert.equal(await botChat.takeOfferRead(pool, sam.id, 900100), false, 'their day is spent');
+    assert.equal(await botChat.takeOfferRead(pool, vet.id, 900101), true, 'somebody else\'s is not');
+    assert.equal(await botChat.takeOfferRead(pool, vet.id, 900101), false, 'a message is read once');
+    await pool.query(`UPDATE homeroom_bot_offer_reads SET read_at = NOW() - INTERVAL '25 hours' WHERE user_id = $1`, [sam.id]);
+    assert.equal(await botChat.takeOfferRead(pool, sam.id, 900102), true, 'a new day');
+    await pool.query(
+      `INSERT INTO homeroom_bot_offer_reads (user_id, message_id) SELECT $1, 950000 + g FROM generate_series(1, $2::int) g`,
+      [maya.id, botChat.OFFER_READS_PER_HOUR]);
+    assert.equal(await botChat.takeOfferRead(pool, vet.id, 900103), false, 'everybody\'s hour is spent');
+    await pool.query(`UPDATE homeroom_bot_offer_reads SET read_at = NOW() - INTERVAL '61 minutes'`);
+    assert.equal(await botChat.takeOfferRead(pool, vet.id, 900104), true, 'a new hour');
   });
 });

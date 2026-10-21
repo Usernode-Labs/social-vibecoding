@@ -27,19 +27,27 @@
  * the prerendered public/index.html that the hand-written shell never had.
  */
 
+import { useRef, useState } from 'react';
+
 import { Button } from '@/components/ui/button';
 import { DialogCard, DialogRoot } from '@/components/ui/dialog';
-import { CameraIcon, PaperclipIcon, PhotoIcon, VideoCameraIcon } from '@/components/ui/icons';
+import { CameraIcon, ChatIcon, DescriptionIcon, PaperclipIcon, PhotoIcon, VideoCameraIcon } from '@/components/ui/icons';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 
 import { HostDropOverlay } from '../attachments/file-drag';
 import { FEEDBACK_DESCRIPTION_MAX } from '../../lib/issue-body-limit';
+import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
+import { useKeyboardSurface } from '../../lib/keyboard-surface';
 import { returnKeyHandler } from '../../lib/return-to-next';
+import { formOffersComment, openCommentMode, prepareComment } from '../improve/suggest-shortcut';
+import { ControllerText } from './controller-text';
 import { Feedback, init as initFeedback } from './feedback-controller';
+import { FeedbackPreview, type FeedbackPreviewItem } from './feedback-preview';
 import { useDialog } from './use-dialog';
+import { SuggestionAsk } from '../notify-ask/suggestion-ask';
 
 /** Reserved for callers that still pass `{ fromDev: true }` — see #226/#312. */
 interface OpenOptions {
@@ -51,7 +59,7 @@ interface OpenOptions {
   intent?: 'issue' | 'feedback';
   /**
    * 'app': open with "This app" chosen, when it can be. For a caller whose
-   * own button named the open app (Getting started's Suggest).
+   * own button named the open app.
    */
   target?: 'app' | 'platform';
   /**
@@ -62,7 +70,19 @@ interface OpenOptions {
    */
   description?: string;
   screenshotBlob?: Blob;
+  /**
+   * Comment mode handing a box over (features/comment-pin/post.ts
+   * `handOverOptions`): its pictures, the pages' with their pins beside them as
+   * data (#4482), the title the box showed, and its Kudos.
+   */
+  screenshots?: Array<{ blob: Blob; pins?: Array<{ x: number; y: number; n?: number | null; note: string }> }>;
+  title?: string;
+  bounty?: boolean;
+  /** 'form': this form, even where "Suggest an improvement" would open comment mode. */
+  mode?: 'form';
   firstFeedback?: { userId: number; appSlug: string | null; issueNumber: number; canFix: boolean };
+  edit?: { reportId: number; version: number; title: string; description: string; secondsLeft: number };
+  onEditSaved?: () => void;
 }
 
 /** The form the drop zone listens on; the controller's node, found by id. */
@@ -77,25 +97,71 @@ function feedbackLocked(): boolean {
 }
 
 export function FeedbackDialog() {
+  // Text only React writes follows the language here. A node the controller
+  // writes too starts from <ControllerText>, which React never updates.
+  const t = useMessages('dialogs');
+  // #4289: the form's switch to comment mode, offered where the device
+  // has not turned it off (not in the side panel). Read on every open,
+  // since the setting lives on the device and can change between opens.
+  const [offersComment, setOffersComment] = useState(false);
+  // #5687: the attached picture or clip a thumbnail asked to see full size.
+  // Null until a tap, so the prerendered document never carries it.
+  const [preview, setPreview] = useState<FeedbackPreviewItem | null>(null);
+  // The card, as a bottom sheet on a phone (#4554): `useKeyboardSurface`
+  // rides the keyboard with it the way the sign-in sheet's does, and the
+  // sheet's slide-up is `useStaticModal`'s `phoneSheet` presentation.
+  const cardRef = useRef<HTMLDivElement>(null);
   const dialog = useDialog<OpenOptions>('feedback', {
-    onOpen: (opts) => Feedback._open(opts || {}),
-    onClose: () => Feedback._reset(),
+    phoneSheet: true,
+    onOpen: (opts) => {
+      if (opts?.edit) setOffersComment(false);
+      else setOffersComment(formOffersComment());
+      Feedback._open(opts || {});
+      // The page under the form is drawn now for its Comment switch, as the
+      // menu does for "Suggest an improvement" (a no-op where the switch is off).
+      if (!opts?.edit) prepareComment();
+    },
+    // A closed dialog never leaves a preview behind: `_reset` revokes the
+    // object URLs the preview would be reading.
+    onClose: () => {
+      setPreview(null);
+      Feedback._reset();
+    },
   });
+  useKeyboardSurface(cardRef, { ride: true });
+  // Comment mode instead, taking the form's draft: the words wait for the
+  // first click on the page, and the pictures, title, Kudos and destination
+  // go into that comment's box.
+  const toComment = () => {
+    const carry = Feedback._takeDraft();
+    dialog.close();
+    const any = carry.text.trim() || carry.title || carry.images.length || carry.bounty;
+    openCommentMode({ via: 'switch', carry: any ? carry : null });
+  };
 
   // Was the middle of `App.bindEvents`. Layout effect, so the header's
   // speech-bubble button and the ?shot=feedback deep link are both live
   // before the first paint that could act on them.
   useIsomorphicLayoutEffect(() => {
+    // The controller builds the thumbnails, so it asks the island to show
+    // one (#5687); the placeholder in the module is where a tap before
+    // wiring lands.
+    Feedback._preview = (item) => setPreview(item);
     initFeedback();
   }, []);
 
   return (
+    <>
     <DialogRoot
       id="feedback-modal"
       ref={dialog.rootRef}
       {...dialog.backdropProps}
     >
-      <DialogCard size="sm">
+      <DialogCard size="sm" ref={cardRef}>
+        {/* The sheet's handle (#4554), shown only in the phone sheet's
+            presentation (app.css's `[data-dialog-sheet]` rules). No id: the
+            prerendered shell gains nothing it has to name. */}
+        <div aria-hidden="true" className="feedback-sheet-grabber" />
         {/* #3907: Return in the title goes on to the description, where it is
             a new line (the iOS keyboard's chevrons are gone). A handler, not
             markup: nothing here is written, so the controller still owns
@@ -106,7 +172,7 @@ export function FeedbackDialog() {
             screenshot row, a clip to the video slot); this draws the outline
             only, and nothing in the controller writes this node. Off while
             the form is locked for a submit or an upload, as its drop is. */}
-        <HostDropOverlay host={feedbackForm} label="Drop images or a clip to attach" isDisabled={feedbackLocked} />
+        <HostDropOverlay host={feedbackForm} label={t('dialogs:feedback.dropLabel')} isDisabled={feedbackLocked} />
         {/* SUGGEST AN IMPROVEMENT, from every way in. It was "Send
             feedback", then "Ask for a change" from the hub's ⋯ (QA
             2026-09-24) and from every way in (UI overhaul); people read
@@ -116,11 +182,52 @@ export function FeedbackDialog() {
             an improvement" since the first-session run-through (5 Oct
             2026), in a newcomer's words. */}
         <h2 className="text-lg font-bold">
-          Suggest an improvement
+          {t('dialogs:feedback.heading')}
         </h2>
         <p className="mt-0.5 mb-4 text-sm text-zinc-600 dark:text-zinc-400">
-          Members can see it, vote on it and pick it up.
+          {t('dialogs:feedback.intro')}
         </p>
+        {/* #4680: the way to see what is already asked for, before writing a
+            new one. The confirmation's small-link look (#feedback-sent-fix)
+            without its hidden/self-center: it shows with the form. Bound to
+            openMine by the controller, the same split as #feedback-sent-mine
+            — React owns the words, the listener is the controller's. Closing
+            keeps the draft (#2796), so half a thought survives the look. */}
+        <button id="feedback-form-mine" type="button" className="-mt-3 mb-4 block text-xs text-zinc-500 underline underline-offset-2 dark:text-zinc-400">
+          {t('dialogs:feedback.form.mine')}
+        </button>
+        {/* #4289: this form, or comment mode, where a click on the page is
+            the comment. "Suggest an improvement" opens comment mode, and this
+            form is reached from its Form switch; this is the way back.
+            React's own node, which the controller never writes; hidden in the
+            prerendered shell (the class, as the rest of this card is), since
+            `offersComment` starts false until the dialog opens. */}
+        <div className={offersComment ? '-mt-1 mb-4 flex items-center gap-2' : 'hidden'}>
+          <span className="inline-flex gap-0.5 rounded-full bg-zinc-100 p-[3px] dark:bg-zinc-800" role="radiogroup" aria-label={t('dialogs:feedback.mode.label')}>
+            <button
+              type="button"
+              role="radio"
+              aria-checked="true"
+              title={t('dialogs:feedback.mode.formTitle')}
+              className="inline-flex h-7 items-center gap-1.5 rounded-full bg-white pl-2 pr-2.5 text-[13px] font-semibold text-zinc-900 shadow-sm ring-1 ring-black/5 dark:bg-zinc-700 dark:text-white"
+            >
+              <DescriptionIcon className="h-4 w-4" />
+              {t('dialogs:feedback.mode.form')}
+            </button>
+            <button
+              type="button"
+              role="radio"
+              aria-checked="false"
+              title={t('dialogs:feedback.mode.commentTitle')}
+              onClick={toComment}
+              className="inline-flex h-7 items-center gap-1.5 rounded-full pl-2 pr-2.5 text-[13px] font-semibold text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white"
+            >
+              <ChatIcon className="h-4 w-4" />
+              {t('dialogs:feedback.mode.comment')}
+            </button>
+          </span>
+          <span className="text-xs text-zinc-500 dark:text-zinc-400">{t('dialogs:feedback.mode.hint')}</span>
+        </div>
         {/*
             Target toggle: file this feedback against the app being viewed
             or against the Homeroom platform. The "This app" button
@@ -143,7 +250,7 @@ export function FeedbackDialog() {
             Homeroom), with what it is under it, so the choice is between
             two places a person knows rather than two categories. */}
         <p id="feedback-target-label" className="mb-1.5 text-sm font-medium text-zinc-900 dark:text-zinc-100">
-          Where should this go?
+          {t('dialogs:feedback.target.label')}
         </p>
         <div id="feedback-target" className="flex gap-2 mb-3" role="radiogroup" aria-labelledby="feedback-target-label">
           <div className="flex-1 flex flex-col items-center">
@@ -158,8 +265,8 @@ export function FeedbackDialog() {
               {/* The controller writes the app's name into the first line,
                   and "No app open" when there is none; the second line says
                   what it is, and goes when the first already says it. */}
-              <span id="feedback-target-app-name" className="block truncate text-sm font-semibold">This app</span>
-              <span id="feedback-target-app-sub" className="block truncate text-xs opacity-75">This app</span>
+              <span id="feedback-target-app-name" className="block truncate text-sm font-semibold"><ControllerText id="dialogs:feedback.target.thisApp" /></span>
+              <span id="feedback-target-app-sub" className="block truncate text-xs opacity-75">{t('dialogs:feedback.target.appSub')}</span>
             </button>
             {/* Caret indicating the selected option; shown/hidden by the controller. */}
             <div
@@ -178,7 +285,7 @@ export function FeedbackDialog() {
               className="w-full rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-left transition-colors"
             >
               <span className="block truncate text-sm font-semibold">Homeroom</span>
-              <span className="block truncate text-xs opacity-75">The platform itself</span>
+              <span className="block truncate text-xs opacity-75">{t('dialogs:feedback.target.platformSub')}</span>
             </button>
             <div
               id="feedback-caret-platform"
@@ -212,17 +319,17 @@ export function FeedbackDialog() {
         */}
         <div className="mb-2">
           <Label id="feedback-title-label" htmlFor="feedback-title" className="mb-1">
-            Title
-            <span className="font-normal text-zinc-500 dark:text-zinc-500">
-              {' optional'}
-            </span>
+            <RichMessage
+              id="dialogs:feedback.title.label"
+              components={[<span className="font-normal text-zinc-500 dark:text-zinc-500" />]}
+            />
           </Label>
           <Input
             id="feedback-title"
             type="text"
             maxLength={200}
             enterKeyHint="next"
-            placeholder="Suggested as you type"
+            placeholder={t('dialogs:feedback.title.placeholder')}
           />
         </div>
         {/*
@@ -246,14 +353,14 @@ export function FeedbackDialog() {
               a question that says what to write, and plainly the one thing
               the request needs, so it carries no asterisk. */}
           <Label id="feedback-text-label" htmlFor="feedback-text" className="mb-1">
-            What should change?
+            {t('dialogs:feedback.description.label')}
           </Label>
           <Textarea
             id="feedback-text"
             rows={4}
             maxLength={FEEDBACK_DESCRIPTION_MAX}
             aria-required="true"
-            placeholder="Describe the change, or the problem you hit"
+            placeholder={t('dialogs:feedback.description.placeholder')}
             className="resize-none"
           >
           </Textarea>
@@ -294,7 +401,7 @@ export function FeedbackDialog() {
               className="hidden inline-flex min-h-[48px] items-center gap-1.5 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-900 dark:text-zinc-100 transition-colors"
             >
               <CameraIcon className="w-3.5 h-3.5" />
-              <span data-screenshot-label="">Attach screenshot</span>
+              <span data-screenshot-label=""><ControllerText id="dialogs:feedback.screenshot.attach" /></span>
             </button>
             <div className="relative">
               <button
@@ -303,13 +410,13 @@ export function FeedbackDialog() {
                 aria-haspopup="menu"
                 aria-expanded="false"
                 aria-controls="feedback-attach-menu"
-                aria-label="Attach a photo or video"
-                title="Attach a photo or video"
+                aria-label={t('dialogs:feedback.attach.button')}
+                title={t('dialogs:feedback.attach.button')}
                 className="hidden inline-flex min-h-[48px] min-w-[48px] items-center justify-center rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-900 dark:text-zinc-100 transition-colors"
               >
                 <PaperclipIcon className="w-5 h-5" aria-hidden="true" />
               </button>
-              <div id="feedback-attach-menu" role="menu" aria-label="Attach" className="feedback-attach-pop hidden">
+              <div id="feedback-attach-menu" role="menu" aria-label={t('dialogs:feedback.attach.menu')} className="feedback-attach-pop hidden">
                 <button
                   id="feedback-screenshot-picker-btn"
                   type="button"
@@ -317,7 +424,7 @@ export function FeedbackDialog() {
                   className="feedback-attach-option hidden"
                 >
                   <PhotoIcon aria-hidden="true" />
-                  Photo
+                  {t('dialogs:feedback.attach.photo')}
                 </button>
                 <button
                   id="feedback-video-btn"
@@ -326,7 +433,7 @@ export function FeedbackDialog() {
                   className="feedback-attach-option hidden"
                 >
                   <VideoCameraIcon aria-hidden="true" />
-                  <span data-video-label="">Video</span>
+                  <span data-video-label=""><ControllerText id="dialogs:feedback.video.add" /></span>
                 </button>
               </div>
             </div>
@@ -377,10 +484,30 @@ export function FeedbackDialog() {
               className="accent-violet-500 w-4 h-4 mt-0.5"
             />
             <span className="text-xs text-zinc-600 dark:text-zinc-400">
-              <span className="font-medium text-zinc-700 dark:text-zinc-300">
-                Include app state:
-              </span>
-              this app can attach a snapshot of its current state to help debugging
+              <RichMessage
+                id="dialogs:feedback.state.label"
+                components={[<span className="font-medium text-zinc-700 dark:text-zinc-300" />]}
+              />
+            </span>
+          </label>
+        </div>
+        {/*
+            #5048: file it as a private request, which only platform admins
+            can see. Shown to full admins only (the controller unhides it);
+            ticked, the request is kept in Homeroom and never becomes a
+            GitHub issue, so the bounty and app-state rows hide and nothing
+            attached goes with it. Same utility classes as the rows around it.
+        */}
+        <div id="feedback-private-row" className="hidden mt-2">
+          <label className="flex items-start gap-2 cursor-pointer select-none">
+            <input id="feedback-private-checkbox" type="checkbox" className="accent-violet-500 w-4 h-4 mt-0.5" />
+            <span className="text-xs text-zinc-600 dark:text-zinc-400">
+              <RichMessage
+                id="dialogs:feedback.private.label"
+                components={[<span className="font-medium text-zinc-700 dark:text-zinc-300" />]}
+              />
+              <br />
+              <span className="text-zinc-500 dark:text-zinc-500">{t('dialogs:feedback.private.note')}</span>
             </span>
           </label>
         </div>
@@ -413,10 +540,10 @@ export function FeedbackDialog() {
           <label className="flex items-start gap-2 cursor-pointer select-none">
             <input id="feedback-bounty-checkbox" type="checkbox" className="accent-violet-500 w-4 h-4 mt-0.5" />
             <span className="text-xs text-zinc-600 dark:text-zinc-400">
-              <span className="font-medium text-zinc-700 dark:text-zinc-300">
-                Put a kudos on this
-              </span>
-              {' to thank whoever solves it'}
+              <RichMessage
+                id="dialogs:feedback.bounty.label"
+                components={[<span className="font-medium text-zinc-700 dark:text-zinc-300" />]}
+              />
               <br />
               <span id="feedback-bounty-note" className="text-zinc-500 dark:text-zinc-500">
               </span>
@@ -425,6 +552,17 @@ export function FeedbackDialog() {
         </div>
         <div id="feedback-status" className="text-sm mt-2 hidden">
         </div>
+        {/* #3994: a message saved on this device that has not sent yet is
+            sent again on a press, instead of only when the outbox's own
+            triggers fire. The controller shows it while anything is waiting
+            and words it while a try is running. */}
+        <button
+          id="feedback-queue-retry"
+          type="button"
+          className="hidden mt-1 min-h-[44px] text-sm font-semibold text-violet-700 hover:underline disabled:cursor-not-allowed disabled:opacity-40 dark:text-violet-300"
+        >
+          <ControllerText id="dialogs:feedback.queue.retry" />
+        </button>
         {/* #4033: Cancel and Post stay on screen while the form above them
             scrolls (a long description, the kudos row). `.feedback-actions`
             in app.css pins the row to the bottom of the kit modal, which is
@@ -443,30 +581,44 @@ export function FeedbackDialog() {
             className="flex-1 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-4 py-2 text-sm font-medium text-zinc-900 dark:text-zinc-100 transition-colors"
             onClick={() => dialog.close()}
           >
-            Cancel
+            {t('core:common.cancel')}
           </button>
           <Button id="feedback-submit" layout="flex">
-            Post request
+            <ControllerText id="dialogs:feedback.submit.post" />
           </Button>
         </div>
         </div>
+        <section id="feedback-edit" className="hidden" aria-labelledby="feedback-edit-heading" tabIndex={-1} onKeyDown={returnKeyHandler()}>
+          <h2 id="feedback-edit-heading" className="text-xl font-bold mb-1">{t('dialogs:feedback.edit.heading')}</h2>
+          <p id="feedback-edit-window" className="text-xs text-zinc-500 dark:text-zinc-400 mb-4"></p>
+          <Label htmlFor="feedback-edit-title" className="mb-1">{t('dialogs:feedback.edit.titleLabel')}</Label>
+          <Input id="feedback-edit-title" maxLength={200} enterKeyHint="next" className="mb-3" />
+          <Label htmlFor="feedback-edit-text" className="mb-1">{t('dialogs:feedback.description.label')}</Label>
+          <Textarea id="feedback-edit-text" rows={5} maxLength={FEEDBACK_DESCRIPTION_MAX} />
+          <p id="feedback-edit-status" role="status" className="hidden text-sm text-red-700 dark:text-red-400 mt-2"></p>
+          <div className="feedback-actions flex gap-3 mt-4">
+            <Button id="feedback-edit-cancel" variant="neutral" ink="neutral" layout="flex" className="min-h-[44px]">{t('core:common.cancel')}</Button>
+            <Button id="feedback-edit-save" layout="flex" disabledStyle="block" className="min-h-[44px]"><ControllerText id="dialogs:feedback.edit.save" /></Button>
+          </div>
+        </section>
         <section id="feedback-first-success" className="hidden" aria-labelledby="feedback-first-title" tabIndex={-1}>
           <h2 id="feedback-first-title" className="text-xl font-bold mb-3">
-            Congratulations on your first request!
+            {t('dialogs:feedback.first.title')}
           </h2>
           <p className="text-sm text-zinc-600 dark:text-zinc-400 mb-4">
-            You’ve helped make this app better. Want to take the next step?
+            {t('dialogs:feedback.first.intro')}
           </p>
           <p id="feedback-first-notice" className="text-sm text-emerald-700 dark:text-emerald-400 mb-4" role="status"></p>
           <div className="flex flex-col gap-3">
-            <Button id="feedback-first-fix" disabledStyle="block" className="min-h-[44px]">Try a fix yourself</Button>
+            <Button id="feedback-first-fix" disabledStyle="block" className="min-h-[44px]">{t('dialogs:feedback.first.fix')}</Button>
             <p id="feedback-first-fix-note" className="text-xs text-zinc-500 dark:text-zinc-400">
-              Start with a draft you can edit before sending it to the coding agent.
+              <ControllerText id="dialogs:feedback.first.fixNote.default" />
             </p>
-            <Button id="feedback-first-board" variant="neutral" ink="neutral" disabledStyle="block" className="min-h-[44px]">See this app’s board</Button>
+            <Button id="feedback-first-board" variant="neutral" ink="neutral" disabledStyle="block" className="min-h-[44px]">{t('dialogs:feedback.first.board')}</Button>
             {/* #3186: the Me screen's list, where this report now is. */}
-            <Button id="feedback-first-mine" variant="neutral" ink="neutral" className="min-h-[44px]">See your requests</Button>
-            <Button id="feedback-first-done" variant="unstyled" ink="muted" className="min-h-[44px]">Done</Button>
+            <Button id="feedback-first-mine" variant="neutral" ink="neutral" className="min-h-[44px]">{t('dialogs:feedback.first.mine')}</Button>
+            <Button id="feedback-first-edit" variant="neutral" ink="neutral" className="hidden min-h-[44px]">{t('dialogs:feedback.edit.button')}</Button>
+            <Button id="feedback-first-done" variant="unstyled" ink="muted" className="min-h-[44px]">{t('core:common.done')}</Button>
           </div>
         </section>
         {/*
@@ -480,15 +632,16 @@ export function FeedbackDialog() {
         */}
         <section id="feedback-sent" className="hidden" aria-labelledby="feedback-sent-title" tabIndex={-1}>
           <h2 id="feedback-sent-title" className="text-lg font-bold mb-3">
-            Request posted
+            <ControllerText id="dialogs:feedback.sent.title" />
           </h2>
           <p id="feedback-sent-notice" className="hidden text-sm text-emerald-700 dark:text-emerald-400 mb-2" role="status"></p>
           {/* B8: where Homeroom bot builds it, this says so ("Homeroom bot is
-              building it now, usually about 8 minutes. ...", #3971), Open
-              chat leads, and building it yourself is the small link at the
-              foot. The controller words the line and shows the two. */}
+              building it now, usually about 8 minutes. ...", #3971); Open
+              chat is a neutral button under Done now (#5687), and building
+              it yourself is the small link at the foot. The controller words
+              the line and shows the two. */}
           <p id="feedback-sent-line" className="text-sm text-zinc-600 dark:text-zinc-400 mb-4">
-            Your idea is on the board now. Find it on your profile, under Your requests.
+            <ControllerText id="dialogs:feedback.sent.line" />
           </p>
           {/* #3971: a person's first request, where Homeroom bot builds it.
               B8 answered that with the bot's confirmation alone, so nobody it
@@ -498,22 +651,49 @@ export function FeedbackDialog() {
               names the app in the line. */}
           <div id="feedback-sent-first" className="hidden mb-4 rounded-lg bg-emerald-50 px-3 py-2.5 dark:bg-emerald-500/10">
             <p className="text-sm font-semibold text-emerald-700 dark:text-emerald-400">
-              Your first request!
+              {t('dialogs:feedback.sent.firstTitle')}
             </p>
             <p id="feedback-sent-first-line" className="text-sm text-zinc-600 dark:text-zinc-400">
-              You just helped shape this app.
+              <ControllerText id="dialogs:feedback.sent.firstLine.unnamed" />
+            </p>
+            <p className="mt-1.5 text-sm text-zinc-600 dark:text-zinc-400">
+              {t('dialogs:feedback.sent.firstBot')}
             </p>
           </div>
+          {/* Where Homeroom bot builds it: get a ping when it is ready? (the
+              notification ask). Its own React child, which the controller
+              never writes into; it only says when it is wanted
+              (../notify-ask/suggestion-ask.tsx). Nothing in the prerender. */}
+          <SuggestionAsk />
+          {/* #5687: Done is what the sheet is for, so it is the filled
+              primary button and comes first. Open chat is the one neutral
+              button under it, where Homeroom bot builds the request:
+              following the build is the useful next step there. See your
+              requests and Edit are one row of quiet links under the buttons
+              ("See your requests · Edit"); Edit stays because it is the only
+              place a request can be edited after posting.
+              The controller toggles `hidden` on each link, so the row reads
+              their state in CSS rather than being told: the dot shows only
+              between two shown links, and the row itself hides when neither
+              shows, so no empty row keeps a gap. */}
           <div className="flex flex-col gap-3">
-            <Button id="feedback-sent-chat" className="hidden min-h-[44px]">Open chat</Button>
-            <Button id="feedback-sent-mine" variant="neutral" ink="neutral" className="min-h-[44px]">See your requests</Button>
-            <Button id="feedback-sent-done" variant="unstyled" ink="muted" className="min-h-[44px]">Done</Button>
+            <Button id="feedback-sent-done" className="min-h-[44px]">{t('core:common.done')}</Button>
+            <Button id="feedback-sent-chat" variant="neutral" ink="neutral" className="hidden min-h-[44px]">{t('dialogs:feedback.sent.chat')}</Button>
+            <div className="flex items-center justify-center [&:not(:has(>:not(.hidden)))]:hidden">
+              <Button id="feedback-sent-mine" type="button" variant="unstyled" size="inline" ink="none" className="min-h-[44px] px-2 text-zinc-500 underline underline-offset-2 dark:text-zinc-400">{t('dialogs:feedback.sent.mine')}</Button>
+              <span aria-hidden="true" className="hidden text-sm text-zinc-500 dark:text-zinc-400 [:not(.hidden)+&:has(+:not(.hidden))]:inline">·</span>
+              <Button id="feedback-sent-edit" type="button" variant="unstyled" size="inline" ink="none" className="hidden min-h-[44px] px-2 text-zinc-500 underline underline-offset-2 dark:text-zinc-400">{t('dialogs:feedback.edit.button')}</Button>
+            </div>
             <button id="feedback-sent-fix" type="button" className="hidden self-center text-xs text-zinc-500 underline underline-offset-2 dark:text-zinc-400">
-              Build it yourself with a coding agent
+              {t('dialogs:feedback.sent.fix')}
             </button>
           </div>
         </section>
       </DialogCard>
     </DialogRoot>
+    {/* #5687: beside the dialog root rather than inside it, so a tap on the
+        dark around the picture is the preview's alone. */}
+    {preview ? <FeedbackPreview item={preview} onClose={() => setPreview(null)} /> : null}
+    </>
   );
 }

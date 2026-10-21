@@ -27,6 +27,7 @@ const benchRunner = require('../services/bench/runner');
 const shotsControl = require('../services/shots-control');
 const shotsState = require('../services/shots-state');
 const shotsIdentities = require('../services/shots-identities');
+const shotsReadyStates = require('../services/shots-ready-states');
 
 // On-demand-TLS gate for Caddy. Caddy GETs this before issuing a Let's
 // Encrypt cert for a hostname it has never seen (see Caddyfile's
@@ -43,7 +44,17 @@ async function isKnownHost(pool, rawDomain) {
   if (domain === USERNODE_DOMAIN) return true;
 
   const suffix = '.' + USERNODE_APPS_DOMAIN;
-  if (!domain.endsWith(suffix)) return false;
+  if (!domain.endsWith(suffix)) {
+    // A custom domain (#4405): Caddy's on-demand site asks before issuing,
+    // and only a claim the platform has verified or already serves may cost
+    // a certificate. Unknown hosts never reach the database.
+    if (!/^[a-z0-9.-]+$/.test(domain) || !domain.includes('.') || domain.endsWith('.' + USERNODE_DOMAIN)) return false;
+    const custom = await pool.query(
+      "SELECT 1 FROM app_domains WHERE hostname = $1 AND status IN ('verified', 'live') LIMIT 1",
+      [domain]
+    );
+    return custom.rowCount > 0;
+  }
   const label = domain.slice(0, -suffix.length);
   // Only single-level subdomains are routable (the wildcard matches one
   // label); reject anything with a further dot.
@@ -105,8 +116,9 @@ function internalRoutes(_config) {
 
   // Run-scoped shots control plane. The shots worker receives a
   // purpose-bound token naming both its session and run; it has no access to
-  // push, issues, production diagnostics, or the generic worker API. The
-  // callbacks live only while the orchestrator owns the paired environments.
+  // push, issues, production diagnostics, or the generic worker API. Its
+  // calls are answered from the run's workspace in Postgres, by whichever web
+  // process serves them, while the run is current and its agent at work.
   const shotsAuth = internalAuthPurpose([platformJwt.PUR_SHOTS]);
   const shotsLimiter = rateLimit({
     windowMs: 60 * 1000,
@@ -115,14 +127,16 @@ function internalRoutes(_config) {
     legacyHeaders: false,
     keyGenerator: (req) => `shots:${req.workerSession?.shotsRunId || 'anon'}`,
   });
-  function shotsControlForRequest(req) {
+  // Applies one of the agent's calls to its run's workspace, in whichever
+  // process serves it (services/shots-control.js).
+  function withShotsControl(req, fn, opts = {}) {
     const runId = String(req.params.runId || '');
     if (req.workerSession.shotsRunId !== runId) {
       throw new shotsControl.ShotsControlError(
         'shots_scope_mismatch', 'Shots token does not own this run.', 403
       );
     }
-    return shotsControl.forRequest({ runId, sessionId: req.workerSession.sessionId });
+    return shotsControl.withControl(pool, { runId, sessionId: req.workerSession.sessionId }, fn, opts);
   }
   function shotsError(res, err) {
     const status = Number(err?.status)
@@ -131,17 +145,17 @@ function internalRoutes(_config) {
     return res.status(status).json({ ok: false, code: err?.code || 'shots_control_failed', message: err?.message || 'Shots control failed.' });
   }
 
-  router.get('/api/internal/shots/:runId/context', shotsAuth, shotsLimiter, (req, res) => {
-    try { return res.json({ ok: true, context: shotsControlForRequest(req).getContext() }); }
+  router.get('/api/internal/shots/:runId/context', shotsAuth, shotsLimiter, async (req, res) => {
+    try { return res.json({ ok: true, context: await withShotsControl(req, (c) => c.getContext(), { readOnly: true }) }); }
     catch (err) { return shotsError(res, err); }
   });
 
   // The app's tile on Homeroom's home screen, as one side's dapp.json draws
   // it. The shots proxy asks for it when the browser opens the home tile
   // path on that side's address (services/shots-home-tile.js).
-  router.get('/api/internal/shots/:runId/home-tile/:side', shotsAuth, shotsLimiter, (req, res) => {
+  router.get('/api/internal/shots/:runId/home-tile/:side', shotsAuth, shotsLimiter, async (req, res) => {
     try {
-      const page = shotsControlForRequest(req).homeTilePage(String(req.params.side || ''));
+      const page = await withShotsControl(req, (c) => c.homeTilePage(String(req.params.side || '')), { readOnly: true });
       res.set({
         'Content-Type': 'text/html; charset=utf-8',
         'Cache-Control': 'no-store',
@@ -157,29 +171,78 @@ function internalRoutes(_config) {
   // its change/screen/side/kind as query fields. The parser limit sits above
   // the clip limit so the structured clip_too_large code wins.
   const shotBody = raw({ type: 'application/octet-stream', limit: '21mb' });
-  router.post('/api/internal/shots/:runId/shot', shotsAuth, shotsLimiter, shotBody, (req, res) => {
+  router.post('/api/internal/shots/:runId/shot', shotsAuth, shotsLimiter, shotBody, async (req, res) => {
     try {
-      const result = shotsControlForRequest(req).saveShot({
+      const result = await withShotsControl(req, (c) => c.saveShot({
         change: req.query.change,
         screen: req.query.screen,
         side: req.query.side,
         kind: req.query.kind,
-      }, Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0));
+        theme: req.query.theme,
+        // What the worker says the still was saved at; read only in a run
+        // taken at device density (shots-control.stillDensity).
+        density: req.query.density,
+        // The agent's answer to whether the still shows anybody's private
+        // things (shots-control.publicSafeOf).
+        showsPrivate: req.query.showsPrivate,
+      }, Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0)));
       return res.json({ ok: true, result });
     } catch (err) { return shotsError(res, err); }
   });
 
-  router.post('/api/internal/shots/:runId/skip', shotsAuth, shotsLimiter, (req, res) => {
+  // The close-ups this run wants now (services/shots-closeups.js), each
+  // with whether it is saved. Empty unless the run is taken at device density.
+  router.get('/api/internal/shots/:runId/closeups', shotsAuth, shotsLimiter, async (req, res) => {
     try {
-      const result = shotsControlForRequest(req).skipChange(req.body || {});
+      const result = await withShotsControl(req, (c, db) => shotsControl.wantedCloseups(db, c), { readOnly: true });
+      return res.json({ ok: true, result: { closeups: result } });
+    } catch (err) { return shotsError(res, err); }
+  });
+
+  // One close-up the shots bridge took, as the raw body, with which one it
+  // is as query fields: kept only when it is wanted, the size asked for, and
+  // the after screen shot at that place.
+  router.post('/api/internal/shots/:runId/closeup', shotsAuth, shotsLimiter, shotBody, async (req, res) => {
+    try {
+      const result = await withShotsControl(req, async (c, db) => {
+        const raw = { change: req.query.change, screen: req.query.screen, part: Number(req.query.part) };
+        const asked = await shotsControl.wantedCloseups(db, c);
+        const stills = await shotsControl.stillsFor(db, c, { change: String(raw.change || ''), screen: String(raw.screen || '') });
+        return c.saveCloseup(raw, Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0), { asked, ...stills });
+      });
+      return res.json({ ok: true, result });
+    } catch (err) { return shotsError(res, err); }
+  });
+
+  router.post('/api/internal/shots/:runId/skip', shotsAuth, shotsLimiter, async (req, res) => {
+    try {
+      const result = await withShotsControl(req, (c) => c.skipChange(req.body || {}));
       return res.json({ ok: true, result });
     } catch (err) { return shotsError(res, err); }
   });
 
   // What a change's shots leave out, shown beside them on the proposal.
-  router.post('/api/internal/shots/:runId/note', shotsAuth, shotsLimiter, (req, res) => {
+  router.post('/api/internal/shots/:runId/note', shotsAuth, shotsLimiter, async (req, res) => {
     try {
-      const result = shotsControlForRequest(req).noteChange(req.body || {});
+      const result = await withShotsControl(req, (c) => c.noteChange(req.body || {}));
+      return res.json({ ok: true, result });
+    } catch (err) { return shotsError(res, err); }
+  });
+
+  // A problem the shots agent noticed on the after build besides the
+  // declared changes, shown on the proposal under "Also noticed".
+  router.post('/api/internal/shots/:runId/problem', shotsAuth, shotsLimiter, async (req, res) => {
+    try {
+      const result = await withShotsControl(req, (c) => c.noteProblem(req.body || {}));
+      return res.json({ ok: true, result });
+    } catch (err) { return shotsError(res, err); }
+  });
+
+  // What the shots agent is about to do to both builds to reach a change (an
+  // API GET held or failed, a sample file uploaded), shown beside its shots.
+  router.post('/api/internal/shots/:runId/condition', shotsAuth, shotsLimiter, async (req, res) => {
+    try {
+      const result = await withShotsControl(req, (c) => c.noteCondition(req.body || {}));
       return res.json({ ok: true, result });
     } catch (err) { return shotsError(res, err); }
   });
@@ -219,31 +282,70 @@ function internalRoutes(_config) {
     } catch (err) {
       return shotsError(res, err);
     }
-    // Whose browser the shots agent will use, said while the building agent
-    // can still declare again. Best-effort: a lookup that fails never fails
-    // a declaration that was recorded.
+    // Whose browser the shots agent will use, and what data the copies hold
+    // (shots-ready-states.js), said while the building agent can still
+    // declare again. Best-effort: a lookup that fails never fails a
+    // declaration that was recorded.
     let warnings = [];
+    let advice = null;
     try {
       const { rows } = await pool.query(
         'SELECT a.id, a.slug FROM chat_sessions s JOIN apps a ON a.id = s.app_id WHERE s.id = $1',
         [sessionId]
       );
       if (rows[0]) {
-        warnings = await shotsIdentities.personaWarnings(pool, rows[0], result.intent, {
-          selfApp: rows[0].slug === _config.selfAppSlug,
-        });
+        const selfApp = rows[0].slug === _config.selfAppSlug;
+        advice = shotsReadyStates.declarationAdvice(result.intent, { selfApp });
+        warnings = await shotsIdentities.personaWarnings(pool, rows[0], result.intent, { selfApp });
       }
     } catch (err) {
       log.warn('internal-api', 'Could not check the declared personas', { sessionId, err: err.message });
     }
-    return res.json({ ok: true, shots: result, ...(warnings.length ? { warnings } : {}) });
+    if (advice) warnings = [...warnings, ...advice.warnings];
+    return res.json({
+      ok: true,
+      shots: result,
+      ...(advice ? { availableStates: advice.availableStates, dataNote: advice.dataNote } : {}),
+      ...(warnings.length ? { warnings } : {}),
+    });
   };
   router.post('/api/internal/sessions/:sessionId/visible-changes',
     visibleChangesAuth, visibleChangesLimiter, declareVisibleChanges);
-  // The path before the rename, for a worker still on the previous release's
-  // image while a deploy rolls out.
-  router.post('/api/internal/sessions/:sessionId/visual-evidence-intent',
-    visibleChangesAuth, visibleChangesLimiter, declareVisibleChanges);
+
+  // #4490: a hosted build's diagram of its change (worker/visible-changes-mcp.js
+  // declare_diagram), on the same boundary as its visible changes: its own
+  // session only, the same validation submit_work applies, and Mermaid only
+  // when the session's declared impact is "none".
+  router.post('/api/internal/sessions/:sessionId/diagram',
+    visibleChangesAuth, visibleChangesLimiter, async (req, res) => {
+      const sessionId = Number(req.params.sessionId);
+      if (!Number.isInteger(sessionId) || sessionId <= 0) {
+        return res.status(400).json({ ok: false, code: 'bad_session_id', message: 'Invalid proposal session id.' });
+      }
+      if (Number(req.workerSession.sessionId) !== sessionId) {
+        return res.status(403).json({ ok: false, code: 'session_mismatch', message: 'The worker token does not own this proposal.' });
+      }
+      try {
+        const { rows } = await pool.query(
+          "SELECT shots_detail->'intent'->>'impact' AS impact FROM chat_sessions WHERE id = $1",
+          [sessionId]
+        );
+        if (!rows[0]) return res.status(404).json({ ok: false, code: 'not_found', message: 'No such proposal session.' });
+        let record;
+        try {
+          record = require('../services/diagram').parseDiagram(req.body?.diagram, { impact: rows[0].impact || null });
+        } catch (err) {
+          return res.status(400).json({ ok: false, code: 'invalid_diagram', message: err.message });
+        }
+        // The row and the pull request's block it owes commit together.
+        const stored = await require('../services/proposal-diagram').storeDeclared(pool, sessionId, record);
+        if (!stored) return res.status(500).json({ ok: false, code: 'diagram_not_stored', message: 'The diagram could not be stored.' });
+        return res.json({ ok: true, diagram: record });
+      } catch (err) {
+        log.error('internal-api', 'declare_diagram failed', { sessionId, err: err.message });
+        return res.status(500).json({ ok: false, code: 'internal_error', message: 'Could not record the diagram.' });
+      }
+    });
 
   // The app-host gate (services/edge-gate.js): Caddy's forward_auth and the
   // Kubernetes gate proxy (scripts/app-gate.js) both ask here.

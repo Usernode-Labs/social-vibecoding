@@ -67,8 +67,8 @@ test('a stuck build, one it cannot build, one with nothing in it and one a perso
   assert.match(dm.dmText('blocked', { reason: 'x' }, context), /Reply to this message with more detail/);
   assert.match(dm.dmText('empty', {}, context), /Reply to this message with what you'd like/);
   assert.match(dm.dmText('person', { reason: 'x' }, context), /reply to this message and say so/);
-  assert.match(read('src/services/homeroom-bot-dm.js'), /\.\.\.\(STUCK_ACTIONS\[kind\] && !\(kind === 'person' && dm\.platform\) \? \{ actions: STUCK_ACTIONS\[kind\], status: 'open' \} : \{\}\),/,
-    '#4239: every stuck kind but a request about Homeroom itself, whose move offer follows');
+  assert.match(read('src/services/homeroom-bot-dm.js'), /\.\.\.\(STUCK_ACTIONS\[kind\] && !\(kind === 'person' && \(dm\.platform \|\| personDeciders\(dm\)\.length\)\) && !dm\.done\n\s+\? \{ actions: STUCK_ACTIONS\[kind\], status: 'open' \} : \{\}\),/,
+    '#4239: every stuck kind but a request about Homeroom itself, whose move offer follows, and one somebody else decides');
   assert.equal(dm.suggestsOnly({ actions: dm.STUCK_ACTIONS.build_failed }), true);
   assert.equal(dm.suggestsOnly({ actions: dm.promptActions(['a', 'b']) }), true);
   assert.equal(dm.suggestsOnly({ actions: [{ type: 'server' }, { type: 'prompt' }] }), false, 'an offer is a decision');
@@ -127,7 +127,10 @@ test('a retired suggestion is drawn as nothing; a decision overtaken still says 
 
 test('Try again replies to its message; Add detail quotes it in the composer and stays', () => {
   const store = read('frontend/src/features/messages/store.ts');
-  assert.match(store, /if \(action\.quote\) setReply\(scope, message\);\s*else if \(staged\) setReply\(scope, null\);\s*const sending = send\(\{ content: action\.label \}\);\s*if \(action\.quote \|\| staged\) setReply\(scope, staged \|\| null\);/);
+  // One request, one story: in the chat with Homeroom bot a button on a
+  // message in a request's thread says its words in that thread (botThreadOf).
+  assert.match(store, /const rootId = botThreadOf\(message\);\s*const scope = scopeKey\(conversationId, rootId\);/);
+  assert.match(store, /if \(action\.quote\) setReply\(scope, message\);\s*else if \(staged\) setReply\(scope, null\);\s*const sending = send\(\{ content: action\.label, threadRootId: rootId, anyThread: true \}\);\s*if \(action\.quote \|\| staged\) setReply\(scope, staged \|\| null\);/);
   const question = read('frontend/src/features/messages/bot-question.tsx');
   assert.match(question, /if \(action\.type === 'reply'\) \{\s*quoteInComposer\(message, conversationId\);\s*return;\s*\}/);
   const api = loadTsx('frontend/src/features/messages/api.ts');
@@ -141,9 +144,14 @@ test('Try again replies to its message; Add detail quotes it in the composer and
   ], 'only a prompt quotes');
 });
 
-test('the staging preview’s declared check finds Try again in the demo DM', () => {
-  const check = JSON.parse(read('dapp.json')).tests.find((t) => /^#4097:/.test(t.name));
-  assert.match(check.expectSelector, /^#messages-screen:not\(\.hidden\):has\(\.messages-message button\.messages-bot-primary\[data-bot-prompt\]\) /);
+test('the staging preview’s declared check finds the demo DM’s stopped build among its finished requests, folded, saying how it ended', () => {
+  // One request, one story: the stopped build is one row in the main chat;
+  // its Try again is in the request's thread, which every row opens. The
+  // demo's stopped build is no longer in the person's activity, so it is
+  // finished: folded with the finished requests beside it into one line of
+  // words that counts both (N finished · N couldn't build).
+  const check = JSON.parse(read('dapp.json')).tests.find((t) => /^#4097/.test(t.name));
+  assert.match(check.expectSelector, /:has\(\[data-bot-settled-toggle\] \[data-bot-settled-count=failed\]\)/);
   assert.ok(check.expectSelector.length <= 256, 'within what the runner reads');
   const fixture = read('src/services/staging-messages.js');
   assert.match(fixture, /homeroomBot: \{ kind: 'build_failed', \.\.\.stuck, actions: dm\.STUCK_ACTIONS\.build_failed, status: 'open' \}/);

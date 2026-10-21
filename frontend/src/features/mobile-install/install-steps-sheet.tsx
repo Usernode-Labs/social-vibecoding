@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { GroupedList } from '@/components/ui/grouped-list';
 import { ArrowUpTrayIcon, EllipsisVerticalIcon, XIcon } from '@/components/ui/icons';
 import { pushDismissible } from '../../lib/back-stack';
+import { useMessages } from '../../lib/i18n/react';
 import { adoptKitSurface, type KitAdoption } from '../../lib/kit-surface';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { A2HS_STEP_LIST, type A2hsStep, type MobileOs } from './detect';
@@ -77,8 +78,11 @@ export function InstallStepsSheet({ os, onClose }: { os: MobileOs; onClose: () =
         aria-modal="true"
         aria-labelledby="mobile-install-steps-title"
         // A constant: the kit writes `platform-sheet-adopted` to this node, and
-        // a className that changed on adoption would erase it.
-        className="w-full max-w-md rounded-t-[20px] bg-[color:var(--dc-sheet-solid)] px-4 pt-4 pb-[calc(1rem+env(safe-area-inset-bottom,0px))]"
+        // a className that changed on adoption would erase it. A column: that
+        // class makes the node `display: flex` (public/css/app.css), and in a
+        // row the title, the steps and Got it stood side by side, the steps
+        // cut off in a narrow strip (shots of #5695).
+        className="w-full max-w-md rounded-t-[20px] bg-[color:var(--dc-sheet-solid)] px-4 pt-4 pb-[calc(1rem+env(safe-area-inset-bottom,0px))] flex flex-col"
         onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); onClose(); } }}
       >
         <InstallStepsContent os={os} onClose={onClose} doneRef={done} />
@@ -98,17 +102,18 @@ export function InstallStepsContent({ os, onClose, doneRef }: {
   onClose: () => void;
   doneRef?: Ref<HTMLButtonElement>;
 }) {
+  const t = useMessages('agent');
   return (
     <>
       <div className="flex items-center gap-2 mb-3">
         <h2 id="mobile-install-steps-title" className="flex-1 min-w-0 text-[17px] font-bold leading-snug text-zinc-900 dark:text-zinc-100">
-          Add Homeroom to your home screen
+          {t('agent:install.steps.title')}
         </h2>
         <button
           id="mobile-install-steps-close"
           type="button"
           onClick={onClose}
-          aria-label="Close"
+          aria-label={t('core:common.close')}
           className="shrink-0 w-8 h-8 flex items-center justify-center rounded-full text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100 transition-colors un-touch-target"
         >
           <XIcon className="w-5 h-5" aria-hidden="true" />
@@ -129,13 +134,14 @@ export function InstallStepsContent({ os, onClose, doneRef }: {
         className="mt-4 min-h-[44px]"
         onClick={onClose}
       >
-        Got it
+        {t('agent:install.steps.done')}
       </Button>
     </>
   );
 }
 
 function StepRow({ n, step, last }: { n: number; step: A2hsStep; last: boolean }) {
+  const t = useMessages('agent');
   const Glyph = step.glyph === 'share' ? ArrowUpTrayIcon : step.glyph === 'menu' ? EllipsisVerticalIcon : null;
   return (
     <li className={last
@@ -149,7 +155,7 @@ function StepRow({ n, step, last }: { n: number; step: A2hsStep; last: boolean }
         {n}
       </span>
       <span className="flex-1 min-w-0 text-[15px] text-zinc-900 dark:text-zinc-100">
-        {step.text}
+        {t(step.text)}
       </span>
       {Glyph ? (
         <Glyph className="shrink-0 w-5 h-5 text-violet-600 dark:text-violet-400" aria-hidden="true" />

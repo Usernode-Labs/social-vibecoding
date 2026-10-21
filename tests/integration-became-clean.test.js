@@ -48,15 +48,16 @@ function stubMirror({ clean, head = HEAD }) {
   return () => { for (const [k, v] of Object.entries(real)) mirror[k] = v; };
 }
 
-// A pool whose UPDATE ... RETURNING answers with what the row said BEFORE.
-function fakePool({ wasClean, wasHead }) {
+// A pool whose UPDATE ... RETURNING answers with what the row said BEFORE,
+// and the block reasons it holds after the write.
+function fakePool({ wasClean, wasHead, blockReasons = [] }) {
   const calls = [];
   return {
     calls,
     async query(sql, params) {
       calls.push({ sql, params });
       if (/UPDATE chat_sessions/.test(sql) && /RETURNING/.test(sql)) {
-        return { rows: [{ was_clean: wasClean, was_head: wasHead }], rowCount: 1 };
+        return { rows: [{ was_clean: wasClean, was_head: wasHead, block_reasons: blockReasons }], rowCount: 1 };
       }
       return { rows: [], rowCount: 1 };
     },
@@ -68,103 +69,60 @@ const session = {
   app_slug: 'app', integration_block_reasons: ['awaiting_approval'],
 };
 
-function hook() {
-  const calls = [];
-  integration.onBecameClean((s) => { calls.push(s); });
-  return { calls, off: () => integration.onBecameClean(null) };
-}
-
-const tick = () => new Promise((r) => setImmediate(r));
-
-test('conflicting → clean on the SAME head fires the hook with the head named', async () => {
+// The flip is told to the preview machine in the write's own statement
+// (tests/workflow-preview-postgres.test.js P6b runs it against PostgreSQL):
+// a hook after the commit was lost by a restart in between, with the row
+// already saying clean.
+test('conflicting → clean on the SAME head is told in the measurement\'s own statement', async () => {
   const restore = stubMirror({ clean: true });
-  const h = hook();
   try {
     const pool = fakePool({ wasClean: false, wasHead: HEAD });
     const out = await integration.measure({ pool, session }, { force: true });
     assert.equal(out.mergesClean, true);
-    await tick();
-    assert.equal(h.calls.length, 1);
-    assert.equal(h.calls[0].id, 9);
-    assert.equal(h.calls[0].integration_head_sha, HEAD);
+    const writes = pool.calls.filter((c) => /UPDATE chat_sessions/.test(c.sql));
+    assert.equal(writes.length, 1, 'one statement: the write and the event commit together');
+    const [write] = writes;
     // The comparison is against the STORED answer, read in the write itself.
-    const write = pool.calls.find((c) => /RETURNING/.test(c.sql));
     assert.match(write.sql, /WITH prev AS/);
     assert.match(write.sql, /SELECT was_clean FROM prev/);
-  } finally { h.off(); restore(); }
-});
-
-test('a NEW head measuring clean does not fire: its push already started its checks', async () => {
-  const restore = stubMirror({ clean: true, head: 'f'.repeat(40) });
-  const h = hook();
-  try {
-    const pool = fakePool({ wasClean: false, wasHead: HEAD });
-    await integration.measure({ pool, session }, { force: true });
-    await tick();
-    assert.equal(h.calls.length, 0, 'a hook here would run the new head\'s checks twice');
-  } finally { h.off(); restore(); }
-});
-
-test('clean → clean, conflict → conflict, and a first measurement all stay quiet', async () => {
-  const h = hook();
-  try {
-    for (const [clean, wasClean] of [[true, true], [false, false], [true, null], [false, null]]) {
-      const restore = stubMirror({ clean });
-      try {
-        await integration.measure({ pool: fakePool({ wasClean, wasHead: HEAD }), session }, { force: true });
-        await tick();
-      } finally { restore(); }
-    }
-    assert.equal(h.calls.length, 0);
-  } finally { h.off(); }
-});
-
-test('a hook that throws is logged, not propagated into the measurement', async () => {
-  const restore = stubMirror({ clean: true });
-  integration.onBecameClean(() => { throw new Error('recheck exploded'); });
-  try {
-    const out = await integration.measure({ pool: fakePool({ wasClean: false, wasHead: HEAD }), session }, { force: true });
-    await tick();
-    assert.equal(out.mergesClean, true);
-    assert.equal(out.error, null);
-  } finally { integration.onBecameClean(null); restore(); }
-});
-
-test('the block reasons written are the caller\'s when given, the row\'s otherwise', async () => {
-  const restore = stubMirror({ clean: true });
-  try {
-    const kept = fakePool({ wasClean: true, wasHead: HEAD });
-    await integration.measure({ pool: kept, session }, { force: true });
-    const w1 = kept.calls.find((c) => /RETURNING/.test(c.sql));
-    assert.equal(w1.params[10], JSON.stringify(['awaiting_approval']), 'measuring does not forget the lane\'s answer');
-    const cleared = fakePool({ wasClean: true, wasHead: HEAD });
-    await integration.measure({ pool: cleared, session }, { force: true, blockReasons: [] });
-    const w2 = cleared.calls.find((c) => /RETURNING/.test(c.sql));
-    assert.equal(w2.params[10], '[]');
+    assert.match(write.sql, /INSERT INTO wf_events[\s\S]*'ConflictResolved'/);
+    assert.match(write.sql, /prev\.was_clean = FALSE AND \$7::boolean IS TRUE AND lower\(prev\.was_head\) = lower\(\$2::text\)/);
+    assert.match(write.sql, /wi\.machine = 'preview' AND wi\.key = 'session:' \|\| \$1::int/);
+    const { MACHINE, sessionKey } = require('../src/workflow/preview/machine.ts');
+    assert.equal(MACHINE, 'preview');
+    assert.equal(sessionKey(9), 'session:9');
   } finally { restore(); }
 });
 
-test('resolutionSpent: the stamp is the approval epoch of the head it was spent on', async () => {
-  // Nothing stamped: not spent.
-  assert.equal(integration.resolutionSpent({ approval_epoch: 0 }), false);
-  assert.equal(integration.resolutionSpent({}), false);
-  // Stamped at the current epoch: spent, until an authored push moves it.
-  assert.equal(integration.resolutionSpent({ approval_epoch: 2, integration_resolved_epoch: 2 }), true);
-  assert.equal(integration.resolutionSpent({ approval_epoch: 3, integration_resolved_epoch: 2 }), false,
-    'a new authored head is a new question');
-  // A row from before the epoch column reads epoch 0.
-  assert.equal(integration.resolutionSpent({ integration_resolved_epoch: 0 }), true);
-  assert.equal(integration.resolutionSpent({ integration_resolved_epoch: '1', approval_epoch: '1' }), true, 'pg text');
+test('no hook is left to register', () => {
+  assert.equal(integration.onBecameClean, undefined);
+});
 
-  // The stamp copies the row's own epoch, in one statement, so it cannot
-  // race an authored push that bumps it.
-  const calls = [];
-  const pool = { query: async (sql, params) => { calls.push({ sql, params }); return { rows: [], rowCount: 1 }; } };
-  await integration.markResolutionSpent(pool, 9);
-  assert.match(calls[0].sql, /SET integration_resolved_epoch = approval_epoch WHERE id = \$1/);
-  assert.deepEqual(calls[0].params, [9]);
-  // Never throws: a stamp that could not be written is a second resolution
-  // attempt at worst, not a failed sync.
-  const broken = { query: async () => { throw new Error('gone'); } };
-  await assert.doesNotReject(() => integration.markResolutionSpent(broken, 9));
+// The merge gate writes the block reasons. A measurement that copied the
+// caller's row back (a row the measure pass read minutes before) wrote a
+// stale copy over the gate's newer answer: without `blockReasons` the
+// column keeps what is stored, and the answer reads it back.
+test('the block reasons written are the caller\'s when given; otherwise the stored ones stay and are returned', async () => {
+  const restore = stubMirror({ clean: true });
+  try {
+    const kept = fakePool({ wasClean: true, wasHead: HEAD, blockReasons: ['behind_main'] });
+    const out = await integration.measure({ pool: kept, session }, { force: true });
+    const w1 = kept.calls.find((c) => /RETURNING/.test(c.sql));
+    assert.equal(w1.params[10], null, 'the caller\'s copy (awaiting_approval) is not written back');
+    assert.match(w1.sql, /integration_block_reasons = COALESCE\(\$11::jsonb, integration_block_reasons\)/,
+      'measuring does not forget the lane\'s answer');
+    assert.match(w1.sql, /integration_block_reasons AS block_reasons/);
+    assert.deepEqual(out.blockReasons, ['behind_main'], 'the answer is what is stored, not the caller\'s copy');
+
+    const cleared = fakePool({ wasClean: true, wasHead: HEAD });
+    const out2 = await integration.measure({ pool: cleared, session }, { force: true, blockReasons: [] });
+    const w2 = cleared.calls.find((c) => /RETURNING/.test(c.sql));
+    assert.equal(w2.params[10], '[]');
+    assert.deepEqual(out2.blockReasons, []);
+
+    const given = fakePool({ wasClean: true, wasHead: HEAD, blockReasons: ['stale'] });
+    const out3 = await integration.measure({ pool: given, session }, { force: true, blockReasons: 'conflicts' });
+    assert.equal(given.calls.find((c) => /RETURNING/.test(c.sql)).params[10], JSON.stringify(['conflicts']));
+    assert.deepEqual(out3.blockReasons, ['conflicts'], 'the caller\'s, when given');
+  } finally { restore(); }
 });

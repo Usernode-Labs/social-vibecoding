@@ -6,7 +6,7 @@
 //
 // Why a new account rather than "Reset first run" on an old one: a reset
 // brings back the join screen and the tour but keeps memberships, votes and
-// history, so Getting started shows progress a newcomer would not have. A test
+// history, so the First challenges show progress a newcomer would not have. A test
 // account is a REAL account — it signs in through the ordinary form (username
 // and a generated password is the one method that works on the web and in the
 // iOS app, against local, staging and production alike), auto-joins the
@@ -18,10 +18,17 @@
 //     (counts_toward_outcome in schema.sql; D1).
 //   * Leaderboards (exclude_podium) and the Journey page (a 'test' left-out
 //     entry) do not see it.
-//   * No welcome DM unless the creator asked; never a season wallet on a
-//     native sign-in (native-session-protocol.js; D2).
+//   * No welcome DM unless the creator asked (test_account_welcome_dm: it
+//     puts staff into a group with the account); never a season wallet on a
+//     native sign-in (native-session-protocol.js; D2). Homeroom bot's hellos
+//     (the tour's, a maker's, a joiner's, a member's) are not fenced: they
+//     reach it as they reach a newcomer, however it was made (#4897).
 //   * At most MAX_LIVE at once, so app slots, the wallet pool and the bot's 50
 //     DM places cannot be drained by a loop.
+//
+// With everyTemplate the account also starts with one project from each
+// starter (makeEveryTemplate below), so an admin can sign in and look at
+// every ready-made app and game starter in one place.
 //
 // The password is returned ONCE, to the admin who asked, and never logged,
 // stored in plain text or written to an event or audit payload.
@@ -32,6 +39,11 @@ const log = require('./logger');
 const usernames = require('./usernames');
 const waitlist = require('./waitlist');
 const journeyLeftOut = require('./journey-left-out');
+const runReport = require('./run-report');
+const appTemplates = require('./app-templates');
+const appManifest = require('./app-manifest');
+const appLimit = require('./app-limit');
+const createOptions = require('./create-options');
 const { withTransaction } = require('./cli-auth');
 
 const MAX_LIVE = 25;
@@ -61,6 +73,20 @@ function generatePassword() {
   return crypto.randomBytes(PASSWORD_BYTES).toString('base64url');
 }
 
+function parseFlag(value, fallback, field) {
+  if (value == null) return fallback;
+  if (typeof value !== 'boolean') fail(400, 'invalid_request', `${field} must be true or false.`, { field });
+  return value;
+}
+
+function parseNote(value) {
+  const note = value == null ? '' : String(value).trim();
+  if (note.length > NOTE_MAX) {
+    fail(400, 'note_too_long', `Keep the note to ${NOTE_MAX} characters.`, { field: 'note', limitChars: NOTE_MAX, actualChars: note.length });
+  }
+  return note;
+}
+
 function parseCreate(body) {
   const b = body && typeof body === 'object' ? body : {};
   let username = null;
@@ -69,32 +95,99 @@ function parseCreate(body) {
     if (!check.ok) fail(400, 'invalid_username', check.error, { field: 'username' });
     username = check.value;
   }
-  const flag = (value, fallback, field) => {
-    if (value == null) return fallback;
-    if (typeof value !== 'boolean') fail(400, 'invalid_request', `${field} must be true or false.`, { field });
-    return value;
-  };
-  const note = b.note == null ? '' : String(b.note).trim();
-  if (note.length > NOTE_MAX) {
-    fail(400, 'note_too_long', `Keep the note to ${NOTE_MAX} characters.`, { field: 'note', limitChars: NOTE_MAX, actualChars: note.length });
-  }
   return {
     username,
-    platformAccess: flag(b.platformAccess, true, 'platformAccess'),
-    homeroomBotDm: flag(b.homeroomBotDm, false, 'homeroomBotDm'),
-    welcomeDm: flag(b.welcomeDm, false, 'welcomeDm'),
-    note,
+    platformAccess: parseFlag(b.platformAccess, true, 'platformAccess'),
+    welcomeDm: parseFlag(b.welcomeDm, false, 'welcomeDm'),
+    everyTemplate: parseFlag(b.everyTemplate, false, 'everyTemplate'),
+    note: parseNote(b.note),
   };
+}
+
+/**
+ * The starters everyTemplate makes a project from: the first entry of each
+ * starter directory (services/app-templates.js), so each ready-made app and
+ * each game starter is made once and a variant (another tier list, another
+ * poll) is not. Empty is the scaffold, not a starter.
+ */
+function everyTemplatePicks() {
+  const seen = new Set();
+  const picks = [];
+  for (const t of appTemplates.TEMPLATES) {
+    if (t.id === appTemplates.DEFAULT_TEMPLATE) continue;
+    const dir = appTemplates.dirOf(t.id);
+    if (seen.has(dir)) continue;
+    seen.add(dir);
+    picks.push(t);
+  }
+  return picks;
+}
+
+/**
+ * One project from each starter for test account `userId`, in the account's
+ * own transaction, each made as POST /api/apps makes one from "What do you
+ * want to make?" (routes/apps.js): the row and its maker's membership in one
+ * insert, which starts its making (src/workflow/app-creation/) and its
+ * community (create_app_community in schema.sql); private to the account
+ * (Just you); its starter on the row, and a ready-made app's icon. Nothing
+ * is described, so nothing is built: a ready-made app is usable once it
+ * runs, and a game starter deploys as the working game it starts as.
+ *
+ * Within the platform's app limit, all of them or none: the limit is the
+ * admin's guard on containers, and a project per starter at once is a real
+ * share of it.
+ */
+async function makeEveryTemplate(client, userId, { pool, config = {} } = {}) {
+  const picks = everyTemplatePicks();
+  // Read through the pool, whose cache the create route shares.
+  const maxApps = await appLimit.effective(pool, config);
+  if (maxApps > 0) {
+    const { rows: [{ n }] } = await client.query(`SELECT COUNT(*)::int AS n FROM apps WHERE status <> 'error'`);
+    if (n + picks.length > maxApps) {
+      fail(429, 'app_limit', `Making a project from every template needs ${picks.length} app slots, and this server has `
+        + `${Math.max(0, maxApps - n)} of its ${maxApps} free. Raise the app limit or remove apps, then try again.`,
+      { active: n, cap: maxApps, needed: picks.length });
+    }
+  }
+  const { collabVisibility, viewVisibility } = createOptions.visibilityForAudience('solo');
+  const made = [];
+  for (const t of picks) {
+    const slug = appManifest.buildAppSlug(t.title, crypto.randomBytes(3).toString('hex'));
+    // eslint-disable-next-line no-await-in-loop
+    const { rows: [app] } = await client.query(
+      `WITH new_app AS (
+         INSERT INTO apps (name, slug, repo_url, created_by, status,
+                           collab_visibility, view_visibility)
+         VALUES ($1, $2, NULL, $3, 'creating', $4, $5)
+         RETURNING *
+       ), membership AS (
+         INSERT INTO app_collaborators (app_id, user_id, status, accepted_at)
+         SELECT id, $3, 'member', NOW() FROM new_app
+         ON CONFLICT (app_id, user_id) DO NOTHING
+       )
+       SELECT id, slug, name FROM new_app`,
+      [t.title, slug, userId, collabVisibility, viewVisibility]
+    );
+    const readyMade = appTemplates.isReadyMade(t.id);
+    // eslint-disable-next-line no-await-in-loop
+    await client.query(
+      'UPDATE apps SET template = $1, icon_emoji = COALESCE($3, icon_emoji) WHERE id = $2',
+      [t.id, app.id, readyMade ? t.icon || null : null]
+    );
+    made.push({ slug: app.slug, name: app.name, template: t.id, kind: readyMade ? 'ready-made' : 'game' });
+  }
+  return made;
 }
 
 /**
  * Make one test account as full admin `actorId`. Everything that decides
  * what the account is commits together: the row, its access, its Journey
- * entry, the audit row and its bot DM place. Only the included OpenRouter key
+ * entry and the audit row. (The Homeroom bot works for it as for anybody let
+ * in.) Only the included OpenRouter key
  * is made after the commit, as sign-up makes it, because it calls out.
  *
  * Returns { userId, username, password, needsUsernameChoice, platformAccess,
- * homeroomBotDm, welcomeDm, note }. The password is in nothing else.
+ * welcomeDm, note, projects }. The password is in nothing else.
  */
 async function create(pool, body, { actorId, config = {} } = {}) {
   if (!Number.isSafeInteger(actorId) || actorId <= 0) fail(403, 'forbidden', 'A full administrator is required.');
@@ -121,7 +214,7 @@ async function create(pool, body, { actorId, config = {} } = {}) {
       }
       const username = input.username || usernames.placeholderUsername();
       // terms consent and tour_done_at stay unset, so the terms, the
-      // community picker, the tour and Getting started all come up as they do
+      // community picker, the tour and the First challenges all come up as they do
       // for a real newcomer. With no username the account wears a
       // placeholder and needs_username_choice, so the tester picks a handle
       // in the real first-run step (frontend/src/features/auth/
@@ -142,26 +235,18 @@ async function create(pool, body, { actorId, config = {} } = {}) {
       await journeyLeftOut.addTestInTransaction(client, {
         userId: user.id, note: input.note || 'Test account (create_test_account)',
       }, { actorId });
-      if (input.homeroomBotDm) {
-        const homeroomBot = require('./homeroom-bot');
-        const dm = await homeroomBot.setDmMember(client, user.username, true, actorId);
-        if (!dm.ok) {
-          fail(409, dm.error === 'full' ? 'bot_dm_full' : 'bot_dm_unavailable', dm.error === 'full'
-            ? `The Homeroom bot's DM list is full (${dm.max} people). Make the account without homeroomBotDm, or free a place first.`
-            : 'The Homeroom bot\'s DM list could not be updated. Try again.');
-        }
-      }
+      const projects = input.everyTemplate ? await makeEveryTemplate(client, user.id, { pool, config }) : [];
       await client.query(
         `INSERT INTO support_actions (actor_user_id, target_user_id, action, reason, payload)
          VALUES ($1, $2, 'test_account_create', $3, $4::jsonb)`,
         [actorId, user.id, input.note || null, JSON.stringify({
           usernameChosen: !!input.username,
           platformAccess: input.platformAccess,
-          homeroomBotDm: input.homeroomBotDm,
           welcomeDm: input.welcomeDm,
+          ...(projects.length ? { everyTemplate: projects.map((p) => p.slug) } : {}),
         })]
       );
-      return user;
+      return { ...user, projects };
     });
   } catch (err) {
     if (err instanceof TestAccountError) throw err;
@@ -175,9 +260,22 @@ async function create(pool, body, { actorId, config = {} } = {}) {
   const managedOpenRouter = require('./openrouter-managed-keys');
   await managedOpenRouter.ensureIncludedKey({ pool, userId: created.id, config, reason: 'test_account' });
 
+  // Its projects answer the first session's question, as making one from
+  // "What do you want to make?" does (routes/apps.js): it opens on Home with
+  // them rather than being asked what to make. Never a reason the create
+  // fails.
+  if (created.projects.length) {
+    try {
+      await require('./first-session').answerJoinScreenByMaking(pool, created.id);
+    } catch (err) {
+      log.warn('test-accounts', 'First session not answered for the template projects', { userId: created.id, err: err.message });
+    }
+  }
+
   log.info('test-accounts', 'Test account created', {
     userId: created.id, by: actorId, usernameChosen: !!input.username,
-    platformAccess: input.platformAccess, homeroomBotDm: input.homeroomBotDm, welcomeDm: input.welcomeDm,
+    platformAccess: input.platformAccess, welcomeDm: input.welcomeDm,
+    projects: created.projects.length,
   });
   return {
     userId: created.id,
@@ -185,20 +283,21 @@ async function create(pool, body, { actorId, config = {} } = {}) {
     password,
     needsUsernameChoice: !input.username,
     platformAccess: input.platformAccess,
-    homeroomBotDm: input.homeroomBotDm,
     welcomeDm: input.welcomeDm,
     note: input.note || null,
+    projects: created.projects,
   };
 }
 
 /**
  * The live test accounts, newest first: who made each, when, when it was
- * last seen (its latest sign-in or day of app use), its note, and the apps it
- * created with their status. Retired (anonymised) ones are not listed.
+ * last seen (its latest sign-in or day of app use), its note, its address
+ * (one a test release email made has one), and the apps it created with
+ * their status. Retired (anonymised) ones are not listed.
  */
 async function list(pool) {
   const { rows } = await pool.query(
-    `SELECT u.id, u.username, u.test_account_created_at AS created_at,
+    `SELECT u.id, u.username, u.email, u.test_account_created_at AS created_at,
             c.username AS created_by,
             GREATEST(
               (SELECT MAX(s.created_at) FROM sessions s WHERE s.user_id = u.id),
@@ -217,6 +316,7 @@ async function list(pool) {
   return rows.map((r) => ({
     userId: r.id,
     username: r.username,
+    email: r.email || null,
     createdBy: r.created_by || null,
     createdAt: r.created_at ? new Date(r.created_at).toISOString() : null,
     lastActiveAt: r.last_active_at ? new Date(r.last_active_at).toISOString() : null,
@@ -227,10 +327,11 @@ async function list(pool) {
 
 /**
  * Retire one test account as full admin `actorId`: take down every app it
- * created (the same teardown DELETE /api/apps/:slug runs), then delete the
- * account through the ordinary admin deletion, which anonymises the row,
- * revokes its sessions and native credentials, withdraws its open votes and
- * takes it off the bot's DM list (the username trigger in schema.sql).
+ * created (the same teardown DELETE /api/apps/:slug runs), each after its
+ * run report is kept (`reportsKept`, the slugs whose report was), then
+ * delete the account through the ordinary admin deletion, which anonymises
+ * the row, revokes its sessions and native credentials and withdraws its
+ * open votes.
  *
  * Refuses any account that is not a test account. If an app cannot be taken
  * down it stops there and reports what it had removed: the account is never
@@ -257,7 +358,13 @@ async function retire(pool, { userId, confirmation }, { actorId, config = {} } =
   );
   const { teardownApp } = require('./app-teardown');
   const removedApps = [];
+  const reportsKept = [];
   for (const app of apps) {
+    // What its first version left behind goes with the app (its runs,
+    // sessions, turns and screens cascade), so its run report is kept first
+    // (services/run-report.js). That never throws: a report that cannot be
+    // kept is logged, and the app is taken down all the same.
+    if (await runReport.keep(pool, { app, testUser: user })) reportsKept.push(app.slug);
     try {
       await teardownApp(pool, config, app);
       removedApps.push(app.slug);
@@ -272,9 +379,6 @@ async function retire(pool, { userId, confirmation }, { actorId, config = {} } =
     }
   }
 
-  // Read only to say so in the answer: the deletion's username trigger is
-  // what takes the entry off.
-  const onBotDm = await isOnBotDmList(pool, user.username);
   const accountDeletion = require('./account-deletion');
   let deletion;
   try {
@@ -297,8 +401,51 @@ async function retire(pool, { userId, confirmation }, { actorId, config = {} } =
     userId,
     username: user.username,
     appsDeleted: removedApps,
-    homeroomBotDm: onBotDm,
+    reportsKept,
     deletionId: deletion.deletionId,
+  };
+}
+
+const REPORT_SLUG_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
+// A deleted account's username is deleted-user-<id>, hence the hyphen.
+const REPORT_USERNAME_RE = /^[a-z0-9_-]{1,64}$/;
+
+/**
+ * A test project's run report (services/run-report.js), for
+ * get_run_report. With `slug`: the app's report built now while it is live,
+ * or once it is gone the newest one retire kept. With `username`: that test
+ * account's kept reports, newest first, and (with no slug) the newest one in
+ * full. Returns { source: 'live' | 'saved' | null, savedAt, slug, report,
+ * saved: [{ slug, appName, savedAt }] }.
+ */
+async function runReportFor(pool, { slug, username } = {}) {
+  const s = slug == null ? '' : String(slug).trim().toLowerCase();
+  const u = username == null ? '' : String(username).trim().replace(/^@/, '').toLowerCase();
+  if (!s && !u) fail(400, 'invalid_request', 'Name an app slug, a test account\'s username, or both.');
+  if (s && !REPORT_SLUG_RE.test(s)) fail(400, 'invalid_slug', 'That is not an app slug.', { field: 'slug' });
+  if (u && !REPORT_USERNAME_RE.test(u)) fail(400, 'invalid_username', 'That is not a username.', { field: 'username' });
+
+  const saved = u ? await runReport.keptFor(pool, u) : [];
+  let found = null;
+  if (s) {
+    const live = await runReport.build(pool, { slug: s });
+    if (live) {
+      found = { source: 'live', savedAt: null, slug: s, report: live };
+    } else {
+      const k = await runReport.kept(pool, { slug: s });
+      if (!k) fail(404, 'no_report', `No app ${s} is live, and no report was kept for one.`, { field: 'slug' });
+      found = { source: 'saved', savedAt: k.savedAt, slug: k.slug, report: k.report };
+    }
+  } else if (saved.length) {
+    const k = await runReport.kept(pool, { id: saved[0].id });
+    if (k) found = { source: 'saved', savedAt: k.savedAt, slug: k.slug, report: k.report };
+  }
+  return {
+    source: found ? found.source : null,
+    savedAt: found ? found.savedAt : null,
+    slug: found ? found.slug : (s || null),
+    report: found ? found.report : null,
+    saved: saved.map((r) => ({ slug: r.slug, appName: r.appName, savedAt: r.savedAt })),
   };
 }
 
@@ -335,18 +482,6 @@ async function onFirstRun(db, userId, at = new Date()) {
     return rows[0]?.first_run === true;
   } catch (err) {
     log.warn('test-accounts', 'Could not read whether a test account is on its first run', { userId: id, err: err.message });
-    return false;
-  }
-}
-
-async function isOnBotDmList(pool, username) {
-  const { rows } = await pool.query(
-    "SELECT value FROM platform_settings WHERE key = 'homeroom_bot_dm_users'"
-  );
-  try {
-    const members = JSON.parse(rows[0] ? rows[0].value : '[]');
-    return Array.isArray(members) && members.includes(String(username).toLowerCase());
-  } catch {
     return false;
   }
 }
@@ -493,18 +628,310 @@ async function redeemPhoneSignIn(pool, phoneNumber, code) {
   return null;
 }
 
+// ── Test release emails ─────────────────────────────────────────────────
+//
+// The waitlist's "you're in" mail (mail/templates.js waitlistReleased) and
+// the sign-up its link starts are reached only from a released waitlist row,
+// and the one way to get a mail sent used to be admitting a real person. Here
+// a full admin sends that mail to an address they read (any address, or a
+// fresh +test alias of their own when they name none) through the sender
+// and throttle Admit uses, so the mail, its link and the sign-up after it are
+// the real thing from the inbox on. Changing the mail and sending it again is
+// one call.
+//
+// A send makes the address a waitlist row, confirmed and released like an
+// admitted signup, and marks it in test_waitlist_releases, which keeps it out
+// of Admin → Waitlist and the Journey's admitted cohorts. The NEW account the
+// address then makes is a test account (waitlist.linkUserByEmail →
+// adoptReleasedAccount below): marked before it is let in, so the welcome DM
+// trigger and every other fence see a test account from the start; let in
+// without manualRelease, as create() does; counted against MAX_LIVE once
+// made; and retired like any other, which deletes the row with it. An address
+// that belongs to a real account or a real signup is refused. A release no
+// account used is withdrawn, row and all, RELEASE_TTL_DAYS after its last
+// send, by the next send.
+
+const RELEASE_TTL_DAYS = 7;
+
+function parseRelease(body) {
+  const b = body && typeof body === 'object' ? body : {};
+  let email = null;
+  if (b.email != null && String(b.email).trim() !== '') {
+    email = waitlist.normalizeEmail(String(b.email));
+    if (!email) fail(400, 'invalid_email', 'Enter a valid email address.', { field: 'email' });
+  }
+  return {
+    email,
+    welcomeDm: parseFlag(b.welcomeDm, false, 'welcomeDm'),
+    note: parseNote(b.note),
+  };
+}
+
+// you+test1a2b3c@example.com for the admin's own confirmed address: a new
+// address every time, which the mail throttle (three a day per address)
+// never meets twice, delivered to the admin's own inbox by any provider that
+// honours a +tag.
+async function ownTestAlias(pool, actorId) {
+  const { rows: [me] } = await pool.query(
+    'SELECT email, email_confirmed FROM users WHERE id = $1',
+    [actorId]
+  );
+  const own = me && me.email_confirmed === true ? waitlist.normalizeEmail(me.email) : null;
+  const at = own ? own.lastIndexOf('@') : -1;
+  const alias = at > 0
+    ? waitlist.normalizeEmail(`${own.slice(0, at).replace(/\+.*$/, '')}+test${crypto.randomBytes(3).toString('hex')}${own.slice(at)}`)
+    : null;
+  if (!alias) {
+    fail(400, 'email_required', 'Name the address to send to: your account has no confirmed email to make a +test alias of.', { field: 'email' });
+  }
+  return alias;
+}
+
+/**
+ * Send the waitlist's "you're in" mail to a test address as full admin
+ * `actorId`. `body` is { email?, welcomeDm?, note? }. Returns { email,
+ * signupId, hasAccount, signsInTo, welcomeDm, note, mail } where mail is the
+ * delivery's own record ({ status, error }, mail_deliveries' vocabulary):
+ * the send never throws, so this is the only way to know whether the mail
+ * went out or the throttle held it back.
+ */
+async function sendRelease(pool, body, { actorId, config = {} } = {}) {
+  if (!Number.isSafeInteger(actorId) || actorId <= 0) fail(403, 'forbidden', 'A full administrator is required.');
+  const input = parseRelease(body);
+  const email = input.email || await ownTestAlias(pool, actorId);
+
+  let release;
+  try {
+    release = await withTransaction(pool, async (client) => {
+      await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [CAP_LOCK_KEY]);
+      await client.query(
+        `DELETE FROM waitlist_signups w USING test_waitlist_releases t
+          WHERE t.signup_id = w.id AND w.linked_user_id IS NULL AND t.used_by IS NULL
+            AND t.last_sent_at < NOW() - make_interval(days => $1)`,
+        [RELEASE_TTL_DAYS]
+      );
+      // A real account first, so it is the one refused.
+      const { rows: [account] } = await client.query(
+        `SELECT id, username, has_platform_access,
+                test_account_created_at IS NOT NULL AS test_account
+           FROM users
+          WHERE LOWER(email) = $1 AND anonymised_at IS NULL
+          ORDER BY (test_account_created_at IS NULL) DESC, id
+          LIMIT 1`,
+        [email]
+      );
+      if (account && !account.test_account) {
+        fail(409, 'real_account', 'That address belongs to a real account, so no test release goes to it. '
+          + 'Use an address only you read, or leave email out for a +test alias of your own.', { field: 'email' });
+      }
+      const { rows: [signup] } = await client.query(
+        `SELECT w.id, t.signup_id IS NOT NULL AS test_release
+           FROM waitlist_signups w
+           LEFT JOIN test_waitlist_releases t ON t.signup_id = w.id
+          WHERE LOWER(w.email) = $1`,
+        [email]
+      );
+      if (signup && !signup.test_release) {
+        fail(409, 'real_signup', 'That address is on the waitlist as a real signup, so no test release goes to it. '
+          + 'Use an address only you read, or leave email out for a +test alias of your own.', { field: 'email' });
+      }
+      if (!account) {
+        // Its link makes a new test account, so that account needs a place.
+        const { rows: [{ n }] } = await client.query(
+          `SELECT COUNT(*)::int AS n FROM users
+            WHERE test_account_created_at IS NOT NULL AND anonymised_at IS NULL`
+        );
+        if (n >= MAX_LIVE) {
+          fail(429, 'at_capacity', `There are already ${n} live test accounts, the most allowed at once, and this email's link would make another. `
+            + 'Retire one you have finished with (list_test_accounts shows them), then try again.', { live: n, max: MAX_LIVE });
+        }
+      }
+
+      let row;
+      if (signup) {
+        ({ rows: [row] } = await client.query(
+          `UPDATE waitlist_signups
+              SET released_at = COALESCE(released_at, NOW()),
+                  confirmed_at = COALESCE(confirmed_at, NOW()),
+                  more_token = COALESCE(more_token, $2)
+            WHERE id = $1
+            RETURNING id, more_token`,
+          [signup.id, crypto.randomBytes(24).toString('hex')]
+        ));
+        await client.query(
+          `UPDATE test_waitlist_releases
+              SET last_sent_at = NOW(), welcome_dm = $2, note = COALESCE($3, note)
+            WHERE signup_id = $1`,
+          [row.id, input.welcomeDm, input.note || null]
+        );
+      } else {
+        // Confirmed and released, the state of a signup an admin admits.
+        // more_token is the capability the mail's link carries, as Admit's.
+        ({ rows: [row] } = await client.query(
+          `INSERT INTO waitlist_signups (email, confirmed_at, released_at, more_token)
+           VALUES ($1, NOW(), NOW(), $2)
+           RETURNING id, more_token`,
+          [email, crypto.randomBytes(24).toString('hex')]
+        ));
+        await client.query(
+          `INSERT INTO test_waitlist_releases (signup_id, created_by, welcome_dm, note)
+           VALUES ($1, $2, $3, $4)`,
+          [row.id, actorId, input.welcomeDm, input.note || null]
+        );
+      }
+      if (account) {
+        // The address already has a live test account: the mail is the
+        // "sign in" one, and the release lets the account in if it waits.
+        await client.query('UPDATE waitlist_signups SET linked_user_id = $2 WHERE id = $1', [row.id, account.id]);
+        await client.query('UPDATE test_waitlist_releases SET used_by = $2 WHERE signup_id = $1', [row.id, account.id]);
+        if (!account.has_platform_access) await waitlist.grantPlatformAccess(client, account.id);
+      }
+      return { signupId: Number(row.id), moreToken: row.more_token, account: account || null };
+    });
+  } catch (err) {
+    if (err instanceof TestAccountError) throw err;
+    // A join for the same address landed between the read and the insert.
+    if (err && err.code === '23505') {
+      fail(409, 'real_signup', 'That address joined the waitlist just now, so no test release goes to it.', { field: 'email' });
+    }
+    throw err;
+  }
+
+  // The mail Admit sends (routes/topochain/admin/waitlist.js sendReleaseMail),
+  // with its store-listing steps and, for an address with no account yet,
+  // its one-time sign-in link (services/release-links.js), freshly minted
+  // so the newest mail's link is the one that works. A failed lookup or
+  // mint drops only that part: the link still prefills the address and
+  // sends a code.
+  const mobile = await require('./mobile-store-links').loadMobileAppUrls(pool).catch((err) => {
+    log.warn('test-accounts', 'Release mail mobile links failed', { message: err.message });
+    return null;
+  });
+  let signInToken = null;
+  if (!release.account) {
+    signInToken = await require('./release-links').mint(pool, { signupId: release.signupId, email }).catch((err) => {
+      log.error('test-accounts', 'Release sign-in link not minted', { signupId: release.signupId, message: err.message });
+      return null;
+    });
+  }
+  const { rows: [{ at }] } = await pool.query('SELECT clock_timestamp() AS at');
+  await require('./mail').sendWaitlistReleaseMail(config, email, {
+    mobile,
+    hasAccount: !!release.account,
+    signInToken,
+    moreToken: release.moreToken || null,
+  });
+  const { rows: [delivery] } = await pool.query(
+    `SELECT status, error FROM mail_deliveries
+      WHERE recipient = $1 AND kind = 'waitlist_released' AND created_at >= $2
+      ORDER BY id DESC
+      LIMIT 1`,
+    [email, at]
+  );
+
+  log.info('test-accounts', 'Test release email sent', {
+    signupId: release.signupId, by: actorId, existing: !!release.account,
+    status: delivery ? delivery.status : null,
+  });
+  return {
+    email,
+    signupId: release.signupId,
+    hasAccount: !!release.account,
+    signsInTo: release.account ? release.account.username : null,
+    welcomeDm: input.welcomeDm,
+    note: input.note || null,
+    mail: delivery
+      ? { status: String(delivery.status), error: delivery.error ? String(delivery.error) : null }
+      : { status: 'unknown', error: null },
+  };
+}
+
+/**
+ * The test releases no account has used yet, newest send first, each with
+ * when it is withdrawn if nobody signs up from it.
+ */
+async function listReleases(pool) {
+  const { rows } = await pool.query(
+    `SELECT w.id, w.email, t.created_at, t.last_sent_at, t.note, c.username AS created_by,
+            t.last_sent_at + make_interval(days => $1) AS expires_at
+       FROM test_waitlist_releases t
+       JOIN waitlist_signups w ON w.id = t.signup_id
+       LEFT JOIN users c ON c.id = t.created_by
+      WHERE t.used_by IS NULL AND w.linked_user_id IS NULL
+      ORDER BY t.last_sent_at DESC, w.id DESC`,
+    [RELEASE_TTL_DAYS]
+  );
+  const iso = (v) => (v ? new Date(v).toISOString() : null);
+  return rows.map((r) => ({
+    signupId: Number(r.id),
+    email: r.email,
+    createdBy: r.created_by || null,
+    createdAt: iso(r.created_at),
+    lastSentAt: iso(r.last_sent_at),
+    expiresAt: iso(r.expires_at),
+    note: r.note || null,
+  }));
+}
+
+/**
+ * Make `userId`, the NEW account a test release's address just made, a test
+ * account and let it in: waitlist.linkUserByEmail calls this, and only for
+ * an account the sign-up created. One transaction, marked before the grant,
+ * so the welcome DM trigger (test_account_welcome_dm) and every other fence
+ * already see a test account when access arrives. Returns true when it let
+ * the account in.
+ */
+async function adoptReleasedAccount(pool, { userId, signupId }) {
+  const letIn = await withTransaction(pool, async (client) => {
+    const { rows: [release] } = await client.query(
+      `UPDATE test_waitlist_releases SET used_by = $2
+        WHERE signup_id = $1
+        RETURNING created_by, welcome_dm, note`,
+      [signupId, userId]
+    );
+    if (!release) return false;
+    await client.query(
+      `UPDATE users
+          SET test_account_created_at = COALESCE(test_account_created_at, NOW()),
+              test_account_created_by = COALESCE(test_account_created_by, $2),
+              test_account_welcome_dm = $3,
+              exclude_podium = TRUE, updated_at = NOW()
+        WHERE id = $1`,
+      [userId, release.created_by, release.welcome_dm]
+    );
+    await journeyLeftOut.addTestInTransaction(client, {
+      userId, note: release.note || 'Test release email (send_test_release_email)',
+    }, { actorId: release.created_by });
+    await client.query(
+      `INSERT INTO support_actions (actor_user_id, target_user_id, action, reason, payload)
+       VALUES ($1, $2, 'test_account_create', $3, $4::jsonb)`,
+      [release.created_by, userId, release.note || null, JSON.stringify({ via: 'test_release', signupId: Number(signupId) })]
+    );
+    // Not a release by hand: no invite generation 0, as create() lets in.
+    return waitlist.grantPlatformAccess(client, userId);
+  });
+  journeyLeftOut.forget(pool);
+  return letIn;
+}
+
 module.exports = {
   MAX_LIVE,
   NOTE_MAX,
   RETIRE_CONFIRMATION,
   PHONE_SIGN_IN_TTL_MS,
   PHONE_SIGN_IN_TRIES,
+  RELEASE_TTL_DAYS,
   TestAccountError,
   create,
   list,
   retire,
+  runReportFor,
   generatePassword,
+  everyTemplatePicks,
   onFirstRun,
   mintPhoneSignIn,
   redeemPhoneSignIn,
+  sendRelease,
+  listReleases,
+  adoptReleasedAccount,
 };

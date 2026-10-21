@@ -188,14 +188,14 @@ test('a long reply in the panel shows four lines and a way to see the rest', () 
 test('the Workshop staging route requires both the textarea and arrow', () => {
   const check = dapp.tests.find((entry) => entry.name.includes('#1584'));
   assert.ok(check, 'a declared check names this change');
-  // The row has to be unfolded for the composer to exist, which is what the
-  // ?shot=feed-comments deep link does to the first issue row.
+  // The card has to be unfolded for the composer to exist.
   //
-  // ?ws=all JOINED IT when the lander became three tabs. The rows the deep
-  // link unfolds are the category list's, and that list is one tab in now —
-  // without the tab the route lands on Current status and there is no row to
-  // unfold, which is how staging failed this check rather than this file.
-  assert.equal(check.path, '/?demo=1&ws=all&shot=feed-comments#app/usernode-2d5619/workshop');
+  // ?ws=all JOINED IT when the lander became three tabs, and #4486 moved it
+  // onto the board with its cards open: By category's rows open the item's
+  // page now rather than unfolding in place, and `?cards=open` is the state
+  // that still draws every card unfolded, the composer under each. The
+  // ?shot=feed-comments deep link fills and scrolls to the first slot.
+  assert.equal(check.path, '/?demo=1&ws=all&group=stage&cards=open&shot=feed-comments#app/usernode-2d5619/workshop');
   assert.match(check.expectSelector, /textarea\[aria-label="Reply to this item"\]/);
   assert.match(check.expectSelector, /button\[aria-label="Send reply"\]:disabled/);
 });

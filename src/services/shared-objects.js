@@ -90,6 +90,17 @@ function changeStateWords(status, { yours = false } = {}) {
   return Object.prototype.hasOwnProperty.call(CHANGE_STATE_WORDS, status) ? CHANGE_STATE_WORDS[status] : (status || null);
 }
 
+// An app's own icon on its card and its community's (run four, 13 Oct 2026:
+// the bot's card for a new app read "◆"): its image at the platform's own
+// address, else its emoji, as its Home tile draws it. Only what it has, so a
+// card with neither draws the glyph (frontend messages/format.tsx ObjectIcon).
+function appIcon(app) {
+  return {
+    ...(app.icon_image_id ? { iconUrl: `/app-icons/${app.icon_image_id}` } : {}),
+    ...(app.icon_emoji ? { iconEmoji: String(app.icon_emoji) } : {}),
+  };
+}
+
 function unavailable(ref) {
   return {
     type: publicType(ref?.object_type || ref?.type || 'app'),
@@ -165,6 +176,29 @@ async function validateForShare(pool, user, raw, { conversationId = null } = {})
   };
 }
 
+/**
+ * The title Homeroom holds for an app's issue, from its own records: the
+ * request the Homeroom bot worked on, else the issue as the platform filed it.
+ * Null when it holds none.
+ */
+async function storedIssueTitle(pool, appId, issueNumber) {
+  try {
+    const { rows } = await pool.query(
+      `SELECT title FROM (
+         SELECT issue_title AS title, 0 AS rank FROM homeroom_bot_requesters WHERE app_id = $1 AND issue_number = $2
+         UNION ALL
+         SELECT title, 1 AS rank FROM issues WHERE app_id = $1 AND github_issue_number = $2
+       ) known
+       WHERE title IS NOT NULL AND title <> ''
+       ORDER BY rank LIMIT 1`,
+      [appId, issueNumber],
+    );
+    return rows[0]?.title || null;
+  } catch {
+    return null;
+  }
+}
+
 async function hydrateOne(pool, user, ref) {
   try {
     const normalized = {
@@ -183,7 +217,7 @@ async function hydrateOne(pool, user, ref) {
       appId: app.id, appSlug: app.slug, subtitle: app.name,
     };
     if (ref.object_type === 'app') {
-      return { ...base, title: app.name, state: app.status, href: `#app/${encodeURIComponent(app.slug)}/app` };
+      return { ...base, title: app.name, state: app.status, href: `#app/${encodeURIComponent(app.slug)}/app`, ...appIcon(app) };
     }
     if (ref.object_type === 'github_issue') {
       const repo = parseRepo(app.repo_url);
@@ -191,8 +225,11 @@ async function hydrateOne(pool, user, ref) {
       const result = await github.fetchPublicIssue(repo.owner, repo.repo, ref.object_ref);
       if (!result.issue && !isTransientIssueRead(result)) return unavailable(ref);
       if (!result.issue) {
+        // GitHub could not answer just now: the title Homeroom already holds
+        // for the request beats "Issue #N".
+        const known = await storedIssueTitle(pool, app.id, ref.object_ref);
         return {
-          ...base, issueNumber: ref.object_ref, title: `Issue #${ref.object_ref}`,
+          ...base, issueNumber: ref.object_ref, title: known || `Issue #${ref.object_ref}`,
           state: null, author: null,
           href: `#app/${encodeURIComponent(app.slug)}/dev/issues/${ref.object_ref}`,
         };
@@ -219,12 +256,16 @@ async function hydrateOne(pool, user, ref) {
       if (!rows.length) return unavailable(ref);
       const row = rows[0];
       return {
-        ...base, sessionId: row.id, title: row.session_title || row.pr_title || `Change #${row.id}`,
+        ...base, sessionId: row.id, ...(row.pr_number ? { prNumber: row.pr_number } : {}),
+        title: row.session_title || row.pr_title || `Change #${row.id}`,
         // B4: where the change is, in words, not its raw status; and no
         // "by homeroom_bot" under one the bot built for somebody.
         state: changeStateWords(row.status, { yours: row.mine === true && Number(row.members) === 1 }),
         author: row.is_synthetic ? null : row.username,
-        href: `#app/${encodeURIComponent(app.slug)}/dev/proposals/${row.id}`,
+        // #4367: a change with a pull request is addressed by its number.
+        href: row.pr_number
+          ? `#app/${encodeURIComponent(app.slug)}/dev/changes/${row.pr_number}`
+          : `#app/${encodeURIComponent(app.slug)}/dev/proposals/${row.id}`,
       };
     }
     if (ref.object_type === 'governance_proposal') {
@@ -284,7 +325,7 @@ async function hydrateOne(pool, user, ref) {
       const row = rows[0];
       return {
         ...base, sessionId: row.session_id, version: row.version,
-        title: row.session_title || row.pr_title || `Spec v${row.version}`,
+        title: row.session_title || row.pr_title || `Plan v${row.version}`,
         state: `v${row.version}`, author: row.username,
         href: `#app/${encodeURIComponent(app.slug)}/dev/sessions/${row.session_id}`,
       };
@@ -313,16 +354,30 @@ async function hydrateForMessages(pool, user, messageIds) {
   // is), so a page of its DM asked GitHub the same question again and again,
   // one after another. That page was slow enough for the service worker to
   // answer a realtime re-read with its stale copy. A card depends only on
-  // its reference and the viewer, so one answer serves every message.
+  // its reference and the viewer, so one answer serves every message. The
+  // distinct cards are read a few at a time rather than one after another:
+  // 24 closed requests at 300 ms each kept a page waiting 7 s.
+  const keyOf = (ref) => [ref.object_type, ref.app_id, ref.object_ref, ref.object_version ?? ''].join(':');
+  const distinct = new Map();
+  for (const ref of rows) if (!distinct.has(keyOf(ref))) distinct.set(keyOf(ref), ref);
   const cards = new Map();
+  const queue = [...distinct.entries()];
+  const worker = async () => {
+    while (queue.length) {
+      const [key, ref] = queue.shift();
+      cards.set(key, await hydrateOne(pool, user, ref));
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(CARD_READS_AT_ONCE, queue.length) }, worker));
   for (const ref of rows) {
-    const key = [ref.object_type, ref.app_id, ref.object_ref, ref.object_version ?? ''].join(':');
-    if (!cards.has(key)) cards.set(key, await hydrateOne(pool, user, ref));
     if (!out.has(ref.message_id)) out.set(ref.message_id, []);
-    out.get(ref.message_id).push({ ...cards.get(key) });
+    out.get(ref.message_id).push({ ...cards.get(keyOf(ref)) });
   }
   return out;
 }
+
+/** How many distinct cards of one page are read at once. */
+const CARD_READS_AT_ONCE = 6;
 
 // ── #3660: a Homeroom link in a message, as the card it names ─────────
 //
@@ -354,11 +409,26 @@ function normalizeLink(raw) {
   const slug = raw.app_slug ?? raw.appSlug;
   if (typeof slug !== 'string' || !LINK_SLUG.test(slug)) return null;
   let ref = null;
+  // #4367: a change's link may name it by its pull request's number instead.
+  const pr = type === 'proposal' ? strictId(raw.pr_number ?? raw.prNumber) : null;
   if (type === 'issue') ref = strictId(raw.issue_number ?? raw.issueNumber);
   if (type === 'proposal') ref = strictId(raw.session_id ?? raw.sessionId);
   if (type === 'governance') ref = strictId(raw.proposal_id ?? raw.proposalId);
-  if (['issue', 'proposal', 'governance'].includes(type) && !ref) return null;
-  return { type, slug, ref };
+  if (['issue', 'proposal', 'governance'].includes(type) && !ref && !pr) return null;
+  return pr && !ref ? { type, slug, ref, pr } : { type, slug, ref };
+}
+
+// The session a change's pull request number names on an app, or null. The
+// card's own read then applies the visibility rule, as for a session id.
+async function sessionForPr(pool, user, slug, pr) {
+  const app = await resolveApp(pool, user, { appId: null, appSlug: slug });
+  if (!app) return null;
+  const { rows } = await pool.query(
+    `SELECT id FROM chat_sessions WHERE app_id = $1 AND pr_number = $2
+      ORDER BY (status IN ('promoted', 'merging', 'merged')) DESC, id DESC LIMIT 1`,
+    [app.id, pr]
+  );
+  return rows[0] ? rows[0].id : null;
 }
 
 async function hydrateLink(pool, user, raw) {
@@ -373,10 +443,19 @@ async function hydrateLink(pool, user, raw) {
         type: link.type, available: true, appId: app.id, appSlug: app.slug,
         title: app.name, subtitle: null,
         href: link.type === 'hub' ? `#app/${slug}/workshop` : `#app/${slug}/dev/chat`,
+        ...(link.type === 'hub' ? appIcon(app) : {}),
       };
     } catch (_) {
       return { type: link.type, available: false };
     }
+  }
+  if (link.pr) {
+    try {
+      link.ref = await sessionForPr(pool, user, link.slug, link.pr);
+    } catch (_) {
+      link.ref = null;
+    }
+    if (!link.ref) return { type: link.type, available: false };
   }
   return hydrateOne(pool, user, {
     object_type: TYPE_ALIASES.get(link.type),

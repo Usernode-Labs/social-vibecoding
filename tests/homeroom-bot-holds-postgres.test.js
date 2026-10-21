@@ -9,6 +9,11 @@
 // mention is the go-ahead and queues the request, the go-ahead lasts, and a
 // hold that starts after it keeps the bot off again.
 //
+// 16 Oct 2026: a request held on a cap is one the bot has promised its
+// requester, and a claim made after that no longer keeps the bot off it
+// (homeroom-bot-older-requests-postgres.test.js). So the bot's look here is
+// one that promised nothing (a question), as a claim still holds after it.
+//
 // Skips when no PostgreSQL is reachable, like the repository's other
 // postgres tests.
 
@@ -75,10 +80,10 @@ test('a mention on a claimed request is answered, a second one is the go-ahead, 
     [evan.id],
   );
 
-  // Three days ago: the bot looked, a cap held it, and chinchan claimed it.
+  // Three days ago: the bot looked and asked a question, and chinchan claimed it.
   await pool.query(
-    `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, cap_suppressed, thread_seen_at, created_at)
-     VALUES ($1, 75, 'live', 'ready', 'proposals_per_app', NOW() - INTERVAL '3 days', NOW() - INTERVAL '3 days')`,
+    `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, thread_seen_at, created_at)
+     VALUES ($1, 75, 'live', 'question', NOW() - INTERVAL '3 days', NOW() - INTERVAL '3 days')`,
     [app.id],
   );
   await pool.query(
@@ -106,9 +111,36 @@ test('a mention on a claimed request is answered, a second one is the go-ahead, 
     },
   };
   const notifications = { async createMentionNotifications() { return []; }, async hydrateAndPush() {} };
-  const refresh = () => bot.refreshApp(pool, app, {
-    github, bot: homeroomBot, ws, notifications, capRoom: { proposals_per_app: 1, proposals_total: 1, question_tripwire: 1 },
+  // The refresh decides an answer; the request's place (the bot-voice
+  // machine, src/workflow/bot-voice/) owes it, writing its post pending, and
+  // its work says it (holds.sayHeld), here with GitHub and the room faked.
+  // What the refresh finds owed (or no longer owed) is its request's
+  // bot-request instance's, whose queue row is the projection (the lane
+  // beside it grants nothing here: the bot is not on).
+  const { createRuntime } = require('../src/workflow/kernel/index.ts');
+  const { botVoice, WORK } = require('../src/workflow/bot-voice/machine.ts');
+  const { botRequest } = require('../src/workflow/bot-request/machine.ts');
+  const { botLane } = require('../src/workflow/bot-lane/machine.ts');
+  const voiceMachine = botVoice();
+  const rt = createRuntime({
+    pool, machines: [voiceMachine, botRequest({ staging: false }), botLane({ staging: false })], pollMs: 50, publish: async () => {},
+    services: {
+      [WORK.post]: { maxAttempts: 2, backoffMs: () => 0, async run({ input }) {
+        return holds.sayHeld(pool, { ...input, deps: { github, ws, notifications } });
+      } },
+    },
   });
+  t.after(() => rt.stop());
+  const settle = async () => {
+    for (let i = 0; i < 20; i++) { await rt.drain(); if (!(await rt.runServices())) { await rt.drain(); return; } }
+  };
+  const refresh = async () => {
+    const out = await bot.refreshApp(pool, app, {
+      github, bot: homeroomBot, ws, notifications, capRoom: { proposals_per_app: 1, proposals_total: 1, question_tripwire: 1 },
+    });
+    await settle();
+    return out;
+  };
   const queued = async () => (await pool.query(
     'SELECT issue_number, reason FROM homeroom_bot_queue WHERE app_id = $1', [app.id],
   )).rows;
@@ -136,7 +168,7 @@ test('a mention on a claimed request is answered, a second one is the go-ahead, 
     assert.equal((await refresh()).queued, 0);
     assert.deepEqual(await posts(), [holds.LEAVING_KIND]);
     assert.match(messages[0].content,
-      new RegExp(`^@${evan.username} ${chin.username} claimed this request 3 days ago, so Homeroom bot is leaving it to them\\. If you still want Homeroom bot to build it, mention it here again and it will go ahead\\.$`));
+      new RegExp(`^@${evan.username} ${chin.username} claimed this request 3 days ago, so I'm leaving it to them\\. If you still want me to build it, mention me here again and I'll go ahead\\.$`));
     assert.deepEqual(messages[0].thread, { type: 'issue', ref: 75 });
     await refresh();
     assert.deepEqual(await posts(), [holds.LEAVING_KIND], 'one answer per mention');
@@ -152,7 +184,7 @@ test('a mention on a claimed request is answered, a second one is the go-ahead, 
     assert.deepEqual(await queued(), [{ issue_number: 75, reason: 'changed' }]);
     assert.deepEqual(await posts(), [holds.LEAVING_KIND, holds.GOING_KIND]);
     assert.match(messages[1].content,
-      new RegExp(`^@${chin.username} ${evan.username} asked Homeroom bot to build this anyway, so it is taking it up now\\.`));
+      new RegExp(`^@${chin.username} ${evan.username} asked me to build this anyway, so I'm taking it up now\\.`));
     // It lasts: the next refresh keeps it queued and says nothing more.
     await refresh();
     assert.deepEqual(await queued(), [{ issue_number: 75, reason: 'changed' }]);
@@ -173,7 +205,45 @@ test('a mention on a claimed request is answered, a second one is the go-ahead, 
   await t.test('only on a live app: a shadow app neither answers nor goes ahead', async () => {
     await say(evan, '@homeroom_bot please');
     const out = await bot.refreshApp(pool, app, { github, bot: homeroomBot, ws, notifications, capRoom: null });
+    await settle();
     assert.equal(out.queued, 0);
     assert.equal(messages.length, 2);
+  });
+
+  await t.test('an answer owed is said once it is decided, and counted as said from then: a failed post is retried, never marked said', async () => {
+    // Somebody new holds it, and a person asks the bot: the answer is owed
+    // (its row pending) before anything is said, and a GitHub that fails
+    // keeps it owed until it is said.
+    await pool.query(`DELETE FROM issue_claims WHERE app_id = $1 AND user_id = $2`, [app.id, sam.id]);
+    await pool.query(`INSERT INTO issue_claims (app_id, github_issue_number, user_id) VALUES ($1, 75, $2)`, [app.id, sam.id]);
+    let down = true;
+    const createIssueComment = github.createIssueComment;
+    github.createIssueComment = async (...args) => {
+      if (down) throw Object.assign(new Error('GitHub is down'), { status: 502 });
+      return createIssueComment(...args);
+    };
+    await say(chin, '@homeroom_bot is this still on?');
+    await bot.refreshApp(pool, app, {
+      github, bot: homeroomBot, ws, notifications, capRoom: { proposals_per_app: 1, proposals_total: 1, question_tripwire: 1 },
+    });
+    await rt.drain();
+    const { rows: [owed] } = await pool.query(
+      `SELECT kind, pending FROM homeroom_bot_posts WHERE app_id = $1 ORDER BY id DESC LIMIT 1`, [app.id]);
+    assert.deepEqual([owed.kind, owed.pending], [holds.LEAVING_KIND, true], 'owed from the decision');
+    await rt.runServices();
+    await rt.drain();
+    const { rows: [still] } = await pool.query(
+      `SELECT pending, thread_message_id FROM homeroom_bot_posts WHERE app_id = $1 ORDER BY id DESC LIMIT 1`, [app.id]);
+    assert.equal(still.pending, true, 'GitHub failed: not said yet, and tried again');
+    down = false;
+    await settle();
+    const { rows: [said] } = await pool.query(
+      `SELECT pending, github_comment_id FROM homeroom_bot_posts WHERE app_id = $1 ORDER BY id DESC LIMIT 1`, [app.id]);
+    assert.equal(said.pending, null);
+    assert.ok(said.github_comment_id);
+    const bubbles = messages.filter((m) => /is still on|leaving it to them/.test(m.content));
+    assert.ok(bubbles.length >= 1);
+    assert.equal(new Set(bubbles.map((m) => m.content)).size, bubbles.length, 'its bubble once');
+    github.createIssueComment = createIssueComment;
   });
 });

@@ -3,7 +3,8 @@
 // B5: Homeroom bot's name, face and first hello.
 //
 //   - the bot is "Homeroom bot" wherever Messages names it, with the Homeroom
-//     mark for its picture and an "AI" badge; people keep their @handles;
+//     mark for its picture and an "AI" badge; people keep their @handles,
+//     except in a direct message, where they are named bare (#4655);
 //   - its DM is the first row of the list, whatever was said last;
 //   - it says hello once per person, ever, with questions to tap: a maker
 //     with their first project, anybody else with their first request.
@@ -12,6 +13,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -27,6 +29,10 @@ test('B5: the bot is named by its name, a person by their handle', () => {
   assert.equal(senderName({ id: 2, username: 'homeroom_bot', bot: true, displayName: 'Homeroom bot' }), 'Homeroom bot');
   assert.equal(senderName({ id: 3, username: 'ada' }), '@ada');
   assert.equal(senderName({ id: 3, username: 'ada', displayName: 'Ada L' }), '@ada', 'a person keeps their handle');
+  // #4655: bare, as a direct message names a person.
+  assert.equal(senderName({ id: 3, username: 'ada' }, { bare: true }), 'ada');
+  assert.equal(senderName({ id: 2, username: 'homeroom_bot', bot: true, displayName: 'Homeroom bot' }, { bare: true }), 'Homeroom bot', 'the bot keeps its name');
+  assert.equal(senderName({ id: 3, username: 'ada' }, { bare: false }), '@ada');
   assert.equal(senderName({ id: 0, username: 'Deleted user' }), 'Deleted user');
   assert.equal(senderName(null), '');
   const face = renderToHtml(createElement(UserAvatar, { user: { id: 2, username: 'homeroom_bot', bot: true }, shape: 'square' }));
@@ -42,32 +48,38 @@ test('B5: the bot is named by its name, a person by their handle', () => {
 
 test('B5: every place Messages names the bot names it, with an AI badge beside it', () => {
   const row = read('frontend/src/features/messages/message-row.tsx');
-  assert.match(row, /\{senderName\(message\.sender\)\}<\/span>\{message\.sender\.bot \? <span className="messages-bot-badge">AI<\/span> : null\}/);
+  assert.equal(message('messages:row.aiBadge'), 'AI');
+  assert.match(row, /\{senderName\(message\.sender, \{ bare \}\)\}<\/span>\{message\.sender\.bot \? <span className="messages-bot-badge">\{t\('messages:row\.aiBadge'\)\}<\/span> : null\}/);
   assert.doesNotMatch(row, />Bot<\/span>/);
-  assert.match(row, /<span>\{senderName\(message\.reply\.sender\)\}<\/span>/, 'the quote');
-  assert.match(row, /preview=\{\{ who: senderName\(message\.sender\)/, 'the action sheet');
-  assert.match(row, /label: `Message from \$\{senderName\(message\.sender\)\}`/, 'the report');
+  assert.match(row, /<span>\{senderName\(message\.reply\.sender, \{ bare \}\)\}<\/span>/, 'the quote');
+  assert.match(row, /preview=\{\{ who: senderName\(message\.sender, \{ bare \}\)/, 'the action sheet');
+  assert.equal(message('messages:row.reportLabel', { name: 'Homeroom bot' }), 'Message from Homeroom bot');
+  assert.match(row, /: t\('messages:row\.reportLabel', \{ name: senderName\(message\.sender, \{ bare \}\) \}\), userId/, 'the report');
   assert.doesNotMatch(row, /'@' : ''\}\{message\.(reply\.)?sender\.username\}/);
   const screen = read('frontend/src/features/messages/index.tsx');
-  assert.match(screen, /conversation\.kind === 'direct' && peer \? senderName\(peer\) : conversation\.title\}\{conversation\.kind === 'direct' && peer\?\.bot \? <span className="messages-bot-badge">AI<\/span> : null\}/, 'the list row');
-  assert.match(screen, /active\.kind === 'direct' && person \? senderName\(person\)[^\n]*person\?\.bot \? <span className="messages-bot-badge">AI<\/span>/, 'the header');
-  assert.match(read('frontend/src/features/messages/composer.tsx'), /Replying to \{senderName\(reply\.sender\)\}/);
+  assert.equal(message('messages:inbox.aiBadge'), 'AI');
+  assert.match(screen, /conversation\.kind === 'direct' && peer \? senderName\(peer, \{ bare: true \}\) : conversation\.title\}\{conversation\.kind === 'direct' && peer\?\.bot \? <span className="messages-bot-badge">\{t\('messages:inbox\.aiBadge'\)\}<\/span> : null\}/, 'the list row');
+  assert.equal(message('messages:header.aiBadge'), 'AI');
+  assert.match(screen, /active\.kind === 'direct' && person \? senderName\(person, \{ bare: true \}\)[^\n]*person\?\.bot \? <span className="messages-bot-badge">\{t\('messages:header\.aiBadge'\)\}<\/span>/, 'the header');
+  assert.match(read('frontend/src/features/messages/composer.tsx'), /t\('messages:composer\.replyingTo', \{ name: senderName\(reply\.sender, \{ bare: active\.kind === 'direct' \}\) \}\)/);
+  assert.equal(message('messages:composer.replyingTo', { name: 'Homeroom bot' }), 'Replying to Homeroom bot');
   assert.match(read('frontend/src/features/messages/store.ts'), /state\.active\.peer\.displayName/, 'the typing line');
 });
 
-test('B5: the bot\'s DM is the first row, and a search lists results as they happened', () => {
-  const { buildInbox, inClockOrder } = loadTsx('frontend/src/features/messages/inbox.ts');
+test('B5: the bot\'s DM is the first row, pinned first in Agents, and a search keeps the sections', () => {
+  const { buildInbox } = loadTsx('frontend/src/features/messages/inbox.ts');
   const conversations = [
     { id: 1, lastActivityAt: '2026-10-04T10:00:00Z', kind: 'direct' },
     { id: 2, lastActivityAt: '2026-10-01T10:00:00Z', kind: 'direct', homeroomBot: true },
     { id: 3, lastActivityAt: '2026-10-03T10:00:00Z', kind: 'direct' },
   ];
-  const base = { conversations, discussions: [], agents: [] };
-  assert.deepEqual(buildInbox({ ...base, filter: 'all' }).map((e) => e.key), ['person:2', 'person:1', 'person:3']);
-  assert.deepEqual(buildInbox({ ...base, filter: 'agents' }).map((e) => e.key), ['person:2']);
-  assert.deepEqual(buildInbox({ ...base, filter: 'people' }).map((e) => e.key), ['person:1', 'person:3']);
-  assert.deepEqual(inClockOrder(buildInbox({ ...base, filter: 'all' })).map((e) => e.key), ['person:1', 'person:3', 'person:2']);
-  assert.match(read('frontend/src/features/messages/index.tsx'), /const shown = q \? inClockOrder\(found\) : found;/);
+  const merged = buildInbox({ conversations, agents: [] });
+  assert.deepEqual(merged.map((e) => e.key), ['person:2', 'person:1', 'person:3']);
+  assert.deepEqual(merged.map((e) => e.section), ['agents', 'people', 'people']);
+  assert.equal(merged[0].pinned, true);
+  // 16 Oct 2026: a search narrows each section rather than mixing them on
+  // one clock, so the bot's chat is still first under Agents.
+  assert.match(read('frontend/src/features/messages/index.tsx'), /const found = inbox\.filter\(matches\);/);
 });
 
 test('B5: prompts to tap keep the suggestion look, and read back as asked', () => {
@@ -104,7 +116,49 @@ test('B5: the hellos say what the bot does, in plain words', () => {
     ['ask-1', 'prompt', 'How long will this take?'], ['ask-2', 'prompt', 'What can I ask for?'], ['ask-3', 'prompt', 'How do I invite friends?'],
   ]);
   assert.deepEqual(dm.MEMBER_PROMPTS, ['What else can I ask for?', 'How long will this take?']);
-  for (const text of [dm.MAKER_HELLO, dm.memberHello('X'), ...dm.MAKER_PROMPTS, ...dm.MEMBER_PROMPTS]) assert.doesNotMatch(text, /—|homeroom_bot/);
+  for (const text of [dm.MAKER_HELLO, dm.memberHello('X'), ...dm.MAKER_PROMPTS, ...dm.MEMBER_PROMPTS, dm.TOUR_HELLO, ...dm.TOUR_PROMPTS]) {
+    assert.doesNotMatch(text, /—|homeroom_bot/);
+  }
+  // #4604: the hello after the tour: who it is, and what to ask it, short.
+  assert.equal(dm.TOUR_HELLO, 'Hi, I\'m Homeroom bot, the AI that builds things on Homeroom. Ask me here to build a change, '
+    + 'file an idea or fix a bug in any project you\'re in, and I\'ll tell you how it goes.');
+  assert.deepEqual(dm.TOUR_PROMPTS, ['What can I ask for?', 'How does the group decide?', 'How do I start a project?']);
+});
+
+test('sign-up test, 19 Oct 2026: a ready-made app\'s maker hears the maker\'s hello, with the project and a change to ask for', () => {
+  const dm = require('../src/services/homeroom-bot-dm');
+  const appTemplates = require('../src/services/app-templates');
+  // The maker's hello, the project's name as its own line (Messages draws
+  // its card), and what to ask for, with the starter's own example. No "It
+  // works as it is." (20 Oct 2026).
+  assert.equal(dm.readyMadeHello('City Tier List', appTemplates.exampleChangeOf('tier-list-cities')),
+    `${dm.MAKER_HELLO}\n\n**City Tier List**\n\nAsk me here for changes, like “add a photo of each city”.`);
+  assert.equal(dm.readyMadeHello('Chores', null),
+    `${dm.MAKER_HELLO}\n\n**Chores**\n\nAsk me here for any change you'd like.`);
+  assert.deepEqual(dm.READY_MADE_PROMPTS, ['What can I ask for?', 'How do I invite friends?', 'How does the group decide?']);
+  for (const text of [dm.readyMadeHello('X', 'add a y'), ...dm.READY_MADE_PROMPTS]) {
+    assert.doesNotMatch(text, /—|homeroom_bot/);
+  }
+  // Every ready-made app has a change to offer.
+  for (const id of appTemplates.READY_IDS) assert.ok(appTemplates.exampleChangeOf(id), id);
+  // Owed through the person's DM machine, as a maker's, with the project.
+  assert.match(read('src/workflow/rules/bot-replies.ts'), /HELLO_KINDS: ReadonlySet<string> = new Set\(\['maker', 'member', 'joiner', 'tour'\]\);/);
+  const greet = read('src/services/homeroom-bot-dm.js');
+  assert.match(greet, /if \(kind === 'maker'\) \{\n\s+const \{ rows: \[app\] \} = await pool\.query\('SELECT id, slug, name, template, created_by FROM apps WHERE id = \$1', \[Number\(appId\)\]\);\n\s+if \(!app\) return null;\n\s+return greetReadyMadeMaker\(pool, \{ userId: Number\(userId\), app, strict: true \}\);/);
+});
+
+test('#4897: no hello is kept from a test account; the welcome DM keeps its own opt-in', () => {
+  // The tour's, a maker's and a joiner's hello (homeroom-bot-dm.js) and a
+  // member's (homeroom-bot-activity.js startCard) read nothing that marks a
+  // test account, so a tester meets the bot as a newcomer does, however the
+  // account was made.
+  for (const file of ['src/services/homeroom-bot-dm.js', 'src/services/homeroom-bot-activity.js']) {
+    assert.doesNotMatch(read(file), /test_account_created_at|quiet_test/, `${file} keeps no hello from a test account`);
+  }
+  // The welcome DM puts staff into a group with the account, so it still
+  // waits for the creator's welcomeDm (test_account_welcome_dm).
+  assert.match(read('src/db/schema.sql'),
+    /IF NEW\.test_account_created_at IS NOT NULL AND NOT NEW\.test_account_welcome_dm THEN\n {4}RETURN NULL;/);
 });
 
 test('B5: its name and its one hello, against the full PostgreSQL schema', { timeout: 180000 }, async (t) => {
@@ -129,20 +183,15 @@ test('B5: its name and its one hello, against the full PostgreSQL schema', { tim
   const conversations = require('../src/services/conversations');
   const dm = require('../src/services/homeroom-bot-dm');
   const activity = require('../src/services/homeroom-bot-activity');
-  const user = async (username, synthetic = false) => (await pool.query(
-    `INSERT INTO users (username, password, has_platform_access, is_synthetic) VALUES ($1, 'x', TRUE, $2) RETURNING id, username`,
-    [username, synthetic],
+  const user = async (username, synthetic = false, access = true) => (await pool.query(
+    `INSERT INTO users (username, password, has_platform_access, is_synthetic) VALUES ($1, 'x', $3, $2) RETURNING id, username`,
+    [username, synthetic, access],
   )).rows[0];
   const bot = await user('homeroom_bot', true);
   await pool.query(schema); // boot names it
   const maya = await user('maya');
   const ben = await user('ben');
   const old = await user('old_friend');
-  await pool.query(
-    `INSERT INTO platform_settings (key, value) VALUES ('homeroom_bot_dm_users', $1)
-     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
-    [JSON.stringify(['maya', 'ben', 'old_friend'])],
-  );
   const project = async (slug, label, owner) => {
     const { rows: [inserted] } = await pool.query(
       `INSERT INTO apps (name, slug, status, created_by) VALUES ($1, $2, 'running', $3) RETURNING id`,
@@ -153,7 +202,7 @@ test('B5: its name and its one hello, against the full PostgreSQL schema', { tim
   const plantPal = await project('plant-pal', 'Plant Pal', maya);
   const herbs = await project('herbs', 'Herbs', maya);
   const supper = await project('supper-club', 'Supper Club', maya);
-  const settings = { audience: 'list', dmUsers: ['maya', 'ben', 'old_friend'], mode: 'live' };
+  const settings = { mode: 'live' };
 
   await t.test('the bot is "Homeroom bot" to whoever reads it; its handle is unchanged', async () => {
     const { rows: [named] } = await pool.query('SELECT username, display_name FROM users WHERE id = $1', [bot.id]);
@@ -173,9 +222,13 @@ test('B5: its name and its one hello, against the full PostgreSQL schema', { tim
   });
 
   await t.test('somebody the bot already wrote to is never greeted', async () => {
-    assert.equal(await dm.claimHello(pool, { userId: maya.id, botId: bot.id, kind: 'maker' }), false);
-    const { rows: [row] } = await pool.query('SELECT kind FROM homeroom_bot_hellos WHERE user_id = $1', [maya.id]);
-    assert.equal(row.kind, 'known');
+    await pool.query(
+      `INSERT INTO platform_settings (key, value) VALUES ('homeroom_bot_mode', 'live')
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`);
+    assert.equal(await dm.greetTourFinisher(pool, { userId: maya.id }), null, 'no hello sent');
+    await pool.query(`DELETE FROM platform_settings WHERE key = 'homeroom_bot_mode'`);
+    const { rows: [row] } = await pool.query('SELECT kind, message_id FROM homeroom_bot_hellos WHERE user_id = $1', [maya.id]);
+    assert.deepEqual(row, { kind: 'known', message_id: null }, 'recorded as known, in the send that did not go');
     await pool.query('DELETE FROM homeroom_bot_hellos WHERE user_id = $1', [maya.id]);
     await pool.query('DELETE FROM conversation_messages WHERE sender_id = $1 OR sender_id = $2', [bot.id, maya.id]);
   });
@@ -191,6 +244,9 @@ test('B5: its name and its one hello, against the full PostgreSQL schema', { tim
     // #4097: the project's name is a line of its own after the hello, which
     // Messages draws as the project's card.
     assert.match(msg.content, /\n\n\*\*Plant Pal\*\*\n\nI'm setting up Plant Pal now\./);
+    // Run six: what comes next, as it happens now (no "for you to try").
+    assert.ok(msg.content.includes('I\'m setting up Plant Pal now. Once it\'s ready I\'ll send you my plan here first, '
+      + 'then build its first version and tell you here when it\'s live.'), msg.content);
     const meta = msg.metadata.homeroomBot;
     assert.equal(meta.status, 'open');
     assert.deepEqual(meta.actions.map((a) => a.label), ['How long will this take?', 'What can I ask for?', 'How do I invite friends?']);
@@ -223,7 +279,7 @@ test('B5: its name and its one hello, against the full PostgreSQL schema', { tim
          ($1, 4, $2, 'Sunday host reminder', 'Remind the host on Sunday'), ($1, 5, $2, 'Menu', 'A menu page')`,
       [supper.id, ben.id],
     );
-    const card = await activity.startCard(pool, {
+    const card = await activity.startCard(pool, { inDm: true,
       app: supper, issueNumber: 4, requester: await dm.requesterOf(pool, supper.id, 4), bot, jobKey: 'hello-1', settings, queued: true,
     });
     const { rows: [msg] } = await pool.query('SELECT content, metadata FROM conversation_messages WHERE id = $1', [card.messageId]);
@@ -232,7 +288,7 @@ test('B5: its name and its one hello, against the full PostgreSQL schema', { tim
     assert.equal(meta.kind, 'activity');
     assert.equal(meta.hello, 'Hi, I\'m Homeroom bot. I build the changes people in Supper Club ask for. Here\'s yours:');
     assert.deepEqual(meta.actions.map((a) => a.label), ['What else can I ask for?', 'How long will this take?']);
-    const next = await activity.startCard(pool, {
+    const next = await activity.startCard(pool, { inDm: true,
       app: supper, issueNumber: 5, requester: await dm.requesterOf(pool, supper.id, 5), bot, jobKey: 'hello-2', settings, queued: true,
     });
     const { rows: [plain] } = await pool.query('SELECT content, metadata FROM conversation_messages WHERE id = $1', [next.messageId]);
@@ -244,7 +300,7 @@ test('B5: its name and its one hello, against the full PostgreSQL schema', { tim
       `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title) VALUES ($1, 6, $2, 'Sides')`,
       [supper.id, maya.id],
     );
-    const own = await activity.startCard(pool, {
+    const own = await activity.startCard(pool, { inDm: true,
       app: supper, issueNumber: 6, requester: await dm.requesterOf(pool, supper.id, 6), bot, jobKey: 'hello-3', settings, queued: true,
     });
     const { rows: [ownMsg] } = await pool.query('SELECT metadata FROM conversation_messages WHERE id = $1', [own.messageId]);
@@ -253,14 +309,11 @@ test('B5: its name and its one hello, against the full PostgreSQL schema', { tim
 
   await t.test('WP-F: somebody who joins by a link hears hello once, only when the bot builds for them and is on', async () => {
     const tess = await user('tess');
-    const zed = await user('zed');
+    // Not let in yet: the bot does not build for them (hasBot).
+    const zed = await user('zed', false, false);
     const mode = (value) => pool.query(
       `INSERT INTO platform_settings (key, value) VALUES ('homeroom_bot_mode', $1)
        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`, [value]);
-    const list = (names) => pool.query(
-      `INSERT INTO platform_settings (key, value) VALUES ('homeroom_bot_dm_users', $1)
-       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`, [JSON.stringify(names)]);
-    await list(['maya', 'ben', 'old_friend', 'tess']);
     await mode('off');
     assert.equal(await dm.greetJoiner(pool, { user: tess, app: supper }), null, 'switched off: no hello it cannot keep');
     await mode('live');
@@ -277,15 +330,152 @@ test('B5: its name and its one hello, against the full PostgreSQL schema', { tim
     const { rows: [hello] } = await pool.query('SELECT kind, message_id FROM homeroom_bot_hellos WHERE user_id = $1', [tess.id]);
     assert.deepEqual(hello, { kind: 'joiner', message_id: sent.messageId });
     assert.equal(await dm.greetJoiner(pool, { user: tess, app: herbs }), null, 'once, ever');
-    await list(['maya', 'ben', 'old_friend']);
     await mode('off');
-    // Redeeming a link is what greets them.
+    // Redeeming a link is what greets them: owed in the redemption's own
+    // transaction, to their DM machine (src/workflow/bot-dm/).
     assert.match(read('src/services/community-invites.js'),
-      /if \(status === 'joined'\) \{\n {6}appAccess\.invalidateVisibility\(invite\.app_id, invite\.slug\);\n[^\n]*\n {6}void require\('\.\/homeroom-bot-dm'\)\.greetJoiner\(pool, \{/);
+      /if \(after\[0\]\?\.status === 'joined'\) \{\n {6}await require\('\.\.\/workflow\/platform\.ts'\)\.greet\(client, \{ userId: user\.id, kind: 'joiner', appId: invite\.app_id \}\);\n {4}\}\n {4}await client\.query\('COMMIT'\);/);
   });
 
-  await t.test('two claims at once greet once', async () => {
-    const claims = await Promise.all([1, 2, 3].map(() => dm.claimHello(pool, { userId: old.id, botId: bot.id, kind: 'member' })));
-    assert.equal(claims.filter(Boolean).length, 1);
+  await t.test('#4604: ending the tour greets once, only somebody the bot has not met', async () => {
+    const onboarding = require('../src/services/onboarding');
+    const mode = (value) => pool.query(
+      `INSERT INTO platform_settings (key, value) VALUES ('homeroom_bot_mode', $1)
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`, [value]);
+    const nina = await user('nina');
+    await mode('off');
+    assert.equal(await dm.greetTourFinisher(pool, { userId: nina.id }), null, 'switched off: no hello it cannot keep');
+    await mode('live');
+    const sent = await dm.greetTourFinisher(pool, { userId: nina.id });
+    assert.ok(sent?.messageId);
+    const { rows: [msg] } = await pool.query('SELECT content, metadata FROM conversation_messages WHERE id = $1', [sent.messageId]);
+    assert.equal(msg.content, dm.TOUR_HELLO);
+    assert.equal(msg.metadata.homeroomBot.kind, 'hello_tour');
+    assert.equal(msg.metadata.homeroomBot.status, 'open', 'a hello they can reply to');
+    assert.equal(dm.momentOf(msg.metadata.homeroomBot), null, 'a hello rings nothing');
+    assert.deepEqual(msg.metadata.homeroomBot.actions.map((a) => a.label), dm.TOUR_PROMPTS);
+    const { rows: [hello] } = await pool.query('SELECT kind, message_id FROM homeroom_bot_hellos WHERE user_id = $1', [nina.id]);
+    assert.deepEqual(hello, { kind: 'tour', message_id: sent.messageId });
+    assert.equal(await dm.greetTourFinisher(pool, { userId: nina.id }), null, 'once, ever');
+    // Somebody greeted another way (the joiner above) is not greeted again.
+    const { rows: [tess] } = await pool.query("SELECT id FROM users WHERE username = 'tess'");
+    assert.equal(await dm.greetTourFinisher(pool, { userId: tess.id }), null, 'one hello per person, whichever it was');
+    await mode('off');
+    // The first end of the tour is what greets, never a backfill.
+    const source = read('src/services/onboarding.js');
+    assert.match(source, /if \(marked && marked\.rowCount > 0 && ended !== 'backfill'\) \{\n {6}await require\('\.\.\/workflow\/platform\.ts'\)\.greet\(client, \{ userId, kind: 'tour' \}\);\n {4}\}\n {4}await client\.query\('COMMIT'\);/,
+      'owed in the transaction that ends the tour');
+    assert.equal(typeof onboarding.markTourDone, 'function');
+  });
+
+  await t.test('sign-up test, 19 Oct 2026: a ready-made app\'s maker hears hello once, as its maker, over its card', async () => {
+    const mode = (value) => pool.query(
+      `INSERT INTO platform_settings (key, value) VALUES ('homeroom_bot_mode', $1)
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`, [value]);
+    const ria = await user('ria');
+    const made = async (slug, label, owner, template) => (await pool.query(
+      `INSERT INTO apps (name, slug, status, created_by, template) VALUES ($1, $2, 'running', $3, $4) RETURNING id`,
+      [label, slug, owner.id, template],
+    )).rows[0].id;
+    const cities = await made('city-tier-list', 'City Tier List', ria, 'tier-list-cities');
+    const blank = await made('ria-blank', 'Ria Blank', ria, null);
+    const notHers = await made('maya-cities', 'Maya Cities', maya, 'tier-list-cities');
+    await mode('off');
+    assert.equal(await dm.greet(pool, { userId: ria.id, kind: 'maker', appId: cities }), null, 'switched off: no hello it cannot keep');
+    await mode('live');
+    assert.equal(await dm.greet(pool, { userId: ria.id, kind: 'maker', appId: blank }), null, 'not a ready-made app');
+    assert.equal(await dm.greet(pool, { userId: ria.id, kind: 'maker', appId: notHers }), null, 'not her project');
+    assert.equal(await dm.greet(pool, { userId: ria.id, kind: 'maker', appId: 2147483000 }), null, 'no such project');
+    assert.equal((await pool.query('SELECT 1 FROM homeroom_bot_hellos WHERE user_id = $1', [ria.id])).rowCount, 0, 'none claimed');
+    const sent = await dm.greet(pool, { userId: ria.id, kind: 'maker', appId: cities });
+    assert.ok(sent?.messageId);
+    const { rows: [msg] } = await pool.query('SELECT content, metadata FROM conversation_messages WHERE id = $1', [sent.messageId]);
+    assert.equal(msg.content, dm.readyMadeHello('City Tier List', 'add a photo of each city'));
+    const meta = msg.metadata.homeroomBot;
+    assert.deepEqual([meta.kind, meta.appSlug, meta.appName, meta.hello, meta.status], ['hello_maker', 'city-tier-list', 'City Tier List', dm.MAKER_HELLO, 'open']);
+    assert.deepEqual(meta.actions.map((a) => a.label), dm.READY_MADE_PROMPTS);
+    assert.equal(dm.momentOf(meta), null, 'a hello rings nothing');
+    const { rows: [hello] } = await pool.query('SELECT kind, message_id FROM homeroom_bot_hellos WHERE user_id = $1', [ria.id]);
+    assert.deepEqual(hello, { kind: 'maker', message_id: sent.messageId });
+    assert.equal(await dm.greet(pool, { userId: ria.id, kind: 'maker', appId: cities }), null, 'once, ever');
+    assert.equal(await dm.greetTourFinisher(pool, { userId: ria.id }), null, 'and no tour\'s hello after it');
+    await mode('off');
+  });
+
+  await t.test('#4897: a test account hears every hello a newcomer hears, with the welcome DM still off', async () => {
+    const mode = (value) => pool.query(
+      `INSERT INTO platform_settings (key, value) VALUES ('homeroom_bot_mode', $1)
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`, [value]);
+    // As create_test_account, create_test_phone_sign_in and
+    // send_test_release_email leave one when nobody asked for the welcome DM.
+    const tester = async (username) => {
+      const made = await user(username);
+      await pool.query('UPDATE users SET test_account_created_at = NOW(), exclude_podium = TRUE WHERE id = $1', [made.id]);
+      const { rows: [row] } = await pool.query('SELECT test_account_welcome_dm FROM users WHERE id = $1', [made.id]);
+      assert.equal(row.test_account_welcome_dm, false);
+      return made;
+    };
+    const helloOf = async (id) => (await pool.query('SELECT kind FROM homeroom_bot_hellos WHERE user_id = $1', [id])).rows[0]?.kind;
+    await mode('live');
+
+    const touring = await tester('tester_tour');
+    const toured = await dm.greetTourFinisher(pool, { userId: touring.id });
+    assert.ok(toured?.messageId, 'the tour\'s, which Messages is empty without');
+    const { rows: [msg] } = await pool.query('SELECT content FROM conversation_messages WHERE id = $1', [toured.messageId]);
+    assert.equal(msg.content, dm.TOUR_HELLO);
+    assert.equal(await helloOf(touring.id), 'tour');
+
+    const joining = await tester('tester_joiner');
+    assert.ok((await dm.greetJoiner(pool, { user: joining, app: supper }))?.messageId, 'a joiner\'s');
+    assert.equal(await helloOf(joining.id), 'joiner');
+
+    const making = await tester('tester_maker');
+    const readingLog = await project('reading-log', 'Reading Log', making);
+    const made = await dm.startFirstVersion(pool, {}, {
+      app: readingLog, user: { ...making, hasPlatformAccess: true }, brief: 'A reading log for our book club, with a page per book.',
+    });
+    assert.ok(made?.conversationId, 'a maker\'s');
+    assert.equal(await helloOf(making.id), 'maker');
+
+    const asking = await tester('tester_member');
+    await pool.query(
+      `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title, asked_text)
+       VALUES ($1, 7, $2, 'Desserts', 'A dessert list')`, [supper.id, asking.id],
+    );
+    const card = await activity.startCard(pool, { inDm: true,
+      app: supper, issueNumber: 7, requester: await dm.requesterOf(pool, supper.id, 7), bot, jobKey: 'hello-4897', settings, queued: true,
+    });
+    const { rows: [carded] } = await pool.query('SELECT metadata FROM conversation_messages WHERE id = $1', [card.messageId]);
+    assert.equal(carded.metadata.homeroomBot.hello, dm.memberHello('Supper Club'), 'a member\'s');
+    assert.equal(await helloOf(asking.id), 'member');
+    await mode('off');
+  });
+
+  await t.test('two hellos at once greet once, each claimed in its own send', async () => {
+    const sends = await Promise.all([1, 2, 3].map((i) => dm.sendDm(pool, {
+      bot, userId: old.id, content: `card ${i}`, idempotencyKey: `hello-race-${i}`,
+      hello: { kind: 'member', content: `Hi! card ${i}`, metadata: { kind: 'activity', hello: 'Hi!' } },
+    })));
+    assert.equal(sends.filter((x) => x?.hello).length, 1, 'one of them says it');
+    const { rows } = await pool.query(
+      `SELECT content FROM conversation_messages WHERE sender_id = $1 AND idempotency_key LIKE 'hello-race-%' ORDER BY id`, [bot.id]);
+    assert.equal(rows.length, 3, 'every card went');
+    assert.equal(rows.filter((r) => r.content.startsWith('Hi!')).length, 1);
+    const { rows: [hello] } = await pool.query('SELECT kind, message_id FROM homeroom_bot_hellos WHERE user_id = $1', [old.id]);
+    assert.equal(hello.kind, 'member');
+    assert.ok(hello.message_id, 'the message it went in');
+  });
+
+  await t.test('a hello whose send fails is not claimed: the next one greets', async () => {
+    const fresh = await user('fresh_one');
+    // The send's transaction fails after the claim: both roll back.
+    const before = (await pool.query('SELECT COUNT(*)::int AS n FROM homeroom_bot_hellos WHERE user_id = $1', [fresh.id])).rows[0].n;
+    await assert.rejects(conversations.sendMessage(pool, bot, (await conversations.ensureAdmittedDirect(pool, bot.id, fresh.id)).conversationId,
+      { content: 'Hi' }, {
+        prepare: async (db) => { await db.query(`INSERT INTO homeroom_bot_hellos (user_id, kind) VALUES ($1, 'tour')`, [fresh.id]); return null; },
+        afterInsert: async () => { throw new Error('the process went'); },
+      }));
+    const after = (await pool.query('SELECT COUNT(*)::int AS n FROM homeroom_bot_hellos WHERE user_id = $1', [fresh.id])).rows[0].n;
+    assert.equal(after, before, 'no claim without its message');
   });
 });

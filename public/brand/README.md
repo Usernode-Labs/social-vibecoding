@@ -79,7 +79,10 @@ recorded.
 - **people.png** — the illustration on the logged-out landing screen,
   `frontend/src/features/auth/landing.tsx`, drawn as a plain `<img>` above the
   activity chips. Decorative: the heading beside it carries the meaning, so it
-  ships with an empty `alt`.
+  ships with an empty `alt`. The waitlist release email also draws it, as an
+  absolute `${PRODUCTION_ORIGIN}/brand/people.png` URL in
+  `src/services/mail/templates.js`'s `waitlistReleased` (#4570), with the same
+  empty `alt` — the headline under it carries the meaning there too.
 - **homeroom-logotype-black.png** — the logo at the top of every
   transactional email (#2908), referenced by `src/services/mail/templates.js`'s
   `HTML_SHELL` as an absolute

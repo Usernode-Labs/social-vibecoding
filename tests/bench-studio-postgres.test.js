@@ -20,6 +20,7 @@ const fs = require('node:fs');
 const http = require('node:http');
 const express = require('express');
 const { Pool } = require('pg');
+const { asTransition } = require('./lib/as-transition');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL
   || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
@@ -50,14 +51,25 @@ test('the App bench studio against the full PostgreSQL schema', { timeout: 12000
   const scaffold = require('../src/services/bench/scaffold');
 
   const { rows: [evan] } = await pool.query("INSERT INTO users (username, password, is_admin) VALUES ('evan', 'x', TRUE) RETURNING id");
+  // A project's making (src/workflow/app-creation/), stood in for: its
+  // insert starts it (a Started event), and its repository arrives a moment
+  // later.
   const created = [];
-  const deps = {
-    // App creation's own path, stood in for: the repository arrives a moment later.
-    async createApp(_config, app) {
-      created.push(app.id);
-      await pool.query("UPDATE apps SET repo_url = $2, status = 'running' WHERE id = $1", [app.id, `https://github.com/usernode-bot/${app.slug}`]);
-    },
-  };
+  let seenEvent = 0;
+  const making = setInterval(async () => {
+    try {
+      const { rows } = await pool.query(
+        `SELECT id, app_id FROM wf_events WHERE machine = 'app-creation' AND type = 'Started' AND id > $1 ORDER BY id`, [seenEvent]);
+      for (const r of rows) {
+        seenEvent = Math.max(seenEvent, Number(r.id));
+        created.push(r.app_id);
+        await pool.query("UPDATE apps SET repo_url = 'https://github.com/usernode-bot/' || slug, status = 'running' WHERE id = $1", [r.app_id]);
+      }
+    } catch { /* the pool closing at the end */ }
+  }, 20);
+  t.after(() => clearInterval(making));
+  const deps = {};
+
 
   let pack;
   await t.test('a pack is saved as the next version of its name; a child keeps what it leaves out', async () => {
@@ -140,7 +152,7 @@ test('the App bench studio against the full PostgreSQL schema', { timeout: 12000
     const quiet = await studio.watchRun(pool, run.id, { since: first.cursor });
     assert.equal(quiet.trials.length, 0);
     const moving = first.trials[0];
-    await pool.query(
+    await asTransition(pool,
       "UPDATE bench_trials SET status = 'running', started_at = NOW(), progress = $2::jsonb WHERE id = $1",
       [moving.trialId, JSON.stringify({ step: 'build', lines: ['Using skill warm'], skills: { invoked: ['warm'], read: [] }, updatedAt: new Date(Date.now() + 1000).toISOString() })],
     );
@@ -283,33 +295,49 @@ test('the App bench studio against the full PostgreSQL schema', { timeout: 12000
     assert.equal(refused.status, 409);
     assert.match(refused.error, /never an app's real data/);
 
+    // The preview machine stood in for: it records the request, and the test
+    // then writes what the machine would (its instance, the row's receipt).
     const deploys = [];
     const benchUser = (await pool.query("INSERT INTO users (username, password, is_synthetic) VALUES ('bench_stub', 'x', TRUE) RETURNING id")).rows[0];
     const previewDeps = {
       user: benchUser,
-      staging: {
-        async buildAndDeployStaging(_config, session, app, sha) {
-          deploys.push({ sessionId: session.id, app: app.slug, sha });
-          await pool.query('UPDATE chat_sessions SET staging_url = $2 WHERE id = $1', [session.id, `https://staging.example/${session.id}`]);
+      previewWorkflow: {
+        async request({ session, head, reason, actor }) {
+          deploys.push({ sessionId: session.id, app: session.app_slug, sha: head, reason, actor });
+          return { status: 'accepted' };
         },
       },
+    };
+    const machine = async (sessionId, state, data) => {
+      const c = await pool.connect();
+      try {
+        await c.query("BEGIN; SET LOCAL app.wf_writer = 'transition'");
+        await c.query(
+          `INSERT INTO wf_instances (machine, key, state, data, machine_version) VALUES ('preview', $1, $2, $3, 2)
+           ON CONFLICT (machine, key) DO UPDATE SET state = EXCLUDED.state, data = EXCLUDED.data`,
+          [`session:${sessionId}`, state, JSON.stringify(data)]);
+        await c.query('COMMIT');
+      } finally { c.release(); }
     };
     const up = await studio.deployPreview(pool, {}, { trialId: refTrial, user: { id: evan.id }, deps: previewDeps });
     assert.equal(up.ok, true, up.error);
     assert.equal(up.preview.status, 'building');
-    for (let i = 0; i < 50 && !deploys.length; i += 1) {
-      // eslint-disable-next-line no-await-in-loop
-      await new Promise((r) => { setTimeout(r, 20); });
-    }
-    await new Promise((r) => { setTimeout(r, 50); });
-    assert.equal(deploys[0].sha, SHA('b'));
+    assert.deepEqual([deploys[0].sha, deploys[0].reason, deploys[0].actor], [SHA('b'), 'preview', `user:${evan.id}`],
+      'a preview with no checks, of the build\'s commit, asked by the admin');
     const host = await studio.hostRow(pool);
     assert.equal(deploys[0].app, host.slug, 'on the host app, whose database is its own empty one');
+    let building = (await studio.watchRun(pool, run.id)).trials.find((x) => x.trialId === refTrial).preview;
+    assert.equal(building.status, 'building', 'until the machine serves it');
+    await machine(deploys[0].sessionId, 'settled', { previewOnly: true, serving: { head: SHA('b') } });
+    await pool.query('UPDATE chat_sessions SET staging_url = $2 WHERE id = $1', [deploys[0].sessionId, `https://staging.example/${deploys[0].sessionId}`]);
     const { rows: [member] } = await pool.query('SELECT status FROM app_collaborators WHERE app_id = $1 AND user_id = $2', [host.id, evan.id]);
     assert.equal(member.status, 'member', 'the admin who asked can open it');
     const live = (await studio.watchRun(pool, run.id)).trials.find((x) => x.trialId === refTrial).preview;
     assert.equal(live.status, 'live');
     assert.match(live.url, /^https:\/\/staging\.example\//);
+    await studio.sweepPreviews(pool, { force: true });
+    const { rows: [stored] } = await pool.query('SELECT status FROM bench_previews WHERE trial_id = $1', [refTrial]);
+    assert.equal(stored.status, 'live', 'the sweep writes the machine\'s outcome onto the row');
     const reused = await studio.deployPreview(pool, {}, { trialId: refTrial, user: { id: evan.id }, deps: previewDeps });
     assert.equal(reused.reused, true, 'one preview a build at a time');
 
@@ -327,12 +355,24 @@ test('the App bench studio against the full PostgreSQL schema', { timeout: 12000
     assert.equal(capped.code, 'preview_cap');
 
     await pool.query("UPDATE bench_previews SET expires_at = NOW() - INTERVAL '1 minute'");
-    const torn = [];
+    // The session is closed the way every close goes (the proposal machine,
+    // which retires its preview for good with it): stood in for here, the
+    // close recorded and the row moved as the machine's transition moves it.
+    const closed = [];
     const ended = await studio.sweepPreviews(pool, {
-      force: true, sessionLifecycle: { async teardownStagingForSession({ sessionId }) { torn.push(sessionId); } },
+      force: true,
+      sessionLifecycle: {
+        async closeOwnSession({ sessionId, reason }) {
+          closed.push({ sessionId, reason });
+          await pool.query(`BEGIN; SET LOCAL app.wf_writer = 'transition';
+            UPDATE chat_sessions SET status = 'archived', archived_at = NOW()
+             WHERE id = ${Number(sessionId)} AND status IN ('active', 'paused'); COMMIT`);
+          return true;
+        },
+      },
     });
     assert.equal(ended, 4);
-    assert.deepEqual(torn, [deploys[0].sessionId]);
+    assert.deepEqual(closed, [{ sessionId: deploys[0].sessionId, reason: 'bench-preview-expired' }]);
     const { rows: [s] } = await pool.query('SELECT status FROM chat_sessions WHERE id = $1', [deploys[0].sessionId]);
     assert.equal(s.status, 'archived');
   });

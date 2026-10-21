@@ -3,6 +3,7 @@ import { useCallback, useState } from 'react';
 import { SectionHeading } from '@/components/ui/field';
 import { ChevronRightIcon } from '@/components/ui/icons';
 
+import { useMessages } from '../../../lib/i18n/react';
 import { useIsomorphicLayoutEffect, useWindowEvent } from '../../../lib/legacy-dom';
 import { displayNameOf, initialOf } from '../../profile/profile-store.js';
 
@@ -56,6 +57,7 @@ function Avatar({ user }: { user: ProfileUser | null }) {
 }
 
 export function ProfileSection() {
+  const t = useMessages('settings');
   const [user, setUser] = useState<ProfileUser | null>(null);
   const sync = useCallback(() => setUser(readUser()), []);
   useIsomorphicLayoutEffect(() => { sync(); }, [sync]);
@@ -69,8 +71,8 @@ export function ProfileSection() {
   return (
     <div data-settings-section="profile" className="hidden">
       <div id="settings-profile-section">
-        <SectionHeading title="Profile">
-          Your name, photo and bio, and whether your public page is on.
+        <SectionHeading title={t('settings:profile.title')}>
+          {t('settings:profile.intro')}
         </SectionHeading>
         <a
           id="settings-profile-card"
@@ -86,7 +88,7 @@ export function ProfileSection() {
               <span className="block text-[15px] text-zinc-500 dark:text-zinc-400 truncate">{handle}</span>
             ) : null}
           </span>
-          <span className="text-[15px] font-medium text-violet-700 dark:text-violet-400 shrink-0">Edit profile</span>
+          <span className="text-[15px] font-medium text-violet-700 dark:text-violet-400 shrink-0">{t('settings:profile.edit')}</span>
           <ChevronRightIcon className="w-4 h-4 shrink-0 text-zinc-400 dark:text-zinc-500" aria-hidden="true" />
         </a>
       </div>

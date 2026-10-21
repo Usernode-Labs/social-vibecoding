@@ -255,7 +255,10 @@ test('Make it and "Look around first" each end it: on the account, the shell\'s 
   assert.match(src, /onMade=\{\(made\) => \{ noteAnswered\(\); setMode\(\{ kind: 'made', made \}\); \}\}/);
   // "Look around first" goes Home and opens its own short tour there (decision E).
   // (A ?shot= screenshot state closes first and records nothing: tests/first-session-make.test.js.)
-  assert.match(src, /onLookAround=\{\(\) => \{\s+if \(shot\) \{ setMode\(\{ kind: 'none' \}\); return; \}\s+noteAnswered\(\);\s+void recordLookAround\(\);\s+legacy\(\)\.App\?\.navigateHome\?\.\(\);\s+setMode\(\{ kind: 'tour', info: LOOK_AROUND_INFO, path: 'look' \}\);\s+\}\}/);
+  // Somebody still on the waitlist gets no tour over the waiting room: the
+  // cards are owed to the first Home after they are let in (#5678).
+  assert.match(src, /onLookAround=\{\(\) => \{\s+if \(shot\) \{ setMode\(\{ kind: 'none' \}\); return; \}\s+noteAnswered\(\);\s+void recordLookAround\(\);[\s\S]{0,500}?legacy\(\)\.App\?\.navigateHome\?\.\(\);\s+setMode\(\{ kind: 'tour', info: LOOK_AROUND_INFO, path: 'look' \}\);\s+\}\}/);
+  assert.match(src, /if \(legacy\(\)\.App\?\.user\?\.hasPlatformAccess === false\) \{\s+const uid = legacy\(\)\.App\?\.user\?\.id;\s+if \(uid != null\) oweLook\(uid\);/);
   // The snapshot's screen is taken down only while it is still the make
   // screen: what Make it led to stays.
   // Nor the Create button's make screen, which nobody owes an answer to.

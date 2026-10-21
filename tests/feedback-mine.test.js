@@ -99,7 +99,7 @@ test('received until a credit names the report, then counted with its points', (
   assert.equal(body.truncated, undefined);
   assert.deepEqual(body.reports[1], {
     id: 12, title: 'Board jumps', target: 'app', appSlug: 'demo-app', appName: 'Demo',
-    issueNumber: 41, createdAt: '2026-09-20T12:00:00.000Z', status: 'received', points: null,
+    issueNumber: 41, createdAt: '2026-09-20T12:00:00.000Z', status: 'received', points: null, edit: null,
   });
 });
 
@@ -119,6 +119,19 @@ test('platform feedback links to the self-hosted app only when the repo is its o
 test('a report without a usable issue number carries no request link', () => {
   const [r] = feedback.shapeMyFeedback([{ ...ROW, issue_number: null }], null).reports;
   assert.equal(r.issueNumber, null);
+});
+
+test('only a recent dialog-filed report exposes its editable words and version', () => {
+  const editable = { ...ROW, source: null, has_body: true, description: 'Correct me', edit_version: 2, seconds_left: 150 };
+  const shape = row => feedback.shapeMyFeedback([row], null).reports[0];
+  assert.deepEqual(shape(editable).edit, {
+    reportId: 12, title: 'Board jumps', description: 'Correct me', version: 2, secondsLeft: 150,
+  });
+  for (const row of [{ ...editable, seconds_left: 0 }, { ...editable, source: 'homeroom_bot' },
+    { ...editable, has_body: false }, { ...editable, issue_number: null }]) {
+    assert.equal(shape(row).edit, null);
+    assert.equal(shape(row).description, undefined, 'no private words outside an active edit');
+  }
 });
 
 test('the totals are over every report, so a capped list says so', () => {
@@ -173,6 +186,9 @@ test('the SQL returns only the caller\'s rows and their own credits (PostgreSQL)
     // The real table, as schema.sql declares it.
     const schema = fs.readFileSync(path.join(__dirname, '../src/db/schema.sql'), 'utf8');
     await client.query(schema.match(/CREATE TABLE IF NOT EXISTS feedback_reports \([\s\S]*?\n\);/)[0]);
+    for (const column of ['source', 'body_prefix', 'body_suffix', 'edit_version']) {
+      await client.query(schema.match(new RegExp(`ALTER TABLE feedback_reports ADD COLUMN IF NOT EXISTS ${column}[^;]+;`))[0]);
+    }
     await client.query('INSERT INTO users VALUES (7), (8)');
     await client.query(`INSERT INTO apps (id, slug, name, repo_url, self_hosted) VALUES
       (1, 'homeroom', 'Homeroom', 'https://github.com/platform/repo', TRUE),

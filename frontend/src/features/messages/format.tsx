@@ -1,6 +1,10 @@
-import { useMemo, useState, type MouseEvent } from 'react';
+import { createContext, useContext, useMemo, useState, type MouseEvent } from 'react';
 
+import { useMessages } from '../../lib/i18n/react';
+import { t as translate } from '../../lib/i18n/runtime';
 import { messageStamp } from '../../lib/timestamp';
+import { requestHue } from './bot-request';
+import { dotText } from './bot-shared';
 import { decorateRefs } from './channels';
 import { findRequestCard, RefCards, revealCard } from './ref-cards';
 import type { ConversationUser, SharedObjectCard } from './types';
@@ -44,7 +48,7 @@ function fallbackMarkdown(value: string): string {
  * requests, and record this conversation as where they were opened from, as
  * a shared card does (`recordObjectOrigin`).
  */
-export function MessageMarkdown({ content, channels, appSlug }: { content: string; channels?: ReadonlySet<string>; appSlug?: string | null }) {
+export function MessageMarkdown({ content, channels, appSlug, requestColors = false }: { content: string; channels?: ReadonlySet<string>; appSlug?: string | null; requestColors?: boolean }) {
   const html = useMemo(() => {
     const rendered = typeof window !== 'undefined' && window.DevChat?.renderMarkdown
       ? window.DevChat.renderMarkdown(content, { breaks: true })
@@ -54,8 +58,19 @@ export function MessageMarkdown({ content, channels, appSlug }: { content: strin
     root.innerHTML = rendered;
     const me = String(window.App?.user?.username || '').toLowerCase();
     decorateRefs(root, channels || NO_CHANNELS, me, appSlug);
+    // One request, one story: in the bot's words, a request's number wears the
+    // colour its tag does in the drawer, the chat and its thread's header
+    // (./bot-request.ts).
+    if (requestColors) {
+      for (const chip of root.querySelectorAll<HTMLElement>('.gc-ref-issue[data-ref-number]')) {
+        const n = Number(chip.getAttribute('data-ref-number'));
+        if (!Number.isInteger(n) || n <= 0) continue;
+        chip.classList.add('gc-ref-request');
+        chip.style.setProperty('--req-h', String(requestHue(n)));
+      }
+    }
     return root.innerHTML;
-  }, [content, channels, appSlug]);
+  }, [content, channels, appSlug, requestColors]);
   // The SAME object while the html is unchanged. React 19 compares this prop
   // by identity and reassigns innerHTML when it differs, so an inline
   // `{ __html }` tore down and rebuilt every message body on every render of
@@ -116,17 +131,18 @@ export function swatchFor(name: string): string {
  */
 /**
  * B5: how a sender or a peer is named. The Homeroom bot by its name ("Homeroom
- * bot"), never its handle; a person by their @handle; nobody (a deleted
- * account, the platform's own system line) by the word it carries.
+ * bot"), never its handle; a person by their @handle — except in a direct
+ * message, where they are named by their bare username (#4655); nobody (a
+ * deleted account, the platform's own system line) by the word it carries.
  */
-export function senderName(user?: Pick<ConversationUser, 'id' | 'username' | 'bot' | 'displayName'> | null): string {
+export function senderName(user?: Pick<ConversationUser, 'id' | 'username' | 'bot' | 'displayName'> | null, opts?: { bare?: boolean }): string {
   if (!user) return '';
   if (user.bot && user.displayName) return user.displayName;
-  return user.id ? `@${user.username}` : user.username;
+  return user.id && !opts?.bare ? `@${user.username}` : user.username;
 }
 
 /** B5: the bot's face, the Homeroom mark tile the header's menu button wears. */
-const BOT_AVATAR = '/brand/homeroom-mark.png';
+export const BOT_AVATAR = '/brand/homeroom-mark.png';
 
 export function UserAvatar({ user, title, size = 'md', shape = 'circle' }: {
   user?: ConversationUser | null;
@@ -158,11 +174,17 @@ export function UserAvatar({ user, title, size = 'md', shape = 'circle' }: {
   );
 }
 
+// Message ids, read when a card renders so the words follow the language on screen.
 const OBJECT_LABELS: Record<SharedObjectCard['type'], string> = {
   // B4: a code proposal is a change, as the bot and the rest of the shell say.
-  app: 'App', issue: 'Request', proposal: 'Change', governance: 'Governance proposal', spec: 'Spec version',
+  app: 'messages:object.kind.app',
+  issue: 'messages:object.kind.issue',
+  proposal: 'messages:object.kind.proposal',
+  governance: 'messages:object.kind.governance',
+  spec: 'messages:object.kind.spec',
   // #3660: the two pages a pasted Homeroom link can name that are not items.
-  hub: 'Community hub', discussion: 'Discussion',
+  hub: 'messages:object.kind.hub',
+  discussion: 'messages:object.kind.discussion',
 };
 
 /**
@@ -178,15 +200,15 @@ export function pendingObjectLabel(
   object: { type: SharedObjectCard['type']; title?: string | null; issueNumber?: number; proposalId?: number; version?: number },
   card?: SharedObjectCard | null,
 ): string {
-  const kind = OBJECT_LABELS[object.type] || 'Item';
+  const kind = translate(OBJECT_LABELS[object.type] || 'messages:object.kind.unknown');
   if (card && card.available && card.title) {
     const project = card.subtitle && card.subtitle !== card.title ? card.subtitle : null;
     const state = object.type === 'app' ? null : card.state;
-    return [kind, card.title, project, state].filter(Boolean).join(' · ');
+    return dotText([kind, card.title, project, state]);
   }
   const number = object.type === 'issue' ? object.issueNumber : object.type === 'governance' ? object.proposalId : null;
   const named = object.title || (number ? `#${number}` : (object.type === 'spec' && object.version ? `v${object.version}` : null));
-  return [kind, named].filter(Boolean).join(' · ');
+  return dotText([kind, named]);
 }
 
 // The glyph tile a card leads with: the app's diamond for an app and its
@@ -196,6 +218,27 @@ function objectGlyph(type: SharedObjectCard['type']): string {
   if (type === 'app' || type === 'hub') return '◆';
   if (type === 'spec') return '§';
   return '#';
+}
+
+/**
+ * The tile itself. An app and its community wear the app's own icon when the
+ * card knows it (its image, else its emoji), as its Home tile does; run four
+ * (13 Oct 2026): the bot's card for the maker's new app read "◆". Without
+ * one, the glyph.
+ */
+function ObjectIcon({ object }: { object: SharedObjectCard }) {
+  const app = object.type === 'app' || object.type === 'hub';
+  if (app && object.iconUrl) {
+    return (
+      <span className="messages-object-icon overflow-hidden" data-object-icon="image">
+        <img src={object.iconUrl} alt="" className="h-full w-full object-cover" loading="lazy" draggable="false" />
+      </span>
+    );
+  }
+  if (app && object.iconEmoji) {
+    return <span className="messages-object-icon text-[22px] leading-none" data-object-icon="emoji" aria-hidden="true">{object.iconEmoji}</span>;
+  }
+  return <span className="messages-object-icon">{objectGlyph(object.type)}</span>;
 }
 
 // #3103: a shared card that opens a Workshop topic or a dev session records
@@ -224,7 +267,7 @@ export function recordObjectOrigin(event: MouseEvent<Element>, href: string, inb
   if (inboxOnly && !here.startsWith('#messages')) return;
   const origin = here.startsWith('#messages') ? here : '#messages';
   if (/\/dev\/sessions\//.test(href)) w.Improve?.enterSessionFrom?.(origin);
-  else if (/\/dev\/(?:issues|proposals|governance)\//.test(href)) w.Improve?.enterTopicFrom?.(origin);
+  else if (/\/dev\/(?:issues|proposals|changes|governance)\//.test(href)) w.Improve?.enterTopicFrom?.(origin);
 }
 
 /**
@@ -233,8 +276,31 @@ export function recordObjectOrigin(event: MouseEvent<Element>, href: string, inb
  * the text is plainly the card under it.
  */
 export function objectEyebrow(object: Pick<SharedObjectCard, 'type' | 'issueNumber'>): string {
-  if (object.type === 'issue' && object.issueNumber) return `Request #${object.issueNumber}`;
-  return OBJECT_LABELS[object.type];
+  if (object.type === 'issue' && object.issueNumber) return translate('messages:object.requestNumber', { number: object.issueNumber });
+  return translate(OBJECT_LABELS[object.type]);
+}
+
+/**
+ * #5303: THE PROJECT A ROOM BELONGS TO, for the cards drawn in it: a
+ * project's channel provides its slug (dev-board/workshop/project-discussion.tsx).
+ * A card about another project's item then says where it is from ("From
+ * KasirKU") where its subline named the project plainly, so a request from
+ * elsewhere does not read as one of the room's own. Null (the default)
+ * changes nothing: Messages' own rooms belong to no project.
+ */
+export const CardHomeContext = createContext<string | null>(null);
+
+/**
+ * The card's subline project words: its project's name, or "From <name>"
+ * when the card is about another project's item than the room's (`home`).
+ * An app, a hub or a discussion card is the project itself, so it never says
+ * "From". Pure.
+ */
+export function cardProjectWords(object: Pick<SharedObjectCard, 'type' | 'appSlug' | 'subtitle'>, home: string | null): string | null {
+  const project = object.subtitle || null;
+  if (!project || !home || !object.appSlug || object.appSlug === home) return project;
+  if (object.type === 'app' || object.type === 'hub' || object.type === 'discussion') return project;
+  return translate('messages:object.fromProject', { project });
 }
 
 export function ObjectCard({ object, compact = false, inboxOnly = false }: {
@@ -243,23 +309,25 @@ export function ObjectCard({ object, compact = false, inboxOnly = false }: {
   /** Drawn in an app's discussion: see `recordObjectOrigin`. */
   inboxOnly?: boolean;
 }) {
+  const t = useMessages('messages');
+  const home = useContext(CardHomeContext);
   if (!object.available) {
     return (
       <div className="messages-object-card messages-object-unavailable" aria-disabled="true">
         <span className="messages-object-icon">?</span>
-        <div className="min-w-0"><div className="text-base font-semibold">Unavailable</div><div className="text-sm text-zinc-500 dark:text-zinc-400">You can’t access this item.</div></div>
+        <div className="min-w-0"><div className="text-base font-semibold">{t('messages:object.unavailable.title')}</div><div className="text-sm text-zinc-500 dark:text-zinc-400">{t('messages:object.unavailable.detail')}</div></div>
       </div>
     );
   }
   const body = (
     <>
-      <span className="messages-object-icon">{objectGlyph(object.type)}</span>
+      <ObjectIcon object={object} />
       <div className="min-w-0 flex-1">
         <div className="text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400 font-semibold">{objectEyebrow(object)}</div>
-        <div className="text-base font-semibold text-zinc-900 dark:text-zinc-100 truncate">{object.title || 'Untitled'}</div>
+        <div className="text-base font-semibold text-zinc-900 dark:text-zinc-100 truncate">{object.title || t('messages:object.untitled')}</div>
         {!compact && (object.subtitle || object.state || object.author) ? (
           <div className="text-sm text-zinc-500 dark:text-zinc-400 truncate">
-            {[object.subtitle, object.state, object.author ? `by ${object.author}` : null].filter(Boolean).join(' · ')}
+            {dotText([cardProjectWords(object, home), object.state, object.author ? t('messages:object.byAuthor', { author: object.author }) : null])}
           </div>
         ) : null}
       </div>

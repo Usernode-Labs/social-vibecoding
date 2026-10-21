@@ -7,7 +7,8 @@
 //     superseded head's approvals are ignored;
 //   - syncImportedProposal: no-op on an unchanged head; on a head change it
 //     advances imported_pr_head_sha, CLEARS the tally, posts the re-review
-//     note, refreshes drift, and re-runs checks pinned to the new head;
+//     note, refreshes drift, and hands the new head to the preview machine
+//     (services/preview-workflow.js), which builds and checks it;
 //   - non-imported rows are skipped without any DB work.
 //
 // Run with: node --test tests/pr-import-sync.test.js
@@ -40,7 +41,7 @@ function fakeModule(relPath, exports) {
 const fakeGithub = fakeModule('../src/services/github', {
   isEnabled: () => true,
   getPR: async () => ({}),
-  getOctokit: async () => ({ rest: { repos: { compareCommits: async () => ({ data: { behind_by: 0 } }) } } }),
+  getReadOctokit: async () => ({ rest: { repos: { compareCommits: async () => ({ data: { behind_by: 0 } }) } } }),
 });
 const fakeWs = fakeModule('../src/services/ws', {
   sendSystemMessage: async () => {},
@@ -48,15 +49,15 @@ const fakeWs = fakeModule('../src/services/ws', {
   pushSessionUpdate: () => {},
   broadcastGlobal: () => {},
 });
-fakeModule('../src/services/visuals', {
-  setChecksPending: async () => {},
-  notifyChecksPending: () => {},
-  captureForSession: async () => {},
+// The preview machine is the only thing that builds a preview or runs the
+// checks: pr-import-sync hands each head to services/preview-workflow.js and
+// nothing more. The fake records every hand-off (withStubs clears it).
+const handOffs = [];
+const fakeWorkflow = fakeModule('../src/services/preview-workflow', {
+  revision: async (args) => { handOffs.push({ kind: 'revision', ...args }); },
+  skipped: async (args) => { handOffs.push({ kind: 'skipped', ...args }); return true; },
 });
-fakeModule('../src/services/staging', {
-  buildAndDeployStaging: async () => ({ containerId: 'c', stagingUrl: 'u', hostname: 'h' }),
-  verifyStagingEdge: async () => {},
-});
+const revisionHeads = () => handOffs.filter((h) => h.kind === 'revision').map((h) => h.head);
 const fakeSyncMain = fakeModule('../src/services/sync-main', {
   // Mirror the real persistBehindMain's DB write so the recording pool
   // captures it (the test asserts drift is refreshed).
@@ -64,9 +65,6 @@ const fakeSyncMain = fakeModule('../src/services/sync-main', {
     await pool.query('UPDATE chat_sessions SET behind_main = $1 WHERE id = $2', [n, session.id]);
   },
   persistConflictState: async () => {},
-});
-fakeModule('../src/services/staging-recovery', {
-  recordStagingBootFailure: async () => {},
 });
 // The head-move classifier (#2038) redoes the merge from the app's mirror.
 // Neither a mirror nor git belongs in this suite: `scriptedMove` is what the
@@ -87,9 +85,26 @@ fakeModule('../src/services/integration', {
   classifyHeadMove: async () => scriptedMove,
 });
 
-const fakeVisuals = require('../src/services/visuals');
-const fakeStaging = require('../src/services/staging');
-const fakeRecovery = require('../src/services/staging-recovery');
+// The head install is the proposal machine's (ReviewHeadMoved, through
+// src/workflow/platform.ts moveReviewHead): pr-import-sync asks it to move
+// the imported pin from the head it read, and reads the epoch off the reply.
+// There is no workflow runtime here, so the fake answers the way the
+// machine's guard and statement would, against the pool the test is using
+// (recordingPool below), and records each ask on it.
+let movePool = null;
+// GitHub's word on the pull request itself: a merge of one up for a vote is
+// merge-followups' (platform.mergeObserved); any other merge or close closes
+// the proposal (session-lifecycle.archiveSession). Both recorded.
+const observedMerges = [];
+const closes = [];
+fakeModule('../src/workflow/platform.ts', {
+  moveReviewHead: async (p) => movePool.move(p),
+  mergeObserved: async (m) => { observedMerges.push(m); return 1; },
+});
+fakeModule('../src/services/session-lifecycle', {
+  archiveSession: async (args) => { closes.push({ sessionId: args.sessionId, reason: args.reason, from: args.from }); return { archived: true }; },
+});
+
 const prImportSync = require('../src/services/pr-import-sync');
 
 // ── governedGate head-scoping ─────────────────────────────────────────
@@ -235,8 +250,10 @@ test('issue votes are never epoch-scoped: they have no revision to go stale', as
 
 // ── syncImportedProposal ──────────────────────────────────────────────
 
-// Save/restore individual fake methods so tests don't leak stubs.
+// Save/restore individual fake methods so tests don't leak stubs. Each run
+// starts with no hand-offs recorded.
 function withStubs(stubs, fn) {
+  handOffs.length = 0;
   const originals = stubs.map(([mod, key]) => [mod, key, mod[key]]);
   for (const [mod, key, val] of stubs) mod[key] = val;
   return (async () => {
@@ -248,26 +265,46 @@ function withStubs(stubs, fn) {
 const SESSION_HEAD = 'a'.repeat(40);
 
 // `pinnedHead` is what the row's imported_pr_head_sha currently holds. The
-// head install is a compare-and-swap on it (RETURNING the epoch), so the pool
-// answers that statement the way Postgres would: a row iff the pin matched,
-// with the epoch bumped iff the statement asked for it. Everything else
-// records and returns no rows.
-function recordingPool({ pinnedHead = SESSION_HEAD, epoch = 0 } = {}) {
+// head install is the proposal machine's move, fenced on it, so the fake
+// machine answers it the way the machine would: accepted iff the pin matched
+// (the epoch moved on iff the votes are not kept), else refused
+// 'head_moved'. `summaryStale` is the description freshness the machine's
+// statement reports back (undefined: none reported). `pending` is how many
+// asks the machine leaves unanswered first (the deciding process slow or
+// restarting). Every query records and returns no rows.
+function recordingPool({ pinnedHead = SESSION_HEAD, epoch = 0, summaryStale, pending = 0 } = {}) {
   const calls = [];
-  return {
+  const moves = [];
+  const pool = {
     calls,
+    moves,
+    move(p) {
+      moves.push(p);
+      // Not decided in time: refused as expired, or still pending.
+      if (moves.length <= pending) return moves.length % 2 ? { status: 'rejected', reason: 'expired', requestKey: `k${moves.length}` } : { status: 'pending', requestKey: `k${moves.length}` };
+      if (p.from !== pinnedHead) return { status: 'rejected', reason: 'head_moved' };
+      const reply = { state: 'in_review', status: 'promoted', epoch: epoch + (p.keepVotes ? 0 : 1) };
+      if (summaryStale !== undefined) reply.prSummaryStale = summaryStale;
+      return { status: 'accepted', reply };
+    },
     query: async (sql, params) => {
       calls.push({ sql, params });
-      if (/SET imported_pr_head_sha = \$1[\s\S]*RETURNING approval_epoch/.test(sql)) {
-        const [, , bump] = params;
-        const expectedOld = params[4];
-        if (expectedOld !== pinnedHead) return { rows: [] };
-        return { rows: [{ approval_epoch: epoch + (bump ? 1 : 0) }] };
-      }
       return { rows: [] };
     },
   };
+  movePool = pool;
+  return pool;
 }
+
+// The one head move a run asked of the machine.
+function headMoveOf(pool) {
+  assert.equal(pool.moves.length, 1, 'one head move is asked of the proposal machine');
+  return pool.moves[0];
+}
+// Nothing here writes the row's head, epoch or description freshness: those
+// are the machine's.
+const wroteHead = (pool) => pool.calls.some((c) => /imported_pr_head_sha\s*=|approval_epoch\s*=/.test(c.sql)
+  && /^\s*UPDATE/i.test(c.sql));
 
 const SESSION = {
   id: 321, app_id: 9, app_slug: 'demo', app_name: 'Demo',
@@ -387,21 +424,17 @@ test('syncImportedProposal: a settled snapshot is not re-read on an unchanged he
 test('syncImportedProposal: active imports refresh without vote reset or re-review copy', async () => {
   const NEW = 'c'.repeat(40);
   const sysMessages = [];
-  let buildSha = null;
   await withStubs([
     [fakeGithub, 'getPR', async () => ({ head: { sha: NEW, ref: 'feature/x' }, base: { ref: 'main' }, mergeable: true })],
     [fakeWs, 'sendSystemMessage', async (_pool, _appId, content) => { sysMessages.push(content); }],
-    [fakeStaging, 'buildAndDeployStaging', async (_c, _s, _a, sha) => {
-      buildSha = sha;
-      return { containerId: 'cid', stagingUrl: 'https://s', hostname: 'h' };
-    }],
   ], async () => {
     const pool = recordingPool();
     const res = await prImportSync.syncImportedProposal({
       config: {}, pool, session: { ...SESSION, status: 'active' },
     });
     assert.equal(res, 'updated');
-    assert.equal(buildSha, NEW, 'preview follows the new GitHub head');
+    assert.equal(headMoveOf(pool).keepVotes, true, 'not up for a vote: no epoch to move');
+    assert.deepEqual(revisionHeads(), [NEW], 'preview follows the new GitHub head');
     assert.ok(!pool.calls.some((c) => /DELETE FROM pr_votes/.test(c.sql)),
       'an item not yet up for vote has no tally to clear');
     assert.equal(sysMessages.length, 1);
@@ -413,31 +446,29 @@ test('syncImportedProposal: active imports refresh without vote reset or re-revi
 test('syncImportedProposal: an authored push resets the tally, posts re-review, re-runs pinned checks', async () => {
   const NEW = 'b'.repeat(40);
   const sysMessages = [];
-  let buildSha = null;
-  let captureSha = null;
   scriptedMove = { kind: 'authored' };
 
   await withStubs([
     [fakeGithub, 'getPR', async () => ({ head: { sha: NEW, ref: 'feature/x' }, base: { ref: 'main' }, mergeable: true })],
-    [fakeGithub, 'getOctokit', async () => ({ rest: { repos: { compareCommits: async () => ({ data: { behind_by: 3 } }) } } })],
+    [fakeGithub, 'getReadOctokit', async () => ({ rest: { repos: { compareCommits: async () => ({ data: { behind_by: 3 } }) } } })],
     [fakeWs, 'sendSystemMessage', async (_pool, _appId, content, msgType, meta, thread) => {
       sysMessages.push({ content, msgType, meta, thread });
     }],
-    [fakeStaging, 'buildAndDeployStaging', async (_c, _s, _a, sha) => { buildSha = sha; return { containerId: 'cid', stagingUrl: 'https://s', hostname: 'h' }; }],
-    [fakeVisuals, 'captureForSession', async (_c, _s, _a, sha) => { captureSha = sha; }],
   ], async () => {
     const pool = recordingPool();
     const res = await prImportSync.syncImportedProposal({ config: {}, pool, session: { ...SESSION } });
     assert.equal(res, 'updated');
 
-    const headUpdate = pool.calls.find((c) => /SET imported_pr_head_sha = \$1/.test(c.sql));
-    assert.ok(headUpdate, 'imported_pr_head_sha is advanced');
-    assert.equal(headUpdate.params[0], NEW);
-    assert.equal(headUpdate.params[2], true,
-      'the tally is cleared by moving the epoch on IN THE SAME STATEMENT as the head install — '
+    const headUpdate = headMoveOf(pool);
+    assert.equal(headUpdate.column, 'imported', 'imported_pr_head_sha is advanced');
+    assert.equal(headUpdate.to, NEW);
+    assert.equal(headUpdate.keepVotes, false,
+      'the tally is cleared by moving the epoch on IN THE SAME MOVE as the head install: '
       + 'no half-cleared window, and the votes survive as a record');
-    assert.equal(headUpdate.params[4], SESSION_HEAD,
-      'the install is a compare-and-swap on the pin the decision was made about');
+    assert.equal(headUpdate.from, SESSION_HEAD,
+      'the move is fenced on the pin the decision was made about');
+    assert.equal(headUpdate.reason, 'imported_head_authored');
+    assert.equal(wroteHead(pool), false, 'the row is the machine\'s to write');
 
     assert.equal(sysMessages.length, 1, 'exactly one re-review note');
     assert.match(sysMessages[0].content, /updated on GitHub/i);
@@ -452,8 +483,11 @@ test('syncImportedProposal: an authored push resets the tally, posts re-review, 
     const sqls = pool.calls.map((c) => c.sql);
     assert.ok(sqls.some((s) => /SET behind_main = \$1/.test(s)), 'behind_main refreshed');
 
-    assert.equal(buildSha, NEW, 'staging build pinned to the new head SHA');
-    assert.equal(captureSha, NEW, 'checks captured against the new head SHA');
+    assert.equal(handOffs.length, 1, 'one hand-off');
+    assert.equal(handOffs[0].kind, 'revision');
+    assert.equal(handOffs[0].head, NEW, 'the machine builds and checks the new head SHA');
+    assert.equal(handOffs[0].source, 'imported');
+    assert.equal(handOffs[0].carryFrom, undefined, 'an authored push carries nothing');
   });
 });
 
@@ -470,29 +504,33 @@ test('syncImportedProposal: a mechanical sync keeps the votes and carries a sett
   const NEW = 'b'.repeat(40);
   const sysMessages = [];
   const voteUpdates = [];
-  let built = false;
   scriptedMove = { kind: 'mechanical' };
 
   await withStubs([
     [fakeGithub, 'getPR', async () => ({ head: { sha: NEW, ref: 'feature/x' }, base: { ref: 'main' }, mergeable: true })],
     [fakeWs, 'sendSystemMessage', async (_pool, _appId, content, msgType, meta) => { sysMessages.push({ content, meta }); }],
     [fakeWs, 'pushVoteUpdate', (u) => { voteUpdates.push(u); }],
-    [fakeStaging, 'buildAndDeployStaging', async () => { built = true; return { containerId: 'cid', stagingUrl: 'https://s', hostname: 'h' }; }],
   ], async () => {
     const pool = recordingPool({ epoch: 4 });
     const session = { ...SESSION, approval_epoch: 4, checks_commit_sha: SESSION_HEAD, check_state: 'passing' };
     const res = await prImportSync.syncImportedProposal({ config: {}, pool, session });
     assert.equal(res, 'updated');
 
-    const headUpdate = pool.calls.find((c) => /SET imported_pr_head_sha = \$1/.test(c.sql));
-    assert.ok(headUpdate, 'the pin still advances — the next merge attempt must offer GitHub the live head');
-    assert.equal(headUpdate.params[0], NEW);
-    assert.equal(headUpdate.params[2], false, 'the epoch does NOT move: the votes still stand');
-    assert.equal(headUpdate.params[3], true, 'the passing verdict is carried onto the merged commit');
+    const headUpdate = headMoveOf(pool);
+    assert.equal(headUpdate.to, NEW, 'the pin still advances: the next merge attempt must offer GitHub the live head');
+    assert.equal(headUpdate.keepVotes, true, 'the epoch does NOT move: the votes still stand');
     assert.equal(session.approval_epoch, 4);
     assert.equal(session.checks_commit_sha, NEW);
 
-    assert.equal(built, false, 'nothing to rebuild: a mechanical merge is pure git over a tested branch and a tested main');
+    // The carry is the preview machine's to make (it keeps the green verdict
+    // of the old head for the merged one); nothing here writes it.
+    assert.ok(!pool.calls.some((c) => /checks_commit_sha/.test(c.sql)), 'the head install leaves the verdict columns alone');
+    assert.equal(handOffs.length, 1,
+      'one hand-off and no rebuild: a mechanical merge is pure git over a tested branch and a tested main');
+    assert.equal(handOffs[0].kind, 'revision');
+    assert.equal(handOffs[0].head, NEW);
+    assert.equal(handOffs[0].carryFrom, SESSION_HEAD, 'the passing verdict is carried onto the merged commit');
+    assert.equal(handOffs[0].trigger, 'commit-push');
     assert.equal(sysMessages.length, 1);
     assert.match(sysMessages[0].content, /brought up to date with main/i);
     assert.match(sysMessages[0].content, /votes still stand/i);
@@ -502,25 +540,42 @@ test('syncImportedProposal: a mechanical sync keeps the votes and carries a sett
   });
 });
 
+test('syncImportedProposal: a carry the machine never received is not one: the merged commit is checked instead', async () => {
+  const NEW = 'b'.repeat(40);
+  scriptedMove = { kind: 'mechanical' };
+  let carries = 0;
+  await withStubs([
+    [fakeGithub, 'getPR', async () => ({ head: { sha: NEW, ref: 'feature/x' }, base: { ref: 'main' }, mergeable: true })],
+    [fakeWorkflow, 'revision', async (args) => {
+      if (args.carryFrom) { carries += 1; throw new Error('runtime unavailable'); }
+      handOffs.push({ kind: 'revision', ...args });
+    }],
+  ], async () => {
+    const pool = recordingPool({ epoch: 4 });
+    const session = { ...SESSION, approval_epoch: 4, checks_commit_sha: SESSION_HEAD, check_state: 'passing' };
+    await prImportSync.syncImportedProposal({ config: {}, pool, session });
+    assert.equal(carries, 1, 'the carry was asked for');
+    assert.equal(session.checks_commit_sha, SESSION_HEAD, 'and not recorded as made');
+    assert.deepEqual(revisionHeads(), [NEW], 'the checks run against the merged commit instead');
+  });
+});
+
 test('syncImportedProposal: a mechanical sync over a run still in flight rebuilds instead of carrying', async () => {
   // #1728's shape: carrying a 'pending' stamp forward would leave the row
   // pending with nothing building. Only a finished verdict rides along.
   const NEW = 'b'.repeat(40);
-  let buildSha = null;
   scriptedMove = { kind: 'mechanical' };
 
   await withStubs([
     [fakeGithub, 'getPR', async () => ({ head: { sha: NEW, ref: 'feature/x' }, base: { ref: 'main' }, mergeable: true })],
-    [fakeStaging, 'buildAndDeployStaging', async (_c, _s, _a, sha) => { buildSha = sha; return { containerId: 'cid', stagingUrl: 'https://s', hostname: 'h' }; }],
   ], async () => {
     const pool = recordingPool({ epoch: 4 });
     const session = { ...SESSION, approval_epoch: 4, checks_commit_sha: SESSION_HEAD, check_state: 'pending' };
     await prImportSync.syncImportedProposal({ config: {}, pool, session });
 
-    const headUpdate = pool.calls.find((c) => /SET imported_pr_head_sha = \$1/.test(c.sql));
-    assert.equal(headUpdate.params[2], false, 'still no epoch bump — the tree is unchanged');
-    assert.equal(headUpdate.params[3], false, 'but an unfinished verdict is not carried');
-    assert.equal(buildSha, NEW, 'the checks re-run against the merged commit');
+    assert.equal(headMoveOf(pool).keepVotes, true, 'still no epoch bump: the tree is unchanged');
+    assert.ok(!handOffs.some((h) => h.carryFrom), 'but an unfinished verdict is not carried');
+    assert.deepEqual(revisionHeads(), [NEW], 'the checks re-run against the merged commit');
   });
 });
 
@@ -531,22 +586,19 @@ test('syncImportedProposal: a mechanical sync over a settled FAILURE rebuilds in
   // failing verdict, so only a green one rides along.
   const NEW = 'b'.repeat(40);
   const sysMessages = [];
-  let buildSha = null;
   scriptedMove = { kind: 'mechanical' };
 
   await withStubs([
     [fakeGithub, 'getPR', async () => ({ head: { sha: NEW, ref: 'feature/x' }, base: { ref: 'main' }, mergeable: true })],
     [fakeWs, 'sendSystemMessage', async (_pool, _appId, content, msgType, meta) => { sysMessages.push({ content, meta }); }],
-    [fakeStaging, 'buildAndDeployStaging', async (_c, _s, _a, sha) => { buildSha = sha; return { containerId: 'cid', stagingUrl: 'https://s', hostname: 'h' }; }],
   ], async () => {
     const pool = recordingPool({ epoch: 4 });
     const session = { ...SESSION, approval_epoch: 4, checks_commit_sha: SESSION_HEAD, check_state: 'failing' };
     await prImportSync.syncImportedProposal({ config: {}, pool, session });
 
-    const headUpdate = pool.calls.find((c) => /SET imported_pr_head_sha = \$1/.test(c.sql));
-    assert.equal(headUpdate.params[2], false, 'no epoch bump — the tree is unchanged, the votes still stand');
-    assert.equal(headUpdate.params[3], false, 'but a failing verdict is not carried');
-    assert.equal(buildSha, NEW, 'the checks re-run against the merged commit');
+    assert.equal(headMoveOf(pool).keepVotes, true, 'no epoch bump: the tree is unchanged, the votes still stand');
+    assert.ok(!handOffs.some((h) => h.carryFrom), 'but a failing verdict is not carried');
+    assert.deepEqual(revisionHeads(), [NEW], 'the checks re-run against the merged commit');
     assert.equal(sysMessages.length, 1);
     assert.match(sysMessages[0].content, /votes still stand/i);
     assert.match(sysMessages[0].content, /checks are re-running against the merged commit/i,
@@ -557,22 +609,19 @@ test('syncImportedProposal: a mechanical sync over a settled FAILURE rebuilds in
 test('syncImportedProposal: a resolved sync keeps the votes but re-tests the merged tree', async () => {
   const NEW = 'b'.repeat(40);
   const sysMessages = [];
-  let buildSha = null;
   scriptedMove = { kind: 'resolved', conflictPaths: ['src/a.js', 'src/b.js'] };
 
   await withStubs([
     [fakeGithub, 'getPR', async () => ({ head: { sha: NEW, ref: 'feature/x' }, base: { ref: 'main' }, mergeable: true })],
     [fakeWs, 'sendSystemMessage', async (_pool, _appId, content) => { sysMessages.push(content); }],
-    [fakeStaging, 'buildAndDeployStaging', async (_c, _s, _a, sha) => { buildSha = sha; return { containerId: 'cid', stagingUrl: 'https://s', hostname: 'h' }; }],
   ], async () => {
     const pool = recordingPool({ epoch: 2 });
     const session = { ...SESSION, approval_epoch: 2, checks_commit_sha: SESSION_HEAD, check_state: 'passing' };
     await prImportSync.syncImportedProposal({ config: {}, pool, session });
 
-    const headUpdate = pool.calls.find((c) => /SET imported_pr_head_sha = \$1/.test(c.sql));
-    assert.equal(headUpdate.params[2], false, 'the votes survive an automatic resolution');
-    assert.equal(headUpdate.params[3], false, 'a resolved tree is one nobody has tested: no carry');
-    assert.equal(buildSha, NEW);
+    assert.equal(headMoveOf(pool).keepVotes, true, 'the votes survive an automatic resolution');
+    assert.ok(!handOffs.some((h) => h.carryFrom), 'a resolved tree is one nobody has tested: no carry');
+    assert.deepEqual(revisionHeads(), [NEW]);
     assert.match(sysMessages[0], /2 conflicting files were resolved automatically/i);
     assert.match(sysMessages[0], /votes still stand/i);
   });
@@ -589,8 +638,7 @@ test('syncImportedProposal: a move the mirror cannot classify is treated as auth
   ], async () => {
     const pool = recordingPool();
     await prImportSync.syncImportedProposal({ config: {}, pool, session: { ...SESSION } });
-    const headUpdate = pool.calls.find((c) => /SET imported_pr_head_sha = \$1/.test(c.sql));
-    assert.equal(headUpdate.params[2], true, 'failing open here would let a real push inherit approvals');
+    assert.equal(headMoveOf(pool).keepVotes, false, 'failing open here would let a real push inherit approvals');
     assert.match(sysMessages[0], /could not verify \(mirror unavailable\)/i);
     assert.match(sysMessages[0], /re-review/i);
   });
@@ -598,17 +646,15 @@ test('syncImportedProposal: a move the mirror cannot classify is treated as auth
 
 test('applyHeadChange: a second applier of the same move writes and posts nothing', async () => {
   // The sweep and the queue can both notice one move (PR #2101 saw two epoch
-  // bumps and two "please re-review" notes for it). The install is a CAS on
-  // the pin: whoever loses it must be a no-op.
+  // bumps and two "please re-review" notes for it). The machine's move is
+  // fenced on the pin: whoever it refuses must be a no-op.
   const NEW = 'b'.repeat(40);
   const sysMessages = [];
-  let built = false;
   scriptedMove = { kind: 'authored' };
 
   await withStubs([
     [fakeGithub, 'getPR', async () => ({ head: { sha: NEW, ref: 'feature/x' }, base: { ref: 'main' }, mergeable: true })],
     [fakeWs, 'sendSystemMessage', async (_pool, _appId, content) => { sysMessages.push(content); }],
-    [fakeStaging, 'buildAndDeployStaging', async () => { built = true; return { containerId: 'cid', stagingUrl: 'https://s', hostname: 'h' }; }],
   ], async () => {
     // The row's pin already reads NEW: another pass got there first.
     const pool = recordingPool({ pinnedHead: NEW });
@@ -616,12 +662,53 @@ test('applyHeadChange: a second applier of the same move writes and posts nothin
       config: {}, pool, session: { ...SESSION }, newHead: NEW, oldHead: SESSION_HEAD,
     });
     assert.equal(res.applied, false);
+    assert.equal(headMoveOf(pool).from, SESSION_HEAD, 'the machine was asked, from the pin this pass read, and refused it');
     const writes = pool.calls.filter((c) => /^\s*(UPDATE|INSERT|DELETE)/i.test(c.sql));
-    assert.equal(writes.length, 1, 'the failed CAS is the only write');
+    assert.equal(writes.length, 0, 'nothing is written here');
     assert.ok(pool.calls.some((c) => /SELECT imported_pr_head_sha, approval_epoch/.test(c.sql)),
       'and the row is re-read so the caller carries on with the pin as it now stands');
     assert.deepEqual(sysMessages, []);
-    assert.equal(built, false);
+    assert.deepEqual(handOffs, [], 'and nothing is handed to the machine');
+  });
+});
+
+test('applyHeadChange: a move the machine has not answered yet is asked again, not taken as applied', async () => {
+  // The machine decides in another process. An unanswered move will be
+  // refused as expired, so taking it for "another pass got there first"
+  // would leave the old pin and the old approvals standing.
+  const NEW = 'b'.repeat(40);
+  scriptedMove = { kind: 'authored' };
+  await withStubs([
+    [fakeGithub, 'getPR', async () => ({ head: { sha: NEW, ref: 'feature/x' }, base: { ref: 'main' }, mergeable: true })],
+    [fakeWs, 'sendSystemMessage', async () => {}],
+  ], async () => {
+    const pool = recordingPool({ epoch: 2, pending: 2 });
+    const session = { ...SESSION, approval_epoch: 2 };
+    const res = await prImportSync.applyHeadChange({
+      config: {}, pool, session, newHead: NEW, oldHead: SESSION_HEAD, notify: false,
+    });
+    assert.equal(res.applied, true, 'the third ask landed');
+    assert.equal(res.epoch, 3);
+    assert.equal(pool.moves.length, 3);
+    assert.ok(pool.moves.every((m) => m.from === SESSION_HEAD && m.to === NEW), 'each ask is the same move');
+    assert.equal(session.imported_pr_head_sha, NEW);
+  });
+});
+
+test('applyHeadChange: a move the machine never answers is asked a bounded number of times', async () => {
+  const NEW = 'b'.repeat(40);
+  scriptedMove = { kind: 'authored' };
+  await withStubs([
+    [fakeGithub, 'getPR', async () => ({ head: { sha: NEW, ref: 'feature/x' }, base: { ref: 'main' }, mergeable: true })],
+    [fakeWs, 'sendSystemMessage', async () => {}],
+  ], async () => {
+    const pool = recordingPool({ pending: 100 });
+    const res = await prImportSync.applyHeadChange({
+      config: {}, pool, session: { ...SESSION }, newHead: NEW, oldHead: SESSION_HEAD, notify: false,
+    });
+    assert.equal(res.applied, false);
+    assert.equal(res.notDecided, true, 'said as not decided, not as another pass\'s');
+    assert.equal(pool.moves.length, 3, 'once and twice more, then left for the next pass');
   });
 });
 
@@ -657,10 +744,8 @@ test('reconcileImportedHead: a mechanical move re-pins, keeps the votes, and def
   mirrorBranchHead = NEW;
   scriptedMove = { kind: 'mechanical' };
   const sysMessages = [];
-  let built = false;
   await withStubs([
     [fakeWs, 'sendSystemMessage', async (_pool, _appId, content) => { sysMessages.push(content); }],
-    [fakeStaging, 'buildAndDeployStaging', async () => { built = true; return { containerId: 'cid', stagingUrl: 'https://s', hostname: 'h' }; }],
   ], async () => {
     const pool = recordingPool({ epoch: 1 });
     const session = { ...IN_APP_REPO, approval_epoch: 1, checks_commit_sha: 'e'.repeat(40), check_state: 'passing' };
@@ -672,7 +757,9 @@ test('reconcileImportedHead: a mechanical move re-pins, keeps the votes, and def
     assert.equal(res.votesKept, true);
     assert.equal(session.imported_pr_head_sha, NEW, 'the in-memory row follows, so the caller merges the live head');
     assert.equal(session.approval_epoch, 1);
-    assert.equal(built, false, "'defer': the caller's checks gate rebuilds exactly the pinned head");
+    assert.deepEqual([headMoveOf(pool).from, headMoveOf(pool).to, headMoveOf(pool).keepVotes], [SESSION_HEAD, NEW, true]);
+    assert.deepEqual(handOffs, [],
+      "'defer': nothing is handed off here; the caller's checks gate rebuilds exactly the pinned head");
     assert.deepEqual(sysMessages, [], "'notify: false': the caller is about to say something more specific");
     assert.ok(!pool.calls.some((c) => /SET behind_main/.test(c.sql)),
       'no GitHub read in hand, so no drift snapshot is written from a stale one');
@@ -685,16 +772,13 @@ test('reconcileImportedHead: an authored move under `defer` still kicks the rebu
   const NEW = 'd'.repeat(40);
   mirrorBranchHead = NEW;
   scriptedMove = { kind: 'authored' };
-  let buildSha = null;
-  await withStubs([
-    [fakeStaging, 'buildAndDeployStaging', async (_c, _s, _a, sha) => { buildSha = sha; return { containerId: 'cid', stagingUrl: 'https://s', hostname: 'h' }; }],
-  ], async () => {
+  await withStubs([], async () => {
     const pool = recordingPool();
     const res = await prImportSync.reconcileImportedHead({ config: {}, pool, session: { ...IN_APP_REPO }, checks: 'defer', notify: false });
     assert.equal(res.votesKept, false);
-    // The rebuild is fire-and-forget on this path; let it start.
+    // The hand-off is fire-and-forget on this path; let it start.
     await new Promise((r) => setTimeout(r, 20));
-    assert.equal(buildSha, NEW);
+    assert.deepEqual(revisionHeads(), [NEW]);
   });
 });
 
@@ -728,65 +812,32 @@ test('reconcileImportedHead: an unreadable mirror leaves the pin alone rather th
   });
 });
 
-// #866 — the rebuild path shares the withdrawn-mid-build guard with the
-// import-time kick: a proposal closed while the (minutes-long) rebuild ran
-// must not have the finished preview persisted onto it.
-test('rerunChecksForNewHead discards the rebuild when the proposal is no longer open', async () => {
+// The re-run is a hand-off: the preview machine builds the new head, checks
+// it, and narrates a build that fails (its prepareFailed write). A hand-off
+// the machine refuses still reaches the caller, which logs it.
+test('rerunChecksForNewHead hands the new head to the preview machine', async () => {
   const NEW = 'c'.repeat(40);
-  let toreDown = null;
-  await withStubs([
-    [fakeStaging, 'buildAndDeployStaging', async () => ({ containerId: 'cid2', stagingUrl: 'https://s2', hostname: 'h' })],
-    [fakeStaging, 'teardownStaging', async (s, app) => {
-      toreDown = { containerId: s.staging_container_id, url: s.staging_url, slug: app && app.slug };
-    }],
-  ], async () => {
-    const calls = [];
-    const pool = {
-      calls,
-      query: async (sql, params) => {
-        calls.push({ sql, params });
-        if (/SELECT status FROM chat_sessions/.test(sql)) return { rows: [{ status: 'archived' }] };
-        return { rows: [] };
-      },
-    };
-    await prImportSync.rerunChecksForNewHead({
-      config: {}, pool, session: { ...SESSION }, newHead: NEW,
-    });
-
-    assert.ok(!calls.some((c) => /UPDATE chat_sessions SET staging_container_id/.test(c.sql)),
-      'no staging_url written onto a withdrawn proposal');
-    assert.deepEqual(toreDown, { containerId: 'cid2', url: 'https://s2', slug: 'demo' },
-      'the fresh container + URL are torn down instead');
+  await withStubs([], async () => {
+    const pool = recordingPool();
+    await prImportSync.rerunChecksForNewHead({ config: {}, pool, session: { ...SESSION }, newHead: NEW, trigger: 'merge-queue' });
+    assert.equal(handOffs.length, 1);
+    assert.deepEqual(
+      { kind: handOffs[0].kind, head: handOffs[0].head, source: handOffs[0].source, trigger: handOffs[0].trigger },
+      { kind: 'revision', head: NEW, source: 'imported', trigger: 'merge-queue' }
+    );
+    assert.equal(pool.calls.length, 0, 'nothing is written here: no pending stamp, no preview columns');
   });
 });
 
-// #866 — a failed rebuild records the terminal verdict (which is what
-// narrates the reason into the thread — see recordStagingBootFailure) and
-// pushes staging_failed so open cards flip to "Preview unavailable" live
-// instead of holding a spinner until something else refetches.
-test('rerunChecksForNewHead records the failure and pushes staging_failed', async () => {
-  const NEW = 'd'.repeat(40);
-  const pushes = [];
-  const recorded = [];
+test('rerunChecksForNewHead lets a failed hand-off reach the caller', async () => {
   await withStubs([
-    [fakeStaging, 'buildAndDeployStaging', async () => { throw new Error('missing secret OPENAI_KEY'); }],
-    [fakeRecovery, 'recordStagingBootFailure', async ({ commitHash, err }) => {
-      recorded.push({ commitHash, message: err.message });
-    }],
-    [fakeWs, 'pushSessionUpdate', (payload) => { pushes.push(payload); }],
+    [fakeWorkflow, 'revision', async () => { throw new Error('workflow store unavailable'); }],
   ], async () => {
-    const pool = recordingPool();
     await assert.rejects(
-      prImportSync.rerunChecksForNewHead({ config: {}, pool, session: { ...SESSION }, newHead: NEW }),
-      /missing secret/,
+      prImportSync.rerunChecksForNewHead({ config: {}, pool: recordingPool(), session: { ...SESSION }, newHead: 'd'.repeat(40) }),
+      /workflow store unavailable/,
       'the failure still propagates to the caller (which logs it)'
     );
-    assert.deepEqual(recorded, [{ commitHash: NEW, message: 'missing secret OPENAI_KEY' }],
-      'verdict recorded against the new head');
-    assert.deepEqual(pushes.map((p) => p.action), ['staging_failed']);
-    assert.equal(pushes[0].appSlug, 'demo');
-    assert.ok(!pool.calls.some((c) => /UPDATE chat_sessions SET staging_container_id/.test(c.sql)),
-      'no preview persisted for a build that failed');
   });
 });
 
@@ -870,10 +921,8 @@ test('applyHeadChange: a late sweep keeps an author summary recorded for the hea
   let github = SESSION_HEAD;
   await withStubs([
     [fakeGithub, 'getPR', async () => ({ head: { sha: github, ref: 'feature/x' }, base: { ref: 'main' }, mergeable: true })],
-    [fakeGithub, 'getOctokit', async () => ({ rest: { repos: { compareCommits: async () => ({ data: { behind_by: 0 } }) } } })],
+    [fakeGithub, 'getReadOctokit', async () => ({ rest: { repos: { compareCommits: async () => ({ data: { behind_by: 0 } }) } } })],
     [fakeWs, 'sendSystemMessage', async () => {}],
-    [fakeStaging, 'buildAndDeployStaging', async () => ({ containerId: 'cid', stagingUrl: 'https://s', hostname: 'h' })],
-    [fakeVisuals, 'captureForSession', async () => {}],
   ], async () => {
     const session = {
       ...SESSION,
@@ -884,23 +933,76 @@ test('applyHeadChange: a late sweep keeps an author summary recorded for the hea
     const first = recordingPool();
     assert.equal(await prImportSync.syncImportedProposal({ config: {}, pool: first, session }), 'unchanged');
 
-    // 2. The sweep, once it has. Postgres answers the claim with the kept flag.
+    // 2. The sweep, once it has. The machine's move answers with the kept flag.
     github = NEW;
-    const pool = recordingPool();
-    const realQuery = pool.query;
-    pool.query = async (sql, params) => {
-      const res = await realQuery(sql, params);
-      if (/SET imported_pr_head_sha = \$1[\s\S]*RETURNING approval_epoch/.test(sql) && res.rows.length) {
-        res.rows[0].pr_summary_stale = false;
-      }
-      return res;
-    };
+    const pool = recordingPool({ summaryStale: false });
     assert.equal(await prImportSync.syncImportedProposal({ config: {}, pool, session }), 'updated');
-    const claim = pool.calls.find((c) => /SET imported_pr_head_sha = \$1/.test(c.sql));
-    assert.match(claim.sql, /pr_summary_source = 'author'/);
-    assert.match(claim.sql, /pr_summary_source_head_sha = \$1::varchar/,
+    assert.equal(headMoveOf(pool).to, NEW);
+    // The machine's statement (src/workflow/proposal/machine.ts headMoved)
+    // installs the head as $1 and keeps an author summary recorded for it.
+    const fs = require('node:fs');
+    const path = require('node:path');
+    const machine = fs.readFileSync(path.join(__dirname, '..', 'src/workflow/proposal/machine.ts'), 'utf8');
+    const headMoved = machine.slice(machine.indexOf('  headMoved: async (tx: Tx, w: any) =>'), machine.indexOf('  approvalsCleared:'));
+    assert.match(headMoved, /imported_pr_head_sha = CASE WHEN \$3 = 'imported' THEN \$1/);
+    assert.match(headMoved, /invalidateHeadMoveSql\('\$1'/);
+    assert.match(headMoved, /\[w\.to, w\.sessionId/, '$1 is the head the move installs');
+    const freshness = fs.readFileSync(path.join(__dirname, '..', 'src/workflow/rules/summary-freshness.ts'), 'utf8');
+    assert.match(freshness, /pr_summary_source = 'author'/);
+    assert.match(freshness, /pr_summary_source_head_sha = \$\{headParam\}::varchar/,
       'the exception is scoped to the head this statement installs');
-    assert.match(claim.sql, /RETURNING approval_epoch, pr_summary_stale/);
-    assert.equal(session.pr_summary_stale, false, 'the in-memory row follows what Postgres kept');
+    assert.equal(session.pr_summary_stale, false, 'the in-memory row follows what the machine kept');
   });
+});
+
+// ── A pull request merged or closed on GitHub settles the proposal ─────
+
+test('syncImportedProposal: merged on GitHub while up for a vote is recorded as a merge; nothing else moves', async () => {
+  observedMerges.length = 0; closes.length = 0;
+  await withStubs([
+    [fakeGithub, 'getPR', async () => ({ merged: true, state: 'closed', merge_commit_sha: 'c'.repeat(40), merged_at: '2026-10-19T10:00:00Z',
+      head: { sha: 'b'.repeat(40) } })],
+  ], async () => {
+    const pool = recordingPool();
+    const res = await prImportSync.syncImportedProposal({ config: {}, pool, session: { ...SESSION } });
+    assert.equal(res, 'merged');
+    assert.deepEqual(observedMerges, [{ sessionId: 321, appId: 9, mergeSha: 'c'.repeat(40), mergedAt: '2026-10-19T10:00:00Z' }]);
+    assert.deepEqual(closes, []);
+    assert.equal(pool.moves.length, 0, 'a merged head is not installed for a vote');
+  });
+});
+
+test('syncImportedProposal: closed on GitHub, or merged before it went up, closes the proposal', async () => {
+  observedMerges.length = 0; closes.length = 0;
+  // Closed a minute ago (an author re-running CI closes and reopens): not
+  // settled yet; closed for longer, it is.
+  await withStubs([[fakeGithub, 'getPR', async () => ({ merged: false, state: 'closed', closed_at: new Date(Date.now() - 60000).toISOString(),
+    head: { sha: 'a'.repeat(40) }, mergeable: true })]], async () => {
+    const res = await prImportSync.syncImportedProposal({ config: {}, pool: recordingPool(), session: { ...SESSION } });
+    assert.equal(res, 'unchanged');
+  });
+  assert.deepEqual(closes, []);
+  await withStubs([[fakeGithub, 'getPR', async () => ({ merged: false, state: 'closed', closed_at: new Date(Date.now() - 600000).toISOString(),
+    head: { sha: 'b'.repeat(40) } })]], async () => {
+    const res = await prImportSync.syncImportedProposal({ config: {}, pool: recordingPool(), session: { ...SESSION } });
+    assert.equal(res, 'closed');
+  });
+  await withStubs([[fakeGithub, 'getPR', async () => ({ merged: true, state: 'closed', head: { sha: 'b'.repeat(40) } })]], async () => {
+    const res = await prImportSync.syncImportedProposal({ config: {}, pool: recordingPool(), session: { ...SESSION, status: 'active' } });
+    assert.equal(res, 'merged');
+  });
+  assert.deepEqual(closes, [
+    { sessionId: 321, reason: 'pr-closed', from: 'promoted' },
+    { sessionId: 321, reason: 'pr-merged', from: 'active' },
+  ], 'the proposal machine decides each close, from the status read');
+  assert.deepEqual(observedMerges, []);
+});
+
+test('syncImportedProposal: a proposal being merged is left to its merge attempt', async () => {
+  observedMerges.length = 0; closes.length = 0;
+  await withStubs([[fakeGithub, 'getPR', async () => ({ merged: true, state: 'closed', head: { sha: 'b'.repeat(40) } })]], async () => {
+    const res = await prImportSync.syncImportedProposal({ config: {}, pool: recordingPool(), session: { ...SESSION, status: 'merging' } });
+    assert.equal(res, 'skipped');
+  });
+  assert.deepEqual([observedMerges, closes], [[], []]);
 });

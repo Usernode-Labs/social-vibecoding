@@ -50,7 +50,7 @@ test('opening payloads are exact and bound the browser clock', () => {
   }, NOW), /only openingId and occurredAt/);
 });
 
-function routePool({ blocked = false } = {}) {
+function routePool({ blocked = false, shares = true } = {}) {
   const rowsByOpening = new Map();
   const calls = [];
   return {
@@ -68,6 +68,9 @@ function routePool({ blocked = false } = {}) {
           view_visibility: 'public',
           moderation_suspended_at: null,
         }] };
+      }
+      if (/SELECT usage_analytics FROM users/.test(text)) {
+        return { rows: [{ usage_analytics: shares }] };
       }
       if (/FROM user_app_blocks/.test(text)) {
         return { rows: blocked ? [{ app_id: 22 }] : [] };
@@ -149,6 +152,16 @@ test('opening collection is authenticated, access-guarded, awaited and idempoten
       timestampSource: 'client',
     });
     assert.match(metadata.receivedAt, /^\d{4}-\d{2}-\d{2}T/);
+  });
+});
+
+test('an opening is dropped, with a 2xx, for somebody who does not share usage analytics (#5097)', async () => {
+  const pool = routePool({ shares: false });
+  await withRoute(pool, { id: 7 }, async (base) => {
+    const { response, body } = await post(base, { openingId: OPENING_ID, occurredAt: new Date().toISOString() });
+    assert.equal(response.status, 200, 'a 2xx, so the browser queue lets it go');
+    assert.equal(body.discarded, true);
+    assert.equal(pool.calls.some(({ sql }) => /INSERT INTO events/.test(sql)), false, 'nothing is stored');
   });
 });
 

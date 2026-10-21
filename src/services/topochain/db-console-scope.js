@@ -118,6 +118,9 @@ const FULLY_READABLE_CONSOLE_TABLES = new Set([
   'mobile_push_registration_events',
   'cli_auth_audit_events',
   'cli_auth_rate_limits',
+  // The shared limiters' counts: a hash of what each counts, a number and
+  // when its window ends. Nothing in it signs anybody in.
+  'rate_limit_hits',
   'mcp_clients',
   'mcp_auth_audit_events',
   // Delegated connector grants (#2779): who holds a grant, of which kind, for
@@ -165,6 +168,12 @@ const FULLY_READABLE_CONSOLE_TABLES = new Set([
   'global_chat_threads',
   'global_chat_messages',
   'global_chat_tool_runs',
+  // Private requests (#5048): admin-only confidential requests and their
+  // comments, kept off GitHub. Every admin can already read them in the
+  // Workshop, and no column holds a credential; the automated debug role
+  // stays denied.
+  'private_requests',
+  'private_request_comments',
 ]);
 
 // The per-column replacement for the old table-level denials — one entry
@@ -210,6 +219,8 @@ const CONSOLE_CREDENTIAL_COLUMNS = {
   mobile_otp_codes: ['code_hash'],
   // Account email proof and the password snapshot are both offline-guessable.
   account_email_verifications: ['code_hash', 'password_hash'],
+  // #5281: the username-change proof, the same two secrets as the row above.
+  account_username_codes: ['code_hash', 'password_hash'],
   web_signup_sessions: ['token_hash'],
   // Apple and Google sign-in (services/sign-in-providers.js). The provider
   // settings' secret is a client secret or a private key; the round trip's
@@ -219,6 +230,10 @@ const CONSOLE_CREDENTIAL_COLUMNS = {
   // identity (user_oauth_identities), which is what "I cannot sign in with
   // Google" needs.
   sign_in_providers: ['secret_enc'],
+  // The read-only roles the leader sets up (services/debug-access.js): the
+  // prod-debug role's password, encrypted. Whether each setup succeeded,
+  // when and on which release stay readable.
+  platform_db_roles: ['secret_enc'],
   oauth_sign_in_states: ['state_hash', 'binder_hash', 'nonce', 'code_verifier'],
   oauth_signup_sessions: ['token_hash'],
   // A spent native sign-in's ID token, hashed: nothing to read in it, and
@@ -231,6 +246,9 @@ const CONSOLE_CREDENTIAL_COLUMNS = {
   // on the row — attempts, expires_at, consumed_at — is exactly what
   // debugging "my code did not work" needs, so only the hash is masked.
   waitlist_verification_codes: ['code_hash'],
+  // The release mail's one-time sign-in link (#4594): a hash looked up by
+  // hash is a bearer credential. Its row, expiry and use stay readable.
+  waitlist_release_links: ['token_hash'],
   native_session_handoffs: ['handoff_hash'],
   native_session_tickets: ['ticket_hash', 'encrypted_response'],
   native_session_credentials: [
@@ -264,6 +282,17 @@ const CONSOLE_CREDENTIAL_COLUMNS = {
   // additionally contains the callback-state hash and live PKCE verifier.
   user_social_identities: ['provider_subject', 'handle'],
   social_identity_oauth_states: ['state_hash', 'pkce_verifier'],
+  // A wallet sign-in's challenge: its hash is the single-use credential.
+  // Which address it was minted for, and until when, stay readable.
+  wallet_challenges: ['challenge_hash'],
+  // A waitlist signer's social-connect round trip: the state's hash, the
+  // capability token it carries, and X's live PKCE verifier. How it ended
+  // stays readable.
+  waitlist_connect_states: ['state_hash', 'token', 'verifier'],
+  // A database export's download ticket, kept on its audit row as a hash
+  // until it is redeemed (services/db-export.js). The rest of the audit
+  // trail (who, when, how it ended) stays readable.
+  db_exports: ['ticket_hash'],
   social_identity_pending_replacements: ['provider_subject', 'handle'],
   // Public report share links. `share_token` is the SOLE access control on
   // the unauthenticated /reports/:token route (schema.sql says so outright),

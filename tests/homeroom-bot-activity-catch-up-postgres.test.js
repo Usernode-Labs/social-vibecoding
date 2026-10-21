@@ -98,11 +98,11 @@ test('the Homeroom bot DM gives work already under way its activity card: once, 
   routePool = pool;
 
   let seq = 0;
-  async function user(prefix, { synthetic = false } = {}) {
+  async function user(prefix, { synthetic = false, access = true } = {}) {
     const { rows } = await pool.query(
       `INSERT INTO users (username, password, has_platform_access, is_synthetic)
-       VALUES ($1, 'x', TRUE, $2) RETURNING id, username`,
-      [synthetic ? prefix : `${prefix}_${++seq}`, synthetic],
+       VALUES ($1, 'x', $3, $2) RETURNING id, username`,
+      [synthetic ? prefix : `${prefix}_${++seq}`, synthetic, access],
     );
     return rows[0];
   }
@@ -127,14 +127,16 @@ test('the Homeroom bot DM gives work already under way its activity card: once, 
   const bot = await user('homeroom_bot', { synthetic: true });
   const ada = await user('ada');
   const sam = await user('sam');
-  const lee = await user('lee');
+  // Homeroom has not let Lee in yet: the bot works for everyone with
+  // platform access, so not for him.
+  const lee = await user('lee', { access: false });
   const seeds = await project('seed-swap', ada);
   const samsApp = await project('sam-shop', sam);
   const hidden = await project('hidden-lab', sam, { visibility: 'private' });
   const notLive = await project('quiet-notes', ada);
+  // The bot acts on every project but a paused one: Quiet notes is paused.
   await setting('homeroom_bot_mode', 'shadow');
-  await setting('homeroom_bot_dm_users', JSON.stringify([ada.username, sam.username]));
-  await setting('homeroom_bot_live_apps', JSON.stringify(['seed-swap', 'sam-shop', 'hidden-lab']));
+  await setting('homeroom_bot_paused_apps', JSON.stringify(['quiet-notes']));
   let settings = await homeroomBot.readSettings(pool);
 
   async function requested(app, issueNumber, who, title) {
@@ -174,9 +176,9 @@ test('the Homeroom bot DM gives work already under way its activity card: once, 
     );
     return row;
   }
-  const asAda = { id: ada.id, username: ada.username, isAdmin: false };
-  const asSam = { id: sam.id, username: sam.username, isAdmin: false };
-  const asLee = { id: lee.id, username: lee.username, isAdmin: false };
+  const asAda = { id: ada.id, username: ada.username, isAdmin: false, hasPlatformAccess: true };
+  const asSam = { id: sam.id, username: sam.username, isAdmin: false, hasPlatformAccess: true };
+  const asLee = { id: lee.id, username: lee.username, isAdmin: false, hasPlatformAccess: false };
   const catchUp = (who) => activity.catchUpCards(pool, { user: who, settings });
   /** The bot's activity cards in `who`'s DM with it, oldest first. */
   async function cardMessages(who) {
@@ -226,12 +228,12 @@ test('the Homeroom bot DM gives work already under way its activity card: once, 
     assert.deepEqual(recorded, [{ kind: 'activity', app_id: seeds.id, issue_number: 3 }], 'recorded as the bot\'s news about the request');
 
     const card = await cardOf(asAda, message.id);
-    assert.deepEqual([card.state, card.stage, card.step, card.stepName], ['working', 'reading', 1, 'Read the request']);
+    assert.deepEqual([card.state, card.stage, card.step, card.stepName], ['working', 'reading', 1, 'Reading']);
     assert.equal(card.startedAt, reading.started_at.toISOString(), 'from when the look began, before the card');
 
     assert.deepEqual(await catchUp(asAda), { added: 0 }, 'a second opening adds none');
-    const loop = await activity.startCard(pool, {
-      app: seeds, issueNumber: 3, requester: { userId: ada.id, username: ada.username, issueTitle: 'Sort by date' },
+    const loop = await activity.startCard(pool, { inDm: true,
+      app: seeds, issueNumber: 3, requester: { userId: ada.id, username: ada.username, issueTitle: 'Sort by date', hasPlatformAccess: true },
       bot, jobKey: reading.id, settings,
     });
     assert.equal(loop.messageId, message.id, 'the loop\'s own card for the look is the same message');
@@ -252,7 +254,7 @@ test('the Homeroom bot DM gives work already under way its activity card: once, 
     assert.equal(message.metadata.homeroomBot.startedAt, began, 'when its look began');
 
     let card = await cardOf(asAda, message.id);
-    assert.deepEqual([card.state, card.stage, card.step, card.stepName], ['working', 'planning', 2, 'Write a plan']);
+    assert.deepEqual([card.state, card.stage, card.step, card.stepName], ['working', 'planning', 2, 'Planning']);
     assert.equal(card.startedAt, began);
     await pool.query(`INSERT INTO homeroom_bot_posts (app_id, issue_number, run_id, kind) VALUES ($1, 4, $2, 'spec')`, [seeds.id, ready.id]);
     card = await cardOf(asAda, message.id);
@@ -270,8 +272,8 @@ test('the Homeroom bot DM gives work already under way its activity card: once, 
 
   await t.test('a restart of a look with a card gets no second, and its card follows the restarted look, not the interrupted build', async () => {
     const first = await queued(seeds, 5);
-    const sent = await activity.startCard(pool, {
-      app: seeds, issueNumber: 5, requester: { userId: ada.id, username: ada.username, issueTitle: 'Export' },
+    const sent = await activity.startCard(pool, { inDm: true,
+      app: seeds, issueNumber: 5, requester: { userId: ada.id, username: ada.username, issueTitle: 'Export', hasPlatformAccess: true },
       bot, jobKey: first.id, settings,
     });
     await dequeue(seeds, 5);
@@ -353,7 +355,7 @@ test('the Homeroom bot DM gives work already under way its activity card: once, 
     await queued(hidden, 2);
     await queued(notLive, 1);
     const adas = (await cardMessages(ada)).length;
-    assert.deepEqual(await catchUp(asAda), { added: 0 }, 'sam\'s and lee\'s work is not hers; she cannot view hidden-lab; quiet-notes is not live');
+    assert.deepEqual(await catchUp(asAda), { added: 0 }, 'sam\'s and lee\'s work is not hers; she cannot view hidden-lab; quiet-notes is paused');
     assert.equal((await cardMessages(ada)).length, adas);
     assert.deepEqual(await cardMessages(sam), [], 'ada opening her DM sends sam nothing');
     assert.deepEqual(await catchUp(asLee), { added: 0 }, 'lee is not somebody the bot talks to in a DM');
@@ -476,14 +478,16 @@ test('the Homeroom bot DM gives work already under way its activity card: once, 
       const page = await conversations.listMessages(pool, viewer, conversationId, {});
       const messages = [...(page.messages || page)].sort((a, b) => a.id - b.id);
       // #4046: the demo's first versions' cards (its plans carry them) are another project's.
-      const cards = messages.filter((m) => m.metadata?.homeroomBot?.kind === 'activity' && m.metadata.homeroomBot.appName === 'Staging demo app');
+      // One story: the demo request #18, whose card is its thread's root, is sent before this one.
+      const cards = messages.filter((m) => m.metadata?.homeroomBot?.kind === 'activity' && m.metadata.homeroomBot.appName === 'Staging demo app'
+        && m.metadata.homeroomBot.issueNumber !== 18);
       assert.deepEqual(cards.map((m) => m.metadata.homeroomBot.issueNumber), [9, 14, 15], 'the new card is the newest');
       const joined = cards[2];
       assert.equal(messages.at(-1).id, joined.id, 'at the end of the DM');
       assert.match(joined.content, /^\*\*Staging demo app\*\* · request #15: Staging demo, add a search box\n\nI started on this earlier/);
       const demo = await activity.demoCards(pool, viewer);
       const state = demo.cards.find((c) => c.messageId === joined.id);
-      assert.deepEqual([state.state, state.step, state.of, state.stepName], ['working', 2, 6, 'Write a plan']);
+      assert.deepEqual([state.state, state.step, state.of, state.stepName], ['working', 2, 6, 'Planning']);
       assert.ok(Date.parse(state.startedAt) < Date.parse(joined.createdAt || joined.created_at), 'it began before its card');
       const { rows } = await pool.query('SELECT 1 FROM homeroom_bot_dm_messages WHERE user_id = $1', [viewer.id]);
       assert.equal(rows.length, 0, 'a demo card stands for no request: nothing is recorded or posted');

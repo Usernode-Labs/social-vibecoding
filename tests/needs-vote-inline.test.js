@@ -59,10 +59,10 @@ test('the form is the card\'s vote picker: the switch, the line for the group, C
   assert.ok(!/role="dialog"/.test(html), 'nothing in the form is a dialog of its own');
 });
 
-test('on No the box asks what is not working, and the send waits for a line', () => {
+test('on No the box asks what is not working, and the send needs no line', () => {
   const empty = form({ side: 'no' });
-  assert.match(empty, /What’s not working for you\? One line is plenty\./);
-  assert.match(empty, /class="dev-vote-reason-send dev-vote-reason-send-no" disabled="">Vote no</, 'a No needs its line');
+  assert.match(empty, /What’s not working for you\? Add a line, if you like\./);
+  assert.match(empty, /class="dev-vote-reason-send dev-vote-reason-send-no">Vote no</, 'a No sends without its line');
   const filled = form({ side: 'no', line: 'Too dark' });
   assert.match(filled, /class="dev-vote-reason-send dev-vote-reason-send-no">Vote no</);
 });
@@ -79,6 +79,38 @@ test('the sheet sends its line with the vote, so castVote does not ask again', (
   assert.match(WORKSHOP, /\(k === 'n' \|\| k === 'N'\) && sheet === 'vote'\) \{ setVoteSide\('no'\); return; \}/);
 });
 
+// #4794: a vote saved from the Communities reel takes its card out of the
+// screen's own feed copy at once, so going back and re-entering Needs you
+// cannot redraw it as still owed. The reel learns of the vote ONLY where the
+// feed has it: inside the `ok === true` branch, after setAnswered — never on
+// a cancel, a refusal or a network failure.
+test('#4794: onAnswered fires only where the vote is saved, and the reel keeps the feed it was drawn', () => {
+  const REEL = read('frontend/src/features/workshop/needs-reel.tsx');
+  const SCREEN = read('frontend/src/features/workshop/index.tsx');
+  const answer = WORKSHOP.slice(WORKSHOP.indexOf('const answer = (which'), WORKSHOP.indexOf('const voteTrimmed'));
+  const okBranch = answer.slice(answer.indexOf('if (ok === true) {'), answer.indexOf('} else if (pinnedHere)'));
+  assert.match(okBranch, /setAnswered\(/, 'the confirmation is drawn first, as it is today');
+  assert.match(okBranch, /try \{ onAnswered\(row, which\); \} catch/, 'then the screen that owns the feed copy is told');
+  assert.equal((answer.match(/onAnswered/g) || []).length, 2,
+    'the hook appears twice in answer() — the guard and the call, both inside the ok branch');
+  assert.ok(!WORKSHOP.includes('onAnswered={'), 'a project page passes nothing; its refresh already drops the row');
+
+  // The reel acts only on a proposal's answer, with the epoch of the source
+  // item; a group decision has no Yes or No in the feed and never reaches it.
+  assert.match(REEL, /onAnswered\?: \(id: number, epoch: number \| null\) => void;/);
+  assert.match(REEL, /row\.askAbout\.kind === 'proposal'/);
+  assert.match(REEL, /epochs\.get\(row\.key\)/);
+  // A vote on the last card empties the feed copy; once the feed has been
+  // drawn this mount, the reel keeps it drawn instead of switching to the
+  // empty line over the viewer's head.
+  assert.match(REEL, /drawnRef\.current = true/);
+  assert.match(REEL, /!items && !drawnRef\.current/);
+  assert.match(REEL, /!shown\.length && !drawnRef\.current/);
+  // And the screen wires the reel to the controller that owns the store.
+  assert.match(SCREEN, /onAnswered=\{\(id, epoch\) => workshopController\.answered\(id, epoch\)\}/);
+  assert.match(SCREEN, /answered\(id: number, epoch: number \| null\)/);
+});
+
 // An approval row (a change on a project that is just yours) asks for a note
 // from the row itself, before the community read has landed and on the
 // staging demo's Just you card, whose project reads as public.
@@ -88,7 +120,7 @@ test('an approval row\'s Yes line is a note before any community read; a group r
   const yes = form({ row: approval });
   assert.match(yes, /<label class="dev-vote-reason-label" for="dev-ws-vote-reason-needs-proposal-42">Add a note, if you like\.<\/label>/);
   assert.doesNotMatch(yes, /for the group/);
-  assert.match(form({ row: approval, side: 'no' }), /What’s not working for you\? One line is plenty\./, 'No is unchanged');
+  assert.match(form({ row: approval, side: 'no' }), /What’s not working for you\? Add a line, if you like\./, 'No is the same');
   assert.match(form(), /Add a line for the group, if you like\./, 'a group row keeps its wording');
 });
 
@@ -121,8 +153,8 @@ test('#22: on a solo project the Yes line is a note, asked of the row\'s own pro
   assert.deepEqual(asked.slice(-1), ['demo-app'], 'the row\'s project, not the page\'s');
 
   const no = draw({ side: 'no' });
-  assert.match(no, /What’s not working for you\? One line is plenty\./);
-  assert.match(no, /class="dev-vote-reason-send dev-vote-reason-send-no" disabled="">Vote no</, 'No still needs its line');
+  assert.match(no, /What’s not working for you\? Add a line, if you like\./);
+  assert.match(no, /class="dev-vote-reason-send dev-vote-reason-send-no">Vote no</, 'No sends without its line');
 
   audience = 'invited';
   assert.match(draw(), /Add a line for the group, if you like\./, 'a group keeps its wording');

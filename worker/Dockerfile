@@ -13,6 +13,23 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git curl wget ca-certificates unzip python3 make g++ \
   && rm -rf /var/lib/apt/lists/*
 
+# ── The shots browser's system font (#4087) ────────────────────────────
+# The shell asks for Tailwind's font-sans stack (ui-sans-serif, system-ui,
+# sans-serif). On a Mac that is San Francisco with real weights; on bookworm
+# slim it fell to a face with no bold weights, so every heading, label and
+# button in the before/after shots came out regular, in another typeface.
+# fonts-inter ships Inter in every static weight (Thin to Black), and
+# fonts-local.conf points system-ui, -apple-system, BlinkMacSystemFont,
+# ui-sans-serif and sans-serif at it. Sits before the cache-bust ARG below.
+# fontconfig's answer is not proof of what Chromium draws, so the Chromium
+# smoke test further down also runs verify-shots-browser-fonts.js.
+COPY fonts-local.conf /etc/fonts/local.conf
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    fontconfig fonts-inter \
+  && rm -rf /var/lib/apt/lists/* \
+  && fc-cache -f \
+  && test "$(fc-match -f '%{family[0]}|%{style[0]}' 'system-ui:weight=205')" = 'Inter|Extra Bold'
+
 # ── Local Postgres for in-loop builds and repository SQL checks ────────
 # INLOOP_DATABASE_URL (src/services/in-loop-browser.js) points at
 # postgres://postgres:postgres@127.0.0.1:5432/inloop — a server that must
@@ -138,6 +155,13 @@ RUN npm install -g @playwright/mcp@${PLAYWRIGHT_MCP_VERSION} \
   && npx playwright install --with-deps chromium \
   && command -v mcp-server-playwright \
   && mcp-server-playwright --version
+# Shots are saved at the browser's device density (3 on a phone, 2 on a
+# desktop), but this MCP version hard-codes browser_take_screenshot's scale to
+# CSS pixels. The patch edits that one tool, and refuses a version whose code
+# no longer matches; verify-shots-browser-mcp.js below proves the saved
+# density in a real browser. See the script's header for why not a pin bump.
+COPY patch-playwright-mcp-screenshot.js /usr/local/bin/patch-playwright-mcp-screenshot.js
+RUN node /usr/local/bin/patch-playwright-mcp-screenshot.js
 
 COPY worker-run.sh   /usr/local/bin/worker-run.sh
 COPY run-cc.sh       /usr/local/bin/run-cc.sh
@@ -145,6 +169,11 @@ COPY run-codex-agent.sh /usr/local/bin/run-codex-agent.sh
 COPY start-inloop-db.sh /usr/local/bin/start-inloop-db.sh
 # Sourced by worker-run.sh and both runners, from their own directory.
 COPY session-branch.sh /usr/local/bin/session-branch.sh
+# Sourced by both runners: the container's memory for a turn's result line.
+COPY memory-fields.sh /usr/local/bin/memory-fields.sh
+# #5123: required by both OpenRouter adapters below, from their own directory:
+# every request they send denies data collection (no training, no retention).
+COPY openrouter-privacy.js /usr/local/bin/openrouter-privacy.js
 COPY codex-openrouter-request.js /usr/local/bin/codex-openrouter-request.js
 # #3296: the same per-invocation, worker-local adapter for an OpenRouter turn
 # that Claude Code runs. It holds that turn's key; claude gets a local token.
@@ -167,15 +196,22 @@ COPY shots-boundary.js /usr/local/bin/shots-boundary.js
 COPY shots-memory.js /usr/local/bin/shots-memory.js
 COPY shots-hosted-app-contract.js /usr/local/bin/shots-hosted-app-contract.js
 COPY shots-browser-observer.js /usr/local/bin/shots-browser-observer.js
+# The only files a shots page can be handed (the shots bridge's upload_file),
+# drawn once into a read-only directory the observer chooses them from.
+COPY shots-samples.js /usr/local/bin/shots-samples.js
+RUN node /usr/local/bin/shots-samples.js /usr/local/share/usernode/shots-samples
 COPY shots-browser-bootstrap.js /usr/local/bin/shots-browser-bootstrap.js
 COPY session-bootstrap.js /usr/local/bin/session-bootstrap.js
 COPY write-shots-mcp-config.js /usr/local/bin/write-shots-mcp-config.js
+# #4087: run in every shots page before its scripts (dismisses the install strip).
+COPY shots-page-init.js /usr/local/share/usernode/shots-page-init.js
 # #2779: the coding agent's read-only Homeroom tools. The config carries no
 # secret: the bridge reads its per-turn grant from the environment.
 COPY homeroom-read-mcp.js /usr/local/bin/homeroom-read-mcp.js
 COPY homeroom-mcp.json /usr/local/share/usernode/homeroom-mcp.json
 COPY verify-shots-browser-mcp.js /usr/local/bin/verify-shots-browser-mcp.js
 COPY verify-shots-browser-auth.js /usr/local/bin/verify-shots-browser-auth.js
+COPY verify-shots-browser-fonts.js /usr/local/bin/verify-shots-browser-fonts.js
 COPY classify-codex-resume.js /usr/local/bin/classify-codex-resume.js
 COPY build-codex-model-catalog.js /usr/local/bin/build-codex-model-catalog.js
 # usernode-push is the worker's only path to writing anything back to
@@ -213,6 +249,15 @@ COPY usernode-report-platform-issue /usr/local/bin/usernode-report-platform-issu
 # back; staging still supplies its own platform-issued capture identity.
 COPY usernode-run-checks /usr/local/bin/usernode-run-checks
 COPY usernode-run-inloop /usr/local/bin/usernode-run-inloop
+# usernode-progress (#4387): the first version's build says what it is
+# adding now ("Adding the tier rows"). It only echoes: the platform reads
+# the phrase off the command in the turn's stream.
+COPY usernode-progress /usr/local/bin/usernode-progress
+# usernode-screen (13 Oct 2026): a first version's spec saves its main
+# screen first, and the platform draws the app's first look from it while
+# the spec goes on (services/first-version-screens.js). It only writes the
+# screen under /tmp/usernode-screens; nothing is sent from it.
+COPY usernode-screen /usr/local/bin/usernode-screen
 # usernode-debug (#616) is read-only production debugging for ADMIN
 # sessions on the self-edit app. It calls the platform's prod-debug
 # internal API (deny-listed read-only SQL role, allowlisted container
@@ -243,6 +288,8 @@ RUN chmod +x /usr/local/bin/worker-run.sh \
               /usr/local/bin/usernode-run-checks \
               /usr/local/bin/usernode-run-inloop \
               /usr/local/bin/usernode-debug \
+              /usr/local/bin/usernode-progress \
+              /usr/local/bin/usernode-screen \
   && mkdir -p /home/node/workspace /home/node/.claude \
   && chown -R node:node /home/node
 
@@ -260,9 +307,12 @@ ENV SOCIAL_VIBECODING_DRIFT_CHECK=off
 # it. A future MCP pin bump that reintroduces a channel/revision mismatch
 # — the failure mode behind #688 — fails the image build loudly here,
 # instead of silently degrading every build turn to "skipped the
-# screenshot check".
+# screenshot check". Then (#4087) the same Chromium renders the shell's font
+# stack, and bare system-ui, at weights 400/650/700/800 and must report Inter
+# Regular/Bold/Bold/ExtraBold through CDP CSS.getPlatformFontsForNode.
 RUN cd /usr/local/lib/node_modules/@playwright/mcp \
-  && node -e "require('playwright').chromium.launch({channel:'chromium',headless:true,chromiumSandbox:false,args:['--use-gl=angle','--use-angle=swiftshader','--enable-unsafe-swiftshader']}).then(b=>b.close()).catch(e=>{console.error(e);process.exit(1);})"
+  && node -e "require('playwright').chromium.launch({channel:'chromium',headless:true,chromiumSandbox:false,args:['--use-gl=angle','--use-angle=swiftshader','--enable-unsafe-swiftshader']}).then(b=>b.close()).catch(e=>{console.error(e);process.exit(1);})" \
+  && node /usr/local/bin/verify-shots-browser-fonts.js
 
 # Validate the actual shots MCP config against the installed package.
 # This catches a missing/renamed command, rejected CLI flags, or failed

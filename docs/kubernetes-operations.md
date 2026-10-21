@@ -91,7 +91,7 @@ A merged platform PR is therefore "merged" on its card before it is running,
 and nothing in that chain reports back to the platform when a link fails. The
 platform watches the gap itself: `services/release-watch.js` compares the
 self-hosted app row's `main_sha` (the running build) with GitHub's `main` on the
-drift poller's cadence, reads the `Build Kubernetes images` run for the merged
+main-drift clock's cadence, reads the `Build Kubernetes images` run for the merged
 commit, and once (per commit and verdict) records the stall on
 `apps.release_stall`, posts to the app's group chat, and notifies the app's
 admins. The Dev board shows an amber banner with the workflow run linked until
@@ -112,10 +112,12 @@ Nothing in that chain tells open browser tabs about the new build either; the
 Pod being replaced does. The rolling update terminates the old Pod only after
 the new one has been Ready for `minReadySeconds`, and the `preStop` sleep has
 taken it out of the Service before `SIGTERM` arrives. On `SIGTERM`, `server.js`
-`cleanup()` closes the listener, then reads the Deployment's target revision
-through `services/deploy-status.js` and, if it is another build, pushes
+`cleanup()` reads the Deployment's target revision through
+`services/deploy-status.js` and, if it is another build, pushes
 `platform_version` to every open `/ws/events` socket
-(`ws.pushPlatformVersion`). Every events handshake carries the same message
+(`ws.pushPlatformVersion`), then closes the sockets so the tabs reconnect to
+the new Pod. The replaced Pod then finishes the work it started before it
+exits: see "Releases let work finish" below. Every events handshake carries the same message
 with the build the socket landed on. A tab prefetches the announced build into
 its service-worker cache and turns the Settings version row into the reload
 button (`handlePlatformVersion` in `public/js/app.js`); it never reloads
@@ -137,6 +139,56 @@ for configuration and the `infra/prototype/bare-metal-platform` runbooks for
 cluster foundation and database operations. Read the installed image and Argo
 revision when comparing source behavior with a live failure.
 
+## Releases let work finish
+
+A platform Pod a release replaces keeps finishing the work it started rather
+than cutting it (`docs/plans/draining-releases.md`), once another platform
+process of its role is serving (it waits up to a minute for one; without one,
+as on a scale to zero, it cuts over as it always did). No process leads. On
+`SIGTERM` it:
+
+1. refuses anything new and marks its row in `platform_processes` `draining`;
+2. quiesces the workflow runtime (no slot, timer or claim; its running work
+   goes on: a person's turn, a build, a merge under way);
+3. announces the new build to its tabs and closes their sockets;
+4. keeps its listener open (a request it still answers, and its own loopback
+   calls) and waits until it holds nothing (its own holds, in its memory),
+   has no registered background work, no running workflow work and no
+   request still answering;
+5. then does what shutdown always did: closes the listener, stops the
+   workflow runtime (its work items are given up to the next claim, which
+   carries each on from what it saved), hands back checks runs, deletes its
+   row and exits.
+
+It waits at most `platform.drainMinutes` (`PLATFORM_DRAIN_TIMEOUT_MS`), and
+ends early when `platform.drainingMax` (`PLATFORM_DRAINING_MAX`) newer releases
+are draining too: counted by release, since one release drains every conductor
+replica (a `rollout restart` of the same build is no newer release). The log says what it is still finishing every minute
+(`Still finishing work before exiting`), and how it ended: `Finished this
+process's work`, or `Drain deadline passed` / `Newer processes are draining
+too`, with what it handed over. What it hands over is claimed again once each
+item's lease lapses (a person's turn follows its coding run's journal to its
+end), and a coding record nothing carries is taken to an end by the
+`turn-leftovers` clock within a few minutes.
+
+The live processes, and the workflow work running now:
+
+```sql
+SELECT id, release, role, state, drain_deadline_at FROM platform_processes
+ WHERE heartbeat_at > NOW() - interval '45 seconds' ORDER BY started_at;
+
+SELECT machine, key, kind, work_key, attempt_count, lease_until FROM wf_work
+ WHERE status = 'running' ORDER BY machine, key;
+```
+
+A schema change has to stay compatible with the code of the release before it
+for as long as such a Pod drains, not only for the seconds of the overlap: the
+migration Job applies the new schema while it still runs. A node drain
+(`kubectl drain`) waits for a platform Pod's drain as well; pass
+`--grace-period` to cut it short. Each draining Pod keeps its database pools
+open until it exits, so with `drainingMax` 2 up to three Pods' pools are open
+at once.
+
 ## Shared app and preview TLS
 
 Generated apps and previews share the installation-owned TLS Secret named by
@@ -154,6 +206,32 @@ working HTTPS even when their Pods are Ready. Existing Ingresses keep their old
 TLS references until reconciled or migrated. The infra runbook
 `docs/23-social-vibecoding-shared-tls.md` includes a read-only migration planner,
 issuance-limit recovery and explicit retirement of legacy Certificates.
+
+## Custom domains
+
+A project's manager can serve it at a web address they own (#4405,
+`services/app-domains.js`): they add a CNAME from `app.example.com` to
+`<slug>.USERNODE_APPS_DOMAIN` and a TXT record `_homeroom.app.example.com`
+carrying the claim's token, and the `app-domains` clock verifies both against
+public resolvers every minute. Once verified, `deployCustomDomain`
+(`services/kubernetes.js`) writes a second Ingress, `sv-domain-<id>`, beside
+the app's own: the same asset prefixes and gate routing, the custom host, and
+a `cert-manager.io/cluster-issuer` annotation naming `CLUSTER_ISSUER`
+(default `letsencrypt-public`), the one place an app Ingress asks for a
+certificate of its own. The certificate lands in `sv-domain-<id>-tls` in
+`APP_NAMESPACE` and goes with the Ingress when the domain is removed,
+disabled or the app is deleted.
+
+Prerequisites: the ClusterIssuer must have an HTTP-01 solver for the apps'
+ingress class (the platform host's own certificate is issued the same way),
+port 80 must reach the ingress for the challenge, and the app namespace's
+policy must let ingress-controller traffic reach cert-manager's solver pods
+there. The app's own Ingress and the shared wildcard Secret are never touched
+(`tests/kubernetes-app-tls.test.js`).
+
+To take a domain out of service without touching the project, use Disable in
+the admin console's Domains section (`#admin/domains`), which deletes the
+Ingress and its Secret; Enable verifies the claim again from the start.
 
 ## Before/after shots cleanup
 
@@ -196,149 +274,298 @@ The platform setting takes effect when the updated server is deployed. Existing
 child-app repositories and previews built from older commits retain their own
 server code; changing the scaffold does not retrofit them.
 
-## Coordinated preview lifecycle
+## Coordinated preview lifecycle (retired)
 
-`platform.previewLifecycleEnabled` (default `false`) sets
-`PREVIEW_LIFECYCLE_ENABLED`. With it enabled, builds, captures and teardown share
-one PostgreSQL advisory lock per session, across platform Pods. A durable
-`preview_operations` row records the desired revision, run UUID, phase and
-outcome. Advancing the session's checks/imported head cancels the old owner;
-the successor waits for its capture and unit-suite consumers to stop before
-changing the preview. Cancellation is not an app test failure.
-
-Capture and unit-suite Jobs carry `social.usernode.io/preview-run-id`. The owner
-requests foreground deletion and confirms Job/Pod termination. API errors keep
-replacement blocked; a DELETE acknowledgement alone does not establish that
-the browser stopped. After a platform restart, a successor for a NEWER revision
-stops orphaned check Jobs before using the preview; a run for the revision the
-session is still waiting on is harvested instead (below).
+`PREVIEW_LIFECYCLE_ENABLED` and its per-session advisory lock are gone: the
+preview machine (below) owns every build, checks run and teardown, one at a time
+per session, as durable work. Its `preview_operations` table is dropped (a
+rollback past the preview machine's deletion recreates it empty).
 
 ## Preview cleanup
 
-Merge, archive and the idle reclaim (`STAGING_IDLE_TEARDOWN_MS`) tear a preview
-down through its session row. Anything those paths leave behind is found by the
-stale-preview sweep (`services/staging-reap.js`), which lists the
+Merge, archive and the preview machine's idle give-back
+(`STAGING_IDLE_TEARDOWN_MS`) retire a preview through the preview machine.
+Anything those paths leave behind is found by the `preview-gc` clock
+(`services/staging-reap.js` `leftovers`), which lists the
 `sv-preview-<appId>-s<sessionId>` Deployments in the app namespace and joins
 them back to `chat_sessions`. Every `STAGING_STALE_SWEEP_INTERVAL_MS` (15 min)
-it tears down at most `STAGING_STALE_SWEEP_LIMIT` (10) previews whose session
-merged, was archived or no longer exists, or whose `usernode.env.fp` label is
-out of date. It never takes a preview backing a live vote (`promoted` or
-`merging`); the heal pass rebuilds those in place when they go out of date.
-Admin → Stale previews takes the same selection without the per-pass limit. A
+it takes each preview whose session merged, was archived or no longer exists,
+and each one its row no longer names that the machine does not hold, one
+target at a time. A preview whose `usernode.env.fp` label is out of date is
+the release's to find: the new build's release work tells the preview
+machine, which rebuilds one backing a live vote (`promoted` or `merging`) and
+gives the rest back. The `preview-runtimes` clock reports a vote-backed
+preview whose runtime or database is gone, and the machine builds it again.
+Admin → Stale previews takes the out-of-date and finished ones at once. A
 preview whose row no longer names it keeps its staging database until the
 orphan database pass (`STAGING_ORPHAN_DB_SWEEP_INTERVAL_MS`, 6 h) finds nothing
 connected to it.
 
-## Harvesting check runs across platform rollouts
+## A separate server for preview databases
+
+By default one PostgreSQL server holds everything: the platform's database,
+every app's production database, and every database a preview needs (each
+app's redacted staging template, each preview's copy of it, and the copies
+before & after shots are taken on). `STAGING_DB_ADMIN_URL` names a second
+server for the preview side, so that the copies, the template rebuilds and
+whatever previews write stop going through production's WAL, replicas and
+archive. It is off unless set, and with it unset nothing changes.
+
+What moves and what stays (`src/services/db-manager.js`, "Two servers"):
+
+- On the preview server: staging templates (`app_<slug>_stgtmpl`), preview
+  copies (`app_<slug>_staging_s<session>_<commit>`), shots copies and their
+  frozen source (`…_shots_…`, `…_evsrc_…`), and the roles of all of them.
+- On the main server, always: the platform's database, every app's production
+  database, app forks, and the advisory locks. The redacted dump is still
+  read from the main server; it is restored on the preview server, and both
+  redaction passes run there and fail the build if they cannot finish.
+- No table records which server a preview database is on. A drop runs on
+  both servers by the database's exact name, and the sweeps list both. A
+  preview built before the switch keeps working and is cleaned up on the main
+  server. A preview connects with the address its container was given when it
+  was built, and its runtime carries two labels written at deploy
+  (`usernode.db.id`, `usernode.db.server`): a digest of the database it was
+  given, as Postgres stores the name (its first 63 bytes), and the server it
+  was made on. Those labels, not the session's number, are what the heal
+  pass, the connection-pressure pass and the drain status judge by, because
+  one proposal can have older copies on the other server.
+- There is no fallback to the main server. If the preview server is down,
+  preview builds fail as a platform fault and retry on the checks' own
+  schedule; they do not move their full copies onto production.
+
+### What the cluster has to provide
+
+The chart does not create the server. It needs:
+
+- **A PostgreSQL server that holds nothing else, with one instance.** No
+  replicas and no backups or WAL archive: everything on it can be rebuilt
+  from the main server.
+- **PostgreSQL 18 or later** for shared-block copies. An older server works;
+  it gets the plain copy, and the platform logs that once. The platform image's
+  `pg_dump` and `pg_restore` (`postgresql-client` in `Dockerfile.kubernetes`,
+  18 at the time of writing) must not be older than either server.
+- **A data volume on a filesystem with reflink**: XFS made with `reflink=1`
+  (check with `xfs_info <mount>`), or Btrfs. On Linux a copy on a filesystem
+  without reflink does not fail: the kernel copies the files instead. The
+  copy still skips the WAL but shares no blocks, and nothing the platform can
+  query says which happened, so check the volume rather than the logs.
+- **A superuser credential for the platform**, as `DB_ADMIN_URL` is on the
+  main server: it creates and drops databases and roles, takes ownership of
+  restored objects and ends sessions on its own disposable databases.
+- **A maintenance database that exists**, named in the URL's path
+  (`postgres` if the path is empty).
+- **The same encoding, locale and collation provider as the main server.**
+  This is yours to ensure: each copy is created from the preview server's own
+  `template0`, nothing compares the two servers' settings, and a restore that
+  succeeds proves nothing about them. A mismatch can change sort order and
+  text comparison in previews without any error.
+- **Every extension an app's database uses.** A missing one fails the
+  restore, and with it that app's builds.
+- **Network reach from two places.** From the platform Pods: the chart adds
+  that egress rule (`previewPostgresql.namespace`, `podSelector`, `port`),
+  and the server's own ingress policy has to admit them. From preview and
+  shots Pods in the app namespace (`APP_NAMESPACE`): that namespace's egress
+  policy is in the foundation, not in this repository, and the server's
+  ingress has to admit Pods labelled
+  `app.kubernetes.io/managed-by: social-vibecoding-runtime` from it. Until
+  both are in place a preview builds and then cannot reach its database.
+- **One address that resolves the same from both places.** A preview is
+  handed the URL's host and port with its own role and password, so use the
+  server's fully qualified Service name, not a Pod address. The URL it
+  receives ends in `?sslmode=disable`: it connects without TLS, whatever its
+  client's own default would have been.
+- **Enough `max_connections` for the previews.** Each preview database is
+  capped at `STAGING_DB_CONNECTION_LIMIT` (12). The connection-pressure pass
+  reads the preview server's own budget and reclaims idle previews there at
+  90% of it.
+
+Lighter write settings are reasonable on a server whose contents can be
+rebuilt: `synchronous_commit = off`, and `wal_level = minimal` with
+`max_wal_senders = 0`, which CloudNativePG accepts only for a one-instance
+cluster with archiving off. Whether the operator lets `fsync` be turned off
+was not confirmed, and nothing here depends on it. The file-copy strategy
+forces a checkpoint before and after every copy, which is why it is never
+used on the main server.
+
+With PostgreSQL 18 on the preview server and 17 on the main one, previews
+and their checks run on a newer PostgreSQL than production does. That is a
+known cost of the shared-block copy.
+
+### Switching it on
+
+1. Create the server and its credential, and open the two network paths.
+2. Add `STAGING_DB_ADMIN_URL` to the platform Secret
+   (`postgres://<user>:<password>@<host>:<port>/<maintenance database>`). It
+   carries a password: keep it in the Secret, never in plaintext values.
+   The host, port, user, password and database go in the address. The only
+   query parameter accepted is `sslmode`; a
+   URL with any other parameter (`?host=`, `?port=`, `?user=`, `?password=`,
+   `?options=` and so on) is refused as a whole and preview builds fail until
+   it is corrected, because the platform's two database clients would read
+   such a URL as two different servers. **`sslmode` may only be `disable`
+   (or left out): the preview server is reached without TLS**, by the
+   platform, by its `psql`, `pg_dump` and `pg_restore` processes and by each
+   preview, which is how the main server is reached today. Each is told so
+   outright: the child processes get `PGSSLMODE=disable`, the platform's own
+   client is given `ssl: false`, and every database URL handed to a preview,
+   a shots runtime or the shots fixtures ends in `?sslmode=disable`,
+   whichever of the two accepted forms the setting took. Every other mode
+   is refused by name. The reason is that the three clients do not agree on
+   what a mode means (node-postgres verifies the certificate for `require`
+   where libpq does not) or on where the certificate authority comes from,
+   and a server only one of them could reach produced previews that could
+   not open their database. The server must therefore accept plain
+   connections from the platform and the app namespace; one that takes TLS
+   only fails every build, before production is read. TLS with a shared
+   certificate authority for all three clients is a follow-up. For the same reason the address names
+   exactly one host, as a DNS name or an IPv4 address (no host list, no IPv6
+   literal, no socket path), and the user is made of letters, digits and
+   underscores: restored objects are handed from that user to each preview's
+   role by name. The platform's own `PG*` environment variables (`PGSERVICE`,
+   `PGHOSTADDR` and the rest) are not passed to the `psql`, `pg_dump` and
+   `pg_restore` processes that talk to the preview server; the URL is their
+   whole connection. Point it at the server itself, not at a pooler that
+   hands each statement to a different backend: the shared-block copy relies
+   on one session staying on one server.
+   With `secrets.create=true` the chart writes it from `previewPostgresql.*`
+   and `secrets.previewDatabasePassword`.
+3. Set `previewPostgresql.enabled: true` with `namespace`, `podSelector` and
+   `port`, and sync. While `enabled` is false the chart sets the variable to
+   an empty value on the platform, which overrides the key in the Secret, so
+   this is the switch.
+
+From the next platform Pod on, new previews are made on the preview server.
+Each app's template is rebuilt there on its first build, and its old template
+on the main server is dropped by that build. Templates of apps that do not
+build again are dropped by the orphan database pass, which runs every six
+hours, takes at most 50 apps a pass and skips what it cannot drop, so a large
+fleet takes several passes and nothing promises a deadline. A template left
+behind costs disk and nothing else. Previews that already exist stay on the main server
+until they are rebuilt or torn down. `Staging template refreshed` log lines
+carry `server: preview`; `refused a shared-block copy` and `older than
+PostgreSQL 18` say why a server gets plain copies. `STAGING_DB_FILE_CLONE=0`
+turns the shared-block attempt off without moving anything.
+
+### Switching it off
+
+1. Set `previewPostgresql.drain: true` (`STAGING_DB_SERVER_DRAIN=1`) and
+   sync. New previews are made on the main server again. Previews still on
+   the preview server keep working and are still cleaned up there; a preview
+   backing a live vote is rebuilt onto the main server by the heal pass, a
+   few per sweep, and any other is rebuilt the next time somebody opens it.
+   Until then such a preview is reported as needing a rebuild. Builds on the
+   main server do not need the preview server to answer: an old database of
+   the same name there is left for the sweep if it cannot be dropped.
+2. Wait until nothing depends on the preview server. This takes three
+   things, and the log line is only one of them:
+   - **The rollout that set the drain has finished**: every platform Pod now
+     running was started with it. A Pod from before still makes previews on
+     the preview server, and nothing in the line below can see what it is
+     about to start.
+   - **The platform's own count is empty, twice in a row.** Every ten minutes
+     while draining it logs `Preview database server drain: still in use`
+     with what it counted, or `Preview database server drain: no dependent
+     preview, build or shots run found`. It counts every preview runtime
+     that exists, in any state (running, starting, restarting, stopped),
+     whose labels say its database is there; every runtime it could not
+     read; the builds it can see (sessions whose checks are pending in their
+     build phase, on any platform Pod, and this Pod's own builds); every
+     unfinished before & after shots run; and every shots database still on
+     the server. It does not see every build: a rebuild another Pod starts
+     from recovery, for a proposal whose checks commit is already recorded,
+     is in neither count. That is why the rollout comes first (a Pod with the
+     drain setting builds on the main server, so an unseen build adds nothing
+     here) and why one empty line is not enough (a build that was under way
+     shows up as a runtime on the next pass). Wait for the second line on two
+     consecutive passes after the rollout finished.
+   - **A look at the server itself**: `pg_stat_activity` there shows no
+     client on an `app_…` database. This is supporting evidence only. A
+     preview holds no connection between requests or after its pool's idle
+     timeout and still breaks when the server goes.
+3. Then set `previewPostgresql.enabled: false` and sync, and remove the key
+   from the Secret and the server. Do it in that order and without a long
+   gap: once the setting is off the platform no longer looks at that server
+   at all, so a preview built there in the meantime would not be noticed.
+
+Removing the setting at once, without draining, is safe for everything on
+the main server and for building: the platform is back to one server. What
+it leaves behind is on the preview server: previews there keep running for as
+long as the server exists, nothing cleans them up, nothing checks whether
+their database is still there, and once the server is deleted each of them
+answers errors until its next rebuild.
+
+### If the preview server is wiped
+
+Nothing has to be done by hand. The next build of each app finds no template
+and rebuilds it. A preview whose database is gone is detected by looking for
+the exact database its runtime was given, on the server it was made on
+(at the next look, or up to a minute later while an earlier "it is there"
+is still believed, and only when that server answers); the heal pass
+rebuilds the ones backing a live vote,
+a re-run of the checks rebuilds first, and any other is rebuilt when it is
+opened. A preview built before the setting was turned on carries no labels; it
+is on the main server and is not checked. If the server comes back on another version, the next copy sees it:
+the version is read on the connection that makes each copy.
+
+A failed build on the preview server is stored as a platform fault, so it
+keeps being retried on the checks' platform-fault schedule (for up to a day,
+two to thirty minutes apart). What people see has not changed with that: the
+proposal's checks read "Couldn't finish" and the step is shown as the
+author's, as for any checks error, although nothing is asked of them.
+
+## Check runs across platform rollouts
 
 Every merge to the self-app rolls the platform Deployment, and every checks
 run in flight at that moment loses the process that was streaming its capture
 and unit-suite Jobs. The Jobs themselves belong to the cluster and finish
-regardless. `services/check-harvest.js` reads them rather than starting over.
+regardless, and they are read rather than started over.
 
-Each run writes a manifest row to `check_runs` (session, commit, owner
-`hostname:pid`, launch context) before its Jobs are created and heartbeats it
-every `CHECK_RUN_HEARTBEAT_MS` (15s). A row with no heartbeat for
-`CHECK_RUN_ORPHAN_MS` (60s) is an orphan. The leader sweeps once at boot —
-before the stuck-checks reconcile, so a harvestable run is never re-driven as
-stuck — and every `CHECK_HARVEST_SWEEP_MS` (30s) after, at most
-`CHECK_HARVEST_CONCURRENCY` (3) adoptions at a time. An orphan is:
+A preview checks run is the preview machine's `checks.run` work item. Each run
+writes a manifest row to `check_runs` (session, commit, launch context, the
+work item's key) before its Jobs are created and heartbeats it every
+`CHECK_RUN_HEARTBEAT_MS` (15s). When the item's claim is lost (its process
+died, or its lease ran out), the retry of the same item collects the Jobs the
+manifest names (`check-harvest.collectForWorkflow`): a finished Job's log is
+read, a running one is waited on, and the output goes through the same
+settlement a live run ends with. It runs the checks again only when there is
+nothing to read, and never settles without a unit suite that blocks merges.
+A run that starts stops the still-running Jobs of the session's runs for other
+commits (background deletion; their input Secrets go with them).
 
-- **settled** when its Jobs are found by the `preview-run-id` label: a finished
-  Job's log is read, a running one is waited on with progress re-published to
-  the proposal card, and the output goes through the same settlement a live
-  run ends with (same parse, verdict, stores, commit guards, broadcasts);
-- **re-driven immediately** when there is nothing to read — the process died
-  before creating the Jobs, or the Jobs are gone (TTL, or cancelled);
-- **moot** when the session no longer wants the run — decided meanwhile, head
-  moved, session closed, or (under the preview lifecycle) a newer run owns it.
+The repo's unit suite usually starts with the preview build: the machine's
+`checks.unitEarly` launches it under an id derived from the attempt
+(`sv-unit-early-…` Jobs), and the checks run against that attempt reads it,
+from its own process or after a restart. It does not start for a head whose
+last checks errored, or while the cluster already runs as many unit suites as
+the checks queue admits (`EARLY_UNIT_SUITE=0` turns it off). The attempt's
+retirement deletes its Jobs.
 
-A platform process that shuts down hands its rows over first: it stamps
-their heartbeat as long past, so the next leader's boot sweep seats them at
-once instead of a minute later. A run whose process died without doing so is
-still covered: before the stale sweep starts a session over, it looks for that
-session's current run on the cluster. If the capture Job is still running, or
-the run finished less than `CHECKS_STALE_MS` ago, the harvest settles it
-instead. A run that starts stops the still-running Jobs of the session's runs
-for other commits (background deletion; their input Secrets go with them).
-Runs for the same commit are left to finish, because their verdict still
-counts.
-
-The paths that start a run ask the same question first (`runToCollect`): a
-manual "Re-run checks" (or `recheck_change`), a promote or vote-time kick, a
-recheck that would rebuild the preview, the sweeper's preview heal, boot
-recovery, and every capture under the preview lifecycle. While the session
-still waits on that commit's verdict and its run is on the cluster, nothing new
-starts; the button and the tool say the run is still going. Once the verdict is
-stored the manifest is gone and a re-run starts fresh. Only a run whose inputs
-changed (new capture routes or shots for the same commit) replaces it.
-
-Under `PREVIEW_LIFECYCLE_ENABLED` the harvester adopts the run's
-`preview_operations` row first and writes through the same ownership check a
-live run does; a request for a newer revision aborts the harvest. A capture
-for the same revision finds the run under the lifecycle lock and leaves it:
-it cancels only other commits' check Jobs and does not take the row. A build,
-or a forced capture, still cancels every check Job of the session. Outside the
-Kubernetes capture runtime the harvester is a no-op. The stale sweep
-(`CHECKS_STALE_MS`) remains the backstop for rows with no manifest at all.
+The main-watch suite after a direct merge keeps its own hand-over: a platform
+process that shuts down stamps its `check_runs` rows' heartbeat as long past,
+so the next attempt of the main-check machine's `main.suite` work adopts them at once
+instead of a minute later (`main-watch.adoptRun`).
 
 Every capture rechecks the exact deployed revision, image, environment
 fingerprint, completed rollout, application health and public edge before
-starting. Check results and screenshot transactions verify the current run and
-revision under a session row lock. Newer revisions cannot publish older output;
-same-commit recovery after a rebuild can replace an infrastructure-error verdict.
-Manual reruns, unit checks, browser checks, screenshots, PR visuals, progress and
-automatic merging remain supported. Docker retains its existing lifecycle.
-
-Kubernetes rebuilds reconcile the existing Ingress and Service instead of
-deleting them first. This removes the missing-host TLS routing window, but does
-not promise uninterrupted interactive previews during application/database
-replacement. Already-started image builds and database preparation settle before
-ownership passes; obsolete captures are cancelled explicitly. Build artifacts
-remain subject to normal retention. This change does not add Envoy retries.
-
-### Activation and rollback
-
-Apply the additive schema migration with the release. **Do not use an ordinary
-rolling flag change:** a flag-off Pod can bypass the coordinator even if it runs
-the new binary. The chart defaults off to make this transition explicit.
-
-1. Schedule a brief platform maintenance window and pause proposal mutations.
-   Through the installation's GitOps owner, scale the platform to zero and
-   confirm all platform Pods have terminated. Keep app previews and PostgreSQL
-   running; do not delete the preview Ingresses.
-2. With platform replicas still zero, set `platform.previewLifecycleEnabled: true`
-   and select the coordinator-capable release. Confirm the schema hook succeeded.
-3. Restore the normal replica count and resume mutations. Verify a new revision
-   supersedes an active capture, both old check Jobs stop, and the new run
-   produces checks/screenshots for its own revision. Further releases may roll
-   normally while every participating Pod keeps coordination enabled.
-
-Rollback across this boundary uses the same stop-all-platform-Pods procedure.
-Before starting a flag-off/older release, terminate outstanding capture and
-unit-suite Jobs and confirm their Pods have stopped. Retain the additive table.
-The mixed-mode restriction also applies to manually started platform processes.
-
-For local validation, `tests/preview-lifecycle.test.js` uses independent real
-PostgreSQL connections and an isolated temporary schema. Set
-`PREVIEW_LIFECYCLE_TEST_DATABASE_URL` to a disposable test database, or use the
-existing `SQL_CHECK_CONNECTION_URL` supplied by the unit runner. It never falls
-back to the application's `DATABASE_URL`. Kubernetes termination and cancellation
-are covered by `tests/kubernetes-preview-cancellation.test.js` with API doubles.
+starting. Newer revisions cannot publish older output. Kubernetes rebuilds
+reconcile the existing Ingress and Service instead of deleting them first,
+which removes the missing-host TLS routing window; it does not promise
+uninterrupted interactive previews during application/database replacement.
 
 ## Check Jobs, their input Secrets and the worker quota
 
 A checks run creates a capture Job and a unit-suite Job in the worker namespace,
 each with an input Secret the Job owns. Once the run's verdict is stored and
 its `check_runs` manifest cleared, the run deletes its finished Jobs with
-background propagation, which takes their Pods and Secrets too; the harvester
-does the same after settling an orphan. The Jobs' `ttlSecondsAfterFinished`
+background propagation, which takes their Pods and Secrets too; a run
+collected after a lost claim does the same once it settles. The Jobs' `ttlSecondsAfterFinished`
 (3600 s) covers everything else: superseded or failed runs, the main-watch
 suite, and whatever a crash leaves. Keep it at least that long, because it is
-how late a harvest can still read a run after a slow leader handover.
+how late a retry can still read a run after a slow hand-over between processes.
 
-`services/check-retention.js` removes what no owner will. On the leader, every
-15 minutes and at most 50 deletions a pass, it deletes:
+`services/check-retention.js` removes what no owner will. As the `check-retention`
+clock, every 15 minutes and at most 50 deletions a pass, it deletes:
 
 - check input Secrets (`sv-capture-…-input`, `sv-unit-suite-…-input`) with no
   owner, older than two hours, that no Pod or Job in the namespace names;
@@ -355,83 +582,250 @@ worker env Secrets; they are object counts, so headroom costs nothing.
 
 ## Workflow governance machine
 
-`platform.workflowGovernanceEnabled` (default `false`) becomes `WF_GOVERNANCE_ENABLED`.
-When it is on, the governance-proposal machine in `src/workflow/` decides governance
-proposals. The governance-apply ticker and the stale sweeper's Pass 0b then leave those
-proposals alone. `docs/workflows.md` explains the machine and where it runs.
+The governance-proposal machine in `src/workflow/` decides every governance proposal.
+It has no flag: its old paths (the governance-apply ticker, the stale sweeper's
+Pass 0b, the apply functions in `routes/issues.js`) are deleted.
+`docs/workflows.md` explains the machine and where it runs.
 
-- **Where it runs.** The machine runs inside the platform Pod; there is no extra
-  workload. Every Pod listens for outcomes and runs pipeline slots, so it applies its
-  own votes; only the advisory-lock leader runs the timer and service loops and the
-  boot backfill.
-- **Schema.** The schema it needs (`wf_*` tables and triggers) is additive and ships
-  with every release, whether the flag is on or off.
-
-### Activation and rollback
-
-Unlike the coordinated preview lifecycle, an ordinary rolling change is safe in both
-directions. No maintenance window or scale-to-zero is needed.
-
-1. **Set the value.** Set `platform.workflowGovernanceEnabled: true` in the platform's
-   values in the infra repository. Argo CD rolls the Deployment with the same image.
-2. **During the rollout overlap.**
-   - The old Pod may still be the leader and apply proposals the old way.
-   - The machine and the old apply functions both lock the proposal's row, so
-     whichever commits first applies it. The machine ends the other's instance
-     `superseded` (`closed_outside`).
-   - The new Pod applies its own votes and withdrawals at once: its pipeline slots run
-     before it is leader. Only what the leader's loops do (timers, follow-up work, and
-     enrolling proposals opened before the flag) waits until it is elected. A route on
-     a proposal not enrolled yet enrolls it itself.
-3. **Verify.**
-   - **The new Pod's log.** It shows `Workflow runtime started` and, on the leader,
-     `Enrolled open governance proposals` with a count.
-   - **Admin → Workflows.** It lists the enrolled proposals, and its problems panel
-     is empty.
-   - **Votes.** A vote on a test proposal answers at once.
-4. **Watch for old writers.** In production the ownership trigger logs instead of
-   refusing (`WF_OWNERSHIP_MODE` defaults to `log`). Over the following days, the
-   problems panel in Admin → Workflows should show no "written outside its machine"
-   line. One lists the column, how often, and its latest writes: the row, the
-   connection's `application_name` and the statement, which name the code path that
-   still writes a governance proposal outside the machine (`wf_ownership_violations`).
-
-**Rollback.** Set the value back to `false` and let Argo CD roll the Deployment.
-- **What happens to the proposals.** The old paths decide them again. The trigger
-  stops guarding them as soon as the new Pods record the flag off.
-- **Turning it on again later is safe.** A proposal decided or deleted in the
-  meantime ends its instance without being applied twice.
+- **Where it runs.** The machine runs on the conductor's replicas (see "Workflow
+  runtime" below); the web Pods only append votes and wait for the outcome.
+- **A runtime that fails to start ends the process.** With no other path for a
+  governance proposal, a Pod without the workflow runtime exits at boot and
+  Kubernetes restarts it, rather than serving without it.
+- **A conductor whose workflow loops fail to start exits** and is restarted, as for the
+  runtime itself.
+- **Ownership is enforced.** A write to an enrolled governance proposal's status or audit
+  keys from outside the machine is refused (`WF_OWNERSHIP_VIOLATION`). A row is enrolled
+  when it is filed, or
+  by the release machine's adoption if filing failed (`enrollGovernance`).
+- **Rolling back past this release** is no longer possible: every release a rollback
+  could reach postdates it, and the infra values no longer carry
+  `platform.workflowGovernanceEnabled` (Usernode-Labs/infra 352b03d).
+- **Verify after a release.** The Pod's log shows `Workflow runtime started` and, on
+  the conductor that ran the release's adoptions, `Enrolled open governance proposals`
+  when there were any; Admin → Workflows lists the enrolled proposals and its problems
+  panel is empty.
 
 ## Workflow merge-followups machine
 
-`platform.workflowMergeFollowupsEnabled` (default `false`) becomes
-`WF_MERGE_FOLLOWUPS_ENABLED`. When it is on, what follows a merge (production delivery,
-preview teardown, included changes, closing requests, the announcements) is durable work
-of the merge-followups machine, and a change reads live only once production runs it.
-`merge-followup-recovery` and the boot resume of issue-close watches stand down.
+The merge-followups machine in `src/workflow/merge-followups/` runs what follows a merge
+(the production deploy, preview teardown, included changes, closing requests, the
+announcements) as durable work, and a change reads live only once production runs it. It
+has no flag: the old merge tail (`finalizeMerge` and its follow-ups), the
+`merge-followup-recovery` sweep and the boot resume of issue-close watches are deleted.
 `docs/workflows.md` explains the machine.
 
-### Activation and rollback
+- **A merge is only reported.** The proposal machine's merge attempt (`merge.attempt`)
+  tells merge-followups `Merged` in the transition that records GitHub's answer. An
+  answer that never came leaves the proposal `merging` (`unconfirmed`), and it asks
+  GitHub again until GitHub says; the `merged-by-hand` clock also looks on GitHub for
+  merges of promoted rows every six hours (`proposal-scans.js lookMergedByHand`), so a
+  pull request merged by hand is recorded within six hours.
+- **Ownership is enforced.** Only the machine moves a proposal into `merged`, and a write
+  to a merged row's `merged_at`, `merge_commit_sha`, `included_in_session_id` or `live_at`
+  from outside it is refused (`WF_OWNERSHIP_VIOLATION`).
+- **Rolling back past this release** is no longer possible: every release a rollback
+  could reach postdates it, and the infra values no longer carry
+  `platform.workflowMergeFollowupsEnabled` (Usernode-Labs/infra#43).
+- **Verify after a release.** The Pod's log shows `Workflow runtime started` with
+  `merge-followups`; the next merge appears in Admin → Workflows as
+  `merge-followups / session:<id>` and reaches `live`, and the proposal's thread says "is
+  live" after the deploy, not before.
 
-An ordinary rolling change, safe in both directions.
+## Workflow app-delivery machine
 
-1. **Set the value.** Set `platform.workflowMergeFollowupsEnabled: true` in the
-   platform's values in the infra repository. Argo CD rolls the Deployment.
-2. **During the rollout overlap.**
-   - An old Pod may still merge the old way. Once a new Pod has recorded the flag, the
-     ownership trigger logs such an old merge in `wf_ownership_violations`, which is
-     `log` mode in production. The old merge tail then runs as before.
-   - A merge on a new Pod is reported to the machine and finished by the leader's loops.
-3. **Verify.**
-   - **The new Pod's log.** It shows `Workflow runtime started` with `merge-followups`.
-   - **Admin → Workflows.** The next merge appears as `merge-followups / session:<id>`
-     and reaches `live`, and its problems panel is empty.
-   - **The proposal's thread.** It says "is live" after the deploy, not before.
+The app-delivery machine in `src/workflow/app-delivery/` runs every production deploy of
+an app, one at a time per app and at most four at a time across the conductors, for everyone who
+asks (a merge, a secret change, a project's first deploy, main moving, Check for updates,
+Redeploy, a rollover whose image is gone, a demo reset), and heals an app reported down,
+never beside a deploy. It has no flag: each caller used to deploy itself, in its own
+process, with "deploying" in that process's memory; now it records a request and the
+machine deploys. `docs/workflows.md` explains the machine.
 
-**Rollback.** Set the value back to `false`.
-- **New merges** take the old tail again.
-- **Merges the machine already accepted** still finish: the runtime keeps running while
-  they have work left, and stops on a later boot once nothing is left.
+- **Where the deploys run.** `app.deploy` is a work item, run by whichever conductor
+  replica claims it. Each deploy clones the app into that Pod's `/tmp` and builds there,
+  as previews do.
+- **"Deploying" is durable.** It is `apps.deploy_state`, read by every Pod and after a
+  restart; a deploy whose process died is retried after its lease. A deploy that never
+  answers (a hung build or lock) is ended by an admin in Admin → Workflows (`EndDeploy`).
+- **Ownership is enforced.** A write to `apps.deploy_state`, `deploy_started_at` or
+  `deploy_from_sha` from outside the machine is refused (`WF_OWNERSHIP_VIOLATION`).
+- **During the rollout that brings it.** An old Pod still deploys the old way; the
+  cross-process build lock keeps its deploy and the machine's from running on one app at
+  once, and each reads the other's "deploying".
+- **Rolling back past this release.** Older code deploys in each caller again. It still
+  runs a deploy app delivery had under way (it registers the machine while one is), but a
+  request left open after a failed deploy waits: the merge or secret change that asked is
+  version 5, which older code leaves alone, so it is answered once the release comes back.
+  Nothing in the infra values needs keeping for it.
+- **Verify after a release.** The Pod's log shows `Workflow runtime started` with
+  `app-delivery`; the next deploy appears in Admin → Workflows as
+  `app-delivery / app:<id>`, `deploying`, then `idle`, and the version pill spins during
+  the deploy after a page reload, too.
+
+## Workflow preview machine
+
+The preview machine in `src/workflow/preview/` builds, checks and retires every
+proposal's preview, and the App bench studio's previews, as durable work, and records
+who is working on a session. It has no flag: its old paths (the per-process build queue,
+the preview lifecycle, the check harvest's sweep, the in-memory capture seat, the early
+unit suite's module, the turn tails' own builds) are deleted. `docs/workflows.md`
+explains the machine.
+
+- **Where the work runs.** Its builds and checks runs are work items, run by whichever
+  conductor replica claims them, at most ten of each at once across them all. Each build
+  clones the proposal into that Pod's `/tmp` and follows its rollout there, so size
+  `platform.conductor.resources` for the previews one Pod may build at once.
+- **On the cluster.** A preview keeps its per-session Deployment, Service and Ingress
+  (`sv-preview-<appId>-s<sessionId>`). Each attempt has its own env Secret
+  (`<name>-env-a<n>`) and database (one per claim of its build, should a build be claimed
+  again after a crash), and the Deployment carries the annotation
+  `social.usernode.io/preview-attempt`: the newest attempt that wrote it and which claim
+  of its build, as `n.k` (a bare `n` is claim 0). The attempt's Secret carries the same
+  annotation, so an older claim never writes its database back into it. A failed rollout
+  restores the template that served, so the older revision keeps serving. Each platform
+  process also holds one more database connection, for its presence lock.
+- **The sweeps only observe.** The boot heal and the sweeper's heal report a runtime
+  that is gone or stale to the machine, the stuck-checks sweep hands it a row with no
+  verdict, and the reapers ask it to retire; each leaves a session it is building,
+  checking or retrying alone. The orphan-database sweep keeps every database of a
+  session it holds.
+- **Ownership is enforced.** A write to a held session's preview or checks columns from
+  outside the machine is refused (`WF_OWNERSHIP_VIOLATION`). The staging seeds in
+  `migrate.js` leave a row it holds alone.
+- **Rolling back past this release** is no longer possible: every release a rollback
+  could reach postdates it, and the infra values no longer carry
+  `platform.workflowPreviewsEnabled` (Usernode-Labs/infra 352b03d).
+- **Verify after a release.** The Pod's log shows `Workflow runtime started` listing
+  `preview`; Admin → Workflows shows each new revision as `preview / session:<id>` going
+  through `preparing` and `checking` to `settled`, with an empty problems panel; and
+  `kubectl -n social-apps get secrets` shows `-env-a<n>` Secrets only for attempts that
+  serve or are being prepared.
+
+## Workflow runtime
+
+The workflow (docs/workflows.md) runs on the conductor's replicas
+(`platform.conductor.replicas`, two in production, set in the infra values): every
+replica runs every machine's pipeline slots, timers and work. No process leads: what the
+leader ran is workflow work or a clock (`src/workflow/clock/`), and a person's turn is the
+`turn` machine's work item. The web Pods decide nothing; they append and wait.
+
+- **Limits hold across the replicas.** A work kind's limit (four deploys, four shots
+  copy builds, ten preview builds, ...) counts every replica's running items, a draining
+  one's too. A second replica is failover, not more at once.
+- **A node lost** with a conductor: its database sessions are reaped within about 40
+  seconds and its work is claimed by the other replica after its lease (one to two
+  minutes). The conductors spread across nodes (`topologySpreadConstraints`, best
+  effort), and the PodDisruptionBudget lets a drain evict one at a time.
+- **Its own database pool** is `platform.conductor.dbPoolMax` (30), beside the
+  runtime's `WF_POOL_MAX` (10). A web Pod's runtime pool is 2.
+- **What a release owes** an older one (the boot adoptions) runs once per release, as the
+  `release` machine's work; Admin → Workflows shows `release / release:<sha>` and what each
+  adoption did (an adoption that kept failing, its error; the others still ran).
+- **Verify after a release.** Both conductors log `Workflow runtime started`; Admin →
+  Workflows names them under "Needs a person" ("Run by …"), and `release:<sha>` reaches
+  `done`.
+
+### Workflow alerts
+
+The conductors serve the workflow's metrics on `platform.conductor.metricsPort` (9464,
+`GET /metrics`, not exposed by the Service), read from Postgres on each scrape, on one
+connection with a 5-second limit. The chart's PodMonitor (`<fullname>-conductor-workflow`)
+has Prometheus scrape them, admitted by the platform's network policy from
+`monitoring.namespace`, and its PrometheusRule alerts. Both render only on a cluster with
+the Prometheus Operator's kinds (`monitoring.coreos.com/v1`, which Argo CD passes to Helm):
+
+| Alert | When | Severity |
+|---|---|---|
+| `SocialWorkflowNoConductor` | no conductor available for 2 minutes | critical |
+| `SocialWorkflowConductorUnderStrength` | fewer available than asked for, 15 minutes | warning |
+| `SocialWorkflowConductorRestarting` | more than three restarts in 30 minutes | warning |
+| `SocialWorkflowWorkNobodyTakes` | work a conductor could take has waited over 5 minutes, for 5 minutes | critical |
+| `SocialWorkflowEventsNotDecided` | an event has waited over 2 minutes to be decided, for 5 minutes | critical |
+| `SocialWorkflowWorkKeepsLapsing` | one item's lease lapsed three times in an hour (its process died, hung or lost the database) | warning |
+| `SocialWorkflowInstancesFlagged` | instances faulted or stalled for 15 minutes | warning |
+| `SocialWorkflowDeadlinesOverdue` | deadlines passed without firing, 10 minutes | warning |
+| `SocialWorkflowSlowDecisions` | people's events take over 5 s to be decided (p95), 15 minutes | warning |
+
+Alertmanager here is default-deny: these reach Discord only once the infra repository's
+route allowlist names them (`alertname =~ "SocialWorkflow.*"`, namespace
+`social-platform`). Work waiting behind a kind's limit, or for a newer release's
+process, is not "nobody takes it". Admin → Workflows shows the same signs under "Needs a
+person".
+
+**Rolling back past this release.** A rollback past #5714 (turns as workflow work, the
+leader gone) is not supported: roadmap item 3.2 deleted what a release from before it needed from
+the releases beside it (the holds it read in `process_holds`, its conversations' claims
+renewed, its Stop forward, the turn-spend mark). A rollback to a release that contains
+#5714 needs one step (the first item below): its migration Job recreates what it still names (`leader_sweeps`,
+the campaign lease columns, `apps.creating_redrives`, all empty), and this release keeps
+what it reads (`process_holds`, `shots_eval_trials.proxy_cents`, the `apps.creating_owner`
+and `starter_images.owner` columns, `apps.creating_owner` defaulting to `workflow` so its
+insert trigger starts every project). What it does with this release's state:
+
+- The `turn` instances this release wrote are at version 3 (a change's dev chat turn that
+  did not end its own way owes `turn.repair`), which that release leaves alone: a person's
+  turn on them waits. Once no process of this release is live (`platform_processes`), lower
+  them; their data is the same shape, and their `turn.repair` work waits unclaimed (on a
+  roll forward, one owed more than six hours earlier is skipped). Lower them before any
+  older release's rollback step, whose SQL names version 2:
+
+  ```sql
+  BEGIN; SET LOCAL app.wf_writer = 'transition';
+  UPDATE wf_instances SET machine_version = 2 WHERE machine = 'turn' AND machine_version = 3;
+  COMMIT;
+  ```
+- Turns this release recorded carry no turn-spend mark, so it keeps none of their calls: a
+  turn that ends without Claude Code's report is billed nothing for them.
+- A ready-made app's image whose build a process of this release was cut in reads
+  `building` until an admin presses Rebuild (Admin › Templates).
+
+## State that decides, on the workflow (roadmap item 3)
+
+This release moved what a process kept in memory and decided from onto the workflow and
+Postgres: consequences owed by the transaction that decides them (`Voted`, `MailOwed`,
+`PlanOwed`, `DiagramStored`, `ConflictResolved` from the measurement, a turn's stalled
+notice and name), shared rate limits (`rate_limit_hits`), wallet challenges and the
+waitlist's connect states in tables, the wallet-link poller as the `wallet-links` clock,
+the Workshop's debounce on its row, the admin's fleet jobs as on-demand clocks, the
+database export's claim and ticket on its `db_exports` row, report and dictation claims,
+and the hand-off's ordering under the proposal lock. `docs/workflows.md` explains each.
+
+- **During the rollout.** Events an older conductor refuses as unknown are asked again
+  once no older workflow process serves (the `reask-refused` clock). An admin's rollover
+  or "reap previews now" is refused while an older workflow process serves ("a platform
+  release is rolling out"). A wallet challenge, a waitlist connect round trip or an export
+  ticket started on one build and finished on the other fails, and the person tries
+  again. An older web Pod's rollover can run beside the new clock's: the build lock takes
+  each app in turn.
+- **Rolling back past this release.** Roll forward instead when you can. Older code
+  leaves alone the instances this release wrote: `turn`, `bot-change` and `app-creation`
+  at version 2, `proposal` at version 5 (their conversations, changes and projects stop
+  moving). For a rollback that lasts, once no process of this release is live
+  (`platform_processes`), lower them; their data is the same shape. A proposal with a
+  diagram move under way or queued stays at version 5 (older code has no handler for
+  `pr.diagram`, and its GitHub moves would wait behind it) and moves again on the roll
+  forward:
+
+  ```sql
+  BEGIN; SET LOCAL app.wf_writer = 'transition';
+  UPDATE wf_instances SET machine_version = 1
+   WHERE machine IN ('turn', 'bot-change', 'app-creation') AND machine_version = 2;
+  UPDATE wf_instances SET machine_version = 4
+   WHERE machine = 'proposal' AND machine_version = 5
+     AND COALESCE(data->'pr'->>'running', '') NOT LIKE 'diagram:%'
+     AND NOT COALESCE(data->'pr'->'next' @> '[{"kind": "pr.diagram"}]'::jsonb, FALSE);
+  DELETE FROM app_report_ai WHERE input_hash = '';
+  COMMIT;
+  ```
+
+  The last line removes a report generation's claim row, which older code would show as
+  an empty report. Work of this release's kinds (`dm.mail`, `bot.tellApproved`,
+  `turn.stalled`, `turn.name`, `app.plan`, `app.earlyLook`, the new clocks' runs) waits
+  unclaimed; on the roll forward a notice owed more than six hours earlier, and a fleet
+  job asked more than six hours earlier, is skipped rather than said or run late. Older
+  code's boot marks a database export this release was streaming interrupted. Nothing
+  in the infra values needs keeping for it.
 
 ## Read-only inventory and logs
 
@@ -509,6 +903,15 @@ budget would prevent the intended check concurrency. Reserve platform CPU
 separately through the installation's `platform.resources.requests.cpu`, with
 namespace quota headroom for rolling-update overlap and migration.
 
+`CHECK_NODE_POOL` (default empty, chart `config.checkNodePool`) replaces that
+spread with a preference for a dedicated node pool, given as the pool nodes'
+label `key=value`. The pool's nodes carry the label and the same pair as a
+`NoSchedule` taint; check Pods tolerate the taint and prefer the label, and
+fall back to the other nodes when the pool is full or down. The worker
+namespace's CPU-request quota still bounds them wherever they run, so raise it
+with the pool's capacity. To see where checks ran:
+`kubectl -n social-workers get pods -l social.usernode.io/workload=check -o wide`.
+
 Self-app previews (`USERNODE_ENV=staging`) do not build worker images, inspect
 Docker or Kubernetes workloads, or read the parent's deployment status. Their
 status API reports `runtimeKind: preview` and `runtimeAvailable: false`; fleet
@@ -520,6 +923,48 @@ The authorized `usernode-debug containers` and `usernode-debug logs <name>`
 interfaces accept managed runtime names such as `sv-worker-s42` and
 `sv-preview-7-s42`. Their inventory includes readiness but leaves CPU/memory
 usage null when measured usage is unavailable.
+
+## IP address retention
+
+The platform keeps a person's IP address for `IP_RETENTION_DAYS` (default
+180, six months; whole days from 1 to 3650; any other value keeps 180). The
+privacy notice states the same period, so change the two together. The `ip-retention`
+clock clears older addresses once a day (`src/services/ip-retention.js`
+lists each column) and keeps the rows. A pass that cleared anything logs
+`Cleared expired IP addresses` with a count per table.
+
+The database is only one copy. The platform also writes a client address into a
+few stdout lines (rate-limit refusals, internal-route refusals, patch-upload
+refusals, database-export audit lines), and those live wherever container
+output is kept. Nothing in this repository ships logs anywhere, so these steps
+are the cluster's:
+
+1. **Kubelet container logs.** Kubelet rotates by size only, so bound the
+   size. On Talos, add to the machine config of every node and apply it:
+
+   ```yaml
+   machine:
+     kubelet:
+       extraConfig:
+         containerLogMaxSize: 10Mi
+         containerLogMaxFiles: 3
+   ```
+
+   (`talosctl -n NODE patch machineconfig --patch @kubelet-logs.yaml`). On
+   the platform 30Mi is days of output, not months, and a container's logs
+   also go when its Pod is deleted, which every release does. Check with
+   `kubectl get --raw /api/v1/nodes/NODE/proxy/configz` that the two values
+   took.
+2. **Any log collector** (Loki, Vector, Fluent Bit, a hosted service) set up
+   outside this repository must keep platform logs no longer than
+   `IP_RETENTION_DAYS`. For Loki: `limits_config.retention_period: 4320h`
+   with `compactor.retention_enabled: true`.
+3. **Database backups** hold the addresses that were in the database on the
+   day of the backup. Keep backups no longer than the period plus the backup
+   rotation, or say so in the notice.
+
+The in-memory log ring behind `/api/status` holds the last 200 lines and is
+gone when the process restarts.
 
 ## Build and startup failures
 
@@ -590,24 +1035,27 @@ Before turning it on:
 2. `PLATFORM_INTERNAL_URL` must be set (the chart sets it from
    `config.internalUrl`).
 
-Turning it on: set `config.appGate: "on"` and sync. The platform leader brings
-the gate up, waits for it to be ready, and only then repoints every managed
-Ingress's catch-all path at it. If the gate does not come up, no Ingress is
+Turning it on: set `config.appGate: "on"` and sync. The app-gate clock (a
+workflow job only the newest build runs, every ten minutes) brings the gate
+up, waits for it to be ready, and only then repoints every managed Ingress's
+catch-all path at it. If the gate does not come up, no Ingress is
 touched. New deploys follow the same rule.
 
 Check: `kubectl -n social-apps get deploy usernode-app-gate`, then open a
 private app's own address signed out (expect the platform's view of the app)
 and signed in (expect the app, signed in).
 
-Turning it off, the fallback: set `config.appGate: "off"` and sync. The
-leader repoints every Ingress straight back to its own Service on boot. In an
-incident, without waiting for a sync:
+Turning it off, the fallback: set `config.appGate: "off"` and sync. Within
+ten minutes of the new build serving, the app-gate clock repoints every
+Ingress straight back to its own Service. An older build still running during
+the rollout never routes them back through the gate, and a rollback is
+applied the same way. In an incident, without waiting for a sync:
 
 ```sh
 kubectl -n social-platform exec deploy/social-vibecoding -- node scripts/app-gate-switch.js off
 ```
 
-This applies at once. Then set `config.appGate: "off"` too, or the next boot
-or app deploy routes through the gate again. `config.appHostSignin: "off"`
+This applies at once. Then set `config.appGate: "off"` too, or the clock's
+next run, or an app deploy, routes through the gate again. `config.appHostSignin: "off"`
 (`APP_HOST_SIGNIN`) separately turns off signing people in at an app's own
 address, on both runtimes; the gate still keeps private apps members-only.

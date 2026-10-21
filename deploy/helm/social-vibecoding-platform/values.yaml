@@ -16,22 +16,59 @@ release:
 
 platform:
   enabled: true
-  # Activation/rollback requires draining all flag-off/on platform Pods;
-  # see docs/kubernetes-operations.md. Mixed coordination modes are unsafe.
-  previewLifecycleEnabled: false
   # Before & after shots are on by default. Set false only as an emergency
   # kill switch; legacy default-root screenshots stay suppressed. This was
   # visualEvidenceV2Enabled before the rename; that key is no longer read.
   shotsEnabled: true
-  # The workflow governance-proposal machine decides governance proposals
-  # (docs/workflows.md). A rolling change is safe in both directions; see
-  # docs/kubernetes-operations.md.
-  workflowGovernanceEnabled: false
-  # The workflow merge-followups machine runs what follows a merge
-  # (docs/workflows.md). A rolling change is safe in both directions; see
-  # docs/kubernetes-operations.md.
-  workflowMergeFollowupsEnabled: false
+  # How long a platform Pod a release replaced keeps finishing the work it
+  # started (turns and what follows them, previews, checks, shots runs,
+  # merges) before it hands the rest over and exits. It exits as soon as it
+  # holds nothing, so this is a ceiling, not a cost; the Pod's grace period
+  # is this plus a minute (docs/plans/draining-releases.md).
+  drainMinutes: 40
+  # How many replaced Pods may finish work at once, beside the one serving.
+  # When releases come faster than work finishes, the oldest hands its work
+  # over first rather than keep one Pod per release.
+  drainingMax: 2
+  # What a replaced Pod keeps while it finishes its work: it starts nothing
+  # new, so its pools shrink to these (DRAIN_DB_POOL_MAX, DRAIN_WF_POOL_MAX,
+  # DB_ADMIN_CONNECTIONS_DRAINING). The connection budget
+  # (postgresql.platformConnections) counts drainingMax of them per replica
+  # at these sizes.
+  drainPools:
+    dbPoolMax: 4
+    wfPoolMax: 2
+    databaseOperations: 1
   replicas: 1
+  # The web and conductor split (docs/plans/web-and-conductor.md). On, the
+  # Pods above serve people's requests, never lead and decide nothing
+  # (PROCESS_ROLE=web: they append and wait for outcomes), and a Deployment
+  # of its own runs the conductor (PROCESS_ROLE=conductor): the workflow
+  # (every machine's pipeline slots, timers and work, docs/workflows.md) on
+  # every replica, and the leader's remaining work (its timers, sweeps,
+  # bench lane) on the one that leads, on Pods the Service sends no requests
+  # to. Off, the Pods above do everything, as they always did. Either way
+  # round, the Service's selector changes only after the Deployments are
+  # healthy (its Argo CD sync wave), so the release that flips it keeps serving.
+  conductor:
+    enabled: true
+    # Each replica runs the workflow; a kind's work limit holds across them
+    # all, so a second one is for failover, not more at once. One leads.
+    replicas: 1
+    # Empty: the platform's resources above.
+    resources: {}
+    # Its own request pool (DB_POOL_MAX): it serves nobody's requests.
+    dbPoolMax: 30
+    # Its workflow pool (WF_POOL_MAX): the pipeline slots, the outcome
+    # listener, work leases and results.
+    wfPoolMax: 10
+    # db-manager's database operations on the main server at once (a clone,
+    # a teardown, a restore; DB_ADMIN_CONNECTIONS_MAX), each a connection or
+    # two outside the pools.
+    databaseOperations: 4
+    # The workflow's metrics (GET /metrics, src/workflow/metrics.ts), on a
+    # port of their own that the Service does not expose.
+    metricsPort: 9464
   image:
     repository: ghcr.io/replace-me/social-vibecoding-platform
     digest: ""
@@ -77,6 +114,14 @@ postgresql:
   database: usernode
   applicationDatabase: app_usernode_2d5619
   username: usernode
+  # The connection budget. The connections the main server keeps from
+  # ordinary roles (its reserved_connections): the child apps cannot take
+  # them, and the platform's user, a superuser, is never held to them.
+  # The chart refuses pools that could open more than this at once: every
+  # role's serving Pods plus one more each for a rollout's surge, drainingMax
+  # replaced Pods per replica at platform.drainPools, and the migration Job.
+  # 0 checks nothing (the bundled server, a local cluster).
+  platformConnections: 0
   storage:
     size: 50Gi
     storageClassName: openebs-lvm-retain
@@ -89,8 +134,40 @@ postgresql:
       memory: 4Gi
   sharedMemorySizeLimit: 1Gi
 
+# A second PostgreSQL server that holds preview databases only: the redacted
+# staging templates, each preview's copy, and the copies before & after shots
+# use. Off by default, and with it off nothing changes. The chart does not
+# create the server; docs/kubernetes-operations.md ("A separate server for
+# preview databases") lists what the cluster has to provide and how to switch
+# it on and off.
+#
+# The platform reads the server's address and credential from
+# STAGING_DB_ADMIN_URL. With secrets.create=true the chart writes it from the
+# values below and secrets.previewDatabasePassword; with an existing Secret,
+# add that key to it yourself. Either way `enabled` is the switch: while it
+# is false the chart sets STAGING_DB_ADMIN_URL to an empty value on the
+# platform, which overrides a key left in the Secret.
+previewPostgresql:
+  enabled: false
+  # First step of switching back: new preview databases are made on the main
+  # server again while the ones already on this server are still cleaned up.
+  # Set enabled=false once those previews have expired.
+  drain: false
+  host: ""
+  port: 5432
+  # Selects the server's Pods for the platform's egress. Leave namespace
+  # empty when it runs in the release namespace.
+  namespace: ""
+  podSelector: {}
+  # The database administrative statements connect to; it must exist.
+  database: postgres
+  username: ""
+
 migration:
   enabled: true
+  # The migration Job's pool (DB_POOL_MAX); it also opens one administrative
+  # connection and a psql. It runs beside every Pod of a rollout.
+  dbPoolMax: 4
   activeDeadlineSeconds: 1800
   ttlSecondsAfterFinished: 3600
   backoffLimit: 1
@@ -105,7 +182,8 @@ migration:
       ephemeral-storage: 2Gi
 
 config:
-  # Prefer the external CNPG primary's node for previews, with normal scheduler
+  # Prefer the external CNPG primary's zone for previews, production apps and
+  # the platform's own Pods (web and conductor), with normal scheduler
   # fallback. Uses postgresql.namespace and podSelector["cnpg.io/cluster"].
   # No effect for bundled PostgreSQL or external databases without that label.
   previewFollowDatabasePrimary: true
@@ -142,6 +220,19 @@ config:
   internalUrl: http://social-vibecoding.social-platform.svc.cluster.local:3000
   logLevel: INFO
   workerMemory: 2g
+  # A worker on the platform's own repository (its agent boots the whole
+  # platform and a browser): 2g OOM-killed most of its bot builds that died.
+  workerMemoryPlatformRepo: 4g
+  # Platform signals (src/services/platform-signals.js): every problem the
+  # platform detects in itself becomes one request on Homeroom's board.
+  # `mode`: shadow keeps the rows the topic pages and figures read and files
+  # nothing; file files the requests; off does nothing. `kinds`: a comma list
+  # of the kinds allowed to file (empty: every kind), so a noisy one can go
+  # back to shadow alone. `bot`: "off" leaves every request to people.
+  platformSignals:
+    mode: shadow
+    kinds: ""
+    bot: "on"
   workerCpus: "2"
   captureMemory: 6g
   captureCpus: "8"
@@ -150,8 +241,19 @@ config:
   # built. Main-watch's run of main has one slot besides these. 0 turns the
   # queue off. See the chart README.
   checksMaxConcurrentRuns: 4
+  # A dedicated node pool for check Jobs, as the pool nodes' label key=value
+  # (for example "usernodelabs.org/node-pool=cpu-heavy"). Checks tolerate a
+  # NoSchedule taint with the same pair and prefer those nodes, falling back
+  # to the others when the pool is full or down. Empty keeps the default
+  # spread over every node. See the chart README.
+  checkNodePool: ""
   # Match application defaults here; each cluster declares its own capacity.
+  # The web Pods' pools (the conductor's are platform.conductor's). With the
+  # conductor off, the platform Pods do its work and take its wfPoolMax and
+  # databaseOperations.
   dbPoolMax: 10
+  wfPoolMax: 2
+  databaseOperations: 2
   maxGlobalSessions: 25
   maxUserSessions: 3
   maxUserPromotedSessions: 5
@@ -165,6 +267,8 @@ secrets:
   create: false
   existingSecret: social-vibecoding
   databasePassword: ""
+  # The preview database server's credential (previewPostgresql above).
+  previewDatabasePassword: ""
   adminUsername: ""
   adminPassword: ""
   sessionSecret: ""
@@ -172,6 +276,9 @@ secrets:
   iframeJwtPrivateKey: ""
   iframeJwtPublicKey: ""
   workerJwtSecret: ""
+  # Alertmanager's bearer token for /api/internal/alerts. Empty turns the
+  # route off (503). The same value goes in the infra repo's receiver.
+  alertmanagerWebhookToken: ""
   edgeJwtSecret: ""
   topochainPartnerApiKey: ""
   githubAppId: ""
@@ -240,10 +347,24 @@ networkPolicy:
   internalCallerNamespaces:
     - social-apps
     - social-workers
+    # Alertmanager's `homeroom` receiver posts infra alerts to
+    # /api/internal/alerts (src/routes/alerts-webhook.js), which checks its
+    # token.
+    - monitoring
   # Generated applications connect directly to their dedicated PostgreSQL
   # databases using per-database roles. Workers do not require database access.
   databaseCallerNamespaces:
     - social-apps
 
+# The workflow's metrics and alerts (docs/kubernetes-operations.md,
+# "Workflow alerts"): a PodMonitor for the conductor's metrics port and a
+# PrometheusRule, picked up by the cluster's kube-prometheus-stack, whose
+# Alertmanager routes them.
+monitoring:
+  enabled: true
+  # The `release` label the Prometheus Operator selects monitors and rules by.
+  prometheusRelease: kube-prometheus-stack
+  # The namespace Prometheus scrapes from (admitted on the metrics port).
+  namespace: monitoring
 podDisruptionBudget:
   enabled: true

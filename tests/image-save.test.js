@@ -15,6 +15,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { loadTsx } = require('./lib/render-tsx');
+const { message } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
@@ -153,7 +154,7 @@ test('the app saves the picture itself when its build can, and says so', async (
   } finally { restore(); resetSaveImageProbe(); }
 });
 
-test('an app build with no save and no share sheet offers nothing, and never a dead link', async () => {
+test('an app build with no save and no share sheet leaves the menu line out, and its Download says to update', async () => {
   const { saveImage, canSaveImage, resetSaveImageProbe } = loadTsx(SAVE);
   resetSaveImageProbe();
   const { log, restore } = stage({ native: true, capabilities: [] });
@@ -161,7 +162,8 @@ test('an app build with no save and no share sheet offers nothing, and never a d
     assert.equal(canSaveImage(shot.src), false);
     assert.equal(await saveImage(shot), 'failed');
     assert.deepEqual(log.clicked, [], 'a download link goes nowhere in the webview');
-    assert.deepEqual(log.toasts, ['Couldn’t download this image.']);
+    assert.deepEqual(log.toasts, [message('messages:imageSave.updateApp')]);
+    assert.match(log.toasts[0], /Update the app/);
   } finally { restore(); resetSaveImageProbe(); }
 });
 
@@ -175,7 +177,7 @@ test('a picture that will not load (a blocked sender: 404) says it could not be 
   } finally { restore(); }
 });
 
-test('a picture on another site is not offered: the viewer keeps Open original', () => {
+test('a picture on another site stays out of the message menu', () => {
   const { canSaveImage, downloadableImages } = loadTsx(SAVE);
   const { restore } = stage();
   try {
@@ -185,12 +187,42 @@ test('a picture on another site is not offered: the viewer keeps Open original',
   } finally { restore(); }
 });
 
+test('the viewer saves a picture on another site as a blob, fetched without this site\'s cookie (#4654)', async () => {
+  const { saveImage } = loadTsx(SAVE);
+  const { log, restore } = stage();
+  try {
+    const remote = { src: 'https://files.example/app-files/abc', name: 'poster.png' };
+    assert.equal(await saveImage(remote), 'downloaded');
+    assert.deepEqual(log.fetched.map((f) => [f.url, f.opts.mode, f.opts.credentials]),
+      [['https://files.example/app-files/abc', 'cors', 'omit']]);
+    assert.deepEqual(log.clicked, [{ href: 'blob:app.example/1', download: 'poster.png' }]);
+    assert.deepEqual(log.toasts, []);
+  } finally { restore(); }
+});
+
+test('a picture on another site that refuses the fetch opens as its original in a new tab', async () => {
+  const { saveImage } = loadTsx(SAVE);
+  const { log, restore } = stage();
+  global.fetch = async () => { throw new TypeError('Failed to fetch'); };
+  try {
+    const remote = { src: 'https://github.com/user-attachments/assets/1', name: 'shot' };
+    assert.equal(await saveImage(remote), 'opened');
+    assert.deepEqual(log.clicked, [{ href: 'https://github.com/user-attachments/assets/1', download: undefined }]);
+    assert.deepEqual(log.toasts, []);
+  } finally { restore(); }
+});
+
 test('the viewer\'s Download is a button that saves, held still on the picture saves too, and a swipe still closes', () => {
   const src = read(VIEWER);
   assert.match(src, /<button\n\s*type="button"\n\s*className=\{`\$\{pill\} disabled:opacity-70`\}\n\s*disabled=\{busy\}[\s\S]*?data-image-viewer-download=""\n\s*onClick=\{download\}/);
-  assert.match(src, /\{busy \? 'Downloading…' : tapAgain \? 'Tap to save' : 'Download'\}/);
+  assert.match(src, /\{busy \? t\('messages:imageViewer\.downloading'\) : tapAgain \? t\('messages:imageViewer\.tapToSave'\) : t\('messages:imageViewer\.download'\)\}/);
+  assert.equal(message('messages:imageViewer.downloading'), 'Downloading…');
+  assert.equal(message('messages:imageViewer.tapToSave'), 'Tap to save');
+  assert.equal(message('messages:imageViewer.download'), 'Download');
   assert.match(src, /void saveImage\(\{ src, name: alt \}\)/);
-  assert.match(src, /\) : canSave \? \(/, 'drawn only where there is a road');
+  // #4654: drawn for every picture, beside ✕ at the right of the top bar.
+  assert.doesNotMatch(src, /\) : canSave \? \(/, 'never hidden for want of a road');
+  assert.match(src, /justify-end gap-3[\s\S]*?data-image-viewer-download=""[\s\S]*?data-image-viewer-close=""/);
   // The hold: still for HOLD_SAVE_MS, cancelled by movement, and the share
   // sheet waits for the finger to lift (the tap a browser requires).
   const { HOLD_SAVE_MS } = loadTsx(VIEWER);
@@ -232,6 +264,7 @@ test('a conversation message builds the same line from its picture attachments',
   assert.match(row, /const images = \(message\.attachments \|\| \[\]\)\.filter\(\(att\) => att\.contentType\.startsWith\('image\/'\)\);/);
   assert.match(row, /useCanSaveImage\(images\[0\]\?\.url \|\| ''\);/);
   assert.match(row, /const pictures = downloadableImages\(images\.map\(\(att\) => \(\{ src: att\.url, name: att\.name \}\)\)\);\n\s*if \(pictures\.length\) items\.push\(\{ key: 'download', label: downloadLabel\(pictures\.length\), icon: DownloadIcon, onSelect: \(\) => \{ void saveImages\(pictures\); \} \}\);/);
-  const copyAt = row.indexOf("key: 'copy', label: 'Copy text'");
+  assert.equal(message('messages:row.menu.copyText'), 'Copy text');
+  const copyAt = row.indexOf("key: 'copy', label: t('messages:row.menu.copyText')");
   assert.ok(copyAt > 0 && row.indexOf("key: 'download'") > copyAt, 'right after Copy text');
 });

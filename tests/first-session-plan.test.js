@@ -20,6 +20,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
+const { message } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
@@ -55,9 +56,9 @@ test('the made screen reads the project under `app`, past the service worker\'s 
   // runs it against the real route).
   const { madeAppOf, madeAppUrl, waitingPlan } = loadTsx(`${DIR}/made.tsx`);
   const fv = { step: 3, of: 7, line: 'plan', ready: false, plan: PLAN };
-  assert.deepEqual(madeAppOf({ app: { status: 'running', first_version: fv } }), { firstVersion: fv, status: 'running' });
+  assert.deepEqual(madeAppOf({ app: { status: 'running', first_version: fv } }), { firstVersion: fv, status: 'running', phase: null });
   assert.deepEqual(waitingPlan(madeAppOf({ app: { first_version: fv } }).firstVersion), PLAN);
-  assert.deepEqual(madeAppOf({ app: { status: 'creating' } }), { firstVersion: null, status: 'creating' });
+  assert.deepEqual(madeAppOf({ app: { status: 'creating' } }), { firstVersion: null, status: 'creating', phase: null });
   assert.equal(madeAppOf({ first_version: fv, status: 'running' }), null, 'a bare record is not the route\'s answer');
   assert.equal(madeAppOf(null), null);
   assert.equal(madeAppOf({ error: 'App not found' }), null);
@@ -71,13 +72,13 @@ test('the made screen reads the project under `app`, past the service worker\'s 
     'the plain read is the boot lane\'s, served from cache first');
   const src = read(`${DIR}/made.tsx`);
   assert.match(src, /fetch\(madeAppUrl\(made\.slug\), \{ credentials: 'same-origin', cache: 'no-store' \}\)/);
-  assert.match(src, /const app = madeAppOf\(body\);\s+if \(live && app\) \{\s+setFv\(app\.firstVersion\);/);
+  assert.match(src, /const app = madeAppOf\(body\);\s+if \(live && app\) \{\s+setReadOnce\(true\);\s+setFv\(app\.firstVersion\);/);
   assert.ok(!/setFv\(app\.first_version/.test(src), 'never the top of the answer');
 });
 
 test('a waiting plan is one small "Needs you" card under the project, with the way to the chat', () => {
   const { PlanWaitsCard, PLAN_LABEL, planWaitsLine } = loadTsx(`${DIR}/made.tsx`);
-  assert.equal(PLAN_LABEL, 'Needs you');
+  assert.equal(message(PLAN_LABEL), 'Needs you');
   assert.equal(planWaitsLine('Plant Pal'), 'Homeroom bot has a plan for Plant Pal');
   let opened = 0;
   const html = renderToHtml(createElement(PlanWaitsCard, { name: 'Plant Pal', onOpenChat() { opened += 1; } }));
@@ -90,14 +91,16 @@ test('a waiting plan is one small "Needs you" card under the project, with the w
   // The plan itself, and its Build it, are the chat's.
   assert.doesNotMatch(html, /Build it|data-bot-plan|<li>/);
   assert.equal(opened, 0);
-  for (const words of [PLAN_LABEL, planWaitsLine('Plant Pal')]) assert.ok(!/—/.test(words), words);
+  for (const words of [message(PLAN_LABEL), planWaitsLine('Plant Pal')]) assert.ok(!/—/.test(words), words);
   const src = read(`${DIR}/made.tsx`);
   assert.doesNotMatch(src, /PlanCardView|decideBotAction|PlanSection|Build it'/, 'the made screen decides nothing');
   // Under the project card, never above it, so the sketch does not move when it lands.
   // (Not over a setup that stopped: its own card is the one thing to do then.)
   // The first session draws none (the plan waits until the tour ends, #4041);
   // from Create, which has no tour, it is the way to the chat.
-  const card = src.indexOf('{plan && !stalled && fromCreate ? <PlanWaitsCard');
+  // 13 Oct 2026: not while the made screen asks the plan's questions itself
+  // (tests/first-version-early-plan.test.js).
+  const card = src.indexOf('{plan && !stalled && fromCreate && !asked ? <PlanWaitsCard');
   assert.ok(card > src.indexOf('<SketchCard made='), 'after the project card');
   assert.ok(card < src.indexOf('data-first-session-hint='), 'before the invite line');
   assert.match(src, /onOpenChat=\{\(\) => onOpenChat\(plan\.conversationId \?\? made\.conversationId\)\}/);
@@ -112,11 +115,16 @@ test('while the plan waits, the build\'s note says so instead of promising a mes
   // Under the card of the idea (./sketch-card.tsx) only when it has something
   // to say, and always in the plain card without one. The sketch's caption
   // calling it the real app is gone.
-  assert.match(src, /<SketchCard made=\{made\} sketch=\{sketch\} line=\{line\} note=\{note\} \/>/);
-  assert.match(src, /<p className="mt-1 text-\[13px\] text-zinc-500 dark:text-zinc-400">\{note\}<\/p>/);
+  // N4 (13 Oct 2026): with the stage's own words and how long it has run.
+  // (Run six: the line only while nothing else on the screen says where it is.)
+  assert.match(src, /<SketchCard made=\{made\} sketch=\{sketch\} line=\{ownLine \? line : null\} note=\{note\} lineWords=\{named\.words\} lineNote=\{named\.note\} band=\{appScreen\} bandClassName=\{APP_BAND\} bandCorner=\{viewSwitch\} \/>/);
+  // (A little lower while the setup's card, or the first look card, stands
+  // in for its status line, #4900, or while nothing does, run six.)
+  assert.match(src, /const rowHidden = settingUp \|\| ranInPlace \|\| !ownLine;/);
+  assert.match(src, /<p className=\{rowHidden \? 'mt-3 text-\[13px\] text-zinc-500 dark:text-zinc-400' : 'mt-1 text-\[13px\] text-zinc-500 dark:text-zinc-400'\}>\{note\}<\/p>/);
   assert.doesNotMatch(src, /sketchCaption/);
   // The plain card's busy dot: not while it waits on them, nor on a setup that stopped (stalledOf).
-  assert.match(src, /const busy = appStatus === 'creating' \|\| \(botBuilds && !\(fv && fv\.ready\) && !plan && !stalled\);/);
+  assert.match(src, /const busy = appStatus === 'creating' \|\| \(botBuilds && !\(fv && fv\.ready\) && !plan && !stalled && !buildLineStopped\(line\)\);/);
 });
 
 test('a first version promises no time at all, and says in one plain line that it asks when it has questions', () => {
@@ -164,9 +172,13 @@ test('the made screen has two ways on and nothing under them: no "look around Ho
   assert.ok(madeBlock.length > 100, 'the made screen\'s block is findable');
   assert.doesNotMatch(madeBlock, /onLookAround/, 'nothing hands it a third way off');
   // The make screen's own "Look around first" is a different answer, and stays.
-  assert.match(read(`${DIR}/make.tsx`), />Look around first<\/button>/);
+  assert.match(read(`${DIR}/make.tsx`), /id="onboarding:firstSession\.make\.lookAround"\s+components=\{\[<button type="button" onClick=\{onLookAround\}/);
+  assert.equal(message('onboarding:firstSession.make.lookAround'), 'Not sure yet? <0>Look around first</0>');
+  assert.match(renderToHtml(createElement(loadTsx(`${DIR}/make.tsx`).MakeScreen, { who: '', onMade() {}, onLookAround() {} })), />Look around first<\/button>/);
+  // A project Homeroom bot does not build: its buttons from the start (one
+  // it builds checks for questions first, tests/first-version-early-plan.test.js).
   const html = renderToHtml(createElement(made.MadeScreen, {
-    made: { slug: 'plant-pal', name: 'Plant Pal', emoji: '🪴', description: null, example: null, conversationId: 12 },
+    made: { slug: 'plant-pal', name: 'Plant Pal', emoji: '🪴', description: null, example: null, conversationId: null },
     me: 'Maya', onContinue() {}, onOpenChat() {},
   }));
   assert.match(html, />Share invite<\/button>/);
@@ -197,7 +209,7 @@ test('who joined is the people row, not a line: the community is read once, then
   assert.match(read('src/services/communities.js'), /AS member_count,/);
 });
 
-test('the made screen renders with nothing read yet: no plan, the build\'s first line', () => {
+test('the made screen renders with nothing read yet: no plan, and one thing going on, the check for questions', () => {
   const { MadeScreen } = loadTsx(`${DIR}/made.tsx`);
   const html = renderToHtml(createElement(MadeScreen, {
     made: { slug: 'plant-pal', name: 'Plant Pal', emoji: '🪴', description: null, example: null, conversationId: 12 },
@@ -206,9 +218,12 @@ test('the made screen renders with nothing read yet: no plan, the build\'s first
     onOpenChat() {},
   }));
   assert.ok(!/data-first-session-plan/.test(html), 'no plan until one is read');
-  assert.match(html, /data-build-line="planning"[^>]*>.*Homeroom bot is planning it/);
-  assert.doesNotMatch(html, /Homeroom is making your app/, 'nothing under the thumbnail but the build line');
-  assert.match(html, /Invite people later/);
+  // Run six: not "Homeroom bot is planning it" as well as the checking line.
+  assert.doesNotMatch(html, /data-build-line=|Homeroom bot is planning it/);
+  assert.doesNotMatch(html, /Homeroom is making your app/, 'nothing under the thumbnail');
+  // Run five: no way past the questions before they could be read.
+  assert.match(html, /Checking whether Homeroom bot needs to ask you anything first\./);
+  assert.doesNotMatch(html, /Invite people later/);
 });
 
 test('the invite sheet: a small caps label over the invite as they will see it, and a note that names itself to a screen reader', () => {

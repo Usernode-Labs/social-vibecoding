@@ -65,7 +65,7 @@ test('the guards that ask "is the form locked?" read the same flag', () => {
   // them still read `disabled` it would think an unlocked form was locked
   // forever, and silently stop handing drafts back.
   assert.match(SRC, /if \(feedbackText\.readOnly\) return;/);
-  assert.match(SRC, /if \(feedbackText\.readOnly \|\| feedbackText\.value\.trim\(\)\) return;/);
+  assert.match(SRC, /\|\| feedbackText\.readOnly \|\| feedbackText\.value\.trim\(\)\) \{/);
   assert.match(SRC, /if \(!feedbackText\.readOnly && !feedbackText\.value\.trim\(\)\) \{/);
 });
 

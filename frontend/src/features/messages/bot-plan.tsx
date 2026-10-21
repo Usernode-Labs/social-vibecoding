@@ -2,15 +2,19 @@ import { useEffect, useState } from 'react';
 
 import { InfoCircleIcon } from '@/components/ui/icons';
 
+import { useMessages } from '../../lib/i18n/react';
+import { t as translate } from '../../lib/i18n/runtime';
 import * as api from './api';
 import { ACTIVITY_OUTCOME_LABELS, isActivityMessage, isMovedActivity } from './bot-activity';
 import { ensureBotActivity, useBotActivity } from './bot-activity-store';
-import { botMeta, requestPlace } from './bot-question';
+import { changeKey } from './bot-shared';
+import { botMeta, postedNote } from './bot-question';
 import { AnsweredChoices, PlanCardView, type AnsweredChoice, type PlanCardState, type PlanProgress } from './bot-plan-view';
+import { PlanSpec } from './bot-plan-spec';
 import { BotHeadWords, botHead } from './bot-head-card';
 import { MessageMarkdown } from './format';
-import { NotifyMe, notifyMeChosen } from './notify-me';
-import { answerBotQuestion, scopeKey, setReply, useMessagesSnapshot } from './store';
+import { NotifyLive, NotifyMe, notifyMeChosen } from './notify-me';
+import { answerBotQuestion, quoteInComposer, useMessagesSnapshot } from './store';
 import type { ConversationMessage, HomeroomBotActivity, HomeroomBotMeta } from './types';
 
 /*
@@ -18,11 +22,13 @@ import type { ConversationMessage, HomeroomBotActivity, HomeroomBotMeta } from '
  * activity card does (./message-row.tsx): their words still say the same for
  * the inbox, the push and search.
  *
- * A PLAN (kind `plan`): a first version's plan, waiting for Build it
+ * A PLAN (kind `plan`): a first version's plan (or, #4488, a complicated
+ * change's), waiting for Build it
  * (./bot-plan-view.tsx). Build it is decided on the server, once, from any
  * device (api.decideBotAction with the choices picked); Change something
  * quotes the card in the composer, and the reply is read by the bot, never
- * posted on the request.
+ * posted on the request. #4488: a complicated change's plan, on a project
+ * that already exists, is the request's: that reply is posted there.
  *
  * #4046: THE PLAN CARRIES ITS REQUEST'S STEP. A first version's activity
  * card begins when its request is queued, above the plan, and Build it moves
@@ -36,7 +42,8 @@ import type { ConversationMessage, HomeroomBotActivity, HomeroomBotMeta } from '
  * the app's thumbnail row and build line); one moved before the thanks
  * existed (no `thanks` in its metadata) is still not drawn. While it is
  * being built, "Notify me when it's ready" is inside the plan card
- * (BotPlanCard's footer, ./notify-me.tsx).
+ * (BotPlanCard's footer, ./notify-me.tsx); for a first version (run six),
+ * the switch "We'll tell you when it's live", on until its maker turns it off.
  *
  * #4046: ONE SET OF SUGGESTIONS. While a plan or a question offers its own
  * answers, the bot's generic questions to tap (its hello's "How long will
@@ -50,8 +57,9 @@ import type { ConversationMessage, HomeroomBotActivity, HomeroomBotMeta } from '
  * the suggested one marked; Build it sends the answers as one message
  * quoting the card (the way a tapped answer has always gone, and so posted
  * on the request's public discussion, which the note says), with the
- * suggested answer for any left alone. Something else quotes it for answers
- * of one's own. One question keeps BotQuestion's one tap (./bot-question.tsx).
+ * suggested answer for any left alone (its button says Send answers, not
+ * Build it: Build it starts building a plan and nothing else). Write my own
+ * quotes it for answers of one's own. One question keeps BotQuestion's one tap (./bot-question.tsx).
  * #4197: answered, each question is a label over its answer's chip, read
  * back from the message's lines; an answer of one's own stays as written.
  */
@@ -88,10 +96,18 @@ function capitalized(text: string): string {
  * 375px (owner, 7 October); the activity card keeps its own words
  * (./bot-activity.tsx typicalText).
  */
-export function planTime(range?: { from: number; to: number } | null): string | null {
+export function planTime(range?: { from: number; to: number } | null): { kind: 'about' | 'range'; from: number; count: number } | null {
   if (!range || !(range.to > 0)) return null;
-  return range.from >= range.to ? `about ${range.to} min` : `${range.from} to ${range.to} min`;
+  return { kind: range.from >= range.to ? 'about' : 'range', from: range.from, count: range.to };
 }
+
+/** The built plan's progress line, one whole message per what it leads with and how the time is said. */
+const PROGRESS_LINES = {
+  stepNamed: { about: 'messages:bot.plan.progress.stepNamedAbout', range: 'messages:bot.plan.progress.stepNamedRange' },
+  step: { about: 'messages:bot.plan.progress.stepAbout', range: 'messages:bot.plan.progress.stepRange' },
+  working: { about: 'messages:bot.plan.progress.workingAbout', range: 'messages:bot.plan.progress.workingRange' },
+  doing: { about: 'messages:bot.plan.progress.doingAbout', range: 'messages:bot.plan.progress.doingRange' },
+} as const;
 
 /**
  * Pure (#4046): the line at the top of a plan in `state`, from its request's
@@ -104,15 +120,19 @@ export function planTime(range?: { from: number; to: number } | null): string | 
 export function planProgress(card: HomeroomBotActivity | null | undefined, state: PlanCardState): PlanProgress | null {
   if (!card || (state !== 'open' && state !== 'built')) return null;
   if (card.state === 'done') {
-    return state === 'built' && card.outcome ? { line: ACTIVITY_OUTCOME_LABELS[card.outcome], step: null, of: null } : null;
+    return state === 'built' && card.outcome ? { line: translate(ACTIVITY_OUTCOME_LABELS[card.outcome]), step: null, of: null } : null;
   }
   const stepped = card.step && card.of ? { step: card.step, of: card.of } : null;
-  if (state === 'open') return stepped ? { line: `Step ${stepped.step} of ${stepped.of}`, ...stepped } : null;
-  const what = stepped
-    ? `Step ${stepped.step} of ${stepped.of}${card.stepName ? ` · ${card.stepName}` : ''}`
-    : capitalized(card.doing || 'working on it');
+  if (state === 'open') return stepped ? { line: translate('messages:bot.plan.step', { step: stepped.step, total: stepped.of }), ...stepped } : null;
+  const lead: keyof typeof PROGRESS_LINES = stepped ? (card.stepName ? 'stepNamed' : 'step') : card.doing ? 'doing' : 'working';
+  const values = {
+    step: stepped?.step ?? 0, total: stepped?.of ?? 0, name: card.stepName || '', doing: card.doing ? capitalized(card.doing) : '',
+  };
   const time = planTime(card.typicalMinutes);
-  return { line: time ? `${what} · ${time}` : what, step: stepped?.step ?? null, of: stepped?.of ?? null };
+  const what = lead === 'stepNamed' ? translate('messages:bot.plan.stepNamed', values)
+    : lead === 'step' ? translate('messages:bot.plan.step', values)
+      : lead === 'doing' ? values.doing : translate('messages:bot.plan.working');
+  return { line: time ? translate(PROGRESS_LINES[lead][time.kind], { ...values, from: time.from, count: time.count }) : what, step: stepped?.step ?? null, of: stepped?.of ?? null };
 }
 
 /**
@@ -138,13 +158,6 @@ export interface PlanLayout {
 
 export const NO_PLAN_LAYOUT: PlanLayout = { hidden: new Set(), cardOf: new Map(), answersOpen: false };
 
-/** A bot message's request, as "app#number", or null. */
-function requestKey(meta: HomeroomBotMeta): string | null {
-  const app = meta.appSlug || meta.appName;
-  const n = Number(meta.issueNumber);
-  return app && Number.isInteger(n) && n > 0 ? `${app}#${n}` : null;
-}
-
 /**
  * Pure (#4046): how the transcript `messages` draws its plans (see THE PLAN
  * CARRIES ITS REQUEST'S STEP above), by message id. Only the bot's own
@@ -156,19 +169,32 @@ function requestKey(meta: HomeroomBotMeta): string | null {
  *     (the card that follows the build), unless it is the bot's thanks
  *     (#4392), which is always drawn;
  *   - the newest plan, waiting or built, reads the newest card's state.
+ *
+ * One request, one story: a plan posted in its request's thread (the card
+ * is the thread's root, and the main chat may also show the plan there) hides
+ * no card, since the card is the way into the thread, and reads the state of
+ * the card it hangs off.
  */
 export function planLayout(messages: readonly ConversationMessage[]): PlanLayout {
   const plans = new Map<string, ConversationMessage>();
   const cards = new Map<string, number[]>();
   const thanks = new Set<number>();
+  const threadedPlans = new Map<number, number>();
   let answersOpen = false;
   for (const message of messages) {
     const meta = botMeta(message);
     if (!meta || message.deleted || !(message.id > 0)) continue;
     if (offersAnswers(message)) answersOpen = true;
-    const key = requestKey(meta);
+    // #4564: the change a message is about, read the same way its change
+    // block is (./bot-shared.ts changeKey), so the two cannot disagree.
+    const key = changeKey(message);
     if (!key) continue;
     if (isPlanMessage(message)) {
+      // In its request's thread: the card it hangs off, never hidden.
+      if (message.threadRootId) {
+        if (['open', 'built'].includes(planState(meta))) threadedPlans.set(message.id, message.threadRootId);
+        continue;
+      }
       const newest = plans.get(key);
       if (!newest || message.id > newest.id) plans.set(key, message);
     } else if (isActivityMessage(message) && !isMovedActivity(message)) {
@@ -176,9 +202,9 @@ export function planLayout(messages: readonly ConversationMessage[]): PlanLayout
       if (meta.thanks) thanks.add(message.id);
     }
   }
-  if (!plans.size) return answersOpen ? { ...NO_PLAN_LAYOUT, answersOpen } : NO_PLAN_LAYOUT;
+  if (!plans.size && !threadedPlans.size) return answersOpen ? { ...NO_PLAN_LAYOUT, answersOpen } : NO_PLAN_LAYOUT;
   const hidden = new Set<number>();
-  const cardOf = new Map<number, number>();
+  const cardOf = new Map<number, number>(threadedPlans);
   for (const [key, plan] of plans) {
     const ids = cards.get(key) || [];
     const carried = ['open', 'built'].includes(planState(botMeta(plan) as HomeroomBotMeta));
@@ -226,12 +252,21 @@ export function planBuilding(
   return !card || card.state === 'working';
 }
 
-/** Put the card in the composer's reply bar, and the caret after it. */
+/** Put the card in the composer's reply bar (its thread's, in a request's thread), and the caret after it. */
 function quote(message: ConversationMessage, conversationId: number) {
-  setReply(scopeKey(conversationId, null), message);
-  window.requestAnimationFrame(() => {
-    document.querySelector<HTMLTextAreaElement>('.messages-composer-input')?.focus({ preventScroll: true });
-  });
+  quoteInComposer(message, conversationId);
+}
+
+/**
+ * Pure (run six): what sits under a plan while what it planned is built. A
+ * first version's switch, on from Make it, whatever this device chose
+ * before; a complicated change's plan keeps the one-time offer.
+ */
+export function notifyFooter(meta: HomeroomBotMeta, offer: boolean, userId: number | null) {
+  if (!meta.plan?.complicated && meta.appSlug) {
+    return <div className="mt-3"><NotifyLive appSlug={meta.appSlug} /></div>;
+  }
+  return offer ? <div className="mt-3"><NotifyMe userId={userId} /></div> : null;
 }
 
 export function BotPlanCard({ message, conversationId, cardId = null }: {
@@ -240,6 +275,8 @@ export function BotPlanCard({ message, conversationId, cardId = null }: {
   /** #4046: its request's activity card, whose step it carries (planLayout). */
   cardId?: number | null;
 }) {
+  // Subscribed: the progress line is read from the catalog as this renders.
+  useMessages('messages');
   const meta = botMeta(message);
   const [pressed, setPressed] = useState(false);
   const activity = useBotActivity();
@@ -252,6 +289,8 @@ export function BotPlanCard({ message, conversationId, cardId = null }: {
   const actionId = meta.actionId;
   const state = planState(meta, pressed);
   const card = cardId ? activity.cards.get(cardId) : null;
+  // 20 Oct 2026: a complicated change's plan shows the spec it is asking about.
+  const spec = meta.plan.complicated ? meta.plan.spec : null;
 
   function build(answers: Array<string | null>) {
     if (!actionId) return;
@@ -263,8 +302,9 @@ export function BotPlanCard({ message, conversationId, cardId = null }: {
 
   return (
     <PlanCardView
-      appName={meta.appName || meta.appSlug || 'your project'}
+      appName={meta.appName || meta.appSlug || ''}
       plan={meta.plan}
+      request={meta.firstVersion || !(Number(meta.issueNumber) > 0) ? null : String(meta.requestTitle || meta.issueTitle || '')}
       state={planState(meta)}
       choices={meta.choices}
       busy={pressed && meta.status !== 'answered'}
@@ -272,12 +312,16 @@ export function BotPlanCard({ message, conversationId, cardId = null }: {
       onBuild={build}
       onChange={() => quote(message, conversationId)}
       progress={planProgress(card, state)}
-      footer={offer && state === 'built' && card && card.state !== 'done' ? <div className="mt-3"><NotifyMe userId={userId} /></div> : null}
+      planSpec={spec && Number(spec.sessionId) > 0 && Number(spec.version) > 0 ? <PlanSpec sessionId={Number(spec.sessionId)} version={Number(spec.version)} /> : null}
+      footer={state === 'built' && card && card.state !== 'done'
+        ? notifyFooter(meta, offer, userId)
+        : null}
     />
   );
 }
 
 export function BotTwoQuestions({ message, conversationId }: { message: ConversationMessage; conversationId: number }) {
+  const t = useMessages('messages');
   const meta = botMeta(message);
   const questions = meta?.questions || [];
   const [picked, setPicked] = useState<Array<string | null>>(() => questions.map(() => null));
@@ -312,7 +356,7 @@ export function BotTwoQuestions({ message, conversationId }: { message: Conversa
                 onClick={() => setPicked((current) => current.map((value, i) => (i === index ? answer : value)))}
               >
                 <span>{answer}</span>
-                {j === 0 ? <span className="messages-bot-default">suggested</span> : null}
+                {j === 0 ? <span className="messages-bot-default">{t('messages:bot.questions.suggested')}</span> : null}
               </button>
             ))}
           </div>
@@ -323,17 +367,17 @@ export function BotTwoQuestions({ message, conversationId }: { message: Conversa
         </ol>
       )}
       {open ? (
-        <div className="mt-2.5 messages-bot-answers" role="group" aria-label="Actions">
-          <button type="button" className="messages-bot-primary" data-bot-answer="build" onClick={build}>Build it</button>
-          <button type="button" className="messages-bot-other" onClick={() => quote(message, conversationId)}>Something else</button>
+        <div className="mt-2.5 messages-bot-answers" role="group" aria-label={t('messages:bot.questions.actions')}>
+          <button type="button" className="messages-bot-primary" data-bot-answer="build" onClick={build}>{t('messages:bot.questions.send')}</button>
+          <button type="button" className="messages-bot-other" onClick={() => quote(message, conversationId)}>{t('messages:bot.questions.writeOwn')}</button>
         </div>
       ) : null}
-      {answered && !pairs ? <p className="messages-bot-answered whitespace-pre-line">{`You answered:\n${answered}`}</p> : null}
-      {meta.status === 'closed' && !answered ? <p className="messages-bot-answered">No longer needed.</p> : null}
+      {answered && !pairs ? <p className="messages-bot-answered whitespace-pre-line">{t('messages:bot.questions.youAnswered', { answers: answered })}</p> : null}
+      {meta.status === 'closed' && !answered ? <p className="messages-bot-answered">{t('messages:bot.questions.closed')}</p> : null}
       {open || sent ? (
         <p className="messages-bot-note">
           <InfoCircleIcon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-          <span>{`Your answers are posted on ${requestPlace(meta)}’s public discussion, where the group can see them.`}</span>
+          <span>{postedNote(meta, 'answers')}</span>
         </p>
       ) : null}
     </div>

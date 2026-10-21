@@ -1,0 +1,79 @@
+'use strict';
+
+// services/preview-workflow.js: how [main]'s preview sources reach the
+// preview machine, the only path for a preview. A source that names no exact
+// head gets the row's pin for its kind, else the branch tip, never 'latest'
+// (P-A1, bug 20); one whose head resolves to nothing hands nothing.
+
+const test = require('node:test');
+const assert = require('node:assert/strict');
+
+const stub = (path, exports) => {
+  const id = require.resolve(path);
+  require.cache[id] = { id, filename: id, loaded: true, exports, paths: [] };
+};
+const submitted = [];
+const platform = { submitRevision: async (r) => { submitted.push(r); return { status: 'accepted', reason: null }; } };
+stub('../src/workflow/platform.ts', platform);
+const tips = new Map();
+stub('../src/services/github', { getBranchSha: async (owner, repo, branch) => tips.get(`${owner}/${repo}#${branch}`) ?? null });
+const workflow = require('../src/services/preview-workflow');
+
+const A = 'a'.repeat(40);
+const B = 'b'.repeat(40);
+const C = 'c'.repeat(40);
+const pool = { query: async () => ({ rows: [{ repo_url: 'https://github.com/acme/shop' }] }) };
+
+test('an exact head is used as given; otherwise the pin for the row kind, then the branch tip', async () => {
+  tips.set('acme/shop#feature', C);
+  assert.equal(await workflow.exactHead(pool, { source: null, status: 'active' }, A.toUpperCase()), A);
+  assert.equal(await workflow.exactHead(pool, { source: 'imported', imported_pr_head_sha: B, status: 'promoted', reviewed_head_sha: C }, 'latest'), B);
+  assert.equal(await workflow.exactHead(pool, { source: null, status: 'promoted', reviewed_head_sha: B }, null), B);
+  assert.equal(await workflow.exactHead(pool, { source: 'cli_handoff', status: 'active', handoff_head_sha: B }), B);
+  assert.equal(await workflow.exactHead(pool, { source: null, status: 'active', app_id: 2, branch_name: 'feature' }), C);
+  const out = await workflow.revision({ pool, session: { id: 1, app_id: 2, status: 'active', branch_name: 'feature' }, source: 'fleet', trigger: 'fleet-maintenance' });
+  assert.deepEqual(out, { status: 'accepted', reason: null }, "the machine's outcome is the caller's");
+  assert.deepEqual(submitted.at(-1), { sessionId: 1, appId: 2, head: C, source: 'fleet', trigger: 'fleet-maintenance', carryFrom: null });
+});
+
+test('a head that cannot be resolved hands nothing and builds nothing', async () => {
+  const before = submitted.length;
+  assert.deepEqual(await workflow.revision({ pool, session: { id: 1, app_id: 2, status: 'active', branch_name: 'gone' }, source: 'heal' }),
+    { status: 'rejected', reason: 'no_head' });
+  assert.equal(submitted.length, before);
+});
+
+test('an errored preview is the machine\'s whether or not its retry timer is set: past the cap a sweep starts nothing', async () => {
+  for (const [state, verdict, deadline, expected] of [
+    ['preparing', null, null, true], ['retiring', null, null, true],
+    ['failed', 'error', new Date(), true], ['failed', 'error', null, true],
+    // A checks run that errored settles on an 'error' verdict, with the same
+    // timer and cap as a failed build.
+    ['settled', 'error', new Date(), true], ['settled', 'error', null, true],
+    ['settled', 'passing', null, false], ['settled', 'failing', null, false], ['idle', null, null, false],
+  ]) {
+    platform.previewInstance = async () => ({ state, data: { verdict }, deadline_at: deadline });
+    assert.equal(await workflow.working(5), expected, `${state}/${verdict}${deadline ? ' with a timer' : ''}`);
+  }
+  platform.previewInstance = async () => null;
+  assert.equal(await workflow.working(5), false, 'a session it does not hold');
+});
+
+test('retired means the machine applied the retirement: not one pending, faulted, or refused for another reason', async () => {
+  for (const [out, retired, taken] of [
+    [{ status: 'accepted' }, true, true],
+    [{ status: 'replayed' }, true, true],
+    [{ status: 'rejected', reason: 'retired' }, true, true],
+    [{ status: 'rejected', reason: 'already_retiring' }, true, true],
+    [{ status: 'rejected', reason: 'already_idle' }, true, true],
+    [{ status: 'pending' }, false, true],
+    [{ status: 'faulted' }, false, false],
+    [{ status: 'rejected', reason: 'worked_on' }, false, false],
+  ]) {
+    let waited;
+    platform.retirePreview = async (id, appId, reason, terminal, waitMs) => { waited = waitMs; return out; };
+    const r = await workflow.retire({ session: { id: 5, app_id: 2 }, reason: 'app_deleted', terminal: true, waitMs: 30000 });
+    assert.deepEqual([r.retired, r.taken], [retired, taken], JSON.stringify(out));
+    assert.equal(waited, 30000, 'the caller\'s wait reaches the machine');
+  }
+});

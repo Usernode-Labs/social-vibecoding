@@ -13,6 +13,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -193,20 +194,23 @@ test('both composers use this module, and neither re-derives the rules', () => {
   assert.match(body, /api\.completedEmojiShortcode\(/);
 });
 
-test('the Messages composer: its own listbox, and its keys run before Enter-to-send', () => {
+test('the Messages composer: its own listbox, and its keys run before the send chord', () => {
   const composer = read('frontend/src/features/messages/composer.tsx');
   // The menu is the mention menu's box, headed with the query, over a listbox
   // named for screen readers.
   assert.match(composer, /className="messages-mention-menu messages-emoji-menu"/);
-  assert.match(composer, /Emoji matching <span className="messages-emoji-menu-query">:\{emoji\.query\}<\/span>/);
-  assert.match(composer, /role="listbox" aria-label="Emoji"/);
+  assert.equal(message('messages:composer.emojiMatching', { query: 'smi' }), 'Emoji matching <0>:smi</0>');
+  assert.match(composer, /<RichMessage id="messages:composer\.emojiMatching" values=\{\{ query: emoji\.query \}\} components=\{\[<span className="messages-emoji-menu-query" \/>\]\} \/>/);
+  assert.equal(message('messages:composer.emojiMenu'), 'Emoji');
+  assert.match(composer, /role="listbox" aria-label=\{t\('messages:composer\.emojiMenu'\)\}/);
   assert.match(composer, /role="option" aria-selected=\{i === emojiActive\}/);
   // A press keeps the textarea focused, like the mention rows.
   assert.match(composer, /data-emoji-option=\{item\.shortcode\} onMouseDown=\{\(event\) => event\.preventDefault\(\)\} onClick=\{\(\) => insertEmoji\(item\.emoji\)\}/);
   // The menu's keys come first: with it open, Enter inserts and never sends.
   // The @ and # list's keys (QA 2026-09-24 Q13) come next, and never meet
   // these: the emoji menu opens only while neither of those lists shows.
-  assert.match(composer, /onKeyDown=\{\(event\) => \{ if \(onEmojiKeyDown\(event\)\) return; if \(suggestionKeys\(event\)\) return; if \(event\.key === 'Enter' && !event\.shiftKey/);
+  // #5361: the send chord is Ctrl/Cmd+Enter; plain Enter is a new line.
+  assert.match(composer, /onKeyDown=\{\(event\) => \{ if \(onEmojiKeyDown\(event\)\) return; if \(suggestionKeys\(event\)\) return; if \(event\.key === 'Enter' && \(event\.metaKey \|\| event\.ctrlKey\)/);
   const handler = composer.slice(composer.indexOf('function onEmojiKeyDown('), composer.indexOf('function onComposerChange('));
   for (const key of ['ArrowDown', 'ArrowUp', 'Enter', 'Tab', 'Escape']) {
     assert.ok(handler.includes(`'${key}'`), `${key} is the menu's while it is open`);

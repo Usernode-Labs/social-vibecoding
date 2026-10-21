@@ -117,8 +117,11 @@ test('Q18: the Messages "+" and the conversation ⋯ are keyboard menus', () => 
   assert.match(head, /className="messages-thread-menu" role="menu"/);
   // Includes Rename group and the conversation-level Report user action.
   // The Homeroom bot DM's "Activity & history" (#3692) left the menu: the
-  // bot's name block in the header opens the panel now.
-  assert.equal((head.match(/role="menuitem"/g) || []).length, 5, 'every row is a menuitem');
+  // bot's name block in the header opens the panel now. Polish N15: the bot
+  // DM offers feedback about the bot in place of Block and Report.
+  assert.equal((head.match(/role="menuitem"/g) || []).length, 6, 'every row is a menuitem');
+  assert.match(head, /withBot\s*\n?\s*\? <button type="button" role="menuitem" data-bot-feedback=""/, 'the bot DM has its own row');
+  assert.match(head, /\{peer && !withBot \? <button/, 'and no Report user');
 });
 
 test('Q18: the Workshop "+" menu closes on Escape and on a press anywhere, and roves with the arrows', () => {
@@ -267,8 +270,12 @@ test('Q13: Enter, Tab and the arrows belong to an open suggestion list before th
   const src = read('frontend/src/features/messages/composer.tsx');
   // The :emoji menu (#2985) takes its keys ahead of this list; the two never
   // show together, since that menu opens only with no @ or # list up.
-  assert.match(src, /onKeyDown=\{\(event\) => \{ if \(onEmojiKeyDown\(event\)\) return; if \(suggestionKeys\(event\)\) return; if \(event\.key === 'Enter'/,
-    'the list gets the key first; Enter sends only when no list took it');
+  assert.match(src, /onKeyDown=\{\(event\) => \{ if \(onEmojiKeyDown\(event\)\) return; if \(suggestionKeys\(event\)\) return; if \(event\.key === 'Enter' && \(event\.metaKey \|\| event\.ctrlKey\)/,
+    'the list gets the key first; the send chord fires only when no list took it');
+  // #5361: plain Enter is a newline (as in the workshop agent chat), so the
+  // old plain-Enter-sends rule must be gone from the composer's send branch.
+  assert.doesNotMatch(src, /event\.key === 'Enter' && !event\.shiftKey && !event\.nativeEvent\.isComposing\) \{ event\.preventDefault\(\); submit\(\)/,
+    'plain Enter no longer sends');
   const keys = src.slice(src.indexOf('function suggestionKeys('), src.indexOf('function insertChannel('));
   assert.match(keys, /event\.key === 'ArrowDown' \|\| event\.key === 'ArrowUp'/);
   assert.match(keys, /\(event\.key === 'Enter' && !event\.shiftKey\) \|\| \(event\.key === 'Tab' && !event\.shiftKey\)/);
@@ -296,5 +303,8 @@ test('Q18: Skip to navigation is the first island in the shell and lands on the 
   assert.match(link, /event\.preventDefault\(\);/, 'the fragment would route to a screen called "platform-tabs"');
   assert.match(link, /nav\.querySelectorAll<HTMLElement>\('a\.platform-tab'\)/);
   assert.match(link, /useVisibility\('platform-tabs', true\)/, 'hidden where the route has no rail');
+  // Polish N10: a signed-out boot publishes the rail away before hydration,
+  // and hydration does not patch the attribute, so the answer lands after it.
+  assert.match(link, /hidden=\{hydrated && !railOnRoute\}/, 'the published answer applies after hydration');
   assert.doesNotMatch(link, /\sid=/, 'no new id in the shell inventory');
 });

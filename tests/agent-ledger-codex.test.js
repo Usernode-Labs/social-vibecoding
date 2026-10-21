@@ -1393,7 +1393,9 @@ test('getCodexAttemptRecoveryState reads the registered attempt context', async 
 });
 
 test('interactive detached-turn recovery invokes the shared thread persistence helper', () => {
-  const source = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+  // The recovery a turn's own work item runs when it resumes (moved out of
+  // server.js unchanged).
+  const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'turn-recovery.js'), 'utf8');
   const start = source.indexOf('async function resumeDetachedTurnInner');
   const end = source.indexOf('\nasync function ', start + 1);
   const body = source.slice(start, end === -1 ? undefined : end);

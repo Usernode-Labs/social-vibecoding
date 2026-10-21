@@ -49,17 +49,24 @@
 const crypto = require('node:crypto');
 const log = require('./logger');
 
-const CHANNEL = 'usernode_ws';
+// The channel, the payload budget, the machines' sender and their encoder
+// are the workflow's copy (src/workflow/pushes.ts): its transitions publish
+// on this bus inside their own transactions.
+const pushes = require('../workflow/pushes.ts');
 
-// 8000 is the server's hard cap. The envelope around the payload is small but
-// not free (instance id, kind, routing), so budget the inner JSON well under
-// it rather than computing the exact remainder and living on the edge.
-const MAX_PAYLOAD_BYTES = 7000;
+const CHANNEL = pushes.BUS_CHANNEL;
+const MAX_PAYLOAD_BYTES = pushes.BUS_PAYLOAD_BYTES;
 
 // Identifies THIS process for the whole life of the process. Random rather
 // than derived from a hostname or pod name: two pods can share a host, and a
 // collision would make one of them drop the other's events as its own.
 const INSTANCE_ID = crypto.randomUUID();
+
+// What a workflow machine decided, published inside its transition's
+// transaction (src/workflow/platform.ts). It is no instance's own echo, so
+// every instance delivers it, the one whose slot decided included, and it
+// is not a peer: hearing one says nothing about who else is listening.
+const { WORKFLOW_SENDER } = pushes;
 
 let _client = null;
 let _onMessage = null;
@@ -297,6 +304,9 @@ function flushBatches() {
   for (const key of [..._batches.keys()]) _flushBatch(key);
 }
 
+// The NOTIFY body for a push a workflow transition publishes (pure).
+const { workflowBody } = pushes;
+
 function _handleNotification(msg) {
   if (!msg || msg.channel !== CHANNEL || !msg.payload) return;
   let env;
@@ -307,6 +317,12 @@ function _handleNotification(msg) {
   }
   // Our own echo. Already delivered locally, before it was ever published.
   if (!env || env.i === INSTANCE_ID) return;
+  if (env.i === WORKFLOW_SENDER) {
+    if (typeof _onMessage === 'function' && env.k !== HELLO_KIND) {
+      _deliver({ kind: env.k, routing: env.r || null, data: env.d, oversize: !!env.o, fromWorkflow: true });
+    }
+    return;
+  }
   // Anything from another instance proves it exists (see _isAlone).
   _peers.lastPeerAt = Date.now();
   if (env.k === HELLO_KIND) return;
@@ -379,7 +395,10 @@ async function _connect() {
   // property of the session and lasts as long as it does, so a pooled client
   // would either be held out of the pool forever or lose the subscription the
   // moment it was recycled.
-  const client = new Client({ connectionString: _connectionString });
+  // Named, with a bounded connect and the dead-peer settings every platform
+  // connection has (src/db/pool.js connectionOptions).
+  const { connectionName, connectionOptions } = require('../db/connection-options');
+  const client = new Client({ connectionString: _connectionString, ...connectionOptions(null, { name: connectionName('bus') }) });
   client.on('notification', _handleNotification);
   client.on('error', (err) => {
     log.warn('ws-bus', 'listener error, reconnecting', { err: err.message });
@@ -407,6 +426,11 @@ async function _connect() {
     _startPeerTimer();
   } catch (err) {
     log.warn('ws-bus', 'listener connect failed, retrying', { err: err.message });
+    // A connection that opened but could not LISTEN is closed, not left
+    // open beside the next try's; its error handler retries no more.
+    client.removeAllListeners('error');
+    client.on('error', () => {});
+    client.end().catch(() => {});
     _scheduleReconnect();
   }
 }
@@ -455,7 +479,7 @@ async function stop() {
 
 module.exports = {
   start, stop, publish, publishBatched, flushBatches,
-  CHANNEL, MAX_PAYLOAD_BYTES, INSTANCE_ID,
+  CHANNEL, MAX_PAYLOAD_BYTES, INSTANCE_ID, WORKFLOW_SENDER, workflowBody,
   BATCH_WINDOW_MS, PEER_HELLO_MS, PEER_TTL_MS, PEER_POLL_MS,
   _isAlone,
   _peers,

@@ -29,7 +29,7 @@
 // bought. Keystrokes go to Browse.setQuery, which still coalesces them on the
 // 100ms debounce the input listener used to own.
 //
-// The prototype's FILTER CHIPS (scrDiscover: All / Featured / Joined / New)
+// The prototype's FILTER CHIPS (scrDiscover: All / Featured / Not joined / Joined / New)
 // ride the same bar, between the search and Sort. `filter` is the second
 // CONTROLLED store field beside `sort` — the pressed chip is drawn off it, so
 // it can never disagree with the rows — rendered from a copy of Browse.FILTERS
@@ -56,6 +56,7 @@ import { Chip, ChipRail } from '@/components/ui/chip';
 import { Label } from '@/components/ui/label';
 import { Select } from '@/components/ui/select';
 import { SearchIcon } from '@/components/ui/icons';
+import { useMessages } from '../../lib/i18n/react';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import { useStoreState } from '../../lib/use-store-state';
 import { BrowseDetail } from './browse-detail';
@@ -81,11 +82,11 @@ function browse(): any {
 // what a key MEANS (resolveSort, the comparators); this is only the labelling.
 // tests/browse-screen.test.js asserts the two lists never drift apart.
 const SORT_OPTIONS: Array<{ key: string; label: string }> = [
-  { key: 'recommended', label: 'Recommended' },
-  { key: 'users', label: 'Most users' },
-  { key: 'active', label: 'Most active' },
-  { key: 'merged', label: 'Most changes live' },
-  { key: 'new', label: 'Newest' },
+  { key: 'recommended', label: 'discover:sort.recommended' },
+  { key: 'users', label: 'discover:sort.users' },
+  { key: 'active', label: 'discover:sort.active' },
+  { key: 'merged', label: 'discover:sort.merged' },
+  { key: 'new', label: 'discover:sort.newest' },
 ];
 
 // The four filter chips — Browse.FILTERS, labelled. A COPY for the same reason
@@ -93,13 +94,23 @@ const SORT_OPTIONS: Array<{ key: string; label: string }> = [
 // a chip row that prerendered empty and hydrated full would be a mismatch.
 // tests/browse-screen.test.js pins the two lists together.
 const FILTER_CHIPS: Array<{ key: string; label: string }> = [
-  { key: 'all', label: 'All' },
-  { key: 'featured', label: 'Featured' },
-  { key: 'yours', label: 'Joined' },
-  { key: 'new', label: 'New' },
+  { key: 'all', label: 'discover:filter.all' },
+  { key: 'featured', label: 'discover:filter.featured' },
+  { key: 'notjoined', label: 'discover:filter.notJoined' },
+  { key: 'yours', label: 'discover:filter.joined' },
+  { key: 'new', label: 'discover:filter.new' },
+];
+
+// The admin-only chips, Browse.ADMIN_FILTERS labelled (#5267), copied for the
+// same reason. They are drawn only once the store says the viewer is an admin
+// (`adminFilters`), which is never true in the prerender, so the shipped
+// markup holds the five chips above and hydration is silent.
+const ADMIN_FILTER_CHIPS: Array<{ key: string; label: string }> = [
+  { key: 'unreviewed', label: 'discover:filter.unreviewed' },
 ];
 
 export function BrowseScreen() {
+  const t = useMessages('discover');
   const screenRef = useRef<HTMLElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
   useVisibilityHiddenClass(screenRef, 'browse-screen', false);
@@ -107,6 +118,7 @@ export function BrowseScreen() {
   const state = useStoreState(browseStore) as {
     level: 'list' | 'detail';
     rows: any[] | null;
+    site: { href: string; label: string } | null;
     empty: string | null;
     error: boolean;
     detail: any;
@@ -116,6 +128,9 @@ export function BrowseScreen() {
     curated: boolean;
     grouped: boolean;
     moreExpanded: boolean;
+    adminFilters?: boolean;
+    categories?: Array<{ key: string; label: string }>;
+    category?: string;
   };
   const onDetail = state.level === 'detail';
 
@@ -141,12 +156,13 @@ export function BrowseScreen() {
           affordance, and on a detail page the field would filter a list
           nobody can see.
 
-          At md and up its fill is the wallpaper's base (--home-ground, set
-          by the body rule that paints the wallpaper on this route — see "The
-          home ground" in app.css), not white: a sticky bar needs an opaque
-          fill for the rows to scroll under, and a white one read as a slab
-          across a cream page. Dark mode reads the same variable, which the
-          body's dark rule points at the inverted ground.
+          ON THE PAGE'S OWN BACKGROUND at every width (#5267). At md and up it
+          used to be a pinned bar filled with the wallpaper's base colour
+          (--home-ground), which a pinned bar needs so the rows can scroll
+          under it; over the wallpaper's washes that flat fill read as a band,
+          a separate panel across the page. Now it has no fill and is not
+          pinned, so the controls scroll away with the list, as they already
+          did on a phone.
 
           ON A PHONE it sits ON THE GROUND, above the list's card, not as
           the card's head. #1919 drew the search, the sort and the list as
@@ -158,10 +174,15 @@ export function BrowseScreen() {
           `browse-pane-head` / `browse-pane-body` / `browse-pane-note` in
           app.css, next to the .browse-row rules — so the phone padding and
           fill live there and only the md+ utilities stay here.
+
+          `md:pt-5` CLEARS THE HEADER'S NOTCH, as Workshop, Messages and
+          Profile do: the bar is `rounded-b-2xl -mb-2`, so this band starts
+          8px under its bottom edge, and `pt-3` left the search field 4px
+          below it (#spacing audit, 14 Oct 2026). 8 for the notch, 12 of air.
       */}
       <div
         id="browse-search-bar"
-        className={`${onDetail ? 'hidden ' : ''}browse-pane-head sticky top-0 z-20 md:px-3 md:pt-3 md:pb-2 md:bg-[color:var(--home-ground)]`}
+        className={`${onDetail ? 'hidden ' : ''}browse-pane-head md:px-3 md:pt-5 md:pb-2`}
       >
         <div className="relative max-w-xl">
           <SearchIcon
@@ -173,12 +194,22 @@ export function BrowseScreen() {
             id="browse-search-input"
             type="text"
             autoComplete="off"
-            placeholder="Search all apps…"
-            aria-label="Search all apps"
+            placeholder={t('discover:search.placeholder')}
+            aria-label={t('discover:search.label')}
             className="w-full rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 pl-9 pr-9 py-2 text-sm text-zinc-800 dark:text-zinc-200 placeholder-zinc-400 focus:outline-none focus:border-violet-400 dark:focus:border-violet-600"
             onInput={(e) => browse()?.setQuery(e.currentTarget.value)}
             onKeyDown={(e) => {
-              if (e.key === 'Escape' && e.currentTarget.value) {
+              // Enter opens the site when the field holds a web address —
+              // what a browser's address bar does (#5364). The live value is
+              // read, not the debounced one, so Enter does not wait for the
+              // 100ms coalesce.
+              if (e.key === 'Enter') {
+                const site = browse()?.siteFor?.(e.currentTarget.value);
+                if (site) {
+                  e.preventDefault();
+                  try { window.open(site.href, '_blank', 'noopener'); } catch (err) { /* ignore */ }
+                }
+              } else if (e.key === 'Escape' && e.currentTarget.value) {
                 e.preventDefault();
                 clear(false);
               }
@@ -187,8 +218,8 @@ export function BrowseScreen() {
           <button
             id="browse-search-clear"
             className={state.showClear ? CLEAR_CLASS : `hidden ${CLEAR_CLASS}`}
-            title="Clear search"
-            aria-label="Clear search"
+            title={t('discover:search.clear')}
+            aria-label={t('discover:search.clear')}
             onClick={() => clear(true)}
           >
             &times;
@@ -202,13 +233,13 @@ export function BrowseScreen() {
             with `aria-pressed`, selection drawn as the solid inversion, not
             the accent. `bar` is its size for a control row; `px-4` (over the
             primitive's `px-6`, through cn's twMerge) keeps all four on one
-            line at 390px, and the rail scrolls rather than wrapping if a
-            larger text size does not fit them.
+            line at 390px where they fit, and the rail scrolls rather than
+            wrapping when they do not (five chips, six for an admin).
         */}
         <ChipRail
           id="browse-filter-chips"
           role="group"
-          aria-label="Filter apps"
+          aria-label={t('discover:filter.groupLabel')}
           className="mt-2 max-w-xl gap-2 px-0 py-0"
         >
           {FILTER_CHIPS.map((f) => (
@@ -220,10 +251,62 @@ export function BrowseScreen() {
               data-filter={f.key}
               onClick={() => browse()?.setFilter(f.key)}
             >
-              {f.label}
+              {t(f.label)}
             </Chip>
           ))}
+          {state.adminFilters ? ADMIN_FILTER_CHIPS.map((f) => (
+            <Chip
+              key={f.key}
+              size="bar"
+              className="browse-filter-chip px-4"
+              selected={state.filter === f.key}
+              data-filter={f.key}
+              data-admin-filter=""
+              onClick={() => browse()?.setFilter(f.key)}
+            >
+              {t(f.label)}
+            </Chip>
+          )) : null}
         </ChipRail>
+        {/*
+            THE TYPE CHIPS (#3962): a second row, All types and then each
+            kind of app the directory holds, read from each project's own
+            dapp.json `category`. It narrows the set the chips above picked,
+            before Sort orders it and the search narrows it. Drawn only once
+            the store lists a type, which the prerender never does, so the
+            shipped markup has no row and hydration is silent; a directory
+            where no project has said what it is keeps the row absent.
+        */}
+        {state.categories && state.categories.length ? (
+          <ChipRail
+            id="browse-category-chips"
+            role="group"
+            aria-label={t('discover:category.groupLabel')}
+            className="mt-2 max-w-xl gap-2 px-0 py-0"
+          >
+            <Chip
+              size="bar"
+              className="browse-category-chip px-4"
+              selected={(state.category || 'all') === 'all'}
+              data-category="all"
+              onClick={() => browse()?.setCategory('all')}
+            >
+              {t('discover:category.all')}
+            </Chip>
+            {state.categories.map((c) => (
+              <Chip
+                key={c.key}
+                size="bar"
+                className="browse-category-chip px-4"
+                selected={state.category === c.key}
+                data-category={c.key}
+                onClick={() => browse()?.setCategory(c.key)}
+              >
+                {t(c.label)}
+              </Chip>
+            ))}
+          </ChipRail>
+        ) : null}
         {/*
             Sort (#1383). Rides the search bar rather than sitting in its own
             strip: both narrow the same list, and one sticky row costs the
@@ -234,18 +317,24 @@ export function BrowseScreen() {
             the field can never disagree with the rows below it. `w-auto`
             overrides the cva's `w-full` through cn's twMerge (the control
             should be as wide as its longest label, not as wide as the bar).
+
+            DRAWN AS THE CHIPS ARE (polish N12): the `plain` field's white,
+            in the chips' own box (a full radius, no border, 36px, their
+            15px medium type), so it reads as one more control of the row
+            above rather than a grey form field beside it.
         */}
         <div id="browse-sort-bar" className="mt-2 flex items-center gap-2 max-w-xl">
-          <Label htmlFor="browse-sort-select" className="shrink-0">Sort</Label>
+          <Label htmlFor="browse-sort-select" className="shrink-0">{t('discover:sort.label')}</Label>
           <Select
             id="browse-sort-select"
-            className="w-auto py-1.5"
-            aria-label="Sort apps"
+            variant="plain"
+            className="w-auto h-9 rounded-full border-0 bg-white dark:bg-zinc-900 px-4 py-0 text-[0.9375rem] font-medium text-zinc-900 dark:text-zinc-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500"
+            aria-label={t('discover:sort.selectLabel')}
             value={state.sort}
             onChange={(e) => browse()?.setSort(e.currentTarget.value)}
           >
             {SORT_OPTIONS.map((o) => (
-              <option key={o.key} value={o.key}>{o.label}</option>
+              <option key={o.key} value={o.key}>{t(o.label)}</option>
             ))}
           </Select>
         </div>
@@ -291,11 +380,11 @@ export function BrowseScreen() {
               // re-runs the same directory load.
               <AppsLoadError
                 className="md:col-span-full"
-                title="Couldn't load the app directory"
+                title={t('discover:loadError.directoryTitle')}
                 onRetry={() => browse()?._load?.()}
               />
             )
-            : <BrowseRows rows={state.rows} curated={state.curated} grouped={state.grouped} moreExpanded={state.moreExpanded} />}
+            : <BrowseRows rows={state.rows} site={state.site} curated={state.curated} grouped={state.grouped} moreExpanded={state.moreExpanded} />}
         </div>
         {/*
             The nothing-to-show line. On a phone it stands in for the list as

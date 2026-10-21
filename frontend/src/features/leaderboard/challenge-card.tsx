@@ -24,39 +24,55 @@
 //
 // It is not in @/components/ui: it is a domain card, not a primitive.
 //
-// ── Title, meta line, rail ─────────────────────────────────────────────
+// ── Open cards ask, finished cards step back (#4563) ───────────────────
 //
-// Under the title, ONE meta line says when the challenge ends and what it
-// pays: "5d left · 500 pts", or "Earned 900 pts" in emerald on a finished
-// challenge the viewer scored on. It takes the slot a description would —
-// never the task, which the tab's detail overlay carries. Under a group
-// header that carries the clock (This week, Always open, Season challenges;
-// ./group-header.tsx) the card leaves the deadline to that header and the
-// line keeps only the reward; the First challenges cards and an ungrouped grid keep it. A
-// finished card has nothing to count down to.
+// Every card used to have one shape and one weight, so the challenge still
+// worth points looked exactly like the one already done. The card now has
+// two shapes, decided by the viewer's own state and nothing else (no colour
+// per card, nothing read from fields an admin may have left empty):
+//
+//   * UNFINISHED (`new`, `progress`): the full card, and beside its rail a
+//     light square with an arrow: the way into the challenge's page, as
+//     tapping anywhere on the card is. No words on it, so a row of cards is
+//     not a column of "Start"s, and no accent fill, so it does not outshout
+//     the reward. It is a span, not a <button>: the card root is already
+//     the button, and a control inside a control is invalid and a second
+//     tab stop; the arrow is decoration to a screen reader.
+//   * DONE: one short line, the ringed green check, the title and what the
+//     viewer earned in emerald, on a 20px card with no tile and no rail. A
+//     settled thing gets no fill; it gives its height to what is still open.
+//     The line still opens the challenge's page.
+//
+// ── Title with its points, then the rail ───────────────────────────────
+//
+// The Semi design (2026-10-16): the card says what to do, what it pays and how
+// far the viewer is, and nothing about time. The points sit at the RIGHT of
+// the title's own line: amber while they are still to earn ("500 pts", "Up
+// to 1,000 pts"), emerald once the viewer earned them on a finished challenge
+// ("500 pts", no "Earned": the colour and the rail's check say it). There is
+// no second line under the title, no deadline and no "next count" time.
 //
 // The RAIL IS CLEAN: its own full-width row holding the state and nothing
 // else — the ring, the label, and for a counted challenge (a target above
 // one) a bar drawn from zero, with a stub at the left edge so "0/3 Apps tried"
 // reads as a track not yet run. A yes-or-no challenge has no steps to fill and
-// keeps its words ("Not started", "Started", "Done").
+// keeps its words ("Not started", "Started", "Done"). A weekly challenge's
+// count says so ("0/2 accepted this week").
 //
 // ── Copy never wraps ───────────────────────────────────────────────────
 //
 // Every line is one line. A 320px phone leaves the card body about 170px.
-// The title truncates; on the meta line the deadline never shrinks (a short
-// token — even a season-long "183d left" is about 60px) and the reward
-// truncates after it; the rail is the body's
-// full width and its label truncates inside it. The labels are composed short
-// in ./topochain-challenges.js (`_stateOf`), because the ring already says
-// which state it is.
+// The title truncates and the points never shrink (a short token, "500 pts"
+// is about 50px); the rail is the body's full width and its label truncates
+// inside it. The labels are composed short in ./topochain-challenges.js
+// (`_stateOf`), because the ring already says which state it is.
 //
 // ── The detail page draws the same parts ──────────────────────────────
 //
-// The Challenges tab's detail page (./challenges-pane.tsx) shows the same
-// meta line under its title (`ChallengeMeta`) and the same clean rail, both at
-// a larger `size` for a page that is read rather than scanned. Only the size
-// differs; the words, tones and rules are these.
+// The Challenges tab's detail page (./challenges-pane.tsx) shows the points
+// under its title (`ChallengeMeta`) and the same clean rail, both at a larger
+// `size` for a page that is read rather than scanned. Only the size differs;
+// the words, tones and rules are these.
 //
 // Every class below is a complete literal: Tailwind's extractor is a regex
 // over source text, so a computed class name never compiles.
@@ -65,8 +81,9 @@ import { useState } from 'react';
 import type { HTMLAttributes, KeyboardEvent, ReactNode } from 'react';
 
 import { IconTile } from '@/components/ui/icon-tile';
-import { CheckIcon } from '@/components/ui/icons';
+import { ArrowRightIcon, CheckIcon } from '@/components/ui/icons';
 import { resolveIllustration } from '../../lib/challenge-illustrations';
+import { useMessages } from '../../lib/i18n/react';
 
 export type ChallengeState = 'new' | 'progress' | 'done';
 
@@ -93,16 +110,21 @@ const RAIL_FILL = 'absolute inset-y-0 left-0 bg-violet-500/25';
 const RAIL_STUB = '0.375rem';
 const RAIL_LABEL = 'relative min-w-0 truncate';
 
-const TITLE = 'truncate text-base font-medium leading-6 text-zinc-900 dark:text-zinc-100';
+// The title's line: the title takes what is left and truncates; the points
+// keep their width. A reward written as organiser prose rather than a number
+// is capped at a little over half the line, so it can never squeeze the title
+// to nothing.
+const TITLE_LINE = 'flex min-w-0 items-baseline gap-2';
+const TITLE = 'min-w-0 flex-1 truncate text-base font-medium leading-6 text-zinc-900 dark:text-zinc-100';
+const POINTS = 'max-w-[55%] shrink-0 truncate text-[0.8125rem] font-medium leading-5 text-amber-800 dark:text-amber-300';
+const POINTS_EARNED = 'max-w-[55%] shrink-0 truncate text-[0.8125rem] font-medium leading-5 text-emerald-700 dark:text-emerald-400';
+// The detail page's points line, under its large title.
 const META: Record<PartSize, string> = {
-  md: 'flex min-w-0 items-baseline gap-1.5 text-[0.8125rem] leading-5',
-  lg: 'flex min-w-0 items-baseline gap-1.5 text-sm leading-5',
+  md: 'min-w-0 truncate text-[0.8125rem] font-medium leading-5',
+  lg: 'min-w-0 truncate text-sm font-medium leading-5',
 };
-const META_DEADLINE = 'shrink-0 text-zinc-500 dark:text-zinc-400';
-const META_DOT = 'shrink-0 text-zinc-400 dark:text-zinc-500';
-const META_REWARD = 'min-w-0 truncate font-medium text-amber-800 dark:text-amber-300';
-const META_EARNED = 'min-w-0 truncate font-medium text-emerald-700 dark:text-emerald-400';
-const META_CADENCE = 'min-w-0 flex-1 truncate text-zinc-500 dark:text-zinc-400';
+const META_REWARD = 'text-amber-800 dark:text-amber-300';
+const META_EARNED = 'text-emerald-700 dark:text-emerald-400';
 // The artwork's face: whatever `--tint-art` the registry's tone class sets.
 // The `dark:` twin is not a second colour — the tone class already switches
 // the property in dark mode — it is what displaces IconTile's own
@@ -113,6 +135,13 @@ const TILE_ART = 'bg-[var(--tint-art)] dark:bg-[var(--tint-art)]';
 // Passed through `className` on both faces, where tailwind-merge displaces the
 // xl size's own `rounded-2xl` rather than layering a second radius on it.
 const TILE_RADIUS = 'rounded-[0.6875rem]';
+// The open card's way in: a light square at the rail's own 36px height and
+// 11px corners (RAIL_SIZE.md), so the two sit flush on one row, one step
+// darker than the white card in both themes, with a plain arrow. It never
+// shrinks; the rail's label truncates first on a narrow phone.
+const CARD_ACTION = 'relative flex h-9 w-9 shrink-0 items-center justify-center rounded-[0.6875rem] '
+  + 'bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300';
+const RAIL_ROW = 'flex min-w-0 items-center gap-2';
 
 
 // The three state marks. The board draws an empty ring, a dashed ring and a
@@ -158,6 +187,7 @@ export function ProgressRail({ state, label, fill, name, counted = false, size =
   counted?: boolean;
   size?: PartSize;
 }): ReactNode {
+  const t = useMessages('leaderboard');
   const pct = fill == null ? null : Math.round(Math.max(0, Math.min(fill, 1)) * 100);
   const bar = counted && state !== 'done' && pct != null;
   return (
@@ -169,7 +199,7 @@ export function ProgressRail({ state, label, fill, name, counted = false, size =
       // The spoken value is the visible one: a rounded percent says 0% at
       // 1/500 and 100% at 499/500.
       aria-valuetext={label}
-      aria-label={name ? `${name}: ${label}` : label}
+      aria-label={name ? t('leaderboard:challenges.state.named', { challenge: name, state: label }) : label}
       className={`${RAIL} ${RAIL_SIZE[size]} ${RAIL_TONE[state]}`}
     >
       {bar ? <span className={RAIL_FILL} style={{ width: pct ? `max(${RAIL_STUB}, ${pct}%)` : RAIL_STUB }} /> : null}
@@ -179,35 +209,16 @@ export function ProgressRail({ state, label, fill, name, counted = false, size =
   );
 }
 
-// The meta line: "5d left · 500 pts · next count 9:37". `text` is the
-// amount — the reward on offer, or with `earned` what the viewer earned, in
-// emerald. `cadence` is when the background scorer next counts this challenge
-// (#3185, composed by TopochainChallenges._cadenceOf), last and quiet: it
-// rides the line the card already has instead of adding a row under the
-// rail. It takes only the room the others leave (basis 0), so on a narrow
-// phone it is what truncates, never the reward. Nothing to say is no line at
-// all, never a stray dot.
-export function ChallengeMeta({ deadline = null, ends = null, text = null, earned = false, cadence = null, size = 'md' }: {
-  deadline?: string | null;
-  /** #3203: the detail page's "ends Mon 12 Oct, 02:00", after the deadline. */
-  ends?: string | null;
+// The detail page's points line under its title: the reward on offer, the
+// viewer's points so far, or with `earned` what the viewer earned, in emerald.
+// Nothing to say is no line at all.
+export function ChallengeMeta({ text = null, earned = false, size = 'md' }: {
   text?: string | null;
   earned?: boolean;
-  cadence?: string | null;
   size?: PartSize;
 }): ReactNode {
-  const parts = [
-    deadline ? <span key="deadline" className={META_DEADLINE}>{deadline}</span> : null,
-    ends ? <span key="ends" className={META_DEADLINE}>{ends}</span> : null,
-    text ? <span key="amount" className={earned ? META_EARNED : META_REWARD}>{text}</span> : null,
-    cadence ? <span key="cadence" className={META_CADENCE}>{cadence}</span> : null,
-  ].filter(Boolean);
-  if (!parts.length) return null;
-  return (
-    <div className={META[size]}>
-      {parts.flatMap((part, i) => (i ? [<span key={`dot-${i}`} aria-hidden="true" className={META_DOT}>·</span>, part] : [part]))}
-    </div>
-  );
+  if (!text) return null;
+  return <div className={`${META[size]} ${earned ? META_EARNED : META_REWARD}`}>{text}</div>;
 }
 
 // The 5rem artwork tile. A challenge whose template names an illustration
@@ -221,13 +232,21 @@ export function ChallengeMeta({ deadline = null, ends = null, text = null, earne
 // An upload need not be square, so the image is `object-contain`: a wide or
 // tall one fits inside the 64px art box on its tone rather than stretching.
 //
+// The image is 64px whatever it holds (the xl tile's `[&>img]` size), and
+// says so in its own attributes too, and it is decoded with the frame that
+// draws it rather than after it (`decoding="sync"`). On Home the art is
+// decoded before the cards first draw (lib/challenge-illustrations.ts
+// warmIllustrations), and the service worker keeps the built-ins in its
+// release cache and an upload cache-first (public/sw.js), so the picture
+// arrives with its card instead of a frame later.
+//
 // Anything else is the tile as it was: a neutral face holding the challenge
 // kind's icon when the payload carries one (both surfaces do, from
 // `challenge_kinds.icon`) and empty otherwise. That includes artwork that
-// fails to load. The service worker leaves both image paths to the network, so
-// offline the image errors, and the error puts back the tile it replaced
-// rather than a broken-image glyph on a tone. It is component state, not a
-// write to the node: the card is a React island.
+// fails to load: offline before the worker has it, the image errors, and the
+// error puts back the tile it replaced rather than a broken-image glyph on a
+// tone. It is component state, not a write to the node: the card is a React
+// island.
 //
 // It never holds the category: headings name it, and a category word in an
 // 80px square was the "ONBOARDIN / G" break on both surfaces.
@@ -243,7 +262,16 @@ export function ChallengeTile({ icon = null, illustration = null, illustrationTo
   if (art && failed !== art.src) {
     return (
       <IconTile size="xl" aria-hidden="true" className={`${art.toneClass} ${TILE_ART} ${TILE_RADIUS}`}>
-        <img src={art.src} alt="" draggable={false} className="object-contain" onError={() => setFailed(art.src)} />
+        <img
+          src={art.src}
+          alt=""
+          width={64}
+          height={64}
+          decoding="sync"
+          draggable={false}
+          className="object-contain"
+          onError={() => setFailed(art.src)}
+        />
       </IconTile>
     );
   }
@@ -267,11 +295,8 @@ export type ChallengeCardView = {
   fill: number | null;
   /** A target above one: the rail draws a bar, from zero. */
   counted?: boolean;
-  /** "5d left"; null on a finished card or with no end in the future. */
-  deadline?: string | null;
+  /** "500 pts" on a finished challenge the viewer scored on; drawn in emerald. */
   earned: string | null;
-  /** "next count 10:42" at the end of the meta line; absent or null says nothing. */
-  cadence?: string | null;
 };
 
 // The corners are concentric: the card's 24px (`rounded-3xl`, 1.5rem in
@@ -289,18 +314,26 @@ export const CHALLENGE_CARD_FACE = 'flex items-center gap-3 bg-white dark:bg-zin
   + 'border border-zinc-200 dark:border-zinc-800 p-3';
 const CARD = CHALLENGE_CARD_FACE
   + ' cursor-pointer hover:border-violet-400 dark:hover:border-violet-600 transition-colors';
+// The finished card: one line on the same white face and hairline, at the
+// 20px corners of a card this short (Home's one-line note uses them too).
+// `h-fit` keeps it one line tall when the Challenges tab's grid would stretch
+// it to a full card beside it; in Home's column it changes nothing.
+const CARD_DONE = 'flex h-fit min-w-0 items-center gap-2.5 bg-white dark:bg-zinc-900 rounded-[1.25rem] '
+  + 'border border-zinc-200 dark:border-zinc-800 px-3.5 py-3 '
+  + 'cursor-pointer hover:border-violet-400 dark:hover:border-violet-600 transition-colors';
+const DONE_MARK = 'shrink-0 text-emerald-700 dark:text-emerald-400';
+const DONE_POINTS = 'max-w-[55%] shrink-0 truncate text-[0.8125rem] font-medium leading-5 text-emerald-700 dark:text-emerald-400';
 
-// The card: tile, then title, the meta line ("5d left · 500 pts") and the
-// rail — nothing else. On a challenge the background scorer counts, the meta
-// line also says when it next counts ("500 pts · next count 9:37"). The task
-// is not on the card (the tab's detail overlay carries it in full).
+// The open card: tile, then the title with its points at the right of the
+// same line, and the rail with its arrow — nothing else.
+// A finished challenge is the one-line card instead (see the file header). The task is not on the card (the tab's
+// detail page carries it in full).
 //
-// TITLE AND RAIL ARE ONE GROUP. The title and its meta line sit 8px above the
-// rail and the whole group is centred against the tile as a unit, rather than
+// TITLE AND RAIL ARE ONE GROUP. The title line sits 8px above the rail and
+// the whole group is centred against the tile as a unit, rather than
 // stretched to the tile's top and bottom edges: the title belongs to its
-// rail, not to the illustration beside it. With a meta line the group is 88px
-// against the 80px tile, without one 68px, at every width — nothing in it
-// wraps, and the scorer's timing adds nothing (it rides the meta line).
+// rail, not to the illustration beside it. The group is 68px against the 80px
+// tile at every width — nothing in it wraps.
 //
 // A card that opens something IS a button (#1918): role="button", in the tab
 // order, and Enter/Space open it like a click. The role is also what gives a
@@ -329,21 +362,45 @@ export function ChallengeCard({ view, className, onClick, onKeyDown, ...rest }: 
       },
     }
     : { onKeyDown };
+  if (view.state === 'done') {
+    return (
+      <div
+        className={className ? `${className} ${CARD_DONE}` : CARD_DONE}
+        data-challenge-state="done"
+        {...pressable}
+        {...rest}
+      >
+        <span className={DONE_MARK}><StateMark state="done" /></span>
+        <div className={TITLE}>{view.goal}</div>
+        {view.earned ? (
+          <>
+            <span className="sr-only">{view.stateLabel}</span>
+            <span className={DONE_POINTS}>{view.earned}</span>
+          </>
+        ) : <span className={DONE_POINTS}>{view.stateLabel}</span>}
+      </div>
+    );
+  }
   return (
-    <div className={className ? `${className} ${CARD}` : CARD} {...pressable} {...rest}>
+    <div className={className ? `${className} ${CARD}` : CARD} data-challenge-state={view.state} {...pressable} {...rest}>
       <ChallengeTile icon={view.icon} illustration={view.illustration} illustrationTone={view.illustrationTone} />
       <div className="flex min-w-0 flex-1 flex-col gap-2">
-        <div className="min-w-0">
+        <div className={TITLE_LINE}>
           <div className={TITLE}>{view.goal}</div>
-          <ChallengeMeta deadline={view.deadline} text={reward} earned={!!view.earned} cadence={view.cadence} />
+          {reward ? <span className={view.earned ? POINTS_EARNED : POINTS}>{reward}</span> : null}
         </div>
-        <ProgressRail
-          state={view.state}
-          label={view.stateLabel}
-          fill={view.fill}
-          name={view.goal}
-          counted={!!view.counted}
-        />
+        <div className={RAIL_ROW}>
+          <ProgressRail
+            state={view.state}
+            label={view.stateLabel}
+            fill={view.fill}
+            name={view.goal}
+            counted={!!view.counted}
+          />
+          <span className={CARD_ACTION}>
+            <ArrowRightIcon className="h-4 w-4" aria-hidden="true" />
+          </span>
+        </div>
       </div>
     </div>
   );

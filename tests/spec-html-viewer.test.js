@@ -15,6 +15,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
+globalThis.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
 const AppView = require('../public/js/app-view.js');
 
 const ROOT = path.join(__dirname, '..');
@@ -34,13 +35,13 @@ test('the shared viewer, with the card\'s options, is the card\'s markup: two si
   assert.equal(picks.length, 2);
   assert.match(picks[1], /shots-side-after" name="shots-7-side" id="shots-7-side-after" aria-label="Show the screen after the change" checked>$/);
   assert.doesNotMatch(html, /shots-seg-both|shots-zoom-pick|shots-side-auto/);
-  assert.match(html, /^<div class="shots-viewer">/);
+  assert.match(html, /^<div class="shots-viewer" id="shots-7-viewer" popover="auto">/);
   assert.equal(AppView._shotsViewerHtml({ key: 7, screens: [] }), '', 'no screens, no viewer');
 });
 
 test('a spec\'s viewer adds side by side, starts on auto, and offers close-up only where a screen has one', () => {
   const html = AppView._shotsViewerHtml({ key: 'spec-dc-9-2-0', screens: screens(), sideBySide: true, autoSide: true, zoom: true, className: 'shots-viewer-spec' });
-  assert.match(html, /^<div class="shots-viewer shots-viewer-spec">/);
+  assert.match(html, /^<div class="shots-viewer shots-viewer-spec" id="shots-spec-dc-9-2-0-viewer" popover="auto">/);
   const picks = html.match(/<input type="radio" class="shots-side-pick[^>]*>/g) || [];
   assert.deepEqual(picks.map((p) => /shots-side-(before|after|both|auto)/.exec(p)[1]), ['before', 'after', 'both', 'auto']);
   assert.doesNotMatch(picks[1], /checked/, 'After is not the start on a spec');
@@ -58,6 +59,12 @@ test('a spec\'s viewer adds side by side, starts on auto, and offers close-up on
   for (const bar of html.match(/<div class="shots-bar">[\s\S]*?<\/div>/g)) {
     assert.match(bar, /<span class="shots-screen-nav"[\s\S]*<\/span><\/div>$/);
   }
+  // #5691: every bar carries the Expand button, and all of them point at the
+  // one viewer (each spec frame is its own document, so its window is the
+  // frame's).
+  const expands = html.match(/<button type="button" class="shots-expand"[^>]*>/g) || [];
+  assert.equal(expands.length, 3);
+  for (const button of expands) assert.match(button, /popovertarget="shots-spec-dc-9-2-0-viewer" popovertargetaction="toggle"/);
   assert.doesNotMatch(html, /<script|onclick|onchange/, 'still radios and labels');
 });
 
@@ -107,7 +114,7 @@ test('the scout is asked for HTML on apps in the setting, with the right stylesh
   // Each capture site stores the document beside its markdown copy.
   assert.equal((src.match(/const capturedSpec = captureSpecOutput\(result\.lastResultText\);/g) || []).length, 2);
   assert.equal((src.match(/contentHtml: capturedSpec\.html,/g) || []).length, 2);
-  assert.match(read('server.js'), /contentHtml: capturedSpec\.html,/);
+  assert.match(read('src/services/turn-recovery.js'), /contentHtml: capturedSpec\.html,/);
   const { SPEC_HTML_CONTRACT } = require('../src/services/prompts.js');
   for (const rule of ['<article data-spec>', '<section data-spec-tab="user">', '<figure data-screens>', 'data-side="before"', 'data-change="N"', 'data-focus="x y w h"', 'scripts off and no network', 'spec-box-new']) {
     assert.ok(SPEC_HTML_CONTRACT.includes(rule), `the contract names ${rule}`);
@@ -215,6 +222,9 @@ test('the Homeroom bot writes its spec as HTML where the setting says, and store
   assert.ok(!('specHtml' in live.readSpec('# T\n\n## User-facing changes\n\nx')), 'a markdown spec reads as it did');
   const src = read2('src/services/homeroom-bot-live.js');
   assert.match(src, /html: specHtml\.htmlSpecsEnabledFor\(config, session\.app_slug\),/);
-  assert.match(src, /\.\.\.\(html \? \{ contentHtml: html \} : \{\}\), hadSpec: false,/);
+  // #4612: the same call, and `revised` decides hadSpec, so a revised plan's
+  // transcript line says the plan was revised.
+  assert.match(src, /\.\.\.\(html \? \{ contentHtml: html \} : \{\}\), hadSpec: !!revised,/);
+  assert.match(src, /revised = false/, 'the first plan is stored as it always was');
   function read2(rel) { return fs.readFileSync(path.join(ROOT, rel), 'utf8'); }
 });

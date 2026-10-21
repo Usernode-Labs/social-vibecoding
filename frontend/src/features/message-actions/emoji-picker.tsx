@@ -5,6 +5,7 @@ import {
   SunIcon, TrophyOutlineIcon, type IconProps,
 } from '@/components/ui/icons';
 
+import { useMessages } from '../../lib/i18n/react';
 import { ALL_EMOJI, EMOJI_CATEGORIES, emojiName, searchEmoji, type EmojiEntry } from './emoji-data';
 import { useRecentReactions } from './recents';
 
@@ -64,6 +65,7 @@ export function EmojiPicker({ onPick, onClose, placement = 'below', className = 
   /** Put the caret in the search field on open — a pointer's picker, not a phone's. */
   autoFocus?: boolean;
 }) {
+  const t = useMessages('messages');
   const [query, setQuery] = useState('');
   const [preview, setPreview] = useState<EmojiEntry | null>(null);
   const [tab, setTab] = useState('recent');
@@ -101,13 +103,13 @@ export function EmojiPicker({ onPick, onClose, placement = 'below', className = 
     if (current !== tab) setTab(current);
   }
 
-  const sections = [{ id: 'recent', label: 'Recently used', emoji: recentEntries }, ...EMOJI_CATEGORIES];
+  const sections = [{ id: 'recent', label: 'messages:emoji.category.recent', emoji: recentEntries }, ...EMOJI_CATEGORIES];
 
   return (
     <div
       className={`msgx-picker msgx-picker-${placement} ${className}`}
       role="dialog"
-      aria-label="Add a reaction"
+      aria-label={t('messages:emoji.picker.name')}
       onKeyDown={(event) => {
         if (event.key === 'Escape') { event.stopPropagation(); onClose(); }
       }}
@@ -118,15 +120,15 @@ export function EmojiPicker({ onPick, onClose, placement = 'below', className = 
           ref={search}
           type="search"
           value={query}
-          placeholder="Search emoji"
-          aria-label="Search emoji"
+          placeholder={t('messages:emoji.picker.search')}
+          aria-label={t('messages:emoji.picker.search')}
           onChange={(event) => setQuery(event.target.value)}
           onKeyDown={(event) => {
             if (event.key === 'Enter' && hits[0]) { event.preventDefault(); onPick(hits[0].emoji); }
           }}
         />
       </label>
-      <div className="msgx-picker-tabs" role="tablist" aria-label="Emoji categories">
+      <div className="msgx-picker-tabs" role="tablist" aria-label={t('messages:emoji.picker.categories')}>
         {sections.map((section) => {
           const Icon = TAB_ICONS[section.id] || FaceSmileIcon;
           const selected = !searching && tab === section.id;
@@ -136,8 +138,8 @@ export function EmojiPicker({ onPick, onClose, placement = 'below', className = 
               type="button"
               role="tab"
               aria-selected={selected}
-              aria-label={section.label}
-              title={section.label}
+              aria-label={t(section.label)}
+              title={t(section.label)}
               className={`msgx-picker-tab ${selected ? 'msgx-picker-tab-active' : ''}`}
               onClick={() => jump(section.id)}
             >
@@ -149,13 +151,13 @@ export function EmojiPicker({ onPick, onClose, placement = 'below', className = 
       <div ref={scroller} className="msgx-picker-scroll" onScroll={onScroll}>
         {searching ? (
           hits.length ? (
-            <div className="msgx-picker-grid" role="group" aria-label="Matching emoji">
+            <div className="msgx-picker-grid" role="group" aria-label={t('messages:emoji.picker.matching')}>
               {hits.map((entry) => <EmojiButton key={entry.emoji} entry={entry} onPick={onPick} onPreview={setPreview} />)}
             </div>
-          ) : <p className="msgx-picker-empty">No emoji match “{query.trim()}”.</p>
+          ) : <p className="msgx-picker-empty">{t('messages:emoji.picker.noMatch', { query: query.trim() })}</p>
         ) : sections.map((section) => (
-          <section key={section.id} data-emoji-section={section.id} aria-label={section.label}>
-            <h4 className="msgx-picker-head">{section.label}</h4>
+          <section key={section.id} data-emoji-section={section.id} aria-label={t(section.label)}>
+            <h4 className="msgx-picker-head">{t(section.label)}</h4>
             <div className="msgx-picker-grid">
               {section.emoji.map((entry) => <EmojiButton key={`${section.id}-${entry.emoji}`} entry={entry} onPick={onPick} onPreview={setPreview} />)}
             </div>
@@ -163,7 +165,7 @@ export function EmojiPicker({ onPick, onClose, placement = 'below', className = 
         ))}
       </div>
       <div className="msgx-picker-foot" aria-hidden="true">
-        {preview ? <><span className="msgx-picker-foot-emoji">{preview.emoji}</span><span>{preview.name}</span></> : <span>Pick a reaction</span>}
+        {preview ? <><span className="msgx-picker-foot-emoji">{preview.emoji}</span><span>{preview.name}</span></> : <span>{t('messages:emoji.picker.hint')}</span>}
       </div>
     </div>
   );

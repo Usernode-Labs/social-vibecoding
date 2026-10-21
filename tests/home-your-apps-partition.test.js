@@ -21,7 +21,10 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const vm = require('node:vm');
 
-const { HOME_SRC } = require('./helpers/home-modules');
+const { HOME_SRC, LAYOUT_SRC } = require('./helpers/home-modules');
+const { installAppCard } = require('./helpers/app-card');
+const { installGridStore } = require('./helpers/home-grid-store');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 
 function makeHome(appOver) {
   const sandbox = {
@@ -55,7 +58,9 @@ function makeHome(appOver) {
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
-  vm.runInContext(`${HOME_SRC}\n;globalThis.__Home = Home;`, sandbox);
+  // home-layout.js is a plain script with no import; it loads wherever Home
+  // does, and the drag recognizers below resolve HomeLayout against it too.
+  vm.runInContext(`${LAYOUT_SRC}\n${HOME_SRC}\n;globalThis.__Home = Home;`, sandbox);
   return sandbox.__Home;
 }
 
@@ -185,6 +190,52 @@ test('filterApps: returns only the matches, in input order', () => {
   assert.deepEqual(Home.filterApps(apps, 'ar').map((a) => a.slug), ['chess', 'word']);
   assert.deepEqual(Home.filterApps(apps, '').map((a) => a.slug), ['chess', 'puzzle', 'word']);
   assert.deepEqual(Home.filterApps(apps, 'nope'), []);
+});
+
+test('filterApps: an exact name or slug match leads; the rest keep input order (#4793)', () => {
+  const Home = makeHome();
+  const apps = [
+    app({ name: 'Chess Arena', slug: 'arena-1' }),
+    app({ name: 'Chess Club', slug: 'club-2' }),
+    app({ name: 'Speed Chess', slug: 'speed-3' }),
+    app({ name: 'Chess', slug: 'chess-4' }),
+    app({ name: 'Board Games', slug: 'chess' }),
+  ];
+  const slugs = (q) => Home.filterApps(apps, q).map((a) => a.slug);
+  assert.deepEqual(slugs('chess'), ['chess-4', 'chess', 'arena-1', 'club-2', 'speed-3'],
+    'name and slug exact matches lead, in input order among themselves');
+  assert.deepEqual(slugs('  CHESS '), ['chess-4', 'chess', 'arena-1', 'club-2', 'speed-3'],
+    'case and surrounding whitespace do not matter');
+  assert.deepEqual(slugs('speed-3'), ['speed-3'], 'an exact slug match');
+  assert.deepEqual(slugs('chess club'), ['club-2'], 'an exact name match');
+  assert.deepEqual(slugs('ches'), ['arena-1', 'club-2', 'speed-3', 'chess-4', 'chess'],
+    'no exact match: input order unchanged');
+  assert.deepEqual(slugs(''), apps.map((a) => a.slug), 'empty query: everything, unchanged');
+  assert.deepEqual(slugs('   '), apps.map((a) => a.slug), 'blank query: everything, unchanged');
+});
+
+test('isExactMatch: whole name or slug, trimmed, any case; never on an empty query', () => {
+  const Home = makeHome();
+  const a = app({ name: 'Chess Arena', slug: 'chess-arena-3f2a' });
+  assert.equal(Home.isExactMatch(a, 'chess arena'), true);
+  assert.equal(Home.isExactMatch(a, ' CHESS-ARENA-3F2A '), true);
+  assert.equal(Home.isExactMatch(a, 'chess'), false, 'a substring is not exact');
+  assert.equal(Home.isExactMatch(a, ''), false);
+  assert.equal(Home.isExactMatch(a, null), false);
+});
+
+test('search: a composed and a decomposed accent are the same letter', () => {
+  const Home = makeHome();
+  const decomposed = 'Café';         // e + combining acute, as stored
+  const composed = 'Café';            // é as one code point, as typed
+  const a = app({ name: decomposed, slug: 'cafe-1' });
+  assert.equal(Home.isExactMatch(a, composed), true, 'exact across forms');
+  assert.equal(Home.isExactMatch(app({ name: composed }), decomposed), true, 'and the other way');
+  assert.equal(Home.matchesQuery(app({ name: `Le ${decomposed} Bar` }), composed.toLowerCase()), true,
+    'substring across forms');
+  const apps = [app({ name: `${composed} Crawl`, slug: 'crawl' }), a];
+  assert.deepEqual(Home.filterApps(apps, composed).map((x) => x.slug), ['cafe-1', 'crawl'],
+    'the decomposed exact match leads');
 });
 
 // ── The home grid is "Your apps" only ─────────────────────────────
@@ -317,4 +368,172 @@ test('partitionApps: a row with no created_at is not a hoist candidate', () => {
   // assertion above is about the missing date and not a dead code path.
   const dated = app({ slug: 'dated', is_collaborator: true, created_by: 1, created_at: '2026-08-25T00:00:00Z' });
   assert.equal(Home.partitionApps([other, dated]).yours[0].slug, 'dated');
+});
+
+// ── The desktop strip's pinned part (#5323) ───────────────────────
+//
+// The strip's pins are the viewer's own list now (features/nav/
+// pinned-apps-store.js, pinned by tests/pinned-apps-store.test.js and
+// tests/nav-tab-bar.test.js). Home publishes nothing to it any more — no
+// grid paint writes to the strip at all. The one path from here is a My
+// apps tile dropped on the "Pin here" slot, wired into the grid placement
+// recognizer in _attachGridPlacement, the same way the widget strip's drop
+// is.
+
+// A layout, as HomeLayout.toWire / a stored _layouts entry writes it.
+const cell = (slug, col, row) => ({ type: 'app', slug, col, row });
+
+// The render-capable sandbox, with a recording bridge where the nav island
+// would be: no render may name the bridge's pin calls, and the placement
+// tests read what the drag wiring sends it.
+
+function makePublishingHome() {
+  const pins = [];
+  const stripPins = [];
+  const dropStates = [];
+  const sandbox = {
+    console,
+    App: { user: { id: 1, canCreateApps: true } },
+    PlatformUI: { toast: () => {} },
+    innerWidth: 1280,
+    document: {
+      createElement: () => ({ style: {}, textContent: '', innerHTML: '' }),
+      getElementById: () => null,
+      querySelector: () => null,
+      querySelectorAll: () => [],
+      addEventListener: () => {},
+      body: { appendChild: () => {} },
+    },
+    fetch: async () => ({ ok: true, json: async () => ({}) }),
+    location: { search: '', origin: 'https://sv.test' },
+    URL,
+    URLSearchParams,
+    setTimeout, clearTimeout, setInterval, clearInterval,
+    localStorage: { getItem: () => null, setItem: () => {}, removeItem: () => {} },
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    UsernodeReact: {
+      nav: {
+        setPinnedApps: (apps) => { pins.push(JSON.parse(JSON.stringify(apps))); },
+        pinStatus: () => 'ok',
+        pinApp: (a) => { stripPins.push(JSON.parse(JSON.stringify(a))); return true; },
+        setPinDrop: (state) => { dropStates.push(state); },
+      },
+    },
+  };
+  sandbox.window = sandbox;
+  sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = englishPlatformI18n();
+  vm.createContext(sandbox);
+  installAppCard(sandbox);
+  installGridStore(sandbox);
+  sandbox.HomePanels = { render: () => {}, ensureLoaded: () => Promise.resolve() };
+  vm.runInContext(`${LAYOUT_SRC}\n${HOME_SRC}\n;globalThis.__Home = Home;`, sandbox);
+  return { Home: sandbox.__Home, pins, stripPins, dropStates, sandbox };
+}
+
+test('a grid render writes nothing to the strip: no publish, no pin (#5323)', () => {
+  const { Home, pins, stripPins } = makePublishingHome();
+  Home._apps = [
+    app({ slug: 'first', name: 'First', is_favorited: true }),
+    app({ slug: 'second', name: 'Second', is_collaborator: true }),
+  ];
+  Home._appsLoaded = true;
+  Home._layouts = { 4: [cell('second', 0, 0), cell('first', 1, 0)] };
+  Home.render();
+  assert.equal(pins.length, 0, 'the top row is not published — the strip is not Home\'s mirror');
+  assert.equal(stripPins.length, 0, 'a paint never pins anything either');
+});
+
+// The drag wiring: a My apps tile dropped on the strip's pinned part pins
+// through the bridge and writes NOTHING to the layout. The recognizer is
+// captured from the stubbed kit, so the real callbacks run.
+
+function makeDraggingHome() {
+  const made = makePublishingHome();
+  const { Home, sandbox } = made;
+  let handlers = null;
+  // The sidebar's Pinned section, as the rail shows it while a drag is up:
+  // visible, over the probe point, with the "Pin here" slot row drawn at a
+  // known rect.
+  const stripRect = { left: 0, top: 100, right: 76, bottom: 600, width: 76, height: 500 };
+  const dropRect = { left: 10, top: 110, right: 66, bottom: 168, width: 56, height: 58 };
+  const fakeStrip = {
+    classList: { contains: (name) => name === 'hidden' && made.stripHidden === true },
+    getBoundingClientRect: () => stripRect,
+    querySelector: (sel) => (sel === '[data-rail-pin-drop]' && !made.noDropRow
+      ? { getBoundingClientRect: () => dropRect } : null),
+  };
+  sandbox.document.getElementById = (id) => (id === 'platform-rail-pinned' ? fakeStrip : null);
+  sandbox.unNative = {
+    attachGridPlacement: (el, h) => { handlers = h; return { detach() {} }; },
+  };
+  made.captured = () => handlers;
+  return made;
+}
+
+test('a My apps tile dropped on the strip pins through the bridge and leaves the layout alone (#5323)', () => {
+  const made = makeDraggingHome();
+  const { Home, stripPins, dropStates } = made;
+  Home._apps = [app({ slug: 'first', name: 'First', is_favorited: true })];
+  Home._appsLoaded = true;
+  Home._layouts = { 4: [cell('first', 0, 0)] };
+  const layoutsBefore = JSON.stringify(Home._layouts);
+  Home._attachGridPlacement({ appendChild: () => {} }, true);
+  const h = made.captured();
+  assert.ok(h, 'the recognizer was attached with Home\'s callbacks');
+
+  // Over the strip, while the slot is up: the sentinel cell, ahead of the
+  // grid's own geometry. The slot un-hides the strip on lift, so the rect
+  // test sees it.
+  Home._dragActive = false;
+  h.onLift({ dataset: { slug: 'first' } });
+  assert.deepEqual(dropStates, ['idle'], 'the "Pin here" slot goes up on lift');
+  assert.equal(h.cellFromPoint(10, 110, {}), Home.STRIP_PIN_CELL, 'the strip is the cell over the strip');
+  const el = { dataset: { slug: 'first' } };
+  assert.equal(h.canPlace(el, Home.STRIP_PIN_CELL), true, 'the strip\'s list says ok');
+  assert.deepEqual({ ...h.rectForCell(el, Home.STRIP_PIN_CELL) }, { left: 10, top: 110 },
+    'the tile settles on the slot row the strip drew');
+
+  // A committed drop parks the slug and writes nothing to the layout.
+  h.onPlace(el, Home.STRIP_PIN_CELL);
+  assert.equal(Home._pendingStripPin, 'first', 'the pin waits for onSettle');
+  assert.equal(JSON.stringify(Home._layouts), layoutsBefore, 'the arrangement on My apps is untouched');
+
+  // Settled: the bridge pins the app with its display data, and the slot
+  // goes away — whatever happened, including a settle with nothing pending.
+  h.onSettle();
+  assert.deepEqual({ ...stripPins[0] },
+    { slug: 'first', name: 'First', iconUrl: null, iconEmoji: null },
+    'display data only: icon_url maps to iconUrl, a missing emoji to null');
+  assert.deepEqual(dropStates, ['idle', null], 'the slot clears on every settle');
+  assert.equal(Home._pendingStripPin, null);
+  assert.equal(Home._dragActive, false);
+  h.onSettle();
+  assert.deepEqual(dropStates, ['idle', null, null], 'and again on a settle with nothing pending');
+});
+
+test('a refused drop (already pinned, or full) never pins and never moves the tile (#5323)', () => {
+  const made = makeDraggingHome();
+  const { Home, stripPins, dropStates } = made;
+  Home._apps = [app({ slug: 'first', name: 'First', is_favorited: true })];
+  Home._appsLoaded = true;
+  Home._layouts = { 4: [cell('first', 0, 0)] };
+  const layoutsBefore = JSON.stringify(Home._layouts);
+  Home._attachGridPlacement({ appendChild: () => {} }, true);
+  const h = made.captured();
+  const el = { dataset: { slug: 'first' } };
+
+  // The bridge's own list answers 'already': canPlace vetoes, the slot names
+  // the refusal, and a settle with nothing parked pins nothing.
+  made.sandbox.UsernodeReact.nav.pinStatus = () => 'already';
+  assert.equal(h.canPlace(el, Home.STRIP_PIN_CELL), false);
+  h.onHover(el, Home.STRIP_PIN_CELL, false);
+  assert.deepEqual(dropStates, ['already'], 'the slot says what a drop would do instead');
+  h.onHover(el, null, false);
+  assert.deepEqual(dropStates, ['already', 'idle'], 'back over the grid, the slot waits neutrally');
+  h.onSettle();
+  assert.deepEqual(stripPins, [], 'a refused drop wrote no pin');
+  assert.deepEqual(dropStates, ['already', 'idle', null], 'and cleared the slot anyway');
+  assert.equal(JSON.stringify(Home._layouts), layoutsBefore, 'and moved no tile');
 });

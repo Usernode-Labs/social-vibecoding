@@ -100,13 +100,11 @@ async function placeholderUsername(db, userId) {
   throw new Error('No free placeholder username for the anonymised account');
 }
 
-// The Homeroom bot's copies of a person's words and name that no foreign key
-// reaches, so neither the purge nor the anonymised row takes them: what they
-// asked a plan changed with (homeroom_bot_runs.plan_change, on the requests
-// they asked for, found through their requester rows before the purge takes
-// those), and their username on the bot's opt-in list (platform_settings
-// homeroom_bot_dm_users, a JSON array of usernames). A list that does not
-// parse is left as it is; the bot reads it the same way (readSettings).
+// The Homeroom bot's copies of a person's words that no foreign key reaches,
+// so neither the purge nor the anonymised row takes them: what they asked a
+// plan changed with (homeroom_bot_runs.plan_change, on the requests they
+// asked for, found through their requester rows before the purge takes
+// those).
 async function forgetBotWords(db, userId) {
   await db.query(
     `UPDATE homeroom_bot_runs r SET plan_change = NULL
@@ -114,23 +112,6 @@ async function forgetBotWords(db, userId) {
       WHERE q.user_id = $1 AND r.app_id = q.app_id AND r.issue_number = q.issue_number
         AND r.plan_change IS NOT NULL`,
     [userId]
-  );
-  const { rows } = await db.query(
-    `SELECT s.value, LOWER(u.username) AS username
-       FROM platform_settings s JOIN users u ON u.id = $1
-      WHERE s.key = 'homeroom_bot_dm_users'
-      FOR UPDATE OF s`,
-    [userId]
-  );
-  if (!rows.length || !rows[0].username) return;
-  let list;
-  try { list = JSON.parse(rows[0].value); } catch { return; }
-  if (!Array.isArray(list)) return;
-  const kept = list.filter((name) => String(name).toLowerCase() !== rows[0].username);
-  if (kept.length === list.length) return;
-  await db.query(
-    `UPDATE platform_settings SET value = $1, updated_at = NOW() WHERE key = 'homeroom_bot_dm_users'`,
-    [JSON.stringify(kept)]
   );
 }
 
@@ -251,6 +232,13 @@ async function deleteAccount(pool, { userId, actorId, mode, confirmation, passwo
     }
     const sessions = await db.query('SELECT id FROM chat_sessions WHERE user_id = $1 FOR UPDATE', [userId]);
     for (const session of sessions.rows) await queueTask(db, deletionId, 'worker', session.id);
+    // #5118: every app the person touched is asked to erase their rows in
+    // its own database (services/app-user-data.js). Read before the private
+    // files and the memberships below are removed.
+    const { touchedAppIds, encodeTarget } = require('./app-user-data');
+    for (const appId of await touchedAppIds(db, userId)) {
+      await queueTask(db, deletionId, 'app_data', encodeTarget(appId, user.usernode_pubkey));
+    }
     const files = await db.query(`DELETE FROM app_files WHERE user_id = $1 AND visibility = 'private' RETURNING id, app_id`, [userId]);
     for (const file of files.rows) await queueTask(db, deletionId, 'object', `${file.app_id}/${file.id}`);
 
@@ -261,7 +249,18 @@ async function deleteAccount(pool, { userId, actorId, mode, confirmation, passwo
       agent_thread_id = NULL, error_detail = NULL, metadata = '{}',
       status = CASE WHEN completed_at IS NULL THEN 'cancelled' ELSE status END,
       completed_at = COALESCE(completed_at, NOW()) WHERE user_id = $1`, [userId]);
-    await db.query(`UPDATE chat_sessions SET status = CASE WHEN status = 'active' THEN 'paused' ELSE status END,
+    // Their sessions holding a slot give it back: the proposal machine pauses
+    // each, asked in this transaction (their proposals up for a vote stay up
+    // for the group to decide).
+    const holding = await db.query(
+      `SELECT id, app_id FROM chat_sessions WHERE user_id = $1 AND status = 'active' AND source IS DISTINCT FROM 'imported'`, [userId]);
+    for (const row of holding.rows) {
+      await require('../workflow/platform.ts').pauseProposal({
+        sessionId: Number(row.id), appId: row.app_id, reason: 'account-deletion', from: 'active', db,
+        requestKey: `account-deletion:${deletionId}:${row.id}`, source: { kind: 'system', name: 'account-deletion' },
+      });
+    }
+    await db.query(`UPDATE chat_sessions SET
       active_turn = NULL, cc_session_id = NULL, agent_thread_id = NULL,
       headless_status = CASE WHEN headless_status = 'generating' THEN 'failed' ELSE headless_status END WHERE user_id = $1`, [userId]);
     // A proposal/spec may be public while its assistant transcript is not.

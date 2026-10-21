@@ -6,7 +6,8 @@
 // before the "Made for you" cards replaced it, because the pitch was hidden
 // only once a LIVE preview was back. Now the pitch stays hidden while the
 // preview is on its way, a quiet placeholder stands where the cards go, and
-// the pitch comes back only for a dead link or a preview that cannot be read.
+// the pitch comes back only for a preview that cannot be read. A dead link,
+// a mistyped one included, has its own page in the pitch's place (#5263).
 //
 // tests/community-invites.test.js pins the card's words and the landing's
 // pitch wiring. This file RUNS useInvitePreview (frontend/src/features/auth/
@@ -21,6 +22,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
@@ -83,7 +85,15 @@ const flush = () => new Promise((resolve) => setImmediate(resolve));
  */
 function mountHook({ pathname, fetchImpl }) {
   const fake = createFakeReact();
-  const card = loadTsx(CARD_PATH, { stubs: { react: fake.React } });
+  // The hook under test draws nothing; the card's text components are not
+  // rendered here, so the React half of the language runtime is stubbed with
+  // the English reader and the stepped React stays two hooks small.
+  const card = loadTsx(CARD_PATH, {
+    stubs: {
+      react: fake.React,
+      '../../lib/i18n/react': { useMessages: () => englishPlatformI18n().t, Message: () => null, RichMessage: () => null },
+    },
+  });
   const calls = [];
   globalThis.location = { pathname };
   globalThis.fetch = (url) => { calls.push(url); return fetchImpl(url); };
@@ -114,7 +124,7 @@ test('on an invite link the preview is pending from the first render until a liv
   hook.unmount();
 });
 
-test('a dead link ends the wait with its reason, so the landing shows why above the pitch', async () => {
+test('a dead link ends the wait with its reason, so the landing shows its own page', async () => {
   const hook = mountHook({ pathname: `/invite/${TOKEN}`, fetchImpl: answering({ live: false, reason: 'expired' }) });
   assert.equal(hook.read().pending, true);
   await flush();
@@ -155,8 +165,18 @@ test('a preview that hangs stops holding the pitch back after the wait, and stil
   hook.unmount();
 });
 
+test('#5263: a mistyped link is a dead one, told so without asking the server', async () => {
+  for (const pathname of ['/invite/nope', `/invite/${TOKEN.slice(0, 15)}`, `/invite/${TOKEN}x`]) {
+    const hook = mountHook({ pathname, fetchImpl: answering(LIVE) });
+    assert.deepEqual(hook.read(), { preview: { live: false, reason: 'unknown' }, pending: false }, pathname);
+    await flush();
+    assert.deepEqual(hook.calls, [], pathname);
+    hook.unmount();
+  }
+});
+
 test('anywhere else nothing is pending and nothing is fetched', async () => {
-  for (const pathname of ['/', '/invite/nope', `/invite/${TOKEN}/extra`]) {
+  for (const pathname of ['/', '/invite', '/invite/', `/invite/${TOKEN}/extra`, '/app/notes']) {
     const hook = mountHook({ pathname, fetchImpl: answering(LIVE) });
     assert.deepEqual(hook.read(), { preview: null, pending: false }, pathname);
     await flush();
@@ -174,10 +194,13 @@ test('the first render reads the path the way onInvitePath does; the prerender, 
   assert.equal(renderToHtml(createElement(Probe)), '<i>false</i>');
   globalThis.location = { pathname: `/invite/${TOKEN}` };
   assert.equal(renderToHtml(createElement(Probe)), '<i>true</i>');
+  // #5263: a mistyped link too, so its page never follows a frame of the story.
+  globalThis.location = { pathname: '/invite/nope' };
+  assert.equal(renderToHtml(createElement(Probe)), '<i>true</i>');
   globalThis.location = { pathname: '/' };
   assert.equal(renderToHtml(createElement(Probe)), '<i>false</i>');
   // The same initializer the landing's onInvitePath uses.
-  const initializer = /useState\(\s+\(\) => typeof location !== 'undefined' && !!inviteTokenFrom\(location\.pathname\),\s+\);/;
+  const initializer = /useState\(\s+\(\) => typeof location !== 'undefined' && onInviteLink\(location\.pathname\),\s+\);/;
   assert.match(read(CARD_PATH), new RegExp(`const \\[pending, setPending\\] = ${initializer.source}`));
   assert.match(read('frontend/src/features/auth/landing.tsx'), new RegExp(`const \\[onInvitePath, setOnInvitePath\\] = ${initializer.source}`));
 });
@@ -196,13 +219,43 @@ test('the placeholder stands where the cards go: one status line, quiet geometry
 test('the landing hides its pitch while the preview is pending and draws the placeholder in the cards\' place', () => {
   const landing = read('frontend/src/features/auth/landing.tsx');
   assert.match(landing, /const \{ preview: invite, pending: invitePending \} = useInvitePreview\(\);/);
-  assert.match(landing, /const pitchHidden = madeForYou \|\| storyOn \|\| invitePending;/);
+  assert.match(landing, /const pitchHidden = madeForYou \|\| deadInvite \|\| storyOn \|\| invitePending \|\| waitingGuest;/);
   // Only until a preview is in hand, and above the live and dead cards.
   const pending = landing.indexOf('{invitePending && !invite ? <InvitePending /> : null}');
   const live = landing.indexOf('{madeForYou ? <MadeForYou ');
-  const dead = landing.indexOf('{invite && !invite.live ? <DeadInvite preview={invite} /> : null}');
+  const dead = landing.indexOf('{deadInvite ? <DeadInvite preview={invite!} primaryClass={PRIMARY_PILL} /> : null}');
   assert.ok(pending > 0, 'the placeholder renders');
-  assert.ok(pending < live && live < dead, 'placeholder, then the live cards, then a dead link\'s line');
-  // A dead link still keeps the pitch: pitchHidden carries no dead-link term.
-  assert.doesNotMatch(landing, /pitchHidden = [^;]*!invite\.live/);
+  assert.ok(pending < live && live < dead, 'placeholder, then the live cards, then a dead link\'s page');
+  // #5263: a dead link's page takes the pitch's place, with its own way on.
+  assert.match(landing, /const deadInvite = !!invite && !invite\.live;/);
+});
+
+test('#5263: a dead link\'s page welcomes, says what happened and what to do, and offers one way on', () => {
+  const { DeadInvite, onInviteLink } = loadTsx(CARD_PATH);
+  const cases = [
+    ['expired', 'This invite link has expired', 'Ask whoever sent it for a new one.'],
+    ['revoked', 'This invite link was turned off', 'Ask whoever sent it for a new one.'],
+    ['used_up', 'This invite link has been used up', 'Ask whoever sent it for a new one.'],
+    ['unknown', 'This invite link does not work', 'Check it was copied whole, or ask whoever sent it for a new one.'],
+    // A reason the page does not know reads as one that does not work.
+    ['something_new', 'This invite link does not work', 'Check it was copied whole, or ask whoever sent it for a new one.'],
+  ];
+  for (const [reason, title, next] of cases) {
+    const html = renderToHtml(createElement(DeadInvite, { preview: { live: false, reason }, primaryClass: 'pill' }));
+    assert.match(html, /data-landing-invite="dead"/, reason);
+    // The landing's own picture and welcome, not a new asset.
+    assert.match(html, /<img src="\/brand\/people\.png" alt=""/, reason);
+    assert.match(html, />Welcome to Homeroom</, reason);
+    assert.match(html, new RegExp(`<h1 data-landing-invite-dead-title=""[^>]*>${title}</h1>`), reason);
+    assert.match(html, new RegExp(`data-landing-invite-dead-next=""[^>]*>${next.replace(/\./g, '\\.')}</p>`), reason);
+    // One action, to the signed-out front page.
+    assert.match(html, /<a href="\/" data-landing-invite-dead-continue="" class="pill">Continue to Homeroom<\/a>/, reason);
+    assert.equal((html.match(/<a /g) || []).length, 1, reason);
+    assert.doesNotMatch(html, /waitlist|Opening gradually/i, reason);
+  }
+  assert.equal(onInviteLink(`/invite/${TOKEN}`), true);
+  assert.equal(onInviteLink('/invite/nope'), true);
+  assert.equal(onInviteLink('/invite/'), false);
+  assert.equal(onInviteLink(`/invite/${TOKEN}/extra`), false);
+  assert.equal(onInviteLink('/'), false);
 });

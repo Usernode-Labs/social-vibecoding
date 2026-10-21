@@ -50,11 +50,12 @@ const MAX_TOOL_ROUNDS = 6;
 // history well under it in practice.
 const HISTORY_ROWS = 400;
 const TITLE_MAX = 80;
-const LEASE_RENEW_MS = 15_000;
+// How often a running turn reads its claim's stop stamp.
+const STOP_POLL_MS = 2000;
 const EMPTY_REPLY_TEXT = 'I could not put an answer together that time. Could you say that again?';
-// What the conversation says about a turn that ended with its process: a
-// deploy replacing the platform's pod, or a crash. The screen offers Retry.
-const INTERRUPTED_TEXT = 'The agent was interrupted by a platform update before it finished. Retry to pick it up again.';
+// What the conversation says about a turn that could not finish its own way
+// (the turn machine's, src/workflow/turn/). The screen offers Retry.
+const { INTERRUPTED_TEXT } = require('../../workflow/turn/machine.ts');
 // What the model is told on Retry: its last attempt at this turn left no
 // answer, and the user asked for one.
 const RETRY_NOTE = '[HOMEROOM] Your last answer to this was cut off by a platform restart before it finished, and '
@@ -90,6 +91,16 @@ function dispatchClaimNote(dispatchable) {
       + 'nothing has started.';
 }
 
+// The receipts a dispatch's wrap-up is written under, keyed on the change's
+// durable turn: the same keys the classic recovered wrap-up uses
+// (routes/sessions.js TURN_WRAPUP_EFFECT_KEYS). Only one of the two ever
+// runs for a change, so sharing them costs nothing and keeps one name.
+const WRAP_UP_EFFECT_KEYS = Object.freeze({
+  llm: 'turn_wrapup_llm',
+  message: 'turn_wrapup_message',
+  spend: 'turn_wrapup_spend',
+});
+
 const IMMEDIATE_WRITE_TOOLS = new Set(['recheck_change']);
 const SUGGEST_REPLIES = 'suggest_replies';
 const WEB_FETCH = 'web_fetch';
@@ -123,7 +134,9 @@ const SET_FOCUS_APP_TOOL = Object.freeze({
 });
 
 // Stop handles for the turns this process is running, by agent session id.
-const stopRegistry = new Map();
+// Each is this process's hold on the turn (services/processes.js): a
+// draining process finishes it before it exits.
+const stopRegistry = require('../processes').heldMap('agent_turn');
 
 // Whether this turn's model can look at pictures: a Claude model always can,
 // an OpenRouter one when the catalog lists image input (openrouter-mayor.js).
@@ -136,8 +149,15 @@ function busKey(agentSessionId) {
   return `agent:${agentSessionId}`;
 }
 
+// The conversation's turn machine instance (src/workflow/turn/): the same
+// key as its stream.
+function turnKey(agentSessionId) {
+  return `agent:${Number(agentSessionId)}`;
+}
+
 function defaults(deps = {}) {
   return {
+    stopPollMs: deps.stopPollMs || STOP_POLL_MS,
     llm: deps.llm || require('../llm'),
     models: deps.models || require('../models'),
     limits: deps.limits || require('../limits'),
@@ -162,10 +182,15 @@ function defaults(deps = {}) {
     // The dev chat's own "Session finished" (routes/sessions.js), read at
     // call time: that module requires this one at load.
     notifyDone: deps.notifyDone || ((pool, changeId) => require('../../routes/sessions').notifySessionDone(pool, changeId)),
+    // The bell's "Session stopped before finishing" (#4729), read at call
+    // time like notifyDone: an agent session's turn that ended in an error
+    // bell nobody watching live (they saw it happen) when nobody is watching.
+    notifyStalled: deps.notifyStalled || ((pool, changeId) => require('../../routes/sessions').notifySessionStalled(pool, changeId)),
     // The owner's lists (Recents, the mark's menu, Messages) show a spinner
     // while a turn runs and a dot once it has finished: tell every tab, on
     // every pod, when either happens.
     notifyUser: deps.notifyUser || ((userId, payload) => require('../ws').pushToUser(userId, payload)),
+    turnEffects: deps.turnEffects || require('../turn-effects'),
     isChangeBusy: deps.isChangeBusy || ((changeId) => require('../active-workers').isSessionBusy(changeId)),
     activeTurnMode: deps.activeTurnMode || ((changeId) => require('../worker').getActiveTurnMode(changeId)),
   };
@@ -388,7 +413,7 @@ function fallbackWrapUp(outcome) {
     return reason || 'The coding agent could not run on this change.';
   }
   if (outcome.isError) return 'The coding agent did not finish this run. The details are above.';
-  if (outcome.kind === 'scout') return 'The spec is updated. Tell me when you want it built.';
+  if (outcome.kind === 'scout') return 'The plan is updated. Tell me when you want it built.';
   return 'The coding agent has finished. The details are above.';
 }
 
@@ -415,6 +440,10 @@ async function runAgentTurn({
   mayor,
   res,
   scheduleInteractiveRecovery = null,
+  // The work item that runs this turn (services/turns.js, the turn
+  // machine's), named on its coding run's record: a Stop reaches that run
+  // through the item's machine, wherever it runs.
+  owner = null,
   deps = {},
 }) {
   const d = defaults(deps);
@@ -432,13 +461,7 @@ async function runAgentTurn({
   const stop = {
     abort: new AbortController(), stopped: false, stoppedBy: null, send, phase: 'mayor', change: null,
     startedAt: Date.now(), buildStartedAt: null, turnId,
-    // Set when this process is shutting down (interruptLocalTurns): the turn
-    // ends as interrupted, with Retry, not as failed.
-    interrupted: false,
-    ended: null,
   };
-  let markEnded = () => {};
-  stop.ended = new Promise((resolve) => { markEnded = resolve; });
   const prior = stopRegistry.get(agentSessionId);
   if (prior && prior !== stop) { try { prior.abort.abort(); } catch { /* already gone */ } }
   stopRegistry.set(agentSessionId, stop);
@@ -458,21 +481,20 @@ async function runAgentTurn({
     }
   };
 
-  // The turn keeps its lease fresh while it runs: a dispatch can outlast the
-  // stale window, and only a turn whose process died should lose it.
-  const leaseTimer = setInterval(() => {
-    d.agentSessions.renewTurnLease(pool, { agentSessionId, turnId }).catch(() => {});
-    if (!stop.stopped && typeof d.agentSessions.readTurnStopRequest === 'function') {
-      d.agentSessions.readTurnStopRequest(pool, { agentSessionId, turnId }).then((request) => {
-        if (!request || stopRegistry.get(agentSessionId) !== stop) return;
-        return require('../agent-session-stop').requestStop({ pool, user, agentSessionId, scheduleInteractiveRecovery });
-      }).catch((err) => log.warn('agent-mayor', 'Could not apply durable stop', { agentSessionId, err: err.message }));
-    }
-  }, LEASE_RENEW_MS);
-  if (typeof leaseTimer.unref === 'function') leaseTimer.unref();
+  // A person's Stop is stamped on the turn's claim (services/agent-session-
+  // stop.js), from whichever process they pressed it on: read here between
+  // the turn's steps. A coding run under way is stopped by its journal by
+  // the turn's machine; this stops the Mayor's own call and marks the turn.
+  const stopPoll = setInterval(() => {
+    if (stop.stopped || typeof d.agentSessions.readTurnStopRequest !== 'function') return;
+    d.agentSessions.readTurnStopRequest(pool, { agentSessionId, turnId }).then((request) => {
+      if (!request || stopRegistry.get(agentSessionId) !== stop) return;
+      stopAgentTurn(agentSessionId, { by: request.stopRequestedBy || null, expectedTurnId: turnId });
+    }).catch((err) => log.warn('agent-mayor', 'Could not read the turn\'s stop', { agentSessionId, err: err.message }));
+  }, d.stopPollMs);
+  if (typeof stopPoll.unref === 'function') stopPoll.unref();
 
   let shim = null;
-  let unbilled = 0;
   let phaseOneCost = 0;
   let totalCost = 0;
   let visibleText = '';
@@ -484,6 +506,9 @@ async function runAgentTurn({
   let compactionPlan = null;
   let summary = { text: null, throughId: 0 };
   let failed = false;
+  // The change a failed turn was on, owed "Session stopped before
+  // finishing" when nobody watches (#4729): what the turn hands its machine.
+  let stalled = null;
   const cards = [];
   const toolLog = [];
 
@@ -493,22 +518,19 @@ async function runAgentTurn({
       log.warn('agent-mayor', 'Could not record Mayor spend', { agentSessionId, err: err.message });
     });
   };
-  const bill = (cents) => {
+  // Each model call is recorded as it is made (the caps see it at once, and
+  // a turn whose process went loses none of it), by whoever paid for it.
+  const bill = async (cents, byok = mayor.byok) => {
     if (!(cents > 0)) return;
-    unbilled += cents;
     totalCost += cents;
-  };
-  const flushSpend = async (byok) => {
-    const cents = unbilled;
-    unbilled = 0;
     await recordSpend(cents, byok);
   };
 
-  const insertAssistant = async ({ text, cost, metadata, changeId }) => {
+  const insertAssistant = async ({ text, cost, metadata, changeId }, db = pool) => {
     // An OpenRouter Mayor's figure is the list-price estimate, never a
     // provider-reported amount, and the reply's cost label says so (#2118).
     const estimated = mayor.provider === 'openrouter' && cost > 0 ? { costEstimated: true } : {};
-    const { rows } = await pool.query(
+    const { rows } = await db.query(
       `INSERT INTO chat_session_messages
          (session_id, agent_session_id, role, content, model, cost_cents, metadata)
        VALUES ($1, $2, 'assistant', $3, $4, $5, $6::jsonb)
@@ -558,7 +580,7 @@ async function runAgentTurn({
   // depend on the active change, which a tool in an earlier round can move.
   const toolOffer = async () => {
     const change = await d.dispatch.loadActiveChange(pool, { agentSessionId, userId: user.id });
-    const dispatchable = d.dispatch.canDispatch(change, d.dispatchDeps);
+    const dispatchable = await d.dispatch.canDispatch(change, d.dispatchDeps);
     let prodEligible = false;
     if (change) {
       try { prodEligible = await d.debugAccess.isEligible(pool, change.id); } catch { prodEligible = false; }
@@ -678,6 +700,7 @@ async function runAgentTurn({
       shouldStop: async () => stop.stopped || !!(typeof d.agentSessions.readTurnStopRequest === 'function'
         && await d.agentSessions.readTurnStopRequest(pool, { agentSessionId, turnId })),
       scheduleInteractiveRecovery,
+      owner,
       deps: d.dispatchDeps,
     });
     stop.change = null;
@@ -702,21 +725,23 @@ async function runAgentTurn({
     }
     // A spec drafted or a build done while nobody is looking is the bell's,
     // as a dev chat's finished turn is ("Session finished", one unread per
-    // change). Looking means this turn's own stream is still open, or the
-    // conversation screen is following the conversation's events.
-    if (outcome.ran && outcome.changeId && !watching()) {
-      await d.notifyDone(pool, outcome.changeId);
+    // change). A turn that ended in an error is the bell's other line,
+    // "Session stopped before finishing" (#4729), so the notification says
+    // what kind of news waits. Looking means this turn's own stream is still
+    // open, or the conversation screen is following the conversation's events.
+    if (outcome.ran && outcome.changeId && !(await watching())) {
+      await (outcome.isError ? d.notifyStalled : d.notifyDone)(pool, outcome.changeId);
     }
   };
 
-  // Is anybody watching this conversation right now?
-  const watching = () => {
+  // Is anybody watching this conversation right now: this turn's own stream,
+  // or a conversation screen following its events on any process.
+  const watching = async () => {
     const streamOpen = !!res && !res.destroyed && !res.writableEnded
       && !(res.socket && res.socket.destroyed);
-    const following = typeof d.sessionBus.subscriberCount === 'function'
-      ? d.sessionBus.subscriberCount(busKey(agentSessionId)) > 0
-      : false;
-    return streamOpen || following;
+    if (streamOpen) return true;
+    if (typeof d.sessionBus.subscriberCount !== 'function') return false;
+    return (await Promise.resolve(d.sessionBus.subscriberCount(busKey(agentSessionId))).catch(() => 0)) > 0;
   };
 
   // The wrap-up. It answers every tool call of the dispatching round, and it
@@ -756,7 +781,7 @@ async function runAgentTurn({
           },
         });
         wrapCost = costOf(mayor, wrap, d);
-        bill(wrapCost);
+        await bill(wrapCost, wrapByok);
         const written = d.takeTextualReplies(d.stripFakeCompletionMarker(wrap.text || '').trim());
         wrapText = written.text;
         const repliesUse = (wrap.toolUses || []).find((u) => u.name === SUGGEST_REPLIES);
@@ -768,7 +793,7 @@ async function runAgentTurn({
       log.warn('agent-mayor', 'Wrap-up failed; using fixed text', { agentSessionId, err: err.message });
     }
     if (!wrapText) wrapText = fallbackWrapUp(outcome);
-    const wrapId = await insertAssistant({
+    const wrapRow = {
       text: wrapText,
       cost: wrapCost,
       changeId: outcome.changeId || null,
@@ -778,15 +803,38 @@ async function runAgentTurn({
         dispatch: kind,
         ...(wrapReplies ? { quickReplies: wrapReplies } : {}),
       },
-    });
-    send('mayor_reasoning', { text: wrapText, messageId: wrapId, wrapUp: true });
-    if (wrapReplies) send('quick_replies', { replies: wrapReplies });
-    await flushSpend(wrapByok);
+    };
+    // A build holds its change's durable turn until this row is written
+    // (agent-dispatch.js finishDurableTurn). Written under the receipt the
+    // recovered wrap-up checks (writeRecoveredWrapUp), so a restart between
+    // this row and the turn's release posts no second wrap-up.
+    let wrapId;
+    let wrapApplied = true;
+    if (outcome.turnId) {
+      const receipt = await d.turnEffects.runDbEffect({
+        pool,
+        turnId: outcome.turnId,
+        effectKey: WRAP_UP_EFFECT_KEYS.message,
+        sessionId: outcome.changeId || null,
+        run: async (client) => ({ id: await insertAssistant(wrapRow, client) }),
+      });
+      wrapApplied = receipt.applied;
+      wrapId = receipt.value ? receipt.value.id : null;
+    } else {
+      wrapId = await insertAssistant(wrapRow);
+    }
+    if (wrapApplied) {
+      send('mayor_reasoning', { text: wrapText, messageId: wrapId, wrapUp: true });
+      if (wrapReplies) send('quick_replies', { replies: wrapReplies });
+    }
     return true;
   };
 
+  // Declared here, not inside the try, so the catch's failed turn can reach
+  // the active change it may have left behind and bell it (#4729).
+  let session = null;
   try {
-    const session = await d.agentSessions.getAgentSession(pool, { userId: user.id, id: agentSessionId });
+    session = await d.agentSessions.getAgentSession(pool, { userId: user.id, id: agentSessionId });
     if (!session || session.status !== 'open') throw new Error('agent session is not open');
 
     if (recorded) {
@@ -864,7 +912,7 @@ async function runAgentTurn({
         },
       });
       const cents = costOf(mayor, result, d);
-      bill(cents);
+      await bill(cents);
       phaseOneCost += cents;
       roundText = '';
       const text = replyText(result.text);
@@ -952,7 +1000,6 @@ async function runAgentTurn({
     const messageId = await persistReply(stop.stopped ? { stopped: true } : (dispatchKind ? { dispatch: dispatchKind } : {}));
     if (messageId || cards.length) send('mayor_reasoning', { text: visibleText, messageId, cards });
     if (quickReplies && !dispatchUse) send('quick_replies', { replies: quickReplies });
-    await flushSpend();
 
     if (dispatchUse && !stop.stopped) {
       await runDispatchAndWrapUp({ dispatchUse, pendingResults, convo, rows: history, systemPrompt });
@@ -960,9 +1007,8 @@ async function runAgentTurn({
     send('usage', { costCents: totalCost });
   } catch (err) {
     failed = true;
-    await flushSpend();
-    if (stop.stopped || stop.interrupted) keepStreamedText();
-    const flag = stop.stopped ? { stopped: true } : (stop.interrupted ? { interrupted: true } : { failed: true });
+    if (stop.stopped) keepStreamedText();
+    const flag = stop.stopped ? { stopped: true } : { failed: true };
     const messageId = await persistReply(flag).catch((persistErr) => {
       log.warn('agent-mayor', 'Could not record a cut-short reply', { agentSessionId, err: persistErr.message });
       return null;
@@ -970,14 +1016,6 @@ async function runAgentTurn({
     if (messageId) send('mayor_reasoning', { text: visibleText, messageId, cards });
     if (stop.stopped) {
       send('stopped', { by: stop.stoppedBy });
-    } else if (stop.interrupted) {
-      log.info('agent-mayor', 'Agent turn interrupted by shutdown', { agentSessionId });
-      await d.agentSessions.appendConversationEvent(pool, {
-        agentSessionId,
-        content: INTERRUPTED_TEXT,
-        event: 'turn_interrupted',
-        metadata: { agentTurnId: turnId, retryable: true },
-      }).catch(() => {});
     } else {
       log.error('agent-mayor', 'Agent turn failed', { agentSessionId, err: err.message });
       send('error', { error: 'The agent could not finish this turn. Try again.' });
@@ -987,18 +1025,29 @@ async function runAgentTurn({
         event: 'turn_failed',
         metadata: { agentTurnId: turnId, retryable: true },
       }).catch(() => {});
+      // The bell's other line (#4729): a turn that died mid-work bells
+      // "Session stopped before finishing" against the change it was on,
+      // when nobody is watching — a stop or an interruption was answered
+      // where it happened, so those stay out of the bell. Owed by the
+      // turn's end, as its machine's work (turn.stalled, which looks who
+      // watches then): sent after this catch instead, a restart lost it.
+      if (session && session.activeChange) stalled = Number(session.activeChange.id);
     }
   } finally {
-    clearInterval(leaseTimer);
-    if (shim) await shim.close('turn_finished');
-    if (stopRegistry.get(agentSessionId) === stop) stopRegistry.delete(agentSessionId);
+    clearInterval(stopPoll);
+    // The handle (and the hold it is: services/processes.js) goes even when
+    // the shim's close throws.
+    try {
+      if (shim) await shim.close('turn_finished');
+    } finally {
+      if (stopRegistry.get(agentSessionId) === stop) stopRegistry.delete(agentSessionId);
+    }
     await d.agentSessions.releaseTurnLease(pool, { agentSessionId, turnId, finished: true }).catch((err) => {
       log.warn('agent-mayor', 'Could not release the turn lease', { agentSessionId, err: err.message });
     });
     listChanged(false);
     send('done', {});
     try { if (res) res.end(); } catch { /* already closed */ }
-    markEnded();
     // The buffer lets a screen that reconnects moments later replay the end
     // of this turn. A turn that started since owns it now: clearing it would
     // throw that turn's first events away.
@@ -1012,6 +1061,7 @@ async function runAgentTurn({
   if (compactionPlan && !failed) {
     await compactHistory({ pool, config, user, agentSessionId, mayor, summary, plan: compactionPlan, d });
   }
+  return stalled ? { stalled } : {};
 }
 
 async function compactHistory({ pool, config, user, agentSessionId, mayor, summary, plan, d }) {
@@ -1070,17 +1120,6 @@ function stopAgentTurn(agentSessionId, { by = null, expectedTurnId = null } = {}
   return { stopped: true, phase: handle.phase };
 }
 
-// Cross-process notifications are a wake-up, never permission to stop an
-// arbitrary run. Re-read the durable intent and match the exact local turn.
-async function receiveStopRequest(pool, { agentSessionId, turnId } = {}, deps = {}) {
-  const handle = stopRegistry.get(Number(agentSessionId));
-  if (!pool || !handle || handle.turnId !== turnId) return false;
-  const request = await (deps.agentSessions || require('../agent-sessions')).readTurnStopRequest(pool, { agentSessionId, turnId });
-  if (!request || stopRegistry.get(Number(agentSessionId)) !== handle) return false;
-  stopAgentTurn(Number(agentSessionId), { by: request.stopRequestedBy, expectedTurnId: turnId });
-  return true;
-}
-
 // Where the running turn is, for a client that joins mid-turn.
 function turnState(agentSessionId) {
   const handle = stopRegistry.get(agentSessionId);
@@ -1111,135 +1150,181 @@ function recoveredRunState(agentSessionId, changeId, deps = {}) {
   return { phase: 'cc', stopping: false, changeId };
 }
 
-// A turn whose process died (a restart mid-dispatch) leaves its lease and
-// its open screens behind: nothing will ever send their `done`. Once the
-// lease is stale, clear it and send that `done` in the dead turn's place, so
-// the screen settles on what the transcript holds. Never while this process
-// runs a turn there. `finished` stamps the green dot: a recovery that posted
-// the wrap-up finished the dead turn's work. True when it handed one back.
-async function handBackOrphanedTurn({ pool, agentSessionId, userId, finished = false, deps = {} }) {
-  if (stopRegistry.has(agentSessionId)) return false;
-  const d = defaults(deps);
-  const released = await d.agentSessions.releaseStaleTurnLease(pool, { agentSessionId, userId, finished });
-  if (!released) return false;
-  log.info('agent-mayor', 'Handed back an orphaned turn lease', { agentSessionId, finished });
-  try { d.notifyUser(userId, { type: 'agent_session_changed', agentSessionId, busy: false }); } catch { /* the lists catch up on their next read */ }
-  d.sessionBus.publish(busKey(agentSessionId), {
-    type: 'done', _seq: `orphan-${Date.now().toString(36)}`, agentSessionId,
-  });
-  return true;
-}
-
-// A recovered run on `changeId` has ended, however it ended: hand back the
-// dead dispatching turn of every conversation it is the active change of. A
-// screen following the run settles now; a lease not yet stale (the restart
-// was moments ago) is released once it is.
-async function handBackAfterRecovery({ pool, changeId, deps = {}, retryMs = null }) {
+// A recovered run on `changeId` has ended, however it ended (its turn's work
+// item resumed it: services/turns.js): every conversation it is the active
+// change of is told, its screens settle on what the transcript holds. The
+// conversation's claim is the turn machine's to release, when that item ends.
+async function handBackAfterRecovery({ pool, changeId, deps = {} }) {
   const d = defaults(deps);
   const conversations = await d.agentSessions.conversationsOfChange(pool, changeId);
   for (const { agentSessionId, userId } of conversations) {
-    // eslint-disable-next-line no-await-in-loop
-    const handed = await handBackOrphanedTurn({ pool, agentSessionId, userId, finished: true, deps });
-    if (handed || stopRegistry.has(agentSessionId)) continue;
+    if (stopRegistry.has(agentSessionId)) continue;
     try { d.notifyUser(userId, { type: 'agent_session_changed', agentSessionId, busy: false }); } catch { /* the lists catch up on their next read */ }
     d.sessionBus.publish(busKey(agentSessionId), {
       type: 'done', _seq: `recovered-${Date.now().toString(36)}`, agentSessionId,
     });
-    const wait = retryMs ?? (d.agentSessions.TURN_LEASE_STALE_SECONDS * 1000 + LEASE_RENEW_MS);
-    const timer = setTimeout(() => {
-      handBackOrphanedTurn({ pool, agentSessionId, userId, finished: true, deps }).catch((err) => {
-        log.warn('agent-mayor', 'Could not hand back an orphaned turn lease', { agentSessionId, err: err.message });
-      });
-    }, wait);
-    if (typeof timer.unref === 'function') timer.unref();
   }
 }
 
-// ── Turns that end with their process ──────────────────────────────────
+// ── A wrap-up the restart took ─────────────────────────────────────────
 //
-// Every deploy replaces the platform's one pod, and the turns running in it
-// end with it. Two things make sure a conversation is never left looking
-// busy with nobody working, and never silently without its answer:
+// A dispatch's wrap-up is written by the turn that dispatched it
+// (writeWrapUp above). A restart mid-build or mid-wrap-up ends that turn
+// with its process, and restart recovery finishes the change's own tail
+// (server.js finalizeRecoveredTurn). This writes the wrap-up the dead turn
+// owed, the way it would have: by this conversation's Mayor (its model and
+// payer, resolveAgentMayor), from the conversation's own history and
+// prompt, into the conversation (agent_session_id, wrapUp, dispatch), and
+// on the conversation's bus. The dispatch's tool_use died with the turn, so
+// its result arrives as a note instead. routes/sessions.js
+// runRecoveredWrapUp sends a change an agent session started here; a plain
+// dev chat keeps its own.
+//
+// `turnId` is the change's durable turn: with it the model call, the row
+// and the spend each happen at most once however often recovery retries,
+// under the receipts `effectKeys` names (the classic recovered wrap-up's).
+// Without one (a local agent's turn, a legacy record) it runs once, best
+// effort. A failure of the model or its payer ends on fixed text, as a live
+// wrap-up does; a failed receipt or row throws so the retained tail retries.
+const RECOVERED_WRAP_UP_NOTE = '[HOMEROOM] The coding agent you dispatched has finished. Its result:\n\n';
 
-// 1. A process that is shutting down ends its own Mayor turns as
-// interrupted: what was said so far is kept, the conversation says the turn
-// was interrupted (with Retry), and the lease is handed back. A turn whose
-// coding agent is running is left alone: the build belongs to the change,
-// and restart recovery adopts it (handBackAfterRecovery). Resolves once each
-// ended turn has written its end, or after `timeoutMs`.
-async function interruptLocalTurns({ timeoutMs = 3000 } = {}) {
-  const ending = [];
-  for (const handle of stopRegistry.values()) {
-    if (handle.phase === 'cc' || handle.stopped || handle.interrupted) continue;
-    handle.interrupted = true;
-    try { handle.abort.abort(); } catch { /* already aborted */ }
-    if (handle.ended) ending.push(handle.ended);
-  }
-  if (!ending.length) return 0;
-  let timer = null;
-  await Promise.race([
-    Promise.allSettled(ending),
-    new Promise((resolve) => { timer = setTimeout(resolve, timeoutMs); }),
-  ]);
-  if (timer) clearTimeout(timer);
-  return ending.length;
-}
-
-// 2. A process that died without that (a crash, a kill) leaves its leases to
-// go stale. The sweeper, on every pod, ends each stale one as interrupted, in
-// one transaction with the note (agentSessions.endInterruptedTurn), and the
-// database's version bump tells every screen. A conversation whose active
-// change still has a run on record is left to restart recovery, which hands
-// it back when the build ends.
-// `agentSessionId` sweeps that one conversation only: a read of it that
-// found its lease stale ends the turn there and then (routes/agent-sessions.js
-// GET /:id/state), rather than showing an idle conversation with no answer
-// until the next sweep.
-async function sweepInterruptedTurns({ pool, agentSessionId = null, deps = {} } = {}) {
+async function writeRecoveredWrapUp({
+  pool, config, agentSessionId, userId, username = null, changeId,
+  kind = 'build', isError = false, toolResultText = '', turnId = null,
+  effectKeys = WRAP_UP_EFFECT_KEYS, signal = null, deps = {},
+}) {
   const d = defaults(deps);
-  const stale = await d.agentSessions.staleTurnLeases(pool, agentSessionId == null ? {} : { agentSessionId });
-  let ended = 0;
-  for (const lease of stale) {
-    if (stopRegistry.has(lease.agentSessionId)) continue;
-    if (lease.changeTurn || recoveredRunState(lease.agentSessionId, lease.activeChangeId, deps)) continue;
-    // eslint-disable-next-line no-await-in-loop
-    const done = await d.agentSessions.endInterruptedTurn(pool, {
-      agentSessionId: lease.agentSessionId, turnId: lease.turnId, content: INTERRUPTED_TEXT,
-    }).catch((err) => {
-      log.warn('agent-mayor', 'Could not end an interrupted turn', { agentSessionId: lease.agentSessionId, err: err.message });
-      return false;
+  const effects = d.turnEffects;
+  const session = await d.agentSessions.getAgentSession(pool, { userId, id: agentSessionId });
+  if (!session) return { ok: false, reason: 'no_conversation' };
+  // The live turn wrote its wrap-up (under this receipt) and died before it
+  // released the change's turn: the conversation already has it.
+  if (turnId) {
+    const { rows: written } = await pool.query(
+      'SELECT state FROM turn_effects WHERE turn_id = $1 AND effect_key = $2',
+      [turnId, effectKeys.message]
+    );
+    if (written[0] && written[0].state === 'completed') {
+      log.info('agent-mayor', 'Recovered wrap-up: the live turn already posted it', { agentSessionId, changeId });
+      return { ok: true, alreadyPosted: true };
+    }
+  }
+  const fallbackText = fallbackWrapUp({ ran: true, isError, kind });
+
+  const mayor = await resolveAgentMayor({ pool, config, userId, agentSessionId, deps }).catch((err) => {
+    log.warn('agent-mayor', 'Recovered wrap-up could not resolve the Mayor', { agentSessionId, err: err.message });
+    return { ok: false };
+  });
+
+  const invoke = async () => {
+    if (!mayor.ok) return { text: '', usage: null, toolUses: [], servedModel: null, fixed: true };
+    const summary = await loadSummary(pool, agentSessionId);
+    const history = await loadHistory(pool, agentSessionId, summary.throughId);
+    const historyAttachments = await d.attachments.loadForHistory(pool, history).catch(() => new Map());
+    const convo = withTrailingUserText(
+      historyToMessages(history, d.buildMayorMessages, historyAttachments),
+      `${RECOVERED_WRAP_UP_NOTE}${toolResultText || '(no details available)'}\n\n`
+        + 'Write your wrap-up for the user now, as you would after any finished run. Do not mention a '
+        + 'restart, a recovery or this note.',
+    );
+    const basePrompt = d.getAgentMayorPrompt({ username, session, summary: summary.text });
+    const wrap = await mayor.client.streamChat({
+      messages: convo,
+      systemPrompt: `${basePrompt}\n\n${WRAP_UP_NOTE}`,
+      model: mayor.model,
+      tools: [d.tools.SUGGEST_REPLIES_TOOL],
+      apiKey: mayor.apiKey,
+      signal: signal || undefined,
+      telemetryContext: {
+        pool, appId: null, sessionId: changeId || null, backend: 'mayor', component: 'mayor_phase_2',
+      },
     });
-    if (!done) continue;
-    ended += 1;
-    log.info('agent-mayor', 'Ended a turn its process left behind', { agentSessionId: lease.agentSessionId });
-    try { d.notifyUser(lease.userId, { type: 'agent_session_changed', agentSessionId: lease.agentSessionId, busy: false }); } catch { /* the version notice says it too */ }
-    d.sessionBus.publish(busKey(lease.agentSessionId), {
-      type: 'done', _seq: `interrupted-${Date.now().toString(36)}`, agentSessionId: lease.agentSessionId,
+    return {
+      text: typeof wrap?.text === 'string' ? wrap.text : '',
+      usage: wrap?.usage || null,
+      toolUses: Array.isArray(wrap?.toolUses) ? wrap.toolUses : [],
+      servedModel: wrap?.servedModel || null,
+    };
+  };
+  const fixed = { text: '', usage: null, toolUses: [], servedModel: null, fixed: true };
+  let wrap;
+  if (turnId) {
+    const effect = await effects.runExternalEffectFailClosed({
+      pool, turnId, effectKey: effectKeys.llm, sessionId: changeId || null, run: invoke, fallback: fixed,
+    });
+    wrap = effect.value || fixed;
+  } else {
+    wrap = await invoke().catch((err) => {
+      log.warn('agent-mayor', 'Recovered wrap-up failed; using fixed text', { agentSessionId, err: err.message });
+      return fixed;
     });
   }
-  return ended;
-}
 
-const SWEEP_EVERY_MS = 30_000;
-let sweepTimer = null;
-
-// Started once per process, after boot (server.js). The first sweep waits a
-// window, so a turn another pod is still finishing during a rollout has had
-// every chance to renew.
-function startInterruptedTurnSweeper({ pool, everyMs = SWEEP_EVERY_MS } = {}) {
-  if (sweepTimer) return;
-  const tick = () => {
-    sweepInterruptedTurns({ pool }).catch((err) => {
-      log.warn('agent-mayor', 'Interrupted-turn sweep failed', { err: err.message });
-    });
+  const written = d.takeTextualReplies(d.stripFakeCompletionMarker(wrap.text || '').trim());
+  const text = written.text || fallbackText;
+  const repliesUse = (wrap.toolUses || []).find((u) => u.name === SUGGEST_REPLIES);
+  let quickReplies = repliesUse ? d.tools.sanitizeQuickReplies(repliesUse.input) : null;
+  if (!quickReplies && written.replies) quickReplies = d.tools.sanitizeQuickReplies({ replies: written.replies });
+  const cost = mayor.ok && !wrap.fixed ? costOf(mayor, wrap, d) : 0;
+  const { rows: lease } = await pool.query(
+    'SELECT active_turn->>\'id\' AS turn_id FROM agent_sessions WHERE id = $1',
+    [agentSessionId]
+  ).catch(() => ({ rows: [] }));
+  const metadata = {
+    ...(lease[0] && lease[0].turn_id ? { agentTurnId: lease[0].turn_id } : {}),
+    wrapUp: true,
+    dispatch: kind,
+    ...(quickReplies ? { quickReplies } : {}),
+    ...(mayor.ok && mayor.provider === 'openrouter' && cost > 0 ? { costEstimated: true } : {}),
+    recovered: true,
   };
-  sweepTimer = setInterval(tick, everyMs);
-  if (typeof sweepTimer.unref === 'function') sweepTimer.unref();
-}
-
-function stopInterruptedTurnSweeper() {
-  if (sweepTimer) clearInterval(sweepTimer);
-  sweepTimer = null;
+  const insert = async (client) => {
+    const { rows } = await client.query(
+      `INSERT INTO chat_session_messages
+         (session_id, agent_session_id, role, content, model, cost_cents, metadata)
+       VALUES ($1, $2, 'assistant', $3, $4, $5, $6::jsonb)
+       RETURNING id`,
+      [changeId || null, agentSessionId, text, mayor.ok ? mayor.model : null, cost, JSON.stringify(metadata)]
+    );
+    return { id: rows[0] ? rows[0].id : null };
+  };
+  let messageId = null;
+  let applied = true;
+  if (turnId) {
+    const receipt = await effects.runDbEffect({
+      pool, turnId, effectKey: effectKeys.message, sessionId: changeId || null, run: insert,
+    });
+    applied = receipt.applied;
+    messageId = receipt.value ? receipt.value.id : null;
+  } else {
+    ({ id: messageId } = await insert(pool));
+  }
+  if (cost > 0 && mayor.spendRecorded) {
+    if (turnId) {
+      await d.limits.settleTurnSpend(pool, userId, cost, {
+        turnByok: !!mayor.byok, turnId, sessionId: changeId || null, effectKey: effectKeys.spend,
+      });
+    } else {
+      await d.limits.recordSpend(pool, userId, cost, { byok: !!mayor.byok }).catch((err) => {
+        log.warn('agent-mayor', 'Could not record recovered wrap-up spend', { agentSessionId, err: err.message });
+      });
+    }
+  }
+  if (applied) {
+    const seq = `recovered-${Date.now().toString(36)}`;
+    d.sessionBus.publish(busKey(agentSessionId), {
+      type: 'mayor_reasoning', _seq: `${seq}-1`, agentSessionId, text, messageId, wrapUp: true,
+    });
+    if (quickReplies) {
+      d.sessionBus.publish(busKey(agentSessionId), {
+        type: 'quick_replies', _seq: `${seq}-2`, agentSessionId, replies: quickReplies,
+      });
+    }
+  }
+  log.info('agent-mayor', 'Recovered wrap-up posted', {
+    agentSessionId, changeId, fixed: !!wrap.fixed, applied,
+  });
+  return { ok: !wrap.fixed, text, quickReplies, messageId, ...(wrap.fixed ? { reason: 'fixed_text' } : {}) };
 }
 
 function newTurnId() {
@@ -1249,7 +1334,7 @@ function newTurnId() {
 module.exports = {
   MAX_TOOL_ROUNDS,
   HISTORY_ROWS,
-  LEASE_RENEW_MS,
+  STOP_POLL_MS,
   EMPTY_REPLY_TEXT,
   INTERRUPTED_TEXT,
   RETRY_NOTE,
@@ -1258,6 +1343,7 @@ module.exports = {
   SWITCH_ACTIVE_CHANGE_TOOL,
   SET_FOCUS_APP_TOOL,
   busKey,
+  turnKey,
   resolveAgentMayor,
   rebillMayor,
   loadHistory,
@@ -1269,18 +1355,15 @@ module.exports = {
   claimsDispatch,
   dispatchClaimNote,
   WRAP_UP_NOTE,
+  WRAP_UP_EFFECT_KEYS,
   titleFromMessage,
   fallbackWrapUp,
   runAgentTurn,
-  stopAgentTurn, receiveStopRequest,
+  stopAgentTurn,
   turnState,
-  handBackOrphanedTurn,
   handBackAfterRecovery,
+  writeRecoveredWrapUp,
   recoveredRunState,
-  interruptLocalTurns,
-  sweepInterruptedTurns,
-  startInterruptedTurnSweeper,
-  stopInterruptedTurnSweeper,
   newTurnId,
   _stopRegistry: stopRegistry,
 };

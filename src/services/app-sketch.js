@@ -54,13 +54,10 @@ const sketchDates = require('./sketch-dates');
 // GLM 5.3 Flash, and Haiku 5.5 when it does not answer in time (llm.js
 // helperMessage); the card row keeps the model that answered.
 const SKETCH_MODEL = 'z-ai/glm-5.3-flash';
-// How long app creation waits for the card before seeding the repository
-// without it (app-creator.js). A late card is committed on its own.
-const SKETCH_WAIT_MS = 30 * 1000;
 // How long the card waits on the model before it is made from the
-// description instead: well inside SKETCH_WAIT_MS, so the first commit has it.
+// description instead. It is a step of the project's setup (app-creator.js),
+// before its first commit, so the first commit always has it.
 const MODEL_WAIT_MS = 15 * 1000;
-const LATE_COMMIT_WAIT_MS = 3 * 60 * 1000;
 // A reply is three short lines of JSON.
 const CARD_MAX_TOKENS = 400;
 // The card's shape, for a model that answers through a schema (GLM); the
@@ -294,14 +291,21 @@ function distinctPoints(points, tagline) {
 
 /**
  * The card made from the name and the description alone: the description's
- * first piece as the tagline, the pieces after it as points (with one true
- * of every project when it has fewer than two), and the keyword map's emoji.
+ * first piece as the tagline (or the make screen's own line for the choice,
+ * when it sent one), the pieces after it as points (with one true of every
+ * project when it has fewer than two), and the keyword map's emoji.
  * Deterministic, and never null.
  */
-function fallbackCard({ name = '', brief = '', today = null, solo = false } = {}) {
+function fallbackCard({ name = '', brief = '', today = null, solo = false, tagline: fixed = null } = {}) {
   const clauses = clausesOf(checkedDates(brief, { today, brief })).map((c) => cleanLine(c, 400)).filter(Boolean);
-  const tagline = clauses.length ? clipWords(clauses[0], TAGLINE_MAX) : cleanLine(`Made for ${name || 'your group'}`, TAGLINE_MAX);
-  let points = distinctPoints(clauses.slice(1).map((c) => clipWords(c, POINT_MAX)), tagline).slice(0, POINTS_MAX);
+  // `fixed`: the make screen's own line for the choice the sentence came
+  // from (a game, or Your own words in a template), written for when the
+  // model gives none. The card says that rather than the sentence's first
+  // clause, which for those choices is the template's opening words.
+  const given = cleanLine(fixed, TAGLINE_MAX);
+  const tagline = given
+    || (clauses.length ? clipWords(clauses[0], TAGLINE_MAX) : cleanLine(`Made for ${name || 'your group'}`, TAGLINE_MAX));
+  let points = distinctPoints(clauses.slice(given ? 0 : 1).map((c) => clipWords(c, POINT_MAX)), tagline).slice(0, POINTS_MAX);
   if (points.length < 2 && !solo) points = distinctPoints([...points, SHARED_POINT], tagline);
   return { kind: 'card', emoji: keywordEmoji(name, brief), tagline, points, source: 'fallback' };
 }
@@ -366,7 +370,7 @@ function sketchUserPrompt({ name, brief, audience, today = null, zone = null, ma
  * where the creator is (`today`, sketch-dates.localToday; `brief`, their
  * description).
  */
-function parseCardReply(text, { name = '', brief = '', today = null, solo = false } = {}) {
+function parseCardReply(text, { name = '', brief = '', today = null, solo = false, fallbackTagline = null } = {}) {
   const out = String(text || '');
   const first = out.indexOf('{');
   const last = out.lastIndexOf('}');
@@ -384,7 +388,7 @@ function parseCardReply(text, { name = '', brief = '', today = null, solo = fals
   const points = distinctPoints((Array.isArray(obj.points) ? obj.points : []).map((p) => line(p, POINT_MAX)), tagline)
     .slice(0, POINTS_MAX);
   if (!tagline && points.length < 2) return null;
-  const fallback = (!tagline || points.length < 2) ? fallbackCard({ name, brief, today, solo }) : null;
+  const fallback = (!tagline || points.length < 2) ? fallbackCard({ name, brief, today, solo, tagline: fallbackTagline }) : null;
   return {
     kind: 'card',
     emoji: chooseEmoji(obj.emoji, { name, brief }),
@@ -466,10 +470,9 @@ function manifestWithCard(text, { emoji = null, tagline = null } = {}) {
 
 // ── Generation ───────────────────────────────────────────────────────────
 
-const pending = new Map();
-
-// A pending row older than this was left by a process that stopped while
-// making it; it reads as failed, and nothing waits on it.
+// A pending row older than this was left by a setup that stopped while
+// making it; it reads as failed on the made screen until the setup, carried
+// on, makes it.
 const STALE_PENDING_MS = 3 * 60 * 1000;
 
 function stillDrawing(row, now = Date.now()) {
@@ -600,7 +603,7 @@ async function saveCard(pool, { app, card, model, error, deps }) {
  * trial's first commit, from the same call. `maker` is who the card is for,
  * as makerOf reads it (null: nobody named). Resolves { card, model, error }.
  */
-async function makeCard(pool, { name, brief, audience = null, solo = false, timeZone = null, user, maker = null, appId = null, deps = {} }) {
+async function makeCard(pool, { name, brief, audience = null, solo = false, timeZone = null, user, maker = null, appId = null, fallbackTagline = null, deps = {} }) {
   const llm = deps.llm || require('./llm');
   const limits = deps.limits || require('./limits');
   const now = deps.now ? deps.now() : new Date();
@@ -634,43 +637,39 @@ async function makeCard(pool, { name, brief, audience = null, solo = false, time
     } else {
       await recordSpend(reply);
       model = reply.model || SKETCH_MODEL;
-      card = parseCardReply(reply.text, { name, brief, today, solo });
+      card = parseCardReply(reply.text, { name, brief, today, solo, fallbackTagline });
       if (!card) error = 'unusable_reply';
     }
   } catch (err) {
     error = String(err && err.message || 'failed').slice(0, 200);
   }
   if (!card) {
-    card = fallbackCard({ name, brief, today, solo });
+    card = fallbackCard({ name, brief, today, solo, tagline: fallbackTagline });
     model = 'fallback';
     log.warn('app-sketch', 'Card made without the model', { appId, error });
   }
   return { card, model, error };
 }
 
-async function generate(pool, { app, user, brief, audience, solo, timeZone, deps }) {
-  const maker = await makerOf(pool, user).catch(() => null);
-  const { card, model, error } = await makeCard(pool, {
-    name: app.name, brief, audience, solo, timeZone, user, maker, appId: app.id, deps,
-  });
-  await saveCard(pool, { app, card, model, error, deps });
-  log.info('app-sketch', 'Card ready', { appId: app.id, source: card.source });
-  return readSketch(pool, app.id);
-}
-
 /**
- * Start a project's card, once. Returns at once; the work runs on. A project
- * with a sketch row already (a retried create) is left alone. Without a model
- * (no key: a staging preview, a local stack) the card is made from the
- * description on the spot. `timeZone` is the creator's device's IANA zone, so
- * "today" is theirs; anything else reads as UTC. `solo`: made for Just me, so
- * a fallback card does not say it is shared with anyone (SHARED_POINT).
+ * Owe a project its card, once: POST /api/apps, before the project's setup
+ * starts. The card is made by the setup itself (drawFor, a step of its
+ * work), so a restart neither loses it nor makes it twice; what it is made
+ * from is kept on the row (`request`). A project with a sketch row already
+ * (a retried create) is left alone. Without a model (no key: a staging
+ * preview, a local stack) the card is made from the description on the
+ * spot. `timeZone` is the creator's device's IANA zone, so "today" is
+ * theirs; anything else reads as UTC. `solo`: made for Just me, so a
+ * fallback card does not say it is shared with anyone (SHARED_POINT).
+ * `fallbackTagline`: the make screen's line for a game or Your own choice,
+ * the tagline when the model gives none (fallbackCard).
+ * `db`: the route's transaction, which also inserts the project.
  */
-async function startSketch(pool, { app, user, brief, audience = null, solo = false, timeZone = null }, deps = {}) {
+async function startSketch(db, { app, user, brief, audience = null, solo = false, timeZone = null, fallbackTagline = null }, deps = {}) {
   const llm = deps.llm || require('./llm');
   if (!llm.isEnabled()) {
-    const card = fallbackCard({ name: app.name, brief, solo, today: sketchDates.localToday(deps.now ? deps.now() : new Date(), timeZone) });
-    const { rows } = await pool.query(
+    const card = fallbackCard({ name: app.name, brief, solo, tagline: fallbackTagline, today: sketchDates.localToday(deps.now ? deps.now() : new Date(), timeZone) });
+    const { rows } = await db.query(
       `INSERT INTO app_sketches (app_id, user_id, status, design, model, ready_at)
        VALUES ($1, $2, 'ready', $3::jsonb, 'fallback', NOW())
        ON CONFLICT (app_id) DO NOTHING
@@ -678,47 +677,53 @@ async function startSketch(pool, { app, user, brief, audience = null, solo = fal
       [app.id, user.id, JSON.stringify(card)]
     );
     if (!rows.length) return false;
-    await saveIcon(pool, app, card.emoji, deps);
-    await saveDescription(pool, app, card.tagline);
+    await saveIcon(db, app, card.emoji, deps);
+    await saveDescription(db, app, card.tagline);
     return true;
   }
-  const { rows } = await pool.query(
-    `INSERT INTO app_sketches (app_id, user_id, status)
-     VALUES ($1, $2, 'pending')
+  const { rows } = await db.query(
+    `INSERT INTO app_sketches (app_id, user_id, status, request)
+     VALUES ($1, $2, 'pending', $3::jsonb)
      ON CONFLICT (app_id) DO NOTHING
      RETURNING app_id`,
-    [app.id, user.id]
+    // The maker's username too: the card names them by it when their row
+    // cannot be read (makerOf).
+    [app.id, user.id, JSON.stringify({ brief, audience, solo: !!solo, timeZone, fallbackTagline: fallbackTagline || null, username: user.username || null })]
   );
-  if (!rows.length) return false;
-  const work = generate(pool, { app, user, brief, audience, solo, timeZone, deps }).catch((err) => {
-    log.warn('app-sketch', 'Card failed', { appId: app.id, err: err.message });
-    return null;
-  });
-  pending.set(app.id, work);
-  work.finally(() => setTimeout(() => pending.delete(app.id), LATE_COMMIT_WAIT_MS).unref?.());
-  return true;
+  return rows.length > 0;
 }
 
 /**
- * The project's card once it is ready, waiting up to `ms` for one still
- * being made by this process; null when there is none (or not in time).
+ * The project's card, for its setup's `card` step: made now when it is owed
+ * (the model's within MODEL_WAIT_MS, else the fallback), and saved with its
+ * icon and description. Null when none is owed. A ready card is returned as
+ * it is, so a setup that resumes gets the one it committed.
  */
-async function whenReady(pool, appId, ms = SKETCH_WAIT_MS, { pollMs = 1000 } = {}) {
-  const deadline = Date.now() + ms;
-  const work = pending.get(appId);
-  if (work) {
-    let timer;
-    await Promise.race([work, new Promise((resolve) => { timer = setTimeout(resolve, ms); })]);
-    clearTimeout(timer);
+async function drawFor(pool, appId, deps = {}) {
+  const row = await readSketch(pool, appId);
+  if (!row || row.status === 'failed') return null;
+  if (row.status === 'ready') return row;
+  const { rows: [owed] } = await pool.query(
+    `SELECT s.user_id, s.request, a.id, a.name FROM app_sketches s JOIN apps a ON a.id = s.app_id WHERE s.app_id = $1`, [appId]);
+  const request = owed?.request || {};
+  const app = { id: owed.id, name: owed.name };
+  const user = owed.user_id ? { id: owed.user_id, username: request.username || null } : null;
+  try {
+    const maker = user ? await makerOf(pool, user).catch(() => null) : null;
+    const { card, model, error } = await makeCard(pool, {
+      name: app.name, brief: request.brief || '', audience: request.audience ?? null, solo: !!request.solo,
+      timeZone: request.timeZone ?? null, fallbackTagline: request.fallbackTagline ?? null, user, maker, appId, deps,
+    });
+    await saveCard(pool, { app, card, model, error, deps });
+    log.info('app-sketch', 'Card ready', { appId, source: card.source });
+  } catch (err) {
+    log.warn('app-sketch', 'Card failed', { appId, err: err.message });
+    await pool.query(`UPDATE app_sketches SET status = 'failed', error = $2 WHERE app_id = $1 AND status = 'pending'`,
+      [appId, String(err.message).slice(0, 200)]).catch(() => {});
+    return null;
   }
-  let row = await readSketch(pool, appId).catch(() => null);
-  // Made by another process (a create retried on another Pod): watch the
-  // row instead, until the same deadline.
-  while (stillDrawing(row) && Date.now() + pollMs <= deadline) {
-    await new Promise((resolve) => setTimeout(resolve, pollMs));
-    row = await readSketch(pool, appId).catch(() => null);
-  }
-  return row && row.status === 'ready' ? row : null;
+  const ready = await readSketch(pool, appId);
+  return ready && ready.status === 'ready' ? ready : null;
 }
 
 /** The repository's design file for a ready card: design/sketch.json, or nothing for a row without a card. */
@@ -733,41 +738,9 @@ async function markCommitted(pool, appId) {
   await pool.query('UPDATE app_sketches SET committed_at = NOW() WHERE app_id = $1 AND committed_at IS NULL', [appId]);
 }
 
-/**
- * A card that missed the repository's first commit: committed on its own
- * when it is ready, design/sketch.json and, when the repository's dapp.json
- * has no icon yet, the card's emoji as its `icon` (else the next deploy would
- * clear the icon saved to the project), and likewise its tagline as the
- * `description` when it has none. Best effort, never throws.
- */
-async function commitWhenReady(pool, { appId, name, owner, repo }, deps = {}) {
-  try {
-    const sketch = await whenReady(pool, appId, LATE_COMMIT_WAIT_MS);
-    if (!sketch || sketch.committed_at) return false;
-    const files = designFiles({ sketch });
-    if (!files.length) return false;
-    const github = deps.github || require('./github');
-    const card = cardOf(sketch.design);
-    const manifest = typeof github.getFileContent === 'function'
-      ? await github.getFileContent(owner, repo, 'dapp.json', 'main').catch(() => null)
-      : null;
-    const withCard = manifest ? manifestWithCard(manifest, { emoji: card.emoji, tagline: card.tagline }) : null;
-    if (withCard) files.push({ path: 'dapp.json', content: withCard });
-    await github.pushFiles(owner, repo, files, {
-      message: `Add the card ${name} was made with`,
-    });
-    await markCommitted(pool, appId);
-    return true;
-  } catch (err) {
-    log.warn('app-sketch', 'Late card not committed', { appId, err: err.message });
-    return false;
-  }
-}
-
 module.exports = {
   SKETCH_MODEL,
   CARD_SCHEMA,
-  SKETCH_WAIT_MS,
   MODEL_WAIT_MS,
   SKETCH_SYSTEM,
   DEFAULT_EMOJI,
@@ -797,8 +770,7 @@ module.exports = {
   taglineOf,
   makeCard,
   startSketch,
-  whenReady,
+  drawFor,
   designFiles,
   markCommitted,
-  commitWhenReady,
 };

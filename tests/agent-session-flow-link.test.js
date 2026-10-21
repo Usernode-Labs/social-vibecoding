@@ -67,6 +67,30 @@ test('the same session already on screen takes it too (a cold link routes it twi
   }
 });
 
+test('a link to the conversation a desktop\'s Messages pane already shows hands it over there', async () => {
+  // The pane does not open the conversation it shows again, so before this
+  // the prepared hand-off waited for the NEXT conversation opened: the link
+  // did nothing where it pointed and opened the sheet somewhere else later.
+  const store = world();
+  try {
+    assert.equal(store.agentSessionController.applyHandoff, store.applyHandoff, 'the router reaches it on window.UsernodeReact.agentSession');
+    await store.openAgentSession({ id: 7, host: 'messages' });
+    assert.equal(store.applyHandoff(7), false, 'nothing prepared, nothing to hand over');
+    store.prepareHandoff('claude-code');
+    assert.equal(store.applyHandoff(8), false, 'another conversation takes it as it opens, not this one');
+    assert.equal(store.getAgentSessionState().handoff, null);
+    assert.equal(store.applyHandoff(7), true);
+    assert.equal(store.getAgentSessionState().handoff, 'claude-code');
+    store.closeHandoff();
+    await store.openAgentSession({ id: 8, host: 'messages' });
+    assert.equal(store.getAgentSessionState().handoff, null, 'taken once: the next conversation opens shut');
+  } finally {
+    cleanup();
+  }
+  // The router hands it over after routing the pane to that conversation.
+  assert.match(appJs, /App\.navigateToMessages\(null, null, agent\);\n(\s+\/\/[^\n]*\n)+\s+if \(agent\.kind === 'agent'\) window\.UsernodeReact\?\.agentSession\?\.applyHandoff\?\.\(agent\.id\);/);
+});
+
 test('the unsent conversation takes it, fresh or already on screen', async () => {
   const store = world();
   try {
@@ -130,8 +154,9 @@ test('the router hands the link\'s flow over and takes it out of the address', (
   assert.deepEqual(takeAgentFlow({ hash: 'agent/12', fragQuery: 'flow=bogus', search: '', prepared }), [], 'an unknown value is ignored and left alone');
   assert.deepEqual(prepared, []);
 
-  // Both agent routes ask, before they navigate; the phone's rewrite of a
-  // Messages address to #agent/<id> drops the query after it was handed over.
+  // Both agent routes ask, before they navigate. On a phone #agent/<id> is
+  // rewritten to the Messages address with its query kept, and that route
+  // hands it over (app.js _agentToInbox).
   assert.match(appJs, /const agent = App\._messagesAgentThread\(parts\);\n\s+if \(agent && agent\.kind === 'agent'\) App\._takeAgentFlow\(hash, fragQuery\);\n\s+if \(agent\) \{/);
   assert.match(appJs, /if \(parts\[0\] === 'agent'\) \{[\s\S]{0,600}App\.setChromeless\(false\);\n\s+App\._takeAgentFlow\(hash, fragQuery\);\n\s+if \(parts\[1\] === 'new'\)/);
 });

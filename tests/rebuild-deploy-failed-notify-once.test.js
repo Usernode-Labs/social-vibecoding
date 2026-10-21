@@ -1,13 +1,14 @@
-// staging.rebuildProduction records every failed attempt on apps.last_failure
+// staging.deployProduction records every failed attempt on apps.last_failure
 // but notifies the app's creator and admins (#1374, the app_health
 // "deploy_failed" notification) once per INCIDENT: a new notification when
 // the commit that fails, or the stage it fails at, is not what the previous
-// record already said. The drift poller retries a failing rebuild on every
-// tick, and a commit the build sandbox cannot build fails identically each
-// time; twenty-five "Deploy failed" pushes went out for one falling-sands
-// commit in a night before this.
+// record already said. A failing deploy is asked for again (the drift
+// poller, after its wait; a heal; a person), and a commit the build sandbox
+// cannot build fails identically each time; twenty-five "Deploy failed"
+// pushes went out for one falling-sands commit in a night before this.
 //
-// Functional, against the real rebuildProduction with its collaborators
+// Functional, against the real deployProduction (the app-delivery machine's
+// deploy) with its collaborators
 // stubbed: clone succeeds, rev-parse reports the sha we choose, and the
 // manifest read throws to stand in for the build failing. The pool stub
 // keeps a real apps.last_failure value so the read-before-write in the
@@ -65,6 +66,7 @@ stub(ids.appManifest, {
   reconcileAppVisibility: async () => {},
   reconcileAppGovernance: async () => {},
   reconcileAppAdmins: async () => {},
+  reconcileAppTopics: async () => null,
   reconcileAppScreenshot: async () => {},
   reconcileAppIcon: async () => {},
   MAX_APP_NAME_LENGTH: 64,
@@ -153,7 +155,7 @@ function reset() {
 }
 
 async function failOnce() {
-  await assert.rejects(staging.rebuildProduction(config, app), buildError);
+  await assert.rejects(staging.deployProduction(config, app), buildError);
 }
 
 test('the first failure on a commit records it and notifies', async () => {
@@ -179,7 +181,7 @@ test('a successful rebuild stamps the cloned source revision on production', asy
   reset();
   appRow.last_failure = { sha: RED, reason: 'earlier build failed' };
   buildError = null;
-  const result = await staging.rebuildProduction(config, app);
+  const result = await staging.deployProduction(config, app);
   assert.equal(result.sha, RED);
   assert.equal(deployedOptions.environment, 'production');
   assert.equal(deployedOptions.labels['social.usernode.io/source-revision'], RED);
@@ -187,10 +189,12 @@ test('a successful rebuild stamps the cloned source revision on production', asy
   assert.equal(notified.length, 0);
 });
 
-test('merge recovery observes a healthy deployed revision after a lost database write', async () => {
+// App delivery passes a merge's commit as the revision a retry may find
+// already running (a crash after the rollout, before the result was saved).
+test('a retried deploy of a merge\'s commit finds it running and healthy, and deploys nothing', async () => {
   reset();
   observedLive = { status: 'running', labels: { 'social.usernode.io/source-revision': RED } };
-  const result = await staging.rebuildProduction(config, app, { reuseRunningRevision: RED });
+  const result = await staging.deployProduction(config, app, { reuseRunningRevision: RED });
   assert.equal(result.sha, RED);
   assert.equal(result.recovered, true);
   assert.equal(result.containerId, 'usernode-app-falling-sands');
@@ -203,7 +207,7 @@ test('the same commit failing again at the same stage is recorded but not re-not
   await failOnce();
   const firstRecord = appRow.last_failure;
 
-  // Five more ticks of the drift poller.
+  // Five more attempts at the same commit.
   for (let i = 0; i < 5; i++) await failOnce();
 
   const writes = queries.filter((q) => /UPDATE apps SET last_failure/.test(q.sql));

@@ -37,6 +37,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
+const { message } = require('./lib/platform-i18n');
+
 const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
 const APP = read('public/js/app.js');
 const SETTINGS = read('frontend/src/features/settings/settings.js');
@@ -62,8 +64,8 @@ test('an anonymous deep link answers with sign-in, only a bare / lands', () => {
 
   assert.match(anon, /if \(!hash \|\| authRoute === 'waiting'\) \{\s*\n\s*AuthScreens\.show\('landing'\);/,
     'no fragment and no app path is the ONLY thing that reaches landing');
-  assert.match(anon, /AuthScreens\.rememberDeepLink\(App\._deepLinkTarget\(\)\);\s*\n\s*AuthScreens\.show\('login'\);/,
-    'every other address is remembered and answered with the sign-in form');
+  assert.match(anon, /AuthScreens\.showSignInFor\(App\._deepLinkTarget\(\)\);\s*\n\s*return;/,
+    'every other address is remembered and answered with the sign-in sheet (#5264)');
   // `hash` falls back to the clean app pathname above this branch, so a
   // sign-out from inside `/app/<slug>` is the same case.
   assert.match(APP, /let hash = rawHash\s*\n\s*\? \(qIdx === -1 \? rawHash : rawHash\.slice\(0, qIdx\)\)\s*\n\s*: pathRoute;/);
@@ -151,9 +153,11 @@ test('the two files agree on the one-shot advisory key', () => {
 });
 
 test('the advisory copy is unchanged, and carries no em dash', () => {
-  const copy = SETTINGS.match(/const NATIVE_SHUTDOWN_NOTICE =\s*\n\s*'([^']+)';/);
+  // The constant names the message; the English catalog holds its words.
+  const copy = SETTINGS.match(/const NATIVE_SHUTDOWN_NOTICE =\s*'(settings:[^']+)';/);
   assert.ok(copy, 'the advisory is a named constant');
-  assert.equal(copy[1],
+  assert.equal(copy[1], 'settings:signOut.nativeShutdownNotice');
+  assert.equal(message(copy[1]),
     'Signed out. Close and reopen the app to finish shutting down Homeroom.');
   // User-facing copy: no em dash in any encoding.
   const logout = SETTINGS.slice(SETTINGS.indexOf('    async logout({ accountDeleted = false } = {}) {'));
@@ -165,7 +169,12 @@ test('the advisory copy is unchanged, and carries no em dash', () => {
   for (const src of scopes) {
     const strings = src.match(/'[^'\n]*(\u2014|&mdash;|&#8212;|\\u2014)[^'\n]*'/g) || [];
     assert.deepEqual(strings, []);
+    // The words these scopes show are catalog messages now: the same rule
+    // holds for the English of every id they name.
+    const ids = [...new Set(src.match(/'settings:[A-Za-z0-9_.]+'/g) || [])].map((id) => id.slice(1, -1));
+    assert.deepEqual(ids.filter((id) => /\u2014|&mdash;|&#8212;/.test(message(id))), []);
   }
+  assert.doesNotMatch(message('settings:signOut.nativeShutdownNotice'), /\u2014|&mdash;|&#8212;/);
 });
 
 test('the advisory is written only where there is something to say', () => {
@@ -176,7 +185,7 @@ test('the advisory is written only where there is something to say', () => {
   // …and it is the native-failure path, which is also the only path that
   // still needs the user to do something.
   const failure = body.slice(body.indexOf('}, (error) => {'));
-  assert.match(failure, /sessionStorage\?\.setItem\?\.\(LOGOUT_NOTICE_KEY, NATIVE_SHUTDOWN_NOTICE\)/);
+  assert.match(failure, /sessionStorage\?\.setItem\?\.\(LOGOUT_NOTICE_KEY, tr\(NATIVE_SHUTDOWN_NOTICE\)\)/);
   assert.match(failure, /window\.location\.replace\(LANDING_URL\)/);
 });
 

@@ -91,6 +91,16 @@ One additive **notification** capability extends v4 the same way:
   full push support and simply never see the call. See "Homescreen icon
   badge" below for the producer contract it unlocks.
 
+One additive **Live Activity** capability extends v5 the same way:
+
+- `setBuildActivity`: the shell shows the maker's first version being built
+  as an iOS Live Activity (the project, the stage and the time left, on the
+  Lock Screen and in the Dynamic Island), ending with "`<name>` is live".
+  Advertise it only where ActivityKit exists (iOS 16.1+); SV reads it as
+  "telling you has a visible effect" and never calls it otherwise.
+  Privileged, like the notification actions. See "Build Live Activity"
+  below for the producer contract it unlocks.
+
 One additive **presentation** capability extends v4 the same way:
 
 - `setAppearance`: the shell remembers the appearance SV resolved to and
@@ -106,6 +116,11 @@ One additive **presentation** capability extends v4 the same way:
   status bar style: SV reads the capability as "the app takes the tone",
   and stops painting its web-side stopgap band under the status bar.
   Unprivileged and not persisted: see "Status-bar tone" below.
+- `shellPainted`: the shell keeps a launch cover over the web view until SV
+  says its first screen is drawn, then fades it out. Advertise it only on a
+  build that holds such a cover: SV reads the capability as "the app is
+  waiting for this", and sends nothing otherwise. Unprivileged: see "First
+  paint" below.
 
 ## Methods
 
@@ -261,6 +276,97 @@ iOS applies `aps.badge` and Android launchers read
 exists for the live half — updating and clearing the badge while the
 user is inside the app.
 
+### Build Live Activity (additive; `setBuildActivity`)
+
+#### `setBuildActivity(activity)` → `{ supported, started?, pushToken? }`
+
+Privileged top-frame action, with the same per-realm capability as the
+notification actions. It touches no native session, so it carries no realm
+claim and is not a lifecycle method. A first version takes about 23 minutes
+to build, and its maker puts the phone down meanwhile: this shows the build
+as an iOS Live Activity (the project, the stage and the time left, on the
+Lock Screen and in the Dynamic Island) until it is live.
+
+| Field | Value |
+|---|---|
+| `activityId` | 1 to 128 of `[A-Za-z0-9.:_-]`, starting with a letter or digit. One per build: SV sends `first-version:<slug>`. The same id updates the running activity; a new id ends the previous one first. |
+| `state` | `"active"` while it builds, `"ended"` once it is done. |
+| `title` | The project's name, at most 80 characters. |
+| `stage` | At most 80 characters, required while `active`: the words the screen shows for the stage, already in the person's language ("Working out the details"). |
+| `detail` | Optional second line, at most 120 characters. SV sends none today. |
+| `startedAt` | Optional, milliseconds since the epoch: when the build started (its plan decided). Left out, the running activity keeps its own start, so the progress does not restart. |
+| `etaAt` | Milliseconds since the epoch, or `null`: when it should be live, after `startedAt`. It drives a countdown that runs with the app asleep; `null` shows the stage only. |
+| `deepLink` | Optional https URL of at most 1024 characters, with a host and no credentials: what a tap opens. SV sends the project's App tab, `https://<origin>/app/<slug>`. |
+| `endedTitle` | Optional, at most 120 characters: the ended headline, already in the person's language. |
+
+Runs of whitespace collapse to one space. Each call describes the whole
+activity: an optional field left out is cleared, except `startedAt`.
+
+It resolves:
+
+- `supported: false` where nothing can show: not iOS 16.1+, or Live
+  Activities switched off for the app. The bridge wrapper also resolves this
+  outside the app, on a build that does not advertise the capability, and
+  when the call is dropped and its 10 s timeout passes, so nothing waits on
+  an old build.
+- `started: true` when an activity for `activityId` is showing after the
+  call; `false` when ActivityKit refused to start one (it starts only while
+  the app is in the foreground), when the person removed this build's
+  activity earlier, or after `ended`.
+- `pushToken`, the activity's ActivityKit push token (hex), when iOS issued
+  one, for a later server push to update it. SV does not use it yet.
+
+It rejects with `errorInfo.code` `invalid_args` (a field outside the table
+above) or `failed` (the app could not act on a valid request), surfaced as
+`err.usernodeCode`.
+
+What SV sends (`frontend/src/features/app-frame/build-activity.ts`, called
+with every fresh read of the project from the App tab and from the made
+screen after Submit):
+
+- **Only the maker's own first version** (`first_version.mine`), only when
+  the capability is advertised, and only when what it shows changed: the
+  line, the stage's words, or the minute the countdown ends.
+- **`active` from Building it**, which the made screen says from Submit on,
+  through Testing it, and through Ready to try for a first version that goes
+  live on its own (`approval.noVote` or `approval.soon`). The stage is the
+  build line's own words (`phaseLine`, `BUILD_LINE_WORDS`), never words of
+  its own. `etaAt` is what the screen's line counts down to: the estimate's
+  (`first_version.estimate.etaAt`), and once the step under way has run past
+  its own estimate, now plus the later steps' usual time, so it moves out
+  with the clock (at most one call a minute); `null` once no later step is
+  left to count (the screen then says it is taking a little longer than
+  usual), or without an estimate.
+- **`ended` once**, with `endedTitle` "`<name>` is live" when the line says
+  Live or the first version has gone from a running app (which the App tab
+  also reads as live: it mounts the app), or "`<name>` is ready to try" when
+  it waits for somebody's approval. An ended id is never sent again.
+- **`started: false` is tried again** when the page next comes back to the
+  foreground, and not before.
+- **Nothing throws into the page.** A rejection is logged with
+  `console.warn`.
+
+Producer requirements for a build that advertises the capability:
+
+- **Advertise `setBuildActivity` only where ActivityKit exists** (iOS 16.1+).
+  Whether the person allows Live Activities can change at any time, so that
+  is answered per call as `supported`.
+- **Trusted top frame only**, enforced by the privileged-bridge policy: it
+  puts the page's words on the Lock Screen, which no hosted app may do.
+- **Validate every field** against the table and refuse with
+  `invalid_args`; the activity's views trust what the channel passes them.
+- **One build at a time**, and calls applied in order: two quick updates
+  must not both see nothing running and start two activities.
+- **`started: false`, not an error**, when ActivityKit will not start one
+  (the app is in the background, or Live Activities are off).
+- **Do not restart an activity the person removed** for the same
+  `activityId`; a later update answers `started: false`.
+- **`ended` shows `endedTitle`, or "`<title>` is live"**, and stays on the
+  Lock Screen for ten minutes. An `ended` with nothing running for that id
+  shows nothing.
+- **End every build activity on sign-out**, since the project it names
+  belongs to the account that signed out.
+
 ### Native sign-in (additive; `signInWithProvider`)
 
 #### `signInWithProvider({ provider, nonce })` → `{ idToken }`
@@ -407,6 +513,9 @@ boot and whenever the answer changes, and only with a changed value:
 - `"dark"` while the fullscreen staging preview (`#staging-overlay`, not
   docked and not under a session's chrome) or the before/after compare
   overlay (`#visual-compare-overlay`) is open;
+- otherwise `"dark"` on a project's pages, whose header wears its
+  community's colour (`data-community-tint` on `<html>`); every such colour
+  is fitted for white text, and the attribute is off inside a running app;
 - otherwise the running app's tone (`data-app-tone` on `<html>`), when an
   app is on screen;
 - otherwise `null`. The boot publish is `null` too, which also clears an
@@ -437,6 +546,60 @@ preview bar's safe-area band in the shell's ground colour (scoped to
 `html.in-native-webview`), so the theme's glyphs sit on the ground they were
 picked for. The first tone the app accepts puts `.native-status-bar-tone` on
 `<html>`, which retires that band for the rest of the document.
+
+### First paint (additive; `shellPainted`)
+
+#### `shellPainted({})` → resolves when received
+
+No arguments: the bridge sends `{}`. SV sends it **at most once per
+document**, from the top document of the trusted shell only, never from a
+framed copy or from an app.
+
+**The problem it solves.** A cold launch walked through six stages in about
+3.3 s: the native splash, a "Connecting" screen, a white frame, a blank
+frame, SV's skeleton with its header under the status bar, and Home
+settling (the header dropping, the tab bar renaming itself, rows inserted,
+artwork arriving a frame late). The app now keeps one cover up across all of
+them, and this call is what lets it go at the right moment rather than on a
+guess.
+
+SV calls it from `public/js/native-chrome.js` (`_initShellPainted`) when all
+of these hold:
+
+- the document is parsed (`DOMContentLoaded` has fired) and no boot hold is
+  up (the head's `first-session-boot` / `language-pending` classes);
+- no skeleton is on screen in a screen root: no `.animate-pulse` placeholder
+  inside a visible `<main>` intersects the viewport;
+- every `<img>` on screen in a screen root has finished loading or failing;
+- `env(safe-area-inset-top)`, read off a probe element's computed
+  `padding-top`, is greater than 0. Inside the app the web view can lay the
+  page out before it knows the inset, and that layout drew the header under
+  the clock.
+
+It then waits for the next paint (two `requestAnimationFrame`s, with a
+120 ms timer under them in case the web view produces no frames under the
+cover) and sends. **Whatever is still loading, it sends at the latest 1.5 s
+after `DOMContentLoaded`**, without waiting for a frame. A document that is
+never parsed sends nothing, which is what the app's own cap is for.
+
+The capability is read once, early, through `getBridgeInfo()`. A degraded
+probe is asked once more after 300 ms; still degraded, SV sends nothing.
+
+Producer requirements for a build that advertises the capability:
+
+- **Fade the cover out over 150 ms on receipt**, and never wait longer than
+  3 s for the call: a page that fails to boot must not leave the cover up.
+- **Resolve the call promptly** (any value; SV ignores it). The wrapper
+  rejects after 4 s and SV logs a `console.warn`, never a `console.error`.
+- **Idempotent, and per document.** A call with no cover up changes
+  nothing. A reload or a new document is a new launch only if the app put
+  the cover back up for it.
+- **Nothing else changes on receipt.** It is presentation state: it must not
+  affect auth, node lifecycle, or which code path runs.
+
+Builds without the capability lose nothing: SV feature-detects it via
+`getBridgeInfo().capabilities` and never calls it otherwise, so a browser,
+an older build and a framed copy run no probe and no polling.
 
 ### Chrome data (v2 — the app-as-SV-chrome surface)
 
@@ -826,6 +989,7 @@ recoverable rather than a dead end.
 | `setFacematchStrict(enabled)` | `{ enabled: bool }` | toggles strict ZK-passport facematch |
 | `requestPermissions()` | — | native alarm-permission prompt; snapshot plus a `granted` bool |
 | `requestAlarmPermissions()` | — | Android: opens the first missing producer permission only (the exact-alarm settings page, else the battery dialog), never the notification prompt; call again for the next step. Snapshot plus a `granted` bool (exact alarms) |
+| `requestNotificationPermission()` | — | the notification permission alone: Android's POST_NOTIFICATIONS dialog (where `requestPermissions()` is the exact-alarm chain), iOS's notification prompt. Snapshot plus a `granted` bool. SV calls it only behind an in-app "Notify me" at its notification-ask moments (`frontend/src/features/notify-ask/`). App builds before flutter-mobile-app#614 resolve 500 ms after the Android dialog opens, before the person answers, so SV watches the snapshot for the grant a while after (`NativeChrome._watchAndroidGrant`) |
 
 `setIosKeepAlive` was removed in v4 with the iOS keep-alive service.
 

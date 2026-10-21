@@ -29,6 +29,7 @@ const bot = require('../src/services/homeroom-bot');
 const live = require('../src/services/homeroom-bot-live');
 const dm = require('../src/services/homeroom-bot-dm');
 const githubModule = require('../src/services/github');
+const durableSteps = require('../src/services/durable-steps');
 const { getTemplateFiles } = require('../src/services/template');
 
 const EAR_TRAINER = 'An app to learn relative notes / chords, and then basic chord progressions. Chord progressions to learn should be taken from popular songs, and hymns. Learning progressions should take more different notes / chords / chord progressions first, and then add in the ones that sound closer until you are being quizzed on the full set. You should be able to select how big the set is from a list of lessons that get progressively harder for each lesson type.';
@@ -567,15 +568,27 @@ const REPO = { owner: 'o', repo: 'ear' };
 const USER = { id: 501, username: 'homeroom_bench' };
 const TRIAL = { id: 44, run_id: 3, attempt: 1 };
 
-function harness({ verdict = 'ready', pushed = true, captureOut = null, takesImages = undefined } = {}) {
-  const calls = { prompts: [], modes: [], ensured: [], scaffold: [], pinned: [], deleted: [], capture: [] };
-  let nextSession = 7000;
+// `firstSession` keeps a later attempt's sessions apart from the ones an
+// earlier attempt opened; `activeTurn` is a turn record a restart left on a
+// session, which a later attempt follows.
+function harness({ verdict = 'ready', pushed = true, captureOut = null, takesImages = undefined, firstSession = 7000, activeTurn = null } = {}) {
+  const calls = { prompts: [], modes: [], ensured: [], scaffold: [], pinned: [], deleted: [], capture: [], owners: [] };
+  let nextSession = firstSession;
   const pool = {
     async query(sql, params) {
-      if (/INSERT INTO chat_sessions/.test(String(sql))) {
+      const s = String(sql);
+      if (/INSERT INTO chat_sessions/.test(s)) {
         nextSession += 1;
+        // A trial's own session carries the build that owns it.
+        if (params.length > 6) calls.owners.push({ id: nextSession, owner: params[6] });
         return { rows: [{ id: nextSession, branch_name: params[2] ?? null, agent_model: params[4] }] };
       }
+      // The build's session carries it too, set as it is opened.
+      if (/SET workflow_owner = \$2/.test(s)) calls.owners.push({ id: Number(params[0]), owner: params[1] });
+      // A session an earlier attempt opened, read back.
+      if (/SELECT \* FROM chat_sessions WHERE id = \$1/.test(s)) return { rows: [{ id: Number(params[0]), branch_name: 'bench/r3-t44', agent_model: null }] };
+      if (/SELECT active_turn FROM chat_sessions/.test(s)) return { rows: activeTurn ? [{ active_turn: activeTurn }] : [] };
+      if (/'\{restarts\}'/.test(s)) return { rows: activeTurn ? [{ restarts: 1 }] : [] };
       // The run's shared first commit (services/bench/scaffold.js): this
       // trial is the first to need it, so it makes it.
       if (/INSERT INTO bench_scaffolds/.test(String(sql))) return { rows: [{ id: 12 }] };
@@ -646,6 +659,40 @@ function ctx(h, stage, snapshot, over = {}) {
   };
 }
 
+// A trial runs as a durable build (services/build-runs.js): its stage runs on
+// durable steps over the build's work item, and every save is kept here, so
+// a later attempt can resume from any of them, as the next leader does after
+// a restart that came just after that step was saved.
+function keeping({ resumeFrom = null, signal = null, owner = 'bot-build/trial:44@c1.x' } = {}) {
+  const saves = [];
+  const steps = durableSteps.durable({
+    resumeFrom, signal, owner, lostAttempts: resumeFrom ? 1 : 0, checkpoint: async (state) => { saves.push(state); },
+  });
+  return { steps, saves };
+}
+const onSteps = (h, steps) => ({ deps: { ...h.deps, durable: steps } });
+// The first state saved with `key` in it: a restart just after that step.
+const savedAt = (saves, key, test = () => true) => saves.find((s) => key in s && test(s[key]));
+
+// The worker a later attempt finds: the one the restart left running, with
+// the turn its record names still in it, followed through its journal.
+function following(h, journalResult) {
+  const followed = [];
+  Object.assign(h.deps.worker, {
+    workerRuntimeName: (id) => `w-${id}`,
+    async getWorkerStatus() { return 'running'; },
+    adoptWarmWorker(id, name) { followed.push(['adopt', name]); },
+    async resumeTurnFromJournal(id, opts) { followed.push(['resume', Number(id), opts.journal]); return journalResult; },
+    async markTurnTail() { return true; },
+    async finishTurn(id, ids) { followed.push(['finish', Number(id), ids.turnId]); return true; },
+  });
+  Object.assign(h.deps.agentTurn, {
+    async persistRecoveredAgentThread() {},
+    async settleRecoveredAgentAttempt() { return { estimatedCost: { estimatedCostUsd: 0.25 } }; },
+  });
+  return followed;
+}
+
 const FIRST = { id: 5, stage: 'build', issueNumber: 1, baseSha: null, texts: { brief: EAR_TRAINER }, extra: { taste: 'first_version', appName: 'Ear Trainer', template: 'empty' } };
 
 test('a first-version trial: today\'s new project as a history-less first commit, the bot\'s first-version triage, the plan as Build it leaves it, spec and build, then the screenshots', async (t) => {
@@ -664,9 +711,10 @@ test('a first-version trial: today\'s new project as a history-less first commit
   assert.deepEqual(h.calls.scaffold[0].files.map((f) => f.path).sort(),
     scaffold.filesFor({ input: { appName: 'Ear Trainer', template: 'empty' }, sketch }).map((f) => f.path).sort());
   assert.ok(h.calls.scaffold[0].files.some((f) => f.path === 'design/sketch.json'), 'the card is in the first commit, as creation puts it');
-  assert.deepEqual(h.calls.deleted, ['bench/r3-s12', 'bench/r3-t44'], 'the first commit\'s branch, then an earlier attempt\'s branch of the same trial');
+  assert.deepEqual(h.calls.deleted, ['bench/r3-s12', 'bench/r3-t44', 'bench/r3-t44'],
+    'the first commit\'s branch, an earlier claim\'s branch of the same trial, then the build\'s own cut of it');
   assert.deepEqual(h.calls.pinned.slice(0, 2), [{ branch: 'bench/r3-s12', sha: SCAFFOLD }, { branch: 'bench/r3-t44', sha: SCAFFOLD }]);
-  assert.ok(h.calls.pinned.slice(2).every((p) => p.branch === 'bench/r3-t44' && p.sha === SCAFFOLD), 'the build confirms the trial\'s branch at the same commit');
+  assert.deepEqual(h.calls.pinned.slice(2), [{ branch: 'bench/r3-t44', sha: SCAFFOLD }], 'the build cuts the trial\'s branch again at the same commit');
   assert.equal(out.base_sha, SCAFFOLD);
   assert.deepEqual(out.parsed.scaffold, { sha: SCAFFOLD, branch: 'bench/r3-s12' });
   assert.equal(out.parsed.sketch.tagline, CARD.tagline);
@@ -727,182 +775,138 @@ test('a first version the triage would not build builds nothing, and says what t
 
 // ── A first version after a restart ─────────────────────────────────────
 //
-// A restart hands a first version back to the lane with what it finished
-// kept on the trial (services/bench/lane.js "After a restart"), and its next
-// claim goes on from there: each kept sub-step is taken as it is, never run
-// again. tests/bench-restart-recovery.test.js covers the hand-back itself.
+// A trial runs as a durable build (services/bench/lane.js runTrial): each
+// part of a first version is a durable step, kept as it ends, and a
+// restart's next attempt carries the trial on from the last one it saved,
+// following a turn the restart caught (services/durable-turn.js). Nothing
+// is run again that was kept, and the trial's branch, once cut, is never
+// cut again. Each test below runs a first attempt, keeps every state it
+// saved, and runs the next attempt from one of them.
 
-/** A first version run start to end, with every part of its checkpoint it kept. */
-async function keptRun(t) {
+/** A first version run start to end on durable steps, with every state it saved. */
+async function keptRun(t, { tweak = null, ...opts } = {}) {
   spySideEffects(t);
-  const h = harness();
-  const parts = [];
-  const out = await runner.runStage(ctx(h, 'first_version', FIRST, { onCheckpoint: async (p) => { parts.push(p); } }));
+  const h = harness(opts);
+  if (tweak) tweak(h);
+  const k = keeping();
+  const out = await runner.runStage(ctx(h, 'first_version', FIRST, onSteps(h, k.steps)));
   assert.equal(out.status, 'ok', out.error);
-  return { out, parts, kept: Object.assign({}, ...parts) };
+  return { out, saves: k.saves, h };
 }
 
-// An earlier claim's triage session, apart from the sessions a fresh harness opens.
-const KEPT_TRIAGE = 6100;
-const keptTriageOf = (kept) => ({ triageSessionId: KEPT_TRIAGE, triage: { ...kept.triage, session_id: KEPT_TRIAGE } });
-
-test('a first version keeps each sub-step as it finishes: the triage\'s session before its turn, then its answer, the spec and the build that landed', async (t) => {
-  const { out, parts, kept } = await keptRun(t);
-  const order = parts.flatMap((p) => Object.keys(p).filter((k) => k !== 'sessions'));
-  assert.deepEqual(order, ['triageSessionId', 'triage', 'sight', 'spec', 'sight', 'build'],
-    'in the order they finish, with what the build could see before each of its turns');
+test('a first version keeps each part as a durable step as it finishes: its first commit and branch, its triage, the build\'s spec and turn, then its screenshots', async (t) => {
+  const { out, saves, h } = await keptRun(t);
+  const parts = ['scaffold', 'branch', 'session:triage', 'turn:triage', 'triage', 'build/session', 'build/branch', 'build/spec',
+    'build/turn:build', 'build/reached:landed', 'shot:capture'];
+  const at = parts.map((key) => saves.findIndex((s) => key in s));
+  assert.deepEqual(parts.filter((_, i) => at[i] < 0), [], 'every part kept');
+  assert.deepEqual(at, [...at].sort((a, b) => a - b), 'in the order they finish: the triage\'s session before its turn runs');
+  const kept = saves.at(-1);
   const [triageSession, buildSession] = out.session_ids;
-  assert.equal(kept.triageSessionId, triageSession, 'recovery tells the triage\'s turn from the spec\'s by it');
-  assert.deepEqual(kept.sessions, [triageSession, buildSession], 'every session the trial opened');
+  assert.deepEqual(kept['session:triage'], { id: triageSession });
   assert.equal(kept.triage.status, 'ok');
   assert.equal(kept.triage.session_id, triageSession);
   assert.equal(kept.triage.parsed.verdict, 'ready');
-  assert.equal(kept.triage.session, undefined, 'never the live session object');
-  assert.deepEqual(kept.spec, { sessionId: buildSession, specMd: '# Ear Trainer\n\nThe first version.' });
-  assert.equal(kept.build.ok, true);
-  assert.equal(kept.build.sha, 'c'.repeat(40));
-  assert.equal(kept.build.commits, 3);
-  assert.equal(kept.build.sessionId, buildSession);
+  assert.equal('session' in kept.triage, false, 'never the live session object');
+  assert.deepEqual(kept['build/session'], { id: buildSession });
+  assert.equal(kept['build/spec'].specMd, '# Ear Trainer\n\nThe first version.');
+  assert.equal(kept['build/turn:build'].phase, 'done');
+  assert.equal(kept['build/turn:build'].out.routed.result.sha, 'c'.repeat(40), 'the build that landed');
+  assert.equal(kept['shot:capture'].capture.booted, true);
+  assert.deepEqual(h.calls.owners, [triageSession, buildSession].map((id) => ({ id, owner: 'bot-build/trial:44@c1.x' })),
+    'each session carries the build that owns it, which restart recovery leaves it to');
   assert.equal(out.parsed.resumedAfterRestart, undefined, 'a trial no restart touched says nothing about one');
 });
 
-test('a first version going on after a restart is never triaged again: the kept answer leads to the spec and the build', async (t) => {
-  const { kept } = await keptRun(t);
-  const h = harness();
-  const checkpoint = { ...keptTriageOf(kept), sessions: [KEPT_TRIAGE], handBacks: 1 };
-  const out = await runner.runStage(ctx(h, 'first_version', FIRST, { checkpoint }));
+test('a first version a restart caught after its triage is never triaged again: the kept answer leads to the spec and the build', async (t) => {
+  const { out: before, saves } = await keptRun(t);
+  const h = harness({ firstSession: 7100 });
+  const out = await runner.runStage(ctx(h, 'first_version', FIRST, onSteps(h, keeping({ resumeFrom: savedAt(saves, 'triage') }).steps)));
   assert.equal(out.status, 'ok', out.error);
   assert.deepEqual(h.calls.modes, ['scout', 'build'], 'the spec and the build, no triage');
   assert.ok(!/now answer the triage request/i.test(h.calls.prompts[0]), 'the first turn is the spec');
   assert.ok(h.calls.prompts[1].includes('Lessons list, a keyboard, both looks.'), 'built from the kept triage\'s plan');
   assert.equal(out.parsed.triage.verdict, 'ready');
-  assert.deepEqual(h.calls.deleted, ['bench/r3-s12', 'bench/r3-t44'], 'the branch starts again at the first commit');
-  assert.equal(out.session_ids[0], KEPT_TRIAGE, 'the kept triage\'s session is still the trial\'s cost');
+  assert.equal(h.calls.scaffold.length, 0, 'its first commit is not made again');
+  assert.deepEqual(h.calls.deleted, ['bench/r3-t44'], 'nor its branch cut again: only the build\'s own cut of it');
+  assert.deepEqual(h.calls.pinned, [{ branch: 'bench/r3-t44', sha: SCAFFOLD }], 'at the same first commit');
+  assert.equal(out.session_ids[0], before.session_ids[0], 'the kept triage\'s session is still the trial\'s cost');
   assert.equal(out.session_ids.length, 2);
   assert.equal(out.parsed.resumedAfterRestart, 1);
   assert.equal(h.calls.capture.length, 1);
 });
 
-test('a kept spec is built from as it is: one build turn, the spec\'s session counted', async (t) => {
-  const { kept } = await keptRun(t);
-  const realBuild = live.buildAndPropose;
-  let args = null;
-  live.buildAndPropose = async (a) => { args = a; return realBuild(a); };
-  t.after(() => { live.buildAndPropose = realBuild; });
+test('a first version whose triage failed before a restart ends as it ended: nothing runs again', async (t) => {
+  spySideEffects(t);
   const h = harness();
-  const spec = { sessionId: 6001, specMd: '# Ear Trainer\n\nThe kept spec.' };
-  const out = await runner.runStage(ctx(h, 'first_version', FIRST, {
-    checkpoint: { ...keptTriageOf(kept), sessions: [KEPT_TRIAGE, 6001], spec },
-  }));
-  assert.equal(out.status, 'ok', out.error);
-  assert.deepEqual(h.calls.modes, ['build']);
-  assert.equal(args.presetSpec, spec.specMd);
-  assert.ok(h.calls.prompts[0].includes('The kept spec.'));
-  assert.equal(out.parsed.spec, spec.specMd);
-  assert.ok(out.session_ids.includes(6001), 'the session that wrote the spec is the trial\'s cost');
-  assert.equal(out.session_ids.length, 3);
+  h.deps.sessions.runCodexAttemptLoop = async () => ({ result: {}, error: 'max_turns', estimatedCostUsd: 0.25 });
+  const k = keeping();
+  const first = await runner.runStage(ctx(h, 'first_version', FIRST, onSteps(h, k.steps)));
+  assert.equal(first.status, 'model_fail');
+  const again = harness({ firstSession: 7100 });
+  const out = await runner.runStage(ctx(again, 'first_version', FIRST, onSteps(again, keeping({ resumeFrom: savedAt(k.saves, 'triage') }).steps)));
+  assert.equal(out.status, 'model_fail', 'its kept outcome, recorded as the live stage would record it');
+  assert.equal(out.error, first.error);
+  assert.equal(out.parsed.built, false);
+  assert.deepEqual(again.calls.modes, [], 'no turn');
+  assert.equal(again.calls.capture.length, 0);
 });
 
-test('a build that landed before a restart keeps its branch at its commit: no turn, the screenshots on a fresh worker', async (t) => {
-  const { kept } = await keptRun(t);
-  const h = harness();
-  const sha = 'd'.repeat(40);
-  const build = { ...kept.build, sessionId: 6002, sha, commits: 2 };
-  const out = await runner.runStage(ctx(h, 'first_version', FIRST, {
-    checkpoint: { ...keptTriageOf(kept), sessions: [KEPT_TRIAGE, 6002], spec: { sessionId: 6002, specMd: kept.spec.specMd }, build },
-  }));
+// Run 190: a restart landed during all six spec turns, recovery kept each
+// spec's markdown only, and no build started from the screens it drew.
+const HTML_SPEC = '<article data-spec><h1>Ear Trainer</h1><section data-spec-tab="user"><h2>User-facing changes</h2>'
+  + '<figure data-screens><ol data-changes><li data-change="1">The lessons</li></ol>'
+  + '<template data-screen data-size="phone" data-height="900"><style>:root{--accent:37 99 235}</style>'
+  + '<div data-side="after" data-change="1"><h2>Lessons</h2><button class="btn-primary">Start</button></div></template></figure>'
+  + '<p>Lessons list.</p></section><section data-spec-tab="tech"><h2>Technical implementation</h2><p>public/app.js draws it.</p></section></article>';
+
+test('a first version a restart caught after its spec builds from the spec it kept: one build turn on the spec\'s session, its drawn screens still counted', async (t) => {
+  const { out: before, saves } = await keptRun(t, {
+    tweak: (h) => {
+      const write = h.deps.worker.execInWorker;
+      h.deps.worker.execInWorker = async (id, opts) => {
+        const out = await write(id, opts);
+        return out.lastResultText === '# Ear Trainer\n\nThe first version.' ? { lastResultText: HTML_SPEC } : out;
+      };
+    },
+  });
+  const atSpec = savedAt(saves, 'build/spec');
+  assert.match(atSpec['build/spec'].specMd, /^# Ear Trainer/);
+  assert.equal(atSpec['build/spec'].specHtml, HTML_SPEC.replace(/—/g, ','), 'kept with its HTML, as the spec turn read it');
+  const h = harness({ firstSession: 7100 });
+  const out = await runner.runStage(ctx(h, 'first_version', FIRST, onSteps(h, keeping({ resumeFrom: atSpec }).steps)));
+  assert.equal(out.status, 'ok', out.error);
+  assert.deepEqual(h.calls.modes, ['build'], 'no spec turn: the kept spec is built from');
+  assert.ok(h.calls.prompts[0].includes('Lessons list.'), 'the build turn is handed it');
+  assert.match(out.parsed.spec, /^# Ear Trainer/);
+  assert.equal(out.parsed.specScreens.length, 1, 'the screens it drew are counted, as a fresh spec\'s are');
+  assert.equal(out.session_id, before.session_id, 'built on the session the spec was written in');
+  assert.deepEqual(out.session_ids, before.session_ids, 'each session the trial\'s cost once');
+  assert.deepEqual(h.calls.deleted, [], 'its branch is not cut again');
+  assert.deepEqual(h.calls.pinned, []);
+  assert.equal(h.calls.capture.length, 1);
+});
+
+test('a first version a restart caught after its build landed is not built again: its branch left at its commit, the screenshots taken in the build\'s own worker', async (t) => {
+  const { out: before, saves } = await keptRun(t);
+  const landed = savedAt(saves, 'build/turn:build', (v) => v.phase === 'done');
+  const h = harness({ firstSession: 7100 });
+  const out = await runner.runStage(ctx(h, 'first_version', FIRST, onSteps(h, keeping({ resumeFrom: landed }).steps)));
   assert.equal(out.status, 'ok', out.error);
   assert.deepEqual(h.calls.modes, [], 'no model turn');
-  assert.ok(!h.calls.deleted.includes('bench/r3-t44'), 'its branch is kept');
-  assert.ok(h.calls.pinned.some((p) => p.branch === 'bench/r3-t44' && p.sha === sha), 'and confirmed at the build\'s commit');
-  assert.equal(out.build_sha, sha);
-  assert.equal(out.build_commits, 2);
+  assert.deepEqual(h.calls.deleted, [], 'its branch, holding the build, is not cut again');
+  assert.deepEqual(h.calls.pinned, []);
+  assert.equal(out.build_sha, 'c'.repeat(40));
+  assert.equal(out.build_commits, 3);
   assert.match(out.diff, /public\/index\.html/, 'its diff read from the first commit');
   assert.equal(out.parsed.built, true);
-  assert.equal(out.parsed.spec, kept.spec.specMd);
+  assert.equal(out.parsed.spec, '# Ear Trainer\n\nThe first version.');
+  assert.equal(out.parsed.costParts.build.usd, 0.25, 'what its build turn cost, kept with its result');
+  assert.deepEqual(out.session_ids, before.session_ids, 'the sessions the first attempt opened, and no other');
   assert.equal(h.calls.capture.length, 1);
-  const shotSession = out.session_ids.at(-1);
-  assert.notEqual(shotSession, 6002);
-  assert.equal(h.calls.capture[0].containerName, `w-${shotSession}`, 'a fresh worker');
-  assert.equal(h.calls.ensured.at(-1).pinnedBase, SCAFFOLD, 'sealed at the first commit, as a live build\'s is');
-  assert.deepEqual(out.session_ids, [KEPT_TRIAGE, 6002, shotSession], 'the kept triage\'s and build\'s sessions, then the screenshots\'');
-  assert.equal(out.capture.booted, true);
-});
-
-test('a kept failure is the trial\'s outcome, recorded as the live stage would record it', async (t) => {
-  const { kept } = await keptRun(t);
-  const timedOut = harness();
-  const triage = { status: 'timeout', error: 'the turn ran past its time limit', session_id: 6003, cost_usd: null, raw_output: '', parsed: null };
-  const a = await runner.runStage(ctx(timedOut, 'first_version', FIRST, { checkpoint: { triageSessionId: 6003, sessions: [6003], triage } }));
-  assert.equal(a.status, 'timeout');
-  assert.deepEqual(timedOut.calls.modes, []);
-  assert.equal(a.parsed.built, false);
-
-  const failed = harness();
-  const build = { ok: false, sessionId: 6004, sha: null, commits: null, specMd: null, specNote: null, error: 'the build ran past its time limit (finished after a restart)' };
-  const b = await runner.runStage(ctx(failed, 'first_version', FIRST, { checkpoint: { ...keptTriageOf(kept), build } }));
-  assert.equal(b.status, 'timeout');
-  assert.deepEqual(failed.calls.modes, []);
-  assert.equal(failed.calls.capture.length, 0);
-
-  const blocked = harness();
-  const spec = { sessionId: 6005, blocked: 'needs a microphone the frame cannot have', error: 'blocked: needs a microphone the frame cannot have' };
-  const c = await runner.runStage(ctx(blocked, 'first_version', FIRST, { checkpoint: { ...keptTriageOf(kept), spec } }));
-  assert.equal(c.status, 'ok');
-  assert.equal(c.parsed.blocked, spec.blocked);
-  assert.deepEqual(blocked.calls.modes, []);
-
-  // A build said to have landed with no commit on record is built again.
-  const noSha = harness();
-  const d = await runner.runStage(ctx(noSha, 'first_version', FIRST, {
-    checkpoint: { ...keptTriageOf(kept), build: { ok: true, sessionId: 6006, sha: null, commits: 1 } },
-  }));
-  assert.equal(d.status, 'ok');
-  assert.deepEqual(noSha.calls.modes, ['scout', 'build']);
-});
-
-test('restart recovery follows every turn of a first version and reads what it produced as the live stage would', () => {
-  const scout = { mode: 'scout' };
-  const build = { mode: 'build' };
-  assert.equal(runner.resumableTurn('first_version', scout), true);
-  assert.equal(runner.resumableTurn('first_version', build), true);
-  assert.equal(runner.resumableTurn('first_version', { mode: 'shots' }), false);
-  assert.equal(runner.resumableTurn('first_version', scout, { reference: true }), false, 'a reference build has no turn');
-  assert.equal(runner.resumableTurn('first_version', null), false);
-
-  assert.equal(runner.firstVersionTurnOf({ triageSessionId: 5 }, 5, scout), 'triage');
-  assert.equal(runner.firstVersionTurnOf({ triageSessionId: 5 }, 6, scout), 'spec');
-  assert.equal(runner.firstVersionTurnOf({}, 6, scout), 'triage', 'nothing kept yet: the triage');
-  assert.equal(runner.firstVersionTurnOf({ triage: { status: 'ok' } }, 6, scout), 'spec');
-  assert.equal(runner.firstVersionTurnOf(null, 6, build), 'build');
-
-  const session = { id: 6, spec_md: '' };
-  const verdict = `\`\`\`json\n${JSON.stringify({ verdict: 'ready', determined: true, build_note: 'Lessons list.', reason: 'clear' })}\n\`\`\``;
-  const tri = runner.recoverFirstVersionTurn({ checkpoint: { triageSessionId: 6 }, session, activeTurn: scout, result: { lastResultText: verdict } });
-  assert.equal(tri.step, 'triage');
-  assert.equal(tri.keep.triage.status, 'ok');
-  assert.equal(tri.keep.triage.session_id, 6);
-  assert.equal(tri.keep.triage.parsed.buildNote, 'Lessons list.');
-  const lateTriage = runner.recoverFirstVersionTurn({ checkpoint: { triageSessionId: 6 }, session, activeTurn: scout, result: {}, timedOut: true });
-  assert.equal(lateTriage.keep.triage.status, 'timeout', 'a triage\'s failure is its outcome');
-
-  const cp = { triageSessionId: 5, triage: { status: 'ok' } };
-  const spec = runner.recoverFirstVersionTurn({ checkpoint: cp, session, activeTurn: scout, result: { lastResultText: '# Ear Trainer\n\nThe first version.' } });
-  assert.deepEqual(spec, { step: 'spec', keep: { spec: { sessionId: 6, specMd: '# Ear Trainer\n\nThe first version.' } } });
-  const blocked = runner.recoverFirstVersionTurn({ checkpoint: cp, session, activeTurn: scout, result: { lastResultText: 'BLOCKED: needs a microphone' } });
-  assert.equal(blocked.keep.spec.blocked, 'needs a microphone');
-  assert.equal(runner.recoverFirstVersionTurn({ checkpoint: cp, session, activeTurn: scout, result: {}, timedOut: true }), null,
-    'a spec that ran out of time is written again');
-  assert.equal(runner.recoverFirstVersionTurn({ checkpoint: cp, session, activeTurn: scout, result: { lastResultText: '' } }), null);
-
-  const withSpec = { ...cp, spec: { sessionId: 6, specMd: '# Kept' } };
-  const landed = runner.recoverFirstVersionTurn({ checkpoint: withSpec, session, activeTurn: build, result: { pushOk: true, ahead: 2, sha: 'd'.repeat(40) } });
-  assert.equal(landed.step, 'build');
-  assert.deepEqual(landed.keep.build, { ok: true, sessionId: 6, sha: 'd'.repeat(40), commits: 2, specMd: '# Kept', specNote: null, error: null });
-  const late = runner.recoverFirstVersionTurn({ checkpoint: withSpec, session, activeTurn: build, result: {}, timedOut: true });
-  assert.equal(late.keep.build.ok, false);
-  assert.match(late.keep.build.error, /ran past its time limit \(finished after a restart\)/);
-  assert.equal(runner.recoverFirstVersionTurn({ checkpoint: cp, session, activeTurn: { mode: 'shots' } }), null);
+  assert.equal(h.calls.capture[0].containerName, `w-${before.session_id}`, 'in the build\'s own worker');
+  assert.ok(h.calls.ensured.length && h.calls.ensured.every((e) => e.pinnedBase === SCAFFOLD), 'sealed at the first commit, as every worker of the trial is');
+  assert.equal(out.parsed.resumedAfterRestart, 1);
 });
 
 test('a build records whether it could see its own screens: what its prompt told it, and what its model was handed', async (t) => {
@@ -929,69 +933,126 @@ test('a build records whether it could see its own screens: what its prompt told
   const c = await runner.runStage(ctx(mixed, 'first_version', FIRST));
   assert.deepEqual(c.parsed.sight, { told: false, passed: true });
 
-  // A build kept through a restart keeps what it could see.
-  const parts = [];
+  // A build a restart caught after it landed keeps what it could see, not
+  // what the catalog says now.
   live.buildSeesImages = async () => true;
+  const k = keeping();
   const kept = harness({ takesImages: true });
-  await runner.runStage(ctx(kept, 'first_version', FIRST, { onCheckpoint: async (p) => { parts.push(p); } }));
-  const checkpoint = Object.assign({}, ...parts);
-  assert.deepEqual(checkpoint.build.sight, { told: true, passed: true });
-  const resumed = harness();
-  const d = await runner.runStage(ctx(resumed, 'first_version', FIRST, { checkpoint: { ...checkpoint, build: { ...checkpoint.build, sessionId: 6007 } } }));
+  await runner.runStage(ctx(kept, 'first_version', FIRST, onSteps(kept, k.steps)));
+  const landed = savedAt(k.saves, 'build/turn:build', (v) => v.phase === 'done');
+  assert.deepEqual([landed.sight_told, landed.sight_passed], [true, true]);
+  live.buildSeesImages = async () => false;
+  const resumed = harness({ firstSession: 7100 });
+  const d = await runner.runStage(ctx(resumed, 'first_version', FIRST, onSteps(resumed, keeping({ resumeFrom: landed }).steps)));
   assert.deepEqual(resumed.calls.modes, [], 'no turn');
   assert.deepEqual(d.parsed.sight, { told: true, passed: true });
 });
 
-test('what a build could see is kept before its build turn runs, so a build restart recovery finished keeps it too', async (t) => {
+test('a first version\'s build turn a restart caught is followed to its end, never dispatched again; what the build could see was kept before it ran', async (t) => {
   spySideEffects(t);
   const realSees = live.buildSeesImages;
   t.after(() => { live.buildSeesImages = realSees; });
   live.buildSeesImages = async () => true;
-  const h = harness({ takesImages: false });
-  const parts = [];
-  const realExec = h.deps.worker.execInWorker;
+  // The first attempt: its build turn is dispatched, its record written, and
+  // the process stops while the turn runs on in its worker.
+  const first = harness({ takesImages: false });
+  const stop = new AbortController();
+  const k = keeping({ signal: stop.signal });
   let atBuildTurn = null;
-  h.deps.worker.execInWorker = async (id, opts) => {
-    if (opts.mode === 'build') atBuildTurn = Object.assign({}, ...parts);
-    return realExec(id, opts);
+  const realExec = first.deps.worker.execInWorker;
+  first.deps.worker.execInWorker = async (id, opts) => {
+    if (opts.mode !== 'build') return realExec(id, opts);
+    first.calls.modes.push(opts.mode);
+    atBuildTurn = k.saves.at(-1);
+    await opts.onTurnRecord({ turnId: 'turn-build', journal: '/journals/build.log' });
+    stop.abort();
+    return new Promise(() => {});
   };
-  const out = await runner.runStage(ctx(h, 'first_version', FIRST, { onCheckpoint: async (p) => { parts.push(p); } }));
-  assert.equal(out.status, 'ok', out.error);
-  assert.deepEqual(atBuildTurn.sight, { told: true, passed: false }, 'on the checkpoint before the build turn started');
-  assert.equal(atBuildTurn.build, undefined, 'long before the build is kept');
+  await assert.rejects(runner.runStage(ctx(first, 'first_version', FIRST, onSteps(first, k.steps))), { code: 'steps_stopped' },
+    'a stop is not the trial\'s failure: its next attempt carries it on');
+  assert.deepEqual([atBuildTurn.sight_told, atBuildTurn.sight_passed], [true, false],
+    'what its prompt told it and what its model was handed, kept before its build turn started');
+  assert.equal('build/reached:landed' in atBuildTurn, false, 'long before the build is kept');
+  const kept = k.saves.at(-1);
+  const buildSession = kept['build/session'].id;
+  assert.deepEqual(kept['build/turn:build'].record, { turnId: 'turn-build', journal: '/journals/build.log' }, 'the turn\'s record, kept as it was written');
 
-  // The build turn was finished by restart recovery, which reads only how it
-  // ended: its kept build says nothing of what it could see.
-  const checkpoint = Object.assign({}, ...parts.filter((p) => !p.build));
-  const recovered = runner.recoverFirstVersionTurn({
-    checkpoint, session: { id: checkpoint.spec.sessionId, spec_md: '' }, activeTurn: { mode: 'build' },
-    result: { pushOk: true, ahead: 2, sha: 'd'.repeat(40) },
+  // The next attempt finds the record on the build's session, its worker
+  // still running, and follows the turn to where it ended: it pushed.
+  const h = harness({
+    firstSession: 7100,
+    activeTurn: { turnId: 'turn-build', journal: '/journals/build.log', mode: 'build', phase: 'executing', backend: 'codex_openrouter' },
   });
-  assert.equal(recovered.keep.build.ok, true);
-  assert.equal(recovered.keep.build.sight, undefined);
-  const resumed = harness();
-  const next = await runner.runStage(ctx(resumed, 'first_version', FIRST, { checkpoint: { ...checkpoint, ...recovered.keep } }));
-  assert.equal(next.status, 'ok', next.error);
-  assert.deepEqual(resumed.calls.modes, [], 'no turn');
-  assert.deepEqual(next.parsed.sight, { told: true, passed: false }, 'the next claim reads it from the checkpoint');
+  const followed = following(h, { pushOk: true, ahead: 3, sha: 'c'.repeat(40), exitCode: 0 });
+  live.buildSeesImages = async () => false;
+  const out = await runner.runStage(ctx(h, 'first_version', FIRST, onSteps(h, keeping({ resumeFrom: kept }).steps)));
+  assert.equal(out.status, 'ok', out.error);
+  assert.deepEqual(h.calls.modes, [], 'its build turn is not dispatched again');
+  assert.deepEqual(followed.filter(([what]) => what !== 'adopt'), [['resume', buildSession, '/journals/build.log'], ['finish', buildSession, 'turn-build']],
+    'followed through its journal to its end, its record released only then');
+  assert.deepEqual(h.calls.ensured, [], 'its worker taken as the restart left it');
+  assert.equal(out.build_sha, 'c'.repeat(40));
+  assert.equal(out.build_commits, 3);
+  assert.deepEqual(out.parsed.sight, { told: true, passed: false }, 'what it could see as its turn ran, which a followed turn does not say again');
+  assert.deepEqual(h.calls.deleted, []);
+  assert.deepEqual(h.calls.pinned, []);
+  assert.equal(h.calls.capture.length, 1);
+  assert.equal(h.calls.capture[0].containerName, `w-${buildSession}`, 'its screenshots in the worker its turn ran in');
 });
 
-test('a turn followed after a restart adds its replayed looks to the counts its step began with, never twice', () => {
-  const cp = {
-    stepLooks: { step: 'build', screenshots: 0, snapshots: 1, navigations: 1 },
-    // Kept while it ran, until a few seconds before the restart.
-    looks: { screenshots: 2, snapshots: 1, navigations: 2 },
+// Until 13 Oct 2026 a first version whose build a restart kept was captured
+// as it stood: its configuration's reviewer never saw it (run 189: a restart
+// while all six builds were building left every one unreviewed). The review
+// is the build's own steps now, carried on from the state it saved.
+const REVIEWER = { model: 'anthropic/claude-opus-5.5', maxRounds: 2, budgetMinutes: 20 };
+
+test('a first version a restart caught in its review carries the review on from the state it saved: never built again, reviewed from the build that landed', async (t) => {
+  spySideEffects(t);
+  const botReview = require('../src/services/bot-review');
+  const realLoop = botReview.runReviewLoop;
+  t.after(() => { botReview.runReviewLoop = realLoop; });
+  const stop = new AbortController();
+  const loops = [];
+  const finalCapture = { booted: true, shots: [{ id: 'phone-light-populated', artifactId: 'a'.repeat(32) }] };
+  botReview.runReviewLoop = async (a) => {
+    loops.push({ start: a.start, resumeFrom: a.resumeFrom || null });
+    if (loops.length === 1) {
+      // The first round's verdict is in when the platform restarts.
+      await a.onState({
+        state: 'reviewing', startedAt: '2026-10-13T18:40:00.000Z', reviewer: REVIEWER, round0: { sha: a.start.sha },
+        rounds: [{ round: 1, verdict: 'fix', reviewerCostUsd: 0.3 }], finalSha: a.start.sha, finalCommits: a.start.commits,
+      });
+      stop.abort();
+      throw new durableSteps.StepsStopped();
+    }
+    return {
+      state: 'done', stop: 'ship', finalSha: 'e'.repeat(40), finalCommits: 4, finalCapture, round0: { sha: a.start.sha },
+      rounds: [...a.resumeFrom.rounds, { round: 2, verdict: 'ship', reviewerCostUsd: 0.2 }],
+    };
   };
-  const lines = ['Using browser_navigate', 'Using browser_take_screenshot', 'Using browser_take_screenshot',
-    'Using browser_take_screenshot', 'Using browser_navigate', 'Using browser_take_screenshot', '[done]'];
-  const looks = lane.recoveredLooks(cp, 'build', lines);
-  assert.deepEqual(looks, { screenshots: 4, snapshots: 1, navigations: 3 }, 'the step\'s counts plus the whole turn\'s');
-  assert.deepEqual(lane.recoveredLooks({ ...cp, looks }, 'build', lines), looks, 'followed again: the same, not more');
-  assert.equal(lane.recoveredLooks(cp, 'spec', lines), null, 'a turn of another step: the checkpoint\'s stay');
-  assert.equal(lane.recoveredLooks({ looks: cp.looks }, 'build', lines), null, 'no step on record: the checkpoint\'s stay');
-  assert.equal(lane.recoveredLooks(cp, 'build', []), null, 'no lines replayed: the checkpoint\'s stay');
-  assert.deepEqual(lane.recoveredLooks({ ...cp, looks: { screenshots: 9, snapshots: 0, navigations: 0 } }, 'build', lines),
-    { screenshots: 9, snapshots: 1, navigations: 3 }, 'never below what the checkpoint holds');
+  const first = harness();
+  const k = keeping({ signal: stop.signal });
+  await assert.rejects(runner.runStage(ctx(first, 'first_version', FIRST, { reviewer: REVIEWER, ...onSteps(first, k.steps) })), { code: 'steps_stopped' });
+  const kept = k.saves.at(-1);
+  assert.equal(kept['build/reached:landed'], true, 'its build kept as it landed, before the review began');
+  assert.equal(kept['build/review_state'].rounds.length, 1, 'and the review\'s state as it went');
+  assert.equal('build/reviewed' in kept, false);
+
+  const h = harness({ firstSession: 7100 });
+  const out = await runner.runStage(ctx(h, 'first_version', FIRST, { reviewer: REVIEWER, ...onSteps(h, keeping({ resumeFrom: kept }).steps) }));
+  assert.equal(out.status, 'ok', out.error);
+  assert.deepEqual(h.calls.modes, [], 'its build is not run again');
+  assert.equal(loops.length, 2);
+  assert.deepEqual([loops[1].start.sha, loops[1].start.commits, loops[1].start.costUsd], ['c'.repeat(40), 3, 0.5],
+    'reviewed from the build that landed, what its spec and build cost with it');
+  assert.equal(loops[1].resumeFrom.rounds.length, 1, 'carried on from the round it was at');
+  assert.equal(out.build_sha, 'e'.repeat(40), 'where the review left the branch');
+  assert.equal(out.build_commits, 4);
+  assert.equal(out.parsed.review.stop, 'ship');
+  assert.ok(Math.abs(out.review_cost_usd - 0.5) < 1e-9, 'every round\'s reviewer calls, once');
+  assert.equal(out.parsed.costParts.build.usd, 0.25, 'its build\'s cost, named as an uninterrupted build\'s is');
+  assert.deepEqual(out.session_ids, [kept['session:triage'].id, kept['build/session'].id], 'the sessions the first attempt opened');
+  assert.equal(h.calls.capture.length, 1, 'then its screenshots, as a first version\'s always are');
 });
 
 test('a capture trial checks the app out at its commit in a sealed worker and only takes the screenshots: no model turn', async (t) => {
@@ -1021,4 +1082,38 @@ test('the only GitHub write a taste trial has is its own bench branch', async ()
   await assert.rejects(() => gh.createBenchScaffold('o', 'r', 'main', [], 'm'), /benchmark trials may not/);
   await assert.rejects(async () => gh.createRootCommit('o', 'r', [], {}), /benchmark trials may not/, 'never a bare commit outside the scaffold');
   assert.equal(await gh.createBenchScaffold('o', 'r', 'bench/r1-t2', [], 'm'), 'x');
+});
+
+// Evan, 8 Oct 2026: a first-version task can start from a game starter
+// (services/app-templates.js `kind: 'game'`), so the bench can build the same
+// brief from the starter and from the empty scaffold side by side, from the
+// admin connector's studio (launch_bench_studio) or a classic run.
+test('a first-version task can start from a game starter: its own task, tagged, scaffolded from it, built on it', async () => {
+  const crypto = require('node:crypto');
+  const studio = require('../src/services/bench/studio');
+  const name = 'Block World';
+  const brief = 'A 3D block game where we build whatever we want together, with friends';
+  const v = taste.validateInput('first_version', { appName: name, brief, template: 'game-blocks' });
+  assert.equal(v.ok, true);
+  assert.equal(v.input.template, 'game-blocks');
+  assert.equal(taste.tagsFor('first_version', { slug: 'host' }, v.input, null).template, 'game-blocks', 'a report can slice by it');
+  assert.ok(report.SLICE_KEYS.includes('template'));
+  assert.ok(report.CONNECTOR_SLICE_KEYS.includes('template'));
+  // The empty scaffold keeps the key a brief's task always had; a starter is a task of its own.
+  const legacy = crypto.createHash('sha256').update(`${name}\n${brief}`).digest('hex').slice(0, 32);
+  assert.equal(studio.studioKey(name, brief), legacy);
+  assert.equal(studio.studioKey(name, brief, 'empty'), legacy);
+  assert.notEqual(studio.studioKey(name, brief, 'game-blocks'), legacy);
+  const out = await studio.resolveBriefs(null, { briefs: [
+    { name, brief }, { name, brief, template: 'game-blocks' }, { ref: 'voxel-world', template: 'game-blocks' }, { ref: 'voxel-world' },
+  ] });
+  assert.equal(out.ok, true);
+  assert.deepEqual(out.items.map((i) => i.template), ['empty', 'game-blocks', 'game-blocks', 'empty']);
+  assert.equal(new Set(out.items.map((i) => i.key)).size, 4, 'four tasks, built side by side');
+  const bad = await studio.resolveBriefs(null, { briefs: [{ name, brief, template: 'game-2d' }] });
+  assert.match(bad.error, /Unknown starter template: game-2d/);
+  // Its first commit is the starter, as a live project made from it gets.
+  const files = scaffold.filesFor({ input: { appName: name, template: 'game-blocks' } });
+  for (const p of ['game/room.js', 'game/rules.js', 'public/vendor/three.module.min.js']) assert.ok(files.some((f) => f.path === p), p);
+  assert.ok(files.find((f) => f.path === 'CLAUDE.md').content.includes('## Starter template: 3D blocks starter'));
 });

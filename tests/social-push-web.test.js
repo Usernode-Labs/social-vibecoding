@@ -1,5 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
@@ -24,6 +25,7 @@ const notificationsSource = fs.readFileSync(
 // module graph.
 function runNotifications(sandbox) {
   sandbox.agoStamp = agoStamp;
+  sandbox.PlatformI18n = englishPlatformI18n();
   vm.runInContext(notificationsSource, sandbox);
 }
 const settingsSource = fs.readFileSync(
@@ -157,6 +159,7 @@ function loadCoordinator({
   }
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(source, sandbox);
   return {
@@ -178,6 +181,17 @@ function loadCoordinator({
 async function settle() {
   await new Promise((resolve) => setImmediate(resolve));
   await new Promise((resolve) => setImmediate(resolve));
+}
+
+// Poll until `check` holds, failing with `what` after `timeoutMs`: for a
+// test that waits on timers, whose ticks a loaded checks pod can delay past
+// any fixed sleep.
+async function until(check, what, { timeoutMs = 10000, everyMs = 2 } = {}) {
+  const end = Date.now() + timeoutMs;
+  while (!check()) {
+    if (Date.now() > end) assert.fail(`timed out waiting until ${what}`);
+    await new Promise((resolve) => setTimeout(resolve, everyMs));
+  }
 }
 
 test('realm readiness waits for deferred shell listeners', async () => {
@@ -1027,8 +1041,11 @@ test('tap retries are bounded and pagehide cancels a scheduled retry', async () 
     timeoutScale: 0.0001,
   });
   await loaded.sandbox.SocialPush.drainPending();
-  await new Promise(resolve => setTimeout(resolve, 30));
-  assert.equal(loaded.calls.filter(([name]) => name === 'open').length, 6);
+  // The first open and five scaled retries. They run on timers, which a
+  // loaded checks pod delays: a fixed 30 ms saw 5 of the 6 (12 Oct 2026).
+  const opens = () => loaded.calls.filter(([name]) => name === 'open').length;
+  await until(() => opens() >= 6 && loaded.sandbox.SocialPush._tapRetryTimer === null, 'the retries run out');
+  assert.equal(opens(), 6);
   assert.equal(loaded.sandbox.SocialPush._tapRetryTimer, null);
   await loaded.sandbox.SocialPush.drainPending();
   loaded.fire('pagehide');

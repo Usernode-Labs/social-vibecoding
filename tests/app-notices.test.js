@@ -1,26 +1,24 @@
 'use strict';
 
-// A project's notices on its Workshop tab (services/app-notices.js,
-// GET /api/apps/:slug/notices, dev-board/workshop/notices.tsx), and the doors
-// to a project's hub that open the hub (AppView._landOnHub, which is
-// AppView._landOnTab turned to the hub since #3555).
+// A project's notices (services/app-notices.js, GET /api/apps/:slug/notices),
+// and the doors to a project's hub that open the hub (AppView._landOnHub,
+// which is AppView._landOnTab turned to the hub since #3555).
 //
-// Channels carry no activity, so the two app-wide notices that had nowhere
-// else to be seen — settings changed lately and the Friday card — are this
-// panel, read from `events`. Merges paused and a stalled release stay the
-// project page's banners.
+// Channels carry no activity, so the two app-wide notices — settings changed
+// lately and the Friday card — are recorded in `events` and read back here.
+// The Workshop tab's "Lately in this project" panel that drew them is gone
+// (#4698 follow-up). Merges paused and a stalled release stay the project
+// page's banners.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { createElement, loadTsx, renderToHtml } = require('./lib/render-tsx');
 
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 const notices = require('../src/services/app-notices');
-const PANEL = 'frontend/src/features/dev-board/workshop/notices.tsx';
 
 const at = new Date('2026-09-27T10:00:00Z');
 
@@ -68,7 +66,7 @@ test('the Friday card is shown while it is fresh, as its own sentence, naming no
 test('the reads: this app, the settings kinds, the last week; the latest card of the last three days', async () => {
   assert.match(notices.SETTINGS_SQL, /e\.event_type = ANY\(\$2::text\[\]\)\s+AND e\.created_at > NOW\(\) - \(\$3 \|\| ' days'\)::interval\s+AND e\.app_id = \$1/);
   assert.match(notices.WEEK_SQL, /e\.event_type = 'weekly_digest'/);
-  assert.deepEqual([...notices.SETTINGS_TYPES], ['visibility_changed', 'governance_changed', 'app_admins_changed', 'app_lock_changed', 'approver_joined']);
+  assert.deepEqual([...notices.SETTINGS_TYPES], ['visibility_changed', 'governance_changed', 'app_admins_changed', 'app_lock_changed', 'app_domain_changed', 'approver_joined']);
   assert.equal(notices.SETTINGS_DAYS, 7);
   assert.equal(notices.WEEK_DAYS, 3);
   const seen = [];
@@ -104,32 +102,15 @@ test('what feeds it: the lock toggle and the Friday sweep record events, not cha
   assert.equal(EVENT_TYPES.WEEKLY_DIGEST, 'weekly_digest');
 });
 
-test('the panel: nothing to say draws nothing; otherwise the card first, then each change with who and when', () => {
-  const { NoticesPanel, noticeMeta, hasNotices } = loadTsx(PANEL);
-  assert.equal(hasNotices(null), false);
-  assert.equal(hasNotices({ settings: [], week: null }), false);
-  assert.equal(renderToHtml(createElement(NoticesPanel, { notices: { settings: [], week: null } })), '');
-  assert.equal(noticeMeta({ kind: 'governance', by: null, at: null }), 'through a voted change');
-  assert.equal(noticeMeta({ kind: 'lock', by: 'ada', at: null }), 'by @ada');
-  assert.equal(noticeMeta({ kind: 'approver', by: null, at: null }), '', 'the line already names them');
-  const html = renderToHtml(createElement(NoticesPanel, { notices: {
-    week: { at: null, line: 'This week on Tiers: 1 change went live: Custom tier colors.', mergedTotal: 1, openTotal: 0 },
-    settings: [{ kind: 'lock', text: 'Locked: merges also need an admin’s yes vote', by: 'ada', at: null }],
-  } }));
-  assert.match(html, /^<section class="dev-ws-strip" data-ws-notices=""><div class="dev-ws-head"><span class="dev-ws-head-title">Lately in this project<\/span><\/div><ul class="dev-ws-notices">/);
-  assert.match(html, /<li class="dev-ws-notice" data-ws-notice="week"><span class="dev-ws-notice-text"><b>This week\.<\/b> 1 change went live: Custom tier colors\.<\/span><\/li><li class="dev-ws-notice" data-ws-notice="lock">/,
-    'the card first, its "This week on <app>:" lead-in said once');
-  assert.match(html, /<span class="dev-ws-notice-meta">by @ada<\/span>/);
-  // Loaded in an effect, so the first render is nothing.
-  assert.match(read(PANEL), /const \[notices, setNotices\] = useState<Notices \| null>\(null\);/);
+test('the Workshop tab draws no "Lately in this project" panel: Overview leads straight into What\'s happening', () => {
+  assert.ok(!fs.existsSync(path.join(ROOT, 'frontend/src/features/dev-board/workshop/notices.tsx')), 'the panel is gone');
   const lander = read('frontend/src/features/dev-board/workshop/workshop.tsx');
-  // On the Workshop tab, straight under the approval rules (#3528). All
-  // items leads the tab since 5 Oct 2026, and the panel kept its place
-  // under the rules rather than moving up with it.
-  const ws = lander.slice(lander.indexOf("{tab === 'workshop' ? ("), lander.indexOf("{tab === 'needs' ? ("));
-  assert.match(ws, /\{slug \? <ApprovalRules slug=\{slug\} \/> : null\}\n\s*\{\/\*[^]{0,500}?\*\/\}\n\s*\{slug \? <WorkshopNotices slug=\{slug\} \/> : null\}/, 'straight under the approval rules');
-  assert.ok(ws.indexOf('data-ws-dashboard=""') < ws.indexOf('<WorkshopNotices') && ws.indexOf('<WorkshopNotices') < ws.indexOf('data-ws-mine=""'),
-    'under All items, and above your work');
+  assert.doesNotMatch(lander, /WorkshopNotices|NoticesPanel|data-ws-notices|from '\.\/notices'/);
+  const ws = lander.slice(lander.indexOf("{tab === 'workshop' && !weekUp ? ("), lander.indexOf("{tab === 'needs' ? ("));
+  assert.match(ws, /\{slug \? <ApprovalLine slug=\{slug\} \/> : null\}\n\s*<\/section>\n\s*\) : null\}\n\n\s*\{\/\* ── WHAT'S HAPPENING ──/,
+    'the Overview card, then What\'s happening');
+  assert.doesNotMatch(read('public/css/app.css'), /\.dev-ws-notice/, 'and none of its CSS');
+  assert.doesNotMatch(read('frontend/locales/en/project.json'), /"notices\./, 'and none of its words');
 });
 
 test('a door to a project\'s hub opens the hub; a page opened again reads the tab last shown', () => {
@@ -137,7 +118,7 @@ test('a door to a project\'s hub opens the hub; a page opened again reads the ta
   // #3555: the hub's door is the general one turned to the hub, so a Recents
   // channel can open its project's Discussion tab the same way.
   assert.match(view, /_landOnHub\(slug\) \{\n\s*AppView\._landOnTab\(slug, 'status'\);\n\s*\},/);
-  assert.match(view, /_landOnTab\(slug, tab\) \{\n\s*const key = AppView\.WORKSHOP_TABS\.indexOf\(tab\) !== -1 \? tab : 'status';\n\s*AppView\._setWorkshopTab\(key\);\n\s*try \{\n\s*window\.dispatchEvent\(new CustomEvent\('usernode:workshop-tab', \{ detail: \{ slug: slug \|\| null, tab: key \} \}\)\);/);
+  assert.match(view, /_landOnTab\(slug, tab\) \{\n\s*const key = AppView\._isWorkshopPlace\(tab\) \? tab : 'status';\n\s*AppView\._setWorkshopTab\(key\);\n\s*try \{\n\s*window\.dispatchEvent\(new CustomEvent\('usernode:workshop-tab', \{ detail: \{ slug: slug \|\| null, tab: key \} \}\)\);/);
   const lander = read('frontend/src/features/dev-board/workshop/workshop.tsx');
   assert.match(lander, /if \(!door \|\| \(door\.slug && door\.slug !== v\.slug\)\) return;\n\s*setTab\(door\.tab\);/, 'a page already open switches; another project\'s door is not its');
   assert.match(lander, /window\.addEventListener\('usernode:workshop-tab', onDoor\);/);
@@ -150,10 +131,14 @@ test('a door to a project\'s hub opens the hub; a page opened again reads the ta
   // a tab the viewer has since left, which is what Back used to reopen on.
   assert.match(lander, /useState<TabKey>\(\(\) => freshTab\(\) \|\| v\.tab \|\| 'status'\)/);
   assert.match(lander, /export function freshTab\(\): TabKey \| null \{\n\s*const tab = callAppView\('_workshopTab'\);/);
-  // The doors: the logo menu row, Discover's rows, the Communities rows and a
-  // Needs you card's project name. Back and Forward are not doors.
+  // The doors: the logo menu row, Discover's rows and a Needs you card's
+  // project name. Back and Forward are not doors, and nor is a row of All
+  // communities: a switch keeps the place you were on (landKeepingPlace).
+  // The menu row lands on the hub before it follows its link, which is full
+  // width everywhere, beside a running app too: a community's page is never
+  // the side panel's (side-panel/routes.ts).
   assert.match(read('frontend/src/features/app-context/app-context-sheet.tsx'), /onClick=\{\(e\) => \{\n\s*if \(slug\) \(window as any\)\.AppView\?\._landOnHub\?\.\(slug\);\n\s*followThenDismiss\(e,/);
   assert.match(read('frontend/src/features/apps/browse.js'), /if \(typeof AppView !== 'undefined' && AppView\._landOnHub\) AppView\._landOnHub\(view\.slug\);\n\s*location\.hash = href;/);
-  assert.match(read('frontend/src/features/workshop/index.tsx'), /win\.AppView\?\._landOnHub\?\.\(row\.slug\);\n\s*win\.App\?\.navigateToApp\?\.\(row\.slug, 'dev'\);/);
+  assert.match(read('frontend/src/features/workshop/index.tsx'), /landKeepingPlace\(row\.slug\);\n\s*win\.App\?\.navigateToApp\?\.\(row\.slug, 'dev'\);/);
   assert.match(read('frontend/src/features/workshop/needs-reel.tsx'), /onClick=\{\(\) => \{ \(window as any\)\.AppView\?\._landOnHub\?\.\(app\.slug\); \}\}/);
 });

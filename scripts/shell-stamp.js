@@ -1,9 +1,9 @@
 // Shared stamp logic for the React shell build artifacts.
 //
 // public/index.html and public/shell/assets/shell.js are generated from
-// frontend/. Docker builds both for every image; tests and native local
-// startup create ignored checkout-local copies through
-// scripts/ensure-shell-artifacts.js.
+// frontend/. Docker builds both for every image; native local startup
+// creates ignored checkout-local copies of both, and the tests of the
+// document alone, through scripts/ensure-shell-artifacts.js.
 //
 // frontend/scripts/build-shell.mjs writes a stamp — a sha256 over every input
 // that can change the output — into both artifacts. The local ensure step uses

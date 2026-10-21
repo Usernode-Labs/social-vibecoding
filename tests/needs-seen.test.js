@@ -155,7 +155,7 @@ test('the feed marks the vote you move on from, forward and unanswered only', ()
   // unseen votes, from the same keys.
   assert.match(WORKSHOP, /const owed = unseenNeeds\(v\.slug \|\| '', owedRows\.length, owedKeys\);/);
   assert.match(WORKSHOP, /describeCommunity\(v\.slug, \{\s*owedCount: owedRows\.length,\s*owed: owedKeys,/);
-  assert.match(WORKSHOP, /<NeedsCard queue=\{v\.queue\} slug=\{slug\}/);
+  assert.match(WORKSHOP, /<ForYouCard\s+slug=\{slug\}[\s\S]{0,80}queue=\{v\.queue\}/);
   // Nothing else in the feed moves: the order stays the one published.
   assert.match(WORKSHOP, /const live = rows\.filter\(\(r\): r is QueueRow => r\.t === 'card'\);/);
 });
@@ -163,24 +163,99 @@ test('the feed marks the vote you move on from, forward and unanswered only', ()
 test('the hub\'s Needs you counts what you have not seen, and stays a door to the rest', () => {
   fakeWindow(7);
   const seen = loadTsx(SEEN_SRC);
-  const { NeedsCard } = loadTsx('frontend/src/features/dev-board/workshop/hub-cards.tsx', {
+  const { ForYouCard } = loadTsx('frontend/src/features/dev-board/workshop/hub-cards.tsx', {
     stubs: { '../../workshop/needs-seen': seen },
   });
   const queue = [voteRow(1, 'Dark mode'), voteRow(2, 'Tags'), voteRow(3, 'Export')];
-  const html = () => renderToHtml(createElement(NeedsCard, { queue, slug: 'garden', canPost: true, onOpen: () => {} }));
+  const html = () => renderToHtml(createElement(ForYouCard, {
+    queue, slug: 'garden', name: 'Garden', mine: null, workEmpty: null, alone: false, data: null, canPost: true,
+    onNeeds: () => {}, onWork: () => {}, onDiscussion: () => {},
+  }));
   assert.match(html(), /data-ws-hub-needs-votes="3"[\s\S]*3 to vote/);
   seen.markNeedsSeen('garden', 'proposal:1@0');
   const one = html();
   assert.match(one, /data-ws-hub-needs-votes="2"/);
-  assert.match(one, /<span class="dev-ws-head-n">2 to vote<\/span>/);
-  assert.match(one, /<span class="dev-ws-hub-needs-title">Tags<\/span>/, 'the first vote you have not seen leads');
-  assert.match(one, /and 1 more/);
+  assert.match(one, /<span class="dev-ws-foryou-pill">2 to vote<\/span>/);
+  assert.match(one, /<span data-ws-hub-needs-first="">Tags, and 1 more<\/span>/, 'the first vote you have not seen leads');
   seen.markNeedsSeen('garden', 'proposal:2@0');
   seen.markNeedsSeen('garden', 'proposal:3@0');
   const all = html();
   assert.doesNotMatch(all, /to vote/, 'nothing new: no number to act on');
   assert.match(all, /data-ws-hub-needs-open=""/, 'but still the way to the votes you skipped');
   assert.match(all, /data-ws-hub-needs-skipped="">3 votes you skipped are still open</);
+});
+
+// ── The feed opens where you left off (#4753) ──────────────────────────
+
+test('firstUnseenIndex: the first vote you have not already passed over', () => {
+  fakeWindow(7);
+  const seen = loadTsx(SEEN_SRC);
+  seen.hydrateNeedsSeen();
+  const rows = [voteRow(1, 'Dark mode'), voteRow(2, 'Tags'), voteRow(3, 'Export')];
+  const slugOf = () => 'garden';
+  assert.equal(seen.firstUnseenIndex([], slugOf), 0, 'an empty feed opens on the first item, as it does today');
+  assert.equal(seen.firstUnseenIndex(rows, slugOf), 0, 'nothing seen yet: the first item, as it does today');
+  seen.markNeedsSeen('garden', 'proposal:1@0');
+  assert.equal(seen.firstUnseenIndex(rows, slugOf), 1, 'the vote you swiped past is not where it opens');
+  seen.markNeedsSeen('garden', 'proposal:2@0');
+  assert.equal(seen.firstUnseenIndex(rows, slugOf), 2);
+  seen.markNeedsSeen('garden', 'proposal:3@0');
+  assert.equal(seen.firstUnseenIndex(rows, slugOf), 0, 'every item passed over: the first item, not the end card');
+});
+
+test('a change rewritten since it was passed over is not where the feed opens', () => {
+  fakeWindow(7);
+  const seen = loadTsx(SEEN_SRC);
+  seen.hydrateNeedsSeen();
+  seen.markNeedsSeen('garden', 'proposal:1@3');
+  assert.equal(seen.firstUnseenIndex([voteRow(1, 'Old words', 3)], () => 'garden'), 0,
+    'seen at this very epoch, there is nothing earlier to stop at: index 0 is the first item either way');
+  const rows = [voteRow(1, 'New words', 4), voteRow(2, 'Fresh', 0)];
+  assert.equal(seen.firstUnseenIndex(rows, () => 'garden'), 0, 'the rewritten change counts as unseen, so the feed can open on it');
+});
+
+test('a row that is not a vote is never recorded as passed over, so the scan stops at it', () => {
+  fakeWindow(7);
+  const seen = loadTsx(SEEN_SRC);
+  seen.hydrateNeedsSeen();
+  const rows = [
+    voteRow(1, 'Dark mode'),
+    { ...voteRow(2, 'An open issue'), kind: 'claim', yes: null, askAbout: { kind: 'issue', ref: 5 } },
+    voteRow(3, 'Export'),
+  ];
+  seen.markNeedsSeen('garden', 'proposal:1@0');
+  assert.equal(seen.firstUnseenIndex(rows, () => 'garden'), 1, 'the non-vote row counts as not seen');
+});
+
+test('the Communities reel: each row is checked against its own project', () => {
+  fakeWindow(7);
+  const seen = loadTsx(SEEN_SRC);
+  seen.hydrateNeedsSeen();
+  const app = (slug) => ({ slug, name: slug, icon_url: null, icon_emoji: null });
+  const rows = [
+    { ...voteRow(1, 'Garden vote'), app: app('garden') },
+    { ...voteRow(1, 'Swap vote, same id, another project'), app: app('swap') },
+  ];
+  seen.markNeedsSeen('garden', 'proposal:1@0');
+  assert.equal(seen.firstUnseenIndex(rows, (r) => (r.app && r.app.slug) || ''), 1,
+    'the garden vote is seen, the swap one is not, though they share an id');
+});
+
+test('NeedsFeed opens on the first unseen item, and only when no other open is owed (#4753)', () => {
+  const WORKSHOP = read('frontend/src/features/dev-board/workshop/workshop.tsx');
+  // The record is read in an effect, not the render (the island rule): the
+  // seed stays the end card's count or 0.
+  assert.match(WORKSHOP, /const \[at, setAt\] = useState\(\(\) => \(endOnOpen \? rows\.filter\(\(r\) => r\.t === 'card'\)\.length : 0\)\);/,
+    'the seed never reads the record');
+  assert.match(WORKSHOP, /const resumeRef = useRef<boolean>\(!endOnOpen && !approveOpenRef\.current && !openOn\);/,
+    'resume only when no other open is owed: no end card, no shot target, no New for you row');
+  const resume = /useLayoutEffect\(\(\) => \{\s*const el = scrollRef\.current;\s*if \(!resumeRef\.current \|\| !el \|\| !el\.clientHeight \|\| !items\.length\) return;\s*resumeRef\.current = false;\s*const idx = firstUnseenIndex\(items, \(r\) => rowSlug\(r, slug\)\);([\s\S]*?)\n {2}\}, \[items\]\);/.exec(WORKSHOP);
+  assert.ok(resume, 'the resume open: once, on the first publish that has rows and a laid-out scroller');
+  assert.match(resume[1], /if \(idx <= 0\) return;/, 'the first unseen item is the first item: nothing to move for');
+  assert.match(resume[1], /curKeyRef\.current = items\[idx\]\.key;\s*setAt\(idx\);\s*el\.style\.scrollBehavior = 'auto';\s*el\.scrollTop = idx \* el\.clientHeight;\s*el\.style\.scrollBehavior = '';/,
+    'instantly, the way the opens above land, and the re-sync then follows the row by key');
+  assert.doesNotMatch(resume[1], /landOn|markNeedsSeen/, 'the jump passes nothing new over: the rows were already seen');
+  assert.match(WORKSHOP, /import \{ firstUnseenIndex, markNeedsSeen, needsRowKey, unseenNeeds, useNeedsSeen \} from '\.\.\/\.\.\/workshop\/needs-seen';/);
 });
 
 // ── The Communities tab, its switcher and its list ─────────────────────

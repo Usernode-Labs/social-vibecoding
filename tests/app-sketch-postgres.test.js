@@ -1,11 +1,11 @@
 'use strict';
 
 // The first session's card against the full schema (src/services/app-sketch.js):
-// started once per project, made by one model call whose spend is recorded,
-// always ready (the description's card when the model is no use), its emoji
-// saved as the project's icon only when it has none, waited for by creation,
-// and committed late when it missed the first commit. The model and GitHub
-// are stand-ins.
+// owed once per project (the route), made by the project's setup with one
+// model call whose spend is recorded (drawFor, its `card` step, before the
+// first commit), always ready (the description's card when the model is no
+// use), its emoji saved as the project's icon only when it has none. The
+// model is a stand-in.
 //
 // Run with: TEST_DATABASE_URL=postgres://... node --test tests/app-sketch-postgres.test.js
 
@@ -93,7 +93,7 @@ test('the sketch against the full PostgreSQL schema', { timeout: 120000 }, async
     const limits = fakeLimits();
     assert.equal(await sketch.startSketch(pool, { app, user, brief: 'Log our Sunday runs' }, { llm, limits, ws: WS }), true);
     assert.equal(await sketch.startSketch(pool, { app, user, brief: 'again' }, { llm, limits, ws: WS }), false, 'once per project');
-    const row = await sketch.whenReady(pool, app.id, 5000);
+    const row = await sketch.drawFor(pool, app.id, { llm, limits, ws: WS });
     assert.equal(row.status, 'ready');
     assert.deepEqual(sketch.cardOf(row.design), { emoji: '👟', tagline: 'The club\'s Sunday runs, together', points: ['Log a run in a tap', 'See the week\'s miles'] });
     assert.equal(row.design.source, 'model');
@@ -109,11 +109,22 @@ test('the sketch against the full PostgreSQL schema', { timeout: 120000 }, async
     assert.deepEqual(await iconOf(app.id), { icon_emoji: '👟', icon_image_id: null });
   });
 
+  // The make screen's own line for a game or Your own choice, kept with what
+  // the card is owed from, is the tagline when the model gives none.
+  await t.test('the make screen\'s line reaches the card the setup makes', async () => {
+    const app = await project();
+    const fixed = 'A dice race: ladders take you up, slides take you back';
+    const deps = { llm: fakeLlm({ text: JSON.stringify({ emoji: '🎲', tagline: '', points: ['Roll the dice', 'Race your friends'] }) }), limits: fakeLimits(), ws: WS };
+    await sketch.startSketch(pool, { app, user, brief: 'A new game we build together. For the first version, a dice race', fallbackTagline: fixed }, deps);
+    assert.equal((await sketch.drawFor(pool, app.id, deps)).design.tagline, fixed);
+  });
+
   await t.test('an icon somebody set is never replaced', async () => {
     const app = await project();
     await pool.query(`UPDATE apps SET icon_emoji = '🎸' WHERE id = $1`, [app.id]);
-    await sketch.startSketch(pool, { app, user, brief: 'Log our Sunday runs' }, { llm: fakeLlm(), limits: fakeLimits(), ws: WS });
-    assert.equal((await sketch.whenReady(pool, app.id, 5000)).design.emoji, '👟');
+    const deps = { llm: fakeLlm(), limits: fakeLimits(), ws: WS };
+    await sketch.startSketch(pool, { app, user, brief: 'Log our Sunday runs' }, deps);
+    assert.equal((await sketch.drawFor(pool, app.id, deps)).design.emoji, '👟');
     assert.deepEqual(await iconOf(app.id), { icon_emoji: '🎸', icon_image_id: null });
   });
 
@@ -121,8 +132,9 @@ test('the sketch against the full PostgreSQL schema', { timeout: 120000 }, async
 
   await t.test('its tagline is the project\'s description, never over one it has (#4235)', async () => {
     const app = await project();
-    await sketch.startSketch(pool, { app, user, brief: 'I want to log our Sunday runs, that me and my friends can see' }, { llm: fakeLlm(), limits: fakeLimits(), ws: WS });
-    await sketch.whenReady(pool, app.id, 5000);
+    const deps = { llm: fakeLlm(), limits: fakeLimits(), ws: WS };
+    await sketch.startSketch(pool, { app, user, brief: 'I want to log our Sunday runs, that me and my friends can see' }, deps);
+    await sketch.drawFor(pool, app.id, deps);
     assert.equal(await descriptionOf(app.id), 'The club\'s Sunday runs, together');
     assert.deepEqual((await pool.query('SELECT manifest_snapshot->\'secrets\' AS s FROM apps WHERE id = $1', [app.id])).rows[0].s, []);
 
@@ -130,8 +142,8 @@ test('the sketch against the full PostgreSQL schema', { timeout: 120000 }, async
     // one a deploy read from dapp.json, stays.
     const described = await project();
     await pool.query('UPDATE apps SET manifest_snapshot = $2 WHERE id = $1', [described.id, JSON.stringify({ description: 'Our running log', secrets: [] })]);
-    await sketch.startSketch(pool, { app: described, user, brief: 'Log our Sunday runs' }, { llm: fakeLlm(), limits: fakeLimits(), ws: WS });
-    await sketch.whenReady(pool, described.id, 5000);
+    await sketch.startSketch(pool, { app: described, user, brief: 'Log our Sunday runs' }, deps);
+    await sketch.drawFor(pool, described.id, deps);
     assert.equal(await descriptionOf(described.id), 'Our running log');
     assert.equal(await sketch.saveDescription(pool, described, 'Something else'), false);
 
@@ -145,54 +157,45 @@ test('the sketch against the full PostgreSQL schema', { timeout: 120000 }, async
 
   await t.test('a refusal or an error is the description\'s card, with why, and creation is not held', async () => {
     const bad = await project();
-    await sketch.startSketch(pool, { app: bad, user, brief: 'A tracker for our weekly miles, so we can see who is keeping up' },
-      { llm: fakeLlm({ text: 'I cannot help with that.' }), limits: fakeLimits(), ws: WS });
-    const row = await sketch.whenReady(pool, bad.id, 5000);
+    const refused = { llm: fakeLlm({ text: 'I cannot help with that.' }), limits: fakeLimits(), ws: WS };
+    await sketch.startSketch(pool, { app: bad, user, brief: 'A tracker for our weekly miles, so we can see who is keeping up' }, refused);
+    const row = await sketch.drawFor(pool, bad.id, refused);
     assert.equal(row.status, 'ready');
     assert.deepEqual([row.model, row.error, row.design.source, row.design.tagline], ['fallback', 'unusable_reply', 'fallback', 'A tracker for our weekly miles']);
     assert.equal((await iconOf(bad.id)).icon_emoji, '🏃');
 
     const broken = await project();
-    await sketch.startSketch(pool, { app: broken, user, brief: 'x y z' }, { llm: fakeLlm({ fail: 'overloaded' }), limits: fakeLimits(), ws: WS });
-    const failed = await sketch.whenReady(pool, broken.id, 5000);
+    const down = { llm: fakeLlm({ fail: 'overloaded' }), limits: fakeLimits(), ws: WS };
+    await sketch.startSketch(pool, { app: broken, user, brief: 'x y z' }, down);
+    const failed = await sketch.drawFor(pool, broken.id, down);
     assert.deepEqual([failed.status, failed.error, sketch.sketchStatus(failed)], ['ready', 'overloaded', 'ready']);
   });
 
-  await t.test('creation waits only as long as it said, and a late sketch is committed on its own', async () => {
+  await t.test('a slow model does not hold the setup: the description\'s card, after its wait', async () => {
     const app = await project();
     let release;
     const gate = new Promise((resolve) => { release = resolve; });
-    await sketch.startSketch(pool, { app, user, brief: 'Log our runs' }, { llm: fakeLlm({ gate }), limits: fakeLimits(), ws: WS, modelWaitMs: 60000 });
+    const deps = { llm: fakeLlm({ gate }), limits: fakeLimits(), ws: WS, modelWaitMs: 100 };
+    await sketch.startSketch(pool, { app, user, brief: 'Log our runs' }, deps);
     const started = Date.now();
-    assert.equal(await sketch.whenReady(pool, app.id, 200), null, 'not in time');
+    const row = await sketch.drawFor(pool, app.id, deps);
     assert.ok(Date.now() - started < 2000);
-
-    const pushes = [];
-    const github = {
-      async getFileContent() { return '{\n  "secrets": []\n}'; },
-      async pushFiles(owner, repo, files, opts) { pushes.push({ owner, repo, files, opts }); },
-    };
-    const late = sketch.commitWhenReady(pool, { appId: app.id, name: app.name, owner: 'usernode-bot', repo: app.slug }, { github });
+    assert.deepEqual([row.status, row.error, row.design.source], ['ready', 'timeout', 'fallback']);
     release();
-    assert.equal(await late, true);
-    assert.equal(pushes.length, 1);
-    assert.deepEqual(pushes[0].files.map((f) => f.path), ['design/sketch.json', 'dapp.json']);
-    assert.deepEqual(JSON.parse(pushes[0].files[1].content).icon, { emoji: '👟' });
-    assert.equal(pushes[0].opts.message, `Add the card ${app.name} was made with`);
-    assert.ok((await sketch.readSketch(pool, app.id)).committed_at, 'marked committed');
-    assert.equal(await sketch.commitWhenReady(pool, { appId: app.id, name: app.name, owner: 'o', repo: 'r' }, { github }), false, 'once');
-    assert.equal(pushes.length, 1);
   });
 
-  await t.test('a row being drawn elsewhere is watched until it is ready', async () => {
+  await t.test('a setup that resumes gets the card it made, and never asks the model twice', async () => {
     const app = await project();
-    await pool.query(`INSERT INTO app_sketches (app_id, user_id, status) VALUES ($1, $2, 'pending')`, [app.id, ada.id]);
-    setTimeout(() => {
-      pool.query(`UPDATE app_sketches SET status = 'ready', design = $2::jsonb, ready_at = NOW() WHERE app_id = $1`,
-        [app.id, JSON.stringify({ kind: 'card', emoji: '🏃', tagline: 'x', points: [] })]).catch(() => {});
-    }, 150);
-    const row = await sketch.whenReady(pool, app.id, 3000, { pollMs: 50 });
-    assert.equal(row && row.status, 'ready');
+    const deps = { llm: fakeLlm(), limits: fakeLimits(), ws: WS };
+    await sketch.startSketch(pool, { app, user: { id: ada.id, username: 'ada' }, brief: 'Log our runs' }, deps);
+    const first = await sketch.drawFor(pool, app.id, deps);
+    const again = await sketch.drawFor(pool, app.id, deps);
+    assert.deepEqual(again.design, first.design);
+    assert.equal(deps.llm.calls.length, 1);
+    const { rows: [owed] } = await pool.query('SELECT request FROM app_sketches WHERE app_id = $1', [app.id]);
+    assert.equal(owed.request.brief, 'Log our runs');
+    assert.equal(owed.request.username, 'ada', 'what the card is made from is kept with it, for the setup');
+    assert.equal(await sketch.drawFor(pool, (await project()).id, deps), null, 'no card owed, none made');
   });
 
   await t.test('without a model (a staging preview, a local stack): the description\'s card, on the spot', async () => {
@@ -202,7 +205,7 @@ test('the sketch against the full PostgreSQL schema', { timeout: 120000 }, async
     const app = await project('Friday Film Crew');
     assert.equal(await sketch.startSketch(pool, { app, user, brief: 'A poll to pick what we watch on movie night' }, { llm: off, ws: WS }), true);
     assert.equal(await sketch.startSketch(pool, { app, user, brief: 'again' }, { llm: off, ws: WS }), false, 'once per project');
-    const row = await sketch.whenReady(pool, app.id, 100);
+    const row = await sketch.drawFor(pool, app.id, { llm: off, ws: WS });
     assert.equal(row.model, 'fallback');
     assert.deepEqual(sketch.cardOf(row.design), { emoji: '🎬', tagline: 'A poll to pick what we watch on movie night', points: [sketch.SHARED_POINT] });
     assert.equal((await iconOf(app.id)).icon_emoji, '🎬');

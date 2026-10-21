@@ -492,20 +492,278 @@ test('the platform\'s own deploy still reconciles the shared backend', async (t)
   );
 });
 
-test('the boot path reconciles the backend, on Kubernetes only', () => {
+test('each release reconciles the backend in its own build, on Kubernetes only', () => {
   // Otherwise a fix to how the backend is BUILT does not reach one that
-  // already exists until some child app happens to deploy.
+  // already exists until some child app happens to deploy. The release's
+  // work (src/workflow/platform.ts ADOPTIONS), never an older build's.
+  const platform = fs.readFileSync(path.join(__dirname, '..', 'src', 'workflow', 'platform.ts'), 'utf-8');
+  assert.match(platform, /\['assetBackend', \(\) => reconcileAssetBackend\(\)\]/);
+  const fn = platform.slice(platform.indexOf('async function reconcileAssetBackend()'));
+  assert.match(fn.slice(0, 300), /if \(!clusterRelease\(\)\) return null;/, 'never on a staging preview, never on Docker');
+  assert.match(platform, /const clusterRelease = \(\) => legacy\('config'\)\.runsClusterMaintenance\(\)\s+&& legacy\('services\/application-runtime'\)\.mode\(appConfig\) === 'kubernetes';/);
+  assert.match(fn.slice(0, 400), /ensurePlatformAssetBackend\(appConfig\)/);
   const server = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf-8');
-  const leader = server.slice(server.indexOf('async function becomeLeader()'));
-  const call = leader.indexOf('ensurePlatformAssetBackend');
-  assert.ok(call > 0, 'the leader reconciles the hosted-asset backend');
+  assert.ok(!server.includes('ensurePlatformAssetBackend'), 'no leader runs it at its election any more');
+});
 
-  const block = leader.slice(0, call);
-  assert.match(block.slice(-400), /mode\(config\) === 'kubernetes'/,
-    'gated on the runtime — the docker runtime has no cluster to reconcile against');
-  // Fire-and-forget: a platform that cannot reach its cluster must still boot.
-  assert.match(leader.slice(call, call + 400), /\.catch\(/,
-    'failure is logged, never fatal');
-  assert.doesNotMatch(leader.slice(Math.max(0, call - 200), call), /await\s+require/,
-    'and never awaited, so boot is not blocked on it');
+// ── A deploy and the backend's reconcile (sharedBackendForDeploy) ─────────
+//
+// The reconcile's first run in a process upserts the backend, waits for its
+// rollout and rewrites every app Ingress, 20-30 s. A deploy waited for all
+// of it, and since platform pods restart on every release nearly every new
+// app's deploy was the first in its process. A backend that already serves
+// now takes the app at once, the reconcile going on behind it; one that does
+// not serve is still waited for, because routing to it is #2045's 503.
+
+const log = require('../src/services/logger');
+
+const notFound = () => Object.assign(new Error('not found'), { code: 404 });
+const readyStatus = (n) => ({ observedGeneration: 1, replicas: n, updatedReplicas: n, readyReplicas: n, availableReplicas: n });
+const DEPLOY_CONFIG = {
+  selfAppSlug: 'usernode-2d5619',
+  kubernetes: {
+    appNamespace: 'social-apps', platformNamespace: 'social-platform', platformDeployment: 'social-vibecoding',
+    generatedAppServiceAccount: 'social-generated-app', appDomain: 'apps.example.test', platformDomain: 'apps.example.test',
+    ingressClassName: 'cilium', appTlsSecretName: 'social-apps-wildcard-tls',
+  },
+};
+const configWith = (over = {}) => ({ ...DEPLOY_CONFIG, kubernetes: { ...DEPLOY_CONFIG.kubernetes, ...over } });
+
+// An app namespace in which the asset backend exists and serves (or not),
+// and whose reconcile reads the platform's own Deployment through
+// `platformRead`, so a test can hold the reconcile where it likes.
+// `serving` names the shared backends (the asset backend, the app gate)
+// that exist and answer before the deploy; a reconcile that creates one
+// makes it answer.
+function deployCluster({ serving, platformRead = async () => ({
+  spec: { template: { spec: { containers: [{ name: 'platform', image: 'img@sha256:a' }] } } },
+}) }) {
+  const up = new Set(serving === true ? [k8s.PLATFORM_ASSET_NAME] : (serving || []));
+  const shared = new Set([k8s.PLATFORM_ASSET_NAME, k8s.APP_GATE_NAME]);
+  const state = { ingresses: [], backendReads: 0 };
+  const appDeployments = new Map();
+  const clients = {
+    core: {
+      readNamespacedSecret: async () => { throw notFound(); },
+      createNamespacedSecret: async ({ body }) => body,
+      readNamespacedService: async ({ name }) => {
+        if (shared.has(name)) {
+          state.backendReads += 1;
+          if (up.has(name)) {
+            return { metadata: { name, resourceVersion: '1' }, spec: { selector: { 'social.usernode.io/runtime-name': name } } };
+          }
+        }
+        throw notFound();
+      },
+      createNamespacedService: async ({ body }) => body,
+      replaceNamespacedService: async ({ body }) => body,
+      listNamespacedPod: async () => ({ items: [] }),
+    },
+    apps: {
+      readNamespacedDeployment: async ({ namespace, name }) => {
+        if (namespace === 'social-platform') return platformRead();
+        if (shared.has(name)) {
+          if (!up.has(name)) throw notFound();
+          return { metadata: { name, generation: 1, resourceVersion: '1' }, spec: { replicas: 2 }, status: readyStatus(2) };
+        }
+        const body = appDeployments.get(name);
+        if (!body) throw notFound();
+        return { ...body, metadata: { ...body.metadata, generation: 1 }, status: readyStatus(1) };
+      },
+      createNamespacedDeployment: async ({ body }) => {
+        if (shared.has(body.metadata.name)) up.add(body.metadata.name);
+        else appDeployments.set(body.metadata.name, body);
+        return { ...body, metadata: { ...body.metadata, generation: 1 } };
+      },
+      replaceNamespacedDeployment: async ({ body }) => body,
+    },
+    networking: {
+      readNamespacedIngress: async () => { throw notFound(); },
+      createNamespacedIngress: async ({ body }) => { state.ingresses.push(body); return body; },
+    },
+  };
+  return { clients, state };
+}
+
+function held() {
+  let release;
+  let fail;
+  const promise = new Promise((resolve, reject) => { release = resolve; fail = reject; });
+  return { promise, release, fail };
+}
+
+const PLATFORM = { spec: { template: { spec: { containers: [{ name: 'platform', image: 'img@sha256:a' }] } } } };
+const assetPathsIn = (ingress) => pathsOf(ingress).map((p) => p.path).filter((p) => p !== '/');
+const deployChild = (config, slug = 'todo-list-123456') => k8s.deployApplication(config, {
+  app: { id: 7, slug }, environment: 'production', imageRef: 'ghcr.io/example/todo@sha256:deadbeef', env: {},
+});
+
+test('a deploy routes to an asset backend that already serves without waiting for its reconcile', async (t) => {
+  const reconcile = held();
+  const { clients, state } = deployCluster({ serving: true, platformRead: () => reconcile.promise });
+  k8s._setClientsForTest(clients);
+  k8s._resetPlatformAssetBackendForTest();
+  t.after(() => { k8s._setClientsForTest(null); k8s._resetPlatformAssetBackendForTest(); });
+
+  // The reconcile is held at its first read; the deploy finishes anyway.
+  await deployChild(DEPLOY_CONFIG);
+  assert.deepEqual(assetPathsIn(state.ingresses[0]), [...k8s.PLATFORM_ASSET_PREFIXES],
+    'routed to the serving backend at once');
+
+  // The reconcile was started all the same, and finishes behind the deploy.
+  reconcile.release(PLATFORM);
+  assert.equal(await k8s.ensurePlatformAssetBackend(DEPLOY_CONFIG), k8s.PLATFORM_ASSET_NAME);
+
+  // Once it has, a deploy reads nothing about the backend: the memo answers.
+  const reads = state.backendReads;
+  await deployChild(DEPLOY_CONFIG, 'groceries-654321');
+  assert.equal(state.backendReads, reads, 'no serving read once the reconcile has settled');
+  assert.deepEqual(assetPathsIn(state.ingresses[1]), [...k8s.PLATFORM_ASSET_PREFIXES]);
+});
+
+test('a deploy whose asset backend does not serve yet waits for the reconcile, as before (#2045)', async (t) => {
+  const reconcile = held();
+  const { clients, state } = deployCluster({ serving: false, platformRead: () => reconcile.promise });
+  k8s._setClientsForTest(clients);
+  k8s._resetPlatformAssetBackendForTest();
+  t.after(() => { k8s._setClientsForTest(null); k8s._resetPlatformAssetBackendForTest(); });
+
+  let done = false;
+  const deploying = deployChild(DEPLOY_CONFIG).then(() => { done = true; });
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(done, false, 'nothing is routed to a backend that is not up');
+  assert.equal(state.ingresses.length, 0);
+
+  reconcile.release(PLATFORM);
+  await deploying;
+  assert.deepEqual(assetPathsIn(state.ingresses[0]), [...k8s.PLATFORM_ASSET_PREFIXES],
+    'routed once the reconcile has brought it up');
+});
+
+test('a reconcile that fails behind a routed deploy is logged, and the deploy stands', async (t) => {
+  const warnings = [];
+  t.mock.method(log, 'warn', (category, message, data) => warnings.push({ category, message, data }));
+  const reconcile = held();
+  const { clients, state } = deployCluster({ serving: true, platformRead: () => reconcile.promise });
+  k8s._setClientsForTest(clients);
+  k8s._resetPlatformAssetBackendForTest();
+  t.after(() => { k8s._setClientsForTest(null); k8s._resetPlatformAssetBackendForTest(); });
+
+  const result = await deployChild(DEPLOY_CONFIG);
+  assert.equal(result.url, 'https://todo-list-123456.apps.example.test');
+  reconcile.fail(new Error('api down'));
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(assetPathsIn(state.ingresses[0]), [...k8s.PLATFORM_ASSET_PREFIXES]);
+  const warned = warnings.find((w) => /reconcile failed behind a deploy/.test(w.message));
+  assert.ok(warned, 'the background failure is logged');
+  assert.equal(warned.data.backend, k8s.PLATFORM_ASSET_NAME);
+  assert.equal(warned.data.error, 'api down');
+
+  // And it cools off as any failed reconcile does: the next deploy is not
+  // routed and does not wait, exactly as before this change.
+  await deployChild(DEPLOY_CONFIG, 'groceries-654321');
+  assert.deepEqual(assetPathsIn(state.ingresses[1]), [], 'cooling off: no routing');
+});
+
+test('KUBERNETES_ASSET_BACKEND_WAIT=always waits for the reconcile even when the backend serves', async (t) => {
+  const reconcile = held();
+  const { clients, state } = deployCluster({ serving: true, platformRead: () => reconcile.promise });
+  k8s._setClientsForTest(clients);
+  k8s._resetPlatformAssetBackendForTest();
+  t.after(() => { k8s._setClientsForTest(null); k8s._resetPlatformAssetBackendForTest(); });
+
+  let done = false;
+  const deploying = deployChild(configWith({ assetBackendWait: 'always' })).then(() => { done = true; });
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(done, false);
+  assert.equal(state.backendReads, 0, 'not even asked whether it serves');
+  reconcile.release(PLATFORM);
+  await deploying;
+  assert.deepEqual(assetPathsIn(state.ingresses[0]), [...k8s.PLATFORM_ASSET_PREFIXES]);
+});
+
+test('a backend serves only with its Service selecting it and a ready, available replica', async (t) => {
+  const name = k8s.PLATFORM_ASSET_NAME;
+  const service = { metadata: { name }, spec: { selector: { 'social.usernode.io/runtime-name': name } } };
+  const deployment = { metadata: { name }, spec: { replicas: 2 }, status: { readyReplicas: 1, availableReplicas: 1 } };
+  const serving = async (svc, dep) => {
+    k8s._setClientsForTest({
+      core: { readNamespacedService: async () => { if (svc instanceof Error) throw svc; return svc; } },
+      apps: { readNamespacedDeployment: async () => { if (dep instanceof Error) throw dep; return dep; } },
+    });
+    return k8s._sharedBackendServingForTest(DEPLOY_CONFIG, name);
+  };
+  t.after(() => k8s._setClientsForTest(null));
+  assert.equal(await serving(service, deployment), true, 'one old replica answering is serving');
+  assert.equal(await serving(notFound(), deployment), false, 'no Service');
+  assert.equal(await serving(service, notFound()), false, 'no Deployment');
+  assert.equal(await serving(new Error('timeout'), deployment), false, 'an API error');
+  assert.equal(await serving({ ...service, spec: { selector: { app: 'other' } } }, deployment), false, 'a Service selecting something else');
+  assert.equal(await serving({ ...service, metadata: { name, deletionTimestamp: 'now' } }, deployment), false);
+  assert.equal(await serving(service, { ...deployment, status: { readyReplicas: 0, availableReplicas: 0 } }), false, 'nothing ready');
+  assert.equal(await serving(service, { ...deployment, status: { readyReplicas: 1, availableReplicas: 0 } }), false, 'ready but not yet available');
+  assert.equal(await serving(service, { ...deployment, spec: { replicas: 0 } }), false, 'scaled to zero');
+  assert.equal(await serving(service, { ...deployment, metadata: { name, deletionTimestamp: 'now' } }), false);
+});
+
+test('the Ingress reconcile skips an Ingress a deploy wrote since its list, and carries on', async (t) => {
+  const managed = 'social-vibecoding-runtime';
+  const ingress = (name, host) => ({
+    metadata: { name, resourceVersion: '1', labels: { 'app.kubernetes.io/managed-by': managed } },
+    spec: { rules: [{ host, http: { paths: [{ path: '/', pathType: 'Prefix', backend: { service: { name, port: { number: 3000 } } } }] } }] },
+  });
+  const replaced = [];
+  k8s._setClientsForTest({ networking: {
+    listNamespacedIngress: async () => ({ items: [ingress('sv-a', 'a.apps.example.test'), ingress('sv-b', 'b.apps.example.test')] }),
+    replaceNamespacedIngress: async ({ name }) => {
+      if (name === 'sv-a') throw Object.assign(new Error('the object has been modified'), { code: 409 });
+      replaced.push(name);
+    },
+  } });
+  t.after(() => k8s._setClientsForTest(null));
+  assert.equal(await k8s._reconcilePlatformAssetIngressesForTest(DEPLOY_CONFIG), 1);
+  assert.deepEqual(replaced, ['sv-b']);
+
+  // Any other failure still stops it, as before.
+  k8s._setClientsForTest({ networking: {
+    listNamespacedIngress: async () => ({ items: [ingress('sv-a', 'a.apps.example.test')] }),
+    replaceNamespacedIngress: async () => { throw Object.assign(new Error('forbidden'), { code: 403 }); },
+  } });
+  await assert.rejects(() => k8s._reconcilePlatformAssetIngressesForTest(DEPLOY_CONFIG), /forbidden/);
+});
+
+test('the app gate is chosen the same way: one that answers takes the app while its reconcile goes on', async (t) => {
+  const before = process.env.PLATFORM_INTERNAL_URL;
+  process.env.PLATFORM_INTERNAL_URL = 'http://social-vibecoding.social-platform.svc:3000';
+  const reconcile = held();
+  const { clients, state } = deployCluster({ serving: [k8s.PLATFORM_ASSET_NAME, k8s.APP_GATE_NAME], platformRead: () => reconcile.promise });
+  k8s._setClientsForTest(clients);
+  k8s._resetPlatformAssetBackendForTest();
+  k8s._resetAppGateForTest();
+  t.after(() => {
+    k8s._setClientsForTest(null); k8s._resetPlatformAssetBackendForTest(); k8s._resetAppGateForTest();
+    if (before === undefined) delete process.env.PLATFORM_INTERNAL_URL; else process.env.PLATFORM_INTERNAL_URL = before;
+  });
+  const gated = { ...DEPLOY_CONFIG, kubernetes: { ...DEPLOY_CONFIG.kubernetes, appGate: 'on' } };
+  await deployChild(gated);
+  const catchAll = pathsOf(state.ingresses[0]).find((p) => p.path === '/');
+  assert.equal(catchAll.backend.service.name, k8s.APP_GATE_NAME, 'behind the gate that answers');
+  reconcile.release(PLATFORM);
+  assert.equal(await k8s.ensureAppGateBackend(gated), k8s.APP_GATE_NAME, 'its reconcile finished behind the deploy');
+  await k8s.ensurePlatformAssetBackend(gated);
+
+  // A gate that does not answer yet is still waited for.
+  const second = held();
+  const fresh = deployCluster({ serving: [k8s.PLATFORM_ASSET_NAME], platformRead: () => second.promise });
+  k8s._setClientsForTest(fresh.clients);
+  k8s._resetPlatformAssetBackendForTest();
+  k8s._resetAppGateForTest();
+  let done = false;
+  const deploying = deployChild(gated).then(() => { done = true; });
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(done, false);
+  second.release(PLATFORM);
+  await deploying;
+  assert.equal(pathsOf(fresh.state.ingresses[0]).find((p) => p.path === '/').backend.service.name, k8s.APP_GATE_NAME);
 });

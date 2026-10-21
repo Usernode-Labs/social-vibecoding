@@ -31,7 +31,7 @@
 // ./app-card-view.tsx, off the same descriptor functions the home grid's strings
 // are built from. The rest is still Home's, reached through the global,
 // because each one reads Home's loaded-app list or the viewer's permissions:
-// isYours, matchesQuery, toggleAdded, menuItemsFor.
+// isYours, filterApps, toggleAdded, menuItemsFor.
 //
 // WHAT THIS FILE DOES NOW (#1191 slice 6, conversion 3): every decision, and
 // no markup. The sort, the search filter, the level derivation, the two
@@ -107,6 +107,11 @@ const Browse = {
   // True between an open({ chrome: false }) and the syncChrome() app.js
   // runs inside the screen transition (#979).
   _chromeSuspended: false,
+  // Apps joined from a row during this visit (#5267). They keep their place
+  // in "Recommended for you" and under Not joined, now saying Open, so a
+  // tap on Join never makes the row it was on jump away. Cleared on a new
+  // visit and on a chip change, when the list is rebuilt anyway.
+  _keptJoins: new Set(),
 
   isOpen() { return Browse._open; },
 
@@ -134,6 +139,7 @@ const Browse = {
     if (!Browse._open) {
       // Pure disclosure state for review captures; no requests or writes.
       Browse._moreExpanded = new URLSearchParams(location.search).get('shot') === 'browse-more';
+      Browse._keptJoins.clear();
     }
     Browse._open = true;
     Browse._chromeSuspended = !!(opts && opts.chrome === false);
@@ -299,7 +305,7 @@ const Browse = {
       const app = Browse.appBySlug(Browse._slug);
       App.setHeaderTitle(app?.name || Browse._slug);
     } else {
-      App.setHeaderTitle('All apps');
+      App.setHeaderTitle(PlatformI18n.t('discover:browse.headerTitle'));
     }
   },
 
@@ -362,11 +368,11 @@ const Browse = {
   // The order of this array is the order of the <select>; the first entry is
   // the default. Labels are user-facing.
   SORTS: [
-    { key: 'recommended', label: 'Recommended' },
-    { key: 'users', label: 'Most users' },
-    { key: 'active', label: 'Most active' },
-    { key: 'merged', label: 'Most changes live' },
-    { key: 'new', label: 'Newest' },
+    { key: 'recommended', label: 'discover:sort.recommended' },
+    { key: 'users', label: 'discover:sort.users' },
+    { key: 'active', label: 'discover:sort.active' },
+    { key: 'merged', label: 'discover:sort.merged' },
+    { key: 'new', label: 'discover:sort.newest' },
   ],
 
   // localStorage key for the remembered choice. Namespaced like the rest of
@@ -432,7 +438,8 @@ const Browse = {
 
   // ── Filter chips (the prototype's scrDiscover) ────────────────────
   //
-  // All · Featured · Joined · New, in a row above the list. A chip
+  // All · Featured · Not joined · Joined · New, in a row above the list,
+  // and Not yet reviewed after them for an admin (ADMIN_FILTERS). A chip
   // FILTERS where Sort only reorders, and the three controls compose in one
   // fixed order: the chip picks the set, Sort orders it, the search narrows
   // it. So "Featured, by Most users" is the featured apps ranked by users,
@@ -443,14 +450,34 @@ const Browse = {
   // browse-screen.tsx keeps a COPY of them for the same reason it keeps one
   // of SORTS (tests/browse-screen.test.js pins the two together).
   FILTERS: [
-    { key: 'all', label: 'All' },
-    { key: 'featured', label: 'Featured' },
+    { key: 'all', label: 'discover:filter.all' },
+    { key: 'featured', label: 'discover:filter.featured' },
+    // What you could still join (#5267): Discover is for finding new
+    // things, and this chip is the list without the ones you are in.
+    { key: 'notjoined', label: 'discover:filter.notJoined' },
     // The key stays `yours` — ?filter=yours links and the declared checks
     // select on it — while the label says what the chip now holds: the
     // communities you are in, not the shortcuts on your Home screen.
-    { key: 'yours', label: 'Joined' },
-    { key: 'new', label: 'New' },
+    { key: 'yours', label: 'discover:filter.joined' },
+    { key: 'new', label: 'discover:filter.new' },
   ],
+
+  // The chips only an admin gets, after the rest (#5267). "Not yet
+  // reviewed" is moderation state: it used to be a heading in everybody's
+  // default list, and it is now a filter for the people who review. The
+  // apps under it are NOT hidden from anyone: they still sit in the default
+  // list, after the reviewed ones, as they always have (directoryTier), with
+  // no heading or label naming the review. browse-screen.tsx keeps a copy,
+  // for the reason it keeps one of FILTERS.
+  ADMIN_FILTERS: [
+    { key: 'unreviewed', label: 'discover:filter.unreviewed' },
+  ],
+
+  // An admin, as the shell sees one: `App.user.isAdmin`, which "View as
+  // non-admin" masks, so that view loses the chip too.
+  isAdminViewer() {
+    try { return !!(typeof App !== 'undefined' && App.user && App.user.isAdmin); } catch (err) { return false; }
+  },
 
   // "New" is the apps CREATED in the last NEW_WINDOW_DAYS days (by
   // `created_at`). A directory where nothing is that young would give the
@@ -470,11 +497,14 @@ const Browse = {
   // without overriding a choice made by hand later in the same visit.
   _urlFilterTaken: false,
 
-  // Anything unrecognised falls back to All rather than emptying the screen.
-  // Pure — unit-tested.
+  // Anything unrecognised falls back to All rather than emptying the screen,
+  // and so does an admin chip asked for by anyone else.
+  // Pure but for the admin read; unit-tested.
   resolveFilter(raw) {
     const key = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
-    return Browse.FILTERS.some((f) => f.key === key) ? key : 'all';
+    if (Browse.FILTERS.some((f) => f.key === key)) return key;
+    if (Browse.ADMIN_FILTERS.some((f) => f.key === key) && Browse.isAdminViewer()) return key;
+    return 'all';
   },
 
   // Runs on screen ENTRY, never during render — the same reason
@@ -488,15 +518,88 @@ const Browse = {
       try { raw = new URLSearchParams(location.search).get('filter'); } catch (err) { raw = null; }
       if (raw) Browse._filter = Browse.resolveFilter(raw);
     }
-    if (Browse._store) Browse._store.set({ filter: Browse._filter });
+    if (Browse._store) Browse._store.set({ filter: Browse._filter, adminFilters: Browse.isAdminViewer() });
   },
 
   // A chip's onClick.
   setFilter(key) {
     const next = Browse.resolveFilter(key);
     Browse._filter = next;
+    Browse._keptJoins.clear();
     if (Browse._store) Browse._store.set({ filter: next });
     Browse.render();
+  },
+
+  // ── Type chips (#3962) ────────────────────────────────────────────
+  //
+  // A second row under the filter chips: All types, then one chip per KIND
+  // of app (dapp.json's top-level `category`, which the deploy reads into
+  // the manifest snapshot GET /api/apps already carries). Nothing guesses a
+  // type: an app is under a type only when its own dapp.json says so, so an
+  // app that says nothing is listed under All types alone.
+  //
+  // A COPY of app-manifest.js APP_CATEGORIES, labelled, in its order; the
+  // server's list is the authority on which words are valid and
+  // tests/browse-screen.test.js pins the two together. The screen draws the
+  // row from the `categories` the list render publishes, never from this
+  // array directly, so the chips are only the types some app has.
+  CATEGORIES: [
+    { key: 'games', label: 'discover:category.games' },
+    { key: 'social', label: 'discover:category.social' },
+    { key: 'tools', label: 'discover:category.tools' },
+    { key: 'learning', label: 'discover:category.learning' },
+    { key: 'creative', label: 'discover:category.creative' },
+    { key: 'other', label: 'discover:category.other' },
+  ],
+
+  // Remembered for the session only, like _filter, and for the same reason.
+  _category: 'all',
+
+  // An app's type, or null: the snapshot's `category` when it is one of
+  // CATEGORIES. Pure — unit-tested.
+  appCategory(app) {
+    const snap = app && app.manifest_snapshot;
+    const raw = snap && typeof snap === 'object' ? snap.category : null;
+    const key = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
+    return Browse.CATEGORIES.some((c) => c.key === key) ? key : null;
+  },
+
+  // The chips the row shows: every type at least one app in the directory
+  // has, in CATEGORIES order. Read off the whole directory, not the filtered
+  // list, so the row stays put while the other controls change. Empty while
+  // no app has a type other than `other`: a row of All types and Other
+  // alone would sort nothing, so it stays absent until projects tag
+  // themselves. Pure — unit-tested.
+  presentCategories(apps) {
+    const have = new Set();
+    for (const a of apps || []) {
+      const key = Browse.appCategory(a);
+      if (key) have.add(key);
+    }
+    if (![...have].some((key) => key !== 'other')) return [];
+    return Browse.CATEGORIES.filter((c) => have.has(c.key));
+  },
+
+  // A type the directory has, else All types: a chip that is gone (its last
+  // app retagged) cannot stay pressed over an empty list.
+  resolveCategory(raw, apps) {
+    const key = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
+    const present = Browse.presentCategories(apps === undefined ? Browse._apps : apps);
+    return present.some((c) => c.key === key) ? key : 'all';
+  },
+
+  // A type chip's onClick.
+  setCategory(key) {
+    Browse._category = Browse.resolveCategory(key);
+    if (Browse._store) Browse._store.set({ category: Browse._category });
+    Browse.render();
+  },
+
+  // The type's set. 'all' is the list unchanged. Pure — unit-tested.
+  categoryApps(apps, key) {
+    const list = (apps || []).filter(Boolean);
+    if (!key || key === 'all') return list;
+    return list.filter((a) => Browse.appCategory(a) === key);
   },
 
   // The New chip's set: see NEW_WINDOW_DAYS. `now` is injectable for the
@@ -530,39 +633,78 @@ const Browse = {
   //              rows' Join pill reads, so the chip and the pill can never
   //              disagree. Not Home.isYours — taking an app off Home is not
   //              leaving it, and Discover is where you join and leave.
+  //   notjoined: the rest, not Home.isJoined, plus the apps joined from a
+  //              row during this visit (_keptJoins), which stay until the
+  //              list is rebuilt.
   //   new      — newApps above.
+  //   unreviewed: admins only, directoryTier 'unreviewed', exactly the
+  //              apps the "Not yet reviewed" heading used to hold.
   // Pure — unit-tested.
   filterApps(apps, key, now) {
     const filter = Browse.resolveFilter(key == null ? Browse._filter : key);
     const list = (apps || []).filter(Boolean);
     if (filter === 'featured') return list.filter((a) => !!a.featured);
+    if (filter === 'notjoined') return list.filter((a) => !Home.isJoined(a) || Browse._keptJoins.has(a.slug));
     if (filter === 'yours') return list.filter((a) => Home.isJoined(a));
     if (filter === 'new') return Browse.newApps(list, now);
+    if (filter === 'unreviewed') return list.filter((a) => Browse.directoryTier(a) === 'unreviewed');
     return list;
   },
 
-  // The nothing-to-show line, per chip. Pure — unit-tested.
-  emptyText(query, key) {
+  // The nothing-to-show line, per chip. With a type picked and no search,
+  // it says the type has nothing here, since the type row only offers types
+  // some app has: it is the filter chip that emptied it. Pure — unit-tested.
+  emptyText(query, key, category) {
     const filter = Browse.resolveFilter(key == null ? Browse._filter : key);
     const q = String(query || '').trim();
+    if (!q && category && category !== 'all') return PlatformI18n.t('discover:empty.category');
     if (q) {
-      if (filter === 'featured') return `No featured apps match “${q}”.`;
-      if (filter === 'yours') return `Nothing you’ve joined matches “${q}”.`;
-      if (filter === 'new') return `No new apps match “${q}”.`;
-      return `No apps match “${q}”.`;
+      if (filter === 'featured') return PlatformI18n.t('discover:empty.search.featured', { query: q });
+      if (filter === 'notjoined') return PlatformI18n.t('discover:empty.search.notJoined', { query: q });
+      if (filter === 'yours') return PlatformI18n.t('discover:empty.search.joined', { query: q });
+      if (filter === 'unreviewed') return PlatformI18n.t('discover:empty.search.unreviewed', { query: q });
+      if (filter === 'new') return PlatformI18n.t('discover:empty.search.new', { query: q });
+      return PlatformI18n.t('discover:empty.search.all', { query: q });
     }
-    if (filter === 'featured') return 'No featured apps yet.';
-    if (filter === 'yours') return 'You haven’t joined anything yet. Join apps from All.';
-    return 'No apps to show yet.';
+    if (filter === 'featured') return PlatformI18n.t('discover:empty.featured');
+    if (filter === 'notjoined') return PlatformI18n.t('discover:empty.notJoined');
+    if (filter === 'yours') return PlatformI18n.t('discover:empty.joined');
+    if (filter === 'unreviewed') return PlatformI18n.t('discover:empty.unreviewed');
+    return PlatformI18n.t('discover:empty.all');
   },
 
   // Unreviewed is not the same as broken. Apps with icons that have not yet
-  // been reviewed remain visible below the reviewed group; explicit demos,
+  // been reviewed remain visible after the reviewed ones (#5267: in the same
+  // list, under no heading of their own); explicit demos,
   // failures, and apps still needing setup/icon work go under Show more.
   directoryTier(app) {
     if (Home.isDiscoveryReady(app)) return 'ready';
     if (app?.directory?.tier === 'more' || app?.status === 'error') return 'more';
     return 'unreviewed';
+  },
+
+  // Where an app sits in the admin's featured order: its featured_order, an
+  // unordered featured app after the ordered ones, everything else last.
+  featuredRank(a) {
+    return a && a.featured
+      ? (a.featured_order == null ? Number.MAX_SAFE_INTEGER - 1 : a.featured_order)
+      : Number.MAX_SAFE_INTEGER;
+  },
+
+  // "Recommended for you" (#5267), the default list's first section. There
+  // is no recommender behind it, on purpose: it is the admin's featured set
+  // (the same `featured` flag the Featured chip and Home's featured lane
+  // read), less the apps you are already in, in the featured order. An app
+  // you join from it stays for the visit (_keptJoins). The `more` tier
+  // (demos, apps needing fixes) never leads the page, featured or not.
+  // Pure; unit-tested.
+  recommendedApps(apps) {
+    return (apps || [])
+      .filter((a) => a && a.featured
+        && (!Home.isJoined(a) || Browse._keptJoins.has(a.slug))
+        && Browse.directoryTier(a) !== 'more')
+      .slice()
+      .sort((x, y) => Browse.featuredRank(x) - Browse.featuredRank(y));
   },
 
   toggleMore() {
@@ -601,9 +743,7 @@ const Browse = {
       if (b == null) return -1;
       return b - a;
     };
-    const featuredRank = (a) => (a && a.featured
-      ? (a.featured_order == null ? Number.MAX_SAFE_INTEGER - 1 : a.featured_order)
-      : Number.MAX_SAFE_INTEGER);
+    const featuredRank = Browse.featuredRank;
     // The later of "last change merged" and "last deploy" — an app can ship
     // without a community proposal and vice versa, and either is a sign of
     // life.
@@ -649,15 +789,47 @@ const Browse = {
     return (apps || []).slice().sort(cmp);
   },
 
+  // A query that looks like a web address offers to open the site, the way a
+  // browser's address bar does (#5364). The row is appended to the same list
+  // the app matches render in; app search itself is untouched (Home.filterApps).
+  //
+  // Pure — unit-tested in tests/browse-screen.test.js. Returns
+  // { href, label } or null:
+  //   href  — the address to open, https:// added when the person left it off
+  //   label — the address as they typed it, without the http(s):// prefix and
+  //           without a trailing /
+  siteFor(query) {
+    const raw = String(query == null ? '' : query).trim();
+    if (!raw || /\s/.test(raw)) return null;
+    let candidate = raw;
+    if (!/^https?:\/\//i.test(candidate)) {
+      // A bare "name.tld" shape, optionally a :port and a path/query/hash.
+      // Plain words ("notes"), decimals ("1.5") and phrases never trigger.
+      if (!/^[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}(:\d+)?([\/?#].*)?$/i.test(candidate)) return null;
+      candidate = `https://${candidate}`;
+    }
+    let url;
+    try { url = new URL(candidate); } catch (err) { return null; }
+    // Only web pages open. This also rejects javascript:, data:, a host with
+    // no dot (https://localhost) and anything malformed URL cannot parse.
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
+    if (!url.hostname.includes('.')) return null;
+    const label = raw.replace(/^https?:\/\//i, '').replace(/\/+$/, '');
+    return { href: url.href, label };
+  },
+
   // The rows for the current chip and query. The chip picks the set first
   // (filterApps), then the sort orders it, then the search narrows it. The
   // search covers every app the chip admits (home's own search is scoped to
-  // "Your apps"), reusing Home's matcher so both fields behave identically.
-  // The three compose, and searching never changes the order.
+  // "Your apps"), reusing Home's search (Home.filterApps) so both fields
+  // behave identically. The three compose, and searching keeps the sort's
+  // order with one exception (#4793): an app whose name or slug IS the
+  // query moves to the top, the rest staying where the sort put them.
   visibleApps() {
-    const pool = Browse.filterApps(Browse._apps, Browse._filter);
+    const chipped = Browse.filterApps(Browse._apps, Browse._filter);
+    const pool = Browse.categoryApps(chipped, Browse.resolveCategory(Browse._category));
     const sorted = Browse.sortApps(pool, Browse._sort);
-    return sorted.filter((a) => Home.matchesQuery(a, Browse._query));
+    return Home.filterApps(sorted, Browse._query);
   },
 
   // ── Row rendering ─────────────────────────────────────────────────
@@ -678,35 +850,37 @@ const Browse = {
   //   new                   12 users · Created 5d ago
   //
   // A zero-merge app omits the merge segment rather than printing "0 merged",
-  // which reads as a defect rather than as an absence.
+  // which reads as a defect rather than as an absence. So does a zero user
+  // count (polish N12): "0 users" beside the row's "Joined" read as a
+  // contradiction, and a zero says nothing in this shell.
   // Pure — unit-tested.
   metaLine(app, key) {
     if (!app) return '';
     const sort = Browse.resolveSort(key == null ? Browse._sort : key);
     const bits = [];
     const users = parseInt(app.active_users || 0, 10) || 0;
-    bits.push(`${users} user${users === 1 ? '' : 's'}`);
+    if (users > 0) bits.push(PlatformI18n.t('discover:row.meta.users', { count: users }));
     if (sort === 'active') {
       const recent = parseInt(app.merged_prs_recent || 0, 10) || 0;
-      if (recent > 0) bits.push(`${recent} live in 30d`);
+      if (recent > 0) bits.push(PlatformI18n.t('discover:row.meta.liveRecently', { count: recent }));
     } else if (sort === 'merged') {
       const merged = parseInt(app.merged_prs || 0, 10) || 0;
-      if (merged > 0) bits.push(`${merged} change${merged === 1 ? '' : 's'} live`);
+      if (merged > 0) bits.push(PlatformI18n.t('discover:row.meta.changesLive', { count: merged }));
     }
     if (sort === 'new') {
       const created = formatRelativeTime(app.created_at);
-      if (created) bits.push(`Created ${created}`);
+      if (created) bits.push(PlatformI18n.t('discover:row.meta.created', { when: created }));
     } else {
       const rel = formatRelativeTime(app.last_deploy_at || app.created_at);
-      if (rel) bits.push(`Updated ${rel}`);
+      if (rel) bits.push(PlatformI18n.t('discover:row.meta.updated', { when: rel }));
     }
     const status = app.status === 'running' ? ''
-      : app.status === 'creating' ? 'Spinning up…'
-      : app.status === 'awaiting_secrets' ? 'Awaiting secrets'
-      : app.status === 'error' ? 'Error'
+      : app.status === 'creating' ? PlatformI18n.t('discover:row.status.creating')
+      : app.status === 'awaiting_secrets' ? PlatformI18n.t('discover:row.status.awaitingSecrets')
+      : app.status === 'error' ? PlatformI18n.t('discover:row.status.error')
       : app.status || '';
     if (status) bits.push(status);
-    return bits.join(' · ');
+    return bits.length ? joinFacts(bits) : '';
   },
 
   // One app-store row, as DATA: icon · name + meta + status pills · Add
@@ -718,10 +892,14 @@ const Browse = {
   // Pure — unit-tested in tests/browse-screen.test.js.
   rowView(app) {
     const isDemo = !!app.demo;
-    // The pill is membership now (Join / Joined), not the Home shortcut it
+    // The pill is membership now (Join, or Open once joined), not the Home shortcut it
     // used to be: see Home.setMembership. `added` keeps its name because the
     // row's data-added attribute is what the declared checks select on.
     const isAdded = Home.isJoined(app);
+    // A joined row offers Open (#5267), the app itself, where it used to
+    // say "✓ Joined"; only an app that can run gets one (the detail page's
+    // canOpen rule), and an inert staging fixture never does.
+    const canOpen = !isDemo && (app.status === 'running' || app.status === 'awaiting_secrets');
     return {
       app,
       directoryTier: Browse.directoryTier(app),
@@ -736,7 +914,10 @@ const Browse = {
       demo: isDemo,
       openable: !isDemo,
       added: isAdded,
-      addTitle: isAdded ? `Joined. Tap to leave ${app.name || app.slug}` : `Join ${app.name || app.slug}`,
+      canOpen,
+      addTitle: isAdded
+        ? PlatformI18n.t('discover:row.open.tip', { app: app.name || app.slug })
+        : PlatformI18n.t('discover:row.join.tip', { app: app.name || app.slug }),
     };
   },
 
@@ -751,15 +932,33 @@ const Browse = {
     if (!Browse._store) return;
     const apps = Browse.visibleApps();
     const query = (Browse._query || '').trim();
-    const rows = apps.map((a) => Browse.rowView(a));
+    // The DEFAULT list (#5267): Recommended order, the All chip, no search.
+    // Only it is grouped, and it leads with "Recommended for you"; every
+    // other chip and sort is one list in its own order.
+    const categories = Browse.presentCategories(Browse._apps);
+    const category = Browse.resolveCategory(Browse._category);
+    const grouped = Browse._sort === 'recommended' && !query && Browse._filter === 'all' && category === 'all';
+    const picked = grouped ? Browse.recommendedApps(apps) : [];
+    const pickedSlugs = new Set(picked.map((a) => a.slug));
+    const rest = picked.length ? apps.filter((a) => !pickedSlugs.has(a.slug)) : apps;
+    const rows = rest.map((a) => Browse.rowView(a));
+    rows.unshift(...picked.map((a) => ({ ...Browse.rowView(a), recommended: true })));
+    // The "Open site" row, when the query is a web address (#5364). It rides
+    // the list descriptor; browse-list.tsx draws it above the app rows.
+    const site = Browse.siteFor(query);
 
     Browse._store.set({
+      site,
       rows,
       // Republished on every list render so the <select> and the
       // #browse-list[data-sort] anchor can never lag the rows they describe.
       sort: Browse._sort,
       // …and the chips and #browse-list[data-filter], for the same reason.
       filter: Browse._filter,
+      // The type row (#3962): the chips it holds (none hides it) and the
+      // pressed one, published together with the rows they picked.
+      categories,
+      category,
       // #1912: EVERY sort tucks the demos and apps needing fixes behind
       // Show more — the disclosure used to exist on Recommended only, so
       // switching to a metric sort suddenly showed everything. Only
@@ -768,10 +967,13 @@ const Browse = {
       // promises). A search still shows every match, expanded.
       // Returning from a detail page keeps the user's disclosure choice.
       curated: !query,
-      grouped: Browse._sort === 'recommended' && !query,
+      grouped,
       moreExpanded: Browse._moreExpanded,
+      adminFilters: Browse.isAdminViewer(),
       error: false,
-      empty: rows.length ? null : Browse.emptyText(query, Browse._filter),
+      // The site row IS a result, so the "No apps match" line never shows
+      // right under it.
+      empty: site ? null : (rows.length ? null : Browse.emptyText(query, Browse._filter, category)),
     });
 
     Browse._maybeShotDetail(rows);
@@ -818,9 +1020,18 @@ const Browse = {
     try { App.prewarmApp(view.slug); } catch (err) { /* ignore */ }
   },
 
+  // The row's Join (#5267: a joined row says Open instead, so this only
+  // ever joins now; leaving is on the project's own page).
   toggleRowAdded(view) {
     if (!view || !view.slug) return;
+    if (!view.added) Browse._keptJoins.add(view.slug);
     Home.setMembership(view.slug, !view.added, () => Browse.render());
+  },
+
+  // The row's Open: the app itself, as the detail page's Open does.
+  openRowApp(view) {
+    if (!view || !view.slug || !view.canOpen) return;
+    App.navigateToApp(view.slug);
   },
 
   // Screenshot-state deep link (?shot=browse-detail): the detail page is
@@ -892,6 +1103,12 @@ const Browse = {
   shareUrlFor(app) {
     if (!app || app.self_hosted) return null;
     if (app.status !== 'running' || !app.url) return null;
+    // A public project's link is its page on Homeroom, which a stranger
+    // opens as the project's page and a link preview names (dialogs/
+    // share.tsx publicPageUrl, routes/project-preview.js).
+    if (app.view_visibility === 'public' && app.slug && typeof location !== 'undefined') {
+      return `${location.origin}/app/${encodeURIComponent(app.slug)}`;
+    }
     const raw = String(app.url);
     try {
       return typeof window !== 'undefined' && typeof window.resolveDevHost === 'function'
@@ -931,7 +1148,7 @@ const Browse = {
     } catch (err) {
       ok = false;
     }
-    PlatformUI.toast(ok ? 'Link copied' : 'Couldn’t copy the link');
+    PlatformUI.toast(ok ? PlatformI18n.t('discover:detail.share.copied') : PlatformI18n.t('discover:detail.share.copyFailed'));
   },
 
   // ── Contributors (#919) ───────────────────────────────────────────
@@ -978,11 +1195,11 @@ const Browse = {
     };
 
     if (state === 'loading') {
-      view.note = 'Loading contributors…';
+      view.note = PlatformI18n.t('discover:detail.contributors.loading');
     } else if (state === 'error') {
-      view.note = 'Couldn’t load contributors.';
+      view.note = PlatformI18n.t('discover:detail.contributors.loadFailed');
     } else if (!items.length) {
-      view.note = 'No contributors yet.';
+      view.note = PlatformI18n.t('discover:detail.contributors.none');
     } else {
       const shown = expanded ? items : items.slice(0, Browse.CONTRIB_FOLD);
       view.rows = shown.map((c, i) => Browse.contributorRowView(c, i + 1));
@@ -991,8 +1208,8 @@ const Browse = {
       // quotes `total` so the number matches the heading.
       if (items.length > Browse.CONTRIB_FOLD) {
         view.toggle = expanded
-          ? 'Show fewer'
-          : `Show all ${total} contributor${total === 1 ? '' : 's'}`;
+          ? PlatformI18n.t('discover:detail.contributors.showFewer')
+          : PlatformI18n.t('discover:detail.contributors.showAll', { count: total });
       }
     }
 
@@ -1005,24 +1222,29 @@ const Browse = {
   // right — so the platform's two ranked people-lists read as one system. A
   // <button> so it is keyboard-focusable like those rows are. Pure.
   contributorRowView(c, rank) {
+    // `who` is also the row's key (data-username, openContributor), so the
+    // missing-name value stays this literal; `unnamed` tells the tooltip to
+    // use its own wording instead of taking it as a username.
     const who = (c && c.username) || 'unknown';
+    const unnamed = !(c && c.username);
     const merged = parseInt(c && c.merged_count, 10) || 0;
     const votes = parseInt(c && c.votes_count, 10) || 0;
     // Role first (it says what they ARE on this app), then the vote count.
     // Creator wins over member — the creator is always backfilled as one,
     // so showing both would be noise on every single first row.
     const bits = [];
-    if (c && c.is_creator) bits.push('Creator');
-    else if (c && c.is_member) bits.push('Member');
-    if (votes > 0) bits.push(`${votes} vote${votes === 1 ? '' : 's'}`);
+    if (c && c.is_creator) bits.push(PlatformI18n.t('discover:detail.contributor.creator'));
+    else if (c && c.is_member) bits.push(PlatformI18n.t('discover:detail.contributor.member'));
+    if (votes > 0) bits.push(PlatformI18n.t('discover:detail.contributor.votes', { count: votes }));
     return {
       who,
+      unnamed,
       rank,
       initial: (who[0] || '?').toUpperCase(),
       merged,
       // null rather than '' so the renderer drops the line instead of
       // drawing an empty one, exactly as the string version did.
-      meta: bits.length ? bits.join(' · ') : null,
+      meta: bits.length ? joinFacts(bits) : null,
       // A zero stays visible in muted grey rather than vanishing, so every
       // row keeps the same shape and the column doesn't ragged out.
       pillTint: merged > 0
@@ -1120,6 +1342,8 @@ const Browse = {
     const forkedFrom = (forkRef && typeof forkRef === 'object')
       ? {
           name: forkRef.name || '<deleted>',
+          // The original is gone: the line has its own wording, and `name` is a placeholder.
+          deleted: !forkRef.name,
           href: (forkRef.linkable && forkRef.slug)
             ? `#app/${encodeURIComponent(forkRef.slug)}`
             : null,
@@ -1158,12 +1382,12 @@ const Browse = {
         updatedRel,
         canOpen,
         openLabel: canOpen
-          ? 'Open'
-          : (app.status === 'creating' ? 'Spinning up…'
-            : app.status === 'error' ? 'Not running'
-            : (app.status || 'Unavailable')),
+          ? PlatformI18n.t('discover:detail.open.action')
+          : (app.status === 'creating' ? PlatformI18n.t('discover:detail.open.creating')
+            : app.status === 'error' ? PlatformI18n.t('discover:detail.open.notRunning')
+            : (app.status || PlatformI18n.t('discover:detail.open.unavailable'))),
         isAdded,
-        favLabel: isAdded ? 'Remove from My apps' : 'Add to My apps',
+        favLabel: isAdded ? PlatformI18n.t('discover:detail.myApps.remove') : PlatformI18n.t('discover:detail.myApps.add'),
         // The Share row (shareDetailApp). A flag, not the URL: the click
         // resolves the link from the app record it is handed, the same one
         // Open and Add act on, rather than from a string frozen at paint.
@@ -1292,12 +1516,19 @@ function formatRelativeTime(input) {
   const t = new Date(input);
   if (Number.isNaN(t.getTime())) return null;
   const seconds = Math.floor((Date.now() - t.getTime()) / 1000);
-  if (seconds < 60) return 'just now';
-  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
-  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
-  if (seconds < 86400 * 30) return `${Math.floor(seconds / 86400)}d ago`;
-  if (seconds < 86400 * 365) return `${Math.floor(seconds / (86400 * 30))}mo ago`;
-  return `${Math.floor(seconds / (86400 * 365))}y ago`;
+  if (seconds < 60) return PlatformI18n.t('discover:time.justNow');
+  if (seconds < 3600) return PlatformI18n.t('discover:time.minutesAgo', { count: Math.floor(seconds / 60) });
+  if (seconds < 86400) return PlatformI18n.t('discover:time.hoursAgo', { count: Math.floor(seconds / 3600) });
+  if (seconds < 86400 * 30) return PlatformI18n.t('discover:time.daysAgo', { count: Math.floor(seconds / 86400) });
+  if (seconds < 86400 * 365) return PlatformI18n.t('discover:time.monthsAgo', { count: Math.floor(seconds / (86400 * 30)) });
+  return PlatformI18n.t('discover:time.yearsAgo', { count: Math.floor(seconds / (86400 * 365)) });
+}
+
+// Short facts on one line of a row ("12 users · Updated 3d ago"). Each fact is
+// a whole message of its own, and what joins two of them is a message too, so
+// a language can use its own separator.
+function joinFacts(facts) {
+  return facts.reduce((first, second) => PlatformI18n.t('discover:row.meta.pair', { first, second }));
 }
 
 // Still published as a global: App.navigateToBrowse, app.js's hash router and
@@ -1305,3 +1536,13 @@ function formatRelativeTime(input) {
 // scripts. Guarded because the SSG prerender pass evaluates this module in
 // Node (the island imports it).
 if (typeof window !== 'undefined') window.Browse = Browse;
+
+// The descriptors above hold text, so a language change rebuilds them from
+// the same state: the rows or the detail page, and the header's title.
+if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+  document.addEventListener('homeroom:language-changed', () => {
+    if (!Browse._open) return;
+    Browse.render();
+    Browse._syncChrome();
+  });
+}

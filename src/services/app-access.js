@@ -77,7 +77,7 @@ const NON_SECRET_APP_COLUMNS = [
   'icon_image_id', 'icon_color', 'featured_illustration', 'forked_from', 'admin_usernames',
   'directory_review_status', 'directory_reviewed_at', 'directory_reviewed_sha',
   'main_check_state', 'main_check_sha', 'main_check_at', 'main_check_detail',
-  'main_check_resumed_sha', 'main_check_paused_sha', 'release_stall',
+  'main_check_resumed_sha', 'main_check_paused_sha', 'release_stall', 'release_run',
   // #2253: the per-app database storage cap's state. Operational, not
   // secret: the admin console shows all of it.
   'db_size_bytes', 'db_size_measured_at', 'db_storage_cap_bytes',
@@ -89,6 +89,9 @@ const NON_SECRET_APP_COLUMNS = [
   // The community the app belongs to (services/communities.js). An id, and
   // the community's members are the app's own collaborators and joiners.
   'community_id',
+  // A production deploy app delivery is running (src/workflow/app-delivery/):
+  // the version pill's "deploying".
+  'deploy_state', 'deploy_started_at', 'deploy_from_sha',
 ];
 
 // `NON_SECRET_APP_COLUMNS` rendered as a bare comma-joined column list
@@ -227,10 +230,21 @@ function sessionCollabGuard(pool) {
       );
       if (!rows.length) return next();
       if (await isBotOwnSession(pool, req.user, id)) return next();
-      if (!(await checkAppAccess(pool, rows[0], req.user, guardLevelFor(req)))) {
-        return res.status(404).json({ error: 'Session not found' });
+      const level = guardLevelFor(req);
+      if (await checkAppAccess(pool, rows[0], req.user, level)) return next();
+      // #5506, as #3410 did for issues: a write refused only by the collab
+      // bar on a change the caller can SEE must not read "Session not
+      // found" — the ready card whose Approve said so was on their screen,
+      // its change served by the same view level that passes here. Say the
+      // refusal plainly. A caller who fails even the view level keeps the
+      // existence-hiding 404.
+      if (level !== 'view' && await checkAppAccess(pool, rows[0], req.user, 'view')) {
+        return res.status(403).json({
+          error: 'You can view this project, but only its collaborators can take part in it.',
+          code: 'collab_required',
+        });
       }
-      return next();
+      return res.status(404).json({ error: 'Session not found' });
     } catch (err) {
       log.error('app-access', 'session guard failed', { id, err: err.message });
       return res.status(500).json({ error: 'Internal server error' });
@@ -291,7 +305,7 @@ function invalidateAllVisibility() {
   visCacheById.clear(); slugToId.clear(); hostVisBySlug.clear();
 }
 
-function invalidateVisibility(appId, slug) {
+function invalidateVisibilityHere(appId, slug) {
   if (appId != null) visCacheById.delete(Number(appId));
   if (slug) {
     slugToId.delete(slug);
@@ -299,6 +313,12 @@ function invalidateVisibility(appId, slug) {
   }
   // Slug entries are tiny and TTL-bounded; a stale slug->id mapping is
   // harmless (ids never re-point), so no full sweep needed.
+}
+
+// Here and in every other process (access-change.js).
+function invalidateVisibility(appId, slug) {
+  invalidateVisibilityHere(appId, slug);
+  require('./access-change').shareAccessChange(appId, slug);
 }
 
 async function getWsVisibility(pool, { appId = null, appSlug = null } = {}) {
@@ -440,6 +460,7 @@ module.exports = {
   issueCollabGuard,
   getWsVisibility,
   invalidateVisibility,
+  invalidateVisibilityHere,
   invalidateAllVisibility,
   parseAppHost,
   getHostVisibility,

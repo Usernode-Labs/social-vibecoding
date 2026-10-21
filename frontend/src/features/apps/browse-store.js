@@ -27,6 +27,12 @@ export const browseStore = createStore({
   level: 'list',
   /** null until the first _renderList; else an array of row descriptors. */
   rows: null,
+  /**
+   * The "Open site" row's descriptor ({ href, label }) while the search text
+   * is a web address (#5364), else null — so the prerender, which has no
+   * query, renders no site row and hydration is silent.
+   */
+  site: null,
   curated: true,
   grouped: true,
   moreExpanded: false,
@@ -50,10 +56,26 @@ export const browseStore = createStore({
    */
   sort: 'recommended',
   /**
-   * Which of Browse.FILTERS chips is on: 'all' | 'featured' | 'yours' | 'new'.
+   * Which chip is on: a key of Browse.FILTERS ('all' | 'featured' |
+   * 'notjoined' | 'yours' | 'new') or, for an admin, of Browse.ADMIN_FILTERS.
    * 'all' is the PRERENDER value, for the same reason as `sort`: ?filter= and
    * the session's own choice are applied on screen entry
    * (Browse._applyInitialFilter), never during render.
    */
   filter: 'all',
+  /**
+   * Whether the admin-only chips (Browse.ADMIN_FILTERS) are drawn (#5267).
+   * False is the PRERENDER value: who is viewing is known only after boot,
+   * so the chip appears on screen entry, never in the first render.
+   */
+  adminFilters: false,
+  /**
+   * The "Filter by type" row (#3962): the type chips Browse.presentCategories
+   * found ({ key, label } each), in order. Empty hides the whole row, and is
+   * the PRERENDER value: which types the directory holds is known only once
+   * /api/apps answers, so the row never appears in the first render.
+   */
+  categories: [],
+  /** The pressed type chip: 'all' or a key of Browse.CATEGORIES. */
+  category: 'all',
 });

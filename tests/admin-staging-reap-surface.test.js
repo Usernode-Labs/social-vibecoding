@@ -114,7 +114,7 @@ test('progress goes out on an admin-only broadcast', () => {
   assert.match(reapJs, /broadcastToAdmins/);
   assert.ok(!/broadcastGlobal\b/.test(reapJs),
     'the payload is an inventory of every preview — it must not reach every client');
-  assert.match(reapJs, /type: 'admin_staging_reap_status'/);
+  assert.match(reapJs, /fleetJob\.frame\('admin_staging_reap_status', job\)/);
 });
 
 test('the shell routes the aggregate event into the console', () => {
@@ -163,7 +163,7 @@ test('the console keeps the WS surface app.js calls, forwarding to the module', 
     assert.ok(consoleJs.includes(fwd), `AdminConsole.${fwd} is where app.js looks for it`);
     assert.ok(consoleJs.includes(target), `${fwd} forwards to the module`);
   }
-  assert.match(reapTsx, /handleStatus\(data: \{ job\?: ReapJob \| null \} \| null\) \{/);
+  assert.match(reapTsx, /handleStatus\(data: \{ job\?: ReapJob \| null; changed\?: boolean \} \| null\) \{/);
   assert.match(reapTsx, /\n  reload\(\) \{ live\?\.reload\(\); \},/);
   // A frame that lands while the admin is on another section must be
   // dropped, not applied to an unmounted component — `live` is null exactly
@@ -296,7 +296,24 @@ test('the status read exposes the expected fingerprint and the automatic history
   const get = getHandlerFull();
   assert.match(get, /expectedFingerprint: stagingEnv\.expectedStagingFingerprint\(/,
     'an admin diagnosing "why is everything stale" needs the digest being compared');
-  assert.match(get, /automatic: stagingReap\.readAutomatic\(\)/);
+  // The automatic pass is the preview-gc clock: its last run is read from
+  // the clock's instance, the same from any process, and survives a restart.
+  assert.match(get, /automatic: await automaticReap\(pool\)/);
+  const start = adminRoutes.indexOf('async function automaticReap(pool)');
+  assert.ok(start > 0, 'automaticReap exists');
+  const fn = adminRoutes.slice(start, adminRoutes.indexOf('\n}\n', start));
+  assert.match(fn, /await clocks\.status\(pool, 'preview-gc'\)\.catch\(\(\) => null\)/,
+    'a clock that cannot be read is no history, never a failed route');
+  assert.match(fn, /const intervalMs = stagingReap\.staleSweepIntervalMs\(\);/,
+    'the interval is reported so the console can say "every N minutes", or that it is off');
+  assert.match(fn, /lastRunAt: s\?\.lastSweepAt \|\| null/);
+  assert.ok(!/leaderStatus|leader-status/.test(adminRoutes), 'nothing of it is kept in a leader\'s memory');
+  // So the automatic line's "not yet" is not about this process any more
+  // (the button's own job record still is).
+  const line = reapTsx.slice(reapTsx.indexOf('function automaticLine('));
+  const lineBody = line.slice(0, line.indexOf('\n}\n'));
+  assert.match(lineBody, /It hasn't run yet\./);
+  assert.ok(!/since this platform process started/.test(lineBody));
 });
 
 test('the demo payload covers the new tile and the automatic line', () => {
@@ -329,12 +346,14 @@ test('the automatic pass never writes session rows itself', () => {
   // the sweeper cannot null a column behind the chokepoint's back — which is
   // the whole cause of the leak this release fixes.
   assert.ok(!/INSERT|UPDATE/i.test(reapJs));
-  assert.match(reapJs, /async function sweepStale/);
+  assert.match(reapJs, /async function leftovers\(config, \{ after = null, limit = Infinity \} = \{\}\)/);
+  assert.match(reapJs, /async function reapLeftover\(item, config = \{\}\)/);
+  assert.match(reapJs, /async function staleEnvTargets\(config\)/);
 });
 
-test('the automatic pass is selective', () => {
-  // An unattended pass taking everything it enumerates on a timer would kill
-  // previews backing live votes.
+test('the selection is selective', () => {
+  // A sweep taking everything it enumerates would kill previews backing live
+  // votes.
   assert.match(reapJs, /VOTE_BACKED_STATUSES/);
   assert.match(reapJs, /function selectStale/);
   const selStart = reapJs.indexOf('function selectStale');
@@ -345,36 +364,54 @@ test('the automatic pass is selective', () => {
   assert.match(sel, /isInFlight/, 'a session mid-turn is left alone');
 });
 
-test('the automatic pass records its tally distinguishably from an admin sweep', () => {
-  assert.match(reapJs, /trigger: 'sweeper'/,
-    'the events row must say which path reaped, or the tallies are unattributable');
+test('the automatic pass is the preview-gc clock, each leftover a target of its own', () => {
+  // A clock of the workflow (src/workflow/clock/services.ts): one run at a
+  // time wherever the workflow runs, its interval the stale-sweep one (0
+  // switches it off), and each leftover reaped as an item that fails alone.
+  const clocks = read('src/workflow/clock/services.ts');
+  const start = clocks.indexOf("name: 'preview-gc',");
+  assert.ok(start > 0, 'the preview-gc clock exists');
+  const job = clocks.slice(start, clocks.indexOf('\n  },\n', start));
+  assert.match(job, /get everyMs\(\) \{ return legacy\('services\/staging-reap'\)\.staleSweepIntervalMs\(\) \|\| 24 \* HOUR; \}/);
+  assert.match(job, /return reap\.staleSweepIntervalMs\(\) \? reap\.leftovers\(config, page\(ctx\)\) : \{ off: true \};/);
+  assert.match(job, /concurrency: 3,[\s\S]*?const r = await legacy\('services\/staging-reap'\)\.reapLeftover\(ctx\.input\.input, config\);/);
+  // A teardown that left the preview running fails its item, which is tried
+  // again and keeps the error, rather than counting as done.
+  assert.match(job, /if \(r\?\.outcome === 'failed'\) throw new Error\(/);
+  // The leader runs none of it, at boot or on a timer, and keeps no cadence.
+  const serverJs = read('server.js');
+  for (const gone of ['stagingReap.sweepStale(', 'stagingReap.staleSweepDue(', 'Boot stale-preview sweep failed']) {
+    assert.ok(!serverJs.includes(gone), `server.js no longer has ${gone}`);
+  }
 });
 
-test('the sweeper pass is wired into the existing session sweeper, throttled', () => {
-  const serverJs = read('server.js');
-  assert.match(serverJs, /stagingReap\.sweepStale\(/);
-  // The cadence lives in the service so the boot run and the sweeper tick
-  // cannot disagree about when a pass is due — and so server.js holds no
-  // module-level timestamp that a load-order change could trip over.
-  assert.match(serverJs, /stagingReap\.staleSweepDue\(\)/,
-    'it runs on its own long interval, not on every 60s tick');
-  assert.equal((serverJs.match(/stagingReap\.staleSweepDue\(\)/g) || []).length, 2,
-    'both the boot run and the sweeper tick gate on the same helper');
-  // It must hand the sweeper a way to see every live session-owned operation,
-  // including CLI staging/check and sync tails that have no worker exec.
-  assert.match(serverJs,
-    /isInFlight: \(id\) => activeWorkersSvc\.isSessionBusy\(id\)/);
-});
-
-test('the pass also runs once at boot, after the heal recovery', () => {
-  // A restart is when a platform env change has just landed, so the fleet is
-  // most likely stale then. Ordering matters: recoverSessions rebuilds the
-  // vote-backed previews first, so this only ever finds ones to tear down.
-  const serverJs = read('server.js');
-  const recover = serverJs.indexOf('recoverSessions(config).catch');
-  const bootSweep = serverJs.indexOf('Boot stale-preview sweep failed');
-  assert.ok(recover > 0 && bootSweep > recover,
-    'the boot sweep must follow recoverSessions');
+test('the newest build hands the previews another env built to the preview machine', () => {
+  // A clock (preview-env, every 15 minutes) that acts only in the newest
+  // build: an older Pod still running during a rollout would judge the new
+  // build's previews by its own environment. Each is told (EnvStale, keyed
+  // per attempt and environment), and the machine rebuilds one under review
+  // and gives back the rest.
+  const clocks = read('src/workflow/clock/services.ts');
+  const start = clocks.indexOf("name: 'preview-env',");
+  assert.ok(start > 0, 'the preview-env clock exists');
+  const job = clocks.slice(start, clocks.indexOf('\n  },\n', start));
+  assert.match(job, /everyMs: 15 \* MIN/);
+  // newestOnly: the clock's rule for a job only the newest build runs.
+  assert.match(job, /newestOnly: true/);
+  // The newest build: that of the live workflow process that started
+  // serving last (a rollback, or the same build with another environment,
+  // is the newest once it serves).
+  assert.match(clocks, /FROM platform_processes\s+WHERE state = 'serving' AND role <> 'web' AND heartbeat_at > now\(\) - make_interval\(secs => \$1\)\s+ORDER BY started_at DESC LIMIT 1/);
+  assert.match(clocks, /if \(!await newestBuild\(deps\.pool\)\) return \{ skipped: 'older_build' \};/);
+  assert.match(job, /legacy\('services\/staging-reap'\)\.tellStaleEnv\(config\)/);
+  const reap = read('src/services/staging-reap.js');
+  const fn = reap.slice(reap.indexOf('async function tellStaleEnv('));
+  const body = fn.slice(0, fn.indexOf('\n}\n'));
+  assert.match(body, /platform\.previewEnvStale\(t\.sessionId, t\.appId, serving\.n, fingerprint\)/);
+  assert.match(body, /reason: 'stale-env', terminal: false/);
+  const platform = read('src/workflow/platform.ts');
+  assert.match(platform, /requestKey: `env:\$\{fingerprint\}:\$\{attempt\}`/);
+  assert.ok(!platform.includes("['envStale',"), 'no release step judges the environment');
 });
 
 test('the console renders the to-shut-down tile and the automatic-sweep line', () => {
@@ -405,24 +442,38 @@ test('the console counts the button\'s real blast radius, not every open preview
 });
 
 // The admin sweep used to take every preview it enumerated (#850's one-off
-// cleanup after the RSA cutover). Both sweeps now take one selection, which
-// never holds a preview backing a live vote: Pass 3 rebuilds those in place.
-test('the button and the automatic pass take the same selection', () => {
-  const runStart = reapJs.indexOf('async function run(');
+// cleanup after the RSA cutover). It now takes one selection, which never
+// holds a preview backing a live vote: the preview machine rebuilds those in
+// place. The automatic passes take its two halves apart: the leftovers
+// (selectAbandoned, whatever the env) on the preview-gc clock, and the
+// out-of-date rest from each release, for the machine to decide.
+test('the button takes the selection, and the automatic passes its two halves', () => {
+  const runStart = reapJs.indexOf('async function runJob(');
   const runBody = reapJs.slice(runStart, reapJs.indexOf('\n}\n', runStart));
   assert.match(runBody, /selectReapable\(/);
-  assert.match(runBody, /isInFlight/);
-  const sweepStart = reapJs.indexOf('async function sweepStale(');
-  assert.match(reapJs.slice(sweepStart, reapJs.indexOf('\n}\n', sweepStart)), /selectReapable\(/);
-  assert.match(postHandler(), /isInFlight: isSessionBusy/,
-    'the route hands the sweep the same in-flight guard server.js gives the timer');
+  // What works on a session, on any process: read when the sweep lists its
+  // previews, and again when a preview's turn comes.
+  assert.match(runBody, /busySessionsAnywhere\(/);
+  assert.match(runBody, /isSessionBusyAnywhere\(/);
+  const leftStart = reapJs.indexOf('async function leftovers(');
+  assert.match(reapJs.slice(leftStart, reapJs.indexOf('\n}\n', leftStart)), /selectAbandoned\(items\)/);
+  const envStart = reapJs.indexOf('async function staleEnvTargets(');
+  assert.match(reapJs.slice(envStart, reapJs.indexOf('\n}\n', envStart)),
+    /i\.fingerprint !== expected && i\.session && namesPreview\(i, i\.session\)/);
+  assert.match(postHandler(), /await stagingReap\.start\(pool, req\.user\)/,
+    'the route asks the preview-reap clock for the sweep');
   assert.match(reapTsx, /Previews backing a live vote are left/,
     'the confirmation says what it leaves alone');
 });
 
-test('the leak event type is declared alongside the reap one', () => {
-  assert.match(eventsJs, /STAGING_TEARDOWN_LEAKED: 'staging_teardown_leaked'/);
-  const stagingJs = read('src/services/staging.js');
-  assert.match(stagingJs, /EVENT_TYPES\.STAGING_TEARDOWN_LEAKED/,
-    'the chokepoint records the leak — it is the only place that knows');
+test('a leaking retirement is not done, and no leak event is recorded instead', () => {
+  assert.doesNotMatch(eventsJs, /STAGING_TEARDOWN_LEAKED/);
+  // The teardown chokepoint hands every preview to the preview machine, so
+  // the place that knows about a leak is the machine's retirement: it
+  // looks again after the deletes and fails (to be retried) while anything
+  // is still there, instead of recording a leak and moving on.
+  const services = read('src/workflow/preview/services.ts');
+  const retire = services.slice(services.indexOf('[WORK.retire]: {'));
+  assert.match(retire.slice(0, retire.indexOf('\n    },\n')),
+    /if \(left\.length\) throw new Error\(`Still present after retirement/);
 });

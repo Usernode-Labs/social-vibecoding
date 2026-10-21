@@ -1,7 +1,7 @@
 // #47 "CI for proposals": checkAndMerge blocks a non-'passing' proposal —
 // even with a winning vote — and lets a 'passing' one through. Admin
 // force-merge bypasses the gate. Same require.cache stubbing pattern as
-// votes-merge-deploy-failed.test.js — nothing real spins up.
+// votes-merge-report-failed.test.js — nothing real spins up.
 //
 // Run with: node --test tests/votes-checks-gate.test.js
 
@@ -45,9 +45,8 @@ function loadVotes() {
     logger: require.resolve('../src/services/logger'),
     pool: require.resolve('../src/db/pool'),
     github: require.resolve('../src/services/github'),
-    staging: require.resolve('../src/services/staging'),
+    platform: require.resolve('../src/workflow/platform.ts'),
     docker: require.resolve('../src/services/docker'),
-    resolver: require.resolve('../src/services/conflict-resolver'),
     ws: require.resolve('../src/services/ws'),
     activeUsers: require.resolve('../src/services/active-users'),
     notifications: require.resolve('../src/services/notifications'),
@@ -69,16 +68,17 @@ function loadVotes() {
     isEnabled: () => true,
     mergePR: async () => ({ sha: 'deadbeefcafe', merged: true }),
   });
-  stub(ids.staging, {
-    rebuildProduction: async () => ({ ok: true }),
-    teardownStaging: async () => {},
+  // A merge is reported to the merge-followups workflow machine, which
+  // owns everything after GitHub's merge. The promoted→merging claim is the
+  // proposal machine's (claimMerge); each one is recorded in `claims`.
+  const claims = [];
+  stub(ids.platform, {
+    mergeConfirmed: async () => ({ status: 'accepted', eventId: 1 }),
+    claimMerge: async (c) => { claims.push(c); return { status: 'accepted', eventId: 2, reply: { claim: 1 } }; },
+    releaseMerge: async () => ({ status: 'accepted', eventId: 3 }),
+    abandonMerge: async () => ({ status: 'accepted', eventId: 4 }),
   });
   stub(ids.docker, {});
-  stub(ids.resolver, {
-    checkAndResolveConflicts: async () => {},
-    resolveAndMaybeRetry: async () => ({ ok: true }),
-    isResolving: () => false,
-  });
   stub(ids.ws, {
     sendSystemMessage: async (_pool, _appId, content) => { systemMessages.push(content); },
     pushNotificationToUser() {},
@@ -109,7 +109,7 @@ function loadVotes() {
       if (orig[k]) require.cache[id] = orig[k]; else delete require.cache[id];
     }
   };
-  return { subject, systemMessages, recheckCalls, restore };
+  return { subject, systemMessages, recheckCalls, claims, restore };
 }
 
 const session = {
@@ -124,22 +124,19 @@ function poolWith(checkState, testResults) {
   return makeRecordingPool([
     [/SELECT COUNT\(\*\) as cnt FROM pr_votes/, [{ cnt: '1' }]],
     [/SELECT check_state, test_results[\s\S]*FROM chat_sessions/, [{ check_state: checkState, test_results: testResults || [], check_error_detail: null }]],
-    [/SET status = 'merging'/, [{ id: 7 }]],
-    [/SELECT \* FROM apps WHERE id/, [{ id: 5, slug: 'whiteboard', self_hosted: false }]],
-    [/SET\s+status = 'merged'/, { rows: [], rowCount: 1 }],
   ]);
 }
 
 test('a failing proposal is blocked: checksBlocked, never claims merging', async () => {
-  const { subject, systemMessages, restore } = loadVotes();
+  const { subject, systemMessages, restore, claims } = loadVotes();
   const p = poolWith('failing', [{ status: 'fail' }, { status: 'pass' }]);
   try {
-    const r = await subject.checkAndMerge({ jwtSecret: 's' }, p, { ...session });
+    const r = await subject.evaluateMergeGate({ jwtSecret: 's' }, p, { ...session });
     assert.equal(r.merged, false);
     assert.equal(r.checksBlocked, true);
     assert.equal(r.checkState, 'failing');
     assert.equal(r.failingCount, 1);
-    assert.ok(!p.queries.some((q) => /SET status = 'merging'/.test(q.sql)), 'never claimed the merge');
+    assert.equal(claims.length, 0, 'never claimed the merge');
     assert.ok(systemMessages.some((m) => /merge is blocked/i.test(m)), 'posted a block notice');
   } finally {
     restore();
@@ -150,7 +147,7 @@ test('a pending proposal is blocked too (not yet passing)', async () => {
   const { subject, restore } = loadVotes();
   const p = poolWith('pending', []);
   try {
-    const r = await subject.checkAndMerge({ jwtSecret: 's' }, p, { ...session });
+    const r = await subject.evaluateMergeGate({ jwtSecret: 's' }, p, { ...session });
     assert.equal(r.merged, false);
     assert.equal(r.checksBlocked, true);
     assert.equal(r.checkState, 'pending');
@@ -163,7 +160,7 @@ test('a NULL check_state (never checked) is blocked', async () => {
   const { subject, restore } = loadVotes();
   const p = poolWith(null, []);
   try {
-    const r = await subject.checkAndMerge({ jwtSecret: 's' }, p, { ...session });
+    const r = await subject.evaluateMergeGate({ jwtSecret: 's' }, p, { ...session });
     assert.equal(r.checksBlocked, true);
     assert.equal(r.checkState, 'pending');
   } finally {
@@ -178,7 +175,7 @@ test('a NULL check_state fires the stale-pending recheck kick', async () => {
   const { subject, recheckCalls, restore } = loadVotes();
   const p = poolWith(null, []);
   try {
-    await subject.checkAndMerge({ jwtSecret: 's' }, p, { ...session });
+    await subject.evaluateMergeGate({ jwtSecret: 's' }, p, { ...session });
     assert.equal(recheckCalls.length, 1, 'recheckSessionChecks invoked once');
     assert.equal(recheckCalls[0].reason, 'stale-pending-vote-kick');
     assert.equal(recheckCalls[0].session.id, session.id);
@@ -191,12 +188,11 @@ test('a NULL check_state fires the stale-pending recheck kick', async () => {
 // 'passing' — the gate lets the merge proceed instead of blocking on a
 // checks state that can never advance.
 test("a 'skipped' proposal clears the gate and proceeds to claim the merge", async () => {
-  const { subject, recheckCalls, restore } = loadVotes();
+  const { subject, recheckCalls, restore, claims } = loadVotes();
   const p = poolWith('skipped', []);
   try {
-    const r = await subject.checkAndMerge({ jwtSecret: 's' }, p, { ...session });
-    assert.equal(r.merged, true, 'skipped proposal merges');
-    assert.ok(p.queries.some((q) => /SET status = 'merging'/.test(q.sql)), 'claimed the merge');
+    const r = await subject.evaluateMergeGate({ jwtSecret: 's' }, p, { ...session });
+    assert.equal(r.ready, true, 'skipped proposal merges');
     assert.equal(recheckCalls.length, 0, 'no recheck kick for a terminal skipped verdict');
   } finally {
     restore();
@@ -204,25 +200,72 @@ test("a 'skipped' proposal clears the gate and proceeds to claim the merge", asy
 });
 
 test('a passing proposal clears the gate and proceeds to claim the merge', async () => {
-  const { subject, restore } = loadVotes();
+  const { subject, restore, claims } = loadVotes();
   const p = poolWith('passing', [{ status: 'pass' }]);
   try {
-    const r = await subject.checkAndMerge({ jwtSecret: 's' }, p, { ...session });
-    assert.equal(r.merged, true, 'passing proposal merges');
-    assert.ok(p.queries.some((q) => /SET status = 'merging'/.test(q.sql)), 'claimed the merge');
+    const r = await subject.evaluateMergeGate({ jwtSecret: 's' }, p, { ...session });
+    assert.equal(r.ready, true, 'passing proposal merges');
+  } finally {
+    restore();
+  }
+});
+
+// 13 Oct 2026 (D1): a project's first version needs no vote. With no yes at
+// all it passes the votes step and waits only on its checks, and says so in
+// its own words rather than "reached the vote threshold"; once they pass it
+// claims the merge.
+function firstVersionPool(checkState, testResults) {
+  return makeRecordingPool([
+    [/AS first_version FROM chat_sessions cs/, [{ first_version: true }]],
+    [/SELECT COUNT\(\*\) as cnt FROM pr_votes/, [{ cnt: '0' }]],
+    [/SELECT check_state, test_results[\s\S]*FROM chat_sessions/, [{ check_state: checkState, test_results: testResults || [], check_error_detail: null }]],
+  ]);
+}
+
+test('D1: a first version with no votes waits only on its checks, and says so', async () => {
+  const { subject, systemMessages, restore } = loadVotes();
+  const p = firstVersionPool('failing', [{ status: 'fail' }]);
+  try {
+    const r = await subject.evaluateMergeGate({ jwtSecret: 's' }, p, { ...session, id: 71, user_id: 99 });
+    assert.equal(r.merged, false);
+    assert.equal(r.checksBlocked, true, 'past the votes step with no yes at all');
+    assert.equal(r.yesCount, 0);
+    assert.equal(r.needed, 0);
+    assert.ok(systemMessages.some((m) => /is the project's first version, which goes live without a vote, but has 1 test failing\. It goes live once its checks pass\./.test(m)),
+      `said in its own words: ${systemMessages.join(' | ')}`);
+    assert.ok(!systemMessages.some((m) => /reached the vote threshold/.test(m)));
+  } finally {
+    restore();
+  }
+});
+
+test('D1: a first version whose checks passed claims the merge with no votes', async () => {
+  const { subject, restore, claims } = loadVotes();
+  const p = firstVersionPool('passing', [{ status: 'pass' }]);
+  try {
+    const r = await subject.evaluateMergeGate({ jwtSecret: 's' }, p, { ...session, id: 72, user_id: 99 });
+    assert.equal(r.ready, true);
+    // Any other change with no yes stays where it is.
+    const other = makeRecordingPool([
+      [/SELECT COUNT\(\*\) as cnt FROM pr_votes/, [{ cnt: '0' }]],
+      [/SELECT check_state, test_results[\s\S]*FROM chat_sessions/, [{ check_state: 'passing', test_results: [], check_error_detail: null }]],
+    ]);
+    const held = await subject.evaluateMergeGate({ jwtSecret: 's' }, other, { ...session, id: 73, user_id: 99 });
+    assert.equal(held.merged, false);
+    assert.equal(held.checksBlocked, undefined, 'it stops at the votes, before the checks');
   } finally {
     restore();
   }
 });
 
 test('admin force-merge bypasses the checks gate', async () => {
-  const { subject, restore } = loadVotes();
+  const { subject, restore, claims } = loadVotes();
   // Even with a failing check_state, force=true must merge — and must NOT
   // run the gate query at all.
   const p = poolWith('failing', [{ status: 'fail' }]);
   try {
-    const r = await subject.checkAndMerge({ jwtSecret: 's' }, p, { ...session }, { force: true });
-    assert.equal(r.merged, true);
+    const r = await subject.evaluateMergeGate({ jwtSecret: 's' }, p, { ...session }, { force: true });
+    assert.equal(r.ready, true);
     assert.ok(!p.queries.some((q) => /SELECT check_state, test_results[\s\S]*FROM chat_sessions/.test(q.sql)),
       'gate query skipped under force');
   } finally {
@@ -234,20 +277,19 @@ test('admin force-merge bypasses the checks gate', async () => {
 // AND surfaces the captured crash reason in the block message, so the proposal
 // owner can act instead of facing an unexplained "couldn't run" dead-end.
 test('an errored proposal surfaces its captured boot-failure reason in the block message', async () => {
-  const { subject, systemMessages, restore } = loadVotes();
+  const { subject, systemMessages, restore, claims } = loadVotes();
   const detail = '[exited (exit=1)] error: no unique or exclusion constraint matching the ON CONFLICT specification';
   const p = makeRecordingPool([
     [/SELECT COUNT\(\*\) as cnt FROM pr_votes/, [{ cnt: '1' }]],
     [/SELECT check_state, test_results[\s\S]*FROM chat_sessions/,
       [{ check_state: 'error', test_results: [], checks_checked_at: new Date().toISOString(), check_error_detail: detail }]],
-    [/SET status = 'merging'/, [{ id: 7 }]],
   ]);
   try {
-    const r = await subject.checkAndMerge({ jwtSecret: 's' }, p, { ...session });
+    const r = await subject.evaluateMergeGate({ jwtSecret: 's' }, p, { ...session });
     assert.equal(r.merged, false);
     assert.equal(r.checksBlocked, true);
     assert.equal(r.checkState, 'error');
-    assert.ok(!p.queries.some((q) => /SET status = 'merging'/.test(q.sql)), 'never claimed the merge');
+    assert.equal(claims.length, 0, 'never claimed the merge');
     assert.ok(systemMessages.some((m) => /preview failed to start/i.test(m) && m.includes('ON CONFLICT')),
       'block message includes the captured boot-failure reason');
   } finally {

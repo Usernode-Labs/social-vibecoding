@@ -37,10 +37,18 @@ const globalClients = new Set(); // Set<{ ws, user }> for /ws/events
 // not sent. The audience still needs to know something moved, so they get the
 // nudge their own reconnect path already handles — `resyncCurrentView` in
 // public/js/app.js — rather than a truncated event.
-function _onBusMessage({ kind, routing, data, oversize }) {
+function _onBusMessage({ kind, routing, data, oversize, fromWorkflow }) {
   const r = routing || {};
   const payload = oversize ? { type: 'resync_hint' } : data;
   if (payload == null) return;
+  // A workflow machine names a notification instead of carrying it: the
+  // relay reads it for the recipient's open tabs, outside the transition
+  // that created it (src/workflow/merge-followups/machine.ts).
+  if (fromWorkflow && kind === 'user' && !oversize && payload.type === 'notification_new'
+      && payload.notificationId != null && !payload.notification) {
+    relayNotification(r.userId, payload.notificationId);
+    return;
+  }
   switch (kind) {
     case 'global':
       deliverGlobal(payload);
@@ -55,6 +63,8 @@ function _onBusMessage({ kind, routing, data, oversize }) {
       // hint would cost a query per instance to protect nothing.
       if (oversize) deliverGlobal(payload);
       else deliverGlobalScoped(payload, { appId: r.appId ?? null, appSlug: r.appSlug ?? null });
+      // A card a machine moved on a board: the Workshop hears it (debounced, leased).
+      if (fromWorkflow && r.boardChange) noteBoardChange({ appId: r.appId ?? null, appSlug: r.appSlug ?? null });
       return;
     case 'admins':
       deliverToAdmins(payload);
@@ -71,15 +81,46 @@ function _onBusMessage({ kind, routing, data, oversize }) {
       void require('./account-deletion-runtime').receive(_pool, r.userId)
         .catch(() => log.warn('ws', 'Account stream cleanup will retry'));
       return;
-    case 'agent_stop':
-      if (!oversize) void require('./mayor/agent-turn').receiveStopRequest(_pool, payload)
-        .catch(() => log.warn('ws', 'Agent stop notification will retry from durable state'));
+    case 'issues_closed':
+      // From a workflow transition only: issues it closed on GitHub, for
+      // this process's own copy of the open-issues list (github.js keeps one
+      // per process). Nothing is sent to sockets; the transition's own
+      // issue_update tells browsers to re-read.
+      // Applied here only: every process hears the transition itself.
+      if (fromWorkflow && r.owner && r.repo) {
+        require('./github').applyIssuesChange(r.owner, r.repo, {
+          closed: payload.numbers, open: payload.open, invalidate: true,
+        });
+      }
       return;
-    case 'homeroom_bot':
-      // Not a socket event at all: the Homeroom bot's loop runs on one Pod
-      // and an issue event can land on any, so the wake rides this bus.
-      // The bot ignores it on every Pod but the one running the loop.
-      require('./homeroom-bot').onBusMessage(payload);
+    case 'app_access':
+      // What another process changed about an app's visibility, governance
+      // or admins (app-access.js shareAccessChange), for this process's own
+      // caches. Nothing is sent to sockets.
+      if (!oversize) {
+        appAccess.invalidateVisibilityHere(r.appId ?? payload?.appId ?? null, payload?.slug || null);
+        const id = payload?.appId ?? null;
+        if (id != null) {
+          require('./governance').invalidateGovernanceHere(Number(id));
+          require('./app-admins').invalidateAppAdminsHere(Number(id));
+        } else {
+          require('./app-admins').invalidateAppAdminsHere(null);
+        }
+      }
+      return;
+    case 'issues_cache':
+      // What another process learned of a repo's issues (github.js
+      // shareIssuesChange), for this process's own copy. Nothing is sent to
+      // sockets: the sender's issue_update tells browsers to re-read.
+      if (!oversize && r.owner && r.repo) require('./github').applyIssuesChange(r.owner, r.repo, payload);
+      return;
+    // A turn's stream has a new row (services/session-bus.js): this
+    // process's subscribers to it read on. Never a socket event.
+    case 'stream':
+      if (fromWorkflow && r.key != null) require('./session-bus').wake(r.key, Number(r.id) || null);
+      return;
+    case 'turn_byok':
+      if (!oversize) require('./worker').receiveTurnByok(payload);
       return;
     default:
       log.warn('ws', 'unknown bus kind', { kind });
@@ -93,6 +134,17 @@ function _onBusMessage({ kind, routing, data, oversize }) {
 // `App.resyncCurrentView`, a chat room with `GroupChat.resyncLoaded`. It says
 // only "re-read", so it leaks nothing to anyone in any room.
 function _onBusListening() {
+  // And what it missed may have invalidated this process's own caches (a
+  // merge's issues_closed, an app made private): they are read again rather
+  // than trusted until their TTL.
+  try {
+    appAccess.invalidateAllVisibility();
+    require('./governance').invalidateGovernanceHere(null);
+    require('./app-admins').invalidateAppAdminsHere(null);
+    require('./github').expireIssuesCachesHere();
+  } catch (err) {
+    log.warn('ws', 'Could not clear the caches after the bus came back', { err: err.message });
+  }
   const hint = { type: 'resync_hint' };
   deliverGlobal(hint);
   for (const appId of rooms.keys()) deliverToRoom(appId, hint);
@@ -127,6 +179,23 @@ function disconnectUser(userId) {
   }
 }
 
+// A release is replacing this process, which finishes its work without
+// serving anyone (docs/plans/draining-releases.md). Every socket is closed
+// with 1012 (service restart): each tab reconnects, which the Service sends
+// to the new Pod, and re-reads what it shows, as on any dropped socket.
+// Returns how many were closed.
+let _closedForRelease = false;
+function closeAllForRelease() {
+  _closedForRelease = true;
+  let n = 0;
+  for (const clients of [globalClients, ...rooms.values()]) {
+    for (const client of [...clients]) {
+      try { client.ws.close(1012, 'Service restart'); n += 1; } catch { /* already gone */ }
+    }
+  }
+  return n;
+}
+
 function connectedUserIds() {
   return [...new Set([globalClients, ...rooms.values()]
     .flatMap(clients => [...clients].map(client => Number(client.user.id))))];
@@ -154,9 +223,11 @@ function connectedUserIds() {
 //     seconds, so only a script reaches it, and over it the frame is
 //     dropped without a word: nobody needs telling that a typing dot was
 //     not shown.
-// In process, which is exact at the one replica the platform ships with; at
-// several, each pod counts its own sockets. The Postgres token bucket is not
-// worth a round trip per typing frame.
+// In process: each web Pod counts its own sockets, and a deploy starts the
+// windows again. These bound a runaway client; only a limiter that gates a
+// send, a bill or a guess shares its count across processes
+// (services/rate-limit-store.js), and a round trip per typing frame is not
+// worth it.
 const SOCKET_RATE_WINDOW_MS = 60 * 1000;
 const SOCKET_RATE_BUDGETS = Object.freeze({
   chat: Object.freeze({ bucket: 'write', max: 60 }),
@@ -247,6 +318,8 @@ function admitSocketFrame(client, msg, now = Date.now()) {
 
 function attach(server, config) {
   const pool = getPool(config);
+  // The bot's voice is handed messages from here, and reads its config here.
+  require('./homeroom-bot-voice').setConfig(config);
   // Also reconcile after a missed NOTIFY or reconnect. This includes HTTP
   // streams; the timer runs on every pod, independently of leader duties.
   const revocationTimer = setInterval(() => {
@@ -270,6 +343,9 @@ function attach(server, config) {
   wss = new WebSocketServer({ noServer: true });
 
   server.on('upgrade', async (req, socket, head) => {
+    // A process finishing its work after a release serves no new socket: the
+    // tab tries again and reaches the new Pod (closeAllForRelease).
+    if (_closedForRelease) { socket.destroy(); return; }
     // Caddy's forward_auth PRESERVES the Connection/Upgrade headers on its
     // auth subrequest while rewriting the URI to /__caddy/access. Node
     // routes any upgrade-flagged request to this 'upgrade' event instead of
@@ -371,8 +447,9 @@ function attach(server, config) {
     log.info('ws', 'Client connected', { userId: user.id, appSlug });
 
     ws.on('message', async (raw) => {
+      let msg = null;
       try {
-        const msg = JSON.parse(raw);
+        msg = JSON.parse(raw);
         // The rate check comes first, so a frame over the budget costs no
         // query at all (see admitSocketFrame).
         if (!admitSocketFrame(client, msg)) return;
@@ -381,6 +458,9 @@ function attach(server, config) {
         await handleMessage(pool, client, msg);
       } catch (err) {
         log.warn('ws', 'Invalid message', { err: err.message });
+        // A chat message that failed before it was written was not posted
+        // either.
+        if (!storedChats.has(msg)) refuseChat(client, msg, 'send_failed');
       }
     });
 
@@ -1009,7 +1089,24 @@ function pushPlatformVersion({ sha, reason = 'rollout' } = {}) {
 // general-stream message a person wrote in THIS app (so a reply can never
 // be a root: no nesting), and — when `viewerId` is given — not by somebody
 // the poster blocked, whose message they cannot see to answer.
-const THREAD_TYPES = Object.freeze(['issue', 'session', 'governance', appChat.MESSAGE_THREAD]);
+//
+// #4417: 'category' is a topic's channel, ref = its app_category_registry
+// row (origin 'topic') of THIS app. A live topic takes posts; an archived or
+// merged one is read-only, and comes back marked `closed` so the sender is
+// told rather than silently dropped. A reply thread under a message of a
+// retired topic is closed with it.
+const THREAD_TYPES = Object.freeze(['issue', 'session', 'governance', appChat.MESSAGE_THREAD, appChat.CATEGORY_THREAD]);
+
+const TOPIC_CLOSED_MESSAGE = 'This topic is archived. Its history stays here to read.';
+
+async function topicChannelState(pool, appId, ref) {
+  const { rows } = await pool.query(
+    `SELECT topic_state FROM app_category_registry
+      WHERE id = $1 AND app_id = $2 AND origin = 'topic'`,
+    [ref, appId]
+  );
+  return rows[0] ? (rows[0].topic_state || 'live') : null;
+}
 
 async function validateThread(pool, appId, thread, viewerId = null) {
   if (!thread || typeof thread !== 'object') return null;
@@ -1030,6 +1127,15 @@ async function validateThread(pool, appId, thread, viewerId = null) {
       );
       if (!rows.length) return null;
     }
+    if (root.thread_type === appChat.CATEGORY_THREAD) {
+      const state = await topicChannelState(pool, appId, Number(root.thread_ref));
+      if (!state) return null;
+      if (state !== 'live') return { type, ref, closed: true };
+    }
+  } else if (type === appChat.CATEGORY_THREAD) {
+    const state = await topicChannelState(pool, appId, ref);
+    if (!state) return null;
+    if (state !== 'live') return { type, ref, closed: true };
   } else if (type === 'session') {
     const { rows } = await pool.query(
       'SELECT 1 FROM chat_sessions WHERE id = $1 AND app_id = $2', [ref, appId]
@@ -1047,10 +1153,32 @@ async function validateThread(pool, appId, thread, viewerId = null) {
 // #621: mutating message types require collab access. Re-checked per
 // message (not cached at connect) so a membership revocation takes
 // effect immediately — chat rates are low and the lookup is a single
-// indexed query. Dropped silently server-side (same pattern as the
-// invalid-thread drop): read-only clients don't render these controls,
-// so anything arriving here is a stale or hostile client.
+// indexed query. Read-only clients don't render these controls, so an
+// edit, a reaction or a typing ping arriving here is dropped silently; a
+// chat message is answered (refuseChat below).
 const WRITE_MSG_TYPES = new Set(['chat', 'edit', 'react', 'typing']);
+
+// A chat message this server will not post. The composer that sent it
+// emptied as it left, so a refusal nobody answered was a message that
+// simply vanished (feedback, 21 Oct 2026: a reply on a change's page, sent
+// to another app's socket, refused as `invalid_thread`). Answered on the
+// sender's socket like `channel_moved`, and public/js/group-chat.js says it
+// was not sent. `message` only where the person can act on it; the client
+// words the rest. The REST write route has no socket and answers in HTTP.
+const NOT_COLLABORATOR_MESSAGE = 'Only collaborators can post here.';
+
+// The chat messages handleMessage has written, so a failure after the row
+// (its broadcast, say) is never answered as a message that was not sent.
+const storedChats = new WeakSet();
+
+function refuseChat(client, msg, code, message = null) {
+  if (!msg || msg.type !== 'chat') return;
+  try {
+    if (client.ws && client.ws.readyState === 1) {
+      client.ws.send(JSON.stringify({ type: 'error', code, ...(message ? { message } : {}) }));
+    }
+  } catch { /* a closed socket has nobody to tell */ }
+}
 
 async function canWriteChat(pool, client) {
   if (await require('./moderation').isRestricted(pool, client.user.id)) return false;
@@ -1071,17 +1199,20 @@ async function handleMessage(pool, client, msg) {
       log.warn('ws', 'write message dropped: access check failed', {
         appId: client.appId, userId: client.user.id, type: msg.type, err: err.message,
       });
+      refuseChat(client, msg, 'write_access_failed');
       return { ok: false, code: 'write_access_failed' };
     }
     if (!allowed) {
       log.warn('ws', 'write message dropped: not a collaborator', {
         appId: client.appId, userId: client.user.id, type: msg.type,
       });
+      refuseChat(client, msg, 'not_collaborator', NOT_COLLABORATOR_MESSAGE);
       return { ok: false, code: 'not_collaborator' };
     }
   }
   // Posting in an app's chat is for the members of its community
-  // (services/communities.js). Unlike the drops above, this one is ANSWERED:
+  // (services/communities.js). Like every refused chat message, this is
+  // ANSWERED, and with a question:
   // the sender is a legitimate client whose composer does not know they have
   // not joined, so the refusal goes back to that one socket as a
   // `join_required` frame carrying the message, and the composer
@@ -1095,6 +1226,7 @@ async function handleMessage(pool, client, msg) {
       log.warn('ws', 'chat message dropped: membership check failed', {
         appId: client.appId, userId: client.user.id, err: err.message,
       });
+      refuseChat(client, msg, 'write_access_failed');
       return { ok: false, code: 'write_access_failed' };
     }
     if (join) {
@@ -1113,6 +1245,19 @@ async function handleMessage(pool, client, msg) {
     let archived = false;
     try {
       archived = await communities.channelArchived(pool, client.appId);
+      // #4417: a reply thread under a message in one of the project's
+      // TOPIC channels is that topic's, not the old channel's: Homeroom's
+      // topics are threads on this same app chat, and they take posts.
+      if (archived && msg.thread && msg.thread.type === 'message') {
+        const rootId = Number(msg.thread.ref);
+        if (Number.isInteger(rootId) && rootId > 0 && rootId <= 2147483647) {
+          const { rows: roots } = await pool.query(
+            'SELECT thread_type FROM chat_messages WHERE id = $1 AND app_id = $2',
+            [rootId, client.appId]
+          );
+          if (roots[0] && roots[0].thread_type === appChat.CATEGORY_THREAD) archived = false;
+        }
+      }
     } catch (err) {
       log.warn('ws', 'channel archive check failed', { appId: client.appId, err: err.message });
     }
@@ -1136,6 +1281,7 @@ async function handleMessage(pool, client, msg) {
         log.warn('ws', 'chat message dropped: bad attachment ids', {
           appId: client.appId, userId: client.user.id,
         });
+        refuseChat(client, msg, 'invalid_attachment_ids');
         return { ok: false, code: 'invalid_attachment_ids' };
       }
       // An attachments-only send is allowed (#694): content stays ''
@@ -1145,8 +1291,8 @@ async function handleMessage(pool, client, msg) {
 
       // #194: optional thread scoping. An invalid/spoofed ref drops the
       // whole message (never silently re-route a thread post into the
-      // general stream — the sender's client is buggy or hostile either
-      // way, and general chat is the louder surface).
+      // general stream — general chat is the louder surface). The sender is
+      // told: a stale page sent one here (a thread of another app).
       let thread = null;
       if (msg.thread) {
         thread = await validateThread(pool, client.appId, msg.thread, client.user.id);
@@ -1154,7 +1300,18 @@ async function handleMessage(pool, client, msg) {
           log.warn('ws', 'chat message dropped: invalid thread ref', {
             appId: client.appId, userId: client.user.id,
           });
+          refuseChat(client, msg, 'invalid_thread');
           return { ok: false, code: 'invalid_thread' };
+        }
+        // #4417: a retired topic's channel is read-only. Answered, like the
+        // archived channel above, so the composer can say why.
+        if (thread.closed) {
+          try {
+            if (client.ws && client.ws.readyState === 1) {
+              client.ws.send(JSON.stringify({ type: 'error', code: 'topic_closed', message: TOPIC_CLOSED_MESSAGE }));
+            }
+          } catch { /* a closed socket has nobody to tell */ }
+          return { ok: false, code: 'topic_closed' };
         }
       }
 
@@ -1204,7 +1361,7 @@ async function handleMessage(pool, client, msg) {
               let author;
               if (r.msg_type === 'spec_share') {
                 const sm = (r.metadata || {}).specShare || {};
-                snippet = sm.title || `Spec v${sm.version || ''}`.trim();
+                snippet = sm.title || `Plan v${sm.version || ''}`.trim();
                 author = sm.sharedBy?.username || r.username || null;
               } else if (r.msg_type === 'system' || r.msg_type === 'vote' || r.msg_type === 'conflict') {
                 snippet = r.content;
@@ -1257,13 +1414,25 @@ async function handleMessage(pool, client, msg) {
             appId: client.appId, userId: client.user.id,
             requested: attIds.length, found: found.length,
           });
+          refuseChat(client, msg, 'attachment_not_owned');
           return { ok: false, code: 'attachment_not_owned' };
         }
         // Preserve the client's send order (the SELECT doesn't).
         attRows = attIds.map((id) => found.find((r) => r.id === id));
       }
 
-      const metadata = (quote || attRows.length) ? {} : null;
+      // `client.relayKey` (server-side callers only: the Homeroom bot passing
+      // a person's DM words on, from its workflow work): the post's mark, so
+      // a retry after a restart finds it and posts it nowhere twice.
+      const relayKey = typeof client.relayKey === 'string' && client.relayKey ? client.relayKey.slice(0, 200) : null;
+      if (relayKey) {
+        const { rows: had } = await pool.query(
+          `SELECT id, created_at FROM chat_messages WHERE app_id = $1 AND user_id = $2 AND metadata->>'relayKey' = $3 LIMIT 1`,
+          [client.appId, client.user.id, relayKey]);
+        if (had.length) return { ok: true, message: { id: Number(had[0].id), createdAt: had[0].created_at }, again: true };
+      }
+      const metadata = (quote || attRows.length || relayKey) ? {} : null;
+      if (relayKey) metadata.relayKey = relayKey;
       if (quote) metadata.quote = quote;
       if (attRows.length) {
         // Render-time summary rides in the message row's metadata so
@@ -1287,6 +1456,14 @@ async function handleMessage(pool, client, msg) {
       // metadata is NOT NULL DEFAULT '{}', so always pass a JSON object.
       const insertParams = [client.appId, client.user.id, content, JSON.stringify(metadata || {}),
         thread ? thread.type : null, thread ? thread.ref : null, postedVia];
+      // 17 Oct 2026: a person's message in any place but a governance vote's
+      // is heard by the Homeroom bot's voice there (src/workflow/bot-voice/)
+      // in the statement that inserts it: an answer it owes is never only in
+      // this process's memory. Never a connector's post.
+      const heard = postedVia !== 'agent' && (!thread || thread.type !== 'governance');
+      const insert = (db) => (heard
+        ? require('../workflow/platform.ts').insertHeard(db, insertSql, insertParams, { appId: client.appId, thread: thread || null })
+        : db.query(insertSql, insertParams).then((r) => r.rows));
       let rows;
       if (attRows.length) {
         // Insert + link atomically — a half-linked send would render
@@ -1294,7 +1471,7 @@ async function handleMessage(pool, client, msg) {
         const cx = await pool.connect();
         try {
           await cx.query('BEGIN');
-          ({ rows } = await cx.query(insertSql, insertParams));
+          rows = await insert(cx);
           await cx.query(
             `UPDATE chat_message_attachments SET message_id = $1 WHERE id = ANY($2)`,
             [rows[0].id, attIds]
@@ -1307,8 +1484,9 @@ async function handleMessage(pool, client, msg) {
           cx.release();
         }
       } else {
-        ({ rows } = await pool.query(insertSql, insertParams));
+        rows = await insert(pool);
       }
+      storedChats.add(msg);
 
       // #2387 follow-up: a reply in a reply thread is drawn in the general
       // stream as a line naming the message its thread hangs off.
@@ -1319,6 +1497,10 @@ async function handleMessage(pool, client, msg) {
           threadRoot = {
             id: Number(root.id), username: root.username || null,
             content: root.deleted_at ? '' : appChat.snippet(root.content), deleted: !!root.deleted_at,
+            // #4417: where the root is: the general stream (null), or one of
+            // the project's topic channels, whose stream draws the reply.
+            thread_type: root.thread_type || null,
+            thread_ref: root.thread_ref == null ? null : Number(root.thread_ref),
           };
         }
       }
@@ -1340,15 +1522,9 @@ async function handleMessage(pool, client, msg) {
       };
 
       await broadcastFromSender(pool, client.appId, outMsg, client.user.id);
-      // B9: a message in the main stream that mentions Homeroom bot asks it
-      // for something (services/homeroom-bot-chat.js). Not awaited: the read
-      // takes a moment, and the room has the message already. Never an edit
-      // (that is chat_edit), and never a connector's post.
-      if (!thread) {
-        void require('./homeroom-bot-chat').noteChatMessage(pool, null, {
-          appId: client.appId, userId: client.user.id, messageId: rows[0].id, content, thread, postedVia,
-        });
-      }
+      // What the Homeroom bot does with it (its voice's answer, a
+      // newcomer's offer, the chat's ask) is the place's workflow machine's:
+      // heard above, in the insert's transaction.
       // WP-E: somebody an invite brought, writing here for the first time:
       // the link's maker hears they said hi (services/invite-activity.js).
       // Not awaited here; the small-group ring below waits for it, so the
@@ -1359,8 +1535,23 @@ async function handleMessage(pool, client, msg) {
         })
         : null;
       // A person answering on an issue's thread is exactly what the Homeroom
-      // bot waits for; a system row (a claim, a bounty) is not a message.
-      if (thread && thread.type === 'issue') noteIssueActivityForBot(client.appId, thread.ref, 'thread');
+      // bot waits for; a system row (a claim, a bounty) is not a message. Its
+      // request's instance heard it in the statement above (insertHeard).
+      // A connector's post (a person's agent writing for them) is heard
+      // after it, as what they said; one on a request the bot has no
+      // instance for yet only asks for its project's refresh.
+      if (thread && thread.type === 'issue' && !heard) noteIssueActivityForBot(client.appId, thread.ref, 'thread');
+      else if (thread && thread.type === 'issue' && !rows[0]?.requestHeard) noteIssueActivityForBot(client.appId, thread.ref, 'posted');
+      // #4974: that reply also settles the bot's asks in the requester's DM —
+      // the question it is waiting on, a stop still showing its buttons — and
+      // says so in the request's thread there. Not awaited. The bot's own post
+      // of a DM answer is skipped by its viaBotDm flag, a connector's above.
+      if (thread && thread.type === 'issue' && postedVia !== 'agent' && !client.viaBotDm) {
+        void require('./homeroom-bot-dm').noteRequestReply(pool, {
+          appId: client.appId, issueNumber: thread.ref, userId: client.user.id,
+          chatMessageId: rows[0].id, content, createdAt: rows[0].created_at,
+        }).catch((err) => log.warn('ws', 'Homeroom bot request-reply note failed', { err: err.message }));
+      }
       // #3264: a reply in the discussion of the bot's own proposal.
       if (thread && thread.type === 'session') noteProposalActivityForBot(pool, client.appId, thread.ref);
       // #2387: a reply thread grew — every row showing its root redraws its
@@ -1377,7 +1568,9 @@ async function handleMessage(pool, client, msg) {
 
       // #2387: everyone who already got a more specific row for this message
       // (quoted → 'reply', @named → 'mention'). A reply-thread participant in
-      // this set gets that row, not a second 'thread_reply' one.
+      // this set gets that row, not a second 'thread_reply' one, and a
+      // request-discussion participant not a second 'issue_thread_reply'
+      // one either (#4535).
       const directlyNotified = new Set();
 
       // #15: reply notification — ping the author of the quoted message
@@ -1391,11 +1584,18 @@ async function handleMessage(pool, client, msg) {
         });
         for (const r of replyRows) directlyNotified.add(Number(r.user_id));
         if (replyRows.length) {
+          // #4417 follow-up: root_thread_type/_ref say where a reply thread starts
+          // (notifications.THREAD_ROOT_COLUMNS_SQL, spelled out so this read stays
+          // static SQL), so a row about a reply in a topic's thread opens beside it.
           const { rows: hydrated } = await pool.query(
             `SELECT n.id, n.kind, n.read_at, n.created_at,
                     n.app_id, a.slug AS app_slug, a.name AS app_name,
                     n.chat_message_id, cm.content AS message_content,
                     cm.thread_type, cm.thread_ref,
+                    (SELECT thread_root.thread_type FROM chat_messages thread_root
+                      WHERE cm.thread_type = 'message' AND thread_root.id = cm.thread_ref) AS root_thread_type,
+                    (SELECT thread_root.thread_ref FROM chat_messages thread_root
+                      WHERE cm.thread_type = 'message' AND thread_root.id = cm.thread_ref) AS root_thread_ref,
                     n.session_id, cs.pr_title, cs.pr_number,
                     su.username AS source_username, n.user_id
              FROM notifications n
@@ -1441,11 +1641,18 @@ async function handleMessage(pool, client, msg) {
           // serialize() works for both fresh and history rows — kudos
           // added session_id / pr_title / pr_number on top of the
           // original mention shape.
+          // #4417 follow-up: root_thread_type/_ref say where a reply thread starts
+          // (notifications.THREAD_ROOT_COLUMNS_SQL, spelled out so this read stays
+          // static SQL), so a row about a reply in a topic's thread opens beside it.
           const { rows: hydrated } = await pool.query(
             `SELECT n.id, n.kind, n.read_at, n.created_at,
                     n.app_id, a.slug AS app_slug, a.name AS app_name,
                     n.chat_message_id, cm.content AS message_content,
                     cm.thread_type, cm.thread_ref,
+                    (SELECT thread_root.thread_type FROM chat_messages thread_root
+                      WHERE cm.thread_type = 'message' AND thread_root.id = cm.thread_ref) AS root_thread_type,
+                    (SELECT thread_root.thread_ref FROM chat_messages thread_root
+                      WHERE cm.thread_type = 'message' AND thread_root.id = cm.thread_ref) AS root_thread_ref,
                     n.session_id, cs.pr_title, cs.pr_number,
                     su.username AS source_username, n.user_id
              FROM notifications n
@@ -1514,6 +1721,27 @@ async function handleMessage(pool, client, msg) {
         }
       }
 
+      // #4535: a message in a request's discussion thread pings the
+      // request's filer and the people who posted there before
+      // ('issue_thread_reply'), the same fan-out as a reply thread above
+      // minus the sender and anybody this message already reached with a
+      // mention or a quote — a mention wins. Proposal and governance
+      // threads are left as they are.
+      if (thread && thread.type === 'issue') {
+        try {
+          const issueRows = await notifications.createIssueThreadNotifications(pool, {
+            appId: client.appId,
+            messageId: rows[0].id,
+            issueNumber: thread.ref,
+            senderId: client.user.id,
+            excludeUserIds: [...directlyNotified],
+          });
+          await Promise.all(issueRows.map((row) => notifications.hydrateAndPush(pool, row)));
+        } catch (err) {
+          log.warn('ws', 'issue thread notify failed', { err: err.message });
+        }
+      }
+
       // Posting a message in this app's group chat is the "I've engaged
       // with this thread" action: clear every unread mention/reply/reaction
       // notification this user has for this app (the reply-clears-all
@@ -1555,6 +1783,15 @@ async function handleMessage(pool, client, msg) {
           await appChat.advanceReadCursor(pool, client.appId, client.user.id, rows[0].id);
         } catch (err) {
           log.warn('ws', 'read cursor advance failed', {
+            appId: client.appId, userId: client.user.id, err: err.message,
+          });
+        }
+      } else if (thread.type === appChat.CATEGORY_THREAD) {
+        // #4417: and posting in a topic's channel is reading that channel.
+        try {
+          await appChat.advanceCategoryCursor(pool, client.appId, thread.ref, client.user.id, rows[0].id);
+        } catch (err) {
+          log.warn('ws', 'topic read cursor advance failed', {
             appId: client.appId, userId: client.user.id, err: err.message,
           });
         }
@@ -1689,11 +1926,18 @@ async function handleMessage(pool, client, msg) {
             emoji,
           });
           if (notifRows.length) {
+            // #4417 follow-up: root_thread_type/_ref say where a reply thread starts
+            // (notifications.THREAD_ROOT_COLUMNS_SQL, spelled out so this read stays
+            // static SQL), so a row about a reply in a topic's thread opens beside it.
             const { rows: hydrated } = await pool.query(
               `SELECT n.id, n.kind, n.read_at, n.created_at,
                       n.app_id, a.slug AS app_slug, a.name AS app_name,
                       n.chat_message_id, cm.content AS message_content,
                       cm.thread_type, cm.thread_ref,
+                      (SELECT thread_root.thread_type FROM chat_messages thread_root
+                        WHERE cm.thread_type = 'message' AND thread_root.id = cm.thread_ref) AS root_thread_type,
+                      (SELECT thread_root.thread_ref FROM chat_messages thread_root
+                        WHERE cm.thread_type = 'message' AND thread_root.id = cm.thread_ref) AS root_thread_ref,
                       n.session_id, cs.pr_title, cs.pr_number,
                       su.username AS source_username, n.user_id, n.detail
                FROM notifications n
@@ -1928,6 +2172,20 @@ async function sendBotMessage(pool, appId, { user, content, metadata = null, thr
      RETURNING id, created_at`,
     [appId, Number(user.id), text, JSON.stringify(metadata || {}), thread.type, thread.ref, kind]
   );
+  // A reply in a reply thread names its root, as a person's does, so the
+  // stream the root is in can draw it (the bot's voice answers there).
+  let threadRoot = null;
+  if (thread.type === appChat.MESSAGE_THREAD) {
+    const root = await appChat.findThreadRoot(pool, appId, thread.ref).catch(() => null);
+    if (root) {
+      threadRoot = {
+        id: Number(root.id), username: root.username || null,
+        content: root.deleted_at ? '' : appChat.snippet(root.content), deleted: !!root.deleted_at,
+        thread_type: root.thread_type || null,
+        thread_ref: root.thread_ref == null ? null : Number(root.thread_ref),
+      };
+    }
+  }
   await broadcastFromSender(pool, appId, {
     type: 'chat',
     id: rows[0].id,
@@ -1937,6 +2195,7 @@ async function sendBotMessage(pool, appId, { user, content, metadata = null, thr
     msgType: kind,
     ...(metadata ? { metadata } : {}),
     thread,
+    ...(threadRoot ? { threadRoot } : {}),
     createdAt: rows[0].created_at,
     postedVia: null,
   }, Number(user.id));
@@ -2105,6 +2364,18 @@ function pushSessionUpdate(data) {
   noteBoardChange(data);
 }
 
+// Read only where the recipient has an events socket (what deliverToUser
+// writes to); the notification's access predicates run now, at relay time.
+function relayNotification(userId, notificationId) {
+  if (userId == null || !_pool) return;
+  let here = false;
+  for (const client of globalClients) if (Number(client.user.id) === Number(userId)) { here = true; break; }
+  if (!here) return;
+  require('./notifications').hydrateNotification(_pool, notificationId)
+    .then((shown) => { if (shown) deliverToUser(shown.userId, { type: 'notification_new', notification: shown.notification }); })
+    .catch((err) => log.warn('ws', 'could not read a notification to relay', { notificationId, err: err.message }));
+}
+
 // #1038: live working-state for one session (services/session-state.js).
 // Scoping is the whole point of having a dedicated helper rather than
 // reusing broadcastGlobal: the payload names an app and a session, so an
@@ -2232,7 +2503,7 @@ function broadcastToAdmins(payload) {
 // above (and any external caller) read naturally and don't have to churn.
 function deliverToUser(userId, payload) {
   if (payload.type === 'app_blocks_changed') {
-    appAccess.invalidateVisibility(payload.appId, payload.slug);
+    appAccess.invalidateVisibilityHere(payload.appId, payload.slug);
     if (payload.blocked) {
       for (const client of rooms.get(payload.appId) || []) {
         if (client.user.id === userId) client.ws.close(4004, 'App blocked');
@@ -2305,4 +2576,4 @@ function pushConversationEvent(memberUserIds, payload, { excludeUserId = null } 
 
 const pushNotificationToUser = pushToUser;
 
-module.exports = { connectedUserIds, disconnectUser, attach, broadcast, _onBusMessage, _onBusListening, broadcastGlobal, broadcastSessionEvent, sessionEventAudience, canWatchSessionRow, SESSION_FANOUT_EVENTS, MAX_WATCHED_SESSIONS_PER_SOCKET, SLOW_CLIENT_MAX_BUFFERED, SLOW_CLIENT_RESUME_BUFFERED, _checkLaggingClients: checkLaggingClients, _sessionMetaCache: sessionMetaCache, broadcastGlobalScoped, broadcastToAdmins, sendSystemMessage, sendBotMessage, sendFirstVersionMessage, getOnlineUsers, pushAppStatusUpdate, pushAppCreationPhase, pushSessionUpdate, pushSessionState, sessionStateAudience, pushVoteUpdate, pushKudosUpdate, pushAppUpdate, pushIssueUpdate, pushBoardOrderUpdate, pushWorkshopUpdate, onBoardChange, pushToUser, pushConversationEvent, pushNotificationToUser, pushPlatformVersion, getReactionsForMessages, validateThread, handleMessage, admitSocketFrame, SOCKET_RATE_BUDGETS, SOCKET_RATE_WINDOW_MS, MAX_CHAT_LEN };
+module.exports = { noteBoardChange, broadcastThreadSummary, connectedUserIds, disconnectUser, closeAllForRelease, attach, broadcast, _onBusMessage, _onBusListening, broadcastGlobal, broadcastSessionEvent, sessionEventAudience, canWatchSessionRow, SESSION_FANOUT_EVENTS, MAX_WATCHED_SESSIONS_PER_SOCKET, SLOW_CLIENT_MAX_BUFFERED, SLOW_CLIENT_RESUME_BUFFERED, _checkLaggingClients: checkLaggingClients, _sessionMetaCache: sessionMetaCache, broadcastGlobalScoped, broadcastToAdmins, sendSystemMessage, sendBotMessage, sendFirstVersionMessage, getOnlineUsers, pushAppStatusUpdate, pushAppCreationPhase, pushSessionUpdate, pushSessionState, sessionStateAudience, pushVoteUpdate, pushKudosUpdate, pushAppUpdate, pushIssueUpdate, pushBoardOrderUpdate, pushWorkshopUpdate, onBoardChange, pushToUser, pushConversationEvent, pushNotificationToUser, pushPlatformVersion, getReactionsForMessages, validateThread, TOPIC_CLOSED_MESSAGE, handleMessage, admitSocketFrame, SOCKET_RATE_BUDGETS, SOCKET_RATE_WINDOW_MS, MAX_CHAT_LEN };

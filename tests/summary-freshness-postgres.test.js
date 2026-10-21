@@ -56,3 +56,52 @@ test('a head move keeps only a fresh author summary recorded for that head', { t
     assert.equal(byId[id].pr_summary_previous_md, 'Words.', `row ${id} keeps the old words`);
   }
 });
+
+// Run four (13 Oct 2026): a fix round of the bot's (services/homeroom-commits.js)
+// changes how a change works, never what it does, so its head move leaves
+// every summary column as it was: fresh stays fresh, stale stays stale. Any
+// other move, with the same SQL, invalidates as above.
+test('a fix round\'s head move leaves the description as it stands', { timeout: 60000 }, async (t) => {
+  const pool = new Pool({ connectionString: DSN, connectionTimeoutMillis: 2000, max: 1 });
+  try { await pool.query('SELECT 1'); } catch (err) {
+    await pool.end();
+    if (process.env.TEST_DATABASE_URL) throw err;
+    t.skip('PostgreSQL unavailable; set TEST_DATABASE_URL to require this check'); return;
+  }
+  t.after(() => pool.end());
+  await pool.query(`CREATE TEMP TABLE fix_rows (
+    id INT PRIMARY KEY,
+    pr_summary_md TEXT,
+    pr_summary_previous_md TEXT,
+    pr_summary_source TEXT,
+    pr_summary_source_head_sha VARCHAR(40),
+    pr_summary_input_version BIGINT NOT NULL DEFAULT 0,
+    pr_summary_stale BOOLEAN NOT NULL DEFAULT FALSE)`);
+  const rows = [
+    [1, 'generated', OTHER, false], // fresh, generated for an earlier head
+    [2, 'author', OTHER, false], // fresh, the author's, for an earlier head
+    [3, 'generated', OTHER, true], // already stale from an earlier change of what it does
+  ];
+  for (const [id, source, head, stale] of rows) {
+    await pool.query(
+      `INSERT INTO fix_rows VALUES ($1, 'Words.', 'Older words.', $2, $3, 5, $4)`, [id, source, head, stale]);
+  }
+  const move = (fix) => pool.query(
+    `UPDATE fix_rows SET ${summaryFreshness.invalidateHeadMoveSql('$1', { fixParam: '$2' })}`, [HEAD, fix]);
+  const read = async () => Object.fromEntries((await pool.query(
+    'SELECT id, pr_summary_stale, pr_summary_input_version, pr_summary_previous_md FROM fix_rows ORDER BY id')).rows
+    .map((r) => [r.id, { stale: r.pr_summary_stale, version: Number(r.pr_summary_input_version), previous: r.pr_summary_previous_md }]));
+
+  await move(true);
+  assert.deepEqual(await read(), {
+    1: { stale: false, version: 5, previous: 'Older words.' },
+    2: { stale: false, version: 5, previous: 'Older words.' },
+    3: { stale: true, version: 5, previous: 'Older words.' },
+  }, 'a fix round touches nothing');
+
+  await move(false);
+  const after = await read();
+  for (const id of [1, 2, 3]) {
+    assert.deepEqual(after[id], { stale: true, version: 6, previous: 'Words.' }, `row ${id}: any other move invalidates`);
+  }
+});

@@ -14,7 +14,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 
-const { classifyRequest, NO_FALLBACK_PAGES, NO_FALLBACK_PREFIXES } = require('../public/sw.js');
+const { classifyRequest, NO_FALLBACK_PAGES, NO_FALLBACK_PREFIXES, SHELL_ASSETS } = require('../public/sw.js');
 
 const ORIGIN = 'https://social-vibecoding.example';
 const classify = (method, path, accept = null, mode = 'no-cors') =>
@@ -68,6 +68,11 @@ test('credential and auth endpoints are bypassed — except /api/auth/me', () =>
   assert.equal(classify('GET', '/api/auth/logout'), 'bypass');
   assert.equal(classify('GET', '/api/auth/wallet-challenge'), 'bypass');
   assert.equal(classify('GET', '/api/auth/me'), 'api');
+  // #5678: the boot's optional read answers "nobody" when nobody is signed
+  // in, and that must never be replayed from the cache (offline it has to
+  // stay a non-answer, as the no-snapshot boot always had).
+  assert.equal(classify('GET', '/api/auth/me?optional=1'), 'bypass');
+  assert.equal(classify('GET', '/api/auth/me?x=1'), 'api');
   assert.equal(classify('GET', '/api/cli/token/status'), 'bypass');
   assert.equal(classify('GET', '/api/cli/device/approval?user_code=ABCD-EFGH'), 'bypass');
   assert.equal(classify('GET', '/api/me/cli-tokens'), 'bypass');
@@ -273,6 +278,45 @@ test('the installed worker leaves an issue screenshot to the browser (#3585)', (
   assert.equal(intercepted.length, 0, 'the browser receives the image, not a cached document');
 });
 
+// "Add to home screen" opens an app's install page, /app/<slug>/install
+// (routes/app-install.js). That navigation got the cached shell too, whose
+// router read `install` as the App tab and reopened the app, so on a phone
+// the row looked like it did nothing (About, Home's card menu, Discover).
+test('an app\'s install page is the server\'s, never the shell', () => {
+  const { isShellDocumentUrl } = require('../public/sw.js');
+  for (const slug of ['city-tier-list-1e2a43', 'notes']) {
+    assert.equal(classify('GET', `/app/${slug}/install`, 'text/html', 'navigate'), 'bypass', slug);
+    assert.equal(isShellDocumentUrl(`${ORIGIN}/app/${slug}/install`, ORIGIN), false,
+      'never stored as the shell either');
+  }
+  // The app's own routes are still the shell's.
+  for (const path of ['/app/notes', '/app/notes/dev', '/app/notes/install/more', '/app/notes/installs', '/app/install']) {
+    assert.equal(classify('GET', path, 'text/html', 'navigate'), 'navigate', path);
+  }
+  assert.equal(isShellDocumentUrl(`${ORIGIN}/app/notes/dev`, ORIGIN), true);
+});
+
+test('the installed worker leaves an app\'s install page to the browser', () => {
+  const handlers = {};
+  const intercepted = [];
+  vm.runInNewContext(fs.readFileSync(require.resolve('../public/sw.js'), 'utf8'), {
+    self: { location: { origin: ORIGIN }, addEventListener: (name, fn) => { handlers[name] = fn; } },
+    URL, Headers, Response, Map, Set, Promise,
+    caches: { open: async () => ({ match: async () => new Response('<!DOCTYPE html><title>Homeroom</title>') }) },
+    fetch: () => new Promise(() => {}),
+    setTimeout: () => 1, clearTimeout: () => {},
+  });
+  handlers.fetch({
+    request: {
+      method: 'GET', url: `${ORIGIN}/app/city-tier-list-1e2a43/install`,
+      headers: new Headers({ accept: 'text/html' }), mode: 'navigate',
+    },
+    respondWith: (response) => intercepted.push(response),
+    waitUntil: () => {},
+  });
+  assert.equal(intercepted.length, 0, 'the browser receives the install page, not a cached document');
+});
+
 test('shell assets classify as shell', () => {
   assert.equal(classify('GET', '/js/app.js'), 'shell');
   assert.equal(classify('GET', '/css/app.css'), 'shell');
@@ -284,32 +328,40 @@ test('shell assets classify as shell', () => {
   assert.equal(classify('GET', '/usernode-bridge/v1/bridge.js'), 'shell');
   assert.equal(classify('GET', '/manifest.webmanifest'), 'shell');
   assert.equal(classify('GET', '/icons/icon-192.png'), 'shell');
-  // The signed-out landing's illustration. It goes the OTHER way from the
-  // challenge artwork below, and the difference is the fallback: a challenge
-  // card draws its kind icon when the picture fails, so caching buys nothing,
-  // while the landing has nothing to put in its place and is the first screen
-  // a visitor who has never signed in reaches — on a precached document.
+  // The signed-out landing's illustration: it has nothing to put in its
+  // place, and it is the first screen a visitor who has never signed in
+  // reaches — on a precached document. (The challenge artwork below is
+  // precached too now, for a different reason.)
   assert.equal(classify('GET', '/brand/people.png'), 'shell');
 });
 
 test('content-addressed images are cache-first', () => {
   assert.equal(classify('GET', `/app-icons/${'a'.repeat(32)}`), 'immutable');
+  // A pack the translation cache serves is named by its content hash too,
+  // and no release lists it: cache-first. The list that names it is an API read.
+  assert.equal(classify('GET', `/locales/live/id.core.${'c'.repeat(64)}.json`), 'immutable');
+  assert.equal(classify('GET', `/locales/id.core.${'c'.repeat(64)}.json`), 'shell', 'a build\'s pack stays the release\'s');
+  assert.equal(classify('GET', '/api/languages'), 'api');
   assert.equal(classify('GET', `/visuals/${'b'.repeat(32)}`), 'immutable');
 });
 
-// Challenge artwork is deliberately left to the network. It is decoration: an
-// offline card whose picture fails to load draws its kind icon instead, so
-// caching nine SVGs would buy nothing a reader can tell apart. Pinned so a
-// later broadening of the `shell` rules does not start caching them silently.
-test('challenge illustrations bypass the worker, with no offline copy', () => {
-  assert.equal(classify('GET', '/illustrations/challenges/block-production.svg'), 'bypass');
+// Challenge artwork used to be left to the network, as decoration with a
+// fallback (a card whose picture fails draws its kind icon). That cost Home a
+// visible step on every cold load: the cards drew, and their pictures a frame
+// or more later (the polish board's #1 and #10, 19 Oct 2026). So the built-ins
+// are precached and served from the release cache like the brand assets, and
+// an upload, whose id is minted per upload and served immutable, is
+// cache-first like the app icons.
+test('challenge illustrations: the built-ins from the release, an upload cache-first', () => {
+  assert.equal(classify('GET', '/illustrations/challenges/block-production.svg'), 'shell');
   assert.equal(classify('GET', '/illustrations/challenges/block-production.svg', 'image/svg+xml', 'no-cors'),
-    'bypass');
-  // Uploaded artwork too. Its id is immutable, which would suit cache-first, but
-  // it is the same decoration with the same fallback, so it stays on the
-  // network rather than joining the `immutable` app-icon rule.
-  assert.equal(classify('GET', `/challenge-illustrations/${'c'.repeat(32)}`), 'bypass');
-  assert.equal(classify('GET', `/challenge-illustrations/${'c'.repeat(32)}`, 'image/png', 'no-cors'), 'bypass');
+    'shell');
+  assert.ok(SHELL_ASSETS.includes('/illustrations/challenges/block-production.svg'), 'precached');
+  assert.equal(classify('GET', `/challenge-illustrations/${'c'.repeat(32)}`), 'immutable');
+  assert.equal(classify('GET', `/challenge-illustrations/${'c'.repeat(32)}`, 'image/png', 'no-cors'), 'immutable');
+  // Only the id's own shape: anything else under the prefix is not an upload.
+  assert.equal(classify('GET', '/challenge-illustrations/not-an-id'), 'bypass');
+  assert.equal(classify('GET', '/illustrations/other/thing.svg'), 'bypass', 'only the challenge art directory');
 });
 
 // ALL cross-origin traffic is bypassed now: the shell compiles Tailwind into
@@ -373,9 +425,12 @@ test('standalone server pages never fall back to the SPA shell', () => {
   //   /connect/authorize — the hosted MCP connector (Claude.ai, ChatGPT)
   // Serving either from the cached SPA shell would show a page that looks
   // signed in but cannot approve anything.
-  assert.deepEqual(NO_FALLBACK_PAGES, ['/cli/authorize', '/connect/authorize']);
+  // And the notification ask's code to scan (routes/public-api.js /get-app):
+  // a redirect to the phone's own store, never a shell route.
+  assert.deepEqual(NO_FALLBACK_PAGES, ['/cli/authorize', '/connect/authorize', '/get-app']);
   assert.equal(classify('GET', '/cli/authorize', 'text/html', 'navigate'), 'bypass');
   assert.equal(classify('GET', '/connect/authorize', 'text/html', 'navigate'), 'bypass');
+  assert.equal(classify('GET', '/get-app', 'text/html', 'navigate'), 'bypass');
 });
 
 // Public report share links (/reports/<token>) are standalone sandboxed

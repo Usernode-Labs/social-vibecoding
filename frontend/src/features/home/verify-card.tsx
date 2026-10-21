@@ -21,15 +21,17 @@
 
 import { useEffect, useState, type ReactNode } from 'react';
 
+import { useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
 import { ASKED_EVENT, noteVerified, VerifyIdentityBody, wasAskedHere, type VerifyCopy } from '../auth/verify-identity';
 import { waitlistOptions } from '../auth/waitlist-shared';
 import { navStore } from '../nav/nav-store.js';
 
+/** The card's three texts, as message ids: read when the card renders. */
 export const VERIFY_CARD_COPY: VerifyCopy = {
-  title: 'Verify your account',
-  lead: 'Add your phone number to vote on public apps and get the full AI budget. Nobody sees your number.',
-  reason: 'Verified accounts vote on public apps and get the full AI budget.',
+  title: 'home:verify.title',
+  lead: 'home:verify.lead',
+  reason: 'home:verify.reason',
 };
 
 const HIDDEN_KEY = 'usernode:verify-card-hidden';
@@ -39,6 +41,7 @@ function hiddenHere(): boolean {
 }
 
 export function VerifyCard(): ReactNode {
+  const t = useMessages('home');
   const { identityNeeded } = useStoreState(navStore);
   const [phoneOffered, setPhoneOffered] = useState<boolean | null>(null);
   const [hidden, setHidden] = useState(false);
@@ -62,10 +65,14 @@ export function VerifyCard(): ReactNode {
     setHidden(true);
   };
   return (
-    <section id="home-verify-card" className="px-3 pb-2 pt-0" aria-label="Verify your account">
+    <section id="home-verify-card" className="px-3 pb-2 pt-0" aria-label={t('home:verify.regionLabel')}>
       <VerifyIdentityBody
         phoneOffered={phoneOffered}
-        copy={VERIFY_CARD_COPY}
+        copy={{
+          title: t(VERIFY_CARD_COPY.title),
+          lead: t(VERIFY_CARD_COPY.lead),
+          reason: t(VERIFY_CARD_COPY.reason),
+        }}
         className=""
         onVerified={noteVerified}
         onSettings={() => {}}

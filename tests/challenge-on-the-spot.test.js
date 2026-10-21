@@ -24,6 +24,21 @@ const path = require('node:path');
 
 const rules = require('../src/services/topochain/challenge-rules');
 const grader = require('../src/services/topochain/challenge-grader');
+// The scorer's lock lives on the process's lock connection
+// (src/db/session-locks.js; tests/session-locks-postgres.test.js runs it).
+// Its stand-in asks the fake pool, which says whether it is held.
+{
+  const locksPath = require.resolve('../src/db/session-locks');
+  const { BUSY } = require(locksPath);
+  require.cache[locksPath] = { id: locksPath, filename: locksPath, loaded: true, exports: {
+    BUSY,
+    ifSessionLockFree: async (pool, key, fn) => {
+      const { rows: [r] } = await pool.query('SELECT pg_try_advisory_lock($1, $2) AS acquired', key);
+      if (!r || r.acquired !== true) return BUSY;
+      try { return await fn(); } finally { await pool.query('SELECT pg_advisory_unlock($1, $2)', key); }
+    },
+  } };
+}
 const scorer = require('../src/services/topochain/challenge-scorer');
 const { anatomy, ON_THE_SPOT_TEXT } = require('../src/services/topochain/challenge-anatomy');
 const { CHALLENGE_SCORER_LOCK } = require('../src/services/advisory-locks');
@@ -146,8 +161,8 @@ test('a vote on the bot\'s build of your own request, or in a "Just you" project
 
 test('a report on a project you made, or a "Just you" one, is not feedback for either measure', () => {
   const sql = flat(scorer.MEASURE_SQL.USEFUL_FEEDBACK);
-  assert.ok(sql.includes(`AND (fr.app_id IS NULL OR (a.created_by IS DISTINCT FROM fr.user_id AND (${NOT_JUST_YOU})))`),
-    'about the platform, or somebody else\'s project that somebody else is in');
+  assert.ok(sql.includes(`AND (fr.app_id IS NULL OR $4::boolean OR (a.created_by IS DISTINCT FROM fr.user_id AND (${NOT_JUST_YOU})))`),
+    'about the platform, or somebody else\'s project that somebody else is in, or anything on a First challenge (#4603)');
   assert.equal(scorer.MEASURE_SQL.FEEDBACK_SENT, scorer.MEASURE_SQL.USEFUL_FEEDBACK, 'both measures, one statement');
   for (const measure of ['USEFUL_FEEDBACK', 'FEEDBACK_SENT']) {
     assert.match(rules.MEASURES[measure].summary, /a project they made,? or one only they can see/, measure);
@@ -177,10 +192,11 @@ test('a vote credit names what was voted on, and is dated when it was cast', asy
   assert.equal(out[0].activityAt, iso(NOW - HOUR));
 });
 
-// evan, 2026-10-01: with nothing up for a vote in any community a newcomer is
-// in, the Getting started card's Vote step is a look at the Workshop, which
-// the server records only then. VOTE_CAST counts that look as it counts a
-// vote: the same window, one credit a person, whichever came first.
+// evan, 2026-10-01: with nothing up for a vote in any community a newcomer was
+// in, the Getting started card's Vote step was a look at the Workshop, which
+// the server recorded only then. VOTE_CAST counts that look as it counts a
+// vote: the same window, one credit a person, whichever came first. The card
+// is gone (#4635) and nothing records a look now; one recorded before counts.
 test('a look at the Workshop when nothing was up for a vote counts for VOTE_CAST, and the admin is told so', () => {
   const sql = flat(scorer.MEASURE_SQL.VOTE_CAST);
   assert.match(sql, /SELECT w\.user_id, 'workshop' AS kind, w\.user_id AS ref_id, w\.created_at, NULL AS app_id/);
@@ -305,7 +321,7 @@ test('a counted measure is scored only under the tick\'s lock, and a held lock s
   assert.equal(summary.credits, 1);
   assert.deepEqual(pool.locks, [[CHALLENGE_SCORER_LOCK, 0]], 'the lock the tick plans under');
   assert.deepEqual(pool.unlocks, [[CHALLENGE_SCORER_LOCK, 0]], 'and given back');
-  assert.equal(pool.released, pool.connects, 'every connection it took, the lock\'s included');
+  assert.equal(pool.released, pool.connects, 'every connection the pass took is given back (the lock takes none)');
 
   // Two plans at once could each pay a different "last unit". So when the
   // tick (or another heartbeat) holds the lock, this pass does not run at
@@ -318,8 +334,7 @@ test('a counted measure is scored only under the tick\'s lock, and a held lock s
   assert.equal(busy.seen.includes(scorer.RULE_CHALLENGES_SQL), false, 'nothing is read or planned');
   assert.equal(busy.inserted.length, 0);
   assert.equal(busy.unlocks.length, 0, 'a lock it never took is not released');
-  assert.equal(busy.connects, 1);
-  assert.equal(busy.released, 1, 'the connection is');
+  assert.equal(busy.connects, 0, 'and no pooled connection taken');
 });
 
 test('every door runs the measures it can complete, and only those', () => {
@@ -339,11 +354,9 @@ test('every door runs the measures it can complete, and only those', () => {
 
 // ─── The heartbeat: a pass on the crossing, and on nothing else ────────
 
-test('the heartbeat reads nothing for an app you made, or once today is past the floor', async () => {
+test('the heartbeat reads nothing once today is past the floor', async () => {
   const pool = spotPool({ total: 40 });
-  const beat = (extra) => scorer.scoreOnAppTime(pool, ON, { appId: 3, ownerId: 9, userId: 7, seconds: 30, daySeconds: 30, ...extra });
-  assert.equal(await beat({ ownerId: 7 }), null);
-  assert.equal(pool.seen.length, 0, 'an app they made never counts, so it is never read');
+  const beat = (extra) => scorer.scoreOnAppTime(pool, ON, { appId: 3, userId: 7, seconds: 30, daySeconds: 30, ...extra });
   assert.equal(await beat({ seconds: 30, daySeconds: 60 }), null);
   assert.equal(pool.seen.length, 0, 'today was already at 30 before this heartbeat: so was the total');
   assert.equal(await beat({ daySeconds: undefined }), null);
@@ -354,13 +367,13 @@ test('the heartbeat reads nothing for an app you made, or once today is past the
 
 test('the heartbeat that crosses the floor runs a pass; the one before it reads and stops', async () => {
   const below = spotPool({ total: 6, ruleRows: [{ id: 1, measure: 'TRY_APPS' }] });
-  assert.equal(await scorer.scoreOnAppTime(below, ON, { appId: 3, ownerId: null, userId: 7, seconds: 6, daySeconds: 6 }), null);
+  assert.equal(await scorer.scoreOnAppTime(below, ON, { appId: 3, userId: 7, seconds: 6, daySeconds: 6 }), null);
   assert.deepEqual(below.seen, [scorer.APP_TIME_SQL], 'one indexed SUM, and no rule lookup');
 
   // Six seconds yesterday and six today is a crossing too: the total is
   // every day's, not the day row's.
   const crossing = spotPool({ total: 12, ruleRows: [{ id: 1, measure: 'TRY_APPS' }], challenges: [] });
-  await scorer.scoreOnAppTime(crossing, ON, { appId: 3, ownerId: 9, userId: 7, seconds: 6, daySeconds: 6, now: NOW });
+  await scorer.scoreOnAppTime(crossing, ON, { appId: 3, userId: 7, seconds: 6, daySeconds: 6, now: NOW });
   assert.deepEqual(crossing.seen.slice(0, 2), [scorer.APP_TIME_SQL, scorer.ON_THE_SPOT_RULES_SQL]);
   assert.ok(crossing.seen.includes(scorer.RULE_CHALLENGES_SQL), 'the pass ran');
   assert.deepEqual(crossing.locks, [[CHALLENGE_SCORER_LOCK, 0]]);
@@ -391,8 +404,12 @@ test('every vote door counts the vote before it answers', () => {
   assert.match(issues, /require\('\.\.\/services\/topochain\/challenge-scorer'\)/);
   assert.match(issueBody, /pushIssueUpdate\(\{ action: 'voted', appSlug: issue\.app_slug, appId: issue\.app_id, issueId: issue\.id, vote \}\);\s*(?:\/\/[^\n]*\n\s*)*await challengeScorer\.scoreOnVote\(pool, config\);/,
     'a request vote: after the broadcast, before the apply');
-  assert.ok(issueBody.indexOf('scoreOnVote') > issueBody.indexOf('return res.json({ ok: true, toggled: true });'),
+  assert.ok(issueBody.lastIndexOf('scoreOnVote') > issueBody.indexOf('return res.json({ ok: true, toggled: true });'),
     'taking a vote back is not casting one');
+  // A governance vote is the governance machine's: the route credits it
+  // once the machine accepted it, never a take-back or one still pending.
+  assert.match(issueBody, /if \(reply\.status === 200 && reply\.body\?\.ok && !reply\.body\.toggled\) await challengeScorer\.scoreOnVote\(pool, config\);\s*return res\.status\(reply\.status\)\.json\(reply\.body\);/,
+    'a governance vote: credited before the voter is answered, a cast only');
 });
 
 test('a report counts before the person is answered, on both targets', () => {
@@ -408,7 +425,7 @@ test('the heartbeat hands the scorer what it needs to find the crossing', () => 
   const route = src.slice(src.indexOf("router.post('/api/apps/:slug/activity'"));
   const body = route.slice(0, route.indexOf("res.json({ ok: true });"));
   assert.match(body, /RETURNING \(xmax = 0\) AS inserted, seconds_spent`/, 'today\'s total, from the same statement');
-  assert.match(body, /await challengeScorer\.scoreOnAppTime\(pool, config, \{\s*appId: appRows\[0\]\.id,\s*ownerId: appRows\[0\]\.created_by,\s*userId: req\.user\.id,\s*seconds,\s*daySeconds: activityRows\[0\]\?\.seconds_spent,\s*\}\);/);
+  assert.match(body, /await challengeScorer\.scoreOnAppTime\(pool, config, \{\s*appId: appRows\[0\]\.id,\s*userId: req\.user\.id,\s*seconds,\s*daySeconds: activityRows\[0\]\?\.seconds_spent,\s*\}\);/);
 });
 
 // ─── What the admin reads ──────────────────────────────────────────────

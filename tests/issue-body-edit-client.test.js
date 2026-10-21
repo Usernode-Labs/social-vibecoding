@@ -22,6 +22,7 @@ function context(username = 'Builder', globals = {}) {
     location: { search: '', hash: '' }, URLSearchParams,
   };
   c.window = c;
+  c.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(c);
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../public/js/app-view.js'), 'utf8'), c);
   vm.runInContext('globalThis.av = AppView', c);
@@ -93,8 +94,9 @@ test('#3952: the body and its GitHub comments go through the request mention pas
   av._ghIssues = [row];
   assert.match(av._topicViewFor('issue', row).body.issueBodyHtml, /^<div class="dev-issue-body">\[mentions\]/);
   assert.match(seen[seen.length - 1], /ping @​snait lmk wyt/);
-  const view = av._issueCommentsView([{ id: 1, author: 'ada', body: 'cc @​snait' }], false, null);
-  assert.match(view.comments[0].bodyHtml, /^\[mentions\]/);
+  // #4453: a GitHub comment is a row of the request page's thread now.
+  av._ghComments.set(av._ghCommentsKey('example', row.number), { truncated: false, comments: [{ id: 1, author: 'ada', body: 'cc @​snait' }] });
+  assert.match(av._requestThreadRows(row.number).rows[0].bodyHtml, /^\[mentions\]/);
   assert.match(seen[seen.length - 1], /cc @​snait/);
 
   // Without group-chat.js on the page, the body renders exactly as before.

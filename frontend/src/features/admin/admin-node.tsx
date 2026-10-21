@@ -270,7 +270,6 @@ function ServicesCard({ svc }: { svc: Record<string, any> }) {
           <div className={NodeUI.kv} style={{ marginTop: '8px' }}>
             <Row label="Chain id" mono>{cp.chainId || '—'}</Row>
             <Row label="Last block height">{fmtNum(cp.lastBlockHeight)}</Row>
-            <Row label="Tx ids seen">{fmtNum(cp.seenTxCount)}</Row>
             <Row label="Wallet links applied">{fmtNum(cp.walletLinkCount)}</Row>
             <Row label="Last polled">{cp.lastPolledAt ? <Refreshed at={cp.lastPolledAt} /> : '—'}</Row>
             {/* Retry cadence + failure streak: the poller backs off from 4s to

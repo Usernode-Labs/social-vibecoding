@@ -353,6 +353,9 @@ function loadScaffoldMiddleware(source, env) {
     if (id === 'path') return require('path');
     if (id === 'jsonwebtoken') return jwt;
     if (id === 'pg') return { Pool: class { async query() { return { rows: [] }; } } };
+    // The platform's user-data routes (#5118) verify their own token;
+    // tests/scaffold-user-data.test.js covers them.
+    if (id === './usernode-user-data') return { mount: () => {} };
     throw new Error(`scaffold sandbox: unexpected require(${id})`);
   };
   // eslint-disable-next-line no-new-func
@@ -399,16 +402,18 @@ test('the scaffold: a guest reads, a guest’s write is account_required, a forg
 });
 
 test('starter read routes do not assume a person', () => {
-  // The four starters under app-templates/ were deleted with the create
-  // dialog (tests/app-templates.test.js); a starter that comes back is held
-  // to the same rule, so the loop reads whatever directories are there.
-  const dir = path.join(__dirname, '..', 'app-templates');
-  const names = fs.existsSync(dir) ? fs.readdirSync(dir) : [];
-  for (const name of names) {
-    const src = fs.readFileSync(path.join(dir, name, 'api.js'), 'utf8');
-    for (const m of src.matchAll(/app\.get\([^]*?\n {2}\}\);/g)) {
-      assert.doesNotMatch(m[0].replace(/req\.user \? req\.user\.(id|username) : null|!!req\.user && [^,]+|req\.user \? \{[^}]*\} : null/g, ''),
-        /req\.user\./, `${name}: a read route reads req.user without a guard`);
+  // Every starter (services/app-templates.js), as a new project gets it: its
+  // api.js, and a game starter's game room (game/*.js) too, whose routes sit
+  // indented inside a class.
+  const appTemplates = require('../src/services/app-templates');
+  for (const id of appTemplates.TEMPLATE_IDS.filter((t) => t !== appTemplates.DEFAULT_TEMPLATE)) {
+    const files = appTemplates.starterFiles(id).filter((f) => f.path === 'api.js' || /^game\/.+\.js$/.test(f.path));
+    assert.ok(files.some((f) => f.path === 'api.js'), `${id}: has an api.js`);
+    for (const f of files) {
+      for (const m of f.content.matchAll(/app\.get\([^]*?\n\s*\}\);/g)) {
+        assert.doesNotMatch(m[0].replace(/req\.user \? req\.user\.(id|username) : null|!!req\.user && [^,]+|req\.user \? \{[^}]*\} : null/g, ''),
+          /req\.user\./, `${id} ${f.path}: a read route reads req.user without a guard`);
+      }
     }
   }
 });

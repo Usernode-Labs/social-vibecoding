@@ -4,10 +4,11 @@
 // writes onto its build session before it proposes (live.prepareProposal),
 // read back by the real pr-metadata the promote route runs, in a throwaway
 // database built from src/db/schema.sql as a boot applies it. Only GitHub is
-// stubbed. The route's own call is reproduced as it makes it
-// (routes/votes.js: the session row, its last user message, `ccSummary: ''`
-// and `preferredTitle: session.proposed_pr_title`), and the last test pins
-// that call so the two cannot drift apart.
+// stubbed. The promote's own call is reproduced as it makes it (the
+// proposal machine's review.open work, src/workflow/proposal/services.ts:
+// the session row, its last user message, `ccSummary: ''` and
+// `preferredTitle: proposed_pr_title`), and the last test pins that call so
+// the two cannot drift apart.
 //
 // Before: "Build issue 3233: Quota notifications are cryptic codes Edit the
 // app…", and no summary. The completion row goes through the real
@@ -107,7 +108,8 @@ test('a bot proposal is named by its spec and led by its own description', { tim
     return s.id;
   }
 
-  // What POST /api/sessions/:id/promote does with it, down to applyPrMetadata.
+  // What putting it up for a vote does with it, down to applyPrMetadata
+  // (review.open, once the promote route's proposal is claimed for review).
   async function promote(sessionId) {
     const { rows: [session] } = await pool.query(
       `SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url
@@ -192,11 +194,15 @@ test('a bot proposal is named by its spec and led by its own description', { tim
     assert.equal(row.pr_title, 'A name a person gave it');
   });
 
-  await t.test('the reproduction above is the call the promote route makes', () => {
-    const votes = fs.readFileSync(path.join(__dirname, '..', 'src/routes/votes.js'), 'utf8');
-    const call = votes.slice(votes.indexOf('prResult = await prMetadata.applyPrMetadata({'));
-    assert.match(call.slice(0, 900), /userMessage: msgRows\[0\]\?\.content \|\| '',\n\s+ccSummary: '',/);
-    assert.match(call.slice(0, 900), /preferredTitle: session\.proposed_pr_title \|\| null,/);
-    assert.match(votes, /`SELECT content FROM chat_session_messages\n\s+WHERE session_id = \$1 AND role = 'user'\n\s+ORDER BY id DESC LIMIT 1`/);
+  await t.test('the reproduction above is the call the promote makes', () => {
+    // The promote route's GitHub work moved into the proposal machine's
+    // review.open handler; the call is pinned there.
+    const services = fs.readFileSync(path.join(__dirname, '..', 'src/workflow/proposal/services.ts'), 'utf8');
+    const open = services.slice(services.indexOf('[WORK.open]: {'), services.indexOf('[WORK.close]'));
+    const call = open.slice(open.indexOf("result = await legacy('services/pr-metadata').applyPrMetadata({"));
+    assert.match(call.slice(0, 600), /userMessage: msg\?\.content \|\| '', ccSummary: '',/);
+    assert.match(call.slice(0, 600), /preferredTitle: row\.proposed_pr_title \|\| null,/);
+    assert.match(open, /`SELECT content FROM chat_session_messages WHERE session_id = \$1 AND role = 'user' ORDER BY id DESC LIMIT 1`/);
+    assert.match(services, /`SELECT cs\.\*, a\.slug AS app_slug, a\.name AS app_name, a\.repo_url\n\s+FROM chat_sessions cs JOIN apps a ON a\.id = cs\.app_id WHERE cs\.id = \$1`/);
   });
 });

@@ -5,14 +5,22 @@ const { nativeBackEnabled, createBackNavigationPublisher } = loadTsx(
   'frontend/src/features/header/native-back-navigation.ts'
 );
 
-const arrow = { visible: true, mode: 'arrow', href: '#settings', slug: null, tab: null };
-test('only a visible Back destination outside embedded app content enables swiping', () => {
+const arrow = { visible: true, mode: 'arrow', href: '#settings' };
+test('only a visible Back destination with no dialog open enables swiping', () => {
   assert.equal(nativeBackEnabled(arrow), true);
-  assert.equal(nativeBackEnabled({ ...arrow, slug: 'example', tab: 'dev' }), true);
   for (const override of [
     { visible: false }, { mode: 'home' }, { mode: 'none' }, { href: null },
-    { slug: 'example', tab: 'app' },
+    // A running app's bar shows ✕, never an arrow.
+    { mode: 'close', href: '/' },
+    { dialogOpen: true },
   ]) assert.equal(nativeBackEnabled({ ...arrow, ...override }), false);
+});
+
+// #3623: the improve target outlives the app it names. On Settings, a thread
+// or a challenge it still reads `usernode-2d5619` on the App tab, and a rule
+// keyed on it kept the swipe off on every screen.
+test('a stale improve target never switches the swipe off', () => {
+  assert.equal(nativeBackEnabled({ ...arrow, slug: 'usernode-2d5619', tab: 'app' }), true);
 });
 
 // #2916: a Workshop topic's back is the "‹ Workshop" chip inside the pane, and
@@ -28,8 +36,12 @@ test('a Workshop topic keeps swiping through its in-pane back chip', () => {
     'without the chip and without an arrow there is no back to swipe to');
   assert.equal(nativeBackEnabled({ ...topic, visible: false }), false,
     'a hidden header (chromeless) still publishes false');
-  assert.equal(nativeBackEnabled({ ...topic, tab: 'app' }), false,
-    'and embedded App-tab content never gets the gesture');
+  assert.equal(nativeBackEnabled({ ...topic, dialogOpen: true }), false,
+    'and a dialog open over the topic takes it away');
+  // Polish #23: on a phone the topic is under the Communities drawer, whose
+  // pan is the swipe back; WebKit's would take the same finger.
+  assert.equal(nativeBackEnabled({ ...topic, drawerOn: true }), false);
+  assert.equal(nativeBackEnabled({ ...topic, drawerOn: false }), true);
 });
 
 const deferred = () => {

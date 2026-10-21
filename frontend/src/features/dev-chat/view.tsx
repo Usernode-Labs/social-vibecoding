@@ -7,6 +7,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
 
+import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
 import { DevChatBanners } from './banners';
 import { DevComposer } from './composer';
@@ -23,10 +24,6 @@ import { devViewStore, type DevViewState, type PaneView } from './view-store';
 const HINT
   = 'mx-3 mt-2 px-3 py-2 rounded-lg bg-violet-500/10 border border-violet-500/20'
   + ' text-xs text-zinc-600 dark:text-zinc-300 shrink-0';
-
-const HINT_TEXT
-  = 'Describe the change you want. When it’s ready, promoting this'
-  + " session's PR is what creates the proposal everyone votes on.";
 
 /** The composer bar's two class runs, as complete literals for Tailwind. */
 const BAR = {
@@ -68,12 +65,13 @@ function paneStyle(p: PaneView): { width: string } | undefined {
 /** Keyed by session so switching chats clears results and collapse state. */
 function ChecksSection({ sessionId }: { sessionId: number }): ReactNode {
   const [open, setOpen] = useState(true);
+  const t = useMessages('devchat');
   return (
-    <section aria-label="Proposal checks" className="mx-3 mt-3 shrink-0 overflow-hidden rounded-xl border border-zinc-200 bg-white dark:border-zinc-700 dark:bg-zinc-900">
+    <section aria-label={t('devchat:view.checks')} className="mx-3 mt-3 shrink-0 overflow-hidden rounded-xl border border-zinc-200 bg-white dark:border-zinc-700 dark:bg-zinc-900">
       <button type="button" aria-expanded={open}
         className="flex w-full items-center justify-between gap-3 px-4 py-3 text-sm font-semibold text-zinc-900 dark:text-zinc-100"
         onClick={() => setOpen(!open)}>
-        <span>Proposal checks</span><span aria-hidden="true">{open ? '▴' : '▾'}</span>
+        <span>{t('devchat:view.checks')}</span><span aria-hidden="true">{open ? '▴' : '▾'}</span>
       </button>
       {open ? <div className="max-h-[35dvh] overflow-y-auto overscroll-contain px-4 pb-4 sm:px-5 sm:pb-5">
         <SessionChecksPanel sessionId={sessionId} />
@@ -88,10 +86,11 @@ function DevSessionChecks(): ReactNode {
 }
 
 function WorkspaceView({ s }: { s: Extract<DevViewState, { kind: 'session' }> }): ReactNode {
+  const t = useMessages('devchat');
   return (
     <>
       {/* #194: the one-shot "what a proposal is" hint, above everything. */}
-      {s.proposalHint ? <div className={HINT}>{HINT_TEXT}</div> : null}
+      {s.proposalHint ? <div className={HINT}>{t('devchat:view.proposalHint')}</div> : null}
       {/* The ELEMENT keeps a CONSTANT className: `PlatformUI.attachScreenFx`
           writes a hairline/blur class onto it once the chat scrolls, and
           React never rewrites a className whose prop has not changed.
@@ -144,24 +143,23 @@ function WorkspaceView({ s }: { s: Extract<DevViewState, { kind: 'session' }> })
         <div id="dc-tab-chat" className="dc-chat-pane platform-kb-column flex-1 flex flex-col min-h-0">
           {s.returnHint && !s.embedded ? (
             <aside
-              id="dc-return-hint" aria-label="Returning to dev chat"
+              id="dc-return-hint" aria-label={t('devchat:view.returnHint.label')}
               className="mx-3 mt-3 mb-1 flex flex-col items-stretch gap-3 rounded-xl bg-violet-500/10 p-4 text-sm text-zinc-700 dark:text-zinc-200 shrink-0 sm:flex-row sm:flex-wrap sm:items-center sm:p-3"
             >
               <div className="flex-1 min-w-0 sm:min-w-[12rem]">
-                <p className="font-semibold">You can come back later</p>
+                <p className="font-semibold">{t('devchat:view.returnHint.title')}</p>
                 {/* Messages, because a change in flight is an agent
                     conversation there (#2770). This named Improve until #2718
                     retired that panel. */}
                 <p className="mt-1">
-                  You can leave this page and return anytime. Open <strong>Messages</strong> to
-                  check your change’s status or find this chat again.
+                  <RichMessage id="devchat:view.returnHint.body" components={[<strong />]} />
                 </p>
               </div>
               <Button
                 id="dc-return-hint-dismiss" type="button" size="sm" layout="shrink"
                 variant="neutral" ink="muted" className="min-h-[44px] self-end sm:self-auto"
                 onClick={() => window.DevChat?.dismissReturnHint()}
-              >Got it</Button>
+              >{t('devchat:view.returnHint.dismiss')}</Button>
             </aside>
           ) : null}
           {/* #1348: the launchpad is PINNED TO THE TOP of the chat area. It
@@ -220,7 +218,7 @@ function WorkspaceView({ s }: { s: Extract<DevViewState, { kind: 'session' }> })
         </div>
         <div
           id="dc-spec-resizer" className={s.spec.open ? PANE.specResizer.on : PANE.specResizer.off}
-          role="separator" aria-orientation="vertical" aria-label="Resize spec viewer"
+          role="separator" aria-orientation="vertical" aria-label={t('devchat:view.resizeSpec')}
         ></div>
         {/* The pane's `width` is the DRAG's inline style and its `-open`
             class is this model's; the reader inside it is its own island,
@@ -232,7 +230,7 @@ function WorkspaceView({ s }: { s: Extract<DevViewState, { kind: 'session' }> })
         <div
           id="dc-staging-resizer"
           className={s.staging.open ? PANE.stagingResizer.on : PANE.stagingResizer.off}
-          role="separator" aria-orientation="vertical" aria-label="Resize staging preview"
+          role="separator" aria-orientation="vertical" aria-label={t('devchat:view.resizeStaging')}
         ></div>
         {/* #771: a SLOT, not a container. The docked preview is an overlay
             positioned over this element's rect, so it stays empty. */}

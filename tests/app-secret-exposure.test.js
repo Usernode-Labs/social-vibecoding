@@ -54,7 +54,7 @@ stub(ids.appManifest, {
   buildAppSlug: realAppManifest.buildAppSlug,
 });
 stub(ids.renamePr, {});
-stub(ids.staging, { rebuildProduction: async () => ({}), MissingSecretsError: class extends Error {} });
+stub(ids.staging, { MissingSecretsError: class extends Error {} });
 
 const SECRET_VALUES = {
   db_password: 'fixture-db-password-do-not-leak',
@@ -98,7 +98,10 @@ const poolMod = require('../src/db/pool');
 let appRow = null;
 let collaboratorIds = new Set();
 
-poolMod.getPool = () => ({
+// The create route writes a project in one transaction (pool.connect):
+// the same answers, through a client.
+const fakePool = {
+  connect: async () => ({ query: (sql, params) => fakePool.query(sql, params), release() {} }),
   query: async (sql, params) => {
     const s = String(sql);
 
@@ -125,7 +128,8 @@ poolMod.getPool = () => ({
     }
     return { rows: [], rowCount: 0 };
   },
-});
+};
+poolMod.getPool = () => fakePool;
 
 const { appRoutes } = require('../src/routes/apps');
 const express = require('express');
@@ -301,7 +305,12 @@ test('the declaration route holds the value encrypted, never in the clear', () =
     path.join(__dirname, '../src/services/pending-secrets.js'), 'utf8'
   );
   assert.match(pendingJs, /encrypt\(value, dataKey\)/, 'held values are encrypted at rest');
-  assert.match(pendingJs, /SET value_enc = NULL/,
+  // The merge applies the held value inside the merge-followups machine's
+  // transaction (src/workflow/rules/pending-secret-apply.ts).
+  const applyTs = fs.readFileSync(
+    path.join(__dirname, '../src/workflow/rules/pending-secret-apply.ts'), 'utf8'
+  );
+  assert.match(applyTs, /SET status = 'applied', value_enc = NULL,/,
     'and the ciphertext is dropped once the value is live in the real store');
 });
 

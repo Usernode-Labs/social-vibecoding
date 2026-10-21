@@ -1,8 +1,9 @@
 // #2389: in an app's general Discussion, the message you just sent landed
-// under the fold. Two causes, both pinned here:
-//   1. the live append was batched by React, so `scrollToBottom()` on the next
-//      line measured the transcript without the new row;
-//   2. your own message only scrolled when you were already at the bottom.
+// under the fold, because the live append was batched by React, so
+// `scrollToBottom()` on the next line measured the transcript without the
+// new row. #2389 also made your own message always scroll; #4511 retired
+// that: your send follows you when you were at or near the bottom, as
+// anyone's does, and a reader up in the history is left where they are.
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -32,11 +33,18 @@ function setup({ lockedToBottom }) {
 
 const chat = (id, userId) => ({ type: 'chat', id, userId, content: 'hi' });
 
-test('your own message scrolls the general chat to the bottom even when you had scrolled up', () => {
-  const h = setup({ lockedToBottom: false });
+test('your own message scrolls the general chat to the bottom when you were at the bottom', () => {
+  const h = setup({ lockedToBottom: true });
   h.gc.handleIncoming(chat(1, 7));
   assert.deepEqual(h.appended, [1]);
   assert.equal(h.scrolled(), 1);
+});
+
+test('#4511: your own message does not move a reader who had scrolled up into the history', () => {
+  const h = setup({ lockedToBottom: false });
+  h.gc.handleIncoming(chat(5, 7));
+  assert.deepEqual(h.appended, [5]);
+  assert.equal(h.scrolled(), 0);
 });
 
 test('someone else\'s message does not yank a reader who has scrolled up', () => {
@@ -52,10 +60,15 @@ test('someone else\'s message still follows a reader who is at the bottom', () =
   assert.equal(h.scrolled(), 1);
 });
 
-test('the snake_case user_id form counts as your own message too', () => {
-  const h = setup({ lockedToBottom: false });
-  h.gc.handleIncoming({ type: 'chat', id: 4, user_id: 7, content: 'hi' });
-  assert.equal(h.scrolled(), 1);
+test('a reply-thread message in the general stream follows the same rule', () => {
+  const up = setup({ lockedToBottom: false });
+  up.gc._handleThreadIncoming = () => {};
+  up.gc.handleIncoming({ type: 'chat', id: 4, user_id: 7, content: 'hi', thread: { type: 'message', ref: 1 } });
+  assert.equal(up.scrolled(), 0);
+  const down = setup({ lockedToBottom: true });
+  down.gc._handleThreadIncoming = () => {};
+  down.gc.handleIncoming({ type: 'chat', id: 4, user_id: 7, content: 'hi', thread: { type: 'message', ref: 1 } });
+  assert.equal(down.scrolled(), 1);
 });
 
 test('the live append is flushed synchronously, so the scroll measures the new row', () => {

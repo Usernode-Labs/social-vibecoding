@@ -20,6 +20,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { loadTsx } = require('./lib/render-tsx');
+const { message } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
@@ -62,7 +63,8 @@ test('#3270, #3488: the feed\'s rows are a project\'s own Needs you rows, each c
 test('#3488: one feed for both Needs you screens, addressed per row', () => {
   const src = read('frontend/src/features/workshop/needs-reel.tsx');
   assert.match(src, /import \{ NeedsFeed \} from '\.\.\/dev-board\/workshop\/workshop';/);
-  assert.match(src, /<NeedsFeed\s+rows=\{rows\}[\s\S]*?doneLabel="Back to your communities"\s+renderApp=\{ReelApp\}/);
+  assert.match(src, /<NeedsFeed\s+rows=\{rows\}[\s\S]*?doneLabel=\{t\('communities:reel\.done'\)\}\s+renderApp=\{ReelApp\}/);
+  assert.equal(message('communities:reel.done'), 'Back to your communities');
   assert.match(src, /callAppView\('_cardMenuInit'\);/, 'the ⋯ works when this screen is the first opened');
   const lander = read('frontend/src/features/dev-board/workshop/workshop.tsx');
   assert.match(lander, /export function NeedsFeed\(/);
@@ -77,7 +79,8 @@ test('#3488: one feed for both Needs you screens, addressed per row', () => {
   // a hidden screen, where V then Y would cast a vote nobody saw.
   assert.match(lander, /const feed = scrollRef\.current;\n\s*if \(!feed \|\| !feed\.offsetParent\) return;\n\s*const k = e\.key;/);
   // A group decision's vote sheet opens its page instead of two dead buttons.
-  assert.match(lander, /\{row\.yes \|\| row\.no \|\| !cardHref \? \([\s\S]*?<a className="dev-ws-answer-btn dev-ws-answer-open" data-ws-answer-open="" href=\{cardHref\}>Open to decide<\/a>/);
+  assert.match(lander, /\{row\.yes \|\| row\.no \|\| !cardHref \? \([\s\S]*?<a className="dev-ws-answer-btn dev-ws-answer-open" data-ws-answer-open="" href=\{cardHref\}>\{t\('project:needsYou\.voteSheet\.openToDecide'\)\}<\/a>/);
+  assert.equal(message('project:needsYou.voteSheet.openToDecide'), 'Open to decide');
   const css = read('public/css/app.css');
   // The box keeps its floor and its column; its HEIGHT moved out of this rule
   // in #3516 (the phone's comes from the screen's clearance, the desktop's
@@ -126,8 +129,11 @@ test('#3516: on a phone the Communities feed ends where the screen\'s clearance 
   const screen = read('frontend/src/features/workshop/index.tsx');
   assert.match(screen, /id="workshop-screen"\s+className="hidden flex-1 overflow-y-auto platform-safe-scroll"/,
     'the screen scrolls itself and carries the clearance');
-  assert.match(screen, /style=\{\{ position: 'relative' \}\}\s*>\s*\{\/\*[\s\S]*?\*\/\}\s*<div className="max-w-2xl mx-auto pb-8">/,
+  assert.match(screen, /style=\{\{ position: 'relative' \}\}\s*>\s*\{\/\*[\s\S]*?\*\/\}\s*<div className="max-w-2xl mx-auto pb-8" data-workshop-panes="">/,
     'its first element is the column');
+  // v3: the feed is its own page at every width again, as on a phone; from
+  // 1024px it was drawn beside the list (D) until the sidebar nested its
+  // second columns.
   assert.match(screen, /\{state\.tab === 'needs' \? \(\n\s*<div data-workshop-pane="needs">/);
   const reel = read('frontend/src/features/workshop/needs-reel.tsx');
   assert.match(reel, /<>\n\s*<div className="workshop-needs-feed" data-needs-reel="">/, 'the feed is a child of the pane');
@@ -156,6 +162,8 @@ test('#3270: the feed reads the owed populations for member projects only, newes
   assert.deepEqual(shaped, [{
     kind: 'proposal', id: 8, title: 'Sort', summary: null, author: 'ada', number: 12, epoch: 3,
     at: '2026-09-20T10:00:00.000Z', yes: 2, no: 0,
+    // A proposal row without a live preview says so (feedStagingUrl).
+    staging_url: null,
     app: { slug: 'garden', name: 'Garden', icon_url: '/app-icons/abc', icon_emoji: null },
   }]);
   // ?demo=1 on staging: the real rows first, then the demo cards, never twice.
@@ -169,7 +177,9 @@ test('#3270: the feed reads the owed populations for member projects only, newes
 
 test('#3271, #852: the Communities screen\'s header is its switcher, at every width', () => {
   const header = read('frontend/src/features/header/header-title.tsx');
-  assert.match(header, /const allAppsSwitcher = screen === 'workshop-screen';/);
+  // Up to the sidebar of rows (D, 18 Oct 2026), which lists the
+  // communities itself: there the title is the screen's name.
+  assert.match(header, /const allAppsSwitcher = screen === 'workshop-screen' && !sidebarRows;/);
   assert.match(header, /id="header-scope-switch"[\s\S]{0,400}aria-controls="community-switcher"[\s\S]{0,200}onClick=\{\(e\) => toggleSwitcher\('header', e\.currentTarget\)\}/,
     'it opens Your communities (#852)');
   assert.doesNotMatch(header, /usePhone|PHONE_QUERY/, 'no width in it any more');

@@ -360,6 +360,31 @@ test('#17: staging gives mock 900018, and only it, a synthetic bot build; produc
   }
 });
 
+test('#4530: the bot\'s demo door draws one request it waits on an answer for; nothing else, and never in production', async () => {
+  const staging = await startStagingServer();
+  try {
+    const port = staging.address().port;
+    const list = async (qs) => new Map((await (await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues${qs}`)).json())
+      .issues.map((i) => [i.number, i]));
+    const drawn = await list('?demo=1&bot=1');
+    assert.deepEqual(drawn.get(900001).botAwaits, { kind: 'question', messageId: null });
+    for (const [n, issue] of drawn) {
+      if (n !== 900001) assert.strictEqual(issue.botAwaits, null, `#${n} is not waited on`);
+    }
+    assert.ok([...(await list('?demo=1')).values()].every((i) => i.botAwaits === null), 'not without the door');
+  } finally {
+    staging.close();
+  }
+  const prod = await startServer();
+  try {
+    const port = prod.address().port;
+    const res = await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues?demo=1&bot=1`);
+    assert.ok((await res.json()).issues.every((i) => i.botAwaits === null), 'production synthesizes nothing');
+  } finally {
+    prod.close();
+  }
+});
+
 test('staging does not clobber a real headless row on a mock number', async () => {
   poolQueryHandler = async (sql) => {
     const s = String(sql);
@@ -765,7 +790,7 @@ test('production comments endpoint never substitutes mocks (empty stays empty)',
 const BOT_THREAD = [
   { id: 3001, user: { login: 'reporter' }, body: 'Dark mode please.', created_at: '2026-10-02T18:20:00Z' },
   { id: 3002, user: { login: 'usernode-bot' }, body: 'Homeroom bot is looking at this request.', created_at: '2026-10-02T18:24:00Z' },
-  { id: 3003, user: { login: 'usernode-bot' }, body: 'Homeroom bot wrote a spec for this request.', created_at: '2026-10-02T18:27:00Z' },
+  { id: 3003, user: { login: 'usernode-bot' }, body: 'Homeroom bot wrote a plan for this request.', created_at: '2026-10-02T18:27:00Z' },
   { id: 3004, user: { login: 'usernode-bot' }, body: 'Thanks for the report.', created_at: '2026-10-02T18:30:00Z' },
 ];
 
@@ -892,7 +917,7 @@ test('#3693: the staging spec comment is as long as a real one, so the route cli
     const port = server.address().port;
     const res = await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues/900003/comments?demo=1`);
     const body = await res.json();
-    const spec = body.comments.find((c) => /<details><summary>The spec<\/summary>/.test(c.body));
+    const spec = body.comments.find((c) => /<details><summary>The plan<\/summary>/.test(c.body));
     assert.ok(spec, 'the thread carries the bot\'s spec comment');
     assert.match(spec.body, /… \[truncated\]$/, 'clipped, as a real spec is');
     assert.doesNotMatch(spec.body, /<\/details>/, 'with its close cut off');

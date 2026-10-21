@@ -35,6 +35,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -118,10 +119,10 @@ test('the placeholders borrow the REAL row classes, so they cannot drift', () =>
     + 'and the inset separator, all in app.css');
   assert.match(KUDOS, /<div key=\{i\} className=\{ROW\}>/,
     'kudos: ROW, the constant all four of that pane’s lists draw with');
-  assert.match(STANDINGS, /rounded-lg border border-zinc-200 dark:border-zinc-800/,
-    'standings: the table’s own container');
-  assert.match(STANDINGS, /bg-zinc-50 dark:bg-zinc-900/,
-    'and the <thead>’s own ground for the header strip');
+  assert.match(STANDINGS, /className=\{`overflow-hidden \$\{CARD\}`\}/,
+    'standings: CARD, the white card the table itself sits on (#4869)');
+  assert.match(STANDINGS, /className=\{`\$\{RULE\} px-4 py-3 flex items-center gap-3`\}/,
+    'and RULE, the hairline between the real rows');
   assert.match(PROFILE, /rounded-2xl \$\{PLANE_FILL\} p-4 mb-3/,
     'profile: the identity card’s face, verbatim (the plane colour, like Discover)');
   assert.match(PROFILE, /rounded-2xl \$\{PLANE_FILL\} px-2 py-3/,
@@ -154,12 +155,11 @@ test('each stands in for what that screen actually renders', () => {
 // The Leaderboard screen's three tabs are one strip (features/leaderboard/
 // index.tsx), and after the two above were fixed the Challenges tab was still
 // the odd one out — on the tab that #2374 made the screen's DEFAULT section,
-// so its three grey lines ("Loading challenges…", "Loading participants…",
-// "Loading…") were the screen's first impression rather than an inner state.
-//
-// Anchored PER SLOT: three loading branches, in three different components,
-// and a whole-file regex would let any one of them quietly go back to a line
-// of text while the other two kept the suite green.
+// so its grey lines ("Loading challenges…" and the detail page's "Loading
+// participants…" and "Loading…") were the screen's first impression rather
+// than an inner state. The participant list and the profile overlay retired
+// with the Semi design (2026-10-16), so the grid's is the one loading branch
+// left, and the test below holds that no other came back as a line of text.
 
 /** The source between two markers, asserted to exist. */
 function slot(src, from, to) {
@@ -169,33 +169,10 @@ function slot(src, from, to) {
   return src.slice(a, b);
 }
 
-const DETAIL = {
-  key: '5',
-  eyebrow: null,
-  goal: 'Join block production',
-  task: null,
-  illustration: null,
-  illustrationTone: null,
-  deadline: null,
-  amount: null,
-  state: 'progress',
-  stateLabel: '180/500 blocks',
-  fill: 0.36,
-  counted: true,
-  cta: null,
-  description: null,
-  requirements: null,
-  scoring: null,
-  participants: 'Participants · 34',
-  pointsTotal: null,
-  moreLabel: 'Show all 34 →',
-  entries: { kind: 'loading' },
-};
-
 /** The pane, rendered over one store value. */
 function paneHtml(state) {
   const api = loadTsx('tests/fixtures/challenges-pane-api.ts');
-  api.topochainChallengesStore.set({ mounted: true, grid: null, detail: null, profile: null, ...state });
+  api.topochainChallengesStore.set({ mounted: true, grid: null, detail: null, ...state });
   return renderToHtml(createElement(api.ChallengesPane));
 }
 
@@ -210,7 +187,8 @@ const visible = (html) => html.replace(/<div class="sr-only" role="status">[^<]*
 
 test('challenges: the grid stands in for the CARDS, at the card’s own face', () => {
   const src = slot(CHALLENGES, 'function GridSkeleton(', 'function Grid({');
-  assert.match(src, /<SkeletonGroup label="Loading challenges">/, 'one group, one label');
+  assert.match(src, /<SkeletonGroup label=\{t\('leaderboard:challenges\.loading'\)\}>/, 'one group, one label');
+  assert.equal(message('leaderboard:challenges.loading'), 'Loading challenges');
   assert.match(src, /<div className=\{GRID\}>/,
     'the pane’s own grid constant, so the placeholders stand in the columns the cards will');
   assert.match(src, /className=\{CHALLENGE_CARD_FACE\}/,
@@ -225,61 +203,35 @@ test('challenges: the grid stands in for the CARDS, at the card’s own face', (
   assert.match(src, /shape="block" className="h-9 w-full rounded-\[0\.6875rem\]"/,
     'and the rail at the card’s 36px height and 11px corners (RAIL_SIZE.md)');
   assert.match(src, /<Skeleton shape="muted" className="h-\[5px\] w-full rounded-full" \/>/,
-    'the season progress leads, as it does in the loaded grid: without it the '
+    'the summary’s line and bar lead, as they do in the loaded grid: without them the '
     + 'whole grid jumps up by that block’s height when the payload lands');
+  assert.match(src, /<div className="flex min-w-0 items-center justify-between gap-2">/,
+    'the title stands with its points at the right of the same line, as on the card');
 
   const html = visible(paneHtml({ grid: { kind: 'loading' } }));
   assert.doesNotMatch(html, /Loading/, 'and no visible line of text is left');
   assert.match(html, /animate-pulse/, 'the placeholders are drawn instead');
 });
 
-test('challenges: the participant list stands in for the ENTRY ROW', () => {
-  const src = slot(CHALLENGES, 'function EntriesSkeleton(', 'function Entries({');
-  assert.match(src, /<SkeletonGroup label="Loading participants" className="flex flex-col">/,
-    'the list’s own column');
-  assert.match(src, /className=\{ENTRY_BOX\}/,
-    'at the real row’s box — the 44px minimum, the outdent and the padding');
-  assert.match(CHALLENGES, /const ENTRY_BOX = '-mx-2 flex min-h-11 /, 'which is that row’s, split off');
-  assert.match(CHALLENGES, /const ENTRY_ROW = `tc-se-entry \$\{ENTRY_BOX\} `/,
-    'and the row itself is still that box plus its hook and affordances');
-
-  const html = visible(renderToHtml(createElement(loadTsx(CHALLENGES_PATH).DetailPage, { view: DETAIL })));
-  assert.doesNotMatch(html, /Loading/, 'no visible line of text');
-  assert.match(html, /animate-pulse/);
-  assert.doesNotMatch(html, /tc-se-entry/,
-    'and the placeholder does not claim the row’s selector hook');
-});
-
-test('challenges: the profile overlay stands in for the PANEL’s three parts', () => {
-  const src = slot(CHALLENGES, 'function ProfileSkeleton(', 'function ProfileBody({');
-  assert.match(src, /<SkeletonGroup label="Loading the profile">/);
-  assert.match(src, /shape="block" className="h-5 w-40 mb-3"/, 'the name');
-  assert.match(src, /<div className="grid grid-cols-2 gap-2 mb-4">/,
-    'the stat grid’s own two columns and spacing');
-
-  const html = visible(paneHtml({ profile: { kind: 'loading' } }));
-  assert.doesNotMatch(html, /Loading/, 'no visible line of text');
-  assert.match(html, /animate-pulse/);
-});
-
-test('challenges: all three loading branches hand off to a skeleton, and only those', () => {
-  // The branches themselves, so a component that exists but is never returned
-  // cannot pass the three tests above.
-  for (const [where, from, to, call] of [
-    ['the grid', 'function Grid({', 'function Cta(', '<GridSkeleton />'],
-    ['the entries', 'function Entries({', 'function PageSection(', '<EntriesSkeleton />'],
-    ['the profile', 'function ProfileBody({', '// ── The pane', '<ProfileSkeleton />'],
-  ]) {
-    const body = slot(CHALLENGES, from, to);
-    assert.ok(body.includes(`if (view.kind === 'loading') return ${call};`),
-      `${where}: its loading branch returns the skeleton`);
+test('challenges: the grid is the one loading branch, and it hands off to the skeleton', () => {
+  // The branch itself, so a component that exists but is never returned
+  // cannot pass the test above.
+  const body = slot(CHALLENGES, 'function Grid({', 'function Cta(');
+  assert.ok(body.includes("if (view.kind === 'loading') return <GridSkeleton />;"),
+    'the grid: its loading branch returns the skeleton');
+  for (const gone of ['EntriesSkeleton', 'ProfileSkeleton', 'loadingParticipants', 'profile.loading']) {
+    assert.ok(!CHALLENGES.includes(gone), `${gone} is gone with the participants and the profile overlay`);
   }
-  // The three strings this replaced, gone from the code. Comment-stripped,
-  // because each component's note records the line it stands in for.
+  // The strings this replaced, gone from the code. Comment-stripped, because
+  // the component's note records the line it stands in for.
   for (const gone of ['Loading challenges…', 'Loading participants…']) {
     assert.ok(!code(CHALLENGES).includes(gone), `"${gone}" is no longer rendered`);
   }
-  assert.ok(!/>Loading…</.test(code(CHALLENGES)), 'nor the bare "Loading…" the overlay showed');
+  assert.ok(!/>Loading…</.test(code(CHALLENGES)), 'nor a bare "Loading…"');
+  // Two since #3650: the grid's, and the challenge page's "Your invites"
+  // list, which holds three row placeholders while its own read is in flight.
+  assert.equal((CHALLENGES.match(/<SkeletonGroup/g) || []).length, 2,
+    'the pane’s skeleton groups: the grid’s and the invite list’s');
 });
 
 test('a skeleton is never a tap target', () => {
@@ -290,8 +242,8 @@ test('a skeleton is never a tap target', () => {
   // controllers select on.
   for (const [name, src] of [['messages', MESSAGES], ['kudos', KUDOS],
     ['standings', STANDINGS], ['profile', PROFILE], ['challenges', CHALLENGES]]) {
-    // EVERY group in the file, not the first: the Challenges pane has three,
-    // and checking one of three is checking none of the other two.
+    // EVERY group in the file, not the first: a file with several would
+    // otherwise be checked by its first alone.
     let at = src.indexOf('<SkeletonGroup');
     assert.ok(at !== -1, `${name}: has a skeleton at all`);
     for (let n = 0; at !== -1; n += 1, at = src.indexOf('<SkeletonGroup', at + 1)) {

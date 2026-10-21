@@ -32,6 +32,7 @@ const path = require('node:path');
 const { Pool } = require('pg');
 
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
+const { message } = require('./lib/platform-i18n');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL
   || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
@@ -90,7 +91,10 @@ test('a Reading chip the moments missed catches up with the card', () => {
 });
 
 test('what the card and the chip say while it waits', () => {
-  const { BotStatusChip, BotRequestCardView, cardWords, FIRST_VERSION_WAIT_LINE } = loadTsx('frontend/src/features/group-chat/bot-request.tsx');
+  const { BotStatusChip, BotRequestCardView, cardWords } = loadTsx('frontend/src/features/group-chat/bot-request.tsx');
+  // The wait line is the end of a whole catalog message that starts with what was taken.
+  const FIRST_VERSION_WAIT_LINE = message('chat:group.botCard.filed.firstVersionWait', { title: 'X' }).slice('Got it: X. '.length);
+  assert.equal(message('chat:group.botCard.filed.firstVersionWait', { title: 'X' }), `Got it: X. ${WAIT}`);
   assert.equal(FIRST_VERSION_WAIT_LINE, WAIT);
   // The DM card's own words (homeroom-bot-activity.js), in the chat card's typography.
   const { FIRST_VERSION_WAIT_WORDS } = require('../src/services/homeroom-bot-activity');
@@ -124,11 +128,12 @@ test('what the card and the chip say while it waits', () => {
 
 test('the merge wakes the loop for what waited, and its pick-up moves the chat request on', () => {
   const src = read('src/services/homeroom-bot.js');
-  // noteRequestMerged: the first version merged, the loop is woken.
-  assert.match(src, /noteIssueActivity\(\{ appId, issueNumber: Number\(firstVersion\[0\]\.issue_number\), reason: 'first_version_live' \}\);/);
-  // processOne, picking the request up: its chat message reads Reading, and
+  // noteRequestMerged: the first version merged, the lane is asked to
+  // refresh the project soon (bot-lane RefreshAsked), and looks again.
+  assert.match(src, /log\.info\('homeroom-bot', 'A project\\'s first version is live; what waited for it is picked up now', \{\s*sessionId: Number\(merged\.id\), appId, issueNumber: Number\(firstVersion\[0\]\.issue_number\),\s*\}\);\s*refresh = true;\s*\}\s*if \(refresh\) await \(deps\.platform \|\| platform\(\)\)\.botRefresh\(appId\)/);
+  // The look, picking the request up: its chat message reads Reading, and
   // noteRequestStatus pushes the requester's cards (followCards).
-  assert.match(src, /await activity\(\)\.startCard\(pool, \{ app, issueNumber, requester, bot, jobKey: item\.id, settings, deps: \{ dm: deps\.dm \} \}\);\s*\/\/ B9: [^\n]*\n\s*await require\('\.\/homeroom-bot-chat'\)\.noteRequestStatus\(pool, \{ appId: app\.id, issueNumber, status: 'reading' \}\);/);
+  assert.match(src, /await activity\(\)\.startCard\(pool, \{[\s\S]*?deps: \{ dm: deps\.dm \},\s*\}\);\s*\/\/ B9: [^\n]*\n\s*await require\('\.\/homeroom-bot-chat'\)\.noteRequestStatus\(pool, \{ appId: app\.id, issueNumber, status: 'reading' \}\);/);
 });
 
 test('Page Turners, against the full PostgreSQL schema', { timeout: 180000 }, async (t) => {
@@ -144,13 +149,44 @@ test('Page Turners, against the full PostgreSQL schema', { timeout: 180000 }, as
   const url = new URL(DSN); url.pathname = `/${name}`;
   const pool = new Pool({ connectionString: String(url), max: 4 });
   const bot = require('../src/services/homeroom-bot');
+  // A request handed to the bot is owed a look by its bot-request instance
+  // (its queue row the projection), and the lane (bot-lane) grants its
+  // read: the workflow runtime runs here, on this database, its pipeline
+  // only (no timers, no work).
+  const platform = require('../src/workflow/platform.ts');
+  require('../src/db/pool').getPool = () => pool;
   t.after(async () => {
     bot._resetForTests();
+    await platform.stopWorkflow();
     await pool.end();
     await admin.query(`DROP DATABASE ${name}`);
     await admin.end();
   });
   await pool.query(read('src/db/schema.sql'));
+  await platform.startWorkflow({ databaseUrl: String(url), dataEncryptionKey: 'synthetic-key', wfPoolMax: 4, wfSlots: 2 }, { loops: false });
+  // Rows a machine owns (a request's queue row, a proposal's move into
+  // merged) are fixtures here, written as the kernel writes them.
+  const asKernel = async (sql, params) => {
+    const c = await pool.connect();
+    try {
+      await c.query('BEGIN');
+      await c.query("SET LOCAL app.wf_writer = 'transition'");
+      await c.query(sql, params);
+      await c.query('COMMIT');
+    } catch (err) {
+      await c.query('ROLLBACK');
+      throw err;
+    } finally {
+      c.release();
+    }
+  };
+  const until = async (check, what) => {
+    for (let i = 0; i < 200; i += 1) {
+      if (await check()) return;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    assert.fail(`timed out waiting: ${what}`);
+  };
   const user = async (username, synthetic = false) => (await pool.query(
     `INSERT INTO users (username, password, has_platform_access, is_synthetic) VALUES ($1, 'x', TRUE, $2)
      RETURNING id, username, is_synthetic AS "isSynthetic", has_platform_access AS "hasPlatformAccess", is_admin AS "isAdmin"`,
@@ -178,9 +214,7 @@ test('Page Turners, against the full PostgreSQL schema', { timeout: 180000 }, as
     `INSERT INTO platform_settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
     [key, value],
   );
-  await set('homeroom_bot_dm_users', JSON.stringify(['maya', 'priya']));
   await set('homeroom_bot_mode', 'live');
-  await set('homeroom_bot_live_apps', JSON.stringify(['page-turners']));
 
   // Maya's first version, request #1: the bot read it and is building it.
   await pool.query(
@@ -210,6 +244,9 @@ test('Page Turners, against the full PostgreSQL schema', { timeout: 180000 }, as
   const deps = (answer) => ({
     readAsk: async () => answer,
     takeOfferRead: () => true,
+    // The chat's own path for a mention, as it is with the bot's voice off
+    // in chats (homeroom-bot-voice.js answers it otherwise).
+    voice: { enabledFor: async () => false, recordAsk: async () => null, dropAsks: async () => {} },
     github: {
       isEnabled: () => true,
       safeMention: (s) => s,
@@ -231,9 +268,10 @@ test('Page Turners, against the full PostgreSQL schema', { timeout: 180000 }, as
   const framesFor = (id) => frames.filter((f) => f.type === 'bot_request_status' && f.messageId === id);
   const cardsTo = (who) => pushed.filter((p) => p.userId === who.id && p.frame.type === 'bot_request_card').map((p) => p.frame.card);
   const mine = async () => (await botChat.myRequests(pool, { app, user: priya, deps: deps(null) })).cards;
-  const readable = async () => (await bot.liveCandidates(pool, {
-    liveSlugs: [app.slug], excludeAppIds: [], pausedApps: [], busyAppIds: [], botId: botUser.id,
-  })).map((r) => Number(r.issue_number));
+  // What the lane (bot-lane) may grant a read to now, in its order.
+  const { READ_CANDIDATES_SQL } = require('../src/workflow/rules/bot-loop.ts');
+  const readable = async () => (await pool.query(READ_CANDIDATES_SQL, [botUser.id, []])).rows
+    .filter((r) => Number(r.app_id) === Number(app.id)).map((r) => Number(r.issue_number));
   const { cardWords } = loadTsx('frontend/src/features/group-chat/bot-request.tsx');
 
   let booksId;
@@ -262,7 +300,13 @@ test('Page Turners, against the full PostgreSQL schema', { timeout: 180000 }, as
     const { rows: dm } = await pool.query(
       `SELECT content FROM conversation_messages WHERE content LIKE '%request #2%' AND content LIKE '%Filed. Waiting for the first version to go live.%'`,
     );
-    assert.equal(dm.length, 1, 'the DM card says it waits too');
+    // One story: asked in the chat, it still gets its card in her DM with
+    // the bot (every request has one), whose thread says where it came from.
+    assert.equal(dm.length, 1, 'its card in her DM, saying it waits');
+    const { rows: origin } = await pool.query(
+      `SELECT content FROM conversation_messages WHERE content LIKE 'You asked for this in %chat. It''s request #2.'`,
+    );
+    assert.equal(origin.length, 1, 'its thread starts with where it was asked');
     // After a reload (GET my-bot-requests): the same card, and the chip left as it is.
     frames.length = 0;
     const again = (await mine()).find((c) => c.messageId === booksId);
@@ -285,13 +329,13 @@ test('Page Turners, against the full PostgreSQL schema', { timeout: 180000 }, as
     // An admin's Run now is not held, as in the bot's read lane: that card
     // reads as any queued request, and only the held one goes without a time.
     const { rows: [{ reason }] } = await pool.query('SELECT reason FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = 2', [app.id]);
-    await pool.query(`UPDATE homeroom_bot_queue SET reason = 'admin' WHERE app_id = $1 AND issue_number = 2`, [app.id]);
+    await asKernel(`UPDATE homeroom_bot_queue SET reason = 'admin' WHERE app_id = $1 AND issue_number = 2`, [app.id]);
     const byId = new Map((await mine()).map((c) => [c.messageId, c]));
     assert.equal(byId.get(booksId).state.stage, 'reading');
     assert.ok(Number.isFinite(byId.get(booksId).typicalMinutes));
     assert.equal(byId.get(goalId).state.stage, 'waiting_first_version');
     assert.equal(byId.get(goalId).typicalMinutes, undefined, 'no time on the held card, even beside one that has one');
-    await pool.query('UPDATE homeroom_bot_queue SET reason = $2 WHERE app_id = $1 AND issue_number = 2', [app.id, reason]);
+    await asKernel('UPDATE homeroom_bot_queue SET reason = $2 WHERE app_id = $1 AND issue_number = 2', [app.id, reason]);
   });
 
   await t.test('a Reading chip a missed moment left on a held request is put right', async () => {
@@ -322,7 +366,7 @@ test('Page Turners, against the full PostgreSQL schema', { timeout: 180000 }, as
     const { rows: [first] } = await pool.query(
       `SELECT id FROM chat_sessions WHERE app_id = $1 AND linked_issues = ARRAY[1]`, [app.id],
     );
-    await pool.query(`UPDATE chat_sessions SET status = 'merged', merged_at = NOW() WHERE id = $1`, [first.id]);
+    await asKernel(`UPDATE chat_sessions SET status = 'merged', merged_at = NOW(), live_at = NOW() WHERE id = $1`, [first.id]);
     const logger = require('../src/services/logger');
     const said = [];
     const realInfo = logger.info;
@@ -334,10 +378,16 @@ test('Page Turners, against the full PostgreSQL schema', { timeout: 180000 }, as
     }
     assert.ok(said.some((s) => /first version is live; what waited for it is picked up now/.test(s.msg)),
       'the loop is woken for what waited');
-    assert.deepEqual(await readable(), [2, 3], 'both are read now, in their order');
+    // The lane looks again: #2, first in line, is granted the project's one
+    // read (its row started), and #3 is next.
+    const startedAt = async (n) => (await pool.query(
+      'SELECT started_at FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = $2', [app.id, n],
+    )).rows[0]?.started_at ?? null;
+    await until(async () => (await startedAt(2)) != null, '#2 granted its read');
+    assert.equal(await startedAt(3), null);
+    assert.deepEqual(await readable(), [3], 'no longer held: #3 waits only for the project\'s one read');
 
-    // The loop picks #2 up (processOne): claimed, and its chat message told.
-    await pool.query('UPDATE homeroom_bot_queue SET started_at = NOW() WHERE app_id = $1 AND issue_number = 2', [app.id]);
+    // The look on #2 starts: its chat message is told.
     frames.length = 0;
     pushed.length = 0;
     await botChat.noteRequestStatus(pool, { appId: app.id, issueNumber: 2, status: 'reading', deps: deps(null) });

@@ -42,8 +42,8 @@
  *    reason there is no portal here.
  *
  *    ONE React-owned child lives inside it, above Log out: the account block
- *    Me's Admin & moderation row and native wallet / node / staking rows
- *    moved into (./account-rows.tsx). Updates inside a moved node are safe —
+ *    Me's native wallet / node / staking rows moved into (./account-rows.tsx;
+ *    Admin & moderation was there too, and is back on Me since #5281). Updates inside a moved node are safe —
  *    React inserts relative to the footer, a valid parent wherever it is —
  *    and the block renders nothing until mounted, so the prerendered footer
  *    is unchanged.
@@ -61,6 +61,7 @@
 
 import type { ComponentType } from 'react';
 
+import { useMessages } from '../../lib/i18n/react';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useMountedOnReveal } from '../../lib/mount-on-reveal';
 import { useStoreState } from '../../lib/use-store-state';
@@ -85,6 +86,10 @@ interface SettingsChunkState {
 }
 
 export function SettingsScreen() {
+  // Subscribed for the two texts this chassis renders itself. A new language
+  // patches those text nodes only; the footer React must not rebuild stays
+  // the node it was, wherever settings.js has moved it.
+  const t = useMessages('settings');
   // The sixteen panes mount on the screen's FIRST REVEAL, not in the
   // prerender (see lib/mount-on-reveal.ts). They were 437 of the document's
   // 1,485 elements, parsed, styled and hydrated on every load for a screen
@@ -135,14 +140,14 @@ export function SettingsScreen() {
           level-1 menu on a phone, the sidebar from md up — sits on the strip,
           and #settings-section-content rises on it with the section inside.
       */}
-      <div id="settings-root" className="max-w-5xl mx-auto p-4 w-full">
+      <div id="settings-root" className="max-w-5xl mx-auto p-4 md:pt-5 w-full">
         <div className="md:flex md:items-start md:gap-6">
           {/*
               Desktop sidebar menu. Below md there is no nav here at all:
               phones get the two-level hierarchy instead (the level-1 menu
               renders into #settings-mobile-menu-host).
           */}
-          <div id="settings-sidebar-col" className="hidden md:block md:w-56 shrink-0">
+          <div id="settings-sidebar-col" className="hidden md:block md:w-56 shrink-0 dc-lift dc-lift-session settings-side-sheet">
             <SettingsNavDesktop />
             {/*
                 Sign out is pinned below the section list rather than buried
@@ -162,7 +167,7 @@ export function SettingsScreen() {
                 id="settings-logout"
                 className="w-full rounded-full bg-red-500/10 px-4 py-2.5 text-[17px] font-semibold text-red-700 dark:text-red-400 hover:bg-red-500/15 transition-colors disabled:opacity-60 disabled:cursor-default disabled:hover:bg-red-500/10"
               >
-                Sign out
+                {t('settings:screen.signOut')}
               </button>
             </div>
           </div>
@@ -182,7 +187,7 @@ export function SettingsScreen() {
               {mounted && Sections ? <Sections /> : null}
               {mounted && !Sections && failed ? (
                 <p className="text-sm text-zinc-500 dark:text-zinc-400 p-4">
-                  Settings could not be loaded. Check your connection and try again.
+                  {t('settings:screen.loadFailed')}
                 </p>
               ) : null}
             </div>

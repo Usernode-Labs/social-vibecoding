@@ -5,11 +5,12 @@
 // alongside a matching container. Clones whose container was already gone
 // accumulated forever — production reached 3,479 staging DBs (198 GB) with 8
 // live previews by 2026-07-30. The sweep reconciles the other direction:
-// enumerate `%_staging_%` databases and drop the ones no session, in-flight
-// build, or client connection can reach.
+// enumerate `%_staging_%` databases and drop the ones no live preview, no
+// session the preview machine holds (its attempts' databases exist before
+// staging_url points at them), and no client connection can reach.
 //
-// All db-manager / staging / pool work is stubbed via require.cache (same
-// pattern as tests/staging-reap.test.js), so no real DB is touched.
+// All db-manager / pool work is stubbed via require.cache (same pattern as
+// tests/staging-reap.test.js), so no real DB is touched.
 //
 // Run with: node --test tests/staging-orphan-db-sweep.test.js
 
@@ -23,7 +24,6 @@ function stub(id, exports) {
 const ids = {
   logger: require.resolve('../src/services/logger'),
   docker: require.resolve('../src/services/docker'),
-  staging: require.resolve('../src/services/staging'),
   dbManager: require.resolve('../src/services/db-manager'),
   events: require.resolve('../src/services/events'),
   ws: require.resolve('../src/services/ws'),
@@ -37,13 +37,20 @@ let fx;
 function freshFixture() {
   return {
     dropped: [],
+    dropOptions: [],
+    previewServer: null,
+    retired: 0,
     dropError: null,
-    inFlight: new Set(),
-    // pg_database rows / live sessions / connected datnames served by the
-    // mock pool, mutated per test.
+    // pg_database rows / live (or machine-held) sessions / connected
+    // datnames served by the mock pool, mutated per test.
     dbRows: [],
     liveSessionRows: [],
     connectedRows: [],
+    // What the per-database recheck just before a drop sees on top of the
+    // census: sessions that went live (or the machine took) since, and
+    // databases a client connected to since.
+    liveSinceCensus: new Set(),
+    connectedSinceCensus: new Set(),
   };
 }
 
@@ -55,20 +62,44 @@ function loadReap() {
   stub(ids.events, { record: () => {}, EVENT_TYPES: {} });
   stub(ids.ws, { broadcastToAdmins: () => {} });
   stub(ids.stagingEnv, { expectedStagingFingerprint: () => 'fp' });
-  stub(ids.staging, {
-    hasInFlightBuild: (sessionId) => fx.inFlight.has(Number(sessionId)),
-  });
   stub(ids.dbManager, {
-    dropDatabase: async (dbName) => {
+    dropDatabase: async (dbName, options) => {
       if (fx.dropError) throw new Error(fx.dropError);
       fx.dropped.push(dbName);
+      fx.dropOptions.push(options);
     },
+    // A second server for preview databases (STAGING_DB_ADMIN_URL). Absent
+    // unless a test sets fx.previewServer.
+    PRIMARY_SERVER: 'primary',
+    PREVIEW_SERVER: 'preview',
+    previewServerConfigured: () => !!fx.previewServer,
+    listPreviewServerStagingDatabases: async () => {
+      if (fx.previewServer.error) throw new Error(fx.previewServer.error);
+      return { dbNames: fx.previewServer.dbNames, connectedDbNames: new Set(fx.previewServer.connected || []) };
+    },
+    previewServerDatabaseHasSessions: async (dbName) =>
+      (fx.previewServer.connected || []).includes(dbName) || fx.connectedSinceCensus.has(dbName),
+    retireStrayTemplates: async () => { fx.retired += 1; return { examined: 0, dropped: 0, failed: 0 }; },
   });
   stub(ids.pool, {
     getPool: () => ({
-      query: async (sql) => {
+      query: async (sql, params) => {
         if (/pg_database/.test(sql)) return { rows: fx.dbRows };
-        if (/staging_url IS NOT NULL/.test(sql)) return { rows: fx.liveSessionRows };
+        // The recheck of one session / one database just before its drop.
+        if (params && /staging_url IS NOT NULL/.test(sql)) {
+          assert.match(sql, /wf_instances/, 'the recheck counts the sessions the machine holds');
+          const id = Number(params[0]);
+          const live = fx.liveSessionRows.some((r) => Number(r.id) === id) || fx.liveSinceCensus.has(id);
+          return { rows: live ? [{ '?column?': 1 }] : [] };
+        }
+        if (params && /pg_stat_activity/.test(sql)) {
+          const on = fx.connectedRows.some((r) => r.datname === params[0]) || fx.connectedSinceCensus.has(params[0]);
+          return { rows: on ? [{ '?column?': 1 }] : [] };
+        }
+        if (/staging_url IS NOT NULL/.test(sql)) {
+          assert.match(sql, /wf_instances/, 'the census counts the sessions the machine holds as live');
+          return { rows: fx.liveSessionRows };
+        }
         if (/pg_stat_activity/.test(sql)) return { rows: fx.connectedRows };
         throw new Error(`unexpected query: ${sql}`);
       },
@@ -89,12 +120,13 @@ test('drops only unreachable staging clones; every guard holds one back', () => 
       'app_whiteboard_0d337f_staging_s12_ab12cd',   // orphan (hex tag)
       'app_usernode_2d5619_staging_s494_latest',    // orphan ('latest' tag)
       'app_usernode_2d5619_staging_s2823_e1f2a3',   // live preview → keep
-      'app_guardian_2_99eba3_staging_s77_9908aa',   // build in flight → keep
+      'app_guardian_2_99eba3_staging_s77_9908aa',   // held by the preview machine → keep
       'app_opinion_market_eb3f76_staging_s50_fb1931', // connected → keep
     ],
-    liveSessionIds: new Set([2823]),
+    // The census reads both into one set: staging_url set, or held by the
+    // preview machine (a build under way).
+    liveSessionIds: new Set([2823, 77]),
     connectedDbNames: new Set(['app_opinion_market_eb3f76_staging_s50_fb1931']),
-    hasInFlightBuild: (id) => id === 77,
   });
   assert.deepEqual(orphans, [
     'app_whiteboard_0d337f_staging_s12_ab12cd',
@@ -114,7 +146,6 @@ test('a live session keeps ALL its clones, not just the URL-derived one', () => 
     ],
     liveSessionIds: new Set([100]),
     connectedDbNames: new Set(),
-    hasInFlightBuild: () => false,
   });
   assert.deepEqual(orphans, []);
 });
@@ -131,7 +162,6 @@ test('never touches names that do not parse as staging clones', () => {
     ],
     liveSessionIds: new Set(),
     connectedDbNames: new Set(),
-    hasInFlightBuild: () => false,
   });
   assert.deepEqual(orphans, []);
 });
@@ -154,6 +184,75 @@ test('sweep drops orphans via dbManager and reports a summary', async () => {
   assert.equal(summary.dropped, 2);
   assert.equal(summary.failed, 0);
   assert.deepEqual(fx.dropped, ['app_a_staging_s1_aaaaaa', 'app_b_staging_s2_bbbbbb']);
+});
+
+test('the census is rechecked before each drop: a session that went live or a client that connected since keeps its database', async () => {
+  const reap = loadReap();
+  fx.dbRows = [
+    { datname: 'app_a_staging_s1_aaaaaa' },
+    { datname: 'app_b_staging_s2_bbbbbb' },
+    { datname: 'app_c_staging_s3_cccccc' },
+  ];
+  fx.liveSinceCensus = new Set([1]);                         // the machine started building
+  fx.connectedSinceCensus = new Set(['app_b_staging_s2_bbbbbb']);
+
+  const summary = await reap.sweepOrphanDbs({});
+  assert.equal(summary.orphaned, 3, 'all three looked orphaned at the census');
+  assert.equal(summary.dropped, 1);
+  assert.equal(summary.failed, 0, 'a database held back is not a failure');
+  assert.deepEqual(fx.dropped, ['app_c_staging_s3_cccccc']);
+});
+
+test('one server: each drop is the plain call it always was', async () => {
+  const reap = loadReap();
+  fx.dbRows = [{ datname: 'app_a_staging_s1_aaaaaa' }];
+  await reap.sweepOrphanDbs({});
+  assert.deepEqual(fx.dropOptions, [undefined]);
+  assert.equal(fx.retired, 0);
+});
+
+test('with a preview server, each server is classified on its own and each orphan is dropped where it was found', async () => {
+  const reap = loadReap();
+  // Main server: one orphan from before the switch, and a database a client
+  // is still connected to.
+  fx.dbRows = [
+    { datname: 'app_a_staging_s1_aaaaaa' },
+    { datname: 'app_b_staging_s2_bbbbbb' },
+  ];
+  fx.connectedRows = [{ datname: 'app_b_staging_s2_bbbbbb' }];
+  fx.liveSessionRows = [{ id: 5 }];
+  // Preview server: an orphan, a live preview, one with a client on it, and
+  // the same name as the main server's connected database, idle here.
+  fx.previewServer = {
+    dbNames: [
+      'app_c_staging_s3_cccccc',
+      'app_d_staging_s5_dddddd',
+      'app_e_staging_s6_eeeeee',
+      'app_b_staging_s2_bbbbbb',
+      'app_c_stgtmpl',
+    ],
+    connected: ['app_e_staging_s6_eeeeee'],
+  };
+
+  const summary = await reap.sweepOrphanDbs({});
+  assert.equal(summary.examined, 7);
+  assert.equal(summary.dropped, 3);
+  const drops = fx.dropped.map((name, i) => `${name}@${fx.dropOptions[i].server}`);
+  assert.deepEqual(drops, [
+    'app_c_staging_s3_cccccc@preview',
+    'app_b_staging_s2_bbbbbb@preview',
+    'app_a_staging_s1_aaaaaa@primary',
+  ], 'the copy of s2 still in use on the main server is not reached by the preview server\'s drop');
+  assert.equal(fx.retired, 1, 'stray templates are retired in the same pass');
+});
+
+test('a preview server that cannot be listed is skipped; the main server is still swept', async () => {
+  const reap = loadReap();
+  fx.dbRows = [{ datname: 'app_a_staging_s1_aaaaaa' }];
+  fx.previewServer = { error: 'connection refused' };
+  const summary = await reap.sweepOrphanDbs({});
+  assert.equal(summary.dropped, 1);
+  assert.deepEqual(fx.dropOptions, [{ server: 'primary' }]);
 });
 
 test('sweep respects the per-pass limit and defers the rest', async () => {
@@ -189,16 +288,38 @@ test('sweep is a no-op inside a staging preview', async () => {
   }
 });
 
-test('orphanDbSweepDue: due once per interval, 0 disables', async () => {
+// The pass is the preview-orphan-dbs clock's run (src/workflow/clock/
+// services.ts): one at a time across every process, on the orphan-DB
+// interval. 0 is a kill switch, not a zero-delay.
+test('the preview-orphan-dbs clock runs the sweep on its interval, and 0 switches it off', async () => {
   const reap = loadReap();
-  assert.equal(reap.orphanDbSweepDue(), true);
-  await reap.sweepOrphanDbs({});           // arms the throttle
-  assert.equal(reap.orphanDbSweepDue(), false);
-
-  process.env.STAGING_ORPHAN_DB_SWEEP_INTERVAL_MS = '0';
+  fx.dbRows = [{ datname: 'app_a_staging_s1_aaaaaa' }];
+  // tests/lib/test-net.js switches the sweep off for every test process (it
+  // would otherwise drop a copy another file is building); this test is
+  // about the default, so it clears that and puts it back afterwards.
+  const savedInterval = process.env.STAGING_ORPHAN_DB_SWEEP_INTERVAL_MS;
+  delete process.env.STAGING_ORPHAN_DB_SWEEP_INTERVAL_MS;
   try {
-    assert.equal(reap.orphanDbSweepDue(), false);
+    const { JOBS } = require('../src/workflow/clock/services.ts');
+    const job = JOBS.find((j) => j.name === 'preview-orphan-dbs');
+    assert.ok(job, 'the preview-orphan-dbs clock exists');
+    assert.equal(reap.orphanDbSweepIntervalMs(), 6 * 60 * 60 * 1000, 'every six hours by default');
+    assert.equal(job.everyMs, reap.orphanDbSweepIntervalMs());
+    assert.equal(job.item, undefined, 'a drop is preconditioned on what it read: safe to run twice, no targets');
+
+    const summary = await job.run({ input: {} }, { config: {}, pool: null });
+    assert.equal(summary.dropped, 1);
+    assert.deepEqual(fx.dropped, ['app_a_staging_s1_aaaaaa']);
+
+    process.env.STAGING_ORPHAN_DB_SWEEP_INTERVAL_MS = '0';
+    assert.equal(reap.orphanDbSweepIntervalMs(), 0);
+    fx.dropped = [];
+    assert.deepEqual(await job.run({ input: {} }, { config: {}, pool: null }), { off: true });
+    assert.deepEqual(fx.dropped, [], 'switched off, it drops nothing');
+    process.env.STAGING_ORPHAN_DB_SWEEP_INTERVAL_MS = 'banana';
+    assert.equal(reap.orphanDbSweepIntervalMs(), 6 * 60 * 60 * 1000, 'junk falls back to the default');
   } finally {
-    delete process.env.STAGING_ORPHAN_DB_SWEEP_INTERVAL_MS;
+    if (savedInterval === undefined) delete process.env.STAGING_ORPHAN_DB_SWEEP_INTERVAL_MS;
+    else process.env.STAGING_ORPHAN_DB_SWEEP_INTERVAL_MS = savedInterval;
   }
 });

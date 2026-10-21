@@ -235,6 +235,12 @@ function seasonsRows(sql, params) {
 
 function handleQuery(rawSql, params = []) {
   const sql = collapse(rawSql);
+
+  // The 18+ check in front of zkpassport/complete (#5095): every fixture
+  // account here has said yes; tests/adult-attestation.test.js covers a no.
+  if (sql.includes('adult_attested_at IS NOT NULL AS attested FROM users')) {
+    return { rows: [{ attested: true }] };
+  }
   if (sql.startsWith('/* challenge onboarding */')) return { rows: [] };
 
   if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') return { rows: [] };
@@ -291,11 +297,12 @@ function handleQuery(rawSql, params = []) {
   }
 
   // ── GET /challenges: the user's own activities on the in-scope ids ──────
-  if (sql.startsWith('SELECT challenge_id, points, description, activity_at FROM user_activities')) {
+  if (sql.startsWith('SELECT challenge_id, points, description, activity_at, metadata FROM user_activities')) {
     const [userId, ids] = params;
     const rows = userActivities
       .filter((a) => a.user_id === userId && ids.includes(a.challenge_id))
-      .map((a) => ({ challenge_id: a.challenge_id, points: a.points, description: a.description || null, activity_at: a.activity_at }));
+      .map((a) => ({ challenge_id: a.challenge_id, points: a.points, description: a.description || null,
+        activity_at: a.activity_at, metadata: a.metadata }));
     return { rows };
   }
 
@@ -506,6 +513,7 @@ test('GET /challenges: event scope — effective merge, category uppercase, cta_
     // carol has one existing completion of challenge 1 (the idempotency fixture).
     assert.equal(item.activities.length, 1);
     assert.equal(item.activities[0].points, 10);
+    assert.equal(item.activities[0].activity_time_precision, 'instant');
     assert.equal(item.activities_total, 10);
   });
 });

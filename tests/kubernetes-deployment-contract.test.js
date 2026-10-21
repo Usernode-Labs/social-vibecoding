@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const path = require('node:path');
 
 const read = (path) => fs.readFileSync(path, 'utf8');
 
@@ -48,6 +49,35 @@ test('Kubernetes platform image builds and contains the generated shell assets',
   assert.doesNotMatch(shellStage, /RUN npm ci/,
     'asset dependencies must stay outside the generated-output snapshot');
 
+  // The commit id sits BELOW the two expensive steps. A build arg above a RUN
+  // is part of that step's cache key, so with GIT_SHA above them every commit
+  // rebuilt the bundle and the stylesheet whatever it had changed: 167 of 167
+  // preview builds in the logs this order was measured against. Nothing above
+  // the id may read it, and everything that does comes after it.
+  const order = (needle) => {
+    const at = shellStage.indexOf(needle);
+    assert.ok(at > -1, `the shell stage must contain \`${needle}\``);
+    assert.equal(shellStage.indexOf(needle, at + 1), -1, `the shell stage must contain \`${needle}\` once`);
+    return at;
+  };
+  const bundle = order('node frontend/scripts/build-shell.mjs --keep-prerender');
+  const css = order('node scripts/build-tailwind.js');
+  const commitArg = order('ARG GIT_SHA=dev');
+  const commitEnv = order('ENV GIT_SHA=$GIT_SHA');
+  const document = order('node frontend/scripts/build-shell.mjs --document');
+  const release = order('RUN node scripts/build-shell-release.js');
+  const precompress = order('RUN node scripts/precompress-static-assets.js');
+  assert.ok(bundle < css && css < commitArg,
+    'the Vite passes and Tailwind run before GIT_SHA is declared, so a commit that left their inputs alone can reuse them');
+  assert.ok(commitArg < commitEnv && commitEnv < document,
+    'the document this build serves is written with the commit id');
+  assert.ok(document < release && release < precompress,
+    'the release file and the precompressed copies describe that final document');
+  assert.equal(shellStage.split('build-shell.mjs').length - 1, 2,
+    'the shell build runs twice in this stage: the bundle, then the document. A plain third run would redo Vite under the commit id');
+  assert.match(shellStage, /from=asset-deps[^\n]+node_modules[^\n]+\\\n\s+node frontend\/scripts\/build-shell\.mjs --document/,
+    'the document step renders with the prerender bundle, which loads react from the dependency stage');
+
   const runtime = dockerfile.slice(dockerfile.lastIndexOf('\nFROM node:22-alpine\n'));
   assert.doesNotMatch(runtime, /^COPY --chown=node:node \. \.$/m,
     'the runtime image must not ship tests, docs, or builder sources');
@@ -56,6 +86,7 @@ test('Kubernetes platform image builds and contains the generated shell assets',
     'COPY --chown=node:node src ./src',
     'COPY --chown=node:node scripts ./scripts',
     'COPY --chown=node:node worker ./worker',
+    'COPY --chown=node:node app-templates ./app-templates',
     'COPY --chown=node:node --from=shell /build/public ./public',
   ]) {
     assert.ok(runtime.includes(source), `${source} must be present in the runtime stage`);
@@ -63,6 +94,40 @@ test('Kubernetes platform image builds and contains the generated shell assets',
   assert.doesNotMatch(runtime, /^COPY .*frontend/m);
   assert.doesNotMatch(runtime, /^COPY .*tests/m);
   assert.doesNotMatch(runtime, /^COPY .*docs/m);
+});
+
+test('Kubernetes platform image ships every directory the server reads beside src/', () => {
+  // The runtime stage copies a list, not the whole tree, so a top-level
+  // directory that src/ reads by path is missing in production unless it is
+  // on that list. app-templates/ was not: every ready-made app and game
+  // starter failed to create with "ENOENT: scandir '/app/app-templates/…'"
+  // while Dockerfile, which copies everything, and every test were fine.
+  const dockerfile = read('Dockerfile.kubernetes');
+  const runtime = dockerfile.slice(dockerfile.lastIndexOf('\nFROM node:22-alpine\n'));
+  const shipped = new Set();
+  for (const [, args] of runtime.matchAll(/^COPY (.+)$/gm)) {
+    const parts = args.split(/\s+/).filter((a) => !a.startsWith('--'));
+    const dest = parts.pop();
+    if (dest === './') for (const p of parts) shipped.add(path.basename(p));
+    else shipped.add(dest.replace(/^\.\//, '').split('/')[0]);
+  }
+
+  const root = path.resolve(__dirname, '..');
+  const reads = [];
+  for (const rel of fs.readdirSync(path.join(root, 'src'), { recursive: true })) {
+    // The CLI runs from a developer's checkout, never in this image.
+    if (!rel.endsWith('.js') || rel.startsWith(`cli${path.sep}`)) continue;
+    const file = path.join(root, 'src', rel);
+    for (const [call] of read(file).matchAll(/path\.(?:join|resolve)\(__dirname(?:,\s*'[^']*')+/g)) {
+      const segments = [...call.matchAll(/'([^']*)'/g)].map((m) => m[1]);
+      const top = path.relative(root, path.resolve(path.dirname(file), ...segments)).split(path.sep)[0];
+      if (top && top !== 'src' && top !== '..') reads.push([top, path.relative(root, file)]);
+    }
+  }
+  assert.ok(reads.some(([top]) => top === 'app-templates'), 'the scan finds services/app-templates.js');
+  for (const [top, from] of reads) {
+    assert.ok(shipped.has(top), `${from} reads ${top}/, which the runtime stage does not copy`);
+  }
 });
 
 test('Kubernetes platform image keeps the npm download cache out of both dependency layers', () => {
@@ -83,7 +148,14 @@ test('Kubernetes platform image keeps the npm download cache out of both depende
 test('Docker keeps boot migrations while Kubernetes can delegate them to a Job', () => {
   const source = read('server.js');
   assert.match(source, /RUN_MIGRATIONS_ON_STARTUP !== 'false'/);
-  assert.match(source, /migration = await withMigrationLock\(getPool\(config\), \(\) => migrate\(config\)\)/);
+  assert.match(source, /migration = await withMigrationLock\(getPool\(config\), async \(\) => \{\n\s*const result = await migrate\(config\);/);
+  // The read-only database roles go with the schema, by the new build,
+  // before any Pod of the release: the Job does both (services/db-roles.js).
+  const job = read('scripts/migrate-kubernetes.js');
+  assert.ok(job.indexOf('await migrate(config)') < job.indexOf("require('../src/services/db-roles').ensureRoles(config)"),
+    'the migration Job sets the roles up after the schema');
+  assert.ok(!/ensureRole\(|ensureConsoleRole\(/.test(source.slice(source.indexOf('async function becomeLeader()'), source.indexOf('async function start()'))),
+    'and no leader does at its election');
 });
 
 test('startup diagnostics expose coarse public-safe phases through health', () => {
@@ -109,7 +181,7 @@ test('self-app previews skip production fleet role maintenance', () => {
   assert.ok(start > -1 && end > start, 'per-app role migration function is located');
   const body = migrate.slice(start, end);
   const stagingGuard = body.indexOf("if (process.env.USERNODE_ENV === 'staging')");
-  const fleetQuery = body.indexOf('SELECT id, slug, container_id');
+  const fleetQuery = body.indexOf('SELECT id, slug, name, container_id');
   assert.ok(stagingGuard > -1 && stagingGuard < fleetQuery,
     'the preview returns before reading or administering production child apps');
   assert.match(body, /Per-app role migration skipped in staging preview/);
@@ -155,15 +227,13 @@ test('Kubernetes enables before & after shots by default with one explicit kill 
     'Helm default treats boolean false as empty and would defeat the kill switch');
 });
 
-test('Kubernetes passes the workflow flags through, off by default', () => {
+test('Kubernetes passes no workflow flag: every machine is the only path for what it decides', () => {
   const platform = read('deploy/helm/social-vibecoding-platform/templates/platform.yaml');
   const values = read('deploy/helm/social-vibecoding-platform/values.yaml');
-  assert.match(values, /workflowGovernanceEnabled: false/);
-  assert.match(platform,
-    /name: WF_GOVERNANCE_ENABLED, value: \{\{ \.Values\.platform\.workflowGovernanceEnabled \| quote \}\}/);
-  assert.match(values, /workflowMergeFollowupsEnabled: false/);
-  assert.match(platform,
-    /name: WF_MERGE_FOLLOWUPS_ENABLED, value: \{\{ \.Values\.platform\.workflowMergeFollowupsEnabled \| quote \}\}/);
+  assert.doesNotMatch(platform, /WF_GOVERNANCE_ENABLED|WF_PREVIEWS_ENABLED|PREVIEW_LIFECYCLE_ENABLED/);
+  assert.doesNotMatch(platform, /WF_MERGE_FOLLOWUPS_ENABLED|WF_APP_DELIVERY_ENABLED|WF_OWNERSHIP_MODE/);
+  assert.doesNotMatch(values, /workflowPreviewsEnabled|previewLifecycleEnabled|workflowGovernanceEnabled/);
+  assert.doesNotMatch(values, /workflowMergeFollowupsEnabled|workflowAppDeliveryEnabled/);
 });
 
 test('Kubernetes workflow resolves all three images before publishing a release', () => {
@@ -245,7 +315,7 @@ test('Kubernetes workflow retains queued releases, publishes the tip, and never 
   // The tip too (7 October: four rollouts in sixteen minutes) goes out no
   // sooner than RELEASE_MIN_GAP_MINUTES after the release before it: it waits
   // in the step, re-reading the branch, and a dispatched run never waits.
-  assert.match(release, /RELEASE_MIN_GAP_MINUTES: '10'/);
+  assert.match(release, /RELEASE_MIN_GAP_MINUTES: '4'/);
   assert.match(release, /\[ "\$GITHUB_EVENT_NAME" != workflow_dispatch \] \\\n\s+\|\| decide true/,
     'a run dispatched by hand is the way to release at once');
   assert.match(release, /sleep \$\(\( wait_until - now < 30 \? wait_until - now : 30 \)\)\n\s+current_sha="\$\(branch_tip\)"/,

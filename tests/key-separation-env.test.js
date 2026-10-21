@@ -113,10 +113,10 @@ function poisonedConfig() {
   };
 }
 
-test('appIdentityEnv emits only the public key (twice), the shim and the app id', () => {
+test('appIdentityEnv emits only the public key (twice), the shim, the app id and its slug and name', () => {
   const env = appIdentityEnv({ id: 7 }, poisonedConfig());
   assert.deepEqual(Object.keys(env).sort(),
-    ['IFRAME_JWT_PUBLIC_KEY', 'JWT_SECRET', 'USERNODE_APP_ID', 'USERNODE_JWT_PUBLIC_KEY']);
+    ['IFRAME_JWT_PUBLIC_KEY', 'JWT_SECRET', 'USERNODE_APP_ID', 'USERNODE_APP_NAME', 'USERNODE_APP_SLUG', 'USERNODE_JWT_PUBLIC_KEY']);
   assertNoLeak('appIdentityEnv', env);
 });
 
@@ -496,7 +496,6 @@ const BUILDERS = [
   'src/services/app-creator.js',
   'src/services/staging.js',
   'src/services/app-respawn.js',
-  'src/routes/sessions.js',
   'src/services/worker.js',
   'src/services/in-loop-browser.js',
 ];
@@ -513,22 +512,24 @@ test('no container-env builder mentions a host-only platform key in code', () =>
   }
 });
 
-test('all five app-container env builders go through the shared helper', () => {
-  // Drift between the five builders is the historical failure mode this
-  // helper exists to prevent; if one stops using it, the leak checks
-  // above stop covering that builder's identity env.
+test('all three app-container env builders go through the shared helper', () => {
+  // Drift between the builders is the historical failure mode this helper
+  // exists to prevent; if one stops using it, the leak checks above stop
+  // covering that builder's identity env. (routes/sessions.js was a fifth
+  // until its inline Docker staging build went: every preview is the
+  // preview machine's now, built through staging.js.)
   //
-  // #851 moved ONE of the six spreads behind a second helper: staging.js's
+  // #851 moved ONE of the spreads behind a second helper: staging.js's
   // preview path now spreads staging-env.platformStagingEnv, which spreads
   // appIdentityEnv itself (so the same env can be fingerprinted into a
   // container label). staging.js therefore has one direct spread left — the
   // production rebuild — and the preview half is covered via staging-env.js.
+  // (app-creator.js was another until a project's first deploy became
+  // app delivery's, staging.js's production deploy.)
   const expected = {
-    'src/services/app-creator.js': 1,
     'src/services/staging.js': 1,
     'src/services/staging-env.js': 1,
     'src/services/app-respawn.js': 1,
-    'src/routes/sessions.js': 1,
   };
   for (const [rel, count] of Object.entries(expected)) {
     const code = stripComments(read(rel));

@@ -50,9 +50,9 @@ test('every Journey route has a labelled demo payload with the real shape', asyn
     const keys = Object.keys(body).filter((k) => k !== 'demo').sort();
     assert.deepEqual(keys, Object.keys(pinned[key]).sort(), `${key}: same top-level keys as the real payload`);
   }
-  // The first mile's onboard column: Getting started as x of n per person,
-  // no card for the one stuck before the join screen, nothing without an
-  // account.
+  // The first mile's onboard column: the first-run list as x of n per
+  // person, none for the one stuck before the join screen, nothing without
+  // an account.
   const mile = await (await fetch(`${base}/api/admin/journey/first-mile?admitted=2026-10-05&demo=1`)).json();
   assert.deepEqual(mile.people.map((p) => p.onboard && (p.onboard.shown ? `${p.onboard.done}/${p.onboard.total}` : 'no card')),
     ['3/5', '1/5', 'no card', null]);
@@ -78,6 +78,10 @@ test('every Journey route has a labelled demo payload with the real shape', asyn
   assert.equal(creation.weeks.length, 8);
   assert.equal(creation.weeks[0].steps.find((x) => x.key === 'running').reached.recorded, false,
     'a week before the record began reads "not recorded", never 0');
+  // #4895: where the time to running went, per stage and per newest project.
+  assert.equal(creation.timing.of, 5);
+  assert.equal(creation.timing.stages.find((x) => x.key === 'build').medianMs, 69000);
+  assert.ok(creation.examples.every((x) => x.timing && x.timing.stages.build > 0));
   const cohort = await (await fetch(`${base}/api/admin/journey/creation?demo=1&cohort=2026-10-05`)).json();
   assert.ok(cohort.examples.every((x) => [900101, 900102, 900103].includes(x.userId)), 'a cohort narrows the examples');
   const allTime = await (await fetch(`${base}/api/admin/journey/creation?demo=1&week=all`)).json();

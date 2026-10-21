@@ -163,14 +163,27 @@ test('a create names its own new repository', () => {
   'a local build with no GitHub gets no pointer');
 
   const creator = read('src/services/app-creator.js');
-  assert.match(creator, /repoUrl = repo\.html_url;[\s\S]{0,300}getTemplateFiles\(name, slug, dbUrl, repoUrl[,)]/,
+  // No database URL (#4895): none goes into a repository, and the database
+  // is made beside the repository rather than before it.
+  assert.match(creator, /const repoUrl = repo\.html_url;[\s\S]{0,400}const files = starterFiles\(row, \{ repoUrl, sketch \}\);/,
     'the GitHub create passes the repository it just made');
+  assert.match(creator, /return getTemplateFiles\(row\.name, row\.slug, null, repoUrl, \{/);
+});
+
+// #4895: the database and the repository are made side by side, which holds
+// only while the starter carries no database URL: the repository is public.
+test('the starter writes no database URL, so it does not wait for the database', () => {
+  const secret = 'postgres://app_demo:hunter2-not-real@db.internal:5432/app_demo';
+  const withUrl = template.getTemplateFiles('Demo', 'demo', secret, 'https://github.com/usernode-bot/demo');
+  const without = template.getTemplateFiles('Demo', 'demo', null, 'https://github.com/usernode-bot/demo');
+  assert.ok(!withUrl.some((f) => f.content.includes('hunter2-not-real')), 'no file carries it');
+  assert.deepEqual(withUrl, without, 'the files are the same either way');
 });
 
 test('an import adds the pointer with the scaffold', () => {
   const creator = read('src/services/app-creator.js');
-  const start = creator.indexOf('} else if (repoUrl) {');
-  const branch = creator.slice(start, creator.indexOf('// 3. Clone (or write)', start));
+  const start = creator.indexOf('async function scaffoldImport(row) {');
+  const branch = creator.slice(start, creator.indexOf('\n}\n', start));
   assert.match(branch, /getCanonicalRepoFile\(repoUrl\)/);
   assert.match(branch, /\.\.\.getConnectorScaffoldFiles\(\),\s*\.\.\.\(canonicalRepoFile \? \[canonicalRepoFile\] : \[\]\)/);
 });

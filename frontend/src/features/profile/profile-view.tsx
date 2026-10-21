@@ -7,11 +7,14 @@
  * to assert on this screen's behaviour — it has no JSX transform, so a decision
  * expressed in this file would be a decision no test could reach.
  *
- * Me is the navigation prototype's Me (`scrMe`), as the UI overhaul left it:
- * the profile card, three stat cards, then two lists of rows with a line under
- * each, "Your work" and "More" (./account-panel.tsx) — see
- * ./profile-store.js's header for where each part of the older, longer
- * Profile went.
+ * Me is the navigation prototype's Me (`scrMe`), regrouped by the navigation
+ * review: the profile card and three stat cards, then the row lists of
+ * ./account-panel.tsx — "Your work", "Rewards" (Challenges & standings,
+ * Kudos) and "Account" (Friends, App slots), with a Settings card at the foot
+ * on a phone. On a wide window (lg and up) the own profile is two columns:
+ * who you are and your Account group on the left, Your work and Rewards on
+ * the right — see ./profile-store.js's header for where each part of the
+ * older, longer Profile went.
  *
  * The initial store state is `open: false`, whose view is `kind: 'empty'` and
  * renders nothing at all. That is the empty `#profile-root` the hand-written
@@ -24,6 +27,7 @@ import { type ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 import { PLANE_FILL } from '@/components/ui/grouped-list';
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
+import { useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
 import {
   buildProfileView,
@@ -31,7 +35,8 @@ import {
   profileStore,
 } from './profile-store.js';
 import { Profile } from './profile.js';
-import { MorePanel, WorkPanel } from './account-panel';
+import { KUDOS_PARKED } from '../leaderboard/kudos-parked';
+import { AccountPanel, AdminPanel, RewardsPanel, SettingsPanel, WorkPanel } from './account-panel';
 import { FeedbackSheet } from './feedback-sheet';
 import { FriendsSheet } from './friends-sheet';
 import { ProfileEditSheet } from './profile-edit-sheet';
@@ -66,6 +71,7 @@ function IdentityAvatar({ url, initial }: { url: string | null; initial: string 
  *  editing it. The prototype's compact card: the name, one muted line of
  *  facts ("@handle · Building since March 2026 · 3 apps"), then the bio. */
 function IdentityCard({ identity }: { identity: any }): ReactNode {
+  const t = useMessages('profile');
   return (
     <div
       id="profile-identity-card"
@@ -103,7 +109,7 @@ function IdentityCard({ identity }: { identity: any }): ReactNode {
           className="self-start ml-[68px] sm:self-auto sm:ml-0"
           onClick={() => Profile.showEditSheet()}
         >
-          Edit profile
+          {t('profile:identity.edit')}
         </Button>
       </div>
       {/*
@@ -143,11 +149,16 @@ function IdentityCard({ identity }: { identity: any }): ReactNode {
   );
 }
 
+// #5249: two stat cards while kudos is parked (merged, challenges), so the
+// grid has two columns then. Complete literals, for Tailwind's extractor.
+const STAT_GRID = KUDOS_PARKED ? 'grid grid-cols-2 gap-2 mb-2' : 'grid grid-cols-3 gap-2 mb-2';
+const STAT_COUNT = KUDOS_PARKED ? 2 : 3;
+
 /** The three stat cards (the prototype's `.stat`): merged, kudos, challenges.
  *  Numbers the Me screen never had until GET /api/me/summary added them up. */
 function StatCards({ stats }: { stats: Array<{ key: string; value: string; label: string }> }): ReactNode {
   return (
-    <div id="profile-stats" className="grid grid-cols-3 gap-2 mb-2">
+    <div id="profile-stats" className={STAT_GRID}>
       {stats.map((stat) => (
         <div
           key={stat.key}
@@ -166,56 +177,81 @@ function StatCards({ stats }: { stats: Array<{ key: string; value: string; label
  * The profile's loading state, at the SCREEN's own shape.
  *
  * It was the words "Loading profile…" centred in an otherwise empty screen.
- * What arrives now is the prototype's Me: the profile card, three stat cards,
- * the three "Your work" rows and the four "More" rows, and this stands in for
- * each at its own geometry — the card's `rounded-2xl p-4` face with the 56px
- * avatar, a name and a facts line, and the Edit button's shape at its right
- * end (leaving it out would let the name line run to an edge the real card
- * never reaches); three short cards in a row; and two lists of rows with a
- * leading tile and two lines of text.
+ * What arrives now is the regrouped Me: the profile card, three stat cards,
+ * the three "Your work" rows and the row groups after them, and this stands
+ * in for each at its own geometry — the card's `rounded-2xl p-4` face with
+ * the 56px avatar, a name and a facts line, and the Edit button's shape at
+ * its right end (leaving it out would let the name line run to an edge the
+ * real card never reaches); three short cards in a row; and lists of rows
+ * with a leading tile and two lines of text. The skeleton takes the two-
+ * column grid the loaded page uses (below lg it is the same single column),
+ * so the page does not jump when the data arrives.
  */
 function ProfileSkeleton(): ReactNode {
+  const t = useMessages('profile');
   return (
-    <SkeletonGroup label="Loading your profile">
-      <div className={`rounded-2xl ${PLANE_FILL} p-4 mb-3`}>
-        <div className="flex items-center gap-3">
-          <Skeleton shape="circle" className="w-14 h-14" />
-          <div className="flex-1 min-w-0">
-            <Skeleton className="w-40 h-4" />
-            <Skeleton shape="muted" className="mt-2 w-48" />
-          </div>
-          <Skeleton shape="block" className="w-24 h-8 rounded-full" />
-        </div>
-      </div>
-      {/* The three stat cards: a figure over its label. */}
-      <div className="grid grid-cols-3 gap-2 mb-2">
-        {Array.from({ length: 3 }, (_, i) => (
-          <div key={i} className={`rounded-2xl ${PLANE_FILL} px-2 py-3 flex flex-col items-center`}>
-            <Skeleton shape="block" className="w-8 h-6" />
-            <Skeleton shape="muted" className="mt-1.5 w-14" />
-          </div>
-        ))}
-      </div>
-      {/* "Your work", then "More": rows with a tile and two lines. */}
-      {[3, 4].map((count, group) => (
-        <div key={group} className={`mt-8 rounded-2xl ${PLANE_FILL}`}>
-          {Array.from({ length: count }, (_, i) => (
-            <div key={i} className="flex items-center gap-4 px-4 py-3.5">
-              <Skeleton shape="block" className="w-11 h-11 rounded-xl" />
+    <SkeletonGroup label={t('profile:screen.loading')}>
+      <div className="lg:grid lg:grid-cols-[minmax(0,22rem)_minmax(0,1fr)] lg:grid-rows-[auto_1fr] lg:gap-x-6 lg:items-start">
+        <div className="lg:col-start-1 lg:row-start-1">
+          <div className={`rounded-2xl ${PLANE_FILL} p-4 mb-3`}>
+            <div className="flex items-center gap-3">
+              <Skeleton shape="circle" className="w-14 h-14" />
               <div className="flex-1 min-w-0">
-                <Skeleton className={i % 2 ? 'w-28' : 'w-40'} />
+                <Skeleton className="w-40 h-4" />
                 <Skeleton shape="muted" className="mt-2 w-48" />
               </div>
+              <Skeleton shape="block" className="w-24 h-8 rounded-full" />
+            </div>
+          </div>
+          {/* The three stat cards: a figure over its label. */}
+          <div className={STAT_GRID}>
+            {Array.from({ length: STAT_COUNT }, (_, i) => (
+              <div key={i} className={`rounded-2xl ${PLANE_FILL} px-2 py-3 flex flex-col items-center`}>
+                <Skeleton shape="block" className="w-8 h-6" />
+                <Skeleton shape="muted" className="mt-1.5 w-14" />
+              </div>
+            ))}
+          </div>
+        </div>
+        {/* Your work, then Rewards: the right column's rows. */}
+        <div className="lg:col-start-2 lg:row-start-1 lg:row-span-2">
+          {[3, KUDOS_PARKED ? 1 : 2].map((count, group) => (
+            <div key={group} className={`mt-8 rounded-2xl ${PLANE_FILL}`}>
+              {Array.from({ length: count }, (_, i) => (
+                <div key={i} className="flex items-center gap-4 px-4 py-3.5">
+                  <Skeleton shape="block" className="w-11 h-11 rounded-xl" />
+                  <div className="flex-1 min-w-0">
+                    <Skeleton className={i % 2 ? 'w-28' : 'w-40'} />
+                    <Skeleton shape="muted" className="mt-2 w-48" />
+                  </div>
+                </div>
+              ))}
             </div>
           ))}
         </div>
-      ))}
+        {/* Account: the two rows under the stats on the left. */}
+        <div className="lg:col-start-1 lg:row-start-2">
+          <div className={`mt-8 rounded-2xl ${PLANE_FILL}`}>
+            {Array.from({ length: 2 }, (_, i) => (
+              <div key={i} className="flex items-center gap-4 px-4 py-3.5">
+                <Skeleton shape="block" className="w-11 h-11 rounded-xl" />
+                <div className="flex-1 min-w-0">
+                  <Skeleton className={i % 2 ? 'w-28' : 'w-40'} />
+                  <Skeleton shape="muted" className="mt-2 w-48" />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
     </SkeletonGroup>
   );
 }
 
 export function ProfileRoot(): ReactNode {
   const state = useStoreState(profileStore);
+  // Subscribed before the view is built: its lines are read as it is.
+  const t = useMessages('profile');
   const view = buildProfileView(state);
 
   if (view.kind === 'empty') return null;
@@ -224,9 +260,9 @@ export function ProfileRoot(): ReactNode {
   // is a normal state, and the connection-error copy blames the network for it.
   if (view.kind === 'signedOut') {
     return (
-      <div className="py-12 text-center">
+      <div className="py-12 text-center lg:max-w-2xl lg:mx-auto">
         <div className="text-sm text-zinc-500 dark:text-zinc-400 mb-4">
-          Sign in to see your profile.
+          {t('profile:signedOut.text')}
         </div>
         <a
           className={
@@ -235,31 +271,34 @@ export function ProfileRoot(): ReactNode {
           }
           href="#login"
         >
-          Sign in
+          {t('profile:signedOut.signIn')}
         </a>
       </div>
     );
   }
   if (view.kind === 'error') {
     return (
-      <div className="text-sm text-zinc-500 py-8 text-center dark:text-zinc-400">
-        Could not load your profile. Check your connection and try again.
+      <div className="text-sm text-zinc-500 py-8 text-center dark:text-zinc-400 lg:max-w-2xl lg:mx-auto">
+        {t('profile:screen.loadFailed')}
       </div>
     );
   }
   if (view.kind === 'publicNotFound') {
     return (
-      <div className="text-sm text-zinc-500 py-12 text-center dark:text-zinc-400">This profile is unavailable.</div>
+      <div className="text-sm text-zinc-500 py-12 text-center dark:text-zinc-400 lg:max-w-2xl lg:mx-auto">{t('profile:public.unavailable')}</div>
     );
   }
   if (view.kind === 'public') {
+    // Another person's profile keeps the one column, at today's width.
     return (
-      <PublicProfileCard
-        profile={view.profile}
-        allowReport={view.allowReport}
-        allowMessage={view.allowMessage}
-        friendship={view.friendship}
-      />
+      <div className="lg:max-w-2xl lg:mx-auto">
+        <PublicProfileCard
+          profile={view.profile}
+          allowReport={view.allowReport}
+          allowMessage={view.allowMessage}
+          friendship={view.friendship}
+        />
+      </div>
     );
   }
 
@@ -287,19 +326,35 @@ export function ProfileRoot(): ReactNode {
           status={state.friendsStatus || ''}
         />
       ) : null}
-      <IdentityCard identity={view.identity} />
-      <StatCards stats={view.stats} />
       {/*
-          "Your work" (UI overhaul): Your changes, Your requests and Your
-          votes, each a view of the Your work screen. Then "More":
-          Challenges & standings, Kudos, Friends and Settings, each saying
-          what is behind it. Admin & moderation, the native node / wallet /
-          staking rows and Log out are in Settings
-          (features/settings/account-rows.tsx). Your contributions, which
-          closed the screen, is gone: Your changes lists every merged one.
+          Two columns from lg (the navigation review): who you are on the
+          left, with your Account group under it; Your work and Rewards on
+          the right, spanning both rows. Below lg the three blocks stack in
+          this same DOM order: card, stats, Your work, Rewards, Account,
+          Settings. "Your work" (UI overhaul): Your changes, Your requests
+          and Your votes, each a view of the Your work screen. "Rewards":
+          Challenges & standings and Kudos. "Account": Friends and App
+          slots. Admin & moderation, the native node / wallet / staking rows
+          and Log out are in Settings (features/settings/account-rows.tsx);
+          the Settings card under this ends the screen at every width (#5557).
+          Your contributions, which closed the screen, is gone: Your changes
+          lists every merged one.
       */}
-      <WorkPanel rows={view.rows} />
-      <MorePanel rows={view.rows} />
+      <div className="lg:grid lg:grid-cols-[minmax(0,22rem)_minmax(0,1fr)] lg:grid-rows-[auto_1fr] lg:gap-x-6 lg:items-start">
+        <div className="lg:col-start-1 lg:row-start-1">
+          <IdentityCard identity={view.identity} />
+          <StatCards stats={view.stats} />
+        </div>
+        <div className="lg:col-start-2 lg:row-start-1 lg:row-span-2">
+          <WorkPanel rows={view.rows} />
+          <RewardsPanel rows={view.rows} />
+        </div>
+        <div className="lg:col-start-1 lg:row-start-2">
+          <AccountPanel rows={view.rows} />
+          <SettingsPanel />
+          <AdminPanel />
+        </div>
+      </div>
     </>
   );
 }

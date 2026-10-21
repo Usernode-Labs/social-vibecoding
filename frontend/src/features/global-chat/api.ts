@@ -1,3 +1,4 @@
+import { t } from '../../lib/i18n/runtime';
 import type {
   GlobalChatBootstrap,
   GlobalChatMessage,
@@ -13,7 +14,7 @@ import type {
 
 async function json<T>(response: Response): Promise<T> {
   const body = await response.json().catch(() => ({})) as { error?: string } & T;
-  if (!response.ok) throw new Error(body.error || `Request failed (${response.status}).`);
+  if (!response.ok) throw new Error(body.error || t('chat:global.error.requestFailedStatus', { status: response.status }));
   return body;
 }
 
@@ -289,7 +290,7 @@ export async function streamTurn({
   });
   if (!response.ok || !response.body) {
     const body = await response.json().catch(() => ({})) as { error?: string };
-    throw new Error(body.error || `Global Chat request failed (${response.status}).`);
+    throw new Error(body.error || t('chat:global.error.chatRequestFailedStatus', { status: response.status }));
   }
 
   const reader = response.body.getReader();

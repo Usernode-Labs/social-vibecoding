@@ -34,6 +34,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 
 const { loadTsx, renderComponent, renderToHtml, createElement } = require('./lib/render-tsx');
 
@@ -184,7 +185,15 @@ test('a continuation line drops the avatar and the name, and keeps its time in t
   assert.doesNotMatch(html, /rounded-xl h-11 w-11/, 'no avatar');
   assert.doesNotMatch(html, /<span>alice<\/span>/, 'no name');
   assert.match(html, /<span class="gc-msg-gutter-time" title="[^"]+">[^<]+<\/span>/, 'the time where the avatar would be');
+  assert.match(html, /class="gc-msg-gutter w-11 /, 'the gutter span carries a stable class for surface overrides (#5165)');
   assert.match(html, /<p>again<\/p>/);
+});
+
+test('the topic thread matches a grouped row\'s gutter to its surface\'s avatar (#5165)', () => {
+  const css = read('public/css/app.css');
+  assert.match(css, /#dev-topic-thread \.gc-msg\[data-grouped\] > \.gc-msg-gutter \{ width: 26px; \}/, 'bubble mode: 26px, like its avatar');
+  assert.match(css, /#dev-topic-thread #gc-thread-messages\[data-language="chat"\] \.gc-msg\[data-grouped\] > \.gc-msg-gutter \{ width: 44px; \}/, 'chat language: keeps the 44px default');
+  assert.match(css, /#dev-topic-thread #gc-thread-messages:is\(\[data-language="request"\], \[data-language="change"\]\) \.gc-msg\[data-grouped\] > \.gc-msg-gutter \{ width: 36px; \}/, 'request and change discussions: 36px, like their avatar');
 });
 
 test('consecutive messages from one person group; a gap, another person or a quote breaks the run (#2783)', () => {
@@ -292,6 +301,7 @@ function loadGroupChat(AppView, App) {
     body: { appendChild() {} },
   };
   const sandbox = {
+    PlatformI18n: englishPlatformI18n(),
     location: { search: '', protocol: 'http:', host: 'localhost' },
     URLSearchParams,
     document,
@@ -487,7 +497,7 @@ test('the quiet fixture app has a channel nobody has spoken in and one open vote
 
   const dapp = JSON.parse(read('dapp.json'));
   const checks = dapp.tests.filter((t) => /staging-demo-quiet/.test(t.path));
-  assert.equal(checks.length, 4);
+  assert.equal(checks.length, 3);
   assert.ok(!dapp.tests.some((t) => /activity-open|gc-activity/.test(`${t.path} ${t.expectSelector}`)), 'no digest anywhere in the manifest');
   const visual = checks.find((t) => t.visual);
   assert.ok(visual && visual.id === 'group-chat.proposal-event');
@@ -499,11 +509,11 @@ test('the quiet fixture app has a channel nobody has spoken in and one open vote
   // the name and the stamp each sit in their OWN wrapper span, so the sender
   // and `.gc-msg-time` are cousins, never siblings. On its own page the box
   // is a div, not a door: the proposal is the page.
-  assert.match(visual.expectSelector, /^\[data-change-discussion\] \.gc-event\[data-event="submitted"\]\[data-here\]\[data-msg-id="900118"\]:has\(div\.gc-event-box > \.dev-card-icon \+ \.gc-event-text\) span:has\(> \[data-event-sender\]\) \+ span > \.gc-msg-time\[title\]$/);
+  // #4455: on a change's own page the row is one quiet line in its stream,
+  // naming who asked, with its stamp.
+  assert.match(visual.expectSelector, /^#gc-thread-messages\[data-language="change"\] \.dev-request-event\[data-change-event="submitted"\]\[data-msg-id="900118"\] > \.dev-request-event-text > b \+ \.dev-request-event-time\[title\]$/);
   assert.ok(visual.expectSelector.length <= 256, 'app-manifest.js truncates a longer selector, silently breaking it');
-  assert.equal(visual.expectText, 'Asked for approval', 'B10d: the words every screen uses');
-  const sender = checks.find((t) => t.expectText === 'staging-demo-quiet-builder');
-  assert.ok(sender && /\[data-msg-id="900118"\] \[data-event-sender\]/.test(sender.expectSelector));
+  assert.equal(visual.expectText, 'staging-demo-quiet-builder asked for approval');
   // The channel, in the project and in Messages: the quiet card and nothing
   // else — no event row and no message row beside it.
   const quiet = checks.filter((t) => /gc-quiet\[data-quiet-chat\]/.test(t.expectSelector));

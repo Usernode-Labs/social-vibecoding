@@ -9,7 +9,8 @@
       "{\"type\":\"usage\",\"_seq\":\"#5\",\"costCents\":1.5,\"model\":\"claude-opus-5-5\",\"byok\":false}",
       "{\"type\":\"mayor_reasoning\",\"_seq\":\"#6\",\"text\":\"Request #34 asks for exactly this. Want a quick spec first?\"}",
       "{\"type\":\"quick_replies\",\"_seq\":\"#7\",\"replies\":[\"Write the spec for #34\",\"Keep the toggle in the toolbar\",\"Which screens change?\"]}",
-      "{\"type\":\"done\",\"_seq\":\"#8\"}"
+      "{\"type\":\"done\",\"_seq\":\"#8\"}",
+      "{\"type\":\"done\",\"_seq\":\"#<uuid>\",\"turnId\":\"<uuid>\"}"
     ],
     "broadcasts": [
       "{\"type\":\"session_event\",\"_seq\":\"#2\",\"text\":\"Thinking about your request...\",\"sessionId\":4242,\"event\":\"status\"}",
@@ -22,17 +23,25 @@
       "SELECT a.id, a.collab_visibility, a.view_visibility, a.moderation_suspended_at FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1 :: [4242]",
       "SELECT app_id FROM user_app_blocks WHERE user_id = $1 AND app_id = $2 :: [7,4242]",
       "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:49b4726211dab378 len:549> :: [\"4242\",7]",
+      "BEGIN :: []",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata, client_message_id) VALUES ($1, 'user', $2, $3, $… <sha:513d6d719625fb1d len:226> :: [4242,\"Add a dark mode toggle\",{\"json\":{}},null]",
       "UPDATE chat_sessions SET last_activity_at = NOW(), notify_on_done = FALSE WHERE id = $1 :: [4242]",
+      "COMMIT :: []",
+      "SELECT id, username FROM users WHERE id = $1 :: [7]",
+      "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:3e6d6a460762a104 len:329> :: [4242,7]",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Thinking about your request...\",{\"json\":{}}]",
       "SELECT id, role, content, metadata FROM chat_session_messages WHERE session_id = $1 AND (role IN ('user', 'assistant') O… <sha:454a396501e7d17e len:194> :: [4242]",
+      "SELECT (cs.active_turn IS NOT NULL OR EXISTS (SELECT 1 FROM local_agent_turns t WHERE t.session_id = cs.id AND t.status … <sha:606178aea56d8f55 len:1515> :: [4242]",
       "SELECT spec_md FROM chat_sessions WHERE id = $1 :: [4242]",
       "SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.status, cs.linked_issues, cs.spec_md, u.username FROM chat_sessio… <sha:c7047dc891be2a6e len:285> :: [31,4242]",
       "SELECT kind, name, description, size_bytes, updated_at FROM user_agent_files WHERE user_id = $1 ORDER BY kind, name :: [7]",
       "SELECT a.self_hosted, u.is_admin, cs.user_id FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id JOIN users u ON u.id = cs.user_id WHERE cs.id = $1 :: [4242]",
       "SELECT m.content, m.created_at, u.username FROM chat_messages m LEFT JOIN users u ON u.id = m.user_id WHERE m.app_id = $… <sha:b8a1d28b89ac3d11 len:246> :: [31,\"session\",4242]",
       "INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata) VALUES ($1, 'assistant', $2, $3, $4, $5, $6) :: [4242,\"Request #34 asks for exactly this. Want a quick spec first?\",\"claude-opus-5-5\",150,1.5,{\"json\":{\"quickReplies\":[\"Write the spec for #34\",\"Keep the toggle in the toolbar\",\"Which screens change?\"],\"quickRepliesSource\":\"model\"}}]",
-      "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]"
+      "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]",
+      "UPDATE local_agent_turns SET waiter_id = gen_random_uuid(), waiter_seen_at = NOW() WHERE id = ( SELECT id FROM local_age… <sha:02869ef4a305436d len:260> :: [\"test-1\"]",
+      "SELECT id FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-1\"]",
+      "SELECT id, active_turn FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-1\"]"
     ],
     "llm": [
       {
@@ -40,8 +49,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "7792ec4ac05ca911",
-          "length": 199994
+          "sha": "385ed99d007a273f",
+          "length": 218676
         },
         "tools": [
           "dispatch_claude_code",
@@ -52,7 +61,7 @@
           "get_github_issue",
           "web_fetch"
         ],
-        "toolsSha": "17c9067b28900b7e",
+        "toolsSha": "c5dc1458ae310e99",
         "toolChoice": null,
         "messages": [
           {
@@ -64,6 +73,7 @@
       }
     ],
     "billing": [
+      "{\"fn\":\"resolveBillingPath\",\"userId\":7}",
       "{\"fn\":\"resolveBillingPath\",\"userId\":7}",
       "{\"fn\":\"recordSpend\",\"userId\":7,\"cents\":1.5,\"opts\":{\"byok\":false}}"
     ],
@@ -96,7 +106,8 @@
       "{\"type\":\"usage\",\"_seq\":\"#11\",\"costCents\":1.5,\"model\":\"claude-opus-5-5\",\"byok\":false}",
       "{\"type\":\"mayor_reasoning\",\"_seq\":\"#12\",\"text\":\"The page says hello, so there is nothing to change yet.\"}",
       "{\"type\":\"quick_replies\",\"_seq\":\"#13\",\"replies\":[\"Draft a spec anyway\",\"Read the issue list\",\"What would change?\"]}",
-      "{\"type\":\"done\",\"_seq\":\"#14\"}"
+      "{\"type\":\"done\",\"_seq\":\"#14\"}",
+      "{\"type\":\"done\",\"_seq\":\"#<uuid>\",\"turnId\":\"<uuid>\"}"
     ],
     "broadcasts": [
       "{\"type\":\"session_event\",\"_seq\":\"#2\",\"text\":\"Thinking about your request...\",\"sessionId\":4242,\"event\":\"status\"}",
@@ -113,10 +124,15 @@
       "SELECT a.id, a.collab_visibility, a.view_visibility, a.moderation_suspended_at FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1 :: [4242]",
       "SELECT app_id FROM user_app_blocks WHERE user_id = $1 AND app_id = $2 :: [7,4242]",
       "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:49b4726211dab378 len:549> :: [\"4242\",7]",
+      "BEGIN :: []",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata, client_message_id) VALUES ($1, 'user', $2, $3, $… <sha:513d6d719625fb1d len:226> :: [4242,\"What does https://example.com/spec say?\",{\"json\":{}},null]",
       "UPDATE chat_sessions SET last_activity_at = NOW(), notify_on_done = FALSE WHERE id = $1 :: [4242]",
+      "COMMIT :: []",
+      "SELECT id, username FROM users WHERE id = $1 :: [7]",
+      "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:3e6d6a460762a104 len:329> :: [4242,7]",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Thinking about your request...\",{\"json\":{}}]",
       "SELECT id, role, content, metadata FROM chat_session_messages WHERE session_id = $1 AND (role IN ('user', 'assistant') O… <sha:454a396501e7d17e len:194> :: [4242]",
+      "SELECT (cs.active_turn IS NOT NULL OR EXISTS (SELECT 1 FROM local_agent_turns t WHERE t.session_id = cs.id AND t.status … <sha:606178aea56d8f55 len:1515> :: [4242]",
       "SELECT spec_md FROM chat_sessions WHERE id = $1 :: [4242]",
       "SELECT kind, name, description, size_bytes, updated_at FROM user_agent_files WHERE user_id = $1 ORDER BY kind, name :: [7]",
       "SELECT a.self_hosted, u.is_admin, cs.user_id FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id JOIN users u ON u.id = cs.user_id WHERE cs.id = $1 :: [4242]",
@@ -125,7 +141,10 @@
       "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Fetching example.com...\",{\"json\":{}}]",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Thinking about what came back...\",{\"json\":{}}]",
       "INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata) VALUES ($1, 'assistant', $2, $3, $4, $5, $6) :: [4242,\"The page says hello, so there is nothing to change yet.\",\"claude-opus-5-5\",150,1.5,{\"json\":{\"quickReplies\":[\"Draft a spec anyway\",\"Read the issue list\",\"What would change?\"],\"quickRepliesSource\":\"model\"}}]",
-      "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]"
+      "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]",
+      "UPDATE local_agent_turns SET waiter_id = gen_random_uuid(), waiter_seen_at = NOW() WHERE id = ( SELECT id FROM local_age… <sha:02869ef4a305436d len:260> :: [\"test-2\"]",
+      "SELECT id FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-2\"]",
+      "SELECT id, active_turn FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-2\"]"
     ],
     "llm": [
       {
@@ -133,8 +152,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "e78e6fdd705c7462",
-          "length": 198367
+          "sha": "aac7898c37e412f4",
+          "length": 217049
         },
         "tools": [
           "dispatch_claude_code",
@@ -145,7 +164,7 @@
           "get_github_issue",
           "web_fetch"
         ],
-        "toolsSha": "17c9067b28900b7e",
+        "toolsSha": "c5dc1458ae310e99",
         "toolChoice": null,
         "messages": [
           {
@@ -168,8 +187,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "e78e6fdd705c7462",
-          "length": 198367
+          "sha": "aac7898c37e412f4",
+          "length": 217049
         },
         "tools": [
           "dispatch_claude_code",
@@ -180,7 +199,7 @@
           "get_github_issue",
           "web_fetch"
         ],
-        "toolsSha": "17c9067b28900b7e",
+        "toolsSha": "c5dc1458ae310e99",
         "toolChoice": null,
         "messages": [
           {
@@ -228,6 +247,7 @@
     ],
     "billing": [
       "{\"fn\":\"resolveBillingPath\",\"userId\":7}",
+      "{\"fn\":\"resolveBillingPath\",\"userId\":7}",
       "{\"fn\":\"recordSpend\",\"userId\":7,\"cents\":1.5,\"opts\":{\"byok\":false}}",
       "{\"fn\":\"resolveBillingPath\",\"userId\":7}",
       "{\"fn\":\"recordSpend\",\"userId\":7,\"cents\":1.5,\"opts\":{\"byok\":false}}"
@@ -259,7 +279,8 @@
       "{\"type\":\"phase\",\"_seq\":\"#3\",\"phase\":\"mayor1\"}",
       "{\"type\":\"status\",\"_seq\":\"#4\",\"text\":\"Opus 5.5's safety classifiers declined this request (safety classifier: cyber) and the fallback couldn't complete it. Try rephrasing or switching models.\",\"modelRefusal\":{\"requested\":\"claude-opus-5-5\",\"category\":\"cyber\"},\"quickReplies\":[\"Try that again\",\"What went wrong?\"]}",
       "{\"type\":\"usage\",\"_seq\":\"#5\",\"costCents\":1.5,\"model\":\"claude-fallback\",\"byok\":false}",
-      "{\"type\":\"done\",\"_seq\":\"#6\"}"
+      "{\"type\":\"done\",\"_seq\":\"#6\"}",
+      "{\"type\":\"done\",\"_seq\":\"#<uuid>\",\"turnId\":\"<uuid>\"}"
     ],
     "broadcasts": [
       "{\"type\":\"session_event\",\"_seq\":\"#2\",\"text\":\"Thinking about your request...\",\"sessionId\":4242,\"event\":\"status\"}",
@@ -271,10 +292,15 @@
       "SELECT a.id, a.collab_visibility, a.view_visibility, a.moderation_suspended_at FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1 :: [4242]",
       "SELECT app_id FROM user_app_blocks WHERE user_id = $1 AND app_id = $2 :: [7,4242]",
       "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:49b4726211dab378 len:549> :: [\"4242\",7]",
+      "BEGIN :: []",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata, client_message_id) VALUES ($1, 'user', $2, $3, $… <sha:513d6d719625fb1d len:226> :: [4242,\"Add a dark mode toggle\",{\"json\":{}},null]",
       "UPDATE chat_sessions SET last_activity_at = NOW(), notify_on_done = FALSE WHERE id = $1 :: [4242]",
+      "COMMIT :: []",
+      "SELECT id, username FROM users WHERE id = $1 :: [7]",
+      "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:3e6d6a460762a104 len:329> :: [4242,7]",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Thinking about your request...\",{\"json\":{}}]",
       "SELECT id, role, content, metadata FROM chat_session_messages WHERE session_id = $1 AND (role IN ('user', 'assistant') O… <sha:454a396501e7d17e len:194> :: [4242]",
+      "SELECT (cs.active_turn IS NOT NULL OR EXISTS (SELECT 1 FROM local_agent_turns t WHERE t.session_id = cs.id AND t.status … <sha:606178aea56d8f55 len:1515> :: [4242]",
       "SELECT spec_md FROM chat_sessions WHERE id = $1 :: [4242]",
       "SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.status, cs.linked_issues, cs.spec_md, u.username FROM chat_sessio… <sha:c7047dc891be2a6e len:285> :: [31,4242]",
       "SELECT kind, name, description, size_bytes, updated_at FROM user_agent_files WHERE user_id = $1 ORDER BY kind, name :: [7]",
@@ -282,7 +308,10 @@
       "SELECT m.content, m.created_at, u.username FROM chat_messages m LEFT JOIN users u ON u.id = m.user_id WHERE m.app_id = $… <sha:b8a1d28b89ac3d11 len:246> :: [31,\"session\",4242]",
       "INSERT INTO events (user_id, app_id, session_id, event_type, metadata) VALUES ($1, $2, $3, $4, $5::jsonb) :: [7,31,4242,\"model_refusal\",{\"json\":{\"requested\":\"claude-opus-5-5\",\"served\":\"claude-fallback\",\"category\":\"cyber\",\"source\":\"mayor\"}}]",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Opus 5.5's safety classifiers declined this request (safety classifier: cyber) and the fallback couldn't complete it. Try rephrasing or switching models.\",{\"json\":{\"modelRefusal\":{\"requested\":\"claude-opus-5-5\",\"category\":\"cyber\"},\"quickReplies\":[\"Try that again\",\"What went wrong?\"]}}]",
-      "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]"
+      "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]",
+      "UPDATE local_agent_turns SET waiter_id = gen_random_uuid(), waiter_seen_at = NOW() WHERE id = ( SELECT id FROM local_age… <sha:02869ef4a305436d len:260> :: [\"test-3\"]",
+      "SELECT id FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-3\"]",
+      "SELECT id, active_turn FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-3\"]"
     ],
     "llm": [
       {
@@ -290,8 +319,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "e78e6fdd705c7462",
-          "length": 198367
+          "sha": "aac7898c37e412f4",
+          "length": 217049
         },
         "tools": [
           "dispatch_claude_code",
@@ -302,7 +331,7 @@
           "get_github_issue",
           "web_fetch"
         ],
-        "toolsSha": "17c9067b28900b7e",
+        "toolsSha": "c5dc1458ae310e99",
         "toolChoice": null,
         "messages": [
           {
@@ -314,6 +343,7 @@
       }
     ],
     "billing": [
+      "{\"fn\":\"resolveBillingPath\",\"userId\":7}",
       "{\"fn\":\"resolveBillingPath\",\"userId\":7}",
       "{\"fn\":\"recordSpend\",\"userId\":7,\"cents\":1.5,\"opts\":{\"byok\":false}}"
     ],
@@ -341,7 +371,8 @@
       "{\"type\":\"usage\",\"_seq\":\"#6\",\"costCents\":1.5,\"model\":\"claude-sonnet-5-5\",\"byok\":false}",
       "{\"type\":\"mayor_reasoning\",\"_seq\":\"#7\",\"text\":\"Here is the plan.\"}",
       "{\"type\":\"quick_replies\",\"_seq\":\"#8\",\"replies\":[\"Build the spec\",\"Change the toggle icon\",\"What files change?\"]}",
-      "{\"type\":\"done\",\"_seq\":\"#9\"}"
+      "{\"type\":\"done\",\"_seq\":\"#9\"}",
+      "{\"type\":\"done\",\"_seq\":\"#<uuid>\",\"turnId\":\"<uuid>\"}"
     ],
     "broadcasts": [
       "{\"type\":\"session_event\",\"_seq\":\"#2\",\"text\":\"Thinking about your request...\",\"sessionId\":4242,\"event\":\"status\"}",
@@ -355,10 +386,15 @@
       "SELECT a.id, a.collab_visibility, a.view_visibility, a.moderation_suspended_at FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1 :: [4242]",
       "SELECT app_id FROM user_app_blocks WHERE user_id = $1 AND app_id = $2 :: [7,4242]",
       "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:49b4726211dab378 len:549> :: [\"4242\",7]",
+      "BEGIN :: []",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata, client_message_id) VALUES ($1, 'user', $2, $3, $… <sha:513d6d719625fb1d len:226> :: [4242,\"Add a dark mode toggle\",{\"json\":{}},null]",
       "UPDATE chat_sessions SET last_activity_at = NOW(), notify_on_done = FALSE WHERE id = $1 :: [4242]",
+      "COMMIT :: []",
+      "SELECT id, username FROM users WHERE id = $1 :: [7]",
+      "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:3e6d6a460762a104 len:329> :: [4242,7]",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Thinking about your request...\",{\"json\":{}}]",
       "SELECT id, role, content, metadata FROM chat_session_messages WHERE session_id = $1 AND (role IN ('user', 'assistant') O… <sha:454a396501e7d17e len:194> :: [4242]",
+      "SELECT (cs.active_turn IS NOT NULL OR EXISTS (SELECT 1 FROM local_agent_turns t WHERE t.session_id = cs.id AND t.status … <sha:606178aea56d8f55 len:1515> :: [4242]",
       "SELECT spec_md FROM chat_sessions WHERE id = $1 :: [4242]",
       "SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.status, cs.linked_issues, cs.spec_md, u.username FROM chat_sessio… <sha:c7047dc891be2a6e len:285> :: [31,4242]",
       "SELECT kind, name, description, size_bytes, updated_at FROM user_agent_files WHERE user_id = $1 ORDER BY kind, name :: [7]",
@@ -367,7 +403,10 @@
       "INSERT INTO events (user_id, app_id, session_id, event_type, metadata) VALUES ($1, $2, $3, $4, $5::jsonb) :: [7,31,4242,\"model_fallback\",{\"json\":{\"requested\":\"claude-opus-5-5\",\"served\":\"claude-sonnet-5-5\",\"category\":\"bio\",\"source\":\"mayor\"}}]",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Opus 5.5 declined part of this request (safety classifier: bio). It was completed by Sonnet 5.5.\",{\"json\":{\"modelFallback\":{\"requested\":\"claude-opus-5-5\",\"served\":\"claude-sonnet-5-5\",\"category\":\"bio\"}}}]",
       "INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata) VALUES ($1, 'assistant', $2, $3, $4, $5, $6) :: [4242,\"Here is the plan.\",\"claude-sonnet-5-5\",150,1.5,{\"json\":{\"quickReplies\":[\"Build the spec\",\"Change the toggle icon\",\"What files change?\"],\"quickRepliesSource\":\"model\"}}]",
-      "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]"
+      "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]",
+      "UPDATE local_agent_turns SET waiter_id = gen_random_uuid(), waiter_seen_at = NOW() WHERE id = ( SELECT id FROM local_age… <sha:02869ef4a305436d len:260> :: [\"test-4\"]",
+      "SELECT id FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-4\"]",
+      "SELECT id, active_turn FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-4\"]"
     ],
     "llm": [
       {
@@ -375,8 +414,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "e78e6fdd705c7462",
-          "length": 198367
+          "sha": "aac7898c37e412f4",
+          "length": 217049
         },
         "tools": [
           "dispatch_claude_code",
@@ -387,7 +426,7 @@
           "get_github_issue",
           "web_fetch"
         ],
-        "toolsSha": "17c9067b28900b7e",
+        "toolsSha": "c5dc1458ae310e99",
         "toolChoice": null,
         "messages": [
           {
@@ -399,6 +438,7 @@
       }
     ],
     "billing": [
+      "{\"fn\":\"resolveBillingPath\",\"userId\":7}",
       "{\"fn\":\"resolveBillingPath\",\"userId\":7}",
       "{\"fn\":\"recordSpend\",\"userId\":7,\"cents\":1.5,\"opts\":{\"byok\":false}}"
     ],
@@ -426,7 +466,8 @@
       "{\"type\":\"usage\",\"_seq\":\"#5\",\"costCents\":1.5,\"model\":\"claude-opus-5-5\",\"byok\":false}",
       "{\"type\":\"mayor_reasoning\",\"_seq\":\"#6\",\"text\":\"Sure, happy to help.\"}",
       "{\"type\":\"quick_replies\",\"_seq\":\"#7\",\"replies\":[\"Keep the moon icon\",\"Default to the system theme\",\"Which pages get dark colours?\"]}",
-      "{\"type\":\"done\",\"_seq\":\"#8\"}"
+      "{\"type\":\"done\",\"_seq\":\"#8\"}",
+      "{\"type\":\"done\",\"_seq\":\"#<uuid>\",\"turnId\":\"<uuid>\"}"
     ],
     "broadcasts": [
       "{\"type\":\"session_event\",\"_seq\":\"#2\",\"text\":\"Thinking about your request...\",\"sessionId\":4242,\"event\":\"status\"}",
@@ -439,17 +480,25 @@
       "SELECT a.id, a.collab_visibility, a.view_visibility, a.moderation_suspended_at FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1 :: [4242]",
       "SELECT app_id FROM user_app_blocks WHERE user_id = $1 AND app_id = $2 :: [7,4242]",
       "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:49b4726211dab378 len:549> :: [\"4242\",7]",
+      "BEGIN :: []",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata, client_message_id) VALUES ($1, 'user', $2, $3, $… <sha:513d6d719625fb1d len:226> :: [4242,\"Add a dark mode toggle\",{\"json\":{}},null]",
       "UPDATE chat_sessions SET last_activity_at = NOW(), notify_on_done = FALSE WHERE id = $1 :: [4242]",
+      "COMMIT :: []",
+      "SELECT id, username FROM users WHERE id = $1 :: [7]",
+      "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:3e6d6a460762a104 len:329> :: [4242,7]",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Thinking about your request...\",{\"json\":{}}]",
       "SELECT id, role, content, metadata FROM chat_session_messages WHERE session_id = $1 AND (role IN ('user', 'assistant') O… <sha:454a396501e7d17e len:194> :: [4242]",
+      "SELECT (cs.active_turn IS NOT NULL OR EXISTS (SELECT 1 FROM local_agent_turns t WHERE t.session_id = cs.id AND t.status … <sha:606178aea56d8f55 len:1515> :: [4242]",
       "SELECT spec_md FROM chat_sessions WHERE id = $1 :: [4242]",
       "SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.status, cs.linked_issues, cs.spec_md, u.username FROM chat_sessio… <sha:c7047dc891be2a6e len:285> :: [31,4242]",
       "SELECT kind, name, description, size_bytes, updated_at FROM user_agent_files WHERE user_id = $1 ORDER BY kind, name :: [7]",
       "SELECT a.self_hosted, u.is_admin, cs.user_id FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id JOIN users u ON u.id = cs.user_id WHERE cs.id = $1 :: [4242]",
       "SELECT m.content, m.created_at, u.username FROM chat_messages m LEFT JOIN users u ON u.id = m.user_id WHERE m.app_id = $… <sha:b8a1d28b89ac3d11 len:246> :: [31,\"session\",4242]",
       "INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata) VALUES ($1, 'assistant', $2, $3, $4, $5, $6) :: [4242,\"Sure, happy to help.\",\"claude-opus-5-5\",150,1.5,{\"json\":{\"quickReplies\":[\"Keep the moon icon\",\"Default to the system theme\",\"Which pages get dark colours?\"],\"quickRepliesSource\":\"enforced\"}}]",
-      "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]"
+      "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]",
+      "UPDATE local_agent_turns SET waiter_id = gen_random_uuid(), waiter_seen_at = NOW() WHERE id = ( SELECT id FROM local_age… <sha:02869ef4a305436d len:260> :: [\"test-5\"]",
+      "SELECT id FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-5\"]",
+      "SELECT id, active_turn FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-5\"]"
     ],
     "llm": [
       {
@@ -457,8 +506,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "e78e6fdd705c7462",
-          "length": 198367
+          "sha": "aac7898c37e412f4",
+          "length": 217049
         },
         "tools": [
           "dispatch_claude_code",
@@ -469,7 +518,7 @@
           "get_github_issue",
           "web_fetch"
         ],
-        "toolsSha": "17c9067b28900b7e",
+        "toolsSha": "c5dc1458ae310e99",
         "toolChoice": null,
         "messages": [
           {
@@ -485,6 +534,7 @@
       }
     ],
     "billing": [
+      "{\"fn\":\"resolveBillingPath\",\"userId\":7}",
       "{\"fn\":\"resolveBillingPath\",\"userId\":7}",
       "{\"fn\":\"recordSpend\",\"userId\":7,\"cents\":1.5,\"opts\":{\"byok\":false}}",
       "{\"fn\":\"resolveBillingPath\",\"userId\":7}",
@@ -513,7 +563,8 @@
       "{\"type\":\"usage\",\"_seq\":\"#5\",\"costCents\":1.5,\"model\":\"claude-opus-5-5\",\"byok\":false}",
       "{\"type\":\"mayor_reasoning\",\"_seq\":\"#6\",\"text\":\"Sure, happy to help.\"}",
       "{\"type\":\"quick_replies\",\"_seq\":\"#7\",\"replies\":[\"Use a darker grey\",\"Keep the toolbar light\",\"What about exports?\"]}",
-      "{\"type\":\"done\",\"_seq\":\"#8\"}"
+      "{\"type\":\"done\",\"_seq\":\"#8\"}",
+      "{\"type\":\"done\",\"_seq\":\"#<uuid>\",\"turnId\":\"<uuid>\"}"
     ],
     "broadcasts": [
       "{\"type\":\"session_event\",\"_seq\":\"#2\",\"text\":\"Thinking about your request...\",\"sessionId\":4242,\"event\":\"status\"}",
@@ -526,17 +577,25 @@
       "SELECT a.id, a.collab_visibility, a.view_visibility, a.moderation_suspended_at FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1 :: [4242]",
       "SELECT app_id FROM user_app_blocks WHERE user_id = $1 AND app_id = $2 :: [7,4242]",
       "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:49b4726211dab378 len:549> :: [\"4242\",7]",
+      "BEGIN :: []",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata, client_message_id) VALUES ($1, 'user', $2, $3, $… <sha:513d6d719625fb1d len:226> :: [4242,\"Add a dark mode toggle\",{\"json\":{}},null]",
       "UPDATE chat_sessions SET last_activity_at = NOW(), notify_on_done = FALSE WHERE id = $1 :: [4242]",
+      "COMMIT :: []",
+      "SELECT id, username FROM users WHERE id = $1 :: [7]",
+      "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:3e6d6a460762a104 len:329> :: [4242,7]",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Thinking about your request...\",{\"json\":{}}]",
       "SELECT id, role, content, metadata FROM chat_session_messages WHERE session_id = $1 AND (role IN ('user', 'assistant') O… <sha:454a396501e7d17e len:194> :: [4242]",
+      "SELECT (cs.active_turn IS NOT NULL OR EXISTS (SELECT 1 FROM local_agent_turns t WHERE t.session_id = cs.id AND t.status … <sha:606178aea56d8f55 len:1515> :: [4242]",
       "SELECT spec_md FROM chat_sessions WHERE id = $1 :: [4242]",
       "SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.status, cs.linked_issues, cs.spec_md, u.username FROM chat_sessio… <sha:c7047dc891be2a6e len:285> :: [31,4242]",
       "SELECT kind, name, description, size_bytes, updated_at FROM user_agent_files WHERE user_id = $1 ORDER BY kind, name :: [7]",
       "SELECT a.self_hosted, u.is_admin, cs.user_id FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id JOIN users u ON u.id = cs.user_id WHERE cs.id = $1 :: [4242]",
       "SELECT m.content, m.created_at, u.username FROM chat_messages m LEFT JOIN users u ON u.id = m.user_id WHERE m.app_id = $… <sha:b8a1d28b89ac3d11 len:246> :: [31,\"session\",4242]",
       "INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata) VALUES ($1, 'assistant', $2, $3, $4, $5, $6) :: [4242,\"Sure, happy to help.\",\"claude-opus-5-5\",150,1.5,{\"json\":{\"quickReplies\":[\"Use a darker grey\",\"Keep the toolbar light\",\"What about exports?\"],\"quickRepliesSource\":\"generated\"}}]",
-      "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]"
+      "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]",
+      "UPDATE local_agent_turns SET waiter_id = gen_random_uuid(), waiter_seen_at = NOW() WHERE id = ( SELECT id FROM local_age… <sha:02869ef4a305436d len:260> :: [\"test-6\"]",
+      "SELECT id FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-6\"]",
+      "SELECT id, active_turn FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-6\"]"
     ],
     "llm": [
       {
@@ -544,8 +603,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "e78e6fdd705c7462",
-          "length": 198367
+          "sha": "aac7898c37e412f4",
+          "length": 217049
         },
         "tools": [
           "dispatch_claude_code",
@@ -556,7 +615,7 @@
           "get_github_issue",
           "web_fetch"
         ],
-        "toolsSha": "17c9067b28900b7e",
+        "toolsSha": "c5dc1458ae310e99",
         "toolChoice": null,
         "messages": [
           {
@@ -576,6 +635,7 @@
       }
     ],
     "billing": [
+      "{\"fn\":\"resolveBillingPath\",\"userId\":7}",
       "{\"fn\":\"resolveBillingPath\",\"userId\":7}",
       "{\"fn\":\"recordSpend\",\"userId\":7,\"cents\":1.5,\"opts\":{\"byok\":false}}",
       "{\"fn\":\"resolveBillingPath\",\"userId\":7}",
@@ -606,7 +666,8 @@
       "{\"type\":\"usage\",\"_seq\":\"#5\",\"costCents\":1.5,\"model\":\"claude-opus-5-5\",\"byok\":false}",
       "{\"type\":\"mayor_reasoning\",\"_seq\":\"#6\",\"text\":\"1. Should it follow the system theme?\"}",
       "{\"type\":\"suggestions\",\"_seq\":\"#7\",\"suggestions\":[{\"question\":\"Should it follow the system theme?\",\"answers\":[\"Yes\",\"No, always light by default\"]}]}",
-      "{\"type\":\"done\",\"_seq\":\"#8\"}"
+      "{\"type\":\"done\",\"_seq\":\"#8\"}",
+      "{\"type\":\"done\",\"_seq\":\"#<uuid>\",\"turnId\":\"<uuid>\"}"
     ],
     "broadcasts": [
       "{\"type\":\"session_event\",\"_seq\":\"#2\",\"text\":\"Thinking about your request...\",\"sessionId\":4242,\"event\":\"status\"}",
@@ -619,17 +680,25 @@
       "SELECT a.id, a.collab_visibility, a.view_visibility, a.moderation_suspended_at FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1 :: [4242]",
       "SELECT app_id FROM user_app_blocks WHERE user_id = $1 AND app_id = $2 :: [7,4242]",
       "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:49b4726211dab378 len:549> :: [\"4242\",7]",
+      "BEGIN :: []",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata, client_message_id) VALUES ($1, 'user', $2, $3, $… <sha:513d6d719625fb1d len:226> :: [4242,\"Add a dark mode toggle\",{\"json\":{}},null]",
       "UPDATE chat_sessions SET last_activity_at = NOW(), notify_on_done = FALSE WHERE id = $1 :: [4242]",
+      "COMMIT :: []",
+      "SELECT id, username FROM users WHERE id = $1 :: [7]",
+      "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:3e6d6a460762a104 len:329> :: [4242,7]",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Thinking about your request...\",{\"json\":{}}]",
       "SELECT id, role, content, metadata FROM chat_session_messages WHERE session_id = $1 AND (role IN ('user', 'assistant') O… <sha:454a396501e7d17e len:194> :: [4242]",
+      "SELECT (cs.active_turn IS NOT NULL OR EXISTS (SELECT 1 FROM local_agent_turns t WHERE t.session_id = cs.id AND t.status … <sha:606178aea56d8f55 len:1515> :: [4242]",
       "SELECT spec_md FROM chat_sessions WHERE id = $1 :: [4242]",
       "SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.status, cs.linked_issues, cs.spec_md, u.username FROM chat_sessio… <sha:c7047dc891be2a6e len:285> :: [31,4242]",
       "SELECT kind, name, description, size_bytes, updated_at FROM user_agent_files WHERE user_id = $1 ORDER BY kind, name :: [7]",
       "SELECT a.self_hosted, u.is_admin, cs.user_id FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id JOIN users u ON u.id = cs.user_id WHERE cs.id = $1 :: [4242]",
       "SELECT m.content, m.created_at, u.username FROM chat_messages m LEFT JOIN users u ON u.id = m.user_id WHERE m.app_id = $… <sha:b8a1d28b89ac3d11 len:246> :: [31,\"session\",4242]",
       "INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata) VALUES ($1, 'assistant', $2, $3, $4, $5, $6) :: [4242,\"1. Should it follow the system theme?\",\"claude-opus-5-5\",150,1.5,{\"json\":{\"suggestions\":[{\"question\":\"Should it follow the system theme?\",\"answers\":[\"Yes\",\"No, always light by default\"]}]}}]",
-      "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]"
+      "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]",
+      "UPDATE local_agent_turns SET waiter_id = gen_random_uuid(), waiter_seen_at = NOW() WHERE id = ( SELECT id FROM local_age… <sha:02869ef4a305436d len:260> :: [\"test-7\"]",
+      "SELECT id FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-7\"]",
+      "SELECT id, active_turn FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-7\"]"
     ],
     "llm": [
       {
@@ -637,8 +706,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "e78e6fdd705c7462",
-          "length": 198367
+          "sha": "aac7898c37e412f4",
+          "length": 217049
         },
         "tools": [
           "dispatch_claude_code",
@@ -649,7 +718,7 @@
           "get_github_issue",
           "web_fetch"
         ],
-        "toolsSha": "17c9067b28900b7e",
+        "toolsSha": "c5dc1458ae310e99",
         "toolChoice": null,
         "messages": [
           {
@@ -661,6 +730,7 @@
       }
     ],
     "billing": [
+      "{\"fn\":\"resolveBillingPath\",\"userId\":7}",
       "{\"fn\":\"resolveBillingPath\",\"userId\":7}",
       "{\"fn\":\"recordSpend\",\"userId\":7,\"cents\":1.5,\"opts\":{\"byok\":false}}"
     ],
@@ -685,7 +755,8 @@
       "{\"type\":\"phase\",\"_seq\":\"#3\",\"phase\":\"mayor1\"}",
       "{\"type\":\"status\",\"_seq\":\"#4\",\"text\":\"Stopped by @tester.\",\"quickReplies\":[\"Try that again\",\"What went wrong?\"]}",
       "{\"type\":\"stopped\",\"_seq\":\"#5\",\"phase\":\"mayor1\",\"by\":\"tester\"}",
-      "{\"type\":\"done\",\"_seq\":\"#6\"}"
+      "{\"type\":\"done\",\"_seq\":\"#6\"}",
+      "{\"type\":\"done\",\"_seq\":\"#<uuid>\",\"turnId\":\"<uuid>\"}"
     ],
     "broadcasts": [
       "{\"type\":\"session_event\",\"_seq\":\"#2\",\"text\":\"Thinking about your request...\",\"sessionId\":4242,\"event\":\"status\"}",
@@ -698,17 +769,25 @@
       "SELECT a.id, a.collab_visibility, a.view_visibility, a.moderation_suspended_at FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1 :: [4242]",
       "SELECT app_id FROM user_app_blocks WHERE user_id = $1 AND app_id = $2 :: [7,4242]",
       "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:49b4726211dab378 len:549> :: [\"4242\",7]",
+      "BEGIN :: []",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata, client_message_id) VALUES ($1, 'user', $2, $3, $… <sha:513d6d719625fb1d len:226> :: [4242,\"Add a dark mode toggle\",{\"json\":{}},null]",
       "UPDATE chat_sessions SET last_activity_at = NOW(), notify_on_done = FALSE WHERE id = $1 :: [4242]",
+      "COMMIT :: []",
+      "SELECT id, username FROM users WHERE id = $1 :: [7]",
+      "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:3e6d6a460762a104 len:329> :: [4242,7]",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Thinking about your request...\",{\"json\":{}}]",
       "SELECT id, role, content, metadata FROM chat_session_messages WHERE session_id = $1 AND (role IN ('user', 'assistant') O… <sha:454a396501e7d17e len:194> :: [4242]",
+      "SELECT (cs.active_turn IS NOT NULL OR EXISTS (SELECT 1 FROM local_agent_turns t WHERE t.session_id = cs.id AND t.status … <sha:606178aea56d8f55 len:1515> :: [4242]",
       "SELECT spec_md FROM chat_sessions WHERE id = $1 :: [4242]",
       "SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.status, cs.linked_issues, cs.spec_md, u.username FROM chat_sessio… <sha:c7047dc891be2a6e len:285> :: [31,4242]",
       "SELECT kind, name, description, size_bytes, updated_at FROM user_agent_files WHERE user_id = $1 ORDER BY kind, name :: [7]",
       "SELECT a.self_hosted, u.is_admin, cs.user_id FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id JOIN users u ON u.id = cs.user_id WHERE cs.id = $1 :: [4242]",
       "SELECT m.content, m.created_at, u.username FROM chat_messages m LEFT JOIN users u ON u.id = m.user_id WHERE m.app_id = $… <sha:b8a1d28b89ac3d11 len:246> :: [31,\"session\",4242]",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Stopped by @tester.\",{\"json\":{\"quickReplies\":[\"Try that again\",\"What went wrong?\"]}}]",
-      "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]"
+      "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]",
+      "UPDATE local_agent_turns SET waiter_id = gen_random_uuid(), waiter_seen_at = NOW() WHERE id = ( SELECT id FROM local_age… <sha:02869ef4a305436d len:260> :: [\"test-8\"]",
+      "SELECT id FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-8\"]",
+      "SELECT id, active_turn FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-8\"]"
     ],
     "llm": [
       {
@@ -716,8 +795,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "e78e6fdd705c7462",
-          "length": 198367
+          "sha": "aac7898c37e412f4",
+          "length": 217049
         },
         "tools": [
           "dispatch_claude_code",
@@ -728,7 +807,7 @@
           "get_github_issue",
           "web_fetch"
         ],
-        "toolsSha": "17c9067b28900b7e",
+        "toolsSha": "c5dc1458ae310e99",
         "toolChoice": null,
         "messages": [
           {
@@ -740,6 +819,7 @@
       }
     ],
     "billing": [
+      "{\"fn\":\"resolveBillingPath\",\"userId\":7}",
       "{\"fn\":\"resolveBillingPath\",\"userId\":7}"
     ],
     "worker": [
@@ -761,7 +841,8 @@
       "{\"type\":\"phase\",\"_seq\":\"#3\",\"phase\":\"mayor1\"}",
       "{\"type\":\"error\",\"_seq\":\"#4\",\"error\":\"overloaded\"}",
       "{\"type\":\"status\",\"_seq\":\"#5\",\"text\":\"This turn failed: The AI provider is overloaded right now. Try again in a minute. Send your message again to retry.\",\"turnError\":true,\"quickReplies\":[\"Try that again\",\"What went wrong?\"]}",
-      "{\"type\":\"done\",\"_seq\":\"#6\"}"
+      "{\"type\":\"done\",\"_seq\":\"#6\"}",
+      "{\"type\":\"done\",\"_seq\":\"#<uuid>\",\"turnId\":\"<uuid>\"}"
     ],
     "broadcasts": [
       "{\"type\":\"session_event\",\"_seq\":\"#2\",\"text\":\"Thinking about your request...\",\"sessionId\":4242,\"event\":\"status\"}",
@@ -773,10 +854,15 @@
       "SELECT a.id, a.collab_visibility, a.view_visibility, a.moderation_suspended_at FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1 :: [4242]",
       "SELECT app_id FROM user_app_blocks WHERE user_id = $1 AND app_id = $2 :: [7,4242]",
       "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:49b4726211dab378 len:549> :: [\"4242\",7]",
+      "BEGIN :: []",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata, client_message_id) VALUES ($1, 'user', $2, $3, $… <sha:513d6d719625fb1d len:226> :: [4242,\"Add a dark mode toggle\",{\"json\":{}},null]",
       "UPDATE chat_sessions SET last_activity_at = NOW(), notify_on_done = FALSE WHERE id = $1 :: [4242]",
+      "COMMIT :: []",
+      "SELECT id, username FROM users WHERE id = $1 :: [7]",
+      "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:3e6d6a460762a104 len:329> :: [4242,7]",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Thinking about your request...\",{\"json\":{}}]",
       "SELECT id, role, content, metadata FROM chat_session_messages WHERE session_id = $1 AND (role IN ('user', 'assistant') O… <sha:454a396501e7d17e len:194> :: [4242]",
+      "SELECT (cs.active_turn IS NOT NULL OR EXISTS (SELECT 1 FROM local_agent_turns t WHERE t.session_id = cs.id AND t.status … <sha:606178aea56d8f55 len:1515> :: [4242]",
       "SELECT spec_md FROM chat_sessions WHERE id = $1 :: [4242]",
       "SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.status, cs.linked_issues, cs.spec_md, u.username FROM chat_sessio… <sha:c7047dc891be2a6e len:285> :: [31,4242]",
       "SELECT kind, name, description, size_bytes, updated_at FROM user_agent_files WHERE user_id = $1 ORDER BY kind, name :: [7]",
@@ -784,7 +870,10 @@
       "SELECT m.content, m.created_at, u.username FROM chat_messages m LEFT JOIN users u ON u.id = m.user_id WHERE m.app_id = $… <sha:b8a1d28b89ac3d11 len:246> :: [31,\"session\",4242]",
       "SELECT active_turn FROM chat_sessions WHERE id = $1 :: [4242]",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"This turn failed: The AI provider is overloaded right now. Try again in a minute. Send your message again to retry.\",{\"json\":{\"turnError\":true,\"quickReplies\":[\"Try that again\",\"What went wrong?\"]}}]",
-      "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]"
+      "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]",
+      "UPDATE local_agent_turns SET waiter_id = gen_random_uuid(), waiter_seen_at = NOW() WHERE id = ( SELECT id FROM local_age… <sha:02869ef4a305436d len:260> :: [\"test-9\"]",
+      "SELECT id FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-9\"]",
+      "SELECT id, active_turn FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-9\"]"
     ],
     "llm": [
       {
@@ -792,8 +881,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "e78e6fdd705c7462",
-          "length": 198367
+          "sha": "aac7898c37e412f4",
+          "length": 217049
         },
         "tools": [
           "dispatch_claude_code",
@@ -804,7 +893,7 @@
           "get_github_issue",
           "web_fetch"
         ],
-        "toolsSha": "17c9067b28900b7e",
+        "toolsSha": "c5dc1458ae310e99",
         "toolChoice": null,
         "messages": [
           {
@@ -816,6 +905,7 @@
       }
     ],
     "billing": [
+      "{\"fn\":\"resolveBillingPath\",\"userId\":7}",
       "{\"fn\":\"resolveBillingPath\",\"userId\":7}"
     ],
     "worker": [
@@ -837,7 +927,8 @@
       "{\"type\":\"accepted\",\"_seq\":\"#1\",\"messageId\":900,\"clientMessageId\":null}",
       "{\"type\":\"status\",\"_seq\":\"#2\",\"text\":\"Thinking about your request...\"}",
       "{\"type\":\"error\",\"_seq\":\"#3\",\"error\":\"LLM not configured\"}",
-      "{\"type\":\"done\",\"_seq\":\"#4\"}"
+      "{\"type\":\"done\",\"_seq\":\"#4\"}",
+      "{\"type\":\"done\",\"_seq\":\"#<uuid>\",\"turnId\":\"<uuid>\"}"
     ],
     "broadcasts": [
       "{\"type\":\"session_event\",\"_seq\":\"#2\",\"text\":\"Thinking about your request...\",\"sessionId\":4242,\"event\":\"status\"}",
@@ -847,19 +938,28 @@
       "SELECT a.id, a.collab_visibility, a.view_visibility, a.moderation_suspended_at FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1 :: [4242]",
       "SELECT app_id FROM user_app_blocks WHERE user_id = $1 AND app_id = $2 :: [7,4242]",
       "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:49b4726211dab378 len:549> :: [\"4242\",7]",
+      "BEGIN :: []",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata, client_message_id) VALUES ($1, 'user', $2, $3, $… <sha:513d6d719625fb1d len:226> :: [4242,\"Add a dark mode toggle\",{\"json\":{}},null]",
       "UPDATE chat_sessions SET last_activity_at = NOW(), notify_on_done = FALSE WHERE id = $1 :: [4242]",
+      "COMMIT :: []",
+      "SELECT id, username FROM users WHERE id = $1 :: [7]",
+      "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:3e6d6a460762a104 len:329> :: [4242,7]",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Thinking about your request...\",{\"json\":{}}]",
       "SELECT id, role, content, metadata FROM chat_session_messages WHERE session_id = $1 AND (role IN ('user', 'assistant') O… <sha:454a396501e7d17e len:194> :: [4242]",
+      "SELECT (cs.active_turn IS NOT NULL OR EXISTS (SELECT 1 FROM local_agent_turns t WHERE t.session_id = cs.id AND t.status … <sha:606178aea56d8f55 len:1515> :: [4242]",
       "SELECT spec_md FROM chat_sessions WHERE id = $1 :: [4242]",
       "SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.status, cs.linked_issues, cs.spec_md, u.username FROM chat_sessio… <sha:c7047dc891be2a6e len:285> :: [31,4242]",
       "SELECT kind, name, description, size_bytes, updated_at FROM user_agent_files WHERE user_id = $1 ORDER BY kind, name :: [7]",
       "SELECT a.self_hosted, u.is_admin, cs.user_id FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id JOIN users u ON u.id = cs.user_id WHERE cs.id = $1 :: [4242]",
       "SELECT m.content, m.created_at, u.username FROM chat_messages m LEFT JOIN users u ON u.id = m.user_id WHERE m.app_id = $… <sha:b8a1d28b89ac3d11 len:246> :: [31,\"session\",4242]",
-      "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]"
+      "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]",
+      "UPDATE local_agent_turns SET waiter_id = gen_random_uuid(), waiter_seen_at = NOW() WHERE id = ( SELECT id FROM local_age… <sha:02869ef4a305436d len:260> :: [\"test-10\"]",
+      "SELECT id FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-10\"]",
+      "SELECT id, active_turn FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-10\"]"
     ],
     "llm": [],
     "billing": [
+      "{\"fn\":\"resolveBillingPath\",\"userId\":7}",
       "{\"fn\":\"resolveBillingPath\",\"userId\":7}"
     ],
     "worker": [
@@ -886,14 +986,15 @@
       "{\"type\":\"phase\",\"_seq\":\"#9\",\"phase\":\"cc\"}",
       "{\"type\":\"status\",\"_seq\":\"#10\",\"text\":\"Scouting the repo for context (Opus)...\",\"agentBackend\":\"claude_code\",\"agentModel\":\"claude-opus-5-5\"}",
       "{\"type\":\"status\",\"_seq\":\"#11\",\"text\":\"Scout reading the codebase...\",\"agentBackend\":\"claude_code\",\"agentModel\":\"claude-opus-5-5\"}",
-      "{\"type\":\"status\",\"_seq\":\"#12\",\"text\":\"Scout drafted a 7-line spec from the codebase.\",\"specPreview\":\"# Dark mode toggle\\n\\n## Summary\\nA sun/moon button in the toolbar switches themes. The choice is saved on each device.\\n\\n## Questions\\nNone.\",\"specLines\":7,\"scoutOutput\":\"# Dark mode toggle\\n\\n## Summary\\nA sun/moon button in the toolbar switches themes. The choice is saved on each device.\\n\\n## Questions\\nNone.\",\"scoutConversationSpecExact\":true,\"specVersion\":1,\"durationMs\":\"<num>\",\"agentBackend\":\"claude_code\",\"agentModel\":\"claude-opus-5-5\"}",
+      "{\"type\":\"status\",\"_seq\":\"#12\",\"text\":\"Scout drafted a 7-line plan from the codebase.\",\"specPreview\":\"# Dark mode toggle\\n\\n## Summary\\nA sun/moon button in the toolbar switches themes. The choice is saved on each device.\\n\\n## Questions\\nNone.\",\"specLines\":7,\"scoutOutput\":\"# Dark mode toggle\\n\\n## Summary\\nA sun/moon button in the toolbar switches themes. The choice is saved on each device.\\n\\n## Questions\\nNone.\",\"scoutConversationSpecExact\":true,\"specVersion\":1,\"durationMs\":\"<num>\",\"agentBackend\":\"claude_code\",\"agentModel\":\"claude-opus-5-5\"}",
       "{\"type\":\"spec_updated\",\"_seq\":\"#13\",\"length\":136,\"lines\":7,\"version\":1}",
       "{\"type\":\"phase\",\"_seq\":\"#14\",\"phase\":\"mayor2\"}",
       "{\"type\":\"token\",\"_seq\":\"#15\",\"text\":\"The spec is in the viewer. Build it when you are ready.\"}",
       "{\"type\":\"usage\",\"_seq\":\"#16\",\"costCents\":1.5,\"model\":\"claude-opus-5-5\",\"byok\":false}",
       "{\"type\":\"mayor_reasoning\",\"_seq\":\"#17\",\"text\":\"The spec is in the viewer. Build it when you are ready.\"}",
       "{\"type\":\"quick_replies\",\"_seq\":\"#18\",\"replies\":[\"Build the spec\",\"Make the toggle remember per account\",\"What will this change?\"]}",
-      "{\"type\":\"done\",\"_seq\":\"#19\"}"
+      "{\"type\":\"done\",\"_seq\":\"#19\"}",
+      "{\"type\":\"done\",\"_seq\":\"#<uuid>\",\"turnId\":\"<uuid>\"}"
     ],
     "broadcasts": [
       "{\"type\":\"session_event\",\"_seq\":\"#2\",\"text\":\"Thinking about your request...\",\"sessionId\":4242,\"event\":\"status\"}",
@@ -904,7 +1005,7 @@
       "{\"type\":\"session_event\",\"_seq\":\"#9\",\"phase\":\"cc\",\"sessionId\":4242,\"event\":\"phase\"}",
       "{\"type\":\"session_event\",\"_seq\":\"#10\",\"text\":\"Scouting the repo for context (Opus)...\",\"agentBackend\":\"claude_code\",\"agentModel\":\"claude-opus-5-5\",\"sessionId\":4242,\"event\":\"status\"}",
       "{\"type\":\"session_event\",\"_seq\":\"#11\",\"text\":\"Scout reading the codebase...\",\"agentBackend\":\"claude_code\",\"agentModel\":\"claude-opus-5-5\",\"sessionId\":4242,\"event\":\"status\"}",
-      "{\"type\":\"session_event\",\"_seq\":\"#12\",\"text\":\"Scout drafted a 7-line spec from the codebase.\",\"specPreview\":\"# Dark mode toggle\\n\\n## Summary\\nA sun/moon button in the toolbar switches themes. The choice is saved on each device.\\n\\n## Questions\\nNone.\",\"specLines\":7,\"scoutOutput\":\"# Dark mode toggle\\n\\n## Summary\\nA sun/moon button in the toolbar switches themes. The choice is saved on each device.\\n\\n## Questions\\nNone.\",\"scoutConversationSpecExact\":true,\"specVersion\":1,\"durationMs\":\"<num>\",\"agentBackend\":\"claude_code\",\"agentModel\":\"claude-opus-5-5\",\"sessionId\":4242,\"event\":\"status\"}",
+      "{\"type\":\"session_event\",\"_seq\":\"#12\",\"text\":\"Scout drafted a 7-line plan from the codebase.\",\"specPreview\":\"# Dark mode toggle\\n\\n## Summary\\nA sun/moon button in the toolbar switches themes. The choice is saved on each device.\\n\\n## Questions\\nNone.\",\"specLines\":7,\"scoutOutput\":\"# Dark mode toggle\\n\\n## Summary\\nA sun/moon button in the toolbar switches themes. The choice is saved on each device.\\n\\n## Questions\\nNone.\",\"scoutConversationSpecExact\":true,\"specVersion\":1,\"durationMs\":\"<num>\",\"agentBackend\":\"claude_code\",\"agentModel\":\"claude-opus-5-5\",\"sessionId\":4242,\"event\":\"status\"}",
       "{\"type\":\"session_event\",\"_seq\":\"#13\",\"length\":136,\"lines\":7,\"version\":1,\"sessionId\":4242,\"event\":\"spec_updated\"}",
       "{\"type\":\"session_event\",\"_seq\":\"#14\",\"phase\":\"mayor2\",\"sessionId\":4242,\"event\":\"phase\"}",
       "{\"type\":\"session_event\",\"_seq\":\"#17\",\"text\":\"The spec is in the viewer. Build it when you are ready.\",\"sessionId\":4242,\"event\":\"mayor_reasoning\"}",
@@ -915,16 +1016,22 @@
       "SELECT a.id, a.collab_visibility, a.view_visibility, a.moderation_suspended_at FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1 :: [4242]",
       "SELECT app_id FROM user_app_blocks WHERE user_id = $1 AND app_id = $2 :: [7,4242]",
       "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:49b4726211dab378 len:549> :: [\"4242\",7]",
+      "BEGIN :: []",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata, client_message_id) VALUES ($1, 'user', $2, $3, $… <sha:513d6d719625fb1d len:226> :: [4242,\"Add a dark mode toggle (#34)\",{\"json\":{}},null]",
       "UPDATE chat_sessions SET last_activity_at = NOW(), notify_on_done = FALSE WHERE id = $1 :: [4242]",
+      "COMMIT :: []",
+      "SELECT id, username FROM users WHERE id = $1 :: [7]",
+      "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:3e6d6a460762a104 len:329> :: [4242,7]",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Thinking about your request...\",{\"json\":{}}]",
       "SELECT id, role, content, metadata FROM chat_session_messages WHERE session_id = $1 AND (role IN ('user', 'assistant') O… <sha:454a396501e7d17e len:194> :: [4242]",
+      "SELECT (cs.active_turn IS NOT NULL OR EXISTS (SELECT 1 FROM local_agent_turns t WHERE t.session_id = cs.id AND t.status … <sha:606178aea56d8f55 len:1515> :: [4242]",
       "SELECT spec_md FROM chat_sessions WHERE id = $1 :: [4242]",
       "SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.status, cs.linked_issues, cs.spec_md, u.username FROM chat_sessio… <sha:c7047dc891be2a6e len:285> :: [31,4242]",
       "SELECT kind, name, description, size_bytes, updated_at FROM user_agent_files WHERE user_id = $1 ORDER BY kind, name :: [7]",
       "SELECT a.self_hosted, u.is_admin, cs.user_id FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id JOIN users u ON u.id = cs.user_id WHERE cs.id = $1 :: [4242]",
       "SELECT m.content, m.created_at, u.username FROM chat_messages m LEFT JOIN users u ON u.id = m.user_id WHERE m.app_id = $… <sha:b8a1d28b89ac3d11 len:246> :: [31,\"session\",4242]",
       "INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata) VALUES ($1, 'assistant', $2, $3, $4, $5, $6) :: [4242,\"I will write a short spec first.\",\"claude-opus-5-5\",150,1.5,{\"json\":{\"quickReplies\":[\"Make a change\",\"What issues are open right now?\",\"What's the current state?\"],\"quickRepliesSource\":\"static\",\"quickRepliesKind\":\"chat_generic\",\"quickRepliesPreamble\":true}}]",
+      "SELECT (cs.active_turn IS NOT NULL OR EXISTS (SELECT 1 FROM local_agent_turns t WHERE t.session_id = cs.id AND t.status … <sha:606178aea56d8f55 len:1515> :: [4242]",
       "SELECT linked_issues, pr_linked_issues_applied FROM chat_sessions WHERE id = $1 :: [4242]",
       "UPDATE chat_sessions SET linked_issues = $1 WHERE id = $2 :: [[34],4242]",
       "SELECT a.self_hosted, u.is_admin, cs.user_id FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id JOIN users u ON u.id = cs.user_id WHERE cs.id = $1 :: [4242]",
@@ -938,8 +1045,8 @@
       "INSERT INTO turn_effects (turn_id, effect_key, session_id, state) VALUES ($1, $2, $3, 'pending') ON CONFLICT (turn_id, effect_key) DO NOTHING RETURNING state :: [\"turn-scout-1\",\"scout_spec_publication\",4242]",
       "UPDATE chat_sessions SET spec_md = $1, spec_html = $3 WHERE id = $2 :: [\"# Dark mode toggle\\n\\n## Summary\\nA sun/moon button in the toolbar switches themes. The choice is saved on each device.\\n\\n## Questions\\nNone.\",4242,null]",
       "INSERT INTO chat_session_specs (session_id, version, content, content_html) VALUES ($1, COALESCE((SELECT MAX(version) FR… <sha:4de9573f1e58a271 len:199> :: [4242,\"# Dark mode toggle\\n\\n## Summary\\nA sun/moon button in the toolbar switches themes. The choice is saved on each device.\\n\\n## Questions\\nNone.\",null]",
-      "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Scout drafted a 7-line spec from the codebase.\",{\"json\":{\"specPreview\":\"# Dark mode toggle\\n\\n## Summary\\nA sun/moon button in the toolbar switches themes. The choice is saved on each device.\\n\\n## Questions\\nNone.\",\"specLines\":7,\"scoutOutput\":\"# Dark mode toggle\\n\\n## Summary\\nA sun/moon button in the toolbar switches themes. The choice is saved on each device.\\n\\n## Questions\\nNone.\",\"scoutConversationSpecExact\":true,\"specVersion\":1,\"durationMs\":\"<num>\",\"agentBackend\":\"claude_code\",\"agentModel\":\"claude-opus-5-5\"}}]",
-      "UPDATE turn_effects SET state = 'completed', result = $3::jsonb, completed_at = NOW(), updated_at = NOW() WHERE turn_id = $1 AND effect_key = $2 :: [\"turn-scout-1\",\"scout_spec_publication\",{\"json\":{\"scoutText\":\"Scout drafted a 7-line spec from the codebase.\",\"metadata\":{\"specPreview\":\"# Dark mode toggle\\n\\n## Summary\\nA sun/moon button in the toolbar switches themes. The choice is saved on each device.\\n\\n## Questions\\nNone.\",\"specLines\":7,\"scoutOutput\":\"# Dark mode toggle\\n\\n## Summary\\nA sun/moon button in the toolbar switches themes. The choice is saved on each device.\\n\\n## Questions\\nNone.\",\"scoutConversationSpecExact\":true,\"specVersion\":1,\"durationMs\":\"<num>\",\"agentBackend\":\"claude_code\",\"agentModel\":\"claude-opus-5-5\"},\"lineCount\":7,\"specVersion\":1,\"hadSpec\":false}}]",
+      "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Scout drafted a 7-line plan from the codebase.\",{\"json\":{\"specPreview\":\"# Dark mode toggle\\n\\n## Summary\\nA sun/moon button in the toolbar switches themes. The choice is saved on each device.\\n\\n## Questions\\nNone.\",\"specLines\":7,\"scoutOutput\":\"# Dark mode toggle\\n\\n## Summary\\nA sun/moon button in the toolbar switches themes. The choice is saved on each device.\\n\\n## Questions\\nNone.\",\"scoutConversationSpecExact\":true,\"specVersion\":1,\"durationMs\":\"<num>\",\"agentBackend\":\"claude_code\",\"agentModel\":\"claude-opus-5-5\"}}]",
+      "UPDATE turn_effects SET state = 'completed', result = $3::jsonb, completed_at = NOW(), updated_at = NOW() WHERE turn_id = $1 AND effect_key = $2 :: [\"turn-scout-1\",\"scout_spec_publication\",{\"json\":{\"scoutText\":\"Scout drafted a 7-line plan from the codebase.\",\"metadata\":{\"specPreview\":\"# Dark mode toggle\\n\\n## Summary\\nA sun/moon button in the toolbar switches themes. The choice is saved on each device.\\n\\n## Questions\\nNone.\",\"specLines\":7,\"scoutOutput\":\"# Dark mode toggle\\n\\n## Summary\\nA sun/moon button in the toolbar switches themes. The choice is saved on each device.\\n\\n## Questions\\nNone.\",\"scoutConversationSpecExact\":true,\"specVersion\":1,\"durationMs\":\"<num>\",\"agentBackend\":\"claude_code\",\"agentModel\":\"claude-opus-5-5\"},\"lineCount\":7,\"specVersion\":1,\"hadSpec\":false}}]",
       "COMMIT :: []",
       "UPDATE chat_sessions SET last_turn_runner = $2, local_agent_label = $3 WHERE id = $1 :: [4242,\"platform\",null]",
       "UPDATE chat_sessions SET last_activity_at = NOW() WHERE id = $1 :: [4242]",
@@ -959,7 +1066,10 @@
       "INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata) VALUES ($1, 'assistant', $2, $3, $4, $5, $6) :: [4242,\"The spec is in the viewer. Build it when you are ready.\",\"claude-opus-5-5\",150,1.5,{\"json\":{\"quickReplies\":[\"Build the spec\",\"Make the toggle remember per account\",\"What will this change?\"],\"quickRepliesSource\":\"model\"}}]",
       "UPDATE turn_effects SET state = 'completed', result = $3::jsonb, completed_at = NOW(), updated_at = NOW() WHERE turn_id = $1 AND effect_key = $2 :: [\"turn-scout-1\",\"turn_wrapup_message\",{\"json\":{\"persisted\":true}}]",
       "COMMIT :: []",
-      "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]"
+      "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]",
+      "UPDATE local_agent_turns SET waiter_id = gen_random_uuid(), waiter_seen_at = NOW() WHERE id = ( SELECT id FROM local_age… <sha:02869ef4a305436d len:260> :: [\"test-11\"]",
+      "SELECT id FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-11\"]",
+      "SELECT id, active_turn FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-11\"]"
     ],
     "llm": [
       {
@@ -967,8 +1077,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "e78e6fdd705c7462",
-          "length": 198367
+          "sha": "aac7898c37e412f4",
+          "length": 217049
         },
         "tools": [
           "dispatch_claude_code",
@@ -979,7 +1089,7 @@
           "get_github_issue",
           "web_fetch"
         ],
-        "toolsSha": "17c9067b28900b7e",
+        "toolsSha": "c5dc1458ae310e99",
         "toolChoice": null,
         "messages": [
           {
@@ -1002,13 +1112,13 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "fb0301428ae04ed5",
-          "length": 198729
+          "sha": "30bcf7f600533c22",
+          "length": 217411
         },
         "tools": [
           "suggest_replies"
         ],
-        "toolsSha": "8127b4d237f21b5b",
+        "toolsSha": "a92d0ef432e0ac61",
         "toolChoice": {
           "type": "auto"
         },
@@ -1053,6 +1163,7 @@
     ],
     "billing": [
       "{\"fn\":\"resolveBillingPath\",\"userId\":7}",
+      "{\"fn\":\"resolveBillingPath\",\"userId\":7}",
       "{\"fn\":\"recordSpend\",\"userId\":7,\"cents\":1.5,\"opts\":{\"byok\":false}}",
       "{\"fn\":\"resolveBillingPath\",\"userId\":7}",
       "{\"fn\":\"resolveBillingPath\",\"userId\":7}",
@@ -1081,7 +1192,7 @@
       "{\"role\":\"system\",\"content\":\"Scouting the repo for context (Opus)...\",\"metadata\":{\"agentBackend\":\"claude_code\",\"agentModel\":\"claude-opus-5-5\"}}",
       "{\"role\":\"system\",\"content\":\"Scout reading the codebase...\",\"metadata\":{\"agentBackend\":\"claude_code\",\"agentModel\":\"claude-opus-5-5\"}}",
       "{\"role\":\"system\",\"content\":\"{\\\"progressLog\\\":[],\\\"agentBackend\\\":\\\"claude_code\\\",\\\"agentModel\\\":\\\"claude-opus-5-5\\\"}\",\"metadata\":{}}",
-      "{\"role\":\"system\",\"content\":\"Scout drafted a 7-line spec from the codebase.\",\"metadata\":{\"specPreview\":\"# Dark mode toggle\\n\\n## Summary\\nA sun/moon button in the toolbar switches themes. The choice is saved on each device.\\n\\n## Questions\\nNone.\",\"specLines\":7,\"scoutOutput\":\"# Dark mode toggle\\n\\n## Summary\\nA sun/moon button in the toolbar switches themes. The choice is saved on each device.\\n\\n## Questions\\nNone.\",\"scoutConversationSpecExact\":true,\"specVersion\":1,\"durationMs\":\"<num>\",\"agentBackend\":\"claude_code\",\"agentModel\":\"claude-opus-5-5\"}}",
+      "{\"role\":\"system\",\"content\":\"Scout drafted a 7-line plan from the codebase.\",\"metadata\":{\"specPreview\":\"# Dark mode toggle\\n\\n## Summary\\nA sun/moon button in the toolbar switches themes. The choice is saved on each device.\\n\\n## Questions\\nNone.\",\"specLines\":7,\"scoutOutput\":\"# Dark mode toggle\\n\\n## Summary\\nA sun/moon button in the toolbar switches themes. The choice is saved on each device.\\n\\n## Questions\\nNone.\",\"scoutConversationSpecExact\":true,\"specVersion\":1,\"durationMs\":\"<num>\",\"agentBackend\":\"claude_code\",\"agentModel\":\"claude-opus-5-5\"}}",
       "{\"role\":\"assistant\",\"content\":\"The spec is in the viewer. Build it when you are ready.\",\"metadata\":{\"quickReplies\":[\"Build the spec\",\"Make the toggle remember per account\",\"What will this change?\"],\"quickRepliesSource\":\"model\"}}"
     ]
   },
@@ -1094,55 +1205,60 @@
       "{\"type\":\"token\",\"_seq\":\"#4\",\"text\":\"Building it now.\"}",
       "{\"type\":\"usage\",\"_seq\":\"#5\",\"costCents\":1.5,\"model\":\"claude-opus-5-5\",\"byok\":false}",
       "{\"type\":\"mayor_reasoning\",\"_seq\":\"#6\",\"text\":\"Building it now.\"}",
-      "{\"type\":\"quick_replies\",\"_seq\":\"#7\",\"replies\":[\"Build the spec\",\"Revise the spec\",\"What will this change?\"]}",
+      "{\"type\":\"quick_replies\",\"_seq\":\"#7\",\"replies\":[\"Build the plan\",\"Revise the plan\",\"What will this change?\"]}",
       "{\"type\":\"assistant_message_end\",\"_seq\":\"#8\"}",
       "{\"type\":\"phase\",\"_seq\":\"#9\",\"phase\":\"cc\"}",
       "{\"type\":\"status\",\"_seq\":\"#10\",\"text\":\"Spinning up coding agent (Opus)...\",\"agentBackend\":\"claude_code\",\"agentModel\":\"claude-opus-5-5\"}",
       "{\"type\":\"status\",\"_seq\":\"#11\",\"text\":\"Claude Code is running...\",\"agentBackend\":\"claude_code\",\"agentModel\":\"claude-opus-5-5\"}",
       "{\"type\":\"status\",\"_seq\":\"#12\",\"text\":\"PR #42 created\"}",
       "{\"type\":\"status\",\"_seq\":\"#13\",\"text\":\"Building staging preview...\"}",
-      "{\"type\":\"status\",\"_seq\":\"#14\",\"text\":\"Staging deployed!\",\"stagingUrl\":\"https://whiteboard-pr42.staging.test\",\"changesReady\":true,\"prNumber\":42,\"prUrl\":\"https://github.com/usernode-bot/whiteboard-0d337f/pull/42\"}",
-      "{\"type\":\"staging_ready\",\"_seq\":\"#15\",\"url\":\"https://whiteboard-pr42.staging.test\",\"changesReady\":true,\"testingMd\":null,\"testingPath\":null}",
-      "{\"type\":\"status\",\"_seq\":\"#16\",\"text\":\"Claude Code finished\",\"agentBackend\":\"claude_code\",\"agentModel\":\"claude-opus-5-5\",\"ccOutput\":\"Added a theme toggle to the toolbar and saved the choice in localStorage.\",\"ccOutcome\":\"success\",\"durationMs\":\"<num>\"}",
-      "{\"type\":\"phase\",\"_seq\":\"#17\",\"phase\":\"mayor2\"}",
-      "{\"type\":\"token\",\"_seq\":\"#18\",\"text\":\"Done. The toggle is in the toolbar and remembers each device.\"}",
-      "{\"type\":\"usage\",\"_seq\":\"#19\",\"costCents\":1.5,\"model\":\"claude-opus-5-5\",\"byok\":false}",
-      "{\"type\":\"mayor_reasoning\",\"_seq\":\"#20\",\"text\":\"Done. The toggle is in the toolbar and remembers each device.\"}",
-      "{\"type\":\"quick_replies\",\"_seq\":\"#21\",\"replies\":[\"Try it in the preview\",\"Use a softer dark grey\",\"What did it change?\"]}",
-      "{\"type\":\"done\",\"_seq\":\"#22\"}"
+      "{\"type\":\"status\",\"_seq\":\"#14\",\"text\":\"Building staging preview...\",\"changesReady\":true,\"stagingBuild\":\"running\",\"prNumber\":42,\"prUrl\":\"https://github.com/usernode-bot/whiteboard-0d337f/pull/42\"}",
+      "{\"type\":\"status\",\"_seq\":\"#15\",\"text\":\"Claude Code finished\",\"agentBackend\":\"claude_code\",\"agentModel\":\"claude-opus-5-5\",\"ccOutput\":\"Added a theme toggle to the toolbar and saved the choice in localStorage.\",\"ccOutcome\":\"success\",\"durationMs\":\"<num>\"}",
+      "{\"type\":\"phase\",\"_seq\":\"#16\",\"phase\":\"mayor2\"}",
+      "{\"type\":\"token\",\"_seq\":\"#17\",\"text\":\"Done. The toggle is in the toolbar and remembers each device.\"}",
+      "{\"type\":\"usage\",\"_seq\":\"#18\",\"costCents\":1.5,\"model\":\"claude-opus-5-5\",\"byok\":false}",
+      "{\"type\":\"mayor_reasoning\",\"_seq\":\"#19\",\"text\":\"Done. The toggle is in the toolbar and remembers each device.\"}",
+      "{\"type\":\"quick_replies\",\"_seq\":\"#20\",\"replies\":[\"Try it in the preview\",\"Use a softer dark grey\",\"What did it change?\"]}",
+      "{\"type\":\"done\",\"_seq\":\"#21\"}",
+      "{\"type\":\"done\",\"_seq\":\"#<uuid>\",\"turnId\":\"<uuid>\"}"
     ],
     "broadcasts": [
       "{\"type\":\"session_event\",\"_seq\":\"#2\",\"text\":\"Thinking about your request...\",\"sessionId\":4242,\"event\":\"status\"}",
       "{\"type\":\"session_event\",\"_seq\":\"#3\",\"phase\":\"mayor1\",\"sessionId\":4242,\"event\":\"phase\"}",
       "{\"type\":\"session_event\",\"_seq\":\"#6\",\"text\":\"Building it now.\",\"sessionId\":4242,\"event\":\"mayor_reasoning\"}",
-      "{\"type\":\"session_event\",\"_seq\":\"#7\",\"replies\":[\"Build the spec\",\"Revise the spec\",\"What will this change?\"],\"sessionId\":4242,\"event\":\"quick_replies\"}",
+      "{\"type\":\"session_event\",\"_seq\":\"#7\",\"replies\":[\"Build the plan\",\"Revise the plan\",\"What will this change?\"],\"sessionId\":4242,\"event\":\"quick_replies\"}",
       "{\"type\":\"session_event\",\"_seq\":\"#8\",\"sessionId\":4242,\"event\":\"assistant_message_end\"}",
       "{\"type\":\"session_event\",\"_seq\":\"#9\",\"phase\":\"cc\",\"sessionId\":4242,\"event\":\"phase\"}",
       "{\"type\":\"session_event\",\"_seq\":\"#10\",\"text\":\"Spinning up coding agent (Opus)...\",\"agentBackend\":\"claude_code\",\"agentModel\":\"claude-opus-5-5\",\"sessionId\":4242,\"event\":\"status\"}",
       "{\"type\":\"session_event\",\"_seq\":\"#11\",\"text\":\"Claude Code is running...\",\"agentBackend\":\"claude_code\",\"agentModel\":\"claude-opus-5-5\",\"sessionId\":4242,\"event\":\"status\"}",
       "{\"type\":\"session_event\",\"_seq\":\"#12\",\"text\":\"PR #42 created\",\"sessionId\":4242,\"event\":\"status\"}",
       "{\"type\":\"session_event\",\"_seq\":\"#13\",\"text\":\"Building staging preview...\",\"sessionId\":4242,\"event\":\"status\"}",
-      "{\"type\":\"session_event\",\"_seq\":\"#14\",\"text\":\"Staging deployed!\",\"stagingUrl\":\"https://whiteboard-pr42.staging.test\",\"changesReady\":true,\"prNumber\":42,\"prUrl\":\"https://github.com/usernode-bot/whiteboard-0d337f/pull/42\",\"sessionId\":4242,\"event\":\"status\"}",
-      "{\"type\":\"session_event\",\"_seq\":\"#15\",\"url\":\"https://whiteboard-pr42.staging.test\",\"changesReady\":true,\"testingMd\":null,\"testingPath\":null,\"sessionId\":4242,\"event\":\"staging_ready\"}",
-      "{\"type\":\"session_event\",\"_seq\":\"#16\",\"text\":\"Claude Code finished\",\"agentBackend\":\"claude_code\",\"agentModel\":\"claude-opus-5-5\",\"ccOutput\":\"Added a theme toggle to the toolbar and saved the choice in localStorage.\",\"ccOutcome\":\"success\",\"durationMs\":\"<num>\",\"sessionId\":4242,\"event\":\"status\"}",
-      "{\"type\":\"session_event\",\"_seq\":\"#17\",\"phase\":\"mayor2\",\"sessionId\":4242,\"event\":\"phase\"}",
-      "{\"type\":\"session_event\",\"_seq\":\"#20\",\"text\":\"Done. The toggle is in the toolbar and remembers each device.\",\"sessionId\":4242,\"event\":\"mayor_reasoning\"}",
-      "{\"type\":\"session_event\",\"_seq\":\"#21\",\"replies\":[\"Try it in the preview\",\"Use a softer dark grey\",\"What did it change?\"],\"sessionId\":4242,\"event\":\"quick_replies\"}",
-      "{\"type\":\"session_event\",\"_seq\":\"#22\",\"sessionId\":4242,\"event\":\"done\"}"
+      "{\"type\":\"session_event\",\"_seq\":\"#14\",\"text\":\"Building staging preview...\",\"changesReady\":true,\"stagingBuild\":\"running\",\"prNumber\":42,\"prUrl\":\"https://github.com/usernode-bot/whiteboard-0d337f/pull/42\",\"sessionId\":4242,\"event\":\"status\"}",
+      "{\"type\":\"session_event\",\"_seq\":\"#15\",\"text\":\"Claude Code finished\",\"agentBackend\":\"claude_code\",\"agentModel\":\"claude-opus-5-5\",\"ccOutput\":\"Added a theme toggle to the toolbar and saved the choice in localStorage.\",\"ccOutcome\":\"success\",\"durationMs\":\"<num>\",\"sessionId\":4242,\"event\":\"status\"}",
+      "{\"type\":\"session_event\",\"_seq\":\"#16\",\"phase\":\"mayor2\",\"sessionId\":4242,\"event\":\"phase\"}",
+      "{\"type\":\"session_event\",\"_seq\":\"#19\",\"text\":\"Done. The toggle is in the toolbar and remembers each device.\",\"sessionId\":4242,\"event\":\"mayor_reasoning\"}",
+      "{\"type\":\"session_event\",\"_seq\":\"#20\",\"replies\":[\"Try it in the preview\",\"Use a softer dark grey\",\"What did it change?\"],\"sessionId\":4242,\"event\":\"quick_replies\"}",
+      "{\"type\":\"session_event\",\"_seq\":\"#21\",\"sessionId\":4242,\"event\":\"done\"}"
     ],
     "queries": [
       "SELECT a.id, a.collab_visibility, a.view_visibility, a.moderation_suspended_at FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1 :: [4242]",
       "SELECT app_id FROM user_app_blocks WHERE user_id = $1 AND app_id = $2 :: [7,4242]",
       "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:49b4726211dab378 len:549> :: [\"4242\",7]",
+      "BEGIN :: []",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata, client_message_id) VALUES ($1, 'user', $2, $3, $… <sha:513d6d719625fb1d len:226> :: [4242,\"Build it\",{\"json\":{}},null]",
       "UPDATE chat_sessions SET last_activity_at = NOW(), notify_on_done = FALSE WHERE id = $1 :: [4242]",
+      "COMMIT :: []",
+      "SELECT id, username FROM users WHERE id = $1 :: [7]",
+      "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:3e6d6a460762a104 len:329> :: [4242,7]",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Thinking about your request...\",{\"json\":{}}]",
       "SELECT id, role, content, metadata FROM chat_session_messages WHERE session_id = $1 AND (role IN ('user', 'assistant') O… <sha:454a396501e7d17e len:194> :: [4242]",
+      "SELECT (cs.active_turn IS NOT NULL OR EXISTS (SELECT 1 FROM local_agent_turns t WHERE t.session_id = cs.id AND t.status … <sha:606178aea56d8f55 len:1515> :: [4242]",
       "SELECT spec_md FROM chat_sessions WHERE id = $1 :: [4242]",
       "SELECT kind, name, description, size_bytes, updated_at FROM user_agent_files WHERE user_id = $1 ORDER BY kind, name :: [7]",
       "SELECT a.self_hosted, u.is_admin, cs.user_id FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id JOIN users u ON u.id = cs.user_id WHERE cs.id = $1 :: [4242]",
       "SELECT m.content, m.created_at, u.username FROM chat_messages m LEFT JOIN users u ON u.id = m.user_id WHERE m.app_id = $… <sha:b8a1d28b89ac3d11 len:246> :: [31,\"session\",4242]",
-      "INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata) VALUES ($1, 'assistant', $2, $3, $4, $5, $6) :: [4242,\"Building it now.\",\"claude-opus-5-5\",150,1.5,{\"json\":{\"quickReplies\":[\"Build the spec\",\"Revise the spec\",\"What will this change?\"],\"quickRepliesSource\":\"static\",\"quickRepliesKind\":\"spec_done\",\"quickRepliesPreamble\":true}}]",
+      "INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata) VALUES ($1, 'assistant', $2, $3, $4, $5, $6) :: [4242,\"Building it now.\",\"claude-opus-5-5\",150,1.5,{\"json\":{\"quickReplies\":[\"Build the plan\",\"Revise the plan\",\"What will this change?\"],\"quickRepliesSource\":\"static\",\"quickRepliesKind\":\"spec_done\",\"quickRepliesPreamble\":true}}]",
+      "SELECT (cs.active_turn IS NOT NULL OR EXISTS (SELECT 1 FROM local_agent_turns t WHERE t.session_id = cs.id AND t.status … <sha:606178aea56d8f55 len:1515> :: [4242]",
       "SELECT a.self_hosted, u.is_admin, cs.user_id FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id JOIN users u ON u.id = cs.user_id WHERE cs.id = $1 :: [4242]",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Spinning up coding agent (Opus)...\",{\"json\":{\"agentBackend\":\"claude_code\",\"agentModel\":\"claude-opus-5-5\"}}]",
       "SELECT spec_md FROM chat_sessions WHERE id = $1 :: [4242]",
@@ -1160,8 +1276,13 @@
       "UPDATE turn_effects SET state = 'completed', result = $3::jsonb, completed_at = NOW(), updated_at = NOW() WHERE turn_id = $1 AND effect_key = $2 :: [\"turn-build-1\",\"pr_opened_announcement\",{\"json\":{\"prNumber\":42}}]",
       "COMMIT :: []",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Building staging preview...\",{\"json\":{}}]",
-      "UPDATE chat_sessions SET staging_container_id = $1, staging_url = $2 WHERE id = $3 :: [\"stage-1\",\"https://whiteboard-pr42.staging.test\",4242]",
-      "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Staging deployed!\",{\"json\":{\"stagingUrl\":\"https://whiteboard-pr42.staging.test\",\"changesReady\":true,\"prNumber\":42,\"prUrl\":\"https://github.com/usernode-bot/whiteboard-0d337f/pull/42\"}}]",
+      "BEGIN :: []",
+      "INSERT INTO turn_effects (turn_id, effect_key, session_id, state) VALUES ($1, $2, $3, 'pending') ON CONFLICT (turn_id, effect_key) DO NOTHING RETURNING state :: [\"turn-build-1\",\"recovered_staging_publication\",4242]",
+      "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Building staging preview...\",{\"json\":{\"changesReady\":true,\"stagingBuild\":\"running\",\"prNumber\":42,\"prUrl\":\"https://github.com/usernode-bot/whiteboard-0d337f/pull/42\"}}]",
+      "UPDATE chat_sessions SET active_turn = jsonb_set( active_turn, '{tail}', COALESCE(active_turn->'tail', '{}'::jsonb) || $… <sha:508f11108a93a8f0 len:298> :: [4242,{\"json\":{\"stagingPublished\":true}},\"turn-build-1\",[\"tail_pending\",\"tail\"]]",
+      "SELECT active_turn FROM chat_sessions WHERE id = $1 :: [4242]",
+      "UPDATE turn_effects SET state = 'completed', result = $3::jsonb, completed_at = NOW(), updated_at = NOW() WHERE turn_id = $1 AND effect_key = $2 :: [\"turn-build-1\",\"recovered_staging_publication\",{\"json\":{\"outcome\":\"building\",\"metadata\":{\"changesReady\":true,\"stagingBuild\":\"running\",\"prNumber\":42,\"prUrl\":\"https://github.com/usernode-bot/whiteboard-0d337f/pull/42\"},\"failure\":null,\"checkpoint\":{\"stagingPublished\":true}}}]",
+      "COMMIT :: []",
       "BEGIN :: []",
       "INSERT INTO turn_effects (turn_id, effect_key, session_id, state) VALUES ($1, $2, $3, 'pending') ON CONFLICT (turn_id, effect_key) DO NOTHING RETURNING state :: [\"turn-build-1\",\"completion_row\",4242]",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Claude Code finished\",{\"json\":{\"agentBackend\":\"claude_code\",\"agentModel\":\"claude-opus-5-5\",\"ccOutput\":\"Added a theme toggle to the toolbar and saved the choice in localStorage.\",\"ccOutcome\":\"success\",\"durationMs\":\"<num>\"}}]",
@@ -1184,7 +1305,10 @@
       "INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata) VALUES ($1, 'assistant', $2, $3, $4, $5, $6) :: [4242,\"Done. The toggle is in the toolbar and remembers each device.\",\"claude-opus-5-5\",150,1.5,{\"json\":{\"quickReplies\":[\"Try it in the preview\",\"Use a softer dark grey\",\"What did it change?\"],\"quickRepliesSource\":\"model\"}}]",
       "UPDATE turn_effects SET state = 'completed', result = $3::jsonb, completed_at = NOW(), updated_at = NOW() WHERE turn_id = $1 AND effect_key = $2 :: [\"turn-build-1\",\"turn_wrapup_message\",{\"json\":{\"persisted\":true}}]",
       "COMMIT :: []",
-      "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]"
+      "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]",
+      "UPDATE local_agent_turns SET waiter_id = gen_random_uuid(), waiter_seen_at = NOW() WHERE id = ( SELECT id FROM local_age… <sha:02869ef4a305436d len:260> :: [\"test-12\"]",
+      "SELECT id FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-12\"]",
+      "SELECT id, active_turn FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-12\"]"
     ],
     "llm": [
       {
@@ -1192,8 +1316,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "fb0301428ae04ed5",
-          "length": 198729
+          "sha": "30bcf7f600533c22",
+          "length": 217411
         },
         "tools": [
           "dispatch_claude_code",
@@ -1204,7 +1328,7 @@
           "get_github_issue",
           "web_fetch"
         ],
-        "toolsSha": "17c9067b28900b7e",
+        "toolsSha": "c5dc1458ae310e99",
         "toolChoice": null,
         "messages": [
           {
@@ -1235,13 +1359,13 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "2e1650b8ced1cf93",
-          "length": 199463
+          "sha": "4c299d69f55f7aff",
+          "length": 218145
         },
         "tools": [
           "suggest_replies"
         ],
-        "toolsSha": "8127b4d237f21b5b",
+        "toolsSha": "a92d0ef432e0ac61",
         "toolChoice": {
           "type": "auto"
         },
@@ -1281,7 +1405,7 @@
               {
                 "type": "tool_result",
                 "tool_use_id": "tu-build",
-                "content": "What the agent did:\nAdded a theme toggle to the toolbar and saved the choice in localStorage.\n\nCommit abc1234d pushed to dev/tester-4242.\n\nOpened PR #42: https://github.com/usernode-bot/whiteboard-0d337f/pull/42\n\nStaging redeployed: https://whiteboard-pr42.staging.test"
+                "content": "What the agent did:\nAdded a theme toggle to the toolbar and saved the choice in localStorage.\n\nCommit abc1234d pushed to dev/tester-4242.\n\nOpened PR #42: https://github.com/usernode-bot/whiteboard-0d337f/pull/42\n\nThe staging preview is building; its checks run once it is up."
               }
             ]
           }
@@ -1290,6 +1414,7 @@
       }
     ],
     "billing": [
+      "{\"fn\":\"resolveBillingPath\",\"userId\":7}",
       "{\"fn\":\"resolveBillingPath\",\"userId\":7}",
       "{\"fn\":\"recordSpend\",\"userId\":7,\"cents\":1.5,\"opts\":{\"byok\":false}}",
       "{\"fn\":\"resolveBillingPath\",\"userId\":7}",
@@ -1303,9 +1428,8 @@
       "{\"fn\":\"ensureWorkerImage\"}",
       "{\"fn\":\"ensureWorker\",\"id\":4242}",
       "{\"fn\":\"syncUserAgentFiles\"}",
-      "{\"fn\":\"execInWorker\",\"id\":4242,\"mode\":\"build\",\"model\":\"claude-opus-5-5\",\"branchName\":\"dev/tester-4242\",\"resumeSessionId\":\"cc-scout-1\",\"prompt\":{\"sha\":\"1d202a186aba23e5\",\"length\":12026},\"systemPrompt\":null,\"holdTurnRecord\":true,\"telemetryComponent\":\"coding_agent_build\"}",
+      "{\"fn\":\"execInWorker\",\"id\":4242,\"mode\":\"build\",\"model\":\"claude-opus-5-5\",\"branchName\":\"dev/tester-4242\",\"resumeSessionId\":\"cc-scout-1\",\"prompt\":{\"sha\":\"fca00680c9a026ef\",\"length\":12533},\"systemPrompt\":null,\"holdTurnRecord\":true,\"telemetryComponent\":\"coding_agent_build\"}",
       "{\"fn\":\"noteTailMilestone\",\"id\":4242,\"milestone\":{\"prNumber\":42,\"prOpenedEventRecorded\":true},\"opts\":{\"turnId\":\"turn-build-1\"}}",
-      "{\"fn\":\"noteTailMilestone\",\"id\":4242,\"milestone\":{\"stagingUrl\":\"https://whiteboard-pr42.staging.test\"},\"opts\":{\"turnId\":\"turn-build-1\"}}",
       "{\"fn\":\"noteTailMilestone\",\"id\":4242,\"milestone\":{\"completionRowPosted\":true},\"opts\":{\"turnId\":\"turn-build-1\"}}",
       "{\"fn\":\"noteTailMilestone\",\"id\":4242,\"milestone\":{\"wrapUpPosted\":true},\"opts\":{\"turnId\":\"turn-build-1\"}}",
       "{\"fn\":\"finishTurn\",\"id\":4242,\"opts\":{\"turnId\":\"turn-build-1\"}}"
@@ -1314,10 +1438,7 @@
       "{\"fn\":\"startCodexAttempt\",\"attemptNumber\":1,\"mode\":\"build\",\"model\":\"openai/gpt-5.3-codex\"}",
       "{\"fn\":\"completeCodexAttempt\",\"turnUuid\":\"attempt-1\",\"status\":\"completed\"}",
       "{\"fn\":\"applyPrMetadata\",\"userMessage\":\"Build it\",\"ccSummary\":\"Added a theme toggle to the toolbar and saved the choice in localStorage.\",\"proposalDescription\":null}",
-      "{\"fn\":\"setChecksPending\",\"id\":4242}",
-      "{\"fn\":\"buildAndDeployStaging\",\"sessionId\":4242,\"sha\":\"abc1234def5678\"}",
-      "{\"fn\":\"verifyStagingEdge\"}",
-      "{\"fn\":\"captureForSession\",\"id\":{\"id\":4242,\"app_id\":31,\"user_id\":7,\"branch_name\":\"dev/tester-4242\",\"status\":\"active\",\"is_headless\":false,\"source\":null,\"session_title\":\"Dark mode\",\"pr_number\":42,\"pr_title\":\"Add a dark mode toggle\",\"cc_session_id\":\"cc-build-1\",\"cloned_from_session_id\":null,\"agent_backend\":\"claude_code\",\"agent_model\":null,\"spec_md\":\"# Dark mode toggle\\n\\n## Summary\\nA sun/moon button in the toolbar switches themes. The choice is saved on each device.\\n\\n## Questions\\nNone.\",\"linked_issues\":[],\"app_slug\":\"whiteboard-0d337f\",\"app_name\":\"Whiteboard\",\"repo_url\":\"https://github.com/usernode-bot/whiteboard-0d337f\",\"app_self_hosted\":false,\"collab_visibility\":\"public\",\"view_visibility\":\"public\",\"pr_url\":\"https://github.com/usernode-bot/whiteboard-0d337f/pull/42\"}}",
+      "{\"fn\":\"previewWorkflow.revision\",\"sessionId\":4242,\"head\":\"abc1234def5678\",\"source\":\"turn\",\"trigger\":\"commit-push\"}",
       "{\"fn\":\"titleAtTurnEnd\",\"firstTurn\":false,\"message\":\"Build it\"}"
     ],
     "unusedLlmSteps": 0,
@@ -1326,13 +1447,13 @@
       "{\"role\":\"assistant\",\"content\":\"The spec is in the viewer.\",\"metadata\":{}}",
       "{\"role\":\"user\",\"content\":\"Build it\",\"metadata\":{}}",
       "{\"role\":\"system\",\"content\":\"Thinking about your request...\",\"metadata\":{}}",
-      "{\"role\":\"assistant\",\"content\":\"Building it now.\",\"metadata\":{\"quickReplies\":[\"Build the spec\",\"Revise the spec\",\"What will this change?\"],\"quickRepliesSource\":\"static\",\"quickRepliesKind\":\"spec_done\",\"quickRepliesPreamble\":true}}",
+      "{\"role\":\"assistant\",\"content\":\"Building it now.\",\"metadata\":{\"quickReplies\":[\"Build the plan\",\"Revise the plan\",\"What will this change?\"],\"quickRepliesSource\":\"static\",\"quickRepliesKind\":\"spec_done\",\"quickRepliesPreamble\":true}}",
       "{\"role\":\"system\",\"content\":\"Spinning up coding agent (Opus)...\",\"metadata\":{\"agentBackend\":\"claude_code\",\"agentModel\":\"claude-opus-5-5\"}}",
       "{\"role\":\"system\",\"content\":\"Claude Code is running...\",\"metadata\":{\"agentBackend\":\"claude_code\",\"agentModel\":\"claude-opus-5-5\"}}",
       "{\"role\":\"system\",\"content\":\"{\\\"progressLog\\\":[],\\\"agentBackend\\\":\\\"claude_code\\\",\\\"agentModel\\\":\\\"claude-opus-5-5\\\"}\",\"metadata\":{}}",
       "{\"role\":\"system\",\"content\":\"PR #42 created\",\"metadata\":{}}",
       "{\"role\":\"system\",\"content\":\"Building staging preview...\",\"metadata\":{}}",
-      "{\"role\":\"system\",\"content\":\"Staging deployed!\",\"metadata\":{\"stagingUrl\":\"https://whiteboard-pr42.staging.test\",\"changesReady\":true,\"prNumber\":42,\"prUrl\":\"https://github.com/usernode-bot/whiteboard-0d337f/pull/42\"}}",
+      "{\"role\":\"system\",\"content\":\"Building staging preview...\",\"metadata\":{\"changesReady\":true,\"stagingBuild\":\"running\",\"prNumber\":42,\"prUrl\":\"https://github.com/usernode-bot/whiteboard-0d337f/pull/42\"}}",
       "{\"role\":\"system\",\"content\":\"Claude Code finished\",\"metadata\":{\"agentBackend\":\"claude_code\",\"agentModel\":\"claude-opus-5-5\",\"ccOutput\":\"Added a theme toggle to the toolbar and saved the choice in localStorage.\",\"ccOutcome\":\"success\",\"durationMs\":\"<num>\"}}",
       "{\"role\":\"assistant\",\"content\":\"Done. The toggle is in the toolbar and remembers each device.\",\"metadata\":{\"quickReplies\":[\"Try it in the preview\",\"Use a softer dark grey\",\"What did it change?\"],\"quickRepliesSource\":\"model\"}}"
     ]
@@ -1346,7 +1467,7 @@
       "{\"type\":\"token\",\"_seq\":\"#4\",\"text\":\"Building it now.\"}",
       "{\"type\":\"usage\",\"_seq\":\"#5\",\"costCents\":1.5,\"model\":\"claude-opus-5-5\",\"byok\":false}",
       "{\"type\":\"mayor_reasoning\",\"_seq\":\"#6\",\"text\":\"Building it now.\"}",
-      "{\"type\":\"quick_replies\",\"_seq\":\"#7\",\"replies\":[\"Build the spec\",\"Revise the spec\",\"What will this change?\"]}",
+      "{\"type\":\"quick_replies\",\"_seq\":\"#7\",\"replies\":[\"Build the plan\",\"Revise the plan\",\"What will this change?\"]}",
       "{\"type\":\"assistant_message_end\",\"_seq\":\"#8\"}",
       "{\"type\":\"phase\",\"_seq\":\"#9\",\"phase\":\"cc\"}",
       "{\"type\":\"status\",\"_seq\":\"#10\",\"text\":\"Spinning up coding agent (Opus)...\",\"agentBackend\":\"claude_code\",\"agentModel\":\"claude-opus-5-5\"}",
@@ -1358,13 +1479,14 @@
       "{\"type\":\"usage\",\"_seq\":\"#16\",\"costCents\":1.5,\"model\":\"claude-opus-5-5\",\"byok\":false}",
       "{\"type\":\"mayor_reasoning\",\"_seq\":\"#17\",\"text\":\"The agent found nothing to change.\"}",
       "{\"type\":\"quick_replies\",\"_seq\":\"#18\",\"replies\":[\"Try that again\",\"What went wrong?\"]}",
-      "{\"type\":\"done\",\"_seq\":\"#19\"}"
+      "{\"type\":\"done\",\"_seq\":\"#19\"}",
+      "{\"type\":\"done\",\"_seq\":\"#<uuid>\",\"turnId\":\"<uuid>\"}"
     ],
     "broadcasts": [
       "{\"type\":\"session_event\",\"_seq\":\"#2\",\"text\":\"Thinking about your request...\",\"sessionId\":4242,\"event\":\"status\"}",
       "{\"type\":\"session_event\",\"_seq\":\"#3\",\"phase\":\"mayor1\",\"sessionId\":4242,\"event\":\"phase\"}",
       "{\"type\":\"session_event\",\"_seq\":\"#6\",\"text\":\"Building it now.\",\"sessionId\":4242,\"event\":\"mayor_reasoning\"}",
-      "{\"type\":\"session_event\",\"_seq\":\"#7\",\"replies\":[\"Build the spec\",\"Revise the spec\",\"What will this change?\"],\"sessionId\":4242,\"event\":\"quick_replies\"}",
+      "{\"type\":\"session_event\",\"_seq\":\"#7\",\"replies\":[\"Build the plan\",\"Revise the plan\",\"What will this change?\"],\"sessionId\":4242,\"event\":\"quick_replies\"}",
       "{\"type\":\"session_event\",\"_seq\":\"#8\",\"sessionId\":4242,\"event\":\"assistant_message_end\"}",
       "{\"type\":\"session_event\",\"_seq\":\"#9\",\"phase\":\"cc\",\"sessionId\":4242,\"event\":\"phase\"}",
       "{\"type\":\"session_event\",\"_seq\":\"#10\",\"text\":\"Spinning up coding agent (Opus)...\",\"agentBackend\":\"claude_code\",\"agentModel\":\"claude-opus-5-5\",\"sessionId\":4242,\"event\":\"status\"}",
@@ -1380,16 +1502,22 @@
       "SELECT a.id, a.collab_visibility, a.view_visibility, a.moderation_suspended_at FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1 :: [4242]",
       "SELECT app_id FROM user_app_blocks WHERE user_id = $1 AND app_id = $2 :: [7,4242]",
       "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:49b4726211dab378 len:549> :: [\"4242\",7]",
+      "BEGIN :: []",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata, client_message_id) VALUES ($1, 'user', $2, $3, $… <sha:513d6d719625fb1d len:226> :: [4242,\"Build it\",{\"json\":{}},null]",
       "UPDATE chat_sessions SET last_activity_at = NOW(), notify_on_done = FALSE WHERE id = $1 :: [4242]",
+      "COMMIT :: []",
+      "SELECT id, username FROM users WHERE id = $1 :: [7]",
+      "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:3e6d6a460762a104 len:329> :: [4242,7]",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Thinking about your request...\",{\"json\":{}}]",
       "SELECT id, role, content, metadata FROM chat_session_messages WHERE session_id = $1 AND (role IN ('user', 'assistant') O… <sha:454a396501e7d17e len:194> :: [4242]",
+      "SELECT (cs.active_turn IS NOT NULL OR EXISTS (SELECT 1 FROM local_agent_turns t WHERE t.session_id = cs.id AND t.status … <sha:606178aea56d8f55 len:1515> :: [4242]",
       "SELECT spec_md FROM chat_sessions WHERE id = $1 :: [4242]",
       "SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.status, cs.linked_issues, cs.spec_md, u.username FROM chat_sessio… <sha:c7047dc891be2a6e len:285> :: [31,4242]",
       "SELECT kind, name, description, size_bytes, updated_at FROM user_agent_files WHERE user_id = $1 ORDER BY kind, name :: [7]",
       "SELECT a.self_hosted, u.is_admin, cs.user_id FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id JOIN users u ON u.id = cs.user_id WHERE cs.id = $1 :: [4242]",
       "SELECT m.content, m.created_at, u.username FROM chat_messages m LEFT JOIN users u ON u.id = m.user_id WHERE m.app_id = $… <sha:b8a1d28b89ac3d11 len:246> :: [31,\"session\",4242]",
-      "INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata) VALUES ($1, 'assistant', $2, $3, $4, $5, $6) :: [4242,\"Building it now.\",\"claude-opus-5-5\",150,1.5,{\"json\":{\"quickReplies\":[\"Build the spec\",\"Revise the spec\",\"What will this change?\"],\"quickRepliesSource\":\"static\",\"quickRepliesKind\":\"spec_done\",\"quickRepliesPreamble\":true}}]",
+      "INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata) VALUES ($1, 'assistant', $2, $3, $4, $5, $6) :: [4242,\"Building it now.\",\"claude-opus-5-5\",150,1.5,{\"json\":{\"quickReplies\":[\"Build the plan\",\"Revise the plan\",\"What will this change?\"],\"quickRepliesSource\":\"static\",\"quickRepliesKind\":\"spec_done\",\"quickRepliesPreamble\":true}}]",
+      "SELECT (cs.active_turn IS NOT NULL OR EXISTS (SELECT 1 FROM local_agent_turns t WHERE t.session_id = cs.id AND t.status … <sha:606178aea56d8f55 len:1515> :: [4242]",
       "SELECT a.self_hosted, u.is_admin, cs.user_id FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id JOIN users u ON u.id = cs.user_id WHERE cs.id = $1 :: [4242]",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Spinning up coding agent (Opus)...\",{\"json\":{\"agentBackend\":\"claude_code\",\"agentModel\":\"claude-opus-5-5\"}}]",
       "SELECT spec_md FROM chat_sessions WHERE id = $1 :: [4242]",
@@ -1422,7 +1550,10 @@
       "INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata) VALUES ($1, 'assistant', $2, $3, $4, $5, $6) :: [4242,\"The agent found nothing to change.\",\"claude-opus-5-5\",150,1.5,{\"json\":{\"quickReplies\":[\"Try that again\",\"What went wrong?\"],\"quickRepliesSource\":\"static\",\"quickRepliesKind\":\"turn_failed\"}}]",
       "UPDATE turn_effects SET state = 'completed', result = $3::jsonb, completed_at = NOW(), updated_at = NOW() WHERE turn_id = $1 AND effect_key = $2 :: [\"turn-build-2\",\"turn_wrapup_message\",{\"json\":{\"persisted\":true}}]",
       "COMMIT :: []",
-      "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]"
+      "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]",
+      "UPDATE local_agent_turns SET waiter_id = gen_random_uuid(), waiter_seen_at = NOW() WHERE id = ( SELECT id FROM local_age… <sha:02869ef4a305436d len:260> :: [\"test-14\"]",
+      "SELECT id FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-14\"]",
+      "SELECT id, active_turn FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-14\"]"
     ],
     "llm": [
       {
@@ -1430,8 +1561,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "fb0301428ae04ed5",
-          "length": 198729
+          "sha": "30bcf7f600533c22",
+          "length": 217411
         },
         "tools": [
           "dispatch_claude_code",
@@ -1442,7 +1573,7 @@
           "get_github_issue",
           "web_fetch"
         ],
-        "toolsSha": "17c9067b28900b7e",
+        "toolsSha": "c5dc1458ae310e99",
         "toolChoice": null,
         "messages": [
           {
@@ -1465,13 +1596,13 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "fb0301428ae04ed5",
-          "length": 198729
+          "sha": "30bcf7f600533c22",
+          "length": 217411
         },
         "tools": [
           "suggest_replies"
         ],
-        "toolsSha": "8127b4d237f21b5b",
+        "toolsSha": "a92d0ef432e0ac61",
         "toolChoice": {
           "type": "auto"
         },
@@ -1522,6 +1653,7 @@
     ],
     "billing": [
       "{\"fn\":\"resolveBillingPath\",\"userId\":7}",
+      "{\"fn\":\"resolveBillingPath\",\"userId\":7}",
       "{\"fn\":\"recordSpend\",\"userId\":7,\"cents\":1.5,\"opts\":{\"byok\":false}}",
       "{\"fn\":\"resolveBillingPath\",\"userId\":7}",
       "{\"fn\":\"resolveBillingPath\",\"userId\":7}",
@@ -1535,7 +1667,7 @@
       "{\"fn\":\"ensureWorkerImage\"}",
       "{\"fn\":\"ensureWorker\",\"id\":4242}",
       "{\"fn\":\"syncUserAgentFiles\"}",
-      "{\"fn\":\"execInWorker\",\"id\":4242,\"mode\":\"build\",\"model\":\"claude-opus-5-5\",\"branchName\":\"dev/tester-4242\",\"resumeSessionId\":null,\"prompt\":{\"sha\":\"1d202a186aba23e5\",\"length\":12026},\"systemPrompt\":null,\"holdTurnRecord\":true,\"telemetryComponent\":\"coding_agent_build\"}",
+      "{\"fn\":\"execInWorker\",\"id\":4242,\"mode\":\"build\",\"model\":\"claude-opus-5-5\",\"branchName\":\"dev/tester-4242\",\"resumeSessionId\":null,\"prompt\":{\"sha\":\"fca00680c9a026ef\",\"length\":12533},\"systemPrompt\":null,\"holdTurnRecord\":true,\"telemetryComponent\":\"coding_agent_build\"}",
       "{\"fn\":\"noteTailMilestone\",\"id\":4242,\"milestone\":{\"completionRowPosted\":true},\"opts\":{\"turnId\":\"turn-build-2\"}}",
       "{\"fn\":\"noteTailMilestone\",\"id\":4242,\"milestone\":{\"wrapUpPosted\":true},\"opts\":{\"turnId\":\"turn-build-2\"}}",
       "{\"fn\":\"finishTurn\",\"id\":4242,\"opts\":{\"turnId\":\"turn-build-2\"}}"
@@ -1549,7 +1681,7 @@
     "messages": [
       "{\"role\":\"user\",\"content\":\"Build it\",\"metadata\":{}}",
       "{\"role\":\"system\",\"content\":\"Thinking about your request...\",\"metadata\":{}}",
-      "{\"role\":\"assistant\",\"content\":\"Building it now.\",\"metadata\":{\"quickReplies\":[\"Build the spec\",\"Revise the spec\",\"What will this change?\"],\"quickRepliesSource\":\"static\",\"quickRepliesKind\":\"spec_done\",\"quickRepliesPreamble\":true}}",
+      "{\"role\":\"assistant\",\"content\":\"Building it now.\",\"metadata\":{\"quickReplies\":[\"Build the plan\",\"Revise the plan\",\"What will this change?\"],\"quickRepliesSource\":\"static\",\"quickRepliesKind\":\"spec_done\",\"quickRepliesPreamble\":true}}",
       "{\"role\":\"system\",\"content\":\"Spinning up coding agent (Opus)...\",\"metadata\":{\"agentBackend\":\"claude_code\",\"agentModel\":\"claude-opus-5-5\"}}",
       "{\"role\":\"system\",\"content\":\"Claude Code is running...\",\"metadata\":{\"agentBackend\":\"claude_code\",\"agentModel\":\"claude-opus-5-5\"}}",
       "{\"role\":\"system\",\"content\":\"{\\\"progressLog\\\":[],\\\"agentBackend\\\":\\\"claude_code\\\",\\\"agentModel\\\":\\\"claude-opus-5-5\\\"}\",\"metadata\":{}}",
@@ -1567,20 +1699,21 @@
       "{\"type\":\"token\",\"_seq\":\"#4\",\"text\":\"Building it now.\"}",
       "{\"type\":\"usage\",\"_seq\":\"#5\",\"costCents\":1.5,\"model\":\"claude-opus-5-5\",\"byok\":false}",
       "{\"type\":\"mayor_reasoning\",\"_seq\":\"#6\",\"text\":\"Building it now.\"}",
-      "{\"type\":\"quick_replies\",\"_seq\":\"#7\",\"replies\":[\"Build the spec\",\"Revise the spec\",\"What will this change?\"]}",
+      "{\"type\":\"quick_replies\",\"_seq\":\"#7\",\"replies\":[\"Build the plan\",\"Revise the plan\",\"What will this change?\"]}",
       "{\"type\":\"assistant_message_end\",\"_seq\":\"#8\"}",
       "{\"type\":\"phase\",\"_seq\":\"#9\",\"phase\":\"cc\"}",
       "{\"type\":\"status\",\"_seq\":\"#10\",\"text\":\"Spinning up coding agent (Opus)...\",\"agentBackend\":\"claude_code\",\"agentModel\":\"claude-opus-5-5\"}",
       "{\"type\":\"status\",\"_seq\":\"#11\",\"text\":\"Claude Code is running...\",\"agentBackend\":\"claude_code\",\"agentModel\":\"claude-opus-5-5\"}",
       "{\"type\":\"status\",\"_seq\":\"#12\",\"text\":\"Claude Code stopped by @tester.\",\"agentBackend\":\"claude_code\",\"agentModel\":\"claude-opus-5-5\",\"durationMs\":\"<num>\",\"stopLanding\":{\"headline\":\"Claude Code stopped by @tester\",\"commits\":0,\"sha\":null,\"pushOk\":false},\"quickReplies\":[\"Try that again\",\"What went wrong?\"]}",
       "{\"type\":\"stopped\",\"_seq\":\"#13\",\"phase\":\"cc\",\"by\":\"tester\"}",
-      "{\"type\":\"done\",\"_seq\":\"#14\"}"
+      "{\"type\":\"done\",\"_seq\":\"#14\"}",
+      "{\"type\":\"done\",\"_seq\":\"#<uuid>\",\"turnId\":\"<uuid>\"}"
     ],
     "broadcasts": [
       "{\"type\":\"session_event\",\"_seq\":\"#2\",\"text\":\"Thinking about your request...\",\"sessionId\":4242,\"event\":\"status\"}",
       "{\"type\":\"session_event\",\"_seq\":\"#3\",\"phase\":\"mayor1\",\"sessionId\":4242,\"event\":\"phase\"}",
       "{\"type\":\"session_event\",\"_seq\":\"#6\",\"text\":\"Building it now.\",\"sessionId\":4242,\"event\":\"mayor_reasoning\"}",
-      "{\"type\":\"session_event\",\"_seq\":\"#7\",\"replies\":[\"Build the spec\",\"Revise the spec\",\"What will this change?\"],\"sessionId\":4242,\"event\":\"quick_replies\"}",
+      "{\"type\":\"session_event\",\"_seq\":\"#7\",\"replies\":[\"Build the plan\",\"Revise the plan\",\"What will this change?\"],\"sessionId\":4242,\"event\":\"quick_replies\"}",
       "{\"type\":\"session_event\",\"_seq\":\"#8\",\"sessionId\":4242,\"event\":\"assistant_message_end\"}",
       "{\"type\":\"session_event\",\"_seq\":\"#9\",\"phase\":\"cc\",\"sessionId\":4242,\"event\":\"phase\"}",
       "{\"type\":\"session_event\",\"_seq\":\"#10\",\"text\":\"Spinning up coding agent (Opus)...\",\"agentBackend\":\"claude_code\",\"agentModel\":\"claude-opus-5-5\",\"sessionId\":4242,\"event\":\"status\"}",
@@ -1593,16 +1726,22 @@
       "SELECT a.id, a.collab_visibility, a.view_visibility, a.moderation_suspended_at FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1 :: [4242]",
       "SELECT app_id FROM user_app_blocks WHERE user_id = $1 AND app_id = $2 :: [7,4242]",
       "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:49b4726211dab378 len:549> :: [\"4242\",7]",
+      "BEGIN :: []",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata, client_message_id) VALUES ($1, 'user', $2, $3, $… <sha:513d6d719625fb1d len:226> :: [4242,\"Build it\",{\"json\":{}},null]",
       "UPDATE chat_sessions SET last_activity_at = NOW(), notify_on_done = FALSE WHERE id = $1 :: [4242]",
+      "COMMIT :: []",
+      "SELECT id, username FROM users WHERE id = $1 :: [7]",
+      "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:3e6d6a460762a104 len:329> :: [4242,7]",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Thinking about your request...\",{\"json\":{}}]",
       "SELECT id, role, content, metadata FROM chat_session_messages WHERE session_id = $1 AND (role IN ('user', 'assistant') O… <sha:454a396501e7d17e len:194> :: [4242]",
+      "SELECT (cs.active_turn IS NOT NULL OR EXISTS (SELECT 1 FROM local_agent_turns t WHERE t.session_id = cs.id AND t.status … <sha:606178aea56d8f55 len:1515> :: [4242]",
       "SELECT spec_md FROM chat_sessions WHERE id = $1 :: [4242]",
       "SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.status, cs.linked_issues, cs.spec_md, u.username FROM chat_sessio… <sha:c7047dc891be2a6e len:285> :: [31,4242]",
       "SELECT kind, name, description, size_bytes, updated_at FROM user_agent_files WHERE user_id = $1 ORDER BY kind, name :: [7]",
       "SELECT a.self_hosted, u.is_admin, cs.user_id FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id JOIN users u ON u.id = cs.user_id WHERE cs.id = $1 :: [4242]",
       "SELECT m.content, m.created_at, u.username FROM chat_messages m LEFT JOIN users u ON u.id = m.user_id WHERE m.app_id = $… <sha:b8a1d28b89ac3d11 len:246> :: [31,\"session\",4242]",
-      "INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata) VALUES ($1, 'assistant', $2, $3, $4, $5, $6) :: [4242,\"Building it now.\",\"claude-opus-5-5\",150,1.5,{\"json\":{\"quickReplies\":[\"Build the spec\",\"Revise the spec\",\"What will this change?\"],\"quickRepliesSource\":\"static\",\"quickRepliesKind\":\"spec_done\",\"quickRepliesPreamble\":true}}]",
+      "INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata) VALUES ($1, 'assistant', $2, $3, $4, $5, $6) :: [4242,\"Building it now.\",\"claude-opus-5-5\",150,1.5,{\"json\":{\"quickReplies\":[\"Build the plan\",\"Revise the plan\",\"What will this change?\"],\"quickRepliesSource\":\"static\",\"quickRepliesKind\":\"spec_done\",\"quickRepliesPreamble\":true}}]",
+      "SELECT (cs.active_turn IS NOT NULL OR EXISTS (SELECT 1 FROM local_agent_turns t WHERE t.session_id = cs.id AND t.status … <sha:606178aea56d8f55 len:1515> :: [4242]",
       "SELECT a.self_hosted, u.is_admin, cs.user_id FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id JOIN users u ON u.id = cs.user_id WHERE cs.id = $1 :: [4242]",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Spinning up coding agent (Opus)...\",{\"json\":{\"agentBackend\":\"claude_code\",\"agentModel\":\"claude-opus-5-5\"}}]",
       "SELECT spec_md FROM chat_sessions WHERE id = $1 :: [4242]",
@@ -1614,7 +1753,10 @@
       "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Claude Code stopped by @tester.\",{\"json\":{\"agentBackend\":\"claude_code\",\"agentModel\":\"claude-opus-5-5\",\"durationMs\":\"<num>\",\"stopLanding\":{\"headline\":\"Claude Code stopped by @tester\",\"commits\":0,\"sha\":null,\"pushOk\":false},\"quickReplies\":[\"Try that again\",\"What went wrong?\"]}}]",
       "UPDATE chat_sessions SET last_turn_runner = $2, local_agent_label = $3 WHERE id = $1 :: [4242,\"platform\",null]",
       "UPDATE chat_sessions SET last_activity_at = NOW() WHERE id = $1 :: [4242]",
-      "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]"
+      "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]",
+      "UPDATE local_agent_turns SET waiter_id = gen_random_uuid(), waiter_seen_at = NOW() WHERE id = ( SELECT id FROM local_age… <sha:02869ef4a305436d len:260> :: [\"test-15\"]",
+      "SELECT id FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-15\"]",
+      "SELECT id, active_turn FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-15\"]"
     ],
     "llm": [
       {
@@ -1622,8 +1764,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "fb0301428ae04ed5",
-          "length": 198729
+          "sha": "30bcf7f600533c22",
+          "length": 217411
         },
         "tools": [
           "dispatch_claude_code",
@@ -1634,7 +1776,7 @@
           "get_github_issue",
           "web_fetch"
         ],
-        "toolsSha": "17c9067b28900b7e",
+        "toolsSha": "c5dc1458ae310e99",
         "toolChoice": null,
         "messages": [
           {
@@ -1655,6 +1797,7 @@
     ],
     "billing": [
       "{\"fn\":\"resolveBillingPath\",\"userId\":7}",
+      "{\"fn\":\"resolveBillingPath\",\"userId\":7}",
       "{\"fn\":\"recordSpend\",\"userId\":7,\"cents\":1.5,\"opts\":{\"byok\":false}}",
       "{\"fn\":\"resolveBillingPath\",\"userId\":7}",
       "{\"fn\":\"resolveBillingPath\",\"userId\":7}"
@@ -1664,7 +1807,7 @@
       "{\"fn\":\"ensureWorkerImage\"}",
       "{\"fn\":\"ensureWorker\",\"id\":4242}",
       "{\"fn\":\"syncUserAgentFiles\"}",
-      "{\"fn\":\"execInWorker\",\"id\":4242,\"mode\":\"build\",\"model\":\"claude-opus-5-5\",\"branchName\":\"dev/tester-4242\",\"resumeSessionId\":null,\"prompt\":{\"sha\":\"1d202a186aba23e5\",\"length\":12026},\"systemPrompt\":null,\"holdTurnRecord\":true,\"telemetryComponent\":\"coding_agent_build\"}",
+      "{\"fn\":\"execInWorker\",\"id\":4242,\"mode\":\"build\",\"model\":\"claude-opus-5-5\",\"branchName\":\"dev/tester-4242\",\"resumeSessionId\":null,\"prompt\":{\"sha\":\"fca00680c9a026ef\",\"length\":12533},\"systemPrompt\":null,\"holdTurnRecord\":true,\"telemetryComponent\":\"coding_agent_build\"}",
       "{\"fn\":\"finishTurn\",\"id\":4242,\"opts\":{\"turnId\":\"turn-build-3\"}}"
     ],
     "calls": [
@@ -1675,7 +1818,7 @@
     "messages": [
       "{\"role\":\"user\",\"content\":\"Build it\",\"metadata\":{}}",
       "{\"role\":\"system\",\"content\":\"Thinking about your request...\",\"metadata\":{}}",
-      "{\"role\":\"assistant\",\"content\":\"Building it now.\",\"metadata\":{\"quickReplies\":[\"Build the spec\",\"Revise the spec\",\"What will this change?\"],\"quickRepliesSource\":\"static\",\"quickRepliesKind\":\"spec_done\",\"quickRepliesPreamble\":true}}",
+      "{\"role\":\"assistant\",\"content\":\"Building it now.\",\"metadata\":{\"quickReplies\":[\"Build the plan\",\"Revise the plan\",\"What will this change?\"],\"quickRepliesSource\":\"static\",\"quickRepliesKind\":\"spec_done\",\"quickRepliesPreamble\":true}}",
       "{\"role\":\"system\",\"content\":\"Spinning up coding agent (Opus)...\",\"metadata\":{\"agentBackend\":\"claude_code\",\"agentModel\":\"claude-opus-5-5\"}}",
       "{\"role\":\"system\",\"content\":\"Claude Code is running...\",\"metadata\":{\"agentBackend\":\"claude_code\",\"agentModel\":\"claude-opus-5-5\"}}",
       "{\"role\":\"system\",\"content\":\"{\\\"progressLog\\\":[],\\\"agentBackend\\\":\\\"claude_code\\\",\\\"agentModel\\\":\\\"claude-opus-5-5\\\"}\",\"metadata\":{}}",
@@ -1692,7 +1835,8 @@
       "{\"type\":\"usage\",\"_seq\":\"#5\",\"costCents\":1.5,\"model\":\"claude-opus-5-5\",\"byok\":false}",
       "{\"type\":\"mayor_reasoning\",\"_seq\":\"#6\",\"text\":\"The coding agent is still running. I will wait for it.\"}",
       "{\"type\":\"quick_replies\",\"_seq\":\"#7\",\"replies\":[\"How is it going?\",\"Stop this build\",\"What is it doing?\"]}",
-      "{\"type\":\"done\",\"_seq\":\"#8\"}"
+      "{\"type\":\"done\",\"_seq\":\"#8\"}",
+      "{\"type\":\"done\",\"_seq\":\"#<uuid>\",\"turnId\":\"<uuid>\"}"
     ],
     "broadcasts": [
       "{\"type\":\"session_event\",\"_seq\":\"#2\",\"text\":\"Thinking about your request...\",\"sessionId\":4242,\"event\":\"status\"}",
@@ -1705,8 +1849,12 @@
       "SELECT a.id, a.collab_visibility, a.view_visibility, a.moderation_suspended_at FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1 :: [4242]",
       "SELECT app_id FROM user_app_blocks WHERE user_id = $1 AND app_id = $2 :: [7,4242]",
       "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:49b4726211dab378 len:549> :: [\"4242\",7]",
+      "BEGIN :: []",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata, client_message_id) VALUES ($1, 'user', $2, $3, $… <sha:513d6d719625fb1d len:226> :: [4242,\"Build it\",{\"json\":{}},null]",
       "UPDATE chat_sessions SET last_activity_at = NOW(), notify_on_done = FALSE WHERE id = $1 :: [4242]",
+      "COMMIT :: []",
+      "SELECT id, username FROM users WHERE id = $1 :: [7]",
+      "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:3e6d6a460762a104 len:329> :: [4242,7]",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Thinking about your request...\",{\"json\":{}}]",
       "SELECT id, role, content, metadata FROM chat_session_messages WHERE session_id = $1 AND (role IN ('user', 'assistant') O… <sha:454a396501e7d17e len:194> :: [4242]",
       "SELECT spec_md FROM chat_sessions WHERE id = $1 :: [4242]",
@@ -1715,7 +1863,10 @@
       "SELECT a.self_hosted, u.is_admin, cs.user_id FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id JOIN users u ON u.id = cs.user_id WHERE cs.id = $1 :: [4242]",
       "SELECT m.content, m.created_at, u.username FROM chat_messages m LEFT JOIN users u ON u.id = m.user_id WHERE m.app_id = $… <sha:b8a1d28b89ac3d11 len:246> :: [31,\"session\",4242]",
       "INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata) VALUES ($1, 'assistant', $2, $3, $4, $5, $6) :: [4242,\"The coding agent is still running. I will wait for it.\",\"claude-opus-5-5\",150,1.5,{\"json\":{\"quickReplies\":[\"How is it going?\",\"Stop this build\",\"What is it doing?\"],\"quickRepliesSource\":\"model\"}}]",
-      "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]"
+      "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]",
+      "UPDATE local_agent_turns SET waiter_id = gen_random_uuid(), waiter_seen_at = NOW() WHERE id = ( SELECT id FROM local_age… <sha:02869ef4a305436d len:260> :: [\"test-16\"]",
+      "SELECT id FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-16\"]",
+      "SELECT id, active_turn FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-16\"]"
     ],
     "llm": [
       {
@@ -1723,8 +1874,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "333a7537b5df7e07",
-          "length": 198429
+          "sha": "3263291fa52bc4e7",
+          "length": 217111
         },
         "tools": [
           "suggest_answers",
@@ -1733,7 +1884,7 @@
           "get_github_issue",
           "web_fetch"
         ],
-        "toolsSha": "2becc57d59146368",
+        "toolsSha": "aa74e7e6f7d99efb",
         "toolChoice": null,
         "messages": [
           {
@@ -1745,6 +1896,7 @@
       }
     ],
     "billing": [
+      "{\"fn\":\"resolveBillingPath\",\"userId\":7}",
       "{\"fn\":\"resolveBillingPath\",\"userId\":7}",
       "{\"fn\":\"recordSpend\",\"userId\":7,\"cents\":1.5,\"opts\":{\"byok\":false}}"
     ],
@@ -1771,7 +1923,8 @@
       "{\"type\":\"usage\",\"_seq\":\"#5\",\"costCents\":1.5,\"model\":\"openai/gpt-5.3-codex\",\"byok\":true}",
       "{\"type\":\"mayor_reasoning\",\"_seq\":\"#6\",\"text\":\"Sure. Should the toggle live in the toolbar?\"}",
       "{\"type\":\"quick_replies\",\"_seq\":\"#7\",\"replies\":[\"Put it in the toolbar\",\"Put it in settings\",\"What changes for users?\"]}",
-      "{\"type\":\"done\",\"_seq\":\"#8\"}"
+      "{\"type\":\"done\",\"_seq\":\"#8\"}",
+      "{\"type\":\"done\",\"_seq\":\"#<uuid>\",\"turnId\":\"<uuid>\"}"
     ],
     "broadcasts": [
       "{\"type\":\"session_event\",\"_seq\":\"#2\",\"text\":\"Thinking about your request...\",\"sessionId\":4242,\"event\":\"status\"}",
@@ -1784,17 +1937,25 @@
       "SELECT a.id, a.collab_visibility, a.view_visibility, a.moderation_suspended_at FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1 :: [4242]",
       "SELECT app_id FROM user_app_blocks WHERE user_id = $1 AND app_id = $2 :: [7,4242]",
       "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:49b4726211dab378 len:549> :: [\"4242\",7]",
+      "BEGIN :: []",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata, client_message_id) VALUES ($1, 'user', $2, $3, $… <sha:513d6d719625fb1d len:226> :: [4242,\"Add a dark mode toggle\",{\"json\":{}},null]",
       "UPDATE chat_sessions SET last_activity_at = NOW(), notify_on_done = FALSE WHERE id = $1 :: [4242]",
+      "COMMIT :: []",
+      "SELECT id, username FROM users WHERE id = $1 :: [7]",
+      "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:3e6d6a460762a104 len:329> :: [4242,7]",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Thinking about your request...\",{\"json\":{}}]",
       "SELECT id, role, content, metadata FROM chat_session_messages WHERE session_id = $1 AND (role IN ('user', 'assistant') O… <sha:454a396501e7d17e len:194> :: [4242]",
+      "SELECT (cs.active_turn IS NOT NULL OR EXISTS (SELECT 1 FROM local_agent_turns t WHERE t.session_id = cs.id AND t.status … <sha:606178aea56d8f55 len:1515> :: [4242]",
       "SELECT spec_md FROM chat_sessions WHERE id = $1 :: [4242]",
       "SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.status, cs.linked_issues, cs.spec_md, u.username FROM chat_sessio… <sha:c7047dc891be2a6e len:285> :: [31,4242]",
       "SELECT kind, name, description, size_bytes, updated_at FROM user_agent_files WHERE user_id = $1 ORDER BY kind, name :: [7]",
       "SELECT a.self_hosted, u.is_admin, cs.user_id FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id JOIN users u ON u.id = cs.user_id WHERE cs.id = $1 :: [4242]",
       "SELECT m.content, m.created_at, u.username FROM chat_messages m LEFT JOIN users u ON u.id = m.user_id WHERE m.app_id = $… <sha:b8a1d28b89ac3d11 len:246> :: [31,\"session\",4242]",
       "INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata) VALUES ($1, 'assistant', $2, $3, $4, $5, $6) :: [4242,\"Sure. Should the toggle live in the toolbar?\",\"openai/gpt-5.3-codex\",150,1.5,{\"json\":{\"quickReplies\":[\"Put it in the toolbar\",\"Put it in settings\",\"What changes for users?\"],\"quickRepliesSource\":\"model\"}}]",
-      "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]"
+      "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]",
+      "UPDATE local_agent_turns SET waiter_id = gen_random_uuid(), waiter_seen_at = NOW() WHERE id = ( SELECT id FROM local_age… <sha:02869ef4a305436d len:260> :: [\"test-17\"]",
+      "SELECT id FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-17\"]",
+      "SELECT id, active_turn FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-17\"]"
     ],
     "llm": [
       {
@@ -1802,8 +1963,8 @@
         "model": "openai/gpt-5.3-codex",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "e78e6fdd705c7462",
-          "length": 198367
+          "sha": "aac7898c37e412f4",
+          "length": 217049
         },
         "tools": [
           "dispatch_claude_code",
@@ -1814,7 +1975,7 @@
           "get_github_issue",
           "web_fetch"
         ],
-        "toolsSha": "17c9067b28900b7e",
+        "toolsSha": "c5dc1458ae310e99",
         "toolChoice": null,
         "messages": [
           {
@@ -1854,13 +2015,13 @@
       "{\"type\":\"status\",\"_seq\":\"#8\",\"text\":\"OpenRouter is running...\",\"agentBackend\":\"codex_openrouter\",\"agentModel\":\"openai/gpt-5.3-codex\"}",
       "{\"type\":\"status\",\"_seq\":\"#9\",\"text\":\"PR #42 created\"}",
       "{\"type\":\"status\",\"_seq\":\"#10\",\"text\":\"Building staging preview...\"}",
-      "{\"type\":\"status\",\"_seq\":\"#11\",\"text\":\"Staging deployed!\",\"stagingUrl\":\"https://whiteboard-pr42.staging.test\",\"changesReady\":true,\"prNumber\":42,\"prUrl\":\"https://github.com/usernode-bot/whiteboard-0d337f/pull/42\"}",
-      "{\"type\":\"staging_ready\",\"_seq\":\"#12\",\"url\":\"https://whiteboard-pr42.staging.test\",\"changesReady\":true,\"testingMd\":null,\"testingPath\":null}",
-      "{\"type\":\"status\",\"_seq\":\"#13\",\"text\":\"OpenRouter finished\",\"agentBackend\":\"codex_openrouter\",\"agentModel\":\"openai/gpt-5.3-codex\",\"ccOutput\":\"Added the toggle.\",\"ccOutcome\":\"success\",\"durationMs\":\"<num>\"}",
-      "{\"type\":\"mayor_reasoning\",\"_seq\":\"#14\",\"text\":\"What the agent did:\\nAdded the toggle.\\n\\nCommit fed9876a pushed to dev/tester-4242.\\n\\nOpened PR #42: https://github.com/usernode-bot/whiteboard-0d337f/pull/42\\n\\nStaging redeployed: https://whiteboard-pr42.staging.test\"}",
-      "{\"type\":\"usage\",\"_seq\":\"#15\",\"costCents\":12,\"model\":\"openrouter/openai/gpt-5.3-codex\",\"byok\":true,\"estimated\":true}",
-      "{\"type\":\"quick_replies\",\"_seq\":\"#16\",\"replies\":[\"Propose it to the group\",\"Make a tweak\",\"What did it change?\"]}",
-      "{\"type\":\"done\",\"_seq\":\"#17\"}"
+      "{\"type\":\"status\",\"_seq\":\"#11\",\"text\":\"Building staging preview...\",\"changesReady\":true,\"stagingBuild\":\"running\",\"prNumber\":42,\"prUrl\":\"https://github.com/usernode-bot/whiteboard-0d337f/pull/42\"}",
+      "{\"type\":\"status\",\"_seq\":\"#12\",\"text\":\"OpenRouter finished\",\"agentBackend\":\"codex_openrouter\",\"agentModel\":\"openai/gpt-5.3-codex\",\"ccOutput\":\"Added the toggle.\",\"ccOutcome\":\"success\",\"durationMs\":\"<num>\"}",
+      "{\"type\":\"mayor_reasoning\",\"_seq\":\"#13\",\"text\":\"What the agent did:\\nAdded the toggle.\\n\\nCommit fed9876a pushed to dev/tester-4242.\\n\\nOpened PR #42: https://github.com/usernode-bot/whiteboard-0d337f/pull/42\\n\\nThe staging preview is building; its checks run once it is up.\"}",
+      "{\"type\":\"usage\",\"_seq\":\"#14\",\"costCents\":12,\"model\":\"openrouter/openai/gpt-5.3-codex\",\"byok\":true,\"estimated\":true}",
+      "{\"type\":\"quick_replies\",\"_seq\":\"#15\",\"replies\":[\"Propose it to the group\",\"Make a tweak\",\"What did it change?\"]}",
+      "{\"type\":\"done\",\"_seq\":\"#16\"}",
+      "{\"type\":\"done\",\"_seq\":\"#<uuid>\",\"turnId\":\"<uuid>\"}"
     ],
     "broadcasts": [
       "{\"type\":\"session_event\",\"_seq\":\"#2\",\"text\":\"Thinking about your request...\",\"sessionId\":4242,\"event\":\"status\"}",
@@ -1872,21 +2033,25 @@
       "{\"type\":\"session_event\",\"_seq\":\"#8\",\"text\":\"OpenRouter is running...\",\"agentBackend\":\"codex_openrouter\",\"agentModel\":\"openai/gpt-5.3-codex\",\"sessionId\":4242,\"event\":\"status\"}",
       "{\"type\":\"session_event\",\"_seq\":\"#9\",\"text\":\"PR #42 created\",\"sessionId\":4242,\"event\":\"status\"}",
       "{\"type\":\"session_event\",\"_seq\":\"#10\",\"text\":\"Building staging preview...\",\"sessionId\":4242,\"event\":\"status\"}",
-      "{\"type\":\"session_event\",\"_seq\":\"#11\",\"text\":\"Staging deployed!\",\"stagingUrl\":\"https://whiteboard-pr42.staging.test\",\"changesReady\":true,\"prNumber\":42,\"prUrl\":\"https://github.com/usernode-bot/whiteboard-0d337f/pull/42\",\"sessionId\":4242,\"event\":\"status\"}",
-      "{\"type\":\"session_event\",\"_seq\":\"#12\",\"url\":\"https://whiteboard-pr42.staging.test\",\"changesReady\":true,\"testingMd\":null,\"testingPath\":null,\"sessionId\":4242,\"event\":\"staging_ready\"}",
-      "{\"type\":\"session_event\",\"_seq\":\"#13\",\"text\":\"OpenRouter finished\",\"agentBackend\":\"codex_openrouter\",\"agentModel\":\"openai/gpt-5.3-codex\",\"ccOutput\":\"Added the toggle.\",\"ccOutcome\":\"success\",\"durationMs\":\"<num>\",\"sessionId\":4242,\"event\":\"status\"}",
-      "{\"type\":\"session_event\",\"_seq\":\"#14\",\"text\":\"What the agent did:\\nAdded the toggle.\\n\\nCommit fed9876a pushed to dev/tester-4242.\\n\\nOpened PR #42: https://github.com/usernode-bot/whiteboard-0d337f/pull/42\\n\\nStaging redeployed: https://whiteboard-pr42.staging.test\",\"sessionId\":4242,\"event\":\"mayor_reasoning\"}",
-      "{\"type\":\"session_event\",\"_seq\":\"#16\",\"replies\":[\"Propose it to the group\",\"Make a tweak\",\"What did it change?\"],\"sessionId\":4242,\"event\":\"quick_replies\"}",
-      "{\"type\":\"session_event\",\"_seq\":\"#17\",\"sessionId\":4242,\"event\":\"done\"}"
+      "{\"type\":\"session_event\",\"_seq\":\"#11\",\"text\":\"Building staging preview...\",\"changesReady\":true,\"stagingBuild\":\"running\",\"prNumber\":42,\"prUrl\":\"https://github.com/usernode-bot/whiteboard-0d337f/pull/42\",\"sessionId\":4242,\"event\":\"status\"}",
+      "{\"type\":\"session_event\",\"_seq\":\"#12\",\"text\":\"OpenRouter finished\",\"agentBackend\":\"codex_openrouter\",\"agentModel\":\"openai/gpt-5.3-codex\",\"ccOutput\":\"Added the toggle.\",\"ccOutcome\":\"success\",\"durationMs\":\"<num>\",\"sessionId\":4242,\"event\":\"status\"}",
+      "{\"type\":\"session_event\",\"_seq\":\"#13\",\"text\":\"What the agent did:\\nAdded the toggle.\\n\\nCommit fed9876a pushed to dev/tester-4242.\\n\\nOpened PR #42: https://github.com/usernode-bot/whiteboard-0d337f/pull/42\\n\\nThe staging preview is building; its checks run once it is up.\",\"sessionId\":4242,\"event\":\"mayor_reasoning\"}",
+      "{\"type\":\"session_event\",\"_seq\":\"#15\",\"replies\":[\"Propose it to the group\",\"Make a tweak\",\"What did it change?\"],\"sessionId\":4242,\"event\":\"quick_replies\"}",
+      "{\"type\":\"session_event\",\"_seq\":\"#16\",\"sessionId\":4242,\"event\":\"done\"}"
     ],
     "queries": [
       "SELECT a.id, a.collab_visibility, a.view_visibility, a.moderation_suspended_at FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1 :: [4242]",
       "SELECT app_id FROM user_app_blocks WHERE user_id = $1 AND app_id = $2 :: [7,4242]",
       "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:49b4726211dab378 len:549> :: [\"4242\",7]",
+      "BEGIN :: []",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata, client_message_id) VALUES ($1, 'user', $2, $3, $… <sha:513d6d719625fb1d len:226> :: [4242,\"Add a dark mode toggle\",{\"json\":{}},null]",
       "UPDATE chat_sessions SET last_activity_at = NOW(), notify_on_done = FALSE WHERE id = $1 :: [4242]",
+      "COMMIT :: []",
+      "SELECT id, username FROM users WHERE id = $1 :: [7]",
+      "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:3e6d6a460762a104 len:329> :: [4242,7]",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Thinking about your request...\",{\"json\":{}}]",
       "SELECT id, role, content, metadata FROM chat_session_messages WHERE session_id = $1 AND (role IN ('user', 'assistant') O… <sha:454a396501e7d17e len:194> :: [4242]",
+      "SELECT (cs.active_turn IS NOT NULL OR EXISTS (SELECT 1 FROM local_agent_turns t WHERE t.session_id = cs.id AND t.status … <sha:606178aea56d8f55 len:1515> :: [4242]",
       "SELECT spec_md FROM chat_sessions WHERE id = $1 :: [4242]",
       "SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.status, cs.linked_issues, cs.spec_md, u.username FROM chat_sessio… <sha:c7047dc891be2a6e len:285> :: [31,4242]",
       "SELECT kind, name, description, size_bytes, updated_at FROM user_agent_files WHERE user_id = $1 ORDER BY kind, name :: [7]",
@@ -1894,6 +2059,7 @@
       "SELECT m.content, m.created_at, u.username FROM chat_messages m LEFT JOIN users u ON u.id = m.user_id WHERE m.app_id = $… <sha:b8a1d28b89ac3d11 len:246> :: [31,\"session\",4242]",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"The Mayor could not reach openai/gpt-5.3-codex, so your message goes straight to the coding agent.\",{\"json\":{}}]",
       "SELECT spec_md FROM chat_sessions WHERE id = $1 :: [4242]",
+      "SELECT (cs.active_turn IS NOT NULL OR EXISTS (SELECT 1 FROM local_agent_turns t WHERE t.session_id = cs.id AND t.status … <sha:606178aea56d8f55 len:1515> :: [4242]",
       "SELECT m.content, m.created_at, u.username FROM chat_messages m LEFT JOIN users u ON u.id = m.user_id WHERE m.app_id = $… <sha:b8a1d28b89ac3d11 len:246> :: [31,\"session\",4242]",
       "SELECT a.self_hosted, u.is_admin, cs.user_id FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id JOIN users u ON u.id = cs.user_id WHERE cs.id = $1 :: [4242]",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Starting OpenRouter (openai/gpt-5.3-codex)...\",{\"json\":{\"agentBackend\":\"codex_openrouter\",\"agentModel\":\"openai/gpt-5.3-codex\"}}]",
@@ -1911,8 +2077,13 @@
       "UPDATE turn_effects SET state = 'completed', result = $3::jsonb, completed_at = NOW(), updated_at = NOW() WHERE turn_id = $1 AND effect_key = $2 :: [\"turn-or-1\",\"pr_opened_announcement\",{\"json\":{\"prNumber\":42}}]",
       "COMMIT :: []",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Building staging preview...\",{\"json\":{}}]",
-      "UPDATE chat_sessions SET staging_container_id = $1, staging_url = $2 WHERE id = $3 :: [\"stage-1\",\"https://whiteboard-pr42.staging.test\",4242]",
-      "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Staging deployed!\",{\"json\":{\"stagingUrl\":\"https://whiteboard-pr42.staging.test\",\"changesReady\":true,\"prNumber\":42,\"prUrl\":\"https://github.com/usernode-bot/whiteboard-0d337f/pull/42\"}}]",
+      "BEGIN :: []",
+      "INSERT INTO turn_effects (turn_id, effect_key, session_id, state) VALUES ($1, $2, $3, 'pending') ON CONFLICT (turn_id, effect_key) DO NOTHING RETURNING state :: [\"turn-or-1\",\"recovered_staging_publication\",4242]",
+      "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Building staging preview...\",{\"json\":{\"changesReady\":true,\"stagingBuild\":\"running\",\"prNumber\":42,\"prUrl\":\"https://github.com/usernode-bot/whiteboard-0d337f/pull/42\"}}]",
+      "UPDATE chat_sessions SET active_turn = jsonb_set( active_turn, '{tail}', COALESCE(active_turn->'tail', '{}'::jsonb) || $… <sha:508f11108a93a8f0 len:298> :: [4242,{\"json\":{\"stagingPublished\":true}},\"turn-or-1\",[\"tail_pending\",\"tail\"]]",
+      "SELECT active_turn FROM chat_sessions WHERE id = $1 :: [4242]",
+      "UPDATE turn_effects SET state = 'completed', result = $3::jsonb, completed_at = NOW(), updated_at = NOW() WHERE turn_id = $1 AND effect_key = $2 :: [\"turn-or-1\",\"recovered_staging_publication\",{\"json\":{\"outcome\":\"building\",\"metadata\":{\"changesReady\":true,\"stagingBuild\":\"running\",\"prNumber\":42,\"prUrl\":\"https://github.com/usernode-bot/whiteboard-0d337f/pull/42\"},\"failure\":null,\"checkpoint\":{\"stagingPublished\":true}}}]",
+      "COMMIT :: []",
       "BEGIN :: []",
       "INSERT INTO turn_effects (turn_id, effect_key, session_id, state) VALUES ($1, $2, $3, 'pending') ON CONFLICT (turn_id, effect_key) DO NOTHING RETURNING state :: [\"turn-or-1\",\"completion_row\",4242]",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"OpenRouter finished\",{\"json\":{\"agentBackend\":\"codex_openrouter\",\"agentModel\":\"openai/gpt-5.3-codex\",\"ccOutput\":\"Added the toggle.\",\"ccOutcome\":\"success\",\"durationMs\":\"<num>\"}}]",
@@ -1922,10 +2093,13 @@
       "UPDATE chat_sessions SET last_activity_at = NOW() WHERE id = $1 :: [4242]",
       "BEGIN :: []",
       "INSERT INTO turn_effects (turn_id, effect_key, session_id, state) VALUES ($1, $2, $3, 'pending') ON CONFLICT (turn_id, effect_key) DO NOTHING RETURNING state :: [\"turn-or-1\",\"turn_wrapup_message\",4242]",
-      "INSERT INTO chat_session_messages (session_id, role, content, model, cost_cents, metadata) VALUES ($1, 'assistant', $2, $3, $4, $5) :: [4242,\"What the agent did:\\nAdded the toggle.\\n\\nCommit fed9876a pushed to dev/tester-4242.\\n\\nOpened PR #42: https://github.com/usernode-bot/whiteboard-0d337f/pull/42\\n\\nStaging redeployed: https://whiteboard-pr42.staging.test\",\"openrouter/openai/gpt-5.3-codex\",12,{\"json\":{\"quickReplies\":[\"Propose it to the group\",\"Make a tweak\",\"What did it change?\"],\"quickRepliesSource\":\"static\",\"quickRepliesKind\":\"code_done\",\"openRouterDirect\":true,\"costEstimated\":true}}]",
+      "INSERT INTO chat_session_messages (session_id, role, content, model, cost_cents, metadata) VALUES ($1, 'assistant', $2, $3, $4, $5) :: [4242,\"What the agent did:\\nAdded the toggle.\\n\\nCommit fed9876a pushed to dev/tester-4242.\\n\\nOpened PR #42: https://github.com/usernode-bot/whiteboard-0d337f/pull/42\\n\\nThe staging preview is building; its checks run once it is up.\",\"openrouter/openai/gpt-5.3-codex\",12,{\"json\":{\"quickReplies\":[\"Propose it to the group\",\"Make a tweak\",\"What did it change?\"],\"quickRepliesSource\":\"static\",\"quickRepliesKind\":\"code_done\",\"openRouterDirect\":true,\"costEstimated\":true}}]",
       "UPDATE turn_effects SET state = 'completed', result = $3::jsonb, completed_at = NOW(), updated_at = NOW() WHERE turn_id = $1 AND effect_key = $2 :: [\"turn-or-1\",\"turn_wrapup_message\",{\"json\":{\"persisted\":true}}]",
       "COMMIT :: []",
-      "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]"
+      "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]",
+      "UPDATE local_agent_turns SET waiter_id = gen_random_uuid(), waiter_seen_at = NOW() WHERE id = ( SELECT id FROM local_age… <sha:02869ef4a305436d len:260> :: [\"test-18\"]",
+      "SELECT id FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-18\"]",
+      "SELECT id, active_turn FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-18\"]"
     ],
     "llm": [
       {
@@ -1933,8 +2107,8 @@
         "model": "openai/gpt-5.3-codex",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "e78e6fdd705c7462",
-          "length": 198367
+          "sha": "aac7898c37e412f4",
+          "length": 217049
         },
         "tools": [
           "dispatch_claude_code",
@@ -1945,7 +2119,7 @@
           "get_github_issue",
           "web_fetch"
         ],
-        "toolsSha": "17c9067b28900b7e",
+        "toolsSha": "c5dc1458ae310e99",
         "toolChoice": null,
         "messages": [
           {
@@ -1964,9 +2138,8 @@
       "{\"fn\":\"ensureWorkerImage\"}",
       "{\"fn\":\"ensureWorker\",\"id\":4242}",
       "{\"fn\":\"syncUserAgentFiles\"}",
-      "{\"fn\":\"execInWorker\",\"id\":4242,\"mode\":\"build\",\"model\":\"openai/gpt-5.3-codex\",\"branchName\":\"dev/tester-4242\",\"resumeSessionId\":null,\"prompt\":{\"sha\":\"85b3a2fcf84e4339\",\"length\":206901},\"systemPrompt\":null,\"holdTurnRecord\":true,\"telemetryComponent\":\"coding_agent_build\"}",
+      "{\"fn\":\"execInWorker\",\"id\":4242,\"mode\":\"build\",\"model\":\"openai/gpt-5.3-codex\",\"branchName\":\"dev/tester-4242\",\"resumeSessionId\":null,\"prompt\":{\"sha\":\"83fe8826dd5c8633\",\"length\":226137},\"systemPrompt\":null,\"holdTurnRecord\":true,\"telemetryComponent\":\"coding_agent_build\"}",
       "{\"fn\":\"noteTailMilestone\",\"id\":4242,\"milestone\":{\"prNumber\":42,\"prOpenedEventRecorded\":true},\"opts\":{\"turnId\":\"turn-or-1\"}}",
-      "{\"fn\":\"noteTailMilestone\",\"id\":4242,\"milestone\":{\"stagingUrl\":\"https://whiteboard-pr42.staging.test\"},\"opts\":{\"turnId\":\"turn-or-1\"}}",
       "{\"fn\":\"noteTailMilestone\",\"id\":4242,\"milestone\":{\"completionRowPosted\":true},\"opts\":{\"turnId\":\"turn-or-1\"}}",
       "{\"fn\":\"noteTailMilestone\",\"id\":4242,\"milestone\":{\"wrapUpPosted\":true},\"opts\":{\"turnId\":\"turn-or-1\"}}",
       "{\"fn\":\"finishTurn\",\"id\":4242,\"opts\":{\"turnId\":\"turn-or-1\"}}"
@@ -1978,10 +2151,7 @@
       "{\"fn\":\"startCodexAttempt\",\"attemptNumber\":1,\"mode\":\"build\",\"model\":\"openai/gpt-5.3-codex\"}",
       "{\"fn\":\"completeCodexAttempt\",\"turnUuid\":\"attempt-1\",\"status\":\"completed\"}",
       "{\"fn\":\"applyPrMetadata\",\"userMessage\":\"Add a dark mode toggle\",\"ccSummary\":\"Added the toggle.\",\"proposalDescription\":null}",
-      "{\"fn\":\"setChecksPending\",\"id\":4242}",
-      "{\"fn\":\"buildAndDeployStaging\",\"sessionId\":4242,\"sha\":\"fed9876abc1234\"}",
-      "{\"fn\":\"verifyStagingEdge\"}",
-      "{\"fn\":\"captureForSession\",\"id\":{\"id\":4242,\"app_id\":31,\"user_id\":7,\"branch_name\":\"dev/tester-4242\",\"status\":\"active\",\"is_headless\":false,\"source\":null,\"session_title\":\"Dark mode\",\"pr_number\":42,\"pr_title\":\"Add a dark mode toggle\",\"cc_session_id\":null,\"cloned_from_session_id\":null,\"agent_backend\":\"codex_openrouter\",\"agent_model\":\"openai/gpt-5.3-codex\",\"spec_md\":\"\",\"linked_issues\":[],\"app_slug\":\"whiteboard-0d337f\",\"app_name\":\"Whiteboard\",\"repo_url\":\"https://github.com/usernode-bot/whiteboard-0d337f\",\"app_self_hosted\":false,\"collab_visibility\":\"public\",\"view_visibility\":\"public\",\"agent_thread_id\":\"thread-1\",\"pr_url\":\"https://github.com/usernode-bot/whiteboard-0d337f/pull/42\"}}",
+      "{\"fn\":\"previewWorkflow.revision\",\"sessionId\":4242,\"head\":\"fed9876abc1234\",\"source\":\"turn\",\"trigger\":\"commit-push\"}",
       "{\"fn\":\"titleAtTurnEnd\",\"firstTurn\":false,\"message\":\"Add a dark mode toggle\"}"
     ],
     "unusedLlmSteps": 0,
@@ -1994,9 +2164,9 @@
       "{\"role\":\"system\",\"content\":\"{\\\"progressLog\\\":[],\\\"agentBackend\\\":\\\"codex_openrouter\\\",\\\"agentModel\\\":\\\"openai/gpt-5.3-codex\\\"}\",\"metadata\":{}}",
       "{\"role\":\"system\",\"content\":\"PR #42 created\",\"metadata\":{}}",
       "{\"role\":\"system\",\"content\":\"Building staging preview...\",\"metadata\":{}}",
-      "{\"role\":\"system\",\"content\":\"Staging deployed!\",\"metadata\":{\"stagingUrl\":\"https://whiteboard-pr42.staging.test\",\"changesReady\":true,\"prNumber\":42,\"prUrl\":\"https://github.com/usernode-bot/whiteboard-0d337f/pull/42\"}}",
+      "{\"role\":\"system\",\"content\":\"Building staging preview...\",\"metadata\":{\"changesReady\":true,\"stagingBuild\":\"running\",\"prNumber\":42,\"prUrl\":\"https://github.com/usernode-bot/whiteboard-0d337f/pull/42\"}}",
       "{\"role\":\"system\",\"content\":\"OpenRouter finished\",\"metadata\":{\"agentBackend\":\"codex_openrouter\",\"agentModel\":\"openai/gpt-5.3-codex\",\"ccOutput\":\"Added the toggle.\",\"ccOutcome\":\"success\",\"durationMs\":\"<num>\"}}",
-      "{\"role\":\"assistant\",\"content\":\"What the agent did:\\nAdded the toggle.\\n\\nCommit fed9876a pushed to dev/tester-4242.\\n\\nOpened PR #42: https://github.com/usernode-bot/whiteboard-0d337f/pull/42\\n\\nStaging redeployed: https://whiteboard-pr42.staging.test\",\"metadata\":{\"quickReplies\":[\"Propose it to the group\",\"Make a tweak\",\"What did it change?\"],\"quickRepliesSource\":\"static\",\"quickRepliesKind\":\"code_done\",\"openRouterDirect\":true,\"costEstimated\":true}}"
+      "{\"role\":\"assistant\",\"content\":\"What the agent did:\\nAdded the toggle.\\n\\nCommit fed9876a pushed to dev/tester-4242.\\n\\nOpened PR #42: https://github.com/usernode-bot/whiteboard-0d337f/pull/42\\n\\nThe staging preview is building; its checks run once it is up.\",\"metadata\":{\"quickReplies\":[\"Propose it to the group\",\"Make a tweak\",\"What did it change?\"],\"quickRepliesSource\":\"static\",\"quickRepliesKind\":\"code_done\",\"openRouterDirect\":true,\"costEstimated\":true}}"
     ]
   },
   "openrouter direct": {
@@ -2009,13 +2179,13 @@
       "{\"type\":\"status\",\"_seq\":\"#5\",\"text\":\"OpenRouter is running...\",\"agentBackend\":\"codex_openrouter\",\"agentModel\":\"openai/gpt-5.3-codex\"}",
       "{\"type\":\"status\",\"_seq\":\"#6\",\"text\":\"PR #42 created\"}",
       "{\"type\":\"status\",\"_seq\":\"#7\",\"text\":\"Building staging preview...\"}",
-      "{\"type\":\"status\",\"_seq\":\"#8\",\"text\":\"Staging deployed!\",\"stagingUrl\":\"https://whiteboard-pr42.staging.test\",\"changesReady\":true,\"prNumber\":42,\"prUrl\":\"https://github.com/usernode-bot/whiteboard-0d337f/pull/42\"}",
-      "{\"type\":\"staging_ready\",\"_seq\":\"#9\",\"url\":\"https://whiteboard-pr42.staging.test\",\"changesReady\":true,\"testingMd\":null,\"testingPath\":null}",
-      "{\"type\":\"status\",\"_seq\":\"#10\",\"text\":\"OpenRouter finished\",\"agentBackend\":\"codex_openrouter\",\"agentModel\":\"openai/gpt-5.3-codex\",\"ccOutput\":\"Added the toggle.\",\"ccOutcome\":\"success\",\"durationMs\":\"<num>\"}",
-      "{\"type\":\"mayor_reasoning\",\"_seq\":\"#11\",\"text\":\"What the agent did:\\nAdded the toggle.\\n\\nCommit fed9876a pushed to dev/tester-4242.\\n\\nOpened PR #42: https://github.com/usernode-bot/whiteboard-0d337f/pull/42\\n\\nStaging redeployed: https://whiteboard-pr42.staging.test\"}",
-      "{\"type\":\"usage\",\"_seq\":\"#12\",\"costCents\":12,\"model\":\"openrouter/openai/gpt-5.3-codex\",\"byok\":true,\"estimated\":true}",
-      "{\"type\":\"quick_replies\",\"_seq\":\"#13\",\"replies\":[\"Propose it to the group\",\"Make a tweak\",\"What did it change?\"]}",
-      "{\"type\":\"done\",\"_seq\":\"#14\"}"
+      "{\"type\":\"status\",\"_seq\":\"#8\",\"text\":\"Building staging preview...\",\"changesReady\":true,\"stagingBuild\":\"running\",\"prNumber\":42,\"prUrl\":\"https://github.com/usernode-bot/whiteboard-0d337f/pull/42\"}",
+      "{\"type\":\"status\",\"_seq\":\"#9\",\"text\":\"OpenRouter finished\",\"agentBackend\":\"codex_openrouter\",\"agentModel\":\"openai/gpt-5.3-codex\",\"ccOutput\":\"Added the toggle.\",\"ccOutcome\":\"success\",\"durationMs\":\"<num>\"}",
+      "{\"type\":\"mayor_reasoning\",\"_seq\":\"#10\",\"text\":\"What the agent did:\\nAdded the toggle.\\n\\nCommit fed9876a pushed to dev/tester-4242.\\n\\nOpened PR #42: https://github.com/usernode-bot/whiteboard-0d337f/pull/42\\n\\nThe staging preview is building; its checks run once it is up.\"}",
+      "{\"type\":\"usage\",\"_seq\":\"#11\",\"costCents\":12,\"model\":\"openrouter/openai/gpt-5.3-codex\",\"byok\":true,\"estimated\":true}",
+      "{\"type\":\"quick_replies\",\"_seq\":\"#12\",\"replies\":[\"Propose it to the group\",\"Make a tweak\",\"What did it change?\"]}",
+      "{\"type\":\"done\",\"_seq\":\"#13\"}",
+      "{\"type\":\"done\",\"_seq\":\"#<uuid>\",\"turnId\":\"<uuid>\"}"
     ],
     "broadcasts": [
       "{\"type\":\"session_event\",\"_seq\":\"#2\",\"sessionId\":4242,\"event\":\"assistant_message_end\"}",
@@ -2024,20 +2194,24 @@
       "{\"type\":\"session_event\",\"_seq\":\"#5\",\"text\":\"OpenRouter is running...\",\"agentBackend\":\"codex_openrouter\",\"agentModel\":\"openai/gpt-5.3-codex\",\"sessionId\":4242,\"event\":\"status\"}",
       "{\"type\":\"session_event\",\"_seq\":\"#6\",\"text\":\"PR #42 created\",\"sessionId\":4242,\"event\":\"status\"}",
       "{\"type\":\"session_event\",\"_seq\":\"#7\",\"text\":\"Building staging preview...\",\"sessionId\":4242,\"event\":\"status\"}",
-      "{\"type\":\"session_event\",\"_seq\":\"#8\",\"text\":\"Staging deployed!\",\"stagingUrl\":\"https://whiteboard-pr42.staging.test\",\"changesReady\":true,\"prNumber\":42,\"prUrl\":\"https://github.com/usernode-bot/whiteboard-0d337f/pull/42\",\"sessionId\":4242,\"event\":\"status\"}",
-      "{\"type\":\"session_event\",\"_seq\":\"#9\",\"url\":\"https://whiteboard-pr42.staging.test\",\"changesReady\":true,\"testingMd\":null,\"testingPath\":null,\"sessionId\":4242,\"event\":\"staging_ready\"}",
-      "{\"type\":\"session_event\",\"_seq\":\"#10\",\"text\":\"OpenRouter finished\",\"agentBackend\":\"codex_openrouter\",\"agentModel\":\"openai/gpt-5.3-codex\",\"ccOutput\":\"Added the toggle.\",\"ccOutcome\":\"success\",\"durationMs\":\"<num>\",\"sessionId\":4242,\"event\":\"status\"}",
-      "{\"type\":\"session_event\",\"_seq\":\"#11\",\"text\":\"What the agent did:\\nAdded the toggle.\\n\\nCommit fed9876a pushed to dev/tester-4242.\\n\\nOpened PR #42: https://github.com/usernode-bot/whiteboard-0d337f/pull/42\\n\\nStaging redeployed: https://whiteboard-pr42.staging.test\",\"sessionId\":4242,\"event\":\"mayor_reasoning\"}",
-      "{\"type\":\"session_event\",\"_seq\":\"#13\",\"replies\":[\"Propose it to the group\",\"Make a tweak\",\"What did it change?\"],\"sessionId\":4242,\"event\":\"quick_replies\"}",
-      "{\"type\":\"session_event\",\"_seq\":\"#14\",\"sessionId\":4242,\"event\":\"done\"}"
+      "{\"type\":\"session_event\",\"_seq\":\"#8\",\"text\":\"Building staging preview...\",\"changesReady\":true,\"stagingBuild\":\"running\",\"prNumber\":42,\"prUrl\":\"https://github.com/usernode-bot/whiteboard-0d337f/pull/42\",\"sessionId\":4242,\"event\":\"status\"}",
+      "{\"type\":\"session_event\",\"_seq\":\"#9\",\"text\":\"OpenRouter finished\",\"agentBackend\":\"codex_openrouter\",\"agentModel\":\"openai/gpt-5.3-codex\",\"ccOutput\":\"Added the toggle.\",\"ccOutcome\":\"success\",\"durationMs\":\"<num>\",\"sessionId\":4242,\"event\":\"status\"}",
+      "{\"type\":\"session_event\",\"_seq\":\"#10\",\"text\":\"What the agent did:\\nAdded the toggle.\\n\\nCommit fed9876a pushed to dev/tester-4242.\\n\\nOpened PR #42: https://github.com/usernode-bot/whiteboard-0d337f/pull/42\\n\\nThe staging preview is building; its checks run once it is up.\",\"sessionId\":4242,\"event\":\"mayor_reasoning\"}",
+      "{\"type\":\"session_event\",\"_seq\":\"#12\",\"replies\":[\"Propose it to the group\",\"Make a tweak\",\"What did it change?\"],\"sessionId\":4242,\"event\":\"quick_replies\"}",
+      "{\"type\":\"session_event\",\"_seq\":\"#13\",\"sessionId\":4242,\"event\":\"done\"}"
     ],
     "queries": [
       "SELECT a.id, a.collab_visibility, a.view_visibility, a.moderation_suspended_at FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1 :: [4242]",
       "SELECT app_id FROM user_app_blocks WHERE user_id = $1 AND app_id = $2 :: [7,4242]",
       "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:49b4726211dab378 len:549> :: [\"4242\",7]",
+      "BEGIN :: []",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata, client_message_id) VALUES ($1, 'user', $2, $3, $… <sha:513d6d719625fb1d len:226> :: [4242,\"Add a dark mode toggle\",{\"json\":{}},null]",
       "UPDATE chat_sessions SET last_activity_at = NOW(), notify_on_done = FALSE WHERE id = $1 :: [4242]",
+      "COMMIT :: []",
+      "SELECT id, username FROM users WHERE id = $1 :: [7]",
+      "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:3e6d6a460762a104 len:329> :: [4242,7]",
       "SELECT spec_md FROM chat_sessions WHERE id = $1 :: [4242]",
+      "SELECT (cs.active_turn IS NOT NULL OR EXISTS (SELECT 1 FROM local_agent_turns t WHERE t.session_id = cs.id AND t.status … <sha:606178aea56d8f55 len:1515> :: [4242]",
       "SELECT m.content, m.created_at, u.username FROM chat_messages m LEFT JOIN users u ON u.id = m.user_id WHERE m.app_id = $… <sha:b8a1d28b89ac3d11 len:246> :: [31,\"session\",4242]",
       "SELECT a.self_hosted, u.is_admin, cs.user_id FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id JOIN users u ON u.id = cs.user_id WHERE cs.id = $1 :: [4242]",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Starting OpenRouter (openai/gpt-5.3-codex)...\",{\"json\":{\"agentBackend\":\"codex_openrouter\",\"agentModel\":\"openai/gpt-5.3-codex\"}}]",
@@ -2055,8 +2229,13 @@
       "UPDATE turn_effects SET state = 'completed', result = $3::jsonb, completed_at = NOW(), updated_at = NOW() WHERE turn_id = $1 AND effect_key = $2 :: [\"turn-or-1\",\"pr_opened_announcement\",{\"json\":{\"prNumber\":42}}]",
       "COMMIT :: []",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Building staging preview...\",{\"json\":{}}]",
-      "UPDATE chat_sessions SET staging_container_id = $1, staging_url = $2 WHERE id = $3 :: [\"stage-1\",\"https://whiteboard-pr42.staging.test\",4242]",
-      "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Staging deployed!\",{\"json\":{\"stagingUrl\":\"https://whiteboard-pr42.staging.test\",\"changesReady\":true,\"prNumber\":42,\"prUrl\":\"https://github.com/usernode-bot/whiteboard-0d337f/pull/42\"}}]",
+      "BEGIN :: []",
+      "INSERT INTO turn_effects (turn_id, effect_key, session_id, state) VALUES ($1, $2, $3, 'pending') ON CONFLICT (turn_id, effect_key) DO NOTHING RETURNING state :: [\"turn-or-1\",\"recovered_staging_publication\",4242]",
+      "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Building staging preview...\",{\"json\":{\"changesReady\":true,\"stagingBuild\":\"running\",\"prNumber\":42,\"prUrl\":\"https://github.com/usernode-bot/whiteboard-0d337f/pull/42\"}}]",
+      "UPDATE chat_sessions SET active_turn = jsonb_set( active_turn, '{tail}', COALESCE(active_turn->'tail', '{}'::jsonb) || $… <sha:508f11108a93a8f0 len:298> :: [4242,{\"json\":{\"stagingPublished\":true}},\"turn-or-1\",[\"tail_pending\",\"tail\"]]",
+      "SELECT active_turn FROM chat_sessions WHERE id = $1 :: [4242]",
+      "UPDATE turn_effects SET state = 'completed', result = $3::jsonb, completed_at = NOW(), updated_at = NOW() WHERE turn_id = $1 AND effect_key = $2 :: [\"turn-or-1\",\"recovered_staging_publication\",{\"json\":{\"outcome\":\"building\",\"metadata\":{\"changesReady\":true,\"stagingBuild\":\"running\",\"prNumber\":42,\"prUrl\":\"https://github.com/usernode-bot/whiteboard-0d337f/pull/42\"},\"failure\":null,\"checkpoint\":{\"stagingPublished\":true}}}]",
+      "COMMIT :: []",
       "BEGIN :: []",
       "INSERT INTO turn_effects (turn_id, effect_key, session_id, state) VALUES ($1, $2, $3, 'pending') ON CONFLICT (turn_id, effect_key) DO NOTHING RETURNING state :: [\"turn-or-1\",\"completion_row\",4242]",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"OpenRouter finished\",{\"json\":{\"agentBackend\":\"codex_openrouter\",\"agentModel\":\"openai/gpt-5.3-codex\",\"ccOutput\":\"Added the toggle.\",\"ccOutcome\":\"success\",\"durationMs\":\"<num>\"}}]",
@@ -2066,10 +2245,13 @@
       "UPDATE chat_sessions SET last_activity_at = NOW() WHERE id = $1 :: [4242]",
       "BEGIN :: []",
       "INSERT INTO turn_effects (turn_id, effect_key, session_id, state) VALUES ($1, $2, $3, 'pending') ON CONFLICT (turn_id, effect_key) DO NOTHING RETURNING state :: [\"turn-or-1\",\"turn_wrapup_message\",4242]",
-      "INSERT INTO chat_session_messages (session_id, role, content, model, cost_cents, metadata) VALUES ($1, 'assistant', $2, $3, $4, $5) :: [4242,\"What the agent did:\\nAdded the toggle.\\n\\nCommit fed9876a pushed to dev/tester-4242.\\n\\nOpened PR #42: https://github.com/usernode-bot/whiteboard-0d337f/pull/42\\n\\nStaging redeployed: https://whiteboard-pr42.staging.test\",\"openrouter/openai/gpt-5.3-codex\",12,{\"json\":{\"quickReplies\":[\"Propose it to the group\",\"Make a tweak\",\"What did it change?\"],\"quickRepliesSource\":\"static\",\"quickRepliesKind\":\"code_done\",\"openRouterDirect\":true,\"costEstimated\":true}}]",
+      "INSERT INTO chat_session_messages (session_id, role, content, model, cost_cents, metadata) VALUES ($1, 'assistant', $2, $3, $4, $5) :: [4242,\"What the agent did:\\nAdded the toggle.\\n\\nCommit fed9876a pushed to dev/tester-4242.\\n\\nOpened PR #42: https://github.com/usernode-bot/whiteboard-0d337f/pull/42\\n\\nThe staging preview is building; its checks run once it is up.\",\"openrouter/openai/gpt-5.3-codex\",12,{\"json\":{\"quickReplies\":[\"Propose it to the group\",\"Make a tweak\",\"What did it change?\"],\"quickRepliesSource\":\"static\",\"quickRepliesKind\":\"code_done\",\"openRouterDirect\":true,\"costEstimated\":true}}]",
       "UPDATE turn_effects SET state = 'completed', result = $3::jsonb, completed_at = NOW(), updated_at = NOW() WHERE turn_id = $1 AND effect_key = $2 :: [\"turn-or-1\",\"turn_wrapup_message\",{\"json\":{\"persisted\":true}}]",
       "COMMIT :: []",
-      "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]"
+      "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]",
+      "UPDATE local_agent_turns SET waiter_id = gen_random_uuid(), waiter_seen_at = NOW() WHERE id = ( SELECT id FROM local_age… <sha:02869ef4a305436d len:260> :: [\"test-19\"]",
+      "SELECT id FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-19\"]",
+      "SELECT id, active_turn FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-19\"]"
     ],
     "llm": [],
     "billing": [
@@ -2080,9 +2262,8 @@
       "{\"fn\":\"ensureWorkerImage\"}",
       "{\"fn\":\"ensureWorker\",\"id\":4242}",
       "{\"fn\":\"syncUserAgentFiles\"}",
-      "{\"fn\":\"execInWorker\",\"id\":4242,\"mode\":\"build\",\"model\":\"openai/gpt-5.3-codex\",\"branchName\":\"dev/tester-4242\",\"resumeSessionId\":null,\"prompt\":{\"sha\":\"85b3a2fcf84e4339\",\"length\":206901},\"systemPrompt\":null,\"holdTurnRecord\":true,\"telemetryComponent\":\"coding_agent_build\"}",
+      "{\"fn\":\"execInWorker\",\"id\":4242,\"mode\":\"build\",\"model\":\"openai/gpt-5.3-codex\",\"branchName\":\"dev/tester-4242\",\"resumeSessionId\":null,\"prompt\":{\"sha\":\"83fe8826dd5c8633\",\"length\":226137},\"systemPrompt\":null,\"holdTurnRecord\":true,\"telemetryComponent\":\"coding_agent_build\"}",
       "{\"fn\":\"noteTailMilestone\",\"id\":4242,\"milestone\":{\"prNumber\":42,\"prOpenedEventRecorded\":true},\"opts\":{\"turnId\":\"turn-or-1\"}}",
-      "{\"fn\":\"noteTailMilestone\",\"id\":4242,\"milestone\":{\"stagingUrl\":\"https://whiteboard-pr42.staging.test\"},\"opts\":{\"turnId\":\"turn-or-1\"}}",
       "{\"fn\":\"noteTailMilestone\",\"id\":4242,\"milestone\":{\"completionRowPosted\":true},\"opts\":{\"turnId\":\"turn-or-1\"}}",
       "{\"fn\":\"noteTailMilestone\",\"id\":4242,\"milestone\":{\"wrapUpPosted\":true},\"opts\":{\"turnId\":\"turn-or-1\"}}",
       "{\"fn\":\"finishTurn\",\"id\":4242,\"opts\":{\"turnId\":\"turn-or-1\"}}"
@@ -2093,10 +2274,7 @@
       "{\"fn\":\"startCodexAttempt\",\"attemptNumber\":1,\"mode\":\"build\",\"model\":\"openai/gpt-5.3-codex\"}",
       "{\"fn\":\"completeCodexAttempt\",\"turnUuid\":\"attempt-1\",\"status\":\"completed\"}",
       "{\"fn\":\"applyPrMetadata\",\"userMessage\":\"Add a dark mode toggle\",\"ccSummary\":\"Added the toggle.\",\"proposalDescription\":null}",
-      "{\"fn\":\"setChecksPending\",\"id\":4242}",
-      "{\"fn\":\"buildAndDeployStaging\",\"sessionId\":4242,\"sha\":\"fed9876abc1234\"}",
-      "{\"fn\":\"verifyStagingEdge\"}",
-      "{\"fn\":\"captureForSession\",\"id\":{\"id\":4242,\"app_id\":31,\"user_id\":7,\"branch_name\":\"dev/tester-4242\",\"status\":\"active\",\"is_headless\":false,\"source\":null,\"session_title\":\"Dark mode\",\"pr_number\":42,\"pr_title\":\"Add a dark mode toggle\",\"cc_session_id\":null,\"cloned_from_session_id\":null,\"agent_backend\":\"codex_openrouter\",\"agent_model\":\"openai/gpt-5.3-codex\",\"spec_md\":\"\",\"linked_issues\":[],\"app_slug\":\"whiteboard-0d337f\",\"app_name\":\"Whiteboard\",\"repo_url\":\"https://github.com/usernode-bot/whiteboard-0d337f\",\"app_self_hosted\":false,\"collab_visibility\":\"public\",\"view_visibility\":\"public\",\"agent_thread_id\":\"thread-1\",\"pr_url\":\"https://github.com/usernode-bot/whiteboard-0d337f/pull/42\"}}",
+      "{\"fn\":\"previewWorkflow.revision\",\"sessionId\":4242,\"head\":\"fed9876abc1234\",\"source\":\"turn\",\"trigger\":\"commit-push\"}",
       "{\"fn\":\"titleAtTurnEnd\",\"firstTurn\":false,\"message\":\"Add a dark mode toggle\"}"
     ],
     "unusedLlmSteps": 0,
@@ -2107,9 +2285,9 @@
       "{\"role\":\"system\",\"content\":\"{\\\"progressLog\\\":[],\\\"agentBackend\\\":\\\"codex_openrouter\\\",\\\"agentModel\\\":\\\"openai/gpt-5.3-codex\\\"}\",\"metadata\":{}}",
       "{\"role\":\"system\",\"content\":\"PR #42 created\",\"metadata\":{}}",
       "{\"role\":\"system\",\"content\":\"Building staging preview...\",\"metadata\":{}}",
-      "{\"role\":\"system\",\"content\":\"Staging deployed!\",\"metadata\":{\"stagingUrl\":\"https://whiteboard-pr42.staging.test\",\"changesReady\":true,\"prNumber\":42,\"prUrl\":\"https://github.com/usernode-bot/whiteboard-0d337f/pull/42\"}}",
+      "{\"role\":\"system\",\"content\":\"Building staging preview...\",\"metadata\":{\"changesReady\":true,\"stagingBuild\":\"running\",\"prNumber\":42,\"prUrl\":\"https://github.com/usernode-bot/whiteboard-0d337f/pull/42\"}}",
       "{\"role\":\"system\",\"content\":\"OpenRouter finished\",\"metadata\":{\"agentBackend\":\"codex_openrouter\",\"agentModel\":\"openai/gpt-5.3-codex\",\"ccOutput\":\"Added the toggle.\",\"ccOutcome\":\"success\",\"durationMs\":\"<num>\"}}",
-      "{\"role\":\"assistant\",\"content\":\"What the agent did:\\nAdded the toggle.\\n\\nCommit fed9876a pushed to dev/tester-4242.\\n\\nOpened PR #42: https://github.com/usernode-bot/whiteboard-0d337f/pull/42\\n\\nStaging redeployed: https://whiteboard-pr42.staging.test\",\"metadata\":{\"quickReplies\":[\"Propose it to the group\",\"Make a tweak\",\"What did it change?\"],\"quickRepliesSource\":\"static\",\"quickRepliesKind\":\"code_done\",\"openRouterDirect\":true,\"costEstimated\":true}}"
+      "{\"role\":\"assistant\",\"content\":\"What the agent did:\\nAdded the toggle.\\n\\nCommit fed9876a pushed to dev/tester-4242.\\n\\nOpened PR #42: https://github.com/usernode-bot/whiteboard-0d337f/pull/42\\n\\nThe staging preview is building; its checks run once it is up.\",\"metadata\":{\"quickReplies\":[\"Propose it to the group\",\"Make a tweak\",\"What did it change?\"],\"quickRepliesSource\":\"static\",\"quickRepliesKind\":\"code_done\",\"openRouterDirect\":true,\"costEstimated\":true}}"
     ]
   },
   "openrouter claude harness escalation": {
@@ -2122,13 +2300,13 @@
       "{\"type\":\"status\",\"_seq\":\"#5\",\"text\":\"OpenRouter is running...\",\"agentBackend\":\"codex_openrouter\",\"agentModel\":\"openai/gpt-5.3-codex\"}",
       "{\"type\":\"status\",\"_seq\":\"#6\",\"text\":\"PR #42 created\"}",
       "{\"type\":\"status\",\"_seq\":\"#7\",\"text\":\"Building staging preview...\"}",
-      "{\"type\":\"status\",\"_seq\":\"#8\",\"text\":\"Staging deployed!\",\"stagingUrl\":\"https://whiteboard-pr42.staging.test\",\"changesReady\":true,\"prNumber\":42,\"prUrl\":\"https://github.com/usernode-bot/whiteboard-0d337f/pull/42\"}",
-      "{\"type\":\"staging_ready\",\"_seq\":\"#9\",\"url\":\"https://whiteboard-pr42.staging.test\",\"changesReady\":true,\"testingMd\":null,\"testingPath\":null}",
-      "{\"type\":\"status\",\"_seq\":\"#10\",\"text\":\"OpenRouter finished\",\"agentBackend\":\"codex_openrouter\",\"agentModel\":\"openai/gpt-5.3-codex\",\"ccOutput\":\"Added the toggle.\",\"ccOutcome\":\"success\",\"durationMs\":\"<num>\"}",
-      "{\"type\":\"mayor_reasoning\",\"_seq\":\"#11\",\"text\":\"What the agent did:\\nAdded the toggle.\\n\\nCommit fed9876a pushed to dev/tester-4242.\\n\\nOpened PR #42: https://github.com/usernode-bot/whiteboard-0d337f/pull/42\\n\\nStaging redeployed: https://whiteboard-pr42.staging.test\"}",
-      "{\"type\":\"usage\",\"_seq\":\"#12\",\"costCents\":12,\"model\":\"openrouter/openai/gpt-5.3-codex\",\"byok\":true,\"estimated\":true}",
-      "{\"type\":\"quick_replies\",\"_seq\":\"#13\",\"replies\":[\"Propose it to the group\",\"Make a tweak\",\"What did it change?\"]}",
-      "{\"type\":\"done\",\"_seq\":\"#14\"}"
+      "{\"type\":\"status\",\"_seq\":\"#8\",\"text\":\"Building staging preview...\",\"changesReady\":true,\"stagingBuild\":\"running\",\"prNumber\":42,\"prUrl\":\"https://github.com/usernode-bot/whiteboard-0d337f/pull/42\"}",
+      "{\"type\":\"status\",\"_seq\":\"#9\",\"text\":\"OpenRouter finished\",\"agentBackend\":\"codex_openrouter\",\"agentModel\":\"openai/gpt-5.3-codex\",\"ccOutput\":\"Added the toggle.\",\"ccOutcome\":\"success\",\"durationMs\":\"<num>\"}",
+      "{\"type\":\"mayor_reasoning\",\"_seq\":\"#10\",\"text\":\"What the agent did:\\nAdded the toggle.\\n\\nCommit fed9876a pushed to dev/tester-4242.\\n\\nOpened PR #42: https://github.com/usernode-bot/whiteboard-0d337f/pull/42\\n\\nThe staging preview is building; its checks run once it is up.\"}",
+      "{\"type\":\"usage\",\"_seq\":\"#11\",\"costCents\":12,\"model\":\"openrouter/openai/gpt-5.3-codex\",\"byok\":true,\"estimated\":true}",
+      "{\"type\":\"quick_replies\",\"_seq\":\"#12\",\"replies\":[\"Propose it to the group\",\"Make a tweak\",\"What did it change?\"]}",
+      "{\"type\":\"done\",\"_seq\":\"#13\"}",
+      "{\"type\":\"done\",\"_seq\":\"#<uuid>\",\"turnId\":\"<uuid>\"}"
     ],
     "broadcasts": [
       "{\"type\":\"session_event\",\"_seq\":\"#2\",\"sessionId\":4242,\"event\":\"assistant_message_end\"}",
@@ -2137,20 +2315,24 @@
       "{\"type\":\"session_event\",\"_seq\":\"#5\",\"text\":\"OpenRouter is running...\",\"agentBackend\":\"codex_openrouter\",\"agentModel\":\"openai/gpt-5.3-codex\",\"sessionId\":4242,\"event\":\"status\"}",
       "{\"type\":\"session_event\",\"_seq\":\"#6\",\"text\":\"PR #42 created\",\"sessionId\":4242,\"event\":\"status\"}",
       "{\"type\":\"session_event\",\"_seq\":\"#7\",\"text\":\"Building staging preview...\",\"sessionId\":4242,\"event\":\"status\"}",
-      "{\"type\":\"session_event\",\"_seq\":\"#8\",\"text\":\"Staging deployed!\",\"stagingUrl\":\"https://whiteboard-pr42.staging.test\",\"changesReady\":true,\"prNumber\":42,\"prUrl\":\"https://github.com/usernode-bot/whiteboard-0d337f/pull/42\",\"sessionId\":4242,\"event\":\"status\"}",
-      "{\"type\":\"session_event\",\"_seq\":\"#9\",\"url\":\"https://whiteboard-pr42.staging.test\",\"changesReady\":true,\"testingMd\":null,\"testingPath\":null,\"sessionId\":4242,\"event\":\"staging_ready\"}",
-      "{\"type\":\"session_event\",\"_seq\":\"#10\",\"text\":\"OpenRouter finished\",\"agentBackend\":\"codex_openrouter\",\"agentModel\":\"openai/gpt-5.3-codex\",\"ccOutput\":\"Added the toggle.\",\"ccOutcome\":\"success\",\"durationMs\":\"<num>\",\"sessionId\":4242,\"event\":\"status\"}",
-      "{\"type\":\"session_event\",\"_seq\":\"#11\",\"text\":\"What the agent did:\\nAdded the toggle.\\n\\nCommit fed9876a pushed to dev/tester-4242.\\n\\nOpened PR #42: https://github.com/usernode-bot/whiteboard-0d337f/pull/42\\n\\nStaging redeployed: https://whiteboard-pr42.staging.test\",\"sessionId\":4242,\"event\":\"mayor_reasoning\"}",
-      "{\"type\":\"session_event\",\"_seq\":\"#13\",\"replies\":[\"Propose it to the group\",\"Make a tweak\",\"What did it change?\"],\"sessionId\":4242,\"event\":\"quick_replies\"}",
-      "{\"type\":\"session_event\",\"_seq\":\"#14\",\"sessionId\":4242,\"event\":\"done\"}"
+      "{\"type\":\"session_event\",\"_seq\":\"#8\",\"text\":\"Building staging preview...\",\"changesReady\":true,\"stagingBuild\":\"running\",\"prNumber\":42,\"prUrl\":\"https://github.com/usernode-bot/whiteboard-0d337f/pull/42\",\"sessionId\":4242,\"event\":\"status\"}",
+      "{\"type\":\"session_event\",\"_seq\":\"#9\",\"text\":\"OpenRouter finished\",\"agentBackend\":\"codex_openrouter\",\"agentModel\":\"openai/gpt-5.3-codex\",\"ccOutput\":\"Added the toggle.\",\"ccOutcome\":\"success\",\"durationMs\":\"<num>\",\"sessionId\":4242,\"event\":\"status\"}",
+      "{\"type\":\"session_event\",\"_seq\":\"#10\",\"text\":\"What the agent did:\\nAdded the toggle.\\n\\nCommit fed9876a pushed to dev/tester-4242.\\n\\nOpened PR #42: https://github.com/usernode-bot/whiteboard-0d337f/pull/42\\n\\nThe staging preview is building; its checks run once it is up.\",\"sessionId\":4242,\"event\":\"mayor_reasoning\"}",
+      "{\"type\":\"session_event\",\"_seq\":\"#12\",\"replies\":[\"Propose it to the group\",\"Make a tweak\",\"What did it change?\"],\"sessionId\":4242,\"event\":\"quick_replies\"}",
+      "{\"type\":\"session_event\",\"_seq\":\"#13\",\"sessionId\":4242,\"event\":\"done\"}"
     ],
     "queries": [
       "SELECT a.id, a.collab_visibility, a.view_visibility, a.moderation_suspended_at FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1 :: [4242]",
       "SELECT app_id FROM user_app_blocks WHERE user_id = $1 AND app_id = $2 :: [7,4242]",
       "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:49b4726211dab378 len:549> :: [\"4242\",7]",
+      "BEGIN :: []",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata, client_message_id) VALUES ($1, 'user', $2, $3, $… <sha:513d6d719625fb1d len:226> :: [4242,\"Add a dark mode toggle\",{\"json\":{}},null]",
       "UPDATE chat_sessions SET last_activity_at = NOW(), notify_on_done = FALSE WHERE id = $1 :: [4242]",
+      "COMMIT :: []",
+      "SELECT id, username FROM users WHERE id = $1 :: [7]",
+      "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:3e6d6a460762a104 len:329> :: [4242,7]",
       "SELECT spec_md FROM chat_sessions WHERE id = $1 :: [4242]",
+      "SELECT (cs.active_turn IS NOT NULL OR EXISTS (SELECT 1 FROM local_agent_turns t WHERE t.session_id = cs.id AND t.status … <sha:606178aea56d8f55 len:1515> :: [4242]",
       "SELECT m.content, m.created_at, u.username FROM chat_messages m LEFT JOIN users u ON u.id = m.user_id WHERE m.app_id = $… <sha:b8a1d28b89ac3d11 len:246> :: [31,\"session\",4242]",
       "SELECT a.self_hosted, u.is_admin, cs.user_id FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id JOIN users u ON u.id = cs.user_id WHERE cs.id = $1 :: [4242]",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Starting OpenRouter (openai/gpt-5.3-codex)...\",{\"json\":{\"agentBackend\":\"codex_openrouter\",\"agentModel\":\"openai/gpt-5.3-codex\"}}]",
@@ -2168,8 +2350,13 @@
       "UPDATE turn_effects SET state = 'completed', result = $3::jsonb, completed_at = NOW(), updated_at = NOW() WHERE turn_id = $1 AND effect_key = $2 :: [\"turn-or-1\",\"pr_opened_announcement\",{\"json\":{\"prNumber\":42}}]",
       "COMMIT :: []",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Building staging preview...\",{\"json\":{}}]",
-      "UPDATE chat_sessions SET staging_container_id = $1, staging_url = $2 WHERE id = $3 :: [\"stage-1\",\"https://whiteboard-pr42.staging.test\",4242]",
-      "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Staging deployed!\",{\"json\":{\"stagingUrl\":\"https://whiteboard-pr42.staging.test\",\"changesReady\":true,\"prNumber\":42,\"prUrl\":\"https://github.com/usernode-bot/whiteboard-0d337f/pull/42\"}}]",
+      "BEGIN :: []",
+      "INSERT INTO turn_effects (turn_id, effect_key, session_id, state) VALUES ($1, $2, $3, 'pending') ON CONFLICT (turn_id, effect_key) DO NOTHING RETURNING state :: [\"turn-or-1\",\"recovered_staging_publication\",4242]",
+      "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Building staging preview...\",{\"json\":{\"changesReady\":true,\"stagingBuild\":\"running\",\"prNumber\":42,\"prUrl\":\"https://github.com/usernode-bot/whiteboard-0d337f/pull/42\"}}]",
+      "UPDATE chat_sessions SET active_turn = jsonb_set( active_turn, '{tail}', COALESCE(active_turn->'tail', '{}'::jsonb) || $… <sha:508f11108a93a8f0 len:298> :: [4242,{\"json\":{\"stagingPublished\":true}},\"turn-or-1\",[\"tail_pending\",\"tail\"]]",
+      "SELECT active_turn FROM chat_sessions WHERE id = $1 :: [4242]",
+      "UPDATE turn_effects SET state = 'completed', result = $3::jsonb, completed_at = NOW(), updated_at = NOW() WHERE turn_id = $1 AND effect_key = $2 :: [\"turn-or-1\",\"recovered_staging_publication\",{\"json\":{\"outcome\":\"building\",\"metadata\":{\"changesReady\":true,\"stagingBuild\":\"running\",\"prNumber\":42,\"prUrl\":\"https://github.com/usernode-bot/whiteboard-0d337f/pull/42\"},\"failure\":null,\"checkpoint\":{\"stagingPublished\":true}}}]",
+      "COMMIT :: []",
       "BEGIN :: []",
       "INSERT INTO turn_effects (turn_id, effect_key, session_id, state) VALUES ($1, $2, $3, 'pending') ON CONFLICT (turn_id, effect_key) DO NOTHING RETURNING state :: [\"turn-or-1\",\"completion_row\",4242]",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"OpenRouter finished\",{\"json\":{\"agentBackend\":\"codex_openrouter\",\"agentModel\":\"openai/gpt-5.3-codex\",\"ccOutput\":\"Added the toggle.\",\"ccOutcome\":\"success\",\"durationMs\":\"<num>\"}}]",
@@ -2179,10 +2366,13 @@
       "UPDATE chat_sessions SET last_activity_at = NOW() WHERE id = $1 :: [4242]",
       "BEGIN :: []",
       "INSERT INTO turn_effects (turn_id, effect_key, session_id, state) VALUES ($1, $2, $3, 'pending') ON CONFLICT (turn_id, effect_key) DO NOTHING RETURNING state :: [\"turn-or-1\",\"turn_wrapup_message\",4242]",
-      "INSERT INTO chat_session_messages (session_id, role, content, model, cost_cents, metadata) VALUES ($1, 'assistant', $2, $3, $4, $5) :: [4242,\"What the agent did:\\nAdded the toggle.\\n\\nCommit fed9876a pushed to dev/tester-4242.\\n\\nOpened PR #42: https://github.com/usernode-bot/whiteboard-0d337f/pull/42\\n\\nStaging redeployed: https://whiteboard-pr42.staging.test\",\"openrouter/openai/gpt-5.3-codex\",12,{\"json\":{\"quickReplies\":[\"Propose it to the group\",\"Make a tweak\",\"What did it change?\"],\"quickRepliesSource\":\"static\",\"quickRepliesKind\":\"code_done\",\"openRouterDirect\":true,\"costEstimated\":true}}]",
+      "INSERT INTO chat_session_messages (session_id, role, content, model, cost_cents, metadata) VALUES ($1, 'assistant', $2, $3, $4, $5) :: [4242,\"What the agent did:\\nAdded the toggle.\\n\\nCommit fed9876a pushed to dev/tester-4242.\\n\\nOpened PR #42: https://github.com/usernode-bot/whiteboard-0d337f/pull/42\\n\\nThe staging preview is building; its checks run once it is up.\",\"openrouter/openai/gpt-5.3-codex\",12,{\"json\":{\"quickReplies\":[\"Propose it to the group\",\"Make a tweak\",\"What did it change?\"],\"quickRepliesSource\":\"static\",\"quickRepliesKind\":\"code_done\",\"openRouterDirect\":true,\"costEstimated\":true}}]",
       "UPDATE turn_effects SET state = 'completed', result = $3::jsonb, completed_at = NOW(), updated_at = NOW() WHERE turn_id = $1 AND effect_key = $2 :: [\"turn-or-1\",\"turn_wrapup_message\",{\"json\":{\"persisted\":true}}]",
       "COMMIT :: []",
-      "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]"
+      "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]",
+      "UPDATE local_agent_turns SET waiter_id = gen_random_uuid(), waiter_seen_at = NOW() WHERE id = ( SELECT id FROM local_age… <sha:02869ef4a305436d len:260> :: [\"test-20\"]",
+      "SELECT id FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-20\"]",
+      "SELECT id, active_turn FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-20\"]"
     ],
     "llm": [],
     "billing": [
@@ -2193,9 +2383,8 @@
       "{\"fn\":\"ensureWorkerImage\"}",
       "{\"fn\":\"ensureWorker\",\"id\":4242}",
       "{\"fn\":\"syncUserAgentFiles\"}",
-      "{\"fn\":\"execInWorker\",\"id\":4242,\"mode\":\"build\",\"model\":\"openai/gpt-5.3-codex\",\"branchName\":\"dev/tester-4242\",\"resumeSessionId\":null,\"prompt\":{\"sha\":\"3170931d0d18cc7f\",\"length\":12213},\"systemPrompt\":{\"sha\":\"b5c6551175425e54\",\"length\":186272},\"holdTurnRecord\":true,\"telemetryComponent\":\"coding_agent_build\"}",
+      "{\"fn\":\"execInWorker\",\"id\":4242,\"mode\":\"build\",\"model\":\"openai/gpt-5.3-codex\",\"branchName\":\"dev/tester-4242\",\"resumeSessionId\":null,\"prompt\":{\"sha\":\"a09462f3e381295d\",\"length\":12720},\"systemPrompt\":{\"sha\":\"8db64acf9e825ff6\",\"length\":204845},\"holdTurnRecord\":true,\"telemetryComponent\":\"coding_agent_build\"}",
       "{\"fn\":\"noteTailMilestone\",\"id\":4242,\"milestone\":{\"prNumber\":42,\"prOpenedEventRecorded\":true},\"opts\":{\"turnId\":\"turn-or-1\"}}",
-      "{\"fn\":\"noteTailMilestone\",\"id\":4242,\"milestone\":{\"stagingUrl\":\"https://whiteboard-pr42.staging.test\"},\"opts\":{\"turnId\":\"turn-or-1\"}}",
       "{\"fn\":\"noteTailMilestone\",\"id\":4242,\"milestone\":{\"completionRowPosted\":true},\"opts\":{\"turnId\":\"turn-or-1\"}}",
       "{\"fn\":\"noteTailMilestone\",\"id\":4242,\"milestone\":{\"wrapUpPosted\":true},\"opts\":{\"turnId\":\"turn-or-1\"}}",
       "{\"fn\":\"finishTurn\",\"id\":4242,\"opts\":{\"turnId\":\"turn-or-1\"}}"
@@ -2207,10 +2396,7 @@
       "{\"fn\":\"completeCodexAttempt\",\"turnUuid\":\"attempt-1\",\"status\":\"completed\"}",
       "{\"fn\":\"issueDraft.createDraft\",\"sessionId\":4242,\"title\":\"The bridge answers 401 in the preview\",\"body\":\"GET /usernode-bridge/ returns 401 in the in-loop preview, so the wallet button cannot load.\",\"target\":\"platform\",\"source\":\"agent\"}",
       "{\"fn\":\"applyPrMetadata\",\"userMessage\":\"Add a dark mode toggle\",\"ccSummary\":\"Added the toggle.\",\"proposalDescription\":null}",
-      "{\"fn\":\"setChecksPending\",\"id\":4242}",
-      "{\"fn\":\"buildAndDeployStaging\",\"sessionId\":4242,\"sha\":\"fed9876abc1234\"}",
-      "{\"fn\":\"verifyStagingEdge\"}",
-      "{\"fn\":\"captureForSession\",\"id\":{\"id\":4242,\"app_id\":31,\"user_id\":7,\"branch_name\":\"dev/tester-4242\",\"status\":\"active\",\"is_headless\":false,\"source\":null,\"session_title\":\"Dark mode\",\"pr_number\":42,\"pr_title\":\"Add a dark mode toggle\",\"cc_session_id\":null,\"cloned_from_session_id\":null,\"agent_backend\":\"codex_openrouter\",\"agent_model\":\"openai/gpt-5.3-codex\",\"spec_md\":\"\",\"linked_issues\":[],\"app_slug\":\"whiteboard-0d337f\",\"app_name\":\"Whiteboard\",\"repo_url\":\"https://github.com/usernode-bot/whiteboard-0d337f\",\"app_self_hosted\":false,\"collab_visibility\":\"public\",\"view_visibility\":\"public\",\"agent_thread_id\":\"thread-1\",\"pr_url\":\"https://github.com/usernode-bot/whiteboard-0d337f/pull/42\"}}",
+      "{\"fn\":\"previewWorkflow.revision\",\"sessionId\":4242,\"head\":\"fed9876abc1234\",\"source\":\"turn\",\"trigger\":\"commit-push\"}",
       "{\"fn\":\"titleAtTurnEnd\",\"firstTurn\":false,\"message\":\"Add a dark mode toggle\"}"
     ],
     "unusedLlmSteps": 0,
@@ -2221,9 +2407,218 @@
       "{\"role\":\"system\",\"content\":\"{\\\"progressLog\\\":[],\\\"agentBackend\\\":\\\"codex_openrouter\\\",\\\"agentModel\\\":\\\"openai/gpt-5.3-codex\\\"}\",\"metadata\":{}}",
       "{\"role\":\"system\",\"content\":\"PR #42 created\",\"metadata\":{}}",
       "{\"role\":\"system\",\"content\":\"Building staging preview...\",\"metadata\":{}}",
-      "{\"role\":\"system\",\"content\":\"Staging deployed!\",\"metadata\":{\"stagingUrl\":\"https://whiteboard-pr42.staging.test\",\"changesReady\":true,\"prNumber\":42,\"prUrl\":\"https://github.com/usernode-bot/whiteboard-0d337f/pull/42\"}}",
+      "{\"role\":\"system\",\"content\":\"Building staging preview...\",\"metadata\":{\"changesReady\":true,\"stagingBuild\":\"running\",\"prNumber\":42,\"prUrl\":\"https://github.com/usernode-bot/whiteboard-0d337f/pull/42\"}}",
       "{\"role\":\"system\",\"content\":\"OpenRouter finished\",\"metadata\":{\"agentBackend\":\"codex_openrouter\",\"agentModel\":\"openai/gpt-5.3-codex\",\"ccOutput\":\"Added the toggle.\",\"ccOutcome\":\"success\",\"durationMs\":\"<num>\"}}",
-      "{\"role\":\"assistant\",\"content\":\"What the agent did:\\nAdded the toggle.\\n\\nCommit fed9876a pushed to dev/tester-4242.\\n\\nOpened PR #42: https://github.com/usernode-bot/whiteboard-0d337f/pull/42\\n\\nStaging redeployed: https://whiteboard-pr42.staging.test\",\"metadata\":{\"quickReplies\":[\"Propose it to the group\",\"Make a tweak\",\"What did it change?\"],\"quickRepliesSource\":\"static\",\"quickRepliesKind\":\"code_done\",\"openRouterDirect\":true,\"costEstimated\":true}}"
+      "{\"role\":\"assistant\",\"content\":\"What the agent did:\\nAdded the toggle.\\n\\nCommit fed9876a pushed to dev/tester-4242.\\n\\nOpened PR #42: https://github.com/usernode-bot/whiteboard-0d337f/pull/42\\n\\nThe staging preview is building; its checks run once it is up.\",\"metadata\":{\"quickReplies\":[\"Propose it to the group\",\"Make a tweak\",\"What did it change?\"],\"quickRepliesSource\":\"static\",\"quickRepliesKind\":\"code_done\",\"openRouterDirect\":true,\"costEstimated\":true}}"
+    ]
+  },
+  "local build turn": {
+    "status": 200,
+    "events": [
+      "{\"type\":\"accepted\",\"_seq\":\"#1\",\"messageId\":900,\"clientMessageId\":null}",
+      "{\"type\":\"status\",\"_seq\":\"#2\",\"text\":\"Thinking about your request...\"}",
+      "{\"type\":\"phase\",\"_seq\":\"#3\",\"phase\":\"mayor1\"}",
+      "{\"type\":\"token\",\"_seq\":\"#4\",\"text\":\"Building it now.\"}",
+      "{\"type\":\"usage\",\"_seq\":\"#5\",\"costCents\":1.5,\"model\":\"claude-opus-5-5\",\"byok\":false}",
+      "{\"type\":\"mayor_reasoning\",\"_seq\":\"#6\",\"text\":\"Building it now.\"}",
+      "{\"type\":\"quick_replies\",\"_seq\":\"#7\",\"replies\":[\"Build the plan\",\"Revise the plan\",\"What will this change?\"]}",
+      "{\"type\":\"assistant_message_end\",\"_seq\":\"#8\"}",
+      "{\"type\":\"phase\",\"_seq\":\"#9\",\"phase\":\"cc\"}",
+      "{\"type\":\"status\",\"_seq\":\"#10\",\"text\":\"Handing this turn to Tester's laptop: your machine, your Claude subscription...\",\"agentBackend\":\"claude_code\",\"agentModel\":null,\"runner\":\"local\",\"localAgentLabel\":\"Tester's laptop\",\"localMode\":\"build\"}",
+      "{\"type\":\"status\",\"_seq\":\"#11\",\"text\":\"Claude Code is running...\",\"agentBackend\":\"claude_code\",\"agentModel\":null}",
+      "{\"type\":\"status\",\"_seq\":\"#12\",\"text\":\"PR #42 created\"}",
+      "{\"type\":\"status\",\"_seq\":\"#13\",\"text\":\"Building staging preview...\"}",
+      "{\"type\":\"status\",\"_seq\":\"#14\",\"text\":\"Building staging preview...\",\"changesReady\":true,\"stagingBuild\":\"running\",\"prNumber\":42,\"prUrl\":\"https://github.com/usernode-bot/whiteboard-0d337f/pull/42\"}",
+      "{\"type\":\"status\",\"_seq\":\"#15\",\"text\":\"Claude Code finished Coding done on Tester's laptop, so no Homeroom credits were used.\",\"agentBackend\":\"claude_code\",\"agentModel\":null,\"ccOutput\":\"Added the toggle on the laptop.\",\"ccOutcome\":\"success\",\"durationMs\":\"<num>\",\"runner\":\"local\",\"localAgentLabel\":\"Tester's laptop\",\"localMode\":\"build\"}",
+      "{\"type\":\"phase\",\"_seq\":\"#16\",\"phase\":\"mayor2\"}",
+      "{\"type\":\"token\",\"_seq\":\"#17\",\"text\":\"Done on your laptop. The toggle is in the toolbar.\"}",
+      "{\"type\":\"usage\",\"_seq\":\"#18\",\"costCents\":1.5,\"model\":\"claude-opus-5-5\",\"byok\":false}",
+      "{\"type\":\"mayor_reasoning\",\"_seq\":\"#19\",\"text\":\"Done on your laptop. The toggle is in the toolbar.\"}",
+      "{\"type\":\"quick_replies\",\"_seq\":\"#20\",\"replies\":[\"Try it in the preview\",\"What did it change?\"]}",
+      "{\"type\":\"done\",\"_seq\":\"#21\"}",
+      "{\"type\":\"done\",\"_seq\":\"#<uuid>\",\"turnId\":\"<uuid>\"}"
+    ],
+    "broadcasts": [
+      "{\"type\":\"session_event\",\"_seq\":\"#2\",\"text\":\"Thinking about your request...\",\"sessionId\":4242,\"event\":\"status\"}",
+      "{\"type\":\"session_event\",\"_seq\":\"#3\",\"phase\":\"mayor1\",\"sessionId\":4242,\"event\":\"phase\"}",
+      "{\"type\":\"session_event\",\"_seq\":\"#6\",\"text\":\"Building it now.\",\"sessionId\":4242,\"event\":\"mayor_reasoning\"}",
+      "{\"type\":\"session_event\",\"_seq\":\"#7\",\"replies\":[\"Build the plan\",\"Revise the plan\",\"What will this change?\"],\"sessionId\":4242,\"event\":\"quick_replies\"}",
+      "{\"type\":\"session_event\",\"_seq\":\"#8\",\"sessionId\":4242,\"event\":\"assistant_message_end\"}",
+      "{\"type\":\"session_event\",\"_seq\":\"#9\",\"phase\":\"cc\",\"sessionId\":4242,\"event\":\"phase\"}",
+      "{\"type\":\"session_event\",\"_seq\":\"#10\",\"text\":\"Handing this turn to Tester's laptop: your machine, your Claude subscription...\",\"agentBackend\":\"claude_code\",\"agentModel\":null,\"runner\":\"local\",\"localAgentLabel\":\"Tester's laptop\",\"localMode\":\"build\",\"sessionId\":4242,\"event\":\"status\"}",
+      "{\"type\":\"session_event\",\"_seq\":\"#11\",\"text\":\"Claude Code is running...\",\"agentBackend\":\"claude_code\",\"agentModel\":null,\"sessionId\":4242,\"event\":\"status\"}",
+      "{\"type\":\"session_event\",\"_seq\":\"#12\",\"text\":\"PR #42 created\",\"sessionId\":4242,\"event\":\"status\"}",
+      "{\"type\":\"session_event\",\"_seq\":\"#13\",\"text\":\"Building staging preview...\",\"sessionId\":4242,\"event\":\"status\"}",
+      "{\"type\":\"session_event\",\"_seq\":\"#14\",\"text\":\"Building staging preview...\",\"changesReady\":true,\"stagingBuild\":\"running\",\"prNumber\":42,\"prUrl\":\"https://github.com/usernode-bot/whiteboard-0d337f/pull/42\",\"sessionId\":4242,\"event\":\"status\"}",
+      "{\"type\":\"session_event\",\"_seq\":\"#15\",\"text\":\"Claude Code finished Coding done on Tester's laptop, so no Homeroom credits were used.\",\"agentBackend\":\"claude_code\",\"agentModel\":null,\"ccOutput\":\"Added the toggle on the laptop.\",\"ccOutcome\":\"success\",\"durationMs\":\"<num>\",\"runner\":\"local\",\"localAgentLabel\":\"Tester's laptop\",\"localMode\":\"build\",\"sessionId\":4242,\"event\":\"status\"}",
+      "{\"type\":\"session_event\",\"_seq\":\"#16\",\"phase\":\"mayor2\",\"sessionId\":4242,\"event\":\"phase\"}",
+      "{\"type\":\"session_event\",\"_seq\":\"#19\",\"text\":\"Done on your laptop. The toggle is in the toolbar.\",\"sessionId\":4242,\"event\":\"mayor_reasoning\"}",
+      "{\"type\":\"session_event\",\"_seq\":\"#20\",\"replies\":[\"Try it in the preview\",\"What did it change?\"],\"sessionId\":4242,\"event\":\"quick_replies\"}",
+      "{\"type\":\"session_event\",\"_seq\":\"#21\",\"sessionId\":4242,\"event\":\"done\"}"
+    ],
+    "queries": [
+      "SELECT a.id, a.collab_visibility, a.view_visibility, a.moderation_suspended_at FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1 :: [4242]",
+      "SELECT app_id FROM user_app_blocks WHERE user_id = $1 AND app_id = $2 :: [7,4242]",
+      "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:49b4726211dab378 len:549> :: [\"4242\",7]",
+      "BEGIN :: []",
+      "INSERT INTO chat_session_messages (session_id, role, content, metadata, client_message_id) VALUES ($1, 'user', $2, $3, $… <sha:513d6d719625fb1d len:226> :: [4242,\"Build it\",{\"json\":{}},null]",
+      "UPDATE chat_sessions SET last_activity_at = NOW(), notify_on_done = FALSE WHERE id = $1 :: [4242]",
+      "COMMIT :: []",
+      "SELECT id, username FROM users WHERE id = $1 :: [7]",
+      "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:3e6d6a460762a104 len:329> :: [4242,7]",
+      "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Thinking about your request...\",{\"json\":{}}]",
+      "SELECT id, role, content, metadata FROM chat_session_messages WHERE session_id = $1 AND (role IN ('user', 'assistant') O… <sha:454a396501e7d17e len:194> :: [4242]",
+      "SELECT (cs.active_turn IS NOT NULL OR EXISTS (SELECT 1 FROM local_agent_turns t WHERE t.session_id = cs.id AND t.status … <sha:606178aea56d8f55 len:1515> :: [4242]",
+      "SELECT spec_md FROM chat_sessions WHERE id = $1 :: [4242]",
+      "SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.status, cs.linked_issues, cs.spec_md, u.username FROM chat_sessio… <sha:c7047dc891be2a6e len:285> :: [31,4242]",
+      "SELECT kind, name, description, size_bytes, updated_at FROM user_agent_files WHERE user_id = $1 ORDER BY kind, name :: [7]",
+      "SELECT a.self_hosted, u.is_admin, cs.user_id FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id JOIN users u ON u.id = cs.user_id WHERE cs.id = $1 :: [4242]",
+      "SELECT m.content, m.created_at, u.username FROM chat_messages m LEFT JOIN users u ON u.id = m.user_id WHERE m.app_id = $… <sha:b8a1d28b89ac3d11 len:246> :: [31,\"session\",4242]",
+      "INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata) VALUES ($1, 'assistant', $2, $3, $4, $5, $6) :: [4242,\"Building it now.\",\"claude-opus-5-5\",150,1.5,{\"json\":{\"quickReplies\":[\"Build the plan\",\"Revise the plan\",\"What will this change?\"],\"quickRepliesSource\":\"static\",\"quickRepliesKind\":\"spec_done\",\"quickRepliesPreamble\":true}}]",
+      "SELECT (cs.active_turn IS NOT NULL OR EXISTS (SELECT 1 FROM local_agent_turns t WHERE t.session_id = cs.id AND t.status … <sha:606178aea56d8f55 len:1515> :: [4242]",
+      "SELECT a.self_hosted, u.is_admin, cs.user_id FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id JOIN users u ON u.id = cs.user_id WHERE cs.id = $1 :: [4242]",
+      "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Handing this turn to Tester's laptop: your machine, your Claude subscription...\",{\"json\":{\"agentBackend\":\"claude_code\",\"agentModel\":null,\"runner\":\"local\",\"localAgentLabel\":\"Tester's laptop\",\"localMode\":\"build\"}}]",
+      "SELECT spec_md FROM chat_sessions WHERE id = $1 :: [4242]",
+      "SELECT check_state, test_results FROM chat_sessions WHERE id = $1 :: [4242]",
+      "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Claude Code is running...\",{\"json\":{\"agentBackend\":\"claude_code\",\"agentModel\":null}}]",
+      "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', 'Claude Code progress', $2) RETURNING id :: [4242,{\"json\":{\"progressLog\":[],\"agentBackend\":\"claude_code\",\"agentModel\":null}}]",
+      "UPDATE chat_sessions SET behind_main = $1 WHERE id = $2 :: [0,4242]",
+      "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"PR #42 created\",{\"json\":{}}]",
+      "INSERT INTO events (user_id, app_id, session_id, event_type, metadata) VALUES ($1, $2, $3, $4, $5::jsonb) :: [7,31,4242,\"pr_opened\",{\"json\":{\"prNumber\":42}}]",
+      "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Building staging preview...\",{\"json\":{}}]",
+      "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Building staging preview...\",{\"json\":{\"changesReady\":true,\"stagingBuild\":\"running\",\"prNumber\":42,\"prUrl\":\"https://github.com/usernode-bot/whiteboard-0d337f/pull/42\"}}]",
+      "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Claude Code finished Coding done on Tester's laptop, so no Homeroom credits were used.\",{\"json\":{\"agentBackend\":\"claude_code\",\"agentModel\":null,\"ccOutput\":\"Added the toggle on the laptop.\",\"ccOutcome\":\"success\",\"durationMs\":\"<num>\",\"runner\":\"local\",\"localAgentLabel\":\"Tester's laptop\",\"localMode\":\"build\"}}]",
+      "UPDATE chat_sessions SET last_turn_runner = $2, local_agent_label = $3 WHERE id = $1 :: [4242,\"local\",\"Tester's laptop\"]",
+      "INSERT INTO events (user_id, app_id, session_id, event_type, metadata) VALUES ($1, $2, $3, $4, $5::jsonb) :: [7,31,4242,\"local_agent_turn\",{\"json\":{\"outcome\":\"completed\",\"runtime\":\"claude-code\",\"durationMs\":\"<num>\",\"mode\":\"build\"}}]",
+      "UPDATE chat_sessions SET last_activity_at = NOW() WHERE id = $1 :: [4242]",
+      "SELECT spec_md FROM chat_sessions WHERE id = $1 :: [4242]",
+      "SELECT m.content, m.created_at, u.username FROM chat_messages m LEFT JOIN users u ON u.id = m.user_id WHERE m.app_id = $… <sha:b8a1d28b89ac3d11 len:246> :: [31,\"session\",4242]",
+      "INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata) VALUES ($1, 'assistant', $2, $3, $4, $5, $6) :: [4242,\"Done on your laptop. The toggle is in the toolbar.\",\"claude-opus-5-5\",150,1.5,{\"json\":{\"quickReplies\":[\"Try it in the preview\",\"What did it change?\"],\"quickRepliesSource\":\"model\"}}]",
+      "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]",
+      "UPDATE local_agent_turns SET waiter_id = gen_random_uuid(), waiter_seen_at = NOW() WHERE id = ( SELECT id FROM local_age… <sha:02869ef4a305436d len:260> :: [\"test-13\"]",
+      "SELECT id FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-13\"]",
+      "SELECT id, active_turn FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-13\"]"
+    ],
+    "llm": [
+      {
+        "kind": "streamChat",
+        "model": "claude-opus-5-5",
+        "apiKey": null,
+        "systemPrompt": {
+          "sha": "30bcf7f600533c22",
+          "length": 217411
+        },
+        "tools": [
+          "dispatch_claude_code",
+          "dispatch_scout",
+          "suggest_answers",
+          "suggest_replies",
+          "list_github_issues",
+          "get_github_issue",
+          "web_fetch"
+        ],
+        "toolsSha": "c5dc1458ae310e99",
+        "toolChoice": null,
+        "messages": [
+          {
+            "role": "user",
+            "content": "Build it"
+          }
+        ],
+        "telemetry": "mayor_phase_1"
+      },
+      {
+        "kind": "requireQuickReplies",
+        "model": "claude-opus-5-5"
+      },
+      {
+        "kind": "generateQuickReplies",
+        "model": null
+      },
+      {
+        "kind": "streamChat",
+        "model": "claude-opus-5-5",
+        "apiKey": null,
+        "systemPrompt": {
+          "sha": "4c299d69f55f7aff",
+          "length": 218145
+        },
+        "tools": [
+          "suggest_replies"
+        ],
+        "toolsSha": "a92d0ef432e0ac61",
+        "toolChoice": {
+          "type": "auto"
+        },
+        "messages": [
+          {
+            "role": "user",
+            "content": "Build it"
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "Building it now."
+              },
+              {
+                "type": "tool_use",
+                "id": "tu-build",
+                "name": "dispatch_claude_code",
+                "input": {
+                  "prompt": "Build the dark mode toggle from the spec."
+                }
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "tool_result",
+                "tool_use_id": "tu-build",
+                "content": "What the agent did:\nAdded the toggle on the laptop.\n\nCommit eeeeeeee pushed to dev/tester-4242.\n\nOpened PR #42: https://github.com/usernode-bot/whiteboard-0d337f/pull/42\n\nThe staging preview is building; its checks run once it is up."
+              }
+            ]
+          }
+        ],
+        "telemetry": "mayor_phase_2"
+      }
+    ],
+    "billing": [
+      "{\"fn\":\"resolveBillingPath\",\"userId\":7}",
+      "{\"fn\":\"resolveBillingPath\",\"userId\":7}",
+      "{\"fn\":\"recordSpend\",\"userId\":7,\"cents\":1.5,\"opts\":{\"byok\":false}}",
+      "{\"fn\":\"resolveBillingPath\",\"userId\":7}",
+      "{\"fn\":\"resolveBillingPath\",\"userId\":7}",
+      "{\"fn\":\"resolveBillingPath\",\"userId\":7}",
+      "{\"fn\":\"resolveBillingPath\",\"userId\":7}",
+      "{\"fn\":\"recordSpend\",\"userId\":7,\"cents\":1.5,\"opts\":{\"byok\":false}}"
+    ],
+    "worker": [
+      "{\"fn\":\"clearPendingStop\",\"id\":4242}"
+    ],
+    "calls": [
+      "{\"fn\":\"localAgent.enqueueTurn\",\"mode\":\"build\",\"branchName\":\"dev/tester-4242\"}",
+      "{\"fn\":\"localAgent.awaitTurnResult\",\"turnId\":\"11\",\"waiterId\":\"waiter-1\"}",
+      "{\"fn\":\"applyPrMetadata\",\"userMessage\":\"Build it\",\"ccSummary\":\"Added the toggle on the laptop.\",\"proposalDescription\":null}",
+      "{\"fn\":\"previewWorkflow.revision\",\"sessionId\":4242,\"head\":\"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\",\"source\":\"turn\",\"trigger\":\"commit-push\"}",
+      "{\"fn\":\"titleAtTurnEnd\",\"firstTurn\":false,\"message\":\"Build it\"}"
+    ],
+    "unusedLlmSteps": 0,
+    "messages": [
+      "{\"role\":\"user\",\"content\":\"Build it\",\"metadata\":{}}",
+      "{\"role\":\"system\",\"content\":\"Thinking about your request...\",\"metadata\":{}}",
+      "{\"role\":\"assistant\",\"content\":\"Building it now.\",\"metadata\":{\"quickReplies\":[\"Build the plan\",\"Revise the plan\",\"What will this change?\"],\"quickRepliesSource\":\"static\",\"quickRepliesKind\":\"spec_done\",\"quickRepliesPreamble\":true}}",
+      "{\"role\":\"system\",\"content\":\"Handing this turn to Tester's laptop: your machine, your Claude subscription...\",\"metadata\":{\"agentBackend\":\"claude_code\",\"agentModel\":null,\"runner\":\"local\",\"localAgentLabel\":\"Tester's laptop\",\"localMode\":\"build\"}}",
+      "{\"role\":\"system\",\"content\":\"Claude Code is running...\",\"metadata\":{\"agentBackend\":\"claude_code\",\"agentModel\":null}}",
+      "{\"role\":\"system\",\"content\":\"{\\\"progressLog\\\":[],\\\"agentBackend\\\":\\\"claude_code\\\",\\\"agentModel\\\":null}\",\"metadata\":{}}",
+      "{\"role\":\"system\",\"content\":\"PR #42 created\",\"metadata\":{}}",
+      "{\"role\":\"system\",\"content\":\"Building staging preview...\",\"metadata\":{}}",
+      "{\"role\":\"system\",\"content\":\"Building staging preview...\",\"metadata\":{\"changesReady\":true,\"stagingBuild\":\"running\",\"prNumber\":42,\"prUrl\":\"https://github.com/usernode-bot/whiteboard-0d337f/pull/42\"}}",
+      "{\"role\":\"system\",\"content\":\"Claude Code finished Coding done on Tester's laptop, so no Homeroom credits were used.\",\"metadata\":{\"agentBackend\":\"claude_code\",\"agentModel\":null,\"ccOutput\":\"Added the toggle on the laptop.\",\"ccOutcome\":\"success\",\"durationMs\":\"<num>\",\"runner\":\"local\",\"localAgentLabel\":\"Tester's laptop\",\"localMode\":\"build\"}}",
+      "{\"role\":\"assistant\",\"content\":\"Done on your laptop. The toggle is in the toolbar.\",\"metadata\":{\"quickReplies\":[\"Try it in the preview\",\"What did it change?\"],\"quickRepliesSource\":\"model\"}}"
     ]
   }
 }

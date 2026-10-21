@@ -3,6 +3,8 @@ import { useEffect, useState, type ReactNode } from 'react';
 import type { BuildLineState } from '../first-session/build-line';
 import { ThumbRow } from '../first-session/sketch-card';
 
+import { useMessages } from '../../lib/i18n/react';
+import { t as translate } from '../../lib/i18n/runtime';
 import { ACTIVITY_OUTCOME_LABELS } from './bot-activity';
 import { cardRecord, ensureBotActivity, loadBotActivity, readsAsked, useBotActivity } from './bot-activity-store';
 import type { ConversationMessage, HomeroomBotActivity, HomeroomBotMeta } from './types';
@@ -14,9 +16,8 @@ import type { ConversationMessage, HomeroomBotActivity, HomeroomBotMeta } from '
  * activity card under the plan (services/homeroom-bot-activity.js
  * cardUnderPlan). Until now that card was not drawn at all: its words
  * reached only the inbox's preview and the push, so the chat said nothing
- * after Build it. Now it is a message the maker sees: its words ("Thanks for
- * answering about the plan. I'll let you know when Run Club is ready to
- * try."), then a card for the app, the thumbnail row the hub draws
+ * after Build it. Now it is a message the maker sees: its words ("Building
+ * it now. I'll tell you when it's ready to try.", the server's), then a card for the app, the thumbnail row the hub draws
  * (../first-session/sketch-card.tsx ThumbRow: the icon tile in the
  * project's colour, and its name) with the build line under the name
  * (../first-session/build-line.tsx). The line follows the build from the
@@ -58,7 +59,7 @@ export function isThanksMessage(message: ConversationMessage): boolean {
  */
 export function thanksLine(card: HomeroomBotActivity | null | undefined, known = true): ThanksLine {
   const building: ThanksLine = {
-    line: 'building', note: `usually ${BUILD_TYPICAL_MINUTES.from} to ${BUILD_TYPICAL_MINUTES.to} min`, words: null,
+    line: 'building', note: translate('messages:bot.thanks.usually', { from: BUILD_TYPICAL_MINUTES.from, to: BUILD_TYPICAL_MINUTES.to }), words: null,
   };
   if (!card) return known ? building : { line: null, note: null, words: null };
   if (card.state === 'working') {
@@ -72,7 +73,7 @@ export function thanksLine(card: HomeroomBotActivity | null | undefined, known =
     case 'proposed':
     case 'going_live': return { line: 'ready', note: null, words: null };
     case 'live': return { line: 'live', note: null, words: null };
-    default: return { line: null, note: null, words: card.outcome ? ACTIVITY_OUTCOME_LABELS[card.outcome] : null };
+    default: return { line: null, note: null, words: card.outcome ? translate(ACTIVITY_OUTCOME_LABELS[card.outcome]) : null };
   }
 }
 
@@ -86,7 +87,8 @@ export function BotThanksCardView({ meta, line, words = null }: {
   /** The message's own words, as the row draws them. */
   words?: ReactNode;
 }) {
-  const name = meta.appName || meta.appSlug || 'your project';
+  const t = useMessages('messages');
+  const name = meta.appName || meta.appSlug || t('messages:bot.thanks.unnamedProject');
   return (
     <div data-bot-thanks={line.line || (line.words ? 'ended' : 'none')}>
       {words}
@@ -106,6 +108,8 @@ export function BotThanksCardView({ meta, line, words = null }: {
 
 /** The thanks, kept current with its activity card's state. */
 export function BotThanksCard({ message, words = null }: { message: ConversationMessage; words?: ReactNode }) {
+  // Subscribed: thanksLine reads its words as this renders.
+  useMessages('messages');
   const snap = useBotActivity();
   const [drawnAt] = useState(readsAsked);
   const known = cardRecord(snap, message.id, drawnAt);

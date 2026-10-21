@@ -225,6 +225,38 @@ test('no em dashes in shell or client-side copy', () => {
     + 'ALLOW or SKIP_FILES in this file with the reason.');
 });
 
+// The shell's copy lives in the language catalogs now (frontend/locales),
+// so the rule follows it there: every English text, and every translation,
+// since a translation the step wrote may carry a dash its English lacks.
+// Ids, by catalog, whose dash is a glyph or a separator rather than
+// punctuation, carried from the code they were moved out of.
+const CATALOG_ALLOW = new Map([
+  ['changes:session.failing.reason', "a separator between a failing check's name and its reason, as the check list draws it"],
+  ['changes:session.failing.reasonAdvisory', 'the same separator, on an advisory check'],
+  ['settings:usernode.widgetIcons.entry.iconUnknown', 'the dash is the placeholder glyph for an icon not yet known'],
+  ['settings:usernode.widgetIcons.entry.darkUnknown', 'the dash is the placeholder glyph for a dark icon not yet known'],
+]);
+
+test('no em dashes in the language catalogs', () => {
+  const locales = path.join(ROOT, 'frontend/locales');
+  const offenders = [];
+  for (const language of fs.readdirSync(locales, { withFileTypes: true }).filter((e) => e.isDirectory())) {
+    for (const file of fs.readdirSync(path.join(locales, language.name)).filter((name) => name.endsWith('.json'))) {
+      const namespace = file.slice(0, -5);
+      const catalog = JSON.parse(fs.readFileSync(path.join(locales, language.name, file), 'utf8'));
+      for (const [key, entry] of Object.entries(catalog)) {
+        const id = `${namespace}:${key.replace(/_(zero|one|two|few|many|other)$/, '')}`;
+        if (!entry || typeof entry.text !== 'string' || !DASH.test(entry.text)) continue;
+        if (CATALOG_ALLOW.has(`${namespace}:${key}`) || CATALOG_ALLOW.has(id)) continue;
+        offenders.push(`${language.name}/${file} ${key}: ${entry.text.slice(0, 100)}`);
+      }
+    }
+  }
+  assert.deepStrictEqual(offenders, [],
+    'Em dash in a catalog entry (#1389). Rewrite the English as the rule above says; a translation '
+    + 'with one is the translation step\'s to redo (it refuses a dash the English lacks).');
+});
+
 // The declared checks assert on rendered text, so a rewritten string and a
 // stale `expectText` fail merge together. Scanning them here means the two
 // can never drift back apart. `name` values are NOT scanned: check history

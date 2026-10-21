@@ -39,6 +39,7 @@ const express = require('express');
 const { getPool } = require('../db/pool');
 const log = require('../services/logger');
 const events = require('../services/events');
+const { signUpMetadata } = require('../services/sign-up-from');
 const providers = require('../services/sign-in-providers');
 const communityInvites = require('../services/community-invites');
 const phoneAuth = require('../services/firebase-phone-auth');
@@ -119,13 +120,16 @@ function signInProviderRoutes(config) {
       // verifyCode, routes/auth.js): a released waitlist address is let
       // in, project invites to it are claimed, and the included OpenRouter
       // key is made. Each is best effort and never throws.
-      await waitlist.linkUserByEmail(pool, { userId: result.userId, email: result.email });
+      await waitlist.linkUserByEmail(pool, { userId: result.userId, email: result.email, newAccount: true });
       await require('../services/email-invites').claimEmailInvites(pool, { userId: result.userId, email: result.email });
       await managedOpenRouter.ensureIncludedKey({
         pool, userId: result.userId, config, reason: `signup_${provider}`,
       });
-      // The sign-up, as the email code records it (routes/auth.js, #4039).
-      events.record(pool, { type: events.EVENT_TYPES.USER_SIGNED_UP, userId: result.userId, metadata: { via: provider } });
+      // The sign-up, as the email code records it (routes/auth.js, #4039),
+      // with the button it began from. The callback is a top-level
+      // navigation, so the landing's SameSite=Lax cookie is on it, Apple's
+      // form POST included once it is redirected to the GET.
+      events.record(pool, { type: events.EVENT_TYPES.USER_SIGNED_UP, userId: result.userId, metadata: signUpMetadata(req, { via: provider }) });
       // Made from the story's sheet: asked what to make, not which
       // communities to join (services/first-session.js). Recorded as
       // reached from the story; the question stays owed until it is

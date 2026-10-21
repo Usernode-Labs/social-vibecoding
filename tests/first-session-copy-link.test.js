@@ -26,6 +26,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
+const { message } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
@@ -136,7 +137,9 @@ test('Copy link copies the note and the link, then does what a share does', () =
   // once when it was shared (notePostable), the made screen told how. The
   // sheet stays open (#4196).
   assert.match(src, /const sent = useCallback\(async \(how: SentHow\) => \{\s+setStatus\(sentStatus\(how\)\);\s+setOut\(true\);\s+keepNote\(made\.slug, note\);\s+await postNote\(how\);\s+onSent\(how\);\s+\}/);
-  assert.match(src, /const postNote = useCallback\(async \(how: SentHow\) => \{\s+if \(!notePostable\(how, note, made\.example\?\.note\)\) return;/);
+  // The example's note is a message id, read in the language on screen.
+  assert.match(src, /const exampleNote = made\.example \? translate\(made\.example\.note\) : null;/);
+  assert.match(src, /const postNote = useCallback\(async \(how: SentHow\) => \{\s+if \(!notePostable\(how, note, exampleNote\)\) return;/);
   const share = src.slice(src.indexOf('const shareLink = useCallback'), src.indexOf('const copyLink = useCallback'));
   const copy = src.slice(src.indexOf('const copyLink = useCallback'), src.indexOf('const tile = '));
   assert.match(share, /await sent\('shared'\);/);
@@ -151,7 +154,8 @@ test('Copy link copies the note and the link, then does what a share does', () =
   // Said on the sheet, which stays: "✓ Copied" on the button for a moment.
   assert.match(copy, /setCopied\(Date\.now\(\)\);\s+await sent\('copied'\);/);
   assert.match(src, /const t = window\.setTimeout\(\(\) => setCopied\(0\), COPIED_MS\);/);
-  assert.match(src, /copied \? '✓ Copied' : 'Copy link'/);
+  assert.match(src, /copied \? t\('onboarding:firstSession\.invite\.copied'\) : t\('onboarding:firstSession\.invite\.copyLink'\)/);
+  assert.deepEqual([message('onboarding:firstSession.invite.copied'), message('onboarding:firstSession.invite.copyLink')], ['✓ Copied', 'Copy link']);
   assert.match(src, /const COPIED_MS = 1200;/);
   const { sentStatus } = loadTsx(MADE);
   assert.equal(sentStatus('copied'), 'Link copied. Paste it in your group chat.');
@@ -164,8 +168,8 @@ test('#4238: the note goes in the group chat only when shared, and only a note t
   const { notePostable } = loadTsx(MADE);
   assert.equal(notePostable('shared', 'Read with us', null), true);
   assert.equal(notePostable('copied', 'Read with us', null), false, 'a copy may never be pasted');
-  assert.equal(notePostable('shared', 'I\'m making this for us. Join and tell me what it needs.', null), false, 'the untouched default');
-  assert.equal(notePostable('shared', '  I\'m making this for us. Join and tell me what it needs.  ', null), false);
+  assert.equal(notePostable('shared', 'I\'m making this for us. Click the link to join the app.', null), false, 'the untouched default');
+  assert.equal(notePostable('shared', '  I\'m making this for us. Click the link to join the app.  ', null), false);
   assert.equal(notePostable('shared', 'Pick a book for June', 'Pick a book for June'), false, "the example's preset note");
   assert.equal(notePostable('shared', 'Pick one for July', 'Pick a book for June'), true);
   assert.equal(notePostable('shared', '   ', null), false);
@@ -174,10 +178,12 @@ test('#4238: the note goes in the group chat only when shared, and only a note t
 test('after a share or a copy the sheet stays open, says so, and Done closes it', () => {
   const src = read(MADE);
   const sheet = src.slice(src.indexOf('export function InviteSheet('), src.indexOf('export function PlanWaitsCard('));
-  // Nothing in the sheet closes it but ✕, the backdrop, Escape and Done.
-  assert.equal((sheet.match(/onClose\(\)/g) || []).length, 1, 'Escape');
-  assert.equal((sheet.match(/onClick=\{onClose\}/g) || []).length, 3, 'the backdrop, ✕ and Done');
-  assert.match(sheet, /\{out \? \(\s+<Button\s+type="button"\s+data-first-session-invite-done=""\s+onClick=\{onClose\}\s+layout="full"\s+variant="pillRaised"\s+size="pillLg"\s+ink="neutral"/);
+  // Nothing in the sheet closes it but ✕, the backdrop, Escape and Done,
+  // each through `close`, which slides it down first (20 Oct 2026).
+  assert.equal((sheet.match(/\bclose\(\);/g) || []).length, 1, 'Escape');
+  assert.equal((sheet.match(/onClick=\{close\}/g) || []).length, 3, 'the backdrop, ✕ and Done');
+  assert.doesNotMatch(sheet, /onClick=\{onClose\}|\bonClose\(\)/, 'nothing takes it off the page at once');
+  assert.match(sheet, /\{out \? \(\s+<Button\s+type="button"\s+data-first-session-invite-done=""\s+onClick=\{close\}\s+layout="full"\s+variant="pillRaised"\s+size="pillLg"\s+ink="neutral"/);
   // Not drawn before anything went out.
   assert.doesNotMatch(renderSheet({ touch: false, share: true }), /data-first-session-invite-done/);
   // The made screen is told how, and does not close the sheet.
@@ -196,13 +202,40 @@ test('a share: cancelled changes nothing; refused copies instead; a made link is
   // Any other failure falls through to the copy; a refused copy leaves the
   // link ready for the next press.
   assert.match(share, /if \(outcome === 'copied'\) \{\s+setCopied\(Date\.now\(\)\);\s+await sent\('copied'\);\s+return;\s+\}/);
-  assert.match(share, /setStatus\('Your link is ready\. Press Share again to send it\.'\);/);
+  assert.match(share, /setStatus\(translate\('onboarding:firstSession\.invite\.status\.ready'\)\);/);
+  assert.equal(message('onboarding:firstSession.invite.status.ready'), 'Your link is ready. Press Share again to send it.');
   assert.doesNotMatch(share, /navigator\.clipboard\.writeText/, 'the copy goes through copyText and its fallbacks');
+});
+
+// Newcomer run, 20 Oct 2026, iPhone: "clicking Share invite, it animates up
+// kind of oddly, and it closes without an animation". Every way out unmounted
+// it in the frame it was pressed, and it slid up inside the made screen's
+// scroller, which Safari keeps scrollable under its toolbar.
+test('the sheet slides down before it goes, and opens on <body>, out of the made screen', () => {
+  const src = read(MADE);
+  const sheet = src.slice(src.indexOf('export function InviteSheet('), src.indexOf('export function PlanWaitsCard('));
+  // The slide: the same transition it came in on, run backwards; gone on its
+  // own transitionend or the timer, whichever comes first; at once with
+  // reduced motion.
+  assert.match(sheet, /setShown\(false\);/);
+  assert.match(sheet, /transition-transform duration-200 ease-out motion-reduce:transition-none/);
+  assert.match(sheet, /if \(e\.target === panel && e\.propertyName === 'transform'\) gone\(\);/);
+  assert.match(sheet, /window\.setTimeout\(gone, INVITE_SLIDE_MS \+ 60\);/);
+  assert.match(sheet, /if \(reducedMotion\(\) \|\| !panel\) \{ closedRef\.current\(\); return; \}/);
+  assert.match(sheet, /if \(leaving\.current\) return;\s+leaving\.current = true;/, 'one way out at a time');
+  const { INVITE_SLIDE_MS } = loadTsx(MADE);
+  assert.equal(INVITE_SLIDE_MS, 200, 'the duration-200 it slides on');
+  // A drag on the dim or the sheet stays there.
+  assert.match(sheet, /<div aria-hidden="true" onClick=\{close\} className=\{`absolute inset-0 touch-none bg-black\/40 /);
+  assert.match(sheet, /overflow-y-auto overscroll-contain rounded-t-\[20px\]/);
+  // On <body>, after the screen, so its page lock leaves it live; unmounted
+  // only once the sheet has gone.
+  assert.match(src, /\{inviting && typeof document !== 'undefined' \? createPortal\(\s+<InviteSheet[\s\S]*?onClose=\{\(\) => setInviting\(false\)\}[\s\S]*?\/>,\s+document\.body,\s+\) : null\}/);
 });
 
 test('Escape closes the sheet, but not while it is dismissing the OS share sheet', () => {
   const src = read(MADE);
-  assert.match(src, /if \(sharing\.current \|\| Date\.now\(\) - shareGoneAt\.current < SHARE_ESCAPE_MS\) return;\s+onClose\(\);/);
+  assert.match(src, /if \(sharing\.current \|\| Date\.now\(\) - shareGoneAt\.current < SHARE_ESCAPE_MS\) return;\s+close\(\);/);
   const share = src.slice(src.indexOf('const shareLink = useCallback'), src.indexOf('const copyLink = useCallback'));
   assert.match(share, /sharing\.current = true;\s+try \{\s+await nav\.share\(/);
   assert.match(share, /\} finally \{\s+sharing\.current = false;\s+shareGoneAt\.current = Date\.now\(\);\s+\}/);
@@ -310,9 +343,11 @@ test('copyText: without ClipboardItem, or when the promised write is refused, th
 
 test('the sheet says what went wrong in its own words', () => {
   const src = read(MADE);
-  assert.match(src, /if \(outcome === 'no-link'\) \{ setError\(\(was\) => was \|\| 'Could not make a link\. Try again\.'\); return; \}/,
+  assert.equal(message('onboarding:firstSession.invite.error.noLink'), 'Could not make a link. Try again.');
+  assert.equal(message('onboarding:firstSession.invite.error.notCopied'), 'Could not copy the link. Try again.');
+  assert.match(src, /if \(outcome === 'no-link'\) \{ setError\(\(was\) => was \|\| translate\('onboarding:firstSession\.invite\.error\.noLink'\)\); return; \}/,
     'the server\'s own reason (link()) when it gave one');
-  assert.match(src, /if \(outcome === 'refused'\) \{ setError\('Could not copy the link\. Try again\.'\); return; \}/,
+  assert.match(src, /if \(outcome === 'refused'\) \{ setError\(translate\('onboarding:firstSession\.invite\.error\.notCopied'\)\); return; \}/,
     'pressed again, the link is made and the copy is written at once');
   // The textarea fallback is the message menu's own.
   assert.match(read(COPY), /import \{ legacyCopy \} from '\.\.\/message-actions\/clipboard';/);

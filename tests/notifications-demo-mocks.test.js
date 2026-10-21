@@ -98,7 +98,7 @@ const SESSION_KINDS = ['session_done', 'auto_solve_done', 'stale_pr', 'check_fai
 // the mark-read scoping test below sends as a request body.
 const DEMO_KINDS = [...SESSION_KINDS, 'session_stalled'];
 
-test('staging + ?demo=1: thirteen mock rows prepend, and only the unread ones bump unread', async () => {
+test('staging + ?demo=1: eighteen mock rows prepend, and only the unread ones bump unread', async () => {
   const pool = makeMockPool();
   const mod = loadRoutes('staging', pool);
   const { server, port } = await startServer(mod);
@@ -108,13 +108,25 @@ test('staging + ?demo=1: thirteen mock rows prepend, and only the unread ones bu
     const body = await res.json();
 
     const mocks = body.notifications.filter((n) => n.id >= 990000);
-    assert.equal(mocks.length, 13, 'exactly thirteen mock rows injected');
+    assert.equal(mocks.length, 18, 'exactly eighteen mock rows injected');
     assert.deepEqual(
       [...new Set(mocks.map((n) => n.kind))].sort(),
-      [...DEMO_KINDS, 'conversation_message', 'platform_limit', 'app_quota_changed', 'kudos'].sort(),
-      'every session-related kind is covered, plus the message row, a platform limit alert '
-      + 'an app allowance change (#3233) and a kudos row (#3227)'
+      [...DEMO_KINDS, 'conversation_message', 'platform_limit', 'app_quota_changed', 'build_live', 'build_ready',
+        'pr_proposed', 'issue_opened', 'issue_mention'].sort(),
+      'every session-related kind is covered, plus the message row, a platform limit alert, '
+      + 'an app allowance change (#3233), the bot\'s story (#5580) and the older rows\' changes; '
+      + 'no kudos row while kudos is parked (#5249)'
     );
+    // #5580: Homeroom bot's two rows are one request's story in the demo
+    // project, so the Unread tab folds them into one card.
+    const story = mocks.filter((n) => n.kind === 'build_live' || n.kind === 'build_ready');
+    assert.deepEqual(story.map((n) => n.id), [990214, 990215]);
+    for (const n of story) {
+      assert.equal(n.sourceUsername, 'homeroom_bot');
+      assert.equal(n.appId, 0, 'the bot\'s news about a project carries that project');
+      assert.equal(n.storyIssueNumber, 990301);
+      assert.match(n.detail, /^hrbot2:\{/);
+    }
     assert.equal(
       mocks.filter((n) => n.kind === 'session_done').length, 4,
       '#971: two session_done rows — one titled, one untitled — plus the read one below; '
@@ -146,22 +158,44 @@ test('staging + ?demo=1: thirteen mock rows prepend, and only the unread ones bu
     assert.match(conversationMock.conversationTitle, /^\[Mock\]/);
     assert.match(conversationMock.messageContent, /^\[Mock\]/);
     assert.ok(conversationMock.conversationId > 0, 'a routable conversation id');
-    // The unread rows feed the cog badge, and ONE ships already read. That
-    // last one is the only thing a staging preview has behind the drawer's
-    // "See more notifications" button: without it the button does not
-    // render at all and the caught-up state is unreachable, so the two things
-    // a reviewer is asked to look at are both invisible.
-    assert.equal(mocks.filter((n) => !n.readAt).length, 12,
-      'twelve unread rows feed the badges');
+    // The unread rows feed the cog badge, and FIVE ship already read. They
+    // are the only thing a staging preview has behind the drawer's "See
+    // older notifications" button: without one the button does not render at
+    // all and the caught-up state is unreachable, so the two things a
+    // reviewer is asked to look at are both invisible.
+    assert.equal(mocks.filter((n) => !n.readAt).length, 13,
+      'thirteen unread rows feed the badges');
     const readMocks = mocks.filter((n) => n.readAt);
-    assert.equal(readMocks.length, 1, 'exactly one already-read row');
+    assert.equal(readMocks.length, 5, 'five already-read rows');
     assert.match(readMocks[0].sessionTitle, /\[Mock\]/,
       'and it is obviously fake, like the rest');
+    // The four after 990206 are the older rows Unread shows once revealed,
+    // one card per change in Today / Yesterday / Last 7 days / Older: a
+    // change today, one request's two notifications yesterday (one card),
+    // 990206 three days ago, and a change twelve days ago.
+    assert.deepEqual(readMocks.map((n) => n.id), [990206, 990216, 990217, 990218, 990219]);
+    const older = readMocks.slice(1);
+    const hoursAgo = (n) => (Date.now() - Date.parse(n.createdAt)) / 3600000;
+    assert.deepEqual(older.map((n) => Math.round(hoursAgo(n))), [2, 26, 29, 288], 'newest first, across the sections');
+    assert.deepEqual(older.filter((n) => n.detail === '990302').map((n) => n.id), [990217, 990218],
+      'one request\'s story: its two notifications fold into one card');
+    for (const n of older) {
+      assert.ok(Date.parse(n.readAt) > Date.parse(n.createdAt), 'read after it arrived');
+      assert.match(n.prTitle || n.storyTitle, /^\[Mock\]/, 'obviously fake');
+      assert.equal(n.appId, 0, 'in the demo project');
+    }
     assert.ok(
       mocks.filter((n) => !['conversation_message', 'platform_limit', 'app_quota_changed'].includes(n.kind))
-        .every((n) => n.appSlug === 'staging-demo'),
+        .every((n) => /^staging-demo(?:-|$)/.test(n.appSlug) && /^Staging demo /.test(n.appName)),
       'obviously-fake app attribution on every APP-scoped row',
     );
+    // #5289: one of them is in a second fake project, so the Unread tab's
+    // per-project fold does not swallow the date it exists to show, and a
+    // preview has a second project's group to look at.
+    const archive = mocks.filter((n) => n.appSlug === 'staging-demo-archive');
+    assert.deepEqual(archive.map((n) => n.id), [990209], 'one row, in its own project');
+    assert.equal(archive[0].appName, 'Staging demo archive');
+    assert.ok(archive[0].appId >= 990000 && archive[0].appId < 1000000, 'a mock-range app id');
     // The platform limit row is the server's, not an app's, like the real one.
     const limit = mocks.find((n) => n.kind === 'platform_limit');
     assert.equal(limit.appSlug, null);
@@ -179,10 +213,16 @@ test('staging + ?demo=1: thirteen mock rows prepend, and only the unread ones bu
     );
     // Real rows survive after the mocks; unread bumped by the UNREAD mock
     // count so the client's badge subtraction stays honest. Counting all
-    // thirteen would claim the read row as unread — inflating the badge by one
+    // eighteen would claim the read rows as unread — inflating the badge by one
     // and leaving "Mark all read" enabled with nothing left to mark.
     assert.ok(body.notifications.some((n) => n.id === 1), 'real rows still present');
-    assert.equal(body.unread, 2 + 12);
+    assert.equal(body.unread, 2 + 13);
+    // #18: the unread mock messages are counted apart too, for the bell to
+    // leave out (the real row is a mention, which the bell keeps).
+    const mockMessages = body.notifications.filter((n) => n.id !== 1 && !n.readAt
+      && ['conversation_message', 'channel_message'].includes(n.kind)).length;
+    assert.ok(mockMessages > 0, 'the demo shows message rows');
+    assert.equal(body.messageUnread, mockMessages);
   } finally {
     server.close();
   }
@@ -226,7 +266,7 @@ test('stagingMockNotifications rows carry the fields the shared row renderers re
   const pool = makeMockPool();
   const mod = loadRoutes('staging', pool);
   const rows = mod.stagingMockNotifications();
-  assert.equal(rows.length, 13);
+  assert.equal(rows.length, 18);
   for (const r of rows) {
     assert.ok(r.id >= 990000 && r.id < 1000000, 'ids sit in the 99xxxx mock range');
     // `readAt` is null on every row EXCEPT the one that exists to be read —
@@ -241,7 +281,7 @@ test('stagingMockNotifications rows carry the fields the shared row renderers re
     // describing something the real pipeline never emits.
     assert.equal(r.appName,
       ['conversation_message', 'platform_limit', 'app_quota_changed'].includes(r.kind)
-        ? null : 'Staging demo app');
+        ? null : r.id === 990209 ? 'Staging demo archive' : 'Staging demo app');
     assert.ok('sessionTitle' in r, '#971: every mock row carries the sessionTitle field');
   }
 
@@ -272,7 +312,7 @@ test('stagingMockNotifications rows carry the fields the shared row renderers re
   assert.ok(Date.parse(readRow.readAt) > Date.parse(readRow.createdAt),
     'read after it arrived');
   assert.ok(Date.parse(readRow.createdAt) < Date.now(), 'and it is genuinely older');
-  assert.equal(rows.filter((r) => r.readAt).length, 1, 'exactly one');
+  assert.equal(rows.filter((r) => r.readAt).length, 5, 'this one and the four older rows below');
 
   // ...and the untitled one proves the branch-name fallback survives.
   const untitled = rows.find((r) => r.kind === 'session_done' && !r.sessionTitle);

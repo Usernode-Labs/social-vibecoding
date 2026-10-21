@@ -44,6 +44,9 @@
  */
 
 
+import type { ReactNode } from 'react';
+import { useMessages } from '../../lib/i18n/react';
+import { t } from '../../lib/i18n/runtime';
 import { agoStamp } from '../../lib/timestamp';
 import { useStoreState } from '../../lib/use-store-state';
 import { notificationsStore } from '../notifications/notifications-store.js';
@@ -153,14 +156,14 @@ function stateOf(session: SessionRowView): {
 } {
   if (session.busy) {
     return {
-      label: 'Working',
+      label: t('agent:menu.row.state.working'),
       pill: 'bg-amber-400/20 text-amber-700 dark:text-amber-300',
       spinner: true,
     };
   }
   if (session.kind === 'task') {
     return {
-      label: 'Handed off',
+      label: t('agent:menu.row.state.handedOff'),
       pill: 'border border-zinc-200 text-zinc-500 dark:border-zinc-700 dark:text-zinc-400',
       spinner: false,
     };
@@ -171,7 +174,7 @@ function stateOf(session: SessionRowView): {
     // TITLE — the part a reader has to read — at "[Mock] Yo…". Same fact,
     // same predicate, and the word the caption and the Workshop's own
     // "Needs you" already use for it.
-    label: session.awaitingInput ? 'Needs you' : 'Ready',
+    label: session.awaitingInput ? t('agent:menu.row.state.needsYou') : t('agent:menu.row.state.ready'),
     pill: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400',
     spinner: false,
   };
@@ -245,11 +248,15 @@ export function SessionRow({
   session,
   showApp,
   onNavigate,
+  tile = null,
 }: {
   session: SessionRowView;
   showApp: boolean;
   onNavigate: () => void;
+  /** What stands in the app tile's place: Messages draws a change's own. */
+  tile?: ReactNode;
 }) {
+  const t = useMessages('agent');
   const { sessionUnreadIds } = useStoreState(notificationsStore) as {
     sessionUnreadIds: number[];
   };
@@ -264,10 +271,10 @@ export function SessionRow({
   // holding a work order, whatever it knows.
   // Everything before the stamp is one string; the stamp is its own element
   // so it can carry the unelided instant in `title` (#1808).
-  const caption = [
-    showApp ? session.appName : null,
-    session.status,
-  ].filter(Boolean).join(' · ');
+  const app = showApp ? session.appName : null;
+  const caption = app && session.status
+    ? t('agent:menu.row.caption', { app, status: session.status })
+    : app || session.status || '';
 
   return (
     <a
@@ -276,7 +283,7 @@ export function SessionRow({
       className="flex items-center gap-3 px-3 min-h-[60px] text-left hover:bg-zinc-50 dark:hover:bg-zinc-800/60 transition-colors"
       onClick={onNavigate}
     >
-      <AppTile session={session} />
+      {tile || <AppTile session={session} />}
       <span className="min-w-0 flex-1">
         <span className="block truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100">
           {session.title}
@@ -307,7 +314,7 @@ export function SessionRow({
         <span
           className="w-2 h-2 rounded-full bg-violet-500 shrink-0"
           role="img"
-          aria-label="Unread activity"
+          aria-label={t('agent:menu.row.unread')}
           data-session-unread={session.id}
         />
       ) : null}

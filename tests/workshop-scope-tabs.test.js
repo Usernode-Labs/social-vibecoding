@@ -39,9 +39,9 @@
 // wide window, opened from the lit tab, the header's name and ⌄, and the All
 // chip here (features/workshop/community-switcher.tsx). The "Which project?"
 // panel both ends of the chip shared is gone. Its audience sections and "Show
-// N more" (#3363) went with it for a round and are back in the switcher
-// (#3519): every community you are in, in the Communities screen's sections,
-// newest first, each saying who it is for and what it waits on you for.
+// N more" (#3363) went with it for a round and were back in the switcher
+// (#3519) until #5290, which made it a search, then Recent, then the All
+// communities row: the page itself is where every community is listed.
 //
 // What is pinned, each a way the screens can be quietly wrong:
 //
@@ -68,19 +68,88 @@ const screen = loadTsx('frontend/src/features/workshop/index.tsx');
 
 const app = (slug, working, needs) => ({ slug, name: slug, working, needs });
 
-test('picking a community goes to its hub, and All communities to the list', () => {
+test('picking a community keeps the page you were on, and All communities goes to the list', () => {
   const at = SCOPE.indexOf('export function goToCommunity(');
   const fn = SCOPE.slice(at, SCOPE.indexOf('\n}\n', at));
   assert.match(fn, /closeSwitcher\(\);/, 'the switcher closes either way');
   assert.match(fn, /setScope\(null\);[\s\S]*?_forgetWorkshopView[\s\S]*?window\.location\.hash = '#communities';/,
     'All communities is the list, by the same address the tab carries');
-  assert.match(fn, /setScope\(slug\);\s*try \{ \(window as any\)\.AppView\?\._landOnHub\?\.\(slug\); \}/,
-    'a community opens on its hub');
+  assert.match(fn, /setScope\(slug\);[\s\S]*?if \(onPage\) return;\s*landKeepingPlace\(slug\);/,
+    'a community opens on the place you were on, else its hub');
+  assert.match(SCREEN, /landKeepingPlace\(row\.slug\);\s*win\.App\?\.navigateToApp\?\.\(row\.slug, 'dev'\);/,
+    'a row of All communities is a switch too');
   assert.match(fn, /void app\?\.navigateToApp\?\.\(slug, 'dev'\);/);
   assert.ok(!fn.includes('startSession') && !fn.includes('giveFeedback'), 'nothing is started from the switcher');
   // Join a community is Discover; #3543: Start a community is the new-project dialog.
   assert.match(SWITCHER, /data-switcher-join=""\s*onClick=\{\(\) => \{ closeSwitcher\(\); window\.location\.hash = '#apps'; \}\}/);
   assert.match(SWITCHER, /data-switcher-start=""\s*onClick=\{\(\) => \{ closeSwitcher\(\); \(window as any\)\.App\?\.showCreateModal\?\.\(\); \}\}/);
+});
+
+test('#5581: on a phone All communities is the drawer\'s list, not the full-screen page', () => {
+  const calls = [];
+  let drawerOn = false;
+  const mod = loadTsx('frontend/src/features/workshop/community-scope.ts', {
+    stubs: {
+      '../nav-drawer/drawer-store': {
+        drawerStore: { get: () => ({ on: drawerOn }) },
+        go: (n) => calls.push(['go', n]),
+        requestOuter: () => calls.push(['outer']),
+      },
+      '../dev-board/workshop/place-store': {
+        landKeepingPlace: (slug) => { calls.push(['land', slug]); return 'status'; },
+      },
+    },
+  });
+  mod.communityScopeStore.set({ slug: null, list: ['garden', 'swap'] });
+  const had = { window: global.window, document: global.document };
+  let phone = true;
+  const location = { hash: '#home' };
+  global.window = {
+    matchMedia: (q) => ({ matches: q.includes('768px') ? !phone : false }),
+    location,
+    App: {
+      currentApp: null,
+      navigateToApp: (slug, tab) => { calls.push(['nav', slug, tab]); return Promise.resolve(); },
+    },
+  };
+  global.document = { querySelector: () => null };
+  try {
+    // A phone: the list is the drawer's level 0 over a community's page, so
+    // the press asks for the list and opens the most recent community.
+    mod.goToCommunity(null);
+    assert.deepEqual(calls, [['outer'], ['land', 'garden'], ['nav', 'garden', 'dev']],
+      'the drawer\'s list over the most recent community');
+    assert.equal(location.hash, '#home', 'never the full-screen All communities page');
+    // The community the tab is on wins over the most recent.
+    calls.length = 0;
+    mod.communityScopeStore.set({ slug: 'swap', list: ['garden', 'swap'] });
+    mod.goToCommunity(null);
+    assert.deepEqual(calls, [['outer'], ['land', 'swap'], ['nav', 'swap', 'dev']]);
+    // Already over its page: the list opens in place, with no navigation.
+    calls.length = 0;
+    drawerOn = true;
+    mod.goToCommunity(null);
+    assert.deepEqual(calls, [['go', 0]]);
+    drawerOn = false;
+    // A new account with no community to show it over keeps the page, which
+    // is where Join and Start are.
+    calls.length = 0;
+    mod.communityScopeStore.set({ slug: null, list: [] });
+    mod.goToCommunity(null);
+    assert.equal(location.hash, '#communities');
+    assert.deepEqual(calls, [], 'nothing opened behind it');
+    // A wide window is the sidebar's own All row: the page, as before.
+    calls.length = 0;
+    phone = false;
+    location.hash = '#home';
+    mod.communityScopeStore.set({ slug: 'garden', list: ['garden'] });
+    mod.goToCommunity(null);
+    assert.equal(location.hash, '#communities');
+    assert.deepEqual(calls, []);
+  } finally {
+    global.window = had.window;
+    global.document = had.document;
+  }
 });
 
 test('the switcher says which community you are on, who each is for, and what it waits on you for', () => {
@@ -96,7 +165,7 @@ test('the switcher says which community you are on, who each is for, and what it
       stubs: {
         './community-scope': {
           ...real,
-          communityScopeStore: fixedStore({ slug, info, list: ['garden', 'club', 'notes'], totalNeeds: 2, switcher: 'tab', anchor: null }),
+          communityScopeStore: fixedStore({ slug, info, list: ['garden', 'club', 'notes'], totalNeeds: 2, switcher: 'header', anchor: null }),
         },
       },
     });
@@ -104,8 +173,12 @@ test('the switcher says which community you are on, who each is for, and what it
   };
   const all = render(null);
   assert.match(all, /<h2 class="community-switcher-title" id="community-switcher-title">Your communities<\/h2>/);
+  // #5290: the search first, then Recent, then All communities.
+  assert.match(all, /<input id="community-switcher-search" type="search" class="community-switcher-search-input"[^>]*placeholder="Search your communities" aria-label="Search your communities" aria-keyshortcuts="Meta\+K Control\+K"/);
+  assert.ok(all.indexOf('community-switcher-search') < all.indexOf('data-switcher-section="recent"'), 'the search comes first');
+  assert.match(all, /<h3 class="community-switcher-section" id="switcher-recent-label"><span>Recent<\/span><\/h3>/);
   const rows = [...all.matchAll(/data-switcher-community="([^"]+)"/g)].map((m) => m[1]);
-  assert.deepEqual(rows, ['all', 'garden', 'club', 'notes'], 'All communities first, then each in the list\'s order');
+  assert.deepEqual(rows, ['garden', 'club', 'notes', 'all'], 'Recent in the list\'s order, then All communities');
   assert.match(all, /data-switcher-community="all" aria-current="true"/, 'with none chosen, All communities is the one you are on');
   assert.match(all, /All communities<\/span><span class="community-switcher-sub">3 communities<\/span>/);
   assert.match(all, /data-switcher-waiting="">2 to vote</, 'what they all wait on you for');
@@ -113,57 +186,41 @@ test('the switcher says which community you are on, who each is for, and what it
   assert.match(all, />Private · 1 member<\/span>/);
   assert.match(all, />Just you<\/span>/);
   assert.equal((all.match(/data-switcher-waiting/g) || []).length, 2, 'a zero says nothing');
-  assert.ok(all.indexOf('data-switcher-join') > all.indexOf('data-switcher-community="notes"'), 'Join, then Start, last');
+  assert.ok(all.indexOf('data-switcher-join') > all.indexOf('data-switcher-community="all"'), 'Join, then Start, last');
   assert.ok(all.indexOf('data-switcher-start') > all.indexOf('data-switcher-join'));
   assert.match(all, />Join a community</);
   assert.match(all, />Start a community</);
+  // It no longer repeats the All communities page's sections (#5290).
+  assert.doesNotMatch(all, /data-switcher-section="(open|invited|solo)"/);
+  assert.doesNotMatch(all, /data-switcher-more=/);
   const one = render('garden');
   assert.match(one, /data-switcher-community="garden" aria-current="true"/, 'the tab\'s community is ticked');
   assert.doesNotMatch(one, /data-switcher-community="all" aria-current/);
   assert.match(one, /color-mix\(in srgb, #2e6660 12%, transparent\)/, 'and tinted in its own colour');
-  // #3519: under the Communities screen's section labels, in their order,
-  // each with its count; three or fewer in a section have no fold row.
-  const labels = [...all.matchAll(/<h3 class="community-switcher-section" id="community-switcher-section-([a-z]+)"><span>([^<]+)<\/span>/g)].map((m) => `${m[1]}:${m[2]}`);
-  assert.deepEqual(labels, ['open:Public communities', 'invited:Private communities', 'solo:Just you']);
-  assert.ok(all.indexOf('data-switcher-section="invited"') < all.indexOf('data-switcher-community="club"')
-    && all.indexOf('data-switcher-community="club"') < all.indexOf('data-switcher-section="solo"'), 'each row under its own section');
-  assert.doesNotMatch(all, /data-switcher-more=/);
 });
 
-test('#3519: a long section shows three, then "Show N more"; the community you are on is never folded away', () => {
-  const fixedStore = (state) => ({ get: () => state, set() {}, subscribe: () => () => {} });
-  const slugs = ['a', 'b', 'c', 'd', 'e', 'f', 'g'];
-  const info = Object.fromEntries(slugs.map((slug) => [slug, {
-    slug, name: slug.toUpperCase(), iconUrl: null, iconEmoji: null, iconColor: null, audience: 'open', memberCount: 2, needs: 0,
-  }]));
-  const real = loadTsx('frontend/src/features/workshop/community-scope.ts');
-  const render = (slug) => {
-    const mod = loadTsx('frontend/src/features/workshop/community-switcher.tsx', {
-      stubs: {
-        './community-scope': {
-          ...real,
-          communityScopeStore: fixedStore({ slug, info, list: slugs, totalNeeds: 0, switcher: 'tab', anchor: null }),
-        },
-      },
-    });
-    return renderToHtml(createElement(mod.SwitcherBody, {}));
-  };
-  const rowsOf = (html) => [...html.matchAll(/data-switcher-community="([^"]+)"/g)].map((m) => m[1]).filter((x) => x !== 'all');
-  const none = render(null);
-  assert.deepEqual(rowsOf(none), ['a', 'b', 'c'], 'three out, newest first');
-  assert.match(none, /data-switcher-more="open" aria-expanded="false">Show 4 more<\/button>/);
-  const fifth = render('e');
-  assert.deepEqual(rowsOf(fifth), ['a', 'b', 'c', 'd', 'e'], 'open far enough to show the tick');
-  assert.match(fifth, /data-switcher-community="e" aria-current="true"/);
-  assert.match(fifth, />Show 2 more<\/button>/);
-  // The fold itself, from the one shared module.
-  const sec = loadTsx('frontend/src/features/workshop/sections.ts');
-  assert.equal(sec.sectionFloor([{ slug: 'a' }, { slug: 'b' }], 'b'), 3);
-  assert.equal(sec.sectionFloor(slugs.map((slug) => ({ slug })), 'f'), 6);
-  assert.deepEqual(sec.sectionFoldFrom(7, 3, 3), sec.sectionFold(7, 3), 'a floor of three is the screen\'s own fold');
-  assert.deepEqual(sec.sectionFoldFrom(7, 6, 6), { shown: 6, label: 'Show 1 more', next: 11 });
-  assert.deepEqual(sec.sectionFoldFrom(7, 11, 6), { shown: 7, label: 'Show fewer', next: 6 }, 'Show fewer stops at the tick');
-  assert.deepEqual(sec.sectionFoldFrom(5, 5, 5), { shown: 5, label: null, next: 5 }, 'no dead Show fewer');
+test('#5290: Recent is your pins, then the sidebar\'s five; the search matches every community by name', () => {
+  const sw = loadTsx('frontend/src/features/workshop/community-switcher.tsx');
+  const list = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
+  assert.deepEqual(sw.switcherRecent([], [], null), [], 'nothing before the list is read');
+  assert.deepEqual(sw.switcherRecent([], [], list), ['a', 'b', 'c', 'd', 'e'], 'the most recently active five, to begin with');
+  assert.deepEqual(sw.switcherRecent([], ['g', 'x', 'b'], list), ['g', 'b', 'a', 'c', 'd'], 'this device\'s order, as the sidebar keeps it');
+  assert.deepEqual(sw.switcherRecent(['h', 'zz', 'h'], ['g'], list), ['h', 'g', 'a', 'b', 'c', 'd'],
+    'pins first, only ones you are in, once, and never twice beside the five');
+  assert.deepEqual(sw.switcherRecent(['a'], [], list), ['a', 'b', 'c', 'd', 'e', 'f']);
+  // The search: the rule the screen and the drawer search by, over every community.
+  assert.match(SWITCHER, /const found = q \? matchRows\(rowsOf\(st\.list \|\| \[\]\), q\) : \[\];/);
+  assert.match(SWITCHER, /import \{ matchRows \} from '\.\/sections';/);
+  assert.match(SWITCHER, /data-switcher-results=""/);
+  assert.match(SWITCHER, /data-switcher-none="">\{t\('communities:switcher\.search\.none', \{ query: q \}\)\}/);
+  // Down from the box into the rows; Enter opens the first match.
+  assert.match(SWITCHER, /if \(e\.key === 'ArrowDown'\) \{[\s\S]{0,200}querySelector<HTMLButtonElement>\('\.community-switcher-list \.community-switcher-row'\)\?\.focus\(\);/);
+  assert.match(SWITCHER, /else if \(e\.key === 'Enter' && found\[0\]\) \{[\s\S]{0,80}goToCommunity\(found\[0\]\.slug\);/);
+  // The All communities row stays outside the search, so the page is always a press away.
+  const at = SWITCHER.indexOf('data-switcher-community="all"');
+  assert.ok(at > SWITCHER.indexOf('data-switcher-section="recent"') && at > SWITCHER.indexOf('data-switcher-results'));
+  // ⌘K focuses the search; a press on the header lands on the row you are on.
+  assert.match(SWITCHER, /if \(from === 'shortcut'\) \{\s*panel\.querySelector<HTMLInputElement>\('#community-switcher-search'\)\?\.focus\(\);/);
 });
 
 test('#852: every class the switcher draws with has a rule, and the menu floats at a fixed size', () => {
@@ -190,10 +247,12 @@ test('All items, the plus and now the tabs are gone; Needs you is a row (#3051)'
     assert.ok(!SCREEN.includes(`id="${id}"`), `#${id} is not on the screen either`);
     assert.ok(!HTML.includes(`id="${id}"`), `#${id} is not in the shipped shell`);
   }
-  // NOTHING FILTERS THE LIST OF APPS, which is the argument that retired the
-  // old strip: the Needs you feed is a page of its own over the list, and
-  // nothing narrows `rows` by it.
-  assert.ok(!SCREEN.includes('filterRows'), 'the screen does not filter the app list');
+  // NOTHING NARROWS THE LIST BY WHAT WAITS, which is the argument that
+  // retired the old strip: the Needs you feed is a page of its own over the
+  // list. The one list's chips and search (#5296) narrow it by audience and
+  // by name only.
+  const filter = SCREEN.slice(SCREEN.indexOf('export function filterRows'), SCREEN.indexOf('/** Each chip\'s words'));
+  assert.ok(filter.length > 0 && !/needs|owed|working/.test(filter), 'the list is never filtered by its counts');
   const store = read('frontend/src/features/workshop/workshop-store.js');
   assert.match(store, /^\s*tab: 'status',/m, 'the list is the default, and the prerender');
   assert.doesNotMatch(store, /scopeOpen/, 'Your communities keeps its own open flag (#852)');
@@ -299,8 +358,10 @@ test('#852: a project page leads with its tabs, and All items with its way back 
   };
   // #3583: the page also says whose it is (`data-ws-slug`), which AppView
   // reads when it saves the list's offset on the way out.
-  assert.match(page('workshop'), /^<div class="dev-ws" data-ws-tab="workshop" data-ws-slug="notes-ab12"><div class="dev-ws-tabs dev-ws-band" data-ws-band="">/);
-  assert.match(page('all'), /^<div class="dev-ws" data-ws-tab="all" data-ws-slug="notes-ab12"><div class="dev-ws-tabs dev-ws-band" data-ws-band="">[\s\S]*?<\/div><\/div><div class="dev-ws-tabs dev-ws-pagebar" data-ws-pagebar="">/);
+  assert.match(page('workshop'), /^<div class="dev-ws" data-ws-tab="workshop" data-ws-slug="notes-ab12"><div class="dev-ws-tabs dev-ws-band dev-ws-placebar" data-ws-band="" data-place-bar="workshop">/);
+  // #4486: All items' way back is the first thing in its pinned head, one
+  // row with the search and the grouping, under the place bar (#4417).
+  assert.match(page('all'), /^<div class="dev-ws" data-ws-tab="all" data-ws-slug="notes-ab12"><div class="dev-ws-tabs dev-ws-band dev-ws-placebar" data-ws-band="" data-place-bar="all">[\s\S]*?<\/h2><\/div><\/div><div class="dev-ws-tabbody"><section class="dev-ws-pane" data-ws-pane=""><div class="dev-ws-pane-head"><div class="dev-ws-allbar" data-ws-allbar=""><div class="dev-ws-pagehead" data-ws-pagehead=""><button type="button" class="dev-ws-page-back un-touch-target" data-ws-page-back=""/);
   const ws = read(WORKSHOP_PATH);
   assert.doesNotMatch(ws, /AppWorkshopScope|useScopeInline|scopeFitsInline|data-ws-scope-inline|SCOPE_INLINE_/);
   const css = read('public/css/app.css');
@@ -338,7 +399,11 @@ test('#2768, #3295, #852: on the app\'s Workshop the header\'s name opens Your c
   // kept the name alone in the bar beside a chip in the page.
   // #3602: a card opened from it switches community too.
   assert.match(header, /const onCard = inApp && tab === 'dev' && subTab === 'topic';/);
-  assert.match(header, /const appSwitch = onWorkshop \|\| onCard;/);
+  // D (18 Oct 2026): from 1024px the sidebar lists the communities, so the
+  // name is a name there (`communityName`); below it, the switcher.
+  assert.match(header, /const communityPage = onWorkshop \|\| onCard;/);
+  assert.match(header, /const appSwitch = communityPage && !sidebarRows;/);
+  assert.match(header, /const communityName = communityPage && sidebarRows;/);
   assert.match(header, /const showTile = inApp;/);
 
   // A static render runs no effects, so the phone flag is still false: this
@@ -365,9 +430,10 @@ test('#2768, #3295, #852: on the app\'s Workshop the header\'s name opens Your c
     assert.doesNotMatch(renderHeader({ subTab }), /header-app-switch/);
   }
 
-  // No width anywhere in it now: the Communities screen's "All" is the
-  // bar's at every width too (#852).
-  assert.match(header, /const allAppsSwitcher = screen === 'workshop-screen';/);
+  // The Communities screen's title is the bar's switcher too (#852), up to
+  // the sidebar of rows (D), which is the one width in it.
+  assert.match(header, /const allAppsSwitcher = screen === 'workshop-screen' && !sidebarRows;/);
+  assert.match(header, /const sidebarRows = useSidebarRows\(\);/);
   assert.doesNotMatch(header, /PHONE_QUERY|usePhone/);
 });
 

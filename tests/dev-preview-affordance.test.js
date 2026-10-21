@@ -20,6 +20,7 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
 const vm = require('node:vm');
+const { message } = require('./lib/platform-i18n');
 const {
   hasAction, issueCardHtml, mySessionCardHtml, previewHtml, proposalCardHtml, sharedSessionCardHtml,
 } = require('./lib/dev-card-html');
@@ -59,6 +60,7 @@ function makeAppView(opts) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(`${MERGE_STATUS_SRC}\n${SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;
@@ -270,7 +272,8 @@ test('each kind gets its own wording, and all four call sites use this helper', 
   for (const kind of ['proposal', 'own-session', 'shared-session', 'issue-run']) {
     const html = previewHtml(AppView, { id: 1, staging_url: 'https://s' }, { kind, sessionId: 1 });
     assert.match(html, /title="[^"]+"/, `${kind} carries a tooltip`);
-    assert.ok(AppView.PREVIEW_TITLES[kind], `${kind} has declared wording`);
+    const ids = AppView.PREVIEW_TITLE_IDS[kind];
+    assert.ok(ids && message(ids.live) && message(ids.rebuild), `${kind} has declared wording`);
   }
 
   // 1. proposal card — the board draws the LABELLED pill (round three)

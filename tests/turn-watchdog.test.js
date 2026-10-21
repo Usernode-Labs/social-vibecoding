@@ -1,8 +1,8 @@
 // Tests for the stuck-at-"Pushing" fixes (sessions 2391/2386 incident):
 //
-//   1. Unit tests for the pure stale active_turn watchdog policy
-//      (src/services/turn-watchdog.js) — reap/skip decisions and the
-//      terminal progress-line append helper.
+//   1. Unit tests for the terminal progress-line append helper
+//      (src/services/turn-watchdog.js). The stale-turn watchdog itself is
+//      gone: a turn's record is its work item's (src/workflow/turn/).
 //   2. Unit tests for the shared busy predicate
 //      (active-workers.isSessionBusy) — a session registered in
 //      activeWorkers must read busy even when the warm-registry
@@ -17,13 +17,15 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+
+// The scripts under test read their text from the language runtime's
+// global; give them the real English one.
+globalThis.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
 const fs = require('node:fs');
 const path = require('node:path');
 
 const {
-  STALE_TURN_MIN_AGE_MS,
   TERMINAL_PROGRESS_LINES,
-  classifyStaleTurn,
   appendTerminalLine,
 } = require('../src/services/turn-watchdog');
 
@@ -34,78 +36,6 @@ const {
   isSessionBusy,
 } = require('../src/services/active-workers');
 const worker = require('../src/services/worker');
-
-// ── 1a. classifyStaleTurn policy ────────────────────────────────────────
-
-const NOW = Date.parse('2026-07-17T12:00:00Z');
-const OLD = new Date(NOW - STALE_TURN_MIN_AGE_MS - 1000).toISOString();
-const FRESH = new Date(NOW - 30 * 1000).toISOString();
-
-test('classifyStaleTurn: no active_turn row is a no-op', () => {
-  assert.equal(
-    classifyStaleTurn({ activeTurn: null, nowMs: NOW, busy: false, executing: false }),
-    'skip_no_turn'
-  );
-});
-
-test('classifyStaleTurn: quarantined rows are never reaped', () => {
-  assert.equal(
-    classifyStaleTurn({
-      activeTurn: { phase: 'quarantined', startedAt: OLD },
-      nowMs: NOW,
-      busy: false,
-      executing: false,
-    }),
-    'skip_quarantined'
-  );
-});
-
-test('classifyStaleTurn: fresh rows are skipped (boot/dispatch race guard)', () => {
-  assert.equal(
-    classifyStaleTurn({ activeTurn: { startedAt: FRESH }, nowMs: NOW, busy: false, executing: false }),
-    'skip_fresh'
-  );
-});
-
-test('classifyStaleTurn: a busy session is never reaped, however old the row', () => {
-  assert.equal(
-    classifyStaleTurn({ activeTurn: { startedAt: OLD }, nowMs: NOW, busy: true, executing: false }),
-    'skip_busy'
-  );
-});
-
-test('classifyStaleTurn: a live detached exec is left for recovery', () => {
-  assert.equal(
-    classifyStaleTurn({ activeTurn: { startedAt: OLD }, nowMs: NOW, busy: false, executing: true }),
-    'skip_executing'
-  );
-});
-
-test('classifyStaleTurn: an unobservable probe (null) is treated conservatively', () => {
-  assert.equal(
-    classifyStaleTurn({ activeTurn: { startedAt: OLD }, nowMs: NOW, busy: false, executing: null }),
-    'skip_executing'
-  );
-});
-
-test('classifyStaleTurn: old + not busy + definitely idle → reap', () => {
-  assert.equal(
-    classifyStaleTurn({ activeTurn: { startedAt: OLD }, nowMs: NOW, busy: false, executing: false }),
-    'reap'
-  );
-});
-
-test('classifyStaleTurn: unparsable startedAt cannot prove freshness', () => {
-  // Missing/garbage timestamps fall through to the busy/executing gates.
-  assert.equal(
-    classifyStaleTurn({ activeTurn: {}, nowMs: NOW, busy: false, executing: false }),
-    'reap'
-  );
-  assert.equal(
-    classifyStaleTurn({ activeTurn: { startedAt: 'not-a-date' }, nowMs: NOW, busy: true, executing: false }),
-    'skip_busy'
-  );
-});
 
 // ── 1b. appendTerminalLine ──────────────────────────────────────────────
 
@@ -171,60 +101,56 @@ test('isSessionBusy: a non-worker session operation blocks turns until its idemp
 
 // ── 3. Source guards ────────────────────────────────────────────────────
 
-const serverSrc = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+// With what a turn's recovery runs, moved out of server.js unchanged
+// (services/turn-recovery.js).
+const serverSrc = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8')
+  + fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'turn-recovery.js'), 'utf8');
 const sessionsSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'sessions.js'), 'utf8');
 const runCcSrc = fs.readFileSync(path.join(__dirname, '..', 'worker', 'run-cc.sh'), 'utf8');
 
-test('server.js sweepers use the shared busy predicate, not bare isInFlight', () => {
-  // Pass 1 (auto-pause) and Pass 2 (staging GC) both gate on it.
-  const uses = serverSrc.match(/activeWorkersSvc\.isSessionBusy\(row\.id\)/g) || [];
-  assert.ok(uses.length >= 2, `expected >=2 isSessionBusy(row.id) gates, found ${uses.length}`);
-  assert.match(serverSrc,
-    /stagingReap\.sweepStale\(config, \{ isInFlight: \(id\) => activeWorkersSvc\.isSessionBusy\(id\) \}\)/,
-    'stale-preview cleanup also respects non-worker session operations');
-  assert.match(serverSrc,
-    /if \(activeWorkersSvc\.isSessionBusy\(row\.id\)\) continue;[\s\S]{0,300}archiveSession/,
-    'stale proposal archival cannot race a session-owned sync/pipeline tail');
-  // The auto-pause SQL must exclude sessions with a live detached-turn record.
-  assert.ok(
-    /status = 'active'\s*\n\s*AND active_turn IS NULL/.test(serverSrc),
-    "Pass 1 SQL must carry AND active_turn IS NULL"
-  );
+test('no sweeper in server.js reaps, pauses or archives a session somebody works on', () => {
+  // No watchdog reaps a turn: a turn's record is its work item's, and one
+  // no item holds is recovered through the adoption (turn-leftovers.js).
+  assert.doesNotMatch(serverSrc, /classifyStaleTurn|Reaping orphaned active_turn/);
+  // The staging GC (once Pass 2) and the stale-preview cleanup are the
+  // preview machine's: its idle give-back waits while somebody works on the
+  // session (a coding turn's journal, a turn on the author's machine, an
+  // operation a live process holds), read under the session's lock, so it
+  // cannot race a session-owned sync or pipeline tail.
+  assert.doesNotMatch(serverSrc, /teardownStagingForSession|stagingReap\.sweepStale\(/);
+  const preview = fs.readFileSync(path.join(__dirname, '..', 'src/workflow/preview/machine.ts'), 'utf8');
+  const worked = preview.slice(preview.indexOf('function worked(s: Live, f: Facts): boolean {'));
+  assert.match(worked.slice(0, worked.indexOf('\n}\n')),
+    /if \(x && \(x\.turnRunning \|\| x\.localTurnRunning \|\| x\.shotsRunning\)\) return true;\n\s+return s\.data\.operations\.some\(\(o\) => f\.alive\.has\(o\.holder\)\);/);
+  const idleRetire = preview.slice(preview.indexOf('const idleDue: Entry'), preview.indexOf('const checksDue: Entry'));
+  assert.match(idleRetire, /if \(worked\(s, f\)\) return step\(\{ name: s\.name, data: s\.data, timer: \{ at: new Date\(ctx\.now\.getTime\(\) \+ WORKED_RECHECK_MS\), event: \{ type: 'IdleDue' \} \} \}\);\n\s+return toRetiring\(s, 'idle'/,
+    'staging GC cannot race a session-owned sync/pipeline tail');
+  // The idle pause (Pass 1, once) and the stale proposal archival are the
+  // proposal machine's now: no sweeper in server.js pauses or archives a
+  // session. The machine reads who works on it (the live turn record, a
+  // session-owned operation) under the session's lock, so neither can race
+  // a sync or pipeline tail, on this process or another.
+  assert.doesNotMatch(serverSrc, /archiveSession\(|pauseSession\(/);
+  const machine = fs.readFileSync(path.join(__dirname, '..', 'src/workflow/proposal/machine.ts'), 'utf8');
+  assert.match(machine, /const busy = \(r: Row\) => r\.activeTurn \|\| r\.workedOn;/);
+  const idle = machine.slice(machine.indexOf('const idleCheck: Handler'), machine.indexOf('const reviewCheck: Handler'));
+  assert.match(idle, /if \(busy\(row\) \|\| s\.data\.sync \|\| row\.shotsRunning \|\| row\.buildHold/, 'the idle pause skips a session somebody works on, or that a sync is asked for');
+  const review = machine.slice(machine.indexOf('const reviewCheck: Handler'));
+  assert.match(review.slice(0, review.indexOf('\n};\n')), /if \(busy\(row\)\) return step\(s, \{ timer: again \}\);/,
+    'stale proposal archival waits while somebody works on it');
+  const facts = fs.readFileSync(path.join(__dirname, '..', 'src/workflow/proposal/facts.ts'), 'utf8');
+  assert.match(facts, /activeTurn: !!r\.active_turn, workedOn: !!r\.local_turn \|\| !!r\.operations,/,
+    'a live detached-turn record reads as busy');
 });
 
 test('server.js recovery flow registers in activeWorkers and bumps last_activity_at', () => {
   assert.ok(
-    /activeWorkersSvc\.activeWorkers\.add\(sessionId\)/.test(serverSrc),
+    /activeWorkersSvc\.activeWorkers\.enter\(sessionId\)/.test(serverSrc),
     'resumeDetachedTurn must add the session to activeWorkers'
   );
   assert.ok(
     /activeWorkersSvc\.activeWorkers\.delete\(sessionId\)/.test(serverSrc),
     'resumeDetachedTurn must remove the session from activeWorkers'
-  );
-});
-
-test('server.js has the stale active_turn watchdog pass', () => {
-  assert.ok(/Reaping orphaned active_turn/.test(serverSrc), 'watchdog reap log line missing');
-  assert.ok(/classifyStaleTurn/.test(serverSrc), 'watchdog must use the pure policy helper');
-  // #896: the reaped-turn message is the shared TURN_UNFINISHED_BREADCRUMB
-  // now — one wording for every unresumable shape, with the shape kept in
-  // metadata.recoveredReason instead of in the text the user reads.
-  //
-  // ...with ONE exception: a reaped TAIL row (the agent finished, the
-  // platform-side wrap-up didn't) knows the commit is already pushed, so
-  // asking for a resend would send the user to redo landed work. It gets
-  // the code-landed wording instead.
-  assert.ok(
-    /: recoveryPills\.TURN_UNFINISHED_BREADCRUMB/.test(serverSrc),
-    'watchdog must post the retry system message for an unresumable exec'
-  );
-  assert.ok(
-    /recoveryPills\.buildCodeLandedBreadcrumb\(/.test(serverSrc),
-    'a reaped tail whose commit landed must not ask for a resend'
-  );
-  assert.ok(
-    /recoveredReason: reapCodeLanded \? 'watchdog_reap_tail' : 'watchdog_reap'/.test(serverSrc),
-    'the reap is still distinguishable from other recoveries in SQL'
   );
 });
 

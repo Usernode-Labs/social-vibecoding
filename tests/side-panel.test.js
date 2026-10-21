@@ -23,7 +23,8 @@
 //   4. THE CHOKEPOINTS refuse a navigation before it lands — a link, a
 //      script's location.hash — and only at the moment the panel applies.
 //   5. THE PANEL'S DOCUMENT never adds a history entry, never runs an app,
-//      and hands everything it does not show to the top window.
+//      hands everything it does not show to the top window, and draws its
+//      own page when the comment's picture asks (#4975).
 //   6. THE ROUTER (public/js/app.js, run in a vm): openAppTab asks the panel
 //      first, the running app leaving drops it, and in the panel's document
 //      an App tab is forwarded, never parked, never polled for versions.
@@ -63,7 +64,7 @@ const R = api.routes;
 
 // ── 1. The address table ─────────────────────────────────────────────────
 
-test('the panel\'s pages: an app\'s Workshop and work, conversations, agent chats', () => {
+test('the panel\'s pages: an app\'s work, conversations, agent chats; its community is known but never the panel\'s', () => {
   const kinds = {
     'app/notes-ab12/workshop': 'workshop',
     'app/notes-ab12/board': 'workshop',
@@ -89,7 +90,12 @@ test('the panel\'s pages: an app\'s Workshop and work, conversations, agent chat
   for (const [route, kind] of Object.entries(kinds)) {
     const page = R.panelPage(route);
     assert.equal(page && page.kind, kind, route);
-    assert.equal(R.embeddedAllows(route), true, `the panel's own document shows ${route}`);
+    // 18 Oct 2026: a community's page (and its old discussion addresses) is a
+    // place of its own: a link to it leaves the app, full screen, and the
+    // panel's document hands it to the top window.
+    const community = kind === 'workshop';
+    assert.equal(R.isPanelRoute(route), !community && kind !== 'messages', `${route} beside the app`);
+    assert.equal(R.embeddedAllows(route), !community, `the panel's own document shows ${route}`);
   }
   // Everything else is somewhere the panel does not go.
   for (const route of ['', 'apps', 'apps/notes-ab12', 'workshop', 'profile', 'profile/dana',
@@ -134,9 +140,12 @@ test('an agent session opens beside the app by either address, climbs to Message
 test('the inbox is where Back climbs to, but a link to it is the Messages TAB and leaves the app', () => {
   assert.equal(R.isPanelRoute('messages'), false, 'the sidebar\'s tabs keep their meaning');
   assert.equal(R.embeddedAllows('messages'), true, 'and the panel\'s own document still shows it');
-  for (const route of ['messages/4242', 'messages/app/notes-ab12', 'chat', 'app/notes-ab12/workshop',
-    'app/other-app/dev/proposals/9']) {
+  for (const route of ['messages/4242', 'chat', 'app/other-app/dev/proposals/9']) {
     assert.equal(R.isPanelRoute(route), true, `${route} opens beside the app`);
+  }
+  // A community leaves the app too, like a tab, wherever it is linked from.
+  for (const route of ['app/notes-ab12/workshop', 'messages/app/notes-ab12', 'app/notes-ab12/dev/chat']) {
+    assert.equal(R.isPanelRoute(route), false, `${route} opens full screen`);
   }
 });
 
@@ -168,7 +177,7 @@ test('an app\'s App tab is never the panel\'s: it names the app to hand to the t
   assert.equal(R.appTabSlug('messages/12'), null);
 });
 
-test('Back climbs: a message to Messages, a proposal, an issue or a change to the Workshop', () => {
+test('Back climbs: a message to Messages; a proposal, an issue or a change has nothing above it here', () => {
   // #3653: an app's discussion is its project page, which has nothing above it.
   assert.equal(R.parentRoute('messages/app/notes-ab12'), null);
   assert.equal(R.parentRoute('app/notes-ab12/dev/chat'), null);
@@ -177,27 +186,28 @@ test('Back climbs: a message to Messages, a proposal, an issue or a change to th
   assert.equal(R.samePage('app/notes-ab12/dev/chat', 'app/notes-ab12/workshop'), true);
   assert.equal(R.parentRoute('messages/4242'), 'messages');
   assert.equal(R.parentRoute('chat/abc'), 'messages');
+  // Its community is never the panel's, and climbing to it would leave the app.
   for (const route of ['app/notes-ab12/dev/proposals/12', 'app/notes-ab12/dev/issues/7',
     'app/notes-ab12/dev/sessions/41', 'app/notes-ab12/dev/sessions/new', 'app/notes-ab12/dev/shared/41']) {
-    assert.equal(R.parentRoute(route), 'app/notes-ab12/workshop', route);
+    assert.equal(R.parentRoute(route), null, route);
   }
-  assert.equal(R.parentRoute('app/notes-ab12/workshop'), null, 'the lists have nothing above them');
+  assert.equal(R.parentRoute('app/notes-ab12/workshop'), null);
   assert.equal(R.parentRoute('messages'), null);
 });
 
 test('the title is the page\'s own header title, except where that would only name the app', () => {
   assert.equal(R.titleFor('messages/4242', 'Design review'), 'Design review');
-  assert.equal(R.titleFor('messages/app/notes-ab12', 'Notes'), 'Workshop', 'a discussion is its project page (#3653)');
-  assert.equal(R.titleFor('app/notes-ab12/workshop', 'Notes'), 'Workshop', 'the Workshop is the Workshop, as the prototype titles it');
+  assert.equal(R.titleFor('messages/app/notes-ab12', 'Notes'), 'Community', 'a discussion is its project page (#3653)');
+  assert.equal(R.titleFor('app/notes-ab12/workshop', 'Notes'), 'Community', 'the project page is titled Community, as the prototype titled it');
   assert.equal(R.titleFor('messages', 'Inbox'), 'Messages', 'and the inbox is Messages');
   assert.equal(R.titleFor('app/notes-ab12/dev/proposals/12', 'Notes'), 'Proposal');
   assert.equal(R.titleFor('app/notes-ab12/dev/issues/7', 'Notes'), 'Request');
   assert.equal(R.titleFor('app/notes-ab12/dev/sessions/41', 'Notes'), 'Change');
   assert.equal(R.titleFor('app/notes-ab12/dev/sessions/new', 'Notes'), 'New change');
   // Derived from the route while the document has said nothing yet.
-  assert.equal(R.titleFor('app/notes-ab12/workshop', ''), 'Workshop');
+  assert.equal(R.titleFor('app/notes-ab12/workshop', ''), 'Community');
   assert.equal(R.titleFor('messages/4242', ''), 'Messages');
-  assert.equal(R.titleFor('messages/app/notes-ab12', ''), 'Workshop');
+  assert.equal(R.titleFor('messages/app/notes-ab12', ''), 'Community');
 });
 
 test('the panel document\'s address keeps the top window\'s query, less its own and the load-scoped ones', () => {
@@ -351,11 +361,13 @@ test('the panel takes a navigation only beside a running app, at desktop width, 
   for (const [opts, expected, why] of cases) {
     topWindow(opts);
     assert.equal(api.canTake(), expected, why);
-    assert.equal(api.take('app/notes-ab12/workshop'), expected, `take: ${why}`);
+    assert.equal(api.take('app/notes-ab12/dev/proposals/12'), expected, `take: ${why}`);
     cleanup();
   }
   topWindow();
   assert.equal(api.take('messages'), false, 'the inbox itself is the Messages tab, never the panel');
+  assert.equal(api.take('app/notes-ab12/workshop'), false, 'nor is a community: it replaces the app, full screen');
+  assert.equal(api.take('messages/app/notes-ab12'), false, 'by its old discussion address too');
   assert.equal(api.take('profile/dana'), false);
   assert.equal(api.sidePanelStore.get().frameSrc, null);
   cleanup();
@@ -363,24 +375,24 @@ test('the panel takes a navigation only beside a running app, at desktop width, 
 
 test('opening starts ONE document, and later pages are navigations inside it', () => {
   topWindow();
-  assert.equal(api.take('app/notes-ab12/workshop'), true);
+  assert.equal(api.take('app/notes-ab12/dev/issues/7'), true);
   let s = api.sidePanelStore.get();
   assert.equal(s.open, true);
-  assert.equal(s.frameSrc, '/?demo=1&panel=1#app/notes-ab12/workshop');
+  assert.equal(s.frameSrc, '/?demo=1&panel=1#app/notes-ab12/dev/issues/7');
   assert.equal(s.frameKey, 1);
   assert.equal(s.loading, true);
-  assert.equal(s.title, 'Workshop', 'titled from the route until the document says');
+  assert.equal(s.title, 'Request', 'titled from the route until the document says');
   assert.equal(s.canBack, false);
   const gone = fakeFrame();
   // A second page asked for while it boots is where it goes once it can.
   api.take('messages/4242');
   assert.deepEqual(gone, [], 'nothing to tell a document that has not booted');
-  api.embeddedApi.ready('app/notes-ab12/workshop', 'Workshop');
+  api.embeddedApi.ready('app/notes-ab12/dev/issues/7', 'Notes');
   assert.deepEqual(gone, [['messages/4242', null]]);
   s = api.sidePanelStore.get();
   assert.equal(s.loading, false);
   assert.equal(s.route, 'messages/4242');
-  assert.equal(s.canBack, true, 'the Workshop it was opened on is behind it');
+  assert.equal(s.canBack, true, 'the request it was opened on is behind it');
   api.embeddedApi.navigated('messages/4242', 'Design review', false);
   assert.equal(api.sidePanelStore.get().title, 'Design review');
   // Another page: the same frame, navigated.
@@ -391,7 +403,7 @@ test('opening starts ONE document, and later pages are navigations inside it', (
   cleanup();
 });
 
-test('Back walks the pages opened in the panel, then climbs to the list, then hides', () => {
+test('Back walks the pages opened in the panel, and a piece of work climbs no further', () => {
   topWindow();
   api.take('app/notes-ab12/dev/sessions/41');
   const gone = fakeFrame();
@@ -404,10 +416,8 @@ test('Back walks the pages opened in the panel, then climbs to the list, then hi
   api.back();
   assert.deepEqual(gone.at(-1), ['app/notes-ab12/dev/sessions/41', null], 'back to the change');
   assert.equal(api.sidePanelStore.get().title, 'Change');
-  assert.equal(api.sidePanelStore.get().canBack, true, 'a change still climbs to its Workshop');
-  api.back();
-  assert.deepEqual(gone.at(-1), ['app/notes-ab12/workshop', null], 'climbed to the app\'s Workshop');
-  assert.equal(api.sidePanelStore.get().canBack, false, 'and nothing is above that');
+  assert.equal(api.sidePanelStore.get().canBack, false,
+    'nothing above a change here: its community is never the panel\'s');
   const count = gone.length;
   api.back();
   assert.equal(gone.length, count, 'Back with nowhere to go goes nowhere');
@@ -431,16 +441,16 @@ test('Back never lands on a `#name` channel reference, which would only send it 
     'back to the proposal the reference was followed from');
   // Opened from the top document too: the pointer is the panel's page until
   // the channel replaces it, and is never kept behind it.
-  api.take('messages/channel/notes');
-  api.embeddedApi.navigated('messages/app/notes-ab12', 'Notes', false);
+  api.take('messages/channel/design');
+  api.embeddedApi.navigated('messages/89', '#design', false);
   api.take('messages/4242');
   api.back();
-  assert.deepEqual(gone.at(-1), ['messages/app/notes-ab12', null]);
+  assert.deepEqual(gone.at(-1), ['messages/89', null]);
   api.back();
   assert.deepEqual(gone.at(-1), ['app/notes-ab12/dev/proposals/12', null],
     'the pointer between them was skipped');
   s = api.sidePanelStore.get();
-  assert.equal(s.canBack, true, 'a proposal still climbs to its Workshop');
+  assert.equal(s.canBack, false, 'and nothing is above the proposal here');
   cleanup();
 });
 
@@ -454,18 +464,18 @@ test('Close keeps the frame and forgets the history; reopening navigates it', ()
   let s = api.sidePanelStore.get();
   assert.equal(s.open, false);
   assert.ok(s.frameSrc, 'the frame stays for a reopen');
-  api.take('app/notes-ab12/workshop');
+  api.take('app/notes-ab12/dev/proposals/12');
   s = api.sidePanelStore.get();
   assert.equal(s.open, true);
   assert.equal(s.frameKey, 1, 'the same frame');
-  assert.deepEqual(gone.at(-1), ['app/notes-ab12/workshop', null]);
+  assert.deepEqual(gone.at(-1), ['app/notes-ab12/dev/proposals/12', null]);
   assert.equal(s.canBack, false, 'a closed panel reopens with no history');
   cleanup();
 });
 
 test('the app leaving the screen drops the panel and its frame; staying keeps it', () => {
   topWindow();
-  api.take('app/notes-ab12/workshop');
+  api.take('app/notes-ab12/dev/proposals/12');
   fakeFrame();
   api.appPresence(true);
   assert.ok(api.sidePanelStore.get().frameSrc, 'another app replacing this one keeps the panel');
@@ -488,6 +498,22 @@ test('Expand is ONE real navigation of the top window, with its own routing, the
   assert.equal(routed.length, 1, 'and routed once, at once');
   assert.equal(api.sidePanelStore.get().frameSrc, null, 'the panel is gone');
   cleanup();
+});
+
+test('Go to community opens the hub full width, leaving the app, because no community is the panel\'s', () => {
+  // The app menu's row, beside a running app on a desktop, follows its own
+  // link: a community's page is never taken for the panel (./routes.ts), so
+  // the router's ordinary navigation replaces the app, and the router's leave
+  // drops a panel that was open. Its old special case (openFullWidth) is gone.
+  topWindow();
+  assert.equal(api.take('app/notes-ab12/workshop'), false);
+  cleanup();
+  assert.equal(api.SidePanel.openFullWidth, undefined, 'nothing on the bridge for it');
+  const sheet = read('frontend/src/features/app-context/app-context-sheet.tsx');
+  const at = sheet.indexOf('id="app-menu-row-workshop"');
+  const row = sheet.slice(at, sheet.indexOf('GO TO APP DISCUSSION and INVITE TO COMMUNITY', at));
+  assert.doesNotMatch(row, /sidePanel/);
+  assert.match(row, /followThenDismiss\(e, slug \? `#app\/\$\{encodeURIComponent\(slug\)\}\/workshop` : '#'\);/);
 });
 
 test('Expand from an agent session goes to Messages, the conversation beside the inbox (#2779)', () => {
@@ -595,15 +621,18 @@ test('a panel link in the top document is refused before the browser follows it'
     return e.defaultPrevented;
   };
   assert.equal(click('#messages'), false, 'a tab root is followed');
-  assert.equal(click('#app/notes-ab12/workshop', { meta: true }), false, 'a new-tab click is the browser\'s');
-  assert.equal(click('#app/notes-ab12/workshop', { target: '_blank' }), false);
+  // A community, from the sidebar or any link: followed, full screen.
+  assert.equal(click('#app/notes-ab12/workshop'), false, 'a community replaces the app');
+  assert.equal(click('/app/notes-ab12/dev/c/onboarding'), false, 'its channels too');
+  assert.equal(click('#app/notes-ab12/dev/proposals/12', { meta: true }), false, 'a new-tab click is the browser\'s');
+  assert.equal(click('#app/notes-ab12/dev/proposals/12', { target: '_blank' }), false);
   assert.equal(api.sidePanelStore.get().frameSrc, null);
-  assert.equal(click('#app/notes-ab12/workshop'), true, 'Go to workshop is caught');
-  assert.equal(api.sidePanelStore.get().route, 'app/notes-ab12/workshop');
+  assert.equal(click('#app/notes-ab12/dev/proposals/12'), true, 'a proposal is caught');
+  assert.equal(api.sidePanelStore.get().route, 'app/notes-ab12/dev/proposals/12');
   assert.equal(click('https://github.com/x/y'), false, 'another site is not ours');
   cleanup();
   topWindow({ width: 800 });
-  assert.equal(click('#app/notes-ab12/workshop'), false, 'below the breakpoint the link is followed');
+  assert.equal(click('#app/notes-ab12/dev/proposals/12'), false, 'below the breakpoint the link is followed');
   cleanup();
 });
 
@@ -628,6 +657,8 @@ test('the header\'s ✕ leaves the app, even when its href names a panel page', 
   };
   assert.equal(click('back-btn', '/#messages/4242'), false, 'the ✕ is left to its own handler');
   assert.equal(click('back-btn', '/app/notes-ab12/dev/proposals/12'), false);
+  assert.equal(click('app-menu-row-workshop', '/#app/notes-ab12/workshop'), false,
+    'so is the app menu\'s Go to community, which opens the hub full width, as every community link does');
   assert.equal(api.sidePanelStore.get().frameSrc, null, 'and no panel opened');
   assert.equal(click('some-row', '/#messages/4242'), true, 'while any other link to a thread is caught');
   cleanup();
@@ -742,12 +773,57 @@ function panelWindow({ href = 'https://homeroom.test/app/notes-ab12/workshop?pan
   const boot = () => (docListeners['sv:authed'] || []).forEach((fn) => fn());
   return { win, runtime, reports, routed, history, fire, boot, navigate, url: () => url.href };
 }
-const tick = () => new Promise((r) => setTimeout(r, 5));
+// The runtime reports from a 0 ms timer, and `go()` (or a refused hash push)
+// sets that timer from a microtask, after the page has routed. A 5 ms timer
+// started before the microtask ran could fire first when routing took more
+// than 4 ms on a loaded machine, and the report was not there yet. Waiting
+// for the next turn first lets the runtime's timer be set before this one,
+// and timers fire in the order they expire.
+const tick = async () => {
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setTimeout(r, 5));
+};
 
 test('the runtime installs only in the panel\'s document', () => {
   globalThis.document = { documentElement: { classList: { contains: () => false } } };
   assert.equal(api.installEmbeddedRuntime({}), null, 'the top document is left alone');
   delete globalThis.document;
+});
+
+test('the runtime answers the comment\'s picture with this document\'s own page (#4975)', async () => {
+  // The drawing module is imported only when a picture is asked for: no
+  // comment work loads in a panel that is never screenshotted.
+  assert.match(read('frontend/src/features/side-panel/embedded.ts'), /import\('\.\.\/comment-pin\/picture'\)/);
+  const p = panelWindow();
+  assert.equal(typeof p.runtime.picture, 'function');
+  // A panel still booting has nothing settled to draw: null, without
+  // touching the page.
+  assert.equal(await p.runtime.picture(1), null);
+  p.boot();
+  await tick();
+  assert.equal(p.runtime.isBooted(), true);
+  // After boot it draws on this document's own turn (a 0 ms timer), and a
+  // draw that fails in this realm — here there is no page to draw — resolves
+  // null, never a rejection.
+  assert.equal(await p.runtime.picture(1), null);
+});
+
+test('the panel keeps one picture draw in flight and shares it', async () => {
+  const p = panelWindow();
+  p.boot();
+  await tick();
+  assert.equal(p.runtime.isBooted(), true);
+  // Two asks made back to back — a scroll retake landing on a pin, say —
+  // share the draw in flight instead of stacking a second capture of the
+  // same document while the first is still running.
+  const first = p.runtime.picture(1);
+  const second = p.runtime.picture(1);
+  assert.equal(second, first, 'the second ask shares the draw in flight');
+  assert.equal(await first, null);
+  // Once settled, the next ask starts a fresh draw.
+  const third = p.runtime.picture(1);
+  assert.notEqual(third, first, 'a settled draw is not handed out again');
+  await third;
 });
 
 test('a panel inside Preview reports readiness and navigation to its immediate parent', async () => {
@@ -927,6 +1003,7 @@ function router({ embedded = false, takes = true } = {}) {
   const root = fakeElement();
   if (embedded) root.classList.add('in-side-panel');
   const context = vm.createContext({
+    PlatformI18n: require('./lib/platform-i18n').englishPlatformI18n(),
     location: new URL('https://homeroom.test/'),
     history: { pushState() {}, replaceState() {}, state: null },
     URL, URLSearchParams, console, setTimeout, clearTimeout,

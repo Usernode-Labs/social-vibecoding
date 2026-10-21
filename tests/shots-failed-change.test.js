@@ -32,6 +32,8 @@ const shotsState = require('../src/services/shots-state');
 const shotsView = require('../src/services/shots-view');
 const followup = require('../src/services/homeroom-bot-followup');
 const dm = require('../src/services/homeroom-bot-dm');
+// app-view.js is a classic script: it reads its text through the global the shell publishes.
+globalThis.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
 const AppView = require('../public/js/app-view.js');
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
 
@@ -163,17 +165,21 @@ test('the stored summary, the public view and get_proposal keep "failed"; old ro
 
   assert.deepEqual(shotsView.cleanShotResults([{ id: 'tick-and-undo', status: 'failed', reason: SAW }]),
     [{ id: 'tick-and-undo', status: 'failed', reason: SAW, note: null }]);
-  // A failed run serves its results only when a change failed, so the page can say which.
+  // A failed run serves its results when a change failed, so the page can
+  // say which, or when none could be reached, so its author's agent reads
+  // why each was skipped (tests/shots-skipped-change.test.js).
   const session = { id: 6269, app_slug: 'flat-4b-chores', shots_detail: {} };
   const served = shotsView.serialize({ ...summary, failureCode: 'shots_change_failed' }, session, 'flat-4b-chores', HEAD);
   assert.equal(served.state, 'failed');
   assert.equal(served.shotResults[0].status, 'failed');
   const incomplete = shotsView.serialize({ ...summary, failureCode: 'shots_capture_incomplete' }, session, 'flat-4b-chores', HEAD);
-  assert.deepEqual(incomplete.shotResults, [], 'an incomplete run keeps showing only its reason');
+  assert.equal(incomplete.shotResults.length, 1, 'an incomplete run serves each change\'s reason too');
+  assert.deepEqual(shotsView.serialize({ ...summary, failureCode: 'shots_agent_failed' }, session, 'flat-4b-chores', HEAD).shotResults, [],
+    'any other failure keeps showing only its reason');
   assert.deepEqual(shotsView.serialize({ ...summary, failureCode: 'shots_change_failed' }, session, 'flat-4b-chores', OTHER_HEAD).shotResults, [],
     'never on a newer commit');
 
-  assert.match(read('src/services/mcp-tools.js'), /status: z\.enum\(\['ready', 'skipped', 'failed'\]\)/);
+  assert.match(read('src/services/mcp-tools.js'), /status: z\.enum\(\['ready', 'unchanged', 'skipped', 'failed'\]\)/);
 });
 
 test('brokenOnHead reads the failed changes of shots on exactly that head', () => {
@@ -225,39 +231,19 @@ test('holdsReady waits for shots on the head, and only while they can still come
   assert.equal(hold({ ...running, checks_checked_at: late, shots_updated_at: late }), false);
 });
 
-test('every way the shots slot settles tells whoever waits on it, after the write', async () => {
-  const told = [];
-  const previous = shotsState._setSettleListenerForTests((pool, id) => { told.push(id); });
-  try {
-    const row = {
-      id: 'e'.repeat(32), session_id: 42, current_run_id: 'e'.repeat(32), state: 'reviewing',
-      base_sha: 'a'.repeat(40), head_sha: HEAD, intent: fixtures.intent(), plan_hash: 'c'.repeat(64),
-      hard_verdict: { passed: true, mode: shots.SHOTS_MODE, runs: 1, stories: [{ id: 'invite-suggestions', status: 'ready', files: 2 }] },
-      updated_at: new Date(),
-    };
-    const pool = { query: async (sql, values) => {
-      if (/SELECT r\.\*/.test(sql)) return { rows: [row] };
-      if (/UPDATE shot_runs/.test(sql)) { Object.assign(row, { state: values[1] }); return { rows: [{ ...row }] }; }
-      if (/FROM shot_artifacts/.test(sql)) return { rows: [] };
-      if (/UPDATE chat_sessions/.test(sql)) return { rowCount: 1, rows: [{ id: 42 }] };
-      throw new Error(`Unexpected query: ${sql}`);
-    } };
-    await shotsState.transitionRun(pool, row.id, 'verified', {});
-    await new Promise((r) => setImmediate(r));
-    assert.deepEqual(told, [42], 'a published run');
-    await shotsState.recordNotStarted(pool, 43, 'Nothing picked this up.');
-    await new Promise((r) => setImmediate(r));
-    assert.deepEqual(told, [42, 43], 'a run that will not start');
-    row.state = 'exploring';
-    await shotsState.transitionRun(pool, row.id, 'reviewing', {});
-    await new Promise((r) => setImmediate(r));
-    assert.deepEqual(told, [42, 43], 'a run still under way tells nobody');
-  } finally {
-    shotsState._setSettleListenerForTests(previous);
-  }
-  assert.match(read('src/services/shots-state.js'),
-    /let settleListener = \(pool, sessionId\) => require\('\.\/homeroom-bot-dm'\)\.noteShotsSettled\(pool, sessionId\);/);
+test('every way the shots slot settles tells whoever waits on it, by a message that commits with it', () => {
+  // The shots machine (src/workflow/shots/) writes the bot's message
+  // whenever the slot settles: a published, failed, waived or closed run, a
+  // run that will not start, a declaration that needs none; a run still
+  // under way tells nobody. A write in the settle's transaction, not a
+  // callback after commit: a crash loses none (tests/workflow-shots-postgres.test.js S1, S3).
+  const machine = read('src/workflow/shots/machine.ts');
+  assert.match(machine, /const settledNote = \(d: Data\): DomainWrite => toBotChange\(d\.sessionId, 'ShotsSettled'\);/);
+  assert.equal(machine.match(/settledNote\(/g).length, 6, 'each way it settles');
+  assert.doesNotMatch(read('src/workflow/shots/services.ts'), /botNote/, 'no work of its own tells the bot');
+  assert.doesNotMatch(read('src/services/shots-state.js'), /settleListener|setImmediate/);
 });
+
 
 // ── 3. The change page never says "All checks passed" over one ───────────
 
@@ -274,22 +260,30 @@ function pageShots(overrides = {}) {
   };
 }
 
-test('the Tested line says something is not working when the shots show a change failing', () => {
-  const said = (item) => AppView._testedLine(item);
-  assert.deepEqual(said({ check_state: 'passing', shots: pageShots() }), { state: 'failed', text: 'Tested · One thing isn’t working' });
-  assert.deepEqual(said({ check_state: 'skipped', shots: pageShots() }), { state: 'failed', text: 'Tested · One thing isn’t working' });
+test('the Testing card says something is not working when the shots show a change failing (#4455)', () => {
+  const said = (item) => { const t = AppView._changeTestingView(item); return { tone: t.tone, figure: t.figure }; };
+  assert.deepEqual(said({ check_state: 'passing', shots: pageShots() }), { tone: 'bad', figure: 'One thing isn’t working' });
+  assert.deepEqual(said({ check_state: 'skipped', shots: pageShots() }), { tone: 'bad', figure: 'One thing isn’t working' });
   const two = pageShots({ shotResults: [{ id: 'tick-and-undo', status: 'failed', reason: SAW }, { id: 'invite-suggestions', status: 'failed', reason: 'x' }] });
-  assert.deepEqual(said({ check_state: 'passing', shots: two }), { state: 'failed', text: 'Tested · 2 things aren’t working' });
+  assert.deepEqual(said({ check_state: 'passing', shots: two }), { tone: 'bad', figure: '2 things aren’t working' });
   // A failed run that kept no results still counts, by its code.
-  assert.deepEqual(said({ check_state: 'passing', shots: { state: 'failed', failureCode: 'shots_change_failed', shotResults: [] } }).text,
-    'Tested · One thing isn’t working');
+  assert.equal(said({ check_state: 'passing', shots: { state: 'failed', failureCode: 'shots_change_failed', shotResults: [] } }).figure,
+    'One thing isn’t working');
   // Everything else reads as it did.
   assert.deepEqual(said({ check_state: 'passing', shots: pageShots({ shotResults: [{ id: 'tick-and-undo', status: 'skipped', reason: 'r' }] }) }),
-    { state: 'passed', text: 'Tested · All checks passed' }, 'a skip is not a failure');
-  assert.deepEqual(said({ check_state: 'passing', shots: pageShots({ state: 'stale' }) }).text, 'Tested · All checks passed',
+    { tone: 'done', figure: 'All checks passed' }, 'a skip is not a failure');
+  assert.equal(said({ check_state: 'passing', shots: pageShots({ state: 'stale' }) }).figure, 'All checks passed',
     'shots of an older commit say nothing about this one');
-  assert.deepEqual(said({ check_state: 'passing' }).text, 'Tested · All checks passed');
-  assert.deepEqual(said({ check_state: 'failing', shots: pageShots() }).text, 'Testing found a problem');
+  assert.equal(said({ check_state: 'passing' }).figure, 'All checks passed');
+  // A red run offers its re-run to whoever may press it (`App.user`).
+  const hadApp = Object.prototype.hasOwnProperty.call(global, 'App');
+  const previous = global.App;
+  global.App = { user: null };
+  try {
+    assert.equal(said({ check_state: 'failing', shots: pageShots() }).figure, 'Found a problem');
+  } finally {
+    if (hadApp) global.App = previous; else delete global.App;
+  }
 });
 
 test('the before & after card marks a failed change as not working, with what happened', () => {
@@ -333,7 +327,7 @@ test('a failed change on the current head is due a fix even when every check pas
   assert.equal(followup.checksDue(botRow({ check_state: 'pending' })), null, 'it waits for the checks, so one turn sees everything');
   assert.equal(followup.checksDue(botRow({ reviewed_head_sha: OTHER_HEAD })), null, 'shots of an older commit');
   assert.equal(followup.checksDue(botRow({ shots_detail: { ...botRow().shots_detail, shotResults: [{ id: 'tick-and-undo', status: 'skipped', reason: 'r' }] } })), null,
-    'a skip is never the bot\'s to fix');
+    'a skip that names no data the change could seed is never the bot\'s to fix');
   // Failing checks and a failed change on one head: one turn, both lists.
   const both = followup.checksDue(botRow({ check_state: 'failing', test_results: [{ name: 'rota.week', status: 'fail', failureReason: 'no text' }] }));
   assert.equal(both.failing.length, 1);
@@ -356,9 +350,12 @@ test('what the bot says about it is plain, and never about checks that passed', 
   const due = followup.checksDue(botRow());
   const person = followup.checksPersonText({ why: 'The route needs a schema change I may not make', failingCount: 0, broken: due.broken });
   assert.equal(person, 'Homeroom bot can\'t get this change working on its own: "Tapping "mark as done" ticks a chore off and offers undo." didn\'t work when Homeroom tried it. The route needs a schema change I may not make. A person needs to look at it from here.');
-  const revised = followup.checksRevisedText({ summary: 'Mark as done records the member, not the account.', broken: true, failing: false });
-  assert.match(revised, /^Homeroom bot fixed what didn't work on this change: Mark as done records the member/);
-  assert.match(revised, /it is tried again on the new version/);
+  // Run four (13 Oct): what was fixed, in the words of what Homeroom tried,
+  // never the turn's own build note.
+  const revised = followup.checksRevisedText({ broken: due.broken, failing: [] });
+  assert.equal(revised, 'Homeroom bot fixed what didn\'t work when Homeroom tried it: "Tapping "mark as done" ticks a chore off and offers undo". '
+    + 'Homeroom tries it again on the new version.');
+  // One note per update: the cleared votes are the platform's line.
   assert.match(followup.checksPersonText({ why: '', failingCount: 2, broken: due.broken }),
     /2 checks are still failing, and one thing it says it does didn't work when Homeroom tried it\./);
   for (const t of [person, revised]) assert.ok(!/—|PR #|proposal/.test(t), t);
@@ -392,7 +389,7 @@ test('ready to try waits for the shots on its head, and carries what they show f
   const waiting = await dm.changeReadiness(readinessPool(sessionRow({
     shots_state: 'exploring', shots_detail: { headSha: HEAD, required: true, intent: chores() },
   })), 6269);
-  assert.deepEqual(waiting, { ready: false, epoch: 3, waitingOnShots: true, broken: [], title: null });
+  assert.deepEqual(waiting, { ready: false, checked: true, epoch: 3, waitingOnShots: true, broken: [], skipped: [], title: null });
   // #3870: what the change is, for its card: the proposal's title unless it
   // is the placeholder, else the session's.
   const titled = (extra) => dm.changeReadiness(readinessPool(sessionRow(extra)), 6269).then((s) => s.title);
@@ -407,38 +404,31 @@ test('ready to try waits for the shots on its head, and carries what they show f
   assert.deepEqual(failing.broken, [], 'a change that fails its checks is the checks\' round, as before');
 });
 
-test('a change its shots show failing goes back to the bot first; once that round is spent, its card says what is wrong', async (t) => {
-  const bot = require('../src/services/homeroom-bot');
-  const real = bot.noteProposalChecks;
-  t.after(() => { bot.noteProposalChecks = real; });
-
-  let asked = 0;
-  bot.noteProposalChecks = async ({ query }, { sessionId }) => { asked += 1; assert.equal(sessionId, 6269); return true; };
-  const handed = readinessPool(sessionRow());
-  assert.equal(await dm.noteChangeReady(handed, 6269, { bot: { id: 77 }, domain: 'onhomeroom.test' }), null);
-  assert.equal(asked, 1, 'the fix round is asked for');
-  assert.ok(!handed.asked.some((s) => /homeroom_bot_requesters/.test(s)), 'and nobody is told it is ready');
-
-  bot.noteProposalChecks = async () => false;
-  const spent = readinessPool(sessionRow());
-  await dm.noteChangeReady(spent, 6269, { bot: { id: 77 }, domain: 'onhomeroom.test' });
-  assert.ok(spent.asked.some((s) => /homeroom_bot_requesters/.test(s)), 'with no round due, its requester hears');
-
-  // A change whose shots are all fine never asks for a round.
-  let roundAsked = false;
-  bot.noteProposalChecks = async () => { roundAsked = true; return true; };
-  const fine = readinessPool(sessionRow({ shots_detail: { ...sessionRow().shots_detail, shotResults: [{ id: 'invite-suggestions', status: 'ready' }] } }));
-  await dm.noteChangeReady(fine, 6269, { bot: { id: 77 }, domain: 'onhomeroom.test' });
-  assert.equal(roundAsked, false);
+test('a change its shots show failing goes back to the bot first; once that round is spent, its card says what is wrong', () => {
+  // The bot's change machine decides (src/workflow/bot-change/), from the
+  // row, with the rules every caller reads (src/workflow/rules/bot-readiness.ts).
+  const rules = require('../src/workflow/rules/bot-readiness.ts');
+  const row = sessionRow();
+  const r = rules.readiness(row, Date.now());
+  assert.equal(r.checked, true);
+  assert.equal(r.broken.length, 1);
+  assert.ok(rules.checksDue({ ...row, looked: false }), 'a fix round is due: it goes back to the bot first');
+  assert.equal(rules.checksDue({ ...row, looked: true }), null, 'once the round looked at the head, none is: its card goes out, saying what is wrong');
+  const fine = { ...row, shots_detail: { ...row.shots_detail, shotResults: [{ id: 'invite-suggestions', status: 'ready' }] } };
+  assert.equal(rules.checksDue({ ...fine, looked: false }), null, 'a change whose shots are all fine never asks for a round');
 
   const src = read('src/services/homeroom-bot-dm.js');
-  assert.match(src, /if \(approval && !broken\.length\) await noteApproversReady/,
+  assert.match(src, /if \(approval && !broken\.length\) \{\n\s+await noteApproversReady/,
     'nobody else is asked to approve a change part of which does not work');
   const botSrc = read('src/services/homeroom-bot.js');
   assert.match(botSrc, /cs\.shots_state, cs\.shots_detail/, 'the fix round reads the shots on the head');
-  assert.match(botSrc, /if \(broken\.length\) \{\n\s+\(deps\.dm \|\| require\('\.\/homeroom-bot-dm'\)\)\.noteChangeReady\(pool, session\.id/,
-    'a hand-off to a person sends the card that waited on the round');
-  assert.match(botSrc, /sweepHeldReady\?\.\(pool/, 'and a change held past the limit is sent by the refresh');
+  // A hand-off to a person ends the round on the look (its request's
+  // instance answers bot-change FixRoundEnded 'looked'), and the change
+  // machine sends the card that waited on the round.
+  const handOff = botSrc.slice(botSrc.indexOf('const handOff = async ('), botSrc.indexOf("acted: 'checks_person' };"));
+  assert.match(handOff, /\n\s+roundEnded\(\);\n/, 'a hand-off to a person ends the round');
+  assert.match(botSrc, /const roundEnded = \(\) => \{ look\.out\.fix = \{ outcome: 'looked' \}; \};/);
+  assert.doesNotMatch(botSrc, /sweepHeldReady/, 'a change held past the limit is the change machine\'s timer, not the refresh\'s');
 });
 
 test('the card and its message say what does not work instead of "ready to try"', () => {
@@ -471,10 +461,12 @@ test('the card and its message say what does not work instead of "ready to try"'
 
 test('a ready card for a change that does not fully work rings as such, not as "ready to try"', async () => {
   const pool = { async query() { return { rows: [{ members: 2 }] }; } };
-  assert.equal(await dm.notificationDetail(pool, 'ready', { kind: 'proposal', appName: 'Flat 4B Chores', appSlug: 'f', firstVersion: true, ready: { broken: ['x'] } }),
-    'hrbot:ready_broken:Flat 4B Chores');
-  assert.equal(await dm.notificationDetail(pool, 'ready', { kind: 'proposal', appName: 'Flat 4B Chores', appSlug: 'f', firstVersion: true, ready: { broken: [] } }),
-    'hrbot:ready:Flat 4B Chores');
+  const { botMomentCopy } = require('../src/services/homeroom-bot-notify-copy');
+  const said = async (metadata) => botMomentCopy(await dm.notificationDetail(pool, 'ready', metadata));
+  const broken = await said({ kind: 'proposal', appName: 'Flat 4B Chores', appSlug: 'f', firstVersion: true, ready: { broken: ['x'] } });
+  assert.deepEqual([broken.said, broken.body], ['ready_broken', 'Built, but one thing isn\'t working yet. Try it to see.']);
+  const ready = await said({ kind: 'proposal', appName: 'Flat 4B Chores', appSlug: 'f', firstVersion: true, ready: { broken: [] } });
+  assert.deepEqual([ready.said, ready.body], ['ready_first', 'Your first version is ready to try.']);
 });
 
 test('the bot\'s builds are asked to try the main action, not just look at the page', () => {
@@ -492,34 +484,28 @@ test('what does not work travels with the message to every device', () => {
   assert.equal('broken' in normalizeBotMeta({ homeroomBot: { kind: 'proposal', ready: { group: false } } }).homeroomBot.ready, false);
 });
 
-test('the refresh asks again about a change of the bot\'s that waited past the limit on its shots', async () => {
-  const asked = [];
-  const pool = {
-    async query(sql, params) {
-      asked.push({ s: String(sql), params });
-      if (/AND cs\.checks_checked_at <= NOW\(\)/.test(String(sql))) return { rows: [{ id: 6269 }] };
-      return { rows: [] };
-    },
-  };
-  assert.equal(await dm.sweepHeldReady(pool), 1);
-  const sweep = asked[0];
-  assert.match(sweep.s, /u\.username = \$1 AND u\.is_synthetic = TRUE/);
-  assert.match(sweep.s, /cs\.status = 'promoted' AND cs\.check_state IN \('passing', 'skipped'\)/);
-  assert.deepEqual(sweep.params, ['homeroom_bot', shotsState.READY_HOLD_MS, 20 * 60 * 1000]);
-  assert.ok(asked.slice(1).some(({ s, params }) => /FROM chat_sessions WHERE id = \$1/.test(s) && params[0] === 6269),
-    'each one found is asked whether it is ready now');
-  const broken = { async query() { throw new Error('db down'); } };
-  assert.equal(await dm.sweepHeldReady(broken), 0, 'never throws');
+test('a change of the bot\'s held on its shots is held until a time, from the later of its verdict and the slot\'s last move', () => {
+  // The change machine sets its timer there (src/workflow/bot-change/); the
+  // refresh's 20-minute window, which ignored the slot's moves and skipped
+  // whatever a pause of the loop spanned, is gone.
+  const rules = require('../src/workflow/rules/bot-readiness.ts');
+  const now = Date.parse('2026-10-16T12:00:00Z');
+  const row = sessionRow({ shots_state: 'exploring', shots_detail: { headSha: HEAD, required: true, intent: chores() },
+    checks_checked_at: new Date(now - 50 * 60000), shots_updated_at: new Date(now - 10 * 60000) });
+  assert.equal(rules.heldUntil(row, HEAD, now), now - 10 * 60000 + rules.READY_HOLD_MS, 'from the slot\'s last move');
+  assert.equal(rules.heldUntil({ ...row, shots_updated_at: new Date(now - 50 * 60000) }, HEAD, now), null, 'held long enough');
+  assert.equal(typeof dm.sweepHeldReady, 'undefined');
 });
 
 test('with no phone to push to, the email says it is built but not everything works', () => {
   const templates = require('../src/services/mail/templates');
   const unsubscribeUrl = 'https://app.onhomeroom.com/mail/unsubscribe?u=7&t=abc';
   const mail = templates.buildMessage('build_ready', { appName: 'Flat 4B Chores', url: 'https://x/#messages/12', unsubscribeUrl, notWorking: true });
-  assert.equal(mail.subject, 'Flat 4B Chores is built, but not everything works yet');
-  assert.match(mail.text, /Homeroom bot built what you asked for in Flat 4B Chores, but not everything works yet\. Open it to see what\./);
+  // "One story": the push's words (homeroom-bot-notify-copy.js), never "ready to try" alone.
+  assert.equal(mail.subject, 'Flat 4B Chores: Built, but something isn\'t working yet');
+  assert.match(mail.text, /^Built, but something isn't working yet\. Try it to see\./);
   assert.match(mail.text, /To stop these emails/);
   assert.equal(templates.buildMessage('build_ready', { appName: 'Flat 4B Chores', url: 'https://x', unsubscribeUrl }).subject,
-    'Flat 4B Chores is ready to try');
+    'Flat 4B Chores: Ready to try');
   assert.match(read('src/services/homeroom-bot-dm.js'), /metadata\.ready\.broken\.length \? \{ notWorking: true \} : \{\}/);
 });

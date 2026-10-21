@@ -2,6 +2,9 @@ const fs = require('fs');
 const path = require('path');
 const nodeAppPackage = require('../templates/node-app/package.json');
 const nodeAppLock = require('../templates/node-app/package-lock.json');
+// The packages a starter may add on top of the template's (an entry's
+// `dependencies` in services/app-templates.js), with their lockfile entries.
+const extraPackages = require('../templates/node-app/extra-packages.json');
 const appTemplates = require('./app-templates');
 
 // Forwarder snippet injected into every scaffolded app's public/index.html.
@@ -124,7 +127,7 @@ change follows it, and updates it when a request changes the look on purpose.
 
 The kit is in \`styles/tailwind-input.css\`: colour tokens with a light and
 a dark value (named in \`tailwind.config.js\`), and a few components
-(\`btn-primary\`, \`btn-secondary\`, \`field\`, \`list\` and \`list-row\`,
+(\`page-column\`, \`btn-primary\`, \`btn-secondary\`, \`field\`, \`list\`, \`list-row\`,
 \`card\`, \`section-label\`, \`skeleton\`, \`state-empty\`, \`state-error\`).
 Re-theme by changing the token values there, keeping every text pair at
 4.5:1 or more in both looks.
@@ -136,12 +139,17 @@ Re-theme by changing the token values there, keeping every text pair at
 - A field's label says what it is; its placeholder, if any, is an example
   that says so ("e.g. 5.0"), never a bare value that could pass for one
   already entered.
+- Each screen sits in \`page-column\`, one centred column on a wide window.
 - Every screen that loads data has honest loading, empty and error states.
   Never show the empty state while loading or after a failure; an error says
-  what failed, what still works, and offers Retry.
+  what failed, what still works, and offers Retry. Loading has the content's
+  own shape (its rows, with \`skeleton\` bars for their text).
 - Seed obviously fake staging demo data so the populated screen can be seen
   ("Staging mock data" in the platform conventions).
-- No cards in cards, no uppercase eyebrows, no emoji as icons.`;
+- No cards in cards, no uppercase eyebrows, no emoji as icons.
+- A header that shows the app's own mark shows the project's icon there
+  (the emoji in \`dapp.json\`'s \`icon\` block) or no mark at all: never an
+  empty tile, and never \`brand/icon.png\`, which the app does not serve.`;
 
 // The design kit's half of styles/tailwind-input.css, after the three
 // @tailwind lines. Part of the Tailwind build every new app shares (a
@@ -210,6 +218,14 @@ const DESIGN_KIT_CSS = `
  * text-small (tailwind.config.js), nothing in between.
  */
 @layer components {
+  /* Each screen's content in one centred column, <main
+     class="page-column">. A phone fills it; a wider window keeps it a
+     readable column instead of stretching rows and buttons across the
+     window. The screen's own padding goes inside it. */
+  .page-column {
+    @apply mx-auto w-full max-w-2xl;
+  }
+
   /* Buttons: one primary per screen, the rest secondary. At least 44 px
      each way, so they are easy to tap. */
   .btn-primary,
@@ -254,7 +270,9 @@ const DESIGN_KIT_CSS = `
   }
 
   /* The states of anything that loads data. Show exactly one at a time:
-     - loading: .skeleton shapes where the data will be, never a blank;
+     - loading: the content's own shape, never a blank: the same list and
+       rows at their height, with .skeleton bars where their text goes, so
+       nothing moves when the data arrives;
      - empty, only when the load WORKED and found nothing: a title, one
        sentence and the action that fills it;
      - error, only when the load FAILED: what failed, what still works,
@@ -310,6 +328,30 @@ const FRESHNESS_HOOK_SCRIPT = fs.readFileSync(
   path.join(__dirname, '..', 'templates', 'app-scaffold', 'homeroom-freshness.sh'),
   'utf8'
 );
+
+// #5118: the handler Homeroom calls when a person deletes their account or
+// asks for their data (POST /usernode/user-deletion, GET
+// /usernode/user-export; "Your people's data" in the conventions). A real
+// file outside src/ so it can be required and tested as itself, and so
+// check-sql.js leaves its queries (an app database's, not the platform's)
+// alone.
+const USER_DATA_PATH = 'usernode-user-data.js';
+const USER_DATA_SCRIPT = fs.readFileSync(
+  path.join(__dirname, '..', '..', 'app-templates', '_scaffold', USER_DATA_PATH),
+  'utf8'
+);
+
+// A ready-made app's live updates: GET /api/changes, an event stream that
+// tells every open screen when a write succeeds (live-updates.js, mounted by
+// server.js), and the page's half that listens and fetches again
+// (public/live-updates.js). Real files for the same reasons as the one
+// above. Only a ready-made app gets them: a game starter has its own live
+// connection (game/live.js), and Empty has no screen that shares anything.
+const LIVE_PATHS = ['live-updates.js', 'public/live-updates.js'];
+const LIVE_FILES = LIVE_PATHS.map((rel) => ({
+  path: rel,
+  content: fs.readFileSync(path.join(__dirname, '..', '..', 'app-templates', '_scaffold', rel), 'utf8'),
+}));
 
 // The one-line file naming the app's canonical repository, which the hook
 // above compares HEAD against. Platform-written rather than part of the
@@ -499,13 +541,17 @@ connector registered under some other name.
 // the same for every new app. EMPTY_SERVER carries no routes and no tables:
 // the starter screen is static (#4047 removed the Press! demo it served),
 // so there is nothing for the scaffold to mount until the app's first real
-// feature adds its own. STARTER_SERVER mounts a starter's api.js
-// (services/app-templates.js) and adds the graceful shutdown the platform
-// conventions ask for.
+// feature adds its own. starterServer mounts a starter's api.js
+// (services/app-templates.js), a ready-made app's live updates before it
+// (LIVE_FILES), and adds the graceful shutdown the platform conventions ask
+// for.
 const EMPTY_SERVER = {
   health: `app.get('/health', (_req, res) => res.json({ status: 'ok' }));
 `,
   routes: '',
+  page: '',
+  staticOptions: '',
+  sendPage: `res.sendFile(path.join(__dirname, 'public', 'index.html'));`,
   start: `async function start() {
   const server = app.listen(port, () => console.log(\`Listening on :\${port}\`));
   // Let Envoy retire idle upstream connections at 60s, with a 15s margin.
@@ -515,26 +561,73 @@ const EMPTY_SERVER = {
 `,
 };
 
-const STARTER_SERVER = {
-  health: `// 503 once a shutdown has begun, so anything polling readiness sees the
+// A starter's page carries no project's name: `{{APP_NAME}}` stands where
+// it shows, and server.js fills it in from USERNODE_APP_NAME each time the
+// page is served (starterPage). So every project made from one ready-made
+// app is the same code, and runs the same prebuilt image
+// (services/starter-images.js); `fallback` is the name a plain local
+// `node server.js`, with no platform around it, shows instead.
+function starterPage(fallback) {
+  return `// The screen, with this project's name in it. The name is not written into
+// public/index.html: the platform hands it to the container
+// (USERNODE_APP_NAME), so every project made from the same Homeroom starter
+// runs the same code, and a renamed project shows its new name from its next
+// deploy. {{APP_NAME}} in the page is where it goes, escaped for HTML.
+// Served here rather than by express.static below, which would send the
+// placeholder; like the static file it replaces, it needs no sign-in.
+const fs = require('fs');
+const APP_NAME = process.env.USERNODE_APP_NAME || ${JSON.stringify(fallback)};
+function escapeHtml(text) {
+  return String(text).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+function page() {
+  return fs.readFileSync(path.join(__dirname, 'public', 'index.html'), 'utf8')
+    .replace(/\\{\\{APP_NAME\\}\\}/g, escapeHtml(APP_NAME));
+}
+app.get(['/', '/index.html'], (_req, res) => res.type('html').send(page()));
+
+`;
+}
+
+// A ready-made app's live updates (LIVE_FILES), mounted before api.js so
+// the write hook hears every write api.js answers.
+const LIVE_ROUTES = `// Live updates (live-updates.js): GET /api/changes tells every screen
+// that is open when a write to /api/* succeeds, so each one fetches what it
+// shows again at once.
+const changes = require('./live-updates').mount(app);
+
+`;
+
+function starterServer(starter) {
+  // A game starter keeps its own live connection (game/live.js) instead.
+  const withLive = !!starter.ready;
+  return {
+    page: starterPage(starter.title),
+    staticOptions: ', { index: false }',
+    sendPage: `res.type('html').send(page());`,
+    health: `// 503 once a shutdown has begun, so anything polling readiness sees the
 // container leaving rotation rather than a connection reset.
 let shuttingDown = false;
 app.get('/health', (_req, res) => res.status(shuttingDown ? 503 : 200).json({ status: shuttingDown ? 'stopping' : 'ok' }));
 `,
-  routes: `// This app's own routes and tables live in api.js, which came from a
+    routes: `${withLive ? LIVE_ROUTES : ''}// This app's own routes and tables live in api.js, which came from a
 // Homeroom starter template. Everything it mounts is behind the sign-in
 // check above, so req.user is always set there.
 const api = require('./api');
 api.routes(app, pool);
 
 `,
-  start: `async function start() {
+    start: `async function start() {
   // Tables are created idempotently on every boot; a staging preview also
   // gets a few obviously fake rows (see migrate() in api.js).
   await api.migrate(pool);
   const server = app.listen(port, () => console.log(\`Listening on :\${port}\`));
   // Let Envoy retire idle upstream connections at 60s, with a 15s margin.
   server.keepAliveTimeout = 75_000;
+  // A starter that keeps live connections (a game's, game/live.js) takes
+  // them on this same server, with its own sign-in check: the middleware
+  // above never sees a WebSocket upgrade.
+  const live = typeof api.attach === 'function' ? api.attach(server) : null;
 
   // Every deploy stops this container with SIGTERM. Stop accepting
   // connections, let in-flight requests finish under a short deadline,
@@ -544,7 +637,8 @@ api.routes(app, pool);
     if (shuttingDown) return;
     shuttingDown = true;
     console.log(\`[shutdown] \${signal} received, draining\`);
-    server.close(() => {});
+    if (live && typeof live.close === 'function') live.close();
+${withLive ? '    changes.close();\n' : ''}    server.close(() => {});
     server.closeIdleConnections?.();
     const timer = setTimeout(() => server.closeAllConnections?.(), DRAIN_MS);
     timer.unref?.();
@@ -560,7 +654,8 @@ api.routes(app, pool);
 }
 
 `,
-};
+  };
+}
 
 // repoUrl is the app's canonical GitHub repository; with it the scaffold
 // includes the pointer file the freshness check reads. A local build with no
@@ -571,7 +666,7 @@ api.routes(app, pool);
 // non-default rule is written into dapp.json's `governance` block, the
 // rule's source of truth, so the repository says what the row says from its
 // first commit. The default rule writes nothing: dapp.json stays
-// `{ "secrets": [] }`.
+// `{ "category": "other", "secrets": [], "tests": [] }`.
 //
 // `description` is the create screen's optional "What is it?" line. It
 // becomes dapp.json's top-level `description` (what the join screen,
@@ -585,7 +680,10 @@ function getTemplateFiles(appName, slug, dbUrl, repoUrl = null, { governance = n
   // starter swaps in its own screen, api.js, README and checks.
   const starter = template == null || template === appTemplates.DEFAULT_TEMPLATE ? null : appTemplates.get(template);
   if (template != null && !appTemplates.isTemplate(template)) throw new Error(`Unknown app template: ${template}`);
-  const server = starter ? STARTER_SERVER : EMPTY_SERVER;
+  const server = starter ? starterServer(starter) : EMPTY_SERVER;
+  // A starter's own packages (a game's `ws`), added to package.json and its
+  // lockfile so the image's `npm ci` installs them.
+  const extraDeps = starter && starter.dependencies ? extraDependencies(starter) : null;
   const governanceBlock = require('./create-options').governanceBlock(governance);
   const about = typeof description === 'string' && description.trim() ? description.trim() : null;
   // The first session's card (services/app-sketch.js): its emoji is the
@@ -598,7 +696,9 @@ function getTemplateFiles(appName, slug, dbUrl, repoUrl = null, { governance = n
   // one.
   const card = sketch ? require('./app-sketch').cardOf(sketch.design) : null;
   const callerEmoji = typeof iconEmoji === 'string' && iconEmoji.trim() ? iconEmoji.trim() : null;
-  const icon = starter ? { emoji: starter.icon }
+  // A game starter becomes the game its creator described, so the card's
+  // emoji (drawn from their words) comes before the starter's own.
+  const icon = starter && (starter.ready || !card) ? { emoji: starter.icon }
     : (card ? { emoji: card.emoji }
     : (callerEmoji ? { emoji: callerEmoji } : null));
   // The welcome card's thumbnail tile, the app's face on Home
@@ -614,35 +714,32 @@ function getTemplateFiles(appName, slug, dbUrl, repoUrl = null, { governance = n
       path: 'CLAUDE.md',
       content: `# ${appName} — notes for Claude Code
 
-This app runs on **Homeroom**. If you're Claude Code
-editing this repo, read the platform conventions before making
-changes:
+This app runs on **Homeroom**. The platform conventions are the single
+source of truth for platform-wide behavior (auth model, \`USERNODE_ENV\`,
+public/private tables, "don't \`git push\`", etc.):
 
 **Platform conventions (authoritative, always current):**
 ${PLATFORM_BASE_URL}/claude.md
 
-Fetch that URL at the start of each session — it's the single source
-of truth for platform-wide behavior (auth model, \`USERNODE_ENV\`,
-public/private tables, "don't \`git push\`", etc.). The hosted copy is
+**Inside Homeroom** (its dev chat, and Homeroom bot's builds), do not
+fetch that URL: what applies to your change is already in your
+instructions, and the \`homeroom\` MCP server's
+\`get_platform_conventions\` reads any one section of the conventions
+when you need it. The two sections below are for working outside
+Homeroom; skip them there.
+
+**Anywhere else** (Claude Code run against this repo locally, or another
+harness), fetch it at the start of each session. The hosted copy is
 updated in place when platform rules change, so fetching it gives you
 today's rules, not a stale snapshot.
 
-When running inside Homeroom's dev-chat, those same conventions are
-already injected into your system prompt, so the fetch is a no-op in
-that path — but it's the right reflex when someone runs Claude Code
-against this repo locally or from another harness.
-
-## Connector permission prompts
+## Connector permission prompts (outside Homeroom)
 
 This repo ships \`.claude/settings.json\`, which allows the **read-only**
 Homeroom connector calls (\`mcp__${CONNECTOR_SERVER_NAME}__get_*\`,
-\`…__list_*\`, \`…__whoami\`) so they stop prompting one at a time. Everything
-that acts — filing a request, opening or advancing a proposal — still asks.
-Claude Code applies those rules only after you accept the
-workspace trust dialog, which lists them for review. See \`.claude/README.md\`
-for the whole story, including what to do if you are still being prompted
-(usually: your connector is registered under a different name than the rules
-assume).
+\`…__list_*\`, \`…__whoami\`) once you accept the workspace trust dialog.
+See \`.claude/README.md\` for the whole story, including what to do if you
+are still being prompted.
 
 ## Check that this checkout is current
 
@@ -669,8 +766,9 @@ answers the same question.
 
 A session-start hook (\`${FRESHNESS_HOOK_PATH}\`, see \`.claude/README.md\`) runs
 this check for you and tells you when you are behind. It is silent offline, so
-its silence is not proof the checkout is current. Inside Homeroom's dev-chat
-the platform fixes the base commit, and none of this applies.
+its silence is not proof the checkout is current. Inside Homeroom (its dev
+chat, and Homeroom bot's builds) the platform fixes the base commit, and none
+of this applies.
 
 ${starter ? starterClaudeSection(starter) : `## Starter template
 
@@ -705,6 +803,15 @@ tables you've marked private), etc.
 
 ${about ? `${about}\n\n_(add a sentence or two more of product context here so Claude Code has a\nshared understanding of what this app is for)_` : `_(add a sentence or two of product context here so Claude Code has a
 shared understanding of what this app is for)_`}
+
+## Your people's data
+
+\`usernode-user-data.js\` erases a person's rows when they delete their
+Homeroom account, and exports them when they ask for a copy. By default it
+covers every table with a \`user_id\` (or \`usernode_pubkey\`) column. When
+you add a table that keys a person's rows another way (\`author_id\`), add it
+to \`OWNED_BY\`; when a table's \`user_id\` is not the person the row is
+about, add it to \`SKIP\`. Keep the file and its mount in \`server.js\`.
 
 ${DESIGN_CLAUDE_SECTION}
 
@@ -758,23 +865,36 @@ carries the app-specific notes and points at the platform rules.
 Once the real app exists, rewrite this README to describe it.
 `,
     },
+    // The package files are the starter's own, the same bytes in every app
+    // made from it: no slug or name of this app's goes into them (they
+    // carried both until October 2026). The image's `COPY package.json
+    // package-lock.json` and the `npm ci` after it are then the same steps
+    // for every copy of a starter, so a new app's first build is served
+    // them from the starter's shared layer cache instead of installing
+    // cold (services/kubernetes-buildkit.js, "The starter's shared
+    // cache"). That cache is named by a hash of these two files and the
+    // Dockerfile below, so every starter that writes the same bytes, the
+    // empty scaffold included, shares one. Nothing reads either field: the
+    // app is named by dapp.json, its README, CLAUDE.md and its screen.
     {
       path: 'package.json',
       content: JSON.stringify({
         ...nodeAppPackage,
-        name: slug,
-        description: appName,
+        ...(extraDeps ? { dependencies: sortedKeys({ ...nodeAppPackage.dependencies, ...extraDeps.ranges }) } : {}),
       }, null, 2),
     },
     {
       path: 'package-lock.json',
       content: JSON.stringify({
         ...nodeAppLock,
-        name: slug,
-        packages: {
+        packages: extraDeps ? sortedKeys({
           ...nodeAppLock.packages,
-          '': { ...nodeAppLock.packages[''], name: slug },
-        },
+          '': {
+            ...nodeAppLock.packages[''],
+            dependencies: sortedKeys({ ...nodeAppLock.packages[''].dependencies, ...extraDeps.ranges }),
+          },
+          ...extraDeps.packages,
+        }, '') : nodeAppLock.packages,
       }, null, 2),
     },
     {
@@ -905,6 +1025,12 @@ module.exports = {
 ${DESIGN_KIT_CSS}`,
     },
     {
+      // What the image leaves out. Past the usual, the files only people and
+      // the platform read from the repository (its README, notes, licence,
+      // manifest and the first session's card), which name the project: the
+      // image then holds nothing of one project's, so every project made
+      // from the same starter builds the same image, and a ready-made app
+      // deploys the one already built (services/starter-images.js).
       path: '.dockerignore',
       content: `.env
 .env.*
@@ -912,6 +1038,11 @@ ${DESIGN_KIT_CSS}`,
 .claude
 node_modules
 public/tailwind.css
+README.md
+CLAUDE.md
+LICENSE
+dapp.json
+design
 `,
     },
     {
@@ -924,6 +1055,16 @@ public/tailwind.css
 test-results/
 playwright-report/
 `,
+    },
+    // #5120 (compliance plan X-07, decided in T-15): every change merged
+    // into an app, by a person or a bot, comes in under MIT, and Usernode
+    // claims no ownership of app code (L-08), so the copyright line names the
+    // app's contributors. No year: the same create writes the same file. A
+    // starter, a game and a healed repo all get it; an import or a fork
+    // keeps whatever licence its own tree carries.
+    {
+      path: 'LICENSE',
+      content: mitLicense(appName),
     },
     {
       path: 'project.toml',
@@ -973,12 +1114,20 @@ value = "build"
       content: JSON.stringify(
         {
           ...(about ? { description: about } : {}),
+          // What kind of app it is, for Discover's "Filter by type" chips
+          // (#3962; app-manifest.js APP_CATEGORIES has the set). A game
+          // starter is a game; anything else starts as `other`, a line the
+          // group changes by proposal once it knows what it is making.
+          category: starter && starter.kind === 'game' ? 'games' : 'other',
           // A starter's tile icon, else the first session card's, and the
-          // checks a starter's first proposal runs.
+          // checks a starter's first proposal runs. The empty starter ships
+          // an empty `tests` array, so the key its checks go under is there
+          // from the first commit: App bench run 191's builds wrote theirs
+          // under `checks`, which the platform never reads.
           ...(icon ? { icon } : {}),
           secrets: [],
           ...(governanceBlock ? { governance: governanceBlock } : {}),
-          ...(starter ? { tests: starter.tests } : {}),
+          tests: starter ? starter.tests : [],
         },
         null,
         2,
@@ -995,6 +1144,8 @@ value = "build"
     // an import's or a fork's (getConnectorScaffoldFiles): those bring their
     // own look.
     ...require('./design-skill').skillFiles(),
+    { path: USER_DATA_PATH, content: USER_DATA_SCRIPT },
+    ...(starter && starter.ready ? LIVE_FILES : []),
     {
       path: 'server.js',
       content: `const express = require('express');
@@ -1061,6 +1212,10 @@ app.use(express.json());
 // USERNODE_PLATFORM_ORIGIN there too if you want the hosted assets locally.
 const PLATFORM_ORIGIN = (process.env.USERNODE_PLATFORM_ORIGIN || '')
   .replace(/\\/+$/, '');
+// This project's address on the platform (/app/<slug>), from the variable the
+// platform injects, and not written in here either: every project made from
+// the same starter is then the same code. Unset only outside the platform.
+const APP_SLUG = process.env.USERNODE_APP_SLUG || '';
 
 app.get(/^\\/usernode-(?:bridge|native|tailwind)\\//, async (req, res) => {
   try {
@@ -1078,6 +1233,13 @@ app.get(/^\\/usernode-(?:bridge|native|tailwind)\\//, async (req, res) => {
     return res.sendStatus(502);
   }
 });
+
+// Homeroom's requests about one person's data: erase it when they delete
+// their account, export it when they ask for a copy. Mounted BEFORE the
+// sign-in check because they carry a platform token of their own, which
+// usernode-user-data.js verifies. When you add a table, check that file's
+// OWNED_BY and SKIP lists ("Your people's data" in the platform conventions).
+require('./usernode-user-data').mount(app, pool);
 
 // "Now" for this request, as a Date: \`req.now\`, set for every request by
 // the middleware below. Read the day and the time through it (and
@@ -1152,7 +1314,7 @@ ${server.health}
 // fresh load.
 app.get('/favicon.ico', (_req, res) => res.status(204).end());
 
-${server.routes}app.use(express.static(path.join(__dirname, 'public')));
+${server.routes}${server.page}app.use(express.static(path.join(__dirname, 'public')${server.staticOptions}));
 
 // HTML shell: serve the app if authenticated. Unauthenticated top-level
 // visits (share links pasted into a browser — Sec-Fetch-Dest: document)
@@ -1174,19 +1336,20 @@ app.get('*', (req, res) => {
     // unusual falls back to the bare link.
     const deepPath = /^\\/[A-Za-z0-9\\-._~!$&()*+,;=:@\\/%?]*$/.test(req.originalUrl)
       ? '?path=' + encodeURIComponent(req.originalUrl) : '';
+    const appPath = APP_SLUG ? '/app/' + encodeURIComponent(APP_SLUG) + '/full' + deepPath : '';
     if (PLATFORM_ORIGIN && req.get('sec-fetch-dest') === 'document') {
-      return res.redirect(302, PLATFORM_ORIGIN + '/app/${slug}/full' + deepPath);
+      return res.redirect(302, PLATFORM_ORIGIN + appPath);
     }
     return res.status(401).send(\`<!doctype html><meta charset=utf-8><title>Open in Homeroom</title>
 <body style="font-family:system-ui;background:#09090b;color:#e4e4e7;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0">
   <div style="max-width:24rem;padding:2rem;text-align:center">
     <h1 style="font-size:1.25rem;margin:0 0 0.5rem">Open this app inside Homeroom</h1>
     <p style="color:#a1a1aa;font-size:0.9rem;margin:0 0 1.25rem">This page is served via the platform; direct visits aren't authenticated.</p>
-    <a href="\${PLATFORM_ORIGIN}/app/${slug}/full\${deepPath}" style="display:inline-block;padding:0.5rem 1rem;background:#7c3aed;color:white;border-radius:0.5rem;text-decoration:none;font-size:0.9rem">Open in Homeroom</a>
+    <a href="\${PLATFORM_ORIGIN}\${appPath}" style="display:inline-block;padding:0.5rem 1rem;background:#7c3aed;color:white;border-radius:0.5rem;text-decoration:none;font-size:0.9rem">Open in Homeroom</a>
   </div>
 </body>\`);
   }
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+  ${server.sendPage}
 });
 
 ${server.start}start().catch(err => { console.error(err); process.exit(1); });
@@ -1277,15 +1440,27 @@ ${server.start}start().catch(err => { console.error(err); process.exit(1); });
   // A starter's own screen replaces the Press! page, and its api.js and
   // scripts join the shared plumbing.
   // The entry's own `fill` (what a tier list ranks) lands in the page's
-  // markup, so it is escaped like the name.
+  // markup, so it is escaped. The project's name is not filled in: its
+  // `{{APP_NAME}}` stays for server.js to fill at runtime (starterPage).
   const own = appTemplates.starterFiles(template, {
     ...Object.fromEntries(Object.entries(starter.fill || {}).map(([key, value]) => [key, escapeHtml(value)])),
-    APP_NAME: escapeHtml(appName),
     DEV_CONSOLE_FORWARDER: DEV_CONSOLE_FORWARDER.trim(),
   });
   const ownPaths = new Set(own.map((f) => f.path));
   const all = [...files.filter((f) => !ownPaths.has(f.path)), ...own];
   return card ? withCard(all, appName, sketch) : all;
+}
+
+// A starter's files with the project's name written into its page, for a
+// caller that serves the page itself or runs it under another project's
+// name: the App bench, whose previews run as its host app
+// (services/bench/scaffold.js, taste.js), and the example pictures
+// (scripts/render-starter-examples.js). A new project keeps `{{APP_NAME}}`
+// for its server.js (starterPage); the empty scaffold has none to fill.
+function fillAppName(files, appName) {
+  return files.map((f) => (f.path === 'public/index.html'
+    ? { ...f, content: f.content.replace(/\{\{APP_NAME\}\}/g, escapeHtml(appName)) }
+    : f));
 }
 
 // The first session's card (services/app-sketch.js), when it was ready in
@@ -1301,9 +1476,12 @@ function withCard(files, appName, sketch) {
 
 // The CLAUDE.md section a starter writes in place of the Press! example's.
 // Same job: tell the coding agent what the app already is and what to keep.
-// A starter is a ready-made app (services/app-templates.js), so its screen
-// carries no "started from a template" notice to delete: it is the app.
+// A ready-made starter is the app (services/app-templates.js), so its screen
+// carries no "started from a template" notice to delete. A game starter is
+// a working game its first version turns into the one its creator described
+// (gameClaudeSection).
 function starterClaudeSection(starter) {
+  if (!starter.ready) return gameClaudeSection(starter);
   return `## Starter template: ${starter.title}
 
 This app was created from Homeroom's ready-made **${starter.title}**.
@@ -1317,10 +1495,22 @@ Where things are:
   \`server.js\` mounts it after the sign-in check and runs \`migrate()\`
   on boot, which also seeds a few obviously fake rows in a staging preview.
 - \`public/index.html\` and \`public/app.js\`: the screen.
+- \`live-updates.js\` and \`public/live-updates.js\`: live updates. Every
+  write to \`/api/*\` that succeeds tells each open screen over
+  \`GET /api/changes\` (an event stream saying only that something
+  changed), and a screen that shows what other people do fetches again
+  (\`LiveUpdates.watch\` in \`public/app.js\`). A route added to \`api.js\` is
+  covered by itself; a change made any other way (a timer, a job) calls
+  \`require('./live-updates').notify()\`.
 - \`dapp.json\` \`tests\`: the checks every proposal runs. Keep them passing,
   and change them when you change what they look for.
 
 Update \`README.md\` when what the app does changes.
+
+\`{{APP_NAME}}\` in \`public/index.html\` is not a leftover: \`server.js\` fills
+it in with the project's name (\`USERNODE_APP_NAME\`, which the platform
+sets) each time it serves the page, so the name follows the project when it
+is renamed. Keep it wherever the name shows.
 
 Keep the \`usernode-dev-console@1\` forwarder \`<script>\` and the bridge
 \`<script>\` when rewriting the HTML: both are platform infrastructure.
@@ -1333,7 +1523,75 @@ ${themeClaudeNote({ how: 'the design kit\'s colour tokens carry both', where: '"
 `;
 }
 
+// A game starter (services/app-templates.js, `kind: 'game'`): a working
+// multiplayer game on the shared game room, which Homeroom bot's first
+// version changes into the game its creator described. This is what tells
+// that build, and every later one, what is already there.
+function gameClaudeSection(starter) {
+  return `## Starter template: ${starter.title}
+
+This app was created from Homeroom's **${starter.title}**: ${starter.summary}
+It is a working game, and its first version is the game its creator
+described, built ON it: keep what fits, change what does not, and replace
+the example game's rules and screen freely. Never delete the game room
+layer to start over; it is what makes the game multiplayer.
+
+Where things are:
+
+- \`game/room.js\` and \`game/live.js\`: the game room. Who is playing, the
+  lobby, starting a game, turns, timers or a live tick, each player's view,
+  saved results and the leaderboard, kept in Postgres (tables
+  \`game_rooms\` and \`game_results\`) and sent to every player over one
+  WebSocket (\`/api/live\`), with \`GET /api/room\` and \`POST /api/room/*\`
+  as the same thing over plain requests. It knows nothing about the game.
+  Its header comment is the contract a game's rules keep.
+- \`game/rules.js\`: this game's rules, as plain functions of the game's
+  state: set up a game, apply a move, what each player may see, when it is
+  over and who won. Most changes to how the game plays happen here.
+- \`api.js\`: wires the rules into the room${starter.tables ? ', and keeps ' + starter.tables : ''}.
+  \`server.js\` mounts it after the sign-in check, runs \`migrate()\` on
+  boot (which also seeds a few obviously fake rows in a staging preview)
+  and hands it the server for the live connection (\`attach\`).
+- \`public/game/room.js\`: the page's side of the room: the live
+  connection, falling back to asking every couple of seconds, and
+  \`join()\`, \`start()\`, \`act(move)\`, \`input(controls)\`.
+- \`public/index.html\` and \`public/app.js\`: the screens (a title screen with
+  the lobby, then the game filling the screen), and \`public/scene.css\`: the
+  game's own look.
+${starter.notes ? `${starter.notes}
+` : ''}- \`dapp.json\` \`tests\`: the checks every proposal runs. Keep them passing,
+  and change them when you change what they look for.
+
+Rules the room keeps for you, and a new game should too:
+
+- The server decides. A move is checked by \`rules.act\` on the server; the
+  page only shows the result. A guest (no account) can watch, never play.
+- Time on the server is \`Date.now()\` inside the room: games run on real
+  time, not a preview's chosen \`req.now\`.
+- Content rules: no weapons, combat or attacking characters, and no
+  gambling or wagering. Shooting games are out; breaking rocks, racing,
+  building and quizzes are fine.
+
+Update \`README.md\` when what the game does changes.
+
+\`{{APP_NAME}}\` in \`public/index.html\` is not a leftover: \`server.js\` fills
+it in with the project's name (\`USERNODE_APP_NAME\`, which the platform
+sets) each time it serves the page, so the name follows the project when it
+is renamed. Keep it wherever the name shows.
+
+Keep the \`usernode-dev-console@1\` forwarder \`<script>\` and the bridge
+\`<script>\` when rewriting the HTML: both are platform infrastructure.
+The page around the game is built from the design kit, which is not
+placeholder either; a game drawn as its own scene may keep one look of its
+own, and should say so under "## Design".
+
+${themeClaudeNote({ how: 'the design kit\'s colour tokens carry both', where: '"## Design"' })}
+
+`;
+}
+
 function starterReadme(appName, starter) {
+  if (!starter.ready) return gameReadme(appName, starter);
   return `# ${appName}
 
 > **Ready-made.** This repo was scaffolded by Homeroom as its ready-made
@@ -1364,13 +1622,100 @@ platform rules.
 `;
 }
 
+// A game starter's README: what the example game does, and that the
+// project's first version turns it into the game its creator described.
+function gameReadme(appName, starter) {
+  return `# ${appName}
+
+> **Game starter.** This repo was scaffolded by Homeroom from its
+> **${starter.title}**, a game that already works and is multiplayer.
+> Homeroom bot builds the game its creator described on top of it.
+
+${starter.summary}
+
+What the starter already does:
+
+${starter.features.map((f) => `- ${f}`).join('\n')}
+
+And what every Homeroom app gets:
+
+- **Sign-in**: the server verifies the platform-issued user token (an
+  RS256 JWT) on every request and every live connection, so the game
+  already knows who is playing.
+- **Database**: the app has its own Postgres database. Its tables are
+  created on boot by \`api.js\` and \`game/room.js\`.
+- **Styling**: Tailwind CSS, precompiled by \`npm run build\` during image
+  creation, following the platform's light or dark theme.
+
+## Changing it
+
+To change this game, ask Homeroom bot: open the app on Homeroom, tap the
+Homeroom icon in the header, then **Suggest an improvement**, and describe
+what you want in plain English. You can also run Claude Code against this
+repo directly; start with \`CLAUDE.md\`, which says where the game's rules
+live and points at the platform rules.
+`;
+}
+
+// An object with its keys in order (`first` leading), the way npm writes
+// package.json dependencies and a lockfile's packages.
+function sortedKeys(obj, first = null) {
+  const keys = Object.keys(obj).sort((a, b) => (a === first ? -1 : b === first ? 1 : a.localeCompare(b)));
+  return Object.fromEntries(keys.map((k) => [k, obj[k]]));
+}
+
+// A starter's `dependencies` (names from extra-packages.json): their ranges
+// for package.json and the lockfile entries `npm ci` installs them from.
+function extraDependencies(starter) {
+  const ranges = {};
+  let packages = {};
+  for (const name of starter.dependencies) {
+    const extra = extraPackages[name];
+    if (!extra) throw new Error(`Starter ${starter.id} needs ${name}, which src/templates/node-app/extra-packages.json does not lock`);
+    ranges[name] = extra.range;
+    packages = { ...packages, ...extra.packages };
+  }
+  return { ranges, packages };
+}
+
+// The standard MIT text (https://opensource.org/license/mit), unchanged but
+// for the copyright line.
+function mitLicense(appName) {
+  return `MIT License
+
+Copyright (c) The ${appName} contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+`;
+}
+
 function escapeHtml(str) {
   return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
 module.exports = {
   getTemplateFiles,
+  fillAppName,
   getConnectorScaffoldFiles,
+  // The Empty starter's design kit (its tokens and components), for the
+  // early first look's prompt (first-version-early-look.js).
+  DESIGN_KIT_CSS,
   getCanonicalRepoFile,
   canonicalRepoUrl,
   CANONICAL_REPO_PATH,

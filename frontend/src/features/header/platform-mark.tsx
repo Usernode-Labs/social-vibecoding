@@ -62,6 +62,7 @@ import { useRef } from 'react';
 
 import { ChevronDownIcon, SpinnerRingIcon } from '@/components/ui/icons';
 
+import { useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import { appContextStore } from '../app-context/app-context-store.js';
@@ -105,9 +106,9 @@ import { improveStore } from '../improve/improve-store.js';
 const WORKING_DOT_CLS =
   'absolute -top-1.5 -right-1.5 flex items-center justify-center w-[15px] h-[15px] rounded-full '
   + 'bg-zinc-200 text-violet-600 dark:bg-zinc-900 dark:text-violet-400';
-const WORKING_TITLE = 'One of your changes is building';
 
 export function PlatformMark() {
+  const t = useMessages();
   // The trigger reports its surface's state, read from the store rather than
   // written onto the node: the sheet has two other ways to close (backdrop,
   // Escape) and a trigger that only hears about the ones routed through
@@ -142,10 +143,10 @@ export function PlatformMark() {
                  text-[color:var(--brand-ink)]"
       aria-haspopup="dialog"
       aria-expanded={open ? 'true' : 'false'}
-      aria-label="Homeroom menu"
+      aria-label={t('core:header.homeroomMenu')}
       /* What the spinner means, on hover (#3015). The menu this opens says
          it too, for a touch screen (../improve/actions.tsx UpdateStatus). */
-      title={working ? WORKING_TITLE : undefined}
+      title={working ? t('core:header.changeBuilding') : undefined}
       onClick={() => (window as unknown as {
         AppContext?: { toggle?: () => void };
       }).AppContext?.toggle?.()}

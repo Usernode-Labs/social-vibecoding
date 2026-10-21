@@ -252,3 +252,96 @@ test('the streak column is what the planner says it is', async (t) => {
     await client.end().catch(() => {});
   }
 });
+
+// ── Graduating on MERGE (9 Oct 2026) ─────────────────────────────────────
+//
+// The fix for the Custom domain check passed it on its own preview, and
+// that one unmerged pass made the check block ~15 proposals without the
+// fix. A pass now blocks its own proposal at once and everybody once that
+// proposal merges. Three statements carry it, and all three use what only
+// the planner can check: an array union with a NOT EXISTS, a writable CTE
+// feeding an UPDATE … FROM, and a one-time backfill that has to stay
+// one-time under the idempotent boot.
+
+// The proposal columns, from schema.sql, on the smallest chat_sessions the
+// statements need.
+const SESSION_DDL = [
+  'CREATE TABLE chat_sessions (id INTEGER PRIMARY KEY, app_id INTEGER NOT NULL, status TEXT NOT NULL)',
+  ...(SCHEMA_SQL.match(/^ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS checks_earned_[^;]*;/gm) || []),
+].join(';\n');
+const BACKFILL = (SCHEMA_SQL.match(/^UPDATE app_check_history SET merged_pass_at[^;]*;/m) || [])[0];
+
+test('a pass blocks its own proposal at once and everybody once it merges', async (t) => {
+  const conn = await connect();
+  if (!conn) return t.skip('the pg driver is not installed in this environment');
+  if (conn.error) return t.skip(`no postgres reachable at ${DSN}: ${conn.error}`);
+  const { client } = conn;
+  try {
+    await withSchema(client, async () => {
+      await client.query(SESSION_DDL);
+      await client.query(`INSERT INTO chat_sessions (id, app_id, status) VALUES
+        (7494, 3, 'promoted'), (7499, 3, 'promoted')`);
+      // 'k-main' already blocks everybody (a merged pass); 'k-new' is the
+      // backlog check 7494 fixed.
+      await checkHistory.recordRun(client, 3, [{ checkKey: 'k-main', name: 'm', path: '/m', passed: true }]);
+      await client.query("UPDATE app_check_history SET merged_pass_at = NOW() WHERE check_key = 'k-main'");
+
+      assert.equal(await checkHistory.recordRun(client, 3, [
+        { checkKey: 'k-main', name: 'm', path: '/m', passed: true },
+        { checkKey: 'k-new', name: 'n', path: '/n', passed: true },
+        { checkKey: 'k-red', name: 'r', path: '/r', passed: false },
+      ], { sessionId: 7494 }), 3);
+      const { rows: [own] } = await client.query('SELECT checks_earned_keys FROM chat_sessions WHERE id = 7494');
+      assert.deepEqual(own.checks_earned_keys, ['k-new'],
+        'its own pass is kept, and what blocks everybody already is not stored again');
+
+      const blocking = async (sessionId) => [...await checkHistory.loadGraduated(client, 3, { sessionId })].sort();
+      assert.deepEqual(await blocking(7494), ['k-main', 'k-new'], 'it blocks 7494\'s next head');
+      assert.deepEqual(await blocking(7499), ['k-main'], 'and nobody else\'s while 7494 is unmerged');
+
+      await client.query("UPDATE chat_sessions SET status = 'merged' WHERE id = 7494");
+      assert.deepEqual(await blocking(7499), ['k-main', 'k-new'], 'once 7494 merges, it blocks everybody');
+      const { rows: [settled] } = await client.query('SELECT checks_earned_settled_at FROM chat_sessions WHERE id = 7494');
+      assert.ok(settled.checks_earned_settled_at, 'folded in once');
+      const { rows: [stamp] } = await client.query("SELECT merged_pass_at FROM app_check_history WHERE check_key = 'k-new'");
+      await checkHistory.loadGraduated(client, 3);
+      const { rows: [again] } = await client.query("SELECT merged_pass_at FROM app_check_history WHERE check_key = 'k-new'");
+      assert.equal(again.merged_pass_at.getTime(), stamp.merged_pass_at.getTime(), 'and never restamped');
+
+      // A run that lands after its passes were folded in writes nothing.
+      await checkHistory.recordRun(client, 3, [{ checkKey: 'k-late', name: 'l', path: '/l', passed: true }], { sessionId: 7494 });
+      const { rows: [late] } = await client.query('SELECT checks_earned_keys FROM chat_sessions WHERE id = 7494');
+      assert.deepEqual(late.checks_earned_keys, ['k-new']);
+    });
+  } finally {
+    await client.end().catch(() => {});
+  }
+});
+
+test('the backfill keeps today\'s gate and runs once', async (t) => {
+  assert.ok(BACKFILL, 'schema.sql carries the merged_pass_at backfill');
+  const conn = await connect();
+  if (!conn) return t.skip('the pg driver is not installed in this environment');
+  if (conn.error) return t.skip(`no postgres reachable at ${DSN}: ${conn.error}`);
+  const { client } = conn;
+  try {
+    await withSchema(client, async () => {
+      // A row from before the column: first passed, marker NULL.
+      await client.query(`INSERT INTO app_check_history (app_id, check_key, first_passed_at)
+        VALUES (4, 'k-old', NOW() - INTERVAL '3 days')`);
+      await client.query(BACKFILL);
+      const { rows: [old] } = await client.query("SELECT merged_pass_at, first_passed_at FROM app_check_history WHERE check_key = 'k-old'");
+      assert.equal(old.merged_pass_at.getTime(), old.first_passed_at.getTime(), 'nothing gating today stops gating');
+
+      // A pass recorded now, on an unmerged proposal, survives every later
+      // boot's copy of the same statement.
+      await checkHistory.recordRun(client, 4, [{ checkKey: 'k-now', name: 'n', path: '/n', passed: true }]);
+      await client.query(BACKFILL);
+      const { rows: [now] } = await client.query("SELECT merged_pass_at, merged_pass_known FROM app_check_history WHERE check_key = 'k-now'");
+      assert.equal(now.merged_pass_at, null, 'an unmerged pass is not a merged one, on any boot');
+      assert.equal(now.merged_pass_known, true);
+    });
+  } finally {
+    await client.end().catch(() => {});
+  }
+});

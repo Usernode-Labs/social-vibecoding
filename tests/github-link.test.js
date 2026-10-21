@@ -12,6 +12,7 @@ const path = require('node:path');
 
 const githubLink = require('../src/services/github-link');
 const { shellMarkup } = require('./lib/shell-markup');
+const { message } = require('./lib/platform-i18n');
 
 const SRC = fs.readFileSync(path.join(__dirname, '../src/services/github-link.js'), 'utf8');
 const ROUTE_SRC = fs.readFileSync(path.join(__dirname, '../src/routes/social-identities.js'), 'utf8');
@@ -188,7 +189,9 @@ test('social identity routes own GitHub independently of MCP and preserve review
   // "holds no token" sentence is decided by the module (it depends on the
   // link's `access`), and the audit link is markup, so it moved with the rest
   // of the block into features/settings/social-identity.tsx.
-  assert.match(SETTINGS_SRC, /holds no GitHub access token/);
+  assert.match(SETTINGS_SRC,
+    /noToken: link\.linked && link\.access === 'identity'\s*\? \(provider === 'github'\s*\? tr\('settings:socialIdentity\.row\.noTokenGithub'\)/);
+  assert.match(message('settings:socialIdentity.row.noTokenGithub'), /holds no GitHub access token/);
   assert.match(SOCIAL_TSX, /github\.com\/settings\/applications/);
   assert.match(SOCIAL_TSX, /target="_blank"[\s\S]{0,80}?rel="noopener noreferrer"/,
     'and it is still a top-level link — the shell is framed, github.com is not frameable');

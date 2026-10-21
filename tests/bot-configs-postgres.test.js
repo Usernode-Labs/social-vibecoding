@@ -19,12 +19,8 @@
 //     recorded once; and the numbers come out per version, with a Wilson
 //     interval;
 //   - a pair whose two sides are one commit is left out as identical, never
-//     a tie; the live result's cost is the turn ledger's;
-//   - a restart that catches a first version in its review proposes its
-//     last committed state that booted and records the review as
-//     interrupted, its reviewer calls debited; past a day, even with a turn
-//     still on its session; and the sweep for lost live builds leaves it
-//     alone;
+//     a tie, and one with no screenshots is left out as that, never a boot
+//     that failed; the live result's cost is the turn ledger's;
 //   - a first version given up stops its side builds; two first versions
 //     starting at once never spend past the side builds' week; old review
 //     screenshots go unless a waiting pair shows them.
@@ -36,6 +32,7 @@ const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const { Pool } = require('pg');
+const { asTransition } = require('./lib/as-transition');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL
   || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
@@ -62,13 +59,8 @@ test('bot configurations against the full PostgreSQL schema', { timeout: 180000 
   await admin.query(`CREATE DATABASE ${name}`);
   const url = new URL(DSN); url.pathname = `/${name}`;
   const pool = new Pool({ connectionString: String(url), max: 8 });
-  const live = require('../src/services/homeroom-bot-live');
   const bot = require('../src/services/homeroom-bot');
-  const real = {
-    post: live.post, advanceSeen: live.advanceSeen, mentionTargets: live.mentionTargets, promoteAsBot: live.promoteAsBot,
-  };
   t.after(async () => {
-    Object.assign(live, real);
     bot._resetForTests();
     await pool.end();
     await admin.query(`DROP DATABASE ${name}`);
@@ -216,7 +208,7 @@ test('bot configurations against the full PostgreSQL schema', { timeout: 180000 
   await t.test('a live first version spawns its side builds on the App bench lane, linked to it', async () => {
     runId = await runRow();
     const snapshotId = await snapshotFor(runId);
-    const lane = { woke: 0, wake() { this.woke += 1; } };
+    const lane = { woke: 0, look() { this.woke += 1; } };
     spawned = await configs.spawnSideBuilds(pool, {}, { botRunId: runId, app, snapshotId, current, deps: { lane } });
     assert.deepEqual({ derived: spawned.derived, trials: spawned.trials, skipped: spawned.skipped }, { derived: 1, trials: 1, skipped: 0 });
     assert.equal(lane.woke, 1, 'the lane is woken');
@@ -271,7 +263,7 @@ test('bot configurations against the full PostgreSQL schema', { timeout: 180000 
   await t.test('once the week\'s side budget is spent, a side build is skipped and says why', async () => {
     await pool.query("INSERT INTO platform_settings (key, value) VALUES ('bot_config_side_weekly_cents', '0')");
     const other = await runRow({ issue: 2 });
-    const out = await configs.spawnSideBuilds(pool, {}, { botRunId: other, app, snapshotId: await snapshotFor(other), current, deps: { lane: { wake() {} } } });
+    const out = await configs.spawnSideBuilds(pool, {}, { botRunId: other, app, snapshotId: await snapshotFor(other), current, deps: { lane: { look() {} } } });
     assert.deepEqual({ trials: out.trials, skipped: out.skipped, derived: out.derived }, { trials: 0, skipped: 1, derived: 1 });
     const { rows: [r] } = await pool.query(
       'SELECT status, error FROM bot_config_results WHERE bot_run_id = $1 AND config_version_id = $2', [other, allGlm.id],
@@ -435,71 +427,10 @@ test('bot configurations against the full PostgreSQL schema', { timeout: 180000 
     assert.ok(out.versions.some((v) => v.role === 'retired'), 'retired versions are listed too, last');
   });
 
-  await t.test('a restart in the middle of a review: the last committed state is proposed, the review recorded interrupted', async () => {
-    bot._resetForTests();
-    const posts = [];
-    live.post = async (args) => { posts.push(args.kind); return { postId: posts.length }; };
-    live.advanceSeen = async () => ({ advanced: true });
-    live.mentionTargets = async () => [];
-    const promoted = [];
-    live.promoteAsBot = async ({ sessionId }) => { promoted.push(Number(sessionId)); return { status: 200, body: { ok: true, prNumber: 41 } }; };
-    const deps = {
-      github: {
-        isEnabled: () => true, getBotUsername: async () => 'usernode-bot',
-        async fetchPublicIssue(_o, _r, n) { return { issue: { number: n, title: 'Plant Log', state: 'open' } }; },
-        async fetchIssueComments() { return { comments: [] }; },
-      },
-      ws: {}, sessionLifecycle: {}, domain: 'app.onhomeroom.com', threadContext: { async loadIssueThread() { return { messages: [] }; } },
-      managedOpenRouter: { async usesIncludedKey() { return false; } }, limits: {}, dm: { async noteBuildRestarted() {} },
-    };
-    const { rows: [s] } = await pool.query(
-      `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, is_headless, linked_issues)
-       VALUES ($1, $2, 'dev/homeroom_bot-x', 'paused', FALSE, ARRAY[7]) RETURNING id`,
-      [app.id, botUser.id],
-    );
-    const id = await runRow({ issue: 7 });
-    await pool.query(
-      `UPDATE homeroom_bot_runs SET build_session_id = $2, bot_config_version_id = $3, created_at = NOW() - INTERVAL '5 hours' WHERE id = $1`,
-      [id, s.id, current.id],
-    );
-    await configs.recordResult(pool, { botRunId: id, configVersionId: noReview.id, source: 'round0', status: 'pending' });
-    const state = {
-      state: 'reviewing', reviewer: { model: OPUS, maxRounds: 3, budgetMinutes: 25 }, startedAt: new Date().toISOString(),
-      round0: { sha: 'r0sha', commits: 1, capture: { booted: true, shots: [] }, costUsd: 0.9, activeMs: 1_000_000 },
-      rounds: [{ round: 1, sha: 'r0sha', verdict: 'fix', issues: [] }], finalSha: 'r1sha', finalCommits: 2, buildText: 'Built.\n==== DESCRIPTION ====\nIt logs plants.\n==== END DESCRIPTION ====',
-      updatedAt: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
-    };
-    await bot.recordReviewState(pool, id, state);
-    const { rows: [saved] } = await pool.query('SELECT review_rounds, review_stop, review->>\'state\' AS st FROM homeroom_bot_runs WHERE id = $1', [id]);
-    assert.deepEqual([saved.review_rounds, saved.review_stop, saved.st], [1, null, 'reviewing']);
-
-    // The sweep for lost live builds leaves a run in its review alone.
-    const settled = await bot.settleAbandonedLiveBuilds(pool, await bot.readSettings(pool), deps);
-    assert.equal(settled, 0);
-
-    // No turn on its session, nothing in this process: the review was cut short.
-    assert.equal(await bot.finishInterruptedReviews(pool, {}, deps), 1);
-    assert.deepEqual(promoted, [s.id], 'proposed as it stands');
-    const { rows: [after] } = await pool.query(
-      `SELECT build_ok, build_sha, proposal_session_id, review_stop, review->>'state' AS st FROM homeroom_bot_runs WHERE id = $1`, [id],
-    );
-    assert.deepEqual([after.build_ok, after.build_sha, after.proposal_session_id, after.review_stop, after.st], [true, 'r1sha', s.id, 'interrupted', 'done']);
-    assert.ok(posts.includes('proposal'), 'the proposal is said as any is');
-    const { rows: [msg] } = await pool.query(
-      "SELECT metadata->>'proposalDescription' AS d FROM chat_session_messages WHERE session_id = $1 AND role = 'system'", [s.id],
-    );
-    assert.equal(msg.d, 'It logs plants.', 'described from the build\'s own message, kept with the review');
-    const { rows: res } = await pool.query(
-      'SELECT source, status, built, sha FROM bot_config_results WHERE bot_run_id = $1 ORDER BY source', [id],
-    );
-    assert.deepEqual(res.map((r) => [r.source, r.status, r.built, r.sha]), [['live', 'done', true, 'r1sha'], ['round0', 'done', true, 'r0sha']]);
-    assert.equal(await bot.finishInterruptedReviews(pool, {}, deps), 0, 'once');
-  });
-
   await t.test('a side trial recorded by the lane: its reviewer calls beside the ledger, its branch not kept, its result made', async () => {
     const lanes = require('../src/services/bench/lane');
     const id = await runRow({ issue: 8 });
-    const out = await configs.spawnSideBuilds(pool, {}, { botRunId: id, app, snapshotId: await snapshotFor(id), current, deps: { lane: { wake() {} } } });
+    const out = await configs.spawnSideBuilds(pool, {}, { botRunId: id, app, snapshotId: await snapshotFor(id), current, deps: { lane: { look() {} } } });
     assert.equal(out.trials, 1);
     const { rows: [tr] } = await pool.query('SELECT id, run_id FROM bench_trials WHERE bot_run_id = $1', [id]);
     const { rows: [benchUser] } = await pool.query("INSERT INTO users (username, password, is_synthetic) VALUES ('homeroom_bench', 'x', TRUE) RETURNING id");
@@ -512,7 +443,7 @@ test('bot configurations against the full PostgreSQL schema', { timeout: 180000 
        VALUES ($1, $2, $3, 'codex_openrouter', 'completed', $4, 0.3, 1000, 100)`,
       [crypto.randomUUID(), sess.id, benchUser.id, GLM],
     );
-    await pool.query("UPDATE bench_trials SET status = 'running', session_id = $2, started_at = NOW() WHERE id = $1", [tr.id, sess.id]);
+    await asTransition(pool, "UPDATE bench_trials SET status = 'running', session_id = $2, started_at = NOW() WHERE id = $1", [tr.id, sess.id]);
     const row = await lanes.loadTrialContext(pool, tr.id);
     const deleted = [];
     const status = await lanes.recordTrial(pool, {
@@ -574,68 +505,22 @@ test('bot configurations against the full PostgreSQL schema', { timeout: 180000 
     const { rows: [pair] } = await pool.query('SELECT status, excluded_reason, pick FROM bot_config_pairs WHERE bot_run_id = $1', [id]);
     assert.deepEqual([pair.status, pair.excluded_reason, pair.pick], ['excluded', configs.IDENTICAL_REASON, null]);
     assert.equal((await configs.nextPair(pool)).pair, null, 'never offered for a pick');
+    // A review proposed with nothing captured (it stopped before its first
+    // capture): no screenshots, which is not a boot that failed.
+    const unseen = await runRow({ issue: 12 });
+    await configs.recordResult(pool, { botRunId: unseen, configVersionId: current.id, source: 'live', built: true, sha: 'unseen1' });
+    await configs.recordResult(pool, {
+      botRunId: unseen, configVersionId: noReview.id, source: 'round0', built: true, booted: true, sha: 'unseen0', capture: cap,
+    });
+    await configs.settlePairs(pool, unseen);
     const stats = (await configs.listWithStats(pool)).versions.find((v) => v.id === noReview.id).stats.vsCurrent;
     assert.equal(stats.identical, 1, 'counted as what it is');
     assert.equal(stats.ties, 1, 'and never as a tie');
-    // The restart above proposed its review with nothing captured: no
-    // screenshots, which is not a boot that failed.
     assert.deepEqual([stats.noScreenshots, stats.didntBoot], [1, 0]);
   });
 
-  await t.test('a restart caught a fix nobody saw boot: back to the last commit that did, its reviewer calls debited; past a day even with a turn on the session', async () => {
-    bot._resetForTests();
-    const moved = [];
-    const spends = [];
-    const promoted = [];
-    live.promoteAsBot = async ({ sessionId }) => { promoted.push(Number(sessionId)); return { status: 200, body: { ok: true, prNumber: 42 } }; };
-    const deps = {
-      github: {
-        isEnabled: () => true, getBotUsername: async () => 'usernode-bot',
-        async fetchPublicIssue(_o, _r, n) { return { issue: { number: n, title: 'Plant Log', state: 'open' } }; },
-        async fetchIssueComments() { return { comments: [] }; },
-        async forceBranchToSha(...a) { moved.push(a); return { updated: true }; },
-      },
-      ws: {}, sessionLifecycle: {}, domain: 'app.onhomeroom.com', threadContext: { async loadIssueThread() { return { messages: [] }; } },
-      managedOpenRouter: { async usesIncludedKey() { return true; } },
-      limits: { async recordSpend(_p, _u, cents) { spends.push(cents); } },
-      dm: { async noteBuildRestarted() {} },
-    };
-    // A turn still recorded on the session, two days on: nothing will ever finish it.
-    const { rows: [s] } = await pool.query(
-      `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, is_headless, linked_issues, active_turn)
-       VALUES ($1, $2, 'dev/homeroom_bot-y', 'paused', FALSE, ARRAY[13], '{"mode":"build"}'::jsonb) RETURNING id`,
-      [app.id, botUser.id],
-    );
-    const id = await runRow({ issue: 13 });
-    await pool.query(
-      `UPDATE homeroom_bot_runs SET build_session_id = $2, bot_config_version_id = $3, created_at = NOW() - INTERVAL '2 days' WHERE id = $1`,
-      [id, s.id, current.id],
-    );
-    await bot.recordReviewState(pool, id, {
-      state: 'reviewing', reviewer: { model: OPUS, maxRounds: 2, budgetMinutes: 20 }, startedAt: new Date().toISOString(),
-      round0: { sha: 'r0sha', commits: 1, capture: { booted: true, shots: [] }, costUsd: 0.9, activeMs: 1_000_000 },
-      rounds: [{ round: 1, sha: 'r0sha', verdict: 'fix', issues: [], reviewerCostUsd: 0.2 }],
-      // The fix landed (r1sha); the restart came before its capture.
-      finalSha: 'r1sha', finalCommits: 2, lastBooted: { sha: 'r0sha', commits: 1 }, buildText: 'Built.',
-      updatedAt: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
-    });
-    assert.equal(await bot.finishInterruptedReviews(pool, {}, deps), 1, 'found despite the turn on its session');
-    assert.deepEqual(moved, [['usernode-bot', 'plant-log', 'dev/homeroom_bot-y', 'r0sha']], 'its own branch, back to the build that booted');
-    assert.deepEqual(promoted, [s.id]);
-    const { rows: [after] } = await pool.query(
-      `SELECT build_sha, review_stop, review->'rolledBack' AS rb, review->>'finalSha' AS fin FROM homeroom_bot_runs WHERE id = $1`, [id],
-    );
-    assert.deepEqual([after.build_sha, after.review_stop, after.fin], ['r0sha', 'interrupted', 'r0sha']);
-    assert.deepEqual(after.rb, { from: 'r1sha', to: 'r0sha', why: 'not seen to boot before the restart' });
-    assert.deepEqual(spends, [20], 'the reviewer call, which no turn ledger holds, is debited');
-    const { rows: [res] } = await pool.query("SELECT sha, cost_usd::float8 AS cost FROM bot_config_results WHERE bot_run_id = $1 AND source = 'live'", [id]);
-    assert.equal(res.sha, 'r0sha');
-    assert.ok(Math.abs(res.cost - (0.2 + 0.04)) < 1e-9);
-    assert.equal(await bot.finishInterruptedReviews(pool, {}, deps), 0, 'once');
-  });
-
   await t.test('a first version given up stops its side builds; a side build the platform failed is skipped, not "didn\'t build"', async () => {
-    const lane = { wake() {} };
+    const lane = { look() {} };
     const id = await runRow({ issue: 14 });
     const out = await configs.spawnSideBuilds(pool, {}, { botRunId: id, app, snapshotId: await snapshotFor(id), current, deps: { lane } });
     assert.deepEqual([out.trials, out.derived], [1, 1]);
@@ -651,7 +536,8 @@ test('bot configurations against the full PostgreSQL schema', { timeout: 180000 
     // A running one is stopped through the lane.
     const id2 = await runRow({ issue: 15 });
     await configs.spawnSideBuilds(pool, {}, { botRunId: id2, app, snapshotId: await snapshotFor(id2), current, deps: { lane } });
-    const { rows: [running] } = await pool.query("UPDATE bench_trials SET status = 'running' WHERE bot_run_id = $1 RETURNING id", [id2]);
+    // (Running as the lane's claim made it: only its transition may.)
+    const { rows: [running] } = await asTransition(pool, "UPDATE bench_trials SET status = 'running' WHERE bot_run_id = $1 RETURNING id", [id2]);
     await configs.abandonSideBuilds(pool, id2, 'lost', { lane: stopLane });
     assert.deepEqual(stopped, [running.id]);
     // The platform failing a side build says nothing about its configuration.
@@ -698,7 +584,7 @@ test('bot configurations against the full PostgreSQL schema', { timeout: 180000 
       },
     };
     const outs = await Promise.all(runs.map((id, i) => configs.spawnSideBuilds(slow, {}, {
-      botRunId: id, app, snapshotId: snaps[i], current, deps: { lane: { wake() {} } },
+      botRunId: id, app, snapshotId: snaps[i], current, deps: { lane: { look() {} } },
     })));
     assert.equal(outs[0].trials + outs[1].trials, 1, 'one fits, and only one is made');
     assert.equal(outs[0].skipped + outs[1].skipped, 1, 'the other is skipped, and says why');
@@ -729,53 +615,6 @@ test('bot configurations against the full PostgreSQL schema', { timeout: 180000 
     assert.equal(await configs.pruneCaptureArtifacts(pool), 0);
     await pool.query("UPDATE bot_config_pairs SET status = 'picked', pick = 'tie' WHERE bot_run_id = $1", [waiting]);
     assert.equal(await configs.pruneCaptureArtifacts(pool), 1, 'once it is picked, it goes too');
-  });
-
-  await t.test('a restart that catches a configured first version\'s own build turn: its results are recorded, or its side builds stopped when it goes round again', async () => {
-    bot._resetForTests();
-    const promoted = [];
-    live.promoteAsBot = async ({ sessionId }) => { promoted.push(Number(sessionId)); return { status: 200, body: { ok: true, prNumber: 43 } }; };
-    const deps = {
-      github: {
-        isEnabled: () => true, getBotUsername: async () => 'usernode-bot',
-        async fetchPublicIssue(_o, _r, n) { return { issue: { number: n, title: 'Plant Log', state: 'open' } }; },
-        async fetchIssueComments() { return { comments: [] }; },
-      },
-      ws: {}, sessionLifecycle: {}, domain: 'app.onhomeroom.com', threadContext: { async loadIssueThread() { return { messages: [] }; } },
-      managedOpenRouter: { async usesIncludedKey() { return false; } }, limits: {}, dm: { async noteBuildRestarted() {}, async requesterOf() { return null; } },
-    };
-    const configured = async (issue) => {
-      const { rows: [s] } = await pool.query(
-        `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, is_headless, linked_issues)
-         VALUES ($1, $2, $3, 'paused', FALSE, ARRAY[$4::int]) RETURNING id`,
-        [app.id, botUser.id, `dev/homeroom_bot-${issue}`, issue],
-      );
-      const id = await runRow({ issue });
-      await pool.query('UPDATE homeroom_bot_runs SET build_session_id = $2, bot_config_version_id = $3 WHERE id = $1', [id, s.id, current.id]);
-      await configs.spawnSideBuilds(pool, {}, { botRunId: id, app, snapshotId: await snapshotFor(id), current, deps: { lane: { wake() {} } } });
-      return { id, sessionId: s.id };
-    };
-    // The build turn ran on through the restart and pushed: proposed, and
-    // its round-0 result recorded rather than left pending.
-    const a = await configured(41);
-    assert.equal(await bot.finishRecoveredTurn({
-      pool, session: { id: a.sessionId }, activeTurn: { mode: 'build' },
-      result: { pushOk: true, ahead: 2, sha: 'b1sha', lastResultText: 'Built.' },
-    }), 'live_pending');
-    await bot.completeRecoveredLive({ pool, config: {}, sessionId: a.sessionId, deps });
-    assert.deepEqual(promoted, [a.sessionId]);
-    const { rows: ra } = await pool.query('SELECT source, status, sha FROM bot_config_results WHERE bot_run_id = $1 ORDER BY source', [a.id]);
-    assert.deepEqual(ra.map((r) => [r.source, r.status, r.sha]), [['live', 'done', 'b1sha'], ['round0', 'done', 'b1sha'], ['trial', 'pending', null]],
-      'its own result and its round-0 one: no review ran, so they are the same build');
-    // The turn was lost: the request goes round again as a new run, which
-    // makes side builds of its own, so this run's stop.
-    const b = await configured(42);
-    assert.equal(await bot.abandonRecoveredTurn({ pool, session: { id: b.sessionId }, why: 'the worker is gone' }), 'live_pending');
-    assert.equal(await bot.completeRecoveredLive({ pool, config: {}, sessionId: b.sessionId, deps }), 'requeued');
-    const { rows: rb } = await pool.query('SELECT source, status FROM bot_config_results WHERE bot_run_id = $1 ORDER BY source', [b.id]);
-    assert.deepEqual(rb.map((r) => [r.source, r.status]), [['round0', 'skipped'], ['trial', 'skipped']]);
-    const { rows: [tb] } = await pool.query('SELECT status FROM bench_trials WHERE bot_run_id = $1', [b.id]);
-    assert.equal(tb.status, 'cancelled');
   });
 
   await t.test('staging seeds a demo of the table once; production never', async () => {

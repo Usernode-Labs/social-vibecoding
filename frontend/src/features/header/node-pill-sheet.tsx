@@ -21,6 +21,8 @@ import { type ReactNode } from 'react';
 
 import { Alert } from '@/components/ui/alert';
 
+import { useMessages } from '../../lib/i18n/react';
+import { t } from '../../lib/i18n/runtime';
 import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
 import { useStoreState } from '../../lib/use-store-state';
 import { nodePillStore } from './node-pill-store';
@@ -67,27 +69,30 @@ function Warnings({ messages }: { messages: string[] }): ReactNode {
 
 /** `12,480 · 4 minutes ago` when the tip's age is known, the height alone otherwise. */
 function heightLabel(height: number | null, tipAge: string | null): string {
-  return tipAge && height != null ? `${fmt(height)} · ${tipAge}` : fmt(height);
+  return tipAge && height != null ? t('wallet:node.sheet.heightWithAge', { height: fmt(height), age: tipAge }) : fmt(height);
 }
 
 function peersLabel(ready: number | null, total: number | null): string {
   if (ready == null) return '—';
-  return `${fmt(ready)} ready${total != null ? ` / ${fmt(total)} known` : ''}`;
+  return total != null
+    ? t('wallet:node.sheet.peersReadyOfKnown', { count: ready, ready: fmt(ready), known: fmt(total) })
+    : t('wallet:node.sheet.peersReady', { count: ready, ready: fmt(ready) });
 }
 
 export function NodeSheetBody(): ReactNode {
   const s = useStoreState(nodePillStore);
+  const t = useMessages('wallet');
   const style = styleFor(s.status);
   return (
     <>
       <div className="flex items-center gap-2 mb-2">
         <span className={`w-2.5 h-2.5 rounded-full ${style.dot}`}></span>
-        <span className="text-base font-semibold">{style.label}</span>
+        <span className="text-base font-semibold">{t(style.labelId)}</span>
       </div>
-      <SheetRow label="Chain" value={s.chain || '—'} />
-      <SheetRow label="Your block height" value={heightLabel(s.localBestHeight, s.tipAge)} />
-      <SheetRow label="Network block height" value={fmt(s.networkBestHeight)} />
-      <SheetRow label="Peers" value={peersLabel(s.readyPeers, s.totalPeers)} />
+      <SheetRow label={t('wallet:node.sheet.chain')} value={s.chain || '—'} />
+      <SheetRow label={t('wallet:node.sheet.yourHeight')} value={heightLabel(s.localBestHeight, s.tipAge)} />
+      <SheetRow label={t('wallet:node.sheet.networkHeight')} value={fmt(s.networkBestHeight)} />
+      <SheetRow label={t('wallet:node.sheet.peers')} value={peersLabel(s.readyPeers, s.totalPeers)} />
       <Warnings messages={s.warnings} />
     </>
   );

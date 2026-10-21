@@ -46,6 +46,29 @@ const mockPool = {
       audit.push(row);
       return { rows: [{ id: row.id }] };
     }
+    // The export's claim and ticket on its row (services/db-export.js).
+    if (/SET status = 'interrupted'/.test(s)) return { rows: [], rowCount: 0 };
+    if (/SET ticket_hash = \$2/.test(s)) {
+      const row = audit.find((r) => r.id === params[0] && r.status === 'requested');
+      if (row) Object.assign(row, { ticket_hash: params[1], ticket_live: true });
+      return { rows: [], rowCount: row ? 1 : 0 };
+    }
+    if (/SET ticket_hash = NULL/.test(s)) {
+      const row = audit.find((r) => r.ticket_live && r.ticket_hash === params[0] && r.user_id === params[1] && r.status === 'requested');
+      if (!row) return { rows: [], rowCount: 0 };
+      row.ticket_live = false;
+      return { rows: [{ id: row.id, user_id: row.user_id, ip: row.ip, db_name: row.db_name }], rowCount: 1 };
+    }
+    if (/SET status = 'streaming', heartbeat_at/.test(s)) {
+      if (audit.some((r) => r.status === 'streaming')) throw Object.assign(new Error('duplicate key'), { code: '23505' });
+      const row = audit.find((r) => r.id === params[0] && r.status === 'requested');
+      if (row) row.status = 'streaming';
+      return { rows: [], rowCount: row ? 1 : 0 };
+    }
+    if (/SET heartbeat_at = NOW\(\)|SET started_at = NOW\(\)/.test(s)) return { rows: [], rowCount: 1 };
+    if (/SELECT EXISTS \(SELECT 1 FROM db_exports WHERE status = 'streaming'/.test(s)) {
+      return { rows: [{ busy: audit.some((r) => r.status === 'streaming') }] };
+    }
     if (/UPDATE db_exports/.test(s)) {
       const row = audit.find((r) => r.id === params[0]);
       if (row) {
@@ -127,9 +150,12 @@ function reset(user = FULL_ADMIN) {
   currentUser = user;
   audit.length = 0;
   events.length = 0;
-  dbExport._resetTickets();
-  dbExport.endExport();
   delete process.env.USERNODE_ENV;
+}
+
+// Another export streaming, on any process: its row.
+function streamingElsewhere() {
+  audit.push({ id: nextAuditId++, user_id: 99, username: 'someone', db_name: 'usernode', status: 'streaming' });
 }
 
 const req = (path, init) => fetch(`${base}${path}`, { redirect: 'manual', ...init });
@@ -177,12 +203,11 @@ test('the probe carries a machine-readable reason so the client needs no env che
 
 test('an in-flight export closes the door in the probe', async () => {
   reset();
-  dbExport.beginExport({ userId: 99, username: 'someone' });
+  streamingElsewhere();
   const { body } = await json(await req('/api/admin/db-export/status'));
   assert.equal(body.available, false);
   assert.equal(body.reason, 'in_progress');
   assert.equal(body.inProgress, true);
-  dbExport.endExport();
 });
 
 test('non-admins never reach the probe', async () => {
@@ -258,12 +283,21 @@ test('a valid confirmation returns a single-use ticket URL and audits BEFORE iss
 test('a second export is refused while one is in flight', async () => {
   const me = freshAdmin();
   reset(me);
-  dbExport.beginExport({ userId: 99 });
+  streamingElsewhere();
   const { status, body } = await ticket();
   assert.equal(status, 409);
   assert.equal(body.code, 'in_progress');
   assert.ok(audit.some((r) => r.denied_reason === 'in_progress'));
-  dbExport.endExport();
+});
+
+test('a download whose ticket was issued while nothing ran is refused once another export streams', async () => {
+  const me = freshAdmin();
+  reset(me);
+  const { body } = await ticket();
+  streamingElsewhere();
+  const res = await json(await req(`/api/admin/db-export?t=${body.token}`));
+  assert.equal(res.status, 409);
+  assert.equal(res.body.code, 'in_progress');
 });
 
 // ─── The download ─────────────────────────────────────────────────
@@ -324,7 +358,7 @@ test('the single-flight guard is released after a download', async () => {
   reset(me);
   const { body } = await ticket();
   await (await req(`/api/admin/db-export?t=${body.token}`)).text();
-  assert.equal(dbExport.isExportInProgress(), false, 'a finished export never wedges the guard');
+  assert.equal(await dbExport.isExportInProgress(mockPool), false, 'a finished export never wedges the guard');
 });
 
 // ─── The append-only history ──────────────────────────────────────

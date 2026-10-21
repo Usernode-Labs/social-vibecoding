@@ -17,6 +17,7 @@
  * merges-paused banner beside it.
  */
 
+import { t } from '../../lib/i18n/runtime';
 import { createStore } from '../../lib/plain-store.js';
 
 export type ReleaseStallKind = 'workflow_failed' | 'workflow_running' | 'rollout_missing' | 'unknown';
@@ -41,21 +42,48 @@ export const releaseStallStore = createStore<ReleaseStallState>({
 });
 
 /** The banner's sentence — one spelling, for the frame and its tests. */
+/**
+ * The banner's sentence, as message ids. One whole message per finding, per
+ * way the merge is named (a squash merge names its PR, with or without the
+ * commit; a direct push only has the commit), and per whether the build still
+ * serving is known: `[without it, with it]`.
+ */
+/** `commitUnknown`: a direct push whose commit is not known either; the sentence says so in its own words. */
+type StallSubject = 'prCommit' | 'pr' | 'commit' | 'commitUnknown';
+const STALL_TEXT: Record<ReleaseStallKind, Record<StallSubject, [string, string]>> = {
+  workflow_failed: {
+    prCommit: ['project:releaseStall.failed.prCommit', 'project:releaseStall.failed.prCommitRunning'],
+    pr: ['project:releaseStall.failed.pr', 'project:releaseStall.failed.prRunning'],
+    commit: ['project:releaseStall.failed.commit', 'project:releaseStall.failed.commitRunning'],
+    commitUnknown: ['project:releaseStall.failed.commitUnknown', 'project:releaseStall.failed.commitUnknownRunning'],
+  },
+  workflow_running: {
+    prCommit: ['project:releaseStall.slow.prCommit', 'project:releaseStall.slow.prCommitRunning'],
+    pr: ['project:releaseStall.slow.pr', 'project:releaseStall.slow.prRunning'],
+    commit: ['project:releaseStall.slow.commit', 'project:releaseStall.slow.commitRunning'],
+    commitUnknown: ['project:releaseStall.slow.commitUnknown', 'project:releaseStall.slow.commitUnknownRunning'],
+  },
+  rollout_missing: {
+    prCommit: ['project:releaseStall.notRolled.prCommit', 'project:releaseStall.notRolled.prCommitRunning'],
+    pr: ['project:releaseStall.notRolled.pr', 'project:releaseStall.notRolled.prRunning'],
+    commit: ['project:releaseStall.notRolled.commit', 'project:releaseStall.notRolled.commitRunning'],
+    commitUnknown: ['project:releaseStall.notRolled.commitUnknown', 'project:releaseStall.notRolled.commitUnknownRunning'],
+  },
+  unknown: {
+    prCommit: ['project:releaseStall.noRun.prCommit', 'project:releaseStall.noRun.prCommitRunning'],
+    pr: ['project:releaseStall.noRun.pr', 'project:releaseStall.noRun.prRunning'],
+    commit: ['project:releaseStall.noRun.commit', 'project:releaseStall.noRun.commitRunning'],
+    commitUnknown: ['project:releaseStall.noRun.commitUnknown', 'project:releaseStall.noRun.commitUnknownRunning'],
+  },
+};
+
 export function releaseStallText(s: Pick<ReleaseStallState, 'kind' | 'sha' | 'prNumber' | 'running'>): string {
   // A squash merge names its PR; a direct push only has the commit.
-  const merged = s.prNumber
-    ? `PR #${s.prNumber}${s.sha ? ` (${s.sha})` : ''} merged`
-    : `Commit ${s.sha || '(unknown)'} landed on main`;
-  const running = s.running ? ` The platform is still running ${s.running}.` : '';
-  switch (s.kind) {
-    case 'workflow_failed':
-      return `${merged} but was not released: its release workflow did not complete.${running}`
-        + ' Run it on main to release the latest commit; a later merge would also carry this change.';
-    case 'workflow_running':
-      return `${merged} and its release workflow is still running, well past the usual couple of minutes.${running}`;
-    case 'rollout_missing':
-      return `${merged} and its release workflow succeeded, but the platform has not rolled onto it.${running}`;
-    default:
-      return `${merged} but is not running yet, and no release workflow run could be found for it.${running}`;
-  }
+  const subject: StallSubject = s.prNumber ? (s.sha ? 'prCommit' : 'pr') : (s.sha ? 'commit' : 'commitUnknown');
+  const ids = (s.kind && STALL_TEXT[s.kind]) || STALL_TEXT.unknown;
+  return t(ids[subject][s.running ? 1 : 0], {
+    pr: s.prNumber || '',
+    commit: s.sha || '',
+    running: s.running || '',
+  });
 }

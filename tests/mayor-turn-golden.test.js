@@ -88,6 +88,10 @@ async function poolQuery(sql, params = []) {
     return { rows: effect ? [{ ...effect }] : [], rowCount: effect ? 1 : 0 };
   }
 
+  // The turn's run reads who asked for it (services/turns.js).
+  if (/^SELECT id, username FROM users WHERE id = \$1$/.test(s.trim())) {
+    return { rows: Number(params[0]) === VIEWER.id ? [{ ...VIEWER }] : [] };
+  }
   if (/FROM chat_sessions cs/.test(s) && /status IN \('promoted', 'merging'\)/.test(s)) {
     return { rows: db.openProposals.map((p) => ({ ...p })) };
   }
@@ -220,6 +224,10 @@ limits.settleTurnSpend = async (_pool, userId, cents, opts) => { rec.billing.pus
 // unrelated SQL here depending on CPU load, sometimes in the NEXT scenario.
 // Keep the turn golden deterministic without changing its expected output.
 require('../src/services/session-state').touch = () => {};
+// The busy read names this process's own holder (it skips this process's
+// operations, which its memory answers for); a fixed one keeps the SQL the
+// same from run to run.
+require('../src/services/process-presence').holder = () => 'golden-host:1:boot';
 
 const sessionTitles = require('../src/services/session-title');
 sessionTitles.titleAtTurnEnd = (args) => { rec.calls.push({ fn: 'titleAtTurnEnd', firstTurn: !!args.firstTurn, message: args.message }); };
@@ -324,16 +332,12 @@ openRouterMayor.resolveForSession = async () => {
 const localAgent = require('../src/services/local-agent');
 localAgent.activeLease = async () => null;
 
-const staging = require('../src/services/staging');
-staging.buildAndDeployStaging = async (_config, session, _app, sha1) => {
-  rec.calls.push({ fn: 'buildAndDeployStaging', sessionId: session.id, sha: sha1 });
-  return { containerId: 'stage-1', stagingUrl: 'https://whiteboard-pr42.staging.test', hostname: 'whiteboard-pr42.staging.test' };
+// A build's tail builds nothing: it hands the commit to the preview machine,
+// which builds and checks it (and writes the preview's own rows) later.
+const previewWorkflow = require('../src/services/preview-workflow');
+previewWorkflow.revision = async ({ session, head, source, trigger }) => {
+  rec.calls.push({ fn: 'previewWorkflow.revision', sessionId: session.id, head, source, trigger });
 };
-staging.verifyStagingEdge = async () => { rec.calls.push({ fn: 'verifyStagingEdge' }); };
-
-const visuals = require('../src/services/visuals');
-visuals.setChecksPending = async (_pool, id) => { rec.calls.push({ fn: 'setChecksPending', id }); };
-visuals.captureForSession = async (_pool, id) => { rec.calls.push({ fn: 'captureForSession', id }); };
 
 const prMetadata = require('../src/services/pr-metadata');
 prMetadata.applyPrMetadata = async (args) => {
@@ -355,6 +359,12 @@ const stopRegistry = require('../src/services/stop-registry');
 // so the suite lifts that one gate, the way it stubs billing;
 // tests/classic-session-read-only.test.js pins the refusal itself.
 require('../src/services/classic-sessions').isClassicSession = () => false;
+// The route asks the turn machine for the turn and follows its stream; the
+// turn's real handler (services/turns.js) runs here, as a workflow process
+// would run it, so everything the turn does is still observed below.
+const turnPlatform = require('./lib/turn-platform').installTurnPlatform({
+  run: { config: { jwtSecret: 'golden', dataEncryptionKey: 'golden-key' }, pool: fakePool },
+});
 const { sessionRoutes } = require('../src/routes/sessions');
 const express = require('express');
 
@@ -426,6 +436,7 @@ async function runTurn({ session = {}, history = [], message = 'Add a dark mode 
     });
     const status = res.status;
     const events = parseSse(await res.text());
+    await Promise.all(turnPlatform.ran.splice(0));
     await settle();
     // One line per entry: compact, and a golden diff reads as a list.
     const line = (v) => JSON.stringify(v);
@@ -705,6 +716,48 @@ test('build turn: commit, PR opened, staging, wrap-up with pills', async () => {
     }),
   });
   check('build turn', result);
+});
+
+// #907: a build handed to the user's own machine runs the same tail. A local
+// turn has no durable turn record, so the tail stamps no milestone for it
+// (worker.noteTailMilestone without an owner throws, and once ended the
+// local tail right after the PR was opened: no preview, no card, no wrap-up).
+test('local build turn: the machine\'s commit gets the PR, the preview hand-off, the card and the wrap-up', async () => {
+  const lease = { id: '7', session_id: BASE_SESSION.id, user_id: 7, label: "Tester's laptop", runtime: 'claude-code' };
+  const saved = { activeLease: localAgent.activeLease, enqueueTurn: localAgent.enqueueTurn, awaitTurnResult: localAgent.awaitTurnResult };
+  localAgent.activeLease = async () => lease;
+  localAgent.enqueueTurn = async (_pool, args) => {
+    rec.calls.push({ fn: 'localAgent.enqueueTurn', mode: args.mode, branchName: args.branchName });
+    return { turn: { id: '11', session_id: BASE_SESSION.id }, lease, waiterId: 'waiter-1' };
+  };
+  localAgent.awaitTurnResult = async (_pool, turnId, opts) => {
+    rec.calls.push({ fn: 'localAgent.awaitTurnResult', turnId, waiterId: opts.waiterId });
+    return {
+      outcome: 'completed',
+      turn: { id: '11', status: 'completed', head_sha: 'e'.repeat(40), summary: 'Added the toggle on the laptop.', progress: [] },
+    };
+  };
+  try {
+    const result = await runTurn({
+      session: { spec_md: SCOUT_SPEC },
+      message: 'Build it',
+      llmSteps: [
+        buildCall(),
+        wrapUp('Done on your laptop. The toggle is in the toolbar.', ['Try it in the preview', 'What did it change?']),
+      ],
+    });
+    assert.deepEqual(result.worker.map((w) => JSON.parse(w)).filter((w) => w.fn === 'noteTailMilestone'), [],
+      'no milestone without a durable turn to stamp it on');
+    const contents = result.messages.map((m) => JSON.parse(m).content);
+    assert.ok(contents.includes('Building staging preview...'), 'the preview card');
+    assert.ok(result.calls.map((c) => JSON.parse(c)).some((c) => c.fn === 'previewWorkflow.revision'
+      && c.head === 'e'.repeat(40)), 'the commit is handed to the preview machine');
+    assert.ok(contents.some((c) => /Coding done on Tester's laptop/.test(c)), 'the completion card');
+    assert.equal(contents.at(-1), 'Done on your laptop. The toggle is in the toolbar.', 'and the wrap-up');
+    check('local build turn', result);
+  } finally {
+    Object.assign(localAgent, saved);
+  }
 });
 
 test('build turn that changes nothing skips the tail', async () => {

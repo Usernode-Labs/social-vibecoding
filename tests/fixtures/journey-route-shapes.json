@@ -66,12 +66,12 @@
   },
   "firstMile": {
     "cohort": "string",
-    "notRecorded": {
-      "followedLink": {
-        "reason": "string",
-        "recorded": "boolean"
-      }
+    "mail": {
+      "clicked": "number",
+      "opened": "number",
+      "tracked": "number"
     },
+    "notRecorded": {},
     "people": [
       {
         "daysSince": "number",
@@ -79,6 +79,7 @@
         "failedAttempts": "number",
         "furthest": "string",
         "hasAccount": "boolean",
+        "mail": "object",
         "name": "string",
         "repeatedTaps": "number",
         "signupId": "number",
@@ -183,6 +184,8 @@
       "welcome": "object"
     },
     "found": [],
+    "made": [],
+    "madeScreen": [],
     "name": "string",
     "navigation": {
       "reason": "string",
@@ -201,6 +204,27 @@
   "creation": {
     "examples": [],
     "finished": "boolean",
+    "firstVersion": {
+      "from": "object",
+      "maker": {
+        "cameBack": "number",
+        "live": "number",
+        "medianBackSeconds": "object",
+        "nearLive": "number"
+      },
+      "nearMinutes": "number",
+      "of": "number",
+      "outcomes": {
+        "building": "number",
+        "failed": "number",
+        "live": "number",
+        "stalled": "number",
+        "waiting": "number"
+      },
+      "stages": [],
+      "stallMinutes": "number",
+      "stoppedAt": []
+    },
     "recordedFrom": {
       "change_live": "object",
       "preview": "object",
@@ -220,6 +244,13 @@
       "change_live": "number",
       "first_version": "number",
       "running": "number"
+    },
+    "timing": {
+      "from": "object",
+      "of": "number",
+      "pod": "object",
+      "stages": [],
+      "totalMs": "object"
     },
     "week": "string",
     "weeks": [
@@ -260,6 +291,10 @@
       },
       "people": "number",
       "steps": []
+    },
+    "made": {
+      "reason": "string",
+      "recorded": "boolean"
     },
     "make": {
       "aha": "number",

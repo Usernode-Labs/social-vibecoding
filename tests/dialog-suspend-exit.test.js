@@ -20,6 +20,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { loadTsx } = require('./lib/render-tsx');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 
 // ── A React small enough to step through ─────────────────────────────────
 
@@ -474,6 +475,9 @@ function mountForkDialog(t, { reply }) {
       react: { ...fake.React, forwardRef: (render) => render },
       'react/jsx-runtime': jsxRuntime,
       './create-progress': { CreateProgress },
+      // The dialog's text, in English, without react-i18next: the fake React
+      // has no context for it.
+      '../../lib/i18n/react': { useMessages: () => englishPlatformI18n().t, RichMessage() { return null; } },
       './app-allowance': { AppAllowance() {}, useAppAllowance: () => ({ blocked: false }) },
       './app-allowance-store.js': { invalidateAppAllowance: async () => {} },
       '../../lib/use-store-state': { useStoreState: (store) => store.get() },
@@ -619,6 +623,8 @@ test('#3683: leaving an app from the members dialog is not undone by its close',
   win.AppView = { appData: { slug: 'team-app', can_manage: false } };
   const leave = clickable({ removeUser: '7' });
   listHost('members-list', '[data-remove-user]', [leave]);
+  // The controller is a classic script: it reads its text through the global.
+  stubGlobal(t, 'PlatformI18n', englishPlatformI18n());
   loadTsx('frontend/src/features/dialogs/members-controller.js').init();
   win.UsernodeReact.dialogs.members = controller();
   controller().open();

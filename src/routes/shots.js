@@ -5,17 +5,12 @@ const { getPool } = require('../db/pool');
 const appAccess = require('../services/app-access');
 const appAdmins = require('../services/app-admins');
 const log = require('../services/logger');
-const orchestrator = require('../services/shots-orchestrator');
 const shots = require('../services/shots-files');
 const plan = require('../services/visible-changes');
 const state = require('../services/shots-state');
 const view = require('../services/shots-view');
 const { visualHeadForSession } = require('../services/pr-vote-revision');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
-// A rerun while this process drains would write a planned run no sweep
-// resumes (the unstarted sweep only reads claims without a run) and start it
-// only to be interrupted: refuse it up front, as other heavy routes do.
-const { drainGuard } = require('../services/lifecycle');
 
 const ARTIFACT_ID_RE = /^[0-9a-f]{32}$/;
 
@@ -46,6 +41,18 @@ function sendError(res, err) {
     error: err?.code || 'shots_error',
     message: String(err?.message || 'The before & after shots could not be updated.').slice(0, 2000),
   });
+}
+
+// The shots machine's refusals, as the shots routes always answered them.
+const REFUSALS = new Map([
+  ['shots_rerun_in_flight', 'Wait for the current shots to finish before taking them again.'],
+  ['missing_visible_changes', 'Declare the change and how to reach it before taking the shots again.'],
+  ['closed', 'This proposal is closed, so its shots are not taken again.'],
+  ['invalid_shots_override_state', 'These before & after shots cannot be waived now.'],
+]);
+function refused(res, reason) {
+  const code = String(reason || 'shots_refused');
+  return res.status(409).json({ error: code, message: REFUSALS.get(code) || 'The before & after shots could not do that now.' });
 }
 
 function parseRange(header, total) {
@@ -90,7 +97,7 @@ function shotsRoutes(config) {
       if (!ctx) return res.status(404).json({ error: 'Proposal not found' });
       return res.json({
         shots: config.shots?.present
-          ? await view.getForSession(pool, ctx.session, ctx.app.slug)
+          ? await view.getForSession(pool, ctx.session, ctx.app.slug, { viewer: req.user })
           : null,
       });
     } catch (err) {
@@ -102,6 +109,10 @@ function shotsRoutes(config) {
   // The proposal owner and app managers can inspect the current run while it
   // is active, or an older run by id after a retry. The public shots view
   // contains only the reviewer result; this private view supports diagnosis.
+  const agentProgress = async (runId) => {
+    const { rows: [row] } = await pool.query('SELECT progress FROM shot_run_control WHERE run_id = $1', [runId]);
+    return row?.progress || null;
+  };
   router.get('/api/apps/:slug/proposals/:sessionId/shots/diagnostics', async (req, res) => {
     const id = sessionId(req.params.sessionId);
     if (!config.shots?.present || !id) return res.status(404).json({ error: 'Shots diagnostics not found' });
@@ -174,8 +185,15 @@ function shotsRoutes(config) {
         },
         // The hash of exactly which shots were published.
         planHash: run.plan_hash,
+        // As stored, except that a ready change whose before and after came
+        // out the same reads 'unchanged', as every result does.
         shotResults: shots.isShotsVerdict(run.hard_verdict) && Array.isArray(run.hard_verdict.stories)
-          ? run.hard_verdict.stories : [],
+          ? run.hard_verdict.stories.map((story) => (story?.status === 'ready'
+            ? { ...story, status: shots.resultStatus(story) } : story))
+          : [],
+        // What the shots agent noticed broken on the after build, as stored.
+        shotNotices: shots.isShotsVerdict(run.hard_verdict) && Array.isArray(run.hard_verdict.notices)
+          ? run.hard_verdict.notices : [],
         artifacts: artifacts.rows.map((artifact) => ({
           storyId: artifact.story_id,
           viewport: artifact.viewport,
@@ -189,7 +207,8 @@ function shotsRoutes(config) {
         })),
         failureCode: run.failure_code,
         failureReason: run.failure_reason,
-        observer: orchestrator.liveRunObserver(run.id, pool),
+        // What the agent is doing now, from its workspace (while it exists).
+        agentProgress: run.id === ctx.session.shots_run_id ? await agentProgress(run.id) : null,
         trace: {
           progress: trace.progress || null,
           heartbeat: trace.heartbeat || null,
@@ -224,8 +243,14 @@ function shotsRoutes(config) {
     try {
       const ctx = await loadContext(pool, req.params.slug, id, req.user, 'view');
       if (!ctx) return res.status(404).json({ error: 'Shots artifact not found' });
+      // A dense still (services/shots-density.js) at its own address, for an
+      // account in the New Needs you experiment; anyone else asking for it
+      // gets the 1x copy every other address serves.
+      const dense = req.query.density === 'device' && await view.viewerSeesDense(pool, req.user);
       const { rows } = await pool.query(
-        `SELECT a.data, a.content_type, a.bytes, a.sha256
+        `SELECT CASE WHEN $4 THEN COALESCE(a.dense_data, a.data) ELSE a.data END AS data,
+                CASE WHEN $4 THEN COALESCE(a.dense_sha256, a.sha256) ELSE a.sha256 END AS sha256,
+                a.content_type, a.bytes, a.variant
            FROM shot_artifacts a
            JOIN shot_runs r ON r.id = a.run_id
            JOIN chat_sessions s ON s.id = r.session_id
@@ -240,10 +265,12 @@ function shotsRoutes(config) {
                   s.checks_commit_sha,
                   s.handoff_head_sha
                 )`,
-        [req.params.artifactId, id, ctx.app.id]
+        [req.params.artifactId, id, ctx.app.id, dense === true]
       );
       const artifact = rows[0];
-      if (!artifact) return res.status(404).json({ error: 'Shots artifact not found' });
+      // A close-up (services/shots-closeups.js) is only ever shown to an
+      // account in the experiment, at its own address.
+      if (!artifact || (artifact.variant === 'closeup' && !dense)) return res.status(404).json({ error: 'Shots artifact not found' });
       const data = Buffer.isBuffer(artifact.data) ? artifact.data : Buffer.from(artifact.data || '');
       const range = parseRange(req.headers.range, data.length);
       res.set({
@@ -275,7 +302,9 @@ function shotsRoutes(config) {
     }
   });
 
-  router.post('/api/apps/:slug/proposals/:sessionId/shots/rerun', sameOriginBrowserOnly, drainGuard, async (req, res) => {
+  // Take the shots again (with a new declaration, maybe). The shots machine
+  // starts the run; this answers once it has decided.
+  router.post('/api/apps/:slug/proposals/:sessionId/shots/rerun', sameOriginBrowserOnly, async (req, res) => {
     const id = sessionId(req.params.sessionId);
     if (!id) return res.status(404).json({ error: 'Proposal not found' });
     try {
@@ -287,27 +316,20 @@ function shotsRoutes(config) {
       let replacement;
       const declared = plan.declaredChanges(req.body);
       if (declared !== undefined) replacement = plan.parseIntent(declared);
-      const currentId = ctx.session.shots_run_id;
-      let run;
-      if (currentId) {
-        run = await state.rerunSameHead(pool, currentId, {
-          trigger: 'manual-rerun', intent: replacement || null,
-        });
-      } else if (replacement) {
-        await state.recordIntent(pool, id, replacement);
-      } else if (!ctx.session.shots_detail?.intent) {
+      if (!replacement && !ctx.session.shots_detail?.intent) {
         return res.status(409).json({
           error: 'missing_visible_changes',
           message: 'Declare the change and how to reach it before taking the shots again.',
         });
       }
-      const scheduled = await orchestrator.scheduleForSession(config, {
-        pool, sessionId: id, headSha: run?.head_sha || null, trigger: 'manual-rerun',
+      const out = await state.retryShots({
+        sessionId: id, appId: ctx.app.id, intent: replacement || null, actor: `user:${req.user.id}`,
       });
+      if (out.status === 'rejected' || out.status === 'faulted') return refused(res, out.reason);
       return res.status(202).json({
         ok: true,
-        runId: run?.id || scheduled.runId || null,
-        shotsState: run?.state || 'planned',
+        runId: out.reply?.runId || null,
+        shotsState: out.reply?.state || 'planned',
       });
     } catch (err) {
       if (err?.code || err instanceof plan.VisibleChangesValidationError) return sendError(res, err);
@@ -327,8 +349,11 @@ function shotsRoutes(config) {
       const canManage = ctx.session.user_id === req.user?.id
         || await appAdmins.canManageApp(pool, ctx.app, req.user);
       if (!canManage) return res.status(404).json({ error: 'Proposal not found' });
-      const result = await orchestrator.stopForSession(pool, id);
-      return res.json(result);
+      const runId = ctx.session.shots_run_id || null;
+      const out = await state.stopShots({ sessionId: id, appId: ctx.app.id, actor: `user:${req.user.id}` });
+      if (out.status === 'rejected') return res.json({ stopped: false, reason: 'not_running' });
+      if (out.status === 'faulted') return refused(res, out.reason);
+      return res.json({ stopped: true, runId: out.reply?.runId || runId });
     } catch (err) {
       if (err?.code) return sendError(res, err);
       log.error('shots', 'Shots stop failed', { sessionId: id, err: err.message });
@@ -348,11 +373,13 @@ function shotsRoutes(config) {
       if (!ctx.session.shots_run_id) {
         return res.status(409).json({ error: 'shots_run_missing', message: 'There are no current before & after shots to override.' });
       }
-      const run = await state.overrideRun(pool, ctx.session.shots_run_id, {
-        userId: req.user.id,
-        reason: req.body?.reason,
-      });
-      return res.json({ ok: true, runId: run.id, shotsState: run.state });
+      const reason = typeof req.body?.reason === 'string' ? req.body.reason.trim().slice(0, 1000) : '';
+      if (!reason) {
+        return res.status(400).json({ error: 'invalid_shots_override', message: 'An authorized user and visible override reason are required.' });
+      }
+      const out = await state.waiveShots({ sessionId: id, appId: ctx.app.id, userId: req.user.id, reason });
+      if (out.status === 'rejected' || out.status === 'faulted') return refused(res, out.reason);
+      return res.json({ ok: true, runId: out.reply?.runId || ctx.session.shots_run_id, shotsState: out.reply?.state || 'overridden' });
     } catch (err) {
       if (err?.code) return sendError(res, err);
       log.error('shots', 'Shots override failed', { sessionId: id, err: err.message });

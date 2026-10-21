@@ -21,10 +21,10 @@
 // build the document from plain values (the platform from its config, the
 // asset server from the three env vars its Deployment is given).
 //
-// Nothing secret is here, and nothing per-user: the same three public facts
+// Nothing secret is here, and nothing per-user: the same few public facts
 // for every caller, so it is served anonymously with a wildcard CORS header.
 
-const { normalizeBaseUrl } = require('./marketing-links');
+const { normalizeBaseUrl, privacyNoticeUrl } = require('./marketing-links');
 
 const CONFIG_PATH = '/usernode-bridge/v1/platform.json';
 
@@ -45,6 +45,8 @@ function appHostConfig({ platformDomain, appsDomain, marketingBaseUrl } = {}) {
     platform_origin: `https://${platform}`,
     apps_domain: apps,
     site_url: normalizeBaseUrl(marketingBaseUrl),
+    // Homeroom's privacy notice, for the button's "Privacy" link (#5116).
+    privacy_url: privacyNoticeUrl({ marketingBaseUrl }),
   };
 }
 

@@ -345,21 +345,20 @@ test('a token minted with the legacy shared secret is not a valid worker token',
 // Two guards: sequencing at the call site, and a bounded retry for
 // contention ordering can't prevent (an overlapping deploy).
 
-test('#891: server.js awaits the two role bootstraps in sequence', () => {
-  const src = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
-  assert.match(src, /await debugAccess\.ensureRole\(config\)/,
-    'the prod-debug role bootstrap must be awaited');
-  assert.match(src, /await topochainConsoleRole\.ensureConsoleRole\(config\)/,
-    'the topochain console role bootstrap must be awaited');
-  // Ordering: prod-debug first, console role second — they must not overlap.
-  const a = src.indexOf('await debugAccess.ensureRole(config)');
-  const b = src.indexOf('await topochainConsoleRole.ensureConsoleRole(config)');
-  assert.ok(a !== -1 && b !== -1 && a < b, 'the bootstraps must be sequenced');
-  // The un-awaited form that caused the race must be gone.
-  assert.doesNotMatch(src, /\n\s*debugAccess\.ensureRole\(config\)\.catch/,
-    'ensureRole must not be fired un-awaited');
-  assert.doesNotMatch(src, /\n\s*topochainConsoleRole\.ensureConsoleRole\(config\)\.catch/,
-    'ensureConsoleRole must not be fired un-awaited');
+test('#891: the two role bootstraps are awaited in sequence, once per release with the schema', () => {
+  // services/db-roles.js, run by the migration step only (the migration Job;
+  // compose's boot migration under its lock): one runner, the new build's
+  // deny lists over the new tables.
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src/services/db-roles.js'), 'utf8');
+  const a = src.indexOf("await require('./debug-access').ensureRole(config)");
+  const b = src.indexOf("await require('./topochain/db-console-role').ensureConsoleRole(config)");
+  assert.ok(a !== -1 && b !== -1 && a < b, 'prod-debug first, the console role second: they must not overlap');
+  assert.match(src, /if \(!runsClusterMaintenance\(\)\) return \{ skipped: 'staging' \};/, 'never on a staging preview');
+  const server = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+  assert.doesNotMatch(server, /ensureRole\(config\)|ensureConsoleRole\(config\)/, 'no leader sets them up at its election');
+  assert.match(server, /await require\('\.\/src\/services\/db-roles'\)\.ensureRoles\(config\)/);
+  const job = fs.readFileSync(path.join(__dirname, '..', 'scripts/migrate-kubernetes.js'), 'utf8');
+  assert.match(job, /await require\('\.\.\/src\/services\/db-roles'\)\.ensureRoles\(config\)/);
 });
 
 test('#891: ensureRole retries a bounded number of times', () => {

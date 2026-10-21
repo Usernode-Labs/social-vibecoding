@@ -30,7 +30,8 @@ const SLOTS = [
   ['frontend/src/features/first-session/make.tsx', ["const NEEDED = '", '<p role="alert" className="mt-3']],
   ['frontend/src/features/first-session/import-repo.tsx', ["const NEEDED = '", '<p role="alert" className="mt-3']],
   ['frontend/src/features/dialogs/app-allowance.tsx', ['role="alert"']],
-  ['frontend/src/features/dialogs/app-settings.tsx', ['role="alert"', "accessMessageIsError ? 'text-red"]],
+  ['frontend/src/features/dialogs/app-settings.tsx', ['role="alert"']],
+  ['frontend/src/features/dialogs/who-decides.tsx', ['data-who-error=""']],
   ['frontend/src/features/dialogs/wallet-recovery.tsx', ['role="alert"']],
   ['frontend/src/features/apps/featured-illustration-editor.tsx', ['role="alert"']],
 ];

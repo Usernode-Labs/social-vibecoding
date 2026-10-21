@@ -7,7 +7,9 @@
 // numbers count, that neither leg ever reaches Identity Toolkit for them,
 // that the code is checked, and that the ID token cannot be forged. The
 // account and the invite are pinned against the full schema in
-// tests/phone-test-numbers-postgres.test.js.
+// tests/phone-test-numbers-postgres.test.js. SHOTS_PHONE_TEST_CODE, the
+// same numbers on a before & after shots copy of Homeroom (which runs the
+// production image as USERNODE_ENV=staging), is pinned here too.
 //
 // Run with: node --test tests/phone-test-numbers.test.js
 
@@ -15,7 +17,9 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const phoneAuth = require('../src/services/firebase-phone-auth');
-const { phoneTestCodeFrom } = require('../src/config');
+const config = require('../src/config');
+
+const { phoneTestCodeFrom, shotsPhoneTestCodeFrom } = config;
 
 const TEST_ONLY = { phoneTestCode: '123456' };
 const FIREBASE = {
@@ -78,6 +82,117 @@ test('test numbers stay off in production even when a config object carries the 
   });
   withEnv({ NODE_ENV: 'development', USERNODE_ENV: undefined }, () => {
     assert.equal(phoneAuth.testNumbersOn(TEST_ONLY), true);
+  });
+});
+
+// A before & after shots copy of Homeroom runs the platform image
+// (NODE_ENV=production) as USERNODE_ENV=staging, and the deployed platform
+// hands it a random code per run (services/shots-environment.js).
+const SHOTS_COPY = { NODE_ENV: 'production', USERNODE_ENV: 'staging', SHOTS_PHONE_TEST_CODE: '482913' };
+const SHOTS_CODE = { phoneTestCode: '482913' };
+
+test('SHOTS_PHONE_TEST_CODE is honoured only where USERNODE_ENV is staging, never in production', () => {
+  assert.deepEqual(shotsPhoneTestCodeFrom({}), { code: '', refused: null });
+  assert.deepEqual(shotsPhoneTestCodeFrom({ ...SHOTS_COPY, SHOTS_PHONE_TEST_CODE: ' 482913 ' }),
+    { code: '482913', refused: null }, 'NODE_ENV=production does not refuse it on a shots copy');
+  assert.deepEqual(shotsPhoneTestCodeFrom({ ...SHOTS_COPY, USERNODE_ENV: 'production' }),
+    { code: '', refused: 'production' });
+  assert.deepEqual(shotsPhoneTestCodeFrom({ SHOTS_PHONE_TEST_CODE: '482913', USERNODE_ENV: 'production' }),
+    { code: '', refused: 'production' });
+  for (const env of [undefined, '', 'Staging', 'development', 'test']) {
+    assert.deepEqual(shotsPhoneTestCodeFrom({ SHOTS_PHONE_TEST_CODE: '482913', USERNODE_ENV: env }),
+      { code: '', refused: 'not a shots copy' }, String(env));
+  }
+  assert.deepEqual(shotsPhoneTestCodeFrom({ ...SHOTS_COPY, SHOTS_PHONE_TEST_CODE: '4829' }),
+    { code: '', refused: 'not six digits' });
+  // PHONE_TEST_CODE keeps its own meaning: the image's NODE_ENV still
+  // refuses it on a staging server, and it never reads the shots name.
+  assert.deepEqual(phoneTestCodeFrom({ ...SHOTS_COPY, PHONE_TEST_CODE: '123456' }),
+    { code: '', refused: 'production' });
+  assert.deepEqual(phoneTestCodeFrom(SHOTS_COPY), { code: '', refused: null });
+});
+
+test('the re-check agrees: a shots copy takes only its own code; an ordinary preview and production refuse', () => {
+  withEnv(SHOTS_COPY, () => {
+    assert.equal(phoneAuth.testNumbersAllowed(SHOTS_CODE), true);
+    assert.equal(phoneAuth.testNumbersOn(SHOTS_CODE), true);
+    assert.equal(phoneAuth.offered(SHOTS_CODE), true);
+    assert.equal(phoneAuth.testNumbersOn(TEST_ONLY), false, 'a config object carrying another code is not this copy\'s');
+  });
+  // An ordinary staging preview runs the same image as USERNODE_ENV=staging,
+  // and is never given the code.
+  withEnv({ ...SHOTS_COPY, SHOTS_PHONE_TEST_CODE: undefined }, () => {
+    assert.equal(phoneAuth.testNumbersOn(SHOTS_CODE), false);
+    assert.equal(phoneAuth.offered(SHOTS_CODE), false);
+  });
+  // Production refuses it even when somebody hands it the variable.
+  withEnv({ ...SHOTS_COPY, USERNODE_ENV: 'production' }, () => {
+    assert.equal(phoneAuth.testNumbersOn(SHOTS_CODE), false);
+    assert.equal(phoneAuth.offered(SHOTS_CODE), false);
+  });
+  withEnv({ ...SHOTS_COPY, NODE_ENV: undefined, USERNODE_ENV: 'production' }, () => {
+    assert.equal(phoneAuth.testNumbersOn(SHOTS_CODE), false);
+  });
+  // NODE_ENV=production with no USERNODE_ENV is not a shots copy either.
+  withEnv({ ...SHOTS_COPY, USERNODE_ENV: undefined }, () => {
+    assert.equal(phoneAuth.testNumbersOn(SHOTS_CODE), false);
+  });
+});
+
+// config.load() as each runtime sees it, the boot lines captured.
+function loadAs(env) {
+  const required = {
+    DATABASE_URL: 'postgres://localhost/test', SESSION_SECRET: 'test-session-secret',
+    ADMIN_USERNAME: 'admin', ADMIN_PASSWORD: 'admin-pass', PHONE_TEST_CODE: undefined,
+  };
+  const lines = [];
+  return withEnv({ ...required, ...env }, () => {
+    const realLog = console.log;
+    const realError = console.error;
+    console.log = (...args) => lines.push(args.join(' '));
+    console.error = (...args) => lines.push(args.join(' '));
+    try {
+      return { loaded: config.load(), boot: lines.join('\n') };
+    } finally {
+      console.log = realLog;
+      console.error = realError;
+    }
+  });
+}
+
+test('a shots copy\'s own config offers phone sign-in and signs a test number in with the run\'s code', async () => {
+  const { loaded, boot } = loadAs(SHOTS_COPY);
+  assert.equal(loaded.phoneTestCode, '482913');
+  assert.match(boot, /SHOTS_PHONE_TEST_CODE=\(set\)/);
+  assert.doesNotMatch(boot, /482913/, 'the boot line never prints the code');
+
+  const before = Object.fromEntries(Object.keys(SHOTS_COPY).map((key) => [key, process.env[key]]));
+  Object.assign(process.env, SHOTS_COPY);
+  try {
+    assert.equal(phoneAuth.offered(loaded), true, 'the offer gate');
+    const sent = await phoneAuth.requestCode(loaded, '+1 415 555 0142', null, { fetch: noFetch });
+    await assert.rejects(
+      () => phoneAuth.exchangeCode(loaded, sent.sessionInfo, '123456', { fetch: noFetch }),
+      (err) => err.code === 'invalid_or_expired_code',
+    );
+    const { idToken } = await phoneAuth.exchangeCode(loaded, sent.sessionInfo, '482913', { fetch: noFetch });
+    const claims = await phoneAuth.verifyIdToken(spendPool(), loaded, idToken, { auth: { verifyIdToken: noFetch } });
+    assert.deepEqual(claims, { uid: 'test-phone:+14155550142', phoneNumber: '+14155550142', test: true },
+      'the verify path');
+  } finally {
+    for (const [key, value] of Object.entries(before)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+});
+
+test('an ordinary staging preview\'s config, the same image without the code, offers no test numbers', () => {
+  const { loaded, boot } = loadAs({ ...SHOTS_COPY, SHOTS_PHONE_TEST_CODE: undefined });
+  assert.equal(loaded.phoneTestCode, '');
+  assert.doesNotMatch(boot, /SHOTS_PHONE_TEST_CODE/);
+  withEnv({ ...SHOTS_COPY, SHOTS_PHONE_TEST_CODE: undefined }, () => {
+    assert.equal(phoneAuth.offered(loaded), false);
   });
 });
 

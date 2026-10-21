@@ -314,7 +314,7 @@ async function evaluate({ pool, user, fork, deps }) {
 /** The open suggestion this copy already has on the original, or null. */
 async function openSuggestion(pool, fork) {
   const { rows } = await pool.query(
-    `SELECT cs.id, a.slug
+    `SELECT cs.id, cs.pr_number, a.slug
        FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id
       WHERE cs.suggested_from_app_id = $1
         AND cs.status IN ('active', 'promoted', 'merging')
@@ -322,11 +322,12 @@ async function openSuggestion(pool, fork) {
       LIMIT 1`,
     [fork.id]
   );
-  return rows[0] ? { sessionId: rows[0].id, href: proposalHref(rows[0].slug, rows[0].id) } : null;
+  return rows[0] ? { sessionId: rows[0].id, href: proposalHref(rows[0].slug, rows[0].id, rows[0].pr_number) } : null;
 }
 
-function proposalHref(slug, sessionId) {
-  return `#app/${encodeURIComponent(slug)}/dev/proposals/${sessionId}`;
+// #4367: by its pull request's number once it has one.
+function proposalHref(slug, sessionId, prNumber = null) {
+  return require('./change-destination').changeHref(slug, sessionId, prNumber);
 }
 
 function repoOf(deps, app) {

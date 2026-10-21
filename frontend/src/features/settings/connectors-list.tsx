@@ -15,6 +15,7 @@
 
 import { GroupedList, ListRow } from '@/components/ui/grouped-list';
 
+import { useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
 import { connectorsStore } from './connectors-store.js';
 
@@ -30,13 +31,14 @@ function controller(): any {
 }
 
 export function ConnectorsListView({ phase, connectors }: ConnectorsState) {
+  const t = useMessages('settings');
   if (phase === 'idle') return null;
   // Bare text nodes, as the two `list.textContent = …` writes produced.
-  if (phase === 'loading') return <>Loading connections…</>;
+  if (phase === 'loading') return <>{t('settings:connectors.list.loading')}</>;
   if (!connectors.length) {
     return (
       <p className="px-4 text-[0.9375rem] text-zinc-500 dark:text-zinc-400">
-        No chat products connected yet.
+        {t('settings:connectors.list.empty')}
       </p>
     );
   }
@@ -61,7 +63,7 @@ export function ConnectorsListView({ phase, connectors }: ConnectorsState) {
               className="inline-flex min-h-[44px] shrink-0 items-center rounded-full bg-red-500/10 px-4 text-[0.9375rem] font-medium text-red-700 dark:text-red-400 hover:bg-red-500/15 transition-colors"
               onClick={(e) => controller()?._disconnectConnector?.(connector.id, e.currentTarget)}
             >
-              Disconnect
+              {t('settings:connectors.list.disconnect')}
             </button>
           )}
         />

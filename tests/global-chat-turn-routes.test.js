@@ -32,10 +32,22 @@ async function listen(router) {
 
 async function mount(t, { failTurn = false, holdTurn = false, failDirect = false } = {}) {
   const calls = [];
+  // The thread's durable turn and Stop stamp (store.js), shared by every
+  // process this suite mounts.
+  const thread = { activeTurnId: null, cancelTurnId: null, gone: false };
   const pool = {
     async query(sql) {
       if (/FROM user_agent_preferences/.test(sql)) {
         return { rows: [{ backend: 'codex', model_id: 'glm/dev', reasoning_effort: 'high' }] };
+      }
+      if (/UPDATE global_chat_threads SET cancel_turn_id = active_turn_id/.test(sql)) {
+        if (!thread.activeTurnId) return { rows: [] };
+        thread.cancelTurnId = thread.activeTurnId;
+        return { rows: [{ active_turn_id: thread.activeTurnId }] };
+      }
+      if (/AS stopped, archived_at IS NOT NULL AS archived/.test(sql)) {
+        if (thread.gone) return { rows: [] };
+        return { rows: [{ stopped: !!thread.cancelTurnId && thread.cancelTurnId === thread.activeTurnId, archived: false }] };
       }
       throw new Error(`unexpected query: ${sql}`);
     },
@@ -86,10 +98,13 @@ async function mount(t, { failTurn = false, holdTurn = false, failDirect = false
       }
       await input.emit({ type: 'turn.started', turnId: 'turn-1' });
       if (holdTurn) {
+        thread.activeTurnId = 'a1a1a1a1-0000-4000-8000-000000000001';
         await new Promise((resolve) => {
           if (input.signal.aborted) resolve();
           else input.signal.addEventListener('abort', resolve, { once: true });
         });
+        calls.push({ type: 'aborted' });
+        thread.activeTurnId = null;
         return;
       }
       await input.emit({
@@ -173,17 +188,26 @@ async function mount(t, { failTurn = false, holdTurn = false, failDirect = false
 
   const routePath = require.resolve('../src/routes/global-chat');
   delete require.cache[routePath];
-  const { globalChatRoutes } = require(routePath);
-  const { server, base } = await listen(globalChatRoutes({
+  const { globalChatRoutes, CANCEL_POLL } = require(routePath);
+  const routeConfig = {
     port: 3000,
     openrouterOrigin: 'https://usernode.dev',
     openrouterDefaultGlobalChatModel: 'cheap/global',
     openrouterDefaultGlobalChatReasoning: 'low',
     dataEncryptionKey: 'test-key',
-  }));
+  };
+  const { server, base } = await listen(globalChatRoutes(routeConfig));
+  const others = [];
+  // Another process serving the same routes: its own in-process turns.
+  const another = async () => {
+    const other = await listen(globalChatRoutes(routeConfig));
+    others.push(other.server);
+    return other.base;
+  };
 
   t.after(() => {
     server.close();
+    for (const s of others) s.close();
     poolModule.getPool = originals.getPool;
     credentialStore.readMetadata = originals.readMetadata;
     credentialStore.readSecret = originals.readSecret;
@@ -198,7 +222,7 @@ async function mount(t, { failTurn = false, holdTurn = false, failDirect = false
     suggestionExecutorModule.createSuggestionExecutor = originals.createSuggestionExecutor;
     delete require.cache[routePath];
   });
-  return { base, calls };
+  return { base, calls, thread, another, CANCEL_POLL };
 }
 
 test('turn and More suggestions endpoints stream typed events with separate model profiles', async (t) => {
@@ -398,6 +422,35 @@ test('an explicit Stop request aborts the active durable turn', async (t) => {
   assert.equal(cancelled.status, 200);
   assert.deepEqual(await cancelled.json(), { ok: true, cancelled: true });
   await turn.text();
+});
+
+test('a Stop that lands on another process stops the turn through its thread, as does deleting the thread', async (t) => {
+  const { base, calls, thread, another, CANCEL_POLL } = await mount(t, { holdTurn: true });
+  const was = CANCEL_POLL.ms;
+  CANCEL_POLL.ms = 20;
+  t.after(() => { CANCEL_POLL.ms = was; });
+  const other = await another();
+  const post = () => fetch(`${base}/api/global-chat/threads/${THREAD_ID}/turns`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text: 'List issues', client: { surface: 'web' } }),
+  });
+  const turn = await post();
+  assert.equal(turn.status, 200);
+  const stop = await fetch(`${other}/api/global-chat/threads/${THREAD_ID}/cancel`, { method: 'POST' });
+  assert.deepEqual(await stop.json(), { ok: true, cancelled: true }, 'stamped on the thread: no turn runs on that process');
+  assert.equal(thread.cancelTurnId, 'a1a1a1a1-0000-4000-8000-000000000001');
+  await turn.text();
+  assert.equal(calls.filter((c) => c.type === 'aborted').length, 1, 'the turn heard it and stopped');
+
+  // A thread deleted elsewhere: the turn running on it goes too.
+  thread.cancelTurnId = null;
+  const again = await post();
+  await new Promise((r) => setTimeout(r, 60));
+  assert.equal(calls.filter((c) => c.type === 'aborted').length, 1, 'nothing stops a turn nobody stopped');
+  thread.gone = true;
+  await again.text();
+  assert.equal(calls.filter((c) => c.type === 'aborted').length, 2);
 });
 
 test('a failure before a turn id still ends SSE with one sanitized terminal event', async (t) => {

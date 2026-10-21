@@ -54,6 +54,17 @@
 //                            presented to app B fails the audience
 //                            check. Never the slug — slugs are mutable
 //                            through the rename-PR flow.
+//   USERNODE_APP_SLUG        `apps.slug`, for the app's own link to its
+//   USERNODE_APP_NAME        page on the platform (/app/<slug>/full), and
+//                            `apps.name`, which a starter's page shows
+//                            (services/template.js starterPage). Neither is
+//                            identity: they let a generated app carry no
+//                            slug or name of its own, so every project made
+//                            from one ready-made app runs one prebuilt image
+//                            (services/starter-images.js). Always set, empty
+//                            for a row without one, so every builder's env
+//                            has the same names (staging-env.js fingerprints
+//                            them, value-exempt).
 //   IFRAME_JWT_PUBLIC_KEY    the SAME public PEM again, under the
 //                            platform's own env-var name. Ordinary child
 //                            containers never read this name and USERNODE_
@@ -137,6 +148,8 @@ function appIdentityEnv(app, config = null) {
     USERNODE_JWT_PUBLIC_KEY: publicPem,
     JWT_SECRET: publicPem,
     USERNODE_APP_ID: String(appId),
+    USERNODE_APP_SLUG: typeof app.slug === 'string' ? app.slug : '',
+    USERNODE_APP_NAME: typeof app.name === 'string' ? app.name : '',
     IFRAME_JWT_PUBLIC_KEY: publicPem,
     ...(origin ? { USERNODE_PLATFORM_ORIGIN: origin } : {}),
     ...(guestPem ? { USERNODE_GUEST_JWT_PUBLIC_KEY: guestPem } : {}),

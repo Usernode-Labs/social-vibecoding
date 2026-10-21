@@ -39,8 +39,10 @@ const log = require('../logger');
 const { CHALLENGE_SCORER_LOCK } = require('../advisory-locks');
 const rules = require('./challenge-rules');
 const grader = require('./challenge-grader');
+const { ONBOARDING_LIMIT } = require('./challenge-onboarding');
 
 const { MEASURES, TRY_APPS_MIN_SECONDS } = rules;
+const { appUsageTimes } = require('./app-usage-time');
 
 // Ceilings for one run. The first run of a season is the big one — every
 // account that already has GitHub linked is a credit waiting to be written —
@@ -56,8 +58,6 @@ const CANDIDATE_LIMIT = 5000;
 const DEFAULT_INTERVAL_MINUTES = 10;
 const DEFAULT_AGGREGATE_HOURS = 6;
 
-let timer = null;
-let inFlight = null;
 
 // ── The challenges each rule covers ────────────────────────────────────
 //
@@ -84,6 +84,16 @@ let inFlight = null;
 // events that are active at once is credited on both. That is the same
 // property that makes a weekly rule keep working when next week's row is
 // created; an operator who wants one instance only binds to the challenge.
+//
+// `first_challenge` (#4602, #4603): whether the challenge is one of its
+// season's First challenges, the one-time introduction (the
+// first ONBOARDING_LIMIT ONBOARDING templates in display order, the rule
+// ./challenge-onboarding.js buildOnboarding applies; $1 is that limit). On
+// those, and only those, time in an app you made counts for "Try an app"
+// and feedback on your own project counts for "Send feedback": a newcomer's
+// first app is usually their own, and the list is paid once in a life. Every
+// repeatable and weekly challenge keeps leaving your own apps out, so points
+// cannot be farmed from them (loadCandidates' `ownApps`).
 const RULE_CHALLENGES_SQL = `
   SELECT r.id AS rule_id, r.name AS rule_name, r.measure, r.target AS rule_target,
          r.points AS rule_points, r.enabled AS rule_enabled,
@@ -93,7 +103,20 @@ const RULE_CHALLENGES_SQL = `
          ct.id AS template_id, ct.category AS t_category, ct.goal AS t_goal,
          ct.schedule_start AS t_schedule_start, ct.schedule_end AS t_schedule_end,
          ct.metric_target AS t_metric_target, ct.reward AS t_reward,
-         se.starts_at AS event_starts_at, se.ends_at AS event_ends_at
+         se.starts_at AS event_starts_at, se.ends_at AS event_ends_at,
+         (UPPER(TRIM(ct.category)) = 'ONBOARDING'
+          AND c.challenge_template_id IN (
+            SELECT ff.challenge_template_id FROM (
+              SELECT DISTINCT ON (f.challenge_template_id) f.challenge_template_id, f.display_order, f.id
+                FROM challenges f
+                JOIN season_events fe ON fe.id = f.season_event_id
+                JOIN challenge_templates ft ON ft.id = f.challenge_template_id
+               WHERE fe.season_id = se.season_id AND fe.internal = FALSE
+                 AND UPPER(TRIM(ft.category)) = 'ONBOARDING'
+               ORDER BY f.challenge_template_id, f.display_order ASC, f.id ASC
+            ) ff
+             ORDER BY ff.display_order ASC, ff.id ASC
+             LIMIT $1)) AS first_challenge
     FROM challenge_scoring_rules r
     JOIN challenges c
       ON (r.challenge_id IS NOT NULL AND c.id = r.challenge_id)
@@ -130,7 +153,8 @@ const CREDITED_SQL = `
 // for the case it is used in, and generous by at most a day otherwise.
 
 // Apps the person did not make, with at least TRY_APPS_MIN_SECONDS (10, since
-// #3570) in them.
+// #3570) in them. On a First challenge ($5, RULE_CHALLENGES_SQL's
+// `first_challenge`) an app they made counts too (#4602).
 const TRY_APPS_SQL = `
   SELECT aa.user_id, aa.app_id, a.name AS app_name,
          MAX(aa.date) AS last_date, SUM(aa.seconds_spent) AS seconds
@@ -138,7 +162,7 @@ const TRY_APPS_SQL = `
     JOIN apps a ON a.id = aa.app_id
    WHERE aa.date >= $1::date AND aa.date <= $2::date
      AND aa.user_id IS NOT NULL
-     AND a.created_by IS DISTINCT FROM aa.user_id
+     AND ($5::boolean OR a.created_by IS DISTINCT FROM aa.user_id)
    GROUP BY aa.user_id, aa.app_id, a.name
   HAVING SUM(aa.seconds_spent) >= $3
    ORDER BY aa.user_id ASC, MAX(aa.date) ASC, aa.app_id ASC
@@ -198,6 +222,12 @@ const PROPOSAL_ACCEPTED_SQL = `
 // COMMUNITY_JOINED_SQL spells out below) has nobody else to tell. A
 // newcomer's first session was paid twice for asking the bot to change their
 // own solo app, by the First challenge and by the weekly one.
+//
+// Except on a First challenge ($4, RULE_CHALLENGES_SQL's `first_challenge`;
+// #4603): "Send feedback" is there to show a newcomer how feedback works,
+// and the project they made in their first session is the one they have
+// something to say about. It is paid once in a life, so it is never paid
+// twice; the weekly and repeatable challenges still leave it out.
 const USEFUL_FEEDBACK_SQL = `
   SELECT fr.id, fr.user_id, fr.created_at, fr.title, fr.description, a.name AS app_name
     FROM feedback_reports fr
@@ -205,6 +235,7 @@ const USEFUL_FEEDBACK_SQL = `
    WHERE fr.created_at >= $1 AND fr.created_at <= $2
      AND fr.issue_number IS NOT NULL
      AND (fr.app_id IS NULL
+          OR $4::boolean
           OR (a.created_by IS DISTINCT FROM fr.user_id
               AND (a.view_visibility = 'public'
                    OR (SELECT COUNT(*) FROM community_members o WHERE o.community_id = a.community_id) > 1
@@ -280,9 +311,30 @@ const COMMUNITY_APP_CREATED_SQL = `
 // counts on the day its person is let in), and a collaborator invite — by
 // username, or by email once claimed — accepted. A link on an invite-only
 // project writes both, which is why each person is taken once: the FIRST
-// invite they took, across all time, names their one inviter. Without that,
+// invite they took INSIDE THE WINDOW names their one inviter. Without that,
 // a handful of accounts joining each other's communities would pay every
 // one of them.
+//
+// The first invite each person ever took, across all inviters — one row per
+// person, the earliest record naming their one inviter. The challenge page's
+// invite list (./invite-statuses.js) reads it to show whose invite came first.
+const INVITES_FIRST_TAKEN_SQL = `SELECT DISTINCT ON (t.invitee_id) t.inviter_id, t.invitee_id, t.at
+    FROM (
+      SELECT i.created_by AS inviter_id, x.user_id AS invitee_id, x.applied_at AS at
+        FROM community_invite_redemptions x
+        JOIN community_invites i ON i.id = x.invite_id
+       WHERE x.status = 'joined' AND x.applied_at IS NOT NULL AND i.created_by IS NOT NULL
+      UNION ALL
+      SELECT c.invited_by, c.user_id, c.accepted_at
+        FROM app_collaborators c
+       WHERE c.status = 'member' AND c.invited_by IS NOT NULL AND c.accepted_at IS NOT NULL
+    ) t
+   WHERE t.inviter_id <> t.invitee_id
+   ORDER BY t.invitee_id ASC, t.at ASC, t.inviter_id ASC`;
+
+// INVITES_JOINED_SQL is the scorer's read: the window filter sits before the DISTINCT ON: filtering
+// after it threw away every in-window join by a person whose first invite
+// ever was older than the window, so the later inviter got nobody (#4048).
 const INVITES_JOINED_SQL = `
   SELECT f.inviter_id AS user_id, f.invitee_id, f.at, u.username AS invitee_username
     FROM (
@@ -298,10 +350,10 @@ const INVITES_JOINED_SQL = `
            WHERE c.status = 'member' AND c.invited_by IS NOT NULL AND c.accepted_at IS NOT NULL
         ) t
        WHERE t.inviter_id <> t.invitee_id
+         AND t.at >= $1 AND t.at <= $2
        ORDER BY t.invitee_id ASC, t.at ASC, t.inviter_id ASC
     ) f
     LEFT JOIN users u ON u.id = f.invitee_id
-   WHERE f.at >= $1 AND f.at <= $2
    ORDER BY f.inviter_id ASC, f.at ASC, f.invitee_id ASC
    LIMIT $3
 `;
@@ -319,17 +371,19 @@ const INVITES_JOINED_SQL = `
 //
 // OR A LOOK AT THE WORKSHOP WHEN NOTHING WAS UP FOR A VOTE (evan,
 // 2026-10-01). A newcomer whose communities have nothing waiting cannot do
-// "Vote on an app" by voting, so the Getting started card sends them to the
-// Workshop instead, and the server records that visit only when nothing was
-// waiting for their vote (services/onboarding.js markWorkshopVisit, as
-// `users.getting_started_seen.vote_workshop`, the last such visit). It is the
+// "Vote on an app" by voting, so the Getting started card sent them to the
+// Workshop instead, and the server recorded that visit only when nothing was
+// waiting for their vote (the card's markWorkshopVisit, as
+// `users.getting_started_seen.vote_workshop`, the last such visit). #4635
+// retired the card and nothing records a visit now, but one recorded before
+// still counts inside a challenge window that holds it. It is the
 // third kind of row here, keyed `vote:workshop:<user id>`, with the same
 // window and the same one credit a person: whichever came first inside the
 // window, the vote or the look, is the credit. The CASE guards the cast, so
 // a value that is not a timestamp is no row rather than a failed pass.
 //
-// TWO MORE VOTES THAT ARE NOT ON SOMEBODY ELSE'S CHANGE (Getting started,
-// first-session test, 2026-10-03). The Homeroom bot writes the proposal for
+// TWO MORE VOTES THAT ARE NOT ON SOMEBODY ELSE'S CHANGE (first-session
+// test, 2026-10-03). The Homeroom bot writes the proposal for
 // a request it builds, so the session's author is the bot, and "not their
 // own" let a person's vote on the build of THEIR OWN request through: the
 // tester asked the bot for an app, voted on its first version, and was paid
@@ -340,7 +394,7 @@ const INVITES_JOINED_SQL = `
 // a vote there. The look has no project, and is not affected. The filters
 // run before DISTINCT ON, so the credit is their earliest vote that counts.
 // routes/workshop-overview.js OWED_BY_COMMUNITY_SQL (`paying`) is the same
-// test, so the card's Vote step only points at a vote that pays.
+// test.
 const VOTE_CAST_SQL = `
   SELECT DISTINCT ON (v.user_id) v.user_id, v.kind, v.ref_id, v.created_at, a.name AS app_name
     FROM (
@@ -427,7 +481,11 @@ const dateToIso = (v) => {
 };
 
 // Load the candidate units for one rule over one challenge.
-async function loadCandidates(pool, measure, window, { target }) {
+// `ownApps`: the challenge is a First challenge (RULE_CHALLENGES_SQL's
+// `first_challenge`), on which the person's own apps count for TRY_APPS and
+// the feedback measures. False everywhere else.
+async function loadCandidates(pool, measure, window, { target, ownApps = false }) {
+  const own = ownApps === true;
   const spec = MEASURES[measure];
   if (!spec) return [];
   const startIso = window.startMs != null ? new Date(window.startMs).toISOString() : '1970-01-01T00:00:00.000Z';
@@ -436,24 +494,37 @@ async function loadCandidates(pool, measure, window, { target }) {
   switch (measure) {
     case 'TRY_APPS': {
       const { rows } = await pool.query(TRY_APPS_SQL,
-        [startIso, endIso, TRY_APPS_MIN_SECONDS, CANDIDATE_LIMIT]);
-      return rows.map((r) => ({
+        [startIso, endIso, TRY_APPS_MIN_SECONDS, CANDIDATE_LIMIT, own]);
+      const times = await appUsageTimes(pool, rows, window,
+        { seconds: TRY_APPS_MIN_SECONDS, perApp: true, ownApps: own });
+      return rows.filter((r) => {
+        const time = times.get(`${r.user_id}:${r.app_id}`);
+        return !time || time.activity_at !== null;
+      }).map((r) => ({
         userId: r.user_id,
         sourceKey: `app:${r.app_id}`,
-        activityAt: dateToIso(r.last_date),
+        activityAt: isoOf(times.get(`${r.user_id}:${r.app_id}`)?.activity_at) || dateToIso(r.last_date),
+        timestampPrecision: times.get(`${r.user_id}:${r.app_id}`)?.timestamp_precision || 'day',
         description: `Tried ${r.app_name || `app #${r.app_id}`}`,
-      }));
+      })).sort((a, b) => Number(a.userId) - Number(b.userId)
+        || Date.parse(a.activityAt) - Date.parse(b.activityAt)
+        || a.sourceKey.localeCompare(b.sourceKey));
     }
     case 'USE_APPS_MINUTES': {
       const seconds = Math.round(Number(target) * 60);
       const { rows } = await pool.query(USE_APPS_MINUTES_SQL,
         [startIso, endIso, seconds, CANDIDATE_LIMIT]);
-      return rows.map((r) => ({
+      const times = await appUsageTimes(pool, rows, window, { seconds, perApp: false });
+      return rows.filter((r) => {
+        const time = times.get(`${r.user_id}:0`);
+        return !time || time.activity_at !== null;
+      }).map((r) => ({
         userId: r.user_id,
         // One credit for the whole window, so the key names the window by
         // the day it starts: a weekly challenge's windows are its weeks.
         sourceKey: `window:${startIso.slice(0, 10)}`,
-        activityAt: dateToIso(r.last_date),
+        activityAt: isoOf(times.get(`${r.user_id}:0`)?.activity_at) || dateToIso(r.last_date),
+        timestampPrecision: times.get(`${r.user_id}:0`)?.timestamp_precision || 'day',
         description: `${Math.floor(Number(r.seconds) / 60)} minutes in apps`,
       }));
     }
@@ -477,7 +548,7 @@ async function loadCandidates(pool, measure, window, { target }) {
       }));
     }
     case 'USEFUL_FEEDBACK': {
-      const { rows } = await pool.query(USEFUL_FEEDBACK_SQL, [startIso, endIso, CANDIDATE_LIMIT]);
+      const { rows } = await pool.query(USEFUL_FEEDBACK_SQL, [startIso, endIso, CANDIDATE_LIMIT, own]);
       return rows.map((r) => ({
         userId: r.user_id,
         sourceKey: `feedback:${r.id}`,
@@ -545,7 +616,7 @@ async function loadCandidates(pool, measure, window, { target }) {
       }));
     }
     case 'FEEDBACK_SENT': {
-      const { rows } = await pool.query(USEFUL_FEEDBACK_SQL, [startIso, endIso, CANDIDATE_LIMIT]);
+      const { rows } = await pool.query(USEFUL_FEEDBACK_SQL, [startIso, endIso, CANDIDATE_LIMIT, own]);
       return rows.map((r) => ({
         userId: r.user_id,
         sourceKey: `feedback:${r.id}`,
@@ -604,6 +675,7 @@ async function writeCredits(pool, { challenge, activityType, credits }) {
         source_key: credit.sourceKey,
         rule_id: credit.ruleId,
         measure: credit.measure,
+        timestamp_precision: credit.timestampPrecision || 'instant',
         ...(credit.completion ? { kind: 'challenge_completion' } : {}),
         ...(credit.grade ? { grade: credit.grade } : {}),
       };
@@ -675,7 +747,9 @@ async function scoreChallenge(pool, row, rule, run) {
   try {
     candidates = [];
     for (const w of windows) {
-      candidates = candidates.concat(await loadCandidates(pool, rule.measure, w, { target }));
+      candidates = candidates.concat(await loadCandidates(pool, rule.measure, w, {
+        target, ownApps: row.first_challenge === true,
+      }));
     }
   } catch (err) {
     entry.error = err.message;
@@ -782,7 +856,7 @@ async function score(pool, {
   dryRun = false, now = Date.now(), apiKey = null, llm = null, only = null,
 } = {}) {
   const summary = { challenges: [], credits: 0, graded: 0, skipped: 0, grading: null };
-  const { rows } = await pool.query(RULE_CHALLENGES_SQL);
+  const { rows } = await pool.query(RULE_CHALLENGES_SQL, [ONBOARDING_LIMIT]);
   const run = {
     summary, dryRun, now, apiKey, llm,
     budget: MAX_CREDITS_PER_RUN,
@@ -1062,17 +1136,14 @@ async function loadCadence(pool, eventId, rows, opts = {}) {
   return (await loadRuleFacts(pool, eventId, rows, opts)).cadence;
 }
 
-// When this process last looked at the standings. In memory, and per process,
-// because all it guards is a rebuild that produces nothing: a deployment with
-// no event to score has no snapshot, `maybeAggregate` finds none and tries
-// again — once per run, which used to mean every ten minutes and would now
-// mean every beat.
-let lastAggregateCheckAt = 0;
-
-// One beat of the schedule. Advisory-locked and `pg_try_advisory_lock`, not
-// the waiting kind: every platform instance runs this timer, and a beat that
-// cannot take the lock has nothing useful to do — the instance holding it is
-// already writing the same credits.
+// One beat of the schedule: a run of the `challenge-scorer` clock
+// (src/workflow/clock/services.ts), on whichever process runs the workflow.
+// Advisory-locked and `pg_try_advisory_lock`, not the waiting kind: the
+// scoring on the spot (scoreOn, at the doors people act through) plans its
+// counted measures under the same lock, and a beat that cannot take it has
+// nothing useful to do — the pass holding it is already writing the same
+// credits. A session lock, so a beat whose process stalls keeps it, and one
+// whose process dies frees it: the fence holds under the clock's lease.
 //
 // A beat with nothing due is not a run and records nothing, with one
 // exception. The service has to be seen to be alive, and the standings have
@@ -1081,33 +1152,31 @@ let lastAggregateCheckAt = 0;
 // every run happened before rules carried intervals of their own. That clock
 // is read from the run history rather than kept in memory, so two instances
 // share one heartbeat and a deploy does not start with an empty run.
-async function tick(pool, config, { now = Date.now() } = {}) {
-  const client = await pool.connect();
-  let locked = false;
-  try {
-    const lock = await client.query(
-      'SELECT pg_try_advisory_lock($1, $2) AS acquired', [CHALLENGE_SCORER_LOCK, 0]
-    );
-    if (lock.rows[0]?.acquired !== true) return { busy: true };
-    locked = true;
+//
+// `lastAggregateCheckAt`: when a beat last looked at the standings (the
+// clock carries it from one run to the next, as `aggregateCheckedAt`). All
+// it guards is a rebuild that produces nothing on a deployment with no
+// event to score.
+async function tick(pool, config, { now = Date.now(), lastAggregateCheckAt = 0 } = {}) {
+  // On the process's lock connection, never a pooled one: the run queries the
+  // pool (src/db/session-locks.js).
+  const locks = require('../../db/session-locks');
+  const out = await locks.ifSessionLockFree(pool, [CHALLENGE_SCORER_LOCK, 0], () => tickLocked(pool, config, { now, lastAggregateCheckAt }));
+  return out === locks.BUSY ? { busy: true } : out;
+}
 
-    const defaultMinutes = intervalMinutes(config);
-    const defaultMs = defaultMinutes * 60_000;
-    const due = await dueRuleIds(pool, { now, defaultMinutes });
-    if (!due.size) {
-      const { rows } = await pool.query(LAST_SCHEDULED_RUN_SQL);
-      const last = rows[0] && rows[0].at ? new Date(rows[0].at).getTime() : null;
-      if (last != null && now - last < defaultMs - rules.DUE_SLACK_MS) return { idle: true };
-    }
-    const aggregate = now - lastAggregateCheckAt >= defaultMs - rules.DUE_SLACK_MS;
-    if (aggregate) lastAggregateCheckAt = now;
-    return await runOnce(pool, { trigger: 'schedule', config, now, only: due, aggregate });
-  } finally {
-    if (locked) {
-      await client.query('SELECT pg_advisory_unlock($1, $2)', [CHALLENGE_SCORER_LOCK, 0]).catch(() => {});
-    }
-    client.release();
+async function tickLocked(pool, config, { now, lastAggregateCheckAt }) {
+  const defaultMinutes = intervalMinutes(config);
+  const defaultMs = defaultMinutes * 60_000;
+  const due = await dueRuleIds(pool, { now, defaultMinutes });
+  if (!due.size) {
+    const { rows } = await pool.query(LAST_SCHEDULED_RUN_SQL);
+    const last = rows[0] && rows[0].at ? new Date(rows[0].at).getTime() : null;
+    if (last != null && now - last < defaultMs - rules.DUE_SLACK_MS) return { idle: true };
   }
+  const aggregate = now - (Number(lastAggregateCheckAt) || 0) >= defaultMs - rules.DUE_SLACK_MS;
+  const ran = await runOnce(pool, { trigger: 'schedule', config, now, only: due, aggregate });
+  return { ...ran, aggregateCheckedAt: aggregate ? now : (Number(lastAggregateCheckAt) || 0) };
 }
 
 // ── On the moment it happens (#3564, #3568, #3569, #3570) ──────────────
@@ -1134,9 +1203,11 @@ async function tick(pool, config, { now = Date.now() } = {}) {
 //
 // The schedule stays the source of truth and the backstop. A membership
 // that arrives by trigger (a queued invite applied when its person is let
-// in, a Home pin, the dapp.json reconcile) has no door to call this from,
+// in, the dapp.json reconcile) has no door to call this from,
 // and is counted on the rule's next pass as before; so is any future door
-// that forgets to. Nothing here is required for correctness, only for
+// that forgets to. A Home pin joins by trigger as well, but it has a door:
+// POST /api/apps/:slug/favorite calls this when its pin was the join (#4600,
+// Home's featured list). Nothing here is required for correctness, only for
 // speed.
 //
 // The same gap, at the other First challenges. "Suggested an improvement,
@@ -1147,9 +1218,7 @@ async function tick(pool, config, { now = Date.now() } = {}) {
 // with the measures that action can complete:
 //
 //   a join              COMMUNITY_JOINED, COMMUNITY_APP_CREATED  scoreOnJoin
-//   a vote              VOTE_CAST       routes/votes.js, routes/issues.js,
-//                                       and the Vote step's Workshop visit
-//                                       (routes/onboarding.js)
+//   a vote              VOTE_CAST       routes/votes.js, routes/issues.js
 //   a report            FEEDBACK_SENT   routes/feedback.js
 //   an app's heartbeat  TRY_APPS, on the crossing only (scoreOnAppTime)
 //
@@ -1199,32 +1268,21 @@ async function scoreOn(pool, config, measures, { now = Date.now() } = {}) {
   if (!(intervalMinutes(config) > 0)) return null;
   const wanted = [...new Set(measures || [])].filter((m) => MEASURES[m] && !MEASURES[m].graded);
   if (!wanted.length) return null;
-  let client = null;
-  let locked = false;
   try {
     const { rows } = await pool.query(ON_THE_SPOT_RULES_SQL, [wanted]);
     if (!rows.length) return null;
-    if (rows.some((r) => MEASURES[r.measure] && MEASURES[r.measure].counted)) {
-      client = await pool.connect();
-      const lock = await client.query(
-        'SELECT pg_try_advisory_lock($1, $2) AS acquired', [CHALLENGE_SCORER_LOCK, 0]
-      );
-      if (lock.rows[0]?.acquired !== true) return { busy: true };
-      locked = true;
-    }
-    return await score(pool, { now, only: new Set(rows.map((r) => Number(r.id))) });
+    const scoreThem = () => score(pool, { now, only: new Set(rows.map((r) => Number(r.id))) });
+    if (!rows.some((r) => MEASURES[r.measure] && MEASURES[r.measure].counted)) return await scoreThem();
+    // On the process's lock connection, never a pooled one
+    // (src/db/session-locks.js).
+    const locks = require('../../db/session-locks');
+    const out = await locks.ifSessionLockFree(pool, [CHALLENGE_SCORER_LOCK, 0], scoreThem);
+    return out === locks.BUSY ? { busy: true } : out;
   } catch (err) {
     log.warn('challenge-scorer', 'Scoring on the spot failed; the schedule will count it', {
       measures: wanted, err: err.message,
     });
     return null;
-  } finally {
-    if (client) {
-      if (locked) {
-        await client.query('SELECT pg_advisory_unlock($1, $2)', [CHALLENGE_SCORER_LOCK, 0]).catch(() => {});
-      }
-      client.release();
-    }
   }
 }
 
@@ -1243,7 +1301,10 @@ const scoreOnFeedback = (pool, config, opts) => scoreOn(pool, config, FEEDBACK_M
 // the only heartbeat that can change TRY_APPS is the one that takes that
 // person's time in that app across TRY_APPS_MIN_SECONDS. So:
 //
-//   1. an app they made never counts, so nothing is read for it;
+//   1. an app they made is read like any other since #4602: it counts for
+//      the First challenge's "Try an app" (RULE_CHALLENGES_SQL's
+//      `first_challenge`), and the pass's own TRY_APPS query leaves it out
+//      of every other challenge;
 //   2. if today's row was already at the floor before this heartbeat, so was
 //      the total — no read, which is every heartbeat after a day's first;
 //   3. otherwise one indexed SUM of their time in that app, every day, and a
@@ -1263,11 +1324,10 @@ const APP_TIME_SQL = `
 `;
 
 async function scoreOnAppTime(pool, config, {
-  appId, ownerId = null, userId, seconds, daySeconds, now = Date.now(),
+  appId, userId, seconds, daySeconds, now = Date.now(),
 } = {}) {
   if (!(intervalMinutes(config) > 0)) return null;
   if (appId == null || userId == null) return null;
-  if (ownerId != null && Number(ownerId) === Number(userId)) return null;
   const added = Number(seconds);
   if (!(Number(daySeconds) - added < TRY_APPS_MIN_SECONDS)) return null;
   try {
@@ -1281,43 +1341,6 @@ async function scoreOnAppTime(pool, config, {
   return scoreOn(pool, config, APP_TIME_MEASURES, { now });
 }
 
-function start(config) {
-  if (timer) return;
-  const minutes = intervalMinutes(config);
-  if (!minutes) {
-    log.info('challenge-scorer', 'Automatic challenge scoring is off (interval 0)');
-    return;
-  }
-  const { getPool } = require('../../db/pool');
-  const run = () => {
-    if (inFlight) return inFlight;
-    inFlight = tick(getPool(config), config)
-      .then((result) => {
-        if (result && result.credits) {
-          log.info('challenge-scorer', 'Credits written', {
-            credits: result.credits, graded: result.graded,
-          });
-        }
-      })
-      .catch((err) => log.error('challenge-scorer', 'Run failed', { err: err.message }))
-      .finally(() => { inFlight = null; });
-    return inFlight;
-  };
-  // The beat, not the interval: `minutes` is now how often a rule runs when
-  // it does not say otherwise, and which rules a beat runs is tick()'s call.
-  timer = setInterval(run, rules.FLOOR_MINUTES * 60_000);
-  if (typeof timer.unref === 'function') timer.unref();
-  // Deploys frequently replace the leader before its first tick, so a season
-  // could otherwise go a whole cadence unscored after every release.
-  setTimeout(run, 30_000).unref?.();
-}
-
-async function stop() {
-  if (timer) clearInterval(timer);
-  timer = null;
-  await inFlight;
-}
-
 module.exports = {
   score,
   runOnce,
@@ -1327,8 +1350,6 @@ module.exports = {
   scoreOnVote,
   scoreOnFeedback,
   scoreOnAppTime,
-  start,
-  stop,
   maybeAggregate,
   loadCandidates,
   loadCredited,
@@ -1343,6 +1364,8 @@ module.exports = {
   MAX_GRADES_PER_RUN,
   CANDIDATE_LIMIT,
   RULE_CHALLENGES_SQL,
+  INVITES_FIRST_TAKEN_SQL,
+  ONBOARDING_LIMIT,
   CADENCE_RULES_SQL,
   CREDITED_SQL,
   MEASURE_SQL,

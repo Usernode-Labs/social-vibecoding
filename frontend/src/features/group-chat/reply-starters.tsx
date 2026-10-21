@@ -39,14 +39,18 @@
 
 import { useState } from 'react';
 
+import { useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
 import { transcriptStore, type TranscriptView } from './transcript-store';
 
-export const REPLY_STARTERS: readonly { label: string; text: string }[] = [
-  { label: '\u{1F44B} Hi!', text: '\u{1F44B} Hi!' },
-  { label: 'Love it!', text: 'Love it!' },
+// `label` and `text` are message ids (frontend/locales/en/chat.json), read
+// when the chips render. `open` marks a sentence the person finishes: a
+// space follows it in the box.
+export const REPLY_STARTERS: readonly { label: string; text: string; open?: boolean }[] = [
+  { label: 'chat:group.starters.hi', text: 'chat:group.starters.hi' },
+  { label: 'chat:group.starters.loveIt', text: 'chat:group.starters.loveIt' },
   // Started, not finished: the caret waits after the space.
-  { label: 'Could it also…', text: 'Could it also ' },
+  { label: 'chat:group.starters.couldItAlso', text: 'chat:group.starters.couldItAlsoText', open: true },
 ];
 
 /** Whether the general chat's transcript calls for the chips (see the header). */
@@ -75,11 +79,12 @@ export function startReply(text: string, doc: Document | null = typeof document 
 const CHIP = 'shrink-0 rounded-full border border-violet-200 bg-white px-3 py-1.5 text-sm text-violet-700 hover:bg-violet-50 dark:border-violet-800 dark:bg-zinc-900 dark:text-violet-300 dark:hover:bg-violet-950/40';
 
 export function ReplyStartersView({ onPick }: { onPick: (text: string) => void }) {
+  const t = useMessages('chat');
   return (
-    <div role="group" aria-label="Start a reply" className="flex gap-2 overflow-x-auto pb-2" data-gc-reply-starters="">
-      {REPLY_STARTERS.map(({ label, text }) => (
-        <button key={label} type="button" className={CHIP} data-gc-reply-starter="" onClick={() => onPick(text)}>
-          {label}
+    <div role="group" aria-label={t('chat:group.starters.label')} className="flex gap-2 overflow-x-auto pb-2" data-gc-reply-starters="">
+      {REPLY_STARTERS.map(({ label, text, open }) => (
+        <button key={label} type="button" className={CHIP} data-gc-reply-starter="" onClick={() => onPick(open ? `${t(text)} ` : t(text))}>
+          {t(label)}
         </button>
       ))}
     </div>

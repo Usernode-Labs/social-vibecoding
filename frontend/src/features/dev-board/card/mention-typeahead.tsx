@@ -34,6 +34,7 @@
 
 import { useCallback, useMemo, useRef, useState, type KeyboardEvent, type RefObject } from 'react';
 
+import { useMessages } from '../../../lib/i18n/react';
 import { useIsomorphicLayoutEffect } from '../../../lib/legacy-dom';
 import { prefixLookup, type PrefixLookup } from '../../../lib/prefix-lookup';
 import { MentionMenuView } from '../../group-chat/autocomplete';
@@ -423,6 +424,7 @@ export function FeedMentionMenu({
   menuRef: RefObject<HTMLDivElement | null>;
   onPick: (username: string) => void;
 }) {
+  const t = useMessages('project');
   if (!items.length) return null;
   const me = viewerName();
   return (
@@ -432,7 +434,7 @@ export function FeedMentionMenu({
         ? 'gc-mention-menu dev-feed-mention-menu dev-feed-mention-menu-below'
         : 'gc-mention-menu dev-feed-mention-menu'}
       role="listbox"
-      aria-label="Mention someone"
+      aria-label={t('project:typeahead.mention.name')}
       data-feed-mention-menu=""
       // mousedown, not click, and prevented — the field keeps focus, so the
       // list is still open when the pick lands (a blur would close it first).

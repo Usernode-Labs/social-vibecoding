@@ -1,6 +1,12 @@
 /**
  * The apps you left, newest first, for the desktop rail's Recents (#2802).
  *
+ * Nothing lists them now (18 Oct 2026): each community's app is a row under
+ * it in the desktop sidebar, so the strip's Recent apps went. The sidebar
+ * still reads a name and a face from here, for a community whose app is
+ * still running that the list of yours does not hold
+ * (./rail-communities.tsx).
+ *
  * ./parked-store.js keeps ONE app: "which app am I in the middle of", drawn
  * as the phone's Resume strip. The rail's Recents list asks a wider question,
  * "what was I just doing", and answers it with apps AND conversations on one
@@ -33,7 +39,7 @@ import { readParked } from './parked-store.js';
 
 const KEY = 'usernode_recent_apps_v1';
 
-/** More than the rail's list holds (./recents.ts, RECENTS_LIMIT), so a
+/** More than any list ever showed (the strip's five, #4417), so a
  *  burst of messages cannot push every app out of storage for good. */
 export const RECENT_APPS_MAX = 40;
 

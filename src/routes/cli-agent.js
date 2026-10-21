@@ -32,6 +32,7 @@ const classicSessions = require('../services/classic-sessions');
 const github = require('../services/github');
 const githubBudget = require('../services/github-budget');
 const { drainGuard } = require('../services/lifecycle');
+const { openEnded } = require('../middleware/inflight-requests');
 const log = require('../services/logger');
 
 const MAX_REASON_CHARS = 500;
@@ -252,6 +253,9 @@ function cliAgentRoutes(config, { pool = getPool(config), auth } = {}) {
     }
     const lease = await requireLease(req, res, req.query.leaseId);
     if (!lease) return undefined;
+    // Held open for the poll window by design: a shutdown's drain does not
+    // wait for it (src/middleware/inflight-requests.js).
+    openEnded(res);
     const controller = new AbortController();
     res.on('close', () => controller.abort());
     try {
@@ -439,7 +443,7 @@ function cliAgentRoutes(config, { pool = getPool(config), auth } = {}) {
     const { status } = req.body;
     // Only outcomes the agent can legitimately report about itself. The
     // platform owns 'abandoned' and 'stopped'; letting a client claim either
-    // would let a laptop mark its own failed run as a benign re-route.
+    // would let a laptop pass off its own failed run as a benign disconnect.
     if (!['completed', 'failed'].includes(status)) {
       return res.status(400).json({ error: 'invalid_request' });
     }

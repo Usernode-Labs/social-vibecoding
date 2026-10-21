@@ -30,6 +30,7 @@ import { Button } from '@/components/ui/button';
 import { DialogCard, DialogRoot } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 
+import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { useHiddenClass } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
 import { AppAllowance, useAppAllowance } from './app-allowance';
@@ -54,17 +55,13 @@ const POLL_INTERVAL_MS = 4000;
  * original's visibility, approval rule and admins stripped from dapp.json).
  * tests/remix-safe-defaults.test.js pins the words as the shell ships them.
  */
-const FORK_INFO_LINES: ReadonlyArray<{ lead: string | null; text: string }> = [
-  { lead: 'Copied:', text: 'the code, the look and the icon.' },
-  {
-    lead: 'Starts fresh:',
-    text: 'it’s Just you, with an empty database. Invite people or open it up later.',
-  },
-  {
-    lead: 'Not copied:',
-    text: 'anyone’s data, keys, chat or members. If the app needs a key, you’ll add your own before it goes live.',
-  },
-  { lead: null, text: 'Its code is public on GitHub.' },
+// Each line is one whole message (frontend/locales/en/dialogs.json). `lead`
+// says the message opens with a bold lead-in, written as its numbered tag.
+const FORK_INFO_LINES: ReadonlyArray<{ id: string; lead: boolean }> = [
+  { id: 'dialogs:fork.info.copied', lead: true },
+  { id: 'dialogs:fork.info.fresh', lead: true },
+  { id: 'dialogs:fork.info.notCopied', lead: true },
+  { id: 'dialogs:fork.info.public', lead: false },
 ];
 
 export interface ForkSource {
@@ -73,6 +70,7 @@ export interface ForkSource {
 }
 
 export function ForkAppDialog() {
+  const t = useMessages('dialogs');
   const inputRef = useRef<HTMLInputElement>(null);
   const errorRef = useRef<HTMLDivElement>(null);
   const sourceRef = useRef<ForkSource | null>(null);
@@ -92,7 +90,9 @@ export function ForkAppDialog() {
       setError('');
       setForked(null);
       stopWatchingCreation();
-      if (inputRef.current) inputRef.current.value = `${src?.name || 'App'} (remix)`;
+      if (inputRef.current) inputRef.current.value = src?.name
+        ? t('dialogs:fork.defaultName.named', { app: src.name })
+        : t('dialogs:fork.defaultName.unnamed');
       setTimeout(() => {
         inputRef.current?.focus();
         inputRef.current?.select();
@@ -134,7 +134,7 @@ export function ForkAppDialog() {
     const source = sourceRef.current;
     if (!source?.slug) return;
     const name = (inputRef.current?.value || '').trim();
-    if (name.length < 3) return setError('Name must be at least 3 characters.');
+    if (name.length < 3) return setError(t('dialogs:fork.error.nameShort'));
 
     setBusy(true);
     try {
@@ -146,7 +146,7 @@ export function ForkAppDialog() {
       const data = await res.json().catch(() => ({}));
       void invalidateAppAllowance();
       if (!res.ok) {
-        setError(data.error || 'Could not make your copy.');
+        setError(data.error || t('dialogs:fork.error.failed'));
         return;
       }
       const slug = data.app?.slug;
@@ -156,7 +156,7 @@ export function ForkAppDialog() {
         // Home writes an address right after the close (#3683).
         dialog.closeForNavigation();
         window.PlatformUI?.toast?.(
-          'Your copy is being made. It will appear in your apps when it is ready.',
+          t('dialogs:fork.beingMade'),
         );
         (window.App?.navigateHome as (() => void) | undefined)?.();
         return;
@@ -168,7 +168,7 @@ export function ForkAppDialog() {
       // the user closes it.
       (window.Home?.load as (() => void) | undefined)?.();
     } catch {
-      setError('Network error. Please try again.');
+      setError(t('dialogs:fork.error.network'));
     } finally {
       setBusy(false);
     }
@@ -211,7 +211,7 @@ export function ForkAppDialog() {
                     publishAppStatus({
                       slug,
                       status: 'error',
-                      errorReason: data.error || `Retry failed (HTTP ${res.status}).`,
+                      errorReason: data.error || t('dialogs:fork.retry.http', { status: res.status }),
                     });
                     return;
                   }
@@ -221,7 +221,7 @@ export function ForkAppDialog() {
                   publishAppStatus({
                     slug,
                     status: 'error',
-                    errorReason: 'Could not reach the server to retry. Try again from the app tile.',
+                    errorReason: t('dialogs:fork.retry.unreachable'),
                   });
                 });
             }}
@@ -240,11 +240,18 @@ export function ForkAppDialog() {
             the name into its sentence ("ForkingBook Clubstands up").
         */}
         <h2 className="text-lg font-bold mb-1 break-words">
-          {'Remix '}
-          <span id="fork-source-name">{sourceName || 'this app'}</span>
+          {sourceName ? (
+            <RichMessage
+              id="dialogs:fork.title.named"
+              values={{ app: sourceName }}
+              components={[<span id="fork-source-name" />]}
+            />
+          ) : (
+            <RichMessage id="dialogs:fork.title.unnamed" components={[<span id="fork-source-name" />]} />
+          )}
         </h2>
         <p className="text-sm text-zinc-500 dark:text-zinc-400 mb-4">
-          Make your own copy. You get the code and the look, and it starts as Just you.
+          {t('dialogs:fork.intro')}
         </p>
         <AppAllowance />
         <form id="fork-form" className="space-y-4" onSubmit={submit}>
@@ -253,7 +260,7 @@ export function ForkAppDialog() {
               htmlFor="fork-input"
               className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1"
             >
-              Name for your copy
+              {t('dialogs:fork.nameLabel')}
             </label>
             <Input
               id="fork-input"
@@ -266,20 +273,23 @@ export function ForkAppDialog() {
               box="dialog"
               hint="muted"
               ring="seamless"
-              placeholder="My copy"
+              placeholder={t('dialogs:fork.namePlaceholder')}
             />
           </div>
           <div
             className="text-xs text-zinc-600 dark:text-zinc-300 space-y-1.5 rounded-lg bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-200 dark:border-zinc-700 p-3"
           >
             {FORK_INFO_LINES.map((line) => (
-              <p key={line.lead || line.text}>
+              <p key={line.id}>
+                {/* The lead-in and its sentence are one message: the bold part
+                    is the numbered tag, and what follows it stays one text
+                    child, as the prerender needs. */}
                 {line.lead ? (
-                  <strong className="font-semibold text-zinc-900 dark:text-zinc-100">{line.lead}</strong>
-                ) : null}
-                {/* One text child, its leading space inside the string: two
-                    adjacent text runs do not survive the prerender. */}
-                {line.lead ? ` ${line.text}` : line.text}
+                  <RichMessage
+                    id={line.id}
+                    components={[<strong className="font-semibold text-zinc-900 dark:text-zinc-100" />]}
+                  />
+                ) : t(line.id)}
               </p>
             ))}
           </div>
@@ -293,7 +303,7 @@ export function ForkAppDialog() {
               className="flex-1 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-4 py-2 text-sm font-medium text-zinc-900 dark:text-zinc-100 transition-colors"
               onClick={() => dialog.close()}
             >
-              Cancel
+              {t('core:common.cancel')}
             </button>
             <Button
               type="submit"
@@ -302,7 +312,7 @@ export function ForkAppDialog() {
               disabled={busy || quotaBlocksCreation}
               disabledStyle="block"
             >
-              {busy ? 'Remixing…' : 'Remix'}
+              {busy ? t('dialogs:fork.submitting') : t('dialogs:fork.submit')}
             </Button>
           </div>
         </form>

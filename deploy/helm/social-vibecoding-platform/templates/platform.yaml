@@ -6,11 +6,23 @@ metadata:
   labels:
     {{- include "social-vibecoding-platform.labels" . | nindent 4 }}
     app.kubernetes.io/component: platform
+  annotations:
+    # After the Deployments (wave 0) are healthy: a selector that starts to
+    # require serves-requests (the conductor switched on, the release that
+    # first labels the serving Pods) is applied only once the Pods carrying
+    # it are rolled out and Ready, never while only the old ones serve.
+    argocd.argoproj.io/sync-wave: "1"
 spec:
   type: ClusterIP
   selector:
     {{- include "social-vibecoding-platform.selectorLabels" . | nindent 4 }}
     app.kubernetes.io/component: platform
+    {{- if .Values.platform.conductor.enabled }}
+    # The conductor's Pods share the platform's identity (its network
+    # policies, its PodDisruptionBudget) but take no requests: only the Pods
+    # that serve them carry this label (docs/plans/web-and-conductor.md).
+    social.usernode.io/serves-requests: "true"
+    {{- end }}
   ports:
     - {name: http, port: 3000, targetPort: http, protocol: TCP}
 ---
@@ -38,7 +50,51 @@ spec:
     matchLabels:
       {{- include "social-vibecoding-platform.selectorLabels" . | nindent 6 }}
       app.kubernetes.io/component: platform
-  template:
+  template:{{ include "social-vibecoding-platform.platformPod" (merge (dict "processRole" (ternary "web" "" .Values.platform.conductor.enabled)) .) }}
+{{- if .Values.platform.conductor.enabled }}
+---
+# The conductor (docs/plans/web-and-conductor.md): the same image and Pod as
+# above, run as PROCESS_ROLE=conductor. Every replica runs the workflow
+# (docs/workflows.md), none of it needing the leader lock; one also stands as
+# leader for the leader's remaining work. The Pods above serve people's
+# requests, never lead and decide nothing. Its Pods carry the platform's
+# component label, so every network policy that admits the platform admits
+# it; its own selector adds process-role, and the Service above leaves it
+# out. A release replaces it as it replaces them: a new one first, then an
+# old one finishes its work (docs/plans/draining-releases.md).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "social-vibecoding-platform.fullname" . }}-conductor
+  labels:
+    {{- include "social-vibecoding-platform.labels" . | nindent 4 }}
+    app.kubernetes.io/component: platform
+    social.usernode.io/process-role: conductor
+spec:
+  replicas: {{ .Values.platform.conductor.replicas }}
+  revisionHistoryLimit: 5
+  minReadySeconds: 10
+  progressDeadlineSeconds: 600
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      {{- include "social-vibecoding-platform.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: platform
+      social.usernode.io/process-role: conductor
+  template:{{ include "social-vibecoding-platform.platformPod" (merge (dict "processRole" "conductor") .) }}
+{{- end }}
+{{- end }}
+
+{{- /*
+The platform's Pod, for the Deployment above and the conductor's. Called with
+the chart's context plus processRole: "" (all: serves and stands for leader),
+"web" or "conductor".
+*/}}
+{{- define "social-vibecoding-platform.platformPod" }}
     metadata:
       annotations:
         checksum/secrets: {{ toYaml .Values.secrets | sha256sum }}
@@ -46,10 +102,41 @@ spec:
       labels:
         {{- include "social-vibecoding-platform.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: platform
+        social.usernode.io/process-role: {{ .processRole | default "all" | quote }}
+        {{- if ne .processRole "conductor" }}
+        social.usernode.io/serves-requests: "true"
+        {{- end }}
     spec:
       serviceAccountName: social-platform-runtime
       automountServiceAccountToken: true
-      terminationGracePeriodSeconds: 90
+      {{- with include "social-vibecoding-platform.databasePrimaryAffinity" . }}
+      {{- . | nindent 6 }}
+      {{- end }}
+      # A Pod a release replaced keeps finishing the work it started for up
+      # to platform.drainMinutes, then hands the rest over and exits
+      # (docs/plans/draining-releases.md). The 60 seconds on top are the
+      # preStop sleep and the bounded steps after the drain.
+      terminationGracePeriodSeconds: {{ add (mul (int .Values.platform.drainMinutes) 60) 60 }}
+      {{- if eq .processRole "conductor" }}
+      # The conductor's replicas on different nodes where it can: losing a
+      # node then leaves one running the workflow.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              {{- include "social-vibecoding-platform.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: platform
+              social.usernode.io/process-role: conductor
+      {{- end }}
+      # The pause container is PID 1 and reaps zombies, as `--init` does on
+      # Docker (src/services/docker.js). Node as PID 1 never reaped the
+      # orphaned `git` processes it spawns: the conductor held 824 zombies
+      # after 14 minutes and the platform reached 61,783 PIDs (Oct 2026),
+      # all counted against the kubelet's per-Pod PID limit. SIGTERM still
+      # reaches Node, whose handler starts the drain.
+      shareProcessNamespace: true
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
@@ -79,15 +166,16 @@ spec:
             - name: PLATFORM_DEPLOYMENT
               value: {{ include "social-vibecoding-platform.fullname" . | quote }}
             - {name: NODE_ENV, value: production}
+            {{- with .processRole }}
+            # web or conductor (src/services/process-role.js); unset is all.
+            - {name: PROCESS_ROLE, value: {{ . | quote }}}
+            {{- end }}
             {{- with .Values.platform.nodeOptions }}
             - {name: NODE_OPTIONS, value: {{ . | quote }}}
             {{- end }}
             - {name: PORT, value: "3000"}
             - {name: APP_RUNTIME, value: kubernetes}
-            - {name: PREVIEW_LIFECYCLE_ENABLED, value: {{ .Values.platform.previewLifecycleEnabled | default false | quote }}}
             - {name: SHOTS_ENABLED, value: {{ .Values.platform.shotsEnabled | quote }}}
-            - {name: WF_GOVERNANCE_ENABLED, value: {{ .Values.platform.workflowGovernanceEnabled | quote }}}
-            - {name: WF_MERGE_FOLLOWUPS_ENABLED, value: {{ .Values.platform.workflowMergeFollowupsEnabled | quote }}}
             - {name: WORKER_RUNTIME, value: kubernetes}
             - {name: CAPTURE_RUNTIME, value: kubernetes}
             {{- $previewCluster := "" }}
@@ -101,11 +189,22 @@ spec:
             # Explicit empty values also override imported config when disabled.
             - {name: PREVIEW_DATABASE_NAMESPACE, value: {{ $previewNamespace | quote }}}
             - {name: PREVIEW_DATABASE_CLUSTER, value: {{ $previewCluster | quote }}}
+            {{- if .Values.previewPostgresql.enabled }}
+            # STAGING_DB_ADMIN_URL itself comes from the Secret: it carries a password.
+            - {name: STAGING_DB_SERVER_DRAIN, value: {{ ternary "1" "" (.Values.previewPostgresql.drain | default false) | quote }}}
+            {{- else }}
+            # An explicit empty value overrides a key left in the imported Secret.
+            - {name: STAGING_DB_ADMIN_URL, value: ""}
+            {{- end }}
             - {name: RUN_MIGRATIONS_ON_STARTUP, value: "false"}
             # During the rollout overlap both old and new platform Pods serve
             # HTTP, but only the Postgres advisory-lock leader runs singleton
             # recovery, sweepers and reconcilers.
             - {name: PLATFORM_LEADER_LOCK, value: "1"}
+            # How long a replaced Pod finishes its work, and how many may at
+            # once (docs/plans/draining-releases.md).
+            - {name: PLATFORM_DRAIN_TIMEOUT_MS, value: {{ mul (int .Values.platform.drainMinutes) 60000 | quote }}}
+            - {name: PLATFORM_DRAINING_MAX, value: {{ int .Values.platform.drainingMax | quote }}}
             - {name: GIT_SHA, value: {{ .Values.release.sourceRevision | quote }}}
             - {name: USERNODE_DOMAIN, value: {{ .Values.config.domain | quote }}}
             - {name: USERNODE_APPS_DOMAIN, value: {{ default .Values.config.domain .Values.config.appsDomain | quote }}}
@@ -123,11 +222,33 @@ spec:
             - {name: LOG_LEVEL, value: {{ .Values.config.logLevel | quote }}}
             - {name: FIREBASE_PHONE_AUTH_ENABLED, value: {{ .Values.config.firebasePhoneAuthEnabled | quote }}}
             - {name: WORKER_MEMORY, value: {{ .Values.config.workerMemory | quote }}}
+            - {name: WORKER_MEMORY_PLATFORM_REPO, value: {{ .Values.config.workerMemoryPlatformRepo | quote }}}
+            - {name: PLATFORM_SIGNALS, value: {{ .Values.config.platformSignals.mode | default "shadow" | quote }}}
+            - {name: PLATFORM_SIGNALS_KINDS, value: {{ .Values.config.platformSignals.kinds | default "" | quote }}}
+            - {name: PLATFORM_SIGNALS_BOT, value: {{ .Values.config.platformSignals.bot | default "on" | quote }}}
             - {name: WORKER_CPUS, value: {{ .Values.config.workerCpus | quote }}}
             - {name: CAPTURE_MEMORY, value: {{ .Values.config.captureMemory | quote }}}
             - {name: CAPTURE_CPUS, value: {{ .Values.config.captureCpus | quote }}}
             - {name: CHECKS_MAX_CONCURRENT_RUNS, value: {{ .Values.config.checksMaxConcurrentRuns | int64 | quote }}}
+            - {name: CHECK_NODE_POOL, value: {{ .Values.config.checkNodePool | quote }}}
+            {{- if and (eq .processRole "conductor") .Values.platform.conductor.dbPoolMax }}
+            - {name: DB_POOL_MAX, value: {{ .Values.platform.conductor.dbPoolMax | int64 | quote }}}
+            {{- else }}
             - {name: DB_POOL_MAX, value: {{ .Values.config.dbPoolMax | int64 | quote }}}
+            {{- end }}
+            # The rest of the connection budget (postgresql.platformConnections):
+            # the workflow pool and db-manager's operations, the conductor's
+            # work's sizes where this Pod does it, and what a replaced Pod keeps.
+            {{- $conductorWork := or (eq .processRole "conductor") (not .Values.platform.conductor.enabled) }}
+            - {name: WF_POOL_MAX, value: {{ ternary .Values.platform.conductor.wfPoolMax .Values.config.wfPoolMax $conductorWork | int64 | quote }}}
+            - {name: DB_ADMIN_CONNECTIONS_MAX, value: {{ ternary .Values.platform.conductor.databaseOperations .Values.config.databaseOperations $conductorWork | int64 | quote }}}
+            - {name: DRAIN_DB_POOL_MAX, value: {{ .Values.platform.drainPools.dbPoolMax | int64 | quote }}}
+            - {name: DRAIN_WF_POOL_MAX, value: {{ .Values.platform.drainPools.wfPoolMax | int64 | quote }}}
+            - {name: DB_ADMIN_CONNECTIONS_DRAINING, value: {{ .Values.platform.drainPools.databaseOperations | int64 | quote }}}
+            {{- if and (eq .processRole "conductor") .Values.platform.conductor.metricsPort }}
+            # The workflow's metrics (src/workflow/metrics.ts).
+            - {name: WF_METRICS_PORT, value: {{ .Values.platform.conductor.metricsPort | int64 | quote }}}
+            {{- end }}
             - {name: MAX_GLOBAL_SESSIONS, value: {{ .Values.config.maxGlobalSessions | int64 | quote }}}
             - {name: MAX_USER_SESSIONS, value: {{ .Values.config.maxUserSessions | int64 | quote }}}
             - {name: MAX_USER_PROMOTED_SESSIONS, value: {{ .Values.config.maxUserPromotedSessions | int64 | quote }}}
@@ -140,6 +261,9 @@ spec:
             - {name: KUBERNETES_CAPTURE_IMAGE, value: {{ include "social-vibecoding-platform.image" .Values.platform.captureImage | quote }}}
           ports:
             - {name: http, containerPort: 3000, protocol: TCP}
+            {{- if and (eq .processRole "conductor") .Values.platform.conductor.metricsPort }}
+            - {name: metrics, containerPort: {{ .Values.platform.conductor.metricsPort | int64 }}, protocol: TCP}
+            {{- end }}
           startupProbe:
             httpGet: {path: /health, port: http}
             periodSeconds: 3
@@ -159,11 +283,15 @@ spec:
           lifecycle:
             preStop: {exec: {command: ["sh", "-c", "sleep 5"]}}
           resources:
+            {{- if and (eq .processRole "conductor") .Values.platform.conductor.resources }}
+            {{- toYaml .Values.platform.conductor.resources | nindent 12 }}
+            {{- else }}
             {{- toYaml .Values.platform.resources | nindent 12 }}
+            {{- end }}
           volumeMounts:
             - {name: tmp, mountPath: /tmp}
       volumes:
         - name: tmp
           emptyDir:
             sizeLimit: {{ .Values.platform.tmpSizeLimit | quote }}
-{{- end }}
+{{- end -}}

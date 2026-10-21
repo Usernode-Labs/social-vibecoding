@@ -6,7 +6,7 @@
  *
  * Lives in the dapp repo root, alongside Dockerfile and package.json. The
  * platform reads it from the freshly-cloned working tree on every deploy
- * (createApp / buildAndDeployStaging / rebuildProduction) so the manifest
+ * (createApp / buildAndDeployStaging / deployProduction) so the manifest
  * is always the current code's source of truth. It is NEVER snapshotted
  * into the platform DB — staleness is a guaranteed pain we don't want.
  *
@@ -58,8 +58,10 @@ const fs = require('fs');
 const path = require('path');
 const log = require('./logger');
 const usernames = require('./usernames');
+const governanceRules = require('./governance-rules');
 const appPermissions = require('./app-permissions');
 const { validatePath } = require('./testing-notes');
+const topicFigures = require('./topic-figures');
 
 const MANIFEST_FILENAME = 'dapp.json';
 
@@ -385,7 +387,10 @@ function normalizeVisualScenario(test) {
 // leading slash, no scheme/whitespace/markup). `name` falls back to the
 // path. `expectSelector` / `expectText` are optional presence assertions;
 // `allowConsoleErrors` opts a test out of the baseline no-console-errors
-// rule (for a route that legitimately logs errors). `visual: true` requires
+// rule (for a route that legitimately logs errors). A check carries no say
+// in how its page is loaded: that is the app's top-level `bootParams` and
+// `routingBoundaries` (readLoadRules below), and the retired per-check
+// `coldLoad` key is ignored. `visual: true` requires
 // a stable `id`, a presence assertion, and at least one repository-relative
 // `impact` glob; malformed visual metadata is ignored without dropping the
 // underlying check. Invalid entries are dropped, duplicate (name+path) pairs
@@ -406,6 +411,7 @@ function readTestsWithMeta(parsed) {
   let invalidDropped = 0;
   let ceilingDropped = 0;
   let invalidVisualDropped = 0;
+  let retiredColdLoad = 0;
   const visualIds = new Set();
   for (const t of raw) {
     if (!t || typeof t !== 'object') { invalidDropped++; continue; }
@@ -433,8 +439,12 @@ function readTestsWithMeta(parsed) {
       expectText: typeof t.expectText === 'string' && t.expectText.trim()
         ? t.expectText.trim().slice(0, MAX_TEST_TEXT_LEN) : null,
       allowConsoleErrors: !!t.allowConsoleErrors,
+      // No per-check load setting is kept: how a check's page is loaded is
+      // the app's rule (readLoadRules below), never the check's. A leftover
+      // `coldLoad` key is ignored, and counted for the warning below.
       ...(visual || {}),
     });
+    if (Object.prototype.hasOwnProperty.call(t, 'coldLoad')) retiredColdLoad++;
   }
   const dropped = invalidDropped + ceilingDropped;
   if (dropped > 0 || invalidVisualDropped > 0) {
@@ -443,7 +453,148 @@ function readTestsWithMeta(parsed) {
       kept: out.length, ceiling: MAX_DECLARED_TESTS,
     });
   }
-  return { tests: out, rawCount: raw.length, ceilingDropped, invalidVisualDropped };
+  if (retiredColdLoad > 0) {
+    log.warn('app-manifest', 'Ignored the retired per-check "coldLoad" key: declare the app\'s "bootParams" or "routingBoundaries" instead (app-conventions.md)', {
+      checks: retiredColdLoad,
+    });
+  }
+  return {
+    tests: out, rawCount: raw.length, ceilingDropped, invalidVisualDropped,
+    loadRules: readLoadRules(parsed),
+  };
+}
+
+// ── How a check's page is loaded: the app's rules, never a check's ──────
+//
+// The browser checks group a document's checks and reach all but the first
+// by writing `location.hash` (capture/capture.js groupTests). Two kinds of
+// address legitimately cannot be shared that way, and both are facts about
+// the APP, so dapp.json declares them once at its top level:
+//
+//   * `bootParams`: query parameters the app reads only when a page loads,
+//     a one-time deep link scripted at boot (Homeroom's `?shot=`, and
+//     `?details=1`, which opens Details once). An address change rightly
+//     does not replay them, so every check whose address carries one (in
+//     its query or its fragment's) gets a load of its own, shared only with
+//     its own address's checks.
+//   * `routingBoundaries`: fragment routes whose screen sends the NEXT
+//     address change somewhere else (Homeroom: on a desktop, a running
+//     app's App tab opens the pages about it in a side panel beside it).
+//     A check at such a route is still reached by a switch like any other;
+//     the only thing that changes is that no other check is switched to
+//     after it: it ends its group. It never changes which checks get a
+//     load, its own or another's (capture.js groupTestsByDocument): where it
+//     cannot end a group without that, it stays an ordinary cohort.
+//
+// There is deliberately no per-check form, and no rule exempts an address
+// that carries no boot parameter from being reached by a switch: a check
+// that falls back on a plain address is a navigation bug, and the fix is
+// that an address change draws what a fresh load of that address draws.
+// The per-check `"coldLoad": true` #5280 introduced is retired and ignored
+// (counted in the warning above). Ignored, not refused: the reader's only
+// refusal is dropping the check, which would lose a check to remove a
+// speed hint that never changed a verdict.
+//
+// What reaches the runner is two bits per check (checkLoadFlags), computed
+// by the platform from these rules against the address it visits: the
+// `coldLoad` bit every runner since #5280 already honours, and `endsGroup`.
+const MAX_BOOT_PARAMS = 8;
+const BOOT_PARAM_RE = /^[A-Za-z][A-Za-z0-9_-]{0,31}$/;
+const MAX_ROUTING_BOUNDARIES = 8;
+const MAX_BOUNDARY_ROUTE_LEN = 128;
+const MAX_BOUNDARY_REASON_LEN = 300;
+const BOUNDARY_SEGMENT_RE = /^(?:\*|[A-Za-z0-9._~%-]+)$/;
+
+// A short list of plain parameter names. Anything else in an entry (an
+// `=`, a `&`, a space, a pattern) is dropped, as is a non-array field.
+function readBootParams(parsed) {
+  const raw = parsed && parsed.bootParams;
+  if (raw === undefined) return [];
+  const out = [];
+  let dropped = Array.isArray(raw) ? 0 : 1;
+  for (const p of (Array.isArray(raw) ? raw : [])) {
+    if (typeof p !== 'string' || !BOOT_PARAM_RE.test(p) || out.length >= MAX_BOOT_PARAMS) { dropped++; continue; }
+    if (!out.includes(p)) out.push(p);
+  }
+  if (dropped) log.warn('app-manifest', 'Dropped invalid "bootParams" entries', { dropped, kept: out.length });
+  return out;
+}
+
+// The segments of a fragment route, without its `#`, one leading `/`, or
+// its own `?query`.
+function fragmentSegments(fragment) {
+  return String(fragment || '').replace(/^#/, '').split('?')[0].replace(/^\//, '').split('/');
+}
+
+// `{ route, reason }`. `route` is a fragment route: `#`, then `/`-separated
+// segments, each literal or `*` (exactly one non-empty segment). It matches
+// a whole route, never a prefix, and its first segment is literal, so no
+// entry can cover every address. `reason` says why the screen hands the
+// next address change elsewhere; an entry without one is dropped.
+function readRoutingBoundaries(parsed) {
+  const raw = parsed && parsed.routingBoundaries;
+  if (raw === undefined) return [];
+  const out = [];
+  let dropped = Array.isArray(raw) ? 0 : 1;
+  for (const e of (Array.isArray(raw) ? raw : [])) {
+    const route = e && typeof e.route === 'string' ? e.route.trim() : '';
+    const reason = e && typeof e.reason === 'string' ? e.reason.trim() : '';
+    const segs = route.startsWith('#') && !route.includes('?') ? fragmentSegments(route) : [];
+    const ok = route.length <= MAX_BOUNDARY_ROUTE_LEN
+      && !!reason && reason.length <= MAX_BOUNDARY_REASON_LEN
+      && segs.length > 0 && segs.every((s) => BOUNDARY_SEGMENT_RE.test(s)) && segs[0] !== '*';
+    if (!ok || out.length >= MAX_ROUTING_BOUNDARIES) { dropped++; continue; }
+    if (!out.some((b) => b.route === route)) out.push({ route, reason });
+  }
+  if (dropped) log.warn('app-manifest', 'Dropped invalid "routingBoundaries" entries', { dropped, kept: out.length });
+  return out;
+}
+
+function readLoadRules(parsed) {
+  return { bootParams: readBootParams(parsed), routingBoundaries: readRoutingBoundaries(parsed) };
+}
+
+function paramNames(query) {
+  const names = [];
+  for (const part of String(query || '').split('&')) {
+    const raw = part.split('=')[0];
+    if (!raw) continue;
+    try { names.push(decodeURIComponent(raw.replace(/\+/g, ' '))); } catch { names.push(raw); }
+  }
+  return names;
+}
+
+// The wire bits for one check, from the app's rules and the address the
+// platform VISITS (for Homeroom, after selfAppHashPath: `/messages/x` is
+// visited as `/#messages/x`, while a clean `/app/<slug>` path stays a path, a
+// document of its own). Plain string surgery, like capture.js
+// splitDocumentUrl, so a malformed address degrades to no bits rather than
+// throwing.
+function checkLoadFlags(address, rules) {
+  const r = rules || {};
+  const boot = Array.isArray(r.bootParams) ? r.bootParams : [];
+  const bounds = Array.isArray(r.routingBoundaries) ? r.routingBoundaries : [];
+  if (!boot.length && !bounds.length) return {};
+  const s = String(address == null ? '' : address);
+  const h = s.indexOf('#');
+  const doc = h === -1 ? s : s.slice(0, h);
+  const frag = h === -1 ? '' : s.slice(h + 1);
+  const q = doc.indexOf('?');
+  const fq = frag.indexOf('?');
+  const names = paramNames(q === -1 ? '' : doc.slice(q + 1))
+    .concat(paramNames(fq === -1 ? '' : frag.slice(fq + 1)));
+  const out = {};
+  if (names.some((n) => boot.includes(n))) out.coldLoad = true;
+  if (frag) {
+    const segs = fragmentSegments(frag);
+    const hit = bounds.some((b) => {
+      const pat = fragmentSegments(b.route);
+      return pat.length === segs.length
+        && pat.every((p, i) => (p === '*' ? !!segs[i] : p === segs[i]));
+    });
+    if (hit) out.endsGroup = true;
+  }
+  return out;
 }
 
 function readTests(parsed) {
@@ -465,53 +616,14 @@ function checkKey(name, path) {
     .digest('hex');
 }
 
-// Reserved keys the platform owns. A manifest entry using one of these
-// is rejected on read so a dapp can't shadow / spoof the platform-injected
-// values that all dapps depend on.
-const RESERVED_KEYS = new Set([
-  'DATABASE_URL',
-  // The RS256 public key user tokens are verified against, and the app's
-  // own integer id (the audience the platform mints for). Reserved for the
-  // same reason as JWT_SECRET: a manifest that shadowed either could point
-  // the container's verifier at an attacker-controlled key or make it
-  // accept identities minted for a different app.
-  'USERNODE_JWT_PUBLIC_KEY',
-  'USERNODE_APP_ID',
-  // The public half guest tokens are verified against (P15): shadowing it
-  // would let a manifest point the container at a key of its choosing.
-  'USERNODE_GUEST_JWT_PUBLIC_KEY',
-  // Retired alias of USERNODE_JWT_PUBLIC_KEY (holds the same public PEM),
-  // still injected so pre-cutover scaffolds verify unchanged. The
-  // RESERVATION OUTLIVES THE INJECTION: even after app-identity-env.js
-  // stops setting this name (see the removal criterion there), a manifest
-  // must never be able to introduce it — an app that still reads
-  // JWT_SECRET would then be handed an attacker-chosen verification key.
-  'JWT_SECRET',
-  // Same public PEM again, under the platform's own env-var name — see
-  // services/app-identity-env.js. Reserved for the same reason.
-  'IFRAME_JWT_PUBLIC_KEY',
-  'PORT',
-  'USERNODE_ENV',
-  'USERNODE_MISSING_SECRETS',
-  'USERNODE_LLM_PROXY_URL',
-  'USERNODE_LLM_PROXY_TOKEN',
-  'USERNODE_STORAGE_URL',
-  'USERNODE_STORAGE_TOKEN',
-  'USERNODE_PLATFORM_API_URL',
-  'USERNODE_PLATFORM_API_V1_URL',
-  // The platform's public origin (services/app-identity-env.js). Reserved
-  // for the same reason as the rest: a manifest that shadowed it could
-  // point an app's "Open in Homeroom" links at a host of its choosing.
-  'USERNODE_PLATFORM_ORIGIN',
-]);
-
-// Reserved prefixes for the LLM-proxy (issue #34), app-storage (#752),
-// and app-platform-API (#744) env-var families — any future
-// USERNODE_LLM_PROXY_* / USERNODE_STORAGE_* / USERNODE_PLATFORM_API_*
-// addition stays platform-owned without another set entry.
-const RESERVED_KEY_PREFIXES = ['USERNODE_LLM_PROXY', 'USERNODE_STORAGE', 'USERNODE_PLATFORM_API'];
-
-const KEY_RE = /^[A-Z][A-Z0-9_]{0,127}$/;
+// Reserved keys the platform owns, the prefixes of its env-var families, a
+// key's shape, and the platform variables only the deploy may write
+// (PLATFORM_ENV_UNWRITABLE, in the platform_env block below): the lists and
+// their reasons are src/workflow/rules/platform-keys.ts, which the workflow
+// machines refuse an unwritable key with. A manifest entry using a reserved
+// key is rejected on read so a dapp can't shadow / spoof the
+// platform-injected values that all dapps depend on.
+const { RESERVED_KEYS, RESERVED_KEY_PREFIXES, KEY_RE, PLATFORM_ENV_UNWRITABLE } = require('../workflow/rules/platform-keys.ts');
 
 // ---------------------------------------------------------------------------
 // platform_env: the platform's own environment-variable manifest.
@@ -525,70 +637,6 @@ const KEY_RE = /^[A-Z][A-Z0-9_]{0,127}$/;
 // process, never in a dapp container.
 // ---------------------------------------------------------------------------
 
-// Keys that may be *declared* (so the admin console can show them and the
-// pre-merge check can reason about them) but can NEVER be written through
-// the admin UI or resolved from the platform_env store at deploy time.
-// These are the platform's structural identity and credentials: they are
-// injected by .github/workflows/deploy.yml straight from GitHub secrets,
-// or computed by the deploy itself. Letting an admin overwrite one from a
-// web form would be a privilege-escalation path (rotate JWT_SECRET →
-// forge any session; rewrite DATABASE_URL → point the platform at an
-// attacker's Postgres), so writes are refused at the DAO, the route, and
-// the UI. Declaring one is fine and useful: it documents the variable.
-const PLATFORM_ENV_UNWRITABLE = new Set([
-  // Reserved / structural.
-  'DATABASE_URL',
-  'PORT',
-  'USERNODE_ENV',
-  'GIT_SHA',
-  // Auth + session crypto.
-  //
-  // DATA_ENCRYPTION_KEY is the load-bearing one: services/secrets.js
-  // derives its AES-256-GCM key from it, and platform_env_values.value_enc
-  // is itself encrypted with it. A console-settable data key is therefore
-  // circular — the store would need the key to read the key — and changing
-  // the value silently orphans every BYOK key and app secret at rest
-  // (decrypt() returns null; nothing throws). It can only come from the
-  // deploy.
-  //
-  // The other four are signing keys: rewriting one from a web form would
-  // let an admin mint app identities, worker tokens or edge cookies at
-  // will. JWT_SECRET no longer signs anything in the platform process, but
-  // the deploy's own secret of that name still holds the same bytes as
-  // DATA_ENCRYPTION_KEY, so it stays listed too. (The JWT_SECRET a child
-  // container receives is a different thing entirely — the RSA public
-  // PEM, injected by services/app-identity-env.js.)
-  'DATA_ENCRYPTION_KEY',
-  'IFRAME_JWT_PRIVATE_KEY',
-  'IFRAME_JWT_PUBLIC_KEY',
-  'WORKER_JWT_SECRET',
-  'EDGE_JWT_SECRET',
-  'JWT_SECRET',
-  'SESSION_SECRET',
-  'ADMIN_USERNAME',
-  'ADMIN_PASSWORD',
-  // Database and GitHub App credentials.
-  'USERNODE_DB_PASSWORD',
-  'GITHUB_APP_ID',
-  'GITHUB_PRIVATE_KEY',
-  'GITHUB_BOT_TOKEN',
-  // Model access and the platform's own dapp keypair.
-  'ANTHROPIC_API_KEY',
-  // OpenRouter organization-level credential. This may create, disable and
-  // delete child keys, so it is deploy-owned and can never be entered in the
-  // platform-variable UI.
-  'OPENROUTER_MANAGEMENT_API_KEY',
-  'USERNODE_APP_PUBKEY',
-  'USERNODE_APP_SECRET_KEY',
-  // Ingress / TLS, owned by the Caddy half of the deploy.
-  'USERNODE_DOMAIN',
-  'USERNODE_APPS_DOMAIN',
-  'ZEROSSL_API_KEY',
-  'ZEROSSL_EAB_KID',
-  'ZEROSSL_EAB_HMAC',
-  'ACME_DNS_PROVIDER',
-  'ACME_DNS_API_TOKEN',
-]);
 
 const MAX_PLATFORM_ENV = 200;
 const MAX_PLATFORM_ENV_DESC_LEN = 400;
@@ -784,6 +832,31 @@ function readDescription(parsed) {
   return text.length > MAX_DESCRIPTION_LENGTH ? text.slice(0, MAX_DESCRIPTION_LENGTH).trimEnd() : text;
 }
 
+// The optional top-level `category` (#3962): what kind of app this is, the
+// one word Discover's "Filter by type" chips sort the directory by. A fixed
+// set, and THIS is the only list of it: the template writes one of these,
+// and Discover keeps a labelled copy (frontend/src/features/apps/browse.js
+// CATEGORIES) that tests/browse-screen.test.js pins to this one. Order is
+// the chips' order. `other` is for an app that is none of the five; it is
+// what a new project's dapp.json starts with, a line its group can change
+// by proposal like any other.
+const APP_CATEGORIES = Object.freeze(['games', 'social', 'tools', 'learning', 'creative', 'other']);
+const APP_CATEGORY_SET = new Set(APP_CATEGORIES);
+
+// Normalize `"category": "games"`. Lenient like `visibility` and
+// `screenshot`: case and surrounding space are forgiven, and anything else
+// (an unknown word, a list, a number) is ignored with a warn and reads as
+// null, which is the same as saying nothing: the app is listed under All
+// types only. Never throws, so a typo never fails a deploy.
+function readCategory(parsed) {
+  const raw = parsed?.category;
+  if (raw == null) return null;
+  const key = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
+  if (APP_CATEGORY_SET.has(key)) return key;
+  log.warn('app-manifest', 'Ignoring unknown category', { value: raw });
+  return null;
+}
+
 // Allowed values for the optional top-level `visibility` block (issue
 // #124). `build` maps to apps.collab_visibility, `view` to
 // apps.view_visibility — same value set as the DB columns.
@@ -874,6 +947,13 @@ function readGovernance(parsed) {
       log.warn('app-manifest', 'Ignoring invalid governance.approvals value', { value: raw.approvals });
     }
   }
+  // #4666: `preset`, or `groups` + `rules` (services/governance-rules.js).
+  // A block that carries either is decided by them, and its old two keys
+  // are not read: the rules replace them. One that cannot be read is
+  // reported and dropped, so the project keeps the rule it has.
+  const { value: rules, error: rulesError } = governanceRules.readRulesBlock(raw);
+  if (rulesError) log.warn('app-manifest', 'Ignoring invalid governance rules', { error: rulesError });
+  if (rules) return { approvers: null, approvals: null, rules };
   if (approvers == null && approvals == null) return null;
   return { approvers, approvals };
 }
@@ -1167,15 +1247,232 @@ function readIcon(parsed) {
   return { emoji, image, color };
 }
 
+// ── Topics (#4417) ──────────────────────────────────────────────────────
+//
+// The optional top-level `topics` array: a project's lasting conversations,
+// each a channel and a category at once.
+//
+//   "topics": [
+//     { "id": "onboarding", "handle": "onboarding", "name": "Onboarding",
+//       "icon": "🚪", "about": "Signing up and the first week" },
+//     { "id": "signup", "handle": "signup", "name": "Sign-up",
+//       "mergedInto": "onboarding" },
+//     { "id": "old", "handle": "old", "name": "Old things", "archived": true }
+//   ]
+//
+//   id          set once and never changed: the CATEGORY KEY, so the
+//               literal value a category vote carries. No rename moves a
+//               vote.
+//   handle      the channel's name: 2 to 32 lowercase letters, digits and
+//               hyphens, starting with a letter (a `#123` is an issue, so a
+//               `#handle` reference has to begin with one), unique in the
+//               project and never `general`. A rename may change it; the
+//               reconcile keeps the old one as an alias.
+//   name        3 to 48 characters (topic-attributes MAX_CATEGORY_LEN).
+//   icon        one emoji, optional.
+//   about       up to 140 characters, optional.
+//   archived    true keeps a retired topic in the file, so its channel and
+//               history keep their key; read-only from then on.
+//   mergedInto  the id of the LIVE topic it was merged into: never itself,
+//               never a topic that was itself merged or archived.
+//   figures     optional: up to twelve figure ids from services/topic-figures.js,
+//               the numbers the channel shows above its room. An unknown id
+//               is an error; the reader keeps the known ones.
+//
+// The array's order is the list's order. At most MAX_LIVE_TOPICS live.
+//
+// Inside the platform a topic is a category row with origin 'topic'
+// (app_category_registry), its channel a 'category' thread: "topic" already
+// names one request or proposal in this code (topic_attribute_votes).
+const MAX_LIVE_TOPICS = 12;
+// Retired entries stay in the file, so the whole array is bounded too.
+const MAX_TOPIC_ENTRIES = 64;
+const MIN_TOPIC_NAME_LENGTH = 3;
+const MAX_TOPIC_NAME_LENGTH = 48;
+const MAX_TOPIC_ABOUT_LENGTH = 140;
+const TOPIC_HANDLE_RE = /^[a-z][a-z0-9-]{0,30}[a-z0-9]$/;
+const RESERVED_TOPIC_HANDLES = new Set(['general']);
+// The built-in categories (services/topic-attributes.js CATEGORY_VALUES):
+// a topic's id is a category key, so it may not be one of those six.
+const BUILTIN_CATEGORY_KEYS = new Set(['feature', 'bug', 'improvement', 'design', 'docs', 'chore']);
+
+/** One emoji: a single grapheme with a pictograph in it, or a keycap. */
+function isOneEmoji(raw) {
+  if (typeof raw !== 'string') return false;
+  const s = raw.trim();
+  if (!s || s.length > MAX_ICON_EMOJI_LENGTH || /\s/.test(s)) return false;
+  const keycap = /^[0-9#*]️?⃣$/.test(s);
+  if (!keycap && !/\p{Extended_Pictographic}|\p{Regional_Indicator}/u.test(s)) return false;
+  if (!keycap && /[A-Za-z0-9]/.test(s)) return false;
+  try {
+    const seg = new Intl.Segmenter('en', { granularity: 'grapheme' });
+    return [...seg.segment(s)].length === 1;
+  } catch {
+    return true;
+  }
+}
+
+/** A topic handle as dapp.json may spell it, normalised, or null. */
+function normalizeTopicHandle(raw) {
+  const h = typeof raw === 'string' ? raw.trim().replace(/^#/, '').toLowerCase() : '';
+  return TOPIC_HANDLE_RE.test(h) && !RESERVED_TOPIC_HANDLES.has(h) ? h : null;
+}
+
+/**
+ * Validate a `topics` array. Returns `{ topics, errors }`: the entries that
+ * hold, normalised to `{ id, handle, name, icon, about, state, mergedInto }`
+ * (and `figures`, when the entry names any)
+ * in the file's order, and one sentence per problem. STRICT callers (the
+ * topics PR, services/topics-pr.js) refuse on any error; the deploy reader
+ * (readTopics) keeps what holds and logs the rest, like every other block.
+ *
+ * Cross-entry rules are applied in order: a duplicate id or handle is the
+ * later entry's error, live entries past MAX_LIVE_TOPICS are errors, and a
+ * `mergedInto` that names no live topic is an error (the reader keeps such
+ * an entry as archived, so its history stays readable and no vote moves).
+ */
+function validateTopics(raw) {
+  const errors = [];
+  if (raw == null) return { topics: [], errors };
+  if (!Array.isArray(raw)) return { topics: [], errors: ['topics must be an array'] };
+  if (raw.length > MAX_TOPIC_ENTRIES) {
+    errors.push(`topics holds at most ${MAX_TOPIC_ENTRIES} entries`);
+  }
+  const out = [];
+  const ids = new Set();
+  const handles = new Set();
+  raw.slice(0, MAX_TOPIC_ENTRIES).forEach((entry, index) => {
+    const where = `topics[${index}]`;
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+      errors.push(`${where} must be an object`);
+      return;
+    }
+    const id = typeof entry.id === 'string' ? entry.id.trim() : '';
+    if (!TOPIC_HANDLE_RE.test(id)) {
+      errors.push(`${where}.id must be 2 to 32 lowercase letters, digits and hyphens, starting with a letter`);
+      return;
+    }
+    if (BUILTIN_CATEGORY_KEYS.has(id)) {
+      errors.push(`${where}.id "${id}" is a built-in category`);
+      return;
+    }
+    if (ids.has(id)) {
+      errors.push(`${where}.id "${id}" is used twice`);
+      return;
+    }
+    const handle = normalizeTopicHandle(entry.handle == null ? id : entry.handle);
+    if ((entry.handle != null && typeof entry.handle !== 'string') || !handle) {
+      errors.push(`${where}.handle must be 2 to 32 lowercase letters, digits and hyphens, starting with a letter, and never "general"`);
+      return;
+    }
+    if (handles.has(handle)) {
+      errors.push(`${where}.handle "#${handle}" is used twice`);
+      return;
+    }
+    const name = typeof entry.name === 'string' ? entry.name.replace(/\s+/g, ' ').trim() : '';
+    if (name.length < MIN_TOPIC_NAME_LENGTH || name.length > MAX_TOPIC_NAME_LENGTH) {
+      errors.push(`${where}.name must be ${MIN_TOPIC_NAME_LENGTH} to ${MAX_TOPIC_NAME_LENGTH} characters`);
+      return;
+    }
+    let icon = '';
+    if (entry.icon != null && entry.icon !== '') {
+      if (!isOneEmoji(entry.icon)) {
+        errors.push(`${where}.icon must be one emoji`);
+        return;
+      }
+      icon = entry.icon.trim();
+    }
+    let about = '';
+    if (entry.about != null) {
+      about = typeof entry.about === 'string' ? entry.about.replace(/\s+/g, ' ').trim() : null;
+      if (about == null || about.length > MAX_TOPIC_ABOUT_LENGTH) {
+        errors.push(`${where}.about must be at most ${MAX_TOPIC_ABOUT_LENGTH} characters`);
+        return;
+      }
+    }
+    let mergedInto = null;
+    if (entry.mergedInto != null) {
+      mergedInto = typeof entry.mergedInto === 'string' ? entry.mergedInto.trim() : '';
+      if (!mergedInto) {
+        errors.push(`${where}.mergedInto must name a topic id`);
+        return;
+      }
+    }
+    if (entry.archived != null && typeof entry.archived !== 'boolean') {
+      errors.push(`${where}.archived must be true or false`);
+      return;
+    }
+    // Figures never cost a topic its place: an unknown id is an error for
+    // the strict callers, and the reader keeps the ids it knows.
+    let figures = [];
+    if (entry.figures != null) {
+      if (!Array.isArray(entry.figures) || entry.figures.some((f) => typeof f !== 'string')) {
+        errors.push(`${where}.figures must be a list of figure ids`);
+      } else {
+        const unknown = entry.figures.filter((f) => !topicFigures.isFigureId(f));
+        if (unknown.length) errors.push(`${where}.figures names an unknown figure: ${unknown.join(', ')}`);
+        if (entry.figures.length > topicFigures.MAX_TOPIC_FIGURES) {
+          errors.push(`${where}.figures holds at most ${topicFigures.MAX_TOPIC_FIGURES} figures`);
+        }
+        figures = topicFigures.knownFigureIds(entry.figures);
+      }
+    }
+    ids.add(id);
+    handles.add(handle);
+    out.push({
+      id, handle, name, icon, about,
+      state: mergedInto ? 'merged' : (entry.archived === true ? 'archived' : 'live'),
+      mergedInto,
+      ...(figures.length ? { figures } : {}),
+    });
+  });
+  // A merge names a LIVE topic: never itself, never one that was itself
+  // merged or archived. An entry that fails is kept, as archived, so it
+  // moves no vote and its channel stays readable.
+  const live = new Set(out.filter((t) => t.state === 'live').map((t) => t.id));
+  for (const t of out) {
+    if (t.state !== 'merged') continue;
+    if (t.mergedInto === t.id || !live.has(t.mergedInto)) {
+      errors.push(`topic "${t.id}" can only be merged into a live topic`);
+      t.state = 'archived';
+      t.mergedInto = null;
+    }
+  }
+  let liveCount = 0;
+  const kept = [];
+  for (const t of out) {
+    if (t.state === 'live') {
+      liveCount += 1;
+      if (liveCount > MAX_LIVE_TOPICS) {
+        errors.push(`a project has at most ${MAX_LIVE_TOPICS} live topics`);
+        continue;
+      }
+    }
+    kept.push(t);
+  }
+  return { topics: kept, errors: [...new Set(errors)] };
+}
+
+// The deploy reader's view: what holds, the rest logged. `null` when the
+// block is absent, which leaves the project's topics as they are; an empty
+// array archives every topic it had.
+function readTopics(parsed) {
+  if (!parsed || parsed.topics === undefined || parsed.topics === null) return null;
+  const { topics, errors } = validateTopics(parsed.topics);
+  if (errors.length) log.warn('app-manifest', 'Ignoring part of the topics block', { errors: errors.slice(0, 10) });
+  if (!Array.isArray(parsed.topics)) return null;
+  return topics;
+}
+
 function read(cloneDir) {
   const filePath = path.join(cloneDir, MANIFEST_FILENAME);
   let raw;
   try {
     raw = fs.readFileSync(filePath, 'utf-8');
   } catch (err) {
-    if (err.code === 'ENOENT') return { name: null, description: null, secrets: [], llm: null, permissions: [], visibility: null, governance: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null, admins: null, platform_env: [] };
+    if (err.code === 'ENOENT') return { name: null, description: null, secrets: [], llm: null, permissions: [], visibility: null, governance: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null, admins: null, platform_env: [], topics: null, category: null };
     log.warn('app-manifest', 'Read failed (treating as empty)', { filePath, err: err.message });
-    return { name: null, description: null, secrets: [], llm: null, permissions: [], visibility: null, governance: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null, admins: null, platform_env: [] };
+    return { name: null, description: null, secrets: [], llm: null, permissions: [], visibility: null, governance: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null, admins: null, platform_env: [], topics: null, category: null };
   }
 
   let parsed;
@@ -1183,7 +1480,7 @@ function read(cloneDir) {
     parsed = JSON.parse(raw);
   } catch (err) {
     log.warn('app-manifest', 'Parse failed (treating as empty)', { filePath, err: err.message });
-    return { name: null, description: null, secrets: [], llm: null, permissions: [], visibility: null, governance: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null, admins: null, platform_env: [] };
+    return { name: null, description: null, secrets: [], llm: null, permissions: [], visibility: null, governance: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null, admins: null, platform_env: [], topics: null, category: null };
   }
 
   const platformEnv = readPlatformEnv(parsed);
@@ -1202,6 +1499,8 @@ function read(cloneDir) {
     icon: readIcon(parsed),
     admins: readAdmins(parsed),
     platform_env: platformEnv,
+    topics: readTopics(parsed),
+    category: readCategory(parsed),
   };
 }
 
@@ -1246,6 +1545,216 @@ async function reconcileAppName(pool, app, manifest) {
     log.warn('app-manifest', 'Rename broadcast failed', { appId: app.id, err: err.message });
   }
   return true;
+}
+
+/**
+ * #4417: reconcile dapp.json's `topics` into the app's category registry,
+ * on the rebuild a merged topics PR triggers (staging.deployProduction),
+ * on an import's first deploy, and at boot for the platform's own app.
+ *
+ * Each topic is the registry row whose category_key is its `id`, origin
+ * 'topic', pinned. What changes, and what follows from it:
+ *
+ *   add      a new row, or an existing category of the same key becomes the
+ *            topic (its votes are the topic's from then on);
+ *   rename   name, about, icon and handle are written; a changed handle
+ *            keeps the old one in topic_aliases. No vote moves: the id is
+ *            what a vote carries;
+ *   merge    the topic is retired into the survivor: every category vote
+ *            for it moves to the survivor (a voter who already backs the
+ *            survivor on that card keeps that vote and loses the old one),
+ *            and so do the Workshop's placements;
+ *   archive  the topic is retired: its votes stay (the tally skips them),
+ *            and its placements are dropped, so the cards count as churn
+ *            and are placed again.
+ *
+ * A topic missing from the file is archived, so its channel stays readable.
+ * An ABSENT block (`topics: null`) changes nothing.
+ *
+ * Writes only what differs, and returns what it did:
+ * `{ added, renamed, merged, archived, revived, changed }` (null for an
+ * absent block). Best-effort like its siblings: callers fire-and-log.
+ */
+async function reconcileAppTopics(pool, app, manifest) {
+  const topics = manifest && Array.isArray(manifest.topics) ? manifest.topics : null;
+  if (!topics || !app || !app.id) return null;
+  const { rows } = await pool.query(
+    `SELECT id, category_key, origin, label, description, icon, topic_handle, topic_aliases,
+            topic_state, merged_into, topic_order, retired_at, topic_figures
+       FROM app_category_registry
+      WHERE app_id = $1`,
+    [app.id]
+  );
+  const byKey = new Map(rows.map((r) => [r.category_key, r]));
+  const handlesNow = new Set(topics.map((t) => t.handle));
+  const aliasTaken = new Set();
+  const result = { added: [], renamed: [], merged: [], archived: [], revived: [], changed: false };
+  const sameList = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
+
+  for (let order = 0; order < topics.length; order += 1) {
+    const t = topics[order];
+    const row = byKey.get(t.id) || null;
+    const wasTopic = !!row && row.origin === 'topic';
+    const prevState = wasTopic ? (row.topic_state || 'live') : null;
+    // Aliases: the old ones, less any that is somebody's handle now or
+    // another topic's alias already, plus the handle this one just left.
+    const aliases = [];
+    const keep = (a) => {
+      if (!a || a === t.handle || handlesNow.has(a) || aliasTaken.has(a) || aliases.includes(a)) return;
+      aliases.push(a);
+    };
+    for (const a of (wasTopic && Array.isArray(row.topic_aliases) ? row.topic_aliases : [])) keep(a);
+    if (wasTopic && row.topic_handle && row.topic_handle !== t.handle) keep(row.topic_handle);
+    for (const a of aliases) aliasTaken.add(a);
+
+    const differs = !wasTopic
+      || row.label !== t.name || (row.description || '') !== t.about || (row.icon || '') !== t.icon
+      || row.topic_handle !== t.handle || !sameList(row.topic_aliases || [], aliases)
+      || prevState !== t.state || (row.merged_into || null) !== (t.mergedInto || null)
+      || row.topic_order !== order || (t.state === 'live') !== (row.retired_at == null)
+      || !sameList(row.topic_figures || [], t.figures || []);
+    if (!differs) continue;
+
+    await pool.query(
+      `INSERT INTO app_category_registry
+         (app_id, category_key, label, description, icon, origin, pinned_at, retired_at,
+          topic_handle, topic_aliases, topic_state, merged_into, merged_at, topic_order, topic_figures)
+       VALUES ($1, $2, $3, $4, $5, 'topic', NOW(),
+               CASE WHEN $8::text = 'live' THEN NULL ELSE NOW() END,
+               $6, $7::text[], $8, $9, CASE WHEN $8::text = 'merged' THEN NOW() ELSE NULL END, $10, $11::text[])
+       ON CONFLICT (app_id, category_key) DO UPDATE SET
+         label = EXCLUDED.label,
+         description = EXCLUDED.description,
+         icon = EXCLUDED.icon,
+         origin = 'topic',
+         pinned_at = COALESCE(app_category_registry.pinned_at, NOW()),
+         retired_at = CASE WHEN EXCLUDED.topic_state = 'live' THEN NULL
+                           ELSE COALESCE(app_category_registry.retired_at, NOW()) END,
+         topic_handle = EXCLUDED.topic_handle,
+         topic_aliases = EXCLUDED.topic_aliases,
+         topic_state = EXCLUDED.topic_state,
+         merged_into = EXCLUDED.merged_into,
+         merged_at = CASE
+           WHEN EXCLUDED.topic_state <> 'merged' THEN NULL
+           WHEN app_category_registry.topic_state = 'merged'
+            AND app_category_registry.merged_into IS NOT DISTINCT FROM EXCLUDED.merged_into
+             THEN COALESCE(app_category_registry.merged_at, NOW())
+           ELSE NOW() END,
+         topic_order = EXCLUDED.topic_order,
+         topic_figures = EXCLUDED.topic_figures`,
+      [app.id, t.id, t.name, t.about, t.icon, t.handle, aliases, t.state, t.mergedInto, order, t.figures || []]
+    );
+    result.changed = true;
+    if (!wasTopic) result.added.push(t.id);
+    else if (row.topic_handle !== t.handle || row.label !== t.name
+      || (row.description || '') !== t.about || (row.icon || '') !== t.icon) result.renamed.push(t.id);
+    if (prevState && prevState !== 'live' && t.state === 'live') result.revived.push(t.id);
+
+    if (t.state === 'merged' && (prevState !== 'merged' || (row.merged_into || null) !== t.mergedInto)) {
+      await moveCategory(pool, app.id, t.id, t.mergedInto);
+      result.merged.push({ from: t.id, into: t.mergedInto });
+    } else if (t.state === 'archived' && prevState !== 'archived') {
+      await dropPlacements(pool, app.id, t.id);
+      result.archived.push(t.id);
+    }
+  }
+
+  // A topic the file no longer names is archived, never deleted: its
+  // channel's history stays readable under its key.
+  const inFile = new Set(topics.map((t) => t.id));
+  for (const row of rows) {
+    if (row.origin !== 'topic' || inFile.has(row.category_key) || row.topic_state === 'archived') continue;
+    await pool.query(
+      `UPDATE app_category_registry
+          SET topic_state = 'archived', retired_at = COALESCE(retired_at, NOW()),
+              merged_into = NULL, merged_at = NULL
+        WHERE id = $1 AND app_id = $2`,
+      [row.id, app.id]
+    );
+    if ((row.topic_state || 'live') === 'live') await dropPlacements(pool, app.id, row.category_key);
+    result.archived.push(row.category_key);
+    result.changed = true;
+  }
+
+  if (result.changed) {
+    log.info('app-manifest', 'Reconciled topics from dapp.json', {
+      appId: app.id, slug: app.slug,
+      added: result.added, renamed: result.renamed, merged: result.merged, archived: result.archived,
+    });
+    // Open pages re-read the places and the Workshop regroups (a merge or
+    // an archive moved placements; a new topic is a category to place
+    // into). Best-effort.
+    try {
+      require('./ws').pushAppUpdate({ action: 'topics_changed', appId: app.id, appSlug: app.slug, slug: app.slug });
+    } catch (err) {
+      log.warn('app-manifest', 'Topics broadcast failed', { appId: app.id, err: err.message });
+    }
+    try {
+      require('./workshop-themes').noteBoardChange(pool, { appId: app.id, appSlug: app.slug });
+    } catch (err) {
+      log.warn('app-manifest', 'Workshop regroup after topics failed', { appId: app.id, err: err.message });
+    }
+  }
+  return result;
+}
+
+// A merge: every category vote for `from` becomes one for `into`. A voter
+// who already backs `into` on that card keeps that vote and loses this one
+// (only possible for rows without a voter, given the one-vote-per-field
+// key, but said in SQL rather than assumed). Then the Workshop's placements
+// follow, and the merged definition leaves the draft.
+async function moveCategory(pool, appId, from, into) {
+  await pool.query(
+    `DELETE FROM topic_attribute_votes v
+      WHERE v.app_id = $1 AND v.field = 'category' AND v.value = $2
+        AND EXISTS (
+          SELECT 1 FROM topic_attribute_votes o
+           WHERE o.app_id = v.app_id AND o.target_type = v.target_type
+             AND o.target_ref = v.target_ref AND o.field = 'category'
+             AND o.value = $3 AND o.user_id IS NOT DISTINCT FROM v.user_id
+        )`,
+    [appId, from, into]
+  );
+  await pool.query(
+    `UPDATE topic_attribute_votes SET value = $3
+      WHERE app_id = $1 AND field = 'category' AND value = $2`,
+    [appId, from, into]
+  );
+  await pool.query(
+    `UPDATE app_workshop_themes
+        SET placements_json = COALESCE((
+              SELECT jsonb_object_agg(e.key, CASE WHEN e.value = to_jsonb($2::text) THEN to_jsonb($3::text) ELSE e.value END)
+                FROM jsonb_each(placements_json) e
+            ), '{}'::jsonb),
+            themes_json = COALESCE((
+              SELECT jsonb_agg(d.def ORDER BY d.n)
+                FROM jsonb_array_elements(themes_json) WITH ORDINALITY AS d(def, n)
+               WHERE d.def->>'id' IS DISTINCT FROM $2::text
+            ), '[]'::jsonb)
+      WHERE app_id = $1`,
+    [appId, from, into]
+  );
+}
+
+// An archive: the Workshop forgets where it put the topic's cards, and its
+// definition leaves the draft. The cards are then new to the next pass,
+// which counts them as churn and places them again.
+async function dropPlacements(pool, appId, key) {
+  await pool.query(
+    `UPDATE app_workshop_themes
+        SET placements_json = COALESCE((
+              SELECT jsonb_object_agg(e.key, e.value)
+                FROM jsonb_each(placements_json) e
+               WHERE e.value IS DISTINCT FROM to_jsonb($2::text)
+            ), '{}'::jsonb),
+            themes_json = COALESCE((
+              SELECT jsonb_agg(d.def ORDER BY d.n)
+                FROM jsonb_array_elements(themes_json) WITH ORDINALITY AS d(def, n)
+               WHERE d.def->>'id' IS DISTINCT FROM $2::text
+            ), '[]'::jsonb)
+      WHERE app_id = $1`,
+    [appId, key]
+  );
 }
 
 /**
@@ -1399,11 +1908,19 @@ async function reconcileAppVisibility(pool, app, manifest) {
  * CURRENT values — used for transition checks and the event's `from`).
  * All side effects beyond the column UPDATE are best-effort.
  */
-async function applyGovernanceChange(pool, app, { approverPolicy, approvalsRequired }, { actorLabel = 'dapp.json', userId = null } = {}) {
+async function applyGovernanceChange(pool, app, { approverPolicy, approvalsRequired, rules }, { actorLabel = 'dapp.json', userId = null } = {}) {
   await pool.query(
     `UPDATE apps SET approver_policy = $1, approvals_required = $2 WHERE id = $3`,
     [approverPolicy, approvalsRequired, app.id]
   );
+  // #4666: the rules column moves only when the caller says what it is now
+  // (`rules` undefined: an old-style change, which leaves it as it was).
+  if (rules !== undefined) {
+    await pool.query(
+      'UPDATE apps SET governance_rules = $1::jsonb WHERE id = $2',
+      [rules ? JSON.stringify(rules) : null, app.id]
+    );
+  }
 
   // invited → anyone: pending approver invites become meaningless.
   if (app.approver_policy === 'invited' && approverPolicy === 'anyone') {
@@ -1467,6 +1984,7 @@ async function applyGovernanceChange(pool, app, { approverPolicy, approvalsRequi
       appId: app.id,
       approverPolicy,
       approvalsRequired,
+      ...(rules !== undefined ? { rules: rules ? (rules.preset || 'own') : null } : {}),
     });
   } catch (err) {
     log.warn('app-manifest', 'Governance broadcast failed', { appId: app.id, err: err.message });
@@ -1479,8 +1997,16 @@ async function applyGovernanceChange(pool, app, { approverPolicy, approvalsRequi
       userId,
       appId: app.id,
       metadata: {
-        from: { approverPolicy: app.approver_policy, approvalsRequired: app.approvals_required },
-        to: { approverPolicy, approvalsRequired },
+        from: {
+          approverPolicy: app.approver_policy,
+          approvalsRequired: app.approvals_required,
+          ...(rules !== undefined ? { rules: describeRulesColumn(app.governance_rules) } : {}),
+        },
+        to: {
+          approverPolicy,
+          approvalsRequired,
+          ...(rules !== undefined ? { rules: describeRulesColumn(rules) } : {}),
+        },
         source: 'manifest',
       },
     });
@@ -1494,6 +2020,47 @@ async function applyGovernanceChange(pool, app, { approverPolicy, approvalsRequi
 }
 
 /**
+ * #4666: a rules value (governance-rules.js parseRulesBlock) as
+ * apps.governance_rules stores it: each named group with its people
+ * resolved to user ids, through the retired-handle ledger as the admins
+ * reconcile does, so a member who renames stays in their group. A name that
+ * matches nobody is kept in `people` and simply has no id yet.
+ */
+async function storedRules(pool, value) {
+  const idsByGroup = new Map();
+  for (const g of value.groups || []) {
+    const resolved = g.people && g.people.length ? await usernames.resolveHandles(pool, g.people) : [];
+    idsByGroup.set(governanceRules.groupKey(g.name), [...new Set(resolved.map((r) => r.id))].sort((a, b) => a - b));
+  }
+  return governanceRules.storedForm(value, idsByGroup);
+}
+
+async function currentRulesColumn(pool, appId) {
+  try {
+    const { rows } = await pool.query('SELECT governance_rules FROM apps WHERE id = $1', [appId]);
+    const v = rows[0]?.governance_rules;
+    return v && typeof v === 'object' ? v : null;
+  } catch (err) {
+    log.warn('app-manifest', 'Could not read the approval rules', { appId, err: err.message });
+    return null;
+  }
+}
+
+function sameRules(a, b) {
+  const canon = (v) => (v ? JSON.stringify({
+    preset: v.preset || null,
+    groups: (v.groups || []).map((g) => ({ name: g.name, people: g.people || [], ids: g.ids || [] })),
+    rules: (v.rules || []).map((r) => ({ group: r.group, kind: r.kind, n: r.n ?? null })),
+  }) : null);
+  return canon(a) === canon(b);
+}
+
+function describeRulesColumn(v) {
+  if (!v || !Array.isArray(v.rules)) return null;
+  return v.preset || governanceRules.matchPreset(v.rules) || 'own';
+}
+
+/**
  * Deploy-time governance reconcile (issue #646) — sibling of
  * reconcileAppVisibility. The manifest's optional top-level
  * `governance` block is the source of truth for apps.approver_policy
@@ -1504,14 +2071,14 @@ async function applyGovernanceChange(pool, app, { approverPolicy, approvalsRequi
  * the platform's own app is the primary consumer (its apply point is
  * boot: db/migrate.js seedSelfApp calls this next to the name/icon
  * reconciles, since the self-app deploys via GitHub Actions and never
- * runs rebuildProduction).
+ * runs deployProduction).
  *
  * Best-effort like its siblings: callers fire-and-log; a failure here
  * must never fail the deploy.
  */
 async function reconcileAppGovernance(pool, app, manifest) {
   const gov = manifest?.governance;
-  if (!gov || (gov.approvers == null && gov.approvals == null)) return false;
+  if (!gov || (gov.approvers == null && gov.approvals == null && !gov.rules)) return false;
 
   const { rows } = await pool.query(
     `SELECT id, slug, approver_policy, approvals_required FROM apps WHERE id = $1`,
@@ -1519,6 +2086,27 @@ async function reconcileAppGovernance(pool, app, manifest) {
   );
   if (!rows.length) return false;
   const cur = rows[0];
+  cur.governance_rules = await currentRulesColumn(pool, app.id);
+
+  // #4666: a block with rules sets them, and puts the two old columns back
+  // to their defaults (the rules replace them); one with only the old keys
+  // clears any rules, so the old keys decide again.
+  if (gov.rules) {
+    const stored = await storedRules(pool, gov.rules);
+    const same = sameRules(cur.governance_rules, stored)
+      && cur.approver_policy === 'anyone' && cur.approvals_required == null;
+    if (same) return false;
+    await applyGovernanceChange(pool, cur, { approverPolicy: 'anyone', approvalsRequired: null, rules: stored },
+      { actorLabel: 'dapp.json', userId: null });
+    return true;
+  }
+  if (cur.governance_rules) {
+    const approverPolicy = gov.approvers || 'anyone';
+    const approvalsRequired = gov.approvals == null || gov.approvals === 'default' ? null : gov.approvals;
+    await applyGovernanceChange(pool, cur, { approverPolicy, approvalsRequired, rules: null },
+      { actorLabel: 'dapp.json', userId: null });
+    return true;
+  }
 
   const approverPolicy = gov.approvers || cur.approver_policy;
   // 'default' is the explicit spelling of the NULL column state.
@@ -1583,7 +2171,12 @@ async function applyAdminsChange(pool, app, { usernames, userIds }, { actorLabel
            SELECT $1, uid, 'member', NOW() FROM UNNEST($2::int[]) AS uid
          ON CONFLICT (app_id, user_id) DO UPDATE
            SET status = 'member',
-               accepted_at = COALESCE(app_collaborators.accepted_at, NOW())`,
+               -- #5104: a pending invite made a member this way was never
+               -- accepted, so it records no acceptance (and no accepted_via,
+               -- which users_connected reads as consent).
+               accepted_at = CASE WHEN app_collaborators.status = 'member'
+                                  THEN COALESCE(app_collaborators.accepted_at, NOW())
+                                  ELSE app_collaborators.accepted_at END`,
         [app.id, ids]
       );
     } catch (err) {
@@ -1956,12 +2549,18 @@ module.exports = {
   readName,
   readDescription,
   MAX_DESCRIPTION_LENGTH,
+  readCategory,
+  APP_CATEGORIES,
   readLlm,
   readVisibility,
   readGovernance,
   readScreenshot,
   readTests,
   readTestsWithMeta,
+  readLoadRules,
+  checkLoadFlags,
+  MAX_BOOT_PARAMS,
+  MAX_ROUTING_BOUNDARIES,
   checkKey,
   readIcon,
   loadIconImage,
@@ -1989,8 +2588,20 @@ module.exports = {
   reconcileAppScreenshot,
   reconcileAppIcon,
   reconcileAppAdmins,
+  reconcileAppTopics,
+  readTopics,
+  validateTopics,
+  normalizeTopicHandle,
+  isOneEmoji,
+  MAX_LIVE_TOPICS,
+  MAX_TOPIC_ENTRIES,
+  MIN_TOPIC_NAME_LENGTH,
+  MAX_TOPIC_NAME_LENGTH,
+  MAX_TOPIC_ABOUT_LENGTH,
+  TOPIC_HANDLE_RE,
   applyVisibilityChange,
   applyGovernanceChange,
+  storedRules,
   applyAdminsChange,
   RESERVED_KEYS,
   RESERVED_KEY_PREFIXES,

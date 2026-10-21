@@ -44,8 +44,18 @@ stub(require.resolve('../src/middleware/admin'), {
 });
 
 const poolMod = require('../src/db/pool');
+// The failure-log read (GET /api/admin/sms/failures) is the one route that
+// queries phone_auth_failures; the stub answers it from `failuresRows` and
+// everything else as before.
+let failuresRows = [];
 poolMod.getPool = () => ({
-  query: async () => ({ rows: [], rowCount: 0 }),
+  query: async (sql) => {
+    if (typeof sql === 'string' && sql.includes('phone_auth_failures')) {
+      if (sql.includes('ORDER BY')) return { rows: failuresRows, rowCount: failuresRows.length };
+      return { rows: [{ n: failuresRows.length }], rowCount: 1 };
+    }
+    return { rows: [], rowCount: 0 };
+  },
   connect: async () => ({ query: async () => ({ rows: [] }), release: () => {} }),
 });
 
@@ -271,6 +281,38 @@ test('five test texts per admin per hour', async () => {
   } finally { server.close(); }
 });
 
+// ── the failure log ────────────────────────────────────────────────────
+
+const failureRow = {
+  id: 12,
+  kind: 'link_verify',
+  user_id: 42,
+  username: 'phonelink',
+  phone_last4: '0101',
+  error_code: 'phone_in_use',
+  provider_code: null,
+  message: 'That phone number already has an account.',
+  created_at: '2026-10-09T07:11:30.000Z',
+};
+
+test('any admin reads the failure log; a non-admin is refused', async () => {
+  failuresRows = [failureRow];
+  const server = await startServer(FULL_CONFIG);
+  try {
+    currentUser = { id: 3, username: 'viewer', isAdmin: true, canAdminWrite: false };
+    const res = await call(server, 'GET', '/api/admin/sms/failures');
+    assert.equal(res.status, 200, 'a view-only admin reads the log');
+    assert.equal(res.body.total7d, 1);
+    assert.equal(res.body.failures.length, 1);
+    assert.equal(res.body.failures[0].kind, 'link_verify');
+    assert.equal(res.body.failures[0].username, 'phonelink');
+
+    currentUser = { id: 4, username: 'pleb', isAdmin: false };
+    const denied = await call(server, 'GET', '/api/admin/sms/failures');
+    assert.equal(denied.status, 403);
+  } finally { server.close(); }
+});
+
 // ── console wiring ─────────────────────────────────────────────────────
 
 test('the console lists SMS delivery in Platform, right after Email delivery', () => {
@@ -293,4 +335,17 @@ test('the section posts to the test route with the sign-in sheet\'s reCAPTCHA to
   assert.match(src, /Send test SMS/);
   assert.match(src, /needs full admin access/, 'a view-only admin is told why there is no form');
   assert.match(src, /if \(typeof window !== 'undefined'\) \(window as any\)\.AdminSms = AdminSms;/);
+});
+
+test('the section renders the failure log table with loading, empty and error states', () => {
+  const src = read('frontend/src/features/admin/admin-sms.tsx');
+  assert.match(src, /'\/api\/admin\/sms\/failures'/);
+  assert.match(src, /Recent failures/);
+  assert.match(src, /admin-sms-failures-table/, 'the table carries its own id');
+  assert.match(src, /AdminUI\.tableWrap/, 'the table is drawn from the registry, not hand-written');
+  assert.match(src, /Could not load the failure log\./);
+  assert.match(src, /No failures recorded\./);
+  assert.match(src, /Loading…/);
+  assert.match(src, /KIND_LABELS\[f\.kind\] \|\| f\.kind/, 'an unknown kind still renders');
+  assert.match(src, /Firebase: /, 'Firebase\'s own code is shown beside this API\'s');
 });

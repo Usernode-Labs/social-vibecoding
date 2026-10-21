@@ -97,6 +97,9 @@ test('the access-ready mail names its action too', () => {
   const signIn = templates.buildMessage('waitlist_released',
     { url: 'https://x.invalid/?login=1', hasAccount: true });
   assert.equal(anchors(signIn.html)[0].text, 'Sign in');
+  // #4570: with no store link published the pill is the mail's ONLY anchor —
+  // the illustration is an <img>, not a link, and nothing else is a button.
+  assert.equal(anchors(create.html).length, 1);
 });
 
 test('the CODE is still the primary path, and still first (#1516)', () => {

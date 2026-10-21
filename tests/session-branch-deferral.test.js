@@ -21,13 +21,18 @@
 // "branch missing upstream: origin/$BRANCH" for a build turn, so a row that
 // records a branch GitHub does not have is a session that can never run a
 // turn again. The helper therefore persists the name only AFTER the ref
-// exists, and holds the row lock across the call so two concurrent first
-// turns cannot mint two names for one session.
+// exists, and holds the session's lock (on the process's lock connection,
+// src/db/session-locks.js) across the call so two concurrent first turns
+// cannot mint two names for one session.
 //
 // Run with: node --test tests/session-branch-deferral.test.js
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+
+// The scripts under test read their text from the language runtime's
+// global; give them the real English one.
+globalThis.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -35,37 +40,41 @@ const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 
 // ── a pool stand-in ─────────────────────────────────────────────────────
 //
-// ensureSessionBranch is the only thing under test, and it touches exactly
-// one client with a scripted set of statements. Matching on the shape of
+// ensureSessionBranch is the only thing under test. Matching on the shape of
 // the SQL rather than mocking pg keeps the test honest about the ORDER the
-// statements run in, which is the part that matters.
+// statements run in, which is the part that matters. The lock it holds is
+// recorded by a stand-in for src/db/session-locks.js
+// (tests/session-locks-postgres.test.js runs the real one).
+const locked = [];
+const locksPath = require.resolve('../src/db/session-locks');
+require.cache[locksPath] = { id: locksPath, filename: locksPath, loaded: true, exports: {
+  withSessionLock: async (_pool, key, fn) => { locked.push(key); return fn(); },
+} };
+
 function fakePool(rowsBySession, opts = {}) {
   const log = [];
-  const releases = { count: 0 };
   const pool = {
     log,
-    releases,
-    async connect() {
-      let txRows = null;
-      return {
-        async query(sql, params) {
-          const text = String(sql).replace(/\s+/g, ' ').trim();
-          log.push(text);
-          if (/^BEGIN|^COMMIT|^ROLLBACK/.test(text)) return { rows: [] };
-          if (/FOR UPDATE OF cs/.test(text)) {
-            txRows = rowsBySession.get(Number(params[0])) || null;
-            return { rows: txRows ? [{ ...txRows }] : [] };
-          }
-          if (/UPDATE chat_sessions SET branch_name/.test(text)) {
-            if (opts.failUpdate) throw new Error('update exploded');
-            const row = rowsBySession.get(Number(params[0]));
-            if (row) row.branch_name = params[1];
-            return { rowCount: 1, rows: [] };
-          }
-          throw new Error(`unexpected statement: ${text}`);
-        },
-        release() { releases.count += 1; },
-      };
+    async query(sql, params) {
+      const text = String(sql).replace(/\s+/g, ' ').trim();
+      log.push(text);
+      if (/FROM chat_sessions cs JOIN apps a/.test(text)) {
+        const row = rowsBySession.get(Number(params[0])) || null;
+        return { rows: row ? [{ ...row }] : [] };
+      }
+      if (/UPDATE chat_sessions SET branch_name/.test(text)) {
+        if (opts.failUpdate) throw new Error('update exploded');
+        const row = rowsBySession.get(Number(params[0]));
+        if (opts.recordedMeanwhile && row) row.branch_name = opts.recordedMeanwhile;
+        if (!row || row.branch_name) return { rowCount: 0, rows: [] };
+        row.branch_name = params[1];
+        return { rowCount: 1, rows: [{ branch_name: params[1] }] };
+      }
+      if (/SELECT branch_name FROM chat_sessions/.test(text)) {
+        const row = rowsBySession.get(Number(params[0]));
+        return { rows: row ? [{ branch_name: row.branch_name }] : [] };
+      }
+      throw new Error(`unexpected statement: ${text}`);
     },
   };
   return pool;
@@ -92,7 +101,6 @@ test('ensureSessionBranch mints a name for a branchless session', async () => {
   assert.equal(out.created, true);
   assert.match(out.branchName, /^dev\/evan-\d+$/);
   assert.equal(rows.get(7).branch_name, out.branchName, 'the name must be persisted');
-  assert.equal(pool.releases.count, 1, 'the client must always be released');
 });
 
 test('ensureSessionBranch sanitizes an email-address username', async () => {
@@ -126,19 +134,25 @@ test('ensureSessionBranch is idempotent: a second call returns the same branch',
   );
 });
 
-test('ensureSessionBranch reads the row FOR UPDATE, inside a transaction', async () => {
-  // This is what serializes two concurrent first turns on one session.
+test('ensureSessionBranch holds the session\'s lock, and never writes over a branch recorded meanwhile', async () => {
+  // The lock is what serializes two concurrent first turns on one session
+  // (on the process's lock connection: holding it takes nothing from the
+  // pool, whose connection GitHub's client may need).
   const lifecycle = loadLifecycle();
+  const { SESSION_BRANCH_LOCK } = require('../src/services/advisory-locks');
   const rows = new Map([[7, {
     id: 7, branch_name: null, user_id: 3, username: 'evan', repo_url: null,
   }]]);
   const pool = fakePool(rows);
+  locked.length = 0;
   await lifecycle.ensureSessionBranch({ pool, sessionId: 7 });
-
-  assert.equal(pool.log[0], 'BEGIN', 'the read must be inside a transaction');
-  assert.match(pool.log[1], /FOR UPDATE OF cs/);
-  assert.match(pool.log[2], /^UPDATE chat_sessions/);
-  assert.equal(pool.log[3], 'COMMIT');
+  assert.deepEqual(locked, [[SESSION_BRANCH_LOCK, 7]]);
+  assert.match(pool.log[0], /FROM chat_sessions cs JOIN apps a/);
+  assert.match(pool.log[1], /^UPDATE chat_sessions SET branch_name = \$2 WHERE id = \$1 AND branch_name IS NULL/);
+  // An older release (row lock, not this one) recorded one meanwhile: it stands.
+  const other = new Map([[8, { id: 8, branch_name: null, user_id: 3, username: 'evan', repo_url: null }]]);
+  const out = await lifecycle.ensureSessionBranch({ pool: fakePool(other, { recordedMeanwhile: 'dev/evan-1' }), sessionId: 8 });
+  assert.deepEqual(out, { branchName: 'dev/evan-1', created: false });
 });
 
 test('ensureSessionBranch prefers the caller-supplied username', async () => {
@@ -206,7 +220,6 @@ test('ensureSessionBranch reports a missing session as no_session', async () => 
       return true;
     }
   );
-  assert.equal(pool.releases.count, 1, 'the client must be released on the error path');
 });
 
 test('a failed write leaves the session branchless rather than half-created', async () => {
@@ -217,8 +230,6 @@ test('a failed write leaves the session branchless rather than half-created', as
   const pool = fakePool(rows, { failUpdate: true });
   await assert.rejects(() => lifecycle.ensureSessionBranch({ pool, sessionId: 7 }));
   assert.equal(rows.get(7).branch_name, null, 'nothing may be persisted');
-  assert.ok(pool.log.includes('ROLLBACK'), 'the transaction must be unwound');
-  assert.equal(pool.releases.count, 1);
 });
 
 // ── the creation route ──────────────────────────────────────────────────

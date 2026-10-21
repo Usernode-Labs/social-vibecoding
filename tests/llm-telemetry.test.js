@@ -501,6 +501,18 @@ test('the strict telemetry allowlist drops content and credentials', () => {
   });
 });
 
+test('the routed host is kept as a name, never as free text (run five)', () => {
+  const host = (servedProvider) => telemetry.normalizeDiagnostics({ servedProvider }).served_provider;
+  assert.equal(host('Together'), 'Together');
+  assert.equal(host('Google Vertex'), 'Google Vertex');
+  assert.equal(host('  CoreWeave '), 'CoreWeave');
+  for (const junk of ['<script>', 'a; DROP TABLE', 'line\nbreak', ' ', '-leading', null]) {
+    assert.equal(host(junk), undefined, JSON.stringify(junk));
+  }
+  assert.equal(host('x'.repeat(200)).length, 80, 'clipped');
+  assert.equal(Object.hasOwn(telemetry.normalizeDiagnostics({}), 'served_provider'), false, 'absent when unknown');
+});
+
 test('Anthropic errors are classified without persisting provider error details', async () => {
   await withTelemetrySink(async (rows) => {
     const error = Object.assign(new Error('sensitive provider message'), { status: 429 });
@@ -620,6 +632,31 @@ test('Claude coding-agent records reported run usage, failure reason, and mixed 
     assert.equal(rows[0].billing_path, 'anthropic_mixed');
     assert.equal(rows[0].cost_usd, 3.25);
   });
+});
+
+// App bench run 190: a build that left a background task running went on
+// after its result when the task ended, and its second result (three model
+// calls) replaced the first one's usage (138 calls): $0.002 for 28 minutes.
+test('a Claude Code run that goes on after its result adds each later result\'s usage to the turn\'s', () => {
+  const state = worker.newWatchState();
+  state.telemetryDiagnosticsEnabled = true;
+  const result = (input, output, turns) => JSON.stringify({
+    type: 'result', is_error: false, result: 'done', num_turns: turns, duration_ms: 1000 * turns, duration_api_ms: 900 * turns,
+    usage: { input_tokens: input, cache_read_input_tokens: input * 10, output_tokens: output },
+  });
+  worker.parseLine(result(5000, 60000, 138), () => {}, state);
+  worker.parseLine(result(200, 700, 3), () => {}, state);
+  assert.equal(state.inputTokens, 5200);
+  assert.equal(state.cachedInputTokens, 52000);
+  assert.equal(state.outputTokens, 60700);
+  assert.equal(state.providerTurnCount, 141);
+  assert.equal(state.agentReportedDurationMs, 141000);
+  assert.equal(state.lastResultText, 'done');
+  // One result reads exactly as before.
+  const one = worker.newWatchState();
+  one.telemetryDiagnosticsEnabled = true;
+  worker.parseLine(result(200, 700, 3), () => {}, one);
+  assert.deepEqual([one.inputTokens, one.outputTokens, one.providerTurnCount], [200, 700, 3]);
 });
 
 test('Claude coding-agent telemetry captures run latency, turns, tool workload, and response shape', async () => {
@@ -1057,7 +1094,8 @@ test('schema makes invocation event replay idempotent', () => {
 test('coding-agent component context is persisted for retry and restart attribution', () => {
   const workerSource = fs.readFileSync(path.join(__dirname, '../src/services/worker.js'), 'utf8');
   const sessionSource = fs.readFileSync(path.join(__dirname, '../src/routes/sessions.js'), 'utf8');
-  const serverSource = fs.readFileSync(path.join(__dirname, '../server.js'), 'utf8');
+  const serverSource = fs.readFileSync(path.join(__dirname, '../server.js'), 'utf8')
+    + fs.readFileSync(path.join(__dirname, '../src/services/turn-recovery.js'), 'utf8');
   for (const field of [
     'telemetryComponent', 'telemetryCorrelationId', 'telemetryAttemptNumber',
     'telemetryRequestMode', 'telemetryRequestTextCharacters',

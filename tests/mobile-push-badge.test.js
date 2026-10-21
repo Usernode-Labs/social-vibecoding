@@ -159,14 +159,25 @@ test('an undecryptable registration is skipped and a provider error does not sto
   assert.deepEqual(calls.sent.map((m) => m.token), ['a', 'b']);
 });
 
-test('a burst of changes coalesces into one push with the settled count', async () => {
-  const { sync, calls } = harness({ unread: 0 });
-  sync.schedule(7);
-  sync.schedule(7);
+// A change owes the user a re-badge as a row (mobile_push_badge_syncs), one
+// per user, which the push sender drains once it has settled
+// (mobile-push-worker.js drainBadges): a burst is one row and one push. It
+// was a timer in the process that heard the change, lost to a restart and
+// one per process that heard it.
+test('a burst of changes is one queued row per user, never a timer of this process', async () => {
+  const queued = [];
+  const pool = { async query(sql, params) { queued.push({ sql, params }); return { rows: [], rowCount: 1 }; } };
+  const sync = new MobilePushBadgeSync({ pool, config: CONFIG, provider: { send: async () => assert.fail('sent by the drain, not here') }, options: { debounceMs: 5 } });
+  assert.equal(sync.schedule(7), true);
   sync.schedule('7');
-  await new Promise((resolve) => setTimeout(resolve, 40));
-  assert.equal(calls.sent.length, 1);
-  sync.stop();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(queued.length, 2);
+  for (const q of queued) {
+    assert.match(q.sql, /INSERT INTO mobile_push_badge_syncs \(user_id\)[\s\S]*ON CONFLICT \(user_id\) DO UPDATE SET queued_at = now\(\), claimed_until = NULL/);
+    assert.deepEqual(q.params, [7]);
+  }
+  const src = require('node:fs').readFileSync(require.resolve('../src/services/mobile-push-badge.js'), 'utf8');
+  assert.doesNotMatch(src, /setTimeout\(\(\) => \{\s*this\.timers/, 'no debounce timer of its own');
 });
 
 test('schedule ignores an unusable user id', () => {
@@ -228,14 +239,17 @@ function handlerBody(src, marker) {
 
 test('loading the bell re-badges the iPhone to the total it just counted', () => {
   const body = handlerBody(routeSource('notifications.js'), "router.get('/api/notifications',");
-  const firstPage = body.slice(body.indexOf('if (!before) {'));
-  const count = firstPage.indexOf('payload.unread = await notifications.countUnread(pool, req.user.id);');
+  // #5527: the first page is also read as `?unread=1` for the Unread tab's
+  // pager, which returns no totals at all — the gate skips that call too.
+  const firstPage = body.slice(body.indexOf('if (!before && !unreadOnly) {'));
+  // #18: the total and the plain messages among it, read in one query.
+  const count = firstPage.indexOf('Object.assign(payload, await notifications.countUnreadSplit(pool, req.user.id));');
   const sync = firstPage.indexOf("require('../services/mobile-push').scheduleBadgeSync(req.user.id)");
   assert.ok(count >= 0, 'first page counts unread');
   assert.ok(sync > count, 'the first page schedules a badge sync after counting');
   // Only the first page: a cursor follow-up carries no total and must not
   // re-badge on every scroll.
-  assert.ok(body.indexOf('scheduleBadgeSync') > body.indexOf('if (!before) {'));
+  assert.ok(body.indexOf('scheduleBadgeSync') > body.indexOf('if (!before && !unreadOnly) {'));
 });
 
 test('retracting kudos refreshes the recipient bell and badge', () => {

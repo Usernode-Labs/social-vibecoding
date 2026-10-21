@@ -27,6 +27,8 @@ const PENDING = 'a'.repeat(48);
 const CONFIRMED = 'b'.repeat(48);
 const ADMITTED = 'c'.repeat(48);
 const UNKNOWN = 'd'.repeat(48);
+// Released, and its address already has an account that is set up.
+const SET_UP = 'e'.repeat(48);
 
 const JOINED = new Date('2026-01-02T03:04:05.000Z');
 const CONFIRMED_AT = new Date('2026-01-03T03:04:05.000Z');
@@ -45,6 +47,17 @@ const ROWS = {
     id: 3, email: 'admitted@example.invalid', answers: {},
     submitted_at: JOINED, confirmed_at: CONFIRMED_AT, released_at: RELEASED_AT, linked_user_id: 900001,
   },
+  [SET_UP]: {
+    id: 4, email: 'set.up@example.invalid', answers: {},
+    submitted_at: JOINED, confirmed_at: CONFIRMED_AT, released_at: RELEASED_AT, linked_user_id: 900002,
+  },
+};
+
+// The accounts the addresses would prove, by address: ADMITTED's has chosen
+// no username and set no password yet (it is still new); SET_UP's has.
+const USERS = {
+  'admitted@example.invalid': { is_admin: false, password_set: false, needs_username_choice: true },
+  'set.up@example.invalid': { is_admin: false, password_set: false, needs_username_choice: false },
 };
 
 // Every statement the route runs, so a test can assert what ?view=status
@@ -60,6 +73,10 @@ function makeMockPool() {
         return row ? { rows: [row] } : { rows: [] };
       }
       if (/waitlist_invite_codes/.test(sql)) return { rows: [{ code: 'INVITECODE' }] };
+      if (/FROM users/.test(sql)) {
+        const user = USERS[params[0]];
+        return { rows: user ? [user] : [] };
+      }
       return { rows: [] };
     },
   };
@@ -202,10 +219,10 @@ test('the full read names the address, and the poll still does not (#1537)', asy
       const before = statements.length;
       const body = await (await get(base, token)).json();
       assert.equal(body.email, email, `full payload should name ${email}`);
-      assert.ok(
-        statements.length - before <= 3,
-        'naming the address must not add a query of its own'
-      );
+      // The one read a released row adds is the `new_account` check, which
+      // is about its account, not its address (tests below).
+      const own = statements.slice(before).filter((sql) => !/FROM users/.test(sql));
+      assert.ok(own.length <= 3, 'naming the address must not add a query of its own');
     }
   });
 });
@@ -234,5 +251,39 @@ test('an unknown token still 404s, with and without the status view', async () =
     // #1537: the refusal must not echo anything back either — the address
     // field exists on the SUCCESS payload only.
     assert.equal(body.email, undefined);
+  });
+});
+
+// Evan, 12 Oct 2026: a "You're in" link for an account that is still new is
+// spent as the page opens (frontend/src/features/auth/landing.tsx), and this
+// read is how the page knows, before it spends anything. A boolean, and a
+// read only: nothing about the link or a session is touched here.
+test('new_account says whether a released row\'s account is still new, and spends nothing', async () => {
+  await withPublicApi(async (base) => {
+    const reads = [];
+    for (const [token, expected] of [[ADMITTED, true], [SET_UP, false], [PENDING, false], [CONFIRMED, false]]) {
+      const before = statements.length;
+      const body = await (await get(base, token)).json();
+      assert.equal(body.new_account, expected, `new_account for ${token[0]}`);
+      reads.push(...statements.slice(before));
+      const users = statements.slice(before).filter((sql) => /FROM users/.test(sql));
+      // Only a released row has a link to spend, so only it is asked about.
+      assert.equal(users.length, token === ADMITTED || token === SET_UP ? 1 : 0, `account reads for ${token[0]}`);
+    }
+    // Spends nothing: no link, no session, no account touched.
+    for (const sql of reads) {
+      assert.doesNotMatch(sql, /waitlist_release_links|web_signup_sessions|\bsessions\b|UPDATE users|INSERT INTO users/i, sql);
+    }
+    for (const sql of reads.filter((q) => /FROM users/.test(q))) {
+      assert.match(sql, /^\s*SELECT is_admin, password_set, needs_username_choice\s+FROM users\s+WHERE lower\(email\) = lower\(\$1\)\s*$/, 'a plain read, not FOR UPDATE');
+    }
+  });
+});
+
+test('the poll never says new_account, and asks nothing about the account', async () => {
+  await withPublicApi(async (base) => {
+    const body = await (await get(base, ADMITTED, '?view=status')).json();
+    assert.equal(body.new_account, undefined);
+    assert.ok(!statements.some((sql) => /FROM users/.test(sql)));
   });
 });

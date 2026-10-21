@@ -20,6 +20,7 @@
  * Pure, so the test drives it with arrays rather than a store.
  */
 
+import { changeHref } from '../../lib/change-href';
 import type { AppDiscussion } from './inbox';
 import type { ConversationSummary } from './types';
 
@@ -148,7 +149,8 @@ export function issueRefHref(appSlug: string, num: string): string {
  *
  * `appSlug` is the project the message is about, when it names one (#3770:
  * a Homeroom bot message carries its request's): its `#N` chips are links
- * to that project's requests.
+ * to that project's requests, and its `PR#N` chips to those proposals'
+ * pages (#5728).
  */
 export function decorateRefs(root: Element, handles: ReadonlySet<string>, me: string, appSlug?: string | null): void {
   const doc = root.ownerDocument;
@@ -180,10 +182,13 @@ export function decorateRefs(root: Element, handles: ReadonlySet<string>, me: st
         frag.appendChild(el);
       } else if (seg.type === 'ref') {
         // An issue in a message that names its project is a link to the
-        // request (#3770). Anything else has no app to reveal it in — a DM
-        // belongs to none — so the chip names the ref without pretending to
-        // navigate, and app.css draws it as text there.
-        const href = !seg.isPr && appSlug ? issueRefHref(appSlug, seg.num) : null;
+        // request (#3770), and a PR a link to its proposal page (#5728).
+        // Anything else has no app to reveal it in — a DM belongs to none —
+        // so the chip names the ref without pretending to navigate, and
+        // app.css draws it as text there.
+        const href = appSlug
+          ? (seg.isPr ? changeHref(appSlug, null, seg.num) : issueRefHref(appSlug, seg.num))
+          : null;
         const chip = doc.createElement(href ? 'a' : 'span');
         if (href) chip.setAttribute('href', href);
         chip.className = seg.isPr ? 'gc-ref gc-ref-pr' : 'gc-ref gc-ref-issue';
@@ -203,4 +208,21 @@ export function decorateRefs(root: Element, handles: ReadonlySet<string>, me: st
     textNode.parentNode?.replaceChild(frag, textNode);
   };
   walk(root);
+}
+
+/**
+ * #5728: a rendered, sanitized reply with its references chipped, for the
+ * surfaces that draw markdown without Messages' own row (an agent session's
+ * reply, a change's chat). With no project to name, nothing is chipped and
+ * the html comes back exactly as it was, so a conversation with no project
+ * looks as it always did.
+ */
+export function linkRefsInHtml(html: string, appSlug: string | null | undefined): string {
+  if (!html || !appSlug || typeof document === 'undefined') return html;
+  const root = document.createElement('div');
+  root.innerHTML = html;
+  const app = typeof window === 'undefined' ? null : (window as any).App;
+  const me = String(app?.user?.username || '').toLowerCase();
+  decorateRefs(root, new Set(), me, appSlug);
+  return root.innerHTML;
 }

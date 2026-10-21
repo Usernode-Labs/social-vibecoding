@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  {{DEV_CONSOLE_FORWARDER}}
+  <title>{{APP_NAME}}</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='45' fill='%237c3aed'/><circle cx='50' cy='50' r='18' fill='white'/></svg>">
+  <!-- Homeroom's native UI kit, centrally hosted and loaded by RELATIVE
+       path like the bridge (never vendored): native pressed states, pull to
+       refresh, and on a phone a tap outside a field closes the keyboard.
+       Before the app's own stylesheet, so the app's styles win a tie. -->
+  <link rel="stylesheet" href="/usernode-native/v1/native.css">
+  <!-- This app's precompiled Tailwind (npm run build writes it on every
+       image build; tailwind.config.js says which files it scans). -->
+  <link rel="stylesheet" href="/tailwind.css">
+  <!-- The platform bridge, centrally hosted and loaded by RELATIVE path.
+       Never vendor it and never write a hostname in front of it. It is also
+       how the app answers the shell, so keep it even if no bridge API is
+       called. -->
+  <script src="/usernode-bridge/v1/bridge.js"></script>
+  <!-- Follow the viewer's Homeroom theme (the bridge reports it), with the
+       OS preference as the fallback outside Homeroom. -->
+  <script>
+    (function () {
+      var media = window.matchMedia('(prefers-color-scheme: dark)');
+      function applyTheme() {
+        var theme = (window.usernode && window.usernode.theme) || (media.matches ? 'dark' : 'light');
+        document.documentElement.classList.toggle('dark', theme === 'dark');
+        document.documentElement.style.colorScheme = theme;
+      }
+      applyTheme();
+      window.addEventListener('usernode:theme-changed', applyTheme);
+      media.addEventListener('change', applyTheme);
+    })();
+  </script>
+  <!-- The native kit's script (its stylesheet is above). After the theme
+       script, which runs first so the page never paints in the wrong look. -->
+  <script src="/usernode-native/v1/native.js"></script>
+  <!-- What takes the loading shapes' place fades in, briefly, rather than
+       cutting over: an animation replays whenever [hidden] comes off, so
+       nothing has to start it. None under reduced motion. -->
+  <style>
+    @keyframes appear { from { opacity: 0; } to { opacity: 1; } }
+    @media (prefers-reduced-motion: no-preference) { .appear { animation: appear 200ms ease-out; } }
+    /* The page scrolls up and down only, in place: a drag past either end
+       bounces this page (and pulls to refresh at the top) rather than
+       carrying on into Homeroom around it, and nothing slides sideways. */
+    html { overscroll-behavior-y: contain; overscroll-behavior-x: none; touch-action: pan-y pinch-zoom; }
+    body { overflow-x: clip; }
+    /* On a phone: a field never zooms the page when it is focused, and a
+       tap on a field or a button is never read as a double-tap zoom. */
+    @media (hover: none) and (pointer: coarse) { input, textarea, select { font-size: 16px; } }
+    input, textarea, button { touch-action: manipulation; }
+    /* The native kit in this app's own colours (the pull-to-refresh spinner). */
+    :root { --un-accent: rgb(var(--accent)); --un-accent-contrast: rgb(var(--on-accent)); --un-surface: rgb(var(--surface)); }
+  </style>
+</head>
+<body class="min-h-screen bg-ground text-fg">
+  <main class="mx-auto flex max-w-xl flex-col gap-8 px-4 py-8">
+    <header class="flex flex-col gap-1">
+      <h1 class="text-title">{{APP_NAME}}</h1>
+      <p class="text-body text-muted">25 minutes of focus, then a gentle beep.</p>
+    </header>
+
+    <!-- The timer: the screen's one job. Nothing here waits on the network. -->
+    <section id="timer" data-state="ready" class="card flex flex-col items-center gap-4 px-4 py-8">
+      <p id="clock" role="timer" class="text-center text-[5rem] font-bold leading-none tabular-nums">25:00</p>
+      <p id="timer-status" aria-live="polite" class="text-body text-muted">Ready when you are</p>
+      <div class="flex w-full items-center justify-center gap-2">
+        <button id="start" type="button" class="btn-primary min-h-14 max-w-xs flex-1 text-heading">Start</button>
+        <button id="reset" type="button" class="btn-secondary" hidden>Reset</button>
+      </div>
+    </section>
+
+    <!-- How many you finished today. The count is each person's own. -->
+    <section id="today" class="flex flex-col">
+      <h2 class="section-label">Today</h2>
+      <!-- Loading: a shape where the count will be. -->
+      <div id="today-loading" class="flex flex-col gap-2" aria-label="Loading">
+        <div class="skeleton h-16 w-full"></div>
+      </div>
+      <div id="today-card" class="card appear" hidden>
+        <p id="today-count" class="text-heading"></p>
+        <p id="today-minutes" class="text-small text-muted"></p>
+      </div>
+      <!-- Empty: only when the count loaded and it is zero. -->
+      <div id="today-empty" class="state-empty card" hidden>
+        <p class="text-heading">No sessions finished today yet</p>
+        <p class="text-body text-muted">Finish a 25 minute session and it counts here.</p>
+      </div>
+      <!-- A visitor with no account can still use the timer. -->
+      <div id="today-guest" class="state-empty card" hidden>
+        <p class="text-heading">Make an account to keep count of your sessions.</p>
+      </div>
+      <!-- Error: only when the count failed to load. The timer still works. -->
+      <div id="today-error" class="state-error card" hidden>
+        <p class="text-heading">Today's count did not load</p>
+        <p class="text-body text-muted">The timer still works. Check your connection and try again.</p>
+        <button id="retry" type="button" class="btn-secondary">Retry</button>
+      </div>
+    </section>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>

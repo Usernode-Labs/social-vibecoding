@@ -1,30 +1,18 @@
 'use strict';
 
-// Owns retry timers for recovery work whose active_turn must remain durable.
-// The caller supplies the actual recovery function and busy-set hooks; this
-// module only provides deduplication, exponential backoff, and the invariant
-// that the session stays owned while it is waiting for the next attempt.
+// What a recovery that keeps a turn's durable record does with an error:
+// whether trying again could help (shouldRetryRecoveryError), quarantining a
+// record whose identity cannot heal (retainOrQuarantineRecoveryError), the
+// cleanup it insists on (requireDurableTurnCleanup), and saying it gave up
+// (recordGaveUp). Who tries again is the turn's work item, in whichever
+// workflow process runs it (services/turns.js RECOVERY_RETRY), not a timer
+// in one process.
 
-const DEFAULT_BASE_DELAY_MS = 1000;
-const DEFAULT_MAX_DELAY_MS = 60 * 1000;
-// How many failed attempts a retained recovery gets before it stops. A
-// restart's ordinary recovery succeeds within a handful (1 to 8 across every
-// session in the 30 days before this limit); the three that looped were
-// failing the same way every time, one of them 1,357 times over 23 hours
-// (usernode-bot/sheep-countrr-a08857#48). Thirty attempts at this backoff is
-// about 25 minutes: long enough to outlast a GitHub or database blip.
-const DEFAULT_MAX_FAILURES = 30;
 const turnLifecycle = require('./turn-lifecycle');
-const jobs = new Map();
 const PERMANENT_RECOVERY_ERROR_CODES = new Set([
   'recovery_retry_state_invalid',
   'agent_attempt_not_found',
 ]);
-
-function retryDelay(failures, baseDelayMs, maxDelayMs) {
-  const exponent = Math.max(0, Math.min(Number(failures) || 0, 10));
-  return Math.min(maxDelayMs, baseDelayMs * (2 ** exponent));
-}
 
 // Durable identity mismatches cannot heal through backoff. Callers leave the
 // active_turn in place as an operator-visible quarantine, but must not keep a
@@ -87,138 +75,35 @@ function isDurableTurnCleanupError(err) {
   return err?.code === 'recovery_cleanup_pending';
 }
 
-// When a job has failed `maxFailures` times, it stops: `onExhausted` runs
-// (callers terminalize what the user sees there) and the session reservation
-// is released. The durable active_turn is left as it is, which is what lets
-// the stale-turn watchdog end it the same way it ends any turn nothing owns:
-// ledger closed, "[interrupted]" on the progress card, the unfinished-turn
-// message with its retry pills, and the owner notified.
-function scheduleRetainedRecovery({
-  key,
-  run,
-  hold = () => {},
-  release = () => {},
-  onError = async () => true,
-  onExhausted = async () => {},
-  onComplete = () => {},
-  onHookError = () => {},
-  baseDelayMs = DEFAULT_BASE_DELAY_MS,
-  maxDelayMs = DEFAULT_MAX_DELAY_MS,
-  maxFailures = DEFAULT_MAX_FAILURES,
-  setTimer = setTimeout,
-  clearTimer = clearTimeout,
-}) {
-  if (!key) throw new Error('recovery-retry: key required');
-  if (typeof run !== 'function') throw new Error('recovery-retry: run required');
-  if (jobs.has(key)) return false;
-
-  const state = {
-    key,
-    failures: 0,
-    timer: null,
-    clearTimer,
-    release,
-    cancelled: false,
-  };
-  jobs.set(key, state);
-
-  const safeCall = (fn, ...args) => {
-    try { return fn(...args); } catch (err) {
-      try { onHookError(err); } catch {}
-      return undefined;
-    }
-  };
-
-  const finish = (completed) => {
-    if (jobs.get(key) !== state) return;
-    jobs.delete(key);
-    state.cancelled = true;
-    if (state.timer != null) {
-      try { state.clearTimer(state.timer); } catch {}
-      state.timer = null;
-    }
-    safeCall(release);
-    if (completed) safeCall(onComplete);
-  };
-
-  const arm = () => {
-    if (state.cancelled) return;
-    // The recovery function may use its own add/finally-delete busy wrapper.
-    // Re-assert ownership after every failure and keep it through backoff so
-    // the stale-turn watchdog cannot reap the state being retried.
-    safeCall(hold);
-    const delay = retryDelay(state.failures, baseDelayMs, maxDelayMs);
-    state.timer = setTimer(runOnce, delay);
-    state.timer?.unref?.();
-  };
-
-  async function runOnce() {
-    if (state.cancelled) return;
-    state.timer = null;
-    try {
-      await run();
-      finish(true);
-    } catch (err) {
-      state.failures += 1;
-      const retryable = shouldRetryRecoveryError(err);
-      let retry = retryable;
-      try {
-        // Always run the hook so callers can terminalize user-visible state,
-        // but a permanent durable-state error cannot be promoted back to a
-        // retry even if the hook observes an active_turn and returns true.
-        const requestedRetry = (await onError(err, { failures: state.failures, key })) !== false;
-        retry = retryable && requestedRetry;
-      } catch (hookErr) {
-        safeCall(onHookError, hookErr);
-        retry = retryable;
-      }
-      if (!retry) {
-        finish(false);
-        return;
-      }
-      if (state.failures >= maxFailures) {
-        try {
-          await onExhausted(err, { failures: state.failures, key });
-        } catch (hookErr) {
-          safeCall(onHookError, hookErr);
-        }
-        finish(false);
-        return;
-      }
-      arm();
-    }
-  }
-
-  arm();
-  return true;
-}
-
-function isScheduled(key) {
-  return jobs.has(key);
-}
-
-function cancel(key) {
-  const state = jobs.get(key);
-  if (!state) return false;
-  jobs.delete(key);
-  state.cancelled = true;
-  if (state.timer != null) {
-    try { state.clearTimer(state.timer); } catch {}
-  }
-  try { state.release(); } catch {}
-  return true;
+// Say that a retained recovery was given up on (events
+// 'turn_recovery_gave_up'): until this, giving up was a log line, and an
+// interrupted turn nothing could pick up again was found by its owner. The
+// platform signals file a request for them (signal-observers/
+// turn-recovery.js). The key is `<recovery>:<session id>` (services/turns.js:
+// `interactive:` for a coding run, `headless:`). Written to `pool`, or the
+// process's shared pool (db/pool.js) when the caller passes none. Never
+// throws, and never waits: what the user sees is terminalized either way.
+function recordGaveUp({ pool = null, key, err, failures }) {
+  try {
+    const events = require('./events');
+    const m = /^([a-z][a-z0-9_-]*):(\d+)$/i.exec(String(key));
+    const id = m ? Number(m[2]) : 0;
+    const sessionId = Number.isSafeInteger(id) && id > 0 ? id : null;
+    // An error's code is the platform's own word for it (no_commits,
+    // recovery_cleanup_pending, ECONNRESET), never its message.
+    const code = err?.code == null ? null : String(err.code).replace(/[^A-Za-z0-9_.:-]/g, '').slice(0, 60) || null;
+    events.record(pool || undefined, {
+      type: events.EVENT_TYPES.TURN_RECOVERY_GAVE_UP,
+      sessionId,
+      metadata: { sessionId, recovery: m ? m[1].toLowerCase() : null, code, failures: Number(failures) || 0 },
+    });
+  } catch { /* a record is a help; giving up still happens */ }
 }
 
 module.exports = {
-  DEFAULT_BASE_DELAY_MS,
-  DEFAULT_MAX_DELAY_MS,
-  DEFAULT_MAX_FAILURES,
-  retryDelay,
   shouldRetryRecoveryError,
   retainOrQuarantineRecoveryError,
   requireDurableTurnCleanup,
   isDurableTurnCleanupError,
-  scheduleRetainedRecovery,
-  isScheduled,
-  cancel,
+  recordGaveUp,
 };

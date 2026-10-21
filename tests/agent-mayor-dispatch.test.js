@@ -237,10 +237,19 @@ test('a run that finishes while nobody is watching lands in the bell, once per c
   ];
   // The user left: this turn's stream is closed and nobody follows the events.
   const notified = [];
+  const notStalled = [];
   const left = fakeRes();
   left.destroyed = true;
-  await runTurn({ steps, res: left, extra: { notifyDone: async (_pool, changeId) => { notified.push(changeId); } } });
+  await runTurn({
+    steps,
+    res: left,
+    extra: {
+      notifyDone: async (_pool, changeId) => { notified.push(changeId); },
+      notifyStalled: async (_pool, changeId) => { notStalled.push(changeId); },
+    },
+  });
   assert.deepEqual(notified, [50], 'the dev chat\'s own "Session finished", on the change the run was on');
+  assert.deepEqual(notStalled, [], 'a run that finished is not a stopped one (#4729)');
 
   // Still watching, through the turn's stream or the conversation's events.
   const watched = [];
@@ -252,6 +261,7 @@ test('a run that finishes while nobody is watching lands in the bell, once per c
     res: followed,
     extra: {
       notifyDone: async (_pool, id) => { watched.push(id); },
+      notifyStalled: async (_pool, id) => { watched.push(id); },
       sessionBus: { publish() {}, clearSession() {}, subscriberCount: () => 1 },
     },
   });
@@ -263,9 +273,29 @@ test('a run that finishes while nobody is watching lands in the bell, once per c
     steps,
     res: left,
     stub: dispatchStub({ outcome: { ran: true, changeId: 50, kind: 'build', isError: false, stopped: true, toolResultText: 'stopped' } }),
-    extra: { notifyDone: async (_pool, id) => { stopped.push(id); } },
+    extra: {
+      notifyDone: async (_pool, id) => { stopped.push(id); },
+      notifyStalled: async (_pool, id) => { stopped.push(id); },
+    },
   });
   assert.deepEqual(stopped, []);
+
+  // An errored run is the bell's other line (#4729): "Session stopped
+  // before finishing", against the change the run was on — and the
+  // finished line stays silent.
+  const stalled = [];
+  const doneToo = [];
+  await runTurn({
+    steps,
+    res: left,
+    stub: dispatchStub({ outcome: { ran: true, changeId: 50, kind: 'build', isError: true, stopped: false, toolResultText: 'The build failed.' } }),
+    extra: {
+      notifyDone: async (_pool, id) => { doneToo.push(id); },
+      notifyStalled: async (_pool, id) => { stalled.push(id); },
+    },
+  });
+  assert.deepEqual(stalled, [50]);
+  assert.deepEqual(doneToo, []);
 });
 
 test('one dispatch per turn; one the change cannot take is refused to the model', async () => {
@@ -479,12 +509,12 @@ test('a follow-up turn records no user message and carries on from the card', as
   assert.equal(stub.runs[0].userMessage, 'Add dark mode', 'the dispatch is briefed with what the user asked');
 });
 
-test('the turn keeps its lease fresh while it runs', async () => {
-  // Every 15 seconds inside a 90-second window: a deploy that kills the turn
-  // leaves its conversation looking busy for at most a minute and a half.
-  assert.equal(agentTurn.LEASE_RENEW_MS, 15000);
-  assert.ok(agentTurn.LEASE_RENEW_MS < require('../src/services/agent-sessions').TURN_LEASE_STALE_SECONDS * 1000 / 5,
-    'renewed many times inside the stale window');
+test('the turn reads its claim\'s stop every two seconds, and never renews the claim', async () => {
+  // The claim lasts as long as the turn (its machine releases it): nothing
+  // keeps it fresh, and a Stop pressed on any process is read from it.
+  assert.equal(agentTurn.STOP_POLL_MS, 2000);
+  const src = require('node:fs').readFileSync(require.resolve('../src/services/mayor/agent-turn.js'), 'utf8');
+  assert.doesNotMatch(src, /renewTurnLease/);
 });
 
 // ── Compaction ─────────────────────────────────────────────────────────
@@ -589,11 +619,24 @@ function dispatchDeps({
     },
     activeWorkers: {
       isSessionBusy: () => isBusy(),
+      // What works on the change on any process (session-work.ts
+      // workedOnSql), here the same as this process.
+      isSessionBusyAnywhere: async () => isBusy(),
       hasSessionOperation: () => isBusy() && !shotsRun,
       activeWorkers: new Map(),
       beginSessionOperation: (id) => { log.push(['begin', id]); return () => log.push(['release', id]); },
     },
-    shotsRunFor: () => shotsRun,
+    // A run of the change's shots under way (the shots machine's state) and
+    // the wait for its end.
+    shotsRunning: async () => !!shotsRun,
+    shotsWait: async (_id, { timeoutMs }) => {
+      if (!shotsRun) return 'idle';
+      let timer;
+      const waited = await Promise.race([shotsRun.then(() => 'finished'),
+        new Promise((resolve) => { timer = setTimeout(() => resolve('timeout'), timeoutMs); })]);
+      clearTimeout(timer);
+      return waited;
+    },
     shotsWaitMs,
     stopRegistry: {
       createHandle: ({ sessionId, phase, send }) => ({ sessionId, phase, send, stopped: false, stoppedBy: null, abort: new AbortController() }),
@@ -740,7 +783,7 @@ test('a dispatch is refused when there is nothing to build on', async () => {
   const busy = await dispatchWith({ busy: true });
   assert.match(busy.outcome.toolResultText, /^busy/);
   assert.ok(!busy.log.some((e) => e[0] === 'begin'), 'a busy change is not claimed');
-  assert.equal(dispatch.canDispatch(null), false);
+  assert.equal(await dispatch.canDispatch(null), false);
 });
 
 test('a change held only by a shots run waits it out, then builds', async () => {
@@ -748,7 +791,7 @@ test('a change held only by a shots run waits it out, then builds', async () => 
   let finish;
   const shotsRun = new Promise((resolve) => { finish = resolve; });
   const { deps } = dispatchDeps({ busy: () => running, shotsRun });
-  assert.equal(dispatch.canDispatch(CHANGE_ROW, deps), true, 'the tools stay on offer while evidence records');
+  assert.equal(await dispatch.canDispatch(CHANGE_ROW, deps), true, 'the tools stay on offer while evidence records');
   setTimeout(() => { running = false; finish(); }, 5);
   const { outcome, log, agentEvents } = await dispatchWith({ busy: () => running, shotsRun });
   assert.equal(outcome.toolResultText, 'built');
@@ -765,7 +808,7 @@ test('a shots run that outlasts the wait is refused as what it is, not as the co
   assert.ok(!log.some((e) => e[0] === 'begin'));
 
   const turn = dispatchDeps({ busy: true });
-  assert.equal(dispatch.canDispatch(CHANGE_ROW, turn.deps), false, 'a turn holding the change still hides the tools');
+  assert.equal(await dispatch.canDispatch(CHANGE_ROW, turn.deps), false, 'a turn holding the change still hides the tools');
 });
 
 test('a stopped or crashed dispatch leaves the change\'s turn to its recovery', async () => {
@@ -812,20 +855,31 @@ test('a stop during dispatch preparation never starts a coding tool', async () =
 });
 
 
-test('a durable cross-process stop notification interrupts the owning turn immediately and ignores stale notifications', async () => {
+test('a stop stamped on the turn\'s claim, from any process, stops the turn at its next read; another turn\'s stamp never does', async () => {
   let reads = 0;
+  let stampFor = 'old-turn';
   const { res } = await runTurn({
+    extra: {
+      stopPollMs: 10,
+      agentSessions: {
+        getAgentSession: async () => SESSION,
+        appendConversationEvent: async () => {},
+        releaseTurnLease: async () => {},
+        readTurnStopRequest: async (_pool, { turnId }) => {
+          reads += 1;
+          return turnId === stampFor ? { stopRequestedAt: new Date().toISOString(), stopRequestedBy: 'ada' } : null;
+        },
+      },
+    },
     steps: [async () => {
-      const id = agentTurn.turnState(5).id;
-      const deps = { agentSessions: { readTurnStopRequest: async () => { reads += 1; return { stopRequestedAt: new Date().toISOString(), stopRequestedBy: 'ada' }; } } };
-      assert.equal(await agentTurn.receiveStopRequest({}, { agentSessionId: 5, turnId: 'old-turn' }, deps), false);
-      assert.equal(reads, 0, 'another turn is not even read');
-      assert.equal(await agentTurn.receiveStopRequest({}, { agentSessionId: 5, turnId: id }, { agentSessions: { readTurnStopRequest: async () => null } }), false);
-      assert.equal(await agentTurn.receiveStopRequest({}, { agentSessionId: 5, turnId: id }, deps), true);
+      await new Promise((r) => setTimeout(r, 60));
+      assert.equal(agentTurn.turnState(5).stopping, false, 'a stamp for another turn is not this one\'s');
+      stampFor = agentTurn.turnState(5).id;
+      for (let i = 0; i < 50 && !agentTurn.turnState(5).stopping; i += 1) await new Promise((r) => setTimeout(r, 10));
       assert.equal(agentTurn.turnState(5).stopping, true);
       return { text: '', toolUses: [], rawContent: [], usage: {} };
     }],
   });
-  assert.equal(reads, 1);
+  assert.ok(reads > 1);
   assert.ok(res.events().some((event) => event.type === 'stopping'));
 });

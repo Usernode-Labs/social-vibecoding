@@ -130,33 +130,46 @@ test('anything that is not a sha is not a tree, whatever git printed', async () 
 
 // ── What a demo-mode merge offers ────────────────────────────────────────
 //
-// votes.js reads the preview off the session and asks GitHub what tree the
-// preview's commit points at. Loaded with GitHub stubbed, because that read
-// is the only thing in it that leaves the process.
+// The merge-followups machine reads the preview off the session (facts.ts)
+// and hands it to app-delivery with the merge's deploy request (machine.ts
+// reuseOf). app-delivery's deploy work asks GitHub what tree the preview's
+// commit points at, and offers the image with it. Run with GitHub, staging
+// and the teardown stubbed, because the GitHub read is the only thing in it
+// that leaves the process and the deploy is what is being offered.
 
-function loadVotes({ tree = TREE, throws = false, enabled = true } = {}) {
+function loadDeploy({ tree = TREE, throws = false } = {}) {
   const ids = {
     github: require.resolve('../src/services/github'),
-    logger: require.resolve('../src/services/logger'),
-    subject: require.resolve('../src/routes/votes'),
+    staging: require.resolve('../src/services/staging'),
+    teardown: require.resolve('../src/services/app-teardown'),
   };
   const orig = {};
   for (const [k, id] of Object.entries(ids)) orig[k] = require.cache[id];
   const asked = [];
+  const deployed = [];
   const put = (id, exports) => { require.cache[id] = { id, filename: id, loaded: true, exports }; };
   put(ids.github, {
-    isEnabled: () => enabled,
+    isEnabled: () => true,
     getCommitTree: async (owner, repo, sha) => {
       asked.push([owner, repo, sha]);
       if (throws) throw new Error('502 Bad Gateway');
       return tree;
     },
   });
-  put(ids.logger, { info() {}, warn() {}, error() {}, debug() {} });
-  delete require.cache[ids.subject];
-  const subject = require(ids.subject);
+  put(ids.staging, {
+    async deployProduction(config, app, options) { deployed.push(options); return { sha: 'f'.repeat(40) }; },
+  });
+  put(ids.teardown, { async removeRuntimeIfDeleted() {} });
+  const { appDeliveryServices } = require('../src/workflow/app-delivery/services.ts');
+  const { WORK } = require('../src/workflow/app-delivery/machine.ts');
+  const pool = { query: async () => ({ rows: [{ id: 1, slug: 'todo-list', self_hosted: false }] }) };
+  const handler = appDeliveryServices({ config: {}, pool })[WORK.deploy];
+  const run = (reuse) => handler.run({
+    input: { appId: 1, revision: null, reuse, prNumber: 4 },
+    key: 'deploy', attempt: 1, resumeFrom: null, checkpoint: async () => {},
+  });
   return {
-    subject, asked,
+    run, asked, deployed,
     restore() {
       for (const [k, id] of Object.entries(ids)) {
         if (orig[k]) require.cache[id] = orig[k]; else delete require.cache[id];
@@ -165,65 +178,77 @@ function loadVotes({ tree = TREE, throws = false, enabled = true } = {}) {
   };
 }
 
-const DEMO_APP = {
-  id: 1, slug: 'todo-list', demo_mode: true,
-  repo_url: 'https://github.com/usernode-bot/todo-list',
-};
-const poolWith = (row) => ({ query: async () => ({ rows: row ? [row] : [] }) });
-const PREVIEW = {
-  staging_image_ref: 'registry.test/apps/todo@sha256:' + 'e'.repeat(64),
-  staging_build_ref: 'bk/job-9',
-  staging_commit_sha: 'c'.repeat(40),
+// What machine.ts reuseOf hands app-delivery for a demo-mode app with a
+// preview: the preview's build and commit, and the app's repository.
+const REUSE = {
+  imageRef: 'registry.test/apps/todo@sha256:' + 'e'.repeat(64),
+  buildRef: 'bk/job-9',
+  commitSha: 'c'.repeat(40),
+  owner: 'usernode-bot', repo: 'todo-list',
 };
 
 test('a demo-mode merge offers the preview\'s image, and the tree GitHub says it is of', async () => {
-  const v = loadVotes();
+  const v = loadDeploy();
   try {
-    const offered = await v.subject.demoPreviewImage(poolWith(PREVIEW), DEMO_APP, { id: 9 });
-    assert.deepEqual(offered, {
-      imageRef: PREVIEW.staging_image_ref,
+    await v.run(REUSE);
+    assert.deepEqual(v.deployed[0].reuseImage, {
+      imageRef: REUSE.imageRef,
       buildRef: 'bk/job-9',
       treeSha: TREE,
-      fromSha: PREVIEW.staging_commit_sha,
+      fromSha: REUSE.commitSha,
     });
     // The tree asked about is the PREVIEW's commit: the offer is "this image
-    // is of that tree", and the rebuild checks that against its own clone.
-    assert.deepEqual(v.asked, [['usernode-bot', 'todo-list', PREVIEW.staging_commit_sha]]);
+    // is of that tree", and the deploy checks that against its own clone.
+    assert.deepEqual(v.asked, [['usernode-bot', 'todo-list', REUSE.commitSha]]);
   } finally { v.restore(); }
 });
 
-test('an app that is not in demo mode is never offered one, and GitHub is not even asked', async () => {
-  const v = loadVotes();
+test('a deploy offered nothing offers nothing, and GitHub is not even asked', async () => {
+  const v = loadDeploy();
   try {
-    assert.equal(await v.subject.demoPreviewImage(poolWith(PREVIEW), { ...DEMO_APP, demo_mode: false }, { id: 9 }), null);
-    assert.equal(await v.subject.demoPreviewImage(poolWith(PREVIEW), {}, { id: 9 }), null);
+    await v.run(null);
+    assert.equal(v.deployed[0].reuseImage, undefined);
     assert.deepEqual(v.asked, [], 'the gate comes before the work');
   } finally { v.restore(); }
 });
 
-test('every way of not knowing means build: no preview, no commit, no GitHub, no answer', async () => {
-  for (const [label, world, app, row] of [
-    ['no preview was ever built', {}, DEMO_APP, null],
-    ['a preview with no image', {}, DEMO_APP, { ...PREVIEW, staging_image_ref: null }],
-    ['a preview of no known commit', {}, DEMO_APP, { ...PREVIEW, staging_commit_sha: null }],
-    ['GitHub is not configured', { enabled: false }, DEMO_APP, PREVIEW],
-    ['GitHub will not answer', { throws: true }, DEMO_APP, PREVIEW],
-    ['GitHub answers with no tree', { tree: null }, DEMO_APP, PREVIEW],
-    ['the app has no parseable repository', {}, { ...DEMO_APP, repo_url: 'not-a-url' }, PREVIEW],
+test('every way of GitHub not knowing means build: no answer, no tree', async () => {
+  for (const [label, world] of [
+    ['GitHub will not answer', { throws: true }],
+    ['GitHub answers with no tree', { tree: null }],
   ]) {
-    const v = loadVotes(world);
+    const v = loadDeploy(world);
     try {
-      assert.equal(await v.subject.demoPreviewImage(poolWith(row), app, { id: 9 }), null, label);
+      await v.run(REUSE);
+      assert.equal(v.deployed[0].reuseImage, undefined, label);
     } finally { v.restore(); }
   }
 });
 
-test('a database that throws is not a failed merge', async () => {
-  const v = loadVotes();
-  try {
-    const pool = { query: async () => { throw new Error('connection terminated'); } };
-    assert.equal(await v.subject.demoPreviewImage(pool, DEMO_APP, { id: 9 }), null);
-  } finally { v.restore(); }
+test('only a demo-mode merge with a preview of a known image and commit offers one', () => {
+  // The gate is the machine's (reuseOf), on what facts.ts read: a preview
+  // with no image or no commit reads as no preview, and an app with no
+  // parseable repository has no repo to ask about.
+  const facts = read('src/workflow/merge-followups/facts.ts');
+  assert.match(facts, /staging: s\.staging_image_ref && s\.staging_commit_sha\s*\n\s*\? \{ imageRef: s\.staging_image_ref, buildRef: s\.staging_build_ref \?\? null, commitSha: s\.staging_commit_sha \} : null/);
+  const machine = read('src/workflow/merge-followups/machine.ts');
+  const helper = machine.slice(machine.indexOf('function reuseOf('));
+  assert.match(helper.slice(0, 200), /return f\?\.app\?\.demoMode && s && f\.app\.repo \? \{ \.\.\.s, \.\.\.f\.app\.repo \} : null;/,
+    'demo mode, a preview and a repository, or nothing');
+  // One call site, in the merge: its answer is what the deploy is offered,
+  // and whether the preview waits for the deploy (only a reused preview
+  // does; any other goes at the merge).
+  const calls = machine.match(/reuseOf\(/g) || [];
+  assert.equal(calls.length, 2, 'the definition and exactly one call');
+  assert.match(machine, /const reuse = reuseOf\(f\);\n\s+const messages = \[toProposal\(d\), \.\.\.\(d\.delivery \? \[deliveryRequest\(d, reuse\)\] : \[\]\), toQueue\(d, 'merged'\)\];/,
+    'what it answers is what the deploy is offered, and nothing else is');
+  assert.match(machine, /return app\.selfHosted \|\| !reuse \? andTeardown\(out\) : out;/,
+    'the same answer decides whether the preview waits for the deploy');
+  // (The merge's other messages, beside the deploy request, tell the
+  // proposal machine the proposal merged and the app's merge queue to go
+  // on; they carry no preview.)
+  const toProposal = machine.slice(machine.indexOf('function toProposal('), machine.indexOf('function merged('));
+  assert.doesNotMatch(toProposal, /reuse|staging|image/i);
 });
 
 // ── The seam, where the source is the only place it shows ────────────────
@@ -239,16 +264,4 @@ test('the rebuild compares against the tree it just cloned, not against what it 
   const build = fn.indexOf('applicationRuntime.build(config, {');
   assert.ok(build > decide, 'the build comes after the decision');
   assert.match(fn.slice(decide, build), /if \(!build\) \{/, 'and only runs when nothing was reused');
-});
-
-test('only a demo-mode merge offers an image, through the one helper', () => {
-  const SRC = read('src/routes/votes.js');
-  const helper = SRC.slice(SRC.indexOf('async function demoPreviewImage'));
-  assert.match(helper.slice(0, 200), /if \(!app\?\.demo_mode\) return null;/,
-    'the gate is the first thing in it');
-  // One call site, and it is the merge's own rebuild.
-  const calls = SRC.match(/demoPreviewImage\(/g) || [];
-  assert.equal(calls.length, 2, 'the definition and exactly one call');
-  assert.match(SRC, /const reuseImage = await demoPreviewImage\(pool, app, session\);\s*\n\s*const result = await staging\.rebuildProduction\(config, app, reuseImage \? \{ reuseImage \} : \{\}\);/,
-    'what it answers is what the rebuild is offered, and nothing else is');
 });

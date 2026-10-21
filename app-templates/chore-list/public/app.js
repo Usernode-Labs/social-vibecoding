@@ -243,8 +243,11 @@
 
   var loaded = false;
   var loading = null;
+  var again = false;
   function load() {
-    if (loading) return loading;
+    // A read already on its way may have left before the change just made:
+    // read once more when it is back.
+    if (loading) { again = true; return loading; }
     loading = api('GET', '/api/chores' + (demo ? '?demo=1' : ''))
       .then(function (data) { loaded = true; render(data); })
       .catch(function (err) {
@@ -253,7 +256,10 @@
         if (loaded) showStatus(err);
         else show('error');
       })
-      .then(function () { loading = null; });
+      .then(function () {
+        loading = null;
+        if (again) { again = false; return load(); }
+      });
     return loading;
   }
 
@@ -268,15 +274,28 @@
   });
   document.getElementById('retry').addEventListener('click', function () { show('loading'); load(); });
 
-  // Other people tick chores off too: look again every 30 seconds while the
-  // app is on screen, and straight away when it comes back. Skipped while
-  // someone is typing, so a refresh never interrupts them.
-  setInterval(function () {
+  // Other people tick chores off too: whenever anybody changes something,
+  // the list is fetched again at once, and looked at every minute regardless
+  // (public/live-updates.js). Not while someone is typing or changing a
+  // chore: what changed then is fetched the moment they are done, so a
+  // refresh never interrupts them.
+  function quiet() {
     var typing = document.activeElement && document.activeElement.tagName === 'INPUT'
       && document.activeElement.type === 'text' && document.activeElement.value;
-    if (!document.hidden && !typing && editing === null) load();
-  }, 30000);
-  document.addEventListener('visibilitychange', function () { if (!document.hidden && editing === null) load(); });
+    return !typing && editing === null;
+  }
+  if (window.LiveUpdates) window.LiveUpdates.watch({ refresh: load, quiet: quiet });
 
-  load();
+  // The first screen, drawn: Homeroom keeps its opening cover up until then
+  // (usernode.ready, the platform bridge), so the app appears in one step
+  // rather than as loading shapes that then change. The cover lifts after a
+  // few seconds regardless.
+  var first = load();
+  if (window.usernode && window.usernode.ready) window.usernode.ready(first);
+
+  // Pull down to fetch again, as a native list does. The native kit
+  // (/usernode-native/v1/native.js) draws the spinner and bounces the page
+  // in place, so a drag past the top no longer carries Homeroom's header
+  // with it. Not on a computer, where the kit leaves the page alone.
+  if (window.unNative) first.then(function () { window.unNative.attachPullToRefresh(window, load); });
 })();
