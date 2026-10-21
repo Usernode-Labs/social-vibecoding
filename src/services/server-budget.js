@@ -57,10 +57,10 @@ async function ensureServerBudget(config, { admin, pool }) {
 
   const limit = dbManager.appConnectionLimit();
   if (limit < 0) return out;
-  const { rows: apps } = await pool.query('SELECT db_name FROM apps WHERE NOT self_hosted AND db_name IS NOT NULL');
+  const { rows: apps } = await pool.query('SELECT slug FROM apps WHERE NOT self_hosted');
   const { rows: uncapped } = await admin.query(
     'SELECT datname FROM pg_database WHERE datname = ANY($1::text[]) AND datconnlimit = -1 AND datname <> $2 ORDER BY datname',
-    [apps.map((a) => a.db_name), dbManager.platformDatabaseName(config.databaseUrl) || '']);
+    [apps.map((a) => dbManager.appDbName(a.slug)), dbManager.platformDatabaseName(config.databaseUrl) || '']);
   for (const { datname } of uncapped) {
     const applied = await dbManager.applyAppConnectionLimit(datname, { execute: (sql) => admin.query(sql) });
     if (applied != null) out.capped.push(datname);

@@ -64,7 +64,7 @@ test('the migration Job grants the reserve and caps the apps made before', { tim
   if (!has.ok) { await admin.end(); t.skip('PostgreSQL before 16 has no reserved connections'); return; }
   const tag = `${process.pid}_${Math.floor(Math.random() * 1e6)}`;
   const user = `sb_platform_${tag}`;
-  const [own, a, b] = ['own', 'a', 'b'].map((n) => `sb_${n}_${tag}`);
+  const [own, a, b] = ['own', 'a', 'b'].map((n) => `app_sb_${n}_${tag}`);
   t.after(async () => {
     for (const db of [own, a, b]) await admin.query(`DROP DATABASE IF EXISTS ${db}`).catch(() => {});
     await admin.query(`DROP ROLE IF EXISTS ${user}`).catch(() => {});
@@ -80,7 +80,7 @@ test('the migration Job grants the reserve and caps the apps made before', { tim
   const pool = {
     async query(sql) {
       assert.match(sql, /NOT self_hosted/);
-      return { rows: [own, a, b, `sb_gone_${tag}`].map((db_name) => ({ db_name })) };
+      return { rows: [own, a, b, `app_sb_gone_${tag}`].map((db) => ({ slug: db.replace(/^app_/, '') })) };
     },
   };
   const limits = async () => Object.fromEntries((await admin.query(
