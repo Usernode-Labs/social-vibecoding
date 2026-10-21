@@ -535,13 +535,19 @@ async function armClocks(release: string): Promise<number> {
 const ON_DEMAND_EVERY_MS = 24 * 60 * 60 * 1000;
 
 // An admin asks for an on-demand job's run (an admin fleet job): not waited
-// for. Its progress is the run's own (clockRunOf). False when it is not
-// armed here (a staging preview).
-export async function askClockRun(job: string, admin: { id: number; username?: string | null }): Promise<boolean> {
+// for. Its progress is the run's own (clockRunOf). Answers `asked` (taken,
+// or `pending`: not yet within the wait, and taken when a workflow process
+// gets to it), `running` (a run of it is under way), `rollout` (an older
+// build's workflow process still serves: it would take the ask without
+// knowing who asked, and its run would do nothing) or `not_armed` (a staging
+// preview).
+export async function askClockRun(job: string, admin: { id: number; username?: string | null }): Promise<'asked' | 'pending' | 'running' | 'rollout' | 'not_armed'> {
   if (!runtime) throw new AdminActionError(409, 'The workflow runtime is not running here');
-  const outcome = await runtime.appendAndWait(CLOCK, clockKey(job), { type: 'RunNow', payload: { by: admin.username ?? null, userId: admin.id } },
+  if (await olderBuildServes(kernelPool!)) return 'rollout';
+  const outcome = await runtime.appendAndWait(CLOCK, clockKey(job), { type: 'RunNow', payload: { by: admin.username ?? null, userId: admin.id, onDemand: true } },
     { requestKey: `admin:${randomUUID()}`, source: { kind: 'admin', name: 'console' }, actor: `user:${admin.id}`, waitMs: 3000 });
-  return outcome.status !== 'rejected';
+  if (outcome.status === 'rejected') return outcome.reason === 'running' ? 'running' : 'not_armed';
+  return outcome.status === 'pending' ? 'pending' : 'asked';
 }
 
 // Events an older build refused because it did not know their type
@@ -551,30 +557,41 @@ export async function askClockRun(job: string, admin: { id: number; username?: s
 // (a mail, a vote's tally, a plan) would be lost. Once no older build serves
 // any more, each one whose type this build's machine knows is asked again,
 // as it was (its source, actor and app), keyed on the refused event so it is
-// asked once. A type this build knows cannot have been refused by it. The
-// reask-refused clock runs it, in the newest build only.
-const REASK_LIVE_SECONDS = 45;
+// asked once. A type this build knows cannot have been refused by it. Only
+// refusals since this build's rollout began (its release instance, less a
+// margin for web processes serving before it) are asked: an older one was
+// another rollout's, and its moment has passed. The reask-refused clock runs
+// it, in the newest build only.
+const LIVE_SECONDS = 45;
 const REASK_LOOKBACK_HOURS = 48;
+const REASK_ROLLOUT_MARGIN_MINUTES = 15;
 const REASK_PAGE = 200;
-export async function reaskRefused(db: Queryable): Promise<{ waiting?: string; asked: number }> {
-  if (!runtime) return { waiting: 'runtime', asked: 0 };
+// Whether a live workflow process of another build serves (a rollout under
+// way): its machines may know fewer events, or fewer fields of them.
+async function olderBuildServes(db: Queryable): Promise<boolean> {
   const own = String(process.env.GIT_SHA || '').trim().slice(0, 40) || null;
   const { rows: [older] } = await db.query(
     `SELECT count(*)::int AS n FROM platform_processes
       WHERE state = 'serving' AND role <> 'web' AND heartbeat_at > now() - make_interval(secs => $1)
-        AND release IS DISTINCT FROM $2`, [REASK_LIVE_SECONDS, own]);
-  if (Number(older?.n) > 0) return { waiting: 'older_build', asked: 0 };
+        AND release IS DISTINCT FROM $2`, [LIVE_SECONDS, own]);
+  return Number(older?.n) > 0;
+}
+export async function reaskRefused(db: Queryable): Promise<{ waiting?: string; asked: number }> {
+  if (!runtime) return { waiting: 'runtime', asked: 0 };
+  if (await olderBuildServes(db)) return { waiting: 'older_build', asked: 0 };
   const pairs = [...knownEvents].flatMap(([m, types]) => [...types].map((t) => [m, t] as const));
   if (!pairs.length) return { asked: 0 };
+  const own = String(process.env.GIT_SHA || '').trim().slice(0, 40) || null;
   const { rows } = await db.query(
     `SELECT e.id, e.machine, e.key, e.app_id, e.type, e.payload, e.source, e.actor
        FROM wf_events e
        JOIN unnest($1::text[], $2::text[]) AS k(machine, type) ON k.machine = e.machine AND k.type = e.type
       WHERE e.status = 'processed' AND e.result = 'rejected' AND e.reason = 'unknown_event'
-        AND e.processed_at > now() - make_interval(hours => $3)
+        AND e.processed_at > GREATEST(now() - make_interval(hours => $3),
+              (SELECT r.created_at - make_interval(mins => $6) FROM wf_instances r WHERE r.machine = $5 AND r.key = $7))
         AND NOT EXISTS (SELECT 1 FROM wf_events r WHERE r.caused_by = e.id AND r.request_key = 'reask:' || e.id)
       ORDER BY e.id LIMIT $4`,
-    [pairs.map((p) => p[0]), pairs.map((p) => p[1]), REASK_LOOKBACK_HOURS, REASK_PAGE]);
+    [pairs.map((p) => p[0]), pairs.map((p) => p[1]), REASK_LOOKBACK_HOURS, REASK_PAGE, RELEASE, REASK_ROLLOUT_MARGIN_MINUTES, releaseKey(own ?? '')]);
   for (const e of rows) {
     await runtime.append(e.machine, e.key, { type: e.type, payload: e.payload }, {
       requestKey: `reask:${e.id}`, source: e.source, actor: e.actor ?? null, appId: e.app_id ?? null, causedBy: Number(e.id),
@@ -610,7 +627,7 @@ export async function clockRunOf(db: Queryable, job: string): Promise<{
 // own status read it: when it last ran, its error, whether a run is under
 // way, what it found, and when the next is due. Read from any process.
 export async function clockStatus(db: Queryable, job: string): Promise<{
-  lastSweepAt: string | null; lastError: string | null; sweepInFlight: boolean; result: Json; nextDueAt: string | null;
+  lastSweepAt: string | null; lastError: string | null; sweepInFlight: boolean; result: Json; kept: Json; nextDueAt: string | null;
 }> {
   const { rows: [r] } = await db.query(
     'SELECT state, data FROM wf_instances WHERE machine = $1 AND key = $2', [CLOCK, clockKey(job)]);
@@ -620,6 +637,8 @@ export async function clockStatus(db: Queryable, job: string): Promise<{
     lastError: last && !last.ok ? last.error : null,
     sweepInFlight: r?.state === 'running',
     result: last?.ok ? (last.result ?? null) : null,
+    // The last good run's result, which a failed run leaves in place.
+    kept: r?.data?.kept ?? null,
     nextDueAt: r?.state === 'waiting' ? r.data.due : null,
   };
 }

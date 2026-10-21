@@ -3231,6 +3231,13 @@ async function sayApproved(pool, sessionId, { voterId, voter = null, epoch = 0 }
   if (!row) return null;
   const mine = Number(voterId) === Number(row.user_id);
   if (!mine && !voter) return null;
+  // Said only while the yes stands: a retraction (or a new epoch) since it
+  // was owed says nothing.
+  const { rows: [stands] } = await pool.query(
+    `SELECT 1 FROM pr_votes WHERE session_id = $1 AND user_id = $2 AND vote = 'yes' AND approval_epoch = $3`,
+    [id, Number(voterId), Number(epoch) || 0],
+  );
+  if (!stands) return null;
   return noteStep(pool, {
     userId: Number(row.user_id), app: { id: row.app_id, slug: row.slug, name: row.name }, issueNumber: Number(row.issue_number),
     step: 'approved', content: mine ? 'You approved it.' : `@${voter} approved it.`,

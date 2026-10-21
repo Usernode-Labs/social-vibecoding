@@ -15820,3 +15820,9 @@ CREATE TABLE IF NOT EXISTS dictation_claims (
   claimed_until  TIMESTAMPTZ NOT NULL
 );
 COMMENT ON TABLE dictation_claims IS 'staging:private';
+
+-- The refusals an older build left during a rollout, for the reask-refused
+-- clock (src/workflow/platform.ts reaskRefused), which reads them every
+-- minute: a few rows, not every event of the last days.
+CREATE INDEX IF NOT EXISTS wf_events_refused_unknown_idx
+  ON wf_events (id) WHERE result = 'rejected' AND reason = 'unknown_event';

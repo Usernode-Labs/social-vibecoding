@@ -7,6 +7,7 @@
 import type { Pool, WorkHandler } from '../kernel/index.ts';
 import { legacy } from '../legacy.ts';
 import { WORK } from './machine.ts';
+import { lateNotice } from '../rules/late-notice.ts';
 
 interface Deps { config: any; pool: Pool }
 
@@ -40,7 +41,7 @@ export function turnServices({ config, pool }: Deps): Record<string, WorkHandler
     [WORK.stalled]: {
       maxAttempts: 5,
       backoffMs: (n) => Math.min(5 * 60 * 1000, 15 * 1000 * 2 ** (n - 1)),
-      run: ({ input }) => legacy('services/turns').tellStalled({ pool }, input),
+      run: async ({ input }) => (lateNotice(input.owedAt) ? { skipped: 'late' } : legacy('services/turns').tellStalled({ pool }, input)),
     },
   };
 }

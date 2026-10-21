@@ -126,7 +126,7 @@ const SHAPE = {
 function broadcast(job) {
   try {
     const { broadcastToAdmins } = require('./ws');
-    broadcastToAdmins({ type: 'admin_rollover_status', job });
+    broadcastToAdmins(fleetJob.frame('admin_rollover_status', job));
   } catch (err) {
     log.warn('app-rollover', 'broadcast failed', { err: err.message });
   }
@@ -189,14 +189,19 @@ function demoJob() {
 
 /**
  * Ask for a sweep: the container-rollover clock's run, on whichever process
- * runs the workflow. Returns { started, job }: `started: false` with the job
- * under way when one runs (anywhere).
+ * runs the workflow. Returns { started, job }, or { started: false, reason }:
+ * `running` with the job under way when one runs (anywhere), `rollout` while
+ * an older build's workflow process still serves, `not_armed` where it is
+ * not armed.
  */
 async function start(pool, admin) {
   const now = await read(pool);
-  if (now && !now.finishedAt && !now.stale) return { started: false, job: now };
+  if (now && !now.finishedAt && !now.stale) return { started: false, reason: 'running', job: now };
   const asked = await require('../workflow/platform.ts').askClockRun(JOB, admin);
-  return { started: !!asked, job: await read(pool) };
+  if (asked !== 'asked' && asked !== 'pending') return { started: false, reason: asked, job: await read(pool) };
+  // Not yet taken (pending): the job shown is the one before it, so none.
+  const job = await read(pool);
+  return { started: true, job: job && (!now || job.id !== now.id) ? job : null };
 }
 
 /** The clock's run: every eligible app rolled over, a step each. */

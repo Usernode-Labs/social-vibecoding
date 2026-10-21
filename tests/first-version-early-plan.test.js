@@ -180,7 +180,7 @@ test('started once, only for a first version the bot builds, and never without a
 
 test('the plan a claim owes is asked once, saved while its readers still wait, and says whether a look is owed', async () => {
   const sql = [];
-  let row = { user_id: 7, brief: 'Polls', early_plan_status: 'pending', id: 3, name: 'Club Votes', slug: 'club-votes' };
+  let row = { user_id: 7, brief: 'Polls', early_plan_status: 'pending', id: 3, name: 'Club Votes', slug: 'club-votes', fresh: true };
   let saved = 1;
   const pool = {
     async query(text, params) {
@@ -199,7 +199,7 @@ test('the plan a claim owes is asked once, saved while its readers still wait, a
     timeline: { async record() {} },
   };
   const kept = new Map();
-  const steps = { once: async (k, fn) => (kept.has(k) ? kept.get(k) : kept.set(k, await fn()).get(k)) };
+  const steps = { has: (k) => kept.has(k), once: async (k, fn) => (kept.has(k) ? kept.get(k) : kept.set(k, await fn()).get(k)) };
   assert.deepEqual(await fvPlan.runEarlyPlan(pool, { appId: 3, steps }, deps), { planned: true });
   const write = sql.find((q) => /SET early_plan_status = \$2, early_plan = \$3::jsonb/.test(q.text));
   assert.equal(write.params[1], 'ready');
@@ -212,6 +212,11 @@ test('the plan a claim owes is asked once, saved while its readers still wait, a
   assert.deepEqual(await fvPlan.runEarlyPlan(pool, { appId: 3, steps }, deps), { planned: false, skipped: 'too_late' });
   row = { ...row, early_plan_status: 'ready' };
   assert.deepEqual(await fvPlan.runEarlyPlan(pool, { appId: 3 }, deps), { planned: false, skipped: 'settled' });
+  // Asked past the window it could be saved in (re-sent after a rollout):
+  // the model is not asked.
+  row = { ...row, early_plan_status: 'pending', fresh: false };
+  assert.deepEqual(await fvPlan.runEarlyPlan(pool, { appId: 3, steps: { has: () => false, once: async (_k, fn) => fn() } }, deps), { planned: false, skipped: 'too_late' });
+  assert.equal(asked, 1, 'no second model call');
 });
 
 test('a plan\'s state: pending until written (a stopped process\'s reads failed), decided once answered or when it asks nothing', () => {

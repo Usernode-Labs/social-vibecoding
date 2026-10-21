@@ -18,6 +18,7 @@
 // deleted by the rate-limit-retention clock.
 
 const crypto = require('node:crypto');
+const log = require('./logger');
 
 let pool = null;
 
@@ -74,6 +75,9 @@ class SharedStore {
     return { totalHits: Number(r.hits), resetTime: new Date(r.reset_at) };
   }
 
+  // A refund (skipSuccessfulRequests / skipFailedRequests) is asked from a
+  // promise nobody awaits once the response ends: it never rejects, or a
+  // database blip would end the process. A refund lost costs one hit.
   async decrement(key) {
     const k = hashed(this.prefix, key);
     if (!pool) {
@@ -81,7 +85,11 @@ class SharedStore {
       if (m && m.totalHits > 0) this.memory.set(k, { ...m, totalHits: m.totalHits - 1 });
       return;
     }
-    await pool.query('UPDATE rate_limit_hits SET hits = GREATEST(hits - 1, 0) WHERE key = $1 AND reset_at > now()', [k]);
+    try {
+      await pool.query('UPDATE rate_limit_hits SET hits = GREATEST(hits - 1, 0) WHERE key = $1 AND reset_at > now()', [k]);
+    } catch (err) {
+      log.warn('rate-limit', 'A refund was not counted', { limiter: this.prefix, err: err.message });
+    }
   }
 
   async resetKey(key) {

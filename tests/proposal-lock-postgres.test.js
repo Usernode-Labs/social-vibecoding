@@ -44,3 +44,27 @@ test('the proposal lock orders one session\'s writers across processes', { timeo
   await Promise.all([first, second]);
   assert.deepEqual(order, ['first:start', 'first:end', 'second:start']);
 });
+
+test('a writer waiting for the lock holds no client, so the holder\'s own queries still run', { timeout: 30000 }, async (t) => {
+  const pool = new Pool({ connectionString: DSN, max: 2, connectionTimeoutMillis: 5000 });
+  try { await pool.query('SELECT 1'); } catch (err) {
+    await pool.end();
+    if (process.env.TEST_DATABASE_URL) throw err;
+    t.skip('PostgreSQL unavailable'); return;
+  }
+  t.after(() => pool.end());
+  const { withProposalLock } = require('../src/services/proposal-update');
+  const session = 900000000 + Math.floor(Math.random() * 1000000);
+  let releaseFirst;
+  const gate = new Promise((r) => { releaseFirst = r; });
+  let firstIn;
+  const entered = new Promise((r) => { firstIn = r; });
+  // Two clients: the holder's, and one for its own query; the waiter must
+  // not sit on the second while it waits.
+  const first = withProposalLock(pool, session, async () => { firstIn(); await gate; return (await pool.query('SELECT 1 AS one')).rows[0].one; });
+  await entered;
+  const second = withProposalLock(pool, session, async () => 'second');
+  await new Promise((r) => setTimeout(r, 150));
+  releaseFirst();
+  assert.deepEqual(await Promise.all([first, second]), [1, 'second']);
+});

@@ -11,6 +11,7 @@
 import type { Json, Pool, WorkHandler } from '../kernel/index.ts';
 import { legacy } from '../legacy.ts';
 import { WORK } from './machine.ts';
+import { lateNotice } from '../rules/late-notice.ts';
 
 interface Deps { config: any; pool: Pool }
 
@@ -81,6 +82,7 @@ export function botDmServices({ config, pool }: Deps): Record<string, WorkHandle
       maxAttempts: 5,
       backoffMs: backoff,
       async run({ input }): Promise<Json> {
+        if (lateNotice(input.owedAt)) return { skipped: 'late' };
         const said = await legacy('services/activity-mail').emailIfNoPush(pool, input);
         return { said };
       },

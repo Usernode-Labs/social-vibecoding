@@ -62,7 +62,29 @@ test('a Workshop pass owed is kept on the app\'s row', { timeout: 60000 }, async
   assert.deepEqual(await themes.changeApp({ pool, ...items[0].input }), { skipped: 'not_owed' });
   assert.ok((await row()).reconcile_due_at, 'still owed');
   const [again] = (await themes.changeTargets({ pool })).items;
-  const out = await themes.changeApp({ pool, ...again.input });
+
+  // While the pass runs, the row holds its claim: a process that dies in it
+  // leaves the pass owed when the claim lapses, and a change meanwhile owes
+  // the next pass from its quiet period.
+  let during = null;
+  const watching = { query: async (sql, params) => {
+    const r = await pool.query(sql, params);
+    if (/AS claim/.test(sql)) {
+      during = await row();
+      await themes.noteBoardChange(pool, { appId: a.id });
+    }
+    return r;
+  } };
+  const out = await themes.changeApp({ pool: watching, ...again.input });
   assert.equal(out.skipped, 'empty', 'run (an empty board has nothing to place)');
+  const claimIn = during.reconcile_due_at.getTime() - Date.now();
+  assert.ok(claimIn > 5 * 60 * 1000, `the claim lasts past a crash's restart: ${claimIn}`);
+  const owed = (await row()).reconcile_due_at;
+  assert.ok(owed && owed.getTime() - Date.now() <= themes.CHANGE_DEBOUNCE_MS, 'the change during the pass is still owed');
+
+  // A pass with no change meanwhile takes itself off the row.
+  await pool.query(`UPDATE app_workshop_themes SET reconcile_due_at = NOW() - interval '1 second' WHERE app_id = $1`, [a.id]);
+  const [third] = (await themes.changeTargets({ pool })).items;
+  await themes.changeApp({ pool, ...third.input });
   assert.equal((await row()).reconcile_due_at, null, 'taken off the row');
 });

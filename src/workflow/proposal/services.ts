@@ -197,10 +197,12 @@ export function proposalServices({ config, pool }: Deps): Record<string, WorkHan
     // The diagram a hosted build declared, written into the pull request's
     // body as its block from what is stored when this runs
     // (services/proposal-diagram.js syncPrBlock): a failed write is tried
-    // again, where it was once a call nobody waited for.
+    // again, where it was once a call nobody waited for. Briefly: the
+    // proposal's GitHub moves run one at a time, and an open or a close
+    // waits behind it.
     [WORK.diagram]: {
-      maxAttempts: 6,
-      backoffMs: (n) => Math.min(30 * 60 * 1000, 30 * 1000 * 2 ** (n - 1)),
+      maxAttempts: 3,
+      backoffMs: (n) => 15 * 1000 * 2 ** (n - 1),
       async run({ input }): Promise<Json> {
         if (!github().isEnabled()) return { skipped: 'github_disabled' };
         return await legacy('services/proposal-diagram').syncPrBlock(pool, Number(input.sessionId));

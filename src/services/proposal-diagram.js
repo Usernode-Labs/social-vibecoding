@@ -90,7 +90,18 @@ async function syncPrBlock(pool, sessionId, deps = {}) {
   const match = String(session.repo_url || '').match(/github\.com\/([^/]+)\/([^/#]+?)(?:\.git)?$/i);
   if (!match) return { updated: false, reason: 'invalid_repo' };
   const github = deps.github || require('./github');
-  await github.updatePR(match[1], match[2], session.pr_number, { body: next });
+  try {
+    await github.updatePR(match[1], match[2], session.pr_number, { body: next });
+  } catch (err) {
+    // GitHub refusing this write (the pull request gone, a body it will not
+    // take) is final: trying again would hold the proposal's other GitHub
+    // moves (an open, a close) behind it. A limit or an outage is tried again.
+    const status = Number(err && err.status);
+    if (status >= 400 && status < 500 && status !== 403 && status !== 429) {
+      return { updated: false, reason: 'github_refused', status };
+    }
+    throw err;
+  }
   await pool.query('UPDATE chat_sessions SET pr_body = $2 WHERE id = $1', [id, next]);
   return { updated: true };
 }

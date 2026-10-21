@@ -155,7 +155,9 @@ the push or its statement:
   that relays it (`ws.js _onBusMessage`): each owes the app a pass on its row
   (`app_workshop_themes.reconcile_due_at`, due 30 s after the first change, so a second
   relay changes nothing), and the `workshop-changes` clock runs each pass due as a
-  target, taking it off the row only as it listed it;
+  target: the pass claims the row (its due moved ten minutes on, so a pass its process
+  died in is owed again then), and takes itself off only if no change came meanwhile (a
+  change pulls a claim back to its quiet period);
 - **the phone badge sync**: everyone a push tells `notifications_changed` is owed a
   re-badge, a row of `mobile_push_badge_syncs` written in the same statement as the
   pushes (`publishPushes`, where phone push is on) and drained by the push sender,
@@ -1502,6 +1504,8 @@ on, `reviewed_head_sha` and `approval_epoch`, and what makes each platform sync 
 - **A hosted build's diagram** is stored together with this machine's `DiagramStored`
   (`proposal-diagram.storeDeclared`, one transaction), and its block in the pull request's
   body is a GitHub move of the proposal (`pr.diagram`): one at a time, the newest waiting.
+  GitHub refusing the write ends it; a limit or an outage is tried again twice, briefly,
+  as the proposal's other GitHub moves wait behind it.
 - **Who works on a session** is `session-work.ts` read under the lock, in every one of these
   decisions; a hand-off's promote names its own operation, and the pipeline checking the very
   commit being proposed does not count.
@@ -1599,8 +1603,10 @@ requires a run of the bot's that proposed the session.
 - **A vote on it** tells it in the vote's own statement (`Voted`, from `routes/votes.js`
   `recordVote`, and from `retractVote` in its transaction): the requester's tray reads
   again, and a yes is said to the requester once per voter and approval epoch
-  (`bot.tellApproved`, `homeroom-bot-dm.sayApproved`). It was a call after the vote's
-  commit, which a restart in between lost.
+  (`bot.tellApproved`, `homeroom-bot-dm.sayApproved`, only while the yes stands). It was
+  a call after the vote's commit, which a restart in between lost. Like every notice
+  owed as work, one owed more than six hours earlier (work a rollback left queued) is not
+  said (`rules/late-notice.ts`).
 - **Its work only sends, strict:** a failure throws and is retried, instead of reporting
   success with nothing done. Each is keyed so a retry says nothing twice: the DMs by their
   idempotency keys (a duplicate send records what its first attempt never got to), the
@@ -1762,17 +1768,25 @@ intervals and their I/O are the table in `clock/services.ts` (`JOBS`).
   (Admin › Rollover) and `preview-reap` (Admin › Staging's "reap now"), has no deadline and
   runs only when an admin asks (`platform.askClockRun`: `RunNow` with who asked, which the
   run's input carries as `asked`). One asked while it runs is refused (`running`), so two
-  presses on two processes are one sweep. Each unit (an app, a preview) is a step of the
-  run's work item (`services/fleet-job.js`): a restart carries the job on after the units
-  it finished, and its progress is that checkpoint, which the console reads from any
-  process (`platform.clockRunOf`). An older build, which knows no on-demand job, arms one
-  on a day's interval; a run nobody asked for does nothing (`skipped: not_asked`).
+  presses on two processes are one sweep, and none is asked while an older build's
+  workflow process serves (`rollout`: it would take the ask without knowing who asked).
+  Each unit (an app, a preview) is a step of the run's work item (`services/fleet-job.js`):
+  a restart carries the job on after the units it finished (a stopping run waits for the
+  units under way to be kept first), and its progress, the units under way included, is
+  that checkpoint, which the console reads from any process (`platform.clockRunOf`). A run
+  first started more than six hours earlier is not carried on. Progress reaches the admins'
+  sockets through the bus: a job too big for one NOTIFY goes as a nudge, and the console
+  reads it again. An older build, which knows no on-demand job, arms one on a day's
+  interval; a run nobody asked for does nothing (`skipped: not_asked`) and is no job on the
+  console, and the next press marks the job asked-for again.
 - **Refused by an older build** (`reask-refused`, every minute, newest build only): during
   a rollout an older workflow process refuses an event type its machine gained in the
   newer build (`unknown_event`), and what it owed would be lost. Once no older build
-  serves, each refusal of the last two days whose type this build's machine knows is
-  appended again as it was, keyed `reask:<id>` and caused by the refusal, so it is asked
-  once (`platform.reaskRefused`).
+  serves, each refusal since this build's rollout began whose type this build's machine
+  knows is appended again as it was, keyed `reask:<id>` and caused by the refusal, so it
+  is asked once (`platform.reaskRefused`, over `wf_events_refused_unknown_idx`). What it
+  sets off checks it still holds: a re-asked yes says nothing once retracted, a re-asked
+  plan asks no model once its window passed.
 - **First runs** are due when the leader timer a job replaces would have run, else spread over
   the next two minutes.
 - **The newest build only** (`newestOnly`): a job whose work depends on the build (its

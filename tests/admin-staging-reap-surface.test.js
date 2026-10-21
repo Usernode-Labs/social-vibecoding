@@ -114,7 +114,7 @@ test('progress goes out on an admin-only broadcast', () => {
   assert.match(reapJs, /broadcastToAdmins/);
   assert.ok(!/broadcastGlobal\b/.test(reapJs),
     'the payload is an inventory of every preview — it must not reach every client');
-  assert.match(reapJs, /type: 'admin_staging_reap_status'/);
+  assert.match(reapJs, /fleetJob\.frame\('admin_staging_reap_status', job\)/);
 });
 
 test('the shell routes the aggregate event into the console', () => {
@@ -163,7 +163,7 @@ test('the console keeps the WS surface app.js calls, forwarding to the module', 
     assert.ok(consoleJs.includes(fwd), `AdminConsole.${fwd} is where app.js looks for it`);
     assert.ok(consoleJs.includes(target), `${fwd} forwards to the module`);
   }
-  assert.match(reapTsx, /handleStatus\(data: \{ job\?: ReapJob \| null \} \| null\) \{/);
+  assert.match(reapTsx, /handleStatus\(data: \{ job\?: ReapJob \| null; changed\?: boolean \} \| null\) \{/);
   assert.match(reapTsx, /\n  reload\(\) \{ live\?\.reload\(\); \},/);
   // A frame that lands while the admin is on another section must be
   // dropped, not applied to an unmounted component — `live` is null exactly

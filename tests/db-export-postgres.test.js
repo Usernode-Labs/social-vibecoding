@@ -84,6 +84,19 @@ test('an export is claimed and ticketed on its row, wherever it is asked', { tim
   assert.deepEqual(await dbExport.beginExport(one, second), { claimed: false, reason: 'gone' });
   assert.equal(await dbExport.isExportInProgress(one), false);
 
+  // An older release's dump (no heartbeat) is live until its own timeout
+  // could have ended it: no second dump beside it, and a boot leaves it.
+  const older = await request(v.id);
+  await one.query(`UPDATE db_exports SET status = 'streaming', started_at = NOW() - interval '5 minutes' WHERE id = $1`, [older]);
+  const beside = await request(u.id);
+  assert.deepEqual(await dbExport.beginExport(two, beside), { claimed: false, reason: 'in_progress' });
+  assert.equal((await row(older)).status, 'streaming', 'left alone');
+  await one.query(`UPDATE db_exports SET started_at = NOW() - interval '1 hour' WHERE id = $1`, [older]);
+  assert.equal(await dbExport.isExportInProgress(one), false);
+  await dbExport.settleAbandoned(one);
+  assert.equal((await row(older)).status, 'interrupted', 'past its timeout');
+  await one.query(`UPDATE db_exports SET status = 'completed', finished_at = NOW() WHERE id = $1`, [beside]);
+
   // A ticket that expired unused: refused, and its request settled by a boot.
   const third = await request(u.id);
   const late = await dbExport.issueTicket(one, { auditId: third });

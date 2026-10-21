@@ -189,6 +189,14 @@ function exportFilename(dbName, now) {
 
 const HEARTBEAT_MS = 30 * 1000;
 const STREAM_STALE_MS = 2 * 60 * 1000;
+// A dump an older release streams keeps no heartbeat: it is taken to run
+// until its own timeout could have ended it.
+const UNBEATING_STALE_MS = DB_EXPORT_TIMEOUT_MS + 5 * 60 * 1000;
+// A streaming row that is a live dump: renewed lately, or (an older
+// release's) started within its timeout.
+// (Never NULL: `NOT` of it is what settles a row.)
+const LIVE_STREAM_SQL = `status = 'streaming' AND (COALESCE(heartbeat_at > NOW() - make_interval(secs => $1), FALSE)
+  OR (heartbeat_at IS NULL AND COALESCE(started_at, requested_at) > NOW() - make_interval(secs => $2)))`;
 
 /**
  * Rows nothing will ever finish, settled `interrupted`: a dump whose
@@ -206,18 +214,17 @@ async function settleAbandoned(pool) {
               THEN 'platform restarted while the export was in flight'
               ELSE 'the download was never started' END),
             ticket_hash = NULL
-      WHERE (status = 'streaming' AND (heartbeat_at IS NULL OR heartbeat_at < NOW() - make_interval(secs => $1)))
-         OR (status = 'requested' AND COALESCE(ticket_expires_at, requested_at) < NOW() - make_interval(secs => $2))`,
-    [STREAM_STALE_MS / 1000, TICKET_TTL_MS / 1000]
+      WHERE (status = 'streaming' AND NOT (${LIVE_STREAM_SQL}))
+         OR (status = 'requested' AND COALESCE(ticket_expires_at, requested_at) < NOW() - make_interval(secs => $3))`,
+    [STREAM_STALE_MS / 1000, UNBEATING_STALE_MS / 1000, TICKET_TTL_MS / 1000]
   );
   return rowCount;
 }
 
 async function isExportInProgress(pool) {
   const { rows: [r] } = await pool.query(
-    `SELECT EXISTS (SELECT 1 FROM db_exports
-                     WHERE status = 'streaming' AND heartbeat_at > NOW() - make_interval(secs => $1)) AS busy`,
-    [STREAM_STALE_MS / 1000]
+    `SELECT EXISTS (SELECT 1 FROM db_exports WHERE ${LIVE_STREAM_SQL}) AS busy`,
+    [STREAM_STALE_MS / 1000, UNBEATING_STALE_MS / 1000]
   );
   return !!(r && r.busy);
 }
@@ -231,6 +238,9 @@ async function isExportInProgress(pool) {
  */
 async function beginExport(pool, auditId) {
   await settleAbandoned(pool);
+  // The index holds this release's dumps to one; an older release's (during
+  // a rollout) is outside it, so it is looked for.
+  if (await isExportInProgress(pool)) return { claimed: false, reason: 'in_progress' };
   let claimed;
   try {
     ({ rowCount: claimed } = await pool.query(

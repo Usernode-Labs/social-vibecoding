@@ -93,7 +93,9 @@ test('a second start is a 409 carrying the in-flight job', () => {
   const post = postHandler();
   assert.match(post, /if \(!started\)/, 'the service reports whether it actually started');
   assert.match(post, /status\(409\)/);
-  assert.match(post, /Rollover already in progress/);
+  assert.match(post, /FLEET_JOB_REFUSED\.get\(reason\)/, 'a refusal says why');
+  assert.match(adminRoutes, /\['running', 'Rollover already in progress'\]/);
+  assert.match(adminRoutes, /\['rollout', 'A platform release is rolling out\. Try again in a few minutes\.'\]/);
   assert.match(post, /status\(202\)/, 'a real start is fire-and-forget: 202 + the job record');
 });
 
@@ -152,7 +154,7 @@ test('progress is broadcast to admins only', () => {
   assert.match(rolloverJs, /broadcastToAdmins/);
   assert.ok(!/broadcastGlobal\b/.test(rolloverJs),
     'the payload is an inventory of every app — it must not reach every client');
-  assert.match(rolloverJs, /type: 'admin_rollover_status'/);
+  assert.match(rolloverJs, /fleetJob\.frame\('admin_rollover_status', job\)/);
 });
 
 test('the shell routes the aggregate event into the console', () => {
@@ -208,7 +210,7 @@ test('the console keeps the WS surface app.js calls, forwarding to the module', 
     assert.ok(consoleJs.includes(fwd), `AdminConsole.${fwd} is where app.js looks for it`);
     assert.ok(consoleJs.includes(target), `${fwd} forwards to the module`);
   }
-  assert.match(rolloverTsx, /handleStatus\(data: \{ job\?: RolloverJob \| null \} \| null\) \{/);
+  assert.match(rolloverTsx, /handleStatus\(data: \{ job\?: RolloverJob \| null; changed\?: boolean \} \| null\) \{/);
   assert.match(rolloverTsx, /\n  reload\(\) \{ live\?\.reload\(\); \},/);
   // A frame that lands while the admin is on another section must be
   // dropped, not applied to an unmounted component — `live` is null exactly
@@ -229,6 +231,13 @@ test('the start button confirms before recreating anything', () => {
   assert.match(start, /\$\{eligible === 1 \? '' : 's'\}/, 'the dialog names the actual app count');
   assert.match(start, /res\.status === 409/, 'a competing sweep is a toast, not an error dialog');
   assert.match(start, /method: 'POST'/);
+});
+
+test('a nudge (a job too big for one bus frame) reads the job again', () => {
+  for (const tsx of [rolloverTsx, read('frontend/src/features/admin/admin-staging-reap.tsx')]) {
+    const handler = tsx.slice(tsx.indexOf('handleStatus(data'), tsx.indexOf('handleStatus(data') + 300);
+    assert.match(handler, /if \(data\.changed && data\.job === undefined\) \{ live\.reload\(\); return; \}/);
+  }
 });
 
 test('the table renders one row per app with its outcome chip', () => {

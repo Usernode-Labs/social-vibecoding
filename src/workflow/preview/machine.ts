@@ -862,7 +862,12 @@ function rawTransitions(deps: Deps): Record<string, Record<string, Entry>> {
   // after adopting it from the row, as ChecksCleared does: the stamp a
   // folded request owes is the row's either way.
   const foldedAdopting: Entry = {
-    guard: (s, e, f, ctx) => { const c = adopting(e, f, ctx); return c !== true ? c : (folded.guard as any)(s, e, f, ctx); },
+    // Judged on the state as adopted from the row, as its transition is: a
+    // session with no instance yet rests, and checks owed on it arm a look.
+    guard: (s, e, f, ctx) => {
+      const c = adopting(e, f, ctx);
+      return c !== true ? c : (folded.guard as any)(standing(adopt(e, f, priorOf(s)), f), e, f, ctx);
+    },
     to: (s, e, f, ctx) => (folded.to as any)(standing(adopt(e, f, priorOf(s)), f), e, f, ctx),
   };
 

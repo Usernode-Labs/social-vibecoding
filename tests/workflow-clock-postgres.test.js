@@ -246,7 +246,26 @@ test('the clock machine runs each job once at a time, wherever the workflow runs
     await until(async () => (await instance('fleet-old'))?.data?.last?.n === 1, 'the scheduled run');
     assert.equal(runs, 0);
     assert.deepEqual((await instance('fleet-old')).data.kept, { skipped: 'not_asked' });
-    await r.stop();
+    // An admin's press says the job is asked for, not scheduled: it runs, a
+    // second press meanwhile is refused, and it waits with no deadline after.
+    let release;
+    const gate = new Promise((res) => { release = res; });
+    r.stop && await r.stop();
+    const r2 = make([{ name: 'fleet-old', everyMs: 0, onDemand: true, async run(ctx) { runs += 1; await gate; return { asked: ctx.input.asked }; } }]);
+    await r2.start({ loops: true });
+    const press = (key) => r2.appendAndWait(MACHINE, clockKey('fleet-old'), { type: 'RunNow', payload: { by: 'ada', userId: 3, onDemand: true } },
+      { requestKey: `admin:old-${key}`, source: { kind: 'admin', name: 'console' } });
+    assert.equal((await press(1)).status, 'accepted');
+    await until(async () => runs === 1, 'the asked run');
+    const second = await press(2);
+    assert.deepEqual([second.status, second.reason], ['rejected', 'running']);
+    release();
+    await until(async () => (await instance('fleet-old'))?.data?.last?.n === 2, 'it ended');
+    const healed = await instance('fleet-old');
+    assert.equal(healed.data.onDemand, true);
+    const { rows: [i] } = await pool.query('SELECT deadline_at FROM wf_instances WHERE machine = $1 AND key = $2', [MACHINE, clockKey('fleet-old')]);
+    assert.equal(i.deadline_at, null, 'no deadline any more');
+    await r2.stop();
   });
 
   await t.test('a continuous job runs again as soon as a run ends', async () => {

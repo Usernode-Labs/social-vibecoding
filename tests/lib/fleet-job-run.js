@@ -13,10 +13,16 @@ function fleetJobRun({ n = 1, by = 'admin-user', userId = 7, resumeFrom = null }
     input: { n, asked: { by, userId } }, checkpoint: resumeFrom, result: null, error: null,
   };
   const abort = new AbortController();
+  // Once the run has ended its claim is gone: a step saved after that is
+  // refused, as the kernel refuses a checkpoint from a lost lease.
+  let open = true;
   const ctx = {
     input: run.input,
     signal: abort.signal,
-    steps: (o = {}) => steps({ ...o, signal: abort.signal, resumeFrom: run.checkpoint, checkpoint: async (v) => { run.checkpoint = v; } }),
+    steps: (o = {}) => steps({ ...o, signal: abort.signal, resumeFrom: run.checkpoint, checkpoint: async (v) => {
+      if (!open) throw new Error('the claim is gone');
+      run.checkpoint = v;
+    } }),
   };
   return {
     run,
@@ -32,6 +38,7 @@ function fleetJobRun({ n = 1, by = 'admin-user', userId = 7, resumeFrom = null }
         run.error = err.message;
         throw err;
       } finally {
+        open = false;
         run.running = false;
         run.endedAt = new Date().toISOString();
       }

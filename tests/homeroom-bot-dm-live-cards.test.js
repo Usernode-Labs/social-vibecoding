@@ -451,6 +451,18 @@ test('Page Turners, read as it stands: the ready card after each Yes and after t
       const [after] = await ready();
       assert.deepEqual([after.approval.missing, after.approval.waitingOn], [0, []]);
       assert.equal(await dm.sayApproved(pool, 999999, { voterId: priya.id, voter: 'priya' }), null, 'one indexed read for a change that is not the bot\'s');
+      // Her yes is said only while it stands: a retraction since (a re-asked
+      // vote landing after it) says nothing.
+      const asked = [];
+      const watched = { query: (sql, params) => { asked.push(sql); return pool.query(sql, params); } };
+      await pool.query('DELETE FROM pr_votes WHERE session_id = $1 AND user_id = $2', [first.id, priya.id]);
+      assert.equal(await dm.sayApproved(watched, first.id, { voterId: priya.id, voter: 'priya', epoch: 0 }), null, 'retracted');
+      assert.ok(/FROM pr_votes/.test(asked.at(-1)), 'stopped at its vote, nothing said');
+      await yes(priya);
+      asked.length = 0;
+      await dm.sayApproved(watched, first.id, { voterId: priya.id, voter: 'priya', epoch: 0 });
+      const at = asked.findIndex((q) => /FROM pr_votes/.test(q));
+      assert.ok(at >= 0 && asked.length > at + 1, 'standing: it goes on to say it');
     });
 
     await t.test('merged: the card says it is live, with no button of its own (#4228)', async () => {

@@ -8,6 +8,7 @@
 import type { Json, Pool, WorkHandler } from '../kernel/index.ts';
 import { legacy } from '../legacy.ts';
 import { WORK } from './machine.ts';
+import { lateNotice } from '../rules/late-notice.ts';
 
 interface Deps { config: any; pool: Pool }
 
@@ -74,6 +75,7 @@ export function botChangeServices({ pool }: Deps): Record<string, WorkHandler> {
       maxAttempts: 5,
       backoffMs: backoff,
       async run({ input }): Promise<Json> {
+        if (lateNotice(input.owedAt)) return { skipped: 'late' };
         const sent = await legacy('services/homeroom-bot-dm').sayApproved(pool, Number(input.sessionId),
           { voterId: Number(input.voterId), voter: input.voter ?? null, epoch: Number(input.epoch) || 0 });
         return { said: !!sent };

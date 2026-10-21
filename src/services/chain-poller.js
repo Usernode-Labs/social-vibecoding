@@ -29,6 +29,9 @@ const POLL_INTERVAL_MS = 4000;
 // acceptable while making the log readable again.
 const MAX_POLL_INTERVAL_MS = 60000;
 const MAX_PAGES = 5;
+// One explorer request's limit: a request that never answers would hold the
+// clock's one run, and with it every process's linking.
+const REQUEST_TIMEOUT_MS = 15000;
 // Without an APP_PUBKEY nothing is linked: looked at again this seldom.
 const OFF_REST_MS = 5 * 60 * 1000;
 
@@ -95,6 +98,7 @@ function httpJson(method, urlStr, body) {
       });
     });
     req.on('error', reject);
+    req.setTimeout(REQUEST_TIMEOUT_MS, () => req.destroy(new Error(`timed out after ${REQUEST_TIMEOUT_MS} ms`)));
     if (bodyBuf) req.write(bodyBuf);
     req.end();
   });
@@ -185,15 +189,26 @@ async function poll(config, pool, previous = null) {
         continue;
       }
 
-      const { rowCount } = await pool.query(
-        `UPDATE users
-           SET usernode_pubkey = $1,
-               wallet_link_token = NULL,
-               wallet_link_expires_at = NULL
-         WHERE wallet_link_token = $2
-           AND wallet_link_expires_at > NOW()`,
-        [sender, memo.token]
-      );
+      let rowCount;
+      try {
+        ({ rowCount } = await pool.query(
+          `UPDATE users
+             SET usernode_pubkey = $1,
+                 wallet_link_token = NULL,
+                 wallet_link_expires_at = NULL
+           WHERE wallet_link_token = $2
+             AND wallet_link_expires_at > NOW()`,
+          [sender, memo.token]
+        ));
+      } catch (err) {
+        // A memo the database refuses as data (a NUL in its token, a value
+        // too long) would be refused on every read, and the cursor would
+        // never pass it: it is skipped. Any other failure throws, and the
+        // next run reads these blocks again.
+        if (!/^22/.test(String(err && err.code))) throw err;
+        log.warn('chain-poller', 'Skipping a link memo the database refused', { code: err.code, txId: tx.tx_id || null });
+        continue;
+      }
       if (rowCount > 0) {
         next = { ...next, walletLinkCount: next.walletLinkCount + 1 };
         log.info('chain-poller', 'Wallet linked', { pubkey: sender, token: memo.token.slice(0, 8) + '...' });
@@ -207,10 +222,11 @@ async function poll(config, pool, previous = null) {
 
 /**
  * The status pages' shape, from the clock's last run (platform.clockStatus:
- * `result` its last good result, `lastSweepAt` when it ran).
+ * `result` its result, `kept` the last good one, which a failed run leaves,
+ * `lastSweepAt` when it ran).
  */
 function statusOf(clock) {
-  const r = (clock && clock.result) || {};
+  const r = (clock && (clock.result || clock.kept)) || {};
   return {
     chainId: r.chainId || null,
     lastBlockHeight: Number(r.lastBlockHeight) || 0,

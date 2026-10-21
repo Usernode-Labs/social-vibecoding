@@ -153,6 +153,30 @@ test('a link memo from a genesis address links the wallet, and the next run read
   }
 });
 
+test('a memo the database refuses as data is skipped, and the cursor passes it', async () => {
+  const explorer = await fakeExplorer((req) => (req.url.endsWith('/active_chain') ? [200, { chain_id: 'c1' }] : [200, { items: [
+    { tx_id: 't1', block_height: 7, source: 'ut1genesis', memo: JSON.stringify({ app: 'vibecode', type: 'link_wallet', token: 'bad\u0000token' }) },
+    { tx_id: 't2', block_height: 8, source: 'ut1genesis', memo: JSON.stringify({ app: 'vibecode', type: 'link_wallet', token: 'tok-2' }) },
+  ] }]));
+  try {
+    const { poller } = pollerAt(explorer.host);
+    const linked = [];
+    const pool = { query: async (_sql, [, token]) => {
+      if (token.includes('\u0000')) throw Object.assign(new Error('invalid byte sequence for encoding "UTF8": 0x00'), { code: '22021' });
+      linked.push(token);
+      return { rowCount: 1 };
+    } };
+    const out = await poller.poll(CONFIG, pool, null);
+    assert.deepEqual(linked, ['tok-2'], 'the next memo still links');
+    assert.equal(out.lastBlockHeight, 8, 'the cursor passes the refused memo');
+    // A failure that is not about the memo's data is the run's: it throws.
+    const down = { query: async () => { throw Object.assign(new Error('connection terminated'), { code: '57P01' }); } };
+    await assert.rejects(poller.poll(CONFIG, down, null), /connection terminated/);
+  } finally {
+    explorer.srv.close();
+  }
+});
+
 test('until the genesis set is loaded nothing is read, so no link is skipped for good', async () => {
   const explorer = await fakeExplorer(() => [200, { chain_id: 'c1', items: [] }]);
   try {
@@ -175,6 +199,10 @@ test('the status pages read the clock\'s last run', () => {
   assert.deepEqual(s, { chainId: 'c1', lastBlockHeight: 9, walletLinkCount: 2, lastPolledAt: 1, lastError: 'HTTP 503',
     consecutiveFailures: 3, downSince: 5, pollIntervalMs: 16000, enabled: true });
   assert.equal(poller.statusOf(null).enabled, false);
+  // A run that failed (a database error) leaves the last good one's state.
+  const failed = poller.statusOf({ lastSweepAt: '2026-10-21T10:01:00Z', lastError: 'connection terminated', result: null,
+    kept: { chainId: 'c1', lastBlockHeight: 9, walletLinkCount: 2, polledAt: 1, restMs: 4000 } });
+  assert.deepEqual([failed.chainId, failed.lastBlockHeight, failed.walletLinkCount, failed.lastError], ['c1', 9, 2, 'connection terminated']);
 });
 
 // ─── genesis-accounts ───────────────────────────────────────────────────

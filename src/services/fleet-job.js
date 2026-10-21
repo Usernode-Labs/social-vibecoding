@@ -19,9 +19,16 @@
 const log = require('./logger');
 
 const FAILED = 'failed';
+// A run older than this when it is carried on is not carried on: a claim
+// left over a rollback, picked up by the next roll-forward, would sweep the
+// fleet hours after anybody asked, from a list taken then.
+const MAX_RUN_AGE_MS = 6 * 60 * 60 * 1000;
 
 // Fixed-width drain: a slow unit never holds up the next one, and at most
-// `limit` run at once.
+// `limit` run at once. A runner that stops (the run's process is stopping:
+// its next step refuses) ends only its own loop; the drain waits for every
+// unit under way to finish and be kept before it throws, so the run's next
+// claim does not do them again.
 async function drain(items, limit, worker) {
   if (!items.length) return;
   let next = 0;
@@ -36,10 +43,23 @@ async function drain(items, limit, worker) {
       }
     })());
   }
-  await Promise.all(runners);
+  const ended = await Promise.allSettled(runners);
+  const failed = ended.find((r) => r.status === 'rejected');
+  if (failed) throw failed.reason;
 }
 
 const unitKey = (key) => `unit:${key}`;
+
+// The console's progress frame: the job when it fits a NOTIFY (the job runs
+// on a workflow process, and its frame reaches the admins' sockets through
+// the bus, services/ws-bus.js, whose payloads stop at 8000 bytes), else a
+// nudge on which the console reads the job again (GET). Too big, the bus
+// would send every admin tab a resync of its whole view instead.
+const FRAME_MAX_BYTES = 6000;
+function frame(type, job) {
+  const full = { type, job };
+  return Buffer.byteLength(JSON.stringify(full)) <= FRAME_MAX_BYTES ? full : { type, changed: true };
+}
 
 /**
  * The console's snapshot of a job, from its run (platform.clockRunOf): what
@@ -47,7 +67,9 @@ const unitKey = (key) => `unit:${key}`;
  * names the list ('apps', 'previews'). Null when the job never ran.
  */
 function snapshotOf(run, { rowsField, keyOf, rowOf, concurrency }) {
-  if (!run) return null;
+  // A run nobody asked for (an older build armed the job on an interval)
+  // did nothing: no job.
+  if (!run || !(run.input && run.input.asked)) return null;
   const kept = (run.checkpoint && typeof run.checkpoint === 'object') ? run.checkpoint : {};
   const result = (run.result && typeof run.result === 'object') ? run.result : null;
   const items = Array.isArray(kept.items) ? kept.items : [];
@@ -82,21 +104,28 @@ async function run(ctx, { name, list, keyOf, rowOf, unit, concurrency, publish, 
   const steps = ctx.steps({ owner: `fleet-job/${name}` });
   const started = await steps.once('started', () => new Date().toISOString());
   const items = await steps.once('items', list);
-  const running = new Set();
+  // The units under way, kept with the run so any process's read shows them.
+  const running = new Set(steps.get('running') || []);
   const snapshot = async () => snapshotOf({
     n: ctx.input.n, running: true, startedAt: started, endedAt: null, input: ctx.input,
     checkpoint: { started, items, running: [...running], ...Object.fromEntries(items.map((it) => [unitKey(keyOf(it)), steps.get(unitKey(keyOf(it)))]).filter(([, v]) => v)) },
     result: null,
   }, { rowsField, keyOf, rowOf, concurrency });
   const tell = async () => { try { publish(await snapshot()); } catch (err) { log.warn('fleet-job', 'progress not told', { name, err: err.message }); } };
+  // Since the run's first start, every claim of it included.
+  const startedMs = Date.parse(started) || Date.now();
+  if (Date.now() - startedMs > MAX_RUN_AGE_MS) {
+    log.warn('fleet-job', 'A run asked for too long ago is not carried on', { name, run: ctx.input.n, started });
+    return { abandoned: true, started };
+  }
   log.info('fleet-job', 'Job started', { name, run: ctx.input.n, total: items.length, concurrency, by: ctx.input.asked?.by ?? null });
   await tell();
 
-  const startedMs = Date.now();
   await drain(items, concurrency, async (item) => {
     const key = unitKey(keyOf(item));
     if (steps.has(key)) return;
     running.add(keyOf(item));
+    await steps.set('running', [...running]);
     await tell();
     const unitStarted = Date.now();
     await steps.once(key, async () => {
@@ -115,6 +144,7 @@ async function run(ctx, { name, list, keyOf, rowOf, unit, concurrency, publish, 
       return { state: outcome, error, ms: Date.now() - unitStarted };
     });
     running.delete(keyOf(item));
+    await steps.set('running', [...running]);
     await tell();
   });
 
@@ -127,4 +157,4 @@ async function run(ctx, { name, list, keyOf, rowOf, unit, concurrency, publish, 
   return { total: job.total, failed: job.failed, concurrency, tally };
 }
 
-module.exports = { run, snapshotOf, drain, FAILED };
+module.exports = { run, snapshotOf, drain, frame, FAILED, MAX_RUN_AGE_MS, FRAME_MAX_BYTES };

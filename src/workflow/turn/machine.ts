@@ -158,11 +158,12 @@ const runResult = (s: S, e: Event<any>) => {
 // A turn that failed on a change (its result's `stalled`) owes its owner
 // "Session stopped before finishing" when nobody watches (#4729):
 // services/turns.js tellStalled, once per turn.
-function stalledWork(s: S, e: Event<any>, key: string): WorkRequest[] {
+function stalledWork(s: S, e: Event<any>, ctx: TransitionContext): WorkRequest[] {
   const sessionId = Number(((e.payload as WorkResultPayload).result as any)?.stalled);
-  const m = /^agent:(\d+)$/.exec(key);
+  const m = /^agent:(\d+)$/.exec(ctx.key);
   if (!m || !Number.isInteger(sessionId) || sessionId <= 0) return [];
-  return [{ kind: WORK.stalled, key: `stalled:${cur(s).turnId}`, input: { sessionId, agentSessionId: Number(m[1]) } }];
+  // `owedAt`: a notice run long after (work left over a rollback) is not said.
+  return [{ kind: WORK.stalled, key: `stalled:${cur(s).turnId}`, input: { sessionId, agentSessionId: Number(m[1]), owedAt: ctx.now.toISOString() } }];
 }
 
 export function turnMachine() {
@@ -241,7 +242,7 @@ export function turnMachine() {
           to: (s: S, e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<S> => {
             if (!runResult(s, e)) return { next: s };
             const out = ended(s, ctx.key, ctx, 'done');
-            return withState({ ...out, work: [...(out.work || []), ...stalledWork(s, e, ctx.key)] }, f, ctx);
+            return withState({ ...out, work: [...(out.work || []), ...stalledWork(s, e, ctx)] }, f, ctx);
           },
         },
         WorkFailed: {

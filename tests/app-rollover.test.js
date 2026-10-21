@@ -139,7 +139,7 @@ function installStubs() {
     askClockRun: async (job, admin) => {
       fx.asked.push([job, admin.username]);
       fx.run = fleetJobRun({ n: (fx.run ? fx.run.run.n : 0) + 1, by: admin.username, userId: admin.id });
-      return true;
+      return 'asked';
     },
   });
   stub(ids.deployStatus, {
@@ -455,14 +455,80 @@ test('a run carried on after a restart rolls only the apps it had not finished',
   assert.equal(fx.eventRecords.length, 0, 'not finished');
 
   fx.respawnCalls = [];
-  const again = fleetJobRun({ resumeFrom: first.run.checkpoint });
+  // It was first started an hour ago: the audit counts from then.
+  const resumeFrom = { ...first.run.checkpoint, started: new Date(Date.now() - 60 * 60 * 1000).toISOString() };
+  const again = fleetJobRun({ resumeFrom });
   fx.run = again;
   await again.go(rollover.runJob, { config: {}, pool: fakePool });
   assert.deepEqual(fx.respawnCalls, ['c'], 'only the app not yet rolled');
+  assert.ok(fx.eventRecords[0].metadata.durationMs >= 60 * 60 * 1000, 'the duration spans every claim of the run');
   const job = await rollover.read(fakePool);
   assert.deepEqual(outcomes(job), { a: 'rolled', b: 'rolled', c: 'rolled' });
   assert.ok(job.finishedAt);
   assert.equal(fx.eventRecords.length, 1, 'one audit row for the job');
+});
+
+test('a run that stops keeps every app under way at the time, so the next claim rolls none twice', async () => {
+  const rollover = setup();
+  fx.apps = [appRow(1, 'a'), appRow(2, 'b'), appRow(3, 'c'), appRow(4, 'd')];
+  fx.respawnDelayMs = 30;
+  const first = fleetJobRun();
+  fx.run = first;
+  // The process starts stopping while 'a', 'b' and 'c' are being rolled.
+  fx.respawnResult = (app) => { if (app.slug === 'a') first.stop(); return 'cid'; };
+  await assert.rejects(first.go(rollover.runJob, { config: {}, pool: fakePool }));
+  assert.deepEqual(fx.respawnCalls.sort(), ['a', 'b', 'c']);
+
+  fx.respawnCalls = [];
+  fx.respawnResult = 'cid';
+  const again = fleetJobRun({ resumeFrom: first.run.checkpoint });
+  fx.run = again;
+  await again.go(rollover.runJob, { config: {}, pool: fakePool });
+  assert.deepEqual(fx.respawnCalls, ['d'], 'only the app nobody had started');
+});
+
+test('a run asked for hours ago is not carried on (a claim left over a rollback)', async () => {
+  const rollover = setup();
+  fx.apps = [appRow(1, 'a'), appRow(2, 'b')];
+  const old = fleetJobRun({ resumeFrom: { started: new Date(Date.now() - 7 * 60 * 60 * 1000).toISOString(), items: [{ id: 1, slug: 'a' }, { id: 2, slug: 'b' }] } });
+  fx.run = old;
+  const out = await old.go(rollover.runJob, { config: {}, pool: fakePool });
+  assert.equal(out.abandoned, true);
+  assert.deepEqual(fx.respawnCalls, [], 'nothing rolled');
+  assert.equal(fx.eventRecords.length, 0);
+});
+
+test('progress too big for one bus frame goes as a nudge, and a read from any process shows the units under way', async () => {
+  const rollover = setup();
+  fx.apps = Array.from({ length: 200 }, (_, i) => appRow(i + 1, `a-much-longer-app-slug-${i + 1}`));
+  fx.respawnDelayMs = 20;
+  const run = fleetJobRun();
+  fx.run = run;
+  let seen = null;
+  fx.respawnResult = () => 'cid';
+  const going = run.go(rollover.runJob, { config: {}, pool: fakePool });
+  // Mid-run, as another process reads it (the run's checkpoint).
+  await sleep(10);
+  seen = await rollover.read(fakePool);
+  await going;
+  assert.ok(seen.apps.some((a) => a.state === 'running'), 'the units under way read as running');
+  const frames = fx.adminBroadcasts.map((b) => Buffer.byteLength(JSON.stringify(b)));
+  assert.ok(Math.max(...frames) <= 8000, `every frame fits a NOTIFY: ${Math.max(...frames)}`);
+  assert.ok(fx.adminBroadcasts.some((b) => b.changed === true && b.job === undefined), 'the big job came as a nudge');
+  // A small job goes whole.
+  const small = setup();
+  fx.apps = [appRow(1, 'a')];
+  fx.run = fleetJobRun();
+  await fx.run.go(small.runJob, { config: {}, pool: fakePool });
+  assert.ok(fx.adminBroadcasts.every((b) => b.job), 'a small job is sent whole');
+});
+
+test('a run nobody asked for (an older build armed the job on an interval) is no job on the console', async () => {
+  const rollover = setup();
+  fx.run = fleetJobRun();
+  fx.run.run.input = { n: 1, previous: null };
+  fx.run.run.running = false;
+  assert.equal(await rollover.read(fakePool), null);
 });
 
 test('concurrency never exceeds the cap', async () => {

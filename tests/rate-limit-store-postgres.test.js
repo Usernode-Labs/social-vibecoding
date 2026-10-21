@@ -102,7 +102,7 @@ test('the limiters that gate a send, a bill or a guess are shared; a runaway-cli
   for (const name of ['chat', 'conversation-message', 'board-order', 'ui-telemetry', 'link-cards']) {
     assert.ok(!shared.has(name), `${name} stays per process`);
   }
-  assert.match(src, /\.\.\.\(shared \? \{ store: new SharedStore\(name\) \} : \{\}\),/);
+  assert.match(src, /\.\.\.\(shared \? \{ store: new SharedStore\(name\), passOnStoreError: true \} : \{\}\),/);
   assert.match(fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8'),
     /require\('\.\/src\/services\/rate-limit-store'\)\.setPool\(getPool\(config\)\);/);
 });

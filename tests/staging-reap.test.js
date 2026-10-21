@@ -203,7 +203,7 @@ function installStubs() {
     askClockRun: async (job, admin) => {
       fx.asked.push([job, admin.username]);
       fx.run = fleetJobRun({ n: (fx.run ? fx.run.run.n : 0) + 1, by: admin.username, userId: admin.id });
-      return true;
+      return 'asked';
     },
   });
   stub(ids.applicationRuntime, {
@@ -492,6 +492,32 @@ test('a session somebody started working on since the sweep listed it keeps its 
     assert.ok(!fx.kubeRemoveCalls.some((c) => /s5806$/.test(c.name)) && !fx.teardownCalls.some((c) => c.sessionId === 5806));
   } finally {
     fakePool.query = real;
+  }
+});
+
+test('a preview whose session was put up for a vote, or started a checks run, since the sweep listed it is kept', async () => {
+  const reap = setup();
+  kubeFleet(currentFp());
+  // 5806 is a live session's out-of-date preview: listed, then changed.
+  for (const [change, outcome] of [[{ status: 'promoted' }, 'skipped_vote'], [{ check_run_open: true }, 'skipped_checks']]) {
+    fx.kubeRemoveCalls = []; fx.teardownCalls = [];
+    const real = fakePool.query;
+    let listed = false;
+    fakePool.query = async (sql, params) => {
+      if (/cs\.id = ANY\(\$1::int\[\]\) AND \(cs\.active_turn IS NOT NULL/.test(sql)) listed = true;
+      const out = await real(sql, params);
+      if (listed && /FROM chat_sessions/.test(sql) && !/AS busy/.test(sql)) {
+        return { ...out, rows: out.rows.map((r) => (r.id === 5806 ? { ...r, ...change } : r)) };
+      }
+      return out;
+    };
+    try {
+      const job = await runSweep(reap, KUBE);
+      assert.equal(job.previews.find((p) => p.sessionId === 5806).state, outcome);
+      assert.ok(!fx.teardownCalls.some((c) => c.sessionId === 5806) && !fx.kubeRemoveCalls.some((c) => /s5806$/.test(c.name)));
+    } finally {
+      fakePool.query = real;
+    }
   }
 });
 

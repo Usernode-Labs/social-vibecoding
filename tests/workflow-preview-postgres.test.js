@@ -842,6 +842,17 @@ test('preview machine against the full PostgreSQL schema', { timeout: 120000 }, 
     }
   });
 
+  await t.test('P18c a folded recheck on a session with no instance yet, its head reading pending, owes a look', async () => {
+    const s = await proposal(await app(), { pin: SHA('e') });
+    assert.equal(await instance(s), undefined, 'no instance yet');
+    await pool.query(`UPDATE chat_sessions SET checks_commit_sha = $2::text, check_state = 'pending', unit_suite_fresh_sha = $2::text WHERE id = $1`, [s.id, SHA('e')]);
+    await send(s, 'RecheckFolded', { head: SHA('e'), sessionId: s.id }, { kind: 'route', name: 'manual-recheck' });
+    await rt.drain();
+    const i = await instance(s);
+    assert.ok(i, 'adopted from its row');
+    assert.equal(i.deadline_event?.type, 'ChecksDue', 'the checks it owes are looked at');
+  });
+
   await t.test('P19 a retirement retried by an admin still covers every attempt it had', async () => {
     const s = await proposal(await app(), { status: 'active' });
     await submit(s, SHA('1'));

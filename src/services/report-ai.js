@@ -300,7 +300,14 @@ async function claimGeneration(pool, appId) {
 
 // Its own claim only (the lease to the microsecond, as text): one that
 // lapsed and another took is the other's.
+// A first generation that wrote no report takes its row away again: an older
+// release (during a rollout, or after a rollback) would show it as an empty
+// report.
 async function releaseGeneration(pool, appId, claim) {
+  await pool.query(
+    `DELETE FROM app_report_ai WHERE app_id = $1 AND generating_until = $2::timestamptz AND input_hash = ''`,
+    [appId, claim]
+  );
   await pool.query(
     'UPDATE app_report_ai SET generating_until = NULL WHERE app_id = $1 AND generating_until = $2::timestamptz',
     [appId, claim]

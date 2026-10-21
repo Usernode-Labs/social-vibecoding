@@ -43,7 +43,9 @@ function makeLimiter({ windowMs, max, name, keyByUser = false, message, skipFail
   const options = {
     windowMs,
     max,
-    ...(shared ? { store: new SharedStore(name) } : {}),
+    // A shared count the database cannot give lets the request through (the
+    // route reads the database too): never a 500 for every request behind it.
+    ...(shared ? { store: new SharedStore(name), passOnStoreError: true } : {}),
     standardHeaders: 'draft-7',
     legacyHeaders: false,
     skipFailedRequests,

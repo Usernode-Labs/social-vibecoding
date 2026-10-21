@@ -93,7 +93,7 @@ test('savePlan keeps the shape only for a plan it could not use', async () => {
   const pool = {
     async query(text, params) {
       sql.push({ text, params });
-      if (/FROM homeroom_bot_first_versions f JOIN apps a/.test(text)) return { rows: [{ user_id: 7, brief: 'Polls', early_plan_status: 'pending', ...appRow }] };
+      if (/FROM homeroom_bot_first_versions f JOIN apps a/.test(text)) return { rows: [{ user_id: 7, brief: 'Polls', early_plan_status: 'pending', fresh: true, ...appRow }] };
       if (/early_plan_reply = \$5::jsonb/.test(text)) return { rows: [], rowCount: 1 };
       return { rows: [] };
     },

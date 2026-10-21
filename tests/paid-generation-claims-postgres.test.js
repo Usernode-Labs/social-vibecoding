@@ -78,8 +78,14 @@ test('a paid generation claims its row, once at a time on any process', { timeou
     assert.equal(await reportAi.getCached(pool, a.id), null, 'the claim\'s row holds no report');
     release();
     await assert.rejects(run, /the provider failed/);
-    const { rows: [r] } = await pool.query('SELECT generating_until FROM app_report_ai WHERE app_id = $1', [a.id]);
-    assert.equal(r.generating_until, null, 'released when it ends, failed or not');
+    const { rows: left } = await pool.query('SELECT generating_until FROM app_report_ai WHERE app_id = $1', [a.id]);
+    assert.deepEqual(left, [], 'a first generation that wrote nothing takes its row away (an older build would show it empty)');
+    // A report kept from before: a failed generation releases its claim and
+    // leaves the report.
+    await pool.query(`INSERT INTO app_report_ai (app_id, input_hash, narrative) VALUES ($1, 'h1', 'Kept.')`, [a.id]);
+    await assert.rejects(reportAi.generateForApp({ pool, config: {}, app, userId: u.id }), /the provider failed/);
+    const { rows: [r] } = await pool.query('SELECT generating_until, narrative FROM app_report_ai WHERE app_id = $1', [a.id]);
+    assert.deepEqual([r.generating_until, r.narrative], [null, 'Kept.'], 'released when it ends, failed or not');
 
     // A process that went away mid-generation: its claim holds until it lapses.
     await pool.query(`UPDATE app_report_ai SET generating_until = NOW() + interval '1 minute' WHERE app_id = $1`, [a.id]);

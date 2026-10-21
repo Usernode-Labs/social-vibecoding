@@ -137,7 +137,11 @@ test('a restart mid-export cannot leave a row stuck in-flight', () => {
   // Both pre-stream and mid-stream states are swept, each only once nothing
   // will finish it: a dump another process streams is left alone
   // (tests/db-export-postgres.test.js).
-  assert.match(settle, /status = 'streaming' AND \(heartbeat_at IS NULL OR heartbeat_at < NOW\(\)/);
+  assert.match(settle, /status = 'streaming' AND NOT \(\$\{LIVE_STREAM_SQL\}\)/);
+  // Live: renewed lately, or an older release's (no heartbeat) within its
+  // own timeout.
+  assert.match(dbExportJs, /COALESCE\(heartbeat_at > NOW\(\) - make_interval\(secs => \$1\), FALSE\)/);
+  assert.match(dbExportJs, /heartbeat_at IS NULL AND COALESCE\(started_at, requested_at\) > NOW\(\)/);
   assert.match(settle, /status = 'requested' AND COALESCE\(ticket_expires_at, requested_at\) < NOW\(\)/);
   assert.ok(!/USERNODE_ENV/.test(fn), 'the sweeper runs in every environment, not just staging');
 });

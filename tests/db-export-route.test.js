@@ -66,7 +66,7 @@ const mockPool = {
       return { rows: [], rowCount: row ? 1 : 0 };
     }
     if (/SET heartbeat_at = NOW\(\)|SET started_at = NOW\(\)/.test(s)) return { rows: [], rowCount: 1 };
-    if (/status = 'streaming' AND heartbeat_at > NOW/.test(s)) {
+    if (/SELECT EXISTS \(SELECT 1 FROM db_exports WHERE status = 'streaming'/.test(s)) {
       return { rows: [{ busy: audit.some((r) => r.status === 'streaming') }] };
     }
     if (/UPDATE db_exports/.test(s)) {

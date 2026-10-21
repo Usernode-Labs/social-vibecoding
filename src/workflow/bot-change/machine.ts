@@ -293,11 +293,13 @@ function wentLive(s: BState, e: Event<any>, f: Facts): Outcome<BState> {
 // it still waits on), and a yes is a quiet line in the request's thread
 // ("ada approved it."), once per voter and epoch. Said after the vote's
 // commit before, a restart in between lost it.
-function voted(s: BState, e: Event<any>, f: Facts): Outcome<BState> {
+function voted(s: BState, e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<BState> {
   const live = s as Live;
   const key = `approved:${e.payload.voterId}:${e.payload.epoch}`;
   const work: WorkRequest[] = e.payload.vote === 'yes' && !live.data.notes[key]
-    ? [{ kind: WORK.approved, key, input: { sessionId: live.data.sessionId, voterId: e.payload.voterId, voter: e.payload.voter, epoch: e.payload.epoch } }]
+    ? [{ kind: WORK.approved, key, input: {
+      sessionId: live.data.sessionId, voterId: e.payload.voterId, voter: e.payload.voter, epoch: e.payload.epoch, owedAt: ctx.now.toISOString(),
+    } }]
     : [];
   return step(live.name as Name, asked(live.data, work), { work, push: tray(f) });
 }

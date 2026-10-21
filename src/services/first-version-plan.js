@@ -431,12 +431,16 @@ async function startEarlyPlan(pool, { app, user, brief }, deps = {}) {
  */
 async function runEarlyPlan(pool, { appId, steps = null }, deps = {}) {
   const { rows: [row] } = await pool.query(
-    `SELECT f.user_id, f.brief, f.early_plan_status, a.id, a.name, a.slug
+    `SELECT f.user_id, f.brief, f.early_plan_status, a.id, a.name, a.slug,
+            f.created_at > NOW() - make_interval(secs => $2::int) AS fresh
        FROM homeroom_bot_first_versions f JOIN apps a ON a.id = f.app_id
       WHERE f.app_id = $1`,
-    [Number(appId)],
+    [Number(appId), STALE_PENDING_MS / 1000],
   );
   if (!row || row.early_plan_status !== 'pending') return { planned: false, skipped: row ? 'settled' : 'gone' };
+  // Past the window its plan could be saved in (savePlan), the model is not
+  // asked: what read it went on without it (an ask re-sent after a rollout).
+  if (!row.fresh && !(steps && steps.has('plan'))) return { planned: false, skipped: 'too_late' };
   const app = { id: row.id, name: row.name, slug: row.slug };
   const ask = () => makePlan(pool, { app, user: { id: row.user_id }, brief: row.brief, deps });
   const made = steps ? await steps.once('plan', ask) : await ask();

@@ -1763,9 +1763,11 @@ async function loadApp(pool, { appId, appSlug }) {
 // first change, kept on its row (reconcile_due_at) and run by the
 // workshop-changes clock (changeTargets, changeApp), so a burst — a merge
 // that closes three issues and lands a row — is one placement call. Each
-// process that heard the change writes the same due time. It was a timer per
-// process that heard it: lost to a restart, and one per process. Resolves
-// whether a pass is owed.
+// process that heard the change writes the same due time. A change while a
+// pass holds the row (its due a lease, further off than the quiet period)
+// owes the next pass from now, so the pass under way does not take it off.
+// It was a timer per process that heard it: lost to a restart, and one per
+// process. Resolves whether a pass is owed.
 async function noteBoardChange(pool, info) {
   if (!llm.isEnabled() || !pool || !info || (info.appId == null && !info.appSlug)) return false;
   try {
@@ -1774,7 +1776,10 @@ async function noteBoardChange(pool, info) {
        SELECT id, '', NOW(), NOW() + make_interval(secs => $3::double precision / 1000) FROM apps
         WHERE ($1::int IS NOT NULL AND id = $1::int) OR ($1::int IS NULL AND slug = $2::text)
        ON CONFLICT (app_id) DO UPDATE
-         SET reconcile_due_at = COALESCE(app_workshop_themes.reconcile_due_at, EXCLUDED.reconcile_due_at)`,
+         SET reconcile_due_at = CASE
+               WHEN app_workshop_themes.reconcile_due_at IS NULL
+                 OR app_workshop_themes.reconcile_due_at > EXCLUDED.reconcile_due_at
+               THEN EXCLUDED.reconcile_due_at ELSE app_workshop_themes.reconcile_due_at END`,
       [info.appId ?? null, info.appSlug || null, CHANGE_DEBOUNCE_MS]
     );
     return true;
@@ -1805,25 +1810,41 @@ async function changeTargets({ pool, limit = SWEEP_MAX_APPS }) {
   return { apps: rows.length, items: rows.map((r) => ({ target: `app:${r.app_id}`, input: { appId: Number(r.app_id), due: r.due } })) };
 }
 
-// One target of it: the pass it owes taken off the row (only the one it was
-// listed for: a change since stays owed) and run. A pass another holds the
-// lease for now is owed again shortly, as the change that owed it may be
-// newer than what that pass read.
+// One target of it: the pass it owes claimed on the row (only the one it was
+// listed for: its due moved PASS_LEASE_MS on, so a process that dies in the
+// pass leaves it owed then), run, and taken off only if no change came
+// meanwhile (a change pulls the claim back to its quiet period). A pass
+// another holds the reconcile's lease for now is owed again shortly, as the
+// change that owed it may be newer than what that pass read.
+const PASS_LEASE_MS = 10 * 60 * 1000;
 async function changeApp({ pool, appId, due }) {
-  const { rowCount } = await pool.query(
-    'UPDATE app_workshop_themes SET reconcile_due_at = NULL WHERE app_id = $1 AND reconcile_due_at = $2::timestamptz',
-    [appId, due]
+  const { rows: [claimed] } = await pool.query(
+    `UPDATE app_workshop_themes SET reconcile_due_at = NOW() + make_interval(secs => $3::double precision / 1000)
+      WHERE app_id = $1 AND reconcile_due_at = $2::timestamptz
+      RETURNING reconcile_due_at::text AS claim`,
+    [appId, due, PASS_LEASE_MS]
   );
-  if (!rowCount) return { skipped: 'not_owed' };
+  if (!claimed) return { skipped: 'not_owed' };
+  // Off the row only if no change came while it ran (it would have pulled
+  // the claim in).
+  const done = () => pool.query(
+    'UPDATE app_workshop_themes SET reconcile_due_at = NULL WHERE app_id = $1 AND reconcile_due_at = $2::timestamptz',
+    [appId, claimed.claim]
+  );
   const app = await loadApp(pool, { appId });
-  if (!app) return { skipped: 'gone' };
+  if (!app) {
+    await done();
+    return { skipped: 'gone' };
+  }
   const r = await reconcile({ pool, app, reason: 'change' });
   if (r && r.skipped === 'leased') {
     await pool.query(
-      `UPDATE app_workshop_themes SET reconcile_due_at = COALESCE(reconcile_due_at, NOW() + make_interval(secs => $2::double precision / 1000))
-        WHERE app_id = $1`,
-      [appId, CHANGE_DEBOUNCE_MS]
+      `UPDATE app_workshop_themes SET reconcile_due_at = NOW() + make_interval(secs => $3::double precision / 1000)
+        WHERE app_id = $1 AND reconcile_due_at = $2::timestamptz`,
+      [appId, claimed.claim, CHANGE_DEBOUNCE_MS]
     );
+  } else {
+    await done();
   }
   return { discovered: !!(r && r.discovered), skipped: (r && r.skipped) || null, error: (r && r.error) || null };
 }

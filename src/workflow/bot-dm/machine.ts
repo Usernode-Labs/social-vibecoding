@@ -200,9 +200,12 @@ const greet = (s: DState, e: Event<any>): Outcome<DState> => owe(s, e, {
 });
 
 // One email per message that rang; the work's key makes a second ask none.
-// Nothing waits on it, so its result is not kept.
-const mailOwed = (s: DState, e: Event<any>): Outcome<DState> => step(s.name === NONE ? 'idle' : (s.name as Name), live(s, e), {
-  work: [{ kind: WORK.mail, key: `mail:${e.payload.messageId}`, input: { ...e.payload.mail, userId: e.payload.userId, messageId: e.payload.messageId } }],
+// Nothing waits on it, so its result is not kept. `owedAt`: an email run
+// long after (work left over a rollback) is not sent.
+const mailOwed = (s: DState, e: Event<any>, _f?: Facts, ctx?: TransitionContext): Outcome<DState> => step(s.name === NONE ? 'idle' : (s.name as Name), live(s, e), {
+  work: [{ kind: WORK.mail, key: `mail:${e.payload.messageId}`, input: {
+    ...e.payload.mail, userId: e.payload.userId, messageId: e.payload.messageId, owedAt: (ctx?.now ?? new Date()).toISOString(),
+  } }],
 });
 
 // A note's result, kept (so the same work owed again is owed once). An act
@@ -253,7 +256,7 @@ async function readFacts(tx: Tx, event: Event<any>): Promise<Facts> {
 
 export function botDm(): Machine<DState, Facts> {
   const works = { WorkSucceeded: result('done'), WorkFailed: result('failed'), WorkExhausted: result('exhausted') };
-  const keyed = (to: (s: DState, e: Event<any>) => Outcome<DState>) => ({
+  const keyed = (to: (s: DState, e: Event<any>, f?: Facts, ctx?: TransitionContext) => Outcome<DState>) => ({
     guard: (_s: DState, e: Event<any>, _f: Facts, ctx: TransitionContext): Check =>
       (ctx.key === dmKey(e.payload.userId) ? ok() : reject('key_mismatch')),
     to,

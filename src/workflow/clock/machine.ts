@@ -41,7 +41,7 @@ const CONTINUOUS_RETRY_MAX_MS = 5 * 60 * 1000;
 type Name = 'waiting' | 'running' | 'retired';
 interface Last { n: number; at: string; ok: boolean; ms: number | null; result: Json; error: string | null }
 // Who asked for an on-demand run (an admin).
-export interface Asked { by: string | null; userId: number | null }
+export type Asked = { by: string | null; userId: number | null };
 
 export interface Data {
   job: string;
@@ -78,10 +78,13 @@ const EVENTS = {
   Arm: (p: any) => ({ job: job(p?.job), everyMs: every(p?.everyMs), firstDueAt: optTime(p?.firstDueAt), onDemand: !!p?.onDemand }),
   // Its deadline.
   Tick: () => ({}),
-  // An admin asks for a run now (who, for the job's own record).
-  RunNow: (p: any): Asked => ({
+  // An admin asks for a run now (who, for the job's own record). `onDemand`:
+  // the job runs only when asked, which this ask says too (an older build
+  // armed it on an interval, knowing no on-demand job).
+  RunNow: (p: any): Asked & { onDemand: boolean } => ({
     by: typeof p?.by === 'string' && p.by.trim() ? p.by.trim().slice(0, 100) : null,
     userId: Number.isSafeInteger(p?.userId) && p.userId > 0 ? p.userId : null,
+    onDemand: p?.onDemand === true,
   }),
   // The release no longer defines the job.
   Retire: () => ({}),
@@ -319,7 +322,12 @@ export function clock() {
             return start(d, ctx);
           },
         },
-        RunNow: { to: (s: CState, e: Event<any>, _f: Facts, ctx: TransitionContext) => start((s as Live).data, ctx, [], e.payload) },
+        RunNow: {
+          to: (s: CState, e: Event<any>, _f: Facts, ctx: TransitionContext) => {
+            const d = (s as Live).data;
+            return start({ ...d, onDemand: d.onDemand || e.payload.onDemand }, ctx, [], { by: e.payload.by, userId: e.payload.userId });
+          },
+        },
         Retire: { to: retire },
         ...results,
       },
@@ -329,8 +337,8 @@ export function clock() {
         // An on-demand job asked again while it runs is refused: the admin
         // sees the run under way (two presses on two processes, one sweep).
         RunNow: {
-          guard: (s: CState) => ((s as Live).data.onDemand ? reject('running') : ok()),
-          to: (s: CState, e: Event<any>): Outcome<CState> => ({ next: { name: 'running', data: { ...(s as Live).data, again: true, asked: e.payload } } }),
+          guard: (s: CState, e: Event<any>) => ((s as Live).data.onDemand || e.payload.onDemand ? reject('running') : ok()),
+          to: (s: CState, e: Event<any>): Outcome<CState> => ({ next: { name: 'running', data: { ...(s as Live).data, again: true, asked: { by: e.payload.by, userId: e.payload.userId } } } }),
         },
         Retire: { to: retire },
         ...results,

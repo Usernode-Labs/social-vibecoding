@@ -1057,12 +1057,12 @@ test('a deployment that cannot verify GitHub identity refuses, and says whose pr
 test('the advisory lock is taken on the session and released in finally', async () => {
   const calls = [];
   const client = {
-    query: async (sql, params) => { calls.push({ sql, params }); return { rows: [] }; },
+    query: async (sql, params) => { calls.push({ sql, params }); return { rows: [{ got: true }] }; },
     release: () => calls.push({ sql: 'RELEASE' }),
   };
   const out = await svc.withProposalLock({ connect: async () => client }, 501, async () => 'body ran');
   assert.equal(out, 'body ran');
-  assert.match(calls[0].sql, /pg_advisory_lock/);
+  assert.match(calls[0].sql, /pg_try_advisory_lock/);
   assert.equal(calls[0].params[1], 501, 'keyed on the session id');
   assert.match(calls[1].sql, /pg_advisory_unlock/);
   assert.equal(calls[2].sql, 'RELEASE');

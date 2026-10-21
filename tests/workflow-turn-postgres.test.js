@@ -150,8 +150,9 @@ test('turn machine against the full PostgreSQL schema', { timeout: 180000 }, asy
     await ask(c, 'turn-s2');
     await settle();
     work.answer = null;
-    assert.deepEqual(work.calls.filter((w) => w.kind === WORK.stalled && w.input.agentSessionId === c.id).map((w) => [w.key, w.input]),
-      [['stalled:turn-s1', { sessionId: 77, agentSessionId: c.id }]]);
+    const owed = work.calls.filter((w) => w.kind === WORK.stalled && w.input.agentSessionId === c.id);
+    assert.deepEqual(owed.map((w) => [w.key, w.input.sessionId, w.input.agentSessionId]), [['stalled:turn-s1', 77, c.id]]);
+    assert.ok(Math.abs(Date.parse(owed[0].input.owedAt) - Date.now()) < 60 * 1000, 'when it was owed (a late one is not said)');
     assert.equal((await instance(c)).state, 'idle');
   });
 

@@ -218,7 +218,7 @@ const SHAPE = {
 function broadcast(job) {
   try {
     const { broadcastToAdmins } = require('./ws');
-    broadcastToAdmins({ type: 'admin_staging_reap_status', job });
+    broadcastToAdmins(fleetJob.frame('admin_staging_reap_status', job));
   } catch (err) {
     log.warn('staging-reap', 'broadcast failed', { err: err.message });
   }
@@ -711,14 +711,19 @@ function demoCounts() {
 
 /**
  * Ask for a sweep: the preview-reap clock's run, on whichever process runs
- * the workflow. Returns { started, job }: `started: false` with the job
- * under way when one runs (anywhere).
+ * the workflow. Returns { started, job }, or { started: false, reason }:
+ * `running` with the job under way when one runs (anywhere), `rollout` while
+ * an older build's workflow process still serves, `not_armed` where it is
+ * not armed.
  */
 async function start(pool, admin) {
   const now = await read(pool);
-  if (now && !now.finishedAt && !now.stale) return { started: false, job: now };
+  if (now && !now.finishedAt && !now.stale) return { started: false, reason: 'running', job: now };
   const asked = await require('../workflow/platform.ts').askClockRun(JOB, admin);
-  return { started: !!asked, job: await read(pool) };
+  if (asked !== 'asked' && asked !== 'pending') return { started: false, reason: asked, job: await read(pool) };
+  // Not yet taken (pending): the job shown is the one before it, so none.
+  const job = await read(pool);
+  return { started: true, job: job && (!now || job.id !== now.id) ? job : null };
 }
 
 /**
@@ -745,14 +750,20 @@ async function runJob(ctx, { config, pool }) {
       log.info('staging-reap', 'Stale preview sweep listed', { examined: containers.length, total: selected.length });
       return selected.map(({ session: _session, ...item }) => ({ ...item, outOfDate: staleNames.has(item.name) }));
     },
+    // What listing it decided, decided again from its row now: minutes (or
+    // a restart) may have passed since the list was taken.
     unit: async (item) => {
       const [fresh] = await classify(pool, [item]);
       const status = fresh.session ? fresh.session.status : null;
-      // Somebody started working on it since it was listed: a turn is about
-      // to replace this preview.
-      if (status && !FINISHED_STATUSES.has(status)
-          && await require('./active-workers').isSessionBusyAnywhere(Number(fresh.sessionId), { pool })) {
-        return { outcome: 'skipped_busy' };
+      if (status && !FINISHED_STATUSES.has(status)) {
+        // Put up for a vote since: the preview machine rebuilds it in place.
+        if (VOTE_BACKED_STATUSES.has(status)) return { outcome: 'skipped_vote' };
+        // A checks run started on it since.
+        if (fresh.session.check_run_open) return { outcome: 'skipped_checks' };
+        // Somebody started working on it since: a turn is about to replace it.
+        if (await require('./active-workers').isSessionBusyAnywhere(Number(fresh.sessionId), { pool })) {
+          return { outcome: 'skipped_busy' };
+        }
       }
       return reapOne(fresh, config);
     },

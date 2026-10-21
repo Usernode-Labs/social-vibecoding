@@ -126,8 +126,16 @@ function makeStore(initialRow, extra) {
     if (/INSERT INTO app_workshop_themes/.test(sql) && /reconcile_due_at/.test(sql)) {
       st.log.push('due');
       if (!st.row) st.row = freshRow({ app_id: params[0] ?? 7 });
-      if (!st.row.reconcile_due_at) st.row.reconcile_due_at = new Date(Date.now() + params[2]).toISOString();
+      const due = new Date(Date.now() + params[2]).toISOString();
+      // Due from the first change; a pass's claim (further off) is pulled in.
+      if (!st.row.reconcile_due_at || Date.parse(st.row.reconcile_due_at) > Date.parse(due)) st.row.reconcile_due_at = due;
       return { rows: [], rowCount: 1 };
+    }
+    // A pass claimed: its due moved on by the claim's lease.
+    if (/AS claim/.test(sql)) {
+      if (!st.row || st.row.reconcile_due_at !== params[1]) return { rows: [], rowCount: 0 };
+      st.row.reconcile_due_at = new Date(Date.now() + params[2]).toISOString();
+      return { rows: [{ claim: st.row.reconcile_due_at }], rowCount: 1 };
     }
     if (/SET reconcile_due_at = LEAST/.test(sql)) {
       st.log.push('owe');
@@ -139,9 +147,10 @@ function makeStore(initialRow, extra) {
       st.row.reconcile_due_at = null;
       return { rows: [], rowCount: 1 };
     }
-    if (/SET reconcile_due_at = COALESCE\(reconcile_due_at/.test(sql)) {
+    if (/SET reconcile_due_at = NOW\(\) \+ make_interval\(secs => \$3/.test(sql)) {
       st.log.push('again');
-      if (st.row && !st.row.reconcile_due_at) st.row.reconcile_due_at = new Date(Date.now() + params[1]).toISOString();
+      if (!st.row || st.row.reconcile_due_at !== params[1]) return { rows: [], rowCount: 0 };
+      st.row.reconcile_due_at = new Date(Date.now() + params[2]).toISOString();
       return { rows: [], rowCount: 1 };
     }
     if (/WHERE reconcile_due_at IS NOT NULL AND reconcile_due_at <= NOW\(\)/.test(sql)) {
@@ -918,7 +927,7 @@ test('a board change owes the app a pass once the board is quiet, kept on its ro
     assert.equal(await svc.noteBoardChange(pool, { appId: 7, appSlug: 'demo' }), true, 'joins the first');
     assert.equal(st.row.reconcile_due_at, first, 'due from the first change, not pushed back by the next');
     assert.equal(await svc.noteBoardChange(pool, {}), false, 'nothing to name');
-    const write = queries.filter((q) => /reconcile_due_at = COALESCE\(app_workshop_themes\.reconcile_due_at, EXCLUDED\.reconcile_due_at\)/.test(q.sql));
+    const write = queries.filter((q) => /WHEN app_workshop_themes\.reconcile_due_at IS NULL/.test(q.sql));
     assert.equal(write.length, 2);
     assert.deepEqual((await svc.changeTargets({ pool })).items, [], 'not before the board is quiet');
     st.row.reconcile_due_at = new Date(Date.now() - 1000).toISOString();

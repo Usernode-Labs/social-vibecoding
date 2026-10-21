@@ -215,6 +215,14 @@ function adminRoutes(config) {
     }
   });
 
+  // Why an admin's fleet job (a rollover, a reap of previews now) did not
+  // start (services/app-rollover.js, staging-reap.js start).
+  const FLEET_JOB_REFUSED = new Map([
+    ['running', 'Rollover already in progress'],
+    ['rollout', 'A platform release is rolling out. Try again in a few minutes.'],
+    ['not_armed', 'This job is not available on this deployment.'],
+  ]);
+
   // ── Container rollover ─────────────────────────────────────
   //
   // Recreate every running child-app container with freshly assembled env
@@ -233,9 +241,9 @@ function adminRoutes(config) {
           error: 'Container rollover is unavailable in staging previews.',
         });
       }
-      const { started, job } = await appRollover.start(pool, req.user);
+      const { started, reason, job } = await appRollover.start(pool, req.user);
       if (!started) {
-        return res.status(409).json({ error: 'Rollover already in progress', job });
+        return res.status(409).json({ error: FLEET_JOB_REFUSED.get(reason) || FLEET_JOB_REFUSED.get('running'), reason, job });
       }
       // warn-level: a fleet-wide container recreate is worth finding in
       // the logs later, same stance as the db-export audit lines.
@@ -340,9 +348,10 @@ function adminRoutes(config) {
           error: 'The stale-preview sweep is unavailable in staging previews.',
         });
       }
-      const { started, job } = await stagingReap.start(pool, req.user);
+      const { started, reason, job } = await stagingReap.start(pool, req.user);
       if (!started) {
-        return res.status(409).json({ error: 'Sweep already in progress', job });
+        const error = reason === 'running' ? 'Sweep already in progress' : FLEET_JOB_REFUSED.get(reason);
+        return res.status(409).json({ error: error || 'Sweep already in progress', reason, job });
       }
       // warn-level: a fleet-wide preview teardown is worth finding in the
       // logs later, same stance as the rollover above.
