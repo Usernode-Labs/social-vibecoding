@@ -127,7 +127,7 @@ test('the digest names its change when there is exactly one, and nothing when th
   const client = {
     async query(text, params) {
       if (/^(BEGIN|COMMIT|ROLLBACK)$/.test(text) || /pg_advisory_xact_lock/.test(text)) return { rows: [] };
-      // Its email is owed by the notice (mailed_at NULL, the notice-mail clock).
+      // It owes no email: mailed_at is written with the notice (#5794).
       assert.match(text, /INSERT INTO notifications \(user_id, app_id, session_id, source_user_id, kind, detail, mailed_at\)/);
       assert.match(text, /NOT EXISTS/);
       inserted.push(params.slice(0, 4));

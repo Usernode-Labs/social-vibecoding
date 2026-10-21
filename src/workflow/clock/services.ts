@@ -373,7 +373,7 @@ export const JOBS: readonly Job[] = Object.freeze([
   },
   {
     // The email a notice owes when no phone could take its push (an invite
-    // moment, a project opening, the vote digest): each notice that owes one
+    // moment, a project opening): each notice that owes one
     // (its `mailed_at` NULL, written with it) a target, sent once and marked
     // (services/activity-mail.js).
     name: 'notice-mail', everyMs: MIN,

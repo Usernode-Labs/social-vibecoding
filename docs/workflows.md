@@ -1771,7 +1771,7 @@ intervals and their I/O are the table in `clock/services.ts` (`JOBS`).
   memos (continuous, resting 4 s, longer while the explorer fails), its chain, cursor and
   outage streak carried in its result; `rate-limit-retention` deletes the shared limiters'
   spent windows (`rate_limit_hits`); `notice-mail` sends the email a notice owes when no
-  phone could take its push (an invite moment, a project opening, the vote digest:
+  phone could take its push (an invite moment, a project opening:
   `notifications.mailed_at` NULL, written with the notice); `workshop-changes` (every 10 s) runs each
   Workshop pass a board change owed.
 - **Previews and proposals.** `preview-runtimes`, `preview-gc`, `preview-env`,

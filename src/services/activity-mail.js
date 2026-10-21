@@ -2,14 +2,14 @@
 
 // WP-E: the email that stands in for a push somebody cannot get.
 //
-// Four moments only: something they asked Homeroom bot for is ready to try
+// Three moments only: something they asked Homeroom bot for is ready to try
 // (`build_ready`; for a project's first version, its going live instead, the
 // moment its maker was promised: homeroom-bot-dm.js sendDm), the first
 // of a day's news about the people their invite link brought
-// (`invite_activity`, services/invite-activity.js), a project they joined
-// while it was made opening (`project_opened`, services/project-opened.js),
-// and the day's changes waiting on their vote (`votes_owed`,
-// services/vote-digest.js). Each is a moment the notification ask promises
+// (`invite_activity`, services/invite-activity.js), and a project they joined
+// while it was made opening (`project_opened`, services/project-opened.js).
+// The daily vote digest is NOT emailed (#5794): frequent mail is what gets a
+// person to unsubscribe. Each remaining one is a moment the notification ask promises
 // "Until then, we'll email you" for (frontend/src/features/notify-ask/
 // decide.ts EMAILED_MOMENTS). Sent only when ALL of these hold:
 //   - they have no phone that could take the push (no live registration,
@@ -30,7 +30,7 @@
 const crypto = require('crypto');
 const { PRODUCTION_ORIGIN } = require('./cli-auth-constants');
 
-const KINDS = Object.freeze(['build_ready', 'invite_activity', 'project_opened', 'votes_owed']);
+const KINDS = Object.freeze(['build_ready', 'invite_activity', 'project_opened']);
 
 // The platform config, for the mail transport and the secret the
 // unsubscribe links are signed with. server.js hands it over at boot; until
@@ -120,7 +120,7 @@ async function readyRow(pool, { userId, conversationId, messageId = null }) {
  */
 async function emailIfNoPush(pool, {
   userId, kind, appName = null, appSlug = null, line = null, conversationId = null, notWorking = false,
-  detail = null, threadRootId = null, messageId: rangFor = null, count = null, hashRoute = null,
+  detail = null, threadRootId = null, messageId: rangFor = null, count = null,
 }) {
   if (!config || !KINDS.includes(kind) || !userId) return 'off';
   const unsubscribe = unsubscribeUrl(userId);
@@ -155,11 +155,7 @@ async function emailIfNoPush(pool, {
     ...(count != null ? { count } : {}),
     ...(notWorking ? { notWorking: true } : {}),
     ...(words ? { subject: words.subject, lead: words.lead } : {}),
-    // `hashRoute`: a shell screen of no one project (the vote digest's
-    // Needs you), as `#communities`.
-    url: typeof hashRoute === 'string' && /^#[a-z][a-z0-9/_-]*$/.test(hashRoute)
-      ? `${origin()}/${hashRoute}`
-      : openUrl({ appSlug, conversationId, threadRootId: root, messageId }),
+    url: openUrl({ appSlug, conversationId, threadRootId: root, messageId }),
     unsubscribeUrl: unsubscribe,
   });
   return 'sent';
@@ -168,14 +164,16 @@ async function emailIfNoPush(pool, {
 // ── Emails owed by a notice ─────────────────────────────────────────────
 //
 // A notice that rang somebody (an invite moment's day's first, a project
-// they joined opening, the vote digest) owes this email in its own insert:
+// they joined opening) owes this email in its own insert:
 // `notifications.mailed_at` NULL. The notice-mail clock
 // (src/workflow/clock/services.ts) sends each as a target of its own
 // (noticeMailTargets), whose item sends it once and marks it handled
 // (mailNotice). Past a day it is not news any more, and is not sent. Each was
 // a call after the notice's commit, which a restart lost.
 
-const NOTICE_MAIL_KINDS = new Set(['member_joined', 'first_message', 'project_opened', 'vote_digest']);
+// The vote digest is deliberately not here (#5794): it rings the bell and the
+// phone, and owes no email. A row already queued for one is 'settled' below.
+const NOTICE_MAIL_KINDS = new Set(['member_joined', 'first_message', 'project_opened']);
 const NOTICE_MAIL_WITHIN_HOURS = 24;
 
 async function noticeMailTargets(pool, { limit = 200 } = {}) {
@@ -196,11 +194,7 @@ function noticeEmail(row) {
   if (row.kind === 'member_joined') {
     return { kind: 'invite_activity', ...app, line: `${row.username ? `@${row.username}` : 'Someone'} joined ${row.app_name} through your invite.` };
   }
-  if (row.kind === 'project_opened') return { kind: 'project_opened', ...app };
-  // The vote digest: how many wait on them; several open Needs you, which
-  // lists them all (no one project).
-  const count = Number(row.detail) || null;
-  return { kind: 'votes_owed', count, ...(row.app_slug ? app : { hashRoute: '#communities' }) };
+  return { kind: 'project_opened', ...app };
 }
 
 /**
