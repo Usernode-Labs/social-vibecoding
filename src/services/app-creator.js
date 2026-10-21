@@ -177,12 +177,15 @@ async function seedStarter(config, pool, row, sketch, ctx) {
     }, { signal: ctx?.signal, label: { appId: row.id, slug: row.slug } });
     const { repoUrl, files, commit } = made;
     const sha = String(commit?.sha || '').toLowerCase() || null;
-    await pool.query('UPDATE apps SET repo_url = $1 WHERE id = $2', [repoUrl, row.id]);
+    // Which revision of the starter that commit carried, beside the
+    // repository (appTemplates.versionOf; null for `empty`).
+    const template = templateOf(row);
+    await pool.query('UPDATE apps SET repo_url = $1, template_version = $3 WHERE id = $2',
+      [repoUrl, row.id, appTemplates.versionOf(template)]);
     if (sketch) await appSketch.markCommitted(pool, row.id).catch(() => {});
     // The deploy may build this commit's tree into the starter's shared
     // layer cache, and a ready-made app's image is built already under its
     // key (services/starter-images.js): both only for this exact commit.
-    const template = templateOf(row);
     const key = appTemplates.isReadyMade(template) ? starterImages.contextKey(files, starterImages.buildRecipe(config)) : null;
     return { sha, repoUrl, offer: sha ? { starter: { sha, template, ...(key ? { key } : {}) } } : null };
   } catch (err) {
