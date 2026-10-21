@@ -352,7 +352,7 @@ test('merge-followups machine against the full PostgreSQL schema', { timeout: 12
     const carried = await proposal(a, { status: 'promoted', linked: [4], title: 'First version' });
     const busy = await proposal(a, { status: 'promoted' });
     await pool.query(`UPDATE chat_sessions SET active_turn = '{"id":"t"}'::jsonb WHERE id = $1`, [busy.id]);
-    work.results.set(WORK.find, (input) => ({ ids: input.sessionId === carrier.id ? [carried.id, busy.id] : [] }));
+    work.results.set(WORK.find, (input) => ({ found: input.sessionId === carrier.id ? [{ id: carried.id, head: null }, { id: busy.id, head: null }] : [] }));
     await merge(carrier);
     // Everything runs but the carrier's deploy, which app-delivery has not answered.
     await settle();
@@ -411,62 +411,6 @@ test('merge-followups machine against the full PostgreSQL schema', { timeout: 12
     await send(s, 'Deployed', { sha: SHA('a') });
     await settle();
     assert.equal((await retireAsked(s)).length, 1);
-  });
-
-  await t.test('a preview.teardown item an older release queued asks the preview machine when it reports', async () => {
-    // Demo mode: the merge waits for the deploy, as an older release's did.
-    const a = await app({ demoMode: true });
-    const s = await proposal(a, { extra: { preview: true } });
-    await merge(s);
-    assert.equal((await retireAsked(s)).length, 0, 'the deploy has not answered');
-    const c = await pool.connect();
-    try {
-      await c.query('BEGIN');
-      await c.query("SET LOCAL app.wf_writer = 'transition'");
-      const input = { sessionId: s.id };
-      await c.query(
-        `UPDATE wf_instances SET data = jsonb_set(data, '{followups,teardown}', $3::jsonb) WHERE machine = $1 AND key = $2`,
-        [MACHINE, sessionKey(s.id), JSON.stringify({ kind: WORK.teardown, input, status: 'pending' })]);
-      await c.query(`INSERT INTO wf_work (machine, key, kind, work_key, input) VALUES ($1, $2, $3, 'teardown', $4)`,
-        [MACHINE, sessionKey(s.id), WORK.teardown, JSON.stringify(input)]);
-      await c.query('COMMIT');
-    } catch (err) { await c.query('ROLLBACK'); throw err; } finally { c.release(); }
-    work.results.set(WORK.teardown, { handedOff: true });
-    try { await settle(); } finally { work.results.delete(WORK.teardown); }
-    const asks = await retireAsked(s);
-    assert.equal(asks.length, 1);
-    assert.deepEqual(asks[0].payload, { sessionId: s.id, reason: 'merged', terminal: true });
-    // Its deploy's answer does not ask again: the follow-up is there.
-    await deliveryAnswer(s, 'Delivered', { sha: SHA('a') });
-    await settle();
-    assert.equal((await instance(s)).state, 'live');
-    assert.equal((await retireAsked(s)).length, 1);
-  });
-
-  await t.test('a main.check item an older release queued asks the main-check machine when it reports', async () => {
-    const a = await app();
-    const s = await proposal(a);
-    await merge(s);
-    // Its merge asked already; the item is as an older release queued it.
-    const before = (await checkAsked(a)).length;
-    const c = await pool.connect();
-    try {
-      await c.query('BEGIN');
-      await c.query("SET LOCAL app.wf_writer = 'transition'");
-      const input = { appId: a.id, sessionId: s.id, prNumber: s.pr_number, mergeSha: SHA('a') };
-      await c.query(
-        `UPDATE wf_instances SET data = jsonb_set(data, '{followups,main-check}', $3::jsonb) WHERE machine = $1 AND key = $2`,
-        [MACHINE, sessionKey(s.id), JSON.stringify({ kind: WORK.mainCheck, input, status: 'pending' })]);
-      await c.query(`INSERT INTO wf_work (machine, key, kind, work_key, input) VALUES ($1, $2, $3, 'main-check', $4)`,
-        [MACHINE, sessionKey(s.id), WORK.mainCheck, JSON.stringify(input)]);
-      await c.query('COMMIT');
-    } catch (err) { await c.query('ROLLBACK'); throw err; } finally { c.release(); }
-    work.results.set(WORK.mainCheck, { handedOff: true });
-    try { await settle(); } finally { work.results.delete(WORK.mainCheck); }
-    const asks = await checkAsked(a);
-    assert.equal(asks.length, before + 1, 'asked when the item reports (main-check\'s claim per commit makes a second ask a no-op)');
-    assert.deepEqual(asks.at(-1).payload, { appId: a.id, sha: SHA('a'), sessionId: s.id, prNumber: s.pr_number });
-    assert.equal((await instance(s)).data.followups['main-check'].status, 'done');
   });
 
   await t.test('a delivery is live only if what it deployed contains the merge (review finding 1)', async () => {
@@ -760,7 +704,7 @@ test('merge-followups machine against the full PostgreSQL schema', { timeout: 12
     const carrier = await proposal(a, { title: 'Carrier' });
     const carried = await proposal(a, { status: 'promoted', linked: [4] });
     const p4 = 800000 + carried.id;
-    work.results.set(WORK.find, (input) => ({ ids: input.sessionId === carrier.id ? [carried.id] : [] }));
+    work.results.set(WORK.find, (input) => ({ found: input.sessionId === carrier.id ? [{ id: carried.id, head: null }] : [] }));
     work.results.set(WORK.issues, (input) => (input.sessionId === carried.id
       ? { closed: [4], failed: [], targets: [{ issueId: p4, number: 4 }] }
       : { closed: [], skipped: [], stillOpen: [], waiting: false, targets: [] }));
@@ -897,8 +841,9 @@ test('merge-followups machine against the full PostgreSQL schema', { timeout: 12
   };
 
   // A merge recorded before every deploy was app-delivery's ran its own
-  // deploy (app.deliver work). An admin's retry of one that failed is
-  // refused for Retry delivery, which asks app-delivery.
+  // deploy (app.deliver work, none left in production). An admin's retry of
+  // that follow-up is refused as any kind with no handler is; Retry
+  // delivery asks app-delivery.
   await t.test('an admin\'s retry of a merge whose own deploy failed before asks app-delivery', async () => {
     const a = await app();
     const s = await proposal(a);
@@ -906,7 +851,7 @@ test('merge-followups machine against the full PostgreSQL schema', { timeout: 12
     await oldFollowup(s, { key: 'deliver', kind: OLD.deliver, state: 'deploy_failed' });
     const refused = await send(s, 'RetryFollowup', { workKey: 'deliver' }, { kind: 'admin' });
     await rt.drain();
-    assert.equal((await outcome(refused)).reason, 'use_retry_delivery');
+    assert.equal((await outcome(refused)).reason, 'not_retryable');
     await send(s, 'RetryDelivery', {}, { kind: 'admin' });
     await settle();
     const i = await instance(s);

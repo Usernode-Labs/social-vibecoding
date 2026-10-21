@@ -341,7 +341,6 @@ const FIRST_PASS_DELAY_MS = 60 * 1000;
 const BUSY_PASS_DELAY_MS = 2 * 1000;
 const IDLE_PASS_DELAY_MS = 30 * 1000;
 const REFRESH_INTERVAL_MS = 5 * 60 * 1000;
-const BUS_KIND = 'homeroom_bot';
 // One turn for a burst. People write a thought in two or three messages, or
 // a message and then a bare "@Homeroom bot" (PR #4584, 9 Oct 2026: a message
 // and its ping 2 seconds apart were answered twice, 23 seconds apart). A
@@ -9753,7 +9752,6 @@ module.exports = {
   KEY_BUILD_CONCURRENCY,
   KEY_SHADOW_BUILD_PLATFORM,
   refreshApps,
-  BUS_KIND,
   MAX_BATCH_SIZE,
   // Pure, exported for tests.
   classifyIssue,

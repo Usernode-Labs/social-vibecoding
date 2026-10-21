@@ -46,16 +46,6 @@ export function mergeFollowupsServices({ config, pool }: Deps): Record<string, W
       },
     },
 
-    // One release only: an older release queued the preview's teardown as
-    // work. It reports, and the transition that applies the result asks the
-    // preview machine to retire it (machine.ts); since this release the
-    // merge's transition asks it by message.
-    [WORK.teardown]: {
-      maxAttempts: 5,
-      backoffMs: backoff,
-      async run(): Promise<Json> { return { handedOff: true }; },
-    },
-
     // Its worker and Claude Code volume go, unless a shots run is still
     // under way in them (the shots machine's instance says): then it says
     // which, and the machine asks again later. Strict and fenced
@@ -95,12 +85,12 @@ export function mergeFollowupsServices({ config, pool }: Deps): Record<string, W
       backoffMs: backoff,
       async run({ input }): Promise<Json> {
         const gh = github();
-        if (!gh.isEnabled()) return { ids: [], found: [] };
+        if (!gh.isEnabled()) return { found: [] };
         const { rows } = await pool.query(INCLUDED_CANDIDATES_SQL, [input.appId, input.sessionId]);
-        if (!rows.length) return { ids: [], found: [] };
+        if (!rows.length) return { found: [] };
         const listed = await gh.listPullRequestCommitShas(input.owner, input.repo, input.prNumber);
         const found = includedIn(rows, listed?.shas);
-        return { ids: found.map((f) => f.id), found };
+        return { found };
       },
     },
 
@@ -131,7 +121,6 @@ export function mergeFollowupsServices({ config, pool }: Deps): Record<string, W
         }
         const out = await watcher.closeAfterMerge({
           owner: input.owner, repo: input.repo, prNumber: input.prNumber, linkedIssues: input.linkedIssues,
-          // An item an older release queued has no `look`: a first look.
           appId: input.appId, pool, look: input.look === 2 ? 2 : 1,
         });
         // A linked request it could neither see closed nor close at the
@@ -149,16 +138,6 @@ export function mergeFollowupsServices({ config, pool }: Deps): Record<string, W
       maxAttempts: 6,
       backoffMs: backoff,
       run: (ctx) => closeAndComment(ctx, 'pullRequest'),
-    },
-
-    // One release only: an older release queued the merge commit's unit
-    // suite as work. It reports, and the transition that applies the result
-    // asks the main-check machine (machine.ts); since this release the
-    // merge's transition asks it by message.
-    [WORK.mainCheck]: {
-      maxAttempts: 5,
-      backoffMs: backoff,
-      async run(): Promise<Json> { return { handedOff: true }; },
     },
 
     // The admin Journey's change_live record, at the merge's time.

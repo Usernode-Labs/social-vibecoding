@@ -13,15 +13,10 @@ export interface CampaignRow {
   threadAppId: number | null;
 }
 
-// A campaign app row as it stands (adoption of a campaign an older release
-// started), or a target app (a campaign starting fresh).
+// An app the campaign reaches, as it starts.
 export interface AppRow {
   appId: number;
   slug: string;
-  state: string | null;
-  sessionId: number | null;
-  prNumber: number | null;
-  error: string | null;
 }
 
 // A proposal the campaign asked to go up for a vote: where it stands.
@@ -88,29 +83,17 @@ async function readCampaign(tx: Tx, id: number): Promise<CampaignRow | null> {
   };
 }
 
-// The rows an older release seeded, in their order; none: the apps the
-// campaign reaches, fixed now (Q2): every live app with a repository, but the
-// platform itself and an app moderation suspended, within the slug filter.
+// The apps the campaign reaches, fixed as it starts (Q2): every live app with
+// a repository, but the platform itself and an app moderation suspended,
+// within the slug filter.
 async function readApps(tx: Tx, c: CampaignRow): Promise<AppRow[]> {
-  // A campaign that ended before the machine took it keeps the rows it has
-  // (none, if it reached no app): it is not given today's fleet.
-  const { rows: existing } = await tx.query(
-    `SELECT mca.app_id, a.slug, mca.state, mca.session_id, mca.error, cs.pr_number
-       FROM maintenance_campaign_apps mca
-       JOIN apps a ON a.id = mca.app_id
-       LEFT JOIN chat_sessions cs ON cs.id = mca.session_id
-      WHERE mca.campaign_id = $1 ORDER BY mca.id`, [c.id]);
-  if (existing.length || c.status !== 'running') {
-    return existing.map((r: any) => ({ appId: r.app_id, slug: String(r.slug), state: r.state ?? null,
-      sessionId: r.session_id ?? null, prNumber: r.pr_number ?? null, error: r.error ?? null }));
-  }
   const { rows } = await tx.query(
     `SELECT a.id, a.slug FROM apps a
       WHERE a.repo_url IS NOT NULL AND a.self_hosted IS NOT TRUE AND a.status = 'running'
         AND a.moderation_suspended_at IS NULL
         AND ($1::text[] IS NULL OR a.slug = ANY($1::text[]))
       ORDER BY a.id`, [c.targetFilter]);
-  return rows.map((r: any) => ({ appId: r.id, slug: String(r.slug), state: null, sessionId: null, prNumber: null, error: null }));
+  return rows.map((r: any) => ({ appId: r.id, slug: String(r.slug) }));
 }
 
 async function readGreen(tx: Tx, campaignId: number) {

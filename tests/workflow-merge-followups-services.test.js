@@ -80,12 +80,7 @@ test('a merge\'s first look that leaves a linked request to GitHub reports it wa
   assert.deepEqual(await run({ ...base, linkedIssues: [4], closeOnly: false, look: 1 }), watch.result,
     'the machine asks for the second look (machine.ts)');
   assert.equal(watch.asked[0].look, 1);
-  // An item queued before the looks (no look in its input) is a first
-  // look: it has not waited for GitHub's own `Closes #N` yet, so the platform
-  // does not close the requests at once (review, 2026-10-17).
-  await run({ ...base, linkedIssues: [4], closeOnly: false });
-  assert.equal(watch.asked[1].look, 1);
-  assert.deepEqual([watch.asked[1].owner, watch.asked[1].repo, watch.asked[1].prNumber, watch.asked[1].appId, watch.asked[1].pool],
+  assert.deepEqual([watch.asked[0].owner, watch.asked[0].repo, watch.asked[0].prNumber, watch.asked[0].appId, watch.asked[0].pool],
     ['acme', 'shop', 8, 2, pool]);
 });
 
@@ -168,13 +163,6 @@ test('worker.retire: a removal the runtime refuses fails the work, to be retried
   } finally { removal.refuse = null; }
 });
 
-test('a preview.teardown item an older release queued only reports: the preview machine retires the preview', async () => {
-  stub('../src/services/staging', { async teardownStaging() { throw new Error('the preview is the preview machine\'s'); } });
-  const { asked, handlers: h } = withRows(() => { throw new Error('nothing is read'); });
-  assert.deepEqual(await call(h, WORK.teardown, { sessionId: 15 }), { handedOff: true });
-  assert.equal(asked.length, 0);
-});
-
 test('included.find names each carried change with the head that matched', async () => {
   const candidates = [
     { id: 3, source: 'native', reviewed_head_sha: 'c'.repeat(40), imported_pr_head_sha: null },
@@ -187,7 +175,7 @@ test('included.find names each carried change with the head that matched', async
   // the search names every change whose head matched.
   const { handlers: h } = withRows(() => candidates);
   const out = await call(h, WORK.find, { sessionId: 1, appId: 2, prNumber: 8, owner: 'acme', repo: 'shop' });
-  assert.deepEqual(out, { ids: [3, 4], found: [{ id: 3, head: 'c'.repeat(40) }, { id: 4, head: 'd'.repeat(40) }] });
+  assert.deepEqual(out, { found: [{ id: 3, head: 'c'.repeat(40) }, { id: 4, head: 'd'.repeat(40) }] });
 });
 
 test('the journey runs strict, so a failure is retried', async () => {
@@ -196,17 +184,11 @@ test('the journey runs strict, so a failure is retried', async () => {
   assert.equal(seen.journey.strict, true);
 });
 
-test('a main.check item an older release queued only reports: its transition asks the main-check machine', async () => {
-  const { asked, handlers: h } = withRows(() => []);
-  assert.deepEqual(await call(h, WORK.mainCheck, { appId: 2, sessionId: 5, prNumber: 8, mergeSha: 'a'.repeat(40) }), { handedOff: true });
-  assert.deepEqual(asked, [], 'it reads and runs nothing');
-});
-
 test('every work kind has its handler, and none is left for the kinds older releases queued', () => {
   // A retry queues only a kind with a handler (machine.ts RETRYABLE, read
   // off WORK): the two lists are one.
   assert.deepEqual(Object.keys(handlers).sort(), Object.values(WORK).sort());
-  for (const old of ['app.deliver', 'bot.requestMerged', 'bot.dmMerged', 'bot.announceLive']) {
+  for (const old of ['app.deliver', 'bot.requestMerged', 'bot.dmMerged', 'bot.announceLive', 'main.check', 'preview.teardown']) {
     assert.equal(handlers[old], undefined, `${old} has no handler`);
   }
 });

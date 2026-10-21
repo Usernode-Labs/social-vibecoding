@@ -777,12 +777,12 @@ ALTER TABLE apps ADD COLUMN IF NOT EXISTS last_failure JSONB;
 -- machine's (src/workflow/app-creation/): `creating_owner = 'workflow'`
 -- says so, and an insert that names it starts its making (the
 -- apps_wf_enrol_creation trigger). Before it, an owner token of the process
--- driving the row with its heartbeat (`creating_heartbeat_at`) and its
--- redrives (`creating_redrives`): read now only to wait for a row an older
--- build is still making during a rollout. To drop once no older build runs.
+-- driving the row with its heartbeat (`creating_heartbeat_at`): read now
+-- only to wait for a row an older build is still making during a rollout.
+-- To drop once no older build runs. Its redrives, read by nothing, are gone.
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS creating_owner TEXT;
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS creating_heartbeat_at TIMESTAMPTZ;
-ALTER TABLE apps ADD COLUMN IF NOT EXISTS creating_redrives INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE apps DROP COLUMN IF EXISTS creating_redrives;
 -- Retired: a production redeploy the old governance paths owed an app (the
 -- deleted services/owed-redeploy.js). Every deploy is app-delivery's request.
 ALTER TABLE apps DROP COLUMN IF EXISTS redeploy_owed_at;
@@ -2302,14 +2302,13 @@ CREATE TABLE IF NOT EXISTS maintenance_campaign_apps (
   updated_at  TIMESTAMPTZ DEFAULT NOW(),
   UNIQUE(campaign_id, app_id)
 );
--- The lease an older release's driver held on a campaign (its runner and
--- until when) and the runner that claimed each app row. Read only during a
--- rollout: the campaign machine adopts a campaign once no older driver
--- holds it and fences it off ('workflow', 'infinity'). Dropped once no
--- release older than the campaign machine can run.
-ALTER TABLE maintenance_campaigns ADD COLUMN IF NOT EXISTS runner_id TEXT;
-ALTER TABLE maintenance_campaigns ADD COLUMN IF NOT EXISTS lease_until TIMESTAMPTZ;
-ALTER TABLE maintenance_campaign_apps ADD COLUMN IF NOT EXISTS runner_id TEXT;
+-- The lease a driver from before the campaign machine held (its runner and
+-- until when, and the runner of each app row): read and written by nothing.
+-- The guard triggers below stop naming them first.
+DROP TRIGGER IF EXISTS maintenance_campaigns_wf_owned ON maintenance_campaigns;
+DROP TRIGGER IF EXISTS maintenance_campaign_apps_wf_owned ON maintenance_campaign_apps;
+ALTER TABLE maintenance_campaigns DROP COLUMN IF EXISTS runner_id, DROP COLUMN IF EXISTS lease_until;
+ALTER TABLE maintenance_campaign_apps DROP COLUMN IF EXISTS runner_id;
 
 -- PR votes
 CREATE TABLE IF NOT EXISTS pr_votes (
@@ -9894,19 +9893,14 @@ ALTER TABLE check_runs ADD COLUMN IF NOT EXISTS admitted_at TIMESTAMPTZ DEFAULT 
 CREATE INDEX IF NOT EXISTS idx_check_runs_app ON check_runs (app_id) WHERE app_id IS NOT NULL;
 
 -- Renamed from visual_evidence_* when visual evidence became before & after
--- shots. Guarded so boot is idempotent either way: an existing deployment
--- renames in place and keeps its rows, a fresh one falls straight through
--- to the CREATEs below.
+-- shots (#3380, 2026-09-29). Guarded so boot is idempotent either way: an
+-- existing deployment renames in place and keeps its rows, a fresh one falls
+-- straight through to the CREATEs below.
 --
--- The previous release's pods keep serving through the rolling update after
--- this runs, and they still name the old tables and columns. So a renamed
--- deployment also keeps the old names answering for them: a view under each
--- old table name, and a legacy copy of each chat_sessions column that
--- chat_sessions_shots_legacy_sync() keeps equal to the new one, in both
--- directions. Nothing in this release reads either. Once no deployment runs
--- an older release, drop the three views, the trigger and its function, and
--- the four chat_sessions.visual_evidence_* columns. A rollback past this
--- release needs the views dropped and the renames reversed by hand first.
+-- What kept the old names answering for the release before the rename (a
+-- view under each old table name, and a legacy copy of each chat_sessions
+-- column a trigger kept equal) is dropped below: no release that names them
+-- can run.
 DO $$
 DECLARE
   pair TEXT[];
@@ -9924,7 +9918,6 @@ BEGIN
                 WHERE table_schema = current_schema() AND table_name = pair[2])
     THEN
       EXECUTE format('ALTER TABLE %I RENAME TO %I', pair[1], pair[2]);
-      EXECUTE format('CREATE VIEW %I AS SELECT * FROM %I', pair[1], pair[2]);
     END IF;
   END LOOP;
   -- Constraint and index names carry the old table names too.
@@ -9964,56 +9957,17 @@ BEGIN
     ALTER TABLE chat_sessions RENAME COLUMN visual_evidence_run_id TO shots_run_id;
     ALTER TABLE chat_sessions RENAME COLUMN visual_evidence_detail TO shots_detail;
     ALTER TABLE chat_sessions RENAME COLUMN visual_evidence_updated_at TO shots_updated_at;
-    ALTER TABLE chat_sessions
-      ADD COLUMN visual_evidence_state VARCHAR(24),
-      ADD COLUMN visual_evidence_run_id VARCHAR(32),
-      ADD COLUMN visual_evidence_detail JSONB,
-      ADD COLUMN visual_evidence_updated_at TIMESTAMPTZ;
-    UPDATE chat_sessions
-       SET visual_evidence_state = shots_state, visual_evidence_run_id = shots_run_id,
-           visual_evidence_detail = shots_detail, visual_evidence_updated_at = shots_updated_at
-     WHERE shots_state IS NOT NULL OR shots_run_id IS NOT NULL
-        OR shots_detail IS NOT NULL OR shots_updated_at IS NOT NULL;
-  END IF;
-  IF EXISTS (SELECT 1 FROM information_schema.columns
-              WHERE table_schema = current_schema() AND table_name = 'chat_sessions'
-                AND column_name = 'visual_evidence_state')
-  THEN
-    CREATE OR REPLACE FUNCTION chat_sessions_shots_legacy_sync() RETURNS trigger AS $fn$
-    BEGIN
-      IF TG_OP = 'INSERT' THEN
-        NEW.shots_state := COALESCE(NEW.shots_state, NEW.visual_evidence_state);
-        NEW.shots_run_id := COALESCE(NEW.shots_run_id, NEW.visual_evidence_run_id);
-        NEW.shots_detail := COALESCE(NEW.shots_detail, NEW.visual_evidence_detail);
-        NEW.shots_updated_at := COALESCE(NEW.shots_updated_at, NEW.visual_evidence_updated_at);
-      ELSE
-        IF NEW.shots_state IS NOT DISTINCT FROM OLD.shots_state THEN
-          NEW.shots_state := NEW.visual_evidence_state;
-        END IF;
-        IF NEW.shots_run_id IS NOT DISTINCT FROM OLD.shots_run_id THEN
-          NEW.shots_run_id := NEW.visual_evidence_run_id;
-        END IF;
-        IF NEW.shots_detail IS NOT DISTINCT FROM OLD.shots_detail THEN
-          NEW.shots_detail := NEW.visual_evidence_detail;
-        END IF;
-        IF NEW.shots_updated_at IS NOT DISTINCT FROM OLD.shots_updated_at THEN
-          NEW.shots_updated_at := NEW.visual_evidence_updated_at;
-        END IF;
-      END IF;
-      NEW.visual_evidence_state := NEW.shots_state;
-      NEW.visual_evidence_run_id := NEW.shots_run_id;
-      NEW.visual_evidence_detail := NEW.shots_detail;
-      NEW.visual_evidence_updated_at := NEW.shots_updated_at;
-      RETURN NEW;
-    END $fn$ LANGUAGE plpgsql;
-    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'chat_sessions_shots_legacy_sync'
-                     AND tgrelid = 'chat_sessions'::regclass AND NOT tgisinternal) THEN
-      CREATE TRIGGER chat_sessions_shots_legacy_sync
-        BEFORE INSERT OR UPDATE ON chat_sessions
-        FOR EACH ROW EXECUTE FUNCTION chat_sessions_shots_legacy_sync();
-    END IF;
   END IF;
 END $$;
+
+DROP TRIGGER IF EXISTS chat_sessions_shots_legacy_sync ON chat_sessions;
+DROP FUNCTION IF EXISTS chat_sessions_shots_legacy_sync();
+DROP VIEW IF EXISTS visual_evidence_runs, visual_evidence_artifacts, visual_evidence_diagnostic_artifacts;
+ALTER TABLE chat_sessions
+  DROP COLUMN IF EXISTS visual_evidence_state,
+  DROP COLUMN IF EXISTS visual_evidence_run_id,
+  DROP COLUMN IF EXISTS visual_evidence_detail,
+  DROP COLUMN IF EXISTS visual_evidence_updated_at;
 
 -- #2380: agent-authored, revision-scoped before & after shots. The hot proposal
 -- reads need only the current state and a bounded public summary; executable
@@ -14541,23 +14495,20 @@ CREATE TRIGGER apps_wf_enrol_creation
 
 -- campaign (src/workflow/campaign/) owns a fleet maintenance campaign once it
 -- holds it: the campaign's status, when it ended, and each app's record (its
--- state and error), projected from the instance; and the lease columns an
--- older release's driver used, written by nothing now and dropped in a later
--- release. INSERTs are not guarded (the
+-- state and error), projected from the instance. INSERTs are not guarded (the
 -- governance apply inserts the campaign, the machine its app rows), nor are
 -- the columns a foreign key empties (a deleted proposal, issue or author).
 DROP TRIGGER IF EXISTS maintenance_campaigns_wf_owned ON maintenance_campaigns;
 CREATE TRIGGER maintenance_campaigns_wf_owned
   BEFORE UPDATE ON maintenance_campaigns
   FOR EACH ROW
-  EXECUTE FUNCTION wf_guard_owned_columns('@enrolled=campaign/campaign:',
-    'status', 'completed_at', 'runner_id', 'lease_until');
+  EXECUTE FUNCTION wf_guard_owned_columns('@enrolled=campaign/campaign:', 'status', 'completed_at');
 DROP TRIGGER IF EXISTS maintenance_campaign_apps_wf_owned ON maintenance_campaign_apps;
 CREATE TRIGGER maintenance_campaign_apps_wf_owned
   BEFORE UPDATE ON maintenance_campaign_apps
   FOR EACH ROW
   WHEN (wf_holds('campaign', 'campaign:' || OLD.campaign_id))
-  EXECUTE FUNCTION wf_guard_owned_columns('state', 'error', 'runner_id');
+  EXECUTE FUNCTION wf_guard_owned_columns('state', 'error');
 
 CREATE OR REPLACE FUNCTION wf_guard_shot_runs() RETURNS TRIGGER AS $$
 BEGIN
@@ -15644,8 +15595,11 @@ $$;
 -- whose key is its own.
 --
 --   status     queued    to build: a new key, or Rebuild in Admin
---              building  `owner` is building it, alive while its
---                        heartbeat_at is fresh
+--              building  the starter-images clock's target is building it
+--                        (`owner` and `heartbeat_at`: the lease a builder from
+--                        before the clock held, written by nothing now but
+--                        the release before roadmap item 3.2; drop them once
+--                        no process of that release, 22ac79e7a, is live)
 --              ready     image_ref is the image
 --              failed    the last attempt failed (`error`); retried a few
 --                        times on its own (attempts), then left for Rebuild
