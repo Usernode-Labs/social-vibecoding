@@ -6,8 +6,8 @@
 //
 // The signed-out pages note it in a short-lived first-party cookie as a
 // sign-in sheet opens (frontend/src/features/auth/sign-up-from.ts, which
-// says why a cookie): the hero's button, the bar's Sign in or Sign up, the
-// "Want to join in?" card, or what the visitor tried on a project's page. Only a
+// says why a cookie): the hero's button, the bar's Sign in or Sign up, or
+// what the visitor tried on a project's page. Only a
 // name from this list is recorded; anything else, or no cookie, records no
 // `from`, and the sign-up is recorded as it always was.
 //
@@ -21,7 +21,6 @@ const SIGN_UP_FROM = Object.freeze([
   'hero',
   'header_sign_in',
   'header_sign_up',
-  'join_card',
   'join',
   'vote',
   'ask',

@@ -26,22 +26,22 @@
  * a page to read behind every card is what makes a grid worth having again.
  *
  * Above the grid: a search, the kinds of app the directory has, a row of
- * what an admin featured, and a sort. Partway down, one card says what an
- * account adds ("Want to join in?"), with a way to say not now. Ways in are
- * asked for where somebody wants to do something (the project page's Join,
- * Vote, Ask), never as a wall.
+ * what an admin featured, and a sort. What an account adds is the hero's to
+ * say (features/auth/story.tsx), with its one button: the "Want to join
+ * in?" card that said it again partway down is gone (Evan, 22 Oct 2026).
+ * Ways in are asked for where somebody wants to do something (the project
+ * page's Join, Vote, Ask), never as a wall.
  */
 
 import { type AnchorHTMLAttributes, type MouseEvent, type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
 
 import { Chip, ChipRail } from '@/components/ui/chip';
 import { GroupedList } from '@/components/ui/grouped-list';
-import { BallotIcon, ChevronRightIcon, LightBulbIcon, PlusIcon, SearchIcon } from '@/components/ui/icons';
+import { ChevronRightIcon, SearchIcon } from '@/components/ui/icons';
 import { cn } from '@/lib/utils';
 
 import { useMessages } from '../../lib/i18n/react';
 import { useCommunityColor } from '../../lib/community-color';
-import { noteSignUpFrom } from '../auth/sign-up-from';
 import { agoStamp } from '../../lib/timestamp';
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import {
@@ -384,53 +384,6 @@ function Featured({ app, primaryClass, inside, onOpenInside }: {
   );
 }
 
-function JoinIn({ onContinue, onDismiss, primaryClass, waitlist }: {
-  onContinue: () => void;
-  onDismiss: () => void;
-  primaryClass: string;
-  waitlist: boolean;
-}) {
-  const t = useMessages('auth');
-  const points: { icon: ReactNode; title: string; body: string }[] = [
-    { icon: <BallotIcon className="h-[18px] w-[18px]" />, title: t('auth:guest.join.vote.title'), body: t('auth:guest.join.vote.body') },
-    { icon: <LightBulbIcon className="h-[18px] w-[18px]" />, title: t('auth:guest.join.ask.title'), body: t('auth:guest.join.ask.body') },
-    { icon: <PlusIcon className="h-[18px] w-[18px]" />, title: t('auth:guest.join.make.title'), body: t('auth:guest.join.make.body') },
-  ];
-  return (
-    <aside data-guest-join="" className="flex flex-col gap-3.5 rounded-[20px] bg-white p-[18px] shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900">
-      <h2 className="text-[17px] font-bold text-zinc-950 dark:text-white">{t('auth:guest.join.title')}</h2>
-      <ul className="flex flex-wrap gap-x-6 gap-y-3.5">
-        {points.map((p) => (
-          <li key={p.title} className="flex min-w-[240px] flex-1 items-start gap-3">
-            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-violet-50 text-violet-700 dark:bg-violet-950 dark:text-violet-300" aria-hidden="true">
-              {p.icon}
-            </span>
-            <span>
-              <span className="block text-[15px] font-[650] text-zinc-900 dark:text-zinc-100">{p.title}</span>
-              <span className="block text-[13px] leading-[18px] text-zinc-500 dark:text-zinc-400">{p.body}</span>
-            </span>
-          </li>
-        ))}
-      </ul>
-      {waitlist ? (
-        <p className="text-[13px] leading-[18px] text-zinc-500 dark:text-zinc-400">{t('auth:guest.join.waitlist')}</p>
-      ) : null}
-      <div className="flex items-center gap-2">
-        <button type="button" data-guest-join-continue="" className={cn(primaryClass, 'h-11 w-auto px-5 text-[15px]')} onClick={() => { noteSignUpFrom('join_card'); onContinue(); }}>
-          {t('auth:guest.join.signUp')}
-        </button>
-        <button
-          type="button"
-          className="h-11 rounded-full px-4 text-[15px] font-semibold text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200"
-          onClick={onDismiss}
-        >
-          {t('auth:guest.join.notNow')}
-        </button>
-      </div>
-    </aside>
-  );
-}
-
 function SortControl({ sort, onSort }: { sort: GuestSort; onSort: (s: GuestSort) => void }) {
   const t = useMessages('auth');
   const label: Record<GuestSort, string> = {
@@ -478,7 +431,7 @@ function CardGrid({ apps, sort, tryable, inside, onOpenInside }: {
   );
 }
 
-export function GuestDiscover({ apps, failed, hero, primaryClass, waitlist, onContinue, onOpenInside, signedIn = false }: {
+export function GuestDiscover({ apps, failed, hero, primaryClass, onOpenInside, signedIn = false }: {
   /** The public directory, or null while it loads. */
   apps: GuestApp[] | null;
   /** The directory could not be read. */
@@ -486,10 +439,6 @@ export function GuestDiscover({ apps, failed, hero, primaryClass, waitlist, onCo
   /** The story's short version, above everything (features/auth/story.tsx). */
   hero: ReactNode;
   primaryClass: string;
-  /** Say that new accounts start on the waitlist. */
-  waitlist: boolean;
-  /** The sign-in sheet, as the story's Continue opens it. */
-  onContinue: () => void;
   /** Open an app in the landing's own viewer. */
   onOpenInside: (app: GuestApp) => void;
   /**
@@ -503,8 +452,6 @@ export function GuestDiscover({ apps, failed, hero, primaryClass, waitlist, onCo
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState<string | null>(null);
   const [sort, setSort] = useState<GuestSort>('trending');
-  const [joinDismissed, setJoinDismissed] = useState(false);
-
   const [rowsShown, setRowsShown] = useState(ROWS_STEP);
 
   const all = apps || [];
@@ -518,7 +465,6 @@ export function GuestDiscover({ apps, failed, hero, primaryClass, waitlist, onCo
     return sortApps(filterApps(all, query, category), sort).filter((a) => !above.has(a.slug));
   }, [all, query, category, sort, featured]);
   useEffect(() => { setRowsShown(ROWS_STEP); }, [query, category, sort]);
-  const showJoin = browsing && !signedIn && !joinDismissed && !!apps && list.length > 0;
   const wide = typeof window !== 'undefined' && window.matchMedia?.('(min-width: 768px)').matches;
   const top = list.slice(0, wide ? TOP_CARDS_WIDE : TOP_CARDS);
   const more = list.slice(top.length);
@@ -577,14 +523,6 @@ export function GuestDiscover({ apps, failed, hero, primaryClass, waitlist, onCo
           ) : null}
           {failed ? <p className="py-6 text-center text-[15px] text-zinc-500 dark:text-zinc-400">{t('auth:guest.loadFailed')}</p> : null}
           <CardGrid apps={top} sort={sort} tryable={tryable} inside={signedIn} onOpenInside={onOpenInside} />
-          {showJoin ? (
-            <JoinIn
-              primaryClass={primaryClass}
-              waitlist={waitlist}
-              onContinue={onContinue}
-              onDismiss={() => setJoinDismissed(true)}
-            />
-          ) : null}
           {rows.length ? (
             <div data-guest-more="" className="flex flex-col gap-2.5">
               <h2 className={SMALL_CAPS_LABEL}>{t('auth:guest.more')}</h2>
