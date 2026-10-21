@@ -435,7 +435,7 @@ export function FirstLookView({ slug, name, src, stage = null, line = null, acti
       )}
       <div className="dev-ws-first-look-body">
         <p className="dev-ws-first-look-name">{name}</p>
-        {line ? <BuildLine state={line.state} words={line.words} note={line.note} className="self-stretch" /> : null}
+        {line ? <BuildLine state={line.state} words={line.words} note={line.note} stacked className="self-stretch" /> : null}
         <p className="dev-ws-strip-text">{t('project:hub.firstLook.text')}</p>
         {action}
         <Button

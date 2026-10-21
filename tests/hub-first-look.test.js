@@ -59,8 +59,8 @@ test('the card: the picture small and phone-shaped, the name, the build line, th
     'the First version card, one of the hub\'s strip cards');
   assert.match(html, new RegExp(`<img src="${SRC.replace(/[?.]/g, '\\$&')}" alt="The first look at Club Votes&#x27;s main screen" width="64" height="138" draggable="false" class="dev-ws-first-look-shot"/>`),
     'a fixed phone-shaped box, so nothing moves as it loads');
-  assert.match(html, /<div class="dev-ws-first-look-body"><p class="dev-ws-first-look-name">Club Votes<\/p><span role="status" data-build-line="building"[^>]*>.*<span class="truncate">Working out the details · 2 min so far<\/span><\/span><p class="dev-ws-strip-text">/,
-    'the name, then the line the card draws without the picture');
+  assert.match(html, /<div class="dev-ws-first-look-body"><p class="dev-ws-first-look-name">Club Votes<\/p><span role="status" data-build-line="building"[^>]*>.*<span class="truncate">Working out the details<\/span><span data-build-line-note=""[^>]*>2 min so far<\/span><\/span><p class="dev-ws-strip-text">/,
+    'the name, then the line the card draws without the picture, its time on a line of its own');
   assert.match(html, /animate-spin/);
   assert.match(html, /<p class="dev-ws-strip-text">Drawn from your answers\. We&#x27;ll tell you when the working app is live\.<\/p>/);
   assert.match(html, /<button[^>]*data-ws-first-look-watch=""[^>]*>Watch Homeroom bot build it<\/button><\/div><\/section>$/);
