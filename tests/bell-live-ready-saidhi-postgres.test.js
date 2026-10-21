@@ -346,8 +346,12 @@ test('the bell after a change is decided, against the full PostgreSQL schema', {
     for (const id of ids) {
       assert.notEqual((await exact(sam.id, id)).readAt, null, `${(await row(id)).kind} reads as read in the exact lookup`);
     }
-    assert.ok((await notifications.hydrateNotification(pool, ids[0])).notification.readAt,
-      'the live push read serializes a truthy readAt');
+    // 21 Oct 2026: the live push reads what the bell lists, so a row off the
+    // list is not pushed at all (it was drawn, then dropped by the next read).
+    for (const id of [...ids, ready]) {
+      assert.equal(await notifications.hydrateNotification(pool, id), null,
+        `${(await row(id)).kind} about a merged change is not pushed live`);
+    }
     const { rows: stored } = await pool.query(
       'SELECT read_at FROM notifications WHERE id = ANY($1::int[])', [ids],
     );
