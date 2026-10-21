@@ -2857,9 +2857,9 @@ test('#4457, #4486, #4718: a change up for a vote keeps its vote on its own line
   assert.match(html, /<span class="dev-ws-tag" data-tone="plain"><svg[^>]*>.*?<\/svg>Preview ready<\/span><\/span><span class="dev-ws-wrow-votes">/, 'a tag without short words draws its label, and the tags line ends before the vote');
   assert.match(CSS, /\.dev-ws-wrow-votes \{ margin-top: 6px; display: flex; align-items: center; \}/);
   assert.match(CSS, /\.dev-ws-wvote \{\s*position: relative; z-index: 1; margin-left: auto;/);
-  const short = { ...brief, tags: [{ label: 'Taking before & after shots', short: 'Taking shots', tone: 'run' }, { label: 'Preview ready', short: 'Preview', tone: 'plain', glyph: 'eye' }] };
+  const short = { ...brief, tags: [{ label: 'Taking before & after screenshots', short: 'Taking screenshots', tone: 'run' }, { label: 'Preview ready', short: 'Preview', tone: 'plain', glyph: 'eye' }] };
   const shortHtml = renderToHtml(createElement(WorkRow, { row: { ...row, brief: short }, slug: 'demo-app' }));
-  assert.match(shortHtml, /<span class="dev-ws-tag" data-tone="run" title="Taking before &amp; after shots"><span class="dc-status-spinner-arc" aria-hidden="true"><\/span><span aria-hidden="true">Taking shots<\/span><span class="sr-only">Taking before &amp; after shots<\/span><\/span>/);
+  assert.match(shortHtml, /<span class="dev-ws-tag" data-tone="run" title="Taking before &amp; after screenshots"><span class="dc-status-spinner-arc" aria-hidden="true"><\/span><span aria-hidden="true">Taking screenshots<\/span><span class="sr-only">Taking before &amp; after screenshots<\/span><\/span>/);
   assert.match(shortHtml, /title="Preview ready">.*<span aria-hidden="true">Preview<\/span><span class="sr-only">Preview ready<\/span><\/span>/);
   const { voteSpecs } = loadTsx('frontend/src/features/dev-board/card/fold.tsx');
   assert.ok(voteSpecs(row.card), 'the fixture can vote');
@@ -2879,7 +2879,7 @@ test('#4716: Your work is This week\'s one-line row: the title, its pill and Vot
   const row = [...v.votes.rows, ...(v.since ? v.since.rows : [])].find((r) => r.t === 'card' && r.card.attrs['data-proposal-row']);
   assert.ok(row, 'a proposal row');
   const brief = { kind: 'change', noun: 'change', n: 34, by: 'bob', mine: false, category: '', replies: 0, linked: [], closed: [], stage: 'vote', at: 0,
-    ago: '4m ago', tags: [{ label: 'Taking before & after shots', short: 'Taking shots', tone: 'run' }], vote: { yes: 0, need: 1, ask: true } };
+    ago: '4m ago', tags: [{ label: 'Taking before & after screenshots', short: 'Taking screenshots', tone: 'run' }], vote: { yes: 0, need: 1, ask: true } };
   const html = renderToHtml(createElement(WorkRow, { row: { ...row, brief }, slug: 'demo-app', variant: 'line' }));
   // The first line: the small glyph (This week's), the title, then the
   // card's own status pill and its Vote at the line's end, the pill first.
@@ -2927,7 +2927,7 @@ test('#4716: Your work\'s tags line names the bot once and you never, drops the 
     { label: 'Conflicts with main · 3 files', tone: 'warn' },
     { label: 'Checks failing · 1', tone: 'bad' },
     { label: 'Preview ready to try', short: 'Preview', tone: 'plain', glyph: 'eye' },
-    { label: 'Taking shots', tone: 'run' },
+    { label: 'Taking screenshots', tone: 'run' },
   ];
   const html = renderToHtml(createElement(WorkRow, { row: { ...row, brief: { ...base, tags } }, slug: 'demo-app', variant: 'line' }));
   const second = html.slice(html.indexOf('<span class="dev-ws-wrow-status">'));
@@ -2937,7 +2937,7 @@ test('#4716: Your work\'s tags line names the bot once and you never, drops the 
   // The tags by how much they matter, by tone: what is wrong, what needs
   // attention, what is running; then who made it.
   assert.deepEqual([...second.matchAll(/<span class="dev-ws-tag" data-tone="(\w+)"/g)].map((m) => m[1]), ['bad', 'warn', 'run', 'plain']);
-  assert.match(second, new RegExp(`Taking shots</span><span class="dev-ws-tag" data-tone="plain"><svg[^>]*>[\\s\\S]*?</svg>${botName}</span>`),
+  assert.match(second, new RegExp(`Taking screenshots</span><span class="dev-ws-tag" data-tone="plain"><svg[^>]*>[\\s\\S]*?</svg>${botName}</span>`),
     'the bot\'s tag after the status tags');
   assert.equal(html.split(botName).length - 1, 1, 'the bot is named once');
   assert.ok(!html.includes('Preview'), 'no preview tag');

@@ -3070,6 +3070,21 @@
     },
     {
       "source": "src/routes/apps.js",
+      "method": "DELETE",
+      "path": "/api/me/app-allowance/request",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.delete.me.app.allowance.request.8fecafc3",
+      "domain": "apps",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#apps"
+    },
+    {
+      "source": "src/routes/apps.js",
       "method": "POST",
       "path": "/api/apps/suggest-description",
       "expression": null,

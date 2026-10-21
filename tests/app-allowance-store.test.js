@@ -75,3 +75,55 @@ test('network failures retain the last count and expose an actionable error', as
   await assert.rejects(model.requestMoreApps(async () => response({ error: 'Please retry later' }, false)), /Please retry later/);
   assert.equal(model.appAllowanceStore.get().requestedAt, null);
 });
+
+// #5737: taking back a pending request so it can be sent again properly.
+test('undoing a pending request clears it for every subscriber', async () => {
+  const model = fresh();
+  const calls = [];
+  const fetcher = async (url, init) => {
+    calls.push([url, init?.method]);
+    return model.appAllowanceStore.get().requestedAt
+      ? response(result(2, 2))
+      : response(result(2, 2, '2026-09-07T12:00:00Z'));
+  };
+  await model.requestMoreApps(fetcher);
+  assert.ok(model.appAllowanceStore.get().requestedAt);
+  await model.cancelAppAllowanceRequest(fetcher);
+  assert.deepEqual(calls, [
+    ['/api/me/app-allowance/request', 'POST'],
+    ['/api/me/app-allowance/request', 'DELETE'],
+  ]);
+  assert.equal(model.appAllowanceStore.get().requestedAt, null);
+});
+
+test('a read started before the undo cannot restore the pending request', async () => {
+  const model = fresh();
+  model.seedAppAllowance({
+    appCreationQuota: result(2, 2).quota,
+    appQuotaRequestedAt: '2026-09-07T12:00:00Z',
+  });
+  let resolve;
+  const read = model.refreshAppAllowance(() => new Promise((r) => { resolve = r; }));
+  await model.cancelAppAllowanceRequest(async () => response(result(2, 2)));
+  resolve(response(result(2, 2, '2026-09-07T12:00:00Z')));
+  await read;
+  assert.equal(model.appAllowanceStore.get().requestedAt, null);
+});
+
+test('a failed undo throws the server\'s message and keeps the request pending', async () => {
+  const model = fresh();
+  model.seedAppAllowance({
+    appCreationQuota: result(2, 2).quota,
+    appQuotaRequestedAt: '2026-09-07T12:00:00Z',
+  });
+  await assert.rejects(
+    model.cancelAppAllowanceRequest(async () => response({ error: 'Please retry later' }, false)),
+    /Please retry later/,
+  );
+  assert.equal(model.appAllowanceStore.get().requestedAt, '2026-09-07T12:00:00Z');
+  await assert.rejects(
+    model.cancelAppAllowanceRequest(async () => response({}, false)),
+    /Could not undo your request\./,
+  );
+  assert.equal(model.appAllowanceStore.get().requestedAt, '2026-09-07T12:00:00Z');
+});

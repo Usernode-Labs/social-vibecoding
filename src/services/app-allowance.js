@@ -107,6 +107,23 @@ async function requestMore(pool, user, opts = {}) {
   return read(pool, user, opts);
 }
 
+// The person takes their own pending request back (#5737): someone who pressed
+// "Request more" before filling the form in had no way to ask again with the
+// right details. It only clears THEIR row, inserts no notification (the
+// admins' notice stays and simply no longer has a request behind it), and
+// leaves a grant or decline racing it to the `IS NOT NULL` guard, so exactly
+// one of them wins. Nothing pending is not an error: it answers the current
+// allowance, which is what a second tab should see anyway.
+async function cancelOwn(pool, user, opts = {}) {
+  const result = await pool.query(
+    `UPDATE users SET app_quota_requested_at = NULL
+      WHERE id = $1 AND app_quota_requested_at IS NOT NULL RETURNING id`,
+    [user.id],
+  );
+  if (result.rows.length) await publish(pool, [], [user.id]);
+  return read(pool, user, opts);
+}
+
 async function setQuota(pool, { userId = null, quota, actorId }) {
   const result = await withTransaction(pool, async (db) => {
     const { rows: users } = await db.query(
@@ -174,4 +191,4 @@ async function grantRequest(pool, { userId, actorId }) {
   return rows[0] || null;
 }
 
-module.exports = { read, serverCapacity, refusal, requestMore, setQuota, declineRequest, grantRequest };
+module.exports = { read, serverCapacity, refusal, requestMore, cancelOwn, setQuota, declineRequest, grantRequest };

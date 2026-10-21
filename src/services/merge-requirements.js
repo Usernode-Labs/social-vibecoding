@@ -86,7 +86,7 @@ const GATES = [
   },
   {
     key: 'shots',
-    label: 'Before & after shots',
+    label: 'Before & after screenshots',
     actor: 'author',
     // Independently reversible rollout gate. Proposals created before v2
     // enrollment do not acquire a fictional requirement merely because the
@@ -612,14 +612,14 @@ function provisional(session) {
     const accepted = exactHead && ['verified', 'not_required', 'overridden'].includes(shotsState);
     out.push({
       key: 'shots',
-      label: 'Before & after shots',
+      label: 'Before & after screenshots',
       actor: 'author',
       state: accepted ? 'done' : shotsState === 'failed' ? 'blocked' : 'active',
       detail: accepted
         ? { state: shotsState }
         : { state: shotsState, note: exactHead
-          ? (detail.failureReason || `the before/after shots are ${String(shotsState).replace(/_/g, ' ')}`)
-          : 'the before/after shots have not been taken for the current commit' },
+          ? (detail.failureReason || `the before/after screenshots are ${String(shotsState).replace(/_/g, ' ')}`)
+          : 'the before/after screenshots have not been taken for the current commit' },
     });
   }
 

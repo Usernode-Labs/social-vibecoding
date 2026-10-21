@@ -148,12 +148,12 @@ const PROBLEMS: Array<[string, string]> = [
   ['missing_recording', 'Missing recording'],
   ['missing_before', 'Missing before side'],
   ['before_fell_back', 'Before fell back to home page'],
-  ['root_only', 'Shot at the front page only'],
+  ['root_only', 'Screenshots of the front page only'],
   ['failed_or_skipped', 'Capture failed or skipped'],
-  ['relevance_failure', 'Shots not relevant'],
-  ['replay_failure', 'Shots failed'],
-  ['unsupported_agent', 'Unsupported shots agent'],
-  ['override', 'Shots waived'],
+  ['relevance_failure', 'Screenshots not relevant'],
+  ['replay_failure', 'Screenshots failed'],
+  ['unsupported_agent', 'Unsupported screenshot agent'],
+  ['override', 'Screenshots waived'],
 ];
 
 // The run states the shots-runs export filters on (services/shots-export.js
@@ -302,7 +302,7 @@ function ExportRuns({ app }: { app: string }) {
   return (
     <section id="admin-gallery-export-panel" className={`${AdminUI.card} p-3 space-y-2`}>
       <div>
-        <div className="text-sm font-medium">Export shots runs</div>
+        <div className="text-sm font-medium">Export screenshot runs</div>
         <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
           One row per before & after run on every proposal, merged or not, with its failure
           details, timings and token use. Uses the App filter above. Runs that did not verify
@@ -437,7 +437,7 @@ function GallerySection() {
       {ready ? (
         <main id="admin-gallery-content" className="space-y-4">
           <p className="text-sm text-zinc-500 dark:text-zinc-400">
-            Before & after shots of each declared change on merged proposals, newest first.
+            Before & after screenshots of each declared change on merged proposals, newest first.
             Historical proposals retain their legacy capture diagnostics.
           </p>
 
