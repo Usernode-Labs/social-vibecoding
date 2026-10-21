@@ -2,8 +2,10 @@
  * The Notifications SHEET (#notifications-sheet) — Streamlined Concept.
  *
  * Unread | All tabs. Unread groups its rows under one heading per project and
- * folds repeats inside a project into one row; All is the archive, in TODAY /
- * EARLIER sections. One row per notification has an avatar-initial chip, the
+ * folds repeats inside a project into one row, and shows its older rows as
+ * one card per change in TODAY / YESTERDAY / LAST 7 DAYS / OLDER sections;
+ * All is the archive, in TODAY / EARLIER sections. One row per notification
+ * has an avatar-initial chip, the
  * source app + relative time as the subtitle, an unread dot and a trailing
  * chevron.
  *
@@ -101,7 +103,7 @@
 
 import { OverlayScrim } from '../../lib/overlay-scrim-view';
 import {
-  useCallback, useEffect, useRef, useState,
+  Fragment, useCallback, useEffect, useRef, useState,
   type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode,
 } from 'react';
 
@@ -388,6 +390,79 @@ export function groupUnreadByApp(rows: ScreenRowView[], t: Translate): AppGroup[
     if (group.appId != null) group.entries = foldRepeats(foldStories(group.entries), t);
   }
   return groups;
+}
+
+/** The older rows' sections on Unread, newest first. */
+type OlderSectionKey = 'today' | 'yesterday' | 'week' | 'longAgo';
+
+type OlderSection = { key: OlderSectionKey; entries: Entry[] };
+
+const OLDER_SECTION_LABELS: Record<OlderSectionKey, string> = {
+  today: 'notifications:sheet.today',
+  yesterday: 'notifications:sheet.yesterday',
+  week: 'notifications:sheet.lastWeek',
+  longAgo: 'notifications:sheet.longAgo',
+};
+
+/** Local midnight `days` days before today's. */
+function startOfDayBefore(days: number, now: Date): number {
+  const d = new Date(now.getTime());
+  d.setHours(0, 0, 0, 0);
+  d.setDate(d.getDate() - days);
+  return d.getTime();
+}
+
+/**
+ * `fold` run over each project's entries on its own, the rows of no project
+ * left as they are (as groupUnreadByApp leaves its Other group), and every
+ * entry kept in its place in the list. Both folds keep the key of the entry
+ * a fold stands where, so the list's order comes back from the keys.
+ */
+function foldEachProject(entries: Entry[], fold: (list: Entry[]) => Entry[]): Entry[] {
+  const place = new Map(entries.map((entry, i) => [entry.key, i]));
+  const byApp = new Map<number, Entry[]>();
+  const out: Entry[] = [];
+  for (const entry of entries) {
+    const app = entry.view.appId;
+    if (app == null) { out.push(entry); continue; }
+    const list = byApp.get(app);
+    if (list) list.push(entry);
+    else byApp.set(app, [entry]);
+  }
+  for (const list of byApp.values()) out.push(...fold(list));
+  return out.sort((a, b) => (place.get(a.key) ?? 0) - (place.get(b.key) ?? 0));
+}
+
+/**
+ * The older rows on Unread, once they are shown (#5747's follow-up): one
+ * card per change, in Today / Yesterday / Last 7 days / Older sections.
+ *
+ * A request or a proposal is one card with all its notifications
+ * (foldStories), wherever in time they fell, and the card goes in the
+ * section of its newest one, where foldStories leaves it. The rows about
+ * no change keep the Unread tab's rules: a person speaking is a card of
+ * its own, and a project's repeats of one kind fold into one card, here
+ * inside one section so a fold never spans a week. "Last 7 days" is the
+ * five days before yesterday, so the three newest sections are a week.
+ */
+export function groupOlderByTime(rows: ScreenRowView[], t: Translate, now: Date = new Date()): OlderSection[] {
+  const entries: Entry[] = rows.map((view) => ({ type: 'notif', key: `n:${view.id}`, at: view.createdAtMs || 0, view }));
+  const cards = foldEachProject(entries, (list) => foldStories(list));
+  const today = startOfDayBefore(0, now);
+  const yesterday = startOfDayBefore(1, now);
+  const week = startOfDayBefore(6, now);
+  const sections: OlderSection[] = [
+    { key: 'today', entries: [] },
+    { key: 'yesterday', entries: [] },
+    { key: 'week', entries: [] },
+    { key: 'longAgo', entries: [] },
+  ];
+  for (const card of cards) {
+    const at = card.at;
+    sections[at >= today ? 0 : at >= yesterday ? 1 : at >= week ? 2 : 3].entries.push(card);
+  }
+  for (const section of sections) section.entries = foldEachProject(section.entries, (list) => foldRepeats(list, t));
+  return sections.filter((section) => section.entries.length > 0);
 }
 
 type Translate = (id: string, values?: Record<string, unknown>) => string;
@@ -1067,6 +1142,9 @@ function ScreenRow({ view, touch, removes, held = false, onRelease, card = null 
 const CARD_SURFACE = 'rounded-[20px] bg-white dark:bg-zinc-900 '
   + 'shadow-[inset_0_0_0_1px_var(--app-sheet-line),0_1px_2px_rgba(0,0,0,0.05)]';
 
+/** A card's project name leading its meta line: the line's size, a step darker, so a list of them scans by project. */
+const PROJECT_INK = 'font-medium text-zinc-600 dark:text-zinc-300';
+
 /**
  * #5580: a card's words. The same three lines in the same order as a row's
  * (what kind, which one, the meta line), so what reads a row reads a card;
@@ -1076,7 +1154,9 @@ const CARD_SURFACE = 'rounded-[20px] bg-white dark:bg-zinc-900 '
  * story card names its request or proposal and how many notifications it
  * is. The top card of a stack says how many more are under it; the line
  * stays while the stack is open, folded to nothing, so the card shrinks and
- * grows with the stack instead of jumping.
+ * grows with the stack instead of jumping. A card in no stack (the older
+ * rows, one per change) has no heading over it, so its meta line names the
+ * project first: "Book club · #5748 · 2 notifications".
  */
 function CardWords({ view, card, hasHistory, saveOnHover }: {
   view: ScreenRowView;
@@ -1096,6 +1176,8 @@ function CardWords({ view, card, hasHistory, saveOnHover }: {
     : t('notifications:story.metaUnnumbered', { count: story.members.length }))
     : source && by ? t('notifications:row.meta.sourceBy', { source, username: by })
       : by ? t('notifications:row.meta.by', { username: by }) : source;
+  // A card in no stack says its project first, where the heading would have.
+  const project = card.leadsWithProject && card.groupName ? card.groupName : null;
   return (
     <>
       <span className="relative flex shrink-0 self-start mt-0.5">
@@ -1134,7 +1216,9 @@ function CardWords({ view, card, hasHistory, saveOnHover }: {
           </span>
         ) : null}
         <span className={hasHistory ? 'block text-xs text-zinc-500 truncate pr-8' : 'block text-xs text-zinc-500 truncate'}>
-          {meta}
+          {project && meta ? (
+            <RichMessage id="notifications:story.projectMeta" values={{ project, meta }} components={[<span className={PROJECT_INK} />]} />
+          ) : project ? <span className={PROJECT_INK}>{project}</span> : meta}
         </span>
         {top ? (
           <span
@@ -1381,13 +1465,17 @@ export function NotificationsSheetView() {
   // groups newest-first too.
   const groupedUnread = tab === 'unread' && !olderShown;
   // Evan, 21 Oct 2026: the older rows were a flat list, so revealing them
-  // undid the stacks the tab opened on. Revealed, Unread keeps its stacks,
-  // and the rows it does not list follow under Earlier as stacks of their
-  // own, one per project, folded the same way.
+  // undid the stacks the tab opened on. Revealed, Unread keeps its stacks.
+  // The rows it does not list followed under Earlier as one closed stack per
+  // project, which hid every change but the newest behind "N more
+  // notifications" and read as one pile per project. They are one card per
+  // change instead, in Today / Yesterday / Last 7 days / Older
+  // (groupOlderByTime), each naming its project on its meta line. Nothing
+  // there is to be cleared, so nothing there needs piling up.
   const olderGrouped = tab === 'unread' && olderShown;
   const appGroups = groupedUnread || olderGrouped ? groupUnreadByApp(unread, t) : [];
   const listedIds = new Set(unread.map((view) => view.id));
-  const olderGroups = olderGrouped ? groupUnreadByApp(all.filter((view) => !listedIds.has(view.id)), t) : [];
+  const olderSections = olderGrouped ? groupOlderByTime(all.filter((view) => !listedIds.has(view.id)), t) : [];
   // #5580: each project is a stack of cards (./notification-stacks.tsx),
   // under the same heading and its Mark read.
   const renderAppGroup = (group: AppGroup): ReactNode => {
@@ -1415,33 +1503,33 @@ export function NotificationsSheetView() {
       />
     );
   };
-  // The older rows' stacks: read, so no Mark read, and a cleared card (an
-  // unread plain message) stays where it is. Keyed apart from the unread
-  // stack of the same project.
-  const renderOlderGroup = (group: AppGroup): ReactNode => {
-    const label = group.key === 'other' || !group.appLine ? t('notifications:sheet.group.other') : groupName(group);
-    const key = `older:${group.key}`;
-    return (
-      <ProjectStack
-        key={key}
-        groupKey={key}
-        name={label}
-        entries={group.entries}
-        sheetOpen={open}
-        head={(showLess) => <AppGroupHead groupKey={key} label={label} appId={null} onShowLess={showLess} />}
-        renderCard={(entry, place) => (
+  // An older section: its heading, then one card per change. The cards are
+  // read, so no Mark read, and a cleared card (an unread plain message)
+  // stays where it is. They sit in no stack, so each names its project on
+  // its meta line; the list borrows the stacks' card spacing (app.css
+  // `.notifications-stack`) and is never closed.
+  const renderOlderSection = (section: OlderSection): ReactNode => (
+    <Fragment key={section.key}>
+      <SectionHeader data-notif-older-head={section.key}>
+        {t(OLDER_SECTION_LABELS[section.key])}
+      </SectionHeader>
+      <div className="notifications-stack" data-notif-older={section.key}>
+        {section.entries.map((entry) => (
           <ScreenRow
             key={entry.key}
             view={entry.view}
             touch={!!snap.touch}
             removes={false}
             onRelease={held.release}
-            card={place}
+            card={{
+              groupName: entry.view.appId != null ? entry.view.appName || entry.view.appLine : '',
+              leadsWithProject: true,
+            }}
           />
-        )}
-      />
-    );
-  };
+        ))}
+      </div>
+    </Fragment>
+  );
   const renderEntry = (entry: Entry): ReactNode => (
     <ScreenRow
       key={entry.key}
@@ -1678,14 +1766,7 @@ export function NotificationsSheetView() {
       {!searching && (groupedUnread ? appGroups.map(renderAppGroup) : olderGrouped ? (
         <>
           {appGroups.map(renderAppGroup)}
-          {olderGroups.length ? (
-            <>
-              <SectionHeader data-notif-older-head="" className="pb-0">
-                {t('notifications:sheet.earlier')}
-              </SectionHeader>
-              {olderGroups.map(renderOlderGroup)}
-            </>
-          ) : null}
+          {olderSections.map(renderOlderSection)}
         </>
       ) : (
         <>
