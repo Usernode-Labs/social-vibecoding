@@ -555,7 +555,12 @@ const App = {
   // failed request in the console. A native shell may still hold the session
   // in its keychain, so it keeps asking, and the answer is turned back into
   // the 401 every reader here already knows.
-  async _fetchSession({ optional = false } = {}) {
+  //
+  // The header stays empty and the option is read from the first argument:
+  // suites that pin this chain slice its source between the exact headers
+  // `_fetchSession()` and `_fetchWebSession()`.
+  async _fetchSession() {
+    const optional = !!(arguments[0] && arguments[0].optional);
     let response = await App._fetchWebSession({ optional });
     if (optional) response = await App._settleOptionalSession(response);
     if (window.NativeChrome && typeof NativeChrome.restoreWebSession === 'function') {
@@ -585,12 +590,17 @@ const App = {
     });
   },
 
-  async _fetchWebSession({ optional = false } = {}) {
+  // The optional read asks with ?optional=1, so the server answers "nobody is
+  // signed in" with a 200 instead of a 401 (#5678). Same empty header, same
+  // first argument, for the same reason.
+  async _fetchWebSession() {
+    const optional = !!(arguments[0] && arguments[0].optional);
     let timer = null;
     const ctrl = typeof AbortController === 'function' ? new AbortController() : null;
     if (ctrl) timer = setTimeout(() => ctrl.abort(), App.BOOT_SESSION_TIMEOUT_MS);
     try {
-      return await fetch(optional ? '/api/auth/me?optional=1' : '/api/auth/me', ctrl ? { signal: ctrl.signal } : undefined);
+      if (optional) return await fetch('/api/auth/me?optional=1', ctrl ? { signal: ctrl.signal } : undefined);
+      return await fetch('/api/auth/me', ctrl ? { signal: ctrl.signal } : undefined);
     } finally {
       if (timer) clearTimeout(timer);
     }
