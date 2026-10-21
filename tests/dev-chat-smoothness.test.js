@@ -315,7 +315,10 @@ test('every html sink in the transcript goes through one wrapper-memoizing compo
   // The live bubble included: a republish mid-turn must not rewrite the frame
   // the stream just painted.
   const live = code.slice(code.indexOf('function LiveContent('), code.indexOf('function Bubble('));
-  assert.match(live, /<Html className="dc-msg-content" html=\{live \|\| html\} \/>/);
+  // #5728 decorates the reply's refs inside LiveContent, so the sink takes
+  // the decorated string; it is still the one memoising wrapper.
+  assert.match(live, /const shown = useMemo\(\(\) => linkRefsInHtml\(live \|\| html, appSlug\)/);
+  assert.match(live, /<Html className="dc-msg-content" html=\{shown\} \/>/);
   assert.match(code, /const Row = memo\(function Row\(/);
   assert.match(code, /\}, sameRowProps\);/);
 });

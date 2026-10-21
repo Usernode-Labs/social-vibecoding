@@ -6624,6 +6624,17 @@ body:has(#platform-header.hidden) #app-frame-host {
 
 .dc-msg-content a { color: var(--accent); text-decoration: underline; word-break: break-all; }
 .dc-msg-content a:hover { color: var(--accent-light); }
+/* #5728: a `#N` / `PR#N` chip in a reply (an agent session, a change's chat)
+   is the app chat's reference chip, not a markdown link: no underline until
+   it is hovered, and no breaking the number across lines. The issue ink is
+   the chip's own emerald, softened on the light sheet as Messages is; a PR
+   chip keeps the accent ink above, which is the blue it already wears. */
+.dc-msg-content a.gc-ref { text-decoration: none; word-break: normal; }
+.dc-msg-content a.gc-ref-issue { color: var(--state-ok); }
+html:not(.dark) .dc-msg-content a.gc-ref-issue { background: rgba(16, 185, 129, 0.05); }
+@media (hover: hover) {
+  .dc-msg-content a.gc-ref:hover { text-decoration: underline; }
+}
 
 .dc-msg-content strong { font-weight: 600; color: var(--text-primary); }
 .dc-msg-content em { font-style: italic; color: var(--text-faint); }
