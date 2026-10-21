@@ -2418,8 +2418,10 @@ export function init() {
           // #3971: a first request says so inside it, naming the app.
           if (data.homeroomBot?.botWillBuild) {
             const first = !!data.firstFeedback && Number(data.firstFeedback.userId) === Number(App.user?.id);
+            // A request sent to Homeroom names Homeroom, not the app that
+            // happened to be open.
             showSent(postedTo, joinSentences([bountyNotice, stateNotice]), data.homeroomBot,
-              first ? { name: appName } : null);
+              first ? { name: target === 'platform' ? 'Homeroom' : appName } : null);
             return;
           }
           // B8: the bot is theirs but does not build here: it went to the group.

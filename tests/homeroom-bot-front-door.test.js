@@ -29,6 +29,22 @@ test('B8: Suggest an improvement is gated on membership and hands its request to
   assert.match(convs, /router\.post\('\/api\/conversations\/homeroom-bot', conversationMessageLimiter, sameOriginBrowserOnly,/);
 });
 
+// #5757: a request sent to Homeroom itself went to nobody: the platform
+// branch of the route filed it and answered, but never handed it to the bot,
+// so no card arrived in the person's chat. It now takes the same hand-off the
+// app branch does, against the platform's own app row.
+test('#5757: a request to Homeroom itself is handed to Homeroom bot, with its confirmation', () => {
+  const route = read('src/routes/feedback.js');
+  const platform = route.slice(route.indexOf('const platformApp = await findAppByRepo(pool, issueOwner, issueRepo)'));
+  assert.ok(platform.length > 0, 'the platform branch resolves the platform app row by repo');
+  assert.match(platform, /noteRequestFiled\(pool, \{\s*app: \{ id: platformApp\.id, slug: platformApp\.slug, name: 'Homeroom' \},\s*user: req\.user, issueNumber: issue\.number, title, askedText: description\.trim\(\),/);
+  assert.match(platform, /Object\.assign\(homeroomBot, \{ canFix, appSlug: platformApp\.slug, issueNumber: issue\.number \}\);/);
+  // Both confirmations carry the bot's answer: the app branch's and the platform branch's.
+  assert.equal(route.match(/\.\.\.\(homeroomBot \? \{ homeroomBot \} : \{\}\),/g).length, 2);
+  // A repo that is not an app row here (not self-hosted) changes nothing.
+  assert.match(platform, /catch\(\(\) => null\)/);
+});
+
 test('B8: the doors that open the chat with Homeroom bot, and what they are called', () => {
   // The mark menu's Build it now row left with its Agent chats section
   // (#4729); building it yourself is Messages' "+" Agent chat choice.

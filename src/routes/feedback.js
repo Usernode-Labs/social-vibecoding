@@ -1133,11 +1133,30 @@ function feedbackRoutes(config) {
       const firstFeedback = await firstFeedbackMoment(pool, {
         user: req.user, app: null, owner: issueOwner, repo: issueRepo, issueNumber: issue.number,
       });
+      // B8: Homeroom bot takes a request to Homeroom itself as it does one to
+      // any project: its card in the person's chat with it, and the
+      // confirmation's "Your idea is underway!". The platform repo is itself
+      // an app row on self-hosted instances (no-op when none matches); the
+      // row carries appAccess.ACCESS_COLUMNS. findAppByRepo returns no name,
+      // so the bot's card names the platform as the report list does.
+      const platformApp = await findAppByRepo(pool, issueOwner, issueRepo).catch(() => null);
+      const homeroomBot = platformApp
+        ? await require('../services/homeroom-bot-dm').noteRequestFiled(pool, {
+          app: { id: platformApp.id, slug: platformApp.slug, name: 'Homeroom' },
+          user: req.user, issueNumber: issue.number, title, askedText: description.trim(),
+        })
+        : null;
+      if (homeroomBot?.botWillBuild) {
+        let canFix = false;
+        try { canFix = await appAccess.checkAppAccess(pool, platformApp, req.user, 'collab'); } catch { canFix = false; }
+        Object.assign(homeroomBot, { canFix, appSlug: platformApp.slug, issueNumber: issue.number });
+      }
       res.json({
         url: issue.html_url, title, titleFallback,
         edit: await filedEditInfo(pool, report, req.user?.id),
         ...(bounty ? { bounty } : {}),
         ...(firstFeedback ? { firstFeedback } : {}),
+        ...(homeroomBot ? { homeroomBot } : {}),
       });
     } catch (err) {
       log.error('feedback', 'Error filing issue', { message: err.message });

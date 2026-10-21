@@ -656,6 +656,9 @@ export function FeedbackDialog() {
             <p id="feedback-sent-first-line" className="text-sm text-zinc-600 dark:text-zinc-400">
               <ControllerText id="dialogs:feedback.sent.firstLine.unnamed" />
             </p>
+            <p className="mt-1.5 text-sm text-zinc-600 dark:text-zinc-400">
+              {t('dialogs:feedback.sent.firstBot')}
+            </p>
           </div>
           {/* Where Homeroom bot builds it: get a ping when it is ready? (the
               notification ask). Its own React child, which the controller
