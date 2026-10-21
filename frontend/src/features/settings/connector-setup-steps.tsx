@@ -91,9 +91,11 @@ export function ClaudeSetupSteps() {
  * ChatGPT: six steps (#4431), plus the one-line recap the route has always
  * carried under them. The recap ships with the steps rather than beside
  * them because it is the same reference — a reader who has done this once
- * needs only that line, on either screen. #4431 asked for the production
- * URL as the MCP URL; the steps point at the live field each caller renders
- * (that URL on production) rather than write the host, per the header above.
+ * needs only that line, on either screen. Step 6 is the one deliberate
+ * exception to the no-host rule in the header above: #4431 asked for the
+ * production URL spelled out there, so it names it beside the live field.
+ * tests/connector-setup-shared.test.js allows exactly that one URL in that
+ * one step.
  */
 export function ChatgptSetupSteps() {
   return (
@@ -115,7 +117,7 @@ export function ChatgptSetupSteps() {
           A form opens for the server&rsquo;s details.
         </SetupStep>
         <SetupStep n={6} title="Enter the MCP URL.">
-          In the MCP URL field, paste the MCP server URL above. It ends in <code className="font-mono text-zinc-600 dark:text-zinc-400">/mcp</code>.
+          In the MCP URL field, enter <code className="font-mono text-zinc-600 dark:text-zinc-400">https://app.onhomeroom.com/mcp</code> (the MCP server URL above).
         </SetupStep>
       </ol>
       <p className={`${CONNECTOR_BODY} mt-3 pt-3 border-t border-zinc-200 dark:border-zinc-800`}>

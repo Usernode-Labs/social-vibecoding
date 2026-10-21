@@ -108,7 +108,18 @@ test('neither screen writes a host into the copy', () => {
   // The rule sections/connectors.tsx states and #2706 inherits: a host in
   // prose goes stale on a fork or a config change, so the live value is
   // passed in and the steps say "the MCP server URL above".
-  for (const [name, src] of [['the shared steps', STEPS], ['the launchpad card', INLINE]]) {
+  //
+  // One deliberate exception (#4431): the user asked for ChatGPT's step 6 to
+  // spell out the production URL, so exactly that URL in exactly that step is
+  // allowed. It is cut out before the check, and the rest of the module (and
+  // the card) still may name no host and no endpoint.
+  const STEP6 = /<SetupStep n=\{6\} title="Enter the MCP URL\.">[\s\S]*?<\/SetupStep>/;
+  const step6 = (STEPS.slice(STEPS.indexOf('export function ChatgptSetupSteps')).match(STEP6) || [''])[0];
+  assert.match(step6, /https:\/\/app\.onhomeroom\.com\/mcp/, 'ChatGPT step 6 spells out the URL #4431 asked for');
+  const stepsBesideTheException = STEPS.replace(step6, '');
+  assert.equal(stepsBesideTheException.split('https://app.onhomeroom.com/mcp').length, 1,
+    'and that URL appears nowhere else in the steps');
+  for (const [name, src] of [['the shared steps', stepsBesideTheException], ['the launchpad card', INLINE]]) {
     assert.doesNotMatch(src, /onhomeroom\.com/, `${name} names no host`);
     assert.doesNotMatch(src, /https:\/\/[a-z0-9.-]*\/mcp/, `${name} hardcodes no endpoint`);
   }
@@ -277,6 +288,7 @@ test('a ChatGPT card renders ChatGPT\'s six steps and its recap', () => {
   assert.match(html, /Click Browse directory\./);
   assert.match(html, /Select Create custom MCP server\./);
   assert.match(html, /Enter the MCP URL\./);
+  assert.match(html, /https:\/\/app\.onhomeroom\.com\/mcp/, 'step 6 names the URL (#4431)');
   assert.equal((html.match(/<li class="flex gap-3">/g) || []).length, 6);
   assert.match(html, /In short:/);
   assert.doesNotMatch(html, /Add custom connector/, 'and none of Claude\u2019s');
