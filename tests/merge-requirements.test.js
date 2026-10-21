@@ -150,7 +150,7 @@ test('every knowable requirement met reads as about to merge, not as unresolved'
 test('the labels are short nouns, the same on the card and the page', () => {
   assert.deepEqual(requirements.GATES.map((g) => g.label), [
     'Votes', 'A Yes from another member', 'Admin approval', 'No conflicts with main', 'Checks',
-    'Before & after shots', 'Platform variables', 'Main is healthy', 'Merge',
+    'Before & after screenshots', 'Platform variables', 'Main is healthy', 'Merge',
   ]);
   const prov = requirements.provisional({ votes_required: 1, yes_count: 1, app_main_check_state: 'passing' });
   for (const g of prov) {

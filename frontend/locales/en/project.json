@@ -3180,8 +3180,8 @@
     "description": "Sub-heading in the Details sheet of a change, over the full technical description of the change. A noun."
   },
   "topic.details.shots": {
-    "text": "Shot details",
-    "description": "Sub-heading in the Details sheet of a change, over the technical record of its before-and-after screenshots: what was captured and what was left out. \"Shot\" is a noun, short for screenshot."
+    "text": "Screenshot details",
+    "description": "Sub-heading in the Details sheet of a change, over the technical record of its before-and-after screenshots: what was captured and what was left out. \"Screenshot\" names one of the pictures."
   },
   "card.pill.goesLiveIn": {
     "text": "Goes live in {{time}}",
