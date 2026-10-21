@@ -6,6 +6,10 @@
 //                                     with the project's link preview in its
 //                                     head: for a public project only.
 //   GET /api/public/apps/:slug/cover.png   its 1200 x 630 cover.
+//   GET /robots.txt                   the crawl rules: everything, and the
+//                                     sitemap; nothing on a staging copy.
+//   GET /sitemap.xml                  the front page and the page of every
+//                                     public project worth finding.
 //
 // Share copies `/app/<slug>` for a public project (features/dialogs/
 // share.tsx), which a member's shell opens as the app and anybody else's as
@@ -31,12 +35,59 @@ const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,99}$/;
 const ENTRY_TTL_MS = 60 * 1000;
 const ENTRY_MAX = 500;
 const COVER_MAX = 200;
+// The sitemap, rebuilt at most this often: crawlers read it rarely, and the
+// directory query is the landing's own.
+const SITEMAP_TTL_MS = 10 * 60 * 1000;
+
+/** A staging copy (a proposal's preview) is never indexed: only production is. */
+function isStagingCopy(env = process.env) {
+  return env.USERNODE_ENV === 'staging';
+}
+
+/** The crawl rules for this origin. */
+function robotsTxt(origin, { staging = isStagingCopy() } = {}) {
+  if (staging) return 'User-agent: *\nDisallow: /\n';
+  return ['User-agent: *', 'Allow: /', origin ? `Sitemap: ${origin}/sitemap.xml` : null]
+    .filter(Boolean).join('\n') + '\n';
+}
+
+/**
+ * Whether a public project's page is worth a search engine's time: it says
+ * what it is (its own description), or somebody uses it (people active
+ * lately). The rest (a test, a diagnostic, an app made and left) stays out
+ * of the sitemap; its page still opens for anybody with the link.
+ */
+function worthListing(app) {
+  return !!(app && ((app.description && String(app.description).trim()) || Number(app.active_users) > 0));
+}
+
+function escapeXml(value) {
+  return String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+/** The day a project last changed: its last voted-in change, else when it was made. */
+function lastModified(app) {
+  const t = Date.parse(app.last_merged_at || app.created_at || '');
+  return Number.isFinite(t) ? new Date(t).toISOString().slice(0, 10) : null;
+}
+
+/** The sitemap: the front page, then each listed project's clean address. */
+function sitemapXml(origin, apps) {
+  const urls = [`  <url><loc>${escapeXml(`${origin}/`)}</loc></url>`];
+  for (const app of apps) {
+    if (!worthListing(app) || !SLUG_RE.test(String(app.slug || ''))) continue;
+    const lastmod = lastModified(app);
+    urls.push(`  <url><loc>${escapeXml(preview.pageUrl(origin, app.slug))}</loc>${lastmod ? `<lastmod>${lastmod}</lastmod>` : ''}</url>`);
+  }
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls.join('\n')}\n</urlset>\n`;
+}
 
 function projectPreviewRoutes(config) {
   const router = Router();
   const pool = getPool(config);
   const entries = new Map();
   const covers = new Map();
+  let sitemap = null;
 
   // The public project, its icon's bytes, and whether its cover can be
   // drawn; null for anything the public directory does not list.
@@ -106,7 +157,34 @@ function projectPreviewRoutes(config) {
     }
   });
 
+  // ── For search engines (Evan, 21 Oct 2026: search traffic is wanted) ──
+  // Both are public paths (middleware/auth.js), and both name only what the
+  // public directory already shows anybody.
+  router.get('/robots.txt', (req, res) => {
+    res.set('Cache-Control', 'public, max-age=3600');
+    return res.type('text/plain').send(robotsTxt(requestOrigin(req)));
+  });
+
+  router.get('/sitemap.xml', publicProjectReadLimiter, async (req, res) => {
+    const origin = requestOrigin(req);
+    if (!origin || isStagingCopy()) return res.status(404).end();
+    try {
+      if (!sitemap || sitemap.origin !== origin || sitemap.expiresAt <= Date.now()) {
+        const apps = await listPublicApps(pool, { includeWallets: false });
+        sitemap = { origin, xml: sitemapXml(origin, apps), expiresAt: Date.now() + SITEMAP_TTL_MS };
+      }
+      res.set('Cache-Control', 'public, max-age=600');
+      return res.type('application/xml').send(sitemap.xml);
+    } catch (err) {
+      log.error('project-preview', 'Building the sitemap failed', { err: err.message });
+      return res.status(500).end();
+    }
+  });
+
   return router;
 }
 
 module.exports = projectPreviewRoutes;
+module.exports.robotsTxt = robotsTxt;
+module.exports.sitemapXml = sitemapXml;
+module.exports.worthListing = worthListing;

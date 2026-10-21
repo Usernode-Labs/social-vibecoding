@@ -69,6 +69,18 @@ export interface GuestOverview {
   requests: { total: number; more: boolean; items: { number: number; title: string }[] } | null;
 }
 
+/**
+ * New accounts start on the waitlist: one made from these pages has no
+ * platform access until it is let in (src/services/email-signup.js
+ * isWaitlisted), and nothing on the server switches that off for everyone.
+ * The guest pages say so where somebody is about to make one: the hero's
+ * button ("Join the waitlist"), the "Want to join in?" card, and the sheets
+ * for taking part on a project's page. One switch for all three, so the day
+ * Homeroom lets everyone in (Evan: about four weeks from 21 Oct 2026) is
+ * this line.
+ */
+export const NEW_ACCOUNTS_WAIT = true;
+
 /** The sorts Discover offers, in the order its control shows them. */
 export const SORTS = ['trending', 'new', 'built'] as const;
 export type GuestSort = (typeof SORTS)[number];
@@ -92,19 +104,21 @@ function createdAt(app: GuestApp): number {
 }
 
 /**
- * The directory in a sort's order. With `tryable`, the projects a visitor
- * can try come first under every sort, each group in the sort's order: one
- * tap from the list to playing is what a visitor came for. Ties keep the
- * directory's own order.
+ * The directory in a sort's order, and only that: Popular is the most people
+ * active first, whether or not a visitor can try it. Putting the tryable
+ * first (21 Oct 2026) led the list with test and diagnostic apps nobody
+ * uses, above a game 42 people play (Evan's review of the live page, 21 Oct
+ * 2026); what a visitor can try is Featured's job, and its cards carry Try
+ * it wherever they sort. Ties keep the directory's own order.
  */
-export function sortApps(apps: readonly GuestApp[], sort: GuestSort, tryable?: (app: GuestApp) => boolean): GuestApp[] {
-  const indexed = apps.map((app, i) => ({ app, i, first: tryable && tryable(app) ? 1 : 0 }));
+export function sortApps(apps: readonly GuestApp[], sort: GuestSort): GuestApp[] {
+  const indexed = apps.map((app, i) => ({ app, i }));
   const key = (app: GuestApp): number => {
     if (sort === 'new') return createdAt(app);
     if (sort === 'built') return buildersOf(app);
     return app.active_users || 0;
   };
-  indexed.sort((a, b) => b.first - a.first || key(b.app) - key(a.app) || a.i - b.i);
+  indexed.sort((a, b) => key(b.app) - key(a.app) || a.i - b.i);
   return indexed.map((x) => x.app);
 }
 
@@ -127,25 +141,20 @@ export function filterApps(apps: readonly GuestApp[], query: string, category: s
   });
 }
 
-/** Featured holds at least this many, when there are that many to try. */
-export const FEATURED_MIN = 3;
-
 /**
- * The Featured row: what an admin featured that a visitor can try, in their
- * order. With fewer than FEATURED_MIN, the most active projects a visitor
- * can try fill it, never one nobody is active in. A project a visitor cannot open is never featured to
- * them: Featured is where playing starts.
+ * The Featured row: what an admin featured (Admin › Featured apps) that a
+ * visitor can try, in their order, and nothing else. A project a visitor
+ * cannot open is never featured to them: Featured is where playing starts.
+ * It is no longer filled up to three with the most active tryable projects:
+ * on production those were a test app and a one-player demo (Evan, 21 Oct
+ * 2026), so the row is curated by hand, and with nothing featured to try it
+ * is not drawn.
  */
 export function featuredApps(apps: readonly GuestApp[], tryable: (app: GuestApp) => boolean = () => true): GuestApp[] {
-  const picked = apps
+  return apps
     .filter((a) => a.featured && tryable(a))
     .slice()
     .sort((a, b) => (a.featured_order ?? Number.MAX_SAFE_INTEGER) - (b.featured_order ?? Number.MAX_SAFE_INTEGER));
-  if (picked.length >= FEATURED_MIN) return picked;
-  // Filled only with projects somebody uses: a test or a diagnostic app
-  // nobody opens is not where playing starts.
-  const fill = sortApps(apps.filter((a) => tryable(a) && !picked.includes(a) && (a.active_users || 0) > 0), 'trending');
-  return [...picked, ...fill.slice(0, FEATURED_MIN - picked.length)];
 }
 
 /**
@@ -182,6 +191,18 @@ export function inHomeroomApp(): boolean {
 /** Where a project's page is: its hub, the address a signed-in person lands on too. */
 export function projectHash(slug: string): string {
   return `#app/${encodeURIComponent(slug)}/workshop`;
+}
+
+/**
+ * The same page's clean address, `/app/<slug>`: the one Share copies, the
+ * server answers with the project's own title and preview
+ * (src/routes/project-preview.js), the sitemap lists and the page names as
+ * its canonical. Discover's cards link here so a search engine following
+ * them finds one address per project; everything after a `#` is invisible
+ * to it.
+ */
+export function projectPath(slug: string): string {
+  return `/app/${encodeURIComponent(slug)}`;
 }
 
 /**

@@ -35,7 +35,10 @@
 // tier list drawn as one.
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
+import { cn } from '@/lib/utils';
+
 import { Message, RichMessage } from '../../lib/i18n/react';
+import { noteSignUpFrom } from './sign-up-from';
 import { FRONT } from '../first-session/examples';
 import { useMessages } from '../../lib/i18n/react';
 import { TierChart } from '../first-session/tier-chart';
@@ -102,7 +105,7 @@ export function nextStep(fit: number, footBottom: number, screenBottom: number):
   return fit + 1;
 }
 
-export function Story({ primaryClass, welcomeEmail = null, onStart, onSignIn, compact = false, lookAround = false }: {
+export function Story({ primaryClass, welcomeEmail = null, onStart, onSignIn, compact = false, lookAround = false, waitlist = false }: {
   primaryClass: string;
   /** The address a "You're in" mail's link names, greeted under the welcome. */
   welcomeEmail?: string | null;
@@ -111,16 +114,22 @@ export function Story({ primaryClass, welcomeEmail = null, onStart, onSignIn, co
   onSignIn?: () => void;
   /**
    * THE SHORT STORY, over the guest Discover (features/guest/guest-discover.tsx):
-   * the welcome, the headline and one line that says the apps below can be
-   * looked around, and nothing to press: the page's bar carries the one
-   * Sign in and the one Sign up, whose sheet has every way in (Apple,
-   * Google, email, a phone). From the 21 Oct 2026 review: two Sign ins,
-   * then two Sign ups, on one screen read as a mistake, and four "Continue
-   * with" buttons made the top of the page tall. No examples (the real apps follow it)
+   * the welcome, the headline, one line that says the apps below can be
+   * looked around, and one filled button under it that opens the sheet
+   * with every way in (`onStart`). From the 21 Oct 2026 review: two Sign
+   * ins, then two Sign ups, on one screen read as a mistake, and four
+   * "Continue with" buttons made the top of the page tall, so the bar
+   * carries the one Sign in. But with nothing to press under the headline,
+   * making an account was a small pill in the corner, and for the waitlist
+   * weeks that is the one thing the page asks for (Evan, 21 Oct 2026): the
+   * button says what it does, joining the waitlist while new accounts wait
+   * (`waitlist`), else signing up. No examples (the real apps follow it)
    * and, on a phone, no picture, so the first apps are near the first
    * screen; nothing to fit, so no steps.
    */
   compact?: boolean;
+  /** The short story's button says "Join the waitlist" (guest-data NEW_ACCOUNTS_WAIT). */
+  waitlist?: boolean;
   /**
    * Inside the Homeroom app the full story is still the front door
    * (landing.tsx `storyFront`), and this adds "Look around first" under its
@@ -202,7 +211,7 @@ export function Story({ primaryClass, welcomeEmail = null, onStart, onSignIn, co
   }, [compact]);
   const foot = (
     <>
-      <a href="#signup" data-landing-story-start="" className={primaryClass} onClick={(e) => { e.preventDefault(); onStart(); }}>
+      <a href="#signup" data-landing-story-start="" className={primaryClass} onClick={(e) => { e.preventDefault(); noteSignUpFrom('story'); onStart(); }}>
         {t('auth:story.continue')}
       </a>
       {/* Polish N10: the line read like a second way in but was plain
@@ -216,7 +225,7 @@ export function Story({ primaryClass, welcomeEmail = null, onStart, onSignIn, co
               href="#login"
               data-landing-story-signin=""
               className={STORY_LINK}
-              onClick={(e) => { e.preventDefault(); (onSignIn || onStart)(); }}
+              onClick={(e) => { e.preventDefault(); noteSignUpFrom('story_sign_in'); (onSignIn || onStart)(); }}
             />,
           ]}
         />
@@ -232,8 +241,9 @@ export function Story({ primaryClass, welcomeEmail = null, onStart, onSignIn, co
   );
   if (compact) {
     // On the page itself, as the story always was, and short: the welcome,
-    // the headline and one line, with a small picture beside them from md.
-    // The ways in are the bar's, so the apps start high.
+    // the headline, one line and the button, with a small picture beside
+    // them from md. The button is sized to its words, not the column, so
+    // the apps still start high.
     return (
       <div ref={storyRef} data-landing-story="" data-landing-story-compact="" className="px-4 pt-5 md:pt-8 flex items-center gap-10">
         <div className="flex min-w-0 flex-1 flex-col items-start text-left">
@@ -245,6 +255,14 @@ export function Story({ primaryClass, welcomeEmail = null, onStart, onSignIn, co
             {t('auth:story.headline')}
           </h1>
           <p className="mt-2 text-base leading-[22px] text-zinc-500 dark:text-zinc-400 text-balance">{t('auth:guest.hero.line')}</p>
+          <button
+            type="button"
+            data-landing-story-join=""
+            className={cn(primaryClass, 'mt-4 h-11 w-auto px-5 text-[15px]')}
+            onClick={() => { noteSignUpFrom('hero'); onStart(); }}
+          >
+            {waitlist ? t('auth:guest.hero.joinWaitlist') : t('auth:guest.hero.signUp')}
+          </button>
         </div>
         <img
           src="/brand/people.png"

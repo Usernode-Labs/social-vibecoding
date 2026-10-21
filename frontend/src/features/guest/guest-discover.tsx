@@ -2,11 +2,12 @@
  * The guest Discover: what a visitor with no account sees first
  * (features/auth/landing.tsx draws it under the story's short hero).
  *
- * WHAT CAN BE PLAYED COMES FIRST (21 Oct 2026 review): a visitor came to
- * try things, and one tap from the list to playing is what makes them stay.
- * Featured holds only projects a visitor can try (guest-data featuredApps),
- * every sort puts those first (sortApps' `tryable`), and each of their cards
- * carries Try it. Only the first eight (four on a phone) are big cards;
+ * WHAT CAN BE PLAYED IS ONE TAP AWAY (21 Oct 2026 review): a visitor came
+ * to try things. Featured holds only projects an admin featured that a
+ * visitor can try (guest-data featuredApps), and every card that can be
+ * tried carries Try it. The sorts are the sorts: Popular is the most people
+ * active first, so a test app nobody uses no longer leads the list because
+ * it happens to be tryable (sortApps). Only the first eight (four on a phone) are big cards;
  * after them "More projects" is a list of rows, twelve at a time, so the top
  * is curated rather than everything listed evenly. Search and the kinds
  * still reach every project.
@@ -17,7 +18,8 @@
  * lately, and what is up for a vote, which opens the project's page at
  * its votes. A card opens the project's read-only page (./guest-project.tsx)
  * at the project's own address, `#app/<slug>/workshop`, which is also where
- * a person lands once they sign in from there. Nothing on a card is locked:
+ * a person lands once they sign in from there; its href is the clean
+ * `/app/<slug>` a search engine can follow (ProjectLink). Nothing on a card is locked:
  * the page behind it is readable by anyone.
  * The landing's old grid was taken away because 36 of its 41 tiles were
  * locked (docs/superpowers/specs/2026-09-18-logged-out-screens-design.md);
@@ -30,7 +32,7 @@
  * Vote, Ask), never as a wall.
  */
 
-import { type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
+import { type AnchorHTMLAttributes, type MouseEvent, type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
 
 import { Chip, ChipRail } from '@/components/ui/chip';
 import { GroupedList } from '@/components/ui/grouped-list';
@@ -39,6 +41,7 @@ import { cn } from '@/lib/utils';
 
 import { useMessages } from '../../lib/i18n/react';
 import { useCommunityColor } from '../../lib/community-color';
+import { noteSignUpFrom } from '../auth/sign-up-from';
 import { agoStamp } from '../../lib/timestamp';
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import {
@@ -56,6 +59,7 @@ import {
   filterApps,
   presentCategories,
   projectHash,
+  projectPath,
   projectVotesHash,
   sortApps,
 } from './guest-data';
@@ -194,6 +198,25 @@ function CardFacts({ app, sort }: { app: GuestApp; sort: GuestSort }) {
   );
 }
 
+/**
+ * A link to a project's page. Its href is the page's clean address
+ * (guest-data projectPath), so a crawler reading Discover finds every public
+ * project at the address its preview, canonical and sitemap name. A plain
+ * click on Discover stays in the page and moves the fragment, as the cards
+ * always did (#app/<slug>/workshop, the address signing in returns to); a
+ * click that asks for a new tab or window, or one from an address that is
+ * already a path, is the browser's, and the server opens the same page.
+ */
+export function ProjectLink({ slug, children, ...rest }: { slug: string; children: ReactNode } & Omit<AnchorHTMLAttributes<HTMLAnchorElement>, 'href' | 'onClick'>) {
+  const onClick = (e: MouseEvent<HTMLAnchorElement>) => {
+    if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    if (location.pathname !== '/') return;
+    e.preventDefault();
+    location.hash = projectHash(slug);
+  };
+  return <a href={projectPath(slug)} onClick={onClick} {...rest}>{children}</a>;
+}
+
 const TRY_SMALL = 'flex h-8 items-center justify-center rounded-full bg-black/5 px-3.5 text-sm font-semibold text-zinc-900 hover:bg-black/10 dark:bg-white/10 dark:text-zinc-100 dark:hover:bg-white/15';
 
 /**
@@ -212,22 +235,22 @@ function Card({ app, eager, sort, tryable, inside, onOpenInside }: {
   const t = useMessages('auth');
   return (
     <article data-guest-card={app.slug} className="flex min-w-0 flex-col gap-2">
-      <a href={projectHash(app.slug)} tabIndex={-1} aria-hidden="true" className="relative block rounded-2xl outline-offset-4">
+      <ProjectLink slug={app.slug} tabIndex={-1} aria-hidden="true" className="relative block rounded-2xl outline-offset-4">
         <GuestCover app={app} className="aspect-[16/10] w-full rounded-2xl shadow-[inset_0_0_0_1px_var(--app-sheet-line)]" />
         {isNew(app) ? (
           <span className="absolute left-2 top-2 rounded-full bg-white px-2 py-0.5 text-xs font-bold text-zinc-950 dark:bg-zinc-900 dark:text-white">
             {t('auth:guest.card.new')}
           </span>
         ) : null}
-      </a>
+      </ProjectLink>
       <span className="flex min-w-0 items-start gap-2.5">
         {/* The icon is the picture already when the group chose none. On a
             phone's two narrow columns the words get the room instead. */}
         {app.illustration_url ? <span className="hidden md:block"><GuestIcon app={app} size="sm" eager={eager} /></span> : null}
         <span className="min-w-0 flex-1">
-          <a href={projectHash(app.slug)} data-guest-card-link="" className="block truncate text-[15px] font-[650] text-zinc-900 outline-offset-4 dark:text-zinc-100">
+          <ProjectLink slug={app.slug} data-guest-card-link="" className="block truncate text-[15px] font-[650] text-zinc-900 outline-offset-4 dark:text-zinc-100">
             {app.name}
-          </a>
+          </ProjectLink>
           <CardFacts app={app} sort={sort} />
         </span>
       </span>
@@ -262,7 +285,7 @@ function MoreRow({ app, sort, tryable, inside, onOpenInside, last }: {
       data-guest-row={app.slug}
       className={cn('flex min-h-[64px] items-center gap-3 px-3.5 py-2.5', last ? '' : 'shadow-[inset_0_-1px_0_var(--app-sheet-line)]')}
     >
-      <a href={projectHash(app.slug)} className="flex min-w-0 flex-1 items-center gap-3 outline-offset-4">
+      <ProjectLink slug={app.slug} className="flex min-w-0 flex-1 items-center gap-3 outline-offset-4">
         <GuestIcon app={app} />
         <span className="min-w-0 flex-1">
           <span className="block truncate text-[15px] font-[650] text-zinc-900 dark:text-zinc-100">{app.name}</span>
@@ -275,7 +298,7 @@ function MoreRow({ app, sort, tryable, inside, onOpenInside, last }: {
             </span>
           ) : null}
         </span>
-      </a>
+      </ProjectLink>
       {tryable ? (
         <TryLink app={app} inside={inside} onOpenInside={onOpenInside} className={cn(TRY_SMALL, 'shrink-0')}>
           <span aria-hidden="true">{t('auth:guest.card.tryIt')}</span>
@@ -333,16 +356,16 @@ function Featured({ app, primaryClass, inside, onOpenInside }: {
       data-guest-featured={app.slug}
       className="flex w-[296px] shrink-0 snap-start flex-col overflow-hidden rounded-[20px] bg-white shadow-[inset_0_0_0_1px_var(--app-sheet-line)] md:w-[360px] dark:bg-zinc-900"
     >
-      <a href={projectHash(app.slug)} tabIndex={-1} aria-hidden="true" className="block">
+      <ProjectLink slug={app.slug} tabIndex={-1} aria-hidden="true" className="block">
         <GuestCover app={app} className="aspect-[16/10] w-full" iconSize="xl" />
-      </a>
+      </ProjectLink>
       <div className="flex flex-1 flex-col gap-2.5 p-3.5">
         <div className="flex items-start gap-3">
           {app.illustration_url ? <GuestIcon app={app} eager /> : null}
           <div className="min-w-0 flex-1">
-            <a href={projectHash(app.slug)} className="block truncate text-[15px] font-[650] text-zinc-900 outline-offset-4 dark:text-zinc-100">
+            <ProjectLink slug={app.slug} className="block truncate text-[15px] font-[650] text-zinc-900 outline-offset-4 dark:text-zinc-100">
               {app.name}
-            </a>
+            </ProjectLink>
             <CardFacts app={app} sort="trending" />
           </div>
           {/* Featured holds only projects a visitor can try (featuredApps). */}
@@ -393,7 +416,7 @@ function JoinIn({ onContinue, onDismiss, primaryClass, waitlist }: {
         <p className="text-[13px] leading-[18px] text-zinc-500 dark:text-zinc-400">{t('auth:guest.join.waitlist')}</p>
       ) : null}
       <div className="flex items-center gap-2">
-        <button type="button" data-guest-join-continue="" className={cn(primaryClass, 'h-11 w-auto px-5 text-[15px]')} onClick={onContinue}>
+        <button type="button" data-guest-join-continue="" className={cn(primaryClass, 'h-11 w-auto px-5 text-[15px]')} onClick={() => { noteSignUpFrom('join_card'); onContinue(); }}>
           {t('auth:guest.join.signUp')}
         </button>
         <button
@@ -492,8 +515,8 @@ export function GuestDiscover({ apps, failed, hero, primaryClass, waitlist, onCo
   const featured = useMemo(() => (browsing ? featuredApps(all, tryable) : []), [all, browsing, tryable]);
   const list = useMemo(() => {
     const above = new Set(featured.map((a) => a.slug));
-    return sortApps(filterApps(all, query, category), sort, tryable).filter((a) => !above.has(a.slug));
-  }, [all, query, category, sort, tryable, featured]);
+    return sortApps(filterApps(all, query, category), sort).filter((a) => !above.has(a.slug));
+  }, [all, query, category, sort, featured]);
   useEffect(() => { setRowsShown(ROWS_STEP); }, [query, category, sort]);
   const showJoin = browsing && !signedIn && !joinDismissed && !!apps && list.length > 0;
   const wide = typeof window !== 'undefined' && window.matchMedia?.('(min-width: 768px)').matches;

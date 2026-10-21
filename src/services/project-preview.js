@@ -211,6 +211,9 @@ function previewTags(app, origin, { cover = true } = {}) {
     `<meta property="og:title" content="${escapeAttr(title)}">`,
     `<meta property="og:description" content="${escapeAttr(description)}">`,
     `<meta property="og:url" content="${escapeAttr(pageUrl(origin, app.slug))}">`,
+    // One address per project for a search engine: the page's clean path,
+    // whichever way it was reached (Discover's cards, a share, the sitemap).
+    `<link rel="canonical" href="${escapeAttr(pageUrl(origin, app.slug))}">`,
     `<meta name="description" content="${escapeAttr(description)}">`,
     `<meta name="twitter:card" content="${cover ? 'summary_large_image' : 'summary'}">`,
     `<meta name="twitter:title" content="${escapeAttr(title)}">`,
@@ -244,6 +247,7 @@ module.exports = {
   colorFromPixels,
   swatchFor,
   coverPath,
+  pageUrl,
   WIDTH,
   HEIGHT,
 };

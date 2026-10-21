@@ -85,11 +85,20 @@ function fakePool() {
       const s = String(sql);
       if (/SELECT 1 FROM apps WHERE slug = \$1/.test(s)) return { rows: params[0] === 'game-corner' ? [{}] : [] };
       if (/FROM apps a/.test(s) && /last_deploy_at DESC NULLS LAST/.test(s)) {
-        return params[1] === 'game-corner' ? { rows: [{
+        const game = {
           id: 7, name: 'Game Corner', slug: 'game-corner', status: 'running', view_visibility: 'public', collab_visibility: 'public',
           icon_emoji: '📊', icon_image_id: null, icon_color: '#2e6660', anon_shell: 'gated', guest_shell: null,
           description: 'Classic games, fresh every day.', member_count: 87, active_users: 42,
-        }] } : { rows: [] };
+          created_at: '2026-06-19T00:00:00.000Z', last_merged_at: '2026-10-20T08:00:00.000Z',
+        };
+        // The whole directory (the sitemap): the game, and a diagnostic app
+        // nobody uses that says nothing about itself.
+        const idle = {
+          ...game, id: 8, name: 'Echo diagnostic', slug: 'echo-diagnostic', description: null, active_users: 0,
+          last_merged_at: null, created_at: '2026-05-01T00:00:00.000Z',
+        };
+        if (params[1] == null) return { rows: [game, idle] };
+        return params[1] === 'game-corner' ? { rows: [game] } : { rows: [] };
       }
       return { rows: [] };
     },
@@ -129,6 +138,7 @@ test('GET /app/<slug>: a public project\'s page carries its preview; anything el
     const html = await page.text();
     assert.match(html, /<title>Game Corner · Homeroom<\/title>/);
     assert.match(html, /<meta property="og:image" content="http:\/\/127\.0\.0\.1:\d+\/api\/public\/apps\/game-corner\/cover\.png">/);
+    assert.match(html, /<link rel="canonical" href="http:\/\/127\.0\.0\.1:\d+\/app\/game-corner">/);
     assert.ok(html.indexOf('og:title') < html.indexOf('</head>'));
     const secret = await fetch(`${srv.base}/app/secret-thing`, { headers: { accept: 'text/html' } });
     assert.equal(await secret.text(), 'catch-all', 'nothing said about a project that is not public');
@@ -159,4 +169,48 @@ test('mounted after sign-in is read and before the catch-all; Share copies the p
   } finally { delete globalThis.location; }
   assert.match(read('frontend/src/features/dialogs/share.tsx'), /const share = page \|\| \(window\.AppView\?\.appData\?\.share_url as string\) \|\| raw;/);
   assert.match(read('frontend/src/features/apps/browse.js'), /if \(app\.view_visibility === 'public' && app\.slug && typeof location !== 'undefined'\) \{\s+return `\$\{location\.origin\}\/app\/\$\{encodeURIComponent\(app\.slug\)\}`;/);
+});
+
+test('one address per project for a search engine: the canonical link names the clean path', () => {
+  const tags = preview.previewTags(APP, ORIGIN);
+  assert.match(tags, /<link rel="canonical" href="https:\/\/app\.example\/app\/game-corner">/);
+  assert.equal(preview.pageUrl(ORIGIN, 'game-corner'), 'https://app.example/app/game-corner');
+});
+
+test('robots.txt lets search engines in and names the sitemap; a staging copy keeps them out', () => {
+  const { robotsTxt } = require('../src/routes/project-preview');
+  assert.equal(robotsTxt(ORIGIN, { staging: false }), 'User-agent: *\nAllow: /\nSitemap: https://app.example/sitemap.xml\n');
+  assert.equal(robotsTxt(ORIGIN, { staging: true }), 'User-agent: *\nDisallow: /\n');
+  // A crawler has no session: both are public paths, whole file names.
+  const auth = read('src/middleware/auth.js');
+  const publicPaths = auth.match(/const PUBLIC_PATHS = \[([\s\S]*?)\];/)[1];
+  assert.match(publicPaths, /'\/robots\.txt',\n  '\/sitemap\.xml',/);
+});
+
+test('the sitemap lists the front page and each public project worth finding, at its clean address', async () => {
+  const { worthListing, sitemapXml } = require('../src/routes/project-preview');
+  assert.equal(worthListing({ description: 'A shared todo app.', active_users: 0 }), true);
+  assert.equal(worthListing({ description: null, active_users: 3 }), true);
+  assert.equal(worthListing({ description: '  ', active_users: 0 }), false, 'says nothing and nobody uses it');
+  assert.equal(worthListing(null), false);
+  const xml = sitemapXml(ORIGIN, [
+    { slug: 'game-corner', description: 'Games', active_users: 4, last_merged_at: '2026-10-20T08:00:00.000Z' },
+    { slug: 'quiet', description: null, active_users: 0 },
+    { slug: 'Bad Slug', description: 'x', active_users: 1 },
+  ]);
+  assert.match(xml, /^<\?xml version="1\.0" encoding="UTF-8"\?>\n<urlset xmlns="http:\/\/www\.sitemaps\.org\/schemas\/sitemap\/0\.9">/);
+  assert.deepEqual([...xml.matchAll(/<loc>([^<]+)<\/loc>/g)].map((m) => m[1]), ['https://app.example/', 'https://app.example/app/game-corner']);
+  assert.match(xml, /<loc>https:\/\/app\.example\/app\/game-corner<\/loc><lastmod>2026-10-20<\/lastmod>/);
+
+  const srv = await startServer();
+  try {
+    const robots = await fetch(`${srv.base}/robots.txt`);
+    assert.equal(robots.headers.get('content-type'), 'text/plain; charset=utf-8');
+    const sitemap = await fetch(`${srv.base}/sitemap.xml`);
+    assert.equal(sitemap.status, 200);
+    assert.match(sitemap.headers.get('content-type'), /^application\/xml/);
+    const body = await sitemap.text();
+    assert.match(body, /<loc>http:\/\/127\.0\.0\.1:\d+\/app\/game-corner<\/loc>/);
+    assert.doesNotMatch(body, /echo-diagnostic/, 'nothing about itself and nobody in it');
+  } finally { await srv.close(); }
 });

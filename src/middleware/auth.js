@@ -124,6 +124,12 @@ const PUBLIC_PATHS = [
   // the root. Whole file names, so the prefix match opens nothing else there.
   '/favicon.ico',
   '/apple-touch-icon.png',
+  // What a search engine reads first at the root (routes/project-preview.js):
+  // the crawl rules and the sitemap of public project pages. A crawler has no
+  // session, and the gate answered both with a 302 to the root. Whole file
+  // names again; both list only what the public directory already shows.
+  '/robots.txt',
+  '/sitemap.xml',
   // Challenge artwork (public/illustrations/challenges/). The challenge list
   // it decorates is public (/api/v4/), so the pictures must be too: an image
   // request answered with a redirect body draws a broken picture instead of

@@ -10452,6 +10452,22 @@
       "reason": "anonymous public API rather than signed-in Classic"
     },
     {
+      "source": "src/routes/project-preview.js",
+      "method": "GET",
+      "path": "/robots.txt",
+      "expression": null,
+      "status": "exempt",
+      "reason": "the crawl rules and the sitemap of public project pages, for search engines; never a model-visible capability"
+    },
+    {
+      "source": "src/routes/project-preview.js",
+      "method": "GET",
+      "path": "/sitemap.xml",
+      "expression": null,
+      "status": "exempt",
+      "reason": "the crawl rules and the sitemap of public project pages, for search engines; never a model-visible capability"
+    },
+    {
       "source": "src/routes/proposal-handoff.js",
       "method": "POST",
       "path": "/api/apps/:slug/proposals/:id/update-from-fork",

@@ -1967,9 +1967,9 @@
       "allowConsoleErrors": true
     },
     {
-      "name": "Landing has one Sign in and one Sign up, both in its bar, and nothing to press in the story under it (first session)",
+      "name": "Landing has Sign in and Sign up in its bar, and one button to make an account under the story (first session)",
       "path": "/?shot=anon#landing",
-      "expectSelector": "#auth-landing-screen:not(.hidden):has(#landing-header button[data-landing-sign-up]):not(:has([data-landing-story] button, [data-landing-story] a)) #landing-header [data-landing-sign-in]:not(.hidden)",
+      "expectSelector": "#auth-landing-screen:not(.hidden):has(#landing-header button[data-landing-sign-up]):has([data-landing-story] button[data-landing-story-join]):not(:has([data-landing-story] a)) #landing-header [data-landing-sign-in]:not(.hidden)",
       "expectText": "Sign in",
       "allowConsoleErrors": true
     },
