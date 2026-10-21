@@ -826,7 +826,8 @@ function askRefusal(s: Live, f: Facts): string | null {
   if (s.name !== 'in_review') return 'not_in_review';
   if (s.data.attempt) return 'in_progress';
   if (s.data.sync) return 'syncing';
-  if (moving(f.row!)) return 'busy';
+  // A merge does not wait for the shots agent's turn (facts.ts mergeMoving).
+  if (f.row!.mergeMoving) return 'busy';
   return null;
 }
 

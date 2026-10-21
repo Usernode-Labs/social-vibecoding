@@ -62,8 +62,9 @@ export const NOT_MOVING_KINDS: readonly string[] = Object.freeze(['turn', 'hando
 // as moving, it made the proposal answer the merge queue `busy` for as long
 // as it ran, and nothing asked again when it ended: on 21 Oct 2026 PR 5787
 // had its checks and its vote at 17:40:47 and merged at 17:44:40, on an
-// unrelated ask 47 s after its shots were published. Still a turn for
-// everything else (activeTurn): a sync with main waits for it.
+// unrelated ask 47 s after its shots were published. Exempt for the merge
+// queue's ask only (proposal/facts.ts mergeMoving): a sync with main, a
+// promote and an unpromote still wait for it.
 export const NOT_MOVING_TURN_MODES: readonly string[] = Object.freeze(['shots']);
 
 // True while the session row `alias` has a coding turn that may move its

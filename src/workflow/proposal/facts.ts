@@ -77,16 +77,20 @@ export interface Row {
   // on its author's own machine or an old flow's recorded operation other
   // than the caller's own (workedOn), its shots run (shotsRunning).
   // `moving`: what may still move its branch under a promote or an
-  // unpromote, or a merge (the queue's ask is declined `busy` meanwhile):
-  // its coding turn other than the shots agent's (which only takes
-  // pictures of its head, session-work.ts NOT_MOVING_TURN_MODES), a turn on
-  // its author's machine, an old flow's operation (a sync, an upload) other
-  // than the caller's own, a worker's turn record (whose end is recorded
-  // after the turn, and is read as its journal instead) and a hand-off's
-  // pipeline (which checks the very commit being proposed, as [main] let it).
+  // unpromote: its coding turn, a turn on its author's machine, an old
+  // flow's operation (a sync, an upload) other than the caller's own, a
+  // worker's turn record (whose end is recorded after the turn, and is
+  // read as its journal instead) and a hand-off's pipeline (which checks
+  // the very commit being proposed, as [main] let it).
+  // `mergeMoving`: the same, less the shots agent's turn, for the merge
+  // queue's ask (machine.ts askRefusal). It only takes pictures of the head
+  // (session-work.ts NOT_MOVING_TURN_MODES), so a merge does not wait for
+  // it; a promote or an unpromote still does (an unpromote destroys the
+  // worker it runs in).
   activeTurn: boolean;
   workedOn: boolean;
   moving: boolean;
+  mergeMoving: boolean;
   shotsRunning: boolean;
   // A durable build (the Homeroom bot's, a bench trial's) holds it.
   buildHold: boolean;
@@ -199,7 +203,8 @@ async function readRow(tx: Tx, sessionId: number, ownOperation: string | null): 
     mergeAttemptAt: iso(r.merge_attempt_at), shots: !!r.shots,
     fixture: String(r.branch_name || '').startsWith('staging-fixture/'),
     activeTurn: !!r.active_turn, workedOn: !!r.local_turn || !!r.operations,
-    moving: !!r.moving_turn || !!r.local_turn || !!r.moving_operations, shotsRunning: !!r.shots_running,
+    moving: !!r.active_turn || !!r.local_turn || !!r.moving_operations,
+    mergeMoving: !!r.moving_turn || !!r.local_turn || !!r.moving_operations, shotsRunning: !!r.shots_running,
     buildHold: !!r.build_hold, pendingSecret: !!r.pending_secret,
     checkState: r.check_state ?? null, checksCommitSha: sha(r.checks_commit_sha),
     bootFailureSyncHead: sha(r.boot_failure_sync_head), fixedCheckSyncHead: sha(r.fixed_check_sync_head),

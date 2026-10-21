@@ -346,14 +346,15 @@ test('proposal machine against the full PostgreSQL schema', { timeout: 180000 },
     await pool.query(
       `INSERT INTO pending_secret_declarations (app_id, session_id, scope, key, declaration, status)
        VALUES ($1, $2, 'app', 'API_KEY', '{}'::jsonb, 'pending')`, [secret.app_id, secret.id]);
-    // The shots agent's turn takes pictures of the head and moves nothing.
+    // An unpromote still waits for the shots agent's turn: it would destroy
+    // the worker the turn runs in (only a merge does not wait for it).
     const shooting = await session({ status: 'promoted', promotedAgo: 0 });
     await pool.query(`UPDATE chat_sessions SET active_turn = '{"turnId":"t","mode":"shots"}'::jsonb WHERE id = $1`, [shooting.id]);
     const ids = [];
     for (const x of [s, busy, secret, shooting]) ids.push(await send(x, 'Unpromote', { from: 'promoted', userId: x.owner.id, username: x.owner.username }, route));
     await settle();
     const results = await Promise.all(ids.map(outcome));
-    assert.deepEqual(results.map((r) => r.reason), [null, 'busy', 'pending_secret', null]);
+    assert.deepEqual(results.map((r) => r.reason), [null, 'busy', 'pending_secret', 'busy']);
     const r = await row(s);
     assert.equal(r.status, 'paused');
     assert.equal(r.approval_epoch, 1);

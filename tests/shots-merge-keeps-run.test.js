@@ -77,7 +77,7 @@ test('a merged proposal\'s run that the platform fails is not retried; one in re
   assert.equal(inReview.timer.event.type, 'RetryDue', 'a platform fault is taken again once while in review');
 });
 
-test('only the shots agent\'s turn is exempt from moving, and the proposal\'s facts read it so', () => {
+test('only the shots agent\'s turn is exempt, and only for the merge queue\'s ask', () => {
   assert.equal(MACHINE, 'shots');
   assert.deepEqual([...NOT_MOVING_TURN_MODES], ['shots']);
   const sql = movingTurnSql('cs');
@@ -86,6 +86,11 @@ test('only the shots agent\'s turn is exempt from moving, and the proposal\'s fa
   assert.throws(() => movingTurnSql('cs; DROP'), /bad alias/);
   const factsSrc = fs.readFileSync(path.join(__dirname, '../src/workflow/proposal/facts.ts'), 'utf8');
   assert.match(factsSrc, /\$\{movingTurnSql\('cs'\)\} AS moving_turn/);
-  assert.match(factsSrc, /moving: !!r\.moving_turn \|\| !!r\.local_turn \|\| !!r\.moving_operations/);
-  assert.match(factsSrc, /cs\.active_turn IS NOT NULL AS active_turn/, 'every other reader still sees the turn');
+  assert.match(factsSrc, /mergeMoving: !!r\.moving_turn \|\| !!r\.local_turn \|\| !!r\.moving_operations/);
+  assert.match(factsSrc, /moving: !!r\.active_turn \|\| !!r\.local_turn \|\| !!r\.moving_operations/,
+    'a promote, an unpromote and a sync still wait for the shots agent\'s turn');
+  const machineSrc = fs.readFileSync(path.join(__dirname, '../src/workflow/proposal/machine.ts'), 'utf8');
+  const ask = machineSrc.slice(machineSrc.indexOf('function askRefusal'), machineSrc.indexOf('const mergeRequested'));
+  assert.match(ask, /if \(f\.row!\.mergeMoving\) return 'busy';/, 'only the merge ask reads mergeMoving');
+  assert.doesNotMatch(ask, /moving\(f\.row!\)/);
 });
