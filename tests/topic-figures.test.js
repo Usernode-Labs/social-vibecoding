@@ -918,3 +918,49 @@ test('topic figures against the full schema', { timeout: 120000 }, async (t) => 
     assert.deepEqual(sidesOf(got['pipeline.reds-rerun']), [['homeroom', 'warn', '60%', '3 of 5 reds'], ['others', 'warn', '33%', '1 of 3 reds']]);
   });
 });
+
+// #5683 (audit F19): while most of a topic's figures still wait for ten
+// people, the tiles said "Not enough data" in the largest type on the page.
+// They fold into one quiet line that names the figures that DO have data.
+test('a reading still waiting for ten people carries `few`, and the strip says what it waits for', () => {
+  const first = figures.present('onboarding.first-project', { secs: 200, n: 4 });
+  assert.equal(first.few, true);
+  const signUp = figures.present('onboarding.sign-up', { hits: 2, total: 9 });
+  assert.equal(signUp.few, true);
+  const enough = figures.present('onboarding.sign-up', { hits: 53, total: 60 });
+  assert.equal(enough.few, undefined, 'a figure with data is not waiting');
+  assert.equal(figures.layoutFor(TOPIC_IDS.onboarding).peopleMin, 10);
+  assert.equal(figures.layoutFor(TOPIC_IDS['homeroom-bot']).peopleMin, undefined, 'the bot grid has no people figure');
+});
+
+const foldPayload = () => ({
+  topic: 'onboarding', layout: 'tiles', days: 30, peopleMin: 10,
+  note: 'Totals only. Smaller groups are rounded more; under 10 people shows “Not enough data”.',
+  figures: [
+    { id: 'onboarding.errors', label: 'Errors in a first session', tip: 't', group: null, column: null, state: 'ok', value: '0%', sub: '0 of 18 visits' },
+    ...['finish', 'come-back', 'first-post', 'join'].map((key, i) => ({
+      id: `onboarding.${key}`, label: `Measure ${i + 2}`, tip: 't', group: null, column: null,
+      state: 'calm', value: 'Not enough data', sub: 'Fewer than 10 people so far', few: true,
+    })),
+  ],
+});
+
+test('one figure of five folds the tiles into one quiet line, with the ⓘ the check reads', () => {
+  const { TopicFiguresView, foldFigures } = loadTsx(STRIP);
+  const payload = foldPayload();
+  assert.equal(foldFigures(payload).waiting.length, 4);
+  const html = renderToHtml(createElement(TopicFiguresView, { handle: 'onboarding', data: payload }));
+  assert.match(html, /data-topic-figures="onboarding"/);
+  assert.match(html, /<p class="dev-ws-figs-folded" data-topic-figures-layout="folded">Errors in a first session 0% \(0 of 18 visits\)\. The other 4 measures appear once 10 people are counted\. <button/);
+  assert.match(html, /class="dev-ws-fig-info"/, 'the declared check selects it inside [data-topic-figures]');
+  assert.doesNotMatch(html, /dev-ws-figs-card/, 'no tiles');
+  assert.doesNotMatch(html, /dev-ws-figs-note/, 'the note is the ⓘ now');
+  // No figure with data says when they all appear.
+  const none = { ...payload, figures: payload.figures.map((f) => ({ ...f, few: true })) };
+  const noneHtml = renderToHtml(createElement(TopicFiguresView, { handle: 'onboarding', data: none }));
+  assert.match(noneHtml, /These 5 measures appear once 10 people are counted\./);
+  // At least half reporting keeps the tiles as they were.
+  const mostly = { ...payload, figures: payload.figures.map((f, i) => (i < 3 ? { ...f, few: undefined } : f)) };
+  assert.equal(foldFigures(mostly), null);
+  assert.match(renderToHtml(createElement(TopicFiguresView, { handle: 'onboarding', data: mostly })), /dev-ws-figs-card/);
+});

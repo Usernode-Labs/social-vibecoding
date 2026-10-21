@@ -38,6 +38,7 @@ import { SectionHeader } from '@/components/ui/grouped-list';
 import { InfoCircleIcon, WarningTriangleIcon } from '@/components/ui/icons';
 
 import { useMessages } from '../../../lib/i18n/react';
+import { getLanguage } from '../../../lib/i18n/runtime';
 import type { PlaceChannel } from './community-card';
 
 export type FigureState = 'ok' | 'warn' | 'calm' | 'empty' | 'missing' | 'error';
@@ -62,6 +63,8 @@ export interface TopicFigure {
   state: FigureState;
   value: string;
   sub: string;
+  /** #5683: still waiting for enough people (the server's `few`). */
+  few?: boolean;
   /** A split figure's sides, Homeroom first; drawn in place of `value`. */
   sides?: FigureSide[];
 }
@@ -75,6 +78,8 @@ export interface TopicFiguresPayload {
   days?: number;
   note?: string | null;
   demo?: boolean;
+  /** #5683: how many people a figure waits for before it reports. */
+  peopleMin?: number;
 }
 
 function demoAsked(): boolean {
@@ -99,14 +104,18 @@ export function topicHasFigures(topic: Pick<PlaceChannel, 'state'> & { figures?:
 const TIP_WIDTH = 280;
 const TIP_MARGIN = 8;
 
-/** One figure's cell, with its ⓘ and what it means. */
-function FigureCell({ figure, open, onOpen, onClose, label }: {
-  figure: TopicFigure;
-  open: boolean;
-  onOpen: (id: string) => void;
-  onClose: (id: string) => void;
+/**
+ * The ⓘ and what it says, placed under the button on the page body while it
+ * is open. One piece for a figure's cell and for the folded line (#5683).
+ */
+function InfoTip({ id, tip, label, open, onOpen, onClose }: {
+  id: string;
+  tip: string;
   /** The ⓘ's accessible name. */
   label: string;
+  open: boolean;
+  onOpen: () => void;
+  onClose: () => void;
 }): ReactNode {
   const tipId = useId();
   const infoRef = useRef<HTMLButtonElement>(null);
@@ -125,15 +134,59 @@ function FigureCell({ figure, open, onOpen, onClose, label }: {
     };
     measure();
     // It follows nothing: a scroll or a resize closes it.
-    const close = () => onClose(figure.id);
-    window.addEventListener('scroll', close, true);
-    window.addEventListener('resize', close);
+    window.addEventListener('scroll', onClose, true);
+    window.addEventListener('resize', onClose);
     return () => {
-      window.removeEventListener('scroll', close, true);
-      window.removeEventListener('resize', close);
+      window.removeEventListener('scroll', onClose, true);
+      window.removeEventListener('resize', onClose);
     };
-  }, [open, figure.id, onClose]);
+  }, [open, onClose]);
 
+  return (
+    <>
+      <button
+        ref={infoRef}
+        type="button"
+        className="dev-ws-fig-info"
+        aria-label={label}
+        aria-describedby={tipId}
+        onFocus={onOpen}
+        onBlur={onClose}
+        // A tap focuses it too: it opens, and a tap anywhere else closes it.
+        onClick={(e) => { e.preventDefault(); onOpen(); }}
+        onKeyDown={(e) => { if (e.key === 'Escape') onClose(); }}
+      >
+        <InfoCircleIcon aria-hidden="true" />
+      </button>
+      {/* Always in the document, so the ⓘ's description is there to read;
+          drawn on the body while open. */}
+      {open && place && typeof document !== 'undefined'
+        ? createPortal(
+          <span
+            id={tipId}
+            role="tooltip"
+            className="dev-ws-fig-tip"
+            data-topic-figure-tip={id}
+            style={{ top: place.top, left: place.left, width: place.width }}
+          >
+            {tip}
+          </span>,
+          document.body,
+        )
+        : <span id={tipId} hidden>{tip}</span>}
+    </>
+  );
+}
+
+/** One figure's cell, with its ⓘ and what it means. */
+function FigureCell({ figure, open, onOpen, onClose, label }: {
+  figure: TopicFigure;
+  open: boolean;
+  onOpen: (id: string) => void;
+  onClose: (id: string) => void;
+  /** The ⓘ's accessible name. */
+  label: string;
+}): ReactNode {
   const quiet = (state: FigureState) => state === 'missing' || state === 'empty' || state === 'error';
   const muted = quiet(figure.state);
   const sides = Array.isArray(figure.sides) && figure.sides.length ? figure.sides : null;
@@ -154,20 +207,14 @@ function FigureCell({ figure, open, onOpen, onClose, label }: {
         {head}
         <span className="dev-ws-fig-label-end">
           {tail}
-          <button
-            ref={infoRef}
-            type="button"
-            className="dev-ws-fig-info"
-            aria-label={label}
-            aria-describedby={tipId}
-            onFocus={() => onOpen(figure.id)}
-            onBlur={() => onClose(figure.id)}
-            // A tap focuses it too: it opens, and a tap anywhere else closes it.
-            onClick={(e) => { e.preventDefault(); onOpen(figure.id); }}
-            onKeyDown={(e) => { if (e.key === 'Escape') onClose(figure.id); }}
-          >
-            <InfoCircleIcon aria-hidden="true" />
-          </button>
+          <InfoTip
+            id={figure.id}
+            tip={figure.tip}
+            label={label}
+            open={open}
+            onOpen={() => onOpen(figure.id)}
+            onClose={() => onClose(figure.id)}
+          />
         </span>
       </span>
       {sides ? (
@@ -197,23 +244,65 @@ function FigureCell({ figure, open, onOpen, onClose, label }: {
           {figure.sub}
         </span>
       ) : null}
-      {/* Always in the document, so the ⓘ's description is there to read;
-          drawn on the body while open. */}
-      {open && place && typeof document !== 'undefined'
-        ? createPortal(
-          <span
-            id={tipId}
-            role="tooltip"
-            className="dev-ws-fig-tip"
-            data-topic-figure-tip={figure.id}
-            style={{ top: place.top, left: place.left, width: place.width }}
-          >
-            {figure.tip}
-          </span>,
-          document.body,
-        )
-        : <span id={tipId} hidden>{figure.tip}</span>}
     </div>
+  );
+}
+
+/**
+ * #5683: the figures a folded strip would keep. While most of a topic's
+ * figures are still waiting for enough people, the tiles say "Not enough
+ * data" in the largest type on the page; the strip then folds into one
+ * quiet line that names the figures that DO have data. Pure. Null when the
+ * tiles stay as they are.
+ */
+export function foldFigures(data: TopicFiguresPayload): { shown: TopicFigure[]; waiting: TopicFigure[] } | null {
+  if (data.layout === 'grid' || !data.figures.length) return null;
+  const waiting = data.figures.filter((f) => f.few);
+  const shown = data.figures.filter((f) => !f.few);
+  return waiting.length > shown.length ? { shown, waiting } : null;
+}
+
+/**
+ * #5683: the quiet line a mostly-waiting strip folds into, under "Last 30
+ * days": the figures that have data, then when the others appear. The ⓘ at
+ * its end carries the rounding note the paragraph under the tiles held.
+ */
+function FoldedFigures({ data, folded, openId, onOpen, onClose }: {
+  data: TopicFiguresPayload;
+  folded: { shown: TopicFigure[]; waiting: TopicFigure[] };
+  openId: string | null;
+  onOpen: (id: string) => void;
+  onClose: (id: string) => void;
+}): ReactNode {
+  const t = useMessages('project');
+  const min = Number(data.peopleMin) || 10;
+  const items = folded.shown.map((figure) => t('project:places.topicFigures.foldedItem', {
+    label: figure.label, figure: figure.value, sub: figure.sub,
+  }));
+  let joined = items.join(', ');
+  try {
+    joined = new Intl.ListFormat(getLanguage(), { style: 'long', type: 'conjunction' }).format(items);
+  } catch { /* the plain join stands */ }
+  const sentence = folded.shown.length
+    ? t('project:places.topicFigures.folded', { figures: joined, count: folded.waiting.length, min })
+    : t('project:places.topicFigures.foldedNone', { count: folded.waiting.length, min });
+  return (
+    <p className="dev-ws-figs-folded" data-topic-figures-layout="folded">
+      {sentence}
+      {data.note ? (
+        <>
+          {' '}
+          <InfoTip
+            id="folded"
+            tip={data.note}
+            label={t('project:places.topicFigures.foldedInfo')}
+            open={openId === 'folded'}
+            onOpen={() => onOpen('folded')}
+            onClose={() => onClose('folded')}
+          />
+        </>
+      ) : null}
+    </p>
   );
 }
 
@@ -233,6 +322,7 @@ export function TopicFiguresView({ handle, data }: {
 
   if (!data.figures.length) return null;
   const days = Number(data.days) || 7;
+  const folded = foldFigures(data);
   const cell = (figure: TopicFigure) => (
     <FigureCell
       key={figure.id}
@@ -286,8 +376,14 @@ export function TopicFiguresView({ handle, data }: {
       <div className="dev-ws-figs-head">
         <SectionHeader className="p-0">{t('project:places.topicFigures.window', { count: days })}</SectionHeader>
       </div>
-      {card}
-      {data.note ? <p className="dev-ws-figs-note">{data.note}</p> : null}
+      {folded ? (
+        <FoldedFigures data={data} folded={folded} openId={openId} onOpen={onOpen} onClose={onClose} />
+      ) : (
+        <>
+          {card}
+          {data.note ? <p className="dev-ws-figs-note">{data.note}</p> : null}
+        </>
+      )}
       {data.demo ? <p className="dev-ws-figs-note" data-topic-figures-demo="">{t('project:places.topicFigures.demo')}</p> : null}
     </section>
   );

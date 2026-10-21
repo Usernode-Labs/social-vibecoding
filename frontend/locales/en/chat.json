@@ -2199,6 +2199,14 @@
     "text": "Nothing said here yet.",
     "description": "Line shown in a topic's channel of a project's discussion when nobody has written in it yet. A topic is one of a project's own named channels, such as #onboarding."
   },
+  "group.topicChannel.start": {
+    "text": "Start #{{handle}}",
+    "description": "Centred heading in a topic's channel of a project's discussion when nobody has written in it yet and the viewer can post. {{handle}} is the channel's handle without its #, for example \"onboarding\"."
+  },
+  "group.topicChannel.invite": {
+    "text": "Ideas posted here can become requests.",
+    "description": "Line under the invitation in a topic's channel of a project's discussion when nobody has written in it yet: says that what people post there can become a request to build something."
+  },
   "group.botOffer.failed": {
     "text": "That didn’t work just now.",
     "description": "Toast when pressing Yes or No under one of Homeroom bot's offers in a chat could not be sent, and the server gave no reason of its own."

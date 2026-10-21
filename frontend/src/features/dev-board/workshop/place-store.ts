@@ -223,6 +223,20 @@ export function cachedTopics(slug: string): string[] | null {
 }
 
 /**
+ * #5683: the place `slug` can really show. A topic belongs to one community,
+ * and a place left over from another one ("#onboarding" under KasirKU) must
+ * not stay beside its name: once `slug`'s record has been read and does not
+ * list the topic, its Hub is shown instead. While the record is unread a
+ * page's own place is trusted, as `keepPlace` trusts it. Pure.
+ */
+export function livePlace(slug: string, place: PlaceKey): PlaceKey {
+  if (!place.startsWith('c:')) return place;
+  const topics = cachedTopics(slug);
+  if (!topics) return place;
+  return topics.includes(place.slice(2)) ? place : 'status';
+}
+
+/**
  * A SWITCH KEEPS YOUR PAGE, on a desktop as in the phone's drawer. Picking
  * another community from the header's ⌄ menu or from All communities opens
  * it on the place you were on when it has that place, else on its hub: the

@@ -7086,11 +7086,13 @@ const AppView = {
       : item.external_agent ? PlatformI18n.t('changes:page.thread.viaExternal')
         : (item.source === 'imported' ? PlatformI18n.t('changes:page.thread.viaGitHub') : null);
     // Issue #5178: the header repeats the status pill the board card shows,
-    // beside "Change #N" — "✓ Live", "Going live…", or the vote's own words.
-    // A change still being built or closed has no pill worth repeating: its
-    // card pill would read as a bare tally, and the Votes card under the
-    // title already says where those stand. The card's own state wins, so
-    // the kind (proposal or gov) and majority stay the card's.
+    // beside "Change #N" — "✓ Live" or "Going live…". #5683: it keeps that
+    // pill only for the delivery states; while the change is being voted on
+    // the Votes card under the title already gives the tally and "Goes live
+    // in …", so repeating it beside the title said the same thing twice
+    // (change-head.tsx VOTE_STATES is the same list). A change still being
+    // built or closed has no pill worth repeating either. The card's own
+    // state wins, so the kind (proposal or gov) and majority stay the card's.
     const statusState = ['active', 'paused', 'closed'].includes(item.status)
       ? null
       : ((card && card.pill && card.pill.state) || AppView.statusPillState(item, kind === 'gov' ? { kind: 'gov' } : {}) || null);
@@ -23754,7 +23756,7 @@ const AppView = {
   // here, which is the half that was worth unit-testing anyway.
 
 
-  voteCountPill(pr, majority) {
+  voteCountPill(pr, majority, opts = {}) {
     if (!pr) return '';
     // #58: for merged PRs prefer the threshold snapshotted at merge time
     // (votes_required) so the denominator reflects history rather than the
@@ -23889,9 +23891,14 @@ const AppView = {
       fills = `<span class="gc-vote-fill gc-vote-fill-yes" style="width:${w.yes}%"></span>`
         + `<span class="gc-vote-fill gc-vote-fill-no" style="width:${w.no}%"></span>`;
     }
+    // #5683: the request page's inline vote card says the tally in words
+    // ("4 of 3 yes votes"); the board and the vote panel keep "x / y".
+    const tally = opts.words
+      ? PlatformI18n.htmlText('changes:badge.votePill.tallyWords', { yes, count: maj })
+      : `${yes} / ${maj}`;
     return `<span class="gc-vote-count gc-vote-count-${state}"${titleAttr}>`
       + fills
-      + `<span class="gc-vote-count-label">${yes} / ${maj}</span>`
+      + `<span class="gc-vote-count-label">${tally}</span>`
       + `</span>` + advisoryChip + explicitChip;
   },
 

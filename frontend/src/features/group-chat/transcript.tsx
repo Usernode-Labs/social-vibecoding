@@ -79,6 +79,7 @@ import { openAppTarget } from '../messages/bot-shared';
 import { setUserBlocked } from '../messages/store';
 import { firstUnreadId, transcriptRow } from '../messages/unread-anchor';
 import { displayName, openRequestSpec, replyCount, requestStream } from '../dev-board/topic/request-model';
+import { BOT_AVATAR } from '../messages/format';
 import { changeLine, changeReplyCount, changeStream } from '../dev-board/topic/change-model';
 import { MessageActionBar, MessageMenu, placementFor, type MenuItem } from '../message-actions/action-bar';
 import { MessageActionSheet, useLongPress } from '../message-actions/action-sheet';
@@ -781,6 +782,9 @@ export const MessageRow = memo(function MessageRow({ msg, grouped = false, surfa
   const recents = useRecentReactions();
   const chat = controller();
   const live = !msg.deleted && !!msg.id;
+  // #5683: Homeroom bot speaks here under its name and logo, as in Messages,
+  // never as "homeroom_bot" with a letter avatar like a person.
+  const named = displayName(msg.username);
   // #4055: in the app, whether its build can save a picture is known only
   // once asked; asking re-renders the row so the menu's Download line can
   // appear. Nothing is asked for a row without a picture.
@@ -806,15 +810,11 @@ export const MessageRow = memo(function MessageRow({ msg, grouped = false, surfa
       // what it was.
       {...(msg.postedVia ? { 'data-posted-via': msg.postedVia } : {})}
       {...longPress}
-      avatar={(
-        <Avatar shape="square" size="md" color={swatchFor(msg.username)} aria-hidden="true">
-          {msg.username.charAt(0).toUpperCase()}
-        </Avatar>
-      )}
+      avatar={<RowAvatar username={msg.username} />}
       name={(
         <>
           {msg.unread ? <span className="gc-unread-dot" aria-label={t('chat:group.row.unreadMention')} /> : null}
-          <span className={msg.mine ? 'gc-msg-username-self' : undefined}>{msg.username}</span>
+          <span className={msg.mine ? 'gc-msg-username-self' : undefined}>{named}</span>
           <PostedViaChip via={msg.postedVia} className="ml-1.5" />
         </>
       )}
@@ -1025,6 +1025,25 @@ function renderRow(msg: TranscriptMessage, fallbackKey: string, main = false, ch
 }
 
 /**
+ * #5683: a row's face. Homeroom bot wears the Homeroom logo, as in Messages;
+ * a person wears their swatch and initial.
+ */
+function RowAvatar({ username }: { username: string }): ReactNode {
+  if (displayName(username) !== username) {
+    return (
+      <Avatar shape="square" size="md" aria-hidden="true" className="overflow-hidden">
+        <img src={BOT_AVATAR} alt="" className="h-full w-full object-cover" data-bot-avatar="" />
+      </Avatar>
+    );
+  }
+  return (
+    <Avatar shape="square" size="md" color={swatchFor(username)} aria-hidden="true">
+      {username.charAt(0).toUpperCase()}
+    </Avatar>
+  );
+}
+
+/**
  * #4453: a comment on the request's GitHub issue, in a request's stream. The
  * same named row a Homeroom reply is (so the two read as one conversation),
  * with "· on GitHub" after the time. It is GitHub's to edit and react to, so
@@ -1038,11 +1057,7 @@ const GitHubRow = memo(function GitHubRow({ msg }: { msg: TranscriptMessage }) {
       data-github-comment={msg.key || ''}
       data-username={msg.username}
       data-username-missing={msg.usernameMissing ? '' : undefined}
-      avatar={(
-        <Avatar shape="square" size="md" color={swatchFor(msg.username)} aria-hidden="true">
-          {displayName(msg.username).charAt(0).toUpperCase()}
-        </Avatar>
-      )}
+      avatar={<RowAvatar username={msg.username} />}
       name={displayName(msg.username)}
       timestamp={(
         msg.time ? (
@@ -1528,7 +1543,22 @@ export function TranscriptRows({ view, source }: {
           ("No messages yet…", or "Loading…" before the history returns)
           outlived the first row that landed on it and only went away on the
           next full publish — a remount or a refresh (#2498). */}
-      {view.lead.placeholder && !rows.length ? (
+      {view.lead.emptyChannel && !rows.length ? (
+        // #5683: a topic's channel with nothing in it invites the first post,
+        // rather than saying so in a corner: the room's own name and what it
+        // is for, then what a post there can become. A viewer who cannot post
+        // gets the same block with the plain line.
+        <div className="gc-channel-empty" data-channel-empty={view.lead.emptyChannel.handle}>
+          <span className="gc-channel-empty-mark" aria-hidden="true">#</span>
+          <p className="gc-channel-empty-title">
+            {view.lead.emptyChannel.canPost
+              ? t('chat:group.topicChannel.start', { handle: view.lead.emptyChannel.handle })
+              : t('chat:group.topicChannel.empty')}
+          </p>
+          {view.lead.emptyChannel.about ? <p className="gc-channel-empty-about">{view.lead.emptyChannel.about}</p> : null}
+          {view.lead.emptyChannel.canPost ? <p className="gc-channel-empty-invite">{t('chat:group.topicChannel.invite')}</p> : null}
+        </div>
+      ) : view.lead.placeholder && !rows.length ? (
         <div className="text-xs text-zinc-500 dark:text-zinc-400 px-2 py-2">{view.lead.placeholder}</div>
       ) : null}
       {/* #2992: the history request failed. The module keeps the failure on

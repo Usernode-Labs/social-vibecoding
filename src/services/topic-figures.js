@@ -1043,7 +1043,11 @@ function reading(def, measure) {
   const empty = (detail) => ({
     state: 'empty', value: 'None yet', detail: since ? `Counting since ${since}` : detail, off: null, final: true, since,
   });
-  const calm = (value, detail) => ({ state: 'calm', value, detail, off: null, final: true });
+  // #5683: `few` marks a reading still waiting for enough people, so the
+  // strip can fold the ones that say so into one quiet line.
+  const calm = (value, detail, few = false) => ({
+    state: 'calm', value, detail, off: null, final: true, ...(few ? { few: true } : {}),
+  });
 
   if (def.kind === 'rate') {
     // A share of dollars keeps its cents; a count is whole.
@@ -1051,7 +1055,7 @@ function reading(def, measure) {
     const total = amount(measure.total);
     const hits = Math.min(amount(measure.hits), total);
     if (def.people) {
-      if (total < PEOPLE_MIN) return calm('Not enough data', FEW_PEOPLE);
+      if (total < PEOPLE_MIN) return calm('Not enough data', FEW_PEOPLE, true);
       const shown = peopleRate(hits, total);
       if (shown.small) return calm(shown.text, 'rounded · small group');
       const off = offTarget(def.target, hits / total);
@@ -1071,7 +1075,7 @@ function reading(def, measure) {
     const n = int(measure.n);
     const secs = num(measure.secs);
     if (def.people) {
-      if (n < PEOPLE_MIN || secs == null) return calm('Not enough data', FEW_PEOPLE);
+      if (n < PEOPLE_MIN || secs == null) return calm('Not enough data', FEW_PEOPLE, true);
       const shown = peopleDuration(secs, n);
       if (shown.small) return calm(shown.text, 'rounded · small group');
       const off = offTarget(def.target, secs);
@@ -1167,7 +1171,7 @@ function present(id, measure) {
     };
   }
   const read = reading(def, measure);
-  return { ...base, state: read.state, value: read.value, sub: lineFor(def, read) };
+  return { ...base, state: read.state, value: read.value, sub: lineFor(def, read), ...(read.few ? { few: true } : {}) };
 }
 
 // ── Windows, sides and the cache ─────────────────────────────────────────
@@ -1268,6 +1272,9 @@ function layoutFor(ids) {
     columns: grid ? COLUMNS.map((key) => ({ key, name: COLUMN_NAMES[key] })) : [],
     days: first ? SOURCES[first.name].days : 7,
     note: defs.some((d) => d.people) ? NOTE_PEOPLE : null,
+    // #5683: how many people a people figure waits for, so a client can say
+    // it without matching on the English of its reading.
+    ...(defs.some((d) => d.people) ? { peopleMin: PEOPLE_MIN } : {}),
   };
 }
 

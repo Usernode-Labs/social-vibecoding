@@ -352,3 +352,28 @@ test('GitHub comments are slotted into the thread by time, and the thread\'s own
   const merged = JSON.parse(JSON.stringify(GroupChat._mergeByTime(hr, gh).map((r) => r.id || r.key)));
   assert.deepEqual(merged, [1, 'a', 2, 3, 4, 'b']);
 });
+
+// #5683: the bar names the request itself, under a small line that says its
+// number and, once settled, how it ended (audit F18, mock-up M10).
+test('the bar names the request, over a line that says how it ended', () => {
+  const open = renderComponent(HEAD, 'RequestBar', { r: requestView() });
+  assert.match(open, /<div class="messages-thread-kicker" data-request-kicker="">Request #4417<\/div>/);
+  assert.match(open, /class="messages-thread-name dev-request-bar-title line-clamp-2">Add topics as discussion containers</);
+  const done = renderComponent(HEAD, 'RequestBar', { r: requestView({ stage: 'voted' }) });
+  assert.match(done, /data-request-kicker="">Request #4417 · done</);
+  const closed = renderComponent(HEAD, 'RequestBar', { r: requestView({ closed: 'This request was closed by vote.' }) });
+  assert.match(closed, /data-request-kicker="">Request #4417 · closed</);
+});
+
+test('the plan card wraps its title and by-line, and names Homeroom bot as Messages does', () => {
+  const card = {
+    key: 's1', title: 'Let cashiers split one bill between two payment methods', version: 1,
+    by: 'evan', at: null, time: '2 days ago', timeTitle: '', read: { kind: 'text', title: 'x', markdown: '', html: '' },
+  };
+  const html = renderComponent(HEAD, 'SpecCard', { card });
+  assert.doesNotMatch(html, /line-clamp-2|truncate/, 'nothing is cut off');
+  assert.match(html, /break-words/);
+  const { requestStream } = loadTsx(MODEL);
+  const out = requestStream([row({ id: 1, kind: 'spec_share', specShare: specShare(1, { sharedBy: 'homeroom_bot' }) })]);
+  assert.equal(out.specs[0].by, 'Homeroom bot');
+});

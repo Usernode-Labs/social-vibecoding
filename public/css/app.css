@@ -805,6 +805,16 @@ html.un-kb .platform-kb-column .un-kb-avoid {
 .messages-thread-name,
 .messages-thread-sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .messages-thread-name { color: var(--text-primary); font-size: 17px; font-weight: 700; }
+/* #5683: a request's bar names the request itself, under its number line
+   (the SectionHeader's literals: 12px, bold, uppercase, tracked 0.06em).
+   The title wraps to two lines there rather than being cut to one. */
+.messages-thread-kicker {
+  color: var(--text-muted);
+  font-size: 12px; font-weight: 700; line-height: 16px;
+  letter-spacing: 0.06em; text-transform: uppercase;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.messages-thread-name.dev-request-bar-title { white-space: normal; overflow-wrap: anywhere; }
 /* #5329: a change title that opens the Details sheet — a reset button that
    reads as the heading it sits in, underlined only on hover. */
 .messages-thread-name-link {
@@ -20221,6 +20231,29 @@ html[data-browser-scroller] .dev-ws[data-ws-tab^="c:"] {
 .dev-ws-figs-rowname { font-size: 15px; line-height: 20px; font-weight: 650; color: var(--text-primary); }
 .dev-ws-figs-rowabout { font-size: 12px; line-height: 16px; color: var(--text-muted); }
 .dev-ws-figs-note { margin: 6px 4px 0; font-size: 12px; line-height: 16px; color: var(--text-muted); }
+/* #5683: while most figures wait for enough people, the tiles fold into one
+   quiet sentence under the window label; its ⓘ carries the rounding note. */
+.dev-ws-figs-folded { margin: 6px 4px 0; font-size: 13px; line-height: 18px; color: var(--text-muted); }
+/* #5683: a topic's channel with nothing in it: a centred invitation to start
+   it, in the shape Messages' empty states use. */
+.gc-channel-empty {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 4px; min-height: 240px; padding: 24px 16px; text-align: center;
+  color: var(--text-muted);
+}
+.gc-channel-empty-mark { font-size: 28px; line-height: 32px; color: var(--text-muted); }
+.gc-channel-empty-title { font-size: 15px; font-weight: 650; color: var(--text-primary); }
+.gc-channel-empty-about { max-width: 34em; margin: 0; font-size: 13px; line-height: 18px; }
+.gc-channel-empty-invite { max-width: 34em; margin: 0; font-size: 13px; line-height: 18px; }
+/* #5683: on a phone the topic's line, the window label, the folded line and
+   the note sit on the page's 16px gutter, as everything else does. */
+@media (max-width: 767.98px) {
+  .dev-ws-topic-head,
+  .dev-ws-figs-head,
+  .dev-ws-figs-note,
+  .dev-ws-figs-folded { padding-left: 12px; padding-right: 12px; }
+  .dev-ws-figs-head { padding-bottom: 2px; }
+}
 @container (max-width: 560px) {
   .dev-ws-figs-tiles { grid-auto-flow: row; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .dev-ws-figs-tiles > .dev-ws-fig:last-child:nth-child(odd) { grid-column: 1 / -1; }

@@ -285,3 +285,20 @@ test('the card\'s checks open the dialog and a failing run offers Re-run; the ba
   assert.equal(message('agent:session.composer.archivedNote'), 'This session is archived. Unarchive it to keep going.');
   assert.match(panel, /window\.AppView\?\.openSessionChecks\?\.\(item\.changeId\)/);
 });
+
+// #5683 (audit F22): the bar said "No change yet" beside "Changes · 1".
+// The pill reads the latest change the conversation made, even when that
+// change is no longer the active one.
+test('the change pill reads the latest change, and says "No change yet" only when there is none', () => {
+  const api = loadTsx('tests/fixtures/agent-session-api.ts');
+  const latest = change({ id: 51, status: 'promoted', prNumber: 15, title: 'Split a bill' });
+  const html = renderToHtml(createElement(api.SessionBar, {
+    session: { title: 'Bill splitting', activeChange: null, changes: [latest] }, about: null, embedded: false,
+  }));
+  assert.match(html, /data-agent-session-change-pill[^>]*title="Waiting for approval"[\s\S]*?>Waiting for approval</);
+  assert.doesNotMatch(html, /No change yet/);
+  const empty = renderToHtml(createElement(api.SessionBar, {
+    session: { title: 'Bill splitting', activeChange: null, changes: [] }, about: null, embedded: false,
+  }));
+  assert.match(empty, /data-agent-session-change-pill[^>]*title="No change yet"[\s\S]*?>No change yet</);
+});

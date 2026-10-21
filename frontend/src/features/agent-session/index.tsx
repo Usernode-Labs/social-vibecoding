@@ -305,7 +305,7 @@ function changeRef(change: AgentChange) {
 /** What the conversation is about: the session's, or the unsent draft's. */
 type About = Pick<AgentSession, 'focusApp' | 'focusContext'> | null;
 
-function SessionBar({ session, about, embedded, action }: {
+export function SessionBar({ session, about, embedded, action }: {
   session: AgentSession | null;
   about: About;
   embedded: boolean;
@@ -351,12 +351,15 @@ function SessionBar({ session, about, embedded, action }: {
   // (#3016). The Messages pane's title is a line of its own above it rather
   // than a sibling the pills wrap around.
   const focusTitle = t('agent:session.bar.focusTitle');
-  // A merge of Homeroom itself waiting for the platform's next release: the
-  // pill keeps "Going live" and its title says when.
-  const releaseNow = useReleaseNow(active?.release);
-  const releaseLine = building ? null : changeReleaseLine(active, releaseNow);
-  const changeText = releaseLine || (active
-    ? changeStatusLabel(active.status, building)
+  // #5683: the pill reads the latest change the conversation made, not only
+  // the active one — "No change yet" beside "Changes · 1" contradicted the
+  // list. A merge of Homeroom itself waiting for the platform's next
+  // release: the pill keeps "Going live" and its title says when.
+  const latest = active || session?.changes?.[0] || null;
+  const releaseNow = useReleaseNow(latest?.release);
+  const releaseLine = building ? null : changeReleaseLine(latest, releaseNow);
+  const changeText = releaseLine || (latest
+    ? changeStatusLabel(latest.status, building)
     : t('agent:session.bar.noChangeYet'));
   return (
     <div className="border-b border-zinc-200 px-4 py-2 dark:border-zinc-800" data-agent-session-bar>
@@ -392,11 +395,11 @@ function SessionBar({ session, about, embedded, action }: {
         </span>
         <span
           data-agent-session-change-pill
-          className={`inline-flex min-w-[3.5rem] items-center whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-semibold ${statusTone(active?.status)}`}
+          className={`inline-flex min-w-[3.5rem] items-center whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-semibold ${statusTone(latest?.status)}`}
           title={changeText}
         >
           <span className="min-w-0 truncate">
-            {active ? changeStatusLabel(active.status, building) : t('agent:session.bar.noChangeYet')}
+            {latest ? changeStatusLabel(latest.status, building) : t('agent:session.bar.noChangeYet')}
           </span>
         </span>
         <button

@@ -230,7 +230,14 @@ const GroupChat = {
     const ref = c ? Number(c.ref) : NaN;
     if (!c || c.type !== 'category' || !Number.isSafeInteger(ref) || ref <= 0 || ref > 2147483647) return null;
     const markers = Array.isArray(c.markers) && c.markers.length ? c.markers : null;
-    return { type: 'category', ref, ...(markers ? { markers } : {}) };
+    // #5683: the channel's own name and description travel with it, so an
+    // empty one can invite the first post in its own words.
+    return {
+      type: 'category', ref,
+      handle: typeof c.handle === 'string' ? c.handle : '',
+      about: typeof c.about === 'string' ? c.about : '',
+      ...(markers ? { markers } : {}),
+    };
   },
 
   // Is `scope` the stream the general pane shows? A frame's `thread`, or a
@@ -1307,7 +1314,17 @@ const GroupChat = {
       'main',
       {
         earlier: false,
-        placeholder: channel && GroupChat._streamLoaded ? PlatformI18n.t('chat:group.topicChannel.empty') : null,
+        // #5683: an empty topic channel draws a centred invitation to start
+        // it, not the quiet line a thread uses; the transcript decides where
+        // it goes, this module knows the channel's name and description.
+        placeholder: null,
+        emptyChannel: channel && GroupChat._streamLoaded && !GroupChat.messages.length
+          ? {
+            handle: channel.handle || '',
+            about: channel.about || '',
+            canPost: !GroupChat._readOnly(),
+          }
+          : null,
         error: GroupChat._historyFailed ? PlatformI18n.t('chat:group.history.failed') : null,
         ...(channel && channel.markers ? { markers: channel.markers, moreBefore: !!GroupChat.hasMore } : {}),
         // The quiet card's three facts (features/group-chat/quiet-card.tsx).
@@ -4256,7 +4273,9 @@ const GroupChat = {
     let badge = '';
     if (pr.status === 'merging') badge = AppView.mergingBadgeHtml();
     else if (pr.status === 'merged') badge = AppView.mergedBadgeHtml();
-    return AppView.voteCountPill(pr, st.majority) + AppView.voteButtonsHtml(pr, { collapseVoted: true }) + badge;
+    // #5683: the chat's inline vote card says the tally in words; the board
+    // and the vote panel keep the "x / y" beside its bar (their own calls).
+    return AppView.voteCountPill(pr, st.majority, { words: true }) + AppView.voteButtonsHtml(pr, { collapseVoted: true }) + badge;
   },
 
   // Row text-color class from the viewer's vote status: faded once voted,

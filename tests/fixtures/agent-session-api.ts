@@ -3,7 +3,7 @@
 // its own, so a store loaded through a second entry would be a second copy the
 // panel cannot see.
 export { AgentSessionPanel, ChangesDrawer, FixChecksCardView, PreviewCardView, RunCard, SavedDrafts, SpecBody, SpecCard } from '../../frontend/src/features/agent-session/index';
-export { OpenAppButton, openAppTarget } from '../../frontend/src/features/agent-session/index';
+export { OpenAppButton, openAppTarget, SessionBar } from '../../frontend/src/features/agent-session/index';
 export { buildTranscript } from '../../frontend/src/features/agent-session/transcript';
 export {
   openAgentSession,

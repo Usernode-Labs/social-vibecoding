@@ -31,7 +31,7 @@ import { useStoreState } from '../../../lib/use-store-state';
 import { drawerStore } from '../../nav-drawer/drawer-store';
 import { navStore } from '../../nav/nav-store.js';
 import { placeHandle, placeName, type PlaceKey } from './places';
-import { placeStore, toggleTray } from './place-store';
+import { livePlace, placeStore, toggleTray } from './place-store';
 
 /** What waits for you, aloud: "29 to vote, 4 unread", or null for nothing. Pure. */
 export function waitingPhrase(owed: number, unread: number): string | null {
@@ -150,11 +150,14 @@ export function HeaderPlace({ slug, name }: { slug: string | null; name: string 
 export function HeaderPlaceName({ slug }: { slug: string | null }): ReactNode {
   const { slug: mounted, place } = useStoreState(placeStore);
   if (!slug || mounted !== slug) return null;
-  const handle = placeHandle(place);
+  // #5683: the header names a channel only if this community has it; one
+  // left over from another community gives way to the community's Hub.
+  const shown = livePlace(slug, place);
+  const handle = placeHandle(shown);
   return (
     <span className="header-place-name" data-header-place="" aria-hidden="true">
       {handle ? <span className="dev-ws-place-title-hash">#</span> : null}
-      {handle || placeName(place)}
+      {handle || placeName(shown)}
     </span>
   );
 }

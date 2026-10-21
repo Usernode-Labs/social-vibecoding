@@ -220,3 +220,25 @@ test('the header\'s own 52px row is the split of 12 and 12 at every width now', 
     /^html\[data-community-tint\] body:has\(#app-view:not\(\.hidden\)\) #platform-header \{\n  padding-bottom: 0\.75rem;\n\}/m,
     'and stands at the top level instead');
 });
+
+// #5683 (audit F20): the header kept Homeroom's "#onboarding" beside
+// KasirKU's name after the page moved to another community.
+test('a channel from another community gives way to this one\'s Hub', async () => {
+  const was = globalThis.fetch;
+  globalThis.fetch = async () => ({
+    ok: true,
+    json: async () => ({ slug: 'notes-ab12', places: { channels: [{ kind: 'topic', state: 'live', handle: 'onboarding', id: 3 }] } }),
+  });
+  try {
+    await ui.reloadCommunity('notes-ab12');
+    assert.equal(ui.livePlace('notes-ab12', 'c:onboarding'), 'c:onboarding', 'a topic this community has is kept');
+    assert.equal(ui.livePlace('notes-ab12', 'c:homeroom-bot'), 'status', 'one it does not have is the Hub');
+    ui.publishPlace('notes-ab12', 'c:homeroom-bot', 0, 0, false);
+    assert.match(renderToHtml(createElement(ui.HeaderPlaceName, { slug: 'notes-ab12' })), />Hub</);
+    ui.clearPlace('notes-ab12');
+  } finally {
+    globalThis.fetch = was;
+  }
+  // A record not read yet: the page's own place is trusted.
+  assert.equal(ui.livePlace('never-read', 'c:onboarding'), 'c:onboarding');
+});

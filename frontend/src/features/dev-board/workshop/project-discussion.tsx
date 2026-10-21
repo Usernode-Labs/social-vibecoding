@@ -428,7 +428,9 @@ function TopicChannel({ slug, name, data, topic, readOnly, onPlace }: {
         name,
         readOnly: readOnly || closed,
         archived: false,
-        channel: { type: 'category', ref, markers: markersRef.current },
+        // #5683: the channel's own name and description, so an empty one can
+        // invite the first post in its own words.
+        channel: { type: 'category', ref, markers: markersRef.current, handle: topic.handle, about: topic.about },
         placeholder: t('project:discussion.topic.placeholder', { handle: topic.handle }),
         notice,
       });

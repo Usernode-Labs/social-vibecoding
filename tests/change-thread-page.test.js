@@ -27,6 +27,7 @@ const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
 const MODEL = 'frontend/src/features/dev-board/topic/change-model.ts';
 const TRANSCRIPT = 'frontend/src/features/group-chat/transcript.tsx';
 const SHELL = 'frontend/src/features/group-chat/thread-shell.tsx';
+const HEAD_CHANGE = 'frontend/src/features/dev-board/topic/change-head.tsx';
 
 const row = (patch) => ({
   id: null, kind: 'message', username: 'maya', time: '09:05 AM',
@@ -321,4 +322,17 @@ test('the title button opens details the way the ⋯ row does, on the row\'s gat
   const css = read('public/css/app.css');
   assert.match(css, /\.messages-thread-name-link:hover \{ text-decoration: underline;/);
   assert.match(css, /\.messages-thread-name-link:focus-visible \{ outline: 2px solid var\(--accent\);/);
+});
+
+// #5683 (audit F22): the pill beside "Change #N" and the Votes card under
+// the title said the same thing twice. While the change is being voted on,
+// the card is the one that says it.
+test('no status pill beside the title while the Votes card already says where it stands', () => {
+  const bar = (status) => renderComponent(HEAD_CHANGE, 'ChangeBar', { v: view(status), menuKey: '' });
+  const voting = { tier: 0, key: 'merge_countdown', label: 'Goes live in ~2 h', tone: 'ok' };
+  assert.doesNotMatch(bar(voting), /data-change-status/, 'the Votes card carries "Goes live in …"');
+  assert.doesNotMatch(bar({ ...voting, key: 'needs_vote', label: 'Needs a vote' }), /data-change-status/);
+  assert.doesNotMatch(bar({ ...voting, key: 'contested', label: 'Contested' }), /data-change-status/);
+  assert.match(bar({ ...voting, key: 'deployed', label: 'Live', tone: 'ok' }), /data-change-status="deployed"/);
+  assert.match(bar({ tier: 0, key: 'delivery_failed', label: 'Failed', tone: 'blocked' }), /data-change-status="delivery_failed"/);
 });

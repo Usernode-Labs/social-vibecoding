@@ -74,7 +74,7 @@ export function requestStream(rows: TranscriptMessage[]): { rows: TranscriptMess
         key,
         title: s.title,
         version: s.version,
-        by: s.sharedBy,
+        by: displayName(s.sharedBy),
         byUnknown: !!s.sharedByUnknown,
         ...(s.botNote === 'replaced' || s.botNote === 'stopped' ? { ended: s.botNote } : {}),
         at: m.at || null,

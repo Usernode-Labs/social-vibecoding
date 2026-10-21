@@ -142,7 +142,7 @@ export function senderName(user?: Pick<ConversationUser, 'id' | 'username' | 'bo
 }
 
 /** B5: the bot's face, the Homeroom mark tile the header's menu button wears. */
-const BOT_AVATAR = '/brand/homeroom-mark.png';
+export const BOT_AVATAR = '/brand/homeroom-mark.png';
 
 export function UserAvatar({ user, title, size = 'md', shape = 'circle' }: {
   user?: ConversationUser | null;

@@ -140,7 +140,8 @@ test('the general pane moves to a topic\'s channel and back without a second soc
   const { gc, loads } = setup();
   gc.messages = [{ id: 1, content: '#general' }];
   gc.mount('homeroom', app({ type: 'category', ref: TOPIC, markers: [] }));
-  assert.deepEqual({ ...gc._channel }, { type: 'category', ref: TOPIC });
+  // #5683: the channel's own name and description ride with it.
+  assert.deepEqual({ ...gc._channel }, { type: 'category', ref: TOPIC, handle: '', about: '' });
   assert.equal(gc.messages.length, 0, 'the stream starts over, from the topic');
   assert.deepEqual(loads, [TOPIC]);
   assert.equal(gc._firstPageUrl('homeroom', null), `/api/apps/homeroom/messages?thread_type=category&thread_ref=${TOPIC}&limit=50`,
@@ -343,7 +344,9 @@ test('a reply in a topic message\'s thread, named by a link, opens that thread b
 test('the topic\'s place mounts #general\'s pane, scoped to the topic, with its reply thread beside it', () => {
   const channel = PD.slice(PD.indexOf('function TopicChannel('));
   // The pane is #general's (AppView.renderGroupChatTab), named for the topic.
-  assert.match(channel, /view\?\.renderGroupChatTab\?\.\(\{[\s\S]*?channel: \{ type: 'category', ref, markers: markersRef\.current \},[\s\S]*?placeholder: t\('project:discussion\.topic\.placeholder', \{ handle: topic\.handle \}\),/);
+  // #5683: the channel hands over its handle and description so an empty one
+  // can invite the first post; the transcript draws that, not a placeholder.
+  assert.match(channel, /view\?\.renderGroupChatTab\?\.\(\{[\s\S]*?channel: \{ type: 'category', ref, markers: markersRef\.current, handle: topic\.handle, about: topic\.about \},[\s\S]*?placeholder: t\('project:discussion\.topic\.placeholder', \{ handle: topic\.handle \}\),/);
   assert.equal(englishPlatformI18n().t('project:discussion.topic.placeholder', { handle: 'ideas' }), 'Message #ideas');
   assert.doesNotMatch(channel, /mountThread/, 'no longer a thread mount: the one thread slot is its reply thread\'s');
   // Held only while the page is the screen on show (one general pane).

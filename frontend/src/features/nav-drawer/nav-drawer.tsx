@@ -50,7 +50,7 @@ import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
 import { audienceLine, useCachedCommunity } from '../dev-board/workshop/community-card';
 import { isPlaceKey, type PlaceKey } from '../dev-board/workshop/places';
-import { cachedTopics, openPlace, placeStore } from '../dev-board/workshop/place-store';
+import { cachedTopics, livePlace, openPlace, placeStore } from '../dev-board/workshop/place-store';
 import { pageTakesEdge } from '../dev-board/workshop/places-tray';
 import { ProjectPlaces } from '../dev-board/workshop/project-places';
 import { useDevViewMode } from '../dev-board/view-mode-store';
@@ -144,7 +144,14 @@ export function NavDrawer(): ReactNode {
   // up, else the page's own.
   const slug = pending ? pending.slug : improve.slug;
   const pageUp = !!slug && placed.slug === slug;
-  const place = pending ? pending.place : (pageUp ? placed.place : rememberedPlace());
+  // #5683: the page's own place is checked against this community, and a
+  // place remembered from another one falls back to its Hub — a channel
+  // from elsewhere never stays beside this community's name.
+  const place = pending
+    ? pending.place
+    : pageUp && slug
+      ? livePlace(slug, placed.place)
+      : keepPlace(rememberedPlace(), slug ? cachedTopics(slug) : null);
   const name = pending ? pending.name : (improve.name || slug || '');
   const selfHosted = pending ? pending.selfHosted : !!improve.selfHosted;
   useIsomorphicLayoutEffect(() => {
