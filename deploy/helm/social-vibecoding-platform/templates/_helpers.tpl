@@ -101,10 +101,11 @@ platform.drainPools, and five connections per process outside its pools
 build-retention guard). A database operation counts twice: one can hold two
 connections at once (pg_dump beside pg_restore; services/db-manager.js).
 A replaced Pod keeps the connections checked out when it shrank until they
-are given back, so for a while it holds more than its drain sizes, and says
-so in the roster. A Pod starting does not start its work until no older Pod
-of its role holds more (processes.js waitForRoom), and that older Pod hands
-its work over as soon as it sees the new one (server.js drainUntilIdle). So
+are given back, so for a while it holds more than its drain sizes. Until it
+does not, it holds a capacity claim (an advisory lock that goes no earlier
+than its connections). A Pod starting does not start its work while a Pod of
+its role holds one (processes.js waitForRoom), and that older Pod hands its
+work over as soon as it sees the new one (server.js drainUntilIdle). So
 while it is above, the new Pod holds only what its boot needs, and the two
 together fit the surge slot as long as a boot needs no more than a drain
 size. The migration Job adds its pool plus two (its

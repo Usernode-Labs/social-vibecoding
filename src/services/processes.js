@@ -41,6 +41,7 @@ const crypto = require('crypto');
 const os = require('os');
 const log = require('./logger');
 const { successorRoles } = require('./process-role');
+const { CAPACITY_CLAIM_LOCKS } = require('./advisory-locks');
 
 const HEARTBEAT_MS = 10 * 1000;
 // A process that has not beaten for this long is gone (four beats missed).
@@ -73,9 +74,10 @@ let started = false;
 let role = 'all';
 let heartbeatTimer = null;
 let draining = null; // { since, deadline } once shutdown has begun
-// Connections held above the drain sizes (the roster's above_drain): 1 from
-// the moment it is marked draining until its drain reports what it holds.
-let aboveDrain = 0;
+// The capacity claim while draining (advisory-locks.js CAPACITY_CLAIM_LOCKS):
+// { release } while held, from markDraining until it holds nothing above its
+// drain sizes (setAboveDrain(0)).
+let claim = null;
 
 // key -> count, for this process. key = `${kind}\u0000${ref}`
 const local = new Map();
@@ -220,13 +222,12 @@ function localSnapshot(limit = 50) {
 // reaped while this process was stalled comes back.
 function writeRow(db) {
   return q(db,
-    `INSERT INTO platform_processes (id, release, role, host, ip, state, drain_started_at, drain_deadline_at, above_drain)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+    `INSERT INTO platform_processes (id, release, role, host, ip, state, drain_started_at, drain_deadline_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
      ON CONFLICT (id) DO UPDATE SET heartbeat_at = NOW(), state = EXCLUDED.state,
-       drain_started_at = EXCLUDED.drain_started_at, drain_deadline_at = EXCLUDED.drain_deadline_at,
-       above_drain = EXCLUDED.above_drain`,
+       drain_started_at = EXCLUDED.drain_started_at, drain_deadline_at = EXCLUDED.drain_deadline_at`,
     [ID, process.env.GIT_SHA || null, role, os.hostname(), process.env.POD_IP || null,
-      draining ? 'draining' : 'serving', draining?.since || null, draining?.deadline || null, aboveDrain]);
+      draining ? 'draining' : 'serving', draining?.since || null, draining?.deadline || null]);
 }
 
 async function beat() {
@@ -278,11 +279,11 @@ async function start({ pool: db, role: r = 'all' } = {}) {
 /** Shutdown has begun: refuse new work, finish this, by `deadline`. */
 async function markDraining(deadline) {
   draining = { since: new Date(), deadline: deadline ? new Date(deadline) : null };
-  aboveDrain = 1;
   if (!started || !pool) return;
+  await takeClaim();
   await q(pool,
     `UPDATE platform_processes SET state = 'draining', drain_started_at = $2, drain_deadline_at = $3,
-            above_drain = $4, heartbeat_at = NOW() WHERE id = $1`, [ID, draining.since, draining.deadline, aboveDrain]);
+            heartbeat_at = NOW() WHERE id = $1`, [ID, draining.since, draining.deadline]);
 }
 
 /**
@@ -343,16 +344,34 @@ async function startedSinceDrain() {
   return row?.n || 0;
 }
 
+// The claim's key: its role's classifier and this process's id, hashed.
+function claimKey(r = role) {
+  return [CAPACITY_CLAIM_LOCKS.get(r) ?? CAPACITY_CLAIM_LOCKS.get('all'), crypto.createHash('sha1').update(ID).digest().readInt32BE(0)];
+}
+
+// Takes the capacity claim on the lock connection; it stays held until
+// released or the connection closes. A claim that cannot be taken is logged:
+// a process starting then does not wait on this one.
+async function takeClaim() {
+  if (claim) return;
+  let held;
+  const acquired = new Promise((resolve) => { held = resolve; });
+  const entry = { release: null };
+  const released = new Promise((resolve) => { entry.release = resolve; });
+  claim = entry;
+  require('../db/session-locks').withSessionLock(pool, claimKey(), () => { held(true); return released; })
+    .catch((err) => { log.warn('processes', 'Could not take the capacity claim', { err: err.message }); held(false); })
+    .finally(() => { if (claim === entry) claim = null; });
+  await acquired;
+}
+
 /**
- * A draining process says how many connections it still holds above its
- * drain sizes (server.js drainUntilIdle), at once when that changes.
+ * A draining process reports how many connections it still holds above its
+ * drain sizes (server.js drainUntilIdle). At none, its capacity claim goes:
+ * what it holds now is within the drain sizes the budget counts it at.
  */
-async function setAboveDrain(n) {
-  const value = Math.max(0, Math.floor(Number(n) || 0));
-  if (!draining || value === aboveDrain) return;
-  aboveDrain = value;
-  if (!started || !pool) return;
-  await q(pool, 'UPDATE platform_processes SET above_drain = $2 WHERE id = $1', [ID, value]);
+function setAboveDrain(n) {
+  if (claim && !(Number(n) > 0)) claim.release();
 }
 
 // The roles a process of `r` replaces (successorRoles read the other way).
@@ -360,37 +379,39 @@ function replacedRoles(r) {
   return ['all', 'web', 'conductor'].filter((x) => successorRoles(x).includes(r));
 }
 
+const CLAIMS_SQL = `SELECT count(*)::int AS processes FROM pg_locks
+  WHERE locktype = 'advisory' AND granted AND objsubid = 2 AND classid = ANY($1::int[]::oid[])
+    AND pid <> pg_backend_pid()`;
+
 /**
  * Admission for the connection budget (item 4). The chart counts a draining
  * process at its drain sizes and a rollout's next Pod at its full ones. A
- * draining process can still hold more (the connections checked out when it
- * shrank): it hands its work over once a process of its role starts
- * (startedSinceDrain), and this process, starting, does not start its work
- * until every older one it replaces holds nothing above them, or is gone. It
- * waits on its lock connection (q), holding no pool. A roster it cannot read
- * is logged and does not keep it from starting.
+ * draining process can hold more (the connections checked out when it
+ * shrank): until it does not, it holds its capacity claim, which goes no
+ * earlier than its connections. It hands its work over once a process of
+ * its role starts (startedSinceDrain), and this process, starting, does not
+ * start its work while any process it replaces holds a claim. It waits on
+ * its lock connection (q), holding no pool. A read that fails is tried
+ * again: room it could not see is not room.
  */
-async function waitForRoom({ pollMs = 1000, reportEveryMs = 10000, sleep = (ms) => new Promise((r) => setTimeout(r, ms)) } = {}) {
+async function waitForRoom({ pollMs = 1000, reportEveryMs = 10000, sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
+  read = () => q(pool, CLAIMS_SQL, [replacedRoles(role).map((r) => CAPACITY_CLAIM_LOCKS.get(r))]) } = {}) {
   if (!started || !pool) return { waitedMs: 0 };
   const began = Date.now();
   let reported = began;
   for (;;) {
-    let above;
+    let claims = null;
+    let failed = null;
     try {
-      ({ rows: [above] } = await q(pool,
-        `SELECT count(*)::int AS processes, COALESCE(sum(above_drain), 0)::int AS connections FROM platform_processes p
-          WHERE p.id <> $1 AND p.role = ANY($2::text[]) AND p.state = 'draining' AND p.above_drain > 0
-            AND p.heartbeat_at > NOW() - make_interval(secs => $3)
-            AND p.started_at < COALESCE((SELECT started_at FROM platform_processes WHERE id = $1), 'infinity'::timestamptz)`,
-        [ID, replacedRoles(role), LIVE_SECONDS]));
+      ({ rows: [claims] } = await read());
     } catch (err) {
-      log.warn('processes', 'Could not read whether older processes still hold connections; starting', { err: err.message });
-      return { waitedMs: Date.now() - began };
+      failed = err;
     }
-    if (!above || above.processes === 0) return { waitedMs: Date.now() - began };
+    if (!failed && (!claims || claims.processes === 0)) return { waitedMs: Date.now() - began };
     if (Date.now() - reported >= reportEveryMs) {
       reported = Date.now();
-      log.info('processes', 'Waiting for older processes to give back connections above their drain sizes', above);
+      if (failed) log.warn('processes', 'Could not read whether older processes still hold connections; trying again', { err: failed.message });
+      else log.info('processes', 'Waiting for older processes to give back connections above their drain sizes', claims);
     }
     await sleep(pollMs);
   }
@@ -438,7 +459,8 @@ function _reset() {
   pool = null;
   role = 'all';
   draining = null;
-  aboveDrain = 0;
+  if (claim) claim.release();
+  claim = null;
   local.clear();
   writes = Promise.resolve();
   writeQueued = false;

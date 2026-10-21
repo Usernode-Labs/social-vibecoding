@@ -375,7 +375,7 @@ test('a draining process shrinks its pools as its drain begins: main, workflow, 
   assert.ok(handover > waits && handover < drain.indexOf('processes.newerDraining()'), 'asked in superseded, before the others');
   // It says what it still holds above its drain sizes once it shrank, and
   // as that changes, until its wait ends.
-  const reported = drain.indexOf('await report();');
+  const reported = drain.indexOf('  report();');
   assert.ok(reported > drain.indexOf('shrinkPoolsForDrain(workflowPlatform)') && reported < waits);
   assert.ok(drain.indexOf('clearInterval(reporting);') > waits);
   assert.match(drain, /const report = \(\) => processes\.setAboveDrain\(retainedAboveDrain\(workflowPlatform\)\)/);

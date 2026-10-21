@@ -1135,10 +1135,11 @@ async function start() {
   // (docs/plans/draining-releases.md): before anything here can start work.
   // Never fatal: holds stay this process's own until the database takes them.
   await processes.start({ pool: getPool(config), role: ownRole });
-  // The connection budget (item 4): nothing here starts work while an older
-  // process this one replaces still holds connections above its drain sizes.
-  // Registered above, this process is what makes it hand over; it waits
-  // holding no pool connection (processes.js waitForRoom).
+  // The connection budget (item 4): nothing here starts work while a
+  // process this one replaces holds its capacity claim (connections above
+  // its drain sizes, until they close). Registered above, this process is
+  // what makes it hand over; it waits holding no pool connection
+  // (processes.js waitForRoom).
   const room = await processes.waitForRoom();
   if (room.waitedMs > 0) log.info('server', 'Older processes gave back their connections; starting', room);
   // The limiters that gate a send, a bill or a guess count in Postgres: one
@@ -1701,12 +1702,11 @@ async function drainUntilIdle({ deadline, announced }) {
   await announced;
   const closed = ws.closeAllForRelease();
   const pools = shrinkPoolsForDrain(workflowPlatform);
-  // What it still holds above its drain sizes, in the roster, at once and as
-  // it changes: a process starting waits until it is none (processes.js
-  // waitForRoom).
-  const report = () => processes.setAboveDrain(retainedAboveDrain(workflowPlatform))
-    .catch((err) => log.warn('server', 'Could not report the connections above the drain sizes', { err: err.message }));
-  await report();
+  // What it still holds above its drain sizes, at once and every second:
+  // at none its capacity claim goes, and a process starting stops waiting on
+  // it (processes.js waitForRoom).
+  const report = () => processes.setAboveDrain(retainedAboveDrain(workflowPlatform));
+  report();
   const reporting = setInterval(report, 1000);
   reporting.unref?.();
   const busy = () => ({

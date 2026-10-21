@@ -89,21 +89,27 @@ function createSessionLocks({ makeClient = (connectionString) => new Client({
   const tails = new Map();
 
   // The lock connection belongs with its pool: ending the pool (a process
-  // stopping, a test's database going) closes it, held or idle.
+  // stopping, a test's database going) closes it, held or idle, AFTER the
+  // pool's own end. A lock still held then (a draining process's capacity
+  // claim, services/processes.js) is given back no earlier than the pool's
+  // connections; when the pool's end never settles, at exit, with them.
   const hooked = new WeakSet();
   function closeWithPool(pool, connectionString) {
     if (hooked.has(pool) || typeof pool.end !== 'function') return;
     hooked.add(pool);
     const end = pool.end.bind(pool);
     pool.end = async (...args) => {
-      const entry = byDatabase.get(connectionString);
-      if (entry && !entry.dead) {
-        entry.dead = true;
-        if (entry.idle) clearTimeout(entry.idle);
-        byDatabase.delete(connectionString);
-        await entry.queue.then(() => entry.client.end()).catch(() => {});
+      try {
+        return await end(...args);
+      } finally {
+        const entry = byDatabase.get(connectionString);
+        if (entry && !entry.dead) {
+          entry.dead = true;
+          if (entry.idle) clearTimeout(entry.idle);
+          byDatabase.delete(connectionString);
+          await entry.queue.then(() => entry.client.end()).catch(() => {});
+        }
       }
-      return end(...args);
     };
   }
 

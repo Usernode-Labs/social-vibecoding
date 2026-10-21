@@ -14,7 +14,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
-const { Pool } = require('pg');
+const { Pool, Client } = require('pg');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
 
@@ -205,45 +205,55 @@ test('processes and the roster, against the full schema', { timeout: 120000 }, a
     assert.equal((await pool.query('SELECT state FROM platform_processes WHERE id = $1', [processes.ID])).rows[0].state, 'draining');
   });
 
-  await t.test('a starting process waits until no older process it replaces holds connections above its drain sizes', async () => {
-    const mine = async () => (await pool.query('SELECT above_drain FROM platform_processes WHERE id = $1', [processes.ID])).rows[0].above_drain;
-    // Marked draining, it counts as not yet shrunk until its drain reports.
-    assert.equal(await mine(), 1);
-    await processes.setAboveDrain(3);
-    assert.equal(await mine(), 3);
-    await processes.setAboveDrain(0);
-    assert.equal(await mine(), 0);
-    await processes.beat();
-    assert.equal(await mine(), 0, 'a beat writes what it holds');
+  await t.test('a draining process holds a capacity claim until it holds nothing above its drain sizes; a starting one waits on claims', async () => {
+    const claims = async (classid) => (await pool.query(
+      `SELECT count(*)::int AS n FROM pg_locks WHERE locktype = 'advisory' AND granted AND objsubid = 2 AND classid = $1::oid`, [classid])).rows[0].n;
+    // Marked draining (above), it took its claim: role 'all', 991021.
+    assert.equal(await claims(991021), 1);
+    processes.setAboveDrain(3);
+    assert.equal(await claims(991021), 1, 'still above its drain sizes');
+    processes.setAboveDrain(0);
+    await until(async () => (await claims(991021)) === 0, { label: 'the claim given back' });
 
-    // Played the other way round: this process starting, older ones draining.
-    await pool.query('DELETE FROM platform_processes WHERE id <> $1', [processes.ID]);
-    assert.equal((await processes.waitForRoom({ pollMs: 20 })).waitedMs < 1000, true, 'nothing older above: at once');
-    const older = (id, { state = 'draining', above = 2, ageSeconds = 0, startedAgo = '1 hour' } = {}) => pool.query(
-      `INSERT INTO platform_processes (id, state, above_drain, started_at, heartbeat_at, drain_started_at)
-       VALUES ($1, $2, $3, NOW() - $4::interval, NOW() - make_interval(secs => $5), NOW())`, [id, state, above, startedAgo, ageSeconds]);
-    await older('older-shrunk', { above: 0 });
-    await older('older-serving', { state: 'serving' });
-    await older('older-gone', { ageSeconds: 600 });
-    await pool.query(`INSERT INTO platform_processes (id, state, above_drain, started_at, drain_started_at)
-                      VALUES ('newer-above', 'draining', 4, NOW() + interval '1 minute', NOW())`);
-    assert.ok((await processes.waitForRoom({ pollMs: 20 })).waitedMs < 1000, 'shrunk, serving, gone or newer: none keeps it');
+    // This process starting: no claim of a role it replaces, no wait.
+    assert.ok((await processes.waitForRoom({ pollMs: 20 })).waitedMs < 1000);
+    // Another process's claim, with no roster row at all (its row went
+    // first, its connections have not closed yet): it waits.
+    const other = new Client({ connectionString: String(url) });
+    await other.connect();
+    try {
+      await other.query('SELECT pg_advisory_lock(990001, 7)');
+      assert.ok((await processes.waitForRoom({ pollMs: 20 })).waitedMs < 1000, 'another lock is no claim');
+      await other.query('SELECT pg_advisory_lock(991022, 7)');
+      let done = false;
+      const waiting = processes.waitForRoom({ pollMs: 20 }).then((r) => { done = true; return r; });
+      await new Promise((r) => setTimeout(r, 200));
+      assert.equal(done, false, 'waits while a process it replaces holds a claim');
+      await other.query('SELECT pg_advisory_unlock(991022, 7)');
+      assert.ok((await waiting).waitedMs >= 200);
+      // The claim goes when that process's connection closes, whatever it did.
+      await other.query('SELECT pg_advisory_lock(991023, 8)');
+      done = false;
+      const again = processes.waitForRoom({ pollMs: 20 }).then(() => { done = true; });
+      await new Promise((r) => setTimeout(r, 100));
+      assert.equal(done, false);
+      await other.end();
+      await again;
+    } finally {
+      await other.end().catch(() => {});
+    }
 
-    await older('older-above');
-    let done = false;
-    const waiting = processes.waitForRoom({ pollMs: 20 }).then((r) => { done = true; return r; });
-    await new Promise((r) => setTimeout(r, 200));
-    assert.equal(done, false, 'waits while an older one holds more');
-    await pool.query(`UPDATE platform_processes SET above_drain = 0 WHERE id = 'older-above'`);
-    assert.ok((await waiting).waitedMs >= 200);
-
-    await older('older-handing-over', { above: 5 });
-    done = false;
-    const again = processes.waitForRoom({ pollMs: 20 }).then((r) => { done = true; return r; });
-    await new Promise((r) => setTimeout(r, 100));
-    assert.equal(done, false);
-    await pool.query(`DELETE FROM platform_processes WHERE id = 'older-handing-over'`);
-    await again;
+    // A read that fails is tried again, never taken for room.
+    let reads = 0;
+    const out = await processes.waitForRoom({
+      pollMs: 5,
+      read: async () => { reads += 1; if (reads < 3) throw new Error('connection reset'); return { rows: [{ processes: 0 }] }; },
+    });
+    assert.equal(reads, 3);
+    assert.ok(out.waitedMs >= 0);
+    // A claim taken again for the stop below.
+    await processes.markDraining(new Date(Date.now() + 60_000));
+    assert.equal(await claims(991021), 1);
   });
 
   await t.test('the process-reap clock deletes long-gone rows; live ones are listed', async () => {
@@ -262,6 +272,9 @@ test('processes and the roster, against the full schema', { timeout: 120000 }, a
     await processes.stop();
     held();
     assert.equal((await pool.query('SELECT 1 FROM platform_processes WHERE id = $1', [processes.ID])).rows.length, 0);
+    // The row is gone; the capacity claim is not: it goes with the
+    // connection, which closes after the pool's own end.
+    assert.equal((await pool.query(`SELECT count(*)::int AS n FROM pg_locks WHERE locktype = 'advisory' AND granted AND classid = 991021::oid`)).rows[0].n, 1);
     assert.equal((await pool.query('SELECT 1 FROM process_holds WHERE process_id = $1', [processes.ID])).rows.length, 0);
     await until(() => true);
   });

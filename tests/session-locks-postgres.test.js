@@ -193,3 +193,33 @@ test('a FATAL answer is a lost connection even before pg says it ended: the wait
   await assert.rejects(strict.withSessionLock(pool, [990004, 2], async () => 'x'), /bad/);
   assert.deepEqual(kept.map((c) => c.ended), [false]);
 });
+
+test('a lock still held when its pool ends goes only after the pool\'s own connections: never before them', { timeout: 30000 }, async (t) => {
+  const probe = new Pool({ connectionString: DSN, max: 1, connectionTimeoutMillis: 3000 });
+  try { await probe.query('SELECT 1'); } catch (err) {
+    await probe.end();
+    if (process.env.TEST_DATABASE_URL) throw err;
+    t.skip('PostgreSQL unavailable; set TEST_DATABASE_URL to require this check'); return;
+  }
+  t.after(() => probe.end());
+  const locks = createSessionLocks({ idleMs: 0 });
+  const pool = new Pool({ connectionString: DSN, max: 2 });
+  const key = [990005, Math.floor(Math.random() * 1e6)];
+  const held = async () => (await probe.query(
+    `SELECT count(*)::int AS n FROM pg_locks WHERE locktype = 'advisory' AND granted AND classid = $1::oid AND objid = $2::oid`, key)).rows[0].n;
+  let release;
+  const claim = locks.withSessionLock(pool, key, () => new Promise((r) => { release = r; }));
+  await sleep(100);
+  assert.equal(await held(), 1);
+  // A connection still checked out: the pool's end waits for it.
+  const busy = await pool.connect();
+  const ended = pool.end();
+  await sleep(200);
+  assert.equal(await held(), 1, 'the lock outlasts the pool connection still open');
+  busy.release();
+  await ended;
+  for (let i = 0; i < 50 && (await held()) > 0; i++) await sleep(20);
+  assert.equal(await held(), 0, 'and goes once the pool has ended');
+  release();
+  await claim.catch(() => {});
+});
