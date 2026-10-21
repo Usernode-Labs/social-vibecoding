@@ -97,8 +97,7 @@ export function clockServices(jobs: readonly Job[], deps: JobDeps): Record<strin
   return out;
 }
 
-// The platform's scheduled jobs, each a clock (machine.ts): its interval,
-// the leader timer it replaces (whose last run sets its first due time), and
+// The platform's scheduled jobs, each a clock (machine.ts): its interval and
 // its run, which is its own module's function. Every run here is safe to run
 // twice: an age DELETE, a delete preconditioned on what it read, or a state
 // change written as a compare-and-set with the notice it causes. An effect

@@ -757,8 +757,9 @@ person".
 leader gone) is not supported: roadmap item 3.2 deleted what a release from before it needed from
 the releases beside it (the holds it read in `process_holds`, its conversations' claims
 renewed, its Stop forward, the turn-spend mark). A rollback to a release that contains
-#5714 is an ordinary one: its migration Job recreates the empty tables it still names
-(`process_holds`, `leader_sweeps`).
+#5714 is an ordinary one: its migration Job recreates the empty `leader_sweeps` it still
+names. Turns this release recorded carry no turn-spend mark, so that release keeps none of
+their calls: a turn that ends without Claude Code's report is billed nothing for them.
 
 ## State that decides, on the workflow (roadmap item 3)
 

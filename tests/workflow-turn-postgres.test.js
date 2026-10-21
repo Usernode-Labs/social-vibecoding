@@ -18,6 +18,7 @@ const { Pool } = require('pg');
 const { createRuntime } = require('../src/workflow/kernel/index.ts');
 const { turnMachine, agentKey, MACHINE, WORK, INTERRUPTED_TEXT, MAX_TURN_MS } = require('../src/workflow/turn/machine.ts');
 const { TURN_STOP } = require('../src/workflow/rules/turn-stop.ts');
+const { asTransition } = require('./lib/as-transition');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
 
@@ -1001,6 +1002,11 @@ test('turn machine against the full PostgreSQL schema', { timeout: 180000 }, asy
     // A process of another release, serving: no leader of an older release
     // recovers anything any more, so the pass does not wait for it.
     await pool.query(`INSERT INTO platform_processes (id, release, state) VALUES ('old-pod', 'old', 'serving')`);
+    // Being stopped (its time ran out): its stop work releases the record.
+    const stopping = await change();
+    await pool.query(`UPDATE chat_sessions SET active_turn = $2::jsonb WHERE id = $1`, [stopping.id, quiet('stopping-job')]);
+    await asTransition(pool, `INSERT INTO wf_work (machine, key, kind, work_key, input, status) VALUES ('turn', $1, 'turn.stop', $2, '{}', 'queued')`,
+      [stopping.key, `stop:${stopping.id}:timeout-x`]);
     const { rows: [liveItem] } = await pool.query(`SELECT id FROM wf_work WHERE kind = $1 AND status IN ('queued', 'running') LIMIT 1`, [WORK.run]);
     const owned = await change();
     await pool.query(`UPDATE chat_sessions SET active_turn = $2::jsonb WHERE id = $1`, [owned.id,
@@ -1009,12 +1015,14 @@ test('turn machine against the full PostgreSQL schema', { timeout: 180000 }, asy
     assert.ok(before >= 1);
     assert.deepEqual((await askedOn(c.key)).map((p) => [p.kind, p.turnId, p.input.sessionId]), [['recover', 'leftover-old-job', c.id]]);
     assert.deepEqual(await askedOn(owned.key), [], 'a record its outstanding item owns is that item\'s');
+    assert.deepEqual(await askedOn(stopping.key), [], 'nor one whose stop is under way');
     assert.deepEqual(await askedOn(fresh.key), [], 'one that just moved may still be its process\'s');
     assert.deepEqual((await askedOn(settledOwner.key)).map((p) => p.kind), ['recover'], 'one its settled item left is nobody\'s');
     await leftoverPass();
     assert.equal((await askedOn(c.key)).length, 1, 'asked once');
     await pool.query(`DELETE FROM platform_processes WHERE id = 'old-pod'`);
-    for (const x of [c, owned, fresh, settledOwner]) await pool.query('UPDATE chat_sessions SET active_turn = NULL WHERE id = $1', [x.id]);
+    await asTransition(pool, `UPDATE wf_work SET status = 'settled', settled_at = NOW() WHERE work_key = $1`, [`stop:${stopping.id}:timeout-x`]);
+    for (const x of [c, owned, fresh, settledOwner, stopping]) await pool.query('UPDATE chat_sessions SET active_turn = NULL WHERE id = $1', [x.id]);
     // A recover turn runs the leader's adoption, as an unowned one.
     reset();
     const was = recovery.recoverOwnedTurn;

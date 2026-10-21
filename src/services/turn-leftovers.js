@@ -46,6 +46,10 @@ const RECORDS_SQL = `
            < NOW() - make_interval(secs => ${QUIET_SECONDS})
      AND NOT EXISTS (SELECT 1 FROM wf_instances t
                       WHERE t.machine = 'turn' AND t.key = 'session:' || cs.id AND t.state = 'running')
+     -- A turn being stopped (its time ran out, or a Stop that releases it):
+     -- its stop work releases the record once the run is confirmed stopped.
+     AND NOT EXISTS (SELECT 1 FROM wf_work s
+                      WHERE s.kind = 'turn.stop' AND s.status <> 'settled' AND s.work_key LIKE 'stop:' || cs.id || ':%')
      -- Asked again only a while after the last ask, and a bounded number of
      -- times: a pass that finds it in between adds nothing.
      AND ra.asks < ${RECORD_RETRY.asks}

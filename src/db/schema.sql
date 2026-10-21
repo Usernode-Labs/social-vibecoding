@@ -14962,14 +14962,9 @@ CREATE INDEX IF NOT EXISTS idx_private_request_comments_request
   ON private_request_comments (private_request_id, id);
 COMMENT ON TABLE private_request_comments IS 'staging:private';
 
--- The leader's sweep times, gone with the leader (every scheduled job is a
--- clock of the workflow, whose instance keeps its last run), and what each
--- process held, which only a release from before the turn machine read
--- (src/workflow/turn/). The release before this one still writes its holds
--- and reads them back as it drains; each of those logs and carries on
--- without the table (services/processes.js writeHolds, turn-leftovers.js).
+-- The leader's sweep times, gone with the leader: every scheduled job is a
+-- clock of the workflow, whose instance keeps its last run.
 DROP TABLE IF EXISTS leader_sweeps;
-DROP TABLE IF EXISTS process_holds;
 
 -- The platform's processes, and what each one is doing that no other may
 -- adopt, tear down, duplicate or call idle (services/processes.js,
@@ -14997,6 +14992,23 @@ CREATE TABLE IF NOT EXISTS platform_processes (
 );
 CREATE INDEX IF NOT EXISTS idx_platform_processes_heartbeat ON platform_processes (heartbeat_at);
 COMMENT ON TABLE platform_processes IS 'staging:private';
+
+-- What a process held, `kind` for `ref`. Nothing in this release writes or
+-- reads it (a process's holds are its own drain's, in its memory). Kept
+-- while the release before roadmap item 3.2 can still serve: it writes its
+-- own holds here and reads them back (its turn-leftovers pass, its adoption,
+-- its Stop route), and without the table its adoption fails closed and a
+-- recover turn's last ask would end a record it could have carried on. Drop
+-- it once no process of that release (22ac79e7a) is live.
+CREATE TABLE IF NOT EXISTS process_holds (
+  process_id TEXT NOT NULL REFERENCES platform_processes(id) ON DELETE CASCADE,
+  kind       TEXT NOT NULL,
+  ref        TEXT NOT NULL,
+  since      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (process_id, kind, ref)
+);
+CREATE INDEX IF NOT EXISTS idx_process_holds_ref ON process_holds (kind, ref);
+COMMENT ON TABLE process_holds IS 'staging:private';
 
 -- The read-only database roles the leader sets up at its election
 -- (services/debug-access.js usernode_debug_ro, topochain/db-console-role.js
@@ -15119,8 +15131,9 @@ CREATE TABLE IF NOT EXISTS shots_eval_trials (
 -- What the Anthropic proxy billed for a trial an older release's runner ran.
 -- Nothing writes or reads it: every trial is billed per attempt
 -- (shots_eval_attempt_costs). Kept while the release before roadmap item
--- 3.2 drains, whose shots-eval machine still reads it (a missing column
--- would fault its transitions); drop it with the next schema change after.
+-- 3.2 can still serve: its shots-eval machine reads it in its transitions (a
+-- missing column would fault them) and its proxy's billFor in its calls.
+-- Drop it once no process of that release (22ac79e7a) is live.
 ALTER TABLE shots_eval_trials ADD COLUMN IF NOT EXISTS proxy_cents NUMERIC(12,4) NOT NULL DEFAULT 0;
 -- When the shots-eval machine decided a running trial ends (a cancel, a
 -- phase past its time, its row ended elsewhere): its work stops at its next
