@@ -1139,7 +1139,16 @@ function feedbackRoutes(config) {
       // an app row on self-hosted instances (no-op when none matches); the
       // row carries appAccess.ACCESS_COLUMNS. findAppByRepo returns no name,
       // so the bot's card names the platform as the report list does.
-      const platformApp = await findAppByRepo(pool, issueOwner, issueRepo).catch(() => null);
+      //
+      // Best effort, and synchronous throw included: the issue is already
+      // filed, so a lookup that fails must never turn a successful submission
+      // into an error (the rule firstFeedbackMoment follows).
+      let platformApp = null;
+      try {
+        platformApp = (await findAppByRepo(pool, issueOwner, issueRepo)) || null;
+      } catch (err) {
+        log.warn('feedback', 'Platform request destination unavailable', { message: err.message });
+      }
       const homeroomBot = platformApp
         ? await require('../services/homeroom-bot-dm').noteRequestFiled(pool, {
           app: { id: platformApp.id, slug: platformApp.slug, name: 'Homeroom' },

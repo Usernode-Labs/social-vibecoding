@@ -35,14 +35,16 @@ test('B8: Suggest an improvement is gated on membership and hands its request to
 // app branch does, against the platform's own app row.
 test('#5757: a request to Homeroom itself is handed to Homeroom bot, with its confirmation', () => {
   const route = read('src/routes/feedback.js');
-  const platform = route.slice(route.indexOf('const platformApp = await findAppByRepo(pool, issueOwner, issueRepo)'));
+  const platform = route.slice(route.indexOf('platformApp = (await findAppByRepo(pool, issueOwner, issueRepo))'));
   assert.ok(platform.length > 0, 'the platform branch resolves the platform app row by repo');
   assert.match(platform, /noteRequestFiled\(pool, \{\s*app: \{ id: platformApp\.id, slug: platformApp\.slug, name: 'Homeroom' \},\s*user: req\.user, issueNumber: issue\.number, title, askedText: description\.trim\(\),/);
   assert.match(platform, /Object\.assign\(homeroomBot, \{ canFix, appSlug: platformApp\.slug, issueNumber: issue\.number \}\);/);
   // Both confirmations carry the bot's answer: the app branch's and the platform branch's.
   assert.equal(route.match(/\.\.\.\(homeroomBot \? \{ homeroomBot \} : \{\}\),/g).length, 2);
-  // A repo that is not an app row here (not self-hosted) changes nothing.
-  assert.match(platform, /catch\(\(\) => null\)/);
+  // The lookup is best effort: a repo that is not an app row here (not
+  // self-hosted), or a lookup that throws, leaves the confirmation as it was
+  // rather than failing a request that is already filed.
+  assert.match(platform, /platformApp = \(await findAppByRepo\(pool, issueOwner, issueRepo\)\) \|\| null;\s*\} catch \(err\) \{\s*log\.warn\('feedback', 'Platform request destination unavailable', \{ message: err\.message \}\);\s*\}/);
 });
 
 test('B8: the doors that open the chat with Homeroom bot, and what they are called', () => {
