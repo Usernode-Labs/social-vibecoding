@@ -15788,3 +15788,35 @@ COMMENT ON TABLE waitlist_connect_states IS 'staging:private';
 ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS reconcile_due_at TIMESTAMPTZ;
 CREATE INDEX IF NOT EXISTS idx_app_workshop_themes_due
   ON app_workshop_themes (reconcile_due_at) WHERE reconcile_due_at IS NOT NULL;
+
+-- A database export's claim and its download ticket, on its own audit row
+-- (services/db-export.js): one row at a time is `streaming`, platform-wide,
+-- renewed by the process streaming it (`heartbeat_at`; a lapsed one is
+-- settled `interrupted` by the next claim); the ticket is kept as its
+-- SHA-256 until it is redeemed or expires, so the download may land on any
+-- process. Both were in the memory of one process. A row an older release
+-- streams has no heartbeat and is not held to the one-at-a-time index.
+ALTER TABLE db_exports ADD COLUMN IF NOT EXISTS heartbeat_at TIMESTAMPTZ;
+ALTER TABLE db_exports ADD COLUMN IF NOT EXISTS ticket_hash TEXT;
+ALTER TABLE db_exports ADD COLUMN IF NOT EXISTS ticket_expires_at TIMESTAMPTZ;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_db_exports_one_streaming
+  ON db_exports ((1)) WHERE status = 'streaming' AND heartbeat_at IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_db_exports_ticket
+  ON db_exports (ticket_hash) WHERE ticket_hash IS NOT NULL;
+
+-- A report generation's claim on its app's row (services/report-ai.js):
+-- one at a time per app on any process, until it ends or this lease lapses.
+-- An app's first generation makes the row to hold it, with no report yet
+-- (input_hash ''). It was a Set in each process's memory.
+ALTER TABLE app_report_ai ADD COLUMN IF NOT EXISTS generating_until TIMESTAMPTZ;
+
+-- A dictation under way for a person (routes/dictation.js): one at a time
+-- per person on any process, until it ends or this lease lapses. A
+-- transcription is returned, never stored, so its claim is a row of its
+-- own. It was a Set in each process's memory.
+CREATE TABLE IF NOT EXISTS dictation_claims (
+  user_id        INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  claim_id       UUID NOT NULL,
+  claimed_until  TIMESTAMPTZ NOT NULL
+);
+COMMENT ON TABLE dictation_claims IS 'staging:private';

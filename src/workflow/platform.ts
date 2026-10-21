@@ -75,6 +75,8 @@ let kernelPool: Pool & { end(): Promise<void> } | null = null;
 let log: Logger | null = null;
 // The configuration the runtime started with (the release's own steps read it).
 let appConfig: any = null;
+// Each machine's event types in this build (reaskRefused reads them).
+let knownEvents: Map<string, Set<string>> = new Map();
 
 // What the ownership triggers read, synced on every boot: enabled:<machine>
 // for every machine (wf_holds reads it). Every machine is the only path for
@@ -223,6 +225,7 @@ export async function startWorkflow(config: any, opts: { loops: boolean }): Prom
   // People's turns: a conversation's, a change's (turn/).
   const turns = turnMachine();
   const machines = [machine, merges, builds, deliveries, creations, previews, shotRuns, proposals, queues, campaigns, botChanges, voices, dms, checks, requests, lane, bench, trials, turns, releases, clocks];
+  knownEvents = new Map(machines.map((m) => [m.name, new Set(m.events.keys())]));
   const services = {
     ...governanceServices(deps), ...mergeFollowupsServices(deps), ...botBuildServices(deps),
     ...appDeliveryServices(deps), ...appCreationServices(deps), ...previewServices(deps), ...shotsServices(deps), ...proposalServices(deps),
@@ -516,13 +519,91 @@ async function armClocks(release: string): Promise<number> {
   if (!runs) return 0;
   for (const job of CLOCK_JOBS) {
     // A job first armed is due within the next two minutes (spread, so they
-    // do not all start in the same second). Only the first Arm reads it.
-    const spread = Math.floor(Math.random() * Math.min(job.everyMs, 2 * 60 * 1000));
+    // do not all start in the same second). Only the first Arm reads it. An
+    // on-demand job runs only when asked; its interval is what an older
+    // build, which knows no on-demand job, would arm it on (a run nobody
+    // asked for does nothing).
+    const everyMs = job.onDemand ? ON_DEMAND_EVERY_MS : job.everyMs;
+    const spread = Math.floor(Math.random() * Math.min(everyMs, 2 * 60 * 1000));
     const firstDueAt = new Date(Date.now() + spread).toISOString();
-    await runtime.append(CLOCK, clockKey(job.name), { type: 'Arm', payload: { job: job.name, everyMs: job.everyMs, firstDueAt } },
+    await runtime.append(CLOCK, clockKey(job.name), { type: 'Arm', payload: { job: job.name, everyMs, firstDueAt, onDemand: !!job.onDemand } },
       { requestKey: `arm:${release}`, source: { kind: 'system', name: 'release' } });
   }
   return CLOCK_JOBS.length;
+}
+
+const ON_DEMAND_EVERY_MS = 24 * 60 * 60 * 1000;
+
+// An admin asks for an on-demand job's run (an admin fleet job): not waited
+// for. Its progress is the run's own (clockRunOf). False when it is not
+// armed here (a staging preview).
+export async function askClockRun(job: string, admin: { id: number; username?: string | null }): Promise<boolean> {
+  if (!runtime) throw new AdminActionError(409, 'The workflow runtime is not running here');
+  const outcome = await runtime.appendAndWait(CLOCK, clockKey(job), { type: 'RunNow', payload: { by: admin.username ?? null, userId: admin.id } },
+    { requestKey: `admin:${randomUUID()}`, source: { kind: 'admin', name: 'console' }, actor: `user:${admin.id}`, waitMs: 3000 });
+  return outcome.status !== 'rejected';
+}
+
+// Events an older build refused because it did not know their type
+// (`unknown_event`): during a rollout, a newer web process appends an event
+// a machine gained, and an older workflow process, which picks every event
+// of an instance its own version wrote, refuses it, and what the event owed
+// (a mail, a vote's tally, a plan) would be lost. Once no older build serves
+// any more, each one whose type this build's machine knows is asked again,
+// as it was (its source, actor and app), keyed on the refused event so it is
+// asked once. A type this build knows cannot have been refused by it. The
+// reask-refused clock runs it, in the newest build only.
+const REASK_LIVE_SECONDS = 45;
+const REASK_LOOKBACK_HOURS = 48;
+const REASK_PAGE = 200;
+export async function reaskRefused(db: Queryable): Promise<{ waiting?: string; asked: number }> {
+  if (!runtime) return { waiting: 'runtime', asked: 0 };
+  const own = String(process.env.GIT_SHA || '').trim().slice(0, 40) || null;
+  const { rows: [older] } = await db.query(
+    `SELECT count(*)::int AS n FROM platform_processes
+      WHERE state = 'serving' AND role <> 'web' AND heartbeat_at > now() - make_interval(secs => $1)
+        AND release IS DISTINCT FROM $2`, [REASK_LIVE_SECONDS, own]);
+  if (Number(older?.n) > 0) return { waiting: 'older_build', asked: 0 };
+  const pairs = [...knownEvents].flatMap(([m, types]) => [...types].map((t) => [m, t] as const));
+  if (!pairs.length) return { asked: 0 };
+  const { rows } = await db.query(
+    `SELECT e.id, e.machine, e.key, e.app_id, e.type, e.payload, e.source, e.actor
+       FROM wf_events e
+       JOIN unnest($1::text[], $2::text[]) AS k(machine, type) ON k.machine = e.machine AND k.type = e.type
+      WHERE e.status = 'processed' AND e.result = 'rejected' AND e.reason = 'unknown_event'
+        AND e.processed_at > now() - make_interval(hours => $3)
+        AND NOT EXISTS (SELECT 1 FROM wf_events r WHERE r.caused_by = e.id AND r.request_key = 'reask:' || e.id)
+      ORDER BY e.id LIMIT $4`,
+    [pairs.map((p) => p[0]), pairs.map((p) => p[1]), REASK_LOOKBACK_HOURS, REASK_PAGE]);
+  for (const e of rows) {
+    await runtime.append(e.machine, e.key, { type: e.type, payload: e.payload }, {
+      requestKey: `reask:${e.id}`, source: e.source, actor: e.actor ?? null, appId: e.app_id ?? null, causedBy: Number(e.id),
+    });
+  }
+  if (rows.length) log?.warn('workflow', 'Events an older build refused, asked again', { count: rows.length });
+  return { asked: rows.length };
+}
+
+// A job's run under way, or its last: whether it runs, who asked, what its
+// work item has kept so far (`checkpoint`) and what it returned (`result`).
+// Read from any process.
+export async function clockRunOf(db: Queryable, job: string): Promise<{
+  n: number; running: boolean; startedAt: string | null; endedAt: string | null; input: Json; checkpoint: Json; result: Json; error: string | null;
+} | null> {
+  const { rows: [r] } = await db.query(
+    `SELECT i.state, i.data, w.input, w.checkpoint, w.result, w.created_at, w.settled_at
+       FROM wf_instances i
+       JOIN wf_work w ON w.machine = i.machine AND w.key = i.key AND w.kind = $3
+                     AND w.work_key = 'run:' || COALESCE(i.data->>'running', i.data->'last'->>'n')
+      WHERE i.machine = $1 AND i.key = $2`, [CLOCK, clockKey(job), `clock.${job}`]);
+  if (!r) return null;
+  const running = r.state === 'running';
+  const last = r.data?.last ?? null;
+  return {
+    n: Number(r.data?.running ?? last?.n ?? 0), running, startedAt: r.created_at ? new Date(r.created_at).toISOString() : null,
+    endedAt: running ? null : (last?.at ?? null), input: r.input ?? null, checkpoint: r.checkpoint ?? null,
+    result: (r.result?.value ?? null) as Json, error: running ? null : (last && !last.ok ? last.error : null),
+  };
 }
 
 // A scheduled job's last run, as the admin pages that once read the leader's
@@ -549,7 +630,7 @@ export async function clockStatus(db: Queryable, job: string): Promise<{
 // (it still runs; its result shows on the job's page).
 export async function runClockNow(job: string, admin: { id: number }, { timeoutMs = 60000 } = {}): Promise<Awaited<ReturnType<typeof clockStatus>> | null> {
   if (!runtime) throw new AdminActionError(409, 'The workflow runtime is not running here');
-  const outcome = await runtime.appendAndWait(CLOCK, clockKey(job), { type: 'RunNow', payload: {} },
+  const outcome = await runtime.appendAndWait(CLOCK, clockKey(job), { type: 'RunNow', payload: { userId: admin.id } },
     { requestKey: `admin:${randomUUID()}`, source: { kind: 'admin', name: 'console' }, actor: `user:${admin.id}` });
   if (outcome.status === 'rejected') {
     // A job no release armed here (a staging preview): the caller decides.

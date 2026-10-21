@@ -374,6 +374,9 @@ function makeHarness() {
     PLATFORM_AT_CAPACITY: 'Platform is at capacity right now. Try again in a few minutes.',
   });
   stubModule(ids.proposalUpdate, {
+    // The real lock needs a pool that hands out clients; the ordering it
+    // gives is tests/proposal-lock-postgres.test.js's.
+    withProposalLock: (_pool, _sessionId, fn) => fn(),
     isContinuableStatus(status) {
       if (status === 'promoted') return 'proposal';
       if (status === 'active' || status === 'paused') return 'session';
@@ -877,27 +880,17 @@ test('an update may carry a patch instead of a branch, with the commit it was ma
   assert.doesNotMatch(share.slice(0, share.indexOf('\n}\n')), /'patch'/);
 });
 
-test('build adoption is serialized per handoff session', async () => {
-  const { subject, restore } = makeHarness();
-  try {
-    const order = [];
-    let releaseFirst;
-    const firstGate = new Promise((resolve) => { releaseFirst = resolve; });
-    const first = subject.serializeHandoffSubmission(101, async () => {
-      order.push('first:start');
-      await firstGate;
-      order.push('first:end');
-    });
-    const second = subject.serializeHandoffSubmission(101, async () => {
-      order.push('second:start');
-      order.push('second:end');
-    });
-    await new Promise((resolve) => setImmediate(resolve));
-    assert.deepEqual(order, ['first:start']);
-    releaseFirst();
-    await Promise.all([first, second]);
-    assert.deepEqual(order, ['first:start', 'first:end', 'second:start', 'second:end']);
-  } finally { restore(); }
+test('a commit upload and a build are adopted under the session\'s proposal lock, on any process', () => {
+  // An older request must never persist its SHA after a newer one and regress
+  // the durable reviewed head. The proposal lock orders them across
+  // processes (tests/proposal-lock-postgres.test.js); the per-process
+  // promise chain it replaced did not.
+  const routeSrc = require('node:fs').readFileSync(
+    require('node:path').join(__dirname, '..', 'src/routes/proposal-handoff.js'), 'utf8');
+  assert.equal((routeSrc.match(/return await proposalUpdate\.withProposalLock\(pool, sessionId, async \(\) => \{/g) || []).length, 2);
+  const pipelineSrc = require('node:fs').readFileSync(
+    require('node:path').join(__dirname, '..', 'src/services/handoff-pipeline.js'), 'utf8');
+  assert.doesNotMatch(pipelineSrc, /serializeHandoffSubmission|SubmissionTails/);
 });
 
 test('a build is refused while another process works on the change, as its durable records say', async () => {

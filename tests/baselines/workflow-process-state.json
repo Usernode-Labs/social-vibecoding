@@ -23,7 +23,8 @@
     "uses src/services/kubernetes.js:ensurePlatformAssetBackend": "the release's assetBackend step: the shared hosted-asset backend upserted (resourceVersion-checked) to what the cluster's platform Deployment runs, once per release in its own build; the same call every app deploy makes",
     "uses src/services/bench/core.js:bootEnabled": "whether this deployment makes the bench suites (BENCH_CORE_MATERIALIZE, the environment): the release's benchSuites step; deciding nothing in a process",
     "uses src/services/bench/core.js:materializeInBackground": "the release's benchSuites step: the Core suite made from this build's checked-in definition, claimed by its own bench_materializations row (a stale claim taken again), awaited; a no-op once that definition is made",
-    "uses src/services/bench/taste.js:materialize": "the release's benchSuites step: the taste suite made from this build's checked-in briefs (rows only), claimed by its bench_materializations row (a running row left by a dead process taken again after ten minutes)"
+    "uses src/services/bench/taste.js:materialize": "the release's benchSuites step: the taste suite made from this build's checked-in briefs (rows only), claimed by its bench_materializations row (a running row left by a dead process taken again after ten minutes)",
+    "state src/workflow/platform.ts#knownEvents": "each machine's event types in this build, set when the runtime starts: the machines' own declarations, the same in every process of a build (reaskRefused reads them)"
   },
   "io": {
     "app-delivery": {
@@ -253,7 +254,9 @@
       "services | uses src/services/chain-poller.js:poll": "the wallet-links clock's run: the explorer's transactions to APP_PUBKEY read on from the last run's result (its cursor and an outage's streak), each link memo from a genesis address applied by an UPDATE that spends its token, so a block read twice links nothing twice; cut out of the timer every serving process ran with its cursor in memory; keeps nothing",
       "services | uses src/services/rate-limit-store.js:prune": "the shared limiters' counts an hour past their window, deleted (rate-limit-retention clock): an age DELETE; keeps nothing",
       "services | uses src/services/workshop-themes.js:changeTargets": "the apps whose Workshop pass is due (reconcile_due_at, owed by a board change once the board has been quiet, or by a page view), as targets (workshop-changes clock); reads only, keeps nothing",
-      "services | uses src/services/workshop-themes.js:changeApp": "one app's owed Workshop pass, a target of the workshop-changes clock: taken off the row only as it was listed (a change since stays owed), then reconciled under the row's lease, owed again shortly when another pass holds the lease; cut out of the per-process debounce timers and in-flight sets; keeps nothing"
+      "services | uses src/services/workshop-themes.js:changeApp": "one app's owed Workshop pass, a target of the workshop-changes clock: taken off the row only as it was listed (a change since stays owed), then reconciled under the row's lease, owed again shortly when another pass holds the lease; cut out of the per-process debounce timers and in-flight sets; keeps nothing",
+      "services | uses src/services/app-rollover.js:runJob": "an admin's container rollover (container-rollover clock, on demand): each app a step of the run's work item, so a restart carries it on, and its progress is that checkpoint (services/fleet-job.js); keeps nothing",
+      "services | uses src/services/staging-reap.js:runJob": "an admin's reap of previews now (preview-reap clock, on demand): each preview a step of the run's work item, so a restart carries it on; what works on a session read on every process, at listing and again at its turn; keeps nothing"
     },
     "app-creation": {
       "services | uses src/services/app-creator.js:setUp": "the setup (app.setup): the database, the card, the repository and its first commit, each a step of the work's checkpoint (a resumed attempt runs none it kept; the first commit is not pushed again when it is the repository's head); keeps nothing in a process",

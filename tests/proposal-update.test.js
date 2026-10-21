@@ -182,7 +182,7 @@ function deps(over = {}, log = {}) {
     applyPatch: over.applyPatch,
     // Both of these are real behaviours elsewhere; here they only have to be
     // observable, so a test can assert the update ran INSIDE them.
-    serialize: over.serialize || (async (id, fn) => {
+    lock: over.lock || (async (_pool, id, fn) => {
       (log.serialized = log.serialized || []).push(id);
       return fn();
     }),
@@ -369,7 +369,7 @@ test('an app-repo proposal is advanced with a lease pinned to the head just read
 test('the update runs inside the session queue, the lock and a session operation', async () => {
   const log = {};
   await run({}, {}, log);
-  assert.deepEqual(log.serialized, [501], 'serialized on the session, as the handoff pipeline is');
+  assert.deepEqual(log.serialized, [501], 'under the session\'s proposal lock, as the handoff pipeline is');
   assert.deepEqual(log.began, [501]);
   assert.deepEqual(log.released, [501], 'and released — a leaked operation marks the session busy forever');
 });

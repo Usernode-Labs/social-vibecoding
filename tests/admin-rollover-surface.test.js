@@ -47,6 +47,9 @@ const dockerJs = read('src/services/docker.js');
 const stagingJs = read('src/services/staging.js');
 const eventsJs = read('src/services/events.js');
 const rolloverJs = read('src/services/app-rollover.js');
+// The job's shape (a unit pending, running, then its outcome) is the fleet
+// job's, which the rollover runs on.
+const fleetJobJs = read('src/services/fleet-job.js');
 
 // The POST handler's source, from its router line to the GET that follows.
 function postHandler() {
@@ -237,7 +240,7 @@ test('the table renders one row per app with its outcome chip', () => {
   ]) {
     assert.match(rolloverTsx, new RegExp(`${state}:`),
       `the UI has a chip for the ${state} outcome the service can emit`);
-    assert.match(rolloverJs, new RegExp(`'${state}'`),
+    assert.match(rolloverJs + fleetJobJs, new RegExp(`'${state}'`),
       `the service actually emits ${state}`);
   }
   const row = rolloverTsx.slice(

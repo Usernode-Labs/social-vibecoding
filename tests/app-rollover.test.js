@@ -1,8 +1,10 @@
 // Tests for the bulk container rollover orchestrator
 // (src/services/app-rollover.js). All docker / staging / respawn / ws work
 // is stubbed via require.cache (same pattern as tests/app-heal.test.js), so
-// no real docker, DB or socket is touched. Each test drives start() with a
-// fake pool + app rows and asserts which path ran per app.
+// no real docker, DB or socket is touched. Each test drives the
+// container-rollover clock's run (runJob) with a fake pool + app rows and
+// asserts which path ran per app; tests/workflow-clock-postgres.test.js runs
+// the on-demand clock itself.
 //
 // Run with: node --test tests/app-rollover.test.js
 
@@ -27,6 +29,7 @@ const ids = {
   platform: require.resolve('../src/workflow/platform.ts'),
 };
 const { PRODUCTION_BUILD_LOCK } = require('../src/services/advisory-locks');
+const { fleetJobRun } = require('./lib/fleet-job-run');
 
 let fx;
 
@@ -61,6 +64,9 @@ function freshFixtures() {
     adminBroadcasts: [],
     globalBroadcasts: [],
     eventRecords: [],
+    // the clock's run (fleetJobRun) and the runs asked of it
+    run: null,
+    asked: [],
     // pool
     queries: [],
     updateRowCount: 1,
@@ -127,6 +133,14 @@ function installStubs() {
   });
   stub(ids.platform, {
     requestDeploy: async (appId, reason) => { fx.requested.push([appId, reason]); return 1; },
+    clockRunOf: async (_db, job) => { assert.equal(job, 'container-rollover'); return fx.run ? fx.run.run : null; },
+    // The clock refuses a run asked while one runs (machine.ts); here the
+    // caller's own check answers first.
+    askClockRun: async (job, admin) => {
+      fx.asked.push([job, admin.username]);
+      fx.run = fleetJobRun({ n: (fx.run ? fx.run.run.n : 0) + 1, by: admin.username, userId: admin.id });
+      return true;
+    },
   });
   stub(ids.deployStatus, {
     // A deploy in this process (the map), or one app delivery runs (the row).
@@ -164,23 +178,19 @@ function appRow(id, slug, extra = {}) {
   };
 }
 
-// Drive one full sweep and resolve with the finished job snapshot.
-async function runSweep(rollover, opts = {}, config = {}) {
-  const res = rollover.start(config, { userId: 7, username: 'admin-user', ...opts });
-  for (let i = 0; i < 400; i++) {
-    const job = rollover.read();
-    if (job && job.finishedAt) return job;
-    await sleep(5);
-  }
-  throw new Error('rollover did not finish');
+// Ask for one sweep, run it to its end, and resolve with the finished job
+// as the console reads it.
+async function runSweep(rollover, config = {}) {
+  const { started } = await rollover.start(fakePool, { id: 7, username: 'admin-user' });
+  assert.equal(started, true);
+  await fx.run.go(rollover.runJob, { config, pool: fakePool });
+  return rollover.read(fakePool);
 }
 
 function setup() {
   fx = freshFixtures();
   installStubs();
-  const rollover = loadRollover();
-  rollover._reset();
-  return rollover;
+  return loadRollover();
 }
 
 function outcomes(job) {
@@ -290,7 +300,7 @@ test('the respawn path also takes the cross-process build lock, as a rebuild doe
 test('on Kubernetes an app with an image is respawned from it, not rebuilt (its image_ref is read)', async () => {
   const rollover = setup();
   fx.apps = [appRow(15, 'kube-app', { image_ref: 'registry/kube-app@sha256:abc' })];
-  const job = await runSweep(rollover, {}, { appRuntime: 'kubernetes' });
+  const job = await runSweep(rollover, { appRuntime: 'kubernetes' });
   assert.match(fx.queries.find((q) => /SELECT id, slug/.test(q.sql)).sql, /image_ref/);
   assert.deepEqual(outcomes(job), { 'kube-app': 'rolled' });
   assert.equal(fx.requested.length, 0);
@@ -302,7 +312,7 @@ test('a deploy that ran while the job waited is not undone: the respawn runs the
   fx.current.set(18, { image_ref: 'registry/redeployed@sha256:new', main_sha: 'newsha' });
   const ran = [];
   require.cache[ids.respawn].exports.runExistingImage = async (_config, app) => { ran.push(app.image_ref); return 'cid'; };
-  await runSweep(rollover, {}, { appRuntime: 'kubernetes' });
+  await runSweep(rollover, { appRuntime: 'kubernetes' });
   assert.deepEqual(ran, ['registry/redeployed@sha256:new'], 'not the one the job saw when it started');
 });
 
@@ -403,19 +413,22 @@ test('markStart/markEnd are balanced on every path, including throws', async () 
   assert.deepEqual(fx.markStarts.map((m) => m.slug), fx.markEnds.map((m) => m.slug));
 });
 
-test('a second start() while a job is live returns the in-flight job', async () => {
+test('a start while a job runs, on any process, returns the job under way', async () => {
   const rollover = setup();
   fx.apps = [appRow(1, 'a'), appRow(2, 'b')];
   fx.respawnDelayMs = 40;
 
-  const first = rollover.start({}, { username: 'admin-user' });
+  const first = await rollover.start(fakePool, { id: 7, username: 'admin-user' });
   assert.equal(first.started, true);
-  const second = rollover.start({}, { username: 'someone-else' });
-  assert.equal(second.started, false, 'the singleton refuses a competing sweep');
+  const running = fx.run.go(rollover.runJob, { config: {}, pool: fakePool });
+  await sleep(5);
+  const second = await rollover.start(fakePool, { id: 8, username: 'someone-else' });
+  assert.equal(second.started, false, 'one sweep at a time');
   assert.equal(second.job.id, first.job.id);
   assert.equal(second.job.startedBy, 'admin-user');
+  assert.equal(fx.asked.length, 1, 'the clock was asked once');
 
-  for (let i = 0; i < 400 && !(rollover.read() || {}).finishedAt; i++) await sleep(5);
+  await running;
   // Two apps, one sweep: each app respawned exactly once.
   assert.deepEqual(fx.respawnCalls.sort(), ['a', 'b']);
 });
@@ -424,8 +437,32 @@ test('a finished job does not block the next one', async () => {
   const rollover = setup();
   fx.apps = [appRow(1, 'a')];
   await runSweep(rollover);
-  const again = rollover.start({}, { username: 'admin-user' });
+  const again = await rollover.start(fakePool, { id: 7, username: 'admin-user' });
   assert.equal(again.started, true, 'press it again after fixing failures');
+});
+
+test('a run carried on after a restart rolls only the apps it had not finished', async (t) => {
+  const rollover = setup();
+  process.env.ROLLOVER_CONCURRENCY = '1';
+  t.after(() => { delete process.env.ROLLOVER_CONCURRENCY; });
+  fx.apps = [appRow(1, 'a'), appRow(2, 'b'), appRow(3, 'c')];
+  const first = fleetJobRun();
+  fx.run = first;
+  // The first process goes away while it rolls 'b'.
+  fx.respawnResult = (app) => { if (app.slug === 'b') first.stop(); return 'cid'; };
+  await assert.rejects(first.go(rollover.runJob, { config: {}, pool: fakePool }));
+  assert.deepEqual(fx.respawnCalls, ['a', 'b']);
+  assert.equal(fx.eventRecords.length, 0, 'not finished');
+
+  fx.respawnCalls = [];
+  const again = fleetJobRun({ resumeFrom: first.run.checkpoint });
+  fx.run = again;
+  await again.go(rollover.runJob, { config: {}, pool: fakePool });
+  assert.deepEqual(fx.respawnCalls, ['c'], 'only the app not yet rolled');
+  const job = await rollover.read(fakePool);
+  assert.deepEqual(outcomes(job), { a: 'rolled', b: 'rolled', c: 'rolled' });
+  assert.ok(job.finishedAt);
+  assert.equal(fx.eventRecords.length, 1, 'one audit row for the job');
 });
 
 test('concurrency never exceeds the cap', async () => {
@@ -491,7 +528,7 @@ test('read() exposes a snapshot, not the live job object', async () => {
   fx.apps = [appRow(1, 'a')];
   const job = await runSweep(rollover);
   job.apps[0].state = 'tampered';
-  assert.equal(rollover.read().apps[0].state, 'rolled',
+  assert.equal((await rollover.read(fakePool)).apps[0].state, 'rolled',
     'a caller mutating the response cannot corrupt the job record');
 });
 

@@ -47,8 +47,12 @@ const reportAi = require('../src/services/report-ai');
 
 const APP = { id: 7, slug: 'demo', name: 'Demo', repo_url: 'https://github.com/acme/demo' };
 
+// A generation's claim on its app's row (generating_until) is free unless
+// `claimHeld`; tests/report-ai-postgres.test.js runs it against the schema.
+let claimHeld = false;
 function dispatch(map) {
   queryHandler = async (sql) => {
+    if (/RETURNING generating_until/.test(sql)) return { rows: claimHeld ? [] : [{ claim: '2026-08-11 00:05:00+00' }] };
     for (const [re, rows] of map) if (re.test(sql)) return { rows };
     return { rows: [] };
   };
@@ -164,6 +168,19 @@ test('generateForApp calls LLM, upserts, and debits on fresh data', async () => 
     assert.ok(queries.some((q) => /INSERT INTO app_report_ai/i.test(q.sql)), 'must upsert cache row');
     assert.ok(queries.some((q) => /llm_usage/i.test(q.sql) && /INSERT/i.test(q.sql)), 'must record spend');
   } finally { llm._setClientForTests(prev); }
+});
+
+test('generateForApp refuses while another generation holds the app, on any process, and never calls the model', async () => {
+  dispatch([[/FROM app_report_ai/i, []]]);
+  claimHeld = true;
+  let llmCalled = false;
+  const prev = llm._setClientForTests({ messages: { create: async () => { llmCalled = true; throw new Error('no'); } } });
+  try {
+    await assert.rejects(
+      reportAi.generateForApp({ pool, config: { dataEncryptionKey: 'k' }, app: APP, userId: 1 }),
+      (err) => err.code === 'generation_in_flight');
+    assert.equal(llmCalled, false);
+  } finally { claimHeld = false; llm._setClientForTests(prev); }
 });
 
 test('generateForApp maps a missing client to llm_unavailable', async () => {
@@ -320,7 +337,7 @@ test('generateForApp persists and returns highlights', async () => {
     queries.length = 0;
     const out = await reportAi.generateForApp({ pool, config: { dataEncryptionKey: 'k' }, app: APP, userId: 42 });
     assert.deepEqual(out.summary.highlights, ['h1']);
-    const ins = queries.find((q) => /INSERT INTO app_report_ai/i.test(q.sql));
+    const ins = queries.find((q) => /INSERT INTO app_report_ai/i.test(q.sql) && !/generating_until/.test(q.sql));
     assert.match(ins.sql, /highlights_json/);
   } finally { llm._setClientForTests(prev); }
 });
@@ -403,7 +420,7 @@ test('generateForApp persists period_start and returns it via shapeRow', async (
       pool, config: { dataEncryptionKey: 'k' }, app: APP, userId: 42, since: SINCE,
     });
     assert.equal(out.summary.periodStart, SINCE);
-    const ins = queries.find((q) => /INSERT INTO app_report_ai/i.test(q.sql));
+    const ins = queries.find((q) => /INSERT INTO app_report_ai/i.test(q.sql) && !/generating_until/.test(q.sql));
     assert.match(ins.sql, /period_start/);
     assert.ok(ins.params.includes(SINCE), 'the period start must be bound into the upsert');
   } finally { llm._setClientForTests(prev); }

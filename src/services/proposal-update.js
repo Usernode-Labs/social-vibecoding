@@ -344,8 +344,8 @@ async function updateProposalFromForkBranch(deps, params) {
   const votes = deps.votes || require('../routes/votes');
   const prImportSync = deps.prImportSync || require('./pr-import-sync');
   const githubPublic = deps.githubPublic || require('./external-agent-tasks').githubPublic;
-  const serialize = deps.serialize
-    || require('./handoff-pipeline').serializeHandoffSubmission;
+  // Ordered per session with every other revision writer, on any process.
+  const lock = deps.lock || withProposalLock;
 
   const { user, origin } = params;
 
@@ -422,7 +422,7 @@ async function updateProposalFromForkBranch(deps, params) {
   }
 
   const sessionId = Number(params.session.id);
-  return serialize(sessionId, () => withProposalLock(pool, sessionId, async () => {
+  return lock(pool, sessionId, async () => {
     // Everything from here on judges the row as it is NOW, not as it was
     // when the caller queued.
     const session = (await reloadSession(pool, sessionId)) || params.session;
@@ -502,7 +502,7 @@ async function updateProposalFromForkBranch(deps, params) {
     } finally {
       releaseOperation();
     }
-  }));
+  });
 }
 
 // A managed local upload has already advanced the bot-owned PR branch. Apply

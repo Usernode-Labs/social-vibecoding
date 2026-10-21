@@ -27,6 +27,7 @@ const schema = fs.readFileSync(path.join(root, 'src/db/schema.sql'), 'utf8');
 const migrate = fs.readFileSync(path.join(root, 'src/db/migrate.js'), 'utf8');
 const adminJs = fs.readFileSync(path.join(root, 'src/routes/admin.js'), 'utf8');
 const eventsJs = fs.readFileSync(path.join(root, 'src/services/events.js'), 'utf8');
+const dbExportJs = fs.readFileSync(path.join(root, 'src/services/db-export.js'), 'utf8');
 
 const table = schema.slice(
   schema.indexOf('CREATE TABLE IF NOT EXISTS db_exports'),
@@ -87,9 +88,15 @@ test('nothing in the codebase deletes from db_exports', () => {
   }
 });
 
-test('the only UPDATE closes a row out — it never rewrites who or what', () => {
-  const updates = adminJs.match(/UPDATE db_exports[\s\S]*?WHERE id = \$1/g) || [];
+test('an UPDATE claims, renews, tickets or closes a row out — it never rewrites who or what', () => {
+  // What each one sets (its WHERE names who may be matched, not what changes).
+  const updates = [...(adminJs.match(/UPDATE db_exports[\s\S]*?WHERE id = \$1/g) || []),
+    ...(dbExportJs.match(/UPDATE db_exports[\s\S]*?(?=WHERE)/g) || [])];
   assert.ok(updates.length > 0, 'the completion path updates the row it inserted');
+  // A terminal row is never claimed, renewed or ticketed again.
+  for (const u of dbExportJs.match(/UPDATE db_exports[\s\S]*?WHERE[^`]*/g) || []) {
+    assert.match(u, /status = '(requested|streaming)'|status IN/, 'only an open row is written');
+  }
   for (const u of updates) {
     for (const immutable of ['user_id', 'username', 'ip', 'user_agent', 'requested_at']) {
       assert.ok(!new RegExp(`SET[\\s\\S]*\\b${immutable}\\s*=`).test(u),
@@ -124,9 +131,14 @@ test('a restart mid-export cannot leave a row stuck in-flight', () => {
     migrate.indexOf('async function seedStagingDbExports')
   );
   assert.ok(fn.length > 0, 'the sweeper exists');
-  assert.match(fn, /status = 'interrupted'/);
-  assert.match(fn, /WHERE status IN \('requested', 'streaming'\)/,
-    'both pre-stream and mid-stream states are swept');
+  assert.match(fn, /settleAbandoned\(pool\)/);
+  const settle = dbExportJs.slice(dbExportJs.indexOf('async function settleAbandoned'));
+  assert.match(settle, /status = 'interrupted'/);
+  // Both pre-stream and mid-stream states are swept, each only once nothing
+  // will finish it: a dump another process streams is left alone
+  // (tests/db-export-postgres.test.js).
+  assert.match(settle, /status = 'streaming' AND \(heartbeat_at IS NULL OR heartbeat_at < NOW\(\)/);
+  assert.match(settle, /status = 'requested' AND COALESCE\(ticket_expires_at, requested_at\) < NOW\(\)/);
   assert.ok(!/USERNODE_ENV/.test(fn), 'the sweeper runs in every environment, not just staging');
 });
 

@@ -37,8 +37,10 @@ const ids = {
   kubernetes: require.resolve('../src/services/kubernetes'),
   applicationRuntime: require.resolve('../src/services/application-runtime'),
   previewWorkflow: require.resolve('../src/services/preview-workflow'),
+  platform: require.resolve('../src/workflow/platform.ts'),
   reap: require.resolve('../src/services/staging-reap'),
 };
+const { fleetJobRun } = require('./lib/fleet-job-run');
 
 let fx;
 
@@ -68,6 +70,9 @@ function freshFixtures() {
     queries: [],
     // session ids the preview machine holds (wf_instances, and its held())
     held: [],
+    // the preview-reap clock's run (fleetJobRun) and the runs asked of it
+    run: null,
+    asked: [],
     // ws / events
     adminBroadcasts: [],
     eventRecords: [],
@@ -93,6 +98,10 @@ const fakePool = {
     // busySessionsAnywhere): the fixtures' `working` ids.
     if (/cs\.id = ANY\(\$1::int\[\]\) AND \(cs\.active_turn IS NOT NULL/.test(sql)) {
       return { rows: (fx.working || []).filter((id) => (params[0] || []).includes(id)).map((id) => ({ id })) };
+    }
+    // Whether one session is worked on now (isSessionBusyAnywhere).
+    if (/AS busy FROM chat_sessions cs WHERE cs\.id = \$1/.test(sql)) {
+      return { rows: [{ busy: (fx.working || []).includes(params[0]) }] };
     }
     if (/FROM chat_sessions/.test(sql)) {
       const ids_ = params[0] || [];
@@ -133,6 +142,7 @@ function installStubs() {
     },
     async stopAndRemove(name, opts) {
       fx.stopCalls.push({ name, opts });
+      if (fx.stopHook) fx.stopHook();
       fx.concurrentNow += 1;
       fx.concurrentMax = Math.max(fx.concurrentMax, fx.concurrentNow);
       try {
@@ -146,6 +156,7 @@ function installStubs() {
   stub(ids.staging, {
     async teardownStaging(session, app) {
       fx.teardownCalls.push({ sessionId: session.id, slug: app && app.slug });
+      if (fx.stopHook) fx.stopHook();
       fx.concurrentNow += 1;
       fx.concurrentMax = Math.max(fx.concurrentMax, fx.concurrentNow);
       try {
@@ -187,6 +198,14 @@ function installStubs() {
   stub(ids.previewWorkflow, {
     async held(sessionId) { return fx.held.includes(Number(sessionId)); },
   });
+  stub(ids.platform, {
+    clockRunOf: async (_db, job) => { assert.equal(job, 'preview-reap'); return fx.run ? fx.run.run : null; },
+    askClockRun: async (job, admin) => {
+      fx.asked.push([job, admin.username]);
+      fx.run = fleetJobRun({ n: (fx.run ? fx.run.run.n : 0) + 1, by: admin.username, userId: admin.id });
+      return true;
+    },
+  });
   stub(ids.applicationRuntime, {
     mode: (config) => config?.appRuntime || process.env.APP_RUNTIME || 'docker',
     async inspect(_config, ref) {
@@ -210,21 +229,16 @@ function loadReap() {
 function setup() {
   fx = freshFixtures();
   installStubs();
-  const reap = loadReap();
-  reap._reset();
-  return reap;
+  return loadReap();
 }
 
-// Drive one full sweep and resolve with the finished job snapshot.
-async function runSweep(reap, opts = {}, config = {}) {
-  const res = reap.start(config, { userId: 7, username: 'admin-user', ...opts });
+// Ask for one sweep, run the preview-reap clock's run to its end, and
+// resolve with the finished job as the console reads it.
+async function runSweep(reap, config = {}) {
+  const res = await reap.start(fakePool, { id: 7, username: 'admin-user' });
   assert.equal(res.started, true, 'the sweep must start');
-  for (let i = 0; i < 400; i++) {
-    const job = reap.read();
-    if (job && job.finishedAt) return job;
-    await sleep(5);
-  }
-  throw new Error('sweep did not finish');
+  await fx.run.go(reap.runJob, { config, pool: fakePool });
+  return reap.read(fakePool);
 }
 
 function states(job) {
@@ -445,16 +459,65 @@ test('a failed stopAndRemove is isolated to its own unit', async () => {
 
 // ── Job shape, singleton, progress and tally ────────────────────────────
 
-test('a second start while a sweep is live returns the in-flight job', async () => {
+test('a start while a sweep runs, on any process, returns the job under way', async () => {
   const reap = setup();
   fleet();
   fx.unitDelayMs = 30;
-  const first = reap.start({}, { username: 'admin-user' });
+  const first = await reap.start(fakePool, { id: 7, username: 'admin-user' });
   assert.equal(first.started, true);
-  const second = reap.start({}, { username: 'someone-else' });
+  const running = fx.run.go(reap.runJob, { config: {}, pool: fakePool });
+  await sleep(5);
+  const second = await reap.start(fakePool, { id: 8, username: 'someone-else' });
   assert.equal(second.started, false, 'the route turns this into a 409');
   assert.equal(second.job.id, first.job.id);
-  for (let i = 0; i < 400 && !(reap.read() || {}).finishedAt; i++) await sleep(5);
+  assert.equal(second.job.startedBy, 'admin-user');
+  assert.equal(fx.asked.length, 1);
+  await running;
+});
+
+test('a session somebody started working on since the sweep listed it keeps its preview', async () => {
+  const reap = setup();
+  kubeFleet(currentFp());
+  // 5806 is a live session's out-of-date preview: listed, then a turn starts.
+  const real = fakePool.query;
+  let listed = false;
+  fakePool.query = async (sql, params) => {
+    if (/cs\.id = ANY\(\$1::int\[\]\) AND \(cs\.active_turn IS NOT NULL/.test(sql)) listed = true;
+    else if (listed) fx.working = [5806];
+    return real(sql, params);
+  };
+  try {
+    const job = await runSweep(reap, KUBE);
+    assert.equal(states(job)[job.previews.find((p) => p.sessionId === 5806).name], 'skipped_busy');
+    assert.ok(!fx.kubeRemoveCalls.some((c) => /s5806$/.test(c.name)) && !fx.teardownCalls.some((c) => c.sessionId === 5806));
+  } finally {
+    fakePool.query = real;
+  }
+});
+
+test('a sweep carried on after a restart tears down only what it had not', async (t) => {
+  const reap = setup();
+  process.env.STAGING_REAP_CONCURRENCY = '1';
+  t.after(() => { delete process.env.STAGING_REAP_CONCURRENCY; });
+  fleet();
+  const first = fleetJobRun();
+  fx.run = first;
+  // The process goes away during the first teardown.
+  fx.stopHook = () => first.stop();
+  await assert.rejects(first.go(reap.runJob, { config: {}, pool: fakePool }));
+  const before = fx.teardownCalls.length + fx.stopCalls.length;
+  assert.equal(before, 1, 'one preview torn down before the process went away');
+  assert.equal(fx.eventRecords.length, 0);
+
+  fx.stopHook = null;
+  const again = fleetJobRun({ resumeFrom: first.run.checkpoint });
+  fx.run = again;
+  await again.go(reap.runJob, { config: {}, pool: fakePool });
+  assert.equal(fx.teardownCalls.length + fx.stopCalls.length, 4, 'each of the four torn down once');
+  const job = await reap.read(fakePool);
+  assert.equal(job.done, 4);
+  assert.ok(job.finishedAt);
+  assert.equal(fx.eventRecords.length, 1);
 });
 
 test('teardown concurrency is bounded by the drain width', async () => {
@@ -1056,7 +1119,8 @@ test('Kubernetes: an unreadable API is a no-op sweep, not a blind one', async ()
 test('Kubernetes: the admin sweep takes everything due at once, nothing more', async () => {
   const reap = setup();
   kubeFleet(currentFp());
-  const job = await runSweep(reap, { isInFlight: (id) => id === 5080 }, KUBE);
+  fx.working = [5080];
+  const job = await runSweep(reap, KUBE);
 
   assert.equal(job.total, 4, 'abandoned + out of date, uncapped');
   assert.equal(job.failed, 0);
@@ -1074,7 +1138,7 @@ test('Kubernetes: the admin sweep leaves a session another process works on, as 
   // Not in this process's memory: a turn or an operation elsewhere
   // (session-work.ts workedOnSql), read once for the pass.
   fx.working = [5080];
-  const job = await runSweep(reap, {}, KUBE);
+  const job = await runSweep(reap, KUBE);
   const taken = job.previews.map((p) => p.sessionId).sort((a, b) => a - b);
   assert.deepEqual(taken, [3711, 4001, 4658, 5806], 'not the session worked on elsewhere');
   const busyRead = fx.queries.find((q) => /cs\.id = ANY\(\$1::int\[\]\) AND \(cs\.active_turn IS NOT NULL/.test(q.sql));

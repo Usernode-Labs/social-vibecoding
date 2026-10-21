@@ -1,6 +1,7 @@
 'use strict';
 
 // #5123: every OpenRouter request denies data collection.
+const crypto = require('node:crypto');
 const { withNoTraining } = require('../../worker/openrouter-privacy');
 
 // Short, mono PCM recordings only. Reading the WAV's frame count gives us
@@ -71,4 +72,25 @@ async function transcribe({ data, apiKey, config, signal, fetchImpl = fetch }) {
   return { text, seconds, model, usage: result.usage || {} };
 }
 
-module.exports = { SAMPLE_RATE, MAX_SECONDS, MAX_BYTES, DEFAULT_MODEL, DictationError, validateWav, transcribe };
+// One provider request per person at a time, on any process: a dictation
+// claims the person's dictation_claims row until it ends, or until `leaseMs`
+// lapses after a crash. Resolves the claim's id, or null while another
+// holds it. It was a Set in each process: two Pods ran two at once.
+async function claim(pool, userId, leaseMs) {
+  const id = crypto.randomUUID();
+  const { rowCount } = await pool.query(
+    `INSERT INTO dictation_claims (user_id, claim_id, claimed_until)
+     VALUES ($1, $2, NOW() + make_interval(secs => $3))
+     ON CONFLICT (user_id) DO UPDATE SET claim_id = EXCLUDED.claim_id, claimed_until = EXCLUDED.claimed_until
+       WHERE dictation_claims.claimed_until < NOW()`,
+    [userId, id, leaseMs / 1000]
+  );
+  return rowCount ? id : null;
+}
+
+// Its own claim only: one that lapsed and another took is the other's.
+async function release(pool, userId, claimId) {
+  await pool.query('DELETE FROM dictation_claims WHERE user_id = $1 AND claim_id = $2', [userId, claimId]);
+}
+
+module.exports = { SAMPLE_RATE, MAX_SECONDS, MAX_BYTES, DEFAULT_MODEL, DictationError, validateWav, transcribe, claim, release };

@@ -16,6 +16,10 @@ export interface Job {
   // How long after a run ends the next is due; 0 runs it again at once.
   everyMs: number;
   leaseMs?: number;
+  // Asked for, not scheduled (an admin's fleet job): run only when an admin
+  // asked (RunNow: the run's `asked`). A run nobody asked for (an older
+  // build arms the job on its interval) does nothing.
+  onDemand?: boolean;
   // What it does depends on the build (its keys, its catalogs, its
   // environment): only the newest release's processes run it. An older
   // build's run during a rollout does nothing (`skipped: older_build`), and
@@ -67,6 +71,7 @@ export function clockServices(jobs: readonly Job[], deps: JobDeps): Record<strin
       leaseMs: job.leaseMs ?? 120000,
       concurrency: 1,
       async run(ctx) {
+        if (job.onDemand && !ctx.input.asked) return { skipped: 'not_asked' };
         if (!job.newestOnly) return json(await job.run(ctx, deps));
         const release = bootRelease();
         if (!await newestBuild(deps.pool)) return { skipped: 'older_build' };
@@ -488,6 +493,28 @@ export const JOBS: readonly Job[] = Object.freeze([
   // ── Previews: outside facts about the runtimes and the servers ───────
   // (What the preview machine decides about a preview it holds, its idle
   // give-back and the checks it owes, is its own deadline: preview/.)
+  // ── The workflow's own ──────────────────────────────────────────────
+  {
+    // Events an older build refused as unknown during a rollout, asked
+    // again once no older build serves (platform.ts reaskRefused).
+    name: 'reask-refused', everyMs: MIN, newestOnly: true,
+    run: async (_ctx: WorkContext, { pool }: JobDeps) => (await import('../platform.ts')).reaskRefused(pool),
+  },
+  // ── An admin's fleet jobs ───────────────────────────────────────────
+  // Run when an admin asks (Admin › Rollover, Admin › Staging), one at a
+  // time across every process; each unit (an app, a preview) is a step of
+  // the run, so a restart carries the job on (services/fleet-job.js).
+  {
+    // Every running app's container recreated with a freshly assembled
+    // environment.
+    name: 'container-rollover', everyMs: 0, onDemand: true, leaseMs: 10 * MIN,
+    run: (ctx: WorkContext, { config, pool }: JobDeps) => legacy('services/app-rollover').runJob(ctx, { config, pool }),
+  },
+  {
+    // Every out-of-date or abandoned preview torn down at once.
+    name: 'preview-reap', everyMs: 0, onDemand: true, leaseMs: 10 * MIN,
+    run: (ctx: WorkContext, { config, pool }: JobDeps) => legacy('services/staging-reap').runJob(ctx, { config, pool }),
+  },
   {
     // A vote-backed preview whose runtime or database is gone is reported
     // lost; the preview machine builds it again.

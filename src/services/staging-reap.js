@@ -62,9 +62,14 @@
  * SHAPE — mirrors services/app-rollover.js deliberately, so the two admin
  * sweeps read the same way:
  *
- *   - One job at a time (module-level singleton); a second start() returns
- *     the in-flight job and the route turns that into a 409.
- *   - In-memory, not persisted, with a 30-min stale guard.
+ *   - One job at a time across every process: the preview-reap clock
+ *     (src/workflow/clock/services.ts), which runs only when an admin asks
+ *     (start: its RunNow); a start while one runs returns the job under way
+ *     and the route turns that into a 409. Each preview is a step of the
+ *     run's work item (services/fleet-job.js), so a restart carries the job
+ *     on, and its progress is that checkpoint, which any process reads
+ *     (read). It was an object in the memory of the web process that
+ *     started it, lost to a restart.
  *   - Per-preview failure isolation: every unit is individually caught and
  *     the drain continues.
  *   - Progress rides one aggregate `admin_staging_reap_status` broadcast to
@@ -106,6 +111,7 @@ const events = require('./events');
 const stagingEnv = require('./staging-env');
 const applicationRuntime = require('./application-runtime');
 const kubernetes = require('./kubernetes');
+const fleetJob = require('./fleet-job');
 const { getPool } = require('../db/pool');
 
 // Preview teardown is cheaper and less disruptive than a production
@@ -114,9 +120,8 @@ const { getPool } = require('../db/pool');
 const DEFAULT_CONCURRENCY = 3;
 const MAX_CONCURRENCY = 10;
 
-// Same TTL as app-rollover / app-deploy-status: anything claiming to be in
-// flight for >30min is an orphaned record, not a genuinely slow sweep.
-const JOB_STALE_AFTER_MS = 30 * 60 * 1000;
+// The clock that runs the admin's sweep (src/workflow/clock/services.ts).
+const JOB = 'preview-reap';
 
 // How often the AUTOMATIC stale pass may run, and how many previews it may
 // tear down per pass. Long interval + small cap on purpose: a stale preview
@@ -170,9 +175,6 @@ const TORN_DOWN = 'torn_down';
 const TORN_DOWN_NO_DB = 'torn_down_no_db';
 const FAILED = 'failed';
 
-let _job = null;
-let _seq = 0;
-
 function isStagingEnv() {
   return process.env.USERNODE_ENV === 'staging';
 }
@@ -196,50 +198,36 @@ function concurrency() {
   return Math.min(raw, MAX_CONCURRENCY);
 }
 
-function isActive(job) {
-  if (!job || job.finishedAt) return false;
-  const age = Date.now() - new Date(job.startedAt).getTime();
-  return age <= JOB_STALE_AFTER_MS;
-}
-
-function snapshot(job) {
-  if (!job) return null;
-  return {
-    id: job.id,
-    startedAt: job.startedAt,
-    startedBy: job.startedBy || null,
-    finishedAt: job.finishedAt || null,
-    concurrency: job.concurrency,
-    total: job.total,
-    done: job.done,
-    failed: job.failed,
-    stale: !job.finishedAt && !isActive(job),
-    previews: job.previews.map((p) => ({
-      name: p.name,
-      slug: p.slug,
-      sessionId: p.sessionId,
-      classification: p.classification,
-      outOfDate: !!p.outOfDate,
-      state: p.state,
-      ms: p.ms,
-      error: p.error,
-    })),
-  };
-}
+// A unit of the admin's sweep, as its run lists it once (small JSON: the
+// session row is read again when its turn comes) and as the console shows
+// it before it ran.
+const SHAPE = {
+  rowsField: 'previews',
+  keyOf: (item) => item.name,
+  rowOf: (item) => ({
+    name: item.name,
+    slug: item.slug,
+    sessionId: item.sessionId,
+    classification: item.classification,
+    outOfDate: !!item.outOfDate,
+  }),
+};
 
 // Lazily required so the module graph stays acyclic — same dodge
 // app-rollover.js and app-deploy-status.js document.
 function broadcast(job) {
   try {
     const { broadcastToAdmins } = require('./ws');
-    broadcastToAdmins({ type: 'admin_staging_reap_status', job: snapshot(job) });
+    broadcastToAdmins({ type: 'admin_staging_reap_status', job });
   } catch (err) {
     log.warn('staging-reap', 'broadcast failed', { err: err.message });
   }
 }
 
-function read() {
-  return snapshot(_job);
+/** The sweep under way, or the last one, as the console shows it. */
+async function read(pool) {
+  const run = await require('../workflow/platform.ts').clockRunOf(pool, JOB);
+  return fleetJob.snapshotOf(run, { ...SHAPE, concurrency: concurrency() });
 }
 
 /**
@@ -722,138 +710,77 @@ function demoCounts() {
 }
 
 /**
- * Kick off a sweep. Synchronous by design: creates and returns the job
- * record, then runs the docker work on a detached promise so the route can
- * answer immediately — same fire-and-forget shape as app-rollover.start.
- *
- * Returns { started, job }. `started: false` means a job was already in
- * flight and `job` is that one. `isInFlight` is the same guard the automatic
- * pass gets (see selectStale).
+ * Ask for a sweep: the preview-reap clock's run, on whichever process runs
+ * the workflow. Returns { started, job }: `started: false` with the job
+ * under way when one runs (anywhere).
  */
-function start(config, { userId = null, username = null, isInFlight = null } = {}) {
-  if (isActive(_job)) return { started: false, job: snapshot(_job) };
-
-  const job = {
-    id: ++_seq,
-    startedAt: new Date().toISOString(),
-    startedBy: username,
-    startedByUserId: userId,
-    finishedAt: null,
-    concurrency: concurrency(),
-    total: 0,
-    done: 0,
-    failed: 0,
-    previews: [],
-  };
-  _job = job;
-
-  // Detached: errors are contained here so an unhandled rejection can never
-  // escape into the request that started the sweep.
-  run(config, job, { isInFlight }).catch((err) => {
-    log.error('staging-reap', 'Sweep crashed', { jobId: job.id, err: err.message });
-    if (!job.finishedAt) {
-      job.finishedAt = new Date().toISOString();
-      broadcast(job);
-    }
-  });
-
-  return { started: true, job: snapshot(job) };
+async function start(pool, admin) {
+  const now = await read(pool);
+  if (now && !now.finishedAt && !now.stale) return { started: false, job: now };
+  const asked = await require('../workflow/platform.ts').askClockRun(JOB, admin);
+  return { started: !!asked, job: await read(pool) };
 }
 
-async function run(config, job, { isInFlight = null } = {}) {
-  const pool = getPool(config);
-  const startedMs = Date.now();
-
-  const containers = await listPreviews(config);
-  const classified = await classify(pool, containers);
-  // What works on each session, on any process (session-work.ts
-  // workedOnSql), read once for the pass.
-  const busy = await require('./active-workers').busySessionsAnywhere(classified.map((item) => item.sessionId), { pool });
-  const working = (id) => busy.has(Number(id)) || !!(isInFlight && isInFlight(id));
-  const { stale, selected: items } = selectReapable(
-    classified, stagingEnv.expectedStagingFingerprint(config), { isInFlight: working }
-  );
-  // The classification says what the session is doing; for a live session's
-  // preview the reason it was taken is its env, so the row says that too.
-  const staleNames = new Set(stale.map((item) => item.name));
-  job.total = items.length;
-  job.previews = items.map((item) => ({
-    name: item.name,
-    slug: item.slug,
-    sessionId: item.sessionId,
-    classification: item.classification,
-    outOfDate: staleNames.has(item.name),
-    state: 'pending',
-    ms: null,
-    error: null,
-  }));
-  log.info('staging-reap', 'Stale preview sweep started', {
-    jobId: job.id, examined: containers.length, total: job.total, concurrency: job.concurrency,
-    by: job.startedBy || null,
-  });
-  broadcast(job);
-
-  await drain(items, job.concurrency, async (item, idx) => {
-    const entry = job.previews[idx];
-    entry.state = 'running';
-    broadcast(job);
-    const unitStarted = Date.now();
-    let outcome = FAILED;
-    let error = null;
-    try {
-      const result = await reapOne(item, config);
-      outcome = result.outcome;
-      error = result.error || null;
-    } catch (err) {
-      // Belt-and-braces: reapOne already catches, so reaching here means a
-      // bug rather than a docker failure. Still isolated per preview.
-      outcome = FAILED;
-      error = err && err.message ? err.message : 'teardown failed';
-      log.error('staging-reap', 'Unit threw outside its own guard', {
-        name: item.name, err: error,
+/**
+ * The clock's run: the previews selectReapable takes, listed once, each torn
+ * down as a step. What works on a session is read on every process
+ * (session-work.ts workedOnSql), and again when its preview's turn comes.
+ */
+async function runJob(ctx, { config, pool }) {
+  return fleetJob.run(ctx, {
+    name: JOB,
+    ...SHAPE,
+    concurrency: concurrency(),
+    list: async () => {
+      const containers = await listPreviews(config);
+      const classified = await classify(pool, containers);
+      const busy = await require('./active-workers').busySessionsAnywhere(classified.map((item) => item.sessionId), { pool });
+      const { stale, selected } = selectReapable(
+        classified, stagingEnv.expectedStagingFingerprint(config), { isInFlight: (id) => busy.has(Number(id)) }
+      );
+      // The classification says what the session is doing; for a live
+      // session's preview the reason it was taken is its env, so the row
+      // says that too.
+      const staleNames = new Set(stale.map((item) => item.name));
+      log.info('staging-reap', 'Stale preview sweep listed', { examined: containers.length, total: selected.length });
+      return selected.map(({ session: _session, ...item }) => ({ ...item, outOfDate: staleNames.has(item.name) }));
+    },
+    unit: async (item) => {
+      const [fresh] = await classify(pool, [item]);
+      const status = fresh.session ? fresh.session.status : null;
+      // Somebody started working on it since it was listed: a turn is about
+      // to replace this preview.
+      if (status && !FINISHED_STATUSES.has(status)
+          && await require('./active-workers').isSessionBusyAnywhere(Number(fresh.sessionId), { pool })) {
+        return { outcome: 'skipped_busy' };
+      }
+      return reapOne(fresh, config);
+    },
+    publish: broadcast,
+    finish: (job, { durationMs }) => {
+      const tally = job.previews.reduce((acc, p) => { acc[p.state] = (acc[p.state] || 0) + 1; return acc; }, {});
+      const byClassification = job.previews.reduce((acc, p) => {
+        acc[p.classification] = (acc[p.classification] || 0) + 1;
+        return acc;
+      }, {});
+      return events.record(pool, {
+        type: events.EVENT_TYPES.STALE_PREVIEWS_REAPED,
+        userId: ctx.input.asked?.userId ?? null,
+        metadata: {
+          jobId: job.id,
+          startedBy: job.startedBy,
+          total: job.total,
+          tornDown: (tally[TORN_DOWN] || 0) + (tally[TORN_DOWN_NO_DB] || 0),
+          dbsDropped: tally[TORN_DOWN] || 0,
+          skipped: Object.keys(tally)
+            .filter((k) => k.startsWith('skipped_'))
+            .reduce((n, k) => n + tally[k], 0),
+          failed: job.failed,
+          failedNames: job.previews.filter((p) => p.state === FAILED).map((p) => p.name),
+          byClassification,
+          durationMs,
+        },
       });
-    }
-    entry.state = outcome;
-    entry.error = error;
-    entry.ms = Date.now() - unitStarted;
-    job.done += 1;
-    if (outcome === FAILED) job.failed += 1;
-    broadcast(job);
-  });
-
-  job.finishedAt = new Date().toISOString();
-  const durationMs = Date.now() - startedMs;
-  const tally = job.previews.reduce((acc, p) => {
-    acc[p.state] = (acc[p.state] || 0) + 1;
-    return acc;
-  }, {});
-  const byClassification = job.previews.reduce((acc, p) => {
-    acc[p.classification] = (acc[p.classification] || 0) + 1;
-    return acc;
-  }, {});
-  log.info('staging-reap', 'Stale preview sweep finished', {
-    jobId: job.id, total: job.total, failed: job.failed, durationMs,
-    tally, byClassification,
-  });
-  broadcast(job);
-
-  // The only durable trace — the job object is in-memory, so an interrupted
-  // sweep leaves no row. Best-effort, like every events.record.
-  events.record(pool, {
-    type: events.EVENT_TYPES.STALE_PREVIEWS_REAPED,
-    userId: job.startedByUserId || null,
-    metadata: {
-      jobId: job.id,
-      total: job.total,
-      tornDown: (tally[TORN_DOWN] || 0) + (tally[TORN_DOWN_NO_DB] || 0),
-      dbsDropped: tally[TORN_DOWN] || 0,
-      skipped: Object.keys(tally)
-        .filter((k) => k.startsWith('skipped_'))
-        .reduce((n, k) => n + tally[k], 0),
-      failed: job.failed,
-      failedNames: job.previews.filter((p) => p.state === FAILED).map((p) => p.name),
-      byClassification,
-      durationMs,
     },
   });
 }
@@ -1423,35 +1350,11 @@ async function kubernetesPreviewExists(config, name) {
   }
 }
 
-// Fixed-width worker drain. No barrier between items: a slow container never
-// holds up the next one, and at most `limit` docker operations are in
-// flight. Copied in shape from app-rollover.drain.
-async function drain(items, limit, worker) {
-  if (!items.length) return;
-  let next = 0;
-  const width = Math.max(1, Math.min(limit, items.length));
-  const runners = [];
-  for (let i = 0; i < width; i++) {
-    runners.push((async () => {
-      for (;;) {
-        const idx = next++;
-        if (idx >= items.length) return;
-        await worker(items[idx], idx);
-      }
-    })());
-  }
-  await Promise.all(runners);
-}
-
-// Test seam only: drop the singleton so each case starts clean.
-function _reset() {
-  _job = null;
-  _seq = 0;
-}
-
 module.exports = {
   start,
   read,
+  runJob,
+  JOB,
   demoJob,
   demoCounts,
   isStagingEnv,
@@ -1488,5 +1391,4 @@ module.exports = {
   TORN_DOWN,
   TORN_DOWN_NO_DB,
   FAILED,
-  _reset,
 };

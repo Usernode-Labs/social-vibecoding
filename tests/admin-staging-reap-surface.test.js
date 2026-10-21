@@ -448,17 +448,20 @@ test('the console counts the button\'s real blast radius, not every open preview
 // (selectAbandoned, whatever the env) on the preview-gc clock, and the
 // out-of-date rest from each release, for the machine to decide.
 test('the button takes the selection, and the automatic passes its two halves', () => {
-  const runStart = reapJs.indexOf('async function run(');
+  const runStart = reapJs.indexOf('async function runJob(');
   const runBody = reapJs.slice(runStart, reapJs.indexOf('\n}\n', runStart));
   assert.match(runBody, /selectReapable\(/);
-  assert.match(runBody, /isInFlight/);
+  // What works on a session, on any process: read when the sweep lists its
+  // previews, and again when a preview's turn comes.
+  assert.match(runBody, /busySessionsAnywhere\(/);
+  assert.match(runBody, /isSessionBusyAnywhere\(/);
   const leftStart = reapJs.indexOf('async function leftovers(');
   assert.match(reapJs.slice(leftStart, reapJs.indexOf('\n}\n', leftStart)), /selectAbandoned\(items\)/);
   const envStart = reapJs.indexOf('async function staleEnvTargets(');
   assert.match(reapJs.slice(envStart, reapJs.indexOf('\n}\n', envStart)),
     /i\.fingerprint !== expected && i\.session && namesPreview\(i, i\.session\)/);
-  assert.match(postHandler(), /isInFlight: isSessionBusy/,
-    'the route hands the sweep the in-flight guard');
+  assert.match(postHandler(), /await stagingReap\.start\(pool, req\.user\)/,
+    'the route asks the preview-reap clock for the sweep');
   assert.match(reapTsx, /Previews backing a live vote are left/,
     'the confirmation says what it leaves alone');
 });

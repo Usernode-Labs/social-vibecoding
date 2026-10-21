@@ -37,7 +37,6 @@ async function automaticReap(pool) {
     tornDown: items, failed: s?.lastError ? 1 : 0,
   };
 }
-const { isSessionBusy } = require('../services/active-workers');
 const stagingEnv = require('../services/staging-env');
 const mail = require('../services/mail');
 const phoneAuth = require('../services/firebase-phone-auth');
@@ -220,9 +219,9 @@ function adminRoutes(config) {
   //
   // Recreate every running child-app container with freshly assembled env
   // (see services/app-rollover.js for why an env change needs a container
-  // recreate at all). Fire-and-forget with a progress feed: POST answers
-  // 202 with the job record and the docker work runs on a detached
-  // promise, exactly like POST /api/apps/:slug/redeploy.
+  // recreate at all). Fire-and-forget with a progress feed: POST asks the
+  // container-rollover clock for a run and answers 202 with the job; the
+  // work runs on whichever process runs the workflow.
 
   router.post('/api/admin/rollover', requireAdminWrite, drainGuard, async (req, res) => {
     try {
@@ -234,17 +233,14 @@ function adminRoutes(config) {
           error: 'Container rollover is unavailable in staging previews.',
         });
       }
-      const { started, job } = appRollover.start(config, {
-        userId: req.user.id,
-        username: req.user.username,
-      });
+      const { started, job } = await appRollover.start(pool, req.user);
       if (!started) {
         return res.status(409).json({ error: 'Rollover already in progress', job });
       }
       // warn-level: a fleet-wide container recreate is worth finding in
       // the logs later, same stance as the db-export audit lines.
       log.warn('admin', 'Container rollover started', {
-        by: req.user.username, jobId: job.id, total: job.total,
+        by: req.user.username, jobId: job?.id ?? null,
       });
       res.status(202).json({ job });
     } catch (err) {
@@ -255,8 +251,8 @@ function adminRoutes(config) {
 
   // Read-only, so it stays on the plain adminMiddleware gate — view-only
   // admins can watch a rollover, they just can't start one. This is the
-  // page-load + WS-reconnect source of truth (the job lives in memory,
-  // exactly like app-deploy-status).
+  // page-load + WS-reconnect source of truth (the clock's run, read from
+  // any process).
   router.get('/api/admin/rollover', async (req, res) => {
     try {
       // Staging mock data (request-time demo injection): a preview has no
@@ -267,7 +263,7 @@ function adminRoutes(config) {
       }
       const eligible = await appRollover.eligibleCount(config).catch(() => null);
       res.json({
-        job: appRollover.read(),
+        job: await appRollover.read(pool),
         eligible,
         concurrency: appRollover.concurrency(),
       });
@@ -344,18 +340,14 @@ function adminRoutes(config) {
           error: 'The stale-preview sweep is unavailable in staging previews.',
         });
       }
-      const { started, job } = stagingReap.start(config, {
-        userId: req.user.id,
-        username: req.user.username,
-        isInFlight: isSessionBusy,
-      });
+      const { started, job } = await stagingReap.start(pool, req.user);
       if (!started) {
         return res.status(409).json({ error: 'Sweep already in progress', job });
       }
       // warn-level: a fleet-wide preview teardown is worth finding in the
       // logs later, same stance as the rollover above.
       log.warn('admin', 'Stale preview sweep started', {
-        by: req.user.username, jobId: job.id, total: job.total,
+        by: req.user.username, jobId: job?.id ?? null,
       });
       res.status(202).json({ job });
     } catch (err) {
@@ -395,7 +387,7 @@ function adminRoutes(config) {
       const counts = await stagingReap.previewCounts(config)
         .catch(() => ({ open: null, stale: null, abandoned: null }));
       res.json({
-        job: stagingReap.read(),
+        job: await stagingReap.read(pool),
         open: counts.open,
         stale: counts.stale,
         abandoned: counts.abandoned,
@@ -2756,7 +2748,7 @@ function adminRoutes(config) {
   router.get('/api/admin/db-export/status', async (req, res) => {
     try {
       const target = dbExport.resolveTargetDb(config);
-      const inProgress = dbExport.isExportInProgress();
+      const inProgress = await dbExport.isExportInProgress(pool);
 
       let dbSizeBytes = null;
       try {
@@ -2893,7 +2885,7 @@ function adminRoutes(config) {
             code: 'unavailable',
           });
         }
-        if (dbExport.isExportInProgress()) {
+        if (await dbExport.isExportInProgress(pool)) {
           await recordExportAudit(req, { status: 'denied', deniedReason: 'in_progress', dbName: target.dbName });
           return res.status(409).json({
             error: 'An export is already in progress. Try again shortly.',
@@ -2909,9 +2901,7 @@ function adminRoutes(config) {
           return res.status(500).json({ error: 'Could not record the export, so it will not be run.' });
         }
 
-        const { token, expiresInSeconds } = dbExport.issueTicket({
-          userId: req.user.id, ip: clientIp(req), auditId, dbName: target.dbName,
-        });
+        const { token, expiresInSeconds } = await dbExport.issueTicket(pool, { auditId });
         log.warn('admin', 'Database export authorized', {
           by: req.user.username, id: req.user.id, dbName: target.dbName,
           auditId, ip: clientIp(req), ticket: `${token.slice(0, 8)}…`,
@@ -2944,7 +2934,7 @@ function adminRoutes(config) {
         });
       }
 
-      const ticket = dbExport.consumeTicket(String(req.query.t || ''), req.user.id);
+      const ticket = await dbExport.consumeTicket(pool, String(req.query.t || ''), req.user.id);
       if (!ticket) {
         log.warn('admin', 'db-export refused: invalid or expired ticket', {
           by: req.user.username, ip: clientIp(req),
@@ -2974,7 +2964,15 @@ function adminRoutes(config) {
         });
       }
 
-      if (!dbExport.beginExport({ userId: req.user.id, username: req.user.username })) {
+      // The one dump, platform-wide: its row is the claim.
+      const claim = await dbExport.beginExport(pool, auditId);
+      if (!claim.claimed && claim.reason === 'gone') {
+        return res.status(403).json({
+          error: 'This export link has expired. Start the export again.',
+          code: 'ticket_invalid',
+        });
+      }
+      if (!claim.claimed) {
         await finishExportAudit(auditId, { status: 'denied', error: 'another export was already running' });
         return res.status(409).json({
           error: 'An export is already in progress. Try again shortly.',
@@ -2996,13 +2994,13 @@ function adminRoutes(config) {
           onStart: () => {
             started = true;
             pool.query(
-              `UPDATE db_exports SET status = 'streaming', started_at = NOW() WHERE id = $1`,
+              `UPDATE db_exports SET started_at = NOW() WHERE id = $1`,
               [auditId]
             ).catch((err) => log.error('admin', 'db-export streaming mark failed', { message: err.message }));
           },
         });
       } finally {
-        dbExport.endExport();
+        claim.end();
       }
 
       await finishExportAudit(auditId, {
