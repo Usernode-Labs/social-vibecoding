@@ -24974,7 +24974,7 @@ html.in-side-panel body {
 
 /* The slider. The pill sits at the foot of the picture, where a thumb
    pressing it covers the least of the shot. */
-.rf-compare { position: relative; overflow: hidden; touch-action: pan-y; user-select: none; -webkit-user-select: none; outline: none; }
+.rf-compare { position: relative; overflow: hidden; touch-action: pan-y; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; outline: none; }
 .rf-compare:focus-visible { box-shadow: inset 0 0 0 2px var(--accent); }
 .rf-layer, .rf-layer-clip { position: absolute; left: 0; top: 0; }
 .rf-layer-clip { inset: 0; }
@@ -24992,6 +24992,11 @@ html.in-side-panel body {
 .rf-pill-word { position: relative; display: block; text-align: center; }
 .rf-pill-dark { position: absolute; inset: 0; background: var(--rf-black); color: var(--rf-cream); clip-path: inset(0 calc(100% - var(--rf-g, 0%)) 0 0); }
 .rf-pill[data-view="before"] { background: var(--rf-black); color: var(--rf-cream); }
+
+/* Held still, the shot opens a round magnifier: the pill's cream and
+   near-black ring, the plates' own soft shadow. */
+.rf-lens { position: absolute; left: 0; top: 0; z-index: 6; width: 132px; height: 132px; border-radius: 999px; overflow: hidden; pointer-events: none; box-shadow: 0 0 0 2px var(--rf-cream), 0 0 0 3px var(--rf-black), 0 8px 24px rgba(0,0,0,.18); animation: rf-lens-in .12s cubic-bezier(0.22,1,0.36,1); }
+@keyframes rf-lens-in { from { opacity: 0; scale: .85; } }
 
 /* The vote sheet, pinned at the page's foot. */
 .rf-sheet { position: relative; z-index: 6; flex: none; overflow: hidden; border-radius: 20px 20px 0 0; background: var(--rf-sheet); box-shadow: 0 -8px 32px rgba(0,0,0,.18), inset 0 1px 0 rgba(255,255,255,.06); transition: height .26s cubic-bezier(0.22,1,0.36,1); }
@@ -25064,6 +25069,7 @@ html.in-side-panel body {
 .rf-fresh h2 { animation: rf-rise .3s .08s cubic-bezier(0.22,1,0.36,1) both; }
 @media (prefers-reduced-motion: reduce) {
   .rf-sheet, .rf-scrim, .rf-seam, .rf-tab, .rf-pill { transition: none; }
+  .rf-lens { animation: none; }
   .rf-fresh .rf-said-mark, .rf-fresh .rf-said-mark path, .rf-fresh h2 { animation: none; }
 }
 
