@@ -64,11 +64,11 @@ test('the sorts: most active, newest, most built, ties in the directory\'s order
   assert.deepEqual(slugs('built'), ['fresh-one', 'game-corner', 'todo-list']);
   const tie = [{ slug: 'a', active_users: 1 }, { slug: 'b', active_users: 1 }];
   assert.deepEqual(sortApps(tie, 'trending').map((a) => a.slug), ['a', 'b']);
-  // What a visitor can try comes first under every sort, each group in the
-  // sort's own order.
-  const tryable = (a) => a.slug !== 'game-corner';
-  assert.deepEqual(sortApps(APPS, 'trending', tryable).map((a) => a.slug), ['todo-list', 'fresh-one', 'game-corner']);
-  assert.deepEqual(sortApps(APPS, 'new', tryable).map((a) => a.slug), ['fresh-one', 'todo-list', 'game-corner']);
+  // Popular is people active and nothing else: a project a visitor can try
+  // does not jump a busier one it cannot (Evan, 21 Oct 2026).
+  assert.equal(sortApps.length, 2, 'no tryable-first argument');
+  const tryableTest = { slug: 'echo-diagnostic', active_users: 0, requires_login: false, guest_ready: true };
+  assert.deepEqual(sortApps([tryableTest, ...APPS], 'trending').map((a) => a.slug), ['game-corner', 'todo-list', 'fresh-one', 'echo-diagnostic']);
 });
 
 test('search reads the name and the description; a kind narrows to its apps', () => {
@@ -111,18 +111,20 @@ test('Try it where it can open here: the viewer anywhere, the app\'s own address
   assert.equal(inHomeroomApp(), false, 'a server render is never the app');
 });
 
-test('Featured is what an admin featured that a visitor can try, filled to three; a project page lives at its hub', () => {
-  const { featuredApps, projectHash, projectVotesHash, linksToWorkshop, canTryHere, FEATURED_MIN } = loadTsx(DATA);
+test('Featured is what an admin featured that a visitor can try, and nothing else; a project page lives at its hub', () => {
+  const data = loadTsx(DATA);
+  const { featuredApps, projectHash, projectVotesHash, linksToWorkshop, canTryHere } = data;
   const here = (a) => canTryHere(a, false);
-  assert.equal(FEATURED_MIN, 3);
-  // Todo List is featured first, but a visitor cannot open it: left out,
-  // and the most active project they can try fills the row.
-  assert.deepEqual(featuredApps(APPS, here).map((a) => a.slug), ['game-corner', 'fresh-one']);
-  assert.deepEqual(featuredApps(APPS).map((a) => a.slug), ['todo-list', 'game-corner', 'fresh-one']);
+  // Todo List is featured first, but a visitor cannot open it: left out.
+  // Fresh can be tried but nobody featured it: never filled in (on
+  // production the fill was a test app and a one-player demo).
+  assert.deepEqual(featuredApps(APPS, here).map((a) => a.slug), ['game-corner']);
+  assert.deepEqual(featuredApps(APPS).map((a) => a.slug), ['todo-list', 'game-corner']);
   assert.deepEqual(featuredApps(APPS, () => false), [], 'nothing to try, no Featured');
-  // Nobody active in it: never the fill.
-  assert.deepEqual(featuredApps(APPS.map((a) => (a.slug === 'fresh-one' ? { ...a, active_users: 0 } : a)), here).map((a) => a.slug), ['game-corner']);
+  assert.deepEqual(featuredApps(APPS.map((a) => ({ ...a, featured: false })), here), [], 'nothing featured, no Featured');
+  assert.equal(data.FEATURED_MIN, undefined, 'no minimum to fill to');
   assert.equal(projectHash('game-corner'), '#app/game-corner/workshop');
+  assert.equal(data.projectPath('game-corner'), '/app/game-corner');
   // A card's votes line opens the page at its Workshop, a signed-in
   // person's own address for it too.
   assert.equal(projectVotesHash('game-corner'), '#app/game-corner/workshop?ws=workshop');
@@ -139,11 +141,20 @@ const discoverProps = (over = {}) => ({
 
 test('every card opens its project\'s page, no card is locked, and Featured is not repeated below it', () => {
   const html = renderComponent(DISCOVER, 'GuestDiscover', discoverProps());
-  assert.deepEqual([...html.matchAll(/data-guest-featured="([^"]+)"/g)].map((m) => m[1]), ['game-corner', 'fresh-one']);
-  assert.deepEqual([...html.matchAll(/<article data-guest-card="([^"]+)"/g)].map((m) => m[1]), ['todo-list']);
-  // The picture and the name each open the page; nothing is nested in a link.
-  assert.match(html, /<article data-guest-card="todo-list"[^>]*><a href="#app\/todo-list\/workshop" tabindex="-1" aria-hidden="true"/);
-  assert.match(html, /<a href="#app\/todo-list\/workshop" data-guest-card-link=""/);
+  assert.deepEqual([...html.matchAll(/data-guest-featured="([^"]+)"/g)].map((m) => m[1]), ['game-corner']);
+  assert.deepEqual([...html.matchAll(/<article data-guest-card="([^"]+)"/g)].map((m) => m[1]), ['todo-list', 'fresh-one']);
+  // The picture and the name each open the page, at its clean address a
+  // search engine can follow; nothing is nested in a link.
+  assert.match(html, /<article data-guest-card="todo-list"[^>]*><a href="\/app\/todo-list" tabindex="-1" aria-hidden="true"/);
+  assert.match(html, /<a href="\/app\/todo-list" data-guest-card-link=""/);
+  assert.match(html, /data-guest-featured="game-corner"[^>]*><a href="\/app\/game-corner" tabindex="-1" aria-hidden="true"/, 'Featured too');
+  assert.doesNotMatch(html, /href="#app\/[^"]+\/workshop"/, 'no card or row links by fragment; only the votes line');
+  // A plain click on Discover stays in the page, at the fragment signing in
+  // returns to; a new tab, or an address that is already a path, is the
+  // browser's.
+  const src = read(DISCOVER);
+  assert.match(src, /if \(e\.defaultPrevented \|\| e\.button !== 0 \|\| e\.metaKey \|\| e\.ctrlKey \|\| e\.shiftKey \|\| e\.altKey\) return;\s+if \(location\.pathname !== '\/'\) return;\s+e\.preventDefault\(\);\s+location\.hash = projectHash\(slug\);/);
+  assert.match(src, /return <a href=\{projectPath\(slug\)\} onClick=\{onClick\} \{\.\.\.rest\}>\{children\}<\/a>;/);
   assert.doesNotMatch(html, /<a [^>]*>(?:(?!<\/a>).)*<a /, 'no link inside a link');
   assert.doesNotMatch(html, /Account required|grayscale|data-icon="lock"/);
   const words = text(html);
@@ -205,7 +216,7 @@ test('Featured holds what a visitor can try, each with Try it, and so does every
   assert.doesNotMatch(html, /data-guest-try="todo-list"/, 'nothing a visitor can open');
   // A waitlisted account is signed in: every project opens for it, nothing asks it to sign up.
   const signedIn = renderComponent(DISCOVER, 'GuestDiscover', discoverProps({ signedIn: true }));
-  assert.deepEqual([...signedIn.matchAll(/data-guest-featured="([^"]+)"/g)].map((m) => m[1]), ['todo-list', 'game-corner', 'fresh-one']);
+  assert.deepEqual([...signedIn.matchAll(/data-guest-featured="([^"]+)"/g)].map((m) => m[1]), ['todo-list', 'game-corner']);
   assert.doesNotMatch(signedIn, /data-guest-join=/);
 });
 
@@ -215,19 +226,19 @@ const MANY = Array.from({ length: 20 }, (_, i) => ({
   created_at: ago(200), requires_login: i % 2 !== 0, guest_ready: false, url: `https://a${i + 1}.example`, contributors: [],
 }));
 
-test('the top is curated: four big cards on a phone, tryable first, then More projects twelve rows at a time', () => {
+test('the top is curated: four big cards on a phone, most active first, then More projects twelve rows at a time', () => {
   const html = renderComponent(DISCOVER, 'GuestDiscover', discoverProps({ apps: MANY }));
-  assert.deepEqual([...html.matchAll(/data-guest-featured="([^"]+)"/g)].map((m) => m[1]), ['a01', 'a03', 'a05']);
-  assert.deepEqual([...html.matchAll(/<article data-guest-card="([^"]+)"/g)].map((m) => m[1]), ['a07', 'a09', 'a11', 'a13']);
+  assert.deepEqual([...html.matchAll(/data-guest-featured="([^"]+)"/g)].map((m) => m[1]), [], 'nothing featured by an admin');
+  assert.deepEqual([...html.matchAll(/<article data-guest-card="([^"]+)"/g)].map((m) => m[1]), ['a01', 'a02', 'a03', 'a04']);
   const rows = [...html.matchAll(/data-guest-row="([^"]+)"/g)].map((m) => m[1]);
   assert.equal(rows.length, 12);
-  assert.deepEqual(rows.slice(0, 4), ['a15', 'a17', 'a19', 'a02'], 'the rest that can be tried, then the others');
+  assert.deepEqual(rows.slice(0, 4), ['a05', 'a06', 'a07', 'a08'], 'in order of people active, tryable or not');
   assert.match(html, /data-guest-show-more=""/);
   assert.ok(text(html).includes(message('auth:guest.more')));
   // A row Try it where the visitor can, else a way to its page.
   const row = (slug) => html.slice(html.indexOf(`data-guest-row="${slug}"`), html.indexOf('data-guest-row=', html.indexOf(`data-guest-row="${slug}"`) + 5));
-  assert.match(row('a15'), /data-guest-try="a15"/);
-  assert.doesNotMatch(row('a02'), /data-guest-try=/);
+  assert.match(row('a05'), /data-guest-try="a05"/);
+  assert.doesNotMatch(row('a06'), /data-guest-try=/);
   const src = read(DISCOVER);
   assert.match(src, /const TOP_CARDS = 4;\nconst TOP_CARDS_WIDE = 8;/);
   assert.match(src, /const ROWS_STEP = 12;/);
@@ -313,13 +324,19 @@ test('the overview it reads carries no names, and the page draws none', () => {
 
 // ─── the story's short version ────────────────────────────────────
 
-test('the short story heads Discover: welcome, headline and one line, with nothing to press', () => {
-  const html = renderComponent(STORY, 'Story', { compact: true, primaryClass: 'pill', onStart() {}, onSignIn() {} });
+test('the short story heads Discover: welcome, headline, one line and one button that says what it does', () => {
+  const html = renderComponent(STORY, 'Story', { compact: true, waitlist: true, primaryClass: 'pill', onStart() {}, onSignIn() {} });
   assert.deepEqual(text(html), [
     'Welcome to Homeroom',
     'On Homeroom, communities make apps together.',
     message('auth:guest.hero.line'),
+    message('auth:guest.hero.joinWaitlist'),
   ]);
+  assert.equal(message('auth:guest.hero.joinWaitlist'), 'Join the waitlist');
+  // Once new accounts no longer wait, the same button says Sign up.
+  const open = renderComponent(STORY, 'Story', { compact: true, primaryClass: 'pill', onStart() {}, onSignIn() {} });
+  assert.ok(text(open).includes(message('auth:guest.hero.signUp')));
+  assert.ok(!text(open).includes(message('auth:guest.hero.joinWaitlist')));
   assert.match(html, /data-landing-story="" data-landing-story-compact=""/);
   // One Sign in on the page, the bar's: no Continue and no Sign in line of
   // its own under the short story.
@@ -329,10 +346,16 @@ test('the short story heads Discover: welcome, headline and one line, with nothi
   assert.doesNotMatch(html, /rounded-\[20px\]|bg-white/);
   assert.match(html, /class="hidden md:block h-auto w-\[200px\] shrink-0"/);
   assert.ok(html.indexOf('<h1') < html.lastIndexOf('/brand/people.png'), 'the words first, the picture after');
-  // Nothing to press in it: the bar's Sign in and Sign up are the ways in,
-  // once each on the screen.
-  assert.doesNotMatch(html, /<button|<a\s/);
+  // One thing to press in it, a filled button sized to its words, which
+  // opens the story's sheet; still no Sign in of its own (the bar's).
+  assert.deepEqual([...html.matchAll(/<button[^>]*>/g)].map((m) => m[0]), ['<button type="button" data-landing-story-join="" class="pill mt-4 h-11 w-auto px-5 text-[15px]">']);
+  assert.doesNotMatch(html, /<a\s/);
   assert.doesNotMatch(read(LANDING), /data-landing-story-sign-up/);
+  // The landing says it from the one switch, and the button notes itself as
+  // the way in (features/auth/sign-up-from.ts).
+  assert.match(read(LANDING), /<Story\s+compact\s+primaryClass=\{PRIMARY_PILL\}\s+welcomeEmail=\{releaseEmail\}\s+waitlist=\{NEW_ACCOUNTS_WAIT\}/);
+  assert.match(read(LANDING), /waitlist=\{NEW_ACCOUNTS_WAIT\}\s+signedIn=\{waitingGuest\}/);
+  assert.match(read(STORY), /onClick=\{\(\) => \{ noteSignUpFrom\('hero'\); onStart\(\); \}\}/);
   // The line invites a look; it does not promise that nothing needs an
   // account, since a lot of the apps do.
   assert.equal(message('auth:guest.hero.line'), "Look around and try what we're making.");
@@ -444,9 +467,9 @@ test('the guest bar: the wordmark at the column\'s left, Sign in and Sign up at 
   const actions = header.slice(header.indexOf('data-landing-actions'));
   assert.match(actions.slice(0, 300), /hiddenLast\(session \|\| !guestPages, guestTop \? 'flex shrink-0 items-center gap-1\.5' : `absolute bottom-4 right-4 /);
   assert.match(actions, /data-landing-sign-in=""\s+className=\{hiddenLast\(session \|\| !guestPages, 'h-7 rounded-full px-2 /);
-  assert.match(actions, /onClick=\{\(\) => setSheet\('signin'\)\}/);
+  assert.match(actions, /onClick=\{\(\) => \{ noteSignUpFrom\('header_sign_in'\); setSheet\('signin'\); \}\}/);
   assert.match(actions, /<Button\s+type="button"\s+variant="pillAccent"\s+size="none"\s+ink="solid"\s+data-landing-sign-up=""/);
-  assert.match(actions, /data-landing-sign-up=""\s+className=[^\n]+\s+onClick=\{\(\) => setSheet\('start'\)\}/);
+  assert.match(actions, /data-landing-sign-up=""\s+className=[^\n]+\s+onClick=\{\(\) => \{ noteSignUpFrom\('header_sign_up'\); setSheet\('start'\); \}\}/);
   assert.doesNotMatch(header, /<a[\s>]/, 'still no anchor in the bar');
   // A project's page keeps its title centred and clear of the buttons.
   assert.match(header, /id="landing-header-title"\s+className="flex-1 min-w-0 px-10 /);
@@ -458,12 +481,22 @@ test('a project page\'s sheets are titled for what the visitor tried, and come b
   const { intentTitle } = loadTsx(LANDING);
   const t = (id, params) => message(id, params);
   const app = APPS[0];
-  assert.equal(intentTitle({ kind: 'join', app }, t), 'Sign up to join Game Corner');
-  assert.equal(intentTitle({ kind: 'vote', app, change: 'Practice mode' }, t), 'Sign up to vote on this change');
-  assert.equal(intentTitle({ kind: 'ask', app }, t), 'Sign up to ask for something');
-  assert.equal(intentTitle({ kind: 'chat', app }, t), 'Sign up to chat in Game Corner');
-  assert.equal(intentTitle({ kind: 'use', app }, t), 'Sign in to use Game Corner');
+  // Once nobody waits, the plain Sign up titles.
+  assert.equal(intentTitle({ kind: 'join', app }, t, false), 'Sign up to join Game Corner');
+  assert.equal(intentTitle({ kind: 'vote', app, change: 'Practice mode' }, t, false), 'Sign up to vote on this change');
+  assert.equal(intentTitle({ kind: 'ask', app }, t, false), 'Sign up to ask for something');
+  assert.equal(intentTitle({ kind: 'chat', app }, t, false), 'Sign up to chat in Game Corner');
+  assert.equal(intentTitle({ kind: 'use', app }, t, false), 'Sign in to use Game Corner');
+  // While new accounts wait, taking part says so in the title, not a line
+  // under it (#4037); Try it does not, since a waiting account can use an app.
+  assert.equal(intentTitle({ kind: 'join', app }, t, true), 'Join the waitlist to be part of Game Corner');
+  assert.equal(intentTitle({ kind: 'vote', app, change: 'Practice mode' }, t, true), 'Join the waitlist to vote on changes');
+  assert.equal(intentTitle({ kind: 'ask', app }, t, true), 'Join the waitlist to ask for something');
+  assert.equal(intentTitle({ kind: 'chat', app }, t, true), 'Join the waitlist to chat in Game Corner');
+  assert.equal(intentTitle({ kind: 'use', app }, t, true), 'Sign in to use Game Corner');
   const src = read(LANDING);
+  assert.match(src, /export function intentTitle\(intent: GuestIntent, t: Translate, waitlist: boolean = NEW_ACCOUNTS_WAIT\): string \{/);
+  assert.match(src, /title=\{intentTitle\(intent, \(id, params\) => t\(id, params\)\)\}/);
   // Remembered for an email sign-in (AuthScreens.finishLogin), and the
   // provider's trip comes back to the same page.
   assert.match(src, /rememberDeepLink as undefined \| \(\(h: string\) => void\)\)\?\.\(projectHash\(i\.app\.slug\)\);/);
@@ -477,9 +510,12 @@ test('the landing\'s declared checks hold Discover and the bar\'s Sign in, folde
   assert.equal(story.path, '/?shot=anon#landing');
   assert.match(story.expectSelector, /#landing-header \[data-landing-sign-in\]:not\(\.hidden\)/);
   assert.match(story.expectSelector, /\[data-guest-discover\] \[data-landing-story\] h1$/);
-  // And one Sign in and one Sign up, both the bar's: nothing to press in the
-  // short story.
-  const one = manifest.tests.find((t) => /^Landing has one Sign in and one Sign up, both in its bar/.test(t.name));
+  // The bar's Sign in and Sign up, and one button in the short story: its
+  // join button, and nothing else to press there.
+  const one = manifest.tests.find((t) => /^Landing has Sign in and Sign up in its bar, and one button to make an account under the story/.test(t.name));
   assert.ok(one);
-  assert.match(one.expectSelector, /:has\(#landing-header button\[data-landing-sign-up\]\):not\(:has\(\[data-landing-story\] button, \[data-landing-story\] a\)\) #landing-header \[data-landing-sign-in\]:not\(\.hidden\)$/);
+  assert.match(one.expectSelector, /:has\(#landing-header button\[data-landing-sign-up\]\):has\(\[data-landing-story\] button\[data-landing-story-join\]\):not\(:has\(\[data-landing-story\] a\)\) #landing-header \[data-landing-sign-in\]:not\(\.hidden\)$/);
+  // Its one other button is pinned by the story's own test above, under the
+  // runner's 256-character cap on a selector.
+  assert.ok(one.expectSelector.length <= 256);
 });

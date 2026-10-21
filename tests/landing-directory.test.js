@@ -682,7 +682,8 @@ test('the landing\'s directory is the guest Discover, with no locked tiles', () 
   // the project page's "Try it" or "Sign in to use it", not a tile's.
   const discover = read('frontend/src/features/guest/guest-discover.tsx');
   assert.doesNotMatch(discover, /LockIcon|Account required|grayscale/);
-  assert.match(discover, /href=\{projectHash\(app\.slug\)\}/);
+  assert.match(discover, /<ProjectLink slug=\{app\.slug\}/);
+  assert.match(discover, /return <a href=\{projectPath\(slug\)\} onClick=\{onClick\}/);
   assert.doesNotMatch(tsx, /TileSkeleton/);
 });
 

@@ -32,6 +32,7 @@ const communityInvites = require('../services/community-invites');
 const phoneAuth = require('../services/firebase-phone-auth');
 const challengeScorer = require('../services/topochain/challenge-scorer');
 const events = require('../services/events');
+const { signUpMetadata } = require('../services/sign-up-from');
 const { validatePassword } = require('../services/password-policy');
 const usernames = require('../services/usernames');
 const contactPrivacy = require('../services/contact-privacy');
@@ -435,7 +436,8 @@ function authRoutes(config) {
       });
       // The sign-up, as an activation code and a wallet record theirs
       // (#4039): an email code made no user_signed_up before.
-      events.record(pool, { type: events.EVENT_TYPES.USER_SIGNED_UP, userId: verified.userId, metadata: { via: 'email' } });
+      // `from`: the button that opened its sheet (services/sign-up-from.js).
+      events.record(pool, { type: events.EVENT_TYPES.USER_SIGNED_UP, userId: verified.userId, metadata: signUpMetadata(req, { via: 'email' }) });
     }
     createSignupCookie(res, verified.signupToken, verified.expiresAt);
     log.info('email-signup', via === 'link' ? 'Release link spent, account step pending' : 'Email code verified, password setup pending', {

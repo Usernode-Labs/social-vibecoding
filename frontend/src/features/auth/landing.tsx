@@ -78,7 +78,8 @@ import {
 import { Story } from './story';
 import { GuestDiscover } from '../guest/guest-discover';
 import { type GuestIntent, GuestProject } from '../guest/guest-project';
-import { type GuestApp, linksToWorkshop, projectHash } from '../guest/guest-data';
+import { type GuestApp, linksToWorkshop, NEW_ACCOUNTS_WAIT, projectHash } from '../guest/guest-data';
+import { noteSignUpFrom } from './sign-up-from';
 import { WaitlistCard } from '../guest/waitlist-card';
 import { useWaitlistOptions, type WaitlistOptions, waitlistOptions } from './waitlist-shared';
 import { WelcomePage } from './welcome-page';
@@ -714,14 +715,22 @@ export function SigningIn() {
 
 type Translate = (id: string, params?: Record<string, unknown>) => string;
 
-/** The sign-in sheet's title for what a visitor tried to do on a project's page. */
-export function intentTitle(intent: GuestIntent, t: Translate): string {
+/**
+ * The sign-in sheet's title for what a visitor tried to do on a project's
+ * page. While new accounts wait (guest-data NEW_ACCOUNTS_WAIT), taking part
+ * says so in the title: an account made now joins the waitlist, and can
+ * join, vote, ask or chat once it is let in. The title, not a line under it
+ * (the sheets carry none, #4037). Try it's "Sign in to use" is the same
+ * either way: a waiting account can use a public app (/api/iframe-token
+ * answers it, #1895).
+ */
+export function intentTitle(intent: GuestIntent, t: Translate, waitlist: boolean = NEW_ACCOUNTS_WAIT): string {
   const project = intent.app.name;
   switch (intent.kind) {
-    case 'join': return t('auth:guest.sheet.join', { project });
-    case 'vote': return t('auth:guest.sheet.vote');
-    case 'ask': return t('auth:guest.sheet.ask');
-    case 'chat': return t('auth:guest.sheet.chat', { project });
+    case 'join': return waitlist ? t('auth:guest.sheet.waitlistJoin', { project }) : t('auth:guest.sheet.join', { project });
+    case 'vote': return waitlist ? t('auth:guest.sheet.waitlistVote') : t('auth:guest.sheet.vote');
+    case 'ask': return waitlist ? t('auth:guest.sheet.waitlistAsk') : t('auth:guest.sheet.ask');
+    case 'chat': return waitlist ? t('auth:guest.sheet.waitlistChat', { project }) : t('auth:guest.sheet.chat', { project });
     default: return t('auth:guest.sheet.use', { project });
   }
 }
@@ -972,6 +981,10 @@ export function LandingScreen() {
   // A signed-in account is never asked to sign in: a link it cannot read
   // shows Discover instead.
   const gate = !session && deepLink && !(guestOn && discoverLink) && !guestProject && !linkPending ? deepLink : null;
+  // The sheet a shared link opens by itself is a way in too
+  // (./sign-up-from.ts): noted as it shows, in an effect, never the render.
+  const gateTarget = gate?.target ?? null;
+  useEffect(() => { if (gateTarget) noteSignUpFrom('link'); }, [gateTarget]);
   const storyFront = storyOn && inApp && !linkedSlug && !discoverLink && !gate;
   // The guest pages (Discover, a project's page) and their bar.
   const guestPages = guestOn && !storyFront;
@@ -1515,6 +1528,7 @@ export function LandingScreen() {
   // shell restores after a sign-in (AuthScreens.finishLogin).
   const askFor = useCallback((i: GuestIntent) => {
     (legacy().AuthScreens?.rememberDeepLink as undefined | ((h: string) => void))?.(projectHash(i.app.slug));
+    noteSignUpFrom(i.kind);
     setResume(null);
     setIntent(i);
   }, []);
@@ -1676,7 +1690,7 @@ export function LandingScreen() {
             type="button"
             data-landing-sign-in=""
             className={hiddenLast(session || !guestPages, 'h-7 rounded-full px-2 text-[15px] font-semibold text-zinc-950 hover:text-zinc-600 dark:text-white dark:hover:text-zinc-300')}
-            onClick={() => setSheet('signin')}
+            onClick={() => { noteSignUpFrom('header_sign_in'); setSheet('signin'); }}
           >
             {t('auth:guest.header.signIn')}
           </button>
@@ -1687,7 +1701,7 @@ export function LandingScreen() {
             ink="solid"
             data-landing-sign-up=""
             className={guestTop ? 'h-7 px-3.5 text-[15px] font-semibold' : 'hidden md:inline-flex h-7 px-3.5 text-[15px] font-semibold'}
-            onClick={() => setSheet('start')}
+            onClick={() => { noteSignUpFrom('header_sign_up'); setSheet('start'); }}
           >
             {t('auth:guest.header.signUp')}
           </Button>
@@ -2153,7 +2167,7 @@ export function LandingScreen() {
               apps={apps}
               failed={appsFailed && !apps}
               primaryClass={PRIMARY_PILL}
-              waitlist
+              waitlist={NEW_ACCOUNTS_WAIT}
               signedIn={waitingGuest}
               onContinue={() => setSheet('start')}
               onOpenInside={(app) => { void live.current.openLandingApp(app); }}
@@ -2164,6 +2178,7 @@ export function LandingScreen() {
                   compact
                   primaryClass={PRIMARY_PILL}
                   welcomeEmail={releaseEmail}
+                  waitlist={NEW_ACCOUNTS_WAIT}
                   onStart={() => setSheet('start')}
                   onSignIn={() => setSheet('signin')}
                 />

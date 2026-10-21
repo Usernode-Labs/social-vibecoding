@@ -141,6 +141,10 @@ const REVIEWED_ROUTE_EXEMPTIONS = [
     reason: 'a shared public project\'s document: the shell with its link preview, for whoever unfurls the link; never a model-visible capability',
   },
   {
+    matches: (route) => route.source === 'src/routes/project-preview.js' && ['/robots.txt', '/sitemap.xml'].includes(route.path),
+    reason: 'the crawl rules and the sitemap of public project pages, for search engines; never a model-visible capability',
+  },
+  {
     matches: (route) => route.source === 'server.js'
       && route.method === 'GET' && route.path === '/usernode-bridge/v1/platform.json',
     reason: 'bridge asset: where the platform is, read by the app-host Homeroom button, never a model-visible capability',

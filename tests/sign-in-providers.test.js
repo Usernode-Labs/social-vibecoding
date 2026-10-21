@@ -430,9 +430,9 @@ test('the routes: public, guarded against a live session, admin-gated, and Apple
   assert.match(routes, /const consented = result\.created \|\| state\.follow_invite === true;/);
   // A new account is a sign-up in the events log, as an email code's,
   // an activation code's and a wallet's are (#4039).
-  assert.match(routes, /events\.record\(pool, \{ type: events\.EVENT_TYPES\.USER_SIGNED_UP, userId: result\.userId, metadata: \{ via: provider \} \}\);/);
+  assert.match(routes, /events\.record\(pool, \{ type: events\.EVENT_TYPES\.USER_SIGNED_UP, userId: result\.userId, metadata: signUpMetadata\(req, \{ via: provider \}\) \}\);/);
   assert.match(read('src/routes/auth.js'),
-    /if \(verified\.created\) \{[\s\S]{0,400}events\.record\(pool, \{ type: events\.EVENT_TYPES\.USER_SIGNED_UP, userId: verified\.userId, metadata: \{ via: 'email' \} \}\);\s+\}/);
+    /if \(verified\.created\) \{[\s\S]{0,400}events\.record\(pool, \{ type: events\.EVENT_TYPES\.USER_SIGNED_UP, userId: verified\.userId, metadata: signUpMetadata\(req, \{ via: 'email' \}\) \}\);\s+\}/);
   // The outcome rides in a cookie, never the URL.
   assert.match(routes, /return res\.redirect\(303, providers\.safeReturnTo\(returnTo\)\);/);
   assert.match(read('server.js'), /app\.use\(authRoutes\(config\)\);\n\/\/ [^\n]+\napp\.use\(require\('\.\/src\/routes\/sign-in-providers'\)\.signInProviderRoutes\(config\)\);/);

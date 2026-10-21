@@ -57,6 +57,8 @@ const providers = require('../services/sign-in-providers');
 const communityInvites = require('../services/community-invites');
 const challengeScorer = require('../services/topochain/challenge-scorer');
 const managedOpenRouter = require('../services/openrouter-managed-keys');
+const events = require('../services/events');
+const { signUpMetadata } = require('../services/sign-up-from');
 const {
   otpVerifyLimiter,
   phoneOtpRequestLimiter,
@@ -239,6 +241,11 @@ function phoneAuthRoutes(config) {
         await managedOpenRouter.ensureIncludedKey({
           pool, userId: result.userId, config, reason: 'signup_phone',
         });
+        // The sign-up, as an email code and Apple or Google record it
+        // (routes/auth.js, routes/sign-in-providers.js). A phone-made
+        // account recorded none before, so the landing's phone way in went
+        // uncounted.
+        events.record(pool, { type: events.EVENT_TYPES.USER_SIGNED_UP, userId: result.userId, metadata: signUpMetadata(req, { via: 'phone' }) });
       }
 
       // A new account whose sheet sent its name (an invite's Join): finished
