@@ -210,7 +210,7 @@ function RailPinnedRow() {
         </span>
       </label>
       <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
-        Off, an app you open takes the whole window and the sidebar comes back when you point at the left edge. On, the sidebar stays beside it.
+        Off, an app you open takes the whole window, and the sidebar button in the top-left corner brings it back. On, the sidebar stays beside it.
       </p>
     </div>
   );

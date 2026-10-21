@@ -1114,7 +1114,7 @@ test('the layout: the app narrows by a margin, above the breakpoint, while the p
 
 test('the panel\'s document draws no chrome and reserves no room for it', () => {
   const block = CSS.slice(CSS.indexOf('html.in-side-panel :is('));
-  for (const id of ['#platform-header', '#platform-tabs', '#platform-rail-peek', '#platform-parked',
+  for (const id of ['#platform-header', '#platform-tabs', '#platform-parked',
     '#chromeless-pill', '#offline-banner', '#mobile-install-banner', '#view-as-non-admin-banner',
     '#platform-side-panel']) {
     assert.ok(block.slice(0, block.indexOf('{')).includes(id), `${id} is hidden in the panel`);

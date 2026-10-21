@@ -19539,6 +19539,17 @@ html.un-kb #platform-parked {
     transition: background-color 140ms ease, color 140ms ease,
                 border-color 140ms ease;
   }
+  /* AN OPEN APP CARRIES IT TOO (#3138). The route's rail is hidden there, so
+     the rule above does not reach the button; the button is still the door,
+     because the window's left edge no longer peeks. Same display and the
+     same transition as the rail's own toggle, on the same desktop
+     breakpoint. The header's left group is visible in an app already (the ✕
+     is in it), so only the control itself needs saying. */
+  html:not(.un-kb) body:has(#app-view:not(.hidden)) .platform-sidebar-toggle {
+    display: inline-flex;
+    transition: background-color 140ms ease, color 140ms ease,
+                border-color 140ms ease;
+  }
   .platform-sidebar-toggle[aria-pressed='false'] {
     background: transparent;
     color: var(--text-muted);
@@ -20414,32 +20425,8 @@ html.un-kb #platform-parked {
 /* ── The rail, peeked back over an open app (#2718) ──────────────────
    frontend/src/features/nav/tab-bar.tsx carries the argument: an app covers
    the rail, which is what makes it feel like a program rather than a page,
-   and on a laptop the pointer is already at the left edge half the time. The
-   navigation comes back on hover and stops spending width while you work —
-   WeChat's floating capsule, an auto-hiding dock and Slack's own collapsed
-   rail are all this move. */
-
-/* THE HOT ZONE, and the only thing that can start a peek. Narrow enough that
-   it never intercepts a pointer heading for the app's own left edge, wide
-   enough to be findable without aiming. */
-.platform-rail-peek {
-  position: fixed;
-  left: 0;
-  top: calc(var(--browser-banner-h, 0px) + var(--platform-header-h)
-    + var(--platform-safe-top, 0px));
-  bottom: 0;
-  width: 18px;
-  /* UNDER the peeked rail and OVER the app, so the pointer can cross from one
-     to the other without passing through the app's own hover targets. */
-  z-index: 39;
-}
-/* A PHONE HAS NO POINTER TO HOVER WITH, and an invisible strip down the left
-   edge of a touch screen eats the swipe that goes back. Below the desktop
-   breakpoint the zone is not there at all — which is also why the peek can
-   only ever happen on the layout that has a rail to peek. */
-@media (max-width: 767px) {
-  .platform-rail-peek { display: none; }
-}
+   and the header's #sidebar-toggle brings the navigation back on a press
+   (#3138). The window's left edge no longer summons anything. */
 
 @media (min-width: 768px) {
   /* FOLDED BY HAND: gone, but coming back on hover. Not `hidden` — that is
@@ -20691,7 +20678,7 @@ html.side-panel-resizing * {
    framed by a same-origin top window (a `?panel=1` address opened on its own
    is the ordinary platform). The frame is narrow, so every screen takes its
    phone layout, which is the point: the panel is a phone-width column. */
-html.in-side-panel :is(#platform-header, #platform-tabs, #platform-rail-peek,
+html.in-side-panel :is(#platform-header, #platform-tabs,
     #platform-parked, #chromeless-pill, #offline-banner, #mobile-install-banner,
     #view-as-non-admin-banner, #platform-side-panel) {
   display: none !important;

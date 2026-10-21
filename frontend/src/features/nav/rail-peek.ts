@@ -52,6 +52,10 @@ export function enterPeek(): void {
 
 /** The pointer left one: fade the rail away unless it arrives at another. */
 export function leavePeek(): void {
+  // A PRESS-OPENED PEEK IS NOT A HOVER (#3138). It was summoned by the
+  // sidebar button, not by the pointer resting somewhere, so the pointer
+  // leaving says nothing about whether it should go away.
+  if (navStore.get().peekPinned) return;
   clearPeekTimer();
   timer = setTimeout(() => {
     navStore.set({ peekOut: true });
@@ -60,4 +64,25 @@ export function leavePeek(): void {
       navStore.set({ peek: false, peekOut: false });
     }, PEEK_FADE_MS);
   }, PEEK_GRACE_MS);
+}
+
+/**
+ * The sidebar button's second press: take a showing peek away at once (#3138).
+ *
+ * The grace period exists for a pointer crossing the gap between the button
+ * and the rail; a press is not a pointer on its way anywhere, so the fade
+ * starts in the press's own task. `peekPinned` goes with it, or a stale pin
+ * would stop the next hover peek on a platform screen from ever fading.
+ */
+export function dismissPeek(): void {
+  clearPeekTimer();
+  if (!navStore.get().peek) {
+    navStore.set({ peekPinned: false, peekOut: false });
+    return;
+  }
+  navStore.set({ peekPinned: false, peekOut: true });
+  timer = setTimeout(() => {
+    timer = null;
+    navStore.set({ peek: false, peekOut: false });
+  }, PEEK_FADE_MS);
 }

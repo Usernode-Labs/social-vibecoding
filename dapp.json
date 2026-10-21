@@ -5239,7 +5239,7 @@
       "expectSelector": "body:has(#app-view:not(.hidden)):has(#platform-tabs:not(.hidden)) #platform-header"
     },
     {
-      "name": "Folded-sidebar peek (#2764): the sidebar toggle sits in the header's left corner above the rail it controls, starting open, with the edge hot zone absent until the rail is folded",
+      "name": "Folded-sidebar peek (#2764): the sidebar toggle sits in the header's left corner above the rail it controls, starting open, and the removed edge hot zone is nowhere on the page (#3138)",
       "path": "/?demo=1",
       "expectSelector": "body:has(#platform-tabs[aria-label=\"Sections\"]:not(.platform-tabs-folded)):not(:has(#platform-rail-peek)) #platform-header .platform-header-left > #sidebar-toggle[aria-controls=\"platform-tabs\"][aria-pressed=\"true\"]"
     },
@@ -5289,9 +5289,14 @@
       "expectSelector": "a#back-btn:not(.hidden)[aria-label=\"Back\"][href=\"#messages\"]"
     },
     {
-      "name": "Over a running app the rail is the route's to hide, so a peek from the window's edge never brings the sidebar toggle into the app's strip",
+      "name": "Over a running app the rail is the route's to hide, and the app's own strip carries the sidebar toggle (#3138)",
       "path": "/#app/staging-demo-forkable",
       "expectSelector": "body:has(#app-view:not(.hidden)):has(#platform-tabs.hidden.platform-tabs-route-hidden) #platform-header .platform-header-left > #sidebar-toggle"
+    },
+    {
+      "name": "Inside a running app the header's sidebar button is the way back (#3138): the left edge no longer summons the rail, and the button says Show sidebar until it is pressed",
+      "path": "/?demo=1#app/staging-demo-forkable",
+      "expectSelector": "body:has(#app-view:not(.hidden)):not(:has(#platform-rail-peek)) #platform-header .platform-header-left > #sidebar-toggle[aria-label=\"Show sidebar\"][aria-pressed=\"false\"]"
     },
     {
       "id": "agent-session.card",

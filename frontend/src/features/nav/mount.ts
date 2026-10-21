@@ -70,7 +70,7 @@ if (typeof window !== 'undefined') {
       navStore.set({
         screen,
         tab: tabOverride || (screen ? tabForScreen(screen) : null),
-        ...(changed ? { peek: false, peekOut: false } : null),
+        ...(changed ? { peek: false, peekOut: false, peekPinned: false } : null),
       });
     },
     /**

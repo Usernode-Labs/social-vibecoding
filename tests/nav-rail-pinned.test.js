@@ -144,6 +144,9 @@ test('the Settings switch renders unchecked, desktop only, and writes through Ap
   const input = html.slice(html.lastIndexOf('<input', at), html.indexOf('>', at) + 1);
   assert.doesNotMatch(input, /checked/, 'the prerender is unchecked; the stored value arrives in an effect');
   assert.match(html, /Keep sidebar open in apps/);
+  assert.match(html, /the sidebar button in the top-left corner brings it back/,
+    'the help line names the button, not the removed edge hover (#3138)');
+  assert.doesNotMatch(html, /point at the left edge/);
   assert.match(html, /class="hidden md:block[^"]*"[^>]*>\s*<label/, 'hidden below 768px');
 
   const src = read('frontend/src/features/settings/sections/theme.tsx');

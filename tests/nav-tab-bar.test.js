@@ -340,26 +340,16 @@ test('the same five tabs stand up at desktop, and the band goes away', () => {
 
 test('the rail peeks back over an open app, and reserves nothing while it does', () => {
   // An app covers the rail, which is what makes it feel like a program
-  // rather than a page, and on a laptop the pointer is already at the left
-  // edge half the time. The navigation comes back on hover and stops
-  // spending width while you work.
+  // rather than a page. The navigation comes back from the header's sidebar
+  // button (#3138) and stops spending width while you work.
   const bar = read('frontend/src/features/nav/tab-bar.tsx');
-  assert.match(bar, /id="platform-rail-peek"/, 'a hot zone starts it');
-  // TWO WAYS TO HAVE NO RAIL, and the zone answers both (#2718 review): the
-  // ROUTE can say there is none (an app) and the VIEWER can fold the one
-  // there is (#sidebar-toggle). `!railOpen` rather than the `collapsed` the
-  // class toggle below uses, deliberately — `collapsed` is also true on the
-  // chromeless and signed-out shells, where a strip that peeked a rail in
-  // would be conjuring navigation out of nothing.
-  assert.match(bar, /\(screen === 'app-view' && !visible\) \|\| !railOpen \? \(/,
-    'and it exists where the rail is out of the way, by either route');
-  // NOT a bare `screen === 'app-view'`: the app view is two screens, and on
-  // its Workshop the rail is UP. This strip is `z-index: 39` against the
-  // rail's 30, so rendering it there lays an invisible 18px column down the
-  // left edge of the tabs and swallows the press meant for the one under the
-  // pointer.
-  assert.ok(!bar.includes("{screen === 'app-view' ? ("),
-    'the app view alone is not the question — whether its rail is down is');
+  // THE EDGE NO LONGER SUMMONS IT (#3138). The fixed 18px strip at the
+  // window's left edge raised the rail whenever the pointer passed, which
+  // inside an app meant over the app's own left column. It is gone, so the
+  // app receives taps and hovers in that column again, and the header's
+  // toggle is the one door.
+  assert.doesNotMatch(bar, /platform-rail-peek/, 'no hot zone is rendered');
+  assert.doesNotMatch(css, /\.platform-rail-peek\s*\{/, 'and app.css draws none');
   // THE PEEK IS NOT THE BAR'S VISIBILITY. The router still says hidden, the
   // screens reserve no band, and the app is full width; this is an overlay
   // on top of that answer.
@@ -369,9 +359,6 @@ test('the rail peeks back over an open app, and reserves nothing while it does',
   assert.match(css, /body:has\(#platform-tabs:not\(\.hidden\):not\(\.platform-tabs-peek\)\)/,
     'a peeking bar reserves nothing — reflowing the app under the pointer '
     + 'that revealed it is the bug this excludes');
-  // A phone has no pointer to hover with, and an invisible strip down the
-  // left edge of a touch screen eats the swipe that goes back.
-  assert.match(css, /@media \(max-width: 767px\) \{\s*\.platform-rail-peek \{ display: none; \}/);
   // A fade, not a slide: a rail that slides in races the pointer that
   // summoned it and arrives under it.
   assert.match(css, /animation: platform-rail-peek-in 140ms ease-out;/);
@@ -401,7 +388,9 @@ test('every screen change clears the peek, and nothing else does', () => {
   // exactly that rate. Nothing in the shipped router does that today; the
   // guard is here so that nothing ever can.
   assert.match(mount, /const changed = navStore\.get\(\)\.screen !== screen;/);
-  assert.match(mount, /\.\.\.\(changed \? \{ peek: false, peekOut: false \} : null\),/);
+  assert.match(mount, /\.\.\.\(changed \? \{ peek: false, peekOut: false, peekPinned: false \} : null\),/);
+  // `peekPinned` goes with the peek (#3138): a stale pin from a press-opened
+  // rail would stop the next hover peek on a platform screen from fading.
 });
 
 test('the desktop rail folds by hand, and a phone can never lose its bar', () => {
@@ -416,18 +405,21 @@ test('the desktop rail folds by hand, and a phone can never lose its bar', () =>
   // store at all: the prerendered document carries a visible bar, so the
   // first client render agrees with it and hydration is silent.
   assert.match(navStoreSrc, /railOpen: true,/);
-  assert.match(toggle, /aria-pressed=\{railOpen \? 'true' : 'false'\}/,
+  // IN AN APP THE STATE ON THE CONTROL IS THE PEEK'S (#3138): the route has
+  // no rail there, so the button is the toggle of the overlay instead.
+  assert.match(toggle, /const showing = hydrated \? \(routeHasRail \? railOpen : peek\) : railOpen;/);
+  assert.match(toggle, /aria-pressed=\{showing \? 'true' : 'false'\}/,
     'the state is on the control, so the label can stay the ACTION');
-  assert.match(toggle, /aria-label=\{railOpen \? 'Hide sidebar' : 'Show sidebar'\}/);
+  assert.match(toggle, /aria-label=\{showing \? 'Hide sidebar' : 'Show sidebar'\}/);
   assert.match(toggle, /aria-controls="platform-tabs"/);
 
-  // IT IS UNSEEN WHERE THE ROUTE HAS NO RAIL — inside an app, chromeless,
-  // signed out — because a toggle for a thing that is not there is a dead
-  // control, and an app's rail comes back by pointing at the window's edge.
-  // BUT THAT IS CSS'S ANSWER, not a `return null`: see the hydration note
-  // further down, and the selector asserted with it.
-  assert.ok(!/^import .*visibility-store/m.test(toggle),
-    'the route may not reach this component through anything render-time');
+  // IT IS UNSEEN ON A PHONE, and inside an app it is the press's door. THE
+  // ROUTE CAN REACH IT, but only through a hook that cannot reach the first
+  // render: `routeHasRail` is spent through the `hydrated` gate, so the
+  // prerender and the first client render still agree.
+  assert.match(toggle, /const routeHasRail = useVisibility\('platform-tabs', true\);/);
+  assert.match(toggle, /useIsomorphicLayoutEffect\(\(\) => \{ setHydrated\(true\); \}, \[\]\);/,
+    'the attributes settle only after hydration');
   assert.ok(!/^\s*(if \(.*\) )?return null;/m.test(toggle), 'it always renders');
 
   // IT LIVES IN THE MEASURED LEFT GROUP, so use-header-layout.ts counts it
@@ -491,22 +483,24 @@ test('the desktop rail folds by hand, and a phone can never lose its bar', () =>
   assert.match(css.slice(zero, zero + 120), /\{\s*--platform-rail-w: 0px;/);
 });
 
-test('a peek over a running app never brings the sidebar toggle into the app\'s strip', () => {
-  // THE BUG: the peek takes `hidden` off #platform-tabs over a running app,
-  // and the toggle's rule asked `#platform-tabs:not(.hidden)` alone — so
-  // pointing at the window's left edge inside an app drew the toggle into the
-  // app's own strip, pushed ✕, the tile and the name 34px right, and a press
-  // on it folded the docked rail behind the app.
+test('the app\'s own strip carries the sidebar toggle, and a peek alone decides nothing', () => {
+  // #3138: an app's rail came back when the pointer reached the window's
+  // left edge, and the peek that did it took `hidden` off #platform-tabs. The
+  // toggle's display rule asked `#platform-tabs:not(.hidden)` alone, so the
+  // peek drew the toggle into the app's strip, pushed ✕, the tile and the
+  // name right, and a press folded a rail that was not the app's.
   //
-  // The ROUTE'S answer rides beside the peek's as its own class, applied
-  // through a ref like the others (never a rendered className, so nothing
-  // about it can reach hydration)…
+  // The app now CARRIES the toggle on purpose — it is the press the rail
+  // comes back from — but the ROUTE still decides it: an app is the one route
+  // with no rail, and it says so through its own class (applied through a ref
+  // like the others, never a rendered className, so nothing about it can
+  // reach hydration)…
   const bar = read('frontend/src/features/nav/tab-bar.tsx');
   assert.match(bar, /useClassToggle\(barRef, 'platform-tabs-route-hidden', !visible\);/);
   assert.match(bar, /useHiddenClass\(barRef, !visible && !peek\);/,
     'while `hidden` is still the OR of the route and the peek, so the peek works');
-  // …and every rule that decides whether the toggle EXISTS reads it. A rail
-  // the viewer folded is still the route's rail, so its toggle stays: that is
+  // …and every rule that decides whether a RAIL's toggle exists reads it. A
+  // rail the viewer folded is still the route's, so its toggle stays: that is
   // how the fold comes undone.
   const decides = css.match(/body:has\(#platform-tabs:not\(\.hidden\)[^)]*\)[^{]*(?:platform-sidebar-toggle|platform-header-left)[^{]*\{/g) || [];
   assert.equal(decides.length, 2, 'the toggle\'s own rule and its group\'s');
@@ -515,6 +509,13 @@ test('a peek over a running app never brings the sidebar toggle into the app\'s 
     assert.doesNotMatch(rule, /platform-tabs-folded|platform-tabs-peek/,
       'folding and peeking are not what decides it: the route is');
   }
+  // THE APP'S BUTTON IS ITS OWN RULE (#3138), keyed off the running app and
+  // not off the peek: it is there before anything is pressed.
+  assert.match(css,
+    /html:not\(\.un-kb\) body:has\(#app-view:not\(\.hidden\)\) \.platform-sidebar-toggle \{\s*\n\s*display: inline-flex;/);
+  const at = css.indexOf('body:has(#app-view:not(.hidden)) .platform-sidebar-toggle');
+  assert.ok(css.lastIndexOf('@media (min-width: 768px) {', at) > 0,
+    'desktop only: a phone never grows a sidebar button');
 });
 
 test('the reservation is keyed off the bar\'s own hidden class', () => {

@@ -114,6 +114,10 @@ export const TAB_FOR_SCREEN = Object.freeze({
  *   pointer left and the grace period ran out, and `peek` stays true for
  *   the ~200ms of the fade so the element is still there to fade. Only ever
  *   true while `peek` is; ./rail-peek.ts sets and clears it.
+ * @property {boolean} peekPinned  The peek was opened by a PRESS (#3138) and
+ *   stays until it is dismissed, however far the pointer moves.
+ *   `leavePeek()` schedules nothing while this is true; ./rail-peek.ts's
+ *   `dismissPeek()` and a screen change clear it.
  * @property {boolean} railOpen  The viewer has the desktop rail expanded.
  *   True is the prerender; see the note on INITIAL for why this is separate
  *   from the visibility store and why it is not remembered across loads.
@@ -128,6 +132,15 @@ const INITIAL = {
   viewer: null,
   peek: false,
   peekOut: false,
+  /*
+      WAS THE PEEK OPENED BY A PRESS? (#3138) An app's rail used to come back
+      on edge hover, and the pointer leaving is what put it away. A press is a
+      different act: it opens the rail over the app and leaves it there, so
+      the pointer leaving must schedule nothing until the button is pressed
+      again or the screen changes. False is the prerender, like every other
+      peek field.
+  */
+  peekPinned: false,
   /*
       IS THE DESKTOP RAIL EXPANDED — the sidebar toggle's own state (#2718
       review).

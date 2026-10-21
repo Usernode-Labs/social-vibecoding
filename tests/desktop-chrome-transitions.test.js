@@ -91,13 +91,18 @@ test('the ground is installed at the browser entry and painted by app.css on des
 
 // ── #2764: the folded rail peeks from the toggle ────────────────────────
 
-function loadPeek() {
-  let state = { peek: false, peekOut: false, railOpen: false };
+function loadPeek(initial = {}) {
+  let state = { peek: false, peekOut: false, railOpen: false, peekPinned: false, ...initial };
   const navStore = { get: () => state, set: (patch) => { state = { ...state, ...patch }; } };
   const mod = loadTsx('frontend/src/features/nav/rail-peek.ts', {
     stubs: { './nav-store.js': { navStore } },
   });
-  return { mod, peek: () => state.peek, peekOut: () => state.peekOut };
+  return {
+    mod,
+    peek: () => state.peek,
+    peekOut: () => state.peekOut,
+    pinned: () => state.peekPinned,
+  };
 }
 
 test('entering a peek target shows the rail, leaving fades it away after the grace period', (t) => {
@@ -148,15 +153,47 @@ test('leaving the toggle and reaching the rail is ONE timer, not two', (t) => {
   assert.equal(peek(), true, 'the rail stays up under the pointer');
 });
 
-test('the toggle peeks only a FOLDED rail, and its markup does not change to do it', () => {
+test('a press-opened peek stays when the pointer leaves, and dismisses at once (#3138)', (t) => {
+  // The pointer used to be the only way in, so leaving it was the signal that
+  // the rail should go. A press is not a pointer: the rail stays until the
+  // button is pressed again or the screen changes.
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const { mod, peek, peekOut, pinned } = loadPeek({ peekPinned: true });
+  mod.enterPeek();
+  mod.leavePeek();
+  t.mock.timers.tick(mod.PEEK_GRACE_MS * 2);
+  assert.equal(peek(), true, 'leaving a pinned peek schedules nothing');
+  assert.equal(peekOut(), false);
+  assert.equal(pinned(), true);
+
+  // The second press starts the fade in the press's own task, not after the
+  // grace period that exists for a pointer crossing the gap.
+  mod.dismissPeek();
+  assert.equal(peek(), true, 'the rail is still drawn while it fades');
+  assert.equal(peekOut(), true, 'the fade started without waiting out the grace period');
+  assert.equal(pinned(), false, 'and a stale pin cannot stop the next hover peek fading');
+  t.mock.timers.tick(mod.PEEK_FADE_MS);
+  assert.equal(peek(), false);
+  assert.equal(peekOut(), false, 'a finished fade leaves nothing set');
+});
+
+test('the toggle peeks a FOLDED rail on the platform, and is the press\'s door in an app', () => {
   const toggle = read('frontend/src/features/nav/sidebar-toggle.tsx');
-  assert.match(toggle, /import \{ clearPeekTimer, enterPeek, leavePeek \} from '\.\/rail-peek';/);
-  // A press ends the peek, or folding the rail again under the same pointer
-  // would bring it straight back as an overlay.
-  assert.match(toggle, /clearPeekTimer\(\);\s*navStore\.set\(\{ railOpen: !navStore\.get\(\)\.railOpen, peek: false, peekOut: false \}\);/);
-  // An open rail has nothing to bring back, and the press that follows the
-  // hover is about to fold it.
-  assert.match(toggle, /onMouseEnter=\{railOpen \? undefined : enterPeek\}/);
+  assert.match(toggle,
+    /import \{ clearPeekTimer, dismissPeek, enterPeek, leavePeek \} from '\.\/rail-peek';/);
+  // THE ROUTE DECIDES, read live in the handlers: a route with a rail folds
+  // and unfolds it exactly as before…
+  assert.match(toggle, /if \(readVisibility\('platform-tabs'\) !== false\) \{/);
+  assert.match(toggle,
+    /clearPeekTimer\(\);\s*navStore\.set\(\{ railOpen: !navStore\.get\(\)\.railOpen, peek: false, peekOut: false \}\);/);
+  // …and a running app, where the route says there is no rail, is the peek's
+  // own door: the second press dismisses, and any other press pins it.
+  assert.match(toggle, /if \(showingPeek && !peekOut\) \{\s*dismissPeek\(\);/);
+  assert.match(toggle, /enterPeek\(\);\s*navStore\.set\(\{ peekPinned: true, railOpen: true \}\);/);
+  // POINTING still peeks a folded rail on a platform screen, and does
+  // nothing at all in an app.
+  assert.match(toggle, /if \(readVisibility\('platform-tabs'\) === false\) return;/);
+  assert.match(toggle, /if \(!navStore\.get\(\)\.railOpen\) enterPeek\(\);/);
   assert.match(toggle, /onMouseLeave=\{peek \? leavePeek : undefined\}/);
   // Handlers are not attributes: the prerender and the first client render
   // still agree whatever the store holds, so hydration stays silent.

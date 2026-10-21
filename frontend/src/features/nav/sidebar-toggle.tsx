@@ -1,5 +1,5 @@
 /**
- * #sidebar-toggle — collapse and expand the desktop rail.
+ * #sidebar-toggle — collapse and expand the desktop rail, and an app's way back.
  *
  * ── Why the bar needs one at all ───────────────────────────────────────
  *
@@ -25,42 +25,48 @@
  * before either — the same corner the prototype and all four of those
  * products use.
  *
- * DESKTOP ONLY, and only where there is a rail to fold — but BOTH of those
- * are app.css's to decide, not this component's. The breakpoint, because a
- * phone's bar is at the foot and folding it would leave a reader with no
- * navigation and no hover to bring it back; and `#platform-tabs.hidden`,
- * because a toggle for a thing that is not there is a dead control and an
- * app's rail comes back by pointing at the window's edge instead. The note
- * on the component below says why neither may be a render-time question.
+ * DESKTOP ONLY, and app.css decides where it is SEEN, not this component:
+ * below 768px a phone's bar is at the foot and folding it would leave a
+ * reader with no navigation and no hover to bring it back. The route decides
+ * whether there is a rail at all, and the note on the component below says
+ * why none of that may be a render-time question.
+ *
+ * ── The press is the only door in an open app (#3138) ──────────────────
+ *
+ * An app used to raise the rail whenever the pointer reached the window's
+ * left edge. That made navigation appear over somebody working in the app's
+ * own left column, so the edge is the app's again. This button, which the
+ * header carries in an app, is the way back: one press fades the rail in over
+ * the app and PINS it there, and the same press fades it away. Going
+ * somewhere from the rail leaves the app the way tapping a tab always does.
+ *
+ * The peek keeps its old pointer behaviour where the route HAS a rail: with
+ * the rail folded, pointing at this button still fades it in, which is what
+ * #2764 added. A press-opened peek is pinned instead (`peekPinned`), because
+ * the pointer never summoned it and leaving is not a signal to take it away.
  *
  * ── Collapsed is the app view's state, reached another way ─────────────
  *
  * Folding the rail puts the shell in exactly the arrangement an open app
- * already produces: no band reserved, the page full width, and the hot zone
- * at the left edge ready to peek it back (features/nav/tab-bar.tsx). That is
- * why this needs no CSS of its own beyond being hidden on a phone — the
- * layout it asks for is one the stylesheet already draws.
+ * already produces: no band reserved, the page full width, and this button
+ * to bring it back. That is why this needs no CSS of its own beyond being
+ * hidden on a phone and shown in an app — the layout it asks for is one the
+ * stylesheet already draws.
  *
- * ── Pointing at it peeks the folded rail (#2764) ───────────────────────
- *
- * With the rail folded, hovering this button fades the rail in OVER the page,
- * the same overlay the window's left edge summons — nothing reflows, and
- * pressing the button is still what docks it back. The button sits directly
- * above where the rail appears, so it is where the pointer already is when a
- * reader goes looking for the navigation they put away; before this, pointing
- * at it did nothing at all. With the rail open it does not peek: there is
- * nothing to bring back, and a press is about to fold it.
- *
- * The enter/leave pair is ./rail-peek.ts's, shared with the rail and the hot
- * zone so the pointer can cross from here onto the rail inside one grace
- * period. Handlers only — nothing about the markup changes with the peek.
+ * The enter/leave pair is ./rail-peek.ts's, shared with the rail so the
+ * pointer can cross from here onto it inside one grace period. Handlers
+ * only — nothing about the markup changes with the peek.
  */
+
+import { useState } from 'react';
 
 import { SidebarIcon } from '@/components/ui/icons';
 
+import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
+import { readVisibility, useVisibility } from '../../lib/visibility-store';
 import { navStore } from './nav-store.js';
-import { clearPeekTimer, enterPeek, leavePeek } from './rail-peek';
+import { clearPeekTimer, dismissPeek, enterPeek, leavePeek } from './rail-peek';
 
 // THE SAME DISC the back slot beside it wears — ../header/platform-header.tsx
 // hoists its own for the same reason: a class string that spans lines ships
@@ -90,29 +96,68 @@ export function SidebarToggle() {
   // it. React error #418 on every route, and a console error fails every
   // declared check.
   //
-  // The markup is therefore constant and `body:has(#platform-tabs.hidden)`
-  // hides it, which is a question CSS can answer without being part of
-  // hydration. `railOpen` stays a rendered attribute because nothing
-  // publishes it before hydration: INITIAL is `true`, and only a press
-  // moves it.
+  // The markup is therefore constant and CSS decides where it is shown: the
+  // rules in app.css read `#platform-tabs` (a route with a rail) and
+  // `#app-view` (a running app, #3138).
   const { railOpen, peek } = useStoreState(navStore);
+  // THE ROUTE'S RAIL. An app publishes `platform-tabs` hidden — the app covers
+  // the rail — and this button is what brings it back over the app. It also
+  // decides whether pointing at the button may peek: only a rail the route
+  // HAS can be folded and peeked back.
+  const routeHasRail = useVisibility('platform-tabs', true);
+  // THE FIRST RENDER IS THE PRERENDER (#3138). `routeHasRail` can already be
+  // false here — app.js publishes it before this deferred bundle hydrates —
+  // so computing the attributes from it during the hydrating render would say
+  // "Show sidebar" where the prerendered button says "Hide sidebar". They
+  // settle after hydration; the markup itself never varies.
+  const [hydrated, setHydrated] = useState(false);
+  useIsomorphicLayoutEffect(() => { setHydrated(true); }, []);
+  // WHAT THE BUTTON IS DOING THE TOGGLE OF: the rail itself on a route that
+  // has one, and the peek over a running app, where the route has none.
+  const showing = hydrated ? (routeHasRail ? railOpen : peek) : railOpen;
+
+  const onPress = () => {
+    // THE ROUTE'S ANSWER, read live rather than from the render: a route with
+    // a rail folds and unfolds it exactly as before.
+    if (readVisibility('platform-tabs') !== false) {
+      clearPeekTimer();
+      navStore.set({ railOpen: !navStore.get().railOpen, peek: false, peekOut: false });
+      return;
+    }
+    // A RUNNING APP HAS NO RAIL OF THE ROUTE'S, so the press owns the peek:
+    // a showing, non-fading one is put away; otherwise the press brings it
+    // back — cancelling a fade in progress — and pins it there.
+    const { peek: showingPeek, peekOut } = navStore.get();
+    if (showingPeek && !peekOut) {
+      dismissPeek();
+      return;
+    }
+    enterPeek();
+    navStore.set({ peekPinned: true, railOpen: true });
+  };
+
+  const onHoverIn = () => {
+    // POINTING STILL PEEKS A FOLDED RAIL ON THE PLATFORM'S OWN SCREENS. In a
+    // running app there is no rail of the route's to fold, and the edge no
+    // longer summons one; only the press above acts there.
+    if (readVisibility('platform-tabs') === false) return;
+    if (!navStore.get().railOpen) enterPeek();
+  };
 
   return (
     <button
       id="sidebar-toggle"
       type="button"
       className={TOGGLE_CLASS}
-      aria-pressed={railOpen ? 'true' : 'false'}
+      aria-pressed={showing ? 'true' : 'false'}
       aria-controls="platform-tabs"
-      aria-label={railOpen ? 'Hide sidebar' : 'Show sidebar'}
-      // A PRESS ENDS ANY PEEK. Docking the rail makes the peek moot, and
-      // left standing it would come straight back as an overlay the moment
-      // the next press folded the rail under the same pointer.
-      onClick={() => {
-        clearPeekTimer();
-        navStore.set({ railOpen: !navStore.get().railOpen, peek: false, peekOut: false });
-      }}
-      onMouseEnter={railOpen ? undefined : enterPeek}
+      aria-label={showing ? 'Hide sidebar' : 'Show sidebar'}
+      // A PRESS THAT FOLDS ENDS ANY HOVER PEEK. Docking the rail makes the
+      // peek moot, and left standing it would come straight back as an
+      // overlay the moment the next press folded the rail under the same
+      // pointer. In an app the same handler is the peek's own door.
+      onClick={onPress}
+      onMouseEnter={onHoverIn}
       onMouseLeave={peek ? leavePeek : undefined}
     >
       <SidebarIcon className="w-5 h-5" />

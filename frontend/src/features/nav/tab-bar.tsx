@@ -295,15 +295,20 @@ function TabBadge({ count, id = 'platform-tabs-badge', label = 'Unread conversat
  * An app covers the rail — "the app is the whole window" is what makes a
  * mini-app feel like a program rather than a page — and the way out is the ✕
  * in the header. That is right on a phone, where the ✕ is under your thumb.
- * On a laptop the pointer is already at the left edge half the time, and the
- * five places you might want are behind a control at the top-left corner and
- * a screen swap.
+ * On a laptop the five places you might want are behind a control at the
+ * top-left corner and a screen swap.
  *
- * So the rail comes BACK on hover, over the app, and going anywhere from it
- * leaves the app the way tapping a tab always does. WeChat's floating
- * capsule, a desktop OS's auto-hiding dock and Slack's own collapsed rail are
- * all the same move: the navigation is still there, it is just not spending
- * width while you are working.
+ * So the rail comes BACK over the app, from the header's sidebar button
+ * (#3138), and going anywhere from it leaves the app the way tapping a tab
+ * always does. WeChat's floating capsule, a desktop OS's auto-hiding dock and
+ * Slack's own collapsed rail are all the same move: the navigation is still
+ * there, it is just not spending width while you are working.
+ *
+ * THE WINDOW'S LEFT EDGE NO LONGER SUMMONS IT (#3138). A strip at the edge
+ * raised the rail whenever the pointer passed, which in an app means it
+ * appeared over the app's own left column while somebody was using it. The
+ * edge belongs to the app again; the header's toggle is the one door there,
+ * and only a press opens it.
  *
  * ── Why the peek is its own fact ──────────────────────────────────────
  *
@@ -316,12 +321,13 @@ function TabBadge({ count, id = 'platform-tabs-badge', label = 'Unread conversat
  *
  * ── The grace period, and what it is for ──────────────────────────────
  *
- * The pointer has to cross a gap to get from the hot zone onto the rail, and
+ * Where a pointer still peeks — a folded rail on one of the platform's own
+ * screens — it has to cross a gap to get from the toggle onto the rail, and
  * on the way back out it crosses the same gap. ./rail-peek.ts holds the delay
- * that covers it — as module state now, because #sidebar-toggle is a second
- * way in (#2764) and the toggle's leave and this bar's enter must share one
- * timer. It is cancelled on unmount so a screen swap cannot land a timer on a
- * bar that has since become the real one.
+ * that covers it, as module state because #sidebar-toggle and the bar share
+ * one timer. A peek a PRESS opened is pinned instead (`peekPinned`), so
+ * leaving schedules nothing at all. The timer is cancelled on unmount so a
+ * screen swap cannot land it on a bar that has since become the real one.
  */
 function useRailPeek(peek: boolean) {
   useEffect(() => clearPeekTimer, []);
@@ -809,38 +815,6 @@ export function PlatformTabs() {
 
   return (
     <>
-      {/*
-          THE HOT ZONE. A strip at the window's left edge, and the only thing
-          that can start a peek. It renders wherever there is no rail to point
-          at — inside an app, or with the rail folded by hand — and app.css
-          hides it below the desktop breakpoint, because a phone has no
-          pointer to hover with and a hidden touch target at the screen edge
-          would eat swipes.
-
-          NOT `collapsed`, and not a bare `screen === 'app-view'` either.
-          `collapsed` is also true on the chromeless and signed-out shells,
-          where there is no rail behind the edge to bring back and a strip
-          that peeked one in would be conjuring navigation out of nothing.
-          And the app view is TWO screens now (#2718 review): on its Workshop
-          the rail is UP, and this strip is `z-index: 39` against the rail's
-          30 — an invisible 18px column down the left edge of the tabs,
-          swallowing the press meant for the one under the pointer.
-
-          So: the app view WITH ITS RAIL DOWN, which is the running app, or a
-          rail the viewer folded anywhere. A folded rail is the running app's
-          arrangement reached another way and the way back has to be the same
-          one, or the toggle is a door that only opens; `!railOpen` implies a
-          rail existed, because the toggle renders only where one does.
-      */}
-      {(screen === 'app-view' && !visible) || !railOpen ? (
-        <div
-          id="platform-rail-peek"
-          className="platform-rail-peek"
-          aria-hidden="true"
-          onMouseEnter={enter}
-          onMouseLeave={leave}
-        />
-      ) : null}
       <nav
         ref={barRef}
         id="platform-tabs"
