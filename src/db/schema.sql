@@ -1691,9 +1691,9 @@ END $$;
 -- wrap-up). The waiter lives in the process that dispatched the turn, so a
 -- restart kills it while the laptop keeps working; without these, nothing
 -- ever finished such a turn. The waiter renews `waiter_seen_at` while it
--- waits, under its `waiter_id`. A waiter that stops renewing (its process
--- died) is taken over by the leader's recovery pass
--- (services/local-agent-recovery.js), which takes the waiter id over. Whoever holds
+-- waits, under its `waiter_id`. When its process goes, the next claim of
+-- the work item that dispatched it (`owner`, below) takes the waiter id over
+-- (services/local-agent-recovery.js). Whoever holds
 -- the id when the turn ends claims `tail_claimed_at`, once, and runs the
 -- tail; `tail_finished_at` says the recovered tail got to its end. Rows from
 -- before this existed have no waiter id and are never taken over.
@@ -1708,7 +1708,7 @@ CREATE INDEX IF NOT EXISTS local_agent_turns_waiting_idx
 -- `turnOwner`, as a coding turn's record names it). Its waiter is that item:
 -- when the item's process goes, the process that claims the item next takes
 -- the waiter id over and finishes the turn (services/turns.js), and no
--- recovery pass touches it. NULL on a turn no item dispatched.
+-- recovery pass touches it. NULL only on a turn from before the turn machine.
 ALTER TABLE local_agent_turns ADD COLUMN IF NOT EXISTS owner JSONB;
 CREATE INDEX IF NOT EXISTS local_agent_turns_owner_idx
   ON local_agent_turns ((owner->>'workId'))
@@ -14962,15 +14962,14 @@ CREATE INDEX IF NOT EXISTS idx_private_request_comments_request
   ON private_request_comments (private_request_id, id);
 COMMENT ON TABLE private_request_comments IS 'staging:private';
 
--- The leader's sweep times, gone with the leader: every scheduled job is a
--- clock of the workflow now (src/workflow/clock/services.ts), whose instance
--- keeps its last run. ROLLOUT-ONLY: a release from before it still leads
--- while it runs beside this one, and records its sweeps here; drop the
--- table with the other rollout-only parts (services/turn-leftovers.js).
-CREATE TABLE IF NOT EXISTS leader_sweeps (
-  name        TEXT PRIMARY KEY,
-  last_run_at TIMESTAMPTZ NOT NULL
-);
+-- The leader's sweep times, gone with the leader (every scheduled job is a
+-- clock of the workflow, whose instance keeps its last run), and what each
+-- process held, which only a release from before the turn machine read
+-- (src/workflow/turn/). The release before this one still writes its holds
+-- and reads them back as it drains; each of those logs and carries on
+-- without the table (services/processes.js writeHolds, turn-leftovers.js).
+DROP TABLE IF EXISTS leader_sweeps;
+DROP TABLE IF EXISTS process_holds;
 
 -- The platform's processes, and what each one is doing that no other may
 -- adopt, tear down, duplicate or call idle (services/processes.js,
@@ -14980,7 +14979,7 @@ CREATE TABLE IF NOT EXISTS leader_sweeps (
 -- writes its row at boot, beats it every 10 seconds, marks it `draining`
 -- (with its deadline) as shutdown begins and deletes it as it exits; one
 -- whose beat is older than 45 seconds is gone, whatever the row says, and the
--- leader deletes such rows (holds go with them). Private to staging clones:
+-- process-reap clock deletes such rows. Private to staging clones:
 -- a preview copying production's rows would believe production's work its
 -- own, live.
 CREATE TABLE IF NOT EXISTS platform_processes (
@@ -14998,23 +14997,6 @@ CREATE TABLE IF NOT EXISTS platform_processes (
 );
 CREATE INDEX IF NOT EXISTS idx_platform_processes_heartbeat ON platform_processes (heartbeat_at);
 COMMENT ON TABLE platform_processes IS 'staging:private';
-
--- ROLLOUT-ONLY: what a process holds, `kind` (a session's turn, a sync, ...)
--- for `ref` (its id), written as it works. A release from before the turn
--- machine reads it to decide what is left behind; this one keeps its holds
--- in memory for its own drain and writes them here only for that release
--- (services/processes.js writeHolds), and reads it only to leave alone what
--- another live process holds (services/turn-leftovers.js). Drop once no such
--- release can run.
-CREATE TABLE IF NOT EXISTS process_holds (
-  process_id TEXT NOT NULL REFERENCES platform_processes(id) ON DELETE CASCADE,
-  kind       TEXT NOT NULL,
-  ref        TEXT NOT NULL,
-  since      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  PRIMARY KEY (process_id, kind, ref)
-);
-CREATE INDEX IF NOT EXISTS idx_process_holds_ref ON process_holds (kind, ref);
-COMMENT ON TABLE process_holds IS 'staging:private';
 
 -- The read-only database roles the leader sets up at its election
 -- (services/debug-access.js usernode_debug_ro, topochain/db-console-role.js

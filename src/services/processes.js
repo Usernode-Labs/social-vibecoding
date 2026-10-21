@@ -22,19 +22,7 @@
  * session's turn or operation, a hand-off pipeline, a fleet rollover's
  * deploy) and returns the release; `heldMap`/`heldSet` are registries whose
  * keys are holds. They are this process's alone, in memory: what its drain
- * waits for (localCount). No process of this release reads another's.
- *
- * ROLLOUT-ONLY: the holds are also written to process_holds, the whole set
- * at once, on every change and every beat (writeHolds), for a release from
- * before the turn machine while it runs beside this one. That release reads
- * them to decide what is left behind: a session busy elsewhere (its idle
- * eviction skips one), a turn or headless run it would adopt or resume, a
- * Stop it forwards to the process running the turn (services/turn-
- * leftovers.js receiveOlderStop). (A worker kept warm is no hold any more:
- * that release may adopt and evict an idle one of this release's, which
- * costs its next turn a re-warm.) Nothing here reads them back but
- * turn-leftovers' own rollout-only reads of other processes' rows.
- * Delete the write once no release older than this one can run.
+ * waits for (localCount). No process reads another's.
  */
 
 const crypto = require('crypto');
@@ -85,20 +73,6 @@ let onClaimLost = null;
 // key -> count, for this process. key = `${kind}\u0000${ref}`
 const local = new Map();
 
-// ROLLOUT-ONLY (see the header): the writes of the holds to process_holds,
-// one after another, and whether one not yet begun is queued (it reads
-// `local` when it runs, so one queued write covers every change before it).
-let writes = Promise.resolve();
-let writeQueued = false;
-const WRITE_HOLDS_SQL = `
-  WITH held AS (SELECT * FROM unnest($2::text[], $3::text[]) AS h(kind, ref)),
-       gone AS (DELETE FROM process_holds p
-                 WHERE p.process_id = $1
-                   AND NOT EXISTS (SELECT 1 FROM held h WHERE h.kind = p.kind AND h.ref = p.ref))
-  INSERT INTO process_holds (process_id, kind, ref)
-  SELECT $1, kind, ref FROM held
-  ON CONFLICT (process_id, kind, ref) DO NOTHING`;
-
 function keyOf(kind, ref) {
   return `${kind}\u0000${ref}`;
 }
@@ -117,36 +91,14 @@ function checkKind(kind) {
   if (!KNOWN.has(kind)) throw new Error(`unknown hold kind: ${kind}`);
 }
 
-// ROLLOUT-ONLY: this process's holds, as they are when the write runs, are
-// the rows process_holds has for it. A write that fails is the next beat's
-// to make again.
-function writeHolds() {
-  if (!started || !pool || writeQueued) return writes;
-  writeQueued = true;
-  writes = writes.then(async () => {
-    writeQueued = false;
-    if (!started || !pool) return;
-    const held = [...local.keys()].map(splitKey);
-    try {
-      await q(pool, WRITE_HOLDS_SQL, [ID, held.map((h) => h.kind), held.map((h) => h.ref)]);
-    } catch (err) {
-      log.warn('processes', 'Could not write this process\'s holds; the next beat writes them', { err: err.message });
-    }
-  });
-  return writes;
-}
-
 /**
  * This process holds `kind` for `ref` until the returned function is called
- * (idempotent). What its drain waits for; never throws for a database
- * problem (the rollout-only write is logged and made again).
+ * (idempotent). What its drain waits for; in memory only.
  */
 function hold(kind, ref) {
   checkKind(kind);
   const key = keyOf(kind, refOf(ref));
-  const n = local.get(key) || 0;
-  local.set(key, n + 1);
-  if (n === 0) writeHolds();
+  local.set(key, (local.get(key) || 0) + 1);
   let released = false;
   return function release() {
     if (released) return;
@@ -154,7 +106,6 @@ function hold(kind, ref) {
     const left = (local.get(key) || 1) - 1;
     if (left > 0) { local.set(key, left); return; }
     local.delete(key);
-    writeHolds();
   };
 }
 
@@ -236,7 +187,6 @@ function writeRow(db) {
 async function beat() {
   if (!started || !pool) return;
   await writeRow(pool);
-  await writeHolds();
 }
 
 function every(ms, fn, label) {
@@ -274,8 +224,6 @@ async function start({ pool: db, role: r = 'all', onClaimLost: lost = () => proc
     log.warn('processes', 'Could not register this process yet; the beat will', { err: err.message });
   }
   started = true;
-  // Holds taken before it started.
-  if (local.size) writeHolds();
   heartbeatTimer = every(HEARTBEAT_MS, beat, 'Process heartbeat');
   log.info('processes', 'Process registered', { id: ID, role });
 }
@@ -458,8 +406,7 @@ async function list(db = pool) {
 
 /**
  * The last step before exit: this process's row goes, so it is not counted
- * as live after it, and its holds' rows with it (ON DELETE CASCADE). Bounded
- * by the caller.
+ * as live after it. Bounded by the caller.
  */
 async function stop() {
   if (!started) return;
@@ -482,8 +429,6 @@ function _reset() {
   claim = null;
   onClaimLost = null;
   local.clear();
-  writes = Promise.resolve();
-  writeQueued = false;
 }
 
 module.exports = {
@@ -509,7 +454,6 @@ module.exports = {
   list,
   stop,
   beat,
-  writeHolds,
   get role() { return role; },
   get draining() { return draining; },
   get started() { return started; },

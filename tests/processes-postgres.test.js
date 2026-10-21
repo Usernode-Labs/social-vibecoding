@@ -2,10 +2,9 @@
 
 // The platform's processes (services/processes.js, docs/plans/
 // draining-releases.md), against the REAL schema in a throwaway PostgreSQL
-// database: the roster, and this process's holds, which are its own drain's
-// and which no process of this release reads; they are written to
-// process_holds only for an older release running beside it (ROLLOUT-ONLY).
-// Another process is played by the rows it would write.
+// database: the roster, and this process's holds, which are its own drain's,
+// in its memory, and which no other process reads. Another process is played
+// by the row it would write.
 //
 // Skipped when no server is reachable, required when TEST_DATABASE_URL is set.
 // Run with: TEST_DATABASE_URL=postgres://... node --test tests/processes-postgres.test.js
@@ -50,15 +49,12 @@ test('processes and the roster, against the full schema', { timeout: 120000 }, a
     await admin.end();
   });
 
-  // Another process: its row, beaten `ageSeconds` ago, and what it holds.
-  async function other(id, { ageSeconds = 0, state = 'serving', holds = [], drainStartedAt = null, role = 'all', release = null } = {}) {
+  // Another process: its row, beaten `ageSeconds` ago.
+  async function other(id, { ageSeconds = 0, state = 'serving', drainStartedAt = null, role = 'all', release = null } = {}) {
     await pool.query(
       `INSERT INTO platform_processes (id, role, state, heartbeat_at, drain_started_at, release)
        VALUES ($1, $2, $3, NOW() - make_interval(secs => $4), $5, $6)`,
       [id, role, state, ageSeconds, drainStartedAt, release]);
-    for (const [kind, ref] of holds) {
-      await pool.query('INSERT INTO process_holds (process_id, kind, ref) VALUES ($1, $2, $3)', [id, kind, String(ref)]);
-    }
   }
 
   await t.test('a hold is this process\'s alone, in memory, counted for its drain', async () => {
@@ -73,12 +69,12 @@ test('processes and the roster, against the full schema', { timeout: 120000 }, a
     assert.equal(processes.localCount(), 0);
     assert.throws(() => processes.hold('not-a-kind', 1), /unknown hold kind/);
     assert.throws(() => processes.hold('session', null), /needs a ref/);
-    for (const gone of ['heldElsewhere', 'heldAnywhere', 'holders', 'refreshMirror', 'refsElsewhere', 'whenReleasedElsewhere']) {
+    for (const gone of ['heldElsewhere', 'heldAnywhere', 'holders', 'refreshMirror', 'refsElsewhere', 'whenReleasedElsewhere', 'writeHolds']) {
       assert.equal(processes[gone], undefined, `no process reads another's holds (${gone})`);
     }
   });
 
-  await t.test('registered: the row; ROLLOUT-ONLY, its holds written for an older release, which reads them', async () => {
+  await t.test('registered: the row, and nothing of its holds: no table keeps them', async () => {
     // In a Kubernetes Pod, this container's dead predecessor (same Pod name)
     // is removed as it starts.
     await other('predecessor');
@@ -95,39 +91,13 @@ test('processes and the roster, against the full schema', { timeout: 120000 }, a
     const { rows: [me] } = await pool.query('SELECT * FROM platform_processes WHERE id = $1', [processes.ID]);
     assert.equal(me.state, 'serving');
 
-    // What an older release reads (its holders / heldElsewhere): this
-    // process's rows, as they are, without this process asking for a write.
-    const rows = async () => (await pool.query(
-      'SELECT kind, ref FROM process_holds WHERE process_id = $1 ORDER BY kind, ref', [processes.ID])).rows.map((r) => `${r.kind}:${r.ref}`);
-    const written = (want, label) => until(async () => JSON.stringify(await rows()) === JSON.stringify(want), { label });
-    await written(['session:11'], 'a hold taken before it started, written as it starts');
     const late = processes.hold('handoff', 12);
-    const twice = processes.hold('handoff', 12);
-    await written(['handoff:12', 'session:11'], 'a hold, as it is taken');
-    late();
-    await new Promise((r) => setTimeout(r, 100));
-    assert.deepEqual(await rows(), ['handoff:12', 'session:11'], 'still held once');
-    twice(); early();
-    await written([], 'gone with its last release');
-    // A write that was lost: the beat writes the whole set again.
-    const again = processes.hold('session', 13);
-    await written(['session:13'], 'a third hold');
-    await pool.query('DELETE FROM process_holds WHERE process_id = $1', [processes.ID]);
     await processes.beat();
-    assert.deepEqual(await rows(), ['session:13'], 'the beat writes the set again');
-    // Read back by nothing here but the rollout-only adoption check, which
-    // skips this process's own rows: its memory answers for those.
-    const leftovers = require('../src/services/turn-leftovers');
-    assert.equal(await leftovers.olderProcessHolding(pool, 13), null, 'not this process\'s own');
-    await other('pod-old', { holds: [['session', 13]] });
-    assert.equal(await leftovers.olderProcessHolding(pool, 13), 'pod-old', 'another live process\'s');
-    // A Stop is forwarded only to a process of another release (routes/
-    // sessions.js forwardStopToOlder): this release's turns are machines'.
-    assert.equal(await leftovers.olderProcessHolding(pool, 13, { otherRelease: true }), null, 'pod-old runs this release');
-    await other('pod-prev-release', { holds: [['session', 13]], release: 'older-release' });
-    assert.equal(await leftovers.olderProcessHolding(pool, 13, { otherRelease: true }), 'pod-prev-release');
-    again();
-    await written([], 'released');
+    assert.deepEqual((await pool.query(`SELECT to_regclass('process_holds') AS holds, to_regclass('leader_sweeps') AS sweeps`)).rows[0],
+      { holds: null, sweeps: null }, 'what a release before the turn machine read is gone with its tables');
+    assert.equal(require('../src/services/turn-leftovers').olderProcessHolding, undefined, 'and nothing reads another process\'s');
+    late(); early();
+    await other('pod-old');
     // A row the process-reap clock reaped while this process stalled comes
     // back with the next beat.
     await pool.query('DELETE FROM platform_processes WHERE id = $1', [processes.ID]);
@@ -298,16 +268,14 @@ test('processes and the roster, against the full schema', { timeout: 120000 }, a
     assert.ok(!live.some((p) => p.id === 'pod-dead'));
   });
 
-  await t.test('stopping deletes this process\'s row, so it is not counted as live after it, and its holds\' rows with it', async () => {
+  await t.test('stopping deletes this process\'s row, so it is not counted as live after it', async () => {
     const held = processes.hold('session', 21);
-    await until(async () => (await pool.query('SELECT 1 FROM process_holds WHERE process_id = $1', [processes.ID])).rows.length === 1, { label: 'the hold written' });
     await processes.stop();
     held();
     assert.equal((await pool.query('SELECT 1 FROM platform_processes WHERE id = $1', [processes.ID])).rows.length, 0);
     // The row is gone; the capacity claim is not: it goes with the
     // connection, which closes after the pool's own end.
     assert.equal((await pool.query(`SELECT count(*)::int AS n FROM pg_locks WHERE locktype = 'advisory' AND granted AND classid = 991021::oid`)).rows[0].n, 1);
-    assert.equal((await pool.query('SELECT 1 FROM process_holds WHERE process_id = $1', [processes.ID])).rows.length, 0);
     await until(() => true);
   });
 });

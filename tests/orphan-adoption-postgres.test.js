@@ -1,15 +1,12 @@
 'use strict';
 
-// A turn a process left behind while the Pod a release replaced still
-// finishes its own (docs/plans/draining-releases.md), against the REAL schema
-// in a throwaway PostgreSQL database:
+// A coding record a turn left behind, against the REAL schema in a
+// throwaway PostgreSQL database: the turn-leftovers clock
+// (services/turn-leftovers.js) asks a recover turn, once, for what was left:
+// a record no work item holds, quiet for two minutes; and nothing else,
+// whatever other release's processes are live.
 //
-//   - adoptOrphanWorker leaves a turn another live process holds alone;
-//   - the turn-leftovers clock (services/turn-leftovers.js) asks a recover
-//     turn, once, for what was left: a record no work item and no live
-//     process holds, quiet for two minutes; and nothing else.
-//
-// The worker module is stubbed; the other processes are the rows they write.
+// The worker module is stubbed.
 // Skipped when no server is reachable, required when TEST_DATABASE_URL is set.
 // Run with: TEST_DATABASE_URL=postgres://... node --test tests/orphan-adoption-postgres.test.js
 
@@ -49,7 +46,7 @@ const onPoolError = (err) => {
   dropped.push(`${err.code || ''} ${err.message}`);
 };
 
-test('only what no live process or work item holds is recovered', { timeout: 120000 }, async (t) => {
+test('only what no work item holds is recovered', { timeout: 120000 }, async (t) => {
   const admin = new Pool({ connectionString: DSN, connectionTimeoutMillis: 2000 });
   admin.on('error', onPoolError);
   try { await admin.query('SELECT 1'); } catch (err) {
@@ -115,8 +112,6 @@ test('only what no live process or work item holds is recovered', { timeout: 120
       [app.id, user.id, `b-${label}`, label, JSON.stringify({ turnId: `t-${label}`, phase, mode: 'build', journal: `/j/${label}`, startedAt: at, lifecycleUpdatedAt: at })]);
     return s.id;
   }
-  const heldLive = await session('held-live');
-  const heldDead = await session('held-dead');
   const fresh = await session('fresh', { at: now });
   const left = await session('left');
   const quarantined = await session('quarantined', { phase: 'quarantined' });
@@ -132,42 +127,28 @@ test('only what no live process or work item holds is recovered', { timeout: 120
     await c.query(`INSERT INTO wf_instances (machine, key, state, machine_version) VALUES ('bot-build', 'run:9', 'building', 1)`);
     await c.query('COMMIT');
   } finally { c.release(); }
-  // An older release's Pod finishing its turns (draining: its leadership
-  // given up, so the leftover pass runs beside it).
-  await pool.query(`INSERT INTO platform_processes (id, release, state, heartbeat_at, drain_started_at) VALUES ('pod-old', 'older-release', 'draining', NOW(), NOW())`);
-  await pool.query(`INSERT INTO platform_processes (id, heartbeat_at) VALUES ('pod-dead', NOW() - interval '10 minutes')`);
-  await pool.query(`INSERT INTO process_holds (process_id, kind, ref) VALUES ('pod-old', 'session', $1), ('pod-dead', 'session', $2)`,
-    [String(heldLive), String(heldDead)]);
-
-  await t.test('adoption leaves a turn another live process is finishing alone', async () => {
-    workerCalls.length = 0;
-    await server.adoptOrphanWorker({ name: `usernode-worker-${heldLive}`, sessionId: heldLive, state: 'running' },
-      { config: {}, pool, staging: {}, ghub: {}, broadcastGlobal: () => {} });
-    assert.deepEqual(workerCalls, [], 'no warm registration, no stop, no teardown, no journal');
-    const { rows: [row] } = await pool.query('SELECT active_turn FROM chat_sessions WHERE id = $1', [heldLive]);
-    assert.equal(row.active_turn.phase, 'executing', 'its turn record is untouched');
-  });
+  // A process of another release, serving: the pass runs all the same
+  // (no release before the turn machine runs beside this one).
+  await pool.query(`INSERT INTO platform_processes (id, release, state, heartbeat_at) VALUES ('pod-old', 'older-release', 'serving', NOW())`);
 
   const leftovers = require('../src/services/turn-leftovers');
   const asked = async () => (await pool.query(
     `SELECT (payload->'input'->>'sessionId')::int AS id FROM wf_events WHERE machine = 'turn' AND type = 'Asked'
        AND payload->>'kind' = 'recover' ORDER BY id`)).rows.map((r) => r.id);
-  // This release is this process's own (processes.start above).
-  const pass = () => leftovers.sweep(pool, { config: {}, deps: { localPass: async () => ({ adopted: 0 }), release: process.env.GIT_SHA || null } });
+  const pass = () => leftovers.sweep(pool);
 
-  await t.test('a recover turn is asked, once, for what was left: unheld (or held by the dead), quiet', async () => {
+  await t.test('a recover turn is asked, once, for what was left: unheld, quiet', async () => {
     const out = await pass();
-    assert.equal(out.records, 3);
+    assert.deepEqual(out, { records: 2 });
     const adopted = await asked();
     // A quarantined record is asked too: the adoption stops its worker and
     // keeps the record for an operator (turn-recovery.js adoptOrphanWorker).
-    assert.deepEqual(adopted.sort((a, b) => a - b), [heldDead, left, quarantined].sort((a, b) => a - b));
+    assert.deepEqual(adopted.sort((a, b) => a - b), [left, quarantined].sort((a, b) => a - b));
     assert.ok(!adopted.includes(fresh), 'a turn whose record just moved may be one being dispatched');
     assert.ok(!adopted.includes(headless) && !adopted.includes(building),
       'nor what other work carries: a headless run, a durable build\'s session');
-    assert.ok(!adopted.includes(heldLive));
     await pass();
-    assert.equal((await asked()).length, 3, 'once');
+    assert.equal((await asked()).length, 2, 'once');
   });
 
   // (A worker a process left behind is the worker-eviction clock's, from

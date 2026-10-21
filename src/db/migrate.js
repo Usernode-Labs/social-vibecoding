@@ -593,7 +593,7 @@ async function auditDuplicatePrSessions(pool) {
 
 // #155: headless runs interrupted by a restart used to be blanket-failed
 // here because the loop lived entirely in the dead process. They are now
-// resumable: runHeadlessSession checkpoints its position in
+// resumable: runHeadlessSessionInner checkpoints its position in
 // chat_sessions.headless_step ('planning' / 'cc_running' / 'wrapping'),
 // and the run's turn work item (services/turns.js) carries a 'generating'
 // row forward from that checkpoint — marking 'failed' only the rows it

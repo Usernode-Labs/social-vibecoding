@@ -158,8 +158,8 @@ export const JOBS: readonly Job[] = Object.freeze([
     // released, and a turn still sitting on one failed, so a change stops
     // saying it runs on a laptop in a bag (services/local-agent.js). A
     // lease is a 120 s TTL a 30 s heartbeat refreshes: a minute is well
-    // inside it. The turns it fails are finished by turn-leftovers (an
-    // older release's) or by the item that dispatched them.
+    // inside it. The turns it fails are finished by the item that
+    // dispatched them.
     name: 'local-agent-leases', everyMs: MIN,
     run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/local-agent').sweepExpiredLeases(pool).then((n: number) => ({ released: n })),
   },
@@ -171,15 +171,11 @@ export const JOBS: readonly Job[] = Object.freeze([
     run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/global-chat/accounting').settleAbandonedReservations(pool),
   },
   {
-    // Turns nothing carries: a coding record no work item holds (the old
-    // orphan sweep's and watchdog's case), and, ROLLOUT-ONLY, what a release
-    // from before the turn machine leaves (its conversations' claims,
-    // headless runs, local agents' turns) once no live process of it holds
-    // them (services/turn-leftovers.js).
+    // A coding record no work item holds (the old orphan sweep's and
+    // watchdog's case): a `recover` turn asked for it
+    // (services/turn-leftovers.js).
     name: 'turn-leftovers', everyMs: MIN, leaseMs: 5 * MIN,
-    run: (ctx: WorkContext, { config, pool }: JobDeps) => legacy('services/turn-leftovers').sweep(pool, {
-      config, previous: (ctx.input as { previous?: Json } | null)?.previous ?? null,
-    }),
+    run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/turn-leftovers').sweep(pool),
   },
   {
     // Turns' streams (stream_events) a finished turn did not clear, and the
