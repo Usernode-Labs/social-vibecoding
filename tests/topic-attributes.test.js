@@ -879,6 +879,19 @@ test('category dropdown offers a text box + the app custom block', () => {
     }),
     /&lt;img src=x onerror=alert\(1\)&gt;/,
     'category chip escapes its label');
+  // #5755: the label rides in `.dev-badge-label` so a chip that the card
+  // cannot fit ellipsises inside a whole pill instead of being sliced.
+  assert.match(
+    renderComponent('tests/fixtures/dev-card-api.ts', 'Badge', {
+      b: {
+        t: 'attr', key: 'attr:category', field: 'category', targetType: 'issue',
+        targetRef: 5, cls: 'bg-sky-500/10', hover: 'hover:bg-sky-500/20',
+        title: 'Vote on this card\'s category', count: 0, readonly: false,
+        label: { kind: 'dot', cls: 'bg-sky-500/10', text: '<img src=x onerror=alert(1)>' },
+      },
+    }),
+    /<span class="dev-badge-label">&lt;img src=x onerror=alert\(1\)&gt;<\/span>/,
+    'the category chip\'s words ride in the span that ellipsises');
   // The popover row is a component now, so its label is a text child — the
   // property `escapeHtml` was there to give it. Rendered, not grepped.
   assert.match(
