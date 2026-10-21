@@ -631,7 +631,7 @@ function useTabMarker(
   box: TabMarkerBox | null;
   lit: string | null;
   markerRef: React.RefObject<HTMLSpanElement | null>;
-  press: (el: HTMLElement, key: string, go: () => void) => boolean;
+  press: (el: HTMLElement, key: string, go: () => void, fallback?: () => void) => boolean;
 } {
   const [box, setBox] = useState<TabMarkerBox | null>(null);
   const markerRef = useRef<HTMLSpanElement | null>(null);
@@ -748,15 +748,17 @@ function useTabMarker(
    * nothing lit yet): the caller navigates as it always did, at once.
    *
    * If the router never lights `key`, the bar goes back to the tab it did
-   * light after PRESS_SETTLE_MS rather than sitting on the wrong one.
+   * light after PRESS_SETTLE_MS rather than sitting on the wrong one. A
+   * press that may reveal nothing hands in a `fallback` for that moment
+   * (./tab-press.ts): it gets one turn before the bar goes back.
    */
-  const press = (el: HTMLElement, key: string, go: () => void): boolean => {
+  const press = (el: HTMLElement, key: string, go: () => void, fallback?: () => void): boolean => {
     const bar = barRef.current;
     if (!bar || !canSlide(bar)) return false;
     place(el, true);
     setPressed(key);
     // A second press before the first has navigated replaces it.
-    schedulePress(pending, key, go, () => setPressed(null));
+    schedulePress(pending, key, go, () => setPressed(null), undefined, undefined, undefined, fallback);
     return true;
   };
 
@@ -784,6 +786,21 @@ function goToTab(key: string, href: string): void {
     return;
   }
   window.location.assign(href);
+}
+
+/**
+ * THE ALL COMMUNITIES PAGE, when a Communities press revealed nothing
+ * (#5730). It is a hash route, so the router always answers it: forget the
+ * remembered view (as choosing All communities does, which also publishes
+ * the scope as null) and write `#communities`, which restoreFromHash sends
+ * to navigateToWorkshop. Not `goToCommunity(null)`: on a phone that takes
+ * the drawer's road the press has just come back from, and this is the same
+ * destination reached by the one address that always lands.
+ */
+function openCommunitiesPage(): void {
+  const app = (window as unknown as { App?: { _forgetWorkshopView?: () => void } }).App;
+  try { app?._forgetWorkshopView?.(); } catch { /* nothing to forget */ }
+  if (window.location.hash !== '#communities') window.location.hash = '#communities';
 }
 
 export function PlatformTabs() {
@@ -894,7 +911,18 @@ export function PlatformTabs() {
     }
     // A press from another tab always resumes the view left, whatever the
     // blue number says (#5708): the Needs you detour overwrote the place.
-    if (key !== lit && press(event.currentTarget, key, () => goToTab(key, href))) {
+    // A COMMUNITIES PRESS THAT REVEALS NOTHING falls back to All communities
+    // (#5730), the one destination that always routes: resuming the
+    // remembered view, or the phone's drawer list, can both end with the
+    // screen where it was, and the bar then slid the pill back, which reads
+    // as a refused press. The fallback is built here from the screen the
+    // press leaves and does nothing if another navigation has moved on, so a
+    // Back or a link during the wait is never overridden.
+    const leftFrom = navStore.get().screen;
+    const fallback = key === 'workshop'
+      ? () => { if (navStore.get().screen === leftFrom) openCommunitiesPage(); }
+      : undefined;
+    if (key !== lit && press(event.currentTarget, key, () => goToTab(key, href), fallback)) {
       event.preventDefault();
       return;
     }

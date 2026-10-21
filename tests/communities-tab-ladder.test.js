@@ -267,7 +267,7 @@ test('#5708: the bar has no votes detour, and a return resumes the remembered vi
   assert.match(src.slice(ladderAt, ladderAt + 200), /pressLitTab\(screen\)/, 'the lit tab is the ladder');
   // Every press from another tab is the tab's own navigation, and that tries
   // the remembered view before the phone's list (#5581).
-  assert.match(src, /if \(key !== lit && press\(event\.currentTarget, key, \(\) => goToTab\(key, href\)\)\)/,
+  assert.match(src, /if \(key !== lit && press\(event\.currentTarget, key, \(\) => goToTab\(key, href\), fallback\)\)/,
     'a press from another tab goes through goToTab');
   const goToTab = src.slice(src.indexOf('function goToTab('), src.indexOf('export function PlatformTabs'));
   const resumeAt = goToTab.indexOf('app?.resumeWorkshopView?.()');

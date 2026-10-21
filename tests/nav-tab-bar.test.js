@@ -993,10 +993,10 @@ test('a plain press on another tab lights it and slides first; the router answer
     'the pressed tab is lit until the router answers');
   const click = src.slice(src.indexOf('const onTabClick = '), src.indexOf('return (', src.indexOf('const onTabClick = ')));
   assert.match(click, /if \(nav\?\.isNativeClick\?\.\(event\)\) return;/, 'a modified click stays the browser\'s');
-  assert.match(click, /if \(key !== lit && press\(event\.currentTarget, key, \(\) => goToTab\(key, href\)\)\) \{\s*event\.preventDefault\(\);/);
+  assert.match(click, /if \(key !== lit && press\(event\.currentTarget, key, \(\) => goToTab\(key, href\), fallback\)\) \{\s*event\.preventDefault\(\);/);
   const press = src.slice(src.indexOf('const press = (el: HTMLElement'), src.indexOf('return { box, lit, markerRef, press };'));
   assert.ok(press.indexOf('place(el, true);') < press.indexOf('schedulePress('), 'the pill moves in the press\'s own task');
-  assert.match(press, /schedulePress\(pending, key, go, \(\) => setPressed\(null\)\);/);
+  assert.match(press, /schedulePress\(pending, key, go, \(\) => setPressed\(null\), undefined, undefined, undefined, fallback\);/);
   // The three roads the clicks take at once, taken late.
   const go = src.slice(src.indexOf('function goToTab('), src.indexOf('export function PlatformTabs()'));
   assert.match(go, /app\.navigateHome\(\{ viaTab: true \}\);/);
@@ -1004,6 +1004,98 @@ test('a plain press on another tab lights it and slides first; the router answer
   assert.match(go, /window\.location\.assign\(href\);/);
   // The router lighting the pressed tab answers the press.
   assert.match(src, /if \(!pending\.current \|\| pending\.current\.key !== tab\) return;\s*pending\.current\.cancel\(\);\s*pending\.current = null;\s*setPressed\(null\);/);
+});
+
+// ── #5730: a Communities press that reveals nothing ends on Communities ──
+//
+// From Me or Discover, a Communities press resumes the remembered view (or
+// opens the phone's drawer list). Either road can end with no screen
+// revealed, and the bar then slid the pill back to the tab pressed from. A
+// fallback hands that press the All communities page, the one address that
+// always routes, and waits once more for it.
+
+test('#5730: an unanswered Communities press falls back to All communities, once', () => {
+  const { schedulePress, PRESS_SETTLE_MS } = loadTsx('frontend/src/features/nav/tab-press.ts');
+  const frames = [];
+  const raf = (cb) => { frames.push(cb); return frames.length; };
+  const caf = (id) => { frames[id - 1] = null; };
+  const frame = () => { const due = frames.splice(0); for (const cb of due) if (cb) cb(); };
+  const timers = [];
+  const clock = {
+    set: (fn, ms) => { timers.push({ fn, ms }); return timers.length; },
+    clear: (id) => { if (timers[id - 1]) timers[id - 1].fn = null; },
+  };
+  // One round of due timers, so the re-armed wait is a later round rather
+  // than being caught by this same call.
+  const fire = (ms) => {
+    const due = timers.filter((t) => t.ms === ms && t.fn);
+    for (const t of due) { const fn = t.fn; t.fn = null; fn(); }
+  };
+  const pressFrom = (key) => {
+    const holder = { current: null };
+    const log = [];
+    const entry = schedulePress(holder, key, () => log.push('go'), () => log.push('settle'),
+      raf, caf, clock, () => log.push('fallback'));
+    frame();
+    fire(0);
+    return { holder, log, entry };
+  };
+
+  // From Me: the fallback answers the settle, and the router answering IT
+  // calls the press off, so the bar stays on Communities.
+  const me = pressFrom('me');
+  assert.deepEqual(me.log, ['go'], 'the press navigated, and nothing answered it');
+  fire(PRESS_SETTLE_MS);
+  assert.deepEqual(me.log, ['go', 'fallback'], 'the fallback runs at the settle time, and settle does not');
+  me.entry.cancel();
+  me.holder.current = null;
+  fire(PRESS_SETTLE_MS);
+  assert.deepEqual(me.log, ['go', 'fallback'], 'answered after the fallback: the bar never goes back');
+
+  // From Discover, unanswered even after the fallback: one more wait, then
+  // settle, and the fallback still ran only once.
+  const discover = pressFrom('discover');
+  fire(PRESS_SETTLE_MS);
+  assert.deepEqual(discover.log, ['go', 'fallback']);
+  fire(PRESS_SETTLE_MS);
+  assert.deepEqual(discover.log, ['go', 'fallback', 'settle'], 'the second wait settles as before');
+  assert.equal(discover.holder.current, null);
+  fire(PRESS_SETTLE_MS);
+  assert.deepEqual(discover.log, ['go', 'fallback', 'settle'], 'the fallback ran once');
+
+  // A second press during the wait replaces the first, fallback and all.
+  const holder = { current: null };
+  const log = [];
+  schedulePress(holder, 'me', () => log.push('go-me'), () => log.push('settle-me'),
+    raf, caf, clock, () => log.push('fallback-me'));
+  frame();
+  fire(0);
+  schedulePress(holder, 'discover', () => log.push('go-discover'), () => log.push('settle-discover'),
+    raf, caf, clock, () => log.push('fallback-discover'));
+  frame();
+  fire(0);
+  fire(PRESS_SETTLE_MS);
+  assert.deepEqual(log, ['go-me', 'go-discover', 'fallback-discover'],
+    'the replaced press never falls back');
+});
+
+test('#5730: only a Communities press carries the fallback, guarded on where it started', () => {
+  const src = read('frontend/src/features/nav/tab-bar.tsx');
+  const click = src.slice(src.indexOf('const onTabClick = '), src.indexOf('return (', src.indexOf('const onTabClick = ')));
+  assert.match(click, /const leftFrom = navStore\.get\(\)\.screen;/,
+    'the fallback captures the screen the press left');
+  assert.match(click, /const fallback = key === 'workshop'\s*\? \(\) => \{ if \(navStore\.get\(\)\.screen === leftFrom\) openCommunitiesPage\(\); \}\s*: undefined;/,
+    'only Communities gets one, and only while that screen is still on show');
+  assert.match(click, /press\(event\.currentTarget, key, \(\) => goToTab\(key, href\), fallback\)/,
+    'the press carries it to the timing half');
+  const fn = src.slice(src.indexOf('function openCommunitiesPage()'), src.indexOf('export function PlatformTabs()'));
+  assert.match(fn, /app\?\._forgetWorkshopView\?\.\(\);/,
+    'choosing All communities forgets the view, as it does in the switcher');
+  assert.match(fn, /if \(window\.location\.hash !== '#communities'\) window\.location\.hash = '#communities';/,
+    'the one address that always lands');
+  // The desktop sidebar of rows still takes its own hash route.
+  const sidebarAt = src.indexOf("if (key === 'workshop' && sidebarRows)");
+  assert.match(src.slice(sidebarAt, sidebarAt + 220), /goToCommunity\(null\);/);
 });
 
 // ── #4417: the desktop strip, and where its apps went ───────────────────
