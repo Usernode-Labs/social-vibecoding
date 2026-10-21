@@ -1377,13 +1377,6 @@
     {
       "source": "src/services/notifications.js",
       "kind": "structural-template",
-      "fingerprint": "040dc8d2ccbfebb55031",
-      "count": 1,
-      "preview": "`SELECT n.id, n.kind, n.user_id, CASE WHEN n.read_at IS NULL AND ${DECIDED_ASK_SETTLED_SQL} THEN COALESCE(cs.merged_at, cs.archived_at, n.created_at) ELSE n.rea"
-    },
-    {
-      "source": "src/services/notifications.js",
-      "kind": "structural-template",
       "fingerprint": "0aa31d0b7f4b61518c80",
       "count": 1,
       "preview": "`SELECT (COUNT(*) FILTER (WHERE ${PLAIN_MESSAGE_SQL}))::int AS m, COUNT(*)::int AS c FROM notifications AS n WHERE n.user_id = $1 AND n.read_at IS NULL AND NOT "
@@ -1401,6 +1394,13 @@
       "fingerprint": "8748f0da3801293ac993",
       "count": 1,
       "preview": "`SELECT n.id, n.kind, CASE WHEN n.read_at IS NULL AND ${DECIDED_ASK_SETTLED_SQL} THEN COALESCE(cs.merged_at, cs.archived_at, n.created_at) ELSE n.read_at END AS"
+    },
+    {
+      "source": "src/services/notifications.js",
+      "kind": "structural-template",
+      "fingerprint": "aa51f2c75742f9b9e953",
+      "count": 1,
+      "preview": "`SELECT n.id, n.kind, n.user_id, CASE WHEN n.read_at IS NULL AND ${DECIDED_ASK_SETTLED_SQL} THEN COALESCE(cs.merged_at, cs.archived_at, n.created_at) ELSE n.rea"
     },
     {
       "source": "src/services/notifications.js",
