@@ -62,12 +62,24 @@ test('Haiku 4.5 is no longer an allowed model (#800)', () => {
   assert.equal(models.resolve('claude-haiku-4-5'), 'claude-opus-5-5');
 });
 
+// #3579: Sonnet 5.5 replaced Sonnet 5 in the same tier at the same price.
+// A stored pick of the retired id resolves to its successor BY NAME.
+test('the retired Sonnet 5 id resolves to Sonnet 5.5 (#3579)', () => {
+  assert.equal(models.isAllowed('claude-sonnet-5'), false);
+  assert.equal(models.resolve('claude-sonnet-5'), 'claude-sonnet-5-5');
+  assert.equal(models.RETIRED_MODELS['claude-sonnet-5'], 'claude-sonnet-5-5');
+  assert.equal(models.MODELS['claude-sonnet-5-5'].outputCostPerMTok, 10);
+  for (const successor of Object.values(models.RETIRED_MODELS)) {
+    assert.equal(models.isAllowed(successor), true, `${successor} must be offered`);
+  }
+});
+
 test('list() exposes exactly the three model ids', () => {
   const ids = models.list().map((m) => m.id).sort();
   assert.deepEqual(ids, [
     'claude-fable-5-1',
     'claude-opus-5-5',
-    'claude-sonnet-5',
+    'claude-sonnet-5-5',
   ]);
 });
 

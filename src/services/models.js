@@ -39,12 +39,14 @@
 // routes/anthropic-proxy.js) and has no reader yet.
 
 const MODELS = {
-  'claude-sonnet-5': {
-    label: 'Sonnet 5',
+  // #3579: Sonnet 5.5 replaces Sonnet 5 at the same $2 in / $10 out per
+  // MTok, so the tier, the guidance and the estimate are unchanged.
+  'claude-sonnet-5-5': {
+    label: 'Sonnet 5.5',
     tier: 'sonnet',
-    // Sonnet 5 is $2 in / $10 out per MTok; 15 was the 4.6 generation's
-    // rate, carried over when the id moved. services/llm.js's per-1k table
-    // reads the same figures.
+    // Sonnet 5.5 is $2 in / $10 out per MTok, the rate Sonnet 5 ran at;
+    // 15 was the 4.6 generation's rate, carried over when the id moved.
+    // services/llm.js's per-1k table reads the same figures.
     outputCostPerMTok: 10,
     changeSize: {
       short: 'simple, small changes',
@@ -89,6 +91,7 @@ const DEFAULT_MODEL = 'claude-opus-5-5';
 // only where a model is about to be RUN.
 const RETIRED_MODELS = Object.freeze({
   'claude-opus-5': 'claude-opus-5-5',
+  'claude-sonnet-5': 'claude-sonnet-5-5',
 });
 
 function isAllowed(m) {
