@@ -137,7 +137,7 @@ async function runAgent(ctx, { config, pool }, input) {
     endUnstarted({ agentSessionId, turnId: input.turnId, error: (mayor && mayor.error) || 'The agent could not start this turn.' });
     return { ended: 'no_payer' };
   }
-  await agentTurn.runAgentTurn({
+  const ran = await agentTurn.runAgentTurn({
     pool,
     config,
     user,
@@ -156,7 +156,9 @@ async function runAgent(ctx, { config, pool }, input) {
   // A run this item dispatched and still holds after the turn returned (its
   // dispatch failed part way): carried to its end here, as a restart would.
   await carryOn(ctx, { config, pool });
-  return { ended: 'done' };
+  // A turn that failed on a change owes "Session stopped before finishing"
+  // (its machine's turn.stalled: tellStalled).
+  return { ended: 'done', ...(ran && ran.stalled ? { stalled: ran.stalled } : {}) };
 }
 
 async function resumeAgent(ctx, { config, pool }, input) {
@@ -425,16 +427,30 @@ async function runRecover(ctx, { config, pool }, input) {
 // Delete with turn-leftovers.js's rollout parts.
 const CLAIM_RENEW = { ms: 30 * 1000 };
 
+// One renewal at a time (a tick while one is on its way is skipped). The
+// first has landed before the run starts, and `stop` waits for the one on
+// its way, so none lands after the item ends: on a busy database neither
+// held when the renewals were fired and forgotten.
 function renewClaim(pool, input) {
-  if (input.kind !== 'agent') return () => {};
-  const renew = () => pool.query(
-    `UPDATE agent_sessions SET active_turn = active_turn || jsonb_build_object('renewedAt', NOW())
-      WHERE id = $1 AND active_turn->>'id' = $2`, [Number(input.agentSessionId), String(input.turnId)])
-    .catch((err) => log.warn('turns', 'Could not renew the conversation\'s claim', { agentSessionId: input.agentSessionId, err: err.message }));
-  renew();
+  if (input.kind !== 'agent') return { ready: Promise.resolve(), stop: async () => {} };
+  let inFlight = null;
+  let stopped = false;
+  const renew = () => {
+    if (stopped || inFlight) return inFlight;
+    inFlight = pool.query(
+      `UPDATE agent_sessions SET active_turn = active_turn || jsonb_build_object('renewedAt', NOW())
+        WHERE id = $1 AND active_turn->>'id' = $2`, [Number(input.agentSessionId), String(input.turnId)])
+      .catch((err) => log.warn('turns', 'Could not renew the conversation\'s claim', { agentSessionId: input.agentSessionId, err: err.message }))
+      .finally(() => { inFlight = null; });
+    return inFlight;
+  };
+  const ready = renew();
   const timer = setInterval(renew, CLAIM_RENEW.ms);
   timer.unref?.();
-  return () => clearInterval(timer);
+  return {
+    ready,
+    stop: async () => { stopped = true; clearInterval(timer); await inFlight; },
+  };
 }
 
 // ROLLOUT-ONLY: a headless run holds its session for the whole of its item,
@@ -498,7 +514,8 @@ async function run(ctx, deps) {
   // A turn asked to resume (an older release's headless run:
   // turn-leftovers.js) starts where its row says it is, as a resumed one.
   const resumed = !!ctx.resumeFrom || (Number(ctx.lostAttempts) || 0) > 0 || input.resume === true;
-  const stopRenewing = renewClaim(deps.pool, input);
+  const renewal = renewClaim(deps.pool, input);
+  await renewal.ready;
   const releaseRun = holdHeadlessRun(input);
   const settledHere = endOnLostLease(ctx, deps.pool);
   try {
@@ -510,7 +527,7 @@ async function run(ctx, deps) {
   } finally {
     settledHere();
     releaseRun();
-    stopRenewing();
+    await renewal.stop();
     // Unless this process lost the item (the next claim carries it on), a
     // coding record it still holds is released as it ends.
     if (!(ctx.signal && ctx.signal.aborted)) {
@@ -521,4 +538,16 @@ async function run(ctx, deps) {
   }
 }
 
-module.exports = { run, ownedChange, RECOVERY_RETRY, STOP_POLL, CLAIM_RENEW, LOST_LEASE, NO_RESPONSE };
+// "Session stopped before finishing" (#4729), owed by an agent turn that
+// failed on change `sessionId` (the turn machine's turn.stalled): belled
+// unless somebody is watching the conversation now, on any process. Throws
+// when it could not be belled, so the work tries again.
+async function tellStalled({ pool }, { sessionId, agentSessionId }) {
+  const bus = require('./session-bus');
+  const watchers = await bus.subscriberCount(require('./mayor/agent-turn').busKey(Number(agentSessionId)));
+  if (watchers > 0) return { watched: true };
+  await require('../routes/sessions').notifySessionStalled(pool, Number(sessionId), { strict: true });
+  return { told: true };
+}
+
+module.exports = { run, tellStalled, ownedChange, RECOVERY_RETRY, STOP_POLL, CLAIM_RENEW, LOST_LEASE, NO_RESPONSE };

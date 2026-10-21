@@ -51,6 +51,10 @@
     "text": "{{count}} notifications",
     "description": "Small last line of a card on the Unread filter that stands for several notifications about one request or proposal whose number is not known: how many notifications the card is. {{count}} is that number."
   },
+  "story.projectMeta": {
+    "text": "<0>{{project}}</0> · {{meta}}",
+    "description": "Small last line of a notification card that sits under no project heading (the older notifications on the Unread filter, one card per request or proposal): the card's project, emphasized, then the rest of the line. Keep the <0></0> tags around the project's name. {{project}} is the project's name, like Book club; {{meta}} is the rest of the line, like \"#5580 · 3 notifications\" or \"by @ana\"."
+  },
   "history.show": {
     "text": "Show what happened",
     "description": "Accessible name of the small arrow at the foot of a notification about a request or proposal: opens, inside the card, everything that happened on it (votes, comments, updates, going live)."
@@ -210,6 +214,18 @@
   "sheet.earlier": {
     "text": "Earlier",
     "description": "Heading over the notifications that arrived before today, in the notifications sheet."
+  },
+  "sheet.yesterday": {
+    "text": "Yesterday",
+    "description": "Heading over the older notifications that arrived yesterday, on the notifications sheet's Unread filter once its older notifications are showing."
+  },
+  "sheet.lastWeek": {
+    "text": "Last 7 days",
+    "description": "Heading over the older notifications that arrived in the rest of the past week (from two to six days ago), on the notifications sheet's Unread filter once its older notifications are showing. It follows the Today and Yesterday headings."
+  },
+  "sheet.longAgo": {
+    "text": "Older",
+    "description": "Heading over the older notifications that arrived more than a week ago, on the notifications sheet's Unread filter once its older notifications are showing. It follows the Last 7 days heading."
   },
   "sheet.empty.unread": {
     "text": "You’re all caught up.",
@@ -1530,5 +1546,125 @@
   "row.chat.requestReplyUnnumbered": {
     "text": "Replied on a request",
     "description": "First line of a notification: somebody posted in the discussion of a request the viewer filed or posted in, when the request's number is not known. \"Request\" is a noun: something people asked a project for. The message is on the line below."
+  },
+  "row.projectOpened.label": {
+    "text": "It’s open: ready to use",
+    "description": "A notification row in the notifications sheet: a project the reader joined while it was still being made has just gone live. The project's name is shown on the line beside it. \"It\" is the project."
+  },
+  "ask.invite_sent.title": {
+    "text": "Hear when they join?",
+    "description": "Part of the notification ask: a small card that appears at a moment when the person has just started waiting on something, asking whether Homeroom may notify them about it. Shown inside the Homeroom phone app; its button then shows the phone's own permission prompt. This one appears right after the person sent an invite link to their project."
+  },
+  "ask.invite_sent.body": {
+    "text": "We’ll tell you when someone opens your invite, and when they join.",
+    "description": "Part of the notification ask: a small card that appears at a moment when the person has just started waiting on something, asking whether Homeroom may notify them about it. Shown inside the Homeroom phone app; its button then shows the phone's own permission prompt. The line under the title, after an invite link was sent."
+  },
+  "ask.suggestion.title": {
+    "text": "Get a ping when it’s ready?",
+    "description": "Part of the notification ask: a small card that appears at a moment when the person has just started waiting on something, asking whether Homeroom may notify them about it. Shown inside the Homeroom phone app; its button then shows the phone's own permission prompt. This one appears after the person suggested a change that Homeroom bot (the platform's assistant) is now building."
+  },
+  "ask.suggestion.body": {
+    "text": "Homeroom bot will message you when your idea is ready to try.",
+    "description": "Part of the notification ask: a small card that appears at a moment when the person has just started waiting on something, asking whether Homeroom may notify them about it. Shown inside the Homeroom phone app; its button then shows the phone's own permission prompt. The line under the title, after a suggestion Homeroom bot is building."
+  },
+  "ask.reply.title": {
+    "text": "Hear when they answer?",
+    "description": "Part of the notification ask: a small card that appears at a moment when the person has just started waiting on something, asking whether Homeroom may notify them about it. Shown inside the Homeroom phone app; its button then shows the phone's own permission prompt. This one appears after the person sent a message to someone, or in a project's chat."
+  },
+  "ask.reply.body": {
+    "text": "Get a notification when somebody replies to you.",
+    "description": "Part of the notification ask: a small card that appears at a moment when the person has just started waiting on something, asking whether Homeroom may notify them about it. Shown inside the Homeroom phone app; its button then shows the phone's own permission prompt. The line under the title, after a message was sent."
+  },
+  "ask.community.title": {
+    "text": "Hear from {{project}}?",
+    "description": "Part of the notification ask: a small card that appears at a moment when the person has just started waiting on something, asking whether Homeroom may notify them about it. Shown inside the Homeroom phone app; its button then shows the phone's own permission prompt. This one appears on the page of a project (a community) the person joined. {{project}} is the project's name."
+  },
+  "ask.community.small.body": {
+    "text": "Get a notification when the group writes here, and when a change needs your vote.",
+    "description": "Part of the notification ask: a small card that appears at a moment when the person has just started waiting on something, asking whether Homeroom may notify them about it. Shown inside the Homeroom phone app; its button then shows the phone's own permission prompt. The line under the title, on a small private project where every message notifies the group."
+  },
+  "ask.community.large.body": {
+    "text": "Get a notification when a change needs your vote, and when somebody replies to you.",
+    "description": "Part of the notification ask: a small card that appears at a moment when the person has just started waiting on something, asking whether Homeroom may notify them about it. Shown inside the Homeroom phone app; its button then shows the phone's own permission prompt. The line under the title, on a larger or public project where ordinary messages do not notify everyone."
+  },
+  "ask.project_opens.title": {
+    "text": "Get a ping when {{project}} opens?",
+    "description": "Part of the notification ask: a small card that appears at a moment when the person has just started waiting on something, asking whether Homeroom may notify them about it. Shown inside the Homeroom phone app; its button then shows the phone's own permission prompt. This one appears to somebody who joined a project that is still being made. {{project}} is the project's name."
+  },
+  "ask.project_opens.body": {
+    "text": "We’ll tell you as soon as it’s ready to use.",
+    "description": "Part of the notification ask: a small card that appears at a moment when the person has just started waiting on something, asking whether Homeroom may notify them about it. Shown inside the Homeroom phone app; its button then shows the phone's own permission prompt. The line under the title, on a project still being made."
+  },
+  "ask.notifyMe": {
+    "text": "Notify me",
+    "description": "Part of the notification ask: a small card that appears at a moment when the person has just started waiting on something, asking whether Homeroom may notify them about it. The card's main button: yes, notify me."
+  },
+  "ask.notNow": {
+    "text": "Not now",
+    "description": "Part of the notification ask: a small card that appears at a moment when the person has just started waiting on something, asking whether Homeroom may notify them about it. The card's second button: closes the card without turning anything on."
+  },
+  "ask.on": {
+    "text": "We’ll let you know",
+    "description": "Part of the notification ask: a small card that appears at a moment when the person has just started waiting on something, asking whether Homeroom may notify them about it. What the card says, with a check mark, once notifications are on."
+  },
+  "ask.off": {
+    "text": "Notifications are off for Homeroom",
+    "description": "Part of the notification ask: a small card that appears at a moment when the person has just started waiting on something, asking whether Homeroom may notify them about it. What the card says when the phone's settings refused notifications."
+  },
+  "ask.turnOn": {
+    "text": "Turn on notifications",
+    "description": "Part of the notification ask: a small card that appears at a moment when the person has just started waiting on something, asking whether Homeroom may notify them about it. A button beside that line that opens the phone's notification settings for Homeroom."
+  },
+  "ask.web.title.app_building": {
+    "text": "Get the app to hear when it’s ready",
+    "description": "Part of the notification ask: a small card that appears at a moment when the person has just started waiting on something, asking whether Homeroom may notify them about it. Shown in a web browser, where Homeroom cannot send notifications: it offers the Homeroom phone app instead. Shown while Homeroom bot builds the person's new project."
+  },
+  "ask.web.title.invite_sent": {
+    "text": "Get the app to hear when they join",
+    "description": "Part of the notification ask: a small card that appears at a moment when the person has just started waiting on something, asking whether Homeroom may notify them about it. Shown in a web browser, where Homeroom cannot send notifications: it offers the Homeroom phone app instead. Shown right after the person sent an invite link."
+  },
+  "ask.web.title.suggestion": {
+    "text": "Get the app to hear when it’s ready",
+    "description": "Part of the notification ask: a small card that appears at a moment when the person has just started waiting on something, asking whether Homeroom may notify them about it. Shown in a web browser, where Homeroom cannot send notifications: it offers the Homeroom phone app instead. Shown after a suggestion Homeroom bot is now building."
+  },
+  "ask.web.title.reply": {
+    "text": "Get the app to hear when they answer",
+    "description": "Part of the notification ask: a small card that appears at a moment when the person has just started waiting on something, asking whether Homeroom may notify them about it. Shown in a web browser, where Homeroom cannot send notifications: it offers the Homeroom phone app instead. Shown after the person sent a message."
+  },
+  "ask.web.title.community": {
+    "text": "Get the app to hear from {{project}}",
+    "description": "Part of the notification ask: a small card that appears at a moment when the person has just started waiting on something, asking whether Homeroom may notify them about it. Shown in a web browser, where Homeroom cannot send notifications: it offers the Homeroom phone app instead. Shown on a project the person joined. {{project}} is the project's name."
+  },
+  "ask.web.title.project_opens": {
+    "text": "Get the app to hear when {{project}} opens",
+    "description": "Part of the notification ask: a small card that appears at a moment when the person has just started waiting on something, asking whether Homeroom may notify them about it. Shown in a web browser, where Homeroom cannot send notifications: it offers the Homeroom phone app instead. Shown on a project still being made. {{project}} is the project's name."
+  },
+  "ask.web.body": {
+    "text": "Homeroom’s notifications come through its phone app.",
+    "description": "Part of the notification ask: a small card that appears at a moment when the person has just started waiting on something, asking whether Homeroom may notify them about it. Shown in a web browser, where Homeroom cannot send notifications: it offers the Homeroom phone app instead. The line under the title."
+  },
+  "ask.web.bodyEmail": {
+    "text": "Homeroom’s notifications come through its phone app. Until then, we’ll email you.",
+    "description": "Part of the notification ask: a small card that appears at a moment when the person has just started waiting on something, asking whether Homeroom may notify them about it. Shown in a web browser, where Homeroom cannot send notifications: it offers the Homeroom phone app instead. The line under the title, in place of the one above, when Homeroom emails the person about this moment while they have no app."
+  },
+  "ask.web.getApp": {
+    "text": "Get the app",
+    "description": "Part of the notification ask: a small card that appears at a moment when the person has just started waiting on something, asking whether Homeroom may notify them about it. Shown in a web browser, where Homeroom cannot send notifications: it offers the Homeroom phone app instead. The card's main button: opens the app's store page, or on a computer a code to scan with a phone."
+  },
+  "ask.sheet.title": {
+    "text": "Get Homeroom on your phone",
+    "description": "Title of a small sheet opened from the notification ask's Get the app button on a computer. It shows a code to scan with a phone."
+  },
+  "ask.sheet.scan": {
+    "text": "Scan this with your phone’s camera. It opens the app’s page in your phone’s store.",
+    "description": "Under that title, beside the code to scan."
+  },
+  "ask.sheet.or": {
+    "text": "Or open the store on your phone",
+    "description": "Small heading over links to the app's store pages, under the code to scan."
+  },
+  "ask.sheet.codeLabel": {
+    "text": "Code to scan for the Homeroom app",
+    "description": "Accessible name of the code image on that sheet."
   }
 }

@@ -406,7 +406,7 @@ test('the words are whole catalog entries, with descriptions and no em dash', ()
 
 // ── 2. The footer: a promise, with a small check ────────────────────────
 
-test('the maker\'s footer promises the notification, beside a small check; everyone else keeps the line', () => {
+test('the maker\'s footer promises the notification, beside a small check; a member keeps the line, with the promise under it', () => {
   const { AppView } = makeAppView();
   const mine = JSON.parse(JSON.stringify(AppView._appStatusView(building())));
   assert.equal(mine.promise, 'We’ll notify you when it’s live');
@@ -415,10 +415,14 @@ test('the maker\'s footer promises the notification, beside a small check; every
   assert.match(out, /<p data-app-first-version-promise=""[^>]*><svg[^>]*aria-hidden="true"[^>]*>[\s\S]*?<\/svg><span>We’ll notify you when it’s live<\/span><\/p>/);
   assert.doesNotMatch(out, /It opens here when it’s ready/);
   assert.doesNotMatch(out.slice(out.indexOf('data-app-first-version-promise')), /violet-|--accent|bg-/, 'quiet: nothing done is filled');
-  // Nobody tells a member (#4396): no promise for them.
+  // Since 21 Oct 2026 a member is told when it opens too (#4396:
+  // project_opened, src/services/project-opened.js): they keep the line,
+  // with the promise under it and the notification ask (`ask`).
   const member = JSON.parse(JSON.stringify(AppView._appStatusView(building({ mine: false, conversationId: null, member: true }))));
-  assert.equal('promise' in member, false);
+  assert.equal(member.promise, 'We’ll notify you when it’s live');
   assert.deepEqual(member.lines, ['It opens here when it’s ready.']);
+  assert.equal(member.ask, 'project_opens');
+  assert.match(read('src/services/homeroom-bot-dm.js'), /require\('\.\/project-opened'\)\.oweTold\(db,/);
   // Its maker is the one Homeroom bot tells it is live, in the bell.
   const dm = read('src/services/homeroom-bot-dm.js');
   assert.match(dm, /live: 'build_live',/);

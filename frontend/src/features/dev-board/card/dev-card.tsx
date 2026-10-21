@@ -418,7 +418,7 @@ export function Badge({ b }: { b: BadgeSpec }): ReactNode {
         label = (
           <>
             <span className={`attr-dot ${b.label.cls}`}></span>
-            {b.label.text}
+            <span className="dev-badge-label">{b.label.text}</span>
           </>
         );
       } else if (b.label.kind === 'avatar') {

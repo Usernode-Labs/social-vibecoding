@@ -631,11 +631,11 @@ test('an element shot must fit the screen it was taken on', () => {
   assert.doesNotThrow(() => shots.checkElementSize(story, target('mobile', 'screen'), size(390, 5000)));
   // Saved before its screen shot in a run taken at device density, an
   // element may be as dense as the screen's browser saves: 3x on a phone
-  // screen, 2x on a desktop one. Any other run's browsers save at 1x.
+  // screen and on a desktop one. Any other run's browsers save at 1x.
   const dense = { deviceDensity: true };
   assert.doesNotThrow(() => shots.checkElementSize(story, target('mobile'), size(1100, 300), null, dense));
-  assert.doesNotThrow(() => shots.checkElementSize(story, target('desktop'), size(2400, 300), null, dense));
-  assert.throws(() => shots.checkElementSize(story, target('desktop'), size(2600, 300), null, dense),
+  assert.doesNotThrow(() => shots.checkElementSize(story, target('desktop'), size(3800, 300), null, dense));
+  assert.throws(() => shots.checkElementSize(story, target('desktop'), size(3900, 300), null, dense),
     refusal('element_shot_too_wide'));
   assert.throws(() => shots.checkElementSize(story, target('mobile'), size(1100, 300)), refusal('element_shot_too_wide'));
   // A 3x screen shot, and the message speaks in the screen's CSS pixels.
@@ -651,5 +651,5 @@ test('a still\'s density is a whole multiple of its screen\'s width, else 1', ()
   for (const [image, screen] of [[1280, 390], [600, 390], [390, 0], [390, undefined], [null, 390], [390 * 5, 390]]) {
     assert.equal(shots.densityFor(image, screen), 1, `${image}/${screen}`);
   }
-  assert.deepEqual([shots.PHONE_DENSITY, shots.DESKTOP_DENSITY], [3, 2]);
+  assert.deepEqual([shots.PHONE_DENSITY, shots.DESKTOP_DENSITY], [3, 3]);
 });

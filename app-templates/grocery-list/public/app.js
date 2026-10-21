@@ -2,107 +2,98 @@
 // platform token the frame was opened with, which is how the server knows
 // who you are.
 //
-// One list the whole project shares, working the way a list works in
-// Homeroom's Todo List app:
+// One list the whole project shares, working and looking the way a list
+// does in Homeroom's Todo List app:
+//   - A fixed nav bar (the native UI kit's), with undo, redo and the menu;
+//     the large title folds into it as the list scrolls. The menu opens
+//     over the page: a sheet on a phone, a dropdown on a computer.
 //   - General items first, with no heading, then each category. Quick-add
-//     puts an item at the top of General; a category's + puts one at the top
-//     of that category.
+//     puts an item at the top of General; a category's + puts one at the
+//     top of that category.
 //   - Ticking keeps an item's place: each category shows its open items,
 //     then "N done" and the ticked ones below, each in their own order. Who
 //     last ticked or unticked an item shows on it.
+//   - Swipe a row left for Complete, Rename and Delete (a full swipe
+//     deletes); swipe a category's name for Rename and Delete. Tap an item's
+//     words to edit them.
+//   - Press and hold an item (or use its handle with a mouse) to drag it
+//     within or between categories; categories move by their handle. Not
+//     while searching, not items while due dates are on (dates set the
+//     order then), and not offline.
 //   - A category folds away by tapping its name, and a finished one starts
 //     folded. Which ones are folded is remembered on this device, and so is
-//     whether ticked items show at all; a category's own "N done" overrides
-//     that until the page is reloaded.
-//   - Drag to reorder: items within and between categories (press and hold
-//     on a touch screen), categories by their handle. Not while searching,
-//     and not items while due dates are on, because then dates set the order.
+//     whether ticked items show at all.
 //   - Undo and redo (up to 50 steps) for adding, deleting, editing, ticking
 //     and due dates; also Cmd/Ctrl+Z and Shift+Cmd/Ctrl+Z or Ctrl+Y.
-//   - Search filters as you type; a category whose name matches shows all of
-//     its items.
+//   - Search filters as you type; a category whose name matches shows all
+//     of its items. Pull the list down to fetch it again.
 //   - Markdown export and import, in Todo List's format.
-// Changes show at once and go to the server in order behind the scenes.
+//   - Offline: the list opens from the copy saved on this device (the
+//     service worker in sw.js keeps the page itself). Adding, ticking,
+//     editing, due dates and deleting work offline too: each change shows at
+//     once, is saved on this device in a queue, and is sent, in order, the
+//     moment the connection is back. A strip under the nav bar says which
+//     world the list is in. Categories, reordering, due dates on or off and
+//     import need a connection, and say so.
 // Other people's changes arrive the moment they are made (live updates,
 // public/live-updates.js).
 //
-// Rendering builds elements and sets textContent, never innerHTML with
+// Rendering builds elements and sets textContent, never markup with
 // people's words in it, so an item called "<b>hi</b>" shows exactly that.
 // Class names are whole literals so the Tailwind build can see them.
 
 (function () {
   var token = new URLSearchParams(window.location.search).get('token') || '';
-  // A touch screen: no drag handles on items (press and hold instead), and
-  // leaving an add field with something typed in it adds it.
+  // A touch screen: no drag handles on items (press and hold instead),
+  // swipe for Rename and Delete, and leaving an add field with something
+  // typed in it adds it.
   var TOUCH = window.matchMedia('(hover: none)').matches;
   var HISTORY_MAX = 50;
   var KEY_COLLAPSED = 'grocery-list:collapsed';
   var KEY_SHOW_COMPLETED = 'grocery-list:showCompleted';
+  var KEY_LAST_USER = 'grocery-list:last-user';
+  var LOAD_TIMEOUT_MS = 12000; // a read the screen is waiting to paint
+  var WRITE_TIMEOUT_MS = 8000; // a queued write, retried anyway
+  var PROBE_TIMEOUT_MS = 3000; // is the server there at all?
+  var HINT_MS = 700; // before an unsent change admits it is waiting
 
   var el = {
+    bar: document.getElementById('bar'),
+    largeTitle: document.getElementById('large-title'),
     undo: document.getElementById('undo'),
     redo: document.getElementById('redo'),
     menuButton: document.getElementById('menu-button'),
     menu: document.getElementById('menu'),
-    dueSwitch: document.getElementById('due-switch'),
+    strip: document.getElementById('offline-chip'),
     activity: document.getElementById('activity'),
-    exportPanel: document.getElementById('export'),
-    exportText: document.getElementById('export-text'),
-    importPanel: document.getElementById('import'),
-    importText: document.getElementById('import-text'),
     search: document.getElementById('search'),
+    searchIcon: document.getElementById('search-icon'),
     searchClear: document.getElementById('search-clear'),
     quickAdd: document.getElementById('quick-add'),
     loading: document.getElementById('loading'),
     error: document.getElementById('error'),
+    errorText: document.getElementById('error-text'),
     empty: document.getElementById('empty'),
     noResults: document.getElementById('no-results'),
     categories: document.getElementById('categories'),
     newCategory: document.getElementById('new-category'),
-    toast: document.getElementById('toast'),
-    toastText: document.getElementById('toast-text'),
   };
 
   var data = null; // { me, now, list, categories, items, activity }
   var loaded = false;
+  var showingSaved = false; // what is on screen came from this device's copy
 
   // What is open on screen.
   var query = '';
   var catDoneOverrides = {}; // category id -> show its ticked items (this visit)
   var openAdders = {}; // category id -> its add field is open
   var editingId = null; // the item whose text is being edited
-  var dueId = null; // the item whose due date is being set
   var renamingCat = null; // the category being renamed
-  var armed = 0; // buttons waiting for their second tap
+
+  function kit() { return window.unNative || null; }
 
   // ── Small helpers ────────────────────────────────────────────────────────
 
-  function api(method, url, body) {
-    var headers = { 'x-usernode-token': token };
-    // A preview opened at a chosen moment tells the server what time it is
-    // there (req.now; "Time-dependent features" in the platform conventions).
-    if (window.usernode && window.usernode.previewNow) headers['x-usernode-now'] = window.usernode.now().toISOString();
-    if (body) headers['Content-Type'] = 'application/json';
-    return fetch(url, { method: method, headers: headers, body: body ? JSON.stringify(body) : undefined })
-      .then(function (res) {
-        return res.json().catch(function () { return {}; }).then(function (d) {
-          if (!res.ok) {
-            var err = new Error(d.error === 'account_required'
-              ? 'Make an account to join in.'
-              : d.error || 'Something went wrong (' + res.status + ').');
-            err.status = res.status;
-            throw err;
-          }
-          return d;
-        });
-      }, function () {
-        var err = new Error("Couldn't reach the list. Check your connection.");
-        err.status = 0;
-        throw err;
-      });
-  }
-
-  /** A tiny element builder: h('p', 'text-small', 'Hello'). */
   function h(tag, className, text) {
     var node = document.createElement(tag);
     if (className) node.className = className;
@@ -126,9 +117,9 @@
     redo: 'M12 4l4 4-4 4M16 8H8a4 4 0 000 8h3',
     menu: 'M4 6h12M4 10h12M4 14h12',
     grip: 'M7.5 5h.01M12.5 5h.01M7.5 10h.01M12.5 10h.01M7.5 15h.01M12.5 15h.01',
+    search: 'M9 15a6 6 0 100-12 6 6 0 000 12zM17 17l-3.5-3.5',
   };
 
-  /** A small icon drawn as an SVG, from PATHS. */
   function icon(kind, className) {
     var ns = 'http://www.w3.org/2000/svg';
     var svg = document.createElementNS(ns, 'svg');
@@ -147,63 +138,25 @@
   }
 
   function iconButton(kind, label, onClick, className) {
-    var b = button(className || 'flex h-11 w-10 shrink-0 items-center justify-center rounded-lg text-muted hover:bg-raised hover:text-fg', null, onClick);
+    var b = button(className || 'flex h-11 w-9 shrink-0 items-center justify-center rounded-lg text-muted hover:text-fg', null, onClick);
     b.setAttribute('aria-label', label);
     b.title = label;
     b.appendChild(icon(kind, 'h-4 w-4'));
     return b;
   }
 
-  /**
-   * A tap that cannot be undone asks for a second one. window.confirm() is no
-   * use here: Homeroom's app frame does not allow dialogs, so it returns false
-   * without showing anything. The first tap says what the second will do, and
-   * the button goes back to how it was after a few seconds.
-   */
-  function tapTwice(btn, armedLabel, action) {
-    var timer = null;
-    var resting = null;
-    var label = null;
-    var className = null;
-    function rest() {
-      timer = null;
-      armed--;
-      btn.textContent = '';
-      resting.forEach(function (n) { btn.appendChild(n); });
-      if (label) btn.setAttribute('aria-label', label);
-      btn.className = className;
-    }
-    btn.addEventListener('click', function () {
-      if (timer) {
-        clearTimeout(timer);
-        rest();
-        action();
-        return;
-      }
-      armed++;
-      resting = Array.prototype.slice.call(btn.childNodes);
-      label = btn.getAttribute('aria-label');
-      className = btn.className;
-      btn.textContent = typeof armedLabel === 'function' ? armedLabel() : armedLabel;
-      btn.setAttribute('aria-label', btn.textContent);
-      btn.className = 'btn-secondary shrink-0 whitespace-nowrap border-0 bg-transparent px-2 text-small text-danger';
-      timer = setTimeout(rest, 4000);
-    });
-  }
-
-  var toastTimer = null;
+  // Short feedback: the kit's toast (a capsule at the bottom on an iPhone or
+  // a computer, a snackbar on Android).
   function toast(message) {
-    el.toastText.textContent = message;
-    el.toast.hidden = false;
-    clearTimeout(toastTimer);
-    toastTimer = setTimeout(function () { el.toast.hidden = true; }, 3200);
+    if (kit()) kit().toast(message);
   }
 
-  function stored(key) {
-    try { return localStorage.getItem(key); } catch (e) { return null; }
-  }
-  function store(key, value) {
-    try { localStorage.setItem(key, value); } catch (e) { /* this visit only */ }
+  // A question with a destructive answer, as the platform asks it: an
+  // action sheet. Homeroom's app frame allows no browser dialogs.
+  function askToConfirm(title, label) {
+    if (!kit()) return Promise.resolve(true);
+    return kit().actionSheet({ title: title, actions: [{ label: label, destructive: true }], cancelLabel: 'Cancel' })
+      .then(function (chosen) { return !!chosen; });
   }
 
   // The moment it is for the viewer: a preview's chosen time, or the device's.
@@ -211,7 +164,7 @@
     return window.usernode && window.usernode.previewNow ? window.usernode.now() : new Date();
   }
 
-  function me() { return data && data.me ? data.me.username : null; }
+  function me() { return data && data.me ? data.me.username : (identity && identity.username) || null; }
   function datesOn() { return !!(data && data.list.due_dates_enabled); }
   function findItem(id) {
     for (var i = 0; i < data.items.length; i++) if (data.items[i].id === id) return data.items[i];
@@ -223,6 +176,11 @@
   }
   function defaultCat() {
     return data.categories.filter(function (c) { return c.is_default; })[0] || null;
+  }
+  function copy(o) {
+    var out = {};
+    for (var k in o) out[k] = o[k];
+    return out;
   }
 
   // General first, then the categories in their order.
@@ -258,6 +216,453 @@
     return data.items
       .filter(function (i) { return i.category_id === catId && !!i.checked === checked; })
       .sort(itemOrder);
+  }
+
+  // ── Who this is, and this device's storage ──────────────────────────────
+  //
+  // The token says who is signed in, for the server; the page reads its
+  // name and id only to keep each person's saved copy and queued changes
+  // apart on a shared device. An offline load has no token (the shell
+  // cannot make one with no connection), so the page remembers who last
+  // opened it, never the token itself, and uses that. Nothing of anybody's
+  // is cleared on a load that does not know who it is.
+
+  var claims = (function () {
+    try { return JSON.parse(atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/'))); } catch (e) { return null; }
+  })();
+  var KNOWN = !!(claims && claims.id != null);
+
+  // Storage that works, or memory standing in for it: a device that refuses
+  // this frame its storage still runs the list, and the strip says the
+  // queue is only kept until the app is closed.
+  var memory = {};
+  var DURABLE = (function () {
+    try {
+      localStorage.setItem('grocery-list:probe', '1');
+      var ok = localStorage.getItem('grocery-list:probe') === '1';
+      localStorage.removeItem('grocery-list:probe');
+      return ok;
+    } catch (e) { return false; }
+  })();
+  function stored(key) {
+    if (!DURABLE) return Object.prototype.hasOwnProperty.call(memory, key) ? memory[key] : null;
+    try { return localStorage.getItem(key); } catch (e) { return null; }
+  }
+  function store(key, value) {
+    if (!DURABLE) { memory[key] = value; return true; }
+    try { localStorage.setItem(key, value); return true; } catch (e) { return false; }
+  }
+  function storedJSON(key) { try { return JSON.parse(stored(key)); } catch (e) { return null; } }
+
+  var identity = KNOWN ? { id: claims.id, username: claims.username } : storedJSON(KEY_LAST_USER);
+  if (KNOWN) store(KEY_LAST_USER, JSON.stringify(identity));
+  var NS = 'grocery-list:u' + (identity && identity.id != null ? identity.id : 'anon') + ':';
+  var KEY_SAVED = NS + 'list';
+  var KEY_QUEUE = NS + 'queue';
+
+  // Another person's saved copy and queue go once this load knows who it is.
+  if (DURABLE && KNOWN) {
+    try {
+      Object.keys(localStorage).forEach(function (k) {
+        if (/^grocery-list:u[^:]+:/.test(k) && k.indexOf(NS) !== 0) localStorage.removeItem(k);
+      });
+    } catch (e) { /* the list still works */ }
+  }
+
+  function saveCopy() { if (data) store(KEY_SAVED, JSON.stringify(data)); }
+
+  // ── Talking to the server ────────────────────────────────────────────────
+
+  // Every request has a deadline. A failure says what kind it was: no
+  // connection (network), a connection that did not answer in time
+  // (timeout), or the server's own answer (status).
+  function api(method, url, body, timeoutMs) {
+    var headers = { 'x-usernode-token': token };
+    // A preview opened at a chosen moment tells the server what time it is
+    // there (req.now; "Time-dependent features" in the platform conventions).
+    if (window.usernode && window.usernode.previewNow) headers['x-usernode-now'] = window.usernode.now().toISOString();
+    if (body) headers['Content-Type'] = 'application/json';
+    var ctl = typeof AbortController === 'function' ? new AbortController() : null;
+    var timedOut = false;
+    var timer = ctl ? setTimeout(function () { timedOut = true; ctl.abort(); }, timeoutMs || LOAD_TIMEOUT_MS) : null;
+    return fetch(url, { method: method, headers: headers, body: body ? JSON.stringify(body) : undefined, signal: ctl ? ctl.signal : undefined })
+      .then(function (res) {
+        clearTimeout(timer);
+        return res.json().catch(function () { return {}; }).then(function (d) {
+          if (!res.ok) {
+            var err = new Error(d.error === 'account_required'
+              ? 'Make an account to join in.'
+              : d.error || 'Something went wrong (' + res.status + ').');
+            err.status = res.status;
+            throw err;
+          }
+          // Anything that came back is the connection working.
+          if ((conn === 'offline' || conn === 'slow') && !replaying && !queue().length) markOnline();
+          return d;
+        });
+      }, function () {
+        clearTimeout(timer);
+        var err;
+        if (timedOut) {
+          markSlow();
+          err = new Error('The connection is slow. Changes will keep trying.');
+          err.timeout = true;
+        } else {
+          markOffline();
+          err = new Error('You are offline.');
+        }
+        err.network = true;
+        err.status = 0;
+        throw err;
+      });
+  }
+
+  // The server's health check, which needs no sign-in: is it there at all?
+  function reachable() {
+    var ctl = typeof AbortController === 'function' ? new AbortController() : null;
+    var timer = ctl ? setTimeout(function () { ctl.abort(); }, PROBE_TIMEOUT_MS) : null;
+    return fetch('/health', { cache: 'no-store', signal: ctl ? ctl.signal : undefined })
+      .then(function (res) { clearTimeout(timer); return res.ok; }, function () { clearTimeout(timer); return false; });
+  }
+
+  // ── The connection, and the strip that says so ──────────────────────────
+  //
+  // 'online', 'slow' (connected but not answering in time), 'offline',
+  // 'syncing' (sending what waited) or 'blocked' (the server did not accept
+  // this load's sign-in, so the queue waits for the next load's).
+
+  var conn = navigator.onLine === false ? 'offline' : 'online';
+  function isOnline() { return conn !== 'offline'; }
+  function markOffline() {
+    var was = conn;
+    conn = 'offline';
+    renderStrip();
+    if (was !== 'offline') { wireNative(); scheduleReplay(); }
+  }
+  function markSlow() {
+    if (conn !== 'offline' && conn !== 'blocked') conn = 'slow';
+    renderStrip();
+  }
+  function markOnline() {
+    var was = conn;
+    conn = 'online';
+    renderStrip();
+    if (was === 'offline') wireNative();
+  }
+
+  var flash = null;
+  var flashTimer = null;
+  function flashSynced() {
+    flash = 'All changes synced';
+    renderStrip();
+    clearTimeout(flashTimer);
+    flashTimer = setTimeout(function () { flash = null; renderStrip(); }, 2200);
+  }
+
+  function changes(n) { return n + (n === 1 ? ' change' : ' changes'); }
+
+  function stripState() {
+    if (flash) return { text: flash };
+    var n = queue().length;
+    // An offline load has no sign-in to send with; the next load has one.
+    if (conn === 'blocked') {
+      return token ? { text: changes(n) + ' waiting: tap to try again', tap: true } : { text: changes(n) + ' waiting: they sync when the list reopens online' };
+    }
+    if (conn === 'offline') {
+      // Never promise what this device cannot keep.
+      if (!DURABLE) return { text: 'Offline: changes are kept until you close the app' };
+      if (n) return { text: 'Offline: ' + changes(n) + ' will sync' };
+      return { text: showingSaved || loaded ? 'Offline: showing the list saved on this device' : 'Offline: nothing saved on this device yet' };
+    }
+    if (conn === 'slow') return n ? { text: 'Slow connection: ' + changes(n) + ' will sync', tap: true } : { text: 'Slow connection' };
+    if (conn === 'syncing') {
+      if (!syncVisible && !hintShown) return null;
+      return { text: n > 1 ? 'Syncing ' + changes(n) + '…' : 'Saving…' };
+    }
+    if (n && hintShown) return { text: n === 1 ? 'Saving…' : changes(n) + ' waiting to sync', tap: true };
+    return null;
+  }
+
+  function renderStrip() {
+    var st = stripState();
+    document.body.classList.toggle('is-offline', conn === 'offline');
+    el.strip.hidden = !st;
+    el.strip.textContent = st ? st.text : '';
+    el.strip.classList.toggle('tappable', !!(st && st.tap));
+  }
+  el.strip.addEventListener('click', function () {
+    var st = stripState();
+    if (st && st.tap) drain(true);
+  });
+
+  // Nothing flashes for a change that lands quickly: a row only shows it is
+  // waiting, and the strip only says "Saving…", once a change has been
+  // unsent for a moment.
+  var hintShown = false;
+  var hintTimer = null;
+  function syncHint(queued) {
+    if (queued) {
+      if (!hintShown && !hintTimer) {
+        hintTimer = setTimeout(function () {
+          hintTimer = null;
+          hintShown = true;
+          if (replaying) syncVisible = true;
+          renderStrip();
+          render();
+        }, HINT_MS);
+      }
+      return;
+    }
+    clearTimeout(hintTimer);
+    hintTimer = null;
+    if (hintShown) { hintShown = false; render(); }
+  }
+
+  // ── The queue of changes ─────────────────────────────────────────────────
+  //
+  // Every item change (add, tick, edit, due date, delete) shows at once and
+  // is saved in a queue on this device, then sent to the server one at a
+  // time, in order, by drain(). With no connection the queue waits, and is
+  // still there if the app is closed; it is sent when the connection is
+  // back (the shell reloads the frame then, with a fresh sign-in). A new
+  // item has a temporary (negative) id until the server answers, and every
+  // change queued behind it is pointed at the real one. An add carries an
+  // idempotency key (client_op_id), so a retried add is the same item.
+
+  var memoryQueue = [];
+  function queue() { return DURABLE ? (storedJSON(KEY_QUEUE) || []) : memoryQueue; }
+  function saveQueue(q) {
+    var ok = DURABLE ? store(KEY_QUEUE, JSON.stringify(q)) : ((memoryQueue = q), true);
+    syncHint(q.length > 0);
+    renderStrip();
+    return ok;
+  }
+
+  // Temporary ids start from the clock, so they never meet ids left in a
+  // queue saved by an earlier visit.
+  var tempSeq = -(Date.now() % 1e9) - 1;
+  function isTemp(id) { return id < 0; }
+  function opId() { return 'g' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10); }
+  var generation = 0; // bumped by every local change, so a stale read is dropped
+
+  // Saves the change (already on screen) and starts sending. False when it
+  // could not be saved, and the caller puts the screen back.
+  function commit(op) {
+    generation++;
+    op.attempts = 0;
+    if (!saveQueue(coalesce(queue(), op))) {
+      toast('There is no room on this device to keep that change.');
+      return false;
+    }
+    drain();
+    return true;
+  }
+
+  // Redundant changes collapse: a tick and an untick, or two renames, send
+  // one request. The change being sent right now is left alone.
+  function coalesce(q, op) {
+    var first = replaying ? 1 : 0;
+    if (op.type === 'toggle' || op.type === 'edit' || op.type === 'due') {
+      for (var i = q.length - 1; i >= first; i--) {
+        if (q[i].type === op.type && q[i].itemId === op.itemId) {
+          var merged = copy(op);
+          merged.undo = q[i].undo || op.undo;
+          q[i] = merged;
+          return q;
+        }
+      }
+    } else if (op.type === 'delete') {
+      // A delete replaces every unsent change to the item; an item whose add
+      // never went out simply never existed.
+      var cancelsAdd = false;
+      for (var j = q.length - 1; j >= first; j--) {
+        if (q[j].itemId !== op.itemId) continue;
+        if (q[j].type === 'add') cancelsAdd = true;
+        q.splice(j, 1);
+      }
+      if (cancelsAdd) return q;
+    }
+    q.push(op);
+    return q;
+  }
+
+  // Which items have unsent changes (a quiet mark on their row).
+  function pendingIds() {
+    var ids = {};
+    queue().forEach(function (o) { ids[o.itemId] = true; });
+    return ids;
+  }
+
+  // What the server's copy of the list looks like with this device's unsent
+  // changes on top, so a read never undoes on screen what is still queued.
+  function project(payload) {
+    queue().forEach(function (op) {
+      var i;
+      if (op.type === 'add') {
+        if (op.item && !payload.items.some(function (x) { return x.id === op.itemId; })) payload.items.push(copy(op.item));
+        return;
+      }
+      if (op.type === 'delete') {
+        payload.items = payload.items.filter(function (x) { return x.id !== op.itemId; });
+        return;
+      }
+      for (i = 0; i < payload.items.length; i++) {
+        if (payload.items[i].id !== op.itemId) continue;
+        var it = payload.items[i];
+        for (var k in op.body) it[k] = op.body[k];
+        if (op.type === 'toggle') {
+          it.completed_at = op.body.checked ? (op.at || it.completed_at) : null;
+          it.last_checked_by = op.by || it.last_checked_by;
+        }
+      }
+    });
+    return payload;
+  }
+
+  // A change the server refused for good comes off the screen too.
+  function applyUndo(op) {
+    if (!data) return;
+    if (op.type === 'add') {
+      data.items = data.items.filter(function (i) { return i.id !== op.itemId; });
+    } else if (op.type === 'delete') {
+      if (op.undo && !findItem(op.itemId)) data.items.push(copy(op.undo));
+    } else if (op.undo) {
+      var item = findItem(op.itemId);
+      if (item) for (var k in op.undo) item[k] = op.undo[k];
+    }
+    saveCopy();
+    render();
+  }
+
+  // ── Sending what waited ──────────────────────────────────────────────────
+
+  var REPLAY_IDLE_MS = 15000;
+  var BACKOFF_START_MS = 5000;
+  var BACKOFF_MAX_MS = 30000;
+  var MAX_ATTEMPTS = 5;
+  var replayTimer = null;
+  var replaying = false;
+  var syncVisible = false;
+  var backoff = BACKOFF_START_MS;
+
+  function scheduleReplay(delay) {
+    clearTimeout(replayTimer);
+    replayTimer = setTimeout(function () { replayTimer = null; drain(); }, delay || REPLAY_IDLE_MS);
+  }
+
+  function drain(force) { attemptReplay(force).catch(function () {}); }
+
+  // One change, sent. An add's answer points every change queued behind it,
+  // and the row on screen, at the item's real id.
+  function runOp(op) {
+    if (op.type === 'add') {
+      return api('POST', op.path, op.body, WRITE_TIMEOUT_MS).then(function (d) {
+        saveQueue(queue().slice(1).map(function (o) {
+          if (o.itemId !== op.itemId) return o;
+          var moved = copy(o);
+          moved.itemId = d.item.id;
+          return moved;
+        }));
+        adopt(op.itemId, d.item);
+      });
+    }
+    if (isTemp(op.itemId)) { saveQueue(queue().slice(1)); return Promise.resolve(); }
+    var path = '/api/items/' + op.itemId;
+    return api(op.type === 'delete' ? 'DELETE' : 'PATCH', path, op.type === 'delete' ? null : op.body, WRITE_TIMEOUT_MS)
+      .then(function () { saveQueue(queue().slice(1)); });
+  }
+
+  function attemptReplay(force) {
+    if (replaying) return Promise.resolve();
+    if (!queue().length) {
+      if (conn === 'blocked') markOnline();
+      // Nothing waiting, but while offline keep looking, so the strip clears
+      // itself the moment the connection is back.
+      if (conn !== 'offline') { renderStrip(); return Promise.resolve(); }
+      return reachable().then(function (up) {
+        if (!up) { scheduleReplay(); return; }
+        markOnline();
+        refresh(true);
+      });
+    }
+    if (!force && navigator.onLine === false) { markOffline(); return Promise.resolve(); }
+    var check = conn === 'offline' || force ? reachable() : Promise.resolve(true);
+    return check.then(function (up) {
+      if (!up) { markOffline(); return; }
+      replaying = true;
+      // Catching up after a bad connection says so at once; an ordinary
+      // change stays quiet unless it turns out slow.
+      syncVisible = conn === 'offline' || conn === 'slow' || conn === 'blocked';
+      conn = 'syncing';
+      renderStrip();
+      var dropped = 0;
+      function next() {
+        var q = queue();
+        if (!q.length) return Promise.resolve(true);
+        var op = q[0];
+        return runOp(op).then(next, function (err) {
+          if (err.timeout) { markSlow(); scheduleReplay(BACKOFF_START_MS); return false; }
+          if (err.network) { markOffline(); scheduleReplay(); return false; }
+          if (err.status === 401) {
+            // This load's sign-in is not accepted (an offline load has
+            // none): keep everything for the next load, which has one.
+            conn = 'blocked';
+            renderStrip();
+            scheduleReplay(BACKOFF_MAX_MS);
+            return false;
+          }
+          if ((err.status === 429 || err.status >= 500) && (op.attempts || 0) + 1 < MAX_ATTEMPTS) {
+            var q2 = queue();
+            q2[0] = copy(op);
+            q2[0].attempts = (op.attempts || 0) + 1;
+            saveQueue(q2);
+            backoff = Math.min(backoff * 2, BACKOFF_MAX_MS);
+            conn = 'online';
+            scheduleReplay(backoff);
+            return false;
+          }
+          // Refused for good (the item was deleted by somebody else, say):
+          // it comes off the screen rather than blocking every later change.
+          dropped++;
+          saveQueue(queue().slice(1));
+          applyUndo(op);
+          return next();
+        });
+      }
+      return next().then(function (drained) {
+        replaying = false;
+        if (conn === 'syncing') conn = 'online';
+        if (dropped) toast(changes(dropped) + " couldn't be applied (the item was deleted)");
+        if (drained) {
+          backoff = BACKOFF_START_MS;
+          clearTimeout(replayTimer);
+          if (!dropped && syncVisible) flashSynced();
+          markOnline();
+          refresh(true);
+        }
+        renderStrip();
+      });
+    });
+  }
+
+  window.addEventListener('online', function () { drain(true); });
+  window.addEventListener('offline', markOffline);
+
+  // The server's answer to an add: the item's real id, everywhere it is used.
+  function adopt(tempId, item) {
+    if (!data) return;
+    var local = findItem(tempId);
+    if (local) {
+      local.id = item.id;
+      local.sort_order = item.sort_order;
+    }
+    undoStack.concat(redoStack).forEach(function (e) { if (e.itemId === tempId) e.itemId = item.id; });
+    if (editingId === tempId) editingId = item.id;
+    Array.prototype.forEach.call(document.querySelectorAll('[data-focus-key$=":' + tempId + '"]'), function (n) {
+      n.setAttribute('data-focus-key', n.getAttribute('data-focus-key').replace(/:-\d+$/, ':' + item.id));
+    });
+    saveCopy();
+    render();
   }
 
   // ── Showing ticked items, folding categories ────────────────────────────
@@ -349,100 +754,7 @@
   function searchText() { return query.trim().toLowerCase(); }
   function searchActive() { return !!searchText(); }
 
-  // ── Sending changes ──────────────────────────────────────────────────────
-  //
-  // Every item change shows at once and joins a queue that goes to the server
-  // one request at a time, in order. A new item has a temporary (negative) id
-  // until the server answers; anything queued behind it uses the real one.
-
-  var queue = [];
-  var sending = false;
-  var failures = [];
-  var tempSeq = -1;
-  var realIds = {};
-  var generation = 0; // bumped by every local change, so a stale refresh is dropped
-
-  function isTemp(id) { return id < 0; }
-  function resolveId(id) { return isTemp(id) ? (realIds[id] || null) : id; }
-  function opId() { return 'g' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10); }
-
-  function commit(op) {
-    generation++;
-    // Deleting an item whose add has not gone out yet: drop both and send nothing.
-    if (op.type === 'delete' && isTemp(op.itemId) && !realIds[op.itemId]) {
-      var start = sending ? 1 : 0;
-      var waiting = queue.slice(start).some(function (o) { return o.type === 'add' && o.itemId === op.itemId; });
-      if (waiting) {
-        queue = queue.filter(function (o, i) { return i < start || o.itemId !== op.itemId; });
-        return;
-      }
-    }
-    queue.push(op);
-    pump();
-  }
-
-  function pump() {
-    if (sending || !queue.length) return;
-    var op = queue[0];
-    var creates = op.type === 'add';
-    var id = creates || op.itemId == null ? null : resolveId(op.itemId);
-    // Its item's add never reached the server, so there is nothing to change.
-    if (!creates && op.itemId != null && id == null) {
-      queue.shift();
-      pump();
-      return;
-    }
-    sending = true;
-    send(op, id, 0);
-  }
-
-  function send(op, id, attempt) {
-    api(op.method, op.path.replace('{id}', id), op.body).then(function (d) {
-      if (op.type === 'add') adopt(op.itemId, d.item);
-      sent();
-    }, function (err) {
-      // A dropped connection or a busy server is worth a few more tries.
-      if ((err.status === 0 || err.status === 429 || err.status >= 500) && attempt < 4) {
-        setTimeout(function () { send(op, id, attempt + 1); }, 2000 * Math.pow(2, attempt));
-        return;
-      }
-      failures.push(err);
-      sent();
-    });
-  }
-
-  function sent() {
-    queue.shift();
-    sending = false;
-    if (queue.length) { pump(); return; }
-    if (!failures.length) return;
-    // What the server refused is put back the way the server has it.
-    var gone = failures.filter(function (e) { return e.status === 404; }).length;
-    toast(gone === failures.length
-      ? (gone === 1 ? "1 change couldn't be applied (the item was deleted)" : gone + " changes couldn't be applied (the item was deleted)")
-      : failures[failures.length - 1].message);
-    failures = [];
-    refresh(true);
-  }
-
-  // The server's answer to an add: the item's real id, everywhere it is used.
-  function adopt(tempId, item) {
-    realIds[tempId] = item.id;
-    var local = findItem(tempId);
-    if (local) {
-      local.id = item.id;
-      local.sort_order = item.sort_order;
-    }
-    undoStack.concat(redoStack).forEach(function (e) { if (e.itemId === tempId) e.itemId = item.id; });
-    if (editingId === tempId) editingId = item.id;
-    if (dueId === tempId) dueId = item.id;
-    Array.prototype.forEach.call(document.querySelectorAll('[data-focus-key$=":' + tempId + '"]'), function (n) {
-      n.setAttribute('data-focus-key', n.getAttribute('data-focus-key').replace(/:-\d+$/, ':' + item.id));
-    });
-    render();
-  }
-
-  // ── Item changes ─────────────────────────────────────────────────────────
+  // ── Item changes (offline too) ───────────────────────────────────────────
 
   // A new item's place: the top of its category's open items.
   function localNewItem(id, catId, text) {
@@ -458,11 +770,13 @@
     var tempId = tempSeq--;
     var item = localNewItem(tempId, cat.id, text);
     data.items.push(item);
-    commit({
-      type: 'add', itemId: tempId, method: 'POST', path: quick ? '/api/items' : '/api/categories/' + cat.id + '/items',
-      body: { text: text, client_op_id: opId() },
+    var ok = commit({
+      type: 'add', itemId: tempId, path: quick ? '/api/items' : '/api/categories/' + cat.id + '/items',
+      body: { text: text, client_op_id: opId() }, item: copy(item),
     });
+    if (!ok) { data.items = data.items.filter(function (i) { return i !== item; }); render(); return null; }
     record({ kind: 'add', itemId: tempId, snapshot: copy(item) });
+    saveCopy();
     render();
     return tempId;
   }
@@ -470,10 +784,12 @@
   function toggleItem(id, checked) {
     var item = findItem(id);
     if (!item || !!item.checked === checked) return;
-    commit({ type: 'toggle', itemId: id, method: 'PATCH', path: '/api/items/{id}', body: { checked: checked } });
+    var before = { checked: item.checked, completed_at: item.completed_at, last_checked_by: item.last_checked_by };
+    var at = clock().toISOString();
+    if (!commit({ type: 'toggle', itemId: id, body: { checked: checked }, undo: before, at: at, by: me() })) { render(); return; }
     record({ kind: 'toggle', itemId: id, before: { checked: !checked }, after: { checked: checked } });
     item.checked = checked;
-    item.completed_at = checked ? clock().toISOString() : null;
+    item.completed_at = checked ? at : null;
     item.last_checked_by = me() || item.last_checked_by;
     // Ticking the last open item: with ticked items showing, the category
     // stays open; with them hidden, it folds.
@@ -481,6 +797,7 @@
       if (catShowDone(item.category_id)) setCatCollapsed(item.category_id, false);
       else clearKeepOpen(item.category_id);
     }
+    saveCopy();
     render();
   }
 
@@ -488,9 +805,10 @@
     var item = findItem(id);
     if (!item) return false;
     if (item.text === text) return true;
-    commit({ type: 'edit', itemId: id, method: 'PATCH', path: '/api/items/{id}', body: { text: text } });
+    if (!commit({ type: 'edit', itemId: id, body: { text: text }, undo: { text: item.text } })) return false;
     record({ kind: 'edit', itemId: id, before: { text: item.text }, after: { text: text } });
     item.text = text;
+    saveCopy();
     render();
     return true;
   }
@@ -501,10 +819,11 @@
     var before = { due_date: item.due_date || null, due_time: item.due_time || null };
     var after = { due_date: date || null, due_time: date ? (time || null) : null };
     if (before.due_date === after.due_date && before.due_time === after.due_time) return true;
-    commit({ type: 'due', itemId: id, method: 'PATCH', path: '/api/items/{id}', body: after });
+    if (!commit({ type: 'due', itemId: id, body: after, undo: before })) return false;
     record({ kind: 'due', itemId: id, before: before, after: after });
     item.due_date = after.due_date;
     item.due_time = after.due_time;
+    saveCopy();
     render();
     return true;
   }
@@ -513,11 +832,11 @@
   function deleteItem(id) {
     var item = findItem(id);
     if (!item) return;
-    commit({ type: 'delete', itemId: id, method: 'DELETE', path: '/api/items/{id}' });
+    if (!commit({ type: 'delete', itemId: id, undo: copy(item) })) { render(); return; }
     record({ kind: 'delete', itemId: id, snapshot: copy(item) });
     data.items = data.items.filter(function (i) { return i !== item; });
     if (editingId === id) editingId = null;
-    if (dueId === id) dueId = null;
+    saveCopy();
     render();
   }
 
@@ -528,15 +847,10 @@
     var cat = findCat(snap.category_id) || defaultCat() || data.categories[0];
     if (!cat) { toast("That item's category is gone"); return null; }
     var id = addItem(cat, snap.text, false);
+    if (id == null) return null;
     if (snap.checked) toggleItem(id, true);
     if (snap.due_date) setDue(id, snap.due_date, snap.due_time || null);
     return id;
-  }
-
-  function copy(item) {
-    var out = {};
-    for (var k in item) out[k] = item[k];
-    return out;
   }
 
   // ── Undo and redo ────────────────────────────────────────────────────────
@@ -614,11 +928,27 @@
     el.redo.disabled = !redoStack.length;
   }
 
-  // ── Category changes (these need the server's answer first) ────────────
+  // ── Changes that need a connection ───────────────────────────────────────
+  //
+  // Categories, reordering, due dates on or off and import go straight to
+  // the server and wait for its answer, so they say so when offline rather
+  // than pretending.
+
+  function needsConnection() {
+    if (isOnline()) return false;
+    toast('You are offline: that needs a connection.');
+    return true;
+  }
+
+  function writeFailed(err) {
+    toast(err.network ? 'You are offline: that needs a connection.' : err.message);
+    refresh(true);
+  }
 
   function addCategory(name) {
-    return api('POST', '/api/categories', { name: name }).then(function (d) {
+    return api('POST', '/api/categories', { name: name }, WRITE_TIMEOUT_MS).then(function (d) {
       data.categories.push(d.category);
+      saveCopy();
       render();
     });
   }
@@ -626,27 +956,53 @@
   function renameCategory(cat, name) {
     renamingCat = null;
     if (!name || name === cat.name) { render(); return; }
+    if (needsConnection()) { render(); return; }
     var before = cat.name;
     cat.name = name;
     render();
-    api('PATCH', '/api/categories/' + cat.id, { name: name }).catch(function (err) {
+    api('PATCH', '/api/categories/' + cat.id, { name: name }, WRITE_TIMEOUT_MS).then(saveCopy, function (err) {
       cat.name = before;
-      toast(err.message);
-      refresh(true);
+      render();
+      writeFailed(err);
     });
   }
 
   function deleteCategory(cat) {
+    if (needsConnection()) return;
     if (data.categories.length <= 1) {
       toast("Can't delete the only category: a list needs at least one");
       return;
     }
-    api('DELETE', '/api/categories/' + cat.id).then(function () {
-      data.categories = data.categories.filter(function (c) { return c.id !== cat.id; });
-      data.items = data.items.filter(function (i) { return i.category_id !== cat.id; });
-      delete openAdders[cat.id];
+    var n = data.items.filter(function (i) { return i.category_id === cat.id; }).length;
+    askToConfirm(n ? 'Delete ' + cat.name + ' and its ' + n + (n === 1 ? ' item?' : ' items?') : 'Delete ' + cat.name + '?', 'Delete').then(function (yes) {
+      if (!yes) return;
+      api('DELETE', '/api/categories/' + cat.id, null, WRITE_TIMEOUT_MS).then(function () {
+        data.categories = data.categories.filter(function (c) { return c.id !== cat.id; });
+        data.items = data.items.filter(function (i) { return i.category_id !== cat.id; });
+        delete openAdders[cat.id];
+        saveCopy();
+        render();
+      }, writeFailed);
+    });
+  }
+
+  function setDueDates(on) {
+    var before = datesOn();
+    if (before === on || needsConnection()) return;
+    data.list.due_dates_enabled = on;
+    render();
+    api('PATCH', '/api/list', { due_dates_enabled: on }, WRITE_TIMEOUT_MS).then(function () {
+      saveCopy();
+      toast(on ? 'Due dates on: this list now sorts by date' : 'Due dates off');
+    }, function (err) {
+      data.list.due_dates_enabled = before;
       render();
-    }, function (err) { toast(err.message); refresh(true); });
+      writeFailed(err);
+    });
+  }
+
+  function dateSortHint() {
+    toast('This list is sorted by due date: turn due dates off to reorder by hand');
   }
 
   // ── Due dates ────────────────────────────────────────────────────────────
@@ -692,31 +1048,55 @@
     return !!item.due_time && item.due_time < nowHM();
   }
 
-  function setDueDates(on) {
-    var before = datesOn();
-    if (before === on) return;
-    data.list.due_dates_enabled = on;
-    toast(on ? 'Due dates on: this list now sorts by date' : 'Due dates off');
-    render();
-    api('PATCH', '/api/list', { due_dates_enabled: on }).catch(function (err) {
-      data.list.due_dates_enabled = before;
-      toast(err.message);
-      render();
-    });
-  }
-
-  function dateSortHint() {
-    toast('This list is sorted by due date: turn due dates off to reorder by hand');
+  // The due date editor: a dialog over the list, with the device's own date
+  // and time pickers.
+  function openDueEditor(id) {
+    var item = findItem(id);
+    if (!item || !kit()) return;
+    var box = h('div', 'flex flex-col gap-4');
+    box.appendChild(h('p', 'text-heading', 'Due date'));
+    box.appendChild(h('p', 'break-words text-small text-muted', item.text));
+    var date = h('input', 'field');
+    date.type = 'date';
+    date.value = item.due_date || '';
+    date.setAttribute('aria-label', 'Date');
+    var time = h('input', 'field');
+    time.type = 'time';
+    time.value = item.due_time || '';
+    time.setAttribute('aria-label', 'Time (optional)');
+    var dateRow = h('label', 'flex flex-col gap-1 text-small text-muted', 'Date');
+    dateRow.appendChild(date);
+    var timeRow = h('label', 'flex flex-col gap-1 text-small text-muted', 'Time (optional)');
+    timeRow.appendChild(time);
+    box.appendChild(dateRow);
+    box.appendChild(timeRow);
+    var actions = h('div', 'flex flex-wrap justify-end gap-2');
+    var modal = null;
+    if (item.due_date) {
+      actions.appendChild(button('btn-secondary mr-auto border-0 bg-transparent px-2 text-danger', 'Clear', function () {
+        modal.dismiss();
+        setDue(item.id, null, null);
+      }));
+    }
+    actions.appendChild(button('btn-secondary', 'Cancel', function () { modal.dismiss(); }));
+    actions.appendChild(button('btn-primary', 'Save', function () {
+      if (!date.value && time.value) { toast('Pick a date first: a time on its own has nothing to be due on'); return; }
+      modal.dismiss();
+      setDue(item.id, date.value || null, time.value ? time.value.slice(0, 5) : null);
+    }));
+    box.appendChild(actions);
+    modal = kit().presentModal({ contentEl: box });
   }
 
   // ── Drawing ──────────────────────────────────────────────────────────────
 
   function focusKey(key) {
     var node = el.categories.querySelector('[data-focus-key="' + key + '"]');
-    if (node) node.focus();
+    if (node) node.focus({ preventScroll: false });
   }
 
-  // Leaving an add field on a touch screen adds what was typed.
+  // The keyboard's done key closes it without submitting: on a touch screen,
+  // leaving an add field with something typed in it adds it.
   function commitOnBlur(input) {
     input.addEventListener('blur', function () {
       if (!TOUCH || !input.value.trim() || !input.form) return;
@@ -725,37 +1105,36 @@
     });
   }
 
-  function itemRow(item, cat) {
-    var row = h('li', 'list-row select-none gap-1 py-0 pl-1 pr-1');
+  function itemRow(item, pending) {
+    var row = h('div', 'item-row flex min-h-11 cursor-pointer items-center gap-3 bg-surface py-1.5 pl-4 pr-2');
     row.setAttribute('data-item', String(item.id));
     row.setAttribute('data-checked', item.checked ? '1' : '0');
 
-    if (!TOUCH && !searchActive()) {
-      var grip = button('flex h-11 w-6 shrink-0 cursor-grab touch-none items-center justify-center text-muted');
-      grip.setAttribute('data-grip', '');
-      grip.setAttribute('aria-label', datesOn() ? 'Sorted by due date' : 'Drag to reorder ' + item.text);
+    // A handle for a mouse; a touch screen lifts the row with a long press.
+    if (!searchActive() && !TOUCH) {
+      var grip = h('span', datesOn() ? 'flex h-11 w-4 shrink-0 items-center justify-center text-muted/60' : 'item-drag flex h-11 w-4 shrink-0 cursor-grab items-center justify-center text-muted/60');
       grip.title = datesOn() ? 'Sorted by due date' : 'Drag to reorder';
       grip.appendChild(icon('grip', 'h-4 w-4'));
       if (datesOn()) grip.addEventListener('click', dateSortHint);
-      else grip.addEventListener('pointerdown', function (e) { startItemDrag(e, row, item); });
       row.appendChild(grip);
     }
 
-    var tick = h('label', 'flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center');
-    var box = h('input', 'h-5 w-5 accent-accent');
+    var hit = h('label', 'check-hit');
+    hit.title = item.checked ? 'Mark as not done' : 'Mark as done';
+    var box = h('input', 'check');
     box.type = 'checkbox';
     box.checked = !!item.checked;
     box.setAttribute('aria-label', (item.checked ? 'Untick ' : 'Tick ') + item.text);
-    box.addEventListener('change', function () { toggleItem(item.id, box.checked); });
-    tick.appendChild(box);
-    row.appendChild(tick);
+    box.addEventListener('change', function () { toggleItem(rowId(row), box.checked); });
+    hit.appendChild(box);
+    row.appendChild(hit);
 
     if (editingId === item.id) {
       row.appendChild(editForm(item));
       return row;
     }
 
-    var body = h('div', 'flex min-w-0 flex-1 cursor-pointer flex-col py-2');
+    var body = h('div', 'flex min-w-0 flex-1 flex-col py-1.5');
     body.appendChild(h('span', item.checked ? 'break-words text-body text-muted line-through' : 'break-words text-body', item.text));
     if (item.last_checked_by) {
       var by = h('span', 'text-small text-muted', (item.checked ? '✓ @' : '↺ @') + item.last_checked_by);
@@ -763,54 +1142,58 @@
       body.appendChild(by);
     }
     row.appendChild(body);
-    // Tapping the item edits it.
-    row.addEventListener('click', function (e) {
-      if (Date.now() - justDragged < 400) return;
-      if (e.target.closest('button, input, label, [data-grip], [data-due]')) return;
-      editingId = item.id;
-      dueId = null;
-      render();
-      focusKey('edit:' + item.id);
-    });
-    if (TOUCH && !searchActive()) {
-      row.addEventListener('pointerdown', function (e) {
-        if (e.target.closest('button, input, label')) return;
-        if (datesOn()) return;
-        startItemDrag(e, row, item);
-      });
+    if (pending) {
+      var dot = h('span', 'shrink-0 px-1 text-body leading-none text-muted', '⋯');
+      dot.title = 'Waiting to sync';
+      dot.setAttribute('aria-label', 'Waiting to sync');
+      row.appendChild(dot);
     }
 
     if (datesOn()) {
-      var chip = button('flex h-11 shrink-0 items-center px-1');
-      chip.setAttribute('data-due', '');
       var label = dueLabel(item);
-      chip.setAttribute('aria-label', label ? 'Due ' + label + ', change it' : 'Add a due date');
-      var pill = h('span', label
+      var chip = button(label
         ? (isOverdue(item)
-          ? 'whitespace-nowrap rounded-full border border-danger px-2 py-0.5 text-small text-danger'
-          : 'whitespace-nowrap rounded-full border border-line bg-raised px-2 py-0.5 text-small text-muted')
-        : 'whitespace-nowrap rounded-full border border-dashed border-line px-2 py-0.5 text-small text-muted', label || '+ date');
-      chip.appendChild(pill);
-      chip.addEventListener('click', function () {
-        dueId = dueId === item.id ? null : item.id;
-        editingId = null;
-        render();
-        if (dueId) focusKey('due-date:' + item.id);
-      });
+          ? 'un-touch-target shrink-0 whitespace-nowrap rounded-full bg-raised px-2 py-0.5 text-small text-danger'
+          : 'un-touch-target shrink-0 whitespace-nowrap rounded-full bg-raised px-2 py-0.5 text-small text-muted')
+        : 'un-touch-target shrink-0 whitespace-nowrap rounded-full border border-dashed border-line px-2 py-0.5 text-small text-muted', label || '+ date',
+      function () { openDueEditor(rowId(row)); });
+      chip.setAttribute('data-due', '');
+      chip.setAttribute('aria-label', label ? 'Due ' + label + ', change it' : 'Add a due date');
       row.appendChild(chip);
     }
 
-    row.appendChild(iconButton('cross', 'Delete ' + item.text, function () { deleteItem(item.id); },
-      'flex h-11 w-10 shrink-0 items-center justify-center rounded-lg text-muted hover:bg-raised hover:text-danger'));
+    // On a computer, hover shows Edit and Delete; on a touch screen, a swipe does.
+    row.appendChild(iconButton('pencil', 'Edit ' + item.text, function () { startEdit(rowId(row)); },
+      'hover-action flex h-11 w-8 shrink-0 items-center justify-center rounded-lg text-muted hover:text-fg'));
+    row.appendChild(iconButton('cross', 'Delete ' + item.text, function () { deleteItem(rowId(row)); },
+      'hover-action flex h-11 w-8 shrink-0 items-center justify-center rounded-lg text-muted hover:text-danger'));
+
+    // Tapping the words edits them; only the circle ticks.
+    row.addEventListener('click', function (e) {
+      if (e.target.closest('button, input, label, .item-drag, [data-due]')) return;
+      startEdit(rowId(row));
+    });
     return row;
   }
 
+  // A row's id is read when it is tapped: an add that has just reached the
+  // server changes it under the row.
+  function rowId(row) { return Number(row.getAttribute('data-item')); }
+
+  function startEdit(id) {
+    if (!findItem(id)) return;
+    editingId = id;
+    render();
+    focusKey('edit:' + id);
+  }
+
   function editForm(item) {
-    var form = h('form', 'flex min-w-0 flex-1 gap-2 py-1.5');
+    var form = h('form', 'flex min-w-0 flex-1 gap-2 py-1');
     form.setAttribute('autocomplete', 'off');
     var input = h('input', 'field min-w-0 flex-1');
     input.value = item.text;
     input.maxLength = 500;
+    input.setAttribute('enterkeyhint', 'done');
     input.setAttribute('aria-label', 'Edit ' + item.text);
     input.setAttribute('data-focus-key', 'edit:' + item.id);
     form.appendChild(input);
@@ -820,73 +1203,26 @@
       done = true;
       var value = input.value.trim();
       editingId = null;
-      if (save && value) editText(item.id, value);
-      else render();
+      if (save && value) { if (!editText(item.id, value)) render(); } else render();
     }
     form.addEventListener('submit', function (e) { e.preventDefault(); finish(true); });
     input.addEventListener('keydown', function (e) { if (e.key === 'Escape') { e.preventDefault(); finish(false); } });
     input.addEventListener('blur', function () { if (!refreshing) finish(true); });
-    var save = h('button', 'btn-secondary shrink-0', 'Save');
-    save.type = 'submit';
-    save.addEventListener('pointerdown', function (e) { e.preventDefault(); });
-    form.appendChild(save);
     return form;
   }
 
-  function dueEditor(item) {
-    var li = h('li', 'flex flex-col gap-3 px-4 py-3');
-    li.setAttribute('data-due-editor', String(item.id));
-    li.appendChild(h('p', 'text-body font-medium', 'Due date'));
-    li.appendChild(h('p', 'break-words text-small text-muted', item.text));
-    var fields = h('div', 'flex flex-wrap gap-2');
-    var date = h('input', 'field w-auto min-w-0 flex-1');
-    date.type = 'date';
-    date.value = item.due_date || '';
-    date.setAttribute('aria-label', 'Date');
-    date.setAttribute('data-focus-key', 'due-date:' + item.id);
-    var time = h('input', 'field w-auto min-w-0 flex-1');
-    time.type = 'time';
-    time.value = item.due_time || '';
-    time.setAttribute('aria-label', 'Time (optional)');
-    time.title = 'Time (optional)';
-    time.setAttribute('data-focus-key', 'due-time:' + item.id);
-    fields.appendChild(date);
-    fields.appendChild(time);
-    li.appendChild(fields);
-    var actions = h('div', 'flex flex-wrap justify-end gap-2');
-    if (item.due_date) {
-      actions.appendChild(button('btn-secondary mr-auto border-0 bg-transparent px-2 text-danger', 'Clear', function () {
-        dueId = null;
-        setDue(item.id, null, null);
-      }));
-    }
-    actions.appendChild(button('btn-secondary', 'Cancel', function () { dueId = null; render(); }));
-    actions.appendChild(button('btn-primary', 'Save', function () {
-      if (!date.value && time.value) {
-        toast('Pick a date first: a time on its own has nothing to be due on');
-        return;
-      }
-      dueId = null;
-      setDue(item.id, date.value || null, time.value || null);
-      render();
-    }));
-    li.appendChild(actions);
-    return li;
-  }
-
   function adderForm(cat) {
-    var form = h('form', 'flex gap-2 px-3 py-2');
+    var form = h('form', 'flex items-center gap-3 bg-surface px-4');
     form.setAttribute('autocomplete', 'off');
-    var input = h('input', 'field min-w-0 flex-1');
+    form.appendChild(h('span', 'select-none text-heading font-normal leading-none text-accent', '+'));
+    var input = h('input', 'min-h-11 min-w-0 flex-1 bg-transparent py-2 text-body text-fg placeholder:text-muted/60 focus:outline-none');
     input.name = 'text';
     input.maxLength = 500;
     input.placeholder = 'Add an item…';
+    input.setAttribute('enterkeyhint', 'done');
     input.setAttribute('aria-label', 'Add an item to ' + cat.name);
     input.setAttribute('data-focus-key', 'adder:' + cat.id);
     form.appendChild(input);
-    var add = h('button', 'btn-secondary shrink-0', 'Add');
-    add.type = 'submit';
-    form.appendChild(add);
     form.addEventListener('submit', function (e) {
       e.preventDefault();
       var text = input.value.trim();
@@ -904,7 +1240,8 @@
   }
 
   function categoryHeader(cat, isCollapsed, open, done) {
-    var head = h('div', 'flex items-center gap-1');
+    var head = h('div', 'cat-head flex items-center gap-1 rounded-lg bg-ground');
+    head.setAttribute('data-cat-head', String(cat.id));
     var searching = searchActive();
     if (renamingCat === cat.id) {
       var form = h('form', 'flex min-w-0 flex-1 gap-2');
@@ -912,6 +1249,7 @@
       var input = h('input', 'field min-w-0 flex-1');
       input.value = cat.name;
       input.maxLength = 100;
+      input.setAttribute('enterkeyhint', 'done');
       input.setAttribute('aria-label', 'Rename ' + cat.name);
       input.setAttribute('data-focus-key', 'rename:' + cat.id);
       var finished = false;
@@ -925,49 +1263,44 @@
       input.addEventListener('keydown', function (e) { if (e.key === 'Escape') { e.preventDefault(); finish(false); } });
       input.addEventListener('blur', function () { if (!refreshing) finish(true); });
       form.appendChild(input);
-      var save = h('button', 'btn-secondary shrink-0', 'Save');
-      save.type = 'submit';
-      save.addEventListener('pointerdown', function (e) { e.preventDefault(); });
-      form.appendChild(save);
       head.appendChild(form);
       return head;
     }
     if (!searching) {
-      var grip = button('flex h-11 w-6 shrink-0 cursor-grab touch-none items-center justify-center text-muted');
-      grip.setAttribute('data-grip', '');
-      grip.setAttribute('aria-label', 'Drag to reorder ' + cat.name);
-      grip.title = 'Drag to reorder';
+      var grip = h('span', 'cat-drag flex h-11 w-6 shrink-0 cursor-grab items-center justify-center text-muted/60');
+      grip.title = 'Drag to reorder categories';
       grip.appendChild(icon('grip', 'h-4 w-4'));
-      grip.addEventListener('pointerdown', function (e) { startCategoryDrag(e, cat); });
       head.appendChild(grip);
     }
     var toggle = button('flex min-h-11 min-w-0 flex-1 items-center gap-2 px-1 text-left', null, function () { toggleCatCollapsed(cat); });
     toggle.setAttribute('aria-expanded', isCollapsed ? 'false' : 'true');
     if (!searching) toggle.appendChild(icon('chevron', isCollapsed ? 'h-4 w-4 shrink-0 text-muted' : 'h-4 w-4 shrink-0 rotate-90 text-muted'));
-    toggle.appendChild(h('span', 'min-w-0 truncate text-body font-medium', cat.name));
+    toggle.appendChild(h('span', 'min-w-0 truncate text-body font-semibold', cat.name));
     if (isCollapsed) {
       var count = open.length + done.length;
       toggle.appendChild(h('span', 'shrink-0 text-small text-muted',
         !open.length && done.length ? done.length + ' done' : count + (count === 1 ? ' item' : ' items')));
     }
     head.appendChild(toggle);
-    if (!searching && !isCollapsed) head.appendChild(iconButton('plus', 'Add to ' + cat.name, function () { toggleAdder(cat); }));
-    head.appendChild(iconButton('pencil', 'Rename ' + cat.name, function () {
-      renamingCat = cat.id;
-      render();
-      focusKey('rename:' + cat.id);
-    }));
-    var remove = iconButton('cross', 'Delete ' + cat.name, null,
-      'flex h-11 w-10 shrink-0 items-center justify-center rounded-lg text-muted hover:bg-raised hover:text-danger');
-    tapTwice(remove, function () {
-      var n = data.items.filter(function (i) { return i.category_id === cat.id; }).length;
-      return n ? 'Delete with its ' + n + (n === 1 ? ' item?' : ' items?') : 'Delete it?';
-    }, function () { deleteCategory(cat); });
-    head.appendChild(remove);
+    if (!searching && !isCollapsed) {
+      head.appendChild(iconButton('plus', 'Add to ' + cat.name, function () { toggleAdder(cat); },
+        'flex h-11 w-10 shrink-0 items-center justify-center rounded-lg text-accent'));
+    }
+    head.appendChild(iconButton('pencil', 'Rename ' + cat.name, function () { startRename(cat.id); },
+      'needs-net hover-action flex h-11 w-8 shrink-0 items-center justify-center rounded-lg text-muted hover:text-fg'));
+    head.appendChild(iconButton('cross', 'Delete ' + cat.name, function () { deleteCategory(cat); },
+      'needs-net hover-action flex h-11 w-8 shrink-0 items-center justify-center rounded-lg text-muted hover:text-danger'));
     return head;
   }
 
-  function categorySection(cat) {
+  function startRename(catId) {
+    if (needsConnection()) return;
+    renamingCat = catId;
+    render();
+    focusKey('rename:' + catId);
+  }
+
+  function categorySection(cat, pending) {
     var q = searchText();
     var open = sectionItems(cat.id, false);
     var done = sectionItems(cat.id, true);
@@ -987,7 +1320,7 @@
     // General has no heading and shows only when something is in it.
     if (cat.is_default && !all) return null;
 
-    var section = h('section', 'flex flex-col gap-1');
+    var section = h('section', 'cat-section flex flex-col gap-1');
     section.setAttribute('data-category', String(cat.id));
     if (cat.is_default) section.setAttribute('data-default', '');
     var isCollapsed = !searching && catCollapsed(cat);
@@ -999,40 +1332,35 @@
     var adderOpen = !searching && openAdders[cat.id];
     if (adderOpen) card.appendChild(adderForm(cat));
 
-    var openList = h('ul', 'divide-y divide-line');
+    var openList = h('div', 'divide-y divide-line');
     openList.setAttribute('data-section', 'open');
-    open.forEach(function (i) {
-      openList.appendChild(itemRow(i, cat));
-      if (dueId === i.id && datesOn()) openList.appendChild(dueEditor(i));
-    });
-    openList.hidden = !open.length;
+    open.forEach(function (i) { openList.appendChild(itemRow(i, pending[i.id])); });
+    // A finished or empty category keeps a lane to add to (and to drop an
+    // item on when dragging).
+    if (!searching && !cat.is_default && !adderOpen && !open.length) {
+      var lane = button('empty-note flex min-h-11 w-full items-center gap-3 px-4 text-left text-small text-muted', null, function () { toggleAdder(cat); });
+      lane.appendChild(h('span', 'select-none text-heading font-normal leading-none text-accent', '+'));
+      lane.appendChild(h('span', null, all ? 'All done, add another' : 'No items yet'));
+      lane.title = all ? 'Add another item' : 'Add the first item';
+      openList.appendChild(lane);
+    }
+    openList.hidden = !openList.children.length;
     card.appendChild(openList);
 
     if (done.length && !searching) {
-      var toggle = button('flex min-h-11 w-full items-center gap-2 px-4 text-left text-small text-muted hover:bg-raised',
-        (showDone ? '▾ ' : '▸ ') + done.length + ' done', function () { toggleCatDone(cat.id); });
+      var toggle = button('flex min-h-11 w-full items-center justify-between gap-2 px-4 text-left text-small text-muted',
+        null, function () { toggleCatDone(cat.id); });
+      toggle.appendChild(h('span', null, done.length + ' done'));
+      toggle.appendChild(h('span', null, showDone ? '▾' : '▸'));
       toggle.title = showDone ? 'Hide completed in this category' : 'Show completed in this category';
       toggle.setAttribute('aria-expanded', showDone ? 'true' : 'false');
       card.appendChild(toggle);
     }
-    var doneList = h('ul', 'divide-y divide-line');
+    var doneList = h('div', 'divide-y divide-line');
     doneList.setAttribute('data-section', 'done');
-    if (showDone) {
-      done.forEach(function (i) {
-        doneList.appendChild(itemRow(i, cat));
-        if (dueId === i.id && datesOn()) doneList.appendChild(dueEditor(i));
-      });
-    }
+    if (showDone) done.forEach(function (i) { doneList.appendChild(itemRow(i, pending[i.id])); });
     doneList.hidden = !showDone || !done.length;
     card.appendChild(doneList);
-
-    // A finished or empty category keeps a way to add to it.
-    if (!searching && !cat.is_default && !adderOpen && (!all || !open.length)) {
-      var lane = button('flex min-h-11 w-full items-center px-4 text-left text-small text-muted hover:bg-raised',
-        all ? 'All done, add another' : 'No items yet', function () { toggleAdder(cat); });
-      lane.title = all ? 'Add another item' : 'Add the first item';
-      card.appendChild(lane);
-    }
     section.appendChild(card);
     return section;
   }
@@ -1059,8 +1387,8 @@
     if (state.focus) {
       var n = el.categories.querySelector('[data-focus-key="' + state.focus.key + '"]');
       if (n) {
-        n.focus();
-        try { n.setSelectionRange(state.focus.start, state.focus.end); } catch (e) { /* date and time fields */ }
+        n.focus({ preventScroll: true });
+        try { n.setSelectionRange(state.focus.start, state.focus.end); } catch (e) { /* not a text field */ }
       }
     }
   }
@@ -1070,18 +1398,19 @@
 
   function render() {
     if (!data) return;
-    // Mid-drag the rows stay put; the redraw happens when it ends.
-    if (drag) { renderWanted = true; return; }
+    // Mid-drag the rows stay put; the redraw happens when the drop settles.
+    if (dragging) { renderWanted = true; return; }
     if (editingId != null && !findItem(editingId)) editingId = null;
-    if (dueId != null && (!findItem(dueId) || !datesOn())) dueId = null;
     if (renamingCat != null && !findCat(renamingCat)) renamingCat = null;
 
     refreshing = true;
     var fields = captureFields();
+    detachNative();
     el.categories.textContent = '';
+    var pending = hintShown || conn === 'offline' ? pendingIds() : {};
     var shown = 0;
     displayCategories().forEach(function (cat) {
-      var section = categorySection(cat);
+      var section = categorySection(cat, pending);
       if (section) { el.categories.appendChild(section); shown++; }
     });
     restoreFields(fields);
@@ -1096,11 +1425,11 @@
     el.quickAdd.hidden = searching;
     el.newCategory.hidden = searching;
     el.searchClear.hidden = !query;
-    el.dueSwitch.checked = datesOn();
     renderActivity();
     syncHistory();
     el.loading.hidden = true;
     el.error.hidden = true;
+    wireNative();
   }
 
   function renderActivity() {
@@ -1112,192 +1441,176 @@
     el.activity.textContent = '@' + a.actor + ' ' + verb + ' “' + text + '”';
   }
 
-  // ── Dragging ─────────────────────────────────────────────────────────────
+  // ── The native UI kit: swipes, reorder, the nav bar ─────────────────────
   //
-  // The row (or category) being dragged stays in the list, faded, and moves
-  // to wherever it would land; a copy follows the pointer. On a touch screen
-  // an item lifts after a short hold, so a swipe still scrolls the page.
+  // Each redraw replaces the rows, so the kit is attached to the new ones
+  // after it: swipe actions on every row and category name, and reorder on
+  // the whole list (items across categories, and the categories), while
+  // online, not searching and (for items) not sorted by date.
 
-  var drag = null;
-  var justDragged = 0;
+  var reorderItems = null;
+  var reorderCats = null;
+  var dragging = false;
 
-  function startItemDrag(e, row, item) {
-    if (drag || searchActive() || datesOn() || e.button > 0) return;
-    beginPointer(e, { kind: 'item', node: row, item: item, hold: TOUCH });
+  function detachNative() {
+    if (reorderItems) { reorderItems.detach(); reorderItems = null; }
+    if (reorderCats) { reorderCats.detach(); reorderCats = null; }
   }
 
-  function startCategoryDrag(e, cat) {
-    if (drag || searchActive() || e.button > 0) return;
-    var section = el.categories.querySelector('[data-category="' + cat.id + '"]');
-    if (!section) return;
-    e.preventDefault();
-    beginPointer(e, { kind: 'category', node: section, cat: cat, hold: false });
-  }
-
-  function beginPointer(e, d) {
-    d.x = e.clientX;
-    d.y = e.clientY;
-    d.pointerId = e.pointerId;
-    d.active = false;
-    d.timer = null;
-    drag = d;
-    if (d.hold) drag.timer = setTimeout(lift, 300);
-    else if (d.kind === 'category') lift();
-    window.addEventListener('pointermove', onPointerMove);
-    window.addEventListener('pointerup', onPointerUp);
-    window.addEventListener('pointercancel', cancelDrag);
-  }
-
-  function lift() {
-    if (!drag || drag.active) return;
-    drag.active = true;
-    var source = drag.kind === 'category' ? drag.node.firstChild : drag.node;
-    var rect = source.getBoundingClientRect();
-    var ghost = source.cloneNode(true);
-    ghost.className = 'pointer-events-none fixed z-50 flex items-center gap-1 overflow-hidden rounded-xl border border-accent bg-surface px-1 opacity-90 shadow-lg';
-    ghost.style.left = rect.left + 'px';
-    ghost.style.top = rect.top + 'px';
-    ghost.style.width = rect.width + 'px';
-    drag.offsetX = drag.x - rect.left;
-    drag.offsetY = drag.y - rect.top;
-    document.body.appendChild(ghost);
-    drag.ghost = ghost;
-    drag.node.classList.add('opacity-40');
-  }
-
-  function onPointerMove(e) {
-    if (!drag || e.pointerId !== drag.pointerId) return;
-    if (!drag.active) {
-      if (Math.abs(e.clientX - drag.x) + Math.abs(e.clientY - drag.y) < 6) return;
-      // Moving before the hold is a scroll on a touch screen; with a mouse it is a drag.
-      if (drag.hold) { cancelDrag(); return; }
-      lift();
+  function wireNative() {
+    var k = kit();
+    if (!k || !data) return;
+    detachNative();
+    Array.prototype.forEach.call(el.categories.querySelectorAll('.item-row:not([data-wired])'), function (row) {
+      row.setAttribute('data-wired', '');
+      var checked = row.getAttribute('data-checked') === '1';
+      k.attachSwipeActions(row, {
+        actions: [
+          { label: checked ? 'Undo' : 'Complete', color: 'var(--un-accent)', handler: function () { toggleItem(rowId(row), !checked); } },
+          { label: 'Rename', handler: function () { startEdit(rowId(row)); } },
+          // A full swipe deletes: the kit takes the row away, then this
+          // records it (and Undo brings it back).
+          { label: 'Delete', destructive: true, handler: function () { deleteItem(rowId(row)); } },
+        ],
+      });
+    });
+    Array.prototype.forEach.call(el.categories.querySelectorAll('.cat-head:not([data-wired])'), function (head) {
+      head.setAttribute('data-wired', '');
+      var cat = findCat(Number(head.getAttribute('data-cat-head')));
+      if (!cat) return;
+      k.attachSwipeActions(head, {
+        actions: [
+          { label: 'Rename', handler: function () { startRename(cat.id); } },
+          // Red, but never a full-swipe delete: a whole category asks first.
+          { label: 'Delete', color: 'var(--un-action-danger)', handler: function () { deleteCategory(cat); } },
+        ],
+      });
+    });
+    if (searchActive() || !isOnline()) return;
+    if (!datesOn()) {
+      reorderItems = k.attachReorder(el.categories, {
+        itemSelector: '.un-swipe:has(.item-row), .item-row.un-swipe, .empty-note',
+        handle: '.item-drag',
+        onLift: function () { dragging = true; },
+        onReorder: function (from, to, itemEl) { onItemReorder(itemEl); },
+        onSettle: settleDrag,
+      });
     }
-    drag.ghost.style.left = (e.clientX - drag.offsetX) + 'px';
-    drag.ghost.style.top = (e.clientY - drag.offsetY) + 'px';
-    if (e.clientY < 60) window.scrollBy(0, -12);
-    else if (e.clientY > window.innerHeight - 60) window.scrollBy(0, 12);
-    if (drag.kind === 'item') placeItem(e.clientX, e.clientY);
-    else placeCategory(e.clientX, e.clientY);
+    reorderCats = k.attachReorder(el.categories, {
+      itemSelector: '.cat-section:not([data-default])',
+      handle: '.cat-drag',
+      onLift: function () { dragging = true; },
+      onReorder: function () { onCategoryReorder(); },
+      onSettle: settleDrag,
+    });
   }
 
-  function placeItem(x, y) {
-    var under = document.elementFromPoint(x, y);
-    if (!under || !el.categories.contains(under)) return;
-    var row = under.closest('[data-item]');
-    if (row && row !== drag.node) {
-      var rect = row.getBoundingClientRect();
-      row.parentNode.insertBefore(drag.node, y < rect.top + rect.height / 2 ? row : row.nextSibling);
-      return;
-    }
-    if (row) return;
-    // Over a category but not a row: to the end of its open items, or the
-    // start of its ticked ones.
-    var section = under.closest('[data-category]');
-    if (!section) return;
-    var list = section.querySelector('ul[data-section="' + (drag.item.checked ? 'done' : 'open') + '"]');
-    if (!list) return;
-    list.hidden = false;
-    if (drag.node.parentNode !== list) {
-      if (drag.item.checked) list.insertBefore(drag.node, list.firstChild);
-      else list.appendChild(drag.node);
-    }
-  }
-
-  function placeCategory(x, y) {
-    var under = document.elementFromPoint(x, y);
-    if (!under || !el.categories.contains(under)) return;
-    var section = under.closest('[data-category]');
-    if (!section || section === drag.node || section.hasAttribute('data-default')) return;
-    var rect = section.getBoundingClientRect();
-    el.categories.insertBefore(drag.node, y < rect.top + rect.height / 2 ? section : section.nextSibling);
-  }
-
-  function onPointerUp(e) {
-    if (!drag || e.pointerId !== drag.pointerId) return;
-    var d = drag;
-    var wasActive = d.active;
-    stopDrag();
-    if (!wasActive) return;
-    justDragged = Date.now();
-    if (d.kind === 'item') dropItem(d);
-    else dropCategory();
-  }
-
-  function cancelDrag() {
-    var wasActive = drag && drag.active;
-    stopDrag();
-    if (wasActive) render();
-  }
-
-  function stopDrag() {
-    if (!drag) return;
-    clearTimeout(drag.timer);
-    if (drag.ghost) drag.ghost.remove();
-    drag.node.classList.remove('opacity-40');
-    drag = null;
-    window.removeEventListener('pointermove', onPointerMove);
-    window.removeEventListener('pointerup', onPointerUp);
-    window.removeEventListener('pointercancel', cancelDrag);
+  function settleDrag() {
+    dragging = false;
     if (renderWanted) { renderWanted = false; render(); }
   }
 
-  // Once a drag is under way on a touch screen, the page must not scroll under it.
-  document.addEventListener('touchmove', function (e) { if (drag && drag.active) e.preventDefault(); }, { passive: false });
-  // A long press is a drag here, not the system's menu.
-  document.addEventListener('contextmenu', function (e) { if (drag) e.preventDefault(); });
-
-  function dropItem(d) {
-    var item = findItem(d.item.id);
-    var section = d.node.closest('[data-category]');
-    if (!item || !section) { render(); return; }
+  function onItemReorder(dropped) {
+    renderWanted = true;
+    if (!data || dropped.classList.contains('empty-note')) return;
+    var row = dropped.classList.contains('item-row') ? dropped : dropped.querySelector('.item-row');
+    var section = dropped.closest('[data-category]');
+    if (!row || !section) return;
+    var item = findItem(rowId(row));
+    if (!item) return;
     var toCat = Number(section.getAttribute('data-category'));
     var fromCat = item.category_id;
     var checked = !!item.checked;
-    var landedInDone = d.node.parentNode.getAttribute('data-section') === 'done';
-    // Within one category, the open and ticked items are ordered apart, so a
+    var landedInDone = !!dropped.closest('[data-section="done"]');
+    // Within one category the open and ticked items are ordered apart, so a
     // drop across that line springs back. Into another category, the item
     // joins whichever part matches it.
     if (fromCat === toCat) {
-      var others = Array.prototype.filter.call(section.querySelectorAll('[data-item]'), function (r) { return r !== d.node; });
-      if (others.length && landedInDone !== checked) { render(); return; }
+      var others = Array.prototype.filter.call(section.querySelectorAll('.item-row'), function (r) { return r !== row; });
+      if (others.length && landedInDone !== checked) return;
     }
     // A ticked item put into a category hiding its ticked items would vanish.
     if (fromCat !== toCat && checked && !catShowDone(toCat)) catDoneOverrides[toCat] = true;
-    var ids = Array.prototype.filter.call(section.querySelectorAll('[data-item]'), function (r) {
+    var ids = Array.prototype.filter.call(section.querySelectorAll('.item-row'), function (r) {
       return (r.getAttribute('data-checked') === '1') === checked;
-    }).map(function (r) { return Number(r.getAttribute('data-item')); });
+    }).map(rowId);
     var before = sectionItems(toCat, checked).map(function (i) { return i.id; });
-    if (fromCat === toCat && before.join() === ids.join()) { render(); return; }
+    if (fromCat === toCat && before.join() === ids.join()) return;
+    if (ids.some(isTemp)) { toast('Still saving that item: try moving it again in a moment.'); return; }
     item.category_id = toCat;
     ids.forEach(function (id, index) {
       var it = findItem(id);
       if (it) it.sort_order = index + 1;
     });
     generation++;
-    render();
-    if (ids.some(isTemp)) {
-      toast('Still saving that item: its position will settle in a moment.');
-      return;
-    }
-    if (fromCat !== toCat) commit({ type: 'move', itemId: item.id, method: 'PATCH', path: '/api/items/{id}', body: { category_id: toCat } });
-    commit({ type: 'order', itemId: null, method: 'POST', path: '/api/categories/' + toCat + '/reorder-items', body: { itemIds: ids } });
+    var move = fromCat !== toCat ? api('PATCH', '/api/items/' + item.id, { category_id: toCat }, WRITE_TIMEOUT_MS) : Promise.resolve();
+    move.then(function () {
+      return api('POST', '/api/categories/' + toCat + '/reorder-items', { itemIds: ids }, WRITE_TIMEOUT_MS);
+    }).then(saveCopy, writeFailed);
   }
 
-  function dropCategory() {
+  function onCategoryReorder() {
+    renderWanted = true;
     var ids = Array.prototype.map.call(el.categories.querySelectorAll('[data-category]:not([data-default])'), function (s) {
       return Number(s.getAttribute('data-category'));
     });
     var before = displayCategories().filter(function (c) { return !c.is_default; }).map(function (c) { return c.id; });
-    if (before.join() === ids.join()) { render(); return; }
+    if (before.join() === ids.join()) return;
     ids.forEach(function (id, index) {
       var c = findCat(id);
       if (c) c.sort_order = index + 1;
     });
     generation++;
-    render();
-    commit({ type: 'order', itemId: null, method: 'POST', path: '/api/categories/reorder', body: { categoryIds: ids } });
+    api('POST', '/api/categories/reorder', { categoryIds: ids }, WRITE_TIMEOUT_MS).then(saveCopy, writeFailed);
   }
+
+  // ── The menu ─────────────────────────────────────────────────────────────
+  //
+  // Over the page, never pushing it down: the kit's menu, which is a sheet
+  // from the bottom on a phone and a dropdown under the button on a
+  // computer. Without the kit, a plain dropdown in the same place.
+
+  function menuItems() {
+    return [
+      { label: 'Show all completed', handler: function () { setShowCompleted(true); } },
+      { label: 'Hide all completed', handler: function () { setShowCompleted(false); } },
+      { label: datesOn() ? 'Turn off due dates' : 'Turn on due dates', disabled: !isOnline(), handler: function () { setDueDates(!datesOn()); } },
+      { label: 'Export markdown', handler: openExport },
+      { label: 'Import markdown', disabled: !isOnline(), handler: openImport },
+    ];
+  }
+
+  function openMenu() {
+    if (!data) return;
+    var k = kit();
+    if (k) {
+      el.menuButton.setAttribute('aria-expanded', 'true');
+      k.menu({ anchorEl: el.menuButton, items: menuItems(), placement: 'bottom-end' })
+        .then(function () { el.menuButton.setAttribute('aria-expanded', 'false'); });
+      return;
+    }
+    setPlainMenu(el.menu.hidden);
+  }
+
+  function setPlainMenu(open) {
+    el.menu.textContent = '';
+    if (open) {
+      menuItems().forEach(function (item) {
+        var b = button('list-row w-full text-left hover:bg-raised disabled:opacity-40', item.label, function () {
+          setPlainMenu(false);
+          item.handler();
+        });
+        b.setAttribute('role', 'menuitem');
+        b.disabled = !!item.disabled;
+        el.menu.appendChild(b);
+      });
+    }
+    el.menu.hidden = !open;
+    el.menuButton.setAttribute('aria-expanded', open ? 'true' : 'false');
+  }
+  document.addEventListener('click', function (e) {
+    if (!el.menu.hidden && !el.menu.contains(e.target) && !el.menuButton.contains(e.target)) setPlainMenu(false);
+  });
 
   // ── Markdown ─────────────────────────────────────────────────────────────
 
@@ -1363,68 +1676,118 @@
     return { name: name, categories: categories };
   }
 
-  var importing = false;
-  function runImport(mode) {
-    if (importing) return;
-    var parsed = parseMarkdown(el.importText.value);
-    if (!parsed.categories.length || !parsed.categories.some(function (c) { return c.items.length; })) {
-      toast('Nothing to import: expected bullets like "* Category" with "  * item" beneath');
-      return;
-    }
-    importing = true;
-    api('POST', '/api/import', { categories: parsed.categories, mode: mode }).then(function () {
-      el.importText.value = '';
-      el.importPanel.hidden = true;
-      toast(mode === 'replace' ? 'List replaced' : 'Imported');
-      return refresh(true);
-    }, function (err) { toast(err.message); }).then(function () { importing = false; });
+  // Export and import are dialogs over the list.
+  function sheetBox(title, note) {
+    var box = h('div', 'flex flex-col gap-3');
+    box.appendChild(h('p', 'text-heading', title));
+    box.appendChild(h('p', 'text-small text-muted', note));
+    return box;
   }
 
-  function copyExport() {
-    function fallback() {
-      el.exportText.select();
-      var ok = false;
-      try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
-      toast(ok ? 'Copied to clipboard' : 'Select the text and copy it');
+  function openExport() {
+    if (!data || !kit()) return;
+    var box = sheetBox('Export markdown', 'Copy this markdown, or select it and copy it yourself.');
+    var text = h('textarea', 'field min-h-[12rem] resize-y font-mono text-small');
+    text.readOnly = true;
+    text.spellcheck = false;
+    text.setAttribute('aria-label', 'The list as markdown');
+    text.value = buildMarkdown();
+    box.appendChild(text);
+    var actions = h('div', 'flex flex-wrap justify-end gap-2');
+    var modal = null;
+    actions.appendChild(button('btn-secondary', 'Close', function () { modal.dismiss(); }));
+    actions.appendChild(button('btn-primary', 'Copy', function () {
+      function fallback() {
+        text.select();
+        var ok = false;
+        try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+        toast(ok ? 'Copied to clipboard' : 'Select the text and copy it');
+      }
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text.value).then(function () { toast('Copied to clipboard'); }, fallback);
+      } else {
+        fallback();
+      }
+    }));
+    box.appendChild(actions);
+    modal = kit().presentModal({ contentEl: box });
+  }
+
+  var importing = false;
+  function openImport() {
+    if (!data || !kit() || needsConnection()) return;
+    var box = sheetBox('Import markdown',
+      'Paste markdown to import into this list. Add merges into matching categories; Replace clears the list first. ~~Strikethrough~~ items import as completed.');
+    var text = h('textarea', 'field min-h-[12rem] resize-y font-mono text-small');
+    text.spellcheck = false;
+    text.setAttribute('aria-label', 'Markdown to import');
+    text.placeholder = '# **My List**\n\n* Category\n  * item\n  * ~~done item~~';
+    box.appendChild(text);
+    var actions = h('div', 'flex flex-wrap justify-end gap-2');
+    var modal = null;
+    function run(mode) {
+      if (importing) return;
+      var parsed = parseMarkdown(text.value);
+      if (!parsed.categories.length || !parsed.categories.some(function (c) { return c.items.length; })) {
+        toast('Nothing to import: expected bullets like "* Category" with "  * item" beneath');
+        return;
+      }
+      importing = true;
+      api('POST', '/api/import', { categories: parsed.categories, mode: mode }, 20000).then(function () {
+        modal.dismiss();
+        toast(mode === 'replace' ? 'List replaced' : 'Imported');
+        return refresh(true);
+      }, function (err) { toast(err.network ? 'You are offline: that needs a connection.' : err.message); })
+        .then(function () { importing = false; });
     }
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(el.exportText.value).then(function () { toast('Copied to clipboard'); }, fallback);
-    } else {
-      fallback();
-    }
+    actions.appendChild(button('btn-secondary', 'Cancel', function () { modal.dismiss(); }));
+    actions.appendChild(button('btn-secondary text-danger', 'Replace', function () {
+      askToConfirm('Replace everything on the list with this?', 'Replace').then(function (yes) { if (yes) run('replace'); });
+    }));
+    actions.appendChild(button('btn-primary', 'Add', function () { run('add'); }));
+    box.appendChild(actions);
+    modal = kit().presentModal({ contentEl: box });
+    text.focus({ preventScroll: true });
   }
 
   // ── Loading ──────────────────────────────────────────────────────────────
 
   var loading = null;
-  // force: also when something is open or being sent (after an import, or a
-  // change the server refused).
+  // force: also when something is being edited or sent (after an import, a
+  // refused change, or the queue draining).
   function refresh(force) {
     // A read already on its way may have left before the latest change:
     // read again once things are quiet (public/live-updates.js).
     if (loading) { if (live) live.changed(); return loading; }
     var asked = generation;
-    loading = api('GET', '/api/list')
+    loading = api('GET', '/api/list', null, LOAD_TIMEOUT_MS)
       .then(function (d) {
         // A change made while this was on its way would be undone by it:
         // read again once it has gone out.
-        if (loaded && !force && (asked !== generation || queue.length)) { if (live) live.changed(); return; }
+        if (loaded && !force && asked !== generation) { if (live) live.changed(); return; }
         loaded = true;
-        data = d;
+        showingSaved = false;
+        data = project(d);
+        saveCopy();
         render();
       })
       .catch(function (err) {
-        // A refresh that fails keeps what is on screen; only a first load
-        // with nothing to show turns into the error state.
-        if (loaded) { if (force) toast(err.message); }
-        else { el.loading.hidden = true; el.error.hidden = false; }
+        // A read that fails keeps what is on screen, the list saved on this
+        // device included; only a first load with nothing to show turns into
+        // the error state.
+        if (data) { if (force && !err.network) toast(err.message); renderStrip(); return; }
+        el.loading.hidden = true;
+        el.error.hidden = false;
+        el.errorText.textContent = err.network
+          ? 'You are offline, and this list has not been saved on this device yet. It will be the next time it opens with a connection.'
+          : 'Nothing on it is lost. Check your connection and try again.';
       })
       .then(function () { loading = null; });
     return loading;
   }
 
   function busy() {
-    return !!drag || queue.length > 0 || armed > 0 || editingId != null || dueId != null || renamingCat != null;
+    return dragging || queue().length > 0 || editingId != null || renamingCat != null;
   }
 
   // ── Wiring ───────────────────────────────────────────────────────────────
@@ -1432,41 +1795,11 @@
   el.undo.appendChild(icon('undo'));
   el.redo.appendChild(icon('redo'));
   el.menuButton.appendChild(icon('menu'));
+  el.searchIcon.appendChild(icon('search', 'h-4 w-4'));
   el.searchClear.appendChild(icon('cross', 'h-4 w-4'));
   el.undo.addEventListener('click', undo);
   el.redo.addEventListener('click', redo);
-
-  function setMenu(open) {
-    el.menu.hidden = !open;
-    el.menuButton.setAttribute('aria-expanded', open ? 'true' : 'false');
-  }
-  el.menuButton.addEventListener('click', function () { setMenu(el.menu.hidden); });
-  // A tap anywhere else closes it, and so does Escape.
-  document.addEventListener('click', function (e) {
-    if (!el.menu.hidden && !el.menu.contains(e.target) && !el.menuButton.contains(e.target)) setMenu(false);
-  });
-  document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && !el.menu.hidden) setMenu(false); });
-  document.getElementById('show-completed').addEventListener('click', function () { setMenu(false); if (data) setShowCompleted(true); });
-  document.getElementById('hide-completed').addEventListener('click', function () { setMenu(false); if (data) setShowCompleted(false); });
-  el.dueSwitch.addEventListener('change', function () { if (data) setDueDates(el.dueSwitch.checked); });
-  document.getElementById('open-export').addEventListener('click', function () {
-    if (!data) return;
-    setMenu(false);
-    el.importPanel.hidden = true;
-    el.exportText.value = buildMarkdown();
-    el.exportPanel.hidden = false;
-  });
-  document.getElementById('open-import').addEventListener('click', function () {
-    setMenu(false);
-    el.exportPanel.hidden = true;
-    el.importPanel.hidden = false;
-    el.importText.focus();
-  });
-  document.getElementById('export-close').addEventListener('click', function () { el.exportPanel.hidden = true; });
-  document.getElementById('export-copy').addEventListener('click', copyExport);
-  document.getElementById('import-cancel').addEventListener('click', function () { el.importPanel.hidden = true; });
-  document.getElementById('import-add').addEventListener('click', function () { runImport('add'); });
-  tapTwice(document.getElementById('import-replace'), 'Tap again to replace everything', function () { runImport('replace'); });
+  el.menuButton.addEventListener('click', function (e) { e.stopPropagation(); openMenu(); });
 
   el.search.addEventListener('input', function () { query = el.search.value; render(); });
   el.search.addEventListener('keydown', function (e) {
@@ -1490,11 +1823,11 @@
     e.preventDefault();
     var input = el.newCategory.elements.name;
     var name = input.value.trim();
-    if (!name || !data) return;
+    if (!name || !data || needsConnection()) return;
     input.value = '';
     addCategory(name).catch(function (err) {
       if (!input.value) input.value = name;
-      toast(err.message);
+      toast(err.network ? 'You are offline: that needs a connection.' : err.message);
     });
   });
   commitOnBlur(el.newCategory.elements.name);
@@ -1517,6 +1850,17 @@
     refresh();
   });
 
+  // The nav bar: its hairline once the list scrolls, and the large title
+  // folding into it.
+  if (kit()) kit().attachNavBar(el.bar, { largeTitleEl: el.largeTitle });
+  // Pull the list down to fetch it again: the kit's pull to refresh, which
+  // is also what makes the page bounce in place instead of dragging
+  // Homeroom around it.
+  if (kit()) {
+    kit().attachPullToRefresh(window, function () { drain(true); return refresh(true); },
+      { content: document.getElementById('page'), topEl: el.bar });
+  }
+
   // Other people shop too: whenever anybody changes something, the list is
   // fetched again at once, and looked at every minute regardless
   // (public/live-updates.js). Not mid-drag, mid-edit or while changes are
@@ -1524,6 +1868,24 @@
   var live = window.LiveUpdates
     ? window.LiveUpdates.watch({ refresh: function () { return refresh(); }, quiet: function () { return !busy(); } })
     : null;
+
+  // The list saved on this device shows at once, before the network
+  // answers, and is all there is offline.
+  var saved = storedJSON(KEY_SAVED);
+  if (saved && saved.list && Array.isArray(saved.items)) {
+    data = saved;
+    showingSaved = true;
+    render();
+  }
+  renderStrip();
+  if (queue().length) drain();
+
+  // The page and its files, kept by the service worker so the list opens
+  // with no connection. Refused in some embedded browsers; the list then
+  // works as before, online.
+  if ('serviceWorker' in navigator) {
+    try { navigator.serviceWorker.register('/sw.js').catch(function () {}); } catch (e) { /* not here */ }
+  }
 
   // The first screen, drawn: Homeroom keeps its opening cover up until then
   // (usernode.ready, the platform bridge), so the app appears in one step

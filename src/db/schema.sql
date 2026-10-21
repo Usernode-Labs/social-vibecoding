@@ -5775,6 +5775,10 @@ INSERT INTO mobile_push_kind_categories (kind, category, default_enabled) VALUES
   -- switch in services/notification-preferences.js (voted_changes_live) is
   -- the first gate.
   ('voted_change_merged', 'proposal_alerts', TRUE),
+  -- #4396: a project you joined while it was made is open
+  -- (services/project-opened.js). Its first version going live is the
+  -- change lifecycle Change alerts already carries.
+  ('project_opened', 'proposal_alerts', TRUE),
   ('issue_opened', 'app_alerts', TRUE),
   ('app_health', 'app_alerts', TRUE),
   -- A server-wide cap nearing its ceiling, for full admins only
@@ -5849,7 +5853,9 @@ DELETE FROM mobile_push_kind_categories
    'platform_incident',
    -- WP-E.
    'build_ready', 'build_needs_you', 'build_stopped', 'build_live',
-   'invite_opened', 'member_joined', 'first_message'
+   'invite_opened', 'member_joined', 'first_message',
+   -- #4396.
+   'project_opened'
  );
 
 -- Sparse account overrides. The closed policy above supplies defaults, so
@@ -8331,6 +8337,30 @@ CREATE TABLE IF NOT EXISTS app_since_summaries (
   PRIMARY KEY (app_id, window_start)
 );
 
+-- A failed checks run in plain words (services/checks-explanation.js): the
+-- sentence the Testing card on a change's page and the top of its Checks
+-- step show, written by the helper model from the failing checks and the
+-- output their tests printed. Written the first time somebody opens the page
+-- after a run fails, never before, and shared by every viewer reading in
+-- that language. One row per change and language: a later run overwrites
+-- it (run_at is the run's checks_checked_at, so a row from an earlier run
+-- is stale and is written again).
+--   explanation  the sentence, NULL while only a failed attempt is held
+--   failed_at    the last failed attempt, so a failing model is asked again
+--                at most once in services/checks-explanation.js RETRY_MS
+-- Private like chat_sessions, whose test output it is read from.
+CREATE TABLE IF NOT EXISTS check_explanations (
+  session_id   INTEGER NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+  language     VARCHAR(35) NOT NULL,
+  run_at       TIMESTAMPTZ NOT NULL,
+  explanation  TEXT,
+  model        VARCHAR(64),
+  failed_at    TIMESTAMPTZ,
+  updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (session_id, language)
+);
+COMMENT ON TABLE check_explanations IS 'staging:private';
+
 -- Platform-wide private messaging (#488). This domain is deliberately
 -- separate from app-scoped `chat_messages`: membership, consent, blocks,
 -- retention, and realtime audiences are all platform-user concerns.
@@ -10620,6 +10650,12 @@ ALTER TABLE apps ADD COLUMN IF NOT EXISTS release_stall JSONB;
 --   completedAt  when a completed run finished (ISO)
 --   readAt       when the poller read it (ISO)
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS release_run JSONB;
+-- When the drift clock first saw main at a tip it could not date
+-- (services/release-watch.js firstSeenAt), whose grace runs from then:
+-- { sha, at } (at in epoch ms). Cleared once the running build is main again.
+-- Kept in a process's memory before, so a restart, or looks alternating
+-- between two workflow processes, started the grace again.
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS release_head_seen JSONB;
 
 -- #2684: the Homeroom bot (`homeroom_bot`, a synthetic user) triages open
 -- requests in shadow mode: it reads an issue, its discussion and the app's
@@ -13132,6 +13168,17 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_community_invite_opens_browser
 CREATE INDEX IF NOT EXISTS idx_community_invite_opens_notice
   ON community_invite_opens (notification_id) WHERE notification_id IS NOT NULL;
 COMMENT ON TABLE community_invite_opens IS 'staging:private';
+
+-- WP-E: the email that stands in for a push somebody cannot get
+-- (services/activity-mail.js), owed by the notice that rang (an invite
+-- moment's day's first, a project they joined opening, the vote digest) and
+-- sent by the notice-mail clock, which sets this once it has handled it. NULL
+-- is owed: only those inserts write it, so every other row, and every row
+-- before it, reads as settled. Sent after the commit before, a restart in
+-- between lost the email for good.
+ALTER TABLE notifications ADD COLUMN IF NOT EXISTS mailed_at TIMESTAMPTZ DEFAULT NOW();
+CREATE INDEX IF NOT EXISTS idx_notifications_mail_owed
+  ON notifications (id) WHERE mailed_at IS NULL;
 
 -- ── Platform limit alerts ──────────────────────────────────────────────
 --
@@ -15713,3 +15760,123 @@ CREATE TABLE IF NOT EXISTS session_workers (
 );
 CREATE INDEX IF NOT EXISTS idx_session_workers_used ON session_workers (last_used_at);
 COMMENT ON TABLE session_workers IS 'staging:private';
+
+-- The count behind each rate limiter that gates a send (a mail, a billed
+-- SMS), a bill (a paid model call) or a guess (a password, a code, a token):
+-- one row per limiter and what it counts, kept as a hash (services/
+-- rate-limit-store.js). Shared by every process and kept across a deploy,
+-- where each process's memory was a budget of its own that every release
+-- reset. A window starts with its key's first hit; rows past their window
+-- go with the rate-limit-retention clock.
+CREATE TABLE IF NOT EXISTS rate_limit_hits (
+  key       TEXT PRIMARY KEY,
+  hits      INTEGER NOT NULL,
+  reset_at  TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_rate_limit_hits_reset ON rate_limit_hits (reset_at);
+COMMENT ON TABLE rate_limit_hits IS 'staging:private';
+
+-- A wallet sign-in's challenge (routes/auth.js wallet-check): bound to one
+-- address, taken once by the signed reply (DELETE ... RETURNING), two
+-- minutes. Only its SHA-256 is kept, as social_identity_oauth_states keeps
+-- an OAuth state. In a process's memory before, a reply another web Pod (or
+-- the next release) answered could not be redeemed. Minting one clears the
+-- expired.
+CREATE TABLE IF NOT EXISTS wallet_challenges (
+  challenge_hash  CHAR(64) PRIMARY KEY CHECK (challenge_hash ~ '^[0-9a-f]{64}$'),
+  pubkey          TEXT NOT NULL,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at      TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_wallet_challenges_expiry ON wallet_challenges (expires_at);
+COMMENT ON TABLE wallet_challenges IS 'staging:private';
+
+-- A waitlist signer's social-connect round trip (routes/waitlist-connect.js):
+-- the hash of its state nonce, the capability token it was minted for, the
+-- provider and X's PKCE verifier, then how it ended (`status`, `handle`),
+-- which a reload replays. Ten minutes. In a process's memory before, a
+-- callback another web Pod (or the next release) answered found nothing.
+-- Parking one clears the expired.
+CREATE TABLE IF NOT EXISTS waitlist_connect_states (
+  state_hash  CHAR(64) PRIMARY KEY CHECK (state_hash ~ '^[0-9a-f]{64}$'),
+  provider    VARCHAR(16) NOT NULL,
+  token       TEXT NOT NULL,
+  verifier    VARCHAR(128),
+  status      VARCHAR(16),
+  handle      TEXT,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at  TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_waitlist_connect_states_expiry ON waitlist_connect_states (expires_at);
+COMMENT ON TABLE waitlist_connect_states IS 'staging:private';
+
+-- A Workshop pass owed (services/workshop-themes.js): a board change owes
+-- one once the board has been quiet for its debounce since that first
+-- change, a page view owes one now. The workshop-changes clock runs each,
+-- taking it off the row as it starts; a change during a pass owes the next.
+-- It was a timer in each process that heard the change, lost to a restart.
+ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS reconcile_due_at TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS idx_app_workshop_themes_due
+  ON app_workshop_themes (reconcile_due_at) WHERE reconcile_due_at IS NOT NULL;
+
+-- A database export's claim and its download ticket, on its own audit row
+-- (services/db-export.js): one row at a time is `streaming`, platform-wide,
+-- renewed by the process streaming it (`heartbeat_at`; a lapsed one is
+-- settled `interrupted` by the next claim); the ticket is kept as its
+-- SHA-256 until it is redeemed or expires, so the download may land on any
+-- process. Both were in the memory of one process. A row an older release
+-- streams has no heartbeat and is not held to the one-at-a-time index.
+ALTER TABLE db_exports ADD COLUMN IF NOT EXISTS heartbeat_at TIMESTAMPTZ;
+ALTER TABLE db_exports ADD COLUMN IF NOT EXISTS ticket_hash TEXT;
+ALTER TABLE db_exports ADD COLUMN IF NOT EXISTS ticket_expires_at TIMESTAMPTZ;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_db_exports_one_streaming
+  ON db_exports ((1)) WHERE status = 'streaming' AND heartbeat_at IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_db_exports_ticket
+  ON db_exports (ticket_hash) WHERE ticket_hash IS NOT NULL;
+
+-- A report generation's claim on its app's row (services/report-ai.js):
+-- one at a time per app on any process, until it ends or this lease lapses.
+-- An app's first generation makes the row to hold it, with no report yet
+-- (input_hash ''). It was a Set in each process's memory.
+ALTER TABLE app_report_ai ADD COLUMN IF NOT EXISTS generating_until TIMESTAMPTZ;
+
+-- A dictation under way for a person (routes/dictation.js): one at a time
+-- per person on any process, until it ends or this lease lapses. A
+-- transcription is returned, never stored, so its claim is a row of its
+-- own. It was a Set in each process's memory.
+CREATE TABLE IF NOT EXISTS dictation_claims (
+  user_id        INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  claim_id       UUID NOT NULL,
+  claimed_until  TIMESTAMPTZ NOT NULL
+);
+COMMENT ON TABLE dictation_claims IS 'staging:private';
+
+-- The refusals an older build left during a rollout, for the reask-refused
+-- clock (src/workflow/platform.ts reaskRefused), which reads them every
+-- minute: a few rows, not every event of the last days.
+CREATE INDEX IF NOT EXISTS wf_events_refused_unknown_idx
+  ON wf_events (id) WHERE result = 'rejected' AND reason = 'unknown_event';
+
+-- The one model call writing a run's explanation, on any process
+-- (services/checks-explanation.js): its row claimed for the run until the
+-- call ends or this lease lapses; other readers wait for what it writes. It
+-- was a promise in each process's memory.
+ALTER TABLE check_explanations ADD COLUMN IF NOT EXISTS generating_until TIMESTAMPTZ;
+
+-- The notification ask (services/notification-asks.js): when Homeroom asked
+-- somebody to turn notifications on, at which moment, on which surface
+-- ('app', the Homeroom app on a phone; 'web', a browser, where the ask is to
+-- get the app), and what they said. Kept per account so a Not now holds on
+-- every device. One row per ask: a later answer replaces the earlier one.
+CREATE TABLE IF NOT EXISTS notification_asks (
+  user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  surface     VARCHAR(8) NOT NULL CHECK (surface IN ('app', 'web')),
+  moment      VARCHAR(32) NOT NULL CHECK (moment IN (
+                'app_building', 'invite_sent', 'suggestion', 'reply',
+                'community', 'project_opens'
+              )),
+  answer      VARCHAR(16) NOT NULL CHECK (answer IN ('yes', 'not_now')),
+  answered_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (user_id, surface, moment)
+);
+COMMENT ON TABLE notification_asks IS 'staging:private';

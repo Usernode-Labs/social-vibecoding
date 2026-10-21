@@ -410,6 +410,32 @@ test('the Homeroom bot\'s reply machines against the full PostgreSQL schema', { 
       'each trigger owes its own; the send keeps one hello per person (sendDm\'s claim)');
   });
 
+  await t.test('D-mail: a message that rang owes its email in its own transaction, sent once as work', async () => {
+    reset();
+    const eve = await user('eve');
+    const mail = { kind: 'build_ready', appName: 'Shop', appSlug: 'shop', conversationId: 7, threadRootId: null };
+    await platform.dmMailOwed(pool, { userId: eve.id, messageId: 501, mail });
+    await platform.dmMailOwed(pool, { userId: eve.id, messageId: 501, mail });
+    await platform.dmMailOwed(pool, { userId: eve.id, messageId: 502, mail });
+    await settle();
+    assert.deepEqual(calls(dm.WORK.mail).map((c) => [c.key, c.input.userId, c.input.messageId, c.input.kind]),
+      [['mail:501', eve.id, 501, 'build_ready'], ['mail:502', eve.id, 502, 'build_ready']], 'one email per message that rang');
+    const i = await inst(dm.MACHINE, dmKey(eve));
+    assert.equal(i.state, 'idle');
+    assert.deepEqual(i.data.notes, {}, 'nothing waits on an email: its result is not kept');
+    const { rows: results } = await pool.query(
+      `SELECT result FROM wf_events WHERE machine = $1 AND key = $2 AND type = 'WorkSucceeded'`, [dm.MACHINE, dmKey(eve)]);
+    assert.deepEqual(results.map((r) => r.result), ['accepted', 'accepted']);
+    // Owed by the message's own transaction: a send that fails after the
+    // insert owes nothing.
+    const conversations = require('../src/services/conversations');
+    const opened = await conversations.ensureAdmittedDirect(pool, bot.id, eve.id);
+    await assert.rejects(conversations.sendMessage(pool, { id: bot.id }, opened.conversationId, { content: 'ready' }, {
+      afterInsert: async (db, m) => { await platform.dmMailOwed(db, { userId: eve.id, messageId: m.messageId, mail }); throw new Error('cut'); },
+    }));
+    assert.equal((await pool.query(`SELECT COUNT(*)::int AS n FROM wf_events WHERE type = 'MailOwed' AND key = $1`, [dmKey(eve)])).rows[0].n, 3);
+  });
+
   await t.test('D-heard: a DM to the bot is heard in its own transaction; a DM between people is not', async () => {
     reset();
     const conversations = require('../src/services/conversations');

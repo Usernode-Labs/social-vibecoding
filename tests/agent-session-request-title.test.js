@@ -163,19 +163,12 @@ async function sendFirstMessage(row) {
   const saved = {
     getPool: poolMod.getPool,
     resolveAgentMayor: agentTurn.resolveAgentMayor,
-    nameFromRequest: agentSessions.nameFromRequest,
   };
-  const named = [];
-  const order = [];
   poolMod.getPool = () => pool;
   agentTurn.resolveAgentMayor = async () => ({ ok: true, apiKey: 'k' });
   // The turn is asked of its machine with the message; this stand-in ends
   // its stream as a finished run would.
   const turns = installTurnPlatform();
-  const askTurn = require('../src/workflow/platform.ts').askTurn;
-  require('../src/workflow/platform.ts').askTurn = async (...args) => { order.push('turn'); return askTurn(...args); };
-  // Never settles: the turn must not wait for the request to be read.
-  agentSessions.nameFromRequest = (_pool, args) => { order.push('name'); named.push(args); return new Promise(() => {}); };
   delete require.cache[require.resolve('../src/routes/agent-sessions')];
   const { agentSessionRoutes } = require('../src/routes/agent-sessions');
   const app = express();
@@ -193,29 +186,31 @@ async function sendFirstMessage(row) {
     await res.arrayBuffer();
     assert.equal(res.status, 200);
     const firstName = pool.calls.find((c) => /SET title = \$1\s+WHERE id = \$2 AND title IS NULL/.test(c.sql));
-    return { named, order, firstName: firstName ? firstName.params[0] : null };
+    return { asked: turns.asks.map((a) => a.input), firstName: firstName ? firstName.params[0] : null };
   } finally {
     server.close();
     Object.assign(poolMod, { getPool: saved.getPool });
     turns.restore();
     Object.assign(agentTurn, { resolveAgentMayor: saved.resolveAgentMayor });
-    agentSessions.nameFromRequest = saved.nameFromRequest;
     delete require.cache[require.resolve('../src/routes/agent-sessions')];
   }
 }
 
-test('the first message of a conversation opened on a request starts the naming, and the turn does not wait for it', async () => {
+// The naming is the turn's own work, beside its run (turn/machine.ts
+// turn.name, pinned in tests/workflow-turn-postgres.test.js): asked with the
+// turn, so a restart after the message never loses it, and the turn never
+// waits for the request to be read.
+test('the first message of a conversation opened on a request asks its turn to name it, and the turn does not wait for it', async () => {
   const opened = await sendFirstMessage(SESSION_ROW);
   assert.equal(opened.firstName, 'can you implement this?', 'the message names it first, with the message, as before');
-  assert.deepEqual(opened.named, [{ agentSessionId: 5, userId: 7 }]);
-  assert.deepEqual(opened.order, ['turn', 'name'],
-    'started once the message is written and its turn asked for; the request ends though the naming never settles');
+  assert.equal(opened.asked.length, 1);
+  assert.equal(opened.asked[0].nameFromRequest, true);
 
   const titled = await sendFirstMessage({ ...SESSION_ROW, title: 'Checklist order', title_source: 'manual' });
-  assert.deepEqual(titled.named, [], 'a conversation that already has a name keeps it');
+  assert.equal(titled.asked[0].nameFromRequest, undefined, 'a conversation that already has a name keeps it');
   assert.equal(titled.firstName, null);
 
   const plain = await sendFirstMessage({ ...SESSION_ROW, focus_context: { entry: 'improve' } });
-  assert.deepEqual(plain.named, [], 'one not opened on a request is named from its first message, as before');
+  assert.equal(plain.asked[0].nameFromRequest, undefined, 'one not opened on a request is named from its first message, as before');
   assert.equal(plain.firstName, 'can you implement this?');
 });

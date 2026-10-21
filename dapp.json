@@ -3037,9 +3037,9 @@
       "expectSelector": "#messages-screen:not(.hidden) .messages-conversation-row .messages-row-line .messages-row-name + .messages-row-time-unread"
     },
     {
-      "name": "A direct conversation is the same Discord-style named-row transcript as every chat: your own turn has your avatar, name and time, and no bubble (#2783)",
+      "name": "A direct conversation puts your own message on the right in its tinted bubble, with no avatar, and the other person's on the left in a plain bubble with their avatar (#5680)",
       "path": "/?demo=1#messages/910001",
-      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-pane.dc-lift.dc-lift-session.messages-thread-direct:not(:has(.messages-bubble)) .messages-message-self > :is(span[aria-hidden], img[alt=\"\"]) + .min-w-0 > .messages-message-head time"
+      "expectSelector": ".messages-layout .messages-thread-direct:has(.messages-message-bubble:not(.messages-message-self)>span[aria-hidden]+.messages-bubble-wrap>.messages-bubble) .messages-message-self>.messages-bubble-wrap:first-child>.messages-message-head+.messages-bubble"
     },
     {
       "name": "...and the sheet carries the conversation's own title row, and ends in the message box: the \"+\", field, Speak and send disc on one row, its character count marked as not near the limit, which a phone does not lay out, so there it is one compact line (#3735, #4389)",
@@ -3047,9 +3047,9 @@
       "expectSelector": "#messages-screen:not(.hidden) .dc-lift-session:has(.messages-composer-add + textarea + [data-dictation] + .messages-send):has(.messages-composer-count:not([data-near-limit])) .messages-thread-header .messages-thread-name + .messages-thread-sub"
     },
     {
-      "name": "A group conversation is a named-row transcript",
+      "name": "A group conversation draws your own messages on the right and everyone else's on the left, each in a bubble (#5680)",
       "path": "/?demo=1#messages/910002",
-      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-pane.messages-thread-group .messages-message:not(.messages-message-bubble) .messages-message-head time"
+      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-pane.messages-thread-group:has(.messages-message-bubble.messages-message-self .messages-bubble) .messages-message-bubble:not(.messages-message-self) > .messages-bubble-wrap > .messages-message-head time"
     },
     {
       "id": "messages.inbox",
@@ -3791,9 +3791,15 @@
       "expectText": "Why it failed"
     },
     {
-      "name": "A failing unit-suite row lists each failing test with its error excerpt under Why it failed (#3978)",
+      "name": "A failing unit-suite row says which test failed and what it failed with, then its error excerpt once, under Show the test output (#3978)",
       "path": "/?demo=1&details=1#app/usernode-2d5619/dev/proposals/9000093",
-      "expectSelector": ".dev-step-blocked[data-note=\"checks\"] .dev-step-run .dev-ledger-fails > .dev-ledger-check-why > .dev-ledger-why > .dev-ledger-why-body > .dev-ledger-why-details > li .dev-ledger-why-excerpt"
+      "expectSelector": ".dev-step-blocked[data-note=\"checks\"] .dev-step-run .dev-ledger-fails > [data-check-unit]:has(.dev-ledger-unit-said) > .dev-ledger-why > .dev-ledger-why-body > .dev-ledger-why-details > li .dev-ledger-why-excerpt"
+    },
+    {
+      "name": "A change whose checks failed tells its author what went wrong in plain words, with Fix it beside a quieter Re-run checks",
+      "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000494",
+      "expectSelector": "[data-change-gate=\"testing\"][data-tone=\"bad\"]:has(.dev-change-gate-fix > .gc-vote-btn-accent[data-change-fix-checks] + .gc-vote-btn:not(.gc-vote-btn-accent)[data-act=\"castRecheck\"]) > .dev-change-gate-why[data-change-gate-why=\"explained\"]",
+      "expectText": "needs a Spanish version"
     },
     {
       "name": "Freshness (#1442): a conflicting proposal says so on its merge step, with its votes still open above it",

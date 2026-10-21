@@ -335,7 +335,6 @@ test('the handoff pipeline is shared, not forked', () => {
   // machine through it. If either caller grows its own copy, the two flows
   // drift.
   for (const fn of [
-    'serializeHandoffSubmission',
     'hasInFlightHandoffPipeline',
     'beginHandoffPipeline',
     'startHandoffPipeline',

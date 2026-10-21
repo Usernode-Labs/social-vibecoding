@@ -2696,24 +2696,18 @@ async function seedStagingPlatformEnv(pool, config) {
 
 // Boot sweep for the database-export audit log. A row is written BEFORE
 // the dump is spawned and only reaches a terminal status when the stream
-// resolves — so a process killed mid-export (deploy cutover: the usernode
-// service has stop_grace_period: 10s; OOM; hard crash) leaves the row
-// stuck in `requested` or `streaming` forever. Nothing else can ever
-// resolve those rows: the in-memory single-flight guard and the child
-// process both died with the old process. Flip them to `interrupted` at
-// boot so the admin console's history never shows a phantom in-flight
-// export. NOT staging-gated — this is a production correctness sweep.
+// resolves — so a process killed mid-export (deploy cutover, OOM, hard
+// crash) leaves the row stuck in `requested` or `streaming`. A boot settles
+// the ones nothing will finish: a dump whose process stopped renewing it,
+// and a request whose ticket expired (services/db-export.js
+// settleAbandoned, which a claim runs too). A dump another process still
+// streams is left alone. NOT staging-gated — this is a production
+// correctness sweep.
 async function sweepInterruptedDbExports(pool) {
   try {
-    const { rowCount } = await pool.query(
-      `UPDATE db_exports
-          SET status = 'interrupted',
-              finished_at = COALESCE(finished_at, NOW()),
-              error = COALESCE(error, 'platform restarted while the export was in flight')
-        WHERE status IN ('requested', 'streaming')`
-    );
-    if (rowCount) {
-      log.warn('db', 'Marked stale database exports interrupted', { count: rowCount });
+    const count = await require('../services/db-export').settleAbandoned(pool);
+    if (count) {
+      log.warn('db', 'Marked stale database exports interrupted', { count });
     }
   } catch (err) {
     log.warn('db', 'Database-export sweep failed', { message: err.message });

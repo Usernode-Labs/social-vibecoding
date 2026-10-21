@@ -2657,6 +2657,12 @@ const FIRST_VERSION_DESIGN_LINES = Object.freeze([
   'components rather than re-invented. In your look-and-fix rounds, compare your screenshots with the drawn screens and',
   'fix what differs. Where a drawing and the spec\'s words disagree, the words decide what the app does and the drawing',
   'decides how it looks.',
+  // 21 Oct 2026: a minesweeper first version reused its drawn board's markup
+  // as a grid of buttons, so a long press selected the numbers and every
+  // tap waited on the browser's click. A game's play is painted instead.
+  'A game\'s play area (its board, field, pieces or cards) is the one thing you never build from the drawing\'s markup:',
+  'paint what the drawing shows on a canvas, played with pointer events, as the platform conventions\' "Games: draw the',
+  'play area on a canvas" says, even for a grid game. A game starter\'s own drawing is kept.',
   // App bench run 193 (14 Oct 2026): the reviewer's two most common round-1
   // findings in every arm, desktop layouts stretched across the window (8 of
   // 15 reviewed builds) and loading states shaped unlike the rows (6).
@@ -4528,11 +4534,16 @@ async function buildAndPropose({
       }
       return true;
     });
+    // Drawn inside its step, so the step is kept only once it is drawn: a
+    // drawing left running past the step was lost to a restart, and the
+    // step said it was done. A drawing that fails is not the build's failure.
     if (onFirstLook && spec.specHtml) await steps.once('first_look', async () => {
-      const drawIn = containerName;
-      void Promise.resolve()
-        .then(() => onFirstLook({ specHtml: spec.specHtml, containerName: drawIn }))
-        .catch((err) => log.warn('homeroom-bot', 'The first look could not be drawn', { sessionId: session.id, err: err.message }));
+      try {
+        await onFirstLook({ specHtml: spec.specHtml, containerName });
+      } catch (err) {
+        durableSteps.rethrowStop(err, 'first look');
+        log.warn('homeroom-bot', 'The first look could not be drawn', { sessionId: session.id, err: err.message });
+      }
       return true;
     });
   } else {
@@ -4812,6 +4823,11 @@ async function buildAndPropose({
         costUsd, activeMs: Date.now() - buildStartedMs, buildText: result.lastResultText || null,
       },
     }));
+    // Its last look, when a restart came after the review was kept and
+    // before the look was (a look under way already is not taken again).
+    if (reviewed) {
+      finalLookBeside({ pool, config, bot, app, session, seed, spec: spec.ok ? spec.specMd : null, locale, review, deps, state: reviewed });
+    }
     if (reviewed) {
       if (reviewed.finalSha) landedSha = reviewed.finalSha;
       if (Number(reviewed.finalCommits) > 0) landedCommits = Number(reviewed.finalCommits);
@@ -4986,6 +5002,34 @@ async function captureBuildState({
  * broke the app rolled back on the branch (rollbackReviewBranch). Resolves
  * the loop's final state, or null when it could not start; never throws.
  */
+// Run seven (14 Oct 2026): a review that stopped on its round limit gets one
+// last look at its final fix, recorded on the live run and nothing else
+// (bot-review.js startFinalLook). Run beside the build's steps: the build
+// goes on to its proposal as it would have, and its item does not end before
+// the look has (steps.beside, its flush), so a restart takes it again rather
+// than losing it. The reviewer is called directly, not through the loop's
+// `review`, so no 'review_round' stage is written for it. Asked again, it is
+// not taken twice: the step, while it runs and once it is saved.
+function finalLookBeside({ pool, config, bot, app, session, seed, spec, locale, review, deps, state }) {
+  const runId = review?.owner?.botRunId;
+  if (!runId || !state) return;
+  const model = state.reviewer?.model || review.reviewer?.model;
+  if (!model) return;
+  try {
+    durableSteps.of(deps).beside('final_look', () => require('./bot-review').startFinalLook({
+      pool, runId, state,
+      review: ({ round, capture: shot, previousIssues, timeoutMs }) => require('./bot-review').reviewCapture({
+        pool, config, userId: bot.id, model, seed, spec, capture: shot, previousIssues,
+        round, maxRounds: round, appId: app.id, sessionId: session.id, timeoutMs, locale,
+        deps: deps.reviewDeps || {},
+      }),
+    }));
+  } catch (err) {
+    durableSteps.rethrowStop(err, 'final look');
+    log.warn('homeroom-bot', 'Could not start the last look after the final fix (going on)', { sessionId: session.id, err: err.message });
+  }
+}
+
 async function reviewLanded({
   pool, config, bot, app, repo, session, branchName, seed, spec, review, deps, runBuildTurn,
   turnBudgetMs, readsImages, platformRepo, skipNow, onProgress, start, fixTurnIds = null,
@@ -5007,29 +5051,7 @@ async function reviewLanded({
   const steps = durableSteps.of(deps);
   const keptState = steps.get('review_state');
   const owner = review.owner || {};
-  // Run seven (14 Oct 2026): a review that stopped on its round limit gets
-  // one last look at its final fix, recorded on the live run and nothing
-  // else (bot-review.js startFinalLook). Started, never waited on: the build
-  // goes on to its proposal as it would have. The reviewer is called
-  // directly, not through the loop's `review` below, so no 'review_round'
-  // stage is written for it.
-  const lookOnceMore = (state) => {
-    if (!owner.botRunId || !state) return;
-    const model = state.reviewer?.model || review.reviewer?.model;
-    if (!model) return;
-    try {
-      botReview.startFinalLook({
-        pool, runId: owner.botRunId, state,
-        review: ({ round, capture: shot, previousIssues, timeoutMs }) => botReview.reviewCapture({
-          pool, config, userId: bot.id, model, seed, spec, capture: shot, previousIssues,
-          round, maxRounds: round, appId: app.id, sessionId: session.id, timeoutMs, locale,
-          deps: deps.reviewDeps || {},
-        }),
-      });
-    } catch (err) {
-      log.warn('homeroom-bot', 'Could not start the last look after the final fix (going on)', { sessionId: session.id, err: err.message });
-    }
-  };
+  const lookOnceMore = (state) => finalLookBeside({ pool, config, bot, app, session, seed, spec, locale, review, deps, state });
   // One that had finished when the restart came (its end saved, the build's
   // `reviewed` step not yet): taken as it ended, never reviewed again (its
   // last look only if the run has none).

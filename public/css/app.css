@@ -1044,30 +1044,33 @@ html.dark .messages-markdown .gc-ref-issue.gc-ref-request { color: hsl(var(--req
 .messages-bot-block-first, .messages-bot-block-middle { padding-bottom: 0; }
 .messages-bot-block-middle, .messages-bot-block-last { padding-top: 0; }
 
-/* ── The bubble transcript (a direct conversation) ───────────────────────
-   Two participants, one of them you, so side and surface say who is
-   speaking and no name is drawn. Theirs is an opaque white bubble on the
-   left; yours is on the right in the accent as a TINT — the same 8% the dev
-   chat gives your turns, with the page's own ink, so a quoted reply or a
-   link inside it keeps its normal colours and no inverted token is needed.
-   The gutter is the cue; the tint confirms it. */
+/* ── A conversation has sides (#5680) ───────────────────────────────────
+   A direct message and a group chat draw each message on its sender's side,
+   in a bubble: yours on the right in the accent as a TINT — the same 8% the
+   general chat gives your turns, with the page's own ink, so a quoted reply
+   or a link inside it keeps its normal colours and no inverted token is
+   needed — and theirs on the left in the opaque surface. The name and the
+   time still read name-then-time (#2392), only against that side: a row
+   runs right to left for its own author, so the head, the bubble and
+   everything under it line up at the right edge. A channel keeps its named
+   rows (#2783) and is untouched by any of this. */
 .messages-message-bubble {
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 6px;
   padding: 4px 16px;
 }
-.messages-message-bubble.messages-message-self { align-items: flex-end; }
-.messages-bubble-wrap {
+.messages-message-bubble.messages-message-self { flex-direction: row-reverse; }
+.messages-message-bubble > .messages-bubble-wrap {
   position: relative;
   display: flex;
   flex-direction: column;
-  align-items: inherit;
-  max-width: 78%;
+  align-items: flex-start;
+  gap: 6px;
   min-width: 0;
 }
+.messages-message-bubble.messages-message-self > .messages-bubble-wrap { align-items: flex-end; }
+.messages-message-self .messages-message-head { justify-content: flex-end; }
 .messages-bubble {
   min-width: 0;
+  max-width: 78%;
   border-radius: 20px;
   padding: 10px 16px;
   color: var(--text-primary);
@@ -1079,6 +1082,11 @@ html.dark .messages-markdown .gc-ref-issue.gc-ref-request { color: hsl(var(--req
 .messages-message-self .messages-bubble { background: var(--accent-tint); }
 .messages-message-bubble .messages-attachments,
 .messages-message-bubble .messages-object-list { width: 100%; max-width: 78%; }
+/* A saved message in a bubble is outlined in the accent: the inset bar a
+   flat row wears excludes bubble rows (below). */
+.messages-message-bubble.messages-message-saved .messages-bubble {
+  box-shadow: inset 0 0 0 1.5px var(--accent);
+}
 .messages-message-meta {
   padding: 0 6px;
   color: var(--text-muted);
@@ -6624,6 +6632,17 @@ body:has(#platform-header.hidden) #app-frame-host {
 
 .dc-msg-content a { color: var(--accent); text-decoration: underline; word-break: break-all; }
 .dc-msg-content a:hover { color: var(--accent-light); }
+/* #5728: a `#N` / `PR#N` chip in a reply (an agent session, a change's chat)
+   is the app chat's reference chip, not a markdown link: no underline until
+   it is hovered, and no breaking the number across lines. The issue ink is
+   the chip's own emerald, softened on the light sheet as Messages is; a PR
+   chip keeps the accent ink above, which is the blue it already wears. */
+.dc-msg-content a.gc-ref { text-decoration: none; word-break: normal; }
+.dc-msg-content a.gc-ref-issue { color: var(--state-ok); }
+html:not(.dark) .dc-msg-content a.gc-ref-issue { background: rgba(16, 185, 129, 0.05); }
+@media (hover: hover) {
+  .dc-msg-content a.gc-ref:hover { text-decoration: underline; }
+}
 
 .dc-msg-content strong { font-weight: 600; color: var(--text-primary); }
 .dc-msg-content em { font-style: italic; color: var(--text-faint); }
@@ -13533,6 +13552,18 @@ button.dev-badge { cursor: pointer; }
   text-overflow: ellipsis;
   max-width: 11ch;
 }
+/* A chip's own words, where the chip itself is the thing that gives way
+   (#5755). The category chip's label used to be a bare text child of the
+   chip's flex box, and bare text cannot ellipsise: in a row that clips its
+   one line, the chip was sliced through at the card's edge. In this span the
+   label ends in "…" and the pill keeps its rounded end. No font-size and no
+   max-width — only the row the chip sits in limits it. */
+.dev-badge-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
 
 /* NOTE the property here is `font-family`, NOT the `font` shorthand. The
    shorthand resets font-size / font-weight / line-height to their initial
@@ -14880,6 +14911,9 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
 }
 :is(.dev-card-dense, .dev-card-topic) .dev-card-meta > .dev-badge {
   height: 19px; font-size: 11.5px; vertical-align: middle; margin-left: 4px;
+  /* The meta line wraps, but a chip wider than the line itself would still
+     run past the card's edge: it stops at the card and ellipsises (#5755). */
+  max-width: calc(100% - 4px);
 }
 /* Tabbed in under the title, as the folded row's meta line is: the row keeps
    its icon in a column of its own and the title and meta share the next, so
@@ -15189,6 +15223,16 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
   box-shadow: 0 0 0 1px var(--border) inset;
 }
 :is(.dev-card-dense, .dev-card-topic) :is(.dev-card-status, .dev-card-facts) > .dev-badge .attr-avatar { width: 14px; height: 14px; }
+/* These two bands are one row, clipped (above), so a chip that does not fit
+   used to be sliced at the card's right edge (#5755). It now shrinks into
+   what is left and ends in a whole rounded pill; only its words give way,
+   through the chip's own `.dev-badge-label`. */
+:is(.dev-card-dense, .dev-card-topic) :is(.dev-card-status, .dev-card-facts) > .dev-badge {
+  flex-shrink: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+:is(.dev-card-dense, .dev-card-topic) :is(.dev-card-status, .dev-card-facts) > .dev-badge > :not(.dev-badge-label):not(.dev-badge-name) { flex-shrink: 0; }
 
 /* ── The action band: one line, folding into ⋯ ──
    28px pills at the second type size and the labelled Preview pill at the
@@ -15945,6 +15989,28 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   border-radius: 10px;
 }
 .dev-ledger-fails > .dev-ledger-check-why { display: block; }
+/* The app's own tests, failed: what the suite is and how many of its tests
+   failed, the tests that failed with their message and place, and the
+   runner's output folded under them. */
+.dev-ledger-fails > .dev-ledger-check-unit { display: block; padding: 8px 10px; }
+.dev-ledger-unit-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 2px 8px; min-width: 0; }
+.dev-ledger-unit-name { font-weight: 600; color: var(--text-primary); }
+.dev-ledger-unit-cmd { font-size: 11.5px; color: var(--text-muted); }
+.dev-ledger-unit-count { margin-left: auto; font-weight: 600; color: var(--state-blocked); }
+.dev-ledger-unit-part { margin-top: 8px; }
+.dev-ledger-unit-k { font-size: 11.5px; font-weight: 600; color: var(--text-muted); }
+.dev-ledger-unit-tests { margin: 2px 0 0; padding: 0; list-style: none; display: grid; gap: 6px; }
+.dev-ledger-unit-tests > li { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.dev-ledger-unit-test { color: var(--text-primary); overflow-wrap: anywhere; }
+.dev-ledger-unit-said { color: var(--text-secondary); overflow-wrap: anywhere; }
+.dev-ledger-unit-where { font-size: 11px; color: var(--text-muted); overflow-wrap: anywhere; }
+.dev-ledger-unit-reason { margin: 6px 0 0; color: var(--text-secondary); overflow-wrap: anywhere; }
+.dev-ledger-unit-output { margin-top: 8px; }
+/* A failed run's "What went wrong", over its failures. */
+.dev-ledger-explain { margin: 2px 0 8px; font-size: 12.5px; }
+.dev-ledger-explain-text { margin: 2px 0 0; line-height: 1.45; color: var(--text-primary); }
+.dev-ledger-explain-source { margin-top: 2px; font-size: 11px; color: var(--text-muted); }
+.dev-ledger-fix-refused { flex-basis: 100%; font-size: 12px; color: var(--state-blocked); }
 .dev-ledger-check-glyph { flex: none; }
 .dev-ledger-check-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dev-ledger-check-path { flex: none; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11.5px; color: var(--text-muted); }
@@ -17138,6 +17204,19 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   color: var(--accent);
 }
 .dev-change-gate-link:hover { text-decoration: underline; }
+/* A failed run: what went wrong, in the card's own ink over the muted line,
+   then the author's Fix it with the re-run beside it, and a refusal under
+   them when the agent could not take it. */
+.dev-change-gate-why { grid-column: 1 / -1; margin: 10px 0 0; font-size: 14px; line-height: 1.45; color: var(--text-primary); overflow-wrap: anywhere; }
+.dev-change-gate-fix { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 10px; }
+.dev-change-gate-fix .gc-vote-btn {
+  height: 34px;
+  padding: 0 14px;
+  gap: 6px;
+  font-size: 14px;
+  font-weight: 600;
+}
+.dev-change-gate-refused { grid-column: 1 / -1; margin: 6px 0 0; font-size: 13px; line-height: 1.4; color: var(--state-blocked); }
 @media (prefers-reduced-motion: reduce) {
   .dev-change-bar-fill { transition: none; }
 }
@@ -18556,12 +18635,13 @@ button.dev-ws-recent-card {
 }
 .dev-ws-share:has(.dev-ws-join-pop) { position: relative; z-index: 5; }
 
-/* ── First look (hub-cards.tsx FirstLookCard, newcomer run six) ──────
-   The maker's, under Share it, while their first version is built: the
-   picture Homeroom bot drew of its main screen, small and phone-shaped
-   (cropped from the top, as a phone shows a screen), beside a small-caps
-   kicker, the card's sentence-case title and line in Share it's own type,
-   and its one button. The picture's box is fixed, so nothing moves as it
+/* ── First look (hub-cards.tsx FirstLookView, newcomer run six) ──────
+   The maker's First version card while their first version is built
+   (21 Oct 2026; a card of its own after For you until then): the picture
+   Homeroom bot drew of its main screen, small and phone-shaped (cropped
+   from the top, as a phone shows a screen), beside the project's name as
+   the thumbnail row draws it, the build line, one line in Share it's own
+   type, and its button. The picture's box is fixed, so nothing moves as it
    loads. */
 .dev-ws-strip.dev-ws-first-look { position: relative; flex-direction: row; align-items: flex-start; gap: 14px; }
 /* #5618: the picture and the words open the maker's chat with Homeroom
@@ -18584,13 +18664,12 @@ button.dev-ws-recent-card {
   flex: 1 1 auto; min-width: 0;
   display: flex; flex-direction: column; align-items: flex-start; gap: 4px;
 }
-.dev-ws-first-look-kicker {
-  margin: 0; font-size: 12px; font-weight: 700; line-height: 16px;
-  letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-muted);
+.dev-ws-first-look-name {
+  margin: 0; max-width: 100%; font-size: 15px; font-weight: 650; line-height: 20px;
+  color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.dev-ws-first-look-body .dev-ws-head-title { margin: 0; }
 .dev-ws-first-look-body .dev-ws-strip-text { color: var(--text-muted); }
-/* Watch keeps its own tap, over the door (#5618). */
+/* Its buttons keep their own taps, over the door (#5618). */
 .dev-ws-first-look-body > button { position: relative; z-index: 2; margin-top: 8px; }
 
 /* ── Approval rules (community-card.tsx ApprovalRules) ─────────────── */
@@ -21604,7 +21683,11 @@ span.dev-ws-dash-cell[data-ws-dash-open]:focus-visible { outline: 2px solid var(
    .dev-card-meta > .dev-badge), so "In review" and "@maya" are the same chip
    at both sizes. Without this they fell back to the base .dev-badge —
    10.5px on a 20px chip against the card's 11.5px on 19px. */
-.dev-ws-row-band > .dev-badge { flex: none; height: 19px; font-size: 11.5px; }
+/* `0 1 auto`, not `none`: the band clips its one line, so a chip that does
+   not fit used to be cut through at the row's edge (#5755). It shrinks now,
+   and its words ellipsise inside a whole pill. */
+.dev-ws-row-band > .dev-badge { flex: 0 1 auto; min-width: 0; overflow: hidden; height: 19px; font-size: 11.5px; }
+.dev-ws-row-band > .dev-badge > :not(.dev-badge-label):not(.dev-badge-name) { flex-shrink: 0; }
 /* The composite pill, wearing the tone it has always carried. Tones are
    `statusPillState`'s vocabulary (neutral / ok / attention / blocked /
    progress), not the merge badge's colour names — an unknown one falls
@@ -24684,6 +24767,13 @@ html.in-side-panel body {
 }
 .dev-ws-lrow .dev-ws-wrow-status::-webkit-scrollbar { display: none; }
 .dev-ws-lrow .dev-ws-wrow-status > * { flex: none; }
+/* The category chip is the one thing on this line that gives way (#5755):
+   it took the line's last room, so it was faded by the mask and cut at the
+   edge. It shrinks into what is left and its label ends in "…". */
+.dev-ws-lrow .dev-ws-wrow-status > .attr-chip { flex: 0 1 auto; min-width: 0; overflow: hidden; }
+/* The line ends 20px before its mask does, so a chip that FITS is never
+   faded by the mask. */
+.dev-ws-lrow .dev-ws-wrow-status { padding-right: 20px; }
 .dev-ws-lrow .dev-ws-wrow-sub { overflow: visible; }
 .dev-ws-lrow > .dev-ws-wrow-menu { margin-top: 1px; }
 @container (max-width: 520px) {
@@ -25071,6 +25161,29 @@ html.in-side-panel body {
   .rf-sheet, .rf-scrim, .rf-seam, .rf-tab, .rf-pill { transition: none; }
   .rf-lens { animation: none; }
   .rf-fresh .rf-said-mark, .rf-fresh .rf-said-mark path, .rf-fresh h2 { animation: none; }
+}
+
+/* From 768px the change page is a panel, not a phone page on a desktop.
+   It starts under the app's header (the shell's own header tokens, as the
+   rail does) and never covers it, 16px clear of it and of the window's
+   foot. It is as tall as what it holds, up to that room, and past it the
+   stage scrolls inside it. The vote sheet is its foot, right under the
+   claim, not pinned to the bottom of the window. The pane behind it is
+   dimmed (.rf-page-dim, not the sidebar or the header); a click there is
+   Back. review-flow.tsx opens the card onto these corners (restRadius).
+   A phone keeps the page above exactly as it was. */
+.rf-page-dim { display: none; }
+@media (min-width: 768px) {
+  .rf-page-wrap {
+    top: calc(var(--browser-banner-h, 0px) + var(--platform-header-h) + var(--platform-safe-top, 0px));
+    --rf-room: calc(100dvh - var(--browser-banner-h, 0px) - var(--platform-header-h) - var(--platform-safe-top, 0px) - var(--platform-tabs-h, 0px) - 32px);
+  }
+  .rf-page-dim { display: block; position: absolute; inset: 0; background: rgba(0,0,0,.32); pointer-events: auto; }
+  .dark .rf-page-dim { background: rgba(0,0,0,.56); }
+  .rf-page { top: 16px; bottom: auto; max-height: var(--rf-room); border-radius: 20px; box-shadow: 0 0 0 1px var(--rf-line), 0 24px 64px rgba(0,0,0,.18); }
+  .rf-head { padding-top: 4px; }
+  .rf-stage { flex: 0 1 auto; }
+  .rf-sheet { max-height: calc(var(--rf-room) - 52px); border-radius: 0; box-shadow: inset 0 1px 0 var(--rf-line); }
 }
 
 /* New Needs you (an experiment), pictures for every card: a drawn picture

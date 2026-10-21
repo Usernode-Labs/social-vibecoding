@@ -518,6 +518,39 @@ test('the Homeroom bot\'s change machine against the full PostgreSQL schema', { 
     assert.equal(Object.values(i.data.notes).filter((n) => n.status === 'done').length, 1);
   });
 
+  // A vote is told to the change's machine in the vote's own statement
+  // (routes/votes.js recordVote, retractVote): it was a call after the
+  // commit, which a restart lost.
+  await t.test('B-vote: a vote on the bot\'s change reads its tray again, and a yes is said once per voter and epoch', async () => {
+    reset();
+    const { recordVote, retractVote } = require('../src/routes/votes.js');
+    const s = await change();
+    await tell(s, 'Proposed');
+    const { rows: [voter] } = await pool.query(`INSERT INTO users (username, password) VALUES ('vote_ada', 'x') RETURNING id, username`);
+    const cast = (v) => recordVote({ pool, session: { id: s.id }, userId: voter.id, vote: v, headSha: s.head, revisionEnforced: false, voter: voter.username });
+    reset();
+    const yes = await cast('yes');
+    assert.equal(yes.rowCount, 1, 'the vote is recorded as before');
+    await settle();
+    assert.deepEqual(calls(WORK.approved).map((c) => [c.key, c.input.voterId, c.input.voter, c.input.epoch]),
+      [[`approved:${voter.id}:1`, voter.id, 'vote_ada', 1]]);
+    assert.deepEqual(pushes.filter((p) => p.data?.type === 'homeroom_bot_work_changed').map((p) => p.routing.userId), [asker.id]);
+    await cast('no');
+    await cast('yes');
+    await settle();
+    assert.equal(calls(WORK.approved).length, 1, 'once per voter and epoch');
+    pushes.length = 0;
+    const out = await retractVote({ pool, sessionId: s.id, userId: voter.id });
+    assert.equal(out.vote, 'yes');
+    await settle();
+    assert.equal(calls(WORK.approved).length, 1, 'taken back: no line');
+    assert.equal(pushes.filter((p) => p.data?.type === 'homeroom_bot_work_changed').length, 1, 'its tray reads again');
+    // A change the machine does not follow tells nobody.
+    const other = await change({ owner: asker.id, run: false });
+    await recordVote({ pool, session: { id: other.id }, userId: voter.id, vote: 'yes', headSha: other.head, revisionEnforced: false, voter: voter.username });
+    assert.equal((await pool.query(`SELECT COUNT(*)::int AS n FROM wf_events WHERE type = 'Voted' AND key = $1`, [sessionKey(other.id)])).rows[0].n, 0);
+  });
+
   await t.test('kernel: no notifier, and nothing a transition returns runs after COMMIT', async () => {
     assert.throws(() => defineMachine({ name: 'old-style', version: 1, events: {}, decode: (r) => r, authorize: {}, transitions: {}, notifiers: {} }),
       /notifiers are gone/);

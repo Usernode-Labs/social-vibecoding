@@ -420,9 +420,12 @@ test('standalone server pages never fall back to the SPA shell', () => {
   //   /connect/authorize — the hosted MCP connector (Claude.ai, ChatGPT)
   // Serving either from the cached SPA shell would show a page that looks
   // signed in but cannot approve anything.
-  assert.deepEqual(NO_FALLBACK_PAGES, ['/cli/authorize', '/connect/authorize']);
+  // And the notification ask's code to scan (routes/public-api.js /get-app):
+  // a redirect to the phone's own store, never a shell route.
+  assert.deepEqual(NO_FALLBACK_PAGES, ['/cli/authorize', '/connect/authorize', '/get-app']);
   assert.equal(classify('GET', '/cli/authorize', 'text/html', 'navigate'), 'bypass');
   assert.equal(classify('GET', '/connect/authorize', 'text/html', 'navigate'), 'bypass');
+  assert.equal(classify('GET', '/get-app', 'text/html', 'navigate'), 'bypass');
 });
 
 // Public report share links (/reports/<token>) are standalone sandboxed

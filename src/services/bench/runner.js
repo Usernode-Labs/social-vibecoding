@@ -12,7 +12,9 @@
 //     agent-turn resolveCodexRuntimeContext), the same harness (the
 //     platform's per-model choice of CLI, 'auto', as the bot's own turns
 //     ask for it), the same reasoning effort and the same wall clocks the
-//     bot's own turns get, whatever the model;
+//     bot's own turns get, whatever the model, unless the trial's arm
+//     names an effort of its own (`vendor/model@max`, bench/arms.js), which
+//     every turn of it then runs at (turnEffort);
 //   * a session per trial, stamped with the trial's model, so the model that
 //     ran is the model the turn resolved (and agent_turns says so).
 //
@@ -285,14 +287,26 @@ function withApp(session, app) {
   return session;
 }
 
-async function openSession(pool, config, { user, app, model, branch, title, owner = null, step = null }) {
+/**
+ * The reasoning effort of a trial's turn at `stage` (triage, spec, build,
+ * followup): its arm's, which every turn of the trial runs at, else its
+ * configuration's for that stage (recipe.effort, through the lane's
+ * studioContext), else null: the session's, as the bot's own turns get it.
+ * A checks fix is a follow-up's. Pure.
+ */
+function turnEffort(ctx, stage) {
+  const key = stage === 'checks_fix' ? 'followup' : stage;
+  return ctx?.effort || ctx?.efforts?.[key] || null;
+}
+
+async function openSession(pool, config, { user, app, model, branch, title, owner = null, step = null, effort = null }) {
   const { rows } = await pool.query(
     `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, is_headless, linked_issues,
                                 session_title, agent_backend, agent_provider, agent_model, agent_reasoning_effort,
                                 workflow_owner, workflow_step)
      VALUES ($1, $2, $3, 'paused', FALSE, '{}', $4, 'codex_openrouter', 'openrouter', $5, $6, $7, $8)
      RETURNING *`,
-    [app.id, user.id, branch, title, model, config.openrouterDefaultCodexReasoning || 'low', owner, owner ? step : null],
+    [app.id, user.id, branch, title, model, effort || config.openrouterDefaultCodexReasoning || 'low', owner, owner ? step : null],
   );
   return withApp(rows[0], app);
 }
@@ -321,7 +335,9 @@ async function trialSession(ctx, key, { model, branch, base }) {
         return { id: Number(mine.id) };
       }
     }
-    session = await openSession(pool, config, { user, app, model, branch, title: ctx.title, owner: steps.owner, step });
+    session = await openSession(pool, config, {
+      user, app, model, branch, title: ctx.title, owner: steps.owner, step, effort: turnEffort(ctx, key),
+    });
     return { id: Number(session.id) };
   });
   if (!session) {
@@ -358,6 +374,8 @@ function trialWorker(ctx, session, branch) {
 async function runTurn({
   pool, config, user, session, repo, prompt, mode, model, budgetMs, deps, commitMsg = '', onActivity = null,
   key = 'turn', steps = durableSteps.none(),
+  // The turn's own effort (turnEffort) over the session's; null runs it at the session's.
+  reasoningEffort = null,
 }) {
   const { worker, sessions, agentTurn } = deps;
   let containerName;
@@ -394,6 +412,7 @@ async function runTurn({
       pool, session, userId: user.id, model, resumeThreadId: null, config,
       // As the bot's own turns ask for it (#3296).
       harness: 'auto',
+      ...(reasoningEffort ? { reasoningEffort } : {}),
     }),
     dispatchOnce: async (ctx) => {
       pricing = ctx?.pricingSnapshot || pricing;
@@ -592,7 +611,7 @@ async function triageStage(ctx) {
   const turn = await runTurn({
     pool, config, user, session, repo, mode: 'scout', model, budgetMs: budgets.turnMs, deps, onActivity: ctx.onActivity,
     prompt: (runtime) => triagePrompt(snapshot, seed, require('../prompts').runtimeReadsImages(runtime), guidance),
-    key: ctx.turnKey || 'triage', steps: stepsOf(ctx),
+    key: ctx.turnKey || 'triage', steps: stepsOf(ctx), reasoningEffort: turnEffort(ctx, 'triage'),
   });
   const out = { session_id: session.id, base_sha: base, build_branch: branch, ...turnFields(turn), session };
   return triageResult({ turn, out, prompt: turn.prompt || triagePrompt(snapshot, seed, false, guidance), snapshot });
@@ -614,6 +633,7 @@ async function specStage(ctx) {
   }
   // A step: run again after a restart, the plan is not read (or published)
   // a second time.
+  const effort = turnEffort(ctx, 'spec');
   const spec = await stepsOf(ctx).once('spec', () => live.draftSpec({
     pool, config, bot: user, session, containerName, seed: snapshot.texts.seed,
     buildNote: snapshot.texts.build_note || '', turnBudgetMs: budgets.turnMs, model, specBudgetMs: budgets.specMs,
@@ -625,6 +645,7 @@ async function specStage(ctx) {
     telemetryComponent: TELEMETRY,
     // #3737: a first version's spec decides its look, as the live one does.
     firstVersion: !!snapshot.extra?.firstVersion,
+    ...(effort ? { reasoningEffort: effort } : {}),
   }));
   const out = { session_id: session.id, base_sha: base, build_branch: branch, cost_usd: spec.costUsd ?? null, session };
   if (spec.stopped) return { ...out, status: 'timeout', error: spec.error };
@@ -772,9 +793,10 @@ async function buildStage(ctx) {
     ...(ctx.skipCheck ? { skipCheck: ctx.skipCheck } : {}),
     // A configuration's (services/bot-configs.js, through the lane's
     // studioContext): which CLI each model runs in, its effort for the spec
-    // and the build, and its review.
+    // and the build, and its review. An arm's effort is both turns'
+    // (turnEffort).
     ...(ctx.harnessOf ? { harnessOf: ctx.harnessOf } : {}),
-    ...(ctx.efforts ? { efforts: { spec: ctx.efforts.spec || null, build: ctx.efforts.build || null } } : {}),
+    ...(ctx.effort || ctx.efforts ? { efforts: { spec: turnEffort(ctx, 'spec'), build: turnEffort(ctx, 'build') } } : {}),
     ...(ctx.reviewer ? { review: { reviewer: ctx.reviewer, owner: { trialId: trial.id }, onState: null } } : {}),
     // And its build-speed tweaks (bot-configs.js TWEAKS), a first version's.
     ...(ctx.tweaks?.length ? { tweaks: ctx.tweaks } : {}),
@@ -1051,7 +1073,7 @@ async function followupStage(ctx, kind) {
     commitMsg: `Homeroom benchmark: trial ${trial.id}`,
     // Its lines in the studio's watch, as a triage's are.
     onActivity: ctx.onActivity,
-    key: kind, steps: stepsOf(ctx),
+    key: kind, steps: stepsOf(ctx), reasoningEffort: turnEffort(ctx, kind),
   });
   const out = { session_id: session.id, base_sha: base, build_branch: branch, session, ...turnFields(turn) };
   return followupResult({ turn, out, mode, base, branch, repo, deps });
@@ -1599,6 +1621,7 @@ module.exports = {
   cutBranch,
   openSession,
   trialSession,
+  turnEffort,
   runTurn,
   turnStatus,
   sessionUsage,

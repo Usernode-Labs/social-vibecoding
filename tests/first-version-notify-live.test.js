@@ -9,8 +9,9 @@
 //   1. The server (src/services/homeroom-bot-dm.js firstVersionNotify,
 //      setFirstVersionNotify, sendDm; src/db/schema.sql notify_live), against
 //      the full PostgreSQL schema: on from Make it, the maker's own only; on,
-//      a first version's ready and live ring and its LIVE is the one emailed
-//      when no phone can take the push (src/services/activity-mail.js); off,
+//      a first version's ready and live ring and its LIVE is the one owed an
+//      email for when no phone can take the push (src/services/activity-mail.js,
+//      sent as the bot-dm machine's work); off,
 //      both are said in the chat and ring nothing. The routes
 //      (src/routes/conversations.js) read and set it for the signed-in maker
 //      only, from the page only.
@@ -74,14 +75,15 @@ test('a first version\'s maker is told it is live unless they turn it off, again
   const pool = await openDatabase(t);
   if (!pool) return;
   const dm = require('../src/services/homeroom-bot-dm');
-  const activityMail = require('../src/services/activity-mail');
   const notifyCopy = require('../src/services/homeroom-bot-notify-copy');
 
-  // What would be emailed: sendDm hands it to activity mail and moves on.
-  const emailed = [];
-  const realEmail = activityMail.emailIfNoPush;
-  activityMail.emailIfNoPush = async (_pool, args) => { emailed.push(args); return 'sent'; };
-  t.after(() => { activityMail.emailIfNoPush = realEmail; });
+  // What is owed an email: sendDm appends it to the bot-dm machine in the
+  // message's own transaction (MailOwed → dm.mail, activity mail's input).
+  let seen = 0;
+  const owed = async () => (await pool.query(
+    `SELECT id, payload FROM wf_events WHERE machine = 'bot-dm' AND type = 'MailOwed' AND id > $1 ORDER BY id`, [seen],
+  )).rows.map((r) => ({ ...r.payload.mail, userId: r.payload.userId, messageId: r.payload.messageId, id: Number(r.id) }));
+  const forget = async () => { const all = await owed(); if (all.length) seen = all[all.length - 1].id; };
 
   const user = async (username, synthetic = false) => (await pool.query(
     `INSERT INTO users (username, password, has_platform_access, is_synthetic) VALUES ($1, 'x', TRUE, $2) RETURNING id, username`,
@@ -134,12 +136,13 @@ test('a first version\'s maker is told it is live unless they turn it off, again
   const ready = await say(maya, 'proposal', fv);
   await flush();
   assert.deepEqual((await rang(ready.messageId)).map((r) => r.kind), ['build_ready']);
-  assert.deepEqual(emailed, [], 'a first version\'s ready sends no email: its live will');
+  assert.deepEqual(await owed(), [], 'a first version\'s ready sends no email: its live will');
   // ...and live rings, and is the one emailed when no phone can take it.
   const live = await say(maya, 'merged', { ...fv, live: true });
   await flush();
   const liveRows = await rang(live.messageId);
   assert.deepEqual(liveRows.map((r) => r.kind), ['build_live']);
+  const emailed = await owed();
   assert.equal(emailed.length, 1);
   assert.equal(emailed[0].userId, maya.id);
   assert.equal(emailed[0].kind, 'build_ready', 'the build mail, worded by its detail');
@@ -151,13 +154,12 @@ test('a first version\'s maker is told it is live unless they turn it off, again
   });
 
   // Anybody else's change is as it was: its ready is emailed.
-  emailed.length = 0;
+  await forget();
   const change = await say(ben, 'proposal', { appSlug: supper.slug, appName: supper.name, issueNumber: 4 });
   await flush();
   assert.deepEqual((await rang(change.messageId)).map((r) => r.kind), ['build_ready']);
-  assert.equal(emailed.length, 1);
-  assert.equal(emailed[0].userId, ben.id);
-  emailed.length = 0;
+  assert.deepEqual((await owed()).map((m) => [m.userId, m.messageId]), [[ben.id, change.messageId]]);
+  await forget();
 
   // Off: said in the chat, unread, and nothing rings or is emailed.
   assert.equal(await dm.setFirstVersionNotify(pool, { appSlug: 'club-votes', userId: maya.id, on: false }), false);
@@ -169,7 +171,7 @@ test('a first version\'s maker is told it is live unless they turn it off, again
     assert.ok(sent?.messageId, 'still said');
     assert.deepEqual(await rang(sent.messageId), [], 'no bell, and so no push');
   }
-  assert.deepEqual(emailed, [], 'no email');
+  assert.deepEqual(await owed(), [], 'no email');
   const { rows: [stored] } = await pool.query('SELECT metadata FROM conversation_messages WHERE id = $1', [quietLive.messageId]);
   assert.equal(stored.metadata.homeroomBot.moment, 'live', 'still the live moment in the chat, shown in the main chat too');
   // What is not a first version's ready or live still rings for them.
@@ -181,7 +183,7 @@ test('a first version\'s maker is told it is live unless they turn it off, again
   const back = await say(maya, 'merged', { ...fv, live: true });
   await flush();
   assert.deepEqual((await rang(back.messageId)).map((r) => r.kind), ['build_live']);
-  assert.equal(emailed.length, 1);
+  assert.equal((await owed()).length, 1);
 
   await t.test('the routes read and set it for the signed-in maker only, and a write only from the page', async (st) => {
     const express = require('express');

@@ -118,6 +118,9 @@ const FULLY_READABLE_CONSOLE_TABLES = new Set([
   'mobile_push_registration_events',
   'cli_auth_audit_events',
   'cli_auth_rate_limits',
+  // The shared limiters' counts: a hash of what each counts, a number and
+  // when its window ends. Nothing in it signs anybody in.
+  'rate_limit_hits',
   'mcp_clients',
   'mcp_auth_audit_events',
   // Delegated connector grants (#2779): who holds a grant, of which kind, for
@@ -279,6 +282,17 @@ const CONSOLE_CREDENTIAL_COLUMNS = {
   // additionally contains the callback-state hash and live PKCE verifier.
   user_social_identities: ['provider_subject', 'handle'],
   social_identity_oauth_states: ['state_hash', 'pkce_verifier'],
+  // A wallet sign-in's challenge: its hash is the single-use credential.
+  // Which address it was minted for, and until when, stay readable.
+  wallet_challenges: ['challenge_hash'],
+  // A waitlist signer's social-connect round trip: the state's hash, the
+  // capability token it carries, and X's live PKCE verifier. How it ended
+  // stays readable.
+  waitlist_connect_states: ['state_hash', 'token', 'verifier'],
+  // A database export's download ticket, kept on its audit row as a hash
+  // until it is redeemed (services/db-export.js). The rest of the audit
+  // trail (who, when, how it ended) stays readable.
+  db_exports: ['ticket_hash'],
   social_identity_pending_replacements: ['provider_subject', 'handle'],
   // Public report share links. `share_token` is the SOLE access control on
   // the unauthenticated /reports/:token route (schema.sql says so outright),

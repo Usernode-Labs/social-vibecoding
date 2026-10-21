@@ -353,7 +353,6 @@ const SELF = {
 const HEAD = { sha: INCOMING, committedAt: at(NOW - 2 * MIN), subject: 'Say when the next release goes live (#4600)' };
 
 test('observe records the release run for main\'s tip on every read; none read, none written', async () => {
-  releaseWatch._forTest.resetFirstSeen();
   const pool = writePool();
   await releaseWatch.observe({}, pool, SELF, HEAD, {
     now: NOW, octokit: actions({ status: 'in_progress', conclusion: null, run_started_at: at(NOW - MIN) }),
@@ -383,7 +382,7 @@ test('observe records the release run for main\'s tip on every read; none read, 
 test('converged clears the recorded run with the stall', async () => {
   const pool = writePool();
   await releaseWatch.converged({}, pool, { ...SELF, main_sha: INCOMING, release_run: { sha: INCOMING, readAt: at(NOW) } });
-  assert.ok(pool.queries.some((q) => /SET release_run = NULL WHERE id = \$1 AND release_run IS NOT NULL/.test(q.sql)));
+  assert.ok(pool.queries.some((q) => /SET release_run = NULL, release_head_seen = NULL\s+WHERE id = \$1 AND \(release_run IS NOT NULL OR release_head_seen IS NOT NULL\)/.test(q.sql)));
   const quiet = writePool();
   await releaseWatch.converged({}, quiet, { ...SELF, main_sha: INCOMING });
   assert.equal(quiet.queries.length, 0, 'nothing recorded, nothing written');
@@ -391,7 +390,7 @@ test('converged clears the recorded run with the stall', async () => {
 
 test('the drift poller reads the column the watch clears', () => {
   const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'src', 'services', 'main-drift-poller.js'), 'utf8');
-  assert.match(src, /SELECT id, slug, repo_url, main_sha, last_deploy_at, self_hosted, release_stall, release_run,/);
+  assert.match(src, /SELECT id, slug, repo_url, main_sha, last_deploy_at, self_hosted, release_stall, release_run, release_head_seen,/);
   const schema = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'src', 'db', 'schema.sql'), 'utf8');
   assert.match(schema, /ALTER TABLE apps ADD COLUMN IF NOT EXISTS release_run JSONB;/);
 });

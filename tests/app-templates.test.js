@@ -266,6 +266,16 @@ test('a tier list ranks by dragging, and tapping one shows who ranked it what', 
   assert.doesNotMatch(html, /picked-actions/);
   assert.match(script, /var label = h\('div', 'flex w-14 shrink-0 items-center justify-center text-heading ' \+ TIER_CLASS\[tier\], tier\);/,
     'a tier\'s label is not a button any more');
+  // A press that moves drags at once, with no hold to time, from a 44 px
+  // target that holds the finger; the page scrolls from anywhere else, and
+  // under a drag held at the screen's edge (Evan, 21 Oct 2026: "you need to
+  // hold on it just right to start dragging").
+  assert.match(script, /var CHIP_MOVABLE = 'inline-flex min-h-11 [^']*touch-none select-none /);
+  assert.match(script, /var CHIP = 'inline-flex min-h-11 /);
+  assert.doesNotMatch(script, /setTimeout\(begin/, 'no hold before a drag');
+  assert.match(script, /if \(Math\.abs\(e\.clientX - drag\.x\) \+ Math\.abs\(e\.clientY - drag\.y\) < SLOP_PX\) return;\s+if \(!begin\(\)\) return;/);
+  assert.match(script, /gestures\.claim\('touch', 'tier-drag'\)/, 'a drag owns the gesture, so pulling to refresh never starts under it');
+  assert.match(script, /function edgeScroll\(\)/);
   // A tap (a press that was not a drag) opens the item's sheet, on either board.
   assert.match(script, /chip\.addEventListener\('click', function \(\) \{\s*if \(!justDragged\) openDetail\(item\.id, chip\);/);
   assert.match(script, /chip = h\('button', CHIP, item\.name\);/, 'the group\'s board too');
@@ -380,6 +390,46 @@ test('every ready-made app hears its own writes, and every screen that shares an
   }
 });
 
+// Evan, 21 Oct 2026: "Book club times: shouldn't this be a weekly time? Not
+// just a few times to choose between?" and "If you type in 'what's it for',
+// it's unclear how to close the keyboard." One find-a-time app, two modes:
+// the book club marks the hours of every week; game night and the trip
+// suggest dates. tests/app-templates-postgres.test.js runs both.
+test('find a time: the book club finds a weekly time, the others suggest dates, and the keyboard closes', () => {
+  const modes = { 'find-a-time-book-club': 'weekly', 'find-a-time-game-night': 'dates', 'find-a-time-trip': 'dates' };
+  for (const [id, mode] of Object.entries(modes)) {
+    const files = generate(id);
+    const html = file(files, 'public/index.html');
+    assert.equal(appTemplates.get(id).fill.TIME_MODE, mode, id);
+    assert.match(html, new RegExp(`<main id="app" class="[^"]*" data-mode="${mode}">`), id);
+    assert.match(file(files, 'api.js'), new RegExp(`const MODE = '${mode}' === 'weekly' \\? 'weekly' : 'dates';`), id);
+    // Homeroom's native kit, by relative path: a tap outside a field closes
+    // the keyboard, and the page stays put instead of dragging Homeroom along.
+    assert.match(html, /<link rel="stylesheet" href="\/usernode-native\/v1\/native\.css">[\s\S]*<link rel="stylesheet" href="\/tailwind\.css">/, id);
+    // The kit's script after the theme script, which comes first after the
+    // bridge (tests/new-app-theme.test.js).
+    assert.match(html, /<script src="\/usernode-bridge\/v1\/bridge\.js"><\/script>[\s\S]*applyTheme\(\);[\s\S]*<\/script>\s*(?:<!--[\s\S]*?-->\s*)?<script src="\/usernode-native\/v1\/native\.js"><\/script>/, id);
+    assert.match(html, /viewport-fit=cover/, id);
+    assert.match(html, /html \{ overscroll-behavior-y: contain; overscroll-behavior-x: none; touch-action: pan-y pinch-zoom; \}/, id);
+  }
+  const html = file(generate('find-a-time-book-club'), 'public/index.html');
+  assert.match(html, /Find a weekly time for our book club\./);
+  assert.match(html, /\[data-mode="weekly"\] \[data-dates-only\], \[data-mode="dates"\] \[data-weekly-only\] \{ display: none !important; \}/);
+  assert.match(html, /<section id="week" [^>]*data-weekly-only hidden>/);
+  assert.match(html, /<div id="plans" [^>]*data-dates-only hidden><\/div>/);
+  assert.match(file(generate('find-a-time-trip'), 'public/index.html'), /Find a time for our trip\./);
+  const script = fs.readFileSync(path.join(appTemplates.STARTERS_DIR, 'find-a-time/public/app.js'), 'utf8');
+  assert.match(script, /var refresh = weekly \? week\.load : load;/);
+  assert.match(script, /window\.unNative\.attachPullToRefresh\(window, refresh\)/);
+  // A hold, then a drag, marks a block of hours without scrolling the page;
+  // a quick swipe is left to the page.
+  assert.match(script, /w\.grid\.addEventListener\('touchmove', function \(e\) \{\s+var t = e\.touches\[0\];\s+if \(paint\) \{\s+e\.preventDefault\(\);/);
+  assert.match(script, /\}, \{ passive: false \}\);/);
+  // The name's Done key closes the keyboard rather than starting a plan half done.
+  assert.match(html, /id="plan-name"[^>]*\s+enterkeyhint="done"/);
+  assert.match(script, /if \(e\.key !== 'Enter'\) return;\s+e\.preventDefault\(\);\s+e\.target\.blur\(\);/);
+});
+
 for (const id of READY) {
   test(`the ${id} app is a whole repository on the platform's conventions`, () => {
     const files = generate(id);
@@ -394,7 +444,9 @@ for (const id of READY) {
     assert.match(html, /window\.usernode && window\.usernode\.theme/);
     assert.match(html, /<script src="\/app\.js"><\/script>\s*<\/body>/);
     assert.match(html, /<title>\{\{APP_NAME\}\}<\/title>/);
-    assert.match(html, /<h1 class="text-title">\{\{APP_NAME\}\}<\/h1>/);
+    // A tier list leaves its name to Homeroom's header (Evan, 21 Oct 2026),
+    // keeping it for a screen reader.
+    assert.match(html, appTemplates.dirOf(id) === 'tier-list' ? /<h1 class="sr-only">\{\{APP_NAME\}\}<\/h1>/ : /<h1 class="text-title">\{\{APP_NAME\}\}<\/h1>/);
     // No CDN: every script and stylesheet is the app's own or the platform's, by path.
     for (const m of html.matchAll(/<(?:script|link)[^>]+(?:src|href)="([^"]+)"/g)) {
       assert.ok(m[1].startsWith('/') || m[1].startsWith('data:'), `${id}: ${m[1]} is not fetched from another origin`);

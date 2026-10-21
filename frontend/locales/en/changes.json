@@ -97,7 +97,7 @@
   },
   "firstVersion.notifyWhenLive": {
     "text": "We’ll notify you when it’s live",
-    "description": "Line beside a small check under a new project's card on its App tab, for the person who started the project, while its first version is being made: a promise that Homeroom will send them a notification once the app is live. \"It\" is the app; \"live\" means published and running for everyone."
+    "description": "Line beside a small check under a new project's card on its App tab while its first version is being made, for the person who started the project and for its other members: a promise that Homeroom will send them a notification once the app is live. \"It\" is the app; \"live\" means published and running for everyone."
   },
   "firstVersion.tryAgain": {
     "text": "Try again",
@@ -1892,12 +1892,12 @@
     "description": "Line under the \"Admin approval\" step in a proposal's list of steps, while no administrator has voted Yes yet."
   },
   "step.shots.failed": {
-    "text": "Couldn’t take shots",
-    "description": "Line under the \"Before & after shots\" step in a proposal's list of steps when the automatic before-and-after screenshots could not be taken."
+    "text": "Couldn’t take screenshots",
+    "description": "Line under the \"Before & after screenshots\" step in a proposal's list of steps when the automatic before-and-after screenshots could not be taken."
   },
   "step.shots.taking": {
-    "text": "Taking shots",
-    "description": "Line under the \"Before & after shots\" step in a proposal's list of steps while the automatic before-and-after screenshots are being taken."
+    "text": "Taking screenshots",
+    "description": "Line under the \"Before & after screenshots\" step in a proposal's list of steps while the automatic before-and-after screenshots are being taken."
   },
   "step.env.needsValues": {
     "text": "Needs values set",
@@ -2340,8 +2340,8 @@
     "description": "Item in a proposal's ⋯ menu: opens the proposal with its before-and-after screenshots shown."
   },
   "proposal.menu.beforeAfterTitle": {
-    "text": "Open the declared changes and their before & after shots",
-    "description": "Tooltip of the \"Before & after\" item in a proposal's ⋯ menu. \"Declared changes\" are the visible changes the author listed; \"shots\" are screenshots."
+    "text": "Open the declared changes and their before & after screenshots",
+    "description": "Tooltip of the \"Before & after\" item in a proposal's ⋯ menu. \"Declared changes\" are the visible changes the author listed; \"screenshots\" are the pictures Homeroom takes of what a proposal changes."
   },
   "proposal.menu.screenshots": {
     "text": "Before/after screenshots",
@@ -3919,10 +3919,6 @@
     "text": "test",
     "description": "Stands in for a unit test's name above its captured error text in a proposal's check results, when the test has no name. A noun, lower case."
   },
-  "verdict.row.unnamedTestLong": {
-    "text": "unnamed test",
-    "description": "Stands in for a unit test's name in a proposal's check results when the test has no name. Lower case."
-  },
   "checks.baseNote.these.agoConflict_one": {
     "text": "These ran against main as it was {{count}} commit ago, so they describe code this proposal would no longer merge into. It now conflicts with main; resolving the conflict re-runs them on the resolved commit.",
     "description": "Note under a proposal's check results when they were earned against an older state of the main line of code. \"These\" and \"they\" are the check results. \"main\" is the name of the project's main line of code and stays as it is. {{count}} is how many commits main has gained since. The proposal now conflicts with main."
@@ -5352,40 +5348,40 @@
     "description": "Tooltip of the status tag on a proposal's card, and text of the matching ledger row on its page: going live is paused for the whole app because the unit tests of its main line of code fail. \"Main\" is that line's name."
   },
   "badge.reason.shots.retrying": {
-    "text": "Trying the shots again",
-    "description": "Status tag on a proposal's card and row label in the ledger on its page: beside a spinner; taking the before and after screenshots was interrupted and is starting again. \"Shots\" are the before and after screenshots Homeroom takes of what a proposal changes."
+    "text": "Trying the screenshots again",
+    "description": "Status tag on a proposal's card and row label in the ledger on its page: beside a spinner; taking the before and after screenshots was interrupted and is starting again. \"Screenshots\" are the pictures Homeroom takes of what a proposal changes, before and after."
   },
   "badge.reason.shots.running": {
-    "text": "Taking before & after shots",
-    "description": "Status tag on a proposal's card and row label in the ledger on its page: beside a spinner; the before and after screenshots are being taken. \"Shots\" are the before and after screenshots Homeroom takes of what a proposal changes."
+    "text": "Taking before & after screenshots",
+    "description": "Status tag on a proposal's card and row label in the ledger on its page: beside a spinner; the before and after screenshots are being taken. \"Screenshots\" are the pictures Homeroom takes of what a proposal changes, before and after."
   },
   "badge.reason.shots.notStarted": {
     "text": "Before & after not started",
-    "description": "Status tag on a proposal's card and row label in the ledger on its page: taking the before and after screenshots has not begun. \"Shots\" are the before and after screenshots Homeroom takes of what a proposal changes."
+    "description": "Status tag on a proposal's card and row label in the ledger on its page: taking the before and after screenshots has not begun. \"Screenshots\" are the pictures Homeroom takes of what a proposal changes, before and after."
   },
   "badge.reason.shots.failed": {
-    "text": "Couldn’t take the shots",
-    "description": "Status tag on a proposal's card and row label in the ledger on its page: taking the before and after screenshots failed. \"Shots\" are the before and after screenshots Homeroom takes of what a proposal changes."
+    "text": "Couldn’t take the screenshots",
+    "description": "Status tag on a proposal's card and row label in the ledger on its page: taking the before and after screenshots failed. \"Screenshots\" are the pictures Homeroom takes of what a proposal changes, before and after."
   },
   "badge.reason.shots.needed": {
     "text": "Before & after needed",
-    "description": "Status tag on a proposal's card and row label in the ledger on its page: the proposal has no before and after screenshots for its current commit. \"Shots\" are the before and after screenshots Homeroom takes of what a proposal changes."
+    "description": "Status tag on a proposal's card and row label in the ledger on its page: the proposal has no before and after screenshots for its current commit. \"Screenshots\" are the pictures Homeroom takes of what a proposal changes, before and after."
   },
   "badge.reason.shots.retryingDetail": {
-    "text": "Homeroom restarted while taking these shots, so it starts them again on its own in a moment.",
-    "description": "Tooltip of the status tag on a proposal's card, and text of the matching ledger row on its page: taking the screenshots was interrupted. \"Homeroom\" is the product's name. \"Shots\" are the before and after screenshots Homeroom takes of what a proposal changes."
+    "text": "Homeroom restarted while taking these screenshots, so it starts them again on its own in a moment.",
+    "description": "Tooltip of the status tag on a proposal's card, and text of the matching ledger row on its page: taking the screenshots was interrupted. \"Homeroom\" is the product's name. \"Screenshots\" are the pictures Homeroom takes of what a proposal changes, before and after."
   },
   "badge.reason.shots.retryingFaultDetail": {
-    "text": "Something on Homeroom’s side stopped these shots, so it takes them again on its own.",
-    "description": "Tooltip of the status tag on a proposal's card, and text of the matching ledger row on its page: taking the screenshots failed for a reason on Homeroom's own side (not the proposal's), and Homeroom takes them again once by itself. \"Homeroom\" is the product's name. \"Shots\" are the before and after screenshots Homeroom takes of what a proposal changes."
+    "text": "Something on Homeroom’s side stopped these screenshots, so it takes them again on its own.",
+    "description": "Tooltip of the status tag on a proposal's card, and text of the matching ledger row on its page: taking the screenshots failed for a reason on Homeroom's own side (not the proposal's), and Homeroom takes them again once by itself. \"Homeroom\" is the product's name. \"Screenshots\" are the pictures Homeroom takes of what a proposal changes, before and after."
   },
   "badge.reason.shots.enforcedDetail": {
-    "text": "Voting and merging wait for before & after shots of the current proposal commit.",
-    "description": "Tooltip of the status tag on a proposal's card, and text of the matching ledger row on its page: the screenshots are missing, on a project where they are required before a vote. \"Shots\" are the before and after screenshots Homeroom takes of what a proposal changes."
+    "text": "Voting and merging wait for before & after screenshots of the current proposal commit.",
+    "description": "Tooltip of the status tag on a proposal's card, and text of the matching ledger row on its page: the screenshots are missing, on a project where they are required before a vote. \"Screenshots\" are the pictures Homeroom takes of what a proposal changes, before and after."
   },
   "badge.reason.shots.missingDetail": {
-    "text": "This proposal has no before & after shots for its current commit yet.",
-    "description": "Tooltip of the status tag on a proposal's card, and text of the matching ledger row on its page: the screenshots are missing, on a project where they are not required. \"Shots\" are the before and after screenshots Homeroom takes of what a proposal changes."
+    "text": "This proposal has no before & after screenshots for its current commit yet.",
+    "description": "Tooltip of the status tag on a proposal's card, and text of the matching ledger row on its page: the screenshots are missing, on a project where they are not required. \"Screenshots\" are the pictures Homeroom takes of what a proposal changes, before and after."
   },
   "badge.tag.resolving": {
     "text": "Resolving conflicts automatically…",
@@ -5761,122 +5757,122 @@
   },
   "shots.state.notStarted.label": {
     "text": "Before & after not started",
-    "description": "Heading of the shots card on a proposal when the before/after screenshots were asked for a while ago and nothing has started taking them. \"Before & after\" names the pair of screenshots."
+    "description": "Heading of the screenshots card on a proposal when the before/after screenshots were asked for a while ago and nothing has started taking them. \"Before & after\" names the pair of screenshots."
   },
   "shots.state.notStarted.detail": {
     "text": "Nothing has picked this preview up yet.",
-    "description": "Sentence under \"Before & after not started\" on a proposal's shots card, when the server recorded no reason. \"This preview\" is the proposal's staging build that the screenshots are taken of."
+    "description": "Sentence under \"Before & after not started\" on a proposal's screenshots card, when the server recorded no reason. \"This preview\" is the proposal's staging build that the screenshots are taken of."
   },
   "shots.state.queued.label": {
     "text": "Before & after queued",
-    "description": "Heading of the shots card on a proposal while its before/after screenshots wait to start."
+    "description": "Heading of the screenshots card on a proposal while its before/after screenshots wait to start."
   },
   "shots.state.queued.detail": {
-    "text": "Getting ready to take the shots.",
-    "description": "Sentence under \"Before & after queued\" on a proposal's shots card. \"Shots\" are the before/after screenshots Homeroom takes of a change."
+    "text": "Getting ready to take the screenshots.",
+    "description": "Sentence under \"Before & after queued\" on a proposal's screenshots card. \"Screenshots\" are the pictures Homeroom takes of a change, before and after."
   },
   "shots.state.building.label": {
     "text": "Building before and after",
-    "description": "Heading of the shots card on a proposal while Homeroom starts the two copies of the app (before the change and after it) that the screenshots are taken of."
+    "description": "Heading of the screenshots card on a proposal while Homeroom starts the two copies of the app (before the change and after it) that the screenshots are taken of."
   },
   "shots.state.building.detail": {
     "text": "Homeroom is starting private copies of the app from before and after this change.",
-    "description": "Sentence under \"Building before and after\" on a proposal's shots card. Homeroom is the product's name."
+    "description": "Sentence under \"Building before and after\" on a proposal's screenshots card. Homeroom is the product's name."
   },
   "shots.state.taking.label": {
-    "text": "Taking the shots",
-    "description": "Heading of the shots card on a proposal while the before/after screenshots are being taken."
+    "text": "Taking the screenshots",
+    "description": "Heading of the screenshots card on a proposal while the before/after screenshots are being taken."
   },
   "shots.state.taking.detail": {
-    "text": "The shots agent is following each declared change on the before and after builds.",
-    "description": "Sentence under \"Taking the shots\" on a proposal's shots card. The \"shots agent\" is the automated program that takes the screenshots; a \"declared change\" is one thing the author said the proposal changes on screen."
+    "text": "The screenshot agent is following each declared change on the before and after builds.",
+    "description": "Sentence under \"Taking the screenshots\" on a proposal's screenshots card. The \"screenshot agent\" is the automated program that takes the screenshots; a \"declared change\" is one thing the author said the proposal changes on screen."
   },
   "shots.state.saving.label": {
-    "text": "Saving the shots",
-    "description": "Heading of the shots card on a proposal while the finished before/after screenshots are being saved."
+    "text": "Saving the screenshots",
+    "description": "Heading of the screenshots card on a proposal while the finished before/after screenshots are being saved."
   },
   "shots.state.saving.detail": {
-    "text": "The shots are being saved to the proposal.",
-    "description": "Sentence under \"Saving the shots\" on a proposal's shots card."
+    "text": "The screenshots are being saved to the proposal.",
+    "description": "Sentence under \"Saving the screenshots\" on a proposal's screenshots card."
   },
   "shots.state.changeFailed.label": {
     "text": "Something didn’t work",
-    "description": "Heading of the shots card on a proposal when the shots agent tried the change on the new build and the app broke."
+    "description": "Heading of the screenshots card on a proposal when the screenshot agent tried the change on the new build and the app broke."
   },
   "shots.state.changeFailed.detail": {
-    "text": "The shots agent tried this change on the after build, and the app broke.",
-    "description": "Sentence under \"Something didn’t work\" on a proposal's shots card, when the server gave no reason. The \"after build\" is the app with the proposal applied."
+    "text": "The screenshot agent tried this change on the after build, and the app broke.",
+    "description": "Sentence under \"Something didn’t work\" on a proposal's screenshots card, when the server gave no reason. The \"after build\" is the app with the proposal applied."
   },
   "shots.state.stopped.label": {
-    "text": "Shots stopped",
-    "description": "Heading of the shots card on a proposal after someone stopped the before/after screenshots part way."
+    "text": "Screenshots stopped",
+    "description": "Heading of the screenshots card on a proposal after someone stopped the before/after screenshots part way."
   },
   "shots.state.stopped.detail": {
-    "text": "Stopped before it finished. No shots were taken for this commit.",
-    "description": "Sentence under \"Shots stopped\" on a proposal's shots card, when the server gave no reason. \"It\" is the run that takes the screenshots; a commit is one saved revision of the proposal's code."
+    "text": "Stopped before it finished. No screenshots were taken for this commit.",
+    "description": "Sentence under \"Screenshots stopped\" on a proposal's screenshots card, when the server gave no reason. \"It\" is the run that takes the screenshots; a commit is one saved revision of the proposal's code."
   },
   "shots.state.retrying.label": {
-    "text": "Trying the shots again",
-    "description": "Heading of the shots card on a proposal when taking the screenshots was interrupted and Homeroom is about to start it again by itself."
+    "text": "Trying the screenshots again",
+    "description": "Heading of the screenshots card on a proposal when taking the screenshots was interrupted and Homeroom is about to start it again by itself."
   },
   "shots.state.retrying.detail": {
-    "text": "Homeroom restarted while taking these shots, so it starts them again on its own in a moment.",
-    "description": "Sentence under \"Trying the shots again\" on a proposal's shots card. Homeroom is the product's name."
+    "text": "Homeroom restarted while taking these screenshots, so it starts them again on its own in a moment.",
+    "description": "Sentence under \"Trying the screenshots again\" on a proposal's screenshots card. Homeroom is the product's name."
   },
   "shots.state.retryingFault.detail": {
-    "text": "Something on Homeroom’s side stopped these shots, so it takes them again on its own.",
-    "description": "Sentence under \"Trying the shots again\" on a proposal's shots card, when taking the screenshots failed for a reason on Homeroom's own side (not the proposal's) and Homeroom takes them again once by itself. Homeroom is the product's name."
+    "text": "Something on Homeroom’s side stopped these screenshots, so it takes them again on its own.",
+    "description": "Sentence under \"Trying the screenshots again\" on a proposal's screenshots card, when taking the screenshots failed for a reason on Homeroom's own side (not the proposal's) and Homeroom takes them again once by itself. Homeroom is the product's name."
   },
   "shots.state.couldNot.label": {
-    "text": "Couldn’t take the shots",
-    "description": "Heading of the shots card on a proposal when the before/after screenshots failed for a reason other than the change itself."
+    "text": "Couldn’t take the screenshots",
+    "description": "Heading of the screenshots card on a proposal when the before/after screenshots failed for a reason other than the change itself."
   },
   "shots.state.couldNot.detail": {
-    "text": "The shots agent could not take the before & after shots.",
-    "description": "Sentence under \"Couldn’t take the shots\" on a proposal's shots card, when the server gave no reason."
+    "text": "The screenshot agent could not take the before & after screenshots.",
+    "description": "Sentence under \"Couldn’t take the screenshots\" on a proposal's screenshots card, when the server gave no reason."
   },
   "shots.state.stale.label": {
-    "text": "Shots are out of date",
-    "description": "Heading of the shots card on a proposal when its screenshots were taken of an older revision."
+    "text": "Screenshots are out of date",
+    "description": "Heading of the screenshots card on a proposal when its screenshots were taken of an older revision."
   },
   "shots.state.stale.detail": {
-    "text": "A newer revision of this proposal replaced these shots.",
-    "description": "Sentence under \"Shots are out of date\" on a proposal's shots card, when the server gave no reason."
+    "text": "A newer revision of this proposal replaced these screenshots.",
+    "description": "Sentence under \"Screenshots are out of date\" on a proposal's screenshots card, when the server gave no reason."
   },
   "shots.state.cancelled.label": {
-    "text": "Shots cancelled",
-    "description": "Heading of the shots card on a proposal when the run taking its screenshots was cancelled because a newer run began."
+    "text": "Screenshots cancelled",
+    "description": "Heading of the screenshots card on a proposal when the run taking its screenshots was cancelled because a newer run began."
   },
   "shots.state.cancelled.detail": {
     "text": "A newer run replaced this one before it finished.",
-    "description": "Sentence under \"Shots cancelled\" on a proposal's shots card, when the server gave no reason. A \"run\" is one attempt at taking the screenshots."
+    "description": "Sentence under \"Screenshots cancelled\" on a proposal's screenshots card, when the server gave no reason. A \"run\" is one attempt at taking the screenshots."
   },
   "shots.state.notRequired.label": {
     "text": "No before & after needed",
-    "description": "Heading of the shots card on a proposal that changes nothing people can see, so no before/after screenshots are taken."
+    "description": "Heading of the screenshots card on a proposal that changes nothing people can see, so no before/after screenshots are taken."
   },
   "shots.state.notRequired.detail": {
     "text": "This proposal has no visual changes.",
-    "description": "Sentence under \"No before & after needed\" on a proposal's shots card, and the whole line about shots on the change's page in that case."
+    "description": "Sentence under \"No before & after needed\" on a proposal's screenshots card, and the whole line about screenshots on the change's page in that case."
   },
   "shots.state.waived.label": {
-    "text": "Shots waived",
-    "description": "Heading of the shots card on a proposal when an administrator allowed review to go on without before/after screenshots."
+    "text": "Screenshots waived",
+    "description": "Heading of the screenshots card on a proposal when an administrator allowed review to go on without before/after screenshots."
   },
   "shots.state.waived.detail": {
-    "text": "An app administrator let review continue without before & after shots.",
-    "description": "Sentence under \"Shots waived\" on a proposal's shots card, and the line about shots on the change's page, when the administrator gave no reason."
+    "text": "An app administrator let review continue without before & after screenshots.",
+    "description": "Sentence under \"Screenshots waived\" on a proposal's screenshots card, and the line about screenshots on the change's page, when the administrator gave no reason."
   },
   "shots.state.pending.label": {
-    "text": "Shots pending",
-    "description": "Heading and badge of the shots card on a proposal when the screenshots are in a state this version does not know: they are not ready yet."
+    "text": "Screenshots pending",
+    "description": "Heading and badge of the screenshots card on a proposal when the screenshots are in a state this version does not know: they are not ready yet."
   },
   "shots.state.pending.detail": {
-    "text": "The before & after shots are not ready yet.",
-    "description": "Sentence under \"Shots pending\" on a proposal's shots card."
+    "text": "The before & after screenshots are not ready yet.",
+    "description": "Sentence under \"Screenshots pending\" on a proposal's screenshots card."
   },
   "shots.sentence.readyLabel": {
-    "text": "Shots ready",
+    "text": "Screenshots ready",
     "description": "Short label on a change's page, under \"What changes for you\", once the before/after screenshots of the proposal are taken."
   },
   "shots.sentence.notStarted": {
@@ -5888,7 +5884,7 @@
     "description": "Line on a change's page, under \"What changes for you\", when the before/after screenshots never started. {{reason}} is the server's own sentence saying why, without its final period. \"None\" refers to screenshots."
   },
   "shots.sentence.queued": {
-    "text": "Before & after: getting ready to take the shots. Homeroom shows each declared change before and after, on this exact proposal build.",
+    "text": "Before & after: getting ready to take the screenshots. Homeroom shows each declared change before and after, on this exact proposal build.",
     "description": "Line on a change's page, under \"What changes for you\", while the before/after screenshots wait to start. Homeroom is the product's name; a \"declared change\" is one thing the author said the proposal changes on screen."
   },
   "shots.sentence.building": {
@@ -5896,63 +5892,63 @@
     "description": "Line on a change's page, under \"What changes for you\", while Homeroom starts the two copies of the app that the screenshots are taken of. Homeroom is the product's name (the English writes it small after the colon; a translation may capitalize it)."
   },
   "shots.sentence.taking": {
-    "text": "Before & after: the shots agent is following each declared change on the before and after builds. Homeroom shows each declared change before and after, on this exact proposal build.",
-    "description": "Line on a change's page, under \"What changes for you\", while the before/after screenshots are being taken. The \"shots agent\" is the automated program that takes them; Homeroom is the product's name."
+    "text": "Before & after: the screenshot agent is following each declared change on the before and after builds. Homeroom shows each declared change before and after, on this exact proposal build.",
+    "description": "Line on a change's page, under \"What changes for you\", while the before/after screenshots are being taken. The \"screenshot agent\" is the automated program that takes them; Homeroom is the product's name."
   },
   "shots.sentence.saving": {
-    "text": "Before & after: the shots are being saved to the proposal. Homeroom shows each declared change before and after, on this exact proposal build.",
+    "text": "Before & after: the screenshots are being saved to the proposal. Homeroom shows each declared change before and after, on this exact proposal build.",
     "description": "Line on a change's page, under \"What changes for you\", while the finished before/after screenshots are being saved. Homeroom is the product's name."
   },
   "shots.sentence.changeFailed": {
-    "text": "Something didn’t work. The shots agent tried this change on the after build, and the app broke.",
-    "description": "Line on a change's page, under \"What changes for you\", when the shots agent tried the change on the new build and the app broke, and the server gave no reason."
+    "text": "Something didn’t work. The screenshot agent tried this change on the after build, and the app broke.",
+    "description": "Line on a change's page, under \"What changes for you\", when the screenshot agent tried the change on the new build and the app broke, and the server gave no reason."
   },
   "shots.sentence.changeFailedBecause": {
     "text": "Something didn’t work. {{reason}}.",
-    "description": "Line on a change's page, under \"What changes for you\", when the shots agent tried the change and the app broke. {{reason}} is the server's own sentence saying what broke, without its final period."
+    "description": "Line on a change's page, under \"What changes for you\", when the screenshot agent tried the change and the app broke. {{reason}} is the server's own sentence saying what broke, without its final period."
   },
   "shots.sentence.stopped": {
-    "text": "Shots stopped. Stopped before it finished. No shots were taken for this commit.",
+    "text": "Screenshots stopped. Stopped before it finished. No screenshots were taken for this commit.",
     "description": "Line on a change's page, under \"What changes for you\", after someone stopped the before/after screenshots part way, when the server gave no reason. \"It\" is the run taking the screenshots."
   },
   "shots.sentence.stoppedBecause": {
-    "text": "Shots stopped. {{reason}}.",
+    "text": "Screenshots stopped. {{reason}}.",
     "description": "Line on a change's page, under \"What changes for you\", after the before/after screenshots were stopped. {{reason}} is the server's own sentence about it, without its final period."
   },
   "shots.sentence.retrying": {
-    "text": "Trying the shots again. Homeroom restarted while taking these shots, so it starts them again on its own in a moment.",
+    "text": "Trying the screenshots again. Homeroom restarted while taking these screenshots, so it starts them again on its own in a moment.",
     "description": "Line on a change's page, under \"What changes for you\", when taking the screenshots was interrupted and starts again by itself. Homeroom is the product's name."
   },
   "shots.sentence.retryingFault": {
-    "text": "Trying the shots again. Something on Homeroom’s side stopped these shots, so it takes them again on its own.",
+    "text": "Trying the screenshots again. Something on Homeroom’s side stopped these screenshots, so it takes them again on its own.",
     "description": "Line on a change's page, under \"What changes for you\", when taking the screenshots failed for a reason on Homeroom's own side (not the proposal's) and Homeroom takes them again once by itself. Homeroom is the product's name."
   },
   "shots.sentence.couldNot": {
-    "text": "Couldn’t take the shots. The shots agent could not take the before & after shots.",
+    "text": "Couldn’t take the screenshots. The screenshot agent could not take the before & after screenshots.",
     "description": "Line on a change's page, under \"What changes for you\", when the before/after screenshots failed and the server gave no reason."
   },
   "shots.sentence.couldNotBecause": {
-    "text": "Couldn’t take the shots. {{reason}}.",
+    "text": "Couldn’t take the screenshots. {{reason}}.",
     "description": "Line on a change's page, under \"What changes for you\", when the before/after screenshots failed. {{reason}} is the server's own sentence saying why, without its final period."
   },
   "shots.sentence.stale": {
-    "text": "Shots are out of date. A newer revision of this proposal replaced these shots.",
+    "text": "Screenshots are out of date. A newer revision of this proposal replaced these screenshots.",
     "description": "Line on a change's page, under \"What changes for you\", when the screenshots belong to an older revision and the server gave no reason."
   },
   "shots.sentence.staleBecause": {
-    "text": "Shots are out of date. {{reason}}.",
+    "text": "Screenshots are out of date. {{reason}}.",
     "description": "Line on a change's page, under \"What changes for you\", when the screenshots belong to an older revision. {{reason}} is the server's own sentence about it, without its final period."
   },
   "shots.sentence.cancelled": {
-    "text": "Shots cancelled. A newer run replaced this one before it finished.",
+    "text": "Screenshots cancelled. A newer run replaced this one before it finished.",
     "description": "Line on a change's page, under \"What changes for you\", when the run taking the screenshots was cancelled and the server gave no reason."
   },
   "shots.sentence.cancelledBecause": {
-    "text": "Shots cancelled. {{reason}}.",
+    "text": "Screenshots cancelled. {{reason}}.",
     "description": "Line on a change's page, under \"What changes for you\", when the run taking the screenshots was cancelled. {{reason}} is the server's own sentence about it, without its final period."
   },
   "shots.sentence.pending": {
-    "text": "Shots pending. The before & after shots are not ready yet.",
+    "text": "Screenshots pending. The before & after screenshots are not ready yet.",
     "description": "Line on a change's page, under \"What changes for you\", when the before/after screenshots are not ready and nothing more specific is known."
   },
   "shots.size.desktop": {
@@ -6081,103 +6077,103 @@
   },
   "shots.card.unknownCommit": {
     "text": "unknown",
-    "description": "Stands in for a code revision's short id in the shots card's \"before … → after …\" line when the id is missing."
+    "description": "Stands in for a code revision's short id in the screenshots card's \"before … → after …\" line when the id is missing."
   },
   "shots.card.readyBadge": {
-    "text": "Shots ready",
-    "description": "Badge on a proposal's shots card once its before/after screenshots are taken."
+    "text": "Screenshots ready",
+    "description": "Badge on a proposal's screenshots card once its before/after screenshots are taken."
   },
   "shots.card.beforeCommit": {
     "text": "before <0>{{commit}}</0>",
-    "description": "Small print on a proposal's shots card naming the code revision the \"before\" screenshots were taken of. {{commit}} is that revision's short id; keep it inside the tags, which set it in code type."
+    "description": "Small print on a proposal's screenshots card naming the code revision the \"before\" screenshots were taken of. {{commit}} is that revision's short id; keep it inside the tags, which set it in code type."
   },
   "shots.card.afterCommit": {
     "text": "after <0>{{commit}}</0>",
-    "description": "Small print on a proposal's shots card naming the code revision the \"after\" screenshots were taken of. {{commit}} is that revision's short id; keep it inside the tags, which set it in code type."
+    "description": "Small print on a proposal's screenshots card naming the code revision the \"after\" screenshots were taken of. {{commit}} is that revision's short id; keep it inside the tags, which set it in code type."
   },
   "shots.card.takeAgain": {
-    "text": "Take the shots again",
-    "description": "Button on a proposal's shots card: starts taking the before/after screenshots over again."
+    "text": "Take the screenshots again",
+    "description": "Button on a proposal's screenshots card: starts taking the before/after screenshots over again."
   },
   "shots.card.stop": {
     "text": "Stop",
-    "description": "Button on a proposal's shots card while the before/after screenshots are being taken: stops taking them."
+    "description": "Button on a proposal's screenshots card while the before/after screenshots are being taken: stops taking them."
   },
   "shots.card.overriddenAt": {
     "text": "Overridden {{when}}",
-    "description": "Small print on a proposal's shots card when an administrator waived the screenshots. {{when}} is the date and time they did it."
+    "description": "Small print on a proposal's screenshots card when an administrator waived the screenshots. {{when}} is the date and time they did it."
   },
   "shots.card.missingDetails": {
-    "text": "These before & after shots are missing their details, so none can be shown.",
+    "text": "These before & after screenshots are missing their details, so none can be shown.",
     "description": "Error shown in place of a proposal's before/after viewer when the screenshots were taken but the record describing them is missing."
   },
   "shots.card.intro": {
-    "text": "Taken on the exact before and after builds of this proposal. Look at the shots to decide whether they show the change.",
-    "description": "Opening line of a proposal's shots card, above the before/after viewer, when it holds screenshots only."
+    "text": "Taken on the exact before and after builds of this proposal. Look at the screenshots to decide whether they show the change.",
+    "description": "Opening line of a proposal's screenshots card, above the before/after viewer, when it holds screenshots only."
   },
   "shots.card.introClips": {
-    "text": "Taken on the exact before and after builds of this proposal. Look at the shots and clips to decide whether they show the change.",
-    "description": "Opening line of a proposal's shots card, above the before/after viewer, when it holds short video clips as well as screenshots."
+    "text": "Taken on the exact before and after builds of this proposal. Look at the screenshots and clips to decide whether they show the change.",
+    "description": "Opening line of a proposal's screenshots card, above the before/after viewer, when it holds short video clips as well as screenshots."
   },
   "shots.card.introNewApp": {
-    "text": "New app: nothing before. This proposal builds the app’s first real screens, so these are its after shots only. Look at them to decide whether they show the change.",
-    "description": "Opening line of a proposal's shots card, above the viewer, when the proposal builds a new app's first real screens: before it there was only the starter template's placeholder screen, so only screenshots after the change were taken."
+    "text": "New app: nothing before. This proposal builds the app’s first real screens, so these are its after screenshots only. Look at them to decide whether they show the change.",
+    "description": "Opening line of a proposal's screenshots card, above the viewer, when the proposal builds a new app's first real screens: before it there was only the starter template's placeholder screen, so only screenshots after the change were taken."
   },
   "shots.card.introNewAppClips": {
-    "text": "New app: nothing before. This proposal builds the app’s first real screens, so these are its after shots and clips only. Look at them to decide whether they show the change.",
-    "description": "Opening line of a proposal's shots card, above the viewer, when the proposal builds a new app's first real screens and the card holds short video clips as well as screenshots: before it there was only the starter template's placeholder screen, so only the after side was recorded."
+    "text": "New app: nothing before. This proposal builds the app’s first real screens, so these are its after screenshots and clips only. Look at them to decide whether they show the change.",
+    "description": "Opening line of a proposal's screenshots card, above the viewer, when the proposal builds a new app's first real screens and the card holds short video clips as well as screenshots: before it there was only the starter template's placeholder screen, so only the after side was recorded."
   },
   "shots.card.label": {
     "text": "Before & after",
     "description": "Accessible name of the section of a proposal that holds its before/after screenshots."
   },
   "shots.card.details": {
-    "text": "Shot details",
-    "description": "Disclosure label at the bottom of a proposal's shots card: opens technical details of the screenshots (which revisions they were taken of)."
+    "text": "Screenshot details",
+    "description": "Disclosure label at the bottom of a proposal's screenshots card: opens technical details of the screenshots (which revisions they were taken of)."
   },
   "shots.card.planHash": {
-    "text": "shots <0>{{hash}}</0>",
-    "description": "Small print in the shots card's details naming the screenshots by their short identifier. {{hash}} is that identifier; keep it inside the tags, which set it in code type."
+    "text": "screenshots <0>{{hash}}</0>",
+    "description": "Small print in the screenshots card's details naming the screenshots by their short identifier. {{hash}} is that identifier; keep it inside the tags, which set it in code type."
   },
   "shots.card.unknownPlan": {
     "text": "unknown",
-    "description": "Stands in for the screenshots' short identifier in the shots card's details when it is missing."
+    "description": "Stands in for the screenshots' short identifier in the screenshots card's details when it is missing."
   },
   "shots.card.takenByAgent": {
-    "text": "taken by the shots agent",
-    "description": "Small print in the shots card's details: the screenshots were taken by Homeroom's automated shots agent. Lower case in English because it continues a line of small facts."
+    "text": "taken by the screenshot agent",
+    "description": "Small print in the screenshots card's details: the screenshots were taken by Homeroom's automated screenshot agent. Lower case in English because it continues a line of small facts."
   },
   "shots.persona.member": {
     "text": "member",
-    "description": "Who the shots agent was signed in as when it took a screenshot: an ordinary member of the community. Shown after the screen sizes on a declared change's line, as in \"desktop · member\"."
+    "description": "Who the screenshot agent was signed in as when it took a screenshot: an ordinary member of the community. Shown after the screen sizes on a declared change's line, as in \"desktop · member\"."
   },
   "shots.persona.readOnlyAdmin": {
     "text": "read-only admin",
-    "description": "Who the shots agent was signed in as when it took a screenshot: an administrator who can look but not change anything. Shown after the screen sizes on a declared change's line."
+    "description": "Who the screenshot agent was signed in as when it took a screenshot: an administrator who can look but not change anything. Shown after the screen sizes on a declared change's line."
   },
   "shots.persona.fullAdmin": {
     "text": "full admin",
-    "description": "Who the shots agent was signed in as when it took a screenshot: an administrator with every permission. Shown after the screen sizes on a declared change's line."
+    "description": "Who the screenshot agent was signed in as when it took a screenshot: an administrator with every permission. Shown after the screen sizes on a declared change's line."
   },
   "shots.persona.guest": {
     "text": "signed-out visitor",
-    "description": "Who the shots agent was when it took a screenshot: a visitor who is not signed in. Shown after the screen sizes on a declared change's line."
+    "description": "Who the screenshot agent was when it took a screenshot: a visitor who is not signed in. Shown after the screen sizes on a declared change's line."
   },
   "shots.seenAs.member": {
     "text": "seen as a member",
-    "description": "One fact in the line under a before/after screenshot of a change and in its Shot details, after the screen size and a middle dot (\"Desktop · seen as …\"): the screen was viewed as an ordinary member of the community. Lower case in English because it follows the dot."
+    "description": "One fact in the line under a before/after screenshot of a change and in its Screenshot details, after the screen size and a middle dot (\"Desktop · seen as …\"): the screen was viewed as an ordinary member of the community. Lower case in English because it follows the dot."
   },
   "shots.seenAs.readOnlyAdmin": {
     "text": "seen as a read-only admin",
-    "description": "One fact in the line under a before/after screenshot of a change and in its Shot details, after the screen size and a middle dot (\"Desktop · seen as …\"): the screen was viewed as an administrator who can look but not change anything. Lower case in English because it follows the dot."
+    "description": "One fact in the line under a before/after screenshot of a change and in its Screenshot details, after the screen size and a middle dot (\"Desktop · seen as …\"): the screen was viewed as an administrator who can look but not change anything. Lower case in English because it follows the dot."
   },
   "shots.seenAs.fullAdmin": {
     "text": "seen as a full admin",
-    "description": "One fact in the line under a before/after screenshot of a change and in its Shot details, after the screen size and a middle dot (\"Desktop · seen as …\"): the screen was viewed as an administrator with every permission. Lower case in English because it follows the dot."
+    "description": "One fact in the line under a before/after screenshot of a change and in its Screenshot details, after the screen size and a middle dot (\"Desktop · seen as …\"): the screen was viewed as an administrator with every permission. Lower case in English because it follows the dot."
   },
   "shots.seenAs.guest": {
     "text": "seen as a signed-out visitor",
-    "description": "One fact in the line under a before/after screenshot of a change and in its Shot details, after the screen size and a middle dot (\"Desktop · seen as …\"): the screen was viewed as a visitor who is not signed in. Lower case in English because it follows the dot."
+    "description": "One fact in the line under a before/after screenshot of a change and in its Screenshot details, after the screen size and a middle dot (\"Desktop · seen as …\"): the screen was viewed as a visitor who is not signed in. Lower case in English because it follows the dot."
   },
   "shots.seenAs.memberReadOnlyAdmin": {
     "text": "seen as a member and a read-only admin",
@@ -6424,20 +6420,20 @@
     "description": "First fact in the line under a before/after screenshot of a change: the screen size's name, for example \"Desktop\", then the screenshot's {{width}} and {{height}} in pixels. \"Seen as …\" follows it after a middle dot."
   },
   "shots.claim.notInShots": {
-    "text": "<0>Not in these shots:</0> {{note}}",
-    "description": "Note under a declared change on a proposal's shots card. {{note}} is what the shots agent wrote about the part of the change its screenshots do not show. The tags make the lead-in bold."
+    "text": "<0>Not in these screenshots:</0> {{note}}",
+    "description": "Note under a declared change on a proposal's screenshots card. {{note}} is what the screenshot agent wrote about the part of the change its screenshots do not show. The tags make the lead-in bold."
   },
   "shots.claim.requestHeld": {
-    "text": "<0>Controlled test:</0> the shots agent kept {{request}} waiting on both builds, to show it loading.",
-    "description": "Note under a declared change on a proposal's shots card, when the screenshots were taken while the app's request for some data was deliberately left unanswered on both the version before and the version after the proposal, so that its loading state shows. {{request}} is that request as written in code, for example \"GET /api/items?page=1\"; leave it as it is. The tags make the lead-in bold."
+    "text": "<0>Controlled test:</0> the screenshot agent kept {{request}} waiting on both builds, to show it loading.",
+    "description": "Note under a declared change on a proposal's screenshots card, when the screenshots were taken while the app's request for some data was deliberately left unanswered on both the version before and the version after the proposal, so that its loading state shows. {{request}} is that request as written in code, for example \"GET /api/items?page=1\"; leave it as it is. The tags make the lead-in bold."
   },
   "shots.claim.requestFailed": {
-    "text": "<0>Controlled test:</0> the shots agent made {{request}} fail on both builds, to show what happens when it does.",
-    "description": "Note under a declared change on a proposal's shots card, when the screenshots were taken while the app's request for some data was deliberately made to fail on both the version before and the version after the proposal, so that its error state shows. {{request}} is that request as written in code, for example \"GET /api/items?page=1\"; leave it as it is. The tags make the lead-in bold."
+    "text": "<0>Controlled test:</0> the screenshot agent made {{request}} fail on both builds, to show what happens when it does.",
+    "description": "Note under a declared change on a proposal's screenshots card, when the screenshots were taken while the app's request for some data was deliberately made to fail on both the version before and the version after the proposal, so that its error state shows. {{request}} is that request as written in code, for example \"GET /api/items?page=1\"; leave it as it is. The tags make the lead-in bold."
   },
   "shots.claim.sampleFile": {
-    "text": "<0>Sample file:</0> the shots agent uploaded {{files}} on both builds, from Homeroom's own sample files.",
-    "description": "Note under a declared change on a proposal's shots card, when the screenshots show the app after a file was uploaded into it, the same on the version before and the version after the proposal. {{files}} is the list of file names, for example \"landscape.png and table.csv\"; the files are made-up pictures, a table and a document that Homeroom provides for this. The tags make the lead-in bold."
+    "text": "<0>Sample file:</0> the screenshot agent uploaded {{files}} on both builds, from Homeroom's own sample files.",
+    "description": "Note under a declared change on a proposal's screenshots card, when the screenshots show the app after a file was uploaded into it, the same on the version before and the version after the proposal. {{files}} is the list of file names, for example \"landscape.png and table.csv\"; the files are made-up pictures, a table and a document that Homeroom provides for this. The tags make the lead-in bold."
   },
   "shots.clip.beforeCaption": {
     "text": "Before clip · {{size}}",
@@ -6461,11 +6457,11 @@
   },
   "shots.clip.playAnimation": {
     "text": "Play animation",
-    "description": "Disclosure label on a proposal's shots card: opens a video recording of an animation the proposal changes."
+    "description": "Disclosure label on a proposal's screenshots card: opens a video recording of an animation the proposal changes."
   },
   "shots.clip.playInteraction": {
     "text": "Play interaction",
-    "description": "Disclosure label on a proposal's shots card: opens a video recording of someone using the changed feature."
+    "description": "Disclosure label on a proposal's screenshots card: opens a video recording of someone using the changed feature."
   },
   "shots.clip.animationLabel": {
     "text": "Animation for {{claim}}",
@@ -6476,7 +6472,7 @@
     "description": "Accessible name of a video recording of the changed feature being used. {{claim}} is the author's own sentence describing that change."
   },
   "shots.screen.noShot": {
-    "text": "No shot",
+    "text": "No screenshot",
     "description": "Placeholder in the before/after viewer where one side has no screenshot."
   },
   "shots.screen.nothingBefore": {
@@ -6505,23 +6501,23 @@
   },
   "shots.claim.failedBadge": {
     "text": "Didn’t work",
-    "description": "Red badge beside a declared change on a proposal's shots card: the shots agent tried it on the new build and the app broke."
+    "description": "Red badge beside a declared change on a proposal's screenshots card: the screenshot agent tried it on the new build and the app broke."
   },
   "shots.claim.failedReason": {
-    "text": "The shots agent tried this on the after build, and the app broke.",
-    "description": "Explanation under a declared change marked \"Didn’t work\" on a proposal's shots card, when the server gave no reason. \"This\" is the declared change; the \"after build\" is the app with the proposal applied."
+    "text": "The screenshot agent tried this on the after build, and the app broke.",
+    "description": "Explanation under a declared change marked \"Didn’t work\" on a proposal's screenshots card, when the server gave no reason. \"This\" is the declared change; the \"after build\" is the app with the proposal applied."
   },
   "shots.claim.skippedBadge": {
     "text": "Skipped",
-    "description": "Grey badge beside a declared change on a proposal's shots card: the shots agent could not reach it, so it has no screenshots."
+    "description": "Grey badge beside a declared change on a proposal's screenshots card: the screenshot agent could not reach it, so it has no screenshots."
   },
   "shots.claim.skippedReason": {
-    "text": "The shots agent could not get to this change.",
-    "description": "Explanation under a declared change marked \"Skipped\" on a proposal's shots card, when the server gave no reason."
+    "text": "The screenshot agent could not get to this change.",
+    "description": "Explanation under a declared change marked \"Skipped\" on a proposal's screenshots card, when the server gave no reason."
   },
   "shots.claim.where": {
     "text": "{{sizes}} · {{persona}}",
-    "description": "Small print under a declared change on a proposal's shots card. {{sizes}} is the list of screen sizes it was shot at, for example \"desktop, phone\", and {{persona}} who the screen was viewed as, for example \"member\"."
+    "description": "Small print under a declared change on a proposal's screenshots card. {{sizes}} is the list of screen sizes it was screenshot at, for example \"desktop, phone\", and {{persona}} who the screen was viewed as, for example \"member\"."
   },
   "shots.compare.fallbackTitle": {
     "text": "Before & after",
@@ -6544,7 +6540,7 @@
     "description": "Placeholder in the full-screen before/after comparison where the \"before\" picture would be: the changed feature did not exist yet."
   },
   "shots.compare.noShot": {
-    "text": "No shot",
+    "text": "No screenshot",
     "description": "Placeholder in the full-screen before/after comparison where one side has no screenshot."
   },
   "shots.compare.openOriginal": {
@@ -6556,7 +6552,7 @@
     "description": "Description, for people who cannot see it, of the \"before\" picture in the full-screen comparison. {{claim}} is the author's own sentence describing the change."
   },
   "shots.compare.altBeforeUnnamed": {
-    "text": "Before: before/after shot",
+    "text": "Before: before/after screenshot",
     "description": "Description, for people who cannot see it, of the \"before\" picture in the full-screen comparison when the change has no description of its own."
   },
   "shots.compare.altBeforeAbsent": {
@@ -6564,7 +6560,7 @@
     "description": "Description, for people who cannot see it, of the \"before\" picture in the full-screen comparison when the changed feature did not exist yet. {{claim}} is the author's own sentence describing the change."
   },
   "shots.compare.altBeforeAbsentUnnamed": {
-    "text": "Before · Not there yet: before/after shot",
+    "text": "Before · Not there yet: before/after screenshot",
     "description": "Description, for people who cannot see it, of the \"before\" picture in the full-screen comparison when the changed feature did not exist yet and the change has no description of its own."
   },
   "shots.compare.altAfter": {
@@ -6572,28 +6568,28 @@
     "description": "Description, for people who cannot see it, of the \"after\" picture in the full-screen comparison. {{claim}} is the author's own sentence describing the change."
   },
   "shots.compare.altAfterUnnamed": {
-    "text": "After: before/after shot",
+    "text": "After: before/after screenshot",
     "description": "Description, for people who cannot see it, of the \"after\" picture in the full-screen comparison when the change has no description of its own."
   },
   "shots.toast.takingAgain": {
-    "text": "Taking the before & after shots again.",
-    "description": "Brief notice after pressing \"Take the shots again\" on a proposal: the screenshots have started over."
+    "text": "Taking the before & after screenshots again.",
+    "description": "Brief notice after pressing \"Take the screenshots again\" on a proposal: the screenshots have started over."
   },
   "shots.toast.takeAgainFailed": {
-    "text": "Could not take the shots again: {{error}}",
-    "description": "Brief notice when \"Take the shots again\" on a proposal failed. {{error}} is the server's own reason."
+    "text": "Could not take the screenshots again: {{error}}",
+    "description": "Brief notice when \"Take the screenshots again\" on a proposal failed. {{error}} is the server's own reason."
   },
   "shots.toast.stopped": {
-    "text": "Stopped the before & after shots.",
-    "description": "Brief notice after pressing \"Stop\" on a proposal's shots card: taking the screenshots was stopped."
+    "text": "Stopped the before & after screenshots.",
+    "description": "Brief notice after pressing \"Stop\" on a proposal's screenshots card: taking the screenshots was stopped."
   },
   "shots.toast.alreadyFinished": {
-    "text": "The before & after shots had already finished.",
-    "description": "Brief notice after pressing \"Stop\" on a proposal's shots card when the screenshots were already done, so there was nothing to stop."
+    "text": "The before & after screenshots had already finished.",
+    "description": "Brief notice after pressing \"Stop\" on a proposal's screenshots card when the screenshots were already done, so there was nothing to stop."
   },
   "shots.toast.stopFailed": {
-    "text": "Could not stop the before & after shots: {{error}}",
-    "description": "Brief notice when \"Stop\" on a proposal's shots card failed. {{error}} is the server's own reason."
+    "text": "Could not stop the before & after screenshots: {{error}}",
+    "description": "Brief notice when \"Stop\" on a proposal's screenshots card failed. {{error}} is the server's own reason."
   },
   "shots.tiles.before": {
     "text": "Before",
@@ -7980,20 +7976,20 @@
     "description": "Tooltip on the Edit requests and Add a request rows in the ⋯ menu of a change's page. The first \"Change\" is a verb, \"this change\" is the proposal, and a request is a filed issue it would resolve."
   },
   "page.menu.shotDetails": {
-    "text": "Shot details",
+    "text": "Screenshot details",
     "description": "Row in the ⋯ menu of a change's page when its before and after screenshots were taken: opens the technical details of those screenshots."
   },
   "page.menu.shotDetailsTitle": {
     "text": "How each change was reached, at which screen sizes, and on which builds",
-    "description": "Tooltip on the Shot details row in the ⋯ menu of a change's page, listing what the details hold: the steps taken to reach each visible change, the screen sizes photographed, and the two builds of the app compared."
+    "description": "Tooltip on the Screenshot details row in the ⋯ menu of a change's page, listing what the details hold: the steps taken to reach each visible change, the screen sizes photographed, and the two builds of the app compared."
   },
   "page.menu.takeShotsAgain": {
-    "text": "Take the shots again",
+    "text": "Take the screenshots again",
     "description": "Row in the ⋯ menu of a change's page, for its author or an admin: starts taking the before and after screenshots over again."
   },
   "page.menu.takeShotsAgainTitle": {
-    "text": "Take the before & after shots again on this exact build",
-    "description": "Tooltip on the Take the shots again row in the ⋯ menu of a change's page. \"Build\" is a noun: the built copy of the app the screenshots are taken of."
+    "text": "Take the before & after screenshots again on this exact build",
+    "description": "Tooltip on the Take the screenshots again row in the ⋯ menu of a change's page. \"Build\" is a noun: the built copy of the app the screenshots are taken of."
   },
   "page.menu.viewPr": {
     "text": "View PR on GitHub",
@@ -8001,7 +7997,7 @@
   },
   "shots.details.builds": {
     "text": "Taken on the exact before and after builds of this change:",
-    "description": "Lead-in at the bottom of the Shot details sheet of a change's page. It ends with a colon and is followed by the short ids of the two code revisions the screenshots were taken of and of the screenshots themselves. \"Builds\" is a noun: built copies of the app; \"change\" is the proposal."
+    "description": "Lead-in at the bottom of the Screenshot details sheet of a change's page. It ends with a colon and is followed by the short ids of the two code revisions the screenshots were taken of and of the screenshots themselves. \"Builds\" is a noun: built copies of the app; \"change\" is the proposal."
   },
   "shots.thread.title": {
     "text": "Before and after",
@@ -8556,8 +8552,8 @@
     "description": "Accessible description of the progress bar on the Testing card of a change's page when the preview could not be started."
   },
   "page.testing.label.broken": {
-    "text": "Testing: the checks passed, but the shots found something broken",
-    "description": "Accessible description of the progress bar on the Testing card of a change's page when the checks passed but the before and after screenshots (\"shots\") found the app broken."
+    "text": "Testing: the checks passed, but the screenshots found something broken",
+    "description": "Accessible description of the progress bar on the Testing card of a change's page when the checks passed but the before and after screenshots (\"screenshots\") found the app broken."
   },
   "page.testing.label.passed": {
     "text": "Tested: all checks passed",
@@ -8600,8 +8596,8 @@
     "description": "Accessible description of the progress bar on the Testing card of a change's page while testing runs and no time estimate is known. {{where}} is a whole sentence saying where the run is, for example \"Building the preview, step 2 of 5.\""
   },
   "page.testing.note.broken": {
-    "text": "The checks passed, but the shots agent tried this change and the app broke.",
-    "description": "One sentence of the line under the figure on the Testing card of a change's page. The shots agent is the automated agent that uses the app to take its before and after screenshots."
+    "text": "The checks passed, but the screenshot agent tried this change and the app broke.",
+    "description": "One sentence of the line under the figure on the Testing card of a change's page. The screenshot agent is the automated agent that uses the app to take its before and after screenshots."
   },
   "page.testing.note.olderMain": {
     "text": "They passed on an older main.",
@@ -8611,13 +8607,41 @@
     "text": "Its checks were skipped.",
     "description": "One sentence of the line under the figure on the Testing card of a change's page when the change's automated checks did not run."
   },
-  "page.testing.note.checksFailed_one": {
-    "text": "{{count}} check failed.",
-    "description": "One sentence of the line under the figure on the Testing card of a change's page: {{count}} is how many automated checks failed."
+  "page.testing.lead.tests_one": {
+    "text": "One of the app’s tests failed.",
+    "description": "First sentence on the Testing card of a change's page when the app's own automated tests found a problem with the change. It is followed by a sentence saying what went wrong. {{count}} is how many tests failed; English spells out the singular, and a language whose singular form is also used for 21 or 101 should print {{count}}."
   },
-  "page.testing.note.checksFailed_other": {
-    "text": "{{count}} checks failed.",
-    "description": "One sentence of the line under the figure on the Testing card of a change's page: {{count}} is how many automated checks failed."
+  "page.testing.lead.tests_other": {
+    "text": "{{count}} of the app’s tests failed.",
+    "description": "First sentence on the Testing card of a change's page when the app's own automated tests found a problem with the change. It is followed by a sentence saying what went wrong. {{count}} is how many tests failed."
+  },
+  "page.testing.lead.checks_one": {
+    "text": "One of the app’s checks failed.",
+    "description": "First sentence on the Testing card of a change's page when the app's automated checks found a problem with the change. It is followed by a sentence saying what went wrong. {{count}} is how many checks failed; English spells out the singular, and a language whose singular form is also used for 21 or 101 should print {{count}}."
+  },
+  "page.testing.lead.checks_other": {
+    "text": "{{count}} of the app’s checks failed.",
+    "description": "First sentence on the Testing card of a change's page when the app's automated checks found a problem with the change. It is followed by a sentence saying what went wrong. {{count}} is how many checks failed."
+  },
+  "page.testing.why.testSaid": {
+    "text": "The test “{{test}}” failed with: {{said}}",
+    "description": "Second sentence on the Testing card of a change's page, saying what went wrong while a plain explanation is not available: the failing automated test and the message it failed with. {{test}} is the test's name and {{said}} its message, both as the app's code wrote them, usually in English."
+  },
+  "page.testing.why.test": {
+    "text": "The test that failed is “{{test}}”.",
+    "description": "Second sentence on the Testing card of a change's page, saying what went wrong while a plain explanation is not available: the failing automated test, when it printed no message. {{test}} is the test's name as the app's code wrote it, usually in English."
+  },
+  "page.testing.why.checkSaid": {
+    "text": "“{{check}}” reported: {{said}}",
+    "description": "Second sentence on the Testing card of a change's page, saying what went wrong while a plain explanation is not available: the failing automated check and what it reported. {{check}} is the check's name and {{said}} its report, both as the app wrote them, usually in English."
+  },
+  "page.testing.why.check": {
+    "text": "The check that failed is “{{check}}”.",
+    "description": "Second sentence on the Testing card of a change's page, saying what went wrong while a plain explanation is not available: the failing automated check, when it reported nothing more. {{check}} is the check's name as the app wrote it, usually in English."
+  },
+  "page.testing.note.authorFixes": {
+    "text": "Its author needs to fix this before it can go live.",
+    "description": "Line under the Testing card of a change's page whose checks failed, shown to everybody but the change's author: the author has to fix what failed before the change can be merged. \"It\" is the change."
   },
   "page.testing.note.checkFailed": {
     "text": "A check failed.",
@@ -8704,8 +8728,8 @@
     "description": "Sentence on the Testing card of a change's page, once every check passed, saying how long the run took, when only the time of the checks is known and it was less than a minute."
   },
   "page.shots.taking": {
-    "text": "Taking the shots. They show up here when they are ready.",
-    "description": "Line inside the Before and after card on a change's page while the before and after screenshots (\"shots\") are being taken."
+    "text": "Taking the screenshots. They show up here when they are ready.",
+    "description": "Line inside the Before and after card on a change's page while the before and after screenshots (\"screenshots\") are being taken."
   },
   "shots.tiles.beforeNoRecording": {
     "text": "Before <0>· no recording</0>",
@@ -8756,8 +8780,8 @@
     "description": "Who made it, in the one line under a row's title in a project's Workshop lists and All items board, when the platform's builder bot made the item. \"Homeroom bot\" is the bot's name."
   },
   "workshop.row.tag.takingShotsShort": {
-    "text": "Taking shots",
-    "description": "The fewer words a row in a project's Workshop lists and All items board shows, beside a spinner, for the status tag \"Taking before & after shots\": screenshots of the change before and after are being taken. The full words are its tooltip and what a screen reader reads."
+    "text": "Taking screenshots",
+    "description": "The fewer words a row in a project's Workshop lists and All items board shows, beside a spinner, for the status tag \"Taking before & after screenshots\": screenshots of the change before and after are being taken. The full words are its tooltip and what a screen reader reads."
   },
   "workshop.row.tag.previewReadyShort": {
     "text": "Preview",
@@ -8849,19 +8873,19 @@
   },
   "shots.noticed.title": {
     "text": "Also noticed",
-    "description": "Small heading on a change's before & after shots, over problems the automated shots agent saw on the after build that are not part of the change; also that list's accessible name."
+    "description": "Small heading on a change's before & after screenshots, over problems the automated screenshot agent saw on the after build that are not part of the change; also that list's accessible name."
   },
   "shots.noticed.change": {
     "text": "Change {{number}}",
-    "description": "Fact under a problem listed under \"Also noticed\" on a change's before & after shots: which of the change's declared changes it was seen while showing. {{number}} is that change's place in the list (1, 2, 3)."
+    "description": "Fact under a problem listed under \"Also noticed\" on a change's before & after screenshots: which of the change's declared changes it was seen while showing. {{number}} is that change's place in the list (1, 2, 3)."
   },
   "shots.noticed.alsoBefore": {
     "text": "Also on the before build",
-    "description": "Fact under a problem listed under \"Also noticed\" on a change's before & after shots: the same problem shows on the version before the change, so the change did not cause it."
+    "description": "Fact under a problem listed under \"Also noticed\" on a change's before & after screenshots: the same problem shows on the version before the change, so the change did not cause it."
   },
   "shots.noticed.notBefore": {
     "text": "Not on the before build",
-    "description": "Fact under a problem listed under \"Also noticed\" on a change's before & after shots: the problem does not show on the version before the change."
+    "description": "Fact under a problem listed under \"Also noticed\" on a change's before & after screenshots: the problem does not show on the version before the change."
   },
   "page.steps.detail.release": {
     "text": "{{release}}.",

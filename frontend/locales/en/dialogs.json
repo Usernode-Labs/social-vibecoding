@@ -515,6 +515,14 @@
     "text": "Admins have your request. You’ll be notified when it is reviewed.",
     "description": "Note under the disabled \"Request pending\" button in the allowance box."
   },
+  "allowance.request.undo": {
+    "text": "Undo request",
+    "description": "Button in the allowance box beside the disabled \"Request pending\" button: takes back the person's request for more app slots so they can ask again. \"Request\" is a noun here."
+  },
+  "allowance.request.undoing": {
+    "text": "Undoing…",
+    "description": "Text of the \"Undo request\" button in the allowance box while the request for more app slots is being taken back."
+  },
   "allowance.refresh": {
     "text": "Refresh allowance",
     "description": "Button in the allowance box, shown after the allowance failed to load: fetches it again."
@@ -526,6 +534,10 @@
   "allowance.error.request": {
     "text": "Could not send your request.",
     "description": "Error in the allowance box when asking the admins for more app slots failed and the server gave no reason."
+  },
+  "allowance.error.undo": {
+    "text": "Could not undo your request.",
+    "description": "Error in the allowance box when taking back the request for more app slots failed and the server gave no reason."
   },
   "appNotifications.title": {
     "text": "Notifications",

@@ -70,6 +70,7 @@ test('app-creation machine against the full PostgreSQL schema', { timeout: 12000
   const setups = { calls: [], next: [] };
   const deploys = { calls: [], next: [] };
   const filings = { calls: [] };
+  const plans = { next: [] };
   const machine = creation.appCreation();
   const deliveries = delivery.appDelivery({ githubOn: () => true, runtimeMode: 'kubernetes' });
   const pushed = [];
@@ -88,6 +89,14 @@ test('app-creation machine against the full PostgreSQL schema', { timeout: 12000
     [WORK.firstRequest]: {
       maxAttempts: 1,
       async run({ input, key }) { filings.calls.push({ key, input }); return { issueNumber: 1 }; },
+    },
+    [WORK.plan]: {
+      maxAttempts: 1,
+      async run({ input, key }) { filings.calls.push({ key, input }); return { planned: plans.next.shift() ?? true }; },
+    },
+    [WORK.earlyLook]: {
+      maxAttempts: 1,
+      async run({ input, key }) { filings.calls.push({ key, input }); return { ok: true, error: null }; },
     },
     [delivery.WORK.deploy]: {
       maxAttempts: 1,
@@ -309,6 +318,36 @@ test('app-creation machine against the full PostgreSQL schema', { timeout: 12000
     await settle();
     assert.deepEqual(filings.calls.map((c) => c.key), ['first-request']);
     assert.equal((await row(a)).status, 'running');
+  });
+
+  // A first version's plan at Make it, claimed with its PlanOwed in one
+  // statement (services/first-version-plan.js startEarlyPlan), is this
+  // machine's work, whatever state the project is in; a plan written owes
+  // its early first look. Both were promises left running before, which a
+  // restart lost.
+  await t.test('C14: a first version\'s plan is its making\'s work, once, in any state; a plan written owes its early first look', async () => {
+    reset();
+    const fvPlan = require('../src/services/first-version-plan');
+    const a = await project();
+    await owe(a);
+    assert.equal(await fvPlan.startEarlyPlan(pool, { app: a, user: owner, brief: 'a tier list of cafes' }, { llm: { isEnabled: () => true } }), true);
+    assert.equal(await fvPlan.startEarlyPlan(pool, { app: a, user: owner, brief: 'a tier list of cafes' }, { llm: { isEnabled: () => true } }), false, 'claimed once');
+    await settle();
+    assert.deepEqual(filings.calls.map((c) => c.key).sort(), ['early-look', 'first-request', 'plan']);
+    assert.equal((await row(a)).status, 'running');
+    // Owed again (a replay), nothing new; a plan not written owes no look.
+    await rt.append(machine, creationKey(a.id), { type: 'PlanOwed', payload: { appId: a.id } },
+      { requestKey: `plan-again-${++rk}`, appId: a.id, source: { kind: 'system', name: 'plan' } });
+    await settle();
+    assert.equal(filings.calls.filter((c) => c.key === 'plan').length, 1);
+    reset();
+    plans.next.push(false);
+    const b = await project();
+    await rt.drain();
+    await rt.append(machine, creationKey(b.id), { type: 'PlanOwed', payload: { appId: b.id } },
+      { requestKey: `plan-${++rk}`, appId: b.id, source: { kind: 'system', name: 'plan' } });
+    await settle();
+    assert.deepEqual(filings.calls.map((c) => c.key), ['plan'], 'no plan, no look');
   });
 
   await t.test('C8: a row an older build is still making is waited for, then made from where it is', async () => {

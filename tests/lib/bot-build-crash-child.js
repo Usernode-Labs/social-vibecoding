@@ -42,6 +42,14 @@ let killAt = null;
 // 'kill' (SIGKILL: a crash) or 'stop' (a clean stop, as a release's SIGTERM
 // gives one: the runtime stops, the build unwinds, its lease is given up).
 let killMode = 'kill';
+// A fakes' event the kill waits for (world.mark), so the process dies with
+// that under way: a removal of a worker, held until the kill.
+let killAfter = null;
+const marks = new Map();
+const marked = (event) => {
+  if (!marks.has(event)) { let resolve; const p = new Promise((r) => { resolve = r; }); marks.set(event, { p, resolve }); }
+  return marks.get(event);
+};
 let stopping = null;
 // Counters a new build starts from (its saves, the fixture's posts).
 const resets = [];
@@ -51,6 +59,8 @@ const world = {
   pid: process.pid,
   als,
   get killAt() { return killAt; },
+  // A fakes' event happened in this process (see killAfter).
+  mark(event) { marked(event).resolve(); },
   // Replace a module before anything loads it.
   stub(modulePath, exports) {
     const id = require.resolve(modulePath);
@@ -67,6 +77,7 @@ const world = {
   // notices.
   async kill(point, extra = {}) {
     if (!killAt || killAt !== point) return;
+    if (killAfter) await marked(killAfter).p;
     if (killMode === 'stop') {
       killAt = null;
       await world.record('stopping', { point, ...extra }).catch(() => {});
@@ -191,6 +202,8 @@ process.on('message', async (m) => {
   if (m?.arm) {
     killAt = m.arm.killAt || null;
     killMode = m.arm.killMode || 'kill';
+    killAfter = m.arm.killAfter || null;
+    marks.clear();
     for (const fn of resets) fn();
     process.send({ armed: true });
   }
@@ -198,6 +211,7 @@ process.on('message', async (m) => {
     for (const fn of resets) fn();
     killAt = m.start.killAt || null;
     killMode = m.start.killMode || 'kill';
+    killAfter = m.start.killAfter || null;
     try {
       await setup.setupWorkflowProcess(config);
       await platform.startWorkflow(config, { loops: true });

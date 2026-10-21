@@ -33,6 +33,7 @@ import { createCheckFailedNotification } from '../rules/change-notifications.ts'
 import { toBotChange, writeBotChange } from '../rules/bot-notes.ts';
 import { OPEN, readFacts } from './facts.ts';
 import type { Facts } from './facts.ts';
+import { NOT_MOVING_KINDS } from '../session-work.ts';
 
 export const MACHINE = 'preview';
 export const sessionKey = (sessionId: number) => `session:${sessionId}`;
@@ -170,8 +171,8 @@ const EVENTS = {
   }),
   ConflictResolved: (p: any) => ({ head: sha(p?.head, 'head') }),
   // A person's "Run checks again" folded into what the session is already
-  // doing (services/unit-suite-reuse.js owePendingRun): the verdict stored
-  // for `head` no longer stands for it.
+  // doing (routes/sessions.js recheck): the verdict stored for `head` no
+  // longer stands for it.
   RecheckFolded: (p: any) => ({ head: sha(p?.head, 'head'), sessionId: optInt(p?.sessionId, 'sessionId') }),
   // The branch moved on to code nothing checks yet (a CLI upload before it
   // is submitted, an update to a paused proposal): the verdict no longer
@@ -290,6 +291,18 @@ const toShots = (d: Data, type: string, payload: Record<string, Json> = {}): Mes
 export const mergeWanted = (d: Data, f: Facts, state: string): MessageRequest[] =>
   ((state === 'passing' || state === 'skipped') && f.session?.status === 'promoted'
     ? [{ to: { machine: 'merge-queue', key: `app:${d.appId}` }, event: { type: 'MergeWanted', payload: { appId: d.appId, sessionId: d.sessionId, reason: 'checks' } }, appId: d.appId }]
+    : []);
+// The same ask when the last operation that kept a proposal in review
+// moving ends (any kind but session-work.ts NOT_MOVING_KINDS). An ask that
+// came while it was live, its own verdict's or a vote's, was declined as
+// busy (proposal/machine.ts askRefusal), and nothing asked again before the
+// queue's sweep four minutes on: 17 of the 22 merges that took over two
+// minutes from 16 to 21 Oct 2026 waited so. A hand-off's check run is such
+// an operation: it ends just after its own verdict (routes/proposal-handoff.js).
+export const stoppedMoving = (d: Data, f: Facts, ended: Operation | undefined, left: readonly Operation[]): MessageRequest[] =>
+  (ended && !NOT_MOVING_KINDS.includes(ended.kind) && f.session?.status === 'promoted'
+    && !left.some((o) => !NOT_MOVING_KINDS.includes(o.kind))
+    ? [{ to: { machine: 'merge-queue', key: `app:${d.appId}` }, event: { type: 'MergeWanted', payload: { appId: d.appId, sessionId: d.sessionId, reason: 'operation-ended' } }, appId: d.appId }]
     : []);
 // To the proposal machine: a promoted proposal's preview will not start
 // because main moved underneath it, and a sync with main is the fix
@@ -833,20 +846,27 @@ function rawTransitions(deps: Deps): Record<string, Record<string, Entry>> {
   // way: the stored verdict of the head they asked about no longer stands
   // for it, so the row reads pending (and merge-blocked) until a run that
   // answers them stores one, as their own run would have stamped it. The
-  // run they are owed starts once the session is idle (owePendingRun), or
-  // from the stale sweep, which re-drives a pending head nothing runs. A
-  // verdict of another head, or one already pending, is left alone.
+  // run they are owed starts once nobody works on the session: its
+  // ChecksDue, looked at every WORKED_RECHECK_MS while somebody does, and at
+  // once when a recorded operation ends. (The route's own poll of the
+  // session in its process's memory, lost to a restart, is gone.) A verdict
+  // of another head, or one already pending, is left alone.
+  // A request whose head has no verdict to stamp (another head's stands, or
+  // it reads pending already) still owes its run: resting, its ChecksDue is
+  // armed.
+  const stampable = (e: Event<any>, f: Facts) => !!f.session && f.session.checks.commitSha === e.payload.head
+    && f.session.checks.state !== 'pending';
+  const resting = (s: Live) => s.name === 'settled' || s.name === 'idle';
   const folded: Entry = {
-    guard: (s, e, f) => (f.session && f.session.checks.commitSha === e.payload.head && f.session.checks.state !== 'pending'
-      ? ok() : reject('nothing_to_stamp')),
-    // The request it owes is run once nobody works there: resting, by its
-    // ChecksDue; a deadline it waits on otherwise (a failed build's retry)
-    // stays.
+    guard: (s, e, f) => (stampable(e, f) || (resting(s) && owedChecks(s, f)) ? ok() : reject('nothing_to_stamp')),
+    // A deadline it waits on otherwise (a failed build's retry) stays.
     to: (s, e, f, ctx) => step({
       name: s.name, data: s.data,
-      writes: [{ type: 'pending', sessionId: s.data.sessionId, head: e.payload.head, phase: null, trigger: 'manual-recheck' }],
-      push: [checksPending(s.data, ctx, e.payload.head, '', 'manual-recheck')],
-      ...(s.name === 'settled' || s.name === 'idle' ? { timer: null } : {}),
+      ...(stampable(e, f) ? {
+        writes: [{ type: 'pending', sessionId: s.data.sessionId, head: e.payload.head, phase: null, trigger: 'manual-recheck' }],
+        push: [checksPending(s.data, ctx, e.payload.head, '', 'manual-recheck')],
+      } : {}),
+      ...(resting(s) ? { timer: { at: new Date(ctx.now.getTime() + WORKED_RECHECK_MS), event: { type: 'ChecksDue' } } } : {}),
     }),
   };
 
@@ -855,7 +875,12 @@ function rawTransitions(deps: Deps): Record<string, Record<string, Entry>> {
   // after adopting it from the row, as ChecksCleared does: the stamp a
   // folded request owes is the row's either way.
   const foldedAdopting: Entry = {
-    guard: (s, e, f, ctx) => { const c = adopting(e, f, ctx); return c !== true ? c : (folded.guard as any)(s, e, f, ctx); },
+    // Judged on the state as adopted from the row, as its transition is: a
+    // session with no instance yet rests, and checks owed on it arm a look.
+    guard: (s, e, f, ctx) => {
+      const c = adopting(e, f, ctx);
+      return c !== true ? c : (folded.guard as any)(standing(adopt(e, f, priorOf(s)), f), e, f, ctx);
+    },
     to: (s, e, f, ctx) => (folded.to as any)(standing(adopt(e, f, priorOf(s)), f), e, f, ctx),
   };
 
@@ -957,10 +982,19 @@ function rawTransitions(deps: Deps): Record<string, Record<string, Entry>> {
       return step({ name: live.name, data: { ...live.data, operations } });
     },
   };
+  // An operation's end: checks owed while it ran (a person's recheck folded
+  // into it) are looked at now rather than at their next ChecksDue.
   const opEnded: Entry = {
     guard: (s, e) => (s.data.operations.some((o: Operation) => o.id === e.payload.id) ? ok() : reject('no_such_operation')),
-    to: (s, e, f) => step({ name: s.name, data: { ...s.data,
-      operations: s.data.operations.filter((o: Operation) => o.id !== e.payload.id && f.alive.has(o.holder)) } }),
+    to: (s, e, f, ctx) => {
+      const ended = s.data.operations.find((o: Operation) => o.id === e.payload.id);
+      const operations = s.data.operations.filter((o: Operation) => o.id !== e.payload.id && f.alive.has(o.holder));
+      const next = { name: s.name, data: { ...s.data, operations } } as Live;
+      return step({
+        ...next, messages: stoppedMoving(s.data, f, ended, operations),
+        ...(owedChecks(next, f) ? { timer: { at: ctx.now, event: { type: 'ChecksDue' } } } : {}),
+      });
+    },
   };
   const ops = { OperationStarted: opStarted, OperationEnded: opEnded };
 

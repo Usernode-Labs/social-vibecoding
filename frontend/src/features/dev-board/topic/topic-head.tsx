@@ -46,14 +46,17 @@ import { Textarea } from '@/components/ui/textarea';
 import { ActionButton, DevCard, StatusPill } from '../card/dev-card';
 import { useInlineImageViewer } from '../../image-viewer/image-viewer';
 import { topicHeadStore } from './topic-store';
+import { useChecksExplanation, useFixAsk, useFixing } from './failed-checks';
 import { TopicBack } from './topic-back';
 import { RequestHead } from './request-head';
 import { ChangeThreadHead } from './change-head';
 import { DescriptionEditor } from './description-editor';
 import { ISSUE_BODY_MAX } from '../../../lib/issue-body-limit';
 import type {
+  ChecksExplainView,
   ChecksVerdict,
   CheckRow,
+  FixChecksView,
   NoteBox,
   NoteTone,
   RosterView,
@@ -158,8 +161,84 @@ function openLabel(r: CheckRow, t: ReturnType<typeof useMessages>): string | nul
   return null;
 }
 
+/** The unit suite's per-test output (#3978), once: each test's name over its excerpt. */
+function TestOutput({ details }: { details: NonNullable<CheckRow['details']> }): ReactNode {
+  return (
+    <ul className="dev-ledger-why-details mt-1 space-y-1">
+      {details.map((d, i) => (
+        <li key={i}>
+          <div className="font-medium">{d.file ? `${d.file} · ${d.test}` : d.test}</div>
+          <pre className="dev-ledger-why-excerpt mt-0.5 max-h-60 overflow-auto whitespace-pre-wrap break-words rounded bg-zinc-500/10 p-2 font-mono text-[0.7rem]">{d.excerpt}</pre>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/**
+ * The app's own test suite (`npm test`), failed: said by what it is ("The
+ * app's own tests", how many of them failed), then the tests that failed,
+ * each with the message it failed with and where, and the runner's own
+ * output folded under "Show the test output". The check's name ("Repo unit
+ * suite (npm test) passes"), the TAP tally and the "on package.json" its
+ * reason used to carry are for the platform, not for whoever reads the row.
+ */
+function UnitSuiteRow({ r }: { r: CheckRow }): ReactNode {
+  const t = useMessages('project');
+  const tests = r.details || [];
+  const tally = r.unitTally || null;
+  // Without per-test output, the reason's own first part names the files.
+  const reason = String(r.reason || '').split(/\s\|\s#\s/)[0].trim();
+  return (
+    <li className={`dev-ledger-check dev-ledger-check-unit${r.advisory ? ' opacity-70' : ''}`} data-check-unit="">
+      <div className="dev-ledger-unit-head">
+        <span className={`dev-ledger-check-glyph ${r.advisory ? 'text-zinc-500 dark:text-zinc-400' : 'text-red-700 dark:text-red-400'} font-medium`} aria-hidden="true">✗</span>
+        <span className="dev-ledger-unit-name" title={r.name}>{t('project:topic.check.unit.name')}</span>
+        <span className="dev-ledger-unit-cmd font-mono">npm test</span>
+        {r.advisory ? <span className="rounded bg-zinc-500/10 px-1 text-[0.65rem] opacity-70">{t('project:topic.check.advisory')}</span> : null}
+        {tally ? (
+          <span className="dev-ledger-unit-count">
+            {tally.total
+              ? t('project:topic.check.unit.failedOf', { count: tally.failed, failed: fmtCount(tally.failed), total: fmtCount(tally.total) })
+              : t('project:topic.check.unit.failed', { count: tally.failed, failed: fmtCount(tally.failed) })}
+          </span>
+        ) : null}
+      </div>
+      {tests.length ? (
+        <div className="dev-ledger-unit-part">
+          <div className="dev-ledger-unit-k">{t('project:topic.check.unit.testsThatFailed', { count: tests.length })}</div>
+          <ul className="dev-ledger-unit-tests">
+            {tests.map((d, i) => (
+              <li key={i}>
+                <span className="dev-ledger-unit-test">{d.test}</span>
+                {d.said ? <span className="dev-ledger-unit-said">{t('project:topic.check.unit.said', { said: d.said })}</span> : null}
+                {d.file ? (
+                  <span className="dev-ledger-unit-where font-mono">
+                    {d.line ? t('project:topic.check.unit.fileLine', { file: d.file, line: d.line }) : d.file}
+                  </span>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : (reason ? <p className="dev-ledger-unit-reason">{reason}</p> : null)}
+      {tests.length ? (
+        <details className="dev-ledger-why dev-ledger-unit-output">
+          <summary className="dev-ledger-check-line">
+            <span className="dev-ledger-check-open">{t('project:topic.check.unit.showOutput')}</span>
+          </summary>
+          <div className="dev-ledger-why-body">
+            <TestOutput details={tests} />
+          </div>
+        </details>
+      ) : null}
+    </li>
+  );
+}
+
 function CheckRowView({ r }: { r: CheckRow }): ReactNode {
   const t = useMessages('project');
+  if (r.unit && !r.pass) return <UnitSuiteRow r={r} />;
   const glyphCls = `dev-ledger-check-glyph ${r.pass ? 'text-emerald-700 dark:text-emerald-400' : (r.advisory ? 'text-zinc-500 dark:text-zinc-400' : 'text-red-700 dark:text-red-400')} font-medium`;
   const tags = (
     <>
@@ -203,25 +282,6 @@ function CheckRowView({ r }: { r: CheckRow }): ReactNode {
             />
           ) : (r.reason || t('project:topic.check.failed'))}
           {r.note ? <div className="dev-ledger-why-note mt-1">{r.note}</div> : null}
-          {/* #3978: the unit-suite row's failing tests, each with the
-              assertion text the run captured. The fold is the collapse —
-              these open with "Why it failed" like the console errors below. */}
-          {r.details && r.details.length ? (
-            <ul className="dev-ledger-why-details">
-              {r.details.map((d, i) => (
-                <li key={i}>
-                  {d.file ? (
-                    <RichMessage
-                      id="project:topic.check.testInFile"
-                      values={{ test: d.test, file: d.file }}
-                      components={[<span className="dev-ledger-why-test" />, <span className="dev-ledger-why-file" />]}
-                    />
-                  ) : <span className="dev-ledger-why-test">{d.test}</span>}
-                  {d.excerpt ? <span className="dev-ledger-why-excerpt">{d.excerpt}</span> : null}
-                </li>
-              ))}
-            </ul>
-          ) : null}
           {r.errors && r.errors.length ? (
             <ul className="dev-ledger-why-errors">
               {r.errors.map((e, i) => (
@@ -233,16 +293,7 @@ function CheckRowView({ r }: { r: CheckRow }): ReactNode {
               ))}
             </ul>
           ) : null}
-          {r.details && r.details.length ? (
-            <ul className="dev-ledger-why-details mt-1 space-y-1">
-              {r.details.map((d, i) => (
-                <li key={i}>
-                  <div className="font-medium">{d.file ? `${d.file} · ${d.test}` : d.test}</div>
-                  <pre className="dev-ledger-why-excerpt mt-0.5 max-h-60 overflow-auto whitespace-pre-wrap break-words rounded bg-zinc-500/10 p-2 font-mono text-[0.7rem]">{d.excerpt}</pre>
-                </li>
-              ))}
-            </ul>
-          ) : null}
+          {r.details && r.details.length ? <TestOutput details={r.details} /> : null}
         </div>
       </details>
     </li>
@@ -1224,6 +1275,46 @@ function RunTrack({ c, busy }: {
 }
 
 /**
+ * A failed run's "What went wrong", over its failures: the plain-words
+ * sentence the Testing card shows (./failed-checks.ts), once it is read.
+ * Nothing until then, and nothing when there is none: the rows under it
+ * already say which tests failed and with what.
+ */
+function WhatWentWrong({ ex }: { ex?: ChecksExplainView | null }): ReactNode {
+  const t = useMessages('project');
+  const text = useChecksExplanation(ex);
+  if (!ex || !text) return null;
+  return (
+    <div className="dev-ledger-explain" data-checks-explained="">
+      <div className="dev-ledger-unit-k">{t('project:topic.checks.explain.title')}</div>
+      <p className="dev-ledger-explain-text">{text}</p>
+      <div className="dev-ledger-explain-source">{t('project:topic.checks.explain.source')}</div>
+    </div>
+  );
+}
+
+/** The Checks step's Fix it, for the change's author: the Testing card's own (./failed-checks.ts). */
+function FixStepButton({ fix }: { fix: FixChecksView }): ReactNode {
+  const t = useMessages('project');
+  const { asking, refused, tap } = useFixAsk(fix);
+  const fixing = useFixing(fix);
+  return (
+    <>
+      <button
+        type="button"
+        className="gc-vote-btn gc-vote-btn-accent"
+        data-change-fix-checks={fix.changeId}
+        disabled={asking || fixing}
+        onClick={tap}
+      >
+        {fixing ? t('project:topic.checks.fixing') : asking ? t('project:topic.change.gate.fixAsking') : t('project:topic.change.gate.fix')}
+      </button>
+      {refused ? <span className="dev-ledger-fix-refused" role="alert">{refused}</span> : null}
+    </>
+  );
+}
+
+/**
  * The Checks step, open: the build as its steps (equal segments — where the
  * build is, not how long is left; see BuildSteps), then the app's declared
  * checks and the unit suite as bars, the failures by name with their "Why it
@@ -1289,6 +1380,7 @@ function RunPanel({ run, id }: { run: StepRun; id: string }): ReactNode {
           <span className={`dev-step-run-v${u.failed ? ' is-bad' : ''}`}>{unitValue}</span>
         </div>
       ) : null}
+      <WhatWentWrong ex={run.explain} />
       {run.fails.length ? (
         <ul className="dev-ledger-fails">
           {run.fails.map((f) => <CheckRowView key={f.key} r={f} />)}
@@ -1367,11 +1459,14 @@ function GateStepView({ r }: { r: StepRow }): ReactNode {
           {r.was ? <span className="dev-step-line dev-step-vote-was">{r.was}</span> : null}
         </span>
       )}
-      {(run && open) || actions.length ? (
+      {(run && open) || actions.length || r.fix ? (
         <div className="dev-step-body">
           {run && open ? <RunPanel run={run} id={panelId} /> : null}
-          {actions.length ? (
-            <span className="dev-ledger-ops">{actions.map((a) => <ActionButton key={a.key} a={a} />)}</span>
+          {actions.length || r.fix ? (
+            <span className="dev-ledger-ops">
+              {r.fix ? <FixStepButton fix={r.fix} /> : null}
+              {actions.map((a) => <ActionButton key={a.key} a={a} />)}
+            </span>
           ) : null}
         </div>
       ) : null}

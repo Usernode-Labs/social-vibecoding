@@ -4878,13 +4878,14 @@ const DevChat = {
     // uploaded — each carries a server id + objectUrl for image thumbs).
     const sentAttachments = (attachments || []).filter((a) => a && a.id);
     if (!message && !sentAttachments.length) return;
-    // #138: a send is a user gesture — unlock the AudioContext and lazily
-    // request OS-notification permission now, so the completion chime /
-    // notification can fire when this turn finishes (browsers only allow
-    // audio + permission prompts from inside a gesture).
+    // #138: a send is a user gesture — unlock the AudioContext now, so the
+    // completion chime can play when this turn finishes (browsers only allow
+    // audio from inside a gesture). The OS-notification permission is
+    // offered, explained first, once per device (offerNotifyPermission):
+    // never the browser's bare prompt.
     if (window.DevAlerts) {
       DevAlerts._unlockAudio();
-      DevAlerts.requestNotifyPermission();
+      if (typeof DevAlerts.offerNotifyPermission === 'function') void DevAlerts.offerNotifyPermission();
     }
     // #2812: the backstop for a mid-turn pick the turn's end could not
     // apply (the server still held the turn). If it still cannot, the
@@ -8079,6 +8080,9 @@ const DevChat = {
             : DevChat.renderMarkdown(content))
           : `<span style="color:var(--text-muted);font-style:italic">${PlatformI18n.htmlText('devchat:transcript.noVisibleReply')}</span>`,
         ...(msgIdx === liveIdx ? { live: true } : null),
+        // #5728: the project the reply is about, so its `#N` / `PR#N` chips
+        // open that board. Only the AI's written reply carries one.
+        ...(isUser ? null : { appSlug: DevChat._appSlug() || null }),
         ...(isUser ? { attachments: DevChat._attachmentRows(msg) } : null),
         // For any assistant message that carried a [CHAT_ONLY] tag, surface
         // the raw output so nothing is ever invisibly swallowed.

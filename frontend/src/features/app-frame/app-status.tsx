@@ -58,6 +58,7 @@ import { type FirstVersionScreens, ScreensBand, hasScreens } from './first-versi
 import { FirstVersionSteps } from './first-version-steps';
 import { type FirstVersionLive, LiveSwitch, useLiveChoice } from './live-switch';
 import { type FirstVersionWaiting, WaitingCard, lineNote } from './waiting-card';
+import { NotifyAsk } from '../notify-ask/notify-ask';
 
 // #4449: Live's player (rrweb) is loaded only once Live is shown.
 const LiveBand = lazy(() => import('./live-band'));
@@ -113,10 +114,16 @@ export interface AppStatusView {
    */
   estimate?: unknown;
   /**
-   * Run six: its maker's promise under the card, with a small check: "We’ll
-   * notify you when it’s live", in place of the lines.
+   * Run six: the promise under the card, with a small check: "We’ll notify
+   * you when it’s live". Its maker's in place of the lines; since 21 Oct
+   * 2026 a member's too, under theirs (members are told when it opens).
    */
   promise?: string | null;
+  /**
+   * The notification ask under the promise (../notify-ask/notify-ask.tsx):
+   * `project_opens` for a member who is not its maker, while it is made.
+   */
+  ask?: 'project_opens' | null;
   /**
    * The lines say what a first-session tour card can say over this screen
    * ("It opens here when it’s ready."), so they hide while a card that says
@@ -357,6 +364,9 @@ export function AppStatusView_({ view: answered }: { view: AppStatusView }): Rea
           <CheckIcon className="h-4 w-4 shrink-0" aria-hidden="true" />
           <span>{view.promise}</span>
         </p>
+      ) : null}
+      {thumb && view.ask === 'project_opens' ? (
+        <NotifyAsk moment="project_opens" project={thumb.name} className="mt-2 w-full max-w-sm text-left" />
       ) : null}
       {view.detail ? (
         <p className="text-xs font-mono text-red-700 max-w-md break-words dark:text-red-400">{view.detail}</p>

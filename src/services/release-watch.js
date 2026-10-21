@@ -211,8 +211,8 @@ async function observe(config, pool, app, head, { now = Date.now(), octokit = nu
   const running = app.main_sha || null;
   const committedAt = head && head.committedAt ? Date.parse(head.committedAt) : NaN;
   // A head with no date (an API shape without one) is measured from the
-  // first time this process saw it, which is at most one tick late.
-  const since = Number.isFinite(committedAt) ? committedAt : firstSeenAt(app.id, sha, now);
+  // first time a look saw it, which is at most one tick late.
+  const since = Number.isFinite(committedAt) ? committedAt : await firstSeenAt(pool, app.id, sha, now);
   const ageMs = Math.max(0, now - since);
 
   let run = null;
@@ -281,10 +281,11 @@ async function observe(config, pool, app, head, { now = Date.now(), octokit = nu
  */
 async function converged(config, pool, app) {
   const record = asRecord(app.release_stall);
-  firstSeen.delete(app.id);
-  // The run read for a commit that is running now has nothing left to say.
-  if (app.release_run) {
-    await pool.query('UPDATE apps SET release_run = NULL WHERE id = $1 AND release_run IS NOT NULL', [app.id])
+  // The run read for a commit that is running now has nothing left to say,
+  // nor has when an undated head was first seen.
+  if (app.release_run || app.release_head_seen) {
+    await pool.query(`UPDATE apps SET release_run = NULL, release_head_seen = NULL
+                       WHERE id = $1 AND (release_run IS NOT NULL OR release_head_seen IS NOT NULL)`, [app.id])
       .catch((err) => log.debug('release-watch', 'Could not clear release_run', { appId: app.id, err: err.message }));
   }
   if (!record) return { cleared: false };
@@ -299,14 +300,18 @@ async function converged(config, pool, app) {
   return { cleared: true, record };
 }
 
-// When this process first saw main at a sha it could not date. In memory:
-// a restart costs at most one tick of grace.
-const firstSeen = new Map(); // app.id -> { sha, at }
-function firstSeenAt(appId, sha, now) {
-  const prev = firstSeen.get(appId);
-  if (prev && sameSha(prev.sha, sha)) return prev.at;
-  firstSeen.set(appId, { sha, at: now });
-  return now;
+// When a look first saw main at a sha it could not date, kept on the row
+// (apps.release_head_seen): the main-drift clock runs on whichever workflow
+// process is free, and kept in each process's memory, looks alternating
+// between two of them, or a restart, started the grace again.
+async function firstSeenAt(pool, appId, sha, now) {
+  const { rows: [r] } = await pool.query(
+    `UPDATE apps SET release_head_seen = CASE WHEN lower(release_head_seen->>'sha') = lower($2::text) THEN release_head_seen
+                                            ELSE jsonb_build_object('sha', $2::text, 'at', $3::bigint) END
+      WHERE id = $1 RETURNING (release_head_seen->>'at')::bigint AS at`,
+    [appId, sha, now]
+  );
+  return r && Number.isFinite(Number(r.at)) ? Number(r.at) : now;
 }
 
 // A row's release-watch block, in the shape the API serializes. Never throws
@@ -692,7 +697,6 @@ module.exports = {
   RELEASE_ROLLOUT_MS,
   WORKFLOW_PATH,
   _forTest: {
-    resetFirstSeen: () => firstSeen.clear(),
     resetOutlook: () => { outlookCache = null; },
     OUTLOOK_TTL_MS,
     ROLLOUT_LATE_MS,

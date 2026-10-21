@@ -2,10 +2,15 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   {{DEV_CONSOLE_FORWARDER}}
   <title>{{APP_NAME}}</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='45' fill='%237c3aed'/><circle cx='50' cy='50' r='18' fill='white'/></svg>">
+  <!-- Homeroom's native UI kit, centrally hosted and loaded by RELATIVE
+       path like the bridge (never vendored): native pressed states, pull to
+       refresh, and on a phone a tap outside a field closes the keyboard.
+       Before the app's own stylesheet, so the app's styles win a tie. -->
+  <link rel="stylesheet" href="/usernode-native/v1/native.css">
   <!-- This app's precompiled Tailwind (npm run build writes it on every
        image build; tailwind.config.js says which files it scans). -->
   <link rel="stylesheet" href="/tailwind.css">
@@ -29,12 +34,26 @@
       media.addEventListener('change', applyTheme);
     })();
   </script>
+  <!-- The native kit's script (its stylesheet is above). After the theme
+       script, which runs first so the page never paints in the wrong look. -->
+  <script src="/usernode-native/v1/native.js"></script>
   <!-- What takes the loading shapes' place fades in, briefly, rather than
        cutting over: an animation replays whenever [hidden] comes off, so
        nothing has to start it. None under reduced motion. -->
   <style>
     @keyframes appear { from { opacity: 0; } to { opacity: 1; } }
     @media (prefers-reduced-motion: no-preference) { .appear { animation: appear 200ms ease-out; } }
+    /* The page scrolls up and down only, in place: a drag past either end
+       bounces this page (and pulls to refresh at the top) rather than
+       carrying on into Homeroom around it, and nothing slides sideways. */
+    html { overscroll-behavior-y: contain; overscroll-behavior-x: none; touch-action: pan-y pinch-zoom; }
+    body { overflow-x: clip; }
+    /* On a phone: a field never zooms the page when it is focused, and a
+       tap on a field or a button is never read as a double-tap zoom. */
+    @media (hover: none) and (pointer: coarse) { input, textarea, select { font-size: 16px; } }
+    input, textarea, button { touch-action: manipulation; }
+    /* The native kit in this app's own colours (the pull-to-refresh spinner). */
+    :root { --un-accent: rgb(var(--accent)); --un-accent-contrast: rgb(var(--on-accent)); --un-surface: rgb(var(--surface)); }
   </style>
 </head>
 <body class="min-h-screen bg-ground text-fg">

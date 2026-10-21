@@ -774,6 +774,53 @@ the budget (`maxUnavailable: 1`) blocks no drain, and the metrics rules find not
 scrape: delete `pdb/social-vibecoding-conductor`, `podmonitor/` and
 `prometheusrule/social-vibecoding-conductor-workflow` by hand if the rollback is to last.
 
+## State that decides, on the workflow (roadmap item 3)
+
+This release moved what a process kept in memory and decided from onto the workflow and
+Postgres: consequences owed by the transaction that decides them (`Voted`, `MailOwed`,
+`PlanOwed`, `DiagramStored`, `ConflictResolved` from the measurement, a turn's stalled
+notice and name), shared rate limits (`rate_limit_hits`), wallet challenges and the
+waitlist's connect states in tables, the wallet-link poller as the `wallet-links` clock,
+the Workshop's debounce on its row, the admin's fleet jobs as on-demand clocks, the
+database export's claim and ticket on its `db_exports` row, report and dictation claims,
+and the hand-off's ordering under the proposal lock. `docs/workflows.md` explains each.
+
+- **During the rollout.** Events an older conductor refuses as unknown are asked again
+  once no older workflow process serves (the `reask-refused` clock). An admin's rollover
+  or "reap previews now" is refused while an older workflow process serves ("a platform
+  release is rolling out"). A wallet challenge, a waitlist connect round trip or an export
+  ticket started on one build and finished on the other fails, and the person tries
+  again. An older web Pod's rollover can run beside the new clock's: the build lock takes
+  each app in turn.
+- **Rolling back past this release.** Roll forward instead when you can. Older code
+  leaves alone the instances this release wrote: `turn`, `bot-change` and `app-creation`
+  at version 2, `proposal` at version 5 (their conversations, changes and projects stop
+  moving). For a rollback that lasts, once no process of this release is live
+  (`platform_processes`), lower them; their data is the same shape. A proposal with a
+  diagram move under way or queued stays at version 5 (older code has no handler for
+  `pr.diagram`, and its GitHub moves would wait behind it) and moves again on the roll
+  forward:
+
+  ```sql
+  BEGIN; SET LOCAL app.wf_writer = 'transition';
+  UPDATE wf_instances SET machine_version = 1
+   WHERE machine IN ('turn', 'bot-change', 'app-creation') AND machine_version = 2;
+  UPDATE wf_instances SET machine_version = 4
+   WHERE machine = 'proposal' AND machine_version = 5
+     AND COALESCE(data->'pr'->>'running', '') NOT LIKE 'diagram:%'
+     AND NOT COALESCE(data->'pr'->'next' @> '[{"kind": "pr.diagram"}]'::jsonb, FALSE);
+  DELETE FROM app_report_ai WHERE input_hash = '';
+  COMMIT;
+  ```
+
+  The last line removes a report generation's claim row, which older code would show as
+  an empty report. Work of this release's kinds (`dm.mail`, `bot.tellApproved`,
+  `turn.stalled`, `turn.name`, `app.plan`, `app.earlyLook`, the new clocks' runs) waits
+  unclaimed; on the roll forward a notice owed more than six hours earlier, and a fleet
+  job asked more than six hours earlier, is skipped rather than said or run late. Older
+  code's boot marks a database export this release was streaming interrupted. Nothing
+  in the infra values needs keeping for it.
+
 ## Read-only inventory and logs
 
 These examples use the organization namespace and Deployment names. Substitute

@@ -486,7 +486,8 @@ test('#4452: the Testing card is one bar, split by how long each part usually ta
   // A failure says so in the same card, with the door to what failed.
   const failed = testing({ check_state: 'failing', test_results: [{ name: 'Home loads', status: 'fail' }] });
   assert.deepEqual([failed.figure, failed.tone, failed.details], ['Found a problem', 'bad', true]);
-  assert.deepEqual(failed.note, ['1 check failed.']);
+  assert.deepEqual(failed.note, ['One of the app’s checks failed.']);
+  assert.equal(failed.authorNote, 'Its author needs to fix this before it can go live.');
   assert.equal(testing({ check_state: 'skipped' }).figure, 'Not tested');
   assert.equal(testing({ check_state: 'error' }).figure, 'Couldn’t finish');
   assert.equal(testing({ check_state: null, staging_url: null }).figure, 'Not started');
@@ -495,6 +496,128 @@ test('#4452: the Testing card is one bar, split by how long each part usually ta
   const tsx = read('frontend/src/features/dev-board/topic/change-head.tsx');
   assert.ok(tsx.includes("openTechnicalDetails?.(id, 'checks')"), 'See what failed opens Details at the Checks part');
   assert.ok(read('frontend/src/features/dev-board/topic/topic-head.tsx').includes('querySelector(`[data-note="${part}"]`)'), 'and scrolls to that part');
+});
+
+// The app's own test suite, failed on one test, as a run stores it.
+const UNIT_ROW = {
+  index: -3, name: 'Repo unit suite (npm test) passes', path: 'package.json', status: 'fail',
+  failureReason: 'tests/i18n.test.js (1): every message the server can send has a Spanish wording | # tests 26 | # pass 25 | # fail 1 | # cancelled 0',
+  failureDetails: [{
+    file: 'tests/i18n.test.js',
+    test: 'every message the server can send has a Spanish wording',
+    excerpt: "  duration_ms: 0.905959\n  location: '/tmp/tmp.p7vv/tests/i18n.test.js:133:1'\n  error: \"Spanish for: Pick a date, or choose I don't remember.\"\n  code: 'ERR_ASSERTION'",
+  }],
+};
+const FAILED = {
+  ...PR, check_state: 'failing', agent_session_id: 55,
+  test_results: [{ name: 'Home loads', path: '/', status: 'pass' }, UNIT_ROW],
+  mergeRequirements: { ...PR.mergeRequirements, gates: gates({ checks: { state: 'blocked' } }) },
+};
+const unescape = (html) => html.replace(/&#x27;/g, '\'').replace(/&quot;/g, '"').replace(/&amp;/g, '&');
+
+test('a failed run says what went wrong in plain words, and offers its author Fix it beside a quieter re-run', () => {
+  // The change's author, on a change built in an agent session.
+  const own = context({ id: 7, username: 'maya' });
+  const card = plain(own._changeTestingView(FAILED));
+  assert.deepEqual([card.figure, card.tone], ['Found a problem', 'bad']);
+  assert.deepEqual(card.note, ['One of the app’s tests failed.']);
+  assert.deepEqual(card.explain, {
+    id: 4090, at: '2026-09-18T12:00:00Z',
+    fallback: 'The test “every message the server can send has a Spanish wording” failed with: Spanish for: Pick a date, or choose I don\'t remember.',
+  });
+  // What the dev chat's own Fix it card sends: the blocking failures, each
+  // with what it reported, and the conversation it goes to.
+  assert.deepEqual(card.fix, {
+    agentSessionId: 55, changeId: 4090, prNumber: 12, total: 1,
+    checks: [{ name: 'Repo unit suite (npm test) passes', reason: UNIT_ROW.failureReason }],
+    at: '2026-09-18T12:00:00Z',
+  });
+  assert.equal(card.authorNote, null);
+  assert.deepEqual(card.actions.map((a) => [a.key, a.cls]), [['recheck', 'gc-vote-btn']], 'the re-run is the quieter button');
+
+  const { page, details } = render(own, FAILED);
+  const testing = unescape(page.slice(page.indexOf('data-change-gate="testing"')));
+  // Preview stays in the corner; the re-run moves beside Fix it, under the sentence.
+  assert.match(testing, /<div class="dev-change-gate-act"><button type="button" class="gc-vote-btn gc-vote-btn-preview"/);
+  assert.doesNotMatch(testing.slice(0, testing.indexOf('dev-change-gate-why')), /castRecheck/);
+  assert.match(testing, /<p class="dev-change-gate-why" data-change-gate-why="own-words">One of the app’s tests failed\. The test “every message the server can send has a Spanish wording” failed with: Spanish for: Pick a date, or choose I don't remember\.<\/p>/);
+  assert.match(testing, /<div class="dev-change-gate-fix"><button type="button" class="gc-vote-btn gc-vote-btn-accent" data-change-fix-checks="4090">Fix it<\/button><button class="gc-vote-btn" title="[^"]*" data-act="castRecheck">Re-run checks<\/button><\/div>/);
+  assert.match(testing, /<p class="dev-change-gate-note">Fix it asks the agent that built this change to fix what failed, using your credits\. You can stay on this page: the checks run again by themselves when it’s done\. <button type="button" class="dev-change-gate-link">See what failed<\/button><\/p>/);
+
+  // Details › Checks: the app's own tests by what they are, the test that
+  // failed with its message and place, the output once, behind its fold.
+  const text = unescape(details);
+  const row = text.slice(text.indexOf('data-check-unit=""'), text.indexOf('</li>', text.indexOf('dev-ledger-unit-output')));
+  assert.match(row, /<span class="dev-ledger-unit-name" title="Repo unit suite \(npm test\) passes">The app’s own tests<\/span><span class="dev-ledger-unit-cmd font-mono">npm test<\/span><span class="dev-ledger-unit-count">1 of 26 failed<\/span>/);
+  assert.match(row, /<div class="dev-ledger-unit-k">The test that failed<\/div><ul class="dev-ledger-unit-tests"><li><span class="dev-ledger-unit-test">every message the server can send has a Spanish wording<\/span><span class="dev-ledger-unit-said">Failed with: Spanish for: Pick a date, or choose I don't remember\.<\/span><span class="dev-ledger-unit-where font-mono">tests\/i18n\.test\.js, line 133<\/span><\/li><\/ul>/);
+  assert.match(row, /<details class="dev-ledger-why dev-ledger-unit-output"><summary class="dev-ledger-check-line"><span class="dev-ledger-check-open">Show the test output<\/span><\/summary>/);
+  assert.equal(text.split('ERR_ASSERTION').length - 1, 1, 'the test output is drawn once');
+  assert.ok(!text.includes('on package.json') && !text.includes('# tests 26'), 'no platform plumbing in the row');
+  // Fix it leads the step's buttons; the re-run beside it is the quieter one.
+  assert.match(text, /<span class="dev-ledger-ops"><button type="button" class="gc-vote-btn gc-vote-btn-accent" data-change-fix-checks="4090">Fix it<\/button><button class="gc-vote-btn" title="[^"]*" data-act="castRecheck">Re-run checks<\/button>/);
+  // "What went wrong" waits for the sentence: the rows already say what failed.
+  assert.ok(!text.includes('data-checks-explained'));
+});
+
+test('a failed run, read by anybody else: the same words, who has to fix it, and no buttons', () => {
+  const av = context();
+  const card = plain(av._changeTestingView(FAILED));
+  assert.equal(card.fix, null);
+  assert.deepEqual(card.actions, []);
+  assert.equal(card.authorNote, 'Its author needs to fix this before it can go live.');
+  const testing = unescape(render(av, FAILED).page);
+  assert.match(testing, /data-change-gate-why="own-words">One of the app’s tests failed\. The test “every message/);
+  assert.match(testing, /<p class="dev-change-gate-note">Its author needs to fix this before it can go live\. <button type="button" class="dev-change-gate-link">See what failed<\/button><\/p>/);
+  assert.ok(!testing.includes('data-change-fix-checks') && !testing.includes('dev-change-gate-fix'));
+  // Its author, on a change with no conversation to ask: the re-run, as before.
+  const own = context({ id: 7, username: 'maya' });
+  const bare = plain(own._changeTestingView({ ...FAILED, agent_session_id: null }));
+  assert.equal(bare.fix, null);
+  assert.deepEqual(bare.actions.map((a) => a.cls), ['gc-vote-btn gc-vote-btn-accent']);
+  // A change no longer open to work offers no Fix it.
+  assert.equal(own._changeTestingView({ ...FAILED, status: 'merged' }).fix, null);
+});
+
+test('a declared check that failed is named with what it reported; several are counted', () => {
+  const av = context();
+  const one = plain(av._changeTestingView({ ...PR, check_state: 'failing', test_results: [{ name: 'Home loads', path: '/', status: 'fail', failureReason: 'Expected #home to exist' }] }));
+  assert.deepEqual(one.note, ['One of the app’s checks failed.']);
+  assert.equal(one.explain.fallback, '“Home loads” reported: Expected #home to exist');
+  const quiet = plain(av._changeTestingView({ ...PR, check_state: 'failing', test_results: [{ name: 'Home loads', status: 'fail' }] }));
+  assert.equal(quiet.explain.fallback, 'The check that failed is “Home loads”.');
+  const two = plain(av._changeTestingView({ ...PR, check_state: 'failing', test_results: [
+    { name: 'Home loads', status: 'fail' }, { name: 'Vote opens', status: 'fail' }, { name: 'Advisory', status: 'fail', advisory: true },
+  ] }));
+  assert.deepEqual(two.note, ['2 of the app’s checks failed.'], 'blocking failures are counted');
+  // The suite failed on three tests: counted from its tally.
+  const three = plain(av._changeTestingView({ ...FAILED, test_results: [{ ...UNIT_ROW, failureReason: 'tests/a.test.js (3): x | # tests 40 | # pass 37 | # fail 3' }] }));
+  assert.deepEqual(three.note, ['3 of the app’s tests failed.']);
+});
+
+test('a failing test’s line and message are read off its excerpt', () => {
+  const av = context();
+  assert.deepEqual(plain(av._excerptFacts("  location: '/tmp/x/tests/a.test.js:12:3'\n  error: 'it''s off'", 'tests/a.test.js')), { line: 12, said: 'it\'s off' });
+  assert.deepEqual(plain(av._excerptFacts('  error: |-\n    expected 2\n    got 3\n  code: x', null)), { line: null, said: 'expected 2 got 3' });
+  assert.deepEqual(plain(av._excerptFacts('  error: "a \\"quoted\\" word"', null)), { line: null, said: 'a "quoted" word' });
+  assert.deepEqual(plain(av._excerptFacts("  location: '/elsewhere/b.js:9:1'", 'tests/a.test.js')), { line: null, said: null }, 'another file\'s line is not this test\'s');
+  assert.deepEqual(plain(av._unitSuiteTally(UNIT_ROW.failureReason)), { failed: 1, total: 26 });
+  assert.equal(av._unitSuiteTally('tests/a.test.js (1): x'), null);
+  assert.equal(av._isUnitSuiteRow(UNIT_ROW), true);
+  assert.equal(av._isUnitSuiteRow({ name: 'Home loads', path: '/' }), false);
+});
+
+test('Fix it from the page sends the dev chat’s own message, lets the stream go, and polls nothing', () => {
+  const src = read('frontend/src/features/dev-board/topic/failed-checks.ts');
+  assert.match(src, /const message = fixChecksMessage\(\{/);
+  assert.match(src, /await sendTurnInBackground\(fix\.agentSessionId, message, clientMessageId\);/);
+  assert.match(src, /const sessions = useAgentSessions\(\);/, 'the turn\'s end is read off the conversation list');
+  assert.doesNotMatch(src, /\/api\/agent-sessions\/\$\{/, 'reading the conversation would mark it seen');
+  assert.match(src, /fetch\(`\/api\/sessions\/\$\{ex\.id\}\/checks-explanation\?lang=\$\{encodeURIComponent\(language\)\}\$\{demoQS\(\)\}`/);
+  const api = read('frontend/src/features/agent-session/api.ts');
+  assert.match(api, /export async function sendTurnInBackground\([\s\S]*?if \(!response\.ok\) await json\(response, t\('agent:session\.error\.turnRefused'\)\);\n {2}controller\.abort\(\);\n\}/);
+  const head = read('frontend/src/features/dev-board/topic/change-head.tsx');
+  assert.match(head, /const explanation = useChecksExplanation\(g\.explain\);\n {2}const fixing = useFixing\(g\.fix\);/);
+  assert.match(head, /id="project:topic\.change\.gate\.noteWatch"/);
 });
 
 test('the steps sheet is the strip expanded: its headline and count, one short step per gate in the gate’s order', () => {
@@ -787,17 +910,17 @@ test('the picture: verified shots are the viewer specs use, a run under way is a
   const av = context();
   const claim = { id: 's1', claim: 'The preview waits for sign-in', viewports: ['desktop'], steps: ['Open a preview'] };
   const building = render(av, { ...PR, shots: { state: 'exploring', claims: [claim], artifacts: [] } }).page;
-  assert.match(building, /<section class="dev-change-shots dev-change-shots-plain" data-change-shots="exploring" aria-label="Before and after"><div class="dev-change-card-name">Before and after<\/div><p class="dev-change-shots-line"><span class="dc-status-spinner-arc" aria-hidden="true"><\/span><span>Taking the shots\. They show up here when they are ready\.<\/span><\/p>/);
+  assert.match(building, /<section class="dev-change-shots dev-change-shots-plain" data-change-shots="exploring" aria-label="Before and after"><div class="dev-change-card-name">Before and after<\/div><p class="dev-change-shots-line"><span class="dc-status-spinner-arc" aria-hidden="true"><\/span><span>Taking the screenshots\. They show up here when they are ready\.<\/span><\/p>/);
   assert.ok(!building.includes('data-shots="1"'), 'no panel for a run still going');
   const failed = render(av, { ...PR, shots: { state: 'failed', failureReason: 'The dialog never opened.', claims: [claim], artifacts: [] } }).page;
-  assert.match(failed, /data-change-shots="failed"[\s\S]*<span>Couldn’t take the shots\. The dialog never opened\.<\/span>/);
+  assert.match(failed, /data-change-shots="failed"[\s\S]*<span>Couldn’t take the screenshots\. The dialog never opened\.<\/span>/);
   assert.ok(!failed.includes('dc-status-spinner-arc'));
   // Interrupted by a restart, with an automatic retry coming: under way.
   const retrying = render(av, { ...PR, shots: {
     state: 'failed', failureCode: 'shots_run_interrupted', automaticRetryPending: true,
     failureReason: 'Homeroom restarted.', claims: [claim], artifacts: [],
   } }).page;
-  assert.match(retrying, /<span class="dc-status-spinner-arc" aria-hidden="true"><\/span><span>Taking the shots\./);
+  assert.match(retrying, /<span class="dc-status-spinner-arc" aria-hidden="true"><\/span><span>Taking the screenshots\./);
   // Verified: the side-by-side viewer, its title in the switch's row; the
   // steps and the screen size are Shot details' (Details), not the card's.
   const url = (side) => `/api/apps/example/proposals/4090/shots/${side.repeat(32)}`;
@@ -809,15 +932,15 @@ test('the picture: verified shots are the viewer specs use, a run under way is a
   assert.match(verified, /<div class="shots-bar"><span class="dev-change-card-name">Before and after<\/span><span class="shots-seg shots-seg-side"/);
   assert.match(verified, /shots-seg-both/, 'side by side is one of its sides');
   assert.match(verified, /shots-side-auto/, 'and it starts side by side when there is room');
-  assert.doesNotMatch(verified, /shots-view-meta|Open a preview|Taken on the exact|Shots ready|Shot details|Take the shots again/);
+  assert.doesNotMatch(verified, /shots-view-meta|Open a preview|Taken on the exact|Screenshots ready|Screenshot details|Take the screenshots again/);
   const shot = av.shotsHtml(shots, { sessionId: 4090, details: true });
   assert.match(shot, /<strong>The preview waits for sign-in<\/strong>[\s\S]*Desktop · seen as a member[\s\S]*Open a preview/);
   assert.match(shot, /Taken on the exact before and after builds of this change/);
   const menu = (item) => { const v = av._topicViewFor('proposal', item); return av._cardMenuItems(v.card.rail.menuKey).map((a) => a.label); };
-  assert.ok(menu({ ...PR, shots }).includes('Shot details'));
-  assert.ok(!menu({ ...PR, user_id: 42, shots: { ...shots, state: 'exploring' } }).includes('Take the shots again'), 'not while a run is going');
-  assert.ok(menu({ ...PR, user_id: 42, shots }).includes('Take the shots again'), 'the author can take them again');
-  assert.ok(!menu({ ...PR, shots }).includes('Take the shots again'), 'somebody else cannot');
+  assert.ok(menu({ ...PR, shots }).includes('Screenshot details'));
+  assert.ok(!menu({ ...PR, user_id: 42, shots: { ...shots, state: 'exploring' } }).includes('Take the screenshots again'), 'not while a run is going');
+  assert.ok(menu({ ...PR, user_id: 42, shots }).includes('Take the screenshots again'), 'the author can take them again');
+  assert.ok(!menu({ ...PR, shots }).includes('Take the screenshots again'), 'somebody else cannot');
 });
 
 test('the capture tiles are checked on a live proposal page, against the staging captures they are seeded with (#4269)', () => {
@@ -924,10 +1047,10 @@ test('a fresh planned run is in progress, and says so in the words the state use
   const v = av._shotsView(evidence);
   assert.equal(v.label, 'Before & after queued');
   assert.equal(v.notStarted, false);
-  assert.match(v.sentence, /^Before & after: getting ready to take the shots\. Homeroom shows each declared change before and after, on this exact proposal build\.$/);
+  assert.match(v.sentence, /^Before & after: getting ready to take the screenshots\. Homeroom shows each declared change before and after, on this exact proposal build\.$/);
   // It is still a run under way, so the card keeps its quiet spinner line.
   const { page } = render(av, { ...PR, shots: evidence });
-  assert.match(page, /data-change-shots="planned"[^]*<span class="dc-status-spinner-arc" aria-hidden="true"><\/span><span>Taking the shots\. They show up here when they are ready\.<\/span>/);
+  assert.match(page, /data-change-shots="planned"[^]*<span class="dc-status-spinner-arc" aria-hidden="true"><\/span><span>Taking the screenshots\. They show up here when they are ready\.<\/span>/);
 });
 
 test('a failed run quotes its reason as written and promises no shots', () => {
@@ -936,7 +1059,7 @@ test('a failed run quotes its reason as written and promises no shots', () => {
     state: 'failed', failureCode: 'shots_capture_incomplete',
     failureReason: 'API returned 500 on the members list.', claims: [CLAIM], artifacts: [],
   });
-  assert.equal(v.sentence, 'Couldn\u2019t take the shots. API returned 500 on the members list.');
+  assert.equal(v.sentence, 'Couldn\u2019t take the screenshots. API returned 500 on the members list.');
   assert.ok(!/Homeroom shows each declared change/.test(v.sentence));
 });
 
@@ -959,12 +1082,12 @@ test('a planned run untouched past five minutes has not started: no spinner, the
 
   const { page } = render(av, { ...PR, user_id: 42, shots: evidence });
   assert.ok(!page.includes('dc-status-spinner-arc'), 'nothing spins on a run that is not moving');
-  assert.ok(!page.includes('Taking the shots'));
+  assert.ok(!page.includes('Taking the screenshots'));
   // The card says it has not started, and why; the retry is the ⋯'s.
   assert.match(page, /data-change-shots="planned"/);
   assert.match(page, /Before &amp; after not started\. Before &amp; after shots are not being taken on this deployment\./);
   const v2 = av._topicViewFor('proposal', { ...PR, user_id: 42, shots: evidence });
-  assert.ok(av._cardMenuItems(v2.card.rail.menuKey).some((a) => a.label === 'Take the shots again'));
+  assert.ok(av._cardMenuItems(v2.card.rail.menuKey).some((a) => a.label === 'Take the screenshots again'));
   assert.doesNotMatch(page, /Visual change preview|Retry visual/);
 });
 
@@ -998,7 +1121,7 @@ test('the card tag follows the same split, and only the moving one spins', () =>
     .find((r) => r.key === 'shots');
 
   const moving = reasons({ state: 'planned', updatedAt: ago(10 * 1000), required: true });
-  assert.equal(moving.label, 'Taking before & after shots');
+  assert.equal(moving.label, 'Taking before & after screenshots');
   assert.equal(moving.running, true);
 
   const stuck = reasons({
@@ -1010,7 +1133,7 @@ test('the card tag follows the same split, and only the moving one spins', () =>
   assert.equal(stuck.detail, 'No staging preview was built for this commit.');
 
   const failed = reasons({ state: 'failed', updatedAt: ago(IDLE * 2), required: true, failureReason: 'The dialog never opened.' });
-  assert.equal(failed.label, 'Couldn\u2019t take the shots');
+  assert.equal(failed.label, 'Couldn\u2019t take the screenshots');
   assert.equal(failed.running, false);
   assert.equal(failed.detail, 'The dialog never opened.');
   // Interrupted by a restart, with an automatic retry coming: under way.
@@ -1018,18 +1141,18 @@ test('the card tag follows the same split, and only the moving one spins', () =>
     state: 'failed', updatedAt: ago(10 * 1000), required: true, failureCode: 'shots_run_interrupted',
     automaticRetryPending: true, failureReason: 'Homeroom restarted. You can take them again.',
   });
-  assert.equal(retrying.label, 'Trying the shots again');
+  assert.equal(retrying.label, 'Trying the screenshots again');
   assert.equal(retrying.running, true);
   assert.match(retrying.detail, /starts them again on its own in a moment/);
   const exploring = reasons({ state: 'exploring', updatedAt: ago(IDLE * 2), required: true });
-  assert.equal(exploring.label, 'Taking before & after shots');
+  assert.equal(exploring.label, 'Taking before & after screenshots');
   assert.equal(exploring.running, true);
   // A set that is neither moving nor failed (a newer commit made it stale)
   // still owes the proposal its shots.
   const stale = reasons({ state: 'stale', updatedAt: ago(IDLE * 2), required: true });
   assert.equal(stale.label, 'Before & after needed');
   assert.equal(stale.running, false);
-  assert.equal(stale.detail, 'This proposal has no before & after shots for its current commit yet.');
+  assert.equal(stale.detail, 'This proposal has no before & after screenshots for its current commit yet.');
   // Shots that are ready, waived or not needed owe nothing.
   for (const state of ['verified', 'overridden', 'not_required']) {
     assert.equal(reasons({ state, required: true }), undefined, state);
@@ -1042,16 +1165,16 @@ test('every state reads in the before & after words', () => {
   const at = copy({ state: 'planned', updatedAt: ago(10 * 1000) });
   assert.equal(at.planned[0], 'Before & after queued');
   assert.equal(at.provisioning[0], 'Building before and after');
-  assert.equal(at.exploring[0], 'Taking the shots');
-  assert.equal(at.reviewing[0], 'Saving the shots');
-  assert.equal(at.failed[0], 'Couldn\u2019t take the shots');
-  assert.equal(at.stale[0], 'Shots are out of date');
-  assert.equal(at.cancelled[0], 'Shots cancelled');
+  assert.equal(at.exploring[0], 'Taking the screenshots');
+  assert.equal(at.reviewing[0], 'Saving the screenshots');
+  assert.equal(at.failed[0], 'Couldn\u2019t take the screenshots');
+  assert.equal(at.stale[0], 'Screenshots are out of date');
+  assert.equal(at.cancelled[0], 'Screenshots cancelled');
   assert.equal(at.not_required[0], 'No before & after needed');
-  assert.equal(at.overridden[0], 'Shots waived');
-  assert.equal(copy({ state: 'failed', failureCode: 'shots_stopped' }).failed[0], 'Shots stopped');
+  assert.equal(at.overridden[0], 'Screenshots waived');
+  assert.equal(copy({ state: 'failed', failureCode: 'shots_stopped' }).failed[0], 'Screenshots stopped');
   // A verified run's strip label is the card's badge.
-  assert.equal(av._shotsView({ state: 'verified', claims: [CLAIM] }).label, 'Shots ready');
+  assert.equal(av._shotsView({ state: 'verified', claims: [CLAIM] }).label, 'Screenshots ready');
   assert.doesNotMatch(JSON.stringify(at), /visual change preview|visual preview/i);
 });
 

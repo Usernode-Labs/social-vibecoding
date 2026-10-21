@@ -17,7 +17,7 @@ const rateLimit = require('../src/services/mail/rate-limit');
 
 const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
 
-// A pool that answers the two reads emailIfNoPush makes.
+// A pool that answers the reads emailIfNoPush makes.
 function fakePool({ user = null, phones = 0 } = {}) {
   const queries = [];
   return {
@@ -26,6 +26,7 @@ function fakePool({ user = null, phones = 0 } = {}) {
       queries.push({ sql, params });
       if (/FROM users WHERE id/.test(sql)) return { rows: user ? [user] : [] };
       if (/FROM mobile_push_registrations/.test(sql)) return { rows: phones ? [{ '?column?': 1 }] : [] };
+      if (/FROM notifications n/.test(sql)) return { rows: [] };
       if (/UPDATE users SET activity_email = FALSE/.test(sql)) return { rowCount: 1, rows: [] };
       throw new Error(`unexpected query: ${sql}`);
     },
@@ -115,8 +116,11 @@ test('both transports send a kind\'s headers', () => {
 });
 
 test('activity mail has its own hourly budget, apart from sign-in codes', () => {
-  assert.deepEqual([...rateLimit.ACTIVITY_KINDS].sort(), ['build_ready', 'invite_activity']);
-  assert.ok(rateLimit.RULES.build_ready && rateLimit.RULES.invite_activity);
+  // #4396 and the notification ask add two: a project you joined opening,
+  // and the votes waiting on you.
+  assert.deepEqual([...rateLimit.ACTIVITY_KINDS].sort(),
+    ['build_ready', 'invite_activity', 'project_opened', 'votes_owed']);
+  for (const kind of rateLimit.ACTIVITY_KINDS) assert.ok(rateLimit.RULES[kind], `${kind} is throttled`);
   // A full activity budget refuses activity mail…
   const full = rateLimit.decide({
     kind: 'build_ready', globalCount: rateLimit.ACTIVITY_MAX_PER_HOUR, maxPerHour: rateLimit.ACTIVITY_MAX_PER_HOUR,

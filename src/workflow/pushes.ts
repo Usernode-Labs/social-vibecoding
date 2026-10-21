@@ -37,9 +37,11 @@ export const issueUpdate = (data: JsonObject) => scoped('issue_update', data);  
 
 // A card moved on a board: besides the browsers, the Workshop's placement
 // stage hears it in every web process that relays the push (services/ws.js
-// `routing.boardChange` → workshop-themes.noteBoardChange, debounced and
-// leased per app), the deciding one included. What ws.pushIssueUpdate /
-// pushSessionUpdate kick in the process that calls them.
+// `routing.boardChange` → workshop-themes.noteBoardChange), the deciding one
+// included: each owes the app a pass on its row (due from the first change,
+// so a second relay changes nothing), which the workshop-changes clock runs.
+// What ws.pushIssueUpdate / pushSessionUpdate kick in the process that calls
+// them.
 export const boardMoved = (p: Push): Push => ({ ...p, routing: { ...(p.routing || {}), boardChange: true } });
 export const voteUpdate = (data: JsonObject) => scoped('vote_update', data);     // ws.pushVoteUpdate
 export const appUpdate = (data: JsonObject) => scoped('app_update', data);       // ws.pushAppUpdate
@@ -129,6 +131,26 @@ export function sessionEvent(to: SessionRoute, event: string, seq: string, data:
       fanout: SESSION_FANOUT_EVENTS.has(event) },
     data: { _seq: seq, ...data, type: 'session_event', sessionId: to.sessionId, event },
   };
+}
+
+// A session's working state (ws.pushSessionState: services/session-state.js
+// buildPayload's shape): to everyone who may view the app for a shared
+// session or a headless run, else to its owner. `phase` and `stopping` are a
+// process's own to tell, so a machine says none.
+export interface SessionStateRow {
+  id: number; app_id: number; user_id: number; status: string | null; shared: boolean; is_headless: boolean;
+  headless_status: string | null; headless_outcome: string | null; headless_issue_number: number | null; app_slug: string | null;
+}
+export function sessionState(row: SessionStateRow, busy: boolean, at: Date): Push {
+  const shared = !!(row.shared || row.is_headless);
+  const data: JsonObject = {
+    type: 'session_state', sessionId: Number(row.id), appId: row.app_id, appSlug: row.app_slug, userId: row.user_id,
+    busy, phase: null, stopping: false, status: row.status,
+    headless: row.is_headless ? { status: row.headless_status, outcome: row.headless_outcome,
+      issueNumber: row.headless_issue_number == null ? null : Number(row.headless_issue_number) } : null,
+    shared, at: at.getTime(),
+  };
+  return shared ? scoped('session_state', data) : toUser(row.user_id, data);
 }
 
 // A session's card moved on a board or list (ws.pushSessionUpdate, without

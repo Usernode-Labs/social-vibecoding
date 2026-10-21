@@ -1196,17 +1196,13 @@ async function recordFinalLook(pool, runId, startedAt, look) {
   return rowCount > 0;
 }
 
-// The last looks still running in this process: a build never waits on
-// them; finalLooksSettled is for a test, or a shutdown that wants them in.
-const pendingFinalLooks = new Set();
-
 /**
- * Take a finished review's last look for the live run `runId` in the
- * background, when it earns one (finalLookDue) and the run has none yet: a
- * restart that hands the same finished review back calls the reviewer no
- * second time. Returns the look's promise (resolving the look, or null when
- * none was taken), or null when none is due; the caller does not wait on
- * it. Never rejects.
+ * Take a finished review's last look for the live run `runId`, when it earns
+ * one (finalLookDue) and the run has none yet: a restart that hands the same
+ * finished review back calls the reviewer no second time. Returns the look's
+ * promise (resolving the look, or null when none was taken), or null when
+ * none is due. The build runs it beside its own steps (homeroom-bot-live.js
+ * finalLookBeside): its item does not end before it has. Never rejects.
  */
 function startFinalLook({ pool, runId, state, review, now = Date.now }) {
   const due = runId ? finalLookDue(state) : null;
@@ -1230,14 +1226,7 @@ function startFinalLook({ pool, runId, state, review, now = Date.now }) {
       return null;
     }
   })();
-  pendingFinalLooks.add(job);
-  job.finally(() => pendingFinalLooks.delete(job));
   return job;
-}
-
-/** Resolves once every last look this process started has ended. */
-function finalLooksSettled() {
-  return Promise.allSettled([...pendingFinalLooks]);
 }
 
 /**
@@ -1389,7 +1378,6 @@ module.exports = {
   takeFinalLook,
   recordFinalLook,
   startFinalLook,
-  finalLooksSettled,
   canResume,
   recoveredFixOf,
   awaitsFix,

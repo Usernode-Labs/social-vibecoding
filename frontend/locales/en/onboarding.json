@@ -1660,8 +1660,8 @@
     "description": "Second card of the walk on Home, pointing at the Messages tab: Homeroom bot is the assistant that builds changes to apps. A name, keep it as it is."
   },
   "firstSession.walk.bot.text": {
-    "text": "It's in Messages. Ask it for a change.",
-    "description": "Line on the walk's Homeroom bot card, for an app with no example change to offer (one Homeroom bot built, or a game): where to find the bot (the Messages tab) and what to ask it for (a change to the app)."
+    "text": "It's in Messages. Ask it to make any changes to {{app}}.",
+    "description": "Line on the walk's Homeroom bot card, for an app with no example change to offer (one Homeroom bot built, or a game): where to find the bot (the Messages tab) and what to ask it for (any change to the app). {{app}} is the project's name, as its tile on Home shows it."
   },
   "firstSession.walk.bot.textExample": {
     "text": "Ask it for changes, like “{{example}}”.",

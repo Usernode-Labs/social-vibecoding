@@ -219,3 +219,31 @@ test('"Request more" is the neutral pill on the create dialog, not the accent', 
   const inset = renderPanel({ quota: { used: 1, limit: 2, remaining: 1 }, server: null }, { surface: 'inset' }).html;
   assert.match(inset.match(/<button[^>]*>Request more<\/button>/)[0], /rounded-lg bg-violet-600/);
 });
+
+// ── #5737: undo a pending request ────────────────────────────────
+
+test('a pending request shows "Undo request" beside it, and nothing else does', () => {
+  const pending = renderPanel(
+    { quota: { used: 2, limit: 2, remaining: 0 }, server: null, requestedAt: '2026-10-03T10:00:00Z' },
+    { quiet: true },
+  ).html;
+  assert.match(pending, />Request pending<\/button>/);
+  const undo = pending.match(/<button[^>]*>Undo request<\/button>/);
+  assert.ok(undo, 'the undo button renders beside it');
+  assert.match(undo[0], /id="create-app-quota-undo"/);
+  // Quiet and neutral, the same pill as "Request more" in that box: the
+  // pending state is what is being said, this is only the way out of it.
+  assert.doesNotMatch(undo[0], /bg-violet-600/, 'a secondary act does not wear the accent');
+  assert.match(undo[0], /rounded-full bg-zinc-100/);
+  assert.match(undo[0], /text-zinc-900/);
+  // The inset (the fork dialog) keeps its plain neutral button.
+  const inset = renderPanel(
+    { quota: { used: 2, limit: 2, remaining: 0 }, server: null, requestedAt: '2026-10-03T10:00:00Z' },
+    { surface: 'inset' },
+  ).html;
+  assert.match(inset, /<button[^>]*>Undo request<\/button>/);
+  // Nothing pending means no undo button.
+  const free = renderPanel({ quota: QUOTA, server: null }).html;
+  assert.doesNotMatch(free, /Undo request/);
+  assert.doesNotMatch(free, /create-app-quota-undo/);
+});

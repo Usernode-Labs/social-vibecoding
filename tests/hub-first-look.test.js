@@ -1,7 +1,7 @@
 'use strict';
 
-// The hub's first look card (frontend/src/features/dev-board/workshop/
-// hub-cards.tsx FirstLookCard).
+// The hub's first look (frontend/src/features/dev-board/workshop/
+// hub-cards.tsx useFirstLook, FirstLookView).
 //
 // Newcomer run six (14 Oct 2026, iPhone 17 Safari, Club Votes): after the
 // tour's Done the maker landed on the hub, which said "Building it", then
@@ -12,6 +12,12 @@
 // with "FIRST LOOK", "Here's what you're making", one line, and "Watch
 // Homeroom bot build it", which opens the App tab. Nothing on it shares the
 // picture: inviting is Share it's, and invitations are to the community.
+//
+// Evan, 21 Oct 2026: "merge the working out the details card and the first
+// look card, keeping the Watch Homeroom bot build it button". The First
+// version card under the hero is now that card for its maker once the
+// picture is there: the picture in place of the thumbnail, the name, the
+// build line, the one line and Watch.
 //
 // Run with: node --test tests/hub-first-look.test.js
 
@@ -42,30 +48,51 @@ const community = (fv) => ({
 
 const SRC = '/api/apps/club-votes/first-version/screens/first_look/0?v=1760464920000';
 
-test('the card: the picture small and phone-shaped, the kicker, the title, the line and the one button', () => {
+const LINE = { state: 'building', words: 'Working out the details', note: '2 min so far' };
+
+test('the card: the picture small and phone-shaped, the name, the build line, the one line and the Watch button', () => {
   // React's server render hoists a preload for the picture ahead of the
   // card; the card is what follows it.
-  const html = renderToHtml(createElement(hub.FirstLookView, { slug: 'club-votes', name: 'Club Votes', src: SRC }))
+  const html = renderToHtml(createElement(hub.FirstLookView, { slug: 'club-votes', name: 'Club Votes', src: SRC, stage: 'building', line: LINE }))
     .replace(/^<link rel="preload" as="image" href="[^"]*"\/>/, '');
-  assert.match(html, /^<section class="dev-ws-strip dev-ws-first-look" data-ws-first-look="">/, 'one of the hub\'s strip cards');
+  assert.match(html, /^<section class="dev-ws-strip dev-ws-hub-first dev-ws-first-look" data-ws-first-version="building" data-ws-first-look="">/,
+    'the First version card, one of the hub\'s strip cards');
   assert.match(html, new RegExp(`<img src="${SRC.replace(/[?.]/g, '\\$&')}" alt="The first look at Club Votes&#x27;s main screen" width="64" height="138" draggable="false" class="dev-ws-first-look-shot"/>`),
     'a fixed phone-shaped box, so nothing moves as it loads');
-  assert.match(html, /<p class="dev-ws-first-look-kicker">First look<\/p>/);
-  assert.match(html, /<p class="dev-ws-head-title">Here&#x27;s what you&#x27;re making<\/p>/);
+  assert.match(html, /<div class="dev-ws-first-look-body"><p class="dev-ws-first-look-name">Club Votes<\/p><span role="status" data-build-line="building"[^>]*>.*<span class="truncate">Working out the details<\/span><span data-build-line-note=""[^>]*>2 min so far<\/span><\/span><p class="dev-ws-strip-text">/,
+    'the name, then the line the card draws without the picture, its time on a line of its own');
+  assert.match(html, /animate-spin/);
   assert.match(html, /<p class="dev-ws-strip-text">Drawn from your answers\. We&#x27;ll tell you when the working app is live\.<\/p>/);
   assert.match(html, /<button[^>]*data-ws-first-look-watch=""[^>]*>Watch Homeroom bot build it<\/button><\/div><\/section>$/);
   // The words, as the product lead wrote them.
-  assert.equal(message('project:hub.firstLook.kicker'), 'First look');
-  assert.equal(message('project:hub.firstLook.title'), 'Here\'s what you\'re making');
   assert.equal(message('project:hub.firstLook.text'), 'Drawn from your answers. We\'ll tell you when the working app is live.');
   assert.equal(message('project:hub.firstLook.watch'), 'Watch Homeroom bot build it');
+  // Its old heading said the project's state a second time: the name and
+  // the line say it now.
+  assert.doesNotMatch(html, /First look<|what you&#x27;re making|dev-ws-first-look-kicker/);
+  assert.doesNotMatch(read('frontend/locales/en/project.json'), /"hub\.firstLook\.(kicker|title)"/);
   // One button, and nothing that shares the picture or invites.
   assert.equal((html.match(/<button/g) || []).length, 1);
   assert.doesNotMatch(html, /[Ss]hare|[Ii]nvite|[Cc]opy/);
-  // The kicker is small caps (AGENTS.md: 12px bold, tracked 0.06em, muted).
+  // The name as the thumbnail row draws it (15px at 650, AGENTS.md).
   const css = read('public/css/app.css');
-  assert.match(css, /\.dev-ws-first-look-kicker \{\n  margin: 0; font-size: 12px; font-weight: 700; line-height: 16px;\n  letter-spacing: 0\.06em; text-transform: uppercase; color: var\(--text-muted\);\n\}/);
+  assert.match(css, /\.dev-ws-first-look-name \{\n  margin: 0; max-width: 100%; font-size: 15px; font-weight: 650; line-height: 20px;/);
+  assert.doesNotMatch(css, /\.dev-ws-first-look-kicker/);
   assert.match(css, /\.dev-ws-first-look-shot \{\n  flex: none; width: 64px; height: 138px; border-radius: 12px;\n  object-fit: cover; object-position: top;/);
+});
+
+test('something waiting on its maker: the card\'s own button over Watch, and no line above it', () => {
+  const answer = createElement('button', { type: 'button', 'data-ws-first-version-action': 'answer' }, 'Answer the question');
+  const html = renderToHtml(createElement(hub.FirstLookView, { slug: 'club-votes', name: 'Club Votes', src: SRC, stage: 'building', line: null, action: answer }))
+    .replace(/^<link rel="preload" as="image" href="[^"]*"\/>/, '');
+  assert.doesNotMatch(html, /data-build-line/, 'the button says where it is');
+  assert.match(html, /<p class="dev-ws-strip-text">[^<]*<\/p><button type="button" data-ws-first-version-action="answer">Answer the question<\/button><button[^>]*data-ws-first-look-watch=""/);
+  // The First version card hands it its line, its button and its press.
+  const src = read(HUB);
+  const card = src.slice(src.indexOf('export function FirstVersionCard('), src.indexOf('/* ── First look'));
+  assert.match(card, /line=\{lineShown \? \{ state: line, words: named\.words, note: named\.note \} : null\}/);
+  assert.match(card, /data-ws-first-version-action=\{action\}\s+onClick=\{press\}/);
+  assert.match(card, /sectionRef=\{ref\}/, 'read again while it is on screen, as the card without the picture is');
 });
 
 test('tapping the picture or the words opens the maker\'s chat with Homeroom bot (#5618)', () => {
@@ -75,18 +102,17 @@ test('tapping the picture or the words opens the maker\'s chat with Homeroom bot
   assert.doesNotMatch(plain, /data-ws-first-look-open/);
   // With it, an empty button is the section's first child (absolute, so the
   // picture and the words after it keep their places), and Watch stays last.
-  const html = renderToHtml(createElement(hub.FirstLookView, { slug: 'club-votes', name: 'Club Votes', src: SRC, onOpen() {} }))
+  const html = renderToHtml(createElement(hub.FirstLookView, { slug: 'club-votes', name: 'Club Votes', src: SRC, stage: 'building', line: LINE, onOpen() {} }))
     .replace(/^<link rel="preload" as="image" href="[^"]*"\/>/, '');
-  assert.match(html, /^<section class="dev-ws-strip dev-ws-first-look" data-ws-first-look=""><button type="button" class="dev-ws-first-look-open" data-ws-first-look-open="" aria-label="Open your chat with Homeroom bot"><\/button><img /,
+  assert.match(html, /^<section class="dev-ws-strip dev-ws-hub-first dev-ws-first-look" data-ws-first-version="building" data-ws-first-look=""><button type="button" class="dev-ws-first-look-open" data-ws-first-look-open="" aria-label="Open your chat with Homeroom bot"><\/button><img /,
     'the door first, empty, over the picture');
   assert.match(html, /<button[^>]*data-ws-first-look-watch=""[^>]*>Watch Homeroom bot build it<\/button><\/div><\/section>$/,
     'Watch keeps its place, and its own tap');
   // It opens the maker's own conversation, or the chat with the bot, as the
   // First version card's Review the plan does.
   const src = read(HUB);
-  const card = src.slice(src.indexOf('export function FirstLookCard('), src.indexOf('export function watchBuild('));
-  assert.match(card, /const id = data\?\.first_version\?\.conversation_id;/);
-  assert.match(card, /if \(id\) openConversation\(id\);\n\s+else void openBot\(\);/);
+  const card = src.slice(src.indexOf('export function FirstVersionCard('), src.indexOf('/* ── First look'));
+  assert.match(card, /onOpen=\{\(\) => \{\n\s+if \(fv\.conversation_id\) openConversation\(fv\.conversation_id\);\n\s+else void openBot\(\);/);
   // The door lies under the Watch button, and only a hover tint and the
   // focus ring show it.
   const css = read('public/css/app.css');
@@ -132,33 +158,36 @@ test('only the first look, read as the tour\'s last card reads it, and nothing u
   assert.equal(firstLookSrc(body({ kind: 'real', count: 3, v: '9' }), 'club-votes'), '/api/apps/club-votes/first-version/screens/real/0?v=9',
     'the tour\'s card still takes either');
   assert.equal(firstLookSrc(body({ kind: 'first_look', count: 1 }), 'club-votes', ['bogus']), null, 'only a kind the server draws');
-  // The first render, before anything is read, draws nothing: built, not
-  // built, or touring alike.
-  for (const fv of [building(), building({ line: 'live', ready: true }), null]) {
-    assert.equal(renderToHtml(createElement(hub.FirstLookCard, { slug: 'club-votes', data: community(fv) })), '');
-  }
-  assert.equal(renderToHtml(createElement(hub.FirstLookCard, { slug: 'club-votes', data: null })), '');
+  // The first render, before anything is read, has no picture: the First
+  // version card is the thumbnail and its line, as for anyone else.
+  const first = renderToHtml(createElement(hub.FirstVersionCard, { slug: 'club-votes', data: community(building()) }));
+  assert.match(first, /^<section class="dev-ws-strip dev-ws-hub-first" data-ws-first-version="building"><div class="dev-ws-hub-first-row"><div data-thumb-row=""/);
+  assert.doesNotMatch(first, /data-ws-first-look/);
+  assert.equal(renderToHtml(createElement(hub.FirstVersionCard, { slug: 'club-votes', data: null })), '');
   const src = read(HUB);
-  const card = src.slice(src.indexOf('export function FirstLookCard('), src.indexOf('export function watchBuild('));
+  const card = src.slice(src.indexOf('export function useFirstLook('), src.indexOf('export function watchBuild('));
   assert.match(card, /fetch\(madeAppUrl\(slug\), \{ credentials: 'same-origin', cache: 'no-store' \}\)/, 'GET /api/apps/:slug, past the worker\'s cache, as the tour reads it');
   assert.match(card, /const found = firstLookSrc\(body, slug, FIRST_LOOK_ONLY\);/);
   assert.match(src, /const FIRST_LOOK_ONLY: readonly string\[\] = \['first_look'\];/);
   assert.match(card, /if \(!wanted \|\| !slug \|\| \(src && src !== broken && !isDrawnLook\(src\)\)\) return undefined;/,
     'asked again only while it is not there, or only drawn (15 Oct 2026, tests/first-look-drawn.test.js)');
   assert.match(card, /\}, FIRST_VERSION_POLL_MS\);/);
-  // Held back while the tour runs: its own last card is this picture.
-  assert.match(card, /const touring = useTourRunning\(\);/);
-  assert.match(card, /if \(!wanted \|\| touring \|\| !shown\) return null;/);
+  assert.match(card, /if \(!wanted \|\| !shown\) return null;/);
+  // Only the maker's, and held back while the tour runs: its own last card
+  // is this picture.
+  const fvCard = src.slice(src.indexOf('export function FirstVersionCard('), src.indexOf('/* ── First look'));
+  assert.match(fvCard, /const look = useFirstLook\(slug, hubShowsFirstLook\(fv\)\);/);
+  assert.match(fvCard, /if \(look && !touring\) \{/);
 });
 
-test('on the hub after For you, before Recently live', () => {
-  // 15 Oct 2026: Share it moved up, under the hero and the First version
-  // card; the first look stays where it was, over Recently live.
+test('in the First version card\'s place, under the hero, and no second card after For you', () => {
+  // 21 Oct 2026: the first look was its own card after For you, under the
+  // First version card that said the same build's state; it is that card now.
   const lander = read('frontend/src/features/dev-board/workshop/workshop.tsx');
   const at = (s) => lander.indexOf(s);
-  assert.ok(at('<ShareItCard slug={slug}') > 0);
-  assert.ok(at('<ShareItCard slug={slug}') < at('<ForYouCard'));
-  assert.ok(at('<ForYouCard') < at('<FirstLookCard slug={slug} data={community} />'));
-  assert.ok(at('<FirstLookCard slug={slug} data={community} />') < at('<RecentlyLive slug={slug}'));
-  assert.match(lander, /import \{ FirstLookCard, FirstVersionCard, ForYouCard, HubSkeleton, RecentlyLive, hubAlone, owesVote \} from '\.\/hub-cards';/);
+  assert.ok(at('<FirstVersionCard slug={slug}') > 0);
+  assert.ok(at('<FirstVersionCard slug={slug}') < at('<ShareItCard slug={slug}'));
+  assert.doesNotMatch(lander, /FirstLookCard/);
+  assert.equal(hub.FirstLookCard, undefined);
+  assert.match(lander, /import \{ FirstVersionCard, ForYouCard, HubSkeleton, RecentlyLive, hubAlone, owesVote \} from '\.\/hub-cards';/);
 });

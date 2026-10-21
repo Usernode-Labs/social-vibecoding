@@ -8,6 +8,7 @@
 import type { Json, Pool, WorkHandler } from '../kernel/index.ts';
 import { legacy } from '../legacy.ts';
 import { WORK } from './machine.ts';
+import { lateNotice } from '../rules/late-notice.ts';
 
 interface Deps { config: any; pool: Pool }
 
@@ -65,6 +66,19 @@ export function botChangeServices({ pool }: Deps): Record<string, WorkHandler> {
         const out = await legacy('services/homeroom-bot').noteRequestMerged(pool, { id: Number(input.sessionId) },
           { before: input.before ?? null, strict: true });
         return (out || null) as Json;
+      },
+    },
+
+    // A yes: a quiet line in the request's thread, under its key per voter
+    // and epoch.
+    [WORK.approved]: {
+      maxAttempts: 5,
+      backoffMs: backoff,
+      async run({ input }): Promise<Json> {
+        if (lateNotice(input.owedAt)) return { skipped: 'late' };
+        const sent = await legacy('services/homeroom-bot-dm').sayApproved(pool, Number(input.sessionId),
+          { voterId: Number(input.voterId), voter: input.voter ?? null, epoch: Number(input.epoch) || 0 });
+        return { said: !!sent };
       },
     },
 

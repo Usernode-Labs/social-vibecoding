@@ -291,12 +291,11 @@ html.un-android .un-switch:checked:active::before {
    right edge. Row AND tray translate via inline transform (JS-owned, 1:1
    with the finger); this file only styles the chrome. */
 
+/* A committed row's place closes in native.js (closeSwipeGap), with
+   transforms rather than a height transition. */
 .un-swipe {
   position: relative;
   overflow: hidden;
-}
-.un-swipe.un-collapsing {
-  transition: height 300ms var(--un-ease-spring-stiff);
 }
 .un-swipe-row {
   position: relative;

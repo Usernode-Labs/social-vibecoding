@@ -138,7 +138,6 @@ const drain = require('./src/services/drain');
 const processRole = require('./src/services/process-role');
 const inflightWork = require('./src/services/inflight-work');
 const inflightRequests = require('./src/middleware/inflight-requests');
-const chainPoller = require('./src/services/chain-poller');
 const genesisAccounts = require('./src/services/genesis-accounts');
 const nodeStatus = require('./src/services/node-status');
 const statusService = require('./src/services/status');
@@ -448,7 +447,7 @@ app.get('/api/node-status', (_req, res) => {
   res.json(nodeStatus.get());
 });
 
-app.get('/api/node-status/full', (_req, res) => {
+app.get('/api/node-status/full', async (_req, res) => {
   // Lazy require here (rather than top of file) keeps the import graph
   // straight: chain-poller and genesis-accounts are leaf modules; node-
   // status doesn't import them. The callback shape is what wires them
@@ -456,11 +455,13 @@ app.get('/api/node-status/full', (_req, res) => {
   const chainPollerSvc = require('./src/services/chain-poller');
   const genesisAccountsSvc = require('./src/services/genesis-accounts');
   res.set('Cache-Control', 'no-store');
+  // The wallet-links clock's last run, read from any process.
+  const walletLinks = await require('./src/workflow/platform.ts').clockStatus(getPool(config), 'wallet-links').catch(() => null);
   res.json(nodeStatus.getFull({
     name: 'usernode-social-vibecoding',
     mode: process.env.USERNODE_LOCAL_DEV ? 'local-dev' : 'production',
     services: () => ({
-      chainPoller: chainPollerSvc.getStatus(),
+      chainPoller: chainPollerSvc.statusOf(walletLinks),
       // getStatus() carries the same outage shape as chainPoller's
       // (consecutiveFailures / downSince / lastError) on top of the
       // loaded/count pair, so the viewer can say how long the genesis
@@ -745,40 +746,17 @@ app.use(messagesOverviewRoutes(config));
 // version, and its apps / members / merged figures. One cached answer for
 // every viewer, so it sits behind authMiddleware beside the other overviews.
 app.use(platformAboutRoutes(config));
-// The Workshop's placement stage runs when a card arrives on or leaves a
-// board — which every route and service announces through ws.pushSessionUpdate
-// / pushIssueUpdate — on whichever instance handled the change (the row's
-// lease keeps two from racing). Registered on every process for that
-// reason; the daily re-draft is a clock (src/workflow/clock/services.ts).
+// The Workshop's placement stage is owed a pass when a card arrives on or
+// leaves a board — which every route and service announces through
+// ws.pushSessionUpdate / pushIssueUpdate — on whichever instance handled the
+// change: its row's due time, which the workshop-changes clock runs
+// (services/workshop-themes.js). Registered on every process for that
+// reason; the daily re-draft is a clock too (src/workflow/clock/services.ts).
 {
   const workshopThemes = require('./src/services/workshop-themes');
   if (typeof ws.onBoardChange === 'function') {
     ws.onBoardChange((info) => workshopThemes.noteBoardChange(getPool(config), info));
   }
-}
-// A promoted head whose checks were deferred because it conflicted with main
-// (services/check-admission.js) gets them the moment it measures clean —
-// against the preview that is already up for it, so a run rather than a
-// rebuild. Measurement happens on whichever instance took the vote, the
-// sweep or the capture, so the hook is registered on every instance, like
-// the board hook above. The preview machine joins a second kick for the same
-// head, so it costs nothing.
-{
-  const integration = require('./src/services/integration');
-  integration.onBecameClean(async (row) => {
-    const pool = getPool(config);
-    const { rows } = await pool.query(
-      `SELECT cs.*, a.slug AS app_slug, a.repo_url, a.name AS app_name
-         FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id
-        WHERE cs.id = $1 AND cs.status = 'promoted'
-          AND cs.check_state = 'pending' AND cs.check_phase = 'deferred'`,
-      [row.id]
-    );
-    if (!rows[0]) return;
-    await require('./src/services/staging-recovery').recheckSessionChecks({
-      config, pool, session: rows[0], reason: 'conflict-resolved',
-    });
-  });
 }
 app.use(reportSnapshotRoutes(config));
 // Home-screen panels (#911): the challenges card's data + its per-user
@@ -1157,6 +1135,9 @@ async function start() {
   // (docs/plans/draining-releases.md): before anything here can start work.
   // Never fatal: holds stay this process's own until the database takes them.
   await processes.start({ pool: getPool(config), role: ownRole });
+  // The limiters that gate a send, a bill or a guess count in Postgres: one
+  // budget for every process, kept across a deploy (services/rate-limit-store.js).
+  require('./src/services/rate-limit-store').setPool(getPool(config));
   // Turns' streams, kept where a browser served by any process reads them
   // (services/session-bus.js).
   sessionBus.init({ pool: getPool(config) });
@@ -1206,10 +1187,11 @@ async function start() {
   shutdownPool = getPool(config);
 
   ws.attach(server, config);
+  // The genesis set, which wallet sign-up asks and the wallet-links clock
+  // reads (on whichever process runs the workflow), in every process.
+  genesisAccounts.start();
   // The caches people's requests read: a conductor serves nobody's.
   if (processRole.servesRequests(ownRole)) {
-    chainPoller.start(config);
-    genesisAccounts.start();
     nodeStatus.start({ nodeRpcUrl: process.env.NODE_RPC_URL });
     // Warm the /api/status cache so the first dashboard load doesn't have
     // to wait 1-2s on `docker stats`. Subsequent loads are served from

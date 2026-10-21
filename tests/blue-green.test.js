@@ -120,7 +120,10 @@ test('no process leads: what a leader ran is the workflow\'s, which every color 
     assert.ok(!serverJs.includes(gone), `no leader runs ${gone}`);
   }
   const clock = read('src', 'workflow', 'clock', 'services.ts');
-  for (const job of ['turn-leftovers', 'estimate-backfill', 'local-agent-leases', 'global-chat-usage-settle']) {
+  // The wallet-link poller too: one run at a time, its cursor durable,
+  // never a timer per serving process.
+  assert.ok(!serverJs.includes('chainPoller.start(config)'), 'no process polls the chain on a timer of its own');
+  for (const job of ['turn-leftovers', 'estimate-backfill', 'local-agent-leases', 'global-chat-usage-settle', 'wallet-links']) {
     assert.match(clock, new RegExp(`name: '${job}'`), `the ${job} clock`);
   }
 
@@ -128,7 +131,7 @@ test('no process leads: what a leader ran is the workflow\'s, which every color 
   for (const perInstance of [
     'app.listen(config.port',
     'ws.attach(server, config)',
-    'chainPoller.start(config)',
+    'genesisAccounts.start()',
     'statusService.start(config)',
   ]) {
     assert.ok(startBody.includes(perInstance), `start() must run per-instance: ${perInstance}`);

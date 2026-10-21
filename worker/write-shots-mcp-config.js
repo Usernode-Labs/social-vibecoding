@@ -48,13 +48,14 @@ const PHONE_DEVICE = 'iPhone 15';
 // The browsers then save at device scale (patch-playwright-mcp-screenshot.js
 // reads SHOTS_SCREENSHOT_SCALE), so the browser's density is the shots'
 // density: the phone's is its device's (3), and a desktop browser draws at
-// 2, a laptop's display, so a card can zoom into a change without drawing
-// it soft. Playwright takes a density only with a fixed viewport, so the
+// 3 too, so a card can zoom into a change without drawing it soft (at 2,
+// one desktop piece in eight the card shows needed more: the close-up
+// capture design, 2026-10-21). Playwright takes a density only with a fixed viewport, so the
 // desktop browser opens at 1280x720 instead of its window's size; the agent
 // resizes to each declared screen before it shoots, as it always has. Off,
 // every shot is 1x, as it always was.
 const deviceDensity = process.env.SHOTS_DEVICE_DENSITY === '1';
-const DESKTOP_DENSITY = 2;
+const DESKTOP_DENSITY = 3;
 const desktopConfig = path.join(path.dirname(path.resolve(output)), 'shots-desktop-browser.json');
 if (deviceDensity) {
   fs.writeFileSync(desktopConfig, `${JSON.stringify({

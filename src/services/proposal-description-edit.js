@@ -3,7 +3,6 @@
 const summaryFreshness = require('./summary-freshness');
 const proposalUpdate = require('./proposal-update');
 const github = require('./github');
-const { serializeHandoffSubmission } = require('./handoff-pipeline');
 
 const MAX_DESCRIPTION_LENGTH = 16000;
 const OPEN_STATUSES = ['active', 'paused', 'promoted', 'merging'];
@@ -55,12 +54,12 @@ const conflict = () => ({
   },
 });
 
-// A metadata edit shares the revision writers' queue and advisory lock. The
+// A metadata edit shares the revision writers' advisory lock. The
 // version predicate also rejects a summary generation or head invalidation
 // that raced the read. Nothing here touches lifecycle, votes or checks.
 async function edit({ pool, sessionId, userId, input, gh = github,
-  serialize = serializeHandoffSubmission, lock = proposalUpdate.withProposalLock }) {
-  return serialize(sessionId, () => lock(pool, sessionId, async () => {
+  lock = proposalUpdate.withProposalLock }) {
+  return lock(pool, sessionId, async () => {
     let session = await readEditable(pool, sessionId, userId);
     if (!session) return { status: 404, body: { error: 'Change not found or no longer editable.' } };
     const version = Number(session.pr_summary_input_version || 0);
@@ -107,7 +106,7 @@ async function edit({ pool, sessionId, userId, input, gh = github,
       body: { ...snapshot(session), changed, prBodyStatus, prBody: session.pr_body || null },
       session,
     };
-  }));
+  });
 }
 
 module.exports = { MAX_DESCRIPTION_LENGTH, OPEN_STATUSES, parseEdit, readEditable, snapshot, edit };

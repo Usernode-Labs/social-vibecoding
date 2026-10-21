@@ -7,6 +7,7 @@ const messageBookmarks = require('../services/message-bookmarks');
 const notificationBookmarks = require('../services/notification-bookmarks');
 const { notificationBookmarkLimiter } = require('../middleware/rate-limits');
 const mobilePushPreferences = require('../services/mobile-push-preferences');
+const notificationAsks = require('../services/notification-asks');
 const notificationPreferences = require('../services/notification-preferences');
 const groupChannelNotify = require('../services/group-channel-notify');
 const channelMutes = require('../services/channel-mutes');
@@ -16,6 +17,9 @@ const storyHistory = require('../services/story-history');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 
 const IS_STAGING = process.env.USERNODE_ENV === 'staging';
+// The most notification ids one `{ ids }` mark-read takes: what the sheet can
+// hold (the first page and the five Unread batches it fills itself with).
+const MAX_MARK_READ_IDS = 600;
 
 // ── Staging mock data ──────────────────────────────────────────────────
 // Request-time (?demo=1) injection of the session-related notification
@@ -308,6 +312,50 @@ function stagingMockNotifications() {
       prTitle: null, branchName: 'dev/mockuser-1700000000003',
       prNumber: null, headlessIssueNumber: null,
     },
+    // The older rows Unread shows once "See older notifications" is tapped:
+    // one card per change, in Today / Yesterday / Last 7 days / Older. Four
+    // more read rows, newest first, so a preview has a card in each section
+    // besides 990206's in Last 7 days, and one request's story (990217 and
+    // 990218, both about mock request 990302) folded into one card there.
+    // Read, so they never touch the bell's count or the Unread stacks.
+    {
+      ...base,
+      id: 990216, kind: 'pr_proposed',
+      createdAt: new Date(now - 2 * 60 * 60 * 1000).toISOString(),
+      readAt: new Date(now - 90 * 60 * 1000).toISOString(),
+      sourceUsername: 'staging-demo-user',
+      sessionId: 990110,
+      prTitle: '[Mock] A dark mode for the board', prNumber: 9902, headlessIssueNumber: null,
+    },
+    {
+      ...base,
+      id: 990217, kind: 'issue_mention',
+      createdAt: new Date(now - 26 * 60 * 60 * 1000).toISOString(),
+      readAt: new Date(now - 25 * 60 * 60 * 1000).toISOString(),
+      sourceUsername: 'staging-demo-reviewer',
+      detail: '990302',
+      storyTitle: '[Mock] A high-score table',
+      sessionId: null, prTitle: null, prNumber: null, headlessIssueNumber: null,
+    },
+    {
+      ...base,
+      id: 990218, kind: 'issue_opened',
+      createdAt: new Date(now - 29 * 60 * 60 * 1000).toISOString(),
+      readAt: new Date(now - 25 * 60 * 60 * 1000).toISOString(),
+      sourceUsername: 'staging-demo-user',
+      detail: '990302',
+      storyTitle: '[Mock] A high-score table',
+      sessionId: null, prTitle: null, prNumber: null, headlessIssueNumber: null,
+    },
+    {
+      ...base,
+      id: 990219, kind: 'pr_proposed',
+      createdAt: new Date(now - 12 * 24 * 60 * 60 * 1000).toISOString(),
+      readAt: new Date(now - 11 * 24 * 60 * 60 * 1000).toISOString(),
+      sourceUsername: 'staging-demo-reviewer',
+      sessionId: 990111,
+      prTitle: '[Mock] Bigger buttons on phones', prNumber: 9903, headlessIssueNumber: null,
+    },
   ];
 }
 
@@ -398,6 +446,18 @@ function stagingMockHistory(id) {
       ],
     };
   }
+  // The older rows' story: mock request 990302, asked, planned, then a
+  // mention (the two notifications stand for the ask and the mention).
+  if (id === 990217 || id === 990218) {
+    return {
+      issueNumber: 990302,
+      sessionIds: [],
+      steps: [
+        { at: ago(27.5 * 60), kind: 'plan', actor: 'homeroom_bot', words: '[Mock] The ten best scores, reset every Monday' },
+        { at: ago(29 * 60), kind: 'asked', actor: 'staging-demo-user' },
+      ],
+    };
+  }
   return null;
 }
 
@@ -440,6 +500,38 @@ function notificationsRoutes(config) {
       return res.json({ preferences });
     } catch (err) {
       log.error('mobile-push-preferences', 'read failed', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // The notification ask (services/notification-asks.js): what this account
+  // was asked at each moment and answered, whether a phone of theirs can take
+  // a push, and whether Homeroom would email them instead. The client decides
+  // from it whether to ask (frontend/src/features/notify-ask/decide.ts).
+  router.get('/api/me/notification-asks', async (req, res) => {
+    res.set('Cache-Control', 'private, no-store');
+    if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
+    try {
+      return res.json(await notificationAsks.readAsks(pool, req.user.id));
+    } catch (err) {
+      log.error('notification-asks', 'read failed', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.post('/api/me/notification-asks', (req, res, next) => {
+    res.set('Cache-Control', 'no-store');
+    if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
+    return next();
+  }, sameOriginBrowserOnly, async (req, res) => {
+    const { details, value } = notificationAsks.validateAsk(req.body);
+    if (!value) {
+      return res.status(422).json({ error: 'The given data was invalid.', details });
+    }
+    try {
+      return res.json(await notificationAsks.recordAsk(pool, req.user.id, value));
+    } catch (err) {
+      log.error('notification-asks', 'record failed', { message: err.message });
       return res.status(500).json({ error: 'Internal server error' });
     }
   });
@@ -815,11 +907,11 @@ function notificationsRoutes(config) {
         // is simply the total now.)
         //
         // Only the UNREAD mocks are counted. This used to add `mocks.length`
-        // outright, which was right while every mock was unread; one of them
-        // now ships with a `readAt` (so the drawer's "older notifications"
-        // view has something behind it), and counting that one would claim an
-        // already-read row as unread — inflating the red badge by one and
-        // leaving "Mark all read" enabled with nothing left to mark.
+        // outright, which was right while every mock was unread; five of them
+        // now ship with a `readAt` (so the drawer's "older notifications"
+        // view has something behind it), and counting those would claim
+        // already-read rows as unread — inflating the red badge and leaving
+        // "Mark all read" enabled with nothing left to mark.
         if (IS_STAGING && req.query.demo === '1') {
           const mocks = stagingMockNotifications();
           payload.notifications = [...mocks, ...payload.notifications];
@@ -985,10 +1077,19 @@ function notificationsRoutes(config) {
     if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
     res.set('Cache-Control', 'private, no-store');
     const {
-      id, all, chat_message_id: chatMessageId, app_id: appId,
+      id, ids, all, chat_message_id: chatMessageId, app_id: appId,
       conversation_id: conversationId, session_id: sessionId,
       kinds, exclude_kinds: excludeKinds,
     } = req.body || {};
+    // `{ ids }`: one clear that is several notifications, read in one
+    // statement (markRead). Positive int4 ids only, at most a page's worth.
+    let idList = null;
+    if (ids != null) {
+      const valid = Array.isArray(ids) && ids.length > 0 && ids.length <= MAX_MARK_READ_IDS
+        && ids.every((value) => Number.isSafeInteger(value) && value > 0 && value <= 2147483647);
+      if (!valid) return res.status(400).json({ error: 'Invalid notification ids' });
+      idList = [...new Set(ids)];
+    }
     // Kind scoping for the split drawers (cog vs bell). Sanitize to
     // string arrays; anything else is treated as absent.
     const kindList = Array.isArray(kinds) ? kinds.filter((k) => typeof k === 'string') : null;
@@ -1096,7 +1197,7 @@ function notificationsRoutes(config) {
       // making "Mark all read" look like it did nothing. Fan out exactly
       // like the branches above whenever something actually changed.
       const cleared = await notifications.markRead(pool, req.user.id, {
-        id, all: !!all, kinds: kindList, excludeKinds: excludeList,
+        id, ids: idList, all: !!all, kinds: kindList, excludeKinds: excludeList,
       });
       const { unread, messageUnread } = await notifications.countUnreadSplit(pool, req.user.id);
       if (cleared > 0) {

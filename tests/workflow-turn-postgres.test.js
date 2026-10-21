@@ -92,9 +92,10 @@ test('turn machine against the full PostgreSQL schema', { timeout: 180000 }, asy
     },
   });
   const machine = turnMachine();
+  const pushed = [];
   const rt = createRuntime({
-    pool, machines: [machine], pollMs: 50, publish: async () => {},
-    services: { [WORK.run]: fake(WORK.run), [TURN_STOP]: fake(TURN_STOP) },
+    pool, machines: [machine], pollMs: 50, publish: async (_q, list) => { pushed.push(...list); },
+    services: { [WORK.run]: fake(WORK.run), [WORK.stalled]: fake(WORK.stalled), [WORK.name]: fake(WORK.name), [TURN_STOP]: fake(TURN_STOP) },
   });
   runtimes.push(rt);
   let rk = 0;
@@ -136,6 +137,53 @@ test('turn machine against the full PostgreSQL schema', { timeout: 180000 }, asy
     assert.equal(await ask(c, 'turn-3'), false);
     await settle();
     assert.deepEqual(runs(c).map((r) => r.input.turnId), ['turn-1', 'turn-2']);
+  });
+
+  // A turn that failed on a change owes "Session stopped before finishing"
+  // as its machine's work (#4729), once: belled after the turn's catch
+  // instead, a restart lost it.
+  await t.test('T1b a turn that failed on a change owes its stalled notice as work, once; a finished one owes none', async () => {
+    const c = await conversation();
+    work.answer = (ctx) => (ctx.input.turnId === 'turn-s1' ? { ended: 'done', stalled: 77 } : { ended: 'done' });
+    await ask(c, 'turn-s1');
+    await settle();
+    await ask(c, 'turn-s2');
+    await settle();
+    work.answer = null;
+    const owed = work.calls.filter((w) => w.kind === WORK.stalled && w.input.agentSessionId === c.id);
+    assert.deepEqual(owed.map((w) => [w.key, w.input.sessionId, w.input.agentSessionId]), [['stalled:turn-s1', 77, c.id]]);
+    assert.ok(Math.abs(Date.parse(owed[0].input.owedAt) - Date.now()) < 60 * 1000, 'when it was owed (a late one is not said)');
+    assert.equal((await instance(c)).state, 'idle');
+  });
+
+  // A conversation opened on a request is named after it by work beside the
+  // turn that asked (#3752): a call after the route's commit before, which a
+  // restart lost.
+  await t.test('T1c a turn asked to name its conversation after its request has that work beside its run, once', async () => {
+    const c = await conversation();
+    await ask(c, 'turn-n1', { nameFromRequest: true });
+    await ask(c, 'turn-n2');
+    await settle();
+    assert.deepEqual(work.calls.filter((w) => w.kind === WORK.name && w.input.agentSessionId === c.id).map((w) => [w.key, w.input]),
+      [['name:turn-n1', { agentSessionId: c.id, userId: c.user.id }]]);
+  });
+
+  // A change's own turn starting and ending is its working state, told by
+  // the transition from whichever process runs it (pushes.ts sessionState):
+  // it was left to the memory of the process that last published it.
+  await t.test('T1d a change\'s turn says the change is busy as it starts and idle as it ends, to its owner', async () => {
+    const { rows: [u] } = await pool.query(`INSERT INTO users (username, password) VALUES ($1, 'x') RETURNING id`, [`tu_${++seq}`]);
+    const { rows: [a] } = await pool.query(
+      `INSERT INTO apps (name, slug, created_by) VALUES ($1::text, $1::text, $2) RETURNING id, slug`, [`tu-app-${++seq}`, u.id]);
+    const { rows: [ch] } = await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, status) VALUES ($1, $2, 'active') RETURNING id`, [a.id, u.id]);
+    pushed.length = 0;
+    work.answer = null;
+    await send({ key: `session:${ch.id}` }, 'Asked', { turnId: 'turn-c1', kind: 'classic', input: { sessionId: ch.id } });
+    await rt.drain();
+    await settle();
+    const states = pushed.filter((p) => p.data.type === 'session_state').map((p) => [p.kind, p.routing.userId, p.data.sessionId, p.data.busy, p.data.appSlug]);
+    assert.deepEqual(states, [['user', u.id, ch.id, true, a.slug], ['user', u.id, ch.id, false, a.slug]]);
   });
 
   await t.test('T2 a turn asked for while one runs waits its turn, in order; the same turn twice is one', async () => {
@@ -451,28 +499,45 @@ test('turn machine against the full PostgreSQL schema', { timeout: 180000 }, asy
          FROM agent_sessions WHERE id = $1`, [c.id])).rows[0];
     const claim = (c, id) => pool.query(
       `UPDATE agent_sessions SET active_turn = jsonb_build_object('id', $2::text, 'startedAt', NOW() - interval '5 minutes') WHERE id = $1`, [c.id, id]);
+    // A database slow to take the renewals (a loaded suite, where this
+    // failed both ways before they were awaited): each lands 40 ms late.
+    const slow = new Proxy(pool, {
+      get(target, key) {
+        if (key === 'query') {
+          return (sql, ...rest) => (typeof sql === 'string' && sql.includes("'renewedAt', NOW()")
+            ? new Promise((r) => setTimeout(r, 40)).then(() => target.query(sql, ...rest))
+            : target.query(sql, ...rest));
+        }
+        const value = target[key];
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    });
+    const cs = [];
     try {
-      const c = await conversation();
-      await claim(c, 'h8');
-      const during = [];
-      mayorRun = async () => {
-        during.push(await claimOf(c));
-        await new Promise((r) => setTimeout(r, 80));
-        during.push(await claimOf(c));
-      };
-      await turns.run(await ctxFor(c, 'h8', { claim: false }), { config: {}, pool });
-      assert.equal(during[0].live, true, 'renewed as it starts, though asked five minutes ago');
-      assert.ok(during[1].renewed > during[0].renewed, 'and again while it runs');
-      const after = (await claimOf(c)).renewed;
-      await new Promise((r) => setTimeout(r, 60));
-      assert.equal((await claimOf(c)).renewed, after, 'not once its item ended');
+      for (const [db, how] of [[pool, ''], [slow, ', with renewals slow to land']]) {
+        const c = await conversation();
+        cs.push(c);
+        await claim(c, 'h8');
+        const during = [];
+        mayorRun = async () => {
+          during.push(await claimOf(c));
+          await new Promise((r) => setTimeout(r, 150));
+          during.push(await claimOf(c));
+        };
+        await turns.run(await ctxFor(c, 'h8', { claim: false }), { config: {}, pool: db });
+        assert.equal(during[0].live, true, `renewed as it starts, though asked five minutes ago${how}`);
+        assert.ok(during[1].renewed > during[0].renewed, `and again while it runs${how}`);
+        const after = (await claimOf(c)).renewed;
+        await new Promise((r) => setTimeout(r, 100));
+        assert.equal((await claimOf(c)).renewed, after, `not once its item ended${how}`);
+      }
 
       const other = await conversation();
       await claim(other, 'someone-else');
       await turns.run(await ctxFor(other, 'h8b', { claim: false }), { config: {}, pool });
       assert.equal((await claimOf(other)).renewed, null, 'a claim another turn holds is not its to renew');
       // Nothing left for the leftover pass below to count.
-      await pool.query('UPDATE agent_sessions SET active_turn = NULL WHERE id = ANY($1::int[])', [[c.id, other.id]]);
+      await pool.query('UPDATE agent_sessions SET active_turn = NULL WHERE id = ANY($1::int[])', [[...cs.map((c) => c.id), other.id]]);
     } finally {
       turns.CLAIM_RENEW.ms = was;
     }

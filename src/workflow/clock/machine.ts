@@ -13,6 +13,12 @@
 // interval), so a release that changes an interval moves it, and retires the
 // jobs it no longer defines (Retire: no deadline, its run cancelled). A job
 // defined again is armed again.
+//
+// A job asked for, not scheduled (`onDemand`: an admin's fleet rollover, a
+// reap of previews now) has no deadline: an admin's RunNow starts a run, its
+// input saying who asked (`asked`), and one asked during a run is refused
+// (`running`). Its handler does nothing for a run nobody asked for (an
+// older build, which knows no on-demand job, arms it on its interval).
 // workflow-foundation's design-leader-duties.md is the design.
 
 import { NONE, defineMachine, ok, reject } from '../kernel/index.ts';
@@ -34,9 +40,14 @@ const CONTINUOUS_RETRY_MAX_MS = 5 * 60 * 1000;
 
 type Name = 'waiting' | 'running' | 'retired';
 interface Last { n: number; at: string; ok: boolean; ms: number | null; result: Json; error: string | null }
+// Who asked for an on-demand run (an admin).
+export type Asked = { by: string | null; userId: number | null };
+
 export interface Data {
   job: string;
   everyMs: number;               // 0: continuous, run again as soon as a run ends
+  onDemand?: boolean;            // runs only when asked (RunNow): no deadline
+  asked?: Asked | null;          // who asked for the run under way or next
   due: string;                   // when the next run is due
   n: number;                     // runs asked for so far
   running: number | null;        // the run under way
@@ -64,11 +75,17 @@ const optTime = (v: unknown) => (typeof v === 'string' && Number.isFinite(Date.p
 const EVENTS = {
   // The release arms the job: its interval, and on first arming when its
   // first run is due (the job's last run under the leader, else now).
-  Arm: (p: any) => ({ job: job(p?.job), everyMs: every(p?.everyMs), firstDueAt: optTime(p?.firstDueAt) }),
+  Arm: (p: any) => ({ job: job(p?.job), everyMs: every(p?.everyMs), firstDueAt: optTime(p?.firstDueAt), onDemand: !!p?.onDemand }),
   // Its deadline.
   Tick: () => ({}),
-  // An admin asks for a run now.
-  RunNow: () => ({}),
+  // An admin asks for a run now (who, for the job's own record). `onDemand`:
+  // the job runs only when asked, which this ask says too (an older build
+  // armed it on an interval, knowing no on-demand job).
+  RunNow: (p: any): Asked & { onDemand: boolean } => ({
+    by: typeof p?.by === 'string' && p.by.trim() ? p.by.trim().slice(0, 100) : null,
+    userId: Number.isSafeInteger(p?.userId) && p.userId > 0 ? p.userId : null,
+    onDemand: p?.onDemand === true,
+  }),
   // The release no longer defines the job.
   Retire: () => ({}),
 };
@@ -79,20 +96,21 @@ const timerAt = (due: string) => ({ at: new Date(due), event: { type: 'Tick' } }
 
 // Start a run: one work item, and no deadline while it runs (the item's
 // lease keeps it alive; its result sets the next).
-function start(d: Data, ctx: TransitionContext, extra: WorkRequest[] = []): Outcome<CState> {
+function start(d: Data, ctx: TransitionContext, extra: WorkRequest[] = [], asked: Asked | null = null): Outcome<CState> {
   const n = d.n + 1;
   return {
-    next: { name: 'running', data: { ...d, n, running: n, startedAt: iso(ctx.now), again: false } },
+    next: { name: 'running', data: { ...d, n, running: n, startedAt: iso(ctx.now), again: false, asked: null } },
     // The last run's result goes with it: what a job carries from one run to
     // the next (an alert level, the build it last ran under) is kept here,
     // never in a process.
-    work: [...extra, { kind: runKind(d.job), key: `run:${n}`, input: { job: d.job, n, previous: d.kept } }],
+    work: [...extra, { kind: runKind(d.job), key: `run:${n}`, input: { job: d.job, n, previous: d.kept, ...(asked ? { asked } : {}) } }],
     timer: null,
   };
 }
 
+// An on-demand job waits with no deadline.
 function wait(d: Data, extra: Partial<Outcome<CState>> = {}): Outcome<CState> {
-  return { next: { name: 'waiting', data: { ...d, running: null, startedAt: null } }, timer: timerAt(d.due), ...extra };
+  return { next: { name: 'waiting', data: { ...d, running: null, startedAt: null } }, timer: d.onDemand ? null : timerAt(d.due), ...extra };
 }
 
 function retryInMs(d: Data, failures: number): number {
@@ -183,7 +201,9 @@ function ran(s: Live, e: Event<WorkResultPayload>, f: Facts, ctx: TransitionCont
   const given = cancel.length ? { cancel } : {};
   if (s.name === 'retired') return { next: { name: 'retired', data: { ...next, running: null, startedAt: null } }, work: items, ...given };
   // An admin's Run now during the run: at once.
-  if (d.again) return { ...start({ ...next, due: iso(ctx.now) }, ctx, items), ...given };
+  if (d.again) return { ...start({ ...next, due: iso(ctx.now) }, ctx, items, d.asked ?? null), ...given };
+  // Asked for, not scheduled: it waits to be asked again, after a failure too.
+  if (d.onDemand) return wait(next, { work: items, ...given });
   if (okRun && d.everyMs === 0) {
     // A continuous job runs again at once, unless it had nothing to do and
     // asked to rest (`restMs`: the push sender of a process that sends none).
@@ -276,7 +296,7 @@ export function clock() {
         Arm: {
           to: (_s: CState, e: Event<any>, _f: Facts, ctx: TransitionContext) => {
             const d: Data = {
-              job: e.payload.job, everyMs: e.payload.everyMs, due: e.payload.firstDueAt ?? iso(ctx.now), n: 0,
+              job: e.payload.job, everyMs: e.payload.everyMs, onDemand: e.payload.onDemand, due: e.payload.firstDueAt ?? iso(ctx.now), n: 0,
               running: null, startedAt: null, again: false, failures: 0, last: null, kept: null, items: { ok: 0, failed: 0, lastError: null },
             };
             return wait(d);
@@ -291,7 +311,7 @@ export function clock() {
           to: (s: CState, e: Event<any>, _f: Facts, ctx: TransitionContext) => {
             const d = (s as Live).data;
             const cap = iso(at(ctx, e.payload.everyMs));
-            return wait({ ...d, everyMs: e.payload.everyMs, due: d.due > cap ? cap : d.due });
+            return wait({ ...d, everyMs: e.payload.everyMs, onDemand: e.payload.onDemand, due: d.due > cap ? cap : d.due });
           },
         },
         Tick: {
@@ -302,20 +322,30 @@ export function clock() {
             return start(d, ctx);
           },
         },
-        RunNow: { to: (s: CState, _e: Event<any>, _f: Facts, ctx: TransitionContext) => start((s as Live).data, ctx) },
+        RunNow: {
+          to: (s: CState, e: Event<any>, _f: Facts, ctx: TransitionContext) => {
+            const d = (s as Live).data;
+            return start({ ...d, onDemand: d.onDemand || e.payload.onDemand }, ctx, [], { by: e.payload.by, userId: e.payload.userId });
+          },
+        },
         Retire: { to: retire },
         ...results,
       },
       running: {
-        Arm: { to: (s: CState, e: Event<any>): Outcome<CState> => ({ next: { name: 'running', data: { ...(s as Live).data, everyMs: e.payload.everyMs } } }) },
+        Arm: { to: (s: CState, e: Event<any>): Outcome<CState> => ({ next: { name: 'running', data: { ...(s as Live).data, everyMs: e.payload.everyMs, onDemand: e.payload.onDemand } } }) },
         Tick: { ignore: 'running' },
-        RunNow: { to: (s: CState): Outcome<CState> => ({ next: { name: 'running', data: { ...(s as Live).data, again: true } } }) },
+        // An on-demand job asked again while it runs is refused: the admin
+        // sees the run under way (two presses on two processes, one sweep).
+        RunNow: {
+          guard: (s: CState, e: Event<any>) => ((s as Live).data.onDemand || e.payload.onDemand ? reject('running') : ok()),
+          to: (s: CState, e: Event<any>): Outcome<CState> => ({ next: { name: 'running', data: { ...(s as Live).data, again: true, asked: { by: e.payload.by, userId: e.payload.userId } } } }),
+        },
         Retire: { to: retire },
         ...results,
       },
       // Defined again by a later build: armed again, due one interval on.
       retired: {
-        Arm: { to: (s: CState, e: Event<any>, _f: Facts, ctx: TransitionContext) => wait({ ...(s as Live).data, everyMs: e.payload.everyMs, due: iso(at(ctx, e.payload.everyMs)) }) },
+        Arm: { to: (s: CState, e: Event<any>, _f: Facts, ctx: TransitionContext) => wait({ ...(s as Live).data, everyMs: e.payload.everyMs, onDemand: e.payload.onDemand, due: iso(at(ctx, e.payload.everyMs)) }) },
         Tick: { ignore: 'retired' },
         RunNow: { ignore: 'retired' },
         Retire: { ignore: 'retired' },

@@ -70,7 +70,7 @@ test('the worker image patches the tool right after installing it, and verifies 
   const verify = dockerfile.indexOf('RUN node /usr/local/bin/verify-shots-browser-mcp.js');
   assert.ok(install >= 0 && install < copy && copy < patch && patch < verify, 'install, patch, then verify');
   const verifier = fs.readFileSync(path.join(root, 'worker', 'verify-shots-browser-mcp.js'), 'utf8');
-  assert.match(verifier, /const density = mode === 1 \? 1 : phone \? 3 : 2;/);
+  assert.match(verifier, /const density = mode === 1 \? 1 : 3;/);
   assert.match(verifier, /verifyBrowser\(configs\[mode\]\.mcpServers\[persona\], \[\], \{ density, closeup: mode !== 1 \}\)/);
   assert.match(verifier, /\['browser_member', 'device'\], \['browser_member_phone', 'device'\]/);
   assert.match(verifier, /saved !== answered \* density/);

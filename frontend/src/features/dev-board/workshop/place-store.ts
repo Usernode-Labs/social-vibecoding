@@ -110,11 +110,16 @@ type AppApi = { _hubHref?: (slug: string) => string };
  * left behind a hidden `#app-view` stays mounted (leaving for Messages or Me
  * does not tear it down), so moving it in place moves a page nobody can see.
  * The caller that knows the page is not on screen asks for the door (#5700).
+ *
+ * The page is up for it from the moment it registers its opener, while it
+ * still loads too: it publishes its place only once loaded, and a press
+ * before that taken as a door pushed no entry (the address is the page's
+ * already), so Back left the project instead of coming back (#3620).
  */
 export function openPlace(
   slug: string, key: PlaceKey, opts: { replace?: boolean; door?: boolean } = {},
 ): boolean {
-  if (!opts.door && opener && opener.slug === slug && placeStore.get().slug === slug) {
+  if (!opts.door && opener && opener.slug === slug) {
     opener.open(key);
     return true;
   }

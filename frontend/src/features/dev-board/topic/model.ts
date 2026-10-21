@@ -123,19 +123,19 @@ export interface CheckRow {
    * address change. Never a verdict.
    */
   note?: string | null;
-  /**
-   * The repo unit suite row's per-test excerpts (request #3978): the file,
-   * the test name and the captured error text — assertion message,
-   * expected/actual, the first stack lines. Empty on every other row; a
-   * declared check's reason is its diagnosis.
-   */
-  details?: { file: string | null; test: string; excerpt: string }[];
   errors?: { kind: string; message: string; source?: string | null }[];
   /**
    * The repo unit suite only (#3978): per failing test, its file, its name
-   * and a bounded, redacted excerpt of the error the runner printed.
+   * and a bounded, redacted excerpt of the error the runner printed, with
+   * the line it failed on and its error message read off that excerpt
+   * (app-view.js `_excerptFacts`). Empty on every other row; a declared
+   * check's reason is its diagnosis.
    */
-  details?: { file?: string | null; test: string; excerpt: string }[];
+  details?: { file?: string | null; test: string; excerpt: string; line?: number | null; said?: string | null }[];
+  /** This row is the app's own test suite (`npm test`), drawn by what it is. */
+  unit?: boolean;
+  /** The suite's tally from its reason: how many tests failed, of how many. */
+  unitTally?: { failed: number; total: number | null } | null;
 }
 
 export interface ChecksVerdict {
@@ -473,6 +473,8 @@ export interface StepRow {
   help?: boolean;
   /** The Checks step: what it shows when it opens. */
   run?: StepRun | null;
+  /** The Checks step, failed, for the change's author: Fix it, before the re-run. */
+  fix?: FixChecksView | null;
   /** Extra hooks on the row (the superseded-base marker on Checks). */
   attrs?: Record<string, string>;
 }
@@ -498,6 +500,8 @@ export interface StepRun {
   /** Passing checks with something to say: a retry and its class, or a note. */
   noted?: CheckRow[];
   note: string | null;
+  /** A failed run: what went wrong, in plain words, over the failures. */
+  explain?: ChecksExplainView | null;
 }
 
 /** The steps sheet: the strip's own headline over its rows, expanded. */
@@ -577,6 +581,39 @@ export interface ChangeBarPart {
   state: 'moving' | 'done' | 'bad' | 'idle';
 }
 
+/**
+ * A failed run's checks in plain words (./failed-checks.ts): the run to ask
+ * GET /api/sessions/:id/checks-explanation about, and the failure's own
+ * words to show until it answers and when it has nothing
+ * (app-view.js `_checksExplainView`).
+ */
+export interface ChecksExplainView {
+  /** The change's id. */
+  id: number;
+  /** The run: its checks_checked_at. */
+  at: string;
+  fallback: string | null;
+}
+
+/**
+ * Fix it from the change's page (./failed-checks.ts): what the dev chat's
+ * own Fix it card would send (../../agent-session/fix-checks.ts), and the
+ * build conversation it goes to. Only for the change's author, on a change
+ * built in an agent session that is still open to more work
+ * (app-view.js `_fixChecksView`).
+ */
+export interface FixChecksView {
+  agentSessionId: number;
+  changeId: number;
+  prNumber: number | null;
+  /** How many blocking checks failed in all. */
+  total: number;
+  /** The first few, each with what it reported. */
+  checks: Array<{ name: string; reason: string }>;
+  /** The run: its checks_checked_at. A new run is a new Fix it. */
+  at: string;
+}
+
 /** #4455: the Votes card or the Testing card under a change's summary. */
 export interface ChangeGateView {
   name: string;
@@ -597,6 +634,12 @@ export interface ChangeGateView {
   actions?: ActionSpec[];
   /** Testing only: a "See what failed" door into Details. */
   details?: boolean;
+  /** Testing only, when its checks failed: what went wrong, in plain words. */
+  explain?: ChecksExplainView | null;
+  /** Testing only, for the change's author: Fix it. */
+  fix?: FixChecksView | null;
+  /** Testing only, for everybody else: who has to fix it. */
+  authorNote?: string | null;
   /**
    * Votes only, on a merge of Homeroom itself that is not live yet: the
    * server's `release` block, which the card words after the note and keeps

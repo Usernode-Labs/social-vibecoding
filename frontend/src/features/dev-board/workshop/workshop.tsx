@@ -95,7 +95,8 @@ import {
   ApprovalLine, CommunityCard, HubCardClose, ShareItCard, canLeave,
   communityPending, leaveCommunity, useCommunity,
 } from './community-card';
-import { FirstLookCard, FirstVersionCard, ForYouCard, HubSkeleton, RecentlyLive, hubAlone, owesVote } from './hub-cards';
+import { FirstVersionCard, ForYouCard, HubSkeleton, RecentlyLive, hubAlone, owesVote } from './hub-cards';
+import { CommunityAsk } from '../../notify-ask/community-ask';
 import { useHubDismissed } from './hub-dismissed';
 import { ProjectDiscussion } from './project-discussion';
 import {
@@ -5034,7 +5035,9 @@ export function DevWorkshop(): ReactNode {
           Under the hero while the bot builds the project from its
           description, so a new project's hub says what it is becoming and
           how far along it is, and opens the bot's chat when the bot waits on
-          its maker. See ./hub-cards.tsx FirstVersionCard. */}
+          its maker. Its maker's shows the first look once it is drawn, with
+          the way to watch it built on the App tab (21 Oct 2026; a card of its
+          own after For you until then). See ./hub-cards.tsx FirstVersionCard. */}
       {slug ? (
         <FirstVersionCard slug={slug} data={community} emoji={app.iconEmoji || null} onSeePlan={() => openTab('plan')} />
       ) : null}
@@ -5071,6 +5074,9 @@ export function DevWorkshop(): ReactNode {
           who is around is the hero's faces and names. On a project nobody
           else is in, the vote line's zero is left out (`alone`). See
           ./hub-cards.tsx. */}
+      {/* Somebody in this community who did not make it: hear from it?
+          (the notification ask, ../../notify-ask/community-ask.tsx). */}
+      {slug ? <CommunityAsk data={community} name={app.name || slug} /> : null}
       {slug ? (
         <ForYouCard
           slug={slug}
@@ -5085,9 +5091,6 @@ export function DevWorkshop(): ReactNode {
           onDiscussion={() => openTab('discussion')}
         />
       ) : null}
-      {/* Run six: the maker's first look while it is built, with the way to
-          watch it built on the App tab. See ./hub-cards.tsx FirstLookCard. */}
-      {slug ? <FirstLookCard slug={slug} data={community} /> : null}
       {slug ? <RecentlyLive slug={slug} rows={v.recentLive} onAll={() => openTab('workshop')} own={ownLive} ident={recentIdent} /> : null}
       {/* Start a new change was the hub's last line; it is the hero's ⋯
           now (../actions-row.tsx), as well as the Homeroom menu's. */}

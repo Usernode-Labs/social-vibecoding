@@ -1035,11 +1035,13 @@ async function notifySessionDone(pool, sessionId) {
 // chat handler's done hook picks this one when the turn persisted a failure
 // row (turnError) and nobody pressed stop; the restart recovery, the
 // stale-turn watchdog and a system pause call it directly.
-async function notifySessionStalled(pool, sessionId) {
-  return notifySessionTurnEnd(pool, sessionId, 'session_stalled');
+// `strict` (a workflow machine's work): a failure is thrown, so it is tried
+// again.
+async function notifySessionStalled(pool, sessionId, { strict = false } = {}) {
+  return notifySessionTurnEnd(pool, sessionId, 'session_stalled', { strict });
 }
 
-async function notifySessionTurnEnd(pool, sessionId, kind) {
+async function notifySessionTurnEnd(pool, sessionId, kind, { strict = false } = {}) {
   try {
     const { rows } = await pool.query(
       `UPDATE chat_sessions SET notify_on_done = FALSE
@@ -1056,6 +1058,7 @@ async function notifySessionTurnEnd(pool, sessionId, kind) {
     });
     if (created.length) await notifications.hydrateAndPush(pool, created[0]);
   } catch (err) {
+    if (strict) throw err;
     log.warn('sessions', `${kind} notify failed`, { sessionId, err: err.message });
   }
 }
@@ -3807,6 +3810,43 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     } catch (err) {
       log.error('sessions', 'Failed to read check results', { message: err.message });
       res.status(500).json({ error: 'Could not load check results' });
+    }
+  });
+
+  // A failed run's checks in plain words (services/checks-explanation.js),
+  // for the Testing card on the change's page and the top of its Checks
+  // step. Read by the same rule as the check results it is written from
+  // (the route above): whoever may read those may read this. `lang` is the
+  // language the page is showing. `explanation` is null when there is none
+  // to give, and the page keeps the failure's own words. A staging ?demo=1
+  // mock carries its own, so the page can be reviewed without a model.
+  router.get('/api/sessions/:id/checks-explanation', async (req, res) => {
+    const id = /^[1-9]\d{0,9}$/.test(String(req.params.id)) ? Number(req.params.id) : 0;
+    if (!id || id > 2147483647) return res.status(404).json({ error: 'Session not found' });
+    try {
+      if (process.env.USERNODE_ENV === 'staging' && req.query.demo === '1') {
+        const mock = stagingMockSharedSessions().find((s) => s.id === id)
+          || stagingMockOwnSessions(req.user.id, config.selfAppSlug).find((s) => s.id === id)
+          || require('./votes').stagingMockProposalFor(id, req.user);
+        if (mock) {
+          return res.set('Cache-Control', 'no-store')
+            .json({ explanation: mock.checks_explanation || null, runAt: mock.checks_checked_at || null });
+        }
+      }
+      const { rows } = await pool.query(
+        `SELECT id, user_id, status, shared_at, app_id, check_state, checks_checked_at, test_results
+           FROM chat_sessions
+          WHERE id = $1`,
+        [id]
+      );
+      const session = rows[0];
+      if (!session || !canViewSession(session, req.user)) return res.status(404).json({ error: 'Session not found' });
+      const explanation = await require('../services/checks-explanation')
+        .explain(pool, session, { language: req.query.lang || (req.user && req.user.locale) });
+      return res.set('Cache-Control', 'no-store').json({ explanation, runAt: session.checks_checked_at });
+    } catch (err) {
+      log.error('sessions', 'Failed to explain failing checks', { message: err.message });
+      return res.status(500).json({ error: 'Could not explain the failing checks' });
     }
   });
 
@@ -6637,15 +6677,18 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       //
       // Folded into what holds the session, the head is still owed a unit
       // suite that really runs (services/unit-suite-reuse.js): a verdict
-      // stored before this press no longer stands for it, so it reads
-      // pending (and merge-blocked) until one does, and once the session is
-      // idle again the owed run starts if nothing has answered it. The stale
-      // sweep, whose scope covers an owed head, re-drives it after a restart.
-      const busyNow = () => isSessionBusyAnywhere(sessionId, { pool });
-      if (await busyNow()) {
-        await require('../services/unit-suite-reuse').owePendingRun({
-          pool, stagingRecovery, config, session, busy: busyNow, head: requestedHead,
-        });
+      // stored before this press no longer stands for it, so the preview
+      // machine stamps it pending (and merge-blocked) until one does
+      // (RecheckFolded), and starts the owed run once nobody works on the
+      // session if nothing has answered it (its ChecksDue).
+      if (await isSessionBusyAnywhere(sessionId, { pool })) {
+        if (requestedHead) {
+          await require('../workflow/platform.ts').recheckFolded({
+            sessionId: Number(session.id), appId: Number(session.app_id), head: String(requestedHead).toLowerCase(),
+          }).catch((err) => {
+            log.warn('sessions', 'Could not stamp a folded recheck pending', { sessionId, err: err.message });
+          });
+        }
         return res.json({ status: 'running' });
       }
       recheckInFlight.add(sessionId);

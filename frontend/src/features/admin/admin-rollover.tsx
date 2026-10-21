@@ -208,8 +208,10 @@ function RolloverSection() {
       const res = await fetch('/api/admin/rollover', { method: 'POST' });
       const data = await res.json().catch(() => ({}));
       if (res.status === 409) {
-        // Singleton job: a second press is a no-op, not an error.
-        (window as any).PlatformUI?.toast?.('A rollover is already in progress.');
+        // Singleton job: a second press is a no-op, not an error. Refused for
+        // another reason (a release rolling out), the server says why.
+        (window as any).PlatformUI?.toast?.(data && data.reason && data.reason !== 'running' && data.error
+          ? data.error : 'A rollover is already in progress.');
         if (data && data.job && alive.current) setJob(data.job);
         return;
       }
@@ -321,8 +323,10 @@ const AdminRollover = {
   // job changes over the socket — the eligible/concurrency/demo trio comes
   // from the GET and is unaffected, which is what the old _paintRollover did
   // too.
-  handleStatus(data: { job?: RolloverJob | null } | null) {
+  // A job too big for one frame comes as a nudge (`changed`): read it again.
+  handleStatus(data: { job?: RolloverJob | null; changed?: boolean } | null) {
     if (!data || !live) return;
+    if (data.changed && data.job === undefined) { live.reload(); return; }
     live.paint(data.job || null);
   },
 

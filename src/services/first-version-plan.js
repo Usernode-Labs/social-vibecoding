@@ -52,8 +52,10 @@ const PLAN_MODEL = 'z-ai/glm-5.3-flash';
 // gives GLM 20 seconds (llm.js HELPER_TIME_LIMIT_MS.first_version_plan)
 // and Haiku what is left.
 const PLAN_WAIT_MS = 45 * 1000;
-// A pending plan older than this was left by a process that stopped while
-// it was asked: it reads as failed, and nothing waits on it.
+// A pending plan older than this is too late for the made screen and the
+// bot's read (its work was held up, or is being tried again after a restart):
+// it reads as failed, nothing waits on it, and its work writes nothing then
+// (savePlan).
 const STALE_PENDING_MS = 2 * 60 * 1000;
 // How long the bot's read of the request waits for a plan still being
 // written, at most, from Make it (whenReady below).
@@ -360,83 +362,110 @@ async function makePlan(pool, { app, user, brief, deps = {} }) {
 
 /**
  * Store what makePlan made: ready with a plan, failed without one, and the
- * shape of a reply it could not use (replyShape).
+ * shape of a reply it could not use (replyShape). Not once the pending plan
+ * reads failed (STALE_PENDING_MS): what read it went on without it. Resolves
+ * whether it was stored.
  */
 async function savePlan(pool, appId, { plan, model, error, shape = null }) {
-  await pool.query(
+  const { rowCount } = await pool.query(
     `UPDATE homeroom_bot_first_versions
         SET early_plan_status = $2, early_plan = $3::jsonb, early_plan_at = NOW(), early_plan_error = $4,
             early_plan_reply = $5::jsonb
-      WHERE app_id = $1 AND early_plan_status = 'pending'`,
+      WHERE app_id = $1 AND early_plan_status = 'pending'
+        AND created_at > NOW() - make_interval(secs => $6::int)`,
     [appId, plan ? 'ready' : 'failed', plan ? JSON.stringify({ ...plan, model: model || null }) : null, plan ? null : clip(error, 200),
-      !plan && shape ? JSON.stringify(shape) : null],
+      !plan && shape ? JSON.stringify(shape) : null, STALE_PENDING_MS / 1000],
   );
+  return rowCount > 0;
 }
 
 function clip(value, max) {
   return typeof value === 'string' ? value.slice(0, max) : null;
 }
 
-const pending = new Map();
+// The claim and its making's PlanOwed (src/workflow/app-creation/: the
+// project's instance, `app:<id>`, runs it as its app.plan work), in one
+// statement: claimed and then asked in the background before, a restart in
+// between left the plan pending until its readers gave up on it.
+const CLAIM_PLAN_SQL = `
+  WITH c AS (
+    UPDATE homeroom_bot_first_versions SET early_plan_status = 'pending'
+     WHERE app_id = $1 AND user_id = $2 AND bot_builds = TRUE AND early_plan_status IS NULL
+     RETURNING app_id
+  ), e AS (
+    INSERT INTO wf_events (machine, key, app_id, type, payload, source, actor, request_key, caused_by)
+    SELECT 'app-creation', 'app:' || c.app_id, c.app_id, 'PlanOwed', jsonb_build_object('appId', c.app_id),
+           '{"kind":"system","name":"plan"}'::jsonb, NULL, 'plan:' || c.app_id, NULL
+      FROM c
+    RETURNING id
+  )
+  SELECT c.app_id, (SELECT pg_notify('wf_events', 'app-creation') FROM e LIMIT 1) IS NOT NULL AS owed FROM c`;
 
 /**
- * Start a first version's plan, once: claims the row (pending) and asks the
- * model in the background. Resolves whether it was started. Only a first
- * version the bot builds, with nothing asked yet; without a model (a
+ * Start a first version's plan, once: claims the row (pending) with the work
+ * that writes it (runEarlyPlan). Resolves whether it was started. Only a
+ * first version the bot builds, with nothing asked yet; without a model (a
  * staging preview, a local stack) nothing is asked, and the triage plans it
- * as before. Once the plan is written, its early first look is started from
- * it, drawn in the worker of `bot`'s session for the app (`config` is the
- * server's). Never throws.
+ * as before. Never throws.
  */
-async function startEarlyPlan(pool, { app, user, brief, config = null, bot = null }, deps = {}) {
+async function startEarlyPlan(pool, { app, user, brief }, deps = {}) {
   try {
     const llm = deps.llm || require('./llm');
     if (!app?.id || !user?.id || !brief) return false;
     if (typeof llm.isEnabled === 'function' && !llm.isEnabled()) return false;
-    const { rows } = await pool.query(
-      `UPDATE homeroom_bot_first_versions SET early_plan_status = 'pending'
-        WHERE app_id = $1 AND user_id = $2 AND bot_builds = TRUE AND early_plan_status IS NULL
-        RETURNING app_id`,
-      [app.id, user.id],
-    );
-    if (!rows.length) return false;
-    const work = makePlan(pool, { app, user, brief, deps })
-      .then(async (made) => {
-        await savePlan(pool, app.id, made);
-        if (made.plan) {
-          log.info('first-version-plan', 'A first version\'s plan is ready at Make it', {
-            appId: app.id, questions: made.plan.questions.length, model: made.model,
-          });
-          // Its timeline's first stage (first-version-timeline.js), before
-          // there is a run.
-          await (deps.timeline || require('./first-version-timeline')).record(pool, {
-            appId: app.id, stage: 'plan_written', detail: { source: 'make_it', questions: made.plan.questions.length },
-          });
-          // Newcomer run six (14 Oct 2026): and its first look, drawn from
-          // this plan now, in a call of its own, so it is there by Submit
-          // (first-version-early-look.js). Not waited on: whenReady waits
-          // for the plan alone.
-          void (deps.earlyLook || require('./first-version-early-look')).startEarlyLook(pool, {
-            app, user, brief, plan: made.plan, config, bot,
-          });
-        } else {
-          log.warn('first-version-plan', 'No plan at Make it; the triage plans it', {
-            appId: app.id, error: made.error, model: made.model, ...(made.shape ? { why: made.shape.why, routedProvider: made.shape.routedProvider } : {}),
-          });
-        }
-        return made;
-      })
-      .catch((err) => {
-        log.warn('first-version-plan', 'The plan at Make it failed', { appId: app.id, err: err.message });
-        return savePlan(pool, app.id, { plan: null, model: null, error: err.message }).catch(() => null);
-      });
-    pending.set(app.id, work);
-    work.finally(() => pending.delete(app.id));
-    return true;
+    const { rows } = await pool.query(CLAIM_PLAN_SQL, [app.id, user.id]);
+    return rows.length > 0;
   } catch (err) {
     log.warn('first-version-plan', 'The plan at Make it was not started', { appId: app?.id, err: err.message });
     return false;
   }
+}
+
+/**
+ * The plan a first version's claim owes (the app-creation machine's
+ * app.plan): asked of the model once (`steps`, the item's: a retry after the
+ * reply came keeps it), saved, and its timeline's first stage recorded.
+ * Resolves { planned }: whether a plan was written, which owes its early
+ * first look (first-version-early-look.js runEarlyLook). Throws when it
+ * cannot read or save, so the work tries again.
+ */
+async function runEarlyPlan(pool, { appId, steps = null }, deps = {}) {
+  const { rows: [row] } = await pool.query(
+    `SELECT f.user_id, f.brief, f.early_plan_status, a.id, a.name, a.slug,
+            f.created_at > NOW() - make_interval(secs => $2::int) AS fresh
+       FROM homeroom_bot_first_versions f JOIN apps a ON a.id = f.app_id
+      WHERE f.app_id = $1`,
+    [Number(appId), STALE_PENDING_MS / 1000],
+  );
+  if (!row) return { planned: false, skipped: 'gone' };
+  // A try carried on after this item saved its plan (its process stopped
+  // before the work ended): the plan is this item's, and its early look is
+  // still owed.
+  const saved = !!(steps && steps.has('plan')) && row.early_plan_status === 'ready';
+  if (row.early_plan_status !== 'pending' && !saved) return { planned: false, skipped: 'settled' };
+  // Past the window its plan could be saved in (savePlan), the model is not
+  // asked: what read it went on without it (an ask re-sent after a rollout).
+  if (!row.fresh && !(steps && steps.has('plan'))) return { planned: false, skipped: 'too_late' };
+  const app = { id: row.id, name: row.name, slug: row.slug };
+  const ask = () => makePlan(pool, { app, user: { id: row.user_id }, brief: row.brief, deps });
+  const made = steps ? await steps.once('plan', ask) : await ask();
+  if (!saved && !(await savePlan(pool, app.id, made))) return { planned: false, skipped: 'too_late' };
+  if (made.plan) {
+    log.info('first-version-plan', 'A first version\'s plan is ready at Make it', {
+      appId: app.id, questions: made.plan.questions.length, model: made.model,
+    });
+    // Its timeline's first stage (first-version-timeline.js), before
+    // there is a run: once, a carried-on try included.
+    const record = () => (deps.timeline || require('./first-version-timeline')).record(pool, {
+      appId: app.id, stage: 'plan_written', detail: { source: 'make_it', questions: made.plan.questions.length },
+    });
+    await (steps ? steps.once('timeline', record) : record());
+  } else {
+    log.warn('first-version-plan', 'No plan at Make it; the triage plans it', {
+      appId: app.id, error: made.error, model: made.model, ...(made.shape ? { why: made.shape.why, routedProvider: made.shape.routedProvider } : {}),
+    });
+  }
+  return { planned: !!made.plan };
 }
 
 /** A first version's row, with its plan and answers, or null. */
@@ -505,22 +534,15 @@ function cleanAnswers(questions, answers) {
 }
 
 /**
- * The plan once it is no longer being written, waiting for one in hand here
- * and watching the row for one in another process, until READ_WAIT_MS after
- * Make it at most. Resolves the row (whatever it holds). Never throws.
+ * The plan once it is no longer being written, watching the row (its work
+ * runs in whichever process claims it), until READ_WAIT_MS after Make it at
+ * most. Resolves the row (whatever it holds). Never throws.
  */
 async function whenReady(pool, appId, { pollMs = 1000, now = Date.now } = {}) {
   try {
-    const work = pending.get(appId);
     let row = await readEarlyPlan(pool, appId);
     if (!row || planStatus(row, now()) !== 'pending') return row;
     const deadline = new Date(row.created_at).getTime() + READ_WAIT_MS;
-    if (work) {
-      let timer;
-      await Promise.race([work, new Promise((resolve) => { timer = setTimeout(resolve, Math.max(0, deadline - now())); })]);
-      clearTimeout(timer);
-      row = await readEarlyPlan(pool, appId);
-    }
     while (row && planStatus(row, now()) === 'pending' && now() + pollMs <= deadline) {
       // eslint-disable-next-line no-await-in-loop
       await new Promise((resolve) => setTimeout(resolve, pollMs));
@@ -581,6 +603,7 @@ module.exports = {
   planModel,
   makePlan,
   startEarlyPlan,
+  runEarlyPlan,
   readEarlyPlan,
   planStatus,
   planOf,
@@ -590,5 +613,4 @@ module.exports = {
   whenReady,
   recordAnswers,
   noteDecided,
-  _pendingForTests: pending,
 };

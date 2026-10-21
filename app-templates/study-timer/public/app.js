@@ -319,4 +319,10 @@
   var first = loadToday();
   if (window.usernode && window.usernode.ready) window.usernode.ready(first);
   if (session.state === 'running') dayLoaded = now().toLocaleDateString();
+
+  // Pull down to fetch again, as a native list does. The native kit
+  // (/usernode-native/v1/native.js) draws the spinner and bounces the page
+  // in place, so a drag past the top no longer carries Homeroom's header
+  // with it. Not on a computer, where the kit leaves the page alone.
+  if (window.unNative) first.then(function () { window.unNative.attachPullToRefresh(window, loadToday); });
 })();

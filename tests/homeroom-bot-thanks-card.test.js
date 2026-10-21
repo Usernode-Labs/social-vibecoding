@@ -61,7 +61,8 @@ test('#4392: the thanks is drawn: its words, then the app\'s thumbnail row with 
   assert.match(html, />Run Club</);
   assert.match(html, /🏃/, 'the project\'s icon is its tile');
   assert.match(html, /data-build-line="building"/);
-  assert.match(html, /Building it · usually 10 to 25 min/);
+  // Beside the tile, the note has its own line (21 Oct 2026): one line cut it.
+  assert.match(html, /<span class="truncate">Building it<\/span><span data-build-line-note=""[^>]*>usually 10 to 25 min<\/span>/);
   assert.match(html, /animate-spin/, 'with the build line\'s spinner');
 
   const ready = renderToHtml(createElement(BotThanksCardView, { meta, line: thanksLine({ ...working(), state: 'done', outcome: 'proposed' }) }));

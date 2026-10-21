@@ -894,6 +894,13 @@
     {
       "source": "src/routes/votes.js",
       "kind": "structural-template",
+      "fingerprint": "bb763ad7b1a9ef54a309",
+      "count": 1,
+      "preview": "`WITH told AS (${botChangeVotedSql({ sessionId: '$1::int', voterId: '$2::int', voter: 'NULL::text', vote: \"'retracted'\", epoch: '$3::int' })}) SELECT (SELECT pg"
+    },
+    {
+      "source": "src/routes/votes.js",
+      "kind": "structural-template",
       "fingerprint": "d4cf0cf4e15e7f7d6ad5",
       "count": 1,
       "preview": "`SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_title_fallback, cs.status, cs.created_at, cs.promoted_at, cs.merge_conflict_state, cs.behind_main, cs"
@@ -904,6 +911,13 @@
       "fingerprint": "e334054feeba350dbb69",
       "count": 1,
       "preview": "`SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_title_fallback, cs.pr_summary_md, cs.pr_summary_stale, cs.pr_body, cs.staging_url, cs.testing_md, cs."
+    },
+    {
+      "source": "src/routes/votes.js",
+      "kind": "structural-template",
+      "fingerprint": "ed2a6965e24f99bc2d8f",
+      "count": 1,
+      "preview": "`WITH current_session AS ( SELECT id, approval_epoch FROM chat_sessions WHERE id = $1 AND status IN ('promoted', 'merging') FOR UPDATE ), v AS ( INSERT INTO pr_"
     },
     {
       "source": "src/routes/workshop-overview.js",
@@ -1377,13 +1391,6 @@
     {
       "source": "src/services/notifications.js",
       "kind": "structural-template",
-      "fingerprint": "040dc8d2ccbfebb55031",
-      "count": 1,
-      "preview": "`SELECT n.id, n.kind, n.user_id, CASE WHEN n.read_at IS NULL AND ${DECIDED_ASK_SETTLED_SQL} THEN COALESCE(cs.merged_at, cs.archived_at, n.created_at) ELSE n.rea"
-    },
-    {
-      "source": "src/services/notifications.js",
-      "kind": "structural-template",
       "fingerprint": "0aa31d0b7f4b61518c80",
       "count": 1,
       "preview": "`SELECT (COUNT(*) FILTER (WHERE ${PLAIN_MESSAGE_SQL}))::int AS m, COUNT(*)::int AS c FROM notifications AS n WHERE n.user_id = $1 AND n.read_at IS NULL AND NOT "
@@ -1401,6 +1408,13 @@
       "fingerprint": "8748f0da3801293ac993",
       "count": 1,
       "preview": "`SELECT n.id, n.kind, CASE WHEN n.read_at IS NULL AND ${DECIDED_ASK_SETTLED_SQL} THEN COALESCE(cs.merged_at, cs.archived_at, n.created_at) ELSE n.read_at END AS"
+    },
+    {
+      "source": "src/services/notifications.js",
+      "kind": "structural-template",
+      "fingerprint": "aa51f2c75742f9b9e953",
+      "count": 1,
+      "preview": "`SELECT n.id, n.kind, n.user_id, CASE WHEN n.read_at IS NULL AND ${DECIDED_ASK_SETTLED_SQL} THEN COALESCE(cs.merged_at, cs.archived_at, n.created_at) ELSE n.rea"
     },
     {
       "source": "src/services/notifications.js",
@@ -2007,7 +2021,7 @@
     {
       "source": "src/workflow/proposal/facts.ts",
       "kind": "structural-template",
-      "fingerprint": "902268e325a637542f37",
+      "fingerprint": "d90a3433dbe4a71d3f5b",
       "count": 1,
       "preview": "`SELECT cs.id, cs.app_id, cs.user_id, cs.status, cs.source, cs.is_headless, cs.pr_number, cs.pr_title, cs.branch_name, cs.reviewed_head_sha, cs.imported_pr_head"
     },
@@ -2073,6 +2087,13 @@
       "fingerprint": "67a25f6c533ca0d9c435",
       "count": 1,
       "preview": "`UPDATE shot_runs SET ${sets.join(', ')} WHERE id = $1`"
+    },
+    {
+      "source": "src/workflow/turn/machine.ts",
+      "kind": "structural-template",
+      "fingerprint": "9d44871cf656aeabb6da",
+      "count": 1,
+      "preview": "`SELECT cs.id, cs.app_id, cs.user_id, cs.status, (cs.shared_at IS NOT NULL) AS shared, cs.is_headless, cs.headless_status, cs.headless_outcome, cs.headless_issu"
     }
   ]
 }
