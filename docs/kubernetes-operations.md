@@ -757,12 +757,24 @@ person".
 leader gone) is not supported: roadmap item 3.2 deleted what a release from before it needed from
 the releases beside it (the holds it read in `process_holds`, its conversations' claims
 renewed, its Stop forward, the turn-spend mark). A rollback to a release that contains
-#5714 is an ordinary one: its migration Job recreates what it still names (`leader_sweeps`,
+#5714 needs one step (the first item below): its migration Job recreates what it still names (`leader_sweeps`,
 the campaign lease columns, `apps.creating_redrives`, all empty), and this release keeps
 what it reads (`process_holds`, `shots_eval_trials.proxy_cents`, the `apps.creating_owner`
 and `starter_images.owner` columns, `apps.creating_owner` defaulting to `workflow` so its
-insert trigger starts every project). Two things it does with this release's state:
+insert trigger starts every project). What it does with this release's state:
 
+- The `turn` instances this release wrote are at version 3 (a change's dev chat turn that
+  did not end its own way owes `turn.repair`), which that release leaves alone: a person's
+  turn on them waits. Once no process of this release is live (`platform_processes`), lower
+  them; their data is the same shape, and their `turn.repair` work waits unclaimed (on a
+  roll forward, one owed more than six hours earlier is skipped). Lower them before any
+  older release's rollback step, whose SQL names version 2:
+
+  ```sql
+  BEGIN; SET LOCAL app.wf_writer = 'transition';
+  UPDATE wf_instances SET machine_version = 2 WHERE machine = 'turn' AND machine_version = 3;
+  COMMIT;
+  ```
 - Turns this release recorded carry no turn-spend mark, so it keeps none of their calls: a
   turn that ends without Claude Code's report is billed nothing for them.
 - A ready-made app's image whose build a process of this release was cut in reads

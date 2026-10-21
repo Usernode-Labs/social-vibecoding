@@ -196,8 +196,10 @@ export function turnMachine() {
     name: MACHINE,
     // 2: a failed turn's "stopped before finishing" (turn.stalled), and a
     // conversation named after its request (turn.name): an older Pod would
-    // end its turn without them.
-    version: 2,
+    // end its turn without them. 3: a change's dev chat turn that did not
+    // end its own way owes its repair (turn.repair), which an older Pod's
+    // end of it would not queue.
+    version: 3,
     events: { Asked: decodeAsked, StopRequested: decodeStop, Tick: () => ({}) },
     create: ['Asked'],
     decode: (row) => ({ name: row.state, data: row.data as Data }),

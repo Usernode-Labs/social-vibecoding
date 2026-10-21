@@ -211,6 +211,36 @@ test('turn machine against the full PostgreSQL schema', { timeout: 180000 }, asy
     work.calls.length = 0;
   });
 
+  // A Pod of the release before turn.repair (its machine version 2) ending
+  // a turn this release started would owe no repair: it leaves the
+  // instance's events to this release, whose version is newer.
+  await t.test('T1f a turn this release started is never ended by an older Pod: it owes its repair here', async () => {
+    const { rows: [u] } = await pool.query(`INSERT INTO users (username, password) VALUES ($1, 'x') RETURNING id`, [`tu_${++seq}`]);
+    const { rows: [a] } = await pool.query(
+      `INSERT INTO apps (name, slug, created_by) VALUES ($1::text, $1::text, $2) RETURNING id`, [`tu-app-${++seq}`, u.id]);
+    const { rows: [ch] } = await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, status) VALUES ($1, $2, 'active') RETURNING id`, [a.id, u.id]);
+    const key = `session:${ch.id}`;
+    await send({ key }, 'Asked', { turnId: 'turn-v1', kind: 'classic', input: { sessionId: ch.id } });
+    await rt.drain();
+    const { rows: [i] } = await pool.query('SELECT state, machine_version FROM wf_instances WHERE machine = $1 AND key = $2', [MACHINE, key]);
+    assert.deepEqual([i.state, Number(i.machine_version)], ['running', machine.version]);
+    assert.equal(machine.version, 3);
+    const older = createRuntime({ pool, machines: [{ ...machine, version: 2 }], pollMs: 50, publish: async () => {}, services: {} });
+    runtimes.push(older);
+    const tick = await send({ key }, 'Tick', {}, { kind: 'system' });
+    await older.drain();
+    const status = async () => (await pool.query('SELECT status FROM wf_events WHERE id = $1', [tick])).rows[0].status;
+    assert.equal(await status(), 'pending', 'the older Pod leaves it');
+    await rt.drain();
+    assert.equal(await status(), 'processed');
+    const { rows: owed } = await pool.query(
+      `SELECT work_key FROM wf_work WHERE machine = $1 AND key = $2 AND kind = $3`, [MACHINE, key, WORK.repair]);
+    assert.deepEqual(owed.map((w) => w.work_key), ['repair:turn-v1']);
+    await settle();
+    work.calls.length = 0;
+  });
+
   await t.test('T2 a turn asked for while one runs waits its turn, in order; the same turn twice is one', async () => {
     const c = await conversation();
     await send(c, 'Asked', { turnId: 'a', kind: 'agent', input: {} });
