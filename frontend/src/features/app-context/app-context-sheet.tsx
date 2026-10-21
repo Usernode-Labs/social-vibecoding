@@ -841,13 +841,19 @@ export function AppsSwitcherSheet(): ReactNode {
                 {t('agent:appContext.row.toVote', { count: owed })}
               </span>
             ) : null}
-            // It says community, so it opens the hub, not whichever tab
-            // the page was last left on (AppView._landOnHub). Beside a
-            // running app on a desktop it opens full width, leaving the app,
-            // as every link to a community does: a community's page is never
-            // the side panel's (../side-panel/routes.ts).
+            // With votes owed it opens Needs you, the queue the figure counts
+            // (#5726), so the number leads to what it counts; with no count it
+            // opens the hub, not whichever tab the page was last left on
+            // (AppView._landOnHub). Beside a running app on a desktop it opens
+            // full width, leaving the app, as every link to a community does:
+            // a community's page is never the side panel's
+            // (../side-panel/routes.ts).
             onClick={(e) => {
-              if (slug) (window as any).AppView?._landOnHub?.(slug);
+              if (slug) {
+                const view = (window as any).AppView;
+                if (owed) view?._landOnTab?.(slug, 'needs');
+                else view?._landOnHub?.(slug);
+              }
               followThenDismiss(e, slug ? `#app/${encodeURIComponent(slug)}/workshop` : '#');
             }}
           />

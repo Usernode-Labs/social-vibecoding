@@ -406,6 +406,13 @@ test('the Workshop is a row in the menu, not a toggle (#2761)', () => {
     'the row that replaced it');
   // The strip's Workshop segment carried the vote count; it rides the row now.
   assert.match(SHEET, /id="app-menu-workshop-owed"/);
+  // #5726: with votes owed the row opens Needs you, the queue the figure
+  // counts, so the number leads to what it counts; with no count it opens
+  // the hub, as it always has.
+  const at = SHEET.indexOf('id="app-menu-row-workshop"');
+  const row = SHEET.slice(at, SHEET.indexOf('GO TO APP DISCUSSION and INVITE TO COMMUNITY', at));
+  assert.match(row, /if \(owed\) view\?\._landOnTab\?\.\(slug, 'needs'\);/);
+  assert.match(row, /else view\?\._landOnHub\?\.\(slug\);/);
   assert.ok(!/In this app/.test(SHEET.replace(/\{\/\*[\s\S]*?\*\/\}/g, '')),
     'and no caption left behind — comments explaining a move are fine, '
     + 'rendered text is not');
