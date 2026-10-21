@@ -77,6 +77,7 @@
  * a Retry after a failed create scaffolds the empty starter.
  */
 
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 
@@ -758,6 +759,30 @@ function starterFiles(id, fill = {}) {
   });
 }
 
+/**
+ * Which revision of a starter a project was seeded from: the first 12 hex
+ * characters of a SHA-256 over its `shared` directory's files and then its
+ * own, by path, as they are on disk, before the placeholders are filled (so
+ * the four tier lists made from one revision share it). app-creator writes
+ * it to apps.template_version with the first commit, so a later change to
+ * every copy of a starter can tell which copies already carry what the
+ * starter has since gained. Null for `empty`, which has no files of its own.
+ */
+function versionOf(id) {
+  if (!isTemplate(id) || id === DEFAULT_TEMPLATE) return null;
+  const t = get(id);
+  const hash = crypto.createHash('sha256');
+  for (const name of [...(t.shared ? [t.shared] : []), dirOf(id)]) {
+    const dir = path.join(STARTERS_DIR, name);
+    for (const rel of walk(dir)) {
+      hash.update(`${name}/${rel}\0`);
+      hash.update(fs.readFileSync(path.join(dir, rel)));
+      hash.update('\0');
+    }
+  }
+  return hash.digest('hex').slice(0, 12);
+}
+
 module.exports = {
   DEFAULT_TEMPLATE,
   READY_IDS,
@@ -773,4 +798,5 @@ module.exports = {
   isTemplate,
   parseTemplate,
   starterFiles,
+  versionOf,
 };
