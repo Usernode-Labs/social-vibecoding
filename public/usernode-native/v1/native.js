@@ -3917,7 +3917,8 @@
    * versions get subtly wrong).
    * ──────────────────────────────────────────────────────────────────── */
 
-  var modalStack = []; // Escape dismisses the TOPMOST dismissible modal only
+  var modalStack = []; // Escape dismisses the TOPMOST dismissible modal only,
+                       // unless a [data-owns-escape] overlay is open above it
   var alertSeq = 0;     // unique ids for each alert's title/message (aria)
 
   // Modal/alert cards and the dim over the page are one fade (#1566).
@@ -3987,6 +3988,12 @@
     // dismisses it) — this capture listener registered first, so it
     // must stand aside or Escape would take both surfaces down.
     if (activePopover) return;
+    // So does any overlay the page opens above a modal and marks
+    // `data-owns-escape` (a full-size picture over a form): it closes
+    // itself, and the modal under it stays. Opt-in, so a page that marks
+    // nothing keeps the old behaviour; asked of the document rather than
+    // of the focused element, so it holds wherever focus is.
+    if (document.querySelector('[data-owns-escape]')) return;
     var top = modalStack[modalStack.length - 1];
     if (top.dismissible) {
       e.preventDefault();
@@ -4189,7 +4196,9 @@
 
   // presentModal({ content | contentEl, onDismiss?, dismissible? }) —
   // content is an HTML string, contentEl an Element to adopt. dismissible
-  // (default true) gates backdrop-tap and Escape. Returns { dismiss(), el }.
+  // (default true) gates backdrop-tap and Escape. Escape stands aside while
+  // an element marked [data-owns-escape] is open (see the keydown listener
+  // above). Returns { dismiss(), el }.
   function presentModal(options) {
     var opts = options || {};
     var dismissible = opts.dismissible !== false;

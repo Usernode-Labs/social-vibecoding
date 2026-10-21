@@ -13,8 +13,9 @@
  * is no Download (the file is already on the device, and the URL is a blob),
  * and its Escape listener runs in the bubble phase on `document`, where the
  * kit modal the form is lifted into would close the whole dialog too. Escape
- * is caught here in the CAPTURE phase and stopped, so the form behind stays
- * exactly as it was typed.
+ * is caught here in the CAPTURE phase and stopped, and the root is marked
+ * `data-owns-escape` so the kit's own listener stands aside, so the form
+ * behind stays exactly as it was typed.
  *
  * A screenshot handed over from comment mode keeps its pins (#4482), drawn
  * over the enlarged picture exactly where the thumbnail draws them.
@@ -56,14 +57,16 @@ export function FeedbackPreview({ item, onClose }: { item: FeedbackPreviewItem; 
       onCloseRef.current();
       return true;
     });
-    // Escape closes the preview. It is taken in the capture phase and
-    // stopped so nothing else in the page treats the same press as its own.
+    // Escape closes the preview, and only the preview. It is taken in the
+    // capture phase and stopped so nothing else in the page treats the same
+    // press as its own.
     //
-    // KNOWN LIMIT: the kit's own Escape listener is registered on `window`
-    // in the capture phase by usernode-native/v1/native.js, which the head
-    // loads BEFORE the shell bundle, so it runs first and also dismisses the
-    // lifted feedback card. Escape therefore closes the preview and the form
-    // (its draft is kept); ✕ and a tap outside close the preview alone.
+    // The kit's own Escape listener is registered on `window` in the capture
+    // phase by usernode-native/v1/native.js, which the head loads BEFORE the
+    // shell bundle, so it runs first: stopping the press here cannot reach
+    // it. It stands aside instead while an element marked `data-owns-escape`
+    // is open, which the root below is, so the lifted feedback card stays
+    // open with its draft as typed, as it does for ✕, a tap outside and Back.
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
       event.preventDefault();
@@ -96,6 +99,7 @@ export function FeedbackPreview({ item, onClose }: { item: FeedbackPreviewItem; 
       aria-modal="true"
       aria-label={name}
       data-feedback-preview=""
+      data-owns-escape=""
       onClick={(event) => {
         // Never let the tap travel on through React's tree as a click outside
         // the kit modal's card.
