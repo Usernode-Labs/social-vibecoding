@@ -1,7 +1,16 @@
-// Polls the Homeroom block explorer for wallet-linking transactions
-// sent to the platform's APP_PUBKEY. When a tx with memo
-// { app: "vibecode", type: "link_wallet", token: "..." } is found,
-// the sender's pubkey is stored against the user who generated that token.
+// Wallet linking: a person proves an address is theirs by sending the
+// platform's APP_PUBKEY a transaction with memo
+// { app: "vibecode", type: "link_wallet", token: "..." }; the sender's
+// pubkey is stored against the user who generated that token.
+//
+// The wallet-links clock (src/workflow/clock/services.ts) reads the explorer
+// for them: one run at a time across every process that runs the workflow,
+// each run a poll(). What a run carries to the next (the chain, the highest
+// block it has read, how many links it made, an outage's streak) is its
+// result, which the clock hands the next run as `previous`. Before, every
+// serving process polled on its own timer with its cursor in memory: N web
+// Pods were N pollers, and every restart read the chain again from the
+// start. Reading a block again changes nothing: a link spends its token.
 
 const https = require('https');
 const http = require('http');
@@ -20,63 +29,45 @@ const POLL_INTERVAL_MS = 4000;
 // acceptable while making the log readable again.
 const MAX_POLL_INTERVAL_MS = 60000;
 const MAX_PAGES = 5;
-const MAX_SEEN = 5000;
+// Without an APP_PUBKEY nothing is linked: looked at again this seldom.
+const OFF_REST_MS = 5 * 60 * 1000;
 
-let chainId = null;
-let seenTxIds = new Set();
-let lastBlockHeight = 0;
-let timerHandle = null;
-let running = false;
-// Surfaced on /node-status (the dapp-server-style full viewer) so operators
-// can confirm the wallet-linker is actually keeping up with the chain.
-let lastPolledAt = null;
-let lastError = null;
-let walletLinkCount = 0;
-// Failure-streak state. `consecutiveFailures` drives the backoff and the
-// log level; `downSince` is what the status pages render as "unreachable
-// for 14 minutes" so an operator can tell a blip from an outage.
-let consecutiveFailures = 0;
-let downSince = null;
-let currentIntervalMs = POLL_INTERVAL_MS;
-
-// Current retry delay: 4s while healthy, doubling per consecutive failure
-// up to the ceiling.
-function backoffMs() {
+// Next run's delay: 4s while healthy, doubling per consecutive failure up to
+// the ceiling (the clock's `restMs`).
+function backoffMs(consecutiveFailures) {
   if (consecutiveFailures <= 0) return POLL_INTERVAL_MS;
   const grown = POLL_INTERVAL_MS * Math.pow(2, consecutiveFailures - 1);
   return Math.min(grown, MAX_POLL_INTERVAL_MS);
 }
 
-// One place to record a failed poll. The FIRST failure of a streak logs at
-// warn (an operator should see the transition); every repeat drops to debug
-// so a long outage costs one line, not one per retry.
-function noteFailure(what, message) {
-  lastError = message;
-  consecutiveFailures += 1;
+// One failed poll, as the next run reads it. The FIRST failure of a streak
+// logs at warn (an operator should see the transition); every repeat drops
+// to debug so a long outage costs one line, not one per retry.
+function noteFailure(previous, what, message) {
+  const consecutiveFailures = (Number(previous.consecutiveFailures) || 0) + 1;
+  const downSince = previous.downSince || Date.now();
   if (consecutiveFailures === 1) {
-    downSince = Date.now();
     log.warn('chain-poller', `${what} — retrying with backoff`, { err: message });
   } else {
     log.debug('chain-poller', `${what} (failure #${consecutiveFailures})`, {
       err: message,
-      nextRetryMs: backoffMs(),
+      nextRetryMs: backoffMs(consecutiveFailures),
     });
   }
+  return { ...previous, consecutiveFailures, downSince, lastError: message, restMs: backoffMs(consecutiveFailures) };
 }
 
 // Closing the streak is worth exactly one warn line: it is the event an
 // operator scanning the log actually wants to find.
-function noteSuccess() {
-  if (consecutiveFailures > 0) {
-    const downMs = downSince ? Date.now() - downSince : 0;
+function noteSuccess(previous) {
+  if (Number(previous.consecutiveFailures) > 0) {
+    const downMs = previous.downSince ? Date.now() - previous.downSince : 0;
     log.warn('chain-poller', 'explorer recovered', {
-      afterFailures: consecutiveFailures,
+      afterFailures: previous.consecutiveFailures,
       downSeconds: Math.round(downMs / 1000),
     });
   }
-  consecutiveFailures = 0;
-  downSince = null;
-  lastError = null;
+  return { ...previous, consecutiveFailures: 0, downSince: null, lastError: null, restMs: POLL_INTERVAL_MS };
 }
 
 function httpJson(method, urlStr, body) {
@@ -115,73 +106,73 @@ function baseUrl() {
   return `${proto}://${EXPLORER_UPSTREAM}${EXPLORER_UPSTREAM_BASE}`;
 }
 
-async function discoverChainId() {
-  const data = await httpJson('GET', `${baseUrl()}/active_chain`);
-  if (data && data.chain_id) chainId = data.chain_id;
-}
-
 function parseMemo(raw) {
   if (!raw) return null;
   try { return JSON.parse(String(raw)); } catch { return null; }
 }
 
-function boundSeenSet() {
-  if (seenTxIds.size > MAX_SEEN) {
-    const arr = [...seenTxIds];
-    seenTxIds = new Set(arr.slice(arr.length - MAX_SEEN));
-  }
+// What a run carries on from the last good one's result.
+function carried(previous) {
+  const p = previous && typeof previous === 'object' ? previous : {};
+  return {
+    chainId: p.chainId || null,
+    lastBlockHeight: Number(p.lastBlockHeight) || 0,
+    walletLinkCount: Number(p.walletLinkCount) || 0,
+    consecutiveFailures: Number(p.consecutiveFailures) || 0,
+    downSince: p.downSince || null,
+    lastError: p.lastError || null,
+  };
 }
 
-async function poll(appPubkey, pool) {
+/**
+ * One poll (the wallet-links clock's run): the explorer's transactions to
+ * APP_PUBKEY from the highest block a run has read, each link memo from a
+ * genesis address applied. Resolves what the next run carries on from, with
+ * when it should run (`restMs`). An explorer that fails is a result, never a
+ * throw: the streak is carried, and the next run waits longer. A database
+ * that cannot be written throws: the next run reads these blocks again.
+ */
+async function poll(config, pool, previous = null) {
+  const appPubkey = config && config.usernodeAppPubkey;
+  const state = { ...carried(previous), polledAt: Date.now() };
+  if (!appPubkey) return { ...state, off: true, restMs: OFF_REST_MS };
   // A link is only for a genesis address, and until this process has loaded
   // the genesis set every address reads as not genesis: a transaction read
   // now would be skipped and never read again. Wait for the set instead.
-  if (!genesisAccounts.isLoaded()) return;
-  lastPolledAt = Date.now();
-  if (!chainId) {
-    try { await discoverChainId(); } catch (e) {
-      noteFailure('chain ID discovery failed', e.message);
-      return;
+  if (!genesisAccounts.isLoaded()) return { ...state, waiting: 'genesis', restMs: POLL_INTERVAL_MS };
+
+  let next = state;
+  if (!next.chainId) {
+    let data;
+    try { data = await httpJson('GET', `${baseUrl()}/active_chain`); } catch (e) {
+      return noteFailure(next, 'chain ID discovery failed', e.message);
     }
     // Discovery succeeded but the explorer answered without a chain_id.
     // This is an outage too — without recording it the streak stays at 0,
     // the poller is pinned at the healthy 4s interval forever, and the
     // status pages report the explorer as fine while nothing is polled.
-    if (!chainId) {
-      noteFailure('chain ID missing', 'Explorer returned no chain_id');
-      return;
-    }
+    if (!data || !data.chain_id) return noteFailure(next, 'chain ID missing', 'Explorer returned no chain_id');
+    next = { ...next, chainId: data.chain_id };
   }
 
-  const txUrl = `${baseUrl()}/${chainId}/transactions`;
+  const txUrl = `${baseUrl()}/${next.chainId}/transactions`;
   let cursor;
-
+  let height = next.lastBlockHeight;
   for (let page = 0; page < MAX_PAGES; page++) {
     const body = { recipient: appPubkey, limit: 50 };
     if (cursor) body.cursor = cursor;
-    if (lastBlockHeight > 0) body.from_height = lastBlockHeight;
+    if (next.lastBlockHeight > 0) body.from_height = next.lastBlockHeight;
 
     let data;
     try { data = await httpJson('POST', txUrl, body); }
     catch (e) {
-      noteFailure('poll failed', e.message);
-      return;
+      return noteFailure({ ...next, lastBlockHeight: height }, 'poll failed', e.message);
     }
-    noteSuccess();
 
     const items = data.items || [];
     if (!items.length) break;
-
-    let allSeen = true;
     for (const tx of items) {
-      const txId = tx.tx_id || tx.id;
-      if (!txId || seenTxIds.has(txId)) continue;
-      allSeen = false;
-      seenTxIds.add(txId);
-
-      if (tx.block_height && tx.block_height > lastBlockHeight) {
-        lastBlockHeight = tx.block_height;
-      }
+      if (tx.block_height && tx.block_height > height) height = tx.block_height;
 
       const memo = parseMemo(tx.memo);
       if (!memo || memo.app !== 'vibecode' || memo.type !== 'link_wallet' || !memo.token) continue;
@@ -194,93 +185,45 @@ async function poll(appPubkey, pool) {
         continue;
       }
 
-      try {
-        const { rowCount } = await pool.query(
-          `UPDATE users
-             SET usernode_pubkey = $1,
-                 wallet_link_token = NULL,
-                 wallet_link_expires_at = NULL
-           WHERE wallet_link_token = $2
-             AND wallet_link_expires_at > NOW()`,
-          [sender, memo.token]
-        );
-        if (rowCount > 0) {
-          walletLinkCount += 1;
-          log.info('chain-poller', 'Wallet linked', { pubkey: sender, token: memo.token.slice(0, 8) + '...' });
-        }
-      } catch (e) {
-        log.warn('chain-poller', 'DB update failed', { err: e.message });
+      const { rowCount } = await pool.query(
+        `UPDATE users
+           SET usernode_pubkey = $1,
+               wallet_link_token = NULL,
+               wallet_link_expires_at = NULL
+         WHERE wallet_link_token = $2
+           AND wallet_link_expires_at > NOW()`,
+        [sender, memo.token]
+      );
+      if (rowCount > 0) {
+        next = { ...next, walletLinkCount: next.walletLinkCount + 1 };
+        log.info('chain-poller', 'Wallet linked', { pubkey: sender, token: memo.token.slice(0, 8) + '...' });
       }
     }
-
-    boundSeenSet();
-    if (allSeen || !data.has_more || !data.next_cursor) break;
+    if (!data.has_more || !data.next_cursor) break;
     cursor = data.next_cursor;
   }
+  return noteSuccess({ ...next, lastBlockHeight: height });
 }
 
-function start(config) {
-  const appPubkey = config.usernodeAppPubkey;
-  if (!appPubkey) {
-    log.info('chain-poller', 'USERNODE_APP_PUBKEY not set — wallet linking disabled');
-    return;
-  }
-
-  const { getPool } = require('../db/pool');
-  const pool = getPool(config);
-
-  log.info('chain-poller', 'Starting', { appPubkey: appPubkey.slice(0, 10) + '...' });
-
-  running = true;
-  // The boot-time discovery is a real probe of the same upstream, so its
-  // failure belongs in the streak: swallowing it left the first ~4s of an
-  // outage reported as healthy, and a successful-but-empty response
-  // uncounted entirely.
-  discoverChainId()
-    .then(() => {
-      if (!chainId) noteFailure('chain ID missing', 'Explorer returned no chain_id');
-    })
-    .catch((e) => noteFailure('chain ID discovery failed', e.message));
-
-  // Self-rescheduling timer rather than setInterval: the delay has to
-  // change as the failure streak grows, and a fixed interval would also
-  // stack overlapping polls once the upstream starts timing out.
-  const tick = async () => {
-    if (!running) return;
-    try { await poll(appPubkey, pool); }
-    catch (e) { log.debug('chain-poller', 'unexpected poll error', { err: e.message }); }
-    if (!running) return;
-    currentIntervalMs = backoffMs();
-    timerHandle = setTimeout(tick, currentIntervalMs);
-    timerHandle.unref?.();
-  };
-  timerHandle = setTimeout(tick, POLL_INTERVAL_MS);
-  timerHandle.unref?.();
-}
-
-function stop() {
-  running = false;
-  if (timerHandle) {
-    clearTimeout(timerHandle);
-    timerHandle = null;
-  }
-}
-
-function getStatus() {
+/**
+ * The status pages' shape, from the clock's last run (platform.clockStatus:
+ * `result` its last good result, `lastSweepAt` when it ran).
+ */
+function statusOf(clock) {
+  const r = (clock && clock.result) || {};
   return {
-    chainId,
-    lastBlockHeight,
-    seenTxCount: seenTxIds.size,
-    walletLinkCount,
-    lastPolledAt,
-    lastError,
+    chainId: r.chainId || null,
+    lastBlockHeight: Number(r.lastBlockHeight) || 0,
+    walletLinkCount: Number(r.walletLinkCount) || 0,
+    lastPolledAt: r.polledAt || null,
+    lastError: r.lastError || (clock && clock.lastError) || null,
     // Outage shape for the status pages: how many retries have failed in a
-    // row, when the streak began, and how long we are currently waiting.
-    consecutiveFailures,
-    downSince,
-    pollIntervalMs: currentIntervalMs,
-    enabled: running,
+    // row, when the streak began, and how long the next one waits.
+    consecutiveFailures: Number(r.consecutiveFailures) || 0,
+    downSince: r.downSince || null,
+    pollIntervalMs: Number(r.restMs) || POLL_INTERVAL_MS,
+    enabled: !!(clock && clock.lastSweepAt) && !r.off,
   };
 }
 
-module.exports = { start, stop, getStatus };
+module.exports = { poll, statusOf, backoffMs, POLL_INTERVAL_MS, MAX_POLL_INTERVAL_MS };

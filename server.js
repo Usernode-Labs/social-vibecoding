@@ -138,7 +138,6 @@ const drain = require('./src/services/drain');
 const processRole = require('./src/services/process-role');
 const inflightWork = require('./src/services/inflight-work');
 const inflightRequests = require('./src/middleware/inflight-requests');
-const chainPoller = require('./src/services/chain-poller');
 const genesisAccounts = require('./src/services/genesis-accounts');
 const nodeStatus = require('./src/services/node-status');
 const statusService = require('./src/services/status');
@@ -448,7 +447,7 @@ app.get('/api/node-status', (_req, res) => {
   res.json(nodeStatus.get());
 });
 
-app.get('/api/node-status/full', (_req, res) => {
+app.get('/api/node-status/full', async (_req, res) => {
   // Lazy require here (rather than top of file) keeps the import graph
   // straight: chain-poller and genesis-accounts are leaf modules; node-
   // status doesn't import them. The callback shape is what wires them
@@ -456,11 +455,13 @@ app.get('/api/node-status/full', (_req, res) => {
   const chainPollerSvc = require('./src/services/chain-poller');
   const genesisAccountsSvc = require('./src/services/genesis-accounts');
   res.set('Cache-Control', 'no-store');
+  // The wallet-links clock's last run, read from any process.
+  const walletLinks = await require('./src/workflow/platform.ts').clockStatus(getPool(config), 'wallet-links').catch(() => null);
   res.json(nodeStatus.getFull({
     name: 'usernode-social-vibecoding',
     mode: process.env.USERNODE_LOCAL_DEV ? 'local-dev' : 'production',
     services: () => ({
-      chainPoller: chainPollerSvc.getStatus(),
+      chainPoller: chainPollerSvc.statusOf(walletLinks),
       // getStatus() carries the same outage shape as chainPoller's
       // (consecutiveFailures / downSince / lastError) on top of the
       // loaded/count pair, so the viewer can say how long the genesis
@@ -1133,6 +1134,9 @@ async function start() {
   // (docs/plans/draining-releases.md): before anything here can start work.
   // Never fatal: holds stay this process's own until the database takes them.
   await processes.start({ pool: getPool(config), role: ownRole });
+  // The limiters that gate a send, a bill or a guess count in Postgres: one
+  // budget for every process, kept across a deploy (services/rate-limit-store.js).
+  require('./src/services/rate-limit-store').setPool(getPool(config));
   // Turns' streams, kept where a browser served by any process reads them
   // (services/session-bus.js).
   sessionBus.init({ pool: getPool(config) });
@@ -1182,10 +1186,11 @@ async function start() {
   shutdownPool = getPool(config);
 
   ws.attach(server, config);
+  // The genesis set, which wallet sign-up asks and the wallet-links clock
+  // reads (on whichever process runs the workflow), in every process.
+  genesisAccounts.start();
   // The caches people's requests read: a conductor serves nobody's.
   if (processRole.servesRequests(ownRole)) {
-    chainPoller.start(config);
-    genesisAccounts.start();
     nodeStatus.start({ nodeRpcUrl: process.env.NODE_RPC_URL });
     // Warm the /api/status cache so the first dashboard load doesn't have
     // to wait 1-2s on `docker stats`. Subsequent loads are served from

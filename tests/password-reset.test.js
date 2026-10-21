@@ -22,6 +22,7 @@ const bcrypt = require('bcrypt');
 // ── Pool stub: query-aware, captures everything ────────────────────
 const poolMod = require('../src/db/pool');
 let capturedQueries = [];
+const walletChallengeRows = new Map(); // challenge hash -> address
 // Row returned for SELECT ... WHERE usernode_pubkey = $1. It carries
 // usernode_pubkey because the wallet handlers verify the signature against
 // the stored column rather than the request field (issue #2502), so a
@@ -37,6 +38,17 @@ let updateReturns = [];     // rows returned for UPDATE ... RETURNING
 poolMod.getPool = () => ({
   query: async (sql, params) => {
     capturedQueries.push({ sql, params });
+    // wallet_challenges, as the table answers: minted, then taken once by
+    // the address it was minted for.
+    if (/INSERT INTO wallet_challenges/.test(sql)) {
+      walletChallengeRows.set(params[0], params[1]);
+      return { rows: [], rowCount: 1 };
+    }
+    if (/DELETE FROM wallet_challenges WHERE challenge_hash/.test(sql)) {
+      if (walletChallengeRows.get(params[0]) !== params[1]) return { rows: [], rowCount: 0 };
+      walletChallengeRows.delete(params[0]);
+      return { rows: [{ '?column?': 1 }], rowCount: 1 };
+    }
     if (/SELECT usernode_pubkey FROM users WHERE id/.test(sql)) {
       return { rows: userLinkedPubkeyRow ? [userLinkedPubkeyRow] : [] };
     }

@@ -114,6 +114,9 @@ const DENIED_TABLES = new Set([
   'external_agent_upload_tokens', // one-time work-order patch upload credential hashes (#4264)
   'user_social_identities',   // private provider ownership proofs
   'social_identity_oauth_states', // social-link state hashes + PKCE verifiers
+  'wallet_challenges',        // wallet sign-in challenge hashes, single use
+  'waitlist_connect_states',  // waitlist social-connect state hashes, capability tokens, PKCE verifiers
+  'rate_limit_hits',          // shared limiter counts, by hashed address or account
   'social_identity_pending_replacements', // short-lived verified account replacements
   'user_ai_credentials', // per-user AI/LLM provider keys (encrypted blobs, still deny)
   'global_chat_threads', // private assistant summaries and ownership

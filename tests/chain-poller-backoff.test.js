@@ -49,132 +49,132 @@ function loadPollerWithFakeLog() {
   return { poller, lines };
 }
 
-test('getStatus exposes the outage shape the status pages render', () => {
-  const { poller } = loadPollerWithFakeLog();
-  const s = poller.getStatus();
-  for (const key of ['consecutiveFailures', 'downSince', 'pollIntervalMs',
-    'lastError', 'lastPolledAt', 'enabled']) {
-    assert.ok(key in s, `getStatus() must expose ${key}`);
-  }
-  assert.equal(s.consecutiveFailures, 0, 'starts clean');
-  assert.equal(s.downSince, null);
-});
+// The poller is the wallet-links clock's run (src/workflow/clock/
+// services.ts): what it carries to the next run, the streak included, is its
+// result, handed back as `previous`. A process's timer and memory before.
 
-test('stop() is safe before start() and leaves the poller disabled', () => {
-  const { poller } = loadPollerWithFakeLog();
-  poller.stop();
-  assert.equal(poller.getStatus().enabled, false);
-});
+const http = require('node:http');
 
-// The backoff curve itself is a pure function of the failure count, so
-// assert it from the source constants rather than by waiting on timers.
-test('the backoff doubles from 4s and is capped at 60s', () => {
-  const src = fs.readFileSync(path.join(ROOT, 'src/services/chain-poller.js'), 'utf8');
-  assert.match(src, /const POLL_INTERVAL_MS = 4000;/);
-  assert.match(src, /const MAX_POLL_INTERVAL_MS = 60000;/);
+// An explorer on a local port: `answer(req, body)` returns [status, json].
+function fakeExplorer(answer) {
+  const asked = [];
+  const srv = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      const parsed = body ? JSON.parse(body) : null;
+      asked.push({ url: req.url, body: parsed });
+      const [status, json] = answer(req, parsed);
+      res.writeHead(status, { 'content-type': 'application/json' });
+      res.end(JSON.stringify(json));
+    });
+  });
+  return new Promise((resolve) => srv.listen(0, '127.0.0.1', () => resolve({ srv, asked, host: `127.0.0.1:${srv.address().port}` })));
+}
 
-  // Re-derive the documented curve so a change to the formula fails here.
-  const base = 4000, cap = 60000;
-  const backoff = (n) => (n <= 0 ? base : Math.min(base * Math.pow(2, n - 1), cap));
-  assert.deepEqual(
-    [0, 1, 2, 3, 4, 5, 6].map(backoff),
-    [4000, 4000, 8000, 16000, 32000, 60000, 60000]);
-  assert.match(src, /Math\.min\(grown, MAX_POLL_INTERVAL_MS\)/);
-});
-
-test('the first failure warns; repeats drop to debug', () => {
-  const src = fs.readFileSync(path.join(ROOT, 'src/services/chain-poller.js'), 'utf8');
-  const fn = src.slice(src.indexOf('function noteFailure('),
-    src.indexOf('function noteSuccess('));
-  assert.match(fn, /consecutiveFailures === 1[\s\S]{0,300}log\.warn/,
-    'the transition INTO an outage must be visible at warn');
-  assert.match(fn, /else \{[\s\S]{0,300}log\.debug/,
-    'repeats must not warn — that is what buried the log');
-  assert.match(fn, /downSince = Date\.now\(\)/,
-    'the streak start is stamped once, on the first failure');
-});
-
-test('recovery emits exactly one warn and clears the streak', () => {
-  const src = fs.readFileSync(path.join(ROOT, 'src/services/chain-poller.js'), 'utf8');
-  const fn = src.slice(src.indexOf('function noteSuccess('),
-    src.indexOf('function httpJson('));
-  assert.match(fn, /consecutiveFailures > 0[\s\S]{0,400}log\.warn/,
-    'closing the streak is the line an operator scans for');
-  assert.match(fn, /consecutiveFailures = 0/);
-  assert.match(fn, /downSince = null/);
-  assert.match(fn, /lastError = null/);
-});
-
-test('both failure paths route through noteFailure (no stray warns left)', () => {
-  const src = fs.readFileSync(path.join(ROOT, 'src/services/chain-poller.js'), 'utf8');
-  const poll = src.slice(src.indexOf('async function poll('),
-    src.indexOf('function start('));
-  assert.match(poll, /noteFailure\('chain ID discovery failed'/);
-  assert.match(poll, /noteFailure\('poll failed'/);
-  // A 200 with no chain_id is an outage too: `if (!chainId) return;` left
-  // the streak at 0, so the poller stayed pinned at the healthy 4s
-  // interval and /status reported the explorer as fine while nothing was
-  // being polled at all.
-  assert.match(poll, /noteFailure\('chain ID missing'/,
-    'a successful response without a chain_id must be counted as a failure');
-  assert.doesNotMatch(poll, /if \(!chainId\) return;/,
-    'the bare early return is the hole this closes');
-  // The DB-update failure is a different subsystem and stays at its own
-  // level, but neither explorer path may warn directly any more.
-  assert.doesNotMatch(poll, /log\.warn\('chain-poller', 'chain ID discovery failed'/);
-  assert.doesNotMatch(poll, /log\.warn\('chain-poller', 'poll failed'/);
-});
-
-test('the boot-time discovery probe is counted in the streak', () => {
-  const src = fs.readFileSync(path.join(ROOT, 'src/services/chain-poller.js'), 'utf8');
-  const fn = src.slice(src.indexOf('function start('), src.indexOf('function stop('));
-  // start() fires one discovery immediately, before the first scheduled
-  // tick. It hits the same upstream as every poll, so when it fails the
-  // explorer is already down — swallowing it reported the opening seconds
-  // of an outage as healthy, and a 200 with no chain_id as healthy for as
-  // long as the explorer kept answering that way.
-  assert.doesNotMatch(fn, /discoverChainId\(\)\.catch\(\(\) => \{\}\)/,
-    'the boot probe must not swallow its own failure');
-  assert.match(fn, /noteFailure\('chain ID discovery failed'/);
-  assert.match(fn, /noteFailure\('chain ID missing'/);
-});
-
-test('a failing boot probe opens the streak instead of reporting healthy', async () => {
-  // Point the poller at a closed local port so the boot probe fails
-  // immediately and offline — EXPLORER_UPSTREAM is read at module load, so
-  // it has to be set before the poller is required.
+// The poller with its logger recorded and its explorer at `host`
+// (EXPLORER_UPSTREAM is read at load), and the genesis set as told.
+function pollerAt(host, { loaded = true, genesis = () => true } = {}) {
   const original = process.env.EXPLORER_UPSTREAM;
-  process.env.EXPLORER_UPSTREAM = '127.0.0.1:1';
-  let poller, lines;
+  process.env.EXPLORER_UPSTREAM = host;
+  const genesisPath = require.resolve(path.join(ROOT, 'src/services/genesis-accounts.js'));
+  const realGenesis = require.cache[genesisPath];
+  require.cache[genesisPath] = { id: genesisPath, filename: genesisPath, loaded: true, exports: { isLoaded: () => loaded, isGenesisAddress: genesis } };
   try {
-    ({ poller, lines } = loadPollerWithFakeLog());
-    poller.start({ usernodeAppPubkey: 'utpk1testfakepubkey', databaseUrl: 'postgres://fake/fake' });
-    await new Promise((resolve) => setTimeout(resolve, 300));
+    return loadPollerWithFakeLog();
   } finally {
-    if (poller) poller.stop();
-    if (original === undefined) delete process.env.EXPLORER_UPSTREAM;
-    else process.env.EXPLORER_UPSTREAM = original;
+    if (realGenesis) require.cache[genesisPath] = realGenesis; else delete require.cache[genesisPath];
+    if (original === undefined) delete process.env.EXPLORER_UPSTREAM; else process.env.EXPLORER_UPSTREAM = original;
   }
+}
 
-  const s = poller.getStatus();
-  assert.equal(s.consecutiveFailures, 1,
-    'the boot probe used to be swallowed, leaving the streak at 0 and the poller pinned at 4s');
-  assert.ok(s.downSince, 'the streak start must be stamped for the status pages');
-  assert.ok(s.lastError, 'and the reason surfaced');
-  const warns = lines.filter((l) => l.level === 'warn');
-  assert.equal(warns.length, 1, 'exactly one warn for the transition into the outage');
+const CONFIG = { usernodeAppPubkey: 'utpk1testfakepubkey' };
+
+test('the backoff doubles from 4s and is capped at 60s, as the next run\'s rest', () => {
+  const { poller } = loadPollerWithFakeLog();
+  assert.deepEqual([0, 1, 2, 3, 4, 5, 6].map(poller.backoffMs), [4000, 4000, 8000, 16000, 32000, 60000, 60000]);
 });
 
-test('the scheduler reschedules itself so the delay can change', () => {
-  const src = fs.readFileSync(path.join(ROOT, 'src/services/chain-poller.js'), 'utf8');
-  // setInterval cannot back off, and would also stack overlapping polls
-  // once the upstream starts timing out.
-  assert.doesNotMatch(src, /setInterval\s*\(/,
-    'a fixed interval cannot implement backoff');
-  assert.match(src, /timerHandle = setTimeout\(tick, currentIntervalMs\)/);
-  assert.match(src, /currentIntervalMs = backoffMs\(\)/);
-  assert.match(src, /timerHandle\.unref\?\.\(\)/,
-    'the retry timer must never hold the process open on shutdown');
+test('an outage is carried from run to run: one warn into it, debug while it lasts, one warn out of it', async () => {
+  let up = false;
+  const explorer = await fakeExplorer((req) => {
+    if (!up) return [503, { error: 'no available server' }];
+    return req.url.endsWith('/active_chain') ? [200, { chain_id: 'c1' }] : [200, { items: [] }];
+  });
+  try {
+    const { poller, lines } = pollerAt(explorer.host);
+    const pool = { query: async () => ({ rowCount: 0 }) };
+    const first = await poller.poll(CONFIG, pool, null);
+    assert.deepEqual([first.consecutiveFailures, first.restMs], [1, 4000]);
+    assert.ok(first.downSince && first.lastError, 'the streak start and why, for the status pages');
+    const second = await poller.poll(CONFIG, pool, first);
+    assert.deepEqual([second.consecutiveFailures, second.restMs, second.downSince], [2, 8000, first.downSince]);
+    assert.deepEqual(lines.map((l) => l.level), ['warn', 'debug'], 'a long outage costs one warn line, not one per retry');
+    up = true;
+    const back = await poller.poll(CONFIG, pool, second);
+    assert.deepEqual([back.consecutiveFailures, back.downSince, back.lastError, back.restMs, back.chainId], [0, null, null, 4000, 'c1']);
+    assert.equal(lines.filter((l) => l.level === 'warn' && /recovered/.test(l.args[1])).length, 1, 'closing the streak warns once');
+  } finally {
+    explorer.srv.close();
+  }
+});
+
+test('a 200 with no chain_id is an outage too', async () => {
+  const explorer = await fakeExplorer(() => [200, {}]);
+  try {
+    const { poller } = pollerAt(explorer.host);
+    const out = await poller.poll(CONFIG, { query: async () => ({ rowCount: 0 }) }, null);
+    assert.equal(out.consecutiveFailures, 1);
+    assert.equal(out.lastError, 'Explorer returned no chain_id');
+  } finally {
+    explorer.srv.close();
+  }
+});
+
+test('a link memo from a genesis address links the wallet, and the next run reads on from its block', async () => {
+  const explorer = await fakeExplorer((req) => (req.url.endsWith('/active_chain') ? [200, { chain_id: 'c1' }] : [200, { items: [
+    { tx_id: 't1', block_height: 7, source: 'ut1genesis', memo: JSON.stringify({ app: 'vibecode', type: 'link_wallet', token: 'tok-1' }) },
+    { tx_id: 't2', block_height: 9, source: 'ut1stranger', memo: JSON.stringify({ app: 'vibecode', type: 'link_wallet', token: 'tok-2' }) },
+    { tx_id: 't3', block_height: 8, source: 'ut1genesis', memo: 'not json' },
+  ] }]));
+  try {
+    const { poller } = pollerAt(explorer.host, { genesis: (a) => a === 'ut1genesis' });
+    const updates = [];
+    const pool = { query: async (sql, params) => { updates.push(params); return { rowCount: 1 }; } };
+    const out = await poller.poll(CONFIG, pool, null);
+    assert.deepEqual(updates, [['ut1genesis', 'tok-1']], 'only a genesis address links');
+    assert.deepEqual([out.walletLinkCount, out.lastBlockHeight, out.chainId], [1, 9, 'c1']);
+    await poller.poll(CONFIG, pool, out);
+    const reads = explorer.asked.filter((a) => a.url.endsWith('/transactions'));
+    assert.equal(reads[1].body.from_height, 9, 'its cursor is the last run\'s result');
+    assert.equal(explorer.asked.filter((a) => a.url.endsWith('/active_chain')).length, 1, 'the chain is the last run\'s too');
+  } finally {
+    explorer.srv.close();
+  }
+});
+
+test('until the genesis set is loaded nothing is read, so no link is skipped for good', async () => {
+  const explorer = await fakeExplorer(() => [200, { chain_id: 'c1', items: [] }]);
+  try {
+    const { poller } = pollerAt(explorer.host, { loaded: false });
+    const out = await poller.poll(CONFIG, { query: async () => assert.fail('nothing written') }, { lastBlockHeight: 5 });
+    assert.equal(out.waiting, 'genesis');
+    assert.equal(out.lastBlockHeight, 5, 'the cursor stays where it was');
+    assert.equal(explorer.asked.length, 0);
+    // No APP_PUBKEY: off, looked at again in five minutes.
+    assert.deepEqual([(await poller.poll({}, null, null)).off, (await poller.poll({}, null, null)).restMs], [true, 300000]);
+  } finally {
+    explorer.srv.close();
+  }
+});
+
+test('the status pages read the clock\'s last run', () => {
+  const { poller } = loadPollerWithFakeLog();
+  const s = poller.statusOf({ lastSweepAt: '2026-10-21T10:00:00Z', lastError: null,
+    result: { chainId: 'c1', lastBlockHeight: 9, walletLinkCount: 2, polledAt: 1, consecutiveFailures: 3, downSince: 5, lastError: 'HTTP 503', restMs: 16000 } });
+  assert.deepEqual(s, { chainId: 'c1', lastBlockHeight: 9, walletLinkCount: 2, lastPolledAt: 1, lastError: 'HTTP 503',
+    consecutiveFailures: 3, downSince: 5, pollIntervalMs: 16000, enabled: true });
+  assert.equal(poller.statusOf(null).enabled, false);
 });
 
 // ─── genesis-accounts ───────────────────────────────────────────────────

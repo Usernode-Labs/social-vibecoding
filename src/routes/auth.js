@@ -1645,19 +1645,34 @@ function authRoutes(config) {
     return res.status(503).json({ error: 'The genesis ledger is still loading. Try again in a minute.', code: 'genesis_loading' });
   }
 
+  // A wallet sign-in's challenge: bound to one address, single use, two
+  // minutes, kept in Postgres (wallet_challenges) as its hash, so whichever
+  // process answers the signed reply redeems it. Kept in this process's
+  // memory before, a reply another web Pod (or the new release) answered
+  // failed. Minting one clears the expired ones.
   const CHALLENGE_TTL_MS = 2 * 60 * 1000;
-  const walletChallenges = new Map();
+  const challengeHash = (challenge) => crypto.createHash('sha256').update(String(challenge)).digest('hex');
 
-  const walletChallengeSweep = setInterval(() => {
-    const now = Date.now();
-    for (const [key, entry] of walletChallenges) {
-      if (now > entry.expiresAt) walletChallenges.delete(key);
-    }
-  }, 30_000);
-  // Route construction happens in focused tests and development utilities
-  // as well as the long-lived server. The cleanup timer must not keep a
-  // process alive after its HTTP server has closed.
-  if (typeof walletChallengeSweep.unref === 'function') walletChallengeSweep.unref();
+  async function mintChallenge(pubkey) {
+    const challenge = crypto.randomBytes(32).toString('hex');
+    await pool.query(
+      `WITH expired AS (DELETE FROM wallet_challenges WHERE expires_at <= NOW())
+       INSERT INTO wallet_challenges (challenge_hash, pubkey, expires_at)
+       VALUES ($1, $2, NOW() + make_interval(secs => $3::int))`,
+      [challengeHash(challenge), pubkey, CHALLENGE_TTL_MS / 1000]
+    );
+    return challenge;
+  }
+
+  // Taken once, and only for the address it was minted for: a reply naming
+  // another address leaves it in place. True when it was this one's.
+  async function consumeChallenge(challenge, pubkey) {
+    const { rows } = await pool.query(
+      `DELETE FROM wallet_challenges WHERE challenge_hash = $1 AND pubkey = $2 AND expires_at > NOW() RETURNING 1`,
+      [challengeHash(challenge), pubkey]
+    );
+    return rows.length > 0;
+  }
 
   function httpJson(method, urlStr, body) {
     return new Promise((resolve, reject) => {
@@ -1707,11 +1722,7 @@ function authRoutes(config) {
       const isGenesis = genesisAccounts.isLoaded() ? genesisAccounts.isGenesisAddress(pubkey.trim()) : null;
 
       if (rows.length > 0) {
-        const challenge = crypto.randomBytes(32).toString('hex');
-        walletChallenges.set(challenge, {
-          pubkey: pubkey.trim(),
-          expiresAt: Date.now() + CHALLENGE_TTL_MS,
-        });
+        const challenge = await mintChallenge(pubkey.trim());
         return res.json({ status: 'linked', challenge, isGenesis });
       }
 
@@ -1740,13 +1751,11 @@ function authRoutes(config) {
       return res.status(400).json({ error: 'pubkey, challenge, and signature required' });
     }
 
-    const entry = walletChallenges.get(challenge);
-    if (!entry || entry.pubkey !== pubkey.trim() || Date.now() > entry.expiresAt) {
-      return res.status(401).json({ error: 'Invalid or expired challenge' });
-    }
     // Single-use, and consumed before any outbound call so neither a slow
     // verification nor a failed one leaves a replayable challenge behind.
-    walletChallenges.delete(challenge);
+    if (!(await consumeChallenge(challenge, pubkey.trim()).catch(() => false))) {
+      return res.status(401).json({ error: 'Invalid or expired challenge' });
+    }
 
     let user;
     try {
@@ -1827,11 +1836,9 @@ function authRoutes(config) {
     const policy = validatePassword(newPassword);
     if (!policy.ok) return res.status(400).json({ error: policy.error });
 
-    const entry = walletChallenges.get(challenge);
-    if (!entry || entry.pubkey !== pubkey.trim() || Date.now() > entry.expiresAt) {
+    if (!(await consumeChallenge(challenge, pubkey.trim()).catch(() => false))) {
       return res.status(401).json({ error: 'Invalid or expired challenge' });
     }
-    walletChallenges.delete(challenge);
 
     // Resolve the account and its signing key BEFORE the verifier is asked
     // anything, exactly as wallet-verify does above (issue #2502) — this
@@ -2073,11 +2080,9 @@ function authRoutes(config) {
       return res.status(400).json({ error: 'No wallet is linked to your account' });
     }
 
-    const entry = walletChallenges.get(challenge);
-    if (!entry || entry.pubkey !== linkedPubkey || Date.now() > entry.expiresAt) {
+    if (!(await consumeChallenge(challenge, linkedPubkey).catch(() => false))) {
       return res.status(401).json({ error: 'Invalid or expired challenge' });
     }
-    walletChallenges.delete(challenge);
 
     // Same binding rule as wallet-verify (issue #2502): the key the verifier
     // checks against comes from this account's stored usernode_pubkey, and a

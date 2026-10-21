@@ -15724,3 +15724,52 @@ CREATE TABLE IF NOT EXISTS session_workers (
 );
 CREATE INDEX IF NOT EXISTS idx_session_workers_used ON session_workers (last_used_at);
 COMMENT ON TABLE session_workers IS 'staging:private';
+
+-- The count behind each rate limiter that gates a send (a mail, a billed
+-- SMS), a bill (a paid model call) or a guess (a password, a code, a token):
+-- one row per limiter and what it counts, kept as a hash (services/
+-- rate-limit-store.js). Shared by every process and kept across a deploy,
+-- where each process's memory was a budget of its own that every release
+-- reset. A window starts with its key's first hit; rows past their window
+-- go with the rate-limit-retention clock.
+CREATE TABLE IF NOT EXISTS rate_limit_hits (
+  key       TEXT PRIMARY KEY,
+  hits      INTEGER NOT NULL,
+  reset_at  TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_rate_limit_hits_reset ON rate_limit_hits (reset_at);
+COMMENT ON TABLE rate_limit_hits IS 'staging:private';
+
+-- A wallet sign-in's challenge (routes/auth.js wallet-check): bound to one
+-- address, taken once by the signed reply (DELETE ... RETURNING), two
+-- minutes. Only its SHA-256 is kept, as social_identity_oauth_states keeps
+-- an OAuth state. In a process's memory before, a reply another web Pod (or
+-- the next release) answered could not be redeemed. Minting one clears the
+-- expired.
+CREATE TABLE IF NOT EXISTS wallet_challenges (
+  challenge_hash  CHAR(64) PRIMARY KEY CHECK (challenge_hash ~ '^[0-9a-f]{64}$'),
+  pubkey          TEXT NOT NULL,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at      TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_wallet_challenges_expiry ON wallet_challenges (expires_at);
+COMMENT ON TABLE wallet_challenges IS 'staging:private';
+
+-- A waitlist signer's social-connect round trip (routes/waitlist-connect.js):
+-- the hash of its state nonce, the capability token it was minted for, the
+-- provider and X's PKCE verifier, then how it ended (`status`, `handle`),
+-- which a reload replays. Ten minutes. In a process's memory before, a
+-- callback another web Pod (or the next release) answered found nothing.
+-- Parking one clears the expired.
+CREATE TABLE IF NOT EXISTS waitlist_connect_states (
+  state_hash  CHAR(64) PRIMARY KEY CHECK (state_hash ~ '^[0-9a-f]{64}$'),
+  provider    VARCHAR(16) NOT NULL,
+  token       TEXT NOT NULL,
+  verifier    VARCHAR(128),
+  status      VARCHAR(16),
+  handle      TEXT,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at  TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_waitlist_connect_states_expiry ON waitlist_connect_states (expires_at);
+COMMENT ON TABLE waitlist_connect_states IS 'staging:private';

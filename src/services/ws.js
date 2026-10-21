@@ -238,9 +238,11 @@ function connectedUserIds() {
 //     seconds, so only a script reaches it, and over it the frame is
 //     dropped without a word: nobody needs telling that a typing dot was
 //     not shown.
-// In process, which is exact at the one replica the platform ships with; at
-// several, each pod counts its own sockets. The Postgres token bucket is not
-// worth a round trip per typing frame.
+// In process: each web Pod counts its own sockets, and a deploy starts the
+// windows again. These bound a runaway client; only a limiter that gates a
+// send, a bill or a guess shares its count across processes
+// (services/rate-limit-store.js), and a round trip per typing frame is not
+// worth it.
 const SOCKET_RATE_WINDOW_MS = 60 * 1000;
 const SOCKET_RATE_BUDGETS = Object.freeze({
   chat: Object.freeze({ bucket: 'write', max: 60 }),

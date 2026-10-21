@@ -40,40 +40,49 @@ const { PRODUCTION_ORIGIN } = require('../services/cli-auth-constants');
 // fourth is one edit rather than two divergent conditions.
 const PROVIDERS = new Set(['github', 'x', 'linkedin']);
 
-// state nonce → { token, provider, verifier, expiresAt }. In-memory is
-// fine: the platform is a single process, and an entry only needs to
-// survive the seconds-long hop to the provider and back.
-const pending = new Map();
-const STATE_TTL_MS = 10 * 60 * 1000;
+// A round trip's state, in Postgres (waitlist_connect_states) as the hash
+// of its nonce: the capability token it was minted for, the provider, and
+// X's PKCE verifier. It only needs to survive the hop to the provider and
+// back, but that hop can come back to another web Pod, or to the next
+// release: kept in this process's memory before (its comment said the
+// platform was one process), a callback another process answered found
+// nothing.
+const STATE_TTL_SECONDS = 10 * 60;
+const stateHash = (nonce) => crypto.createHash('sha256').update(String(nonce)).digest('hex');
 
-function putState(entry) {
-  // Opportunistic sweep so abandoned round-trips don't accumulate.
-  const now = Date.now();
-  for (const [k, v] of pending) {
-    if (v.expiresAt < now) pending.delete(k);
-  }
+// Parks a new state (and clears the expired ones). Resolves its nonce.
+async function putState(pool, { token, provider, verifier = null }) {
   const nonce = crypto.randomBytes(24).toString('hex');
-  pending.set(nonce, { ...entry, expiresAt: now + STATE_TTL_MS });
+  await pool.query(
+    `WITH expired AS (DELETE FROM waitlist_connect_states WHERE expires_at <= NOW())
+     INSERT INTO waitlist_connect_states (state_hash, provider, token, verifier, expires_at)
+     VALUES ($1, $2, $3, $4, NOW() + make_interval(secs => $5::int))`,
+    [stateHash(nonce), provider, token, verifier, STATE_TTL_SECONDS]
+  );
   return nonce;
 }
 
-function takeState(nonce) {
-  const entry = pending.get(nonce);
-  if (!entry) return null;
-  pending.delete(nonce);
-  return entry.expiresAt < Date.now() ? null : entry;
+// Takes a pending state for its provider, once (the exchange is under way
+// from here): { token, verifier }, or null.
+async function takeState(pool, nonce, provider) {
+  const { rows } = await pool.query(
+    `UPDATE waitlist_connect_states SET status = 'working'
+      WHERE state_hash = $1 AND provider = $2 AND status IS NULL AND expires_at > NOW()
+      RETURNING token, verifier`,
+    [stateHash(nonce), provider]
+  );
+  return rows[0] || null;
 }
 
-// state nonce → { token, status, provider, handle, expiresAt }, for a round trip
-// that has already finished.
+// A finished round trip remembers WHERE it landed.
 //
-// `takeState` consumes the nonce, so the SECOND request to a callback URL
-// found nothing and fell through to `/#landing` — the public landing page,
-// with no message and no log line, after a provider round trip that had
-// already succeeded and stored the handle. Reported from production on
-// 2026-08-27 for GitHub and again for X: the server logged "Social handle
-// verified" both times, and both times the person landed on the home screen
-// instead of their form.
+// `takeState` takes the nonce, so the SECOND request to a callback URL found
+// nothing and fell through to `/#landing` — the public landing page, with no
+// message and no log line, after a provider round trip that had already
+// succeeded and stored the handle. Reported from production on 2026-08-27
+// for GitHub and again for X: the server logged "Social handle verified"
+// both times, and both times the person landed on the home screen instead
+// of their form.
 //
 // A second request is ordinary: the back button, a reload, copying the URL
 // out of the address bar and reopening it, a link scanner, a browser retry.
@@ -82,31 +91,26 @@ function takeState(nonce) {
 //
 // It records the outcome, never the authorization code, and the replay
 // reports that outcome and nothing else — the code is single-use at the
-// provider, so re-exchanging it could only turn a success into an error. Reading is
-// deliberately non-destructive: people reload more than once. The record
-// holds no more than the caller already has (they must present the state
-// nonce, which was minted for that token and rides in their own URL), and it
-// expires on the same clock as the pending state.
-const completed = new Map();
-
-function rememberOutcome(nonce, provider, token, status, handle) {
-  const now = Date.now();
-  for (const [k, v] of completed) {
-    if (v.expiresAt < now) completed.delete(k);
-  }
-  completed.set(nonce, {
-    token, status, provider, handle: handle || null, expiresAt: now + STATE_TTL_MS,
-  });
+// provider, so re-exchanging it could only turn a success into an error.
+// Reading is deliberately non-destructive: people reload more than once. The
+// record holds no more than the caller already has (they must present the
+// state nonce, which was minted for that token and rides in their own URL),
+// and it expires on the same clock as the pending state.
+async function rememberOutcome(pool, nonce, status, handle) {
+  await pool.query(
+    `UPDATE waitlist_connect_states SET status = $2, handle = $3, expires_at = NOW() + make_interval(secs => $4::int)
+      WHERE state_hash = $1`,
+    [stateHash(nonce), status, handle || null, STATE_TTL_SECONDS]
+  );
 }
 
-function peekOutcome(nonce, provider) {
-  const done = completed.get(nonce);
-  if (!done || done.provider !== provider) return null;
-  if (done.expiresAt < Date.now()) {
-    completed.delete(nonce);
-    return null;
-  }
-  return done;
+async function peekOutcome(pool, nonce, provider) {
+  const { rows } = await pool.query(
+    `SELECT token, status, handle FROM waitlist_connect_states
+      WHERE state_hash = $1 AND provider = $2 AND status IS NOT NULL AND status <> 'working' AND expires_at > NOW()`,
+    [stateHash(nonce), provider]
+  );
+  return rows[0] || null;
 }
 
 // Where the round-trip lands back in the SPA. `status` rides in the
@@ -441,6 +445,12 @@ function waitlistConnectRoutes(config) {
     if (!creds) return res.redirect(formUrl(token, 'unavailable'));
 
     const redirectUri = callbackUrl(config, provider);
+    // A state that cannot be parked is a round trip that cannot finish:
+    // back to the form, saying it failed.
+    const park = (entry) => putState(pool, entry).catch((err) => {
+      log.error('waitlist-connect', 'Could not park the round trip\'s state', { provider, message: err.message });
+      return null;
+    });
 
     if (provider === 'linkedin') {
       // OpenID Connect, no PKCE. `openid profile` is the smallest scope
@@ -449,7 +459,8 @@ function waitlistConnectRoutes(config) {
       // ask for — LinkedIn exposes no API reporting whether a member
       // follows a page, which is why the form says "connect" and never
       // claims a verified follow.
-      const state = putState({ token, provider });
+      const state = await park({ token, provider });
+      if (!state) return res.redirect(formUrl(token, 'failed'));
       const url = 'https://www.linkedin.com/oauth/v2/authorization?' + new URLSearchParams({
         response_type: 'code',
         client_id: creds.id,
@@ -461,7 +472,8 @@ function waitlistConnectRoutes(config) {
     }
 
     if (provider === 'github') {
-      const state = putState({ token, provider });
+      const state = await park({ token, provider });
+      if (!state) return res.redirect(formUrl(token, 'failed'));
       const url = 'https://github.com/login/oauth/authorize?' + new URLSearchParams({
         client_id: creds.id,
         redirect_uri: redirectUri,
@@ -475,7 +487,8 @@ function waitlistConnectRoutes(config) {
     // record; only its S256 challenge goes to the provider.
     const verifier = crypto.randomBytes(32).toString('base64url');
     const challenge = crypto.createHash('sha256').update(verifier).digest('base64url');
-    const state = putState({ token, provider, verifier });
+    const state = await park({ token, provider, verifier });
+    if (!state) return res.redirect(formUrl(token, 'failed'));
     const url = 'https://x.com/i/oauth2/authorize?' + new URLSearchParams({
       response_type: 'code',
       client_id: creds.id,
@@ -542,27 +555,31 @@ function waitlistConnectRoutes(config) {
       redirect: token ? formUrl(token, status) : null,
     });
 
-    const entry = takeState(state);
-    if (!entry || entry.provider !== provider) {
+    const unread = (err) => {
+      log.error('waitlist-connect', 'Could not read the round trip\'s state', { provider, message: err.message });
+      return null;
+    };
+    const entry = state ? await takeState(pool, state, provider).catch(unread) : null;
+    if (!entry) {
       // Already finished: a reload, the back button, or anything else that
       // re-requests this URL. The first pass knows how it ended; report that
       // again rather than an error for a round trip that worked.
-      const done = peekOutcome(state, provider);
+      const done = state ? await peekOutcome(pool, state, provider).catch(unread) : null;
       if (done) return reply(done.status, done.token, done.handle);
       // Genuinely unknown: no state record means no token, so there is no
-      // form to return to. The page says the link has expired — which also
-      // covers a server restart while the person was at the provider, since
-      // the state lives in memory. Logged, because this used to be the one
-      // path through here that produced neither an explanation nor a line to
-      // grep for.
+      // form to return to. The page says the link has expired. Logged,
+      // because this used to be the one path through here that produced
+      // neither an explanation nor a line to grep for.
       log.info('waitlist-connect', 'Callback with unknown or expired state', { provider });
       return reply('expired', null, null);
     }
 
     // Every exit below is terminal, so each one records how it ended before
     // answering.
-    const land = (status, handle) => {
-      rememberOutcome(state, provider, entry.token, status, handle);
+    const land = async (status, handle) => {
+      await rememberOutcome(pool, state, status, handle).catch((err) => {
+        log.warn('waitlist-connect', 'Could not remember how the round trip ended', { provider, message: err.message });
+      });
       return reply(status, entry.token, handle);
     };
 

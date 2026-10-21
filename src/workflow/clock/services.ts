@@ -190,6 +190,19 @@ export const JOBS: readonly Job[] = Object.freeze([
     run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/ip-retention').purgeExpiredIps(pool),
   },
   {
+    // Wallet links read off the chain (services/chain-poller.js): a run
+    // every 4 seconds, backing off to a minute while the explorer is down,
+    // its cursor the last run's result.
+    name: 'wallet-links', everyMs: 0,
+    run: (ctx: WorkContext, { pool, config }: JobDeps) => legacy('services/chain-poller').poll(config, pool, ctx.input.previous ?? null),
+  },
+  {
+    // The shared limiters' counts past their window
+    // (services/rate-limit-store.js).
+    name: 'rate-limit-retention', everyMs: HOUR,
+    run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/rate-limit-store').prune(pool),
+  },
+  {
     // An agent session's delegated connector grants, a week after their turn.
     name: 'delegation-prune', everyMs: HOUR,
     run: async (_ctx: WorkContext, { pool }: JobDeps) => ({ pruned: await legacy('services/mcp-oauth').pruneDelegations(pool) }),
