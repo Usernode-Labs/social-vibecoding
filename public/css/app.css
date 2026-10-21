@@ -10866,6 +10866,28 @@ html.un-kb #settings-content-col > .settings-sheet {
 @media (min-width: 768px) {
   #settings-content-col > .settings-sheet { margin-top: 0; }
 }
+/* THE SECTION LIST IS A SHEET TOO (UX audit, 20 Oct 2026). It was drawn
+   straight on the strip while the pane rose beside it, so one screen had two
+   kinds of card, and it scrolled away with the screen. It now takes the
+   pane's own surface and top edge (`.dc-lift dc-lift-session` in
+   features/settings/index.tsx), stays put while a long pane scrolls, and
+   when it is taller than the window it scrolls on its own, with "Find a
+   setting" held at its top (settings-nav.tsx). The id outranks `.dc-lift`'s
+   `position: relative`. `top` is the root's `md:pt-5`, so the two sheets'
+   top edges stay level; the fixed height makes the sheet run to the window's
+   foot like the pane, so a short list never ends on a square edge. */
+@media (min-width: 768px) {
+  #settings-sidebar-col {
+    position: sticky;
+    top: 1.25rem;
+    align-self: flex-start;
+    height: calc(100dvh - var(--platform-header-h) - 1.25rem);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+    padding: 10px 8px 32px;
+  }
+}
 .settings-sheet > [data-settings-section] { max-width: 40rem; }
 /* A PAGE shows several parts at once since the settings restructure
    (Account is Profile, Username, Email & recovery, Password and Delete
@@ -23215,6 +23237,23 @@ html.un-kb #platform-parked {
 }
 .workshop-search .messages-search {
   margin: 0;
+}
+/* THE SEARCH SITS A SMALL GAP UNDER THE NEEDS YOU CARD (UX audit, 20 Oct
+   2026). The card's section carried no bottom margin, so the field touched
+   it. Twelve is the gap the chip row already keeps below the search. Only
+   when something heads the list: with no card (or with no loading skeleton
+   in its place) the search keeps the place it had. */
+section + .workshop-search {
+  margin-top: 12px;
+}
+/* THE CHIP ROW FADES WHERE IT IS CUT, the same 2rem fade Home's Discover
+   lane uses on desktop (`.home-discover-rail`). The rail scrolls sideways
+   with its scrollbar hidden, so without a cue a half-visible "Just you" read
+   as the end of the row. `data-more` is set by AudienceChips from its own
+   scroll measurement — on only while a chip is past the right edge. */
+.audience-chips[data-more] {
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 2rem), transparent);
+  mask-image: linear-gradient(to right, #000 calc(100% - 2rem), transparent);
 }
 /* LIT, from the sidebar's search (features/workshop/communities-search.ts),
    until focus leaves it: the place's own tint, so the eye lands on it. */

@@ -5163,6 +5163,19 @@ const App = {
         App.navigateToWorkshop();
         return;
       }
+      if (parts[0] === 'discover') {
+        // Discover's OLD NAME (UX audit, 20 Oct 2026): its own address is
+        // `#apps`, so this is an ALIAS, as `#workshop` is for `#communities`.
+        // Rewrite the address in place before handing off — replaceState
+        // fires no hashchange, so it neither re-routes nor adds a Back step
+        // — and a shared link settles on the canonical address.
+        try {
+          history.replaceState(null, '', '#apps' + (parts[1] ? '/' + parts[1] : ''));
+        } catch (err) { /* non-fatal: navigation below still works */ }
+        App.setChromeless(false);
+        App.navigateToBrowse(parts[1] ? decodeURIComponent(parts[1]) : null);
+        return;
+      }
       if (parts[0] === 'apps') {
         // Browse-all-apps screen (home-screen split). No gate: the list
         // is the visibility-filtered /api/apps payload, and the
@@ -9492,6 +9505,7 @@ App._bootScreenFor = function _bootScreenFor(hash, pathname, signedIn) {
   switch (head) {
     case '': return null;                    // home: the prerender is right
     case 'apps': return 'browse-screen';
+    case 'discover': return 'browse-screen'; // its old name (see restoreFromHash)
     case 'profile': return 'profile-screen';
     case 'settings': return 'settings-screen';
     case 'admin': return 'admin-screen';

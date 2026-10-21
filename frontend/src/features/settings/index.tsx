@@ -147,7 +147,7 @@ export function SettingsScreen() {
               phones get the two-level hierarchy instead (the level-1 menu
               renders into #settings-mobile-menu-host).
           */}
-          <div id="settings-sidebar-col" className="hidden md:block md:w-56 shrink-0">
+          <div id="settings-sidebar-col" className="hidden md:block md:w-56 shrink-0 dc-lift dc-lift-session settings-side-sheet">
             <SettingsNavDesktop />
             {/*
                 Sign out is pinned below the section list rather than buried

@@ -2053,6 +2053,25 @@ test('#apps and #apps/<slug> both route to navigateToBrowse', () => {
     /App\.navigateToBrowse\(parts\[1\] \? decodeURIComponent\(parts\[1\]\) : null\)/);
 });
 
+test('#discover is an alias of #apps, landing on Discover itself', () => {
+  // UX audit, 20 Oct 2026: Discover's own address is #apps, and a typed or
+  // shared #discover matched no branch and fell through to Home. The alias
+  // rewrites the address in place (no Back step, no re-route) and then hands
+  // off to the same navigation, as #workshop does for #communities.
+  const start = APP_SRC.indexOf("parts[0] === 'discover'");
+  assert.ok(start > -1, 'a #discover branch exists');
+  const branch = APP_SRC.slice(start, APP_SRC.indexOf("parts[0] === 'apps'", start));
+  const rewrite = branch.indexOf("history.replaceState(null, '', '#apps'");
+  assert.ok(rewrite > -1, 'the address settles on Discover\'s own');
+  assert.ok(rewrite < branch.indexOf('App.navigateToBrowse'),
+    'the rewrite runs first, so the router lands on the canonical address');
+  assert.match(branch,
+    /App\.navigateToBrowse\(parts\[1\] \? decodeURIComponent\(parts\[1\]\) : null\)/,
+    'and an optional app segment deep-links as #apps/<slug> does');
+  // Its FIRST PAINT is Discover too, not Home for a beat before the router.
+  assert.match(APP_SRC, /case 'discover': return 'browse-screen'/);
+});
+
 test('navigateToBrowse / _exitBrowse follow the screen pattern', () => {
   assert.match(APP_SRC, /navigateToBrowse\(slug\) \{/);
   assert.match(APP_SRC, /_exitBrowse\(\) \{/);
