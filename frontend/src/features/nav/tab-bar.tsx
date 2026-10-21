@@ -288,22 +288,25 @@ function TabBadge({ count, id = 'platform-tabs-badge', label = 'Unread conversat
 }
 
 /**
- * The rail, peeked back over an open app (#2718, desktop only).
+ * The rail, peeked back over a page the viewer folded it away from (#2718,
+ * desktop only).
  *
- * ── The problem, on a laptop ──────────────────────────────────────────
+ * ── The fold, on a laptop ─────────────────────────────────────────────
  *
- * An app covers the rail — "the app is the whole window" is what makes a
- * mini-app feel like a program rather than a page — and the way out is the ✕
- * in the header. That is right on a phone, where the ✕ is under your thumb.
- * On a laptop the pointer is already at the left edge half the time, and the
- * five places you might want are behind a control at the top-left corner and
- * a screen swap.
+ * Folding the rail — the header's toggle — spends no width while you work,
+ * and the way to get it back should not be the same control again, or the
+ * toggle is a door that only opens. So a rail the viewer folded comes BACK on
+ * hover, from the toggle itself (#2764) and from the window's left edge, and
+ * going anywhere from it is ordinary navigation.
  *
- * So the rail comes BACK on hover, over the app, and going anywhere from it
- * leaves the app the way tapping a tab always does. WeChat's floating
- * capsule, a desktop OS's auto-hiding dock and Slack's own collapsed rail are
- * all the same move: the navigation is still there, it is just not spending
- * width while you are working.
+ * ── NOT over a running app ────────────────────────────────────────────
+ *
+ * An app that covers the rail keeps the whole window. It used to bring the
+ * rail back on hover too, but pointing at or near the left edge is something
+ * a person does while working in the app, and a rail sliding over it took the
+ * app's own controls there away with it (#3138). The way out is the ✕ in the
+ * header, as on any app screen. The hot zone is therefore not rendered while
+ * an app covers the rail (see `appOpen` below).
  *
  * ── Why the peek is its own fact ──────────────────────────────────────
  *
@@ -741,8 +744,14 @@ export function PlatformTabs() {
   // TWO WAYS TO HAVE NO RAIL, and they are not the same fact. The ROUTE can
   // say there is none (an app, chromeless, signed out) and the VIEWER can
   // fold the one there is (../header/../nav/sidebar-toggle.tsx). The peek
-  // brings it back over either.
+  // brings back a rail the VIEWER folded; it is not drawn to summon one over
+  // a running app (#3138).
   const collapsed = !visible || !railOpen;
+  // A RUNNING APP THAT COVERS THE RAIL, named from the router's own answer:
+  // `visible` is false for the app view's running screen, true for its
+  // Workshop and for a pinned rail, and false for chromeless and signed-out
+  // shells. The hot zone is left out while this holds (see the render below).
+  const appOpen = screen === 'app-view' && !visible;
   // A peek un-hides the bar without the router having changed its mind, so
   // the class it renders is the OR of the two and the overlay treatment is a
   // second class app.css keys the peeking case off.
@@ -811,28 +820,32 @@ export function PlatformTabs() {
     <>
       {/*
           THE HOT ZONE. A strip at the window's left edge, and the only thing
-          that can start a peek. It renders wherever there is no rail to point
-          at — inside an app, or with the rail folded by hand — and app.css
+          that can start a peek from the edge. It renders where the viewer
+          folded the rail by hand — never over a running app — and app.css
           hides it below the desktop breakpoint, because a phone has no
           pointer to hover with and a hidden touch target at the screen edge
           would eat swipes.
 
-          NOT `collapsed`, and not a bare `screen === 'app-view'` either.
-          `collapsed` is also true on the chromeless and signed-out shells,
-          where there is no rail behind the edge to bring back and a strip
-          that peeked one in would be conjuring navigation out of nothing.
-          And the app view is TWO screens now (#2718 review): on its Workshop
-          the rail is UP, and this strip is `z-index: 39` against the rail's
-          30 — an invisible 18px column down the left edge of the tabs,
-          swallowing the press meant for the one under the pointer.
+          NOT `collapsed`, and not over an app either. `collapsed` is also
+          true on the chromeless and signed-out shells, where there is no
+          rail behind the edge to bring back and a strip that peeked one in
+          would be conjuring navigation out of nothing. And a RUNNING APP
+          (`appOpen`) keeps the whole window (#3138): pointing at or near its
+          left edge is something you do while working in it, and the rail
+          sliding over the app took the app's own controls there away. The way
+          out of an app is the header's ✕.
 
-          So: the app view WITH ITS RAIL DOWN, which is the running app, or a
-          rail the viewer folded anywhere. A folded rail is the running app's
-          arrangement reached another way and the way back has to be the same
-          one, or the toggle is a door that only opens; `!railOpen` implies a
-          rail existed, because the toggle renders only where one does.
+          And the app view is TWO screens (#2718 review): on its Workshop the
+          rail is UP, and this strip is `z-index: 39` against the rail's 30 —
+          an invisible 18px column down the left edge of the tabs, swallowing
+          the press meant for the one under the pointer.
+
+          So: a rail the viewer folded, on a screen that is not a running app.
+          `!railOpen` implies a rail existed, because the toggle renders only
+          where one does. `appOpen` wins over it, so folding before opening an
+          app cannot leave a hot zone over it.
       */}
-      {(screen === 'app-view' && !visible) || !railOpen ? (
+      {!appOpen && !railOpen ? (
         <div
           id="platform-rail-peek"
           className="platform-rail-peek"

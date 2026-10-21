@@ -338,21 +338,27 @@ test('the same five tabs stand up at desktop, and the band goes away', () => {
   assert.match(block, /\.platform-parked-pill \{[\s\S]{0,200}order: -1;/);
 });
 
-test('the rail peeks back over an open app, and reserves nothing while it does', () => {
-  // An app covers the rail, which is what makes it feel like a program
-  // rather than a page, and on a laptop the pointer is already at the left
-  // edge half the time. The navigation comes back on hover and stops
-  // spending width while you work.
+test('a folded rail peeks, and a running app never summons it', () => {
+  // Folding the rail spends no width while you work, and the way back should
+  // not be the same control again. A RUNNING APP is different (#3138): it
+  // keeps the whole window, because pointing at its left edge is something
+  // you do while working in it and a rail sliding over took the app's own
+  // controls away.
   const bar = read('frontend/src/features/nav/tab-bar.tsx');
   assert.match(bar, /id="platform-rail-peek"/, 'a hot zone starts it');
-  // TWO WAYS TO HAVE NO RAIL, and the zone answers both (#2718 review): the
-  // ROUTE can say there is none (an app) and the VIEWER can fold the one
-  // there is (#sidebar-toggle). `!railOpen` rather than the `collapsed` the
-  // class toggle below uses, deliberately — `collapsed` is also true on the
-  // chromeless and signed-out shells, where a strip that peeked a rail in
-  // would be conjuring navigation out of nothing.
-  assert.match(bar, /\(screen === 'app-view' && !visible\) \|\| !railOpen \? \(/,
-    'and it exists where the rail is out of the way, by either route');
+  // A RUNNING APP THAT COVERS THE RAIL, read from the router's own answer.
+  // `visible` is false for the app view's running screen, true for its
+  // Workshop and for a pinned rail, so this names exactly the case the hot
+  // zone must stay out of.
+  assert.match(bar, /const appOpen = screen === 'app-view' && !visible;/,
+    'the running app is named from the visibility the router published');
+  // ONLY A RAIL THE VIEWER FOLDED. `!railOpen` rather than the `collapsed`
+  // the class toggle below uses, deliberately — `collapsed` is also true on
+  // the chromeless and signed-out shells, where a strip that peeked a rail in
+  // would be conjuring navigation out of nothing — and `appOpen` wins over
+  // it, so folding before opening an app cannot leave a hot zone over it.
+  assert.match(bar, /!appOpen && !railOpen \? \(/,
+    'and it exists only for a rail the viewer folded on a platform page');
   // NOT a bare `screen === 'app-view'`: the app view is two screens, and on
   // its Workshop the rail is UP. This strip is `z-index: 39` against the
   // rail's 30, so rendering it there lays an invisible 18px column down the

@@ -20411,13 +20411,13 @@ html.un-kb #platform-parked {
 }
 
 
-/* ── The rail, peeked back over an open app (#2718) ──────────────────
-   frontend/src/features/nav/tab-bar.tsx carries the argument: an app covers
-   the rail, which is what makes it feel like a program rather than a page,
-   and on a laptop the pointer is already at the left edge half the time. The
-   navigation comes back on hover and stops spending width while you work —
-   WeChat's floating capsule, an auto-hiding dock and Slack's own collapsed
-   rail are all this move. */
+/* ── The rail, peeked back over a page it was folded from (#2718) ────
+   frontend/src/features/nav/tab-bar.tsx carries the argument: folding the
+   rail spends no width while you work, and a rail the viewer folded comes
+   back on hover rather than through the same control again. This is a
+   FOLDED rail over a platform page — not a rail over an app, which keeps the
+   whole window and never summons one (#3138) — and the pointer can cross
+   from the edge onto it inside one grace period. */
 
 /* THE HOT ZONE, and the only thing that can start a peek. Narrow enough that
    it never intercepts a pointer heading for the app's own left edge, wide

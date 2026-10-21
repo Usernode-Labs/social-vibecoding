@@ -33,13 +33,16 @@
  * app's rail comes back by pointing at the window's edge instead. The note
  * on the component below says why neither may be a render-time question.
  *
- * ── Collapsed is the app view's state, reached another way ─────────────
+ * ── Collapsed is a platform page's arrangement, reached another way ────
  *
- * Folding the rail puts the shell in exactly the arrangement an open app
- * already produces: no band reserved, the page full width, and the hot zone
- * at the left edge ready to peek it back (features/nav/tab-bar.tsx). That is
- * why this needs no CSS of its own beyond being hidden on a phone — the
- * layout it asks for is one the stylesheet already draws.
+ * Folding the rail puts the shell in a full-width arrangement: no band
+ * reserved, the page full width, and the hot zone at the left edge ready to
+ * peek it back (features/nav/tab-bar.tsx). That is why this needs no CSS of
+ * its own beyond being hidden on a phone — the layout it asks for is one the
+ * stylesheet already draws. A RUNNING APP covers the rail in that same
+ * arrangement, but the hover return does not apply there (#3138): folding
+ * before opening an app still leaves no hot zone over it. The toggle's own
+ * hover peek below is unchanged.
  *
  * ── Pointing at it peeks the folded rail (#2764) ───────────────────────
  *
