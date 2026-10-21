@@ -25,8 +25,7 @@
 // runner left (its heartbeat quiet: its process is gone) is cleaned up and
 // queued again, once. The rows of the trials it runs are kept beating as
 // that runner's were, so an older release's runner, during a rollout, never
-// takes one for its own lost one. While two releases serve, nothing new is
-// granted: an older one's proxy would bill a trial's calls to the author.
+// takes one for its own lost one.
 //
 // workflow-foundation's design-step4-lanes.md is the design.
 
@@ -195,9 +194,7 @@ function decide(s0: Step, f: Facts, ctx: TransitionContext, deps: Deps): Outcome
     .reduce((sum, id) => sum + Math.max(spentSoFar.get(id) || 0, f.estimateCents), 0);
   const skip = new Set<number>();
   let waiting = false;
-  // Two releases serving: nothing new until the rollout is over.
-  if (f.rollout && f.planned.length) waiting = true;
-  for (const p of f.rollout ? [] : f.planned) {
+  for (const p of f.planned) {
     if (running >= deps.concurrency) break;
     if (skip.has(p.evalId) || sessionsBusy.has(p.sessionId)) continue;
     if (f.liveShots.has(p.sessionId)) { waiting = true; continue; }

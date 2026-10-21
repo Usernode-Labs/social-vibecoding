@@ -452,7 +452,7 @@ test('shots evals, end to end (PostgreSQL)', { timeout: 180_000 }, async (t) => 
     // Its agent's turn runs (never returns here); a call the proxy billed it.
     void rt.runServices();
     await new Promise((r) => setTimeout(r, 100));
-    await pool.query('UPDATE shots_eval_trials SET proxy_cents = 12 WHERE id = $1', [trial.id]);
+    await require('../src/workflow/shots-eval/costs.ts').addCost(pool, { trialId: trial.id, attemptId: trial.attempt_id, proxyCents: 12 });
     const out = await evals.cancelRun(pool, launched.eval.id, { platform: platformHere });
     assert.equal(out.ok, true);
     const { rows: [w] } = await pool.query(
@@ -462,8 +462,8 @@ test('shots evals, end to end (PostgreSQL)', { timeout: 180_000 }, async (t) => 
       `SELECT input FROM wf_work WHERE machine = 'shots-eval' AND kind = 'eval.cleanup' AND work_key LIKE $1`, [`cleanup:${trial.id}:%`]);
     assert.equal(cleanup.input.stopTurn, true, 'its turn stopped by its record');
     await settle();
-    const { rows: [ended] } = await pool.query('SELECT state, cost_cents::float8 AS cost, proxy_cents::float8 AS proxy FROM shots_eval_trials WHERE id = $1', [trial.id]);
-    assert.deepEqual(ended, { state: 'cancelled', cost: 12, proxy: 0 }, 'charged once, its bill emptied');
+    const { rows: [ended] } = await pool.query('SELECT state, cost_cents::float8 AS cost FROM shots_eval_trials WHERE id = $1', [trial.id]);
+    assert.deepEqual(ended, { state: 'cancelled', cost: 12 }, 'charged once');
     const { rows: [ev] } = await pool.query('SELECT status, spent_cents::float8 AS spent FROM shots_eval_runs WHERE id = $1', [launched.eval.id]);
     assert.deepEqual(ev, { status: 'cancelled', spent: 12 });
     assert.ok(world.removed.includes(trial.attempt_id));
@@ -648,7 +648,10 @@ test('shots evals, end to end (PostgreSQL)', { timeout: 180_000 }, async (t) => 
     assert.equal(launched.ok, true, JSON.stringify(launched));
     world.restore();
     const before = dispatched.length;
-    world = fakeOutsideWorld({ dispatched, costUsd: 0.01, hold: (options) => pool.query('UPDATE shots_eval_trials SET proxy_cents = $2 WHERE attempt_id = $1', [options.runId, e]) });
+    world = fakeOutsideWorld({ dispatched, costUsd: 0.01, hold: async (options) => {
+      const { rows: [tr] } = await pool.query('SELECT id FROM shots_eval_trials WHERE attempt_id = $1', [options.runId]);
+      await require('../src/workflow/shots-eval/costs.ts').addCost(pool, { trialId: tr.id, attemptId: options.runId, proxyCents: e });
+    } });
     try {
       await lookNow();
       await settle();
@@ -691,58 +694,34 @@ test('shots evals, end to end (PostgreSQL)', { timeout: 180_000 }, async (t) => 
     } finally { c.release(); }
   };
 
-  await t.test('E3: a call reaching any process bills the trial: an older runner\'s turn, a straggler, a trial put back', async () => {
+  await t.test('E3: a call reaching any process bills the trial its owner names: a straggler, a trial put back; a turn nothing owns is no trial\'s', async () => {
     await closeEvals();
     const launched = await evals.launch(pool, CONFIG, { sessionIds: [MERGED_TWO], capUsd: 10 });
     const [trial] = await trialsOf(launched.eval.id);
     await asTransition(pool, `UPDATE shots_eval_trials SET state = 'exploring' WHERE id = $1`, [trial.id]);
-    // An older release's runner's turn: no owner, correlated with the attempt;
-    // on the trial's row, which that runner settles (or this machine, adopting it).
+    // A shots turn nothing owns, correlated with the attempt (what an older
+    // release's runner dispatched): no eval's, so never the platform's to pay.
     await setTurn(MERGED_TWO, { turnId: 't', mode: 'shots', telemetryCorrelationId: trial.attempt_id });
-    const old = await evals.billFor(pool, MERGED_TWO);
-    assert.equal(old?.trialId, trial.id);
-    await old.noteSpend(40);
-    assert.equal((await pool.query('SELECT proxy_cents::float8 AS p FROM shots_eval_trials WHERE id = $1', [trial.id])).rows[0].p, 40);
-    // Correlated with nothing of an eval's: not the eval's.
-    await setTurn(MERGED_TWO, { turnId: 't', mode: 'shots', telemetryCorrelationId: '7'.repeat(32) });
     assert.equal(await evals.billFor(pool, MERGED_TWO), null);
-    // The machine's turn: on its attempt's costs; its end takes the row's too.
+    // The machine's turn: on its attempt's costs, and only those (what an
+    // older runner's proxy left on the trial's row is no one's to charge).
+    await pool.query('UPDATE shots_eval_trials SET proxy_cents = 40 WHERE id = $1', [trial.id]);
     await setTurn(MERGED_TWO, ownedTurn(trial));
     const bill = await evals.billFor(pool, MERGED_TWO);
     await bill.noteSpend(5);
     await settle1(trial);
-    assert.equal((await trialsOf(launched.eval.id))[0].cost, 45);
+    assert.equal((await trialsOf(launched.eval.id))[0].cost, 5);
     // A straggler after its end: what it adds charged at once.
     await bill.noteSpend(5);
-    assert.equal((await trialsOf(launched.eval.id))[0].cost, 50);
-    assert.equal((await evalRow(launched.eval.id)).spent, 50);
+    assert.equal((await trialsOf(launched.eval.id))[0].cost, 10);
+    assert.equal((await evalRow(launched.eval.id)).spent, 10);
     // Put back under a new attempt meanwhile: the old attempt's call is still the trial's.
     await asTransition(pool, `UPDATE shots_eval_trials SET state = 'planned', attempt_id = $2 WHERE id = $1`, [trial.id, '6'.repeat(32)]);
     const again = await evals.billFor(pool, MERGED_TWO);
     assert.equal(again?.trialId, trial.id, 'never the author\'s');
     await again.noteSpend(5);
-    assert.equal((await trialsOf(launched.eval.id))[0].cost, 55);
-    assert.equal((await evalRow(launched.eval.id)).spent, 55);
-    await closeEvals();
-  });
-
-  await t.test('E3c: an older runner\'s call that lands after the machine settled its adopted attempt is charged to it', async () => {
-    await closeEvals();
-    const launched = await evals.launch(pool, CONFIG, { sessionIds: [MERGED_TWO], capUsd: 10 });
-    const [trial] = await trialsOf(launched.eval.id);
-    await asTransition(pool, `UPDATE shots_eval_trials SET state = 'exploring' WHERE id = $1`, [trial.id]);
-    await setTurn(MERGED_TWO, { turnId: 't', mode: 'shots', telemetryCorrelationId: trial.attempt_id });
-    const bill = await evals.billFor(pool, MERGED_TWO);
-    await bill.noteSpend(40);
-    // The machine adopted it and its end settled the attempt, the row's 40 with it.
-    await settle1(trial);
-    assert.equal((await trialsOf(launched.eval.id))[0].cost, 40);
-    // A call already in flight lands now.
-    await bill.noteSpend(5);
-    assert.equal((await trialsOf(launched.eval.id))[0].cost, 45);
-    assert.equal((await evalRow(launched.eval.id)).spent, 45);
-    assert.equal((await pool.query('SELECT proxy_cents::float8 AS p FROM shots_eval_trials WHERE id = $1', [trial.id])).rows[0].p, 0,
-      'nothing left on the row that nobody settles');
+    assert.equal((await trialsOf(launched.eval.id))[0].cost, 15);
+    assert.equal((await evalRow(launched.eval.id)).spent, 15);
     await closeEvals();
   });
 
@@ -901,21 +880,18 @@ test('shots evals, end to end (PostgreSQL)', { timeout: 180_000 }, async (t) => 
     await closeEvals();
   });
 
-  await t.test('E10: while two releases serve, nothing new starts; once one does, it starts', async () => {
+  await t.test('E10: while two releases serve, a trial starts all the same: every release bills its calls to it', async () => {
     await closeEvals();
     const launched = await evals.launch(pool, CONFIG, { sessionIds: [MERGED_TWO], capUsd: 10 });
     await pool.query(`INSERT INTO platform_processes (id, release, state) VALUES ('old-pod', 'a1', 'serving'), ('new-pod', 'b2', 'serving')`);
     try {
       await lookNow();
       await rt.drain();
-      assert.equal((await trialsOf(launched.eval.id))[0].state, 'planned', 'an older release would bill its calls to the author');
-      await pool.query(`DELETE FROM platform_processes WHERE id = 'old-pod'`);
-      await lookNow();
-      await rt.drain();
       assert.equal((await trialsOf(launched.eval.id))[0].state, 'provisioning');
     } finally { await pool.query(`DELETE FROM platform_processes WHERE id IN ('old-pod', 'new-pod')`); }
     await closeEvals();
   });
+
 
   await t.test('E11: what Claude Code reported a dispatch cost is on its attempt\'s costs as it returns', async () => {
     await closeEvals();

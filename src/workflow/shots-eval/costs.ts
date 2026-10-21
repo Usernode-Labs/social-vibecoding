@@ -52,25 +52,18 @@ export async function addCost(q: Queryable, p: { trialId: number; attemptId: str
 }
 
 /**
- * The trial's end settles its attempt: what an older release's runner's
- * proxy put on the trial's row for it moved into the attempt's totals, the
- * attempt marked settled, and the larger total charged (less what was
- * charged for it already). Inside the end's transaction. Resolves what was
- * charged.
+ * The trial's end settles its attempt: the attempt marked settled, and the
+ * larger total charged (less what was charged for it already). Inside the
+ * end's transaction. Resolves what was charged.
  */
 export async function settleAttempt(q: Queryable, p: { trialId: number; attemptId: string }): Promise<number> {
   await q.query(
     `INSERT INTO shots_eval_attempt_costs AS c (attempt_id, trial_id) VALUES ($1, $2)
      ON CONFLICT (attempt_id) DO UPDATE SET trial_id = c.trial_id`, [p.attemptId, p.trialId]);
-  const { rows: [legacy] } = await q.query(
-    `WITH old AS (SELECT id, proxy_cents FROM shots_eval_trials WHERE id = $1 AND attempt_id = $2 FOR UPDATE)
-     UPDATE shots_eval_trials t SET proxy_cents = 0 FROM old WHERE t.id = old.id RETURNING old.proxy_cents::float8 AS cents`,
-    [p.trialId, p.attemptId]);
   const { rows: [c] } = await q.query(
-    `UPDATE shots_eval_attempt_costs
-        SET proxy_cents = proxy_cents + $2::numeric, settled_at = COALESCE(settled_at, NOW())
+    `UPDATE shots_eval_attempt_costs SET settled_at = COALESCE(settled_at, NOW())
       WHERE attempt_id = $1
       RETURNING trial_id, (GREATEST(proxy_cents, reported_cents) - charged_cents)::float8 AS owed`,
-    [p.attemptId, Number(legacy?.cents) || 0]);
+    [p.attemptId]);
   return charge(q, p.attemptId, Number(c.trial_id), Number(c.owed));
 }

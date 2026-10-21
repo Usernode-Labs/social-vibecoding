@@ -15116,11 +15116,11 @@ CREATE TABLE IF NOT EXISTS shots_eval_trials (
     CHECK (state IN ('planned', 'provisioning', 'exploring', 'reviewing', 'verified', 'failed', 'cancelled')),
   CONSTRAINT shots_eval_trials_repetition_check CHECK (repetition BETWEEN 1 AND 3)
 );
--- What the Anthropic proxy billed for a trial an older release's runner
--- runs (during a rollout; that runner settles it itself), on whichever
--- process each call reached (services/shots-eval.js billFor). The shots-eval
--- machine's trials are billed per attempt (shots_eval_attempt_costs); when
--- one ends, what is here for its attempt moves there and is emptied.
+-- What the Anthropic proxy billed for a trial an older release's runner ran.
+-- Nothing writes or reads it: every trial is billed per attempt
+-- (shots_eval_attempt_costs). Kept while the release before roadmap item
+-- 3.2 drains, whose shots-eval machine still reads it (a missing column
+-- would fault its transitions); drop it with the next schema change after.
 ALTER TABLE shots_eval_trials ADD COLUMN IF NOT EXISTS proxy_cents NUMERIC(12,4) NOT NULL DEFAULT 0;
 -- When the shots-eval machine decided a running trial ends (a cancel, a
 -- phase past its time, its row ended elsewhere): its work stops at its next

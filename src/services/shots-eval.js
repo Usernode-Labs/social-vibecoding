@@ -512,50 +512,35 @@ async function storeTrialFiles(pool, trialId, attemptId, slots) {
  * Read from the session's turn record, whichever process the call reaches
  * and whether or not the process that dispatched it is still alive: a shots
  * turn the eval machine's work owns is the attempt its work names, on any
- * attempt of its trial; a shots turn nothing owns, which an older release's
- * runner dispatched (its calls reach a newer process during a rollout), is
- * the trial whose attempt it is correlated with on this session. Any other
- * turn on the session (the proposal's own shots, a person's) is not.
- * Resolves null, or `{ trialId, overCap(extraCents), noteSpend(cents) }`:
- * the cap read from the eval's spend and what its attempts not yet settled
- * have cost. A machine's attempt's calls go on its costs
- * (workflow/shots-eval/costs.ts: one after its end charges only what it
- * adds); an older runner's on the trial's row, which that runner settles,
- * until the machine has settled that attempt (adopting it): then on its
- * costs too.
+ * attempt of its trial. Any other turn on the session (the proposal's own
+ * shots, a person's) is not. Resolves null, or
+ * `{ trialId, overCap(extraCents), noteSpend(cents) }`: the cap read from
+ * the eval's spend and what its attempts not yet settled have cost. The
+ * calls go on the attempt's costs (workflow/shots-eval/costs.ts: one after
+ * its end charges only what it adds).
  */
 async function billFor(pool, sessionId) {
   const { rows: [s] } = await pool.query('SELECT active_turn FROM chat_sessions WHERE id = $1', [Number(sessionId)]);
   let turn = s?.active_turn || null;
   if (typeof turn === 'string') { try { turn = JSON.parse(turn); } catch { turn = null; } }
-  if (!turn || turn.mode !== 'shots') return null;
-  let trialId = null;
-  let attemptId = null;
-  if (turn.owner) {
-    if (turn.owner.machine !== 'shots-eval') return null;
-    const m = /^agent:(\d+):([0-9a-f]{32}):/.exec(String(turn.owner.workKey || ''));
-    if (!m) return null;
-    trialId = Number(m[1]);
-    attemptId = m[2];
-  } else {
-    attemptId = String(turn.telemetryCorrelationId || '');
-    if (!/^[0-9a-f]{32}$/.test(attemptId)) return null;
-  }
+  if (!turn || turn.mode !== 'shots' || !turn.owner) return null;
+  if (turn.owner.machine !== 'shots-eval') return null;
+  const m = /^agent:(\d+):([0-9a-f]{32}):/.exec(String(turn.owner.workKey || ''));
+  if (!m) return null;
+  const trialId = Number(m[1]);
+  const attemptId = m[2];
   const { rows: [t] } = await pool.query(
     `SELECT t.id, r.cap_cents::float8 AS cap,
             (r.spent_cents
              + COALESCE((SELECT SUM(GREATEST(c.proxy_cents, c.reported_cents)) FROM shots_eval_attempt_costs c
                           JOIN shots_eval_trials o ON o.id = c.trial_id
-                         WHERE o.eval_run_id = r.id AND c.settled_at IS NULL), 0)
-             + COALESCE((SELECT SUM(o.proxy_cents) FROM shots_eval_trials o
-                          WHERE o.eval_run_id = r.id AND o.state = ANY($4::text[])), 0))::float8 AS spent
+                         WHERE o.eval_run_id = r.id AND c.settled_at IS NULL), 0))::float8 AS spent
        FROM shots_eval_trials t JOIN shots_eval_runs r ON r.id = t.eval_run_id
-      WHERE ($1::int IS NOT NULL AND t.id = $1) OR ($1::int IS NULL AND t.session_id = $3 AND t.attempt_id = $2)`,
-    [trialId, attemptId, Number(sessionId), ACTIVE_STATES]);
+      WHERE t.id = $1`,
+    [trialId]);
   if (!t) return null;
   const capCents = num(t.cap);
   let spentCents = num(t.spent);
-  const machineTrial = trialId != null;
   return {
     trialId: Number(t.id),
     overCap: (extraCents = 0) => capCents > 0 && spentCents + (Number(extraCents) || 0) > capCents,
@@ -563,34 +548,9 @@ async function billFor(pool, sessionId) {
       const cents = Number(costCents);
       if (!(Number.isFinite(cents) && cents > 0)) return;
       spentCents += cents;
-      if (!machineTrial && await noteOnRow(pool, Number(t.id), attemptId, cents)) return;
       await addCost(pool, { trialId: Number(t.id), attemptId, proxyCents: cents });
     },
   };
-}
-
-// An older release's runner's call, on the trial's row, while that runner
-// (or this machine's end, adopting it) has yet to settle the attempt.
-// Resolves false once the machine has settled it: the call then charges
-// what it adds (addCost). The trial's row is taken first, so an end
-// settling it at the same moment either takes this call with the row's
-// amount or is seen settled here.
-async function noteOnRow(pool, trialId, attemptId, cents) {
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-    await client.query('SELECT 1 FROM shots_eval_trials WHERE id = $1 FOR UPDATE', [trialId]);
-    // (On the row whatever attempt it is on now: the trial's either way.)
-    const { rows: [kept] } = await client.query('SELECT 1 FROM shots_eval_attempt_costs WHERE attempt_id = $1', [attemptId]);
-    if (!kept) await client.query('UPDATE shots_eval_trials SET proxy_cents = proxy_cents + $2::numeric WHERE id = $1', [trialId, cents]);
-    await client.query('COMMIT');
-    return !kept;
-  } catch (err) {
-    await client.query('ROLLBACK').catch(() => {});
-    throw err;
-  } finally {
-    client.release();
-  }
 }
 
 /** What Claude Code reported a dispatch of a trial's attempt cost, on its costs (the eval machine's agent work). */
