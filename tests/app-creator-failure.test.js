@@ -41,11 +41,12 @@ function loadAppCreator({ githubStubs = {}, forkerStubs = {}, app }) {
       if (/SELECT \* FROM apps WHERE id = \$1/.test(sql)) return { rows: [app] };
       return { rows: [], rowCount: 1 };
     },
-    // The repository's turn in line: its advisory lock's client.
-    async connect() {
-      return { query: async (sql, params) => { queries.push({ sql: String(sql), params, client: true }); return { rows: [] }; }, release() {} };
-    },
   };
+  // The repository's turn in line: its advisory lock, on the process's lock
+  // connection (src/db/session-locks.js), recorded.
+  stub(require.resolve('../src/db/session-locks'), {
+    withSessionLock: async (_pool, key, fn) => { queries.push({ lock: key }); return fn(); },
+  });
   stub(ids.logger, { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} });
   stub(ids.github, {
     isEnabled: () => true,
@@ -135,7 +136,7 @@ const queue = require('../src/services/repo-create-queue');
 const { REPO_SLOW_DOWN } = require('../src/services/deploy-failure');
 const slowDown = () => Object.assign(new Error('You have exceeded a secondary rate limit and have been temporarily blocked from content creation. Please retry your request again later.'),
   { status: 403, response: { status: 403, headers: {} } });
-const lockTurns = (queries) => queries.filter((q) => q.client && /pg_advisory_xact_lock/.test(q.sql)).length;
+const lockTurns = (queries) => queries.filter((q) => q.lock && q.lock.extended).length;
 
 test('GitHub\'s secondary limit is waited out: the repository is made on a later turn in line', async () => {
   queue._forTest.setTiming({ gapMs: 0, firstWaitMs: 5, maxWaitMs: 20, budgetMs: 1000 });

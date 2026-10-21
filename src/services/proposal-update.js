@@ -233,58 +233,18 @@ function renameHeadFailure(result, branch) {
 // either loses its own commits or lands on a proposal whose votes were
 // cleared for a revision that no longer exists.
 //
-// Keyed on the SESSION id, on a dedicated client, held across the whole
-// update and released in `finally` — the same shape as
-// external-agent-tasks.js's task lock, and for the same reason: a git fetch
-// and push take seconds of network, and holding a transaction open across
-// that is worse than the race it prevents. Degrades to running unlocked when
-// the pool has no `connect()`, which is never a reason to refuse an update.
-//
-// A writer waiting for it holds no client while it waits: it tries the lock
-// and, refused, gives its client back before it tries again (every revision
-// writer of a proposal takes it, a hand-off upload or build included). A
-// waiter blocked in pg_advisory_lock kept its client, and enough of them
-// left the holder's own queries no client to run on.
-const LOCK_RETRY_MIN_MS = 50;
-const LOCK_RETRY_MAX_MS = 1000;
+// Keyed on the SESSION id, a session advisory lock held across the whole
+// update on the process's lock connection (src/db/session-locks.js), never
+// a pooled one: a git fetch and push take seconds of network, and holding a
+// transaction open across that is worse than the race it prevents. A writer
+// waiting for it holds no connection while it waits (every revision writer of
+// a proposal takes it, a hand-off upload or build included). Degrades to
+// running unlocked when the pool is not a database pool, which is never a
+// reason to refuse an update.
 async function withProposalLock(pool, sessionId, fn) {
   const id = Number(sessionId);
-  if (!Number.isSafeInteger(id) || id <= 0 || !pool || typeof pool.connect !== 'function') {
-    return fn();
-  }
-  let client;
-  for (let wait = LOCK_RETRY_MIN_MS; ; wait = Math.min(LOCK_RETRY_MAX_MS, wait * 2)) {
-    try {
-      client = await pool.connect();
-    } catch (err) {
-      log.warn('proposal-update', 'update lock unavailable, proceeding unlocked', {
-        sessionId: id, err: err.message,
-      });
-      return fn();
-    }
-    let got;
-    try {
-      const { rows: [r] } = await client.query('SELECT pg_try_advisory_lock($1, $2) AS got', [PROPOSAL_UPDATE_LOCK, id]);
-      got = !!(r && r.got);
-    } catch (err) {
-      client.release();
-      log.warn('proposal-update', 'update lock unavailable, proceeding unlocked', {
-        sessionId: id, err: err.message,
-      });
-      return fn();
-    }
-    if (got) break;
-    client.release();
-    await new Promise((resolve) => setTimeout(resolve, wait));
-  }
-  try {
-    return await fn();
-  } finally {
-    try {
-      await client.query('SELECT pg_advisory_unlock($1, $2)', [PROPOSAL_UPDATE_LOCK, id]);
-    } catch { /* releasing the client drops the session lock anyway */ }
-    client.release();
-  }
+  if (!Number.isSafeInteger(id) || id <= 0) return fn();
+  return require('../db/session-locks').withSessionLock(pool, [PROPOSAL_UPDATE_LOCK, id], fn, { unlockedOnError: true });
 }
 
 // The proposal, re-read under the lock. The caller's copy was loaded before

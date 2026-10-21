@@ -545,19 +545,15 @@ function defaultDeps() {
 async function sweep(pool, config, { deps = defaultDeps(), now = Date.now() } = {}) {
   const modeName = mode();
   if (modeName === 'off' || !pool) return { mode: modeName };
-  const client = await pool.connect();
-  let locked = false;
+  // The sweep's lock is on the process's lock connection, never a pooled one:
+  // the sweep queries the pool (src/db/session-locks.js).
+  const locks = require('../db/session-locks');
   try {
-    const { rows: [lock] } = await client.query('SELECT pg_try_advisory_lock(hashtext($1)) AS ok', ['platform-signals']);
-    locked = lock?.ok === true;
-    if (!locked) return { mode: modeName, skipped: true };
-    return await sweepLocked(pool, config, { deps, now, modeName });
+    const out = await locks.ifSessionLockFree(pool, { text: 'platform-signals' }, () => sweepLocked(pool, config, { deps, now, modeName }));
+    return out === locks.BUSY ? { mode: modeName, skipped: true } : out;
   } catch (err) {
     log.warn('platform-signals', 'Sweep failed', { err: err.message });
     return { mode: modeName, error: err.message };
-  } finally {
-    if (locked) await client.query('SELECT pg_advisory_unlock(hashtext($1))', ['platform-signals']).catch(() => {});
-    client.release();
   }
 }
 

@@ -111,8 +111,14 @@ const { PROCESS_PRESENCE_LOCK } = require('../workflow/rules/presence.ts');
 // renamed slug's check and insert, and by services/app-data-retention.js
 // around its re-check and drop.
 const APP_NAME_PURGE_LOCK = 991019;
+// A session's branch made on first use (services/session-lifecycle.js
+// ensureSessionBranch): the CLASSIFIER half of
+// `pg_advisory_lock(classifier, sessionId)`, session-scoped, on the
+// process's lock connection (src/db/session-locks.js), held while GitHub
+// creates the branch, so two first uses make one branch.
+const SESSION_BRANCH_LOCK = 991020;
 
 module.exports = { ADMIN_MUTATION_LOCK, EXTERNAL_TASK_SUBMIT_LOCK, PROPOSAL_UPDATE_LOCK, BUILD_RETENTION_LOCK,
   STAGING_BUILD_LOCK, PRODUCTION_BUILD_LOCK, STAGING_TEMPLATE_LOCK,
   VOTE_DIGEST_LOCK, CHALLENGE_SCORER_LOCK, HOMEROOM_BOT_LOCK, HOMEROOM_BOT_CARDS_LOCK,
-  CHECKS_QUEUE_LOCK, PREVIEW_DOCKER_DEPLOY_LOCK, PROCESS_PRESENCE_LOCK, APP_NAME_PURGE_LOCK };
+  CHECKS_QUEUE_LOCK, PREVIEW_DOCKER_DEPLOY_LOCK, PROCESS_PRESENCE_LOCK, APP_NAME_PURGE_LOCK, SESSION_BRANCH_LOCK };

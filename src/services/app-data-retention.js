@@ -104,23 +104,19 @@ class NameHeldError extends Error {
 // dropped, whatever a read before the lock said. An app created while the
 // lock is held waits for it, then sees the receipt still pending (it is
 // stamped after the lock is released) and is refused.
+//
+// The lock is held as a session lock on the process's lock connection
+// (src/db/session-locks.js), not in a transaction left open on a pooled one
+// while the drop runs; it excludes the trigger's transaction lock on the same
+// key all the same.
 async function underNameLock(pool, { dbName, appId }, step) {
   const { APP_NAME_PURGE_LOCK } = require('./advisory-locks');
-  const client = await pool.connect();
-  let open = false;
-  try {
-    await client.query('BEGIN');
-    open = true;
-    await client.query('SELECT pg_advisory_xact_lock($1::int, hashtext($2::text))', [APP_NAME_PURGE_LOCK, dbName]);
-    const { rows: [r] } = await client.query(NAME_HELD_SQL, [dbName, appId]);
+  const { rows: [k] } = await pool.query('SELECT hashtext($1::text) AS h', [dbName]);
+  await require('../db/session-locks').withSessionLock(pool, [APP_NAME_PURGE_LOCK, Number(k.h)], async () => {
+    const { rows: [r] } = await pool.query(NAME_HELD_SQL, [dbName, appId]);
     if (r?.held) throw new NameHeldError(dbName);
     await step();
-    await client.query('COMMIT');
-    open = false;
-  } finally {
-    if (open) await client.query('ROLLBACK').catch(() => {});
-    client.release();
-  }
+  });
 }
 
 // The three data steps, each recorded. Never throws: the teardown goes on to

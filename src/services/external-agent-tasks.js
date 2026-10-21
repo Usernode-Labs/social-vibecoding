@@ -2477,25 +2477,10 @@ async function appSlugForProposal(pool, proposalId) {
 // pre-existing behaviour, and never a reason to refuse a submission.
 async function withTaskLock(pool, taskId, fn) {
   const id = Number(taskId);
-  if (!Number.isSafeInteger(id) || id <= 0 || typeof pool.connect !== 'function') {
-    return fn();
-  }
-  let client;
-  try {
-    client = await pool.connect();
-  } catch (err) {
-    log.warn('external-agent-tasks', 'submit lock unavailable, proceeding unlocked', { taskId: id, err: err.message });
-    return fn();
-  }
-  try {
-    await client.query('SELECT pg_advisory_lock($1, $2)', [EXTERNAL_TASK_SUBMIT_LOCK, id]);
-    return await fn();
-  } finally {
-    try {
-      await client.query('SELECT pg_advisory_unlock($1, $2)', [EXTERNAL_TASK_SUBMIT_LOCK, id]);
-    } catch { /* the release below drops the session anyway */ }
-    client.release();
-  }
+  if (!Number.isSafeInteger(id) || id <= 0) return fn();
+  // On the process's lock connection, never a pooled one: a waiter there
+  // held its connection while it waited (src/db/session-locks.js).
+  return require('../db/session-locks').withSessionLock(pool, [EXTERNAL_TASK_SUBMIT_LOCK, id], fn, { unlockedOnError: true });
 }
 
 // The caller's most recent open task for one app, so `slug` + `branch` works

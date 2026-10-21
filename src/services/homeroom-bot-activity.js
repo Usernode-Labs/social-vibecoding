@@ -1054,18 +1054,12 @@ function followedRequests(rows) {
 }
 
 /** Run `work` holding the person's catch-up lock, or resolve null when another holds it. */
+// On the process's lock connection, never a pooled one: `work` queries the
+// pool (src/db/session-locks.js).
 async function whileHolding(pool, userId, work) {
-  const client = await pool.connect();
-  let held = false;
-  try {
-    const { rows } = await client.query('SELECT pg_try_advisory_lock($1, $2) AS acquired', [HOMEROOM_BOT_CARDS_LOCK, userId]);
-    held = !!rows[0]?.acquired;
-    if (!held) return null;
-    return await work();
-  } finally {
-    if (held) await client.query('SELECT pg_advisory_unlock($1, $2)', [HOMEROOM_BOT_CARDS_LOCK, userId]).catch(() => {});
-    client.release();
-  }
+  const locks = require('../db/session-locks');
+  const out = await locks.ifSessionLockFree(pool, [HOMEROOM_BOT_CARDS_LOCK, userId], work);
+  return out === locks.BUSY ? null : out;
 }
 
 /**

@@ -55,24 +55,20 @@ function pause(ms, signal = null) {
   });
 }
 
-// The transaction writes nothing: it exists to hold the lock, and ending it
-// lets the next process's task go. A client whose ROLLBACK failed is broken
-// and is dropped rather than returned to the pool.
+// The lock is a session lock on the process's lock connection
+// (src/db/session-locks.js), not a transaction held open on a pooled one: a
+// task takes seconds of GitHub, and a process waiting its turn held a pooled
+// connection all that time. Giving it back lets the next process's task go.
+// The key is the one an older release takes in a transaction, so the two
+// exclude each other.
 async function underLock(pool, task) {
-  const client = await pool.connect();
-  let broken = null;
-  try {
-    await client.query('BEGIN');
-    await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [LOCK_KEY]);
+  return require('../db/session-locks').withSessionLock(pool, { extended: LOCK_KEY }, async () => {
     try {
       return await task();
     } finally {
       await pause(timing.gapMs);
     }
-  } finally {
-    await client.query('ROLLBACK').catch((err) => { broken = err; });
-    client.release(broken || undefined);
-  }
+  });
 }
 
 function inLine(pool, task) {

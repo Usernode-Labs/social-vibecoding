@@ -4985,7 +4985,9 @@ function firstVersionStartedText({ name, hello = false, earlyPlan = false, off =
 async function recordFirstVersion(db, pool, config, { app, user, brief }) {
   const text = normalizeBrief(brief);
   if (!text || !app?.id || !user?.id) return false;
-  const settings = await settingsModule().readSettings(pool);
+  // Read on the caller's transaction connection, never another from the pool
+  // while it holds one (a full pool would wait on itself).
+  const settings = await settingsModule().readSettings(db);
   const botBuilds = hasBot(settings, user);
   const { rows } = await db.query(
     `INSERT INTO homeroom_bot_first_versions (app_id, user_id, brief, bot_builds)

@@ -24,6 +24,21 @@ const path = require('node:path');
 
 const rules = require('../src/services/topochain/challenge-rules');
 const grader = require('../src/services/topochain/challenge-grader');
+// The scorer's lock lives on the process's lock connection
+// (src/db/session-locks.js; tests/session-locks-postgres.test.js runs it).
+// Its stand-in asks the fake pool, which says whether it is held.
+{
+  const locksPath = require.resolve('../src/db/session-locks');
+  const { BUSY } = require(locksPath);
+  require.cache[locksPath] = { id: locksPath, filename: locksPath, loaded: true, exports: {
+    BUSY,
+    ifSessionLockFree: async (pool, key, fn) => {
+      const { rows: [r] } = await pool.query('SELECT pg_try_advisory_lock($1, $2) AS acquired', key);
+      if (!r || r.acquired !== true) return BUSY;
+      try { return await fn(); } finally { await pool.query('SELECT pg_advisory_unlock($1, $2)', key); }
+    },
+  } };
+}
 const scorer = require('../src/services/topochain/challenge-scorer');
 const { anatomy, ON_THE_SPOT_TEXT } = require('../src/services/topochain/challenge-anatomy');
 const { CHALLENGE_SCORER_LOCK } = require('../src/services/advisory-locks');
@@ -306,7 +321,7 @@ test('a counted measure is scored only under the tick\'s lock, and a held lock s
   assert.equal(summary.credits, 1);
   assert.deepEqual(pool.locks, [[CHALLENGE_SCORER_LOCK, 0]], 'the lock the tick plans under');
   assert.deepEqual(pool.unlocks, [[CHALLENGE_SCORER_LOCK, 0]], 'and given back');
-  assert.equal(pool.released, pool.connects, 'every connection it took, the lock\'s included');
+  assert.equal(pool.released, pool.connects, 'every connection the pass took is given back (the lock takes none)');
 
   // Two plans at once could each pay a different "last unit". So when the
   // tick (or another heartbeat) holds the lock, this pass does not run at
@@ -319,8 +334,7 @@ test('a counted measure is scored only under the tick\'s lock, and a held lock s
   assert.equal(busy.seen.includes(scorer.RULE_CHALLENGES_SQL), false, 'nothing is read or planned');
   assert.equal(busy.inserted.length, 0);
   assert.equal(busy.unlocks.length, 0, 'a lock it never took is not released');
-  assert.equal(busy.connects, 1);
-  assert.equal(busy.released, 1, 'the connection is');
+  assert.equal(busy.connects, 0, 'and no pooled connection taken');
 });
 
 test('every door runs the measures it can complete, and only those', () => {
