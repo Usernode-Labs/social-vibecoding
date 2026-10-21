@@ -7939,6 +7939,71 @@ const AppView = {
   },
 
   WORKSHOP_TAB_KEY: 'devWorkshopTab',
+  // #3620: WHICH TAB AN ENTRY WAS SHOWING, in `history.state`.
+  //
+  // A tab press changes what the page shows without changing its address (the
+  // tab is remembered, never written into the URL — see `_workshopTab`). Left
+  // alone, that made the press invisible to the browser's Back button, which
+  // left the page entirely instead of returning to the tab you came from. So
+  // a press pushes one record AT THE SAME ADDRESS and tags it; Back and
+  // Forward land on a record that names its tab, and `_workshopTab` reads it
+  // first. `pushed` says a press put the record there, which is what lets All
+  // items' own back disc spend it instead of adding a second step.
+  WORKSHOP_TAB_STATE_KEY: '__unWorkshopTab',
+  /** The current entry's tab marker, or null when it carries none. */
+  _workshopTabEntry() {
+    try {
+      const state = window.history ? window.history.state : null;
+      const entry = state && typeof state === 'object' ? state[AppView.WORKSHOP_TAB_STATE_KEY] : null;
+      if (!entry || typeof entry !== 'object') return null;
+      if (AppView.WORKSHOP_TABS.indexOf(entry.key) === -1) return null;
+      return { key: entry.key, pushed: entry.pushed === true };
+    } catch { return null; }
+  },
+  /**
+   * Write the tab onto the CURRENT entry, in place. `pushed` is kept: an
+   * entry a press created still owns its step after a door or a lit-tab
+   * press re-tags it.
+   */
+  _noteWorkshopTabEntry(key) {
+    const next = AppView.WORKSHOP_TABS.indexOf(key) !== -1 ? key : 'status';
+    try {
+      const prev = window.history.state;
+      const before = prev && typeof prev === 'object' ? prev[AppView.WORKSHOP_TAB_STATE_KEY] : null;
+      window.history.replaceState({
+        ...(prev && typeof prev === 'object' ? prev : {}),
+        [AppView.WORKSHOP_TAB_STATE_KEY]: { key: next, pushed: !!(before && before.pushed) },
+      }, '');
+    } catch { /* a refused history write leaves the page working in place */ }
+  },
+  /**
+   * A tab press: one new entry at the same address, marked as a press's own
+   * so the page's back disc can spend it. The state is spread, so the back
+   * stack's own keys ride along and a dialog still knows which record it owns.
+   */
+  _pushWorkshopTabEntry(key) {
+    const next = AppView.WORKSHOP_TABS.indexOf(key) !== -1 ? key : 'status';
+    try {
+      const prev = window.history.state;
+      window.history.pushState({
+        ...(prev && typeof prev === 'object' ? prev : {}),
+        [AppView.WORKSHOP_TAB_STATE_KEY]: { key: next, pushed: true },
+      }, '');
+    } catch { /* the tab still switches; it just has no step of its own */ }
+  },
+  /**
+   * Spend the step a tab press opened, for a control that goes back one level
+   * (All items' disc). False when this entry was not put here by a press — a
+   * `?ws=` link, a reload — and the caller should switch in place instead.
+   */
+  _spendWorkshopTabEntry() {
+    const entry = AppView._workshopTabEntry();
+    if (!entry || !entry.pushed) return false;
+    try {
+      window.history.back();
+      return true;
+    } catch { return false; }
+  },
   // `?ws=` resolved once and cached, mirroring `?group=` above — and for the
   // same reason: a declared check runs against an empty localStorage and
   // would otherwise always land on the default tab and assert nothing.
@@ -7966,8 +8031,9 @@ const AppView = {
     AppView._workshopTabUrlOverride = tab;
   },
   /**
-   * Which tab the lander opens on: the deep link, then what you last chose,
-   * then Current status.
+   * Which tab the lander opens on: the tab the history entry you landed on
+   * was showing (#3620), then the deep link, then what you last chose, then
+   * Current status.
    *
    * REMEMBERED, because the three tabs are three different jobs and the one
    * you want is usually the one you wanted last time — somebody working
@@ -7976,6 +8042,10 @@ const AppView = {
    * setting, and the same mechanism the grouping already uses.
    */
   _workshopTab() {
+    // Back and Forward land on a record that carries the tab it showed; that
+    // is where the page reopens. A reload of the same record agrees.
+    const entry = AppView._workshopTabEntry();
+    if (entry) return entry.key;
     const url = AppView._workshopTabParam();
     if (url) return url;
     try {

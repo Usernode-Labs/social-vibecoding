@@ -915,7 +915,7 @@ test('the Needs you row names the communities waiting on you, and the tabs are g
   // #3526: the title counts the votes not yet swiped past; with none new it
   // says how many were skipped, since the row is still the way to them.
   assert.match(src, /title=\{totals\.needs > 0\s*\? `\$\{totals\.needs\} \$\{totals\.needs === 1 \? 'vote' : 'votes'\} waiting on you`\s*: `\$\{totals\.owed\} \$\{totals\.owed === 1 \? 'vote' : 'votes'\} you skipped`\}/);
-  assert.match(src, /onClick=\{\(\) => workshopController\.setTab\('needs'\)\}/, 'the row opens the feed');
+  assert.match(src, /onClick=\{\(\) => workshopController\.openNeeds\(\)\}/, 'the row opens the feed as a history step');
   assert.match(src, /data-workshop-needs-back=""/, 'and the feed has a way back');
   assert.doesNotMatch(src, /—'|'[^'\n]*—[^'\n]*'/, 'no em dash in the screen\'s copy');
 

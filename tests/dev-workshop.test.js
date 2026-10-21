@@ -4001,7 +4001,10 @@ test('the ⋯ asks to be wired when it mounts, because the module wires it befor
   // door back to the hub mounts it from React state, while the module side
   // of the press only persists the choice — nothing re-runs the wiring.
   assert.match(WORKSHOP, /onMore=\{\(\) => openTab\('workshop'\)\}/);
-  assert.match(WORKSHOP, /onBack=\{\(\) => openTab\(pageParent\(tab\)\)\}/);
+  // #3620: All items' disc spends the step a tab press opened, and only a
+  // `?ws=all` bookmark (no step) switches in place.
+  assert.match(WORKSHOP, /onBack=\{backFromPage\}/);
+  assert.match(WORKSHOP, /const backFromPage = \(\) => \{\s*if \(callAppView\('_spendWorkshopTabEntry'\)\) return;\s*openTab\(pageParent\(tab\)\);\s*\};/);
   // Every tab turns the page, Homeroom's Discussion (#general) included (#3494).
   assert.match(WORKSHOP, /const openTab = \(next: TabKey\) => \{\s*setTab\(next\);\s*callAppView\('_setWorkshopTab', next\);/);
   const setTab = APP_VIEW_SRC.slice(APP_VIEW_SRC.indexOf('  _setWorkshopTab(key) {'));
@@ -4730,10 +4733,12 @@ test('the project page opens on the page you last used', () => {
   assert.match(APP_VIEW_SRC, /WORKSHOP_TAB_KEY: 'devWorkshopTab',/);
   const read = /_workshopTab\(\) \{([\s\S]*?)\n  \},/.exec(APP_VIEW_SRC);
   assert.ok(read, '_workshopTab resolves it');
-  // ORDER MATTERS: the deep link wins, then what you chose, then the default.
-  // A declared check runs against an empty localStorage, so `?ws=` losing to
-  // a stored value would make every one of them assert the wrong tab.
-  assert.match(read[1], /const url = AppView\._workshopTabParam\(\);\s*if \(url\) return url;/);
+  // ORDER MATTERS: the history entry you landed on wins (#3620: Back and
+  // Forward reopen the tab they left), then the deep link, then what you
+  // chose, then the default. A declared check runs against an empty
+  // localStorage, so `?ws=` losing to a stored value would make every one of
+  // them assert the wrong tab.
+  assert.match(read[1], /const entry = AppView\._workshopTabEntry\(\);\s*if \(entry\) return entry\.key;\s*const url = AppView\._workshopTabParam\(\);\s*if \(url\) return url;/);
   assert.match(read[1], /localStorage\.getItem\(AppView\.WORKSHOP_TAB_KEY\)/);
   assert.match(read[1], /return 'status';/);
   // And an explicit tap retires the URL override, exactly as the grouping
@@ -4745,7 +4750,7 @@ test('the project page opens on the page you last used', () => {
   // The view model publishes the RESOLVED tab, not the raw parameter.
   assert.match(APP_VIEW_SRC, /tab: AppView\._workshopTab\(\),/);
   assert.match(WORKSHOP, /onOpen=\{\(\) => openTab\('needs'\)\}/);
-  assert.match(WORKSHOP, /onBack=\{\(\) => openTab\(pageParent\(tab\)\)\}/);
+  assert.match(WORKSHOP, /onBack=\{backFromPage\}/);
   // Every tab turns the page, Homeroom's Discussion (#general) included (#3494).
   assert.match(WORKSHOP, /const openTab = \(next: TabKey\) => \{\s*setTab\(next\);\s*callAppView\('_setWorkshopTab', next\);/);
 });

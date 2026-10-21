@@ -3430,8 +3430,28 @@ export function DevWorkshop(): ReactNode {
   const openTab = (next: TabKey) => {
     setTab(next);
     callAppView('_setWorkshopTab', next);
+    // #3620: A TAB PRESS IS A STEP OF ITS OWN. It pushes one record at the
+    // page's own address, tagged with the tab it opens, so Back returns to
+    // the tab you came from and Forward walks it again. The entry being left
+    // is tagged first, so the record Back lands on also knows its tab even
+    // when the press came before this page's first effect ran. A press on
+    // the lit tab adds no step: there is nowhere to go back to.
+    if (next === tab) {
+      callAppView('_noteWorkshopTabEntry', next);
+    } else {
+      callAppView('_noteWorkshopTabEntry', tab);
+      callAppView('_pushWorkshopTabEntry', next);
+    }
     callAppView('_saveFeedScroll', v.slug, 0);
     scrollToHead(hostRef.current);
+  };
+  // ALL ITEMS' WAY BACK IS A STEP, NOT A SECOND ONE (#3620). When a tab press
+  // opened All items, its record is spent, so Back after the disc goes to the
+  // tab before it rather than to All items again. A `?ws=all` bookmark has no
+  // such record, so the disc switches to the Workshop as a new step instead.
+  const backFromPage = () => {
+    if (callAppView('_spendWorkshopTabEntry')) return;
+    openTab(pageParent(tab));
   };
   // ...AND AGAIN WHEN THE PUBLISH LANDS, which is what the seed alone could
   // not do. The seed runs against whatever the store holds AT MOUNT, and that
@@ -3459,6 +3479,15 @@ export function DevWorkshop(): ReactNode {
     const onDoor = (event: Event) => {
       const door = (event as CustomEvent<{ slug: string | null; tab: TabKey } | null>).detail;
       if (!door || (door.slug && door.slug !== v.slug)) return;
+      // #3620: a door pressed while this page is open is a tab press too, so
+      // it takes the same step: one record when it changes the tab, none when
+      // it names the one already showing.
+      if (door.tab === tab) {
+        callAppView('_noteWorkshopTabEntry', door.tab);
+      } else {
+        callAppView('_noteWorkshopTabEntry', tab);
+        callAppView('_pushWorkshopTabEntry', door.tab);
+      }
       setTab(door.tab);
       // #3583: the scroller that is really there (see scrollToHead). AppView
       // has forgotten the offset already (_landOnTab), and a door that goes
@@ -3467,6 +3496,31 @@ export function DevWorkshop(): ReactNode {
     };
     window.addEventListener('usernode:workshop-tab', onDoor);
     return () => window.removeEventListener('usernode:workshop-tab', onDoor);
+  }, [v.slug, tab]);
+  // #3620: every tab or project change tags the entry it is on, which is
+  // what Back and Forward read to reopen the tab they left.
+  useEffect(() => {
+    if (!v.slug) return;
+    callAppView('_noteWorkshopTabEntry', tab);
+  }, [tab, v.slug]);
+  // #3620: BACK AND FORWARD BETWEEN TABS. A traversal onto one of the page's
+  // own records names the tab it showed; apply it here, and only while this
+  // project's page is the one on show. The back stack runs in the capture
+  // phase and stops the popstate a surface consumed, so a dialog over a tab
+  // still closes first.
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+    const onPop = () => {
+      const app = (window as any).App;
+      if (app && (app.currentApp !== v.slug || app.currentTab !== 'dev')) return;
+      const entry = callAppView('_workshopTabEntry') as { key?: TabKey } | null;
+      if (!entry || !entry.key) return;
+      setTab(entry.key);
+      callAppView('_setWorkshopTab', entry.key);
+      scrollToHead(hostRef.current);
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
   }, [v.slug]);
   // ANOTHER PROJECT IN THE SAME PAGE (#3555). Going straight from one
   // project's page to another's keeps the host (#app-view keeps
@@ -3655,7 +3709,7 @@ export function DevWorkshop(): ReactNode {
         <PageBack
           label="Workshop"
           title={pageTitle(tab)}
-          onBack={() => openTab(pageParent(tab))}
+          onBack={backFromPage}
         />
       </div>
     </div>

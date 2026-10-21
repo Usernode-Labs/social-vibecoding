@@ -38,6 +38,7 @@ import { createPortal } from 'react-dom';
 
 import { CheckIcon, PlusIcon, UserGroupIcon } from '@/components/ui/icons';
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
+import { pushDismissible } from '../../lib/back-stack';
 import { adoptKitSurface, type KitAdoption } from '../../lib/kit-surface';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
@@ -338,6 +339,19 @@ function SwitcherMenu(): ReactNode {
 export function CommunitySwitcher(): ReactNode {
   const st = useStoreState(communityScopeStore);
   const wide = useWide();
+  // #3620: BACK CLOSES THE SWITCHER AND LEAVES THE PAGE UNDER IT ALONE. It
+  // used to have no record of its own, so the press first traversed the page
+  // behind it and the route change closed it on the way: Back moved the
+  // screen and shut the menu. While it is open it now claims one press
+  // (lib/back-stack.ts, the same seam dialogs use). Closed any other way, the
+  // claim is handed back as a navigation: a row that goes somewhere leaves
+  // the record under the new entry rather than spending it from an address
+  // that has moved.
+  useEffect(() => {
+    if (!st.switcher) return undefined;
+    const release = pushDismissible(() => { closeSwitcher(); });
+    return () => release({ navigating: true });
+  }, [st.switcher]);
   // A route change closes it: the page it was about has gone.
   useEffect(() => {
     if (!st.switcher) return undefined;

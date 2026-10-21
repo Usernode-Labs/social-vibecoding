@@ -82,7 +82,7 @@
  * class has exactly one owner.
  */
 
-import { useRef, useState, type MouseEvent, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react';
 import { flushSync } from 'react-dom';
 
 import { GroupedList, ListRow, SectionHeader } from '@/components/ui/grouped-list';
@@ -221,6 +221,24 @@ export function tabFromQuery(search: string): TabKey | null {
     return v === 'needs' || v === 'status' ? v : null;
   } catch {
     return null;
+  }
+}
+
+/**
+ * #3620: the Needs you feed's own history marker. The feed is a page of this
+ * screen rather than an address, so the row that opens it pushes one record
+ * at the same address and tags it; Back then returns to the list of your
+ * communities instead of leaving the screen.
+ */
+const NEEDS_STATE_KEY = '__unWorkshopNeeds';
+
+/** Whether the entry the page is standing on opened the Needs you feed. */
+function needsEntry(): boolean {
+  try {
+    const state = window.history.state;
+    return !!(state && typeof state === 'object' && state[NEEDS_STATE_KEY] === true);
+  } catch {
+    return false;
   }
 }
 
@@ -439,6 +457,21 @@ export function WorkshopScreen() {
   };
   useVisibilityHiddenClass(screenRef, 'workshop-screen', false);
   useNeedsSeen();
+  // #3620: BACK FROM THE FEED. A traversal onto the record the Needs you row
+  // pushed reopens the feed; one that lands on a record without the marker
+  // puts the list back. Only while this screen is the one on show: a project
+  // page or a running app has its own popstate handling.
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+    const onPop = () => {
+      const app = (window as any).App;
+      if (!app || !app._inWorkshop || app.currentApp) return;
+      if (needsEntry()) workshopController.setTab('needs');
+      else if (workshopStore.get().tab === 'needs') workshopController.setTab('status');
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
   // ONE PAGE: the list of your projects, with Needs you as a row at its top
   // that opens the feed of votes owed across all of them (`tab: 'needs'`,
   // also reached by `?ws=needs`), and a way back. See the markup below.
@@ -523,7 +556,7 @@ export function WorkshopScreen() {
                 <ListRow
                   as="button"
                   data-workshop-needs-open=""
-                  onClick={() => workshopController.setTab('needs')}
+                  onClick={() => workshopController.openNeeds()}
                   leading={(
                     <span className="app-icon-tile w-11 h-11 shrink-0 rounded-xl flex items-center justify-center bg-violet-50 text-violet-700 dark:bg-violet-950/40 dark:text-violet-300">
                       <SpeechCheckIcon className="w-5 h-5" aria-hidden="true" />
@@ -613,7 +646,7 @@ export function WorkshopScreen() {
                   data-workshop-needs-back=""
                   aria-label="Back to Communities"
                   title="Back to Communities"
-                  onClick={() => workshopController.setTab('status')}
+                  onClick={() => workshopController.closeNeeds()}
                 >
                   <ChevronLeftIcon className="dev-ws-page-back-glyph" aria-hidden="true" />
                 </button>
@@ -627,7 +660,7 @@ export function WorkshopScreen() {
                 across your projects, one per screen, newest first, drawn by
                 a project's own Needs you feed (#3488). See ./needs-reel.tsx. */}
             {state.error ? null : (
-              <NeedsReel items={state.feed} error={state.feedError} capped={state.feedCapped} onDone={() => workshopController.setTab('status')} />
+              <NeedsReel items={state.feed} error={state.feedError} capped={state.feedCapped} onDone={() => workshopController.closeNeeds()} />
             )}
           </div>
         ) : null}
@@ -668,6 +701,36 @@ export const workshopController = {
   /** Show one of the two tabs. */
   setTab(tab: TabKey) {
     workshopStore.set({ tab: tab === 'needs' ? 'needs' : 'status' });
+  },
+  /**
+   * #3620: OPEN THE FEED AS A STEP. One record at the same address, tagged,
+   * so Back returns to the list of your communities. A second press while it
+   * is already showing adds nothing.
+   */
+  openNeeds() {
+    if (workshopStore.get().tab === 'needs') return;
+    try {
+      const prev = window.history.state;
+      window.history.pushState({
+        ...(prev && typeof prev === 'object' ? prev : {}),
+        [NEEDS_STATE_KEY]: true,
+      }, '');
+    } catch { /* no history: the feed still opens in place */ }
+    workshopController.setTab('needs');
+  },
+  /**
+   * The feed's back disc and its Done: spend the record the row pushed, so
+   * the press after it leaves the screen rather than reopening the feed. A
+   * `?ws=needs` link has no record of its own, so it switches in place.
+   */
+  closeNeeds() {
+    if (needsEntry()) {
+      try {
+        window.history.back();
+        return;
+      } catch { /* fall through to switching in place */ }
+    }
+    workshopController.setTab('status');
   },
   async reload() {
     const demo = demoQuery();

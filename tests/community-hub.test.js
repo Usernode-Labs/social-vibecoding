@@ -81,7 +81,7 @@ test('a project page is four tabs, Hub, Discussion, Needs you and Workshop, with
   assert.deepEqual(['needs', 'workshop', 'all', 'discussion'].map(pageTitle), ['Needs you', 'Workshop', 'All items', 'Discussion']);
   // The band on every page; All items adds its way back under it.
   assert.match(LANDER, /const pageBar = tab === 'all' \? \(/);
-  assert.match(LANDER, /<PageBack\s+label="Workshop"\s+title=\{pageTitle\(tab\)\}\s+onBack=\{\(\) => openTab\(pageParent\(tab\)\)\}/);
+  assert.match(LANDER, /<PageBack\s+label="Workshop"\s+title=\{pageTitle\(tab\)\}\s+onBack=\{backFromPage\}/);
   assert.match(LANDER, /\{band\}\s*\{pageBar\}/);
   // The hub's order, as agreed: the hero (who is here, what it is, what you
   // can do, the fortnight), what landed since your last visit, Needs you (a
