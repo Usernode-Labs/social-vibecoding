@@ -746,11 +746,12 @@ app.use(messagesOverviewRoutes(config));
 // version, and its apps / members / merged figures. One cached answer for
 // every viewer, so it sits behind authMiddleware beside the other overviews.
 app.use(platformAboutRoutes(config));
-// The Workshop's placement stage runs when a card arrives on or leaves a
-// board — which every route and service announces through ws.pushSessionUpdate
-// / pushIssueUpdate — on whichever instance handled the change (the row's
-// lease keeps two from racing). Registered on every process for that
-// reason; the daily re-draft is a clock (src/workflow/clock/services.ts).
+// The Workshop's placement stage is owed a pass when a card arrives on or
+// leaves a board — which every route and service announces through
+// ws.pushSessionUpdate / pushIssueUpdate — on whichever instance handled the
+// change: its row's due time, which the workshop-changes clock runs
+// (services/workshop-themes.js). Registered on every process for that
+// reason; the daily re-draft is a clock too (src/workflow/clock/services.ts).
 {
   const workshopThemes = require('./src/services/workshop-themes');
   if (typeof ws.onBoardChange === 'function') {

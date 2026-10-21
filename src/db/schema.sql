@@ -10620,6 +10620,12 @@ ALTER TABLE apps ADD COLUMN IF NOT EXISTS release_stall JSONB;
 --   completedAt  when a completed run finished (ISO)
 --   readAt       when the poller read it (ISO)
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS release_run JSONB;
+-- When the drift clock first saw main at a tip it could not date
+-- (services/release-watch.js firstSeenAt), whose grace runs from then:
+-- { sha, at } (at in epoch ms). Cleared once the running build is main again.
+-- Kept in a process's memory before, so a restart, or looks alternating
+-- between two workflow processes, started the grace again.
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS release_head_seen JSONB;
 
 -- #2684: the Homeroom bot (`homeroom_bot`, a synthetic user) triages open
 -- requests in shadow mode: it reads an issue, its discussion and the app's
@@ -15773,3 +15779,12 @@ CREATE TABLE IF NOT EXISTS waitlist_connect_states (
 );
 CREATE INDEX IF NOT EXISTS idx_waitlist_connect_states_expiry ON waitlist_connect_states (expires_at);
 COMMENT ON TABLE waitlist_connect_states IS 'staging:private';
+
+-- A Workshop pass owed (services/workshop-themes.js): a board change owes
+-- one once the board has been quiet for its debounce since that first
+-- change, a page view owes one now. The workshop-changes clock runs each,
+-- taking it off the row as it starts; a change during a pass owes the next.
+-- It was a timer in each process that heard the change, lost to a restart.
+ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS reconcile_due_at TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS idx_app_workshop_themes_due
+  ON app_workshop_themes (reconcile_due_at) WHERE reconcile_due_at IS NOT NULL;

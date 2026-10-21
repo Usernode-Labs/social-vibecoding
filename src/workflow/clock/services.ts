@@ -636,6 +636,20 @@ export const JOBS: readonly Job[] = Object.freeze([
     },
   },
   {
+    // The Workshop passes a board change or a page view owed (each app's
+    // reconcile_due_at, services/workshop-themes.js), once the board has
+    // been quiet since its first change: each app a target of its own.
+    name: 'workshop-changes', everyMs: 10 * 1000,
+    run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/workshop-themes').changeTargets({ pool, limit: MAX_ITEMS }),
+    item: {
+      concurrency: 2,
+      leaseMs: 5 * MIN,
+      run: (ctx: WorkContext, { pool }: JobDeps) => legacy('services/workshop-themes').changeApp({
+        pool, appId: Number(ctx.input.input?.appId), due: String(ctx.input.input?.due),
+      }),
+    },
+  },
+  {
     // The Workshop's themes: every app opened in the last week re-checked,
     // re-drafted once a day when anything changed. Each app a target.
     name: 'workshop-themes',

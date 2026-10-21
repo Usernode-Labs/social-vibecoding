@@ -6640,15 +6640,18 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       //
       // Folded into what holds the session, the head is still owed a unit
       // suite that really runs (services/unit-suite-reuse.js): a verdict
-      // stored before this press no longer stands for it, so it reads
-      // pending (and merge-blocked) until one does, and once the session is
-      // idle again the owed run starts if nothing has answered it. The stale
-      // sweep, whose scope covers an owed head, re-drives it after a restart.
-      const busyNow = () => isSessionBusyAnywhere(sessionId, { pool });
-      if (await busyNow()) {
-        await require('../services/unit-suite-reuse').owePendingRun({
-          pool, stagingRecovery, config, session, busy: busyNow, head: requestedHead,
-        });
+      // stored before this press no longer stands for it, so the preview
+      // machine stamps it pending (and merge-blocked) until one does
+      // (RecheckFolded), and starts the owed run once nobody works on the
+      // session if nothing has answered it (its ChecksDue).
+      if (await isSessionBusyAnywhere(sessionId, { pool })) {
+        if (requestedHead) {
+          await require('../workflow/platform.ts').recheckFolded({
+            sessionId: Number(session.id), appId: Number(session.app_id), head: String(requestedHead).toLowerCase(),
+          }).catch((err) => {
+            log.warn('sessions', 'Could not stamp a folded recheck pending', { sessionId, err: err.message });
+          });
+        }
         return res.json({ status: 'running' });
       }
       recheckInFlight.add(sessionId);

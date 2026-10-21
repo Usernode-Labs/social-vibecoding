@@ -72,8 +72,6 @@ const topicAttrs = require('./topic-attributes');
 const issueProgress = require('./issue-progress');
 const { countedVotePredicateSql } = require('./pr-vote-revision');
 const { GOVERNANCE_KINDS } = require('./governance-kinds');
-const inflightWork = require('./inflight-work');
-const lifecycle = require('./lifecycle');
 const limits = require('./limits');
 const llm = require('./llm');
 const log = require('./logger');
@@ -114,8 +112,6 @@ const CHANGE_DEBOUNCE_MS = envInt('WORKSHOP_THEMES_DEBOUNCE_MS', 30 * 1000, 1000
 // failure (a model outage, output the sanitiser rejects) could cost one
 // model call per board change. The failure is also what the GET reports.
 const FAILURE_BACKOFF_MS = envInt('WORKSHOP_THEMES_FAILURE_BACKOFF_MS', 5 * 60 * 1000, 30 * 1000);
-// A GET starts a reconcile at most this often per app (per process).
-const GET_KICK_MIN_MS = 60 * 1000;
 // The row-level lease one reconcile holds; a crashed holder's lease lapses.
 const LEASE_INTERVAL = '10 minutes';
 // Cards per placement call.
@@ -643,7 +639,8 @@ function stagingDemoGrouping(input, registry = []) {
 
 const ROW_COLUMNS = `app_id, input_hash, themes_json, placements_json, unplaced_json, source, model,
           generated_at, discovered_at, discovery_key_count, churn_added, churn_removed,
-          last_error, last_failed_at, last_viewed_at, reconcile_started_at,
+          last_error, last_failed_at, last_viewed_at, reconcile_started_at, reconcile_due_at,
+          reconcile_started_at > NOW() - '${LEASE_INTERVAL}'::interval AS reconciling,
           digest_text, digest_json, digest_at, digest_error,
           discovery_version, placement_version, digest_version`;
 
@@ -674,6 +671,10 @@ function shapeRow(r) {
     lastFailedAt: r.last_failed_at || null,
     lastViewedAt: r.last_viewed_at || null,
     reconcileStartedAt: r.reconcile_started_at || null,
+    // A pass owed (reconcile_due_at) or one holding the lease now: what the
+    // page reads as pending, from any process.
+    reconcileDueAt: r.reconcile_due_at || null,
+    reconciling: !!r.reconciling,
     digest: r.digest_text || null,
     // The three windowed lines the lander draws as cards. `digest_text`
     // beside it is the same answer flattened to prose, kept so a row stays
@@ -1510,11 +1511,6 @@ function notify(app, stage) {
 
 // ── The reconcile ─────────────────────────────────────────────────────
 
-// Per process: apps with a reconcile running, and apps a change reached
-// while one was running (they get one more pass when it ends).
-const inFlight = new Set();
-const dirty = new Set();
-
 async function reconcile({ pool, app, reason }) {
   const result = {
     reason: reason || null, skipped: null, discovered: false, replaced: false, placed: 0, none: 0, failed: 0, removed: 0,
@@ -1524,9 +1520,7 @@ async function reconcile({ pool, app, reason }) {
     // The stages this pass re-ran because their prompt version had moved.
     outdated: [],
   };
-  if (inFlight.has(app.id)) { dirty.add(app.id); return { ...result, skipped: 'in-flight' }; }
   if (!llm.isEnabled()) return { ...result, skipped: 'no-model' };
-  inFlight.add(app.id);
   let leased = null;
   try {
     const { input } = await buildThemeInput(pool, app);
@@ -1751,8 +1745,6 @@ async function reconcile({ pool, app, reason }) {
     return { ...result, error: String(err && err.message || err) };
   } finally {
     if (leased) await releaseLease(pool, app.id, leased).catch(() => {});
-    inFlight.delete(app.id);
-    if (dirty.delete(app.id)) noteBoardChange(pool, { appId: app.id, appSlug: app.slug });
   }
 }
 
@@ -1765,35 +1757,75 @@ async function loadApp(pool, { appId, appSlug }) {
   return rows[0] || null;
 }
 
-// A board change (ws.pushSessionUpdate / pushIssueUpdate). One timer per
-// app: a second change inside the quiet period joins the first. Returns
-// whether a reconcile is scheduled. Its timer is not a leader timer, so it
-// says itself what shutdown needs: none starts once shutdown has begun (the
-// hourly sweep or the next change redoes it), and one under way is held in
-// services/inflight-work.js for the drain. Untracked, one ran on after the
-// pool closed at each restart.
-const changeTimers = new Map();
-function noteBoardChange(pool, info) {
-  if (!llm.isEnabled() || !pool || !info) return false;
-  const key = info.appId != null ? `id:${info.appId}` : (info.appSlug ? `slug:${info.appSlug}` : null);
-  if (!key) return false;
-  if (changeTimers.has(key)) return true;
-  const timer = setTimeout(() => {
-    changeTimers.delete(key);
-    if (lifecycle.isShuttingDown()) return;
-    inflightWork.track('workshop-themes:change', () => runChange(pool, info)).catch((err) => {
-      log.warn('workshop-themes', 'change reconcile failed', { key, message: err.message });
-    });
-  }, CHANGE_DEBOUNCE_MS);
-  if (timer.unref) timer.unref();
-  changeTimers.set(key, timer);
-  return true;
+// A board change (ws.pushSessionUpdate / pushIssueUpdate, and a machine's
+// push marked boardChange, in every process that relays it): the app is
+// owed a pass once the board has been quiet for CHANGE_DEBOUNCE_MS from its
+// first change, kept on its row (reconcile_due_at) and run by the
+// workshop-changes clock (changeTargets, changeApp), so a burst — a merge
+// that closes three issues and lands a row — is one placement call. Each
+// process that heard the change writes the same due time. It was a timer per
+// process that heard it: lost to a restart, and one per process. Resolves
+// whether a pass is owed.
+async function noteBoardChange(pool, info) {
+  if (!llm.isEnabled() || !pool || !info || (info.appId == null && !info.appSlug)) return false;
+  try {
+    await pool.query(
+      `INSERT INTO app_workshop_themes (app_id, input_hash, last_viewed_at, reconcile_due_at)
+       SELECT id, '', NOW(), NOW() + make_interval(secs => $3::double precision / 1000) FROM apps
+        WHERE ($1::int IS NOT NULL AND id = $1::int) OR ($1::int IS NULL AND slug = $2::text)
+       ON CONFLICT (app_id) DO UPDATE
+         SET reconcile_due_at = COALESCE(app_workshop_themes.reconcile_due_at, EXCLUDED.reconcile_due_at)`,
+      [info.appId ?? null, info.appSlug || null, CHANGE_DEBOUNCE_MS]
+    );
+    return true;
+  } catch (err) {
+    log.warn('workshop-themes', 'Could not owe a pass for a board change', { appId: info.appId, message: err.message });
+    return false;
+  }
 }
 
-async function runChange(pool, info) {
-  const app = await loadApp(pool, info);
-  if (!app) return null;
-  return reconcile({ pool, app, reason: 'change' });
+// A page view's pass: owed now (it was a reconcile started in the web
+// process that served the view, once a minute per process).
+async function owePassNow(pool, appId) {
+  await pool.query(
+    `UPDATE app_workshop_themes SET reconcile_due_at = LEAST(COALESCE(reconcile_due_at, NOW()), NOW()) WHERE app_id = $1`,
+    [appId]
+  );
+}
+
+// The workshop-changes clock: the apps whose pass is due, each a target.
+async function changeTargets({ pool, limit = SWEEP_MAX_APPS }) {
+  if (!llm.isEnabled()) return { apps: 0, skipped: 'no-model', items: [] };
+  const { rows } = await pool.query(
+    `SELECT app_id, reconcile_due_at::text AS due FROM app_workshop_themes
+      WHERE reconcile_due_at IS NOT NULL AND reconcile_due_at <= NOW()
+      ORDER BY reconcile_due_at LIMIT $1`,
+    [limit]
+  );
+  return { apps: rows.length, items: rows.map((r) => ({ target: `app:${r.app_id}`, input: { appId: Number(r.app_id), due: r.due } })) };
+}
+
+// One target of it: the pass it owes taken off the row (only the one it was
+// listed for: a change since stays owed) and run. A pass another holds the
+// lease for now is owed again shortly, as the change that owed it may be
+// newer than what that pass read.
+async function changeApp({ pool, appId, due }) {
+  const { rowCount } = await pool.query(
+    'UPDATE app_workshop_themes SET reconcile_due_at = NULL WHERE app_id = $1 AND reconcile_due_at = $2::timestamptz',
+    [appId, due]
+  );
+  if (!rowCount) return { skipped: 'not_owed' };
+  const app = await loadApp(pool, { appId });
+  if (!app) return { skipped: 'gone' };
+  const r = await reconcile({ pool, app, reason: 'change' });
+  if (r && r.skipped === 'leased') {
+    await pool.query(
+      `UPDATE app_workshop_themes SET reconcile_due_at = COALESCE(reconcile_due_at, NOW() + make_interval(secs => $2::double precision / 1000))
+        WHERE app_id = $1`,
+      [appId, CHANGE_DEBOUNCE_MS]
+    );
+  }
+  return { discovered: !!(r && r.discovered), skipped: (r && r.skipped) || null, error: (r && r.error) || null };
 }
 
 // The hourly sweep (the `workshop-themes` clock, src/workflow/clock/services.ts):
@@ -1828,21 +1860,12 @@ async function sweepApp({ pool, appId }) {
   return { discovered: !!(r && r.discovered), skipped: (r && r.skipped) || null };
 }
 
-// A GET starts a reconcile at most once a minute per app: the row's own
-// lease and the failure backoff bound the rest.
-const lastKick = new Map();
-function kickAllowed(appId) {
-  const t = lastKick.get(appId) || 0;
-  if (Date.now() - t < GET_KICK_MIN_MS) return false;
-  lastKick.set(appId, Date.now());
-  return true;
-}
-
 // What the route serves. Never waits on the model. With definitions, the
 // themes with their items from the placements, `coverage` counting how
 // much of the board they hold, `unplaced` naming the cards the placer
-// declined, and `pending` when a reconcile is running or was just started
-// (`pendingStage` says which stage). Without definitions, the category
+// declined, and `pending` when a reconcile is running or owed, or this view
+// owed one (`pendingStage` says which stage): the workshop-changes clock
+// runs it, never the process that served the view. Without definitions, the category
 // grouping (or staging's demo) with the same flags.
 async function getThemes({ pool, app }) {
   const { input } = await buildThemeInput(pool, app);
@@ -1870,10 +1893,11 @@ async function getThemes({ pool, app }) {
 
   const hasThemes = !!(row && row.themes.length);
   if (!hasThemes) {
-    let pending = inFlight.has(app.id);
-    if (!pending && enabled && keys.length && !backingOff(row) && kickAllowed(app.id)) {
+    let pending = !!(row && (row.reconciling || row.reconcileDueAt));
+    if (!pending && enabled && keys.length && !backingOff(row)) {
       pending = true;
-      void reconcile({ pool, app, reason: 'get' });
+      await ensureRow(pool, app.id);
+      await owePassNow(pool, app.id);
     }
     if (IS_STAGING && !enabled) {
       return {
@@ -1914,15 +1938,15 @@ async function getThemes({ pool, app }) {
   });
   const replace = !why && versionBehind(row.placementVersion, llm.WORKSHOP_PLACEMENT_VERSION);
   const digestWhy = digestDue(row);
-  let pending = inFlight.has(app.id);
-  // A view starts a pass for anything the row does not know or holds under
+  let pending = !!(row.reconciling || row.reconcileDueAt);
+  // A view owes a pass for anything the row does not know or holds under
   // an older prompt, the paragraph included. It used to wait for unplaced
   // cards or a due draft alone, so a version bump, or a day-old paragraph,
   // reached the page only when the hourly sweep came round.
   const due = pendingCount > 0 || !!why || replace || !!digestWhy;
-  if (!pending && enabled && due && !backingOff(row) && kickAllowed(app.id)) {
+  if (!pending && enabled && due && !backingOff(row)) {
     pending = true;
-    void reconcile({ pool, app, reason: 'get' });
+    await owePassNow(pool, app.id);
   }
   return {
     themes,
@@ -1951,7 +1975,7 @@ module.exports = {
   needsDiscovery, versionBehind, digestDue, digestStale, diffRow, themesWithItems,
   keepPinned, targetOfKey, loadThemeVotes, registryCategories, builtInCategories, syncCategories,
   liveTopicsOf, fixTopics,
-  getCached, getThemes, reconcile, noteBoardChange, sweepTargets, sweepApp, setNotifier,
+  getCached, getThemes, reconcile, noteBoardChange, changeTargets, changeApp, sweepTargets, sweepApp, setNotifier,
   DISCOVERY_MAX_AGE_MS, DIGEST_MAX_AGE_MS, DIGEST_RETRY_MS, DRIFT_RATIO, CHANGE_DEBOUNCE_MS, FAILURE_BACKOFF_MS, PLACEMENT_BATCH,
   // The digest’s own windows, fetched apart from the board snapshot so a
   // week is never a truncated slice of one. DIGEST_WEEK_MAX is the cap it
@@ -1960,9 +1984,4 @@ module.exports = {
   // #3293: the weeks before those two, derived rather than drafted, back to
   // the project's start.
   fetchDigestHistory, historyLine, DIGEST_HISTORY_TITLES,
-  _inFlightForTests: inFlight,
-  _dirtyForTests: dirty,
-  _changeTimersForTests: changeTimers,
-  _lastKickForTests: lastKick,
-  _runChangeForTests: runChange,
 };

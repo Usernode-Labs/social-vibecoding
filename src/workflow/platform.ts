@@ -1495,7 +1495,7 @@ export async function requestRecheck(r: { sessionId: number; appId: number; reas
 }
 
 // A person's "Run checks again" folded into what the session is already
-// doing (services/unit-suite-reuse.js owePendingRun): the machine stamps the
+// doing (routes/sessions.js recheck): the machine stamps the
 // head's stored verdict pending, if it is the head's and not pending already.
 export async function recheckFolded(r: { sessionId: number; appId: number; head: string }): Promise<EventOutcome> {
   return runtime!.appendAndWait(PREVIEW, previewKey(r.sessionId), { type: 'RecheckFolded', payload: { head: r.head, sessionId: r.sessionId } },

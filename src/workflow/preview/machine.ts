@@ -170,8 +170,8 @@ const EVENTS = {
   }),
   ConflictResolved: (p: any) => ({ head: sha(p?.head, 'head') }),
   // A person's "Run checks again" folded into what the session is already
-  // doing (services/unit-suite-reuse.js owePendingRun): the verdict stored
-  // for `head` no longer stands for it.
+  // doing (routes/sessions.js recheck): the verdict stored for `head` no
+  // longer stands for it.
   RecheckFolded: (p: any) => ({ head: sha(p?.head, 'head'), sessionId: optInt(p?.sessionId, 'sessionId') }),
   // The branch moved on to code nothing checks yet (a CLI upload before it
   // is submitted, an update to a paused proposal): the verdict no longer
@@ -833,20 +833,27 @@ function rawTransitions(deps: Deps): Record<string, Record<string, Entry>> {
   // way: the stored verdict of the head they asked about no longer stands
   // for it, so the row reads pending (and merge-blocked) until a run that
   // answers them stores one, as their own run would have stamped it. The
-  // run they are owed starts once the session is idle (owePendingRun), or
-  // from the stale sweep, which re-drives a pending head nothing runs. A
-  // verdict of another head, or one already pending, is left alone.
+  // run they are owed starts once nobody works on the session: its
+  // ChecksDue, looked at every WORKED_RECHECK_MS while somebody does, and at
+  // once when a recorded operation ends. (The route's own poll of the
+  // session in its process's memory, lost to a restart, is gone.) A verdict
+  // of another head, or one already pending, is left alone.
+  // A request whose head has no verdict to stamp (another head's stands, or
+  // it reads pending already) still owes its run: resting, its ChecksDue is
+  // armed.
+  const stampable = (e: Event<any>, f: Facts) => !!f.session && f.session.checks.commitSha === e.payload.head
+    && f.session.checks.state !== 'pending';
+  const resting = (s: Live) => s.name === 'settled' || s.name === 'idle';
   const folded: Entry = {
-    guard: (s, e, f) => (f.session && f.session.checks.commitSha === e.payload.head && f.session.checks.state !== 'pending'
-      ? ok() : reject('nothing_to_stamp')),
-    // The request it owes is run once nobody works there: resting, by its
-    // ChecksDue; a deadline it waits on otherwise (a failed build's retry)
-    // stays.
+    guard: (s, e, f) => (stampable(e, f) || (resting(s) && owedChecks(s, f)) ? ok() : reject('nothing_to_stamp')),
+    // A deadline it waits on otherwise (a failed build's retry) stays.
     to: (s, e, f, ctx) => step({
       name: s.name, data: s.data,
-      writes: [{ type: 'pending', sessionId: s.data.sessionId, head: e.payload.head, phase: null, trigger: 'manual-recheck' }],
-      push: [checksPending(s.data, ctx, e.payload.head, '', 'manual-recheck')],
-      ...(s.name === 'settled' || s.name === 'idle' ? { timer: null } : {}),
+      ...(stampable(e, f) ? {
+        writes: [{ type: 'pending', sessionId: s.data.sessionId, head: e.payload.head, phase: null, trigger: 'manual-recheck' }],
+        push: [checksPending(s.data, ctx, e.payload.head, '', 'manual-recheck')],
+      } : {}),
+      ...(resting(s) ? { timer: { at: new Date(ctx.now.getTime() + WORKED_RECHECK_MS), event: { type: 'ChecksDue' } } } : {}),
     }),
   };
 
@@ -957,10 +964,15 @@ function rawTransitions(deps: Deps): Record<string, Record<string, Entry>> {
       return step({ name: live.name, data: { ...live.data, operations } });
     },
   };
+  // An operation's end: checks owed while it ran (a person's recheck folded
+  // into it) are looked at now rather than at their next ChecksDue.
   const opEnded: Entry = {
     guard: (s, e) => (s.data.operations.some((o: Operation) => o.id === e.payload.id) ? ok() : reject('no_such_operation')),
-    to: (s, e, f) => step({ name: s.name, data: { ...s.data,
-      operations: s.data.operations.filter((o: Operation) => o.id !== e.payload.id && f.alive.has(o.holder)) } }),
+    to: (s, e, f, ctx) => {
+      const next = { name: s.name, data: { ...s.data,
+        operations: s.data.operations.filter((o: Operation) => o.id !== e.payload.id && f.alive.has(o.holder)) } } as Live;
+      return step({ ...next, ...(owedChecks(next, f) ? { timer: { at: ctx.now, event: { type: 'ChecksDue' } } } : {}) });
+    },
   };
   const ops = { OperationStarted: opStarted, OperationEnded: opEnded };
 

@@ -807,6 +807,41 @@ test('preview machine against the full PostgreSQL schema', { timeout: 120000 }, 
     }
   });
 
+  // A person's recheck folded into an operation is owed its run once the
+  // session is free: the operation's end looks at once (ChecksDue now), a
+  // folded request arms it a minute on. The route's own poll of the session
+  // in its process's memory, lost to a restart, is gone.
+  await t.test('P18b checks owed while an operation ran are looked at as it ends', async () => {
+    const s = await proposal(await app(), { pin: SHA('c') });
+    await submit(s, SHA('c'));
+    await settle();
+    assert.equal((await instance(s)).state, 'settled');
+    const live = await pool.connect();
+    await live.query('SELECT pg_advisory_lock($1, hashtext($2) & 2147483647)', [PROCESS_PRESENCE_LOCK, 'p18b-host']);
+    try {
+      await send(s, 'OperationStarted', { sessionId: s.id, id: 'op:p18b', kind: 'sync', holder: 'p18b-host' });
+      await rt.drain();
+      await pool.query('UPDATE chat_sessions SET unit_suite_fresh_sha = $2 WHERE id = $1', [s.id, SHA('c')]);
+      await send(s, 'RecheckFolded', { head: SHA('c'), sessionId: s.id }, { kind: 'route', name: 'manual-recheck' });
+      await rt.drain();
+      let i = await instance(s);
+      assert.equal(i.deadline_event.type, 'ChecksDue');
+      const inMs = new Date(i.deadline_at).getTime() - Date.now();
+      assert.ok(inMs > 50 * 1000 && inMs <= 60 * 1000, `a minute on: ${inMs}`);
+      await send(s, 'OperationEnded', { id: 'op:p18b' });
+      await rt.drain();
+      i = await instance(s);
+      assert.equal(i.deadline_event.type, 'ChecksDue');
+      assert.ok(new Date(i.deadline_at).getTime() <= Date.now(), 'due at once');
+      const before = work.calls.filter((c) => c.kind === WORK.run).length;
+      await rt.fireTimers();
+      await settle();
+      assert.ok(work.calls.filter((c) => c.kind === WORK.run).length > before, 'the owed run started');
+    } finally {
+      live.release(true);
+    }
+  });
+
   await t.test('P19 a retirement retried by an admin still covers every attempt it had', async () => {
     const s = await proposal(await app(), { status: 'active' });
     await submit(s, SHA('1'));

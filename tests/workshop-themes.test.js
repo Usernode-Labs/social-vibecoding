@@ -81,7 +81,14 @@ const llm = require('../src/services/llm');
 const svc = require('../src/services/workshop-themes');
 
 const APP = { id: 7, slug: 'demo', name: 'Demo', repo_url: 'https://github.com/acme/demo' };
-const settle = () => new Promise((r) => setTimeout(r, 10));
+// What a view or a change owed, run as the workshop-changes clock runs it
+// (changeTargets, then changeApp per target): the process that served the
+// view runs nothing itself.
+const settle = async () => {
+  await new Promise((r) => setTimeout(r, 10));
+  const owed = await svc.changeTargets({ pool });
+  for (const it of owed.items || []) await svc.changeApp({ pool, ...it.input });
+};
 const now = () => new Date().toISOString();
 const ago = (ms) => new Date(Date.now() - ms).toISOString();
 
@@ -113,12 +120,43 @@ function freshRow(over) {
 function makeStore(initialRow, extra) {
   const st = { row: initialRow || null, denyLease: false, log: [], extra: extra || [] };
   queryHandler = async (sql, params) => {
+    // A pass owed (reconcile_due_at): by a board change, once the board has
+    // been quiet since its first change; by a view, now; again shortly when
+    // another pass holds the lease.
+    if (/INSERT INTO app_workshop_themes/.test(sql) && /reconcile_due_at/.test(sql)) {
+      st.log.push('due');
+      if (!st.row) st.row = freshRow({ app_id: params[0] ?? 7 });
+      if (!st.row.reconcile_due_at) st.row.reconcile_due_at = new Date(Date.now() + params[2]).toISOString();
+      return { rows: [], rowCount: 1 };
+    }
+    if (/SET reconcile_due_at = LEAST/.test(sql)) {
+      st.log.push('owe');
+      if (st.row) st.row.reconcile_due_at = now();
+      return { rows: [], rowCount: st.row ? 1 : 0 };
+    }
+    if (/SET reconcile_due_at = NULL WHERE app_id = \$1 AND reconcile_due_at = \$2/.test(sql)) {
+      if (!st.row || st.row.reconcile_due_at !== params[1]) return { rows: [], rowCount: 0 };
+      st.row.reconcile_due_at = null;
+      return { rows: [], rowCount: 1 };
+    }
+    if (/SET reconcile_due_at = COALESCE\(reconcile_due_at/.test(sql)) {
+      st.log.push('again');
+      if (st.row && !st.row.reconcile_due_at) st.row.reconcile_due_at = new Date(Date.now() + params[1]).toISOString();
+      return { rows: [], rowCount: 1 };
+    }
+    if (/WHERE reconcile_due_at IS NOT NULL AND reconcile_due_at <= NOW\(\)/.test(sql)) {
+      const due = st.row && st.row.reconcile_due_at && Date.parse(st.row.reconcile_due_at) <= Date.now();
+      return { rows: due ? [{ app_id: st.row.app_id ?? 7, due: st.row.reconcile_due_at }] : [] };
+    }
     if (/INSERT INTO app_workshop_themes/.test(sql)) {
       st.log.push('ensure');
       if (!st.row) st.row = freshRow({ app_id: params[0] });
       return { rows: [] };
     }
-    if (/FROM app_workshop_themes WHERE app_id/.test(sql)) return { rows: st.row ? [st.row] : [] };
+    if (/FROM app_workshop_themes WHERE app_id/.test(sql)) {
+      return { rows: st.row ? [{ ...st.row, reconciling: !!st.row.reconcile_started_at }] : [] };
+    }
+    if (/FROM apps WHERE id = \$1/.test(sql) && !st.extra.some(([re]) => re.test(sql))) return { rows: [APP] };
     if (/SET reconcile_started_at = clock_timestamp\(\)/.test(sql)) {
       st.log.push('lease');
       if (st.denyLease || !st.row) return { rows: [] };
@@ -225,11 +263,6 @@ function boardOf(n) {
 function resetBoard() {
   publicIssues = { issues: [], truncatedList: false };
   attrSummary = new Map();
-  svc._lastKickForTests.clear();
-  svc._inFlightForTests.clear();
-  svc._dirtyForTests.clear();
-  for (const t of svc._changeTimersForTests.values()) clearTimeout(t);
-  svc._changeTimersForTests.clear();
   svc.setNotifier(null);
 }
 
@@ -641,7 +674,6 @@ test('first run: discovery drafts the definitions, placement fills them, the row
     assert.equal(spend.length, 3, 'all three calls are billed to the platform account');
     assert.ok(spend.every((q) => q.params[0] === 999), 'to the platform user');
     assert.deepEqual(notes, [{ appId: 7, appSlug: 'demo', stage: 'discovery' }]);
-    assert.ok(!svc._inFlightForTests.has(APP.id));
   } finally { llm._setClientForTests(prev); resetBoard(); }
 });
 
@@ -756,7 +788,6 @@ test('placement runs in batches, retries what a batch skipped, and a failed batc
     assert.equal(Object.keys(st.row.placements_json).length, svc.PLACEMENT_BATCH);
     assert.match(st.row.last_error, /^placement: batch boom/);
     assert.ok(st.row.last_failed_at, 'and the failure backs off');
-    assert.ok(!svc._inFlightForTests.has(APP.id));
   } finally { llm._setClientForTests(prev); resetBoard(); }
 });
 
@@ -792,7 +823,6 @@ test('a failed discovery keeps the standing categories and lets the rest of the 
       'the version is only stamped by a draft that ran — this row was already current');
     assert.equal(st.row.last_error, 'discovery: discovery boom', 'named as the stage that failed');
     assert.equal(st.row.reconcile_started_at, null, 'the failure releases the lease');
-    assert.ok(!svc._inFlightForTests.has(APP.id));
 
     // …and the rest of the pass ran on the standing categories. This is the
     // whole point: the stages after discovery are no longer hostages to it.
@@ -834,7 +864,7 @@ test('a failed discovery keeps the standing categories and lets the rest of the 
   } finally { llm._setClientForTests(prev); resetBoard(); }
 });
 
-test('one reconcile per app: a held lease skips, a concurrent call marks the app dirty for one more pass', async () => {
+test('one reconcile per app: a held lease skips, and a change it skipped is owed again', async () => {
   boardOf(2);
   const st = makeStore(freshRow({}));
   st.denyLease = true;
@@ -844,23 +874,18 @@ test('one reconcile per app: a held lease skips, a concurrent call marks the app
     const out = await svc.reconcile({ pool, app: APP, reason: 'change' });
     assert.equal(out.skipped, 'leased');
     assert.equal(m.calls.length, 0);
-
+    // A change's pass that finds another holding the lease (in any process)
+    // is owed again shortly: what that pass read may predate the change.
+    st.row.reconcile_due_at = new Date(Date.now() - 1000).toISOString();
+    const [it] = (await svc.changeTargets({ pool })).items;
+    assert.deepEqual(await svc.changeApp({ pool, ...it.input }), { discovered: false, skipped: 'leased', error: null });
+    assert.ok(st.log.includes('again'));
+    assert.ok(Date.parse(st.row.reconcile_due_at) > Date.now(), 'owed again, after the quiet period');
     st.denyLease = false;
-    let release;
-    const gate = new Promise((r) => { release = r; });
-    const slow = makeModel({ themes: [{ name: 'A', anchors: [] }], place: placeAllInto('a') });
-    const create = slow.client.messages.create;
-    slow.client.messages.create = async (p) => { await gate; return create(p); };
-    llm._setClientForTests(slow.client);
-    const first = svc.reconcile({ pool, app: APP, reason: 'change' });
+    st.row.reconcile_due_at = new Date(Date.now() - 1000).toISOString();
     await settle();
-    const second = await svc.reconcile({ pool, app: APP, reason: 'change' });
-    assert.equal(second.skipped, 'in-flight');
-    assert.ok(svc._dirtyForTests.has(APP.id));
-    release();
-    await first;
-    assert.ok(!svc._dirtyForTests.has(APP.id));
-    assert.ok(svc._changeTimersForTests.has(`id:${APP.id}`), 'the dirty app gets one more pass after the quiet period');
+    assert.ok(m.calls.length > 0, 'and run once the lease is free');
+    assert.equal(st.row.reconcile_due_at, null);
   } finally { llm._setClientForTests(prev); resetBoard(); }
 });
 
@@ -870,26 +895,40 @@ test('no model: a reconcile is a no-op', async () => {
   const prev = llm._setClientForTests(null);
   try {
     assert.equal((await svc.reconcile({ pool, app: APP })).skipped, 'no-model');
-    assert.equal(svc.noteBoardChange(pool, { appId: 7 }), false);
+    assert.equal(await svc.noteBoardChange(pool, { appId: 7 }), false);
   } finally { llm._setClientForTests(prev); resetBoard(); }
 });
 
 // ── triggers ─────────────────────────────────────────────────────────
 
-test('a board change is debounced per app, then reconciled for the app the broadcast named', async () => {
+// A board change owes the app a pass on its row, due once the board has been
+// quiet since its first change, which the workshop-changes clock runs. It
+// was a timer in each process that heard the change: lost to a restart, and
+// one per process.
+test('a board change owes the app a pass once the board is quiet, kept on its row, run by the clock', async () => {
   boardOf(1);
   const st = makeStore(freshRow({}), [[/FROM apps WHERE id = \$1/, [APP]]]);
   const m = makeModel({ themes: [{ name: 'A', anchors: [] }], place: placeAllInto('a') });
   const prev = llm._setClientForTests(m.client);
   try {
-    assert.equal(svc.noteBoardChange(pool, { appId: 7, appSlug: 'demo' }), true);
-    assert.equal(svc.noteBoardChange(pool, { appId: 7, appSlug: 'demo' }), true, 'joins the first');
-    assert.equal(svc._changeTimersForTests.size, 1, 'one timer, not two');
-    assert.ok(svc.CHANGE_DEBOUNCE_MS >= 1000);
-    assert.equal(svc.noteBoardChange(pool, {}), false, 'nothing to name');
-    const out = await svc._runChangeForTests(pool, { appId: 7 });
+    assert.equal(await svc.noteBoardChange(pool, { appId: 7, appSlug: 'demo' }), true);
+    const first = st.row.reconcile_due_at;
+    const dueIn = Date.parse(first) - Date.now();
+    assert.ok(dueIn > svc.CHANGE_DEBOUNCE_MS - 1000 && dueIn <= svc.CHANGE_DEBOUNCE_MS, `the quiet period: ${dueIn}`);
+    assert.equal(await svc.noteBoardChange(pool, { appId: 7, appSlug: 'demo' }), true, 'joins the first');
+    assert.equal(st.row.reconcile_due_at, first, 'due from the first change, not pushed back by the next');
+    assert.equal(await svc.noteBoardChange(pool, {}), false, 'nothing to name');
+    const write = queries.filter((q) => /reconcile_due_at = COALESCE\(app_workshop_themes\.reconcile_due_at, EXCLUDED\.reconcile_due_at\)/.test(q.sql));
+    assert.equal(write.length, 2);
+    assert.deepEqual((await svc.changeTargets({ pool })).items, [], 'not before the board is quiet');
+    st.row.reconcile_due_at = new Date(Date.now() - 1000).toISOString();
+    const { items } = await svc.changeTargets({ pool });
+    assert.deepEqual(items.map((i) => i.target), ['app:7']);
+    const out = await svc.changeApp({ pool, ...items[0].input });
     assert.equal(out.discovered, true);
     assert.equal(st.row.discovery_key_count, 1);
+    assert.equal(st.row.reconcile_due_at, null, 'taken off the row as it ran');
+    assert.deepEqual(await svc.changeApp({ pool, ...items[0].input }), { skipped: 'not_owed' }, 'a second item runs nothing');
   } finally { llm._setClientForTests(prev); resetBoard(); }
 });
 
@@ -928,15 +967,14 @@ test('the sweep finds the apps opened in the last week, and each is reconciled a
 
 // ── getThemes: never waits, always answers ───────────────────────────
 
-test('no row and a model: the category grouping, pending, and a discovery kicked off behind it — once a minute', async () => {
+// A view owes a pass (its row's due time, now); the workshop-changes clock
+// runs it. It was a reconcile started in the web process that served the
+// view, once a minute per process.
+test('no row and a model: the category grouping, pending, and a discovery owed behind it, once', async () => {
   publicIssues = { issues: [{ number: 1, title: 'a', updatedAt: '2026-09-01T00:00:00Z' }], truncatedList: false };
   attrSummary = new Map([[1, { category: { top: 'design' } }]]);
   const st = makeStore(null);
-  let release;
-  const gate = new Promise((r) => { release = r; });
   const m = makeModel({ themes: [{ name: 'A', anchors: [] }], place: placeAllInto('a') });
-  const create = m.client.messages.create;
-  m.client.messages.create = async (p) => { await gate; return create(p); };
   const prev = llm._setClientForTests(m.client);
   try {
     const out = await svc.getThemes({ pool, app: APP });
@@ -945,12 +983,12 @@ test('no row and a model: the category grouping, pending, and a discovery kicked
     assert.equal(out.pendingStage, 'discovery');
     assert.equal(out.coverage, null);
     assert.deepEqual(out.themes.map((t) => t.name), ['Design']);
-    assert.ok(svc._inFlightForTests.has(APP.id));
+    assert.equal(m.calls.length, 0, 'the view runs nothing itself');
+    assert.ok(st.row.reconcile_due_at, 'a pass owed now');
     const again = await svc.getThemes({ pool, app: APP });
-    assert.equal(again.pending, true, 'a second read while it runs does not start a second one');
-    release();
+    assert.equal(again.pending, true, 'a second read while it is owed owes no second one');
+    assert.equal(st.log.filter((x) => x === 'owe').length, 1);
     await settle();
-    assert.ok(!svc._inFlightForTests.has(APP.id));
     assert.equal(m.calls.filter((c) => c.kind === 'discovery').length, 1);
     assert.ok(st.row.themes_json.length, 'and the row now has definitions');
   } finally { llm._setClientForTests(prev); resetBoard(); }
@@ -1014,7 +1052,6 @@ test('a row that covers the board is served fresh with no model call; a legacy r
     assert.equal(m.calls.length, 0);
 
     makeStore(freshRow({ themes_json: [{ id: 'l', name: 'Legacy', items: ['issue:1', 'issue:2', 'issue:7'] }], generated_at: ago(1000) }));
-    svc._lastKickForTests.clear();
     const legacy = await svc.getThemes({ pool, app: APP });
     assert.deepEqual(legacy.themes[0].items, ['issue:1', 'issue:2'], 'served from the definitions\' own items');
     assert.equal(legacy.coverage.pending, 0);
@@ -1458,7 +1495,6 @@ test('a view kicks a pass for a paragraph under an older prompt, and for one a d
     assert.deepEqual(m.calls.map((c) => c.kind), ['digest']);
     assert.equal(st.row.digest_text, 'Under the new prompt, written by the model.');
     // A day-old paragraph under the current prompt kicks the same way.
-    svc._lastKickForTests.clear();
     st.row.digest_at = ago(25 * 60 * 60 * 1000);
     const again = await svc.getThemes({ pool, app: APP });
     assert.equal(again.pending, true);
@@ -1466,7 +1502,6 @@ test('a view kicks a pass for a paragraph under an older prompt, and for one a d
     await settle();
     assert.equal(m.calls.length, 2);
     // A current, fresh one does not.
-    svc._lastKickForTests.clear();
     const quiet = await svc.getThemes({ pool, app: APP });
     assert.equal(quiet.pending, false);
     assert.equal(quiet.pendingStage, null);
