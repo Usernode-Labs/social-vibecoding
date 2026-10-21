@@ -1669,9 +1669,15 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // The unit-suite row's new shape folded into the #3978 check on 9000093.
   // 738 leaves 142 slots.
   //
+  // 738 → 739: +1: inside the Homeroom app a signed-out visitor still opens
+  // on the whole story, with Look around first under Continue
+  // (?shot=anon&un-native-webview=1#landing), a route no other check
+  // reaches; the browsers' Discover keeps the landing's own two checks.
+  // 739 leaves 141 slots.
+  //
   // A mismatch says what the count is, what it is pinned at, and what to do
   // (tests/lib/check-cap.js) — it used to print only `812 !== 811`.
-  checkCap.assertPinned(DAPP.tests.length, 738);
+  checkCap.assertPinned(DAPP.tests.length, 739);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
