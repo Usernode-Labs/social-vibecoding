@@ -12312,7 +12312,12 @@ html.in-native-webview.un-android .un-modal.un-in:has(> #create-card) {
 #create-card[data-audience="open"]      .create-who-pill[data-audience-pill="open"],
 #create-card[data-kind="app"]           .create-kind-row[data-kind-pill="app"],
 #create-card[data-mode="new"]           .create-mode-pill[data-mode-pill="new"],
+#create-card[data-mode="template"]      .create-mode-pill[data-mode-pill="template"],
 #create-card[data-mode="import"]        .create-mode-pill[data-mode-pill="import"],
+#create-card[data-template="social"]    .create-template-pill[data-template-pill="social"],
+#create-card[data-template="multimedia"] .create-template-pill[data-template-pill="multimedia"],
+#create-card[data-template="game2d"]    .create-template-pill[data-template-pill="game2d"],
+#create-card[data-template="game3d"]    .create-template-pill[data-template-pill="game3d"],
 #create-card[data-approvers="anyone"]   .create-approver-pill[data-approver-pill="anyone"],
 #create-card[data-approvers="invited"]  .create-approver-pill[data-approver-pill="invited"],
 #create-card[data-approvals="majority"] .create-approvals-pill[data-approvals-pill="majority"],
@@ -12327,7 +12332,12 @@ html.in-native-webview.un-android .un-modal.un-in:has(> #create-card) {
 #create-card[data-audience="open"]      .create-who-pill[data-audience-pill="open"] .create-choice-caption,
 #create-card[data-kind="app"]           .create-kind-row[data-kind-pill="app"] .create-choice-caption,
 #create-card[data-mode="new"]           .create-mode-pill[data-mode-pill="new"] .create-choice-caption,
+#create-card[data-mode="template"]      .create-mode-pill[data-mode-pill="template"] .create-choice-caption,
 #create-card[data-mode="import"]        .create-mode-pill[data-mode-pill="import"] .create-choice-caption,
+#create-card[data-template="social"]    .create-template-pill[data-template-pill="social"] .create-choice-caption,
+#create-card[data-template="multimedia"] .create-template-pill[data-template-pill="multimedia"] .create-choice-caption,
+#create-card[data-template="game2d"]    .create-template-pill[data-template-pill="game2d"] .create-choice-caption,
+#create-card[data-template="game3d"]    .create-template-pill[data-template-pill="game3d"] .create-choice-caption,
 #create-card[data-approvers="anyone"]   .create-approver-pill[data-approver-pill="anyone"] .create-choice-caption,
 #create-card[data-approvers="invited"]  .create-approver-pill[data-approver-pill="invited"] .create-choice-caption {
   color: inherit;
@@ -12353,6 +12363,9 @@ html.in-native-webview.un-android .un-modal.un-in:has(> #create-card) {
   opacity: 0.45;
   cursor: not-allowed;
 }
+
+/* The four starters belong to "Start from a template" alone (#3521). */
+#create-card:not([data-mode="template"]) .create-template-block { display: none; }
 
 /* The repo URL and its check belong to "Import a GitHub repo" alone. */
 #create-card:not([data-mode="import"]) .create-import-block { display: none; }

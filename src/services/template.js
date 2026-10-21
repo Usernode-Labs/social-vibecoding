@@ -92,6 +92,8 @@ const PLATFORM_BASE_URL = `https://${PLATFORM_DOMAIN}`;
 // from it, taken from the one place that defines them so a scaffolded repo
 // can never drift from the server that answers those calls. See #1218 and
 // the long note in services/mcp-connect-constants.js.
+const { starterFor } = require('./app-templates');
+
 const {
   SERVER_NAME: CONNECTOR_SERVER_NAME,
   READ_ONLY_ALLOW_RULES: CONNECTOR_ALLOW_RULES,
@@ -315,11 +317,89 @@ connector registered under some other name.
 // Discover and the project's page show) and the first sentence of
 // CLAUDE.md's About section, so the coding agent starts from the same
 // intent. Absent, both stay as they were.
-function getTemplateFiles(appName, slug, dbUrl, repoUrl = null, { governance = null, description = null } = {}) {
+// `template` is the create screen's starter (#3521), one of the keys in
+// services/app-templates.js. `empty` (and anything unknown on an old or
+// hand-written row) is today's scaffold exactly. A named starter swaps only
+// `public/index.html` and `server.js` for its own screen and API, and names
+// itself in README.md and CLAUDE.md; every other file is the same one every
+// project gets.
+function getTemplateFiles(appName, slug, dbUrl, repoUrl = null, { governance = null, description = null, template = 'empty' } = {}) {
   const canonicalRepoFile = getCanonicalRepoFile(repoUrl);
   const governanceBlock = require('./create-options').governanceBlock(governance);
   const about = typeof description === 'string' && description.trim() ? description.trim() : null;
-  return [
+  const starter = starterFor(template, { appName, slug, forwarder: DEV_CONSOLE_FORWARDER });
+  // The "Starter template" section of CLAUDE.md and the README's own note
+  // name the starter the project began from, and what to replace first.
+  const starterClaude = starter
+    ? `## Starter template
+
+The screen this app currently ships is the **${starter.title}** starter
+template (${starter.caption.charAt(0).toLowerCase() + starter.caption.slice(1)})
+— the demo markup in \`public/index.html\`, the routes in \`server.js\` and
+the tables its bootstrap creates. It is something to start from, not
+product intent.
+
+When the user asks for their first real feature, REPLACE the template
+screen rather than building alongside it:
+
+- remove the \`usernode-starter-notice@1\` block in \`public/index.html\`
+  (both sentinel comments and everything between them),
+- remove or repurpose the starter's screen, its \`/api/...\` routes and the
+  tables its \`server.js\` bootstrap creates, as appropriate,
+- rewrite \`README.md\` to describe the actual app.
+`
+    : `## Starter template
+
+The screen this app currently ships — the hero, the "What's already
+working" card, and the Press! example (the demo markup in
+\`public/index.html\`, the \`/api/press\` and \`/api/leaderboard\` routes, and
+the \`presses\` table bootstrap in \`server.js\`) — is placeholder content
+from the Homeroom starter template, not product intent.
+
+When the user asks for their first real feature, REPLACE the template
+screen rather than building alongside it:
+
+- remove the \`usernode-starter-notice@1\` block in \`public/index.html\`
+  (both sentinel comments and everything between them),
+- remove or repurpose the "Try the example" card, its demo endpoints and
+  the \`presses\` table as appropriate,
+- rewrite \`README.md\` to describe the actual app.
+`;
+  const readmeStarter = starter
+    ? `> **Starter template** — this repo was scaffolded by Homeroom Social
+> Vibecoding from the **${starter.title}** starter: ${starter.caption.charAt(0).toLowerCase() + starter.caption.slice(1)}
+> Everything in it is placeholder example code until the app's first real
+> feature is built.
+
+The starter is a small working app that proves the plumbing works:
+
+- **Sign-in** — the server verifies the platform-issued user token
+  (an RS256 JWT) on every request, so the app already knows who is
+  using it. No accounts to build.
+- **Database** — the app has its own private Postgres database, and the
+  starter's own tables are created at boot in \`server.js\`.
+- **Live API** — the starter's routes read and write through a real
+  Express server.
+- **Styling** — Tailwind CSS, precompiled by \`npm run build\` during
+  image creation with either Kubernetes/Paketo or standalone Docker.
+`
+    : `> **Starter template** — this repo was scaffolded by Homeroom Social
+> Vibecoding. Everything in it is placeholder example code until the
+> app's first real feature is built.
+
+The scaffold is a small working demo that proves the plumbing works:
+
+- **Sign-in** — the server verifies the platform-issued user token
+  (an RS256 JWT) on every request, so the app already knows who is
+  using it. No accounts to build.
+- **Database** — the app has its own private Postgres database; the
+  demo stores button presses in a \`presses\` table.
+- **Live API** — two example routes (\`/api/press\`,
+  \`/api/leaderboard\`) read and write through a real Express server.
+- **Styling** — Tailwind CSS, precompiled by \`npm run build\` during
+  image creation with either Kubernetes/Paketo or standalone Docker.
+`;
+  const files = [
     {
       path: 'CLAUDE.md',
       content: `# ${appName} — notes for Claude Code
@@ -384,21 +464,7 @@ the platform fixes the base commit, and none of this applies.
 
 ## Starter template
 
-The screen this app currently ships — the hero, the "What's already
-working" card, and the Press! example (the demo markup in
-\`public/index.html\`, the \`/api/press\` and \`/api/leaderboard\` routes, and
-the \`presses\` table bootstrap in \`server.js\`) — is placeholder content
-from the Homeroom starter template, not product intent.
-
-When the user asks for their first real feature, REPLACE the template
-screen rather than building alongside it:
-
-- remove the \`usernode-starter-notice@1\` block in \`public/index.html\`
-  (both sentinel comments and everything between them),
-- remove or repurpose the "Try the example" card, its demo endpoints and
-  the \`presses\` table as appropriate,
-- rewrite \`README.md\` to describe the actual app.
-
+${starterClaude}
 Keep the \`usernode-dev-console@1\` forwarder \`<script>\` when rewriting the
 HTML — that block is platform infrastructure, not template content.
 
@@ -436,22 +502,7 @@ dependencies"; etc.)_
       path: 'README.md',
       content: `# ${appName}
 
-> **Starter template** — this repo was scaffolded by Homeroom Social
-> Vibecoding. Everything in it is placeholder example code until the
-> app's first real feature is built.
-
-The scaffold is a small working demo that proves the plumbing works:
-
-- **Sign-in** — the server verifies the platform-issued user token
-  (an RS256 JWT) on every request, so the app already knows who is
-  using it. No accounts to build.
-- **Database** — the app has its own private Postgres database; the
-  demo stores button presses in a \`presses\` table.
-- **Live API** — two example routes (\`/api/press\`,
-  \`/api/leaderboard\`) read and write through a real Express server.
-- **Styling** — Tailwind CSS, precompiled by \`npm run build\` during
-  image creation with either Kubernetes/Paketo or standalone Docker.
-
+${readmeStarter}
 ## Replacing the template
 
 Open the app on Homeroom, tap the Homeroom icon in the header, choose
@@ -989,6 +1040,15 @@ start().catch(err => { console.error(err); process.exit(1); });
 `,
     },
   ];
+  // A named starter replaces the demo screen and its server, and nothing
+  // else: package.json, the Dockerfile, the connector scaffold and the
+  // canonical-repo pointer are the same for every project.
+  if (!starter) return files;
+  return files.map((file) => {
+    if (file.path === 'public/index.html') return { ...file, content: starter.index };
+    if (file.path === 'server.js') return { ...file, content: starter.server };
+    return file;
+  });
 }
 
 function escapeHtml(str) {

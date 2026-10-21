@@ -78,6 +78,8 @@
  * as it was written.
  */
 
+const { TEMPLATE_KEYS, isTemplateKey } = require('./app-templates');
+
 const AUDIENCES = new Set(['solo', 'invited', 'open']);
 const VISIBILITIES = new Set(['public', 'private']);
 const MAX_INVITEES = 20;
@@ -177,12 +179,31 @@ function parseDescription(raw) {
 }
 
 /**
+ * The starter a new project begins from (#3521), one of the keys in
+ * services/app-templates.js. Absent means `empty`, today's scaffold; an
+ * unknown key is refused rather than silently swapped for the empty
+ * starter, because a creator who sent one meant it. An import never takes
+ * one: the repo brings its own code, so a named template sent with it is
+ * refused rather than discarded.
+ */
+function parseTemplate(raw, imported) {
+  if (raw == null) return { template: 'empty' };
+  if (!isTemplateKey(raw)) {
+    return { error: `template must be ${TEMPLATE_KEYS.map((k) => `"${k}"`).slice(0, -1).join(', ')} or "${TEMPLATE_KEYS[TEMPLATE_KEYS.length - 1]}"` };
+  }
+  if (imported && raw !== 'empty') {
+    return { error: 'A GitHub repo brings its own code. Choose a template only for a new project.' };
+  }
+  return { template: raw };
+}
+
+/**
  * Everything POST /api/apps needs to know about who a new project is for.
  * Returns `{ error }` for a 400, otherwise
  * `{ audience, collabVisibility, viewVisibility, invitees, inviteEmails,
- * governance, description }`.
+ * governance, description, template }`.
  */
-function parseCreateOptions(body = {}) {
+function parseCreateOptions(body = {}, { imported = false } = {}) {
   let audience = null;
   let collabVisibility;
   let viewVisibility;
@@ -214,6 +235,9 @@ function parseCreateOptions(body = {}) {
   const desc = parseDescription(body.description);
   if (desc.error) return { error: desc.error };
 
+  const tpl = parseTemplate(body.template, imported);
+  if (tpl.error) return { error: tpl.error };
+
   return {
     audience,
     collabVisibility,
@@ -222,6 +246,7 @@ function parseCreateOptions(body = {}) {
     inviteEmails: mail.emails,
     governance: gov.governance,
     description: desc.description,
+    template: tpl.template,
   };
 }
 

@@ -97,8 +97,32 @@ test('the new repository\'s dapp.json carries a non-default rule, and only then'
   assert.deepEqual(readGovernance(dapp({ approverPolicy: 'invited', approvalsRequired: 3 })),
     { approvers: 'invited', approvals: 3 });
   const creator = fs.readFileSync(path.join(__dirname, '../src/services/app-creator.js'), 'utf8');
-  assert.equal((creator.match(/\{ governance: governanceOf\(appRow\), description: descriptionOf\(appRow\) \}/g) || []).length, 2,
-    'both template paths (GitHub and local) pass the row\'s rule and its line');
+  assert.equal((creator.match(/\{ governance: governanceOf\(appRow\), description: descriptionOf\(appRow\), template: appRow\.template_key \|\| 'empty' \}/g) || []).length, 2,
+    'both template paths (GitHub and local) pass the row\'s rule, its line and its starter');
+});
+
+test('the starter a project begins from: empty by default, five keys, refused on an import', () => {
+  const tpl = (template, opts) => options.parseCreateOptions(
+    { audience: 'solo', ...(template === undefined ? {} : { template }) }, opts);
+  assert.equal(tpl(undefined).template, 'empty', 'Start from scratch is Empty by name');
+  assert.equal(tpl(null).template, 'empty');
+  for (const key of ['empty', 'social', 'multimedia', 'game2d', 'game3d']) {
+    assert.equal(tpl(key).template, key, key);
+  }
+  // A creator who sent one meant it: an unknown key is a 400 naming the keys.
+  assert.match(tpl('Blog').error,
+    /^template must be "empty", "social", "multimedia", "game2d" or "game3d"$/);
+  assert.match(tpl(7).error, /^template must be/);
+  // An import never takes one: the repo brings its own code.
+  assert.equal(tpl('empty', { imported: true }).template, 'empty');
+  assert.match(tpl('social', { imported: true }).error,
+    /^A GitHub repo brings its own code\. Choose a template only for a new project\.$/);
+  // The route writes the key where createApp reads it.
+  const route = fs.readFileSync(path.join(__dirname, '../src/routes/apps.js'), 'utf8');
+  assert.match(route, /INSERT INTO apps \(name, slug, repo_url, created_by, status,\s*collab_visibility, view_visibility, template_key\)/);
+  assert.match(route, /template && template !== 'empty' \? \{ template \}/);
+  const schema = fs.readFileSync(path.join(__dirname, '../src/db/schema.sql'), 'utf8');
+  assert.match(schema, /ALTER TABLE apps ADD COLUMN IF NOT EXISTS template_key VARCHAR\(32\);/);
 });
 
 test('"What is it?" is one optional line, tidied and bounded', () => {

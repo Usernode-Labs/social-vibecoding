@@ -46,10 +46,10 @@ test('creating a project for someone, against the full schema', { timeout: 18000
   const { rows: people } = await pool.query(
     `INSERT INTO users (username, password, has_platform_access, app_quota) VALUES
        ('maker', 'x', TRUE, 10), ('Ada', 'x', TRUE, 2), ('grace', 'x', TRUE, 2), ('other', 'x', TRUE, 10),
-       ('writer', 'x', TRUE, 10), ('mailer', 'x', TRUE, 10)
+       ('writer', 'x', TRUE, 10), ('mailer', 'x', TRUE, 10), ('starter', 'x', TRUE, 10)
      RETURNING id, username`
   );
-  const [maker, ada, grace, other, writer, mailer] = people;
+  const [maker, ada, grace, other, writer, mailer, starter] = people;
   // Ada has an address confirmed on her account; nobody has sam@.
   await pool.query(`UPDATE users SET email = 'ada@example.com', email_confirmed = TRUE WHERE id = $1`, [ada.id]);
   // Mutable: the create limiter allows five an hour per user, so the last
@@ -181,6 +181,23 @@ test('creating a project for someone, against the full schema', { timeout: 18000
     assert.deepEqual(mailed, [{ email: 'sam@example.com', inviter: 'mailer', project: 'Mail club' }]);
     const wrong = await create({ name: 'Mail club two', audience: 'open', inviteEmails: ['sam@example.com'] });
     assert.equal(wrong.status, 400, 'only a group is created with invites');
+  });
+
+  await t.test('the chosen starter is written to the row and reaches the build', async () => {
+    viewer = { id: starter.id, username: starter.username, isAdmin: false, canAdminWrite: false };
+    const res = await create({ name: 'Seed swap list', audience: 'solo', template: 'social' });
+    assert.equal(res.status, 201, JSON.stringify(res.data));
+    assert.equal(res.data.app.template_key, 'social');
+    const { rows } = await pool.query('SELECT template_key FROM apps WHERE id = $1', [res.data.app.id]);
+    assert.equal(rows[0].template_key, 'social', 'the starter is a column on the row');
+    const handed = built.find((row) => row.id === res.data.app.id);
+    assert.equal(handed.template_key, 'social',
+      'the build gets the row, so a Retry after a failed create writes the same starter');
+    const plain = await create({ name: 'Plain one', audience: 'solo' });
+    assert.equal(plain.data.app.template_key, 'empty', 'Start from scratch is the Empty template by name');
+    const imported = await create({ name: 'Imported app', audience: 'solo', repoUrl: 'https://github.com/o/r', template: 'social' });
+    assert.equal(imported.status, 400, 'a repo brings its own code');
+    assert.match(imported.data.error, /A GitHub repo brings its own code\. Choose a template only for a new project\./);
   });
 
   await t.test('an older client\'s body still works, and a bad choice is a 400 before anything exists', async () => {

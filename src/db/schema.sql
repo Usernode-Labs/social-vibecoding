@@ -579,6 +579,12 @@ UPDATE apps SET last_deploy_at = created_at WHERE last_deploy_at IS NULL;
 -- deploy block-on-missing-required check uses it as the source of
 -- truth for "what does this dapp create".
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS manifest_snapshot JSONB;
+-- #3521: the starter a new project began from, one of services/app-templates
+-- .js's TEMPLATE_KEYS. NULL and 'empty' both mean the empty starter (Start
+-- from scratch); the create route writes the chosen key, and createApp passes
+-- it to the template so a Retry after a failed create writes the same starter.
+-- No backfill: every existing project keeps its repository and this stays NULL.
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS template_key VARCHAR(32);
 
 -- #416: detail of the last build/deploy failure so the UI can show a
 -- build log instead of a bare "Error" status. Shape:

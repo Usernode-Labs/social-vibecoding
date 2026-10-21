@@ -22,8 +22,9 @@
  *   approve  who approves changes: members vote, or people you pick (starting
  *            with you), with "at least N yes votes" as a follow-up under the
  *            second. A private or a public community only.
- *   start    how to begin: from scratch, from a template (Soon), or from a
- *            GitHub repo, whose check opens under its row. The check also
+ *   start    how to begin: from scratch, from a template (which opens four
+ *            ready-made starters underneath it), or a GitHub repo, whose
+ *            check opens under its row. The check also
  *            reads the repo's dapp.json, and a notice names each earlier
  *            answer it will replace (name, what it is, who it is for, who
  *            approves); those answers are dimmed.
@@ -126,7 +127,9 @@ import {
 import { normalizeRepositoryUrl } from './repository-url';
 import { useDialog } from './use-dialog';
 
-type Mode = 'new' | 'import';
+type Mode = 'new' | 'template' | 'import';
+/** A named starter (#3521); 'empty' is Start from scratch, not a row. */
+type Template = 'social' | 'multimedia' | 'game2d' | 'game3d';
 type ImportState = 'idle' | 'checking' | 'ok' | 'error';
 /** Who it is for: services/communities.js's audiences, by their internal names. */
 type Audience = 'solo' | 'invited' | 'open';
@@ -261,6 +264,8 @@ export function createBody(answers: {
   /** "What is it?": one optional line. */
   description?: string;
   mode: Mode;
+  /** The starter chosen in template mode, from services/app-templates.js. */
+  template?: Template | null;
   repoUrl?: string;
   audience: Audience;
   invitees?: readonly Invitee[];
@@ -272,7 +277,13 @@ export function createBody(answers: {
 }): Record<string, unknown> {
   const body: Record<string, unknown> = { name: answers.name, audience: answers.audience };
   const importing = answers.mode === 'import';
-  if (importing && answers.repoUrl) body.repoUrl = answers.repoUrl;
+  // Start from scratch is the Empty template by name on the screen; an
+  // import sends nothing, because the repo brings its own code.
+  if (importing) {
+    if (answers.repoUrl) body.repoUrl = answers.repoUrl;
+  } else {
+    body.template = answers.mode === 'template' ? (answers.template ?? 'empty') : 'empty';
+  }
   const description = (answers.description || '').replace(/\s+/g, ' ').trim();
   if (description && !(importing && answers.repo?.description)) body.description = description;
   if (answers.audience === 'invited') {
@@ -339,6 +350,7 @@ interface ShotState {
   audience: Audience | null;
   kind: Kind | null;
   mode: Mode | null;
+  template: Template | null;
   approvers: Approvers | null;
   name: string;
 }
@@ -353,11 +365,12 @@ interface ShotState {
  *   create-approve  A public community, on the approval step
  *   create-start    A public community, on the last step, nothing picked yet
  *   create-import   the last step, importing
+ *   create-template the last step, a template chosen and filled
  *
  * `create-access`, an older link, lands on `create-approve`.
  */
 function shotState(): ShotState {
-  const open: ShotState = { step: 'who', audience: null, kind: null, mode: null, approvers: null, name: '' };
+  const open: ShotState = { step: 'who', audience: null, kind: null, mode: null, template: null, approvers: null, name: '' };
   try {
     const shot = new URLSearchParams(location.search).get('shot');
     const named = { ...open, kind: 'app' as Kind, name: 'Seed swap' };
@@ -366,6 +379,7 @@ function shotState(): ShotState {
     if (shot === 'create-approve' || shot === 'create-access') return { ...named, step: 'approve', audience: 'open' };
     if (shot === 'create-start') return { ...named, step: 'start', audience: 'open', approvers: 'anyone' };
     if (shot === 'create-import') return { ...named, step: 'start', audience: 'solo', mode: 'import' };
+    if (shot === 'create-template') return { ...named, step: 'start', audience: 'solo', mode: 'template', template: 'social' };
     return open;
   } catch {
     return open;
@@ -461,6 +475,18 @@ const WHO: ReadonlyArray<{ key: Audience; title: string; caption: string }> = [
   { key: 'invited', title: 'A private community', caption: 'Private to you and the people you invite.' },
   { key: 'open', title: 'A public community', caption: 'Anyone can find it, join and build.' },
 ];
+
+/** The four ready-made starters, in the order the block lists them (#3521). */
+const TEMPLATES: ReadonlyArray<{ key: Template; title: string; caption: string }> = [
+  { key: 'social', title: 'Social productivity', caption: 'A shared to-do list your group keeps together.' },
+  { key: 'multimedia', title: 'Multimedia social', caption: 'A photo wall: post a picture and a caption.' },
+  { key: 'game2d', title: '2D game', caption: 'A canvas game: collect as many stars as you can in 30 seconds.' },
+  { key: 'game3d', title: '3D game', caption: 'A first-person game: steer through gates drawn in 3D.' },
+];
+
+const TEMPLATE_PILL = 'create-template-pill ' + CARD + ' px-4 py-2.5 text-left w-full flex items-center gap-3 transition-colors';
+/* The starter rows sit under the template row, indented against a rule. */
+const TEMPLATE_BLOCK = 'create-template-block flex flex-col gap-2 pl-3 border-l-2 border-zinc-200 dark:border-zinc-700';
 
 function WhoGlyph({ audience }: { audience: Audience }) {
   const cls = 'w-5 h-5 shrink-0 opacity-80';
@@ -743,6 +769,7 @@ export function CreateAppDialog() {
   const [approvals, setApprovals] = useState<Approvals | null>(null);
   const [approvalsN, setApprovalsN] = useState(1);
   const [mode, setMode] = useState<Mode | null>(null);
+  const [template, setTemplate] = useState<Template | null>(null);
   const [step, setStep] = useState<Step>('who');
   const [importState, setImportState] = useState<ImportState>('idle');
   const [repo, setRepo] = useState<RepoManifest | null>(null);
@@ -777,7 +804,10 @@ export function CreateAppDialog() {
       case 'kind': return kind != null;
       case 'details': return name.trim().length > 0;
       case 'approve': return approvers != null && (approvers !== 'invited' || approvals != null);
-      case 'start': return mode != null && (mode !== 'import' || importState === 'ok');
+      case 'start':
+        return mode != null
+          && (mode !== 'import' || importState === 'ok')
+          && (mode !== 'template' || template != null);
       default: return false;
     }
   }
@@ -795,6 +825,7 @@ export function CreateAppDialog() {
       setAudience(initial.audience);
       setKind(initial.kind);
       applyMode(initial.mode);
+      setTemplate(initial.template);
       setApprovers(initial.approvers);
       setStep(initial.step);
       if (nameRef.current) nameRef.current.value = initial.name;
@@ -809,6 +840,7 @@ export function CreateAppDialog() {
       formRef.current?.reset();
       setError('');
       applyMode(null);
+      setTemplate(null);
       setAudience(null);
       setPeople([]);
       setKind(null);
@@ -879,6 +911,17 @@ export function CreateAppDialog() {
     if (step !== 'start' || next === mode) return;
     applyMode(next);
     if (next === 'import') setTimeout(() => urlRef.current?.focus(), 0);
+  }
+
+  /**
+   * Pressing a starter in the template block picks it. It also brings the
+   * answer back to Start from a template if another mode was selected, so
+   * the block is never a fill with nothing behind it.
+   */
+  function chooseTemplate(next: Template) {
+    if (step !== 'start') return;
+    if (mode !== 'template') applyMode('template');
+    setTemplate(next);
   }
 
   /** Move one step along, once this one is answered. */
@@ -995,6 +1038,7 @@ export function CreateAppDialog() {
       name: trimmed,
       description: describeRef.current?.value || '',
       mode,
+      template,
       repoUrl,
       audience: audience ?? 'solo',
       invitees: people,
@@ -1050,6 +1094,7 @@ export function CreateAppDialog() {
   // row wears the fill on arrival.
   const answers = {
     'data-mode': mode ?? '',
+    'data-template': template ?? '',
     'data-import-state': importState,
     'data-step': step,
     'data-audience': audience ?? '',
@@ -1077,7 +1122,7 @@ export function CreateAppDialog() {
         {created ? (
           <CreateProgress
             appName={created.name}
-            mode={mode ?? 'new'}
+            mode={mode === 'import' ? 'import' : 'new'}
             surface="pane"
             progress={progress}
             openLabel="Open project"
@@ -1363,10 +1408,11 @@ export function CreateAppDialog() {
             </div>
           </div>
           {/*
-              LAST: how to begin. From scratch; from a template, which is
-              coming; or from a GitHub repo, whose URL and Check open under
-              its row. The check also reads the repo's dapp.json, and the
-              notice under it names each earlier answer the repo replaces.
+              LAST: how to begin. From scratch; from a template, whose four
+              starters open underneath it; or from a GitHub repo, whose URL
+              and Check open under its row. The check also reads the repo's
+              dapp.json, and the notice under it names each earlier answer the
+              repo replaces.
           */}
           <div data-create-step="start" className="space-y-2" ref={lastStepRef}>
             <p className={STEP_HEADING}>{`${numberOf('start')}. How do you want to start?`}</p>
@@ -1382,12 +1428,44 @@ export function CreateAppDialog() {
                 <span className={CHOICE_CAPTION}>An empty app. Describe what you want and build it with the group.</span>
               </span>
             </button>
-            <div className={SOON} data-mode-pill="template" aria-disabled="true">
+            <button
+              type="button"
+              data-mode-pill="template"
+              aria-pressed={mode === 'template'}
+              className={CHOICE}
+              onClick={() => chooseStart('template')}
+            >
               <span className="min-w-0 flex-1">
                 <span className={CHOICE_TITLE}>Start from a template</span>
-                <span className={CHOICE_CAPTION}>A ready-made app to make your own.</span>
+                <span className={CHOICE_CAPTION}>
+                  {mode === 'template' && template
+                    ? TEMPLATES.find((t) => t.key === template)?.title
+                    : 'A ready-made app to make your own.'}
+                </span>
               </span>
-              <span className={SOON_TAG}>Soon</span>
+            </button>
+            {/*
+                The four starters. They show only while Start from a template
+                is chosen (app.css folds the block off data-mode), and pressing
+                one fills it: the chosen starter is the app the project begins
+                from.
+            */}
+            <div className={TEMPLATE_BLOCK}>
+              {TEMPLATES.map((t) => (
+                <button
+                  key={t.key}
+                  type="button"
+                  data-template-pill={t.key}
+                  aria-pressed={mode === 'template' && template === t.key}
+                  className={TEMPLATE_PILL}
+                  onClick={() => chooseTemplate(t.key)}
+                >
+                  <span className="min-w-0 flex-1">
+                    <span className={CHOICE_TITLE}>{t.title}</span>
+                    <span className={CHOICE_CAPTION}>{t.caption}</span>
+                  </span>
+                </button>
+              ))}
             </div>
             <button
               type="button"
