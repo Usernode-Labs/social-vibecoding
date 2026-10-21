@@ -3919,10 +3919,6 @@
     "text": "test",
     "description": "Stands in for a unit test's name above its captured error text in a proposal's check results, when the test has no name. A noun, lower case."
   },
-  "verdict.row.unnamedTestLong": {
-    "text": "unnamed test",
-    "description": "Stands in for a unit test's name in a proposal's check results when the test has no name. Lower case."
-  },
   "checks.baseNote.these.agoConflict_one": {
     "text": "These ran against main as it was {{count}} commit ago, so they describe code this proposal would no longer merge into. It now conflicts with main; resolving the conflict re-runs them on the resolved commit.",
     "description": "Note under a proposal's check results when they were earned against an older state of the main line of code. \"These\" and \"they\" are the check results. \"main\" is the name of the project's main line of code and stays as it is. {{count}} is how many commits main has gained since. The proposal now conflicts with main."
@@ -8611,13 +8607,41 @@
     "text": "Its checks were skipped.",
     "description": "One sentence of the line under the figure on the Testing card of a change's page when the change's automated checks did not run."
   },
-  "page.testing.note.checksFailed_one": {
-    "text": "{{count}} check failed.",
-    "description": "One sentence of the line under the figure on the Testing card of a change's page: {{count}} is how many automated checks failed."
+  "page.testing.lead.tests_one": {
+    "text": "One of the app’s tests failed.",
+    "description": "First sentence on the Testing card of a change's page when the app's own automated tests found a problem with the change. It is followed by a sentence saying what went wrong. {{count}} is how many tests failed; English spells out the singular, and a language whose singular form is also used for 21 or 101 should print {{count}}."
   },
-  "page.testing.note.checksFailed_other": {
-    "text": "{{count}} checks failed.",
-    "description": "One sentence of the line under the figure on the Testing card of a change's page: {{count}} is how many automated checks failed."
+  "page.testing.lead.tests_other": {
+    "text": "{{count}} of the app’s tests failed.",
+    "description": "First sentence on the Testing card of a change's page when the app's own automated tests found a problem with the change. It is followed by a sentence saying what went wrong. {{count}} is how many tests failed."
+  },
+  "page.testing.lead.checks_one": {
+    "text": "One of the app’s checks failed.",
+    "description": "First sentence on the Testing card of a change's page when the app's automated checks found a problem with the change. It is followed by a sentence saying what went wrong. {{count}} is how many checks failed; English spells out the singular, and a language whose singular form is also used for 21 or 101 should print {{count}}."
+  },
+  "page.testing.lead.checks_other": {
+    "text": "{{count}} of the app’s checks failed.",
+    "description": "First sentence on the Testing card of a change's page when the app's automated checks found a problem with the change. It is followed by a sentence saying what went wrong. {{count}} is how many checks failed."
+  },
+  "page.testing.why.testSaid": {
+    "text": "The test “{{test}}” failed with: {{said}}",
+    "description": "Second sentence on the Testing card of a change's page, saying what went wrong while a plain explanation is not available: the failing automated test and the message it failed with. {{test}} is the test's name and {{said}} its message, both as the app's code wrote them, usually in English."
+  },
+  "page.testing.why.test": {
+    "text": "The test that failed is “{{test}}”.",
+    "description": "Second sentence on the Testing card of a change's page, saying what went wrong while a plain explanation is not available: the failing automated test, when it printed no message. {{test}} is the test's name as the app's code wrote it, usually in English."
+  },
+  "page.testing.why.checkSaid": {
+    "text": "“{{check}}” reported: {{said}}",
+    "description": "Second sentence on the Testing card of a change's page, saying what went wrong while a plain explanation is not available: the failing automated check and what it reported. {{check}} is the check's name and {{said}} its report, both as the app wrote them, usually in English."
+  },
+  "page.testing.why.check": {
+    "text": "The check that failed is “{{check}}”.",
+    "description": "Second sentence on the Testing card of a change's page, saying what went wrong while a plain explanation is not available: the failing automated check, when it reported nothing more. {{check}} is the check's name as the app wrote it, usually in English."
+  },
+  "page.testing.note.authorFixes": {
+    "text": "Its author needs to fix this before it can go live.",
+    "description": "Line under the Testing card of a change's page whose checks failed, shown to everybody but the change's author: the author has to fix what failed before the change can be merged. \"It\" is the change."
   },
   "page.testing.note.checkFailed": {
     "text": "A check failed.",

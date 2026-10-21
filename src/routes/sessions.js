@@ -3810,6 +3810,43 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     }
   });
 
+  // A failed run's checks in plain words (services/checks-explanation.js),
+  // for the Testing card on the change's page and the top of its Checks
+  // step. Read by the same rule as the check results it is written from
+  // (the route above): whoever may read those may read this. `lang` is the
+  // language the page is showing. `explanation` is null when there is none
+  // to give, and the page keeps the failure's own words. A staging ?demo=1
+  // mock carries its own, so the page can be reviewed without a model.
+  router.get('/api/sessions/:id/checks-explanation', async (req, res) => {
+    const id = /^[1-9]\d{0,9}$/.test(String(req.params.id)) ? Number(req.params.id) : 0;
+    if (!id || id > 2147483647) return res.status(404).json({ error: 'Session not found' });
+    try {
+      if (process.env.USERNODE_ENV === 'staging' && req.query.demo === '1') {
+        const mock = stagingMockSharedSessions().find((s) => s.id === id)
+          || stagingMockOwnSessions(req.user.id, config.selfAppSlug).find((s) => s.id === id)
+          || require('./votes').stagingMockProposalFor(id, req.user);
+        if (mock) {
+          return res.set('Cache-Control', 'no-store')
+            .json({ explanation: mock.checks_explanation || null, runAt: mock.checks_checked_at || null });
+        }
+      }
+      const { rows } = await pool.query(
+        `SELECT id, user_id, status, shared_at, app_id, check_state, checks_checked_at, test_results
+           FROM chat_sessions
+          WHERE id = $1`,
+        [id]
+      );
+      const session = rows[0];
+      if (!session || !canViewSession(session, req.user)) return res.status(404).json({ error: 'Session not found' });
+      const explanation = await require('../services/checks-explanation')
+        .explain(pool, session, { language: req.query.lang || (req.user && req.user.locale) });
+      return res.set('Cache-Control', 'no-store').json({ explanation, runAt: session.checks_checked_at });
+    } catch (err) {
+      log.error('sessions', 'Failed to explain failing checks', { message: err.message });
+      return res.status(500).json({ error: 'Could not explain the failing checks' });
+    }
+  });
+
   // Get session with message history
   //
   // Owner OR admin, the same rule `/api/sessions/:id/events` states a few

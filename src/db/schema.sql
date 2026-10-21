@@ -8331,6 +8331,30 @@ CREATE TABLE IF NOT EXISTS app_since_summaries (
   PRIMARY KEY (app_id, window_start)
 );
 
+-- A failed checks run in plain words (services/checks-explanation.js): the
+-- sentence the Testing card on a change's page and the top of its Checks
+-- step show, written by the helper model from the failing checks and the
+-- output their tests printed. Written the first time somebody opens the page
+-- after a run fails, never before, and shared by every viewer reading in
+-- that language. One row per change and language: a later run overwrites
+-- it (run_at is the run's checks_checked_at, so a row from an earlier run
+-- is stale and is written again).
+--   explanation  the sentence, NULL while only a failed attempt is held
+--   failed_at    the last failed attempt, so a failing model is asked again
+--                at most once in services/checks-explanation.js RETRY_MS
+-- Private like chat_sessions, whose test output it is read from.
+CREATE TABLE IF NOT EXISTS check_explanations (
+  session_id   INTEGER NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+  language     VARCHAR(35) NOT NULL,
+  run_at       TIMESTAMPTZ NOT NULL,
+  explanation  TEXT,
+  model        VARCHAR(64),
+  failed_at    TIMESTAMPTZ,
+  updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (session_id, language)
+);
+COMMENT ON TABLE check_explanations IS 'staging:private';
+
 -- Platform-wide private messaging (#488). This domain is deliberately
 -- separate from app-scoped `chat_messages`: membership, consent, blocks,
 -- retention, and realtime audiences are all platform-user concerns.

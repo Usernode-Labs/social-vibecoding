@@ -804,6 +804,27 @@ export async function sendTurn(
 }
 
 /**
+ * A message sent from outside the conversation, as a change's page's Fix it
+ * sends it: the route decides everything that can refuse the turn before
+ * its stream opens, and the turn runs on the server however the connection
+ * ends, so an opened stream is the answer and is let go at once. Throws the
+ * server's refusal ("still working", no credits) in its own words.
+ */
+export async function sendTurnInBackground(id: number, message: string, clientMessageId: string): Promise<void> {
+  const controller = new AbortController();
+  const response = await fetch(`/api/agent-sessions/${id}/turns`, {
+    method: 'POST',
+    credentials: 'same-origin',
+    cache: 'no-store',
+    headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+    body: JSON.stringify({ message, clientMessageId }),
+    signal: controller.signal,
+  });
+  if (!response.ok) await json(response, t('agent:session.error.turnRefused'));
+  controller.abort();
+}
+
+/**
  * One file's bytes, uploaded to the conversation before the message that
  * sends it (the dev chat's two-step, #450): the server decides its kind from
  * the name and the bytes, never from what the browser says it is.
