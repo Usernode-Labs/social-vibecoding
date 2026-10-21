@@ -497,6 +497,33 @@ test('#5296: every community is out at once, and an empty audience\'s chip is hi
   mod.workshopStore.set({ open: false, rows: null });
 });
 
+test('UX audit: the chip rail fades while more chips are past its edge', () => {
+  const mod = loadTsx('frontend/src/features/workshop/index.tsx');
+  const out = renderToHtml(createElement(mod.AudienceChips, {
+    tallies: { all: 3, open: 2, invited: 1, solo: 1 },
+    pressed: 'all',
+    onPress: () => {},
+    scope: 'workshop',
+  }));
+  assert.match(out, /class="[^"]*\baudience-chips\b/, 'the rail says which row it is');
+  assert.doesNotMatch(out, /data-more/, 'no fade until a measurement says there is more');
+  const src = read('frontend/src/features/workshop/index.tsx');
+  const fn = src.slice(src.indexOf('export function AudienceChips'));
+  assert.match(fn, /el\.scrollLeft \+ el\.clientWidth < el\.scrollWidth - 1/,
+    'more means a chip lies past the right edge');
+  assert.match(fn, /'data-more': ''/, 'and that is what turns the fade on');
+  const css = read('public/css/app.css');
+  assert.match(css, /\.audience-chips\[data-more\] \{[\s\S]{0,300}mask-image: linear-gradient\(to right, #000 calc\(100% - 2rem\), transparent\)/,
+    'the same 2rem fade Home\'s Discover lane uses');
+});
+
+test('UX audit: the search clears the Needs you card it follows', () => {
+  // The card's section had no bottom margin, so the field touched it. The gap
+  // only applies when something heads the list (the card or its skeleton).
+  const css = read('public/css/app.css');
+  assert.match(css, /section \+ \.workshop-search \{\s*margin-top: 12px;/);
+});
+
 test('the screen is built from the grouped-list primitives, not a copy of them', () => {
   // AGENTS.md: "a primitive nobody knows exists gets hand-written instead."
   // GroupedList / SectionHeader / ListRow ARE the widget language's primary

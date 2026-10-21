@@ -217,12 +217,36 @@ export function AudienceChips({ tallies, pressed, onPress, scope }: {
   scope: string;
 }) {
   const t = useMessages('communities');
+  // WHILE MORE CHIPS ARE PAST THE RIGHT EDGE, THE RAIL FADES THERE (UX
+  // audit, 20 Oct 2026). The rail already scrolls sideways with its
+  // scrollbar hidden, so a cut-off row read as the end of the list. Measured
+  // rather than assumed: a desktop where all four chips fit shows no fade,
+  // and the fade goes once the row is scrolled to its end.
+  const railRef = useRef<HTMLDivElement | null>(null);
+  const [more, setMore] = useState(false);
+  // Re-measured when the tallies change, since that is what adds or removes
+  // a chip.
+  useEffect(() => {
+    const el = railRef.current;
+    if (!el) return;
+    const measure = () => setMore(el.scrollLeft + el.clientWidth < el.scrollWidth - 1);
+    measure();
+    el.addEventListener('scroll', measure, { passive: true });
+    // A hidden zero chip changes the row's width without a scroll event.
+    const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(measure) : null;
+    if (observer) observer.observe(el);
+    return () => {
+      el.removeEventListener('scroll', measure);
+      if (observer) observer.disconnect();
+    };
+  }, [tallies]);
   return (
     <ChipRail
-      className="gap-2 pt-0 pb-3"
+      ref={railRef}
+      className="audience-chips gap-2 pt-0 pb-3"
       role="group"
       aria-label={t('communities:filter.label')}
-      {...{ [`data-${scope}-chips`]: '' }}
+      {...{ [`data-${scope}-chips`]: '', ...(more ? { 'data-more': '' } : {}) }}
     >
       {(['all', ...SECTIONS.map((section) => section.key)] as AudienceFilter[]).map((key) => {
         const count = tallies[key];
