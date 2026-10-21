@@ -278,7 +278,8 @@ export function ThumbRow({ name, colorKey, emoji, tagline = null, line = null, l
       <span className="flex min-w-0 flex-col gap-0.5">
         <span className="truncate text-[15px] font-[650] leading-5">{name}</span>
         {line ? (
-          <BuildLine state={line} note={lineNote} words={lineWords} />
+          // Beside the tile: the note on its own line, so neither is cut.
+          <BuildLine state={line} note={lineNote} words={lineWords} stacked />
         ) : tagline ? (
           <span className="line-clamp-2 text-[13px] leading-[18px] text-zinc-500 dark:text-zinc-400">{tagline}</span>
         ) : null}

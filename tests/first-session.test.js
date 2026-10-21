@@ -32,7 +32,7 @@ test('the walk on Home: three cards, each ringing one place, with Next, and Done
   // bot built, a game, an import) gets the bot card's words without one.
   assert.deepEqual(steps.map((s) => [s.screen, s.target, s.title, s.text]), [
     ['home', '#app-list .app-card[data-slug="sunday-run-club"]', 'Welcome to Homeroom', 'Sunday Run Club lives here, on Home.'],
-    ['home', '#platform-tab-messages', 'Homeroom bot', 'It\'s in Messages. Ask it for a change.'],
+    ['home', '#platform-tab-messages', 'Homeroom bot', 'It\'s in Messages. Ask it to make any changes to Sunday Run Club.'],
     ['home', '#platform-tab-workshop', 'Communities', 'Sunday Run Club\'s hub is here. Invite people and decide what changes.'],
   ]);
   assert.deepEqual(homeWalkSteps({ slug: 'sunday-run-club', name: 'Sunday Run Club', example: null }), steps, 'null is no example');

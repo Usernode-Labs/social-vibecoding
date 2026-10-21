@@ -18567,12 +18567,13 @@ button.dev-ws-recent-card {
 }
 .dev-ws-share:has(.dev-ws-join-pop) { position: relative; z-index: 5; }
 
-/* ── First look (hub-cards.tsx FirstLookCard, newcomer run six) ──────
-   The maker's, under Share it, while their first version is built: the
-   picture Homeroom bot drew of its main screen, small and phone-shaped
-   (cropped from the top, as a phone shows a screen), beside a small-caps
-   kicker, the card's sentence-case title and line in Share it's own type,
-   and its one button. The picture's box is fixed, so nothing moves as it
+/* ── First look (hub-cards.tsx FirstLookView, newcomer run six) ──────
+   The maker's First version card while their first version is built
+   (21 Oct 2026; a card of its own after For you until then): the picture
+   Homeroom bot drew of its main screen, small and phone-shaped (cropped
+   from the top, as a phone shows a screen), beside the project's name as
+   the thumbnail row draws it, the build line, one line in Share it's own
+   type, and its button. The picture's box is fixed, so nothing moves as it
    loads. */
 .dev-ws-strip.dev-ws-first-look { position: relative; flex-direction: row; align-items: flex-start; gap: 14px; }
 /* #5618: the picture and the words open the maker's chat with Homeroom
@@ -18595,13 +18596,12 @@ button.dev-ws-recent-card {
   flex: 1 1 auto; min-width: 0;
   display: flex; flex-direction: column; align-items: flex-start; gap: 4px;
 }
-.dev-ws-first-look-kicker {
-  margin: 0; font-size: 12px; font-weight: 700; line-height: 16px;
-  letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-muted);
+.dev-ws-first-look-name {
+  margin: 0; max-width: 100%; font-size: 15px; font-weight: 650; line-height: 20px;
+  color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.dev-ws-first-look-body .dev-ws-head-title { margin: 0; }
 .dev-ws-first-look-body .dev-ws-strip-text { color: var(--text-muted); }
-/* Watch keeps its own tap, over the door (#5618). */
+/* Its buttons keep their own taps, over the door (#5618). */
 .dev-ws-first-look-body > button { position: relative; z-index: 2; margin-top: 8px; }
 
 /* ── Approval rules (community-card.tsx ApprovalRules) ─────────────── */
