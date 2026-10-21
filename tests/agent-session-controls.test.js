@@ -258,8 +258,12 @@ test('the card\'s checks open the dialog and a failing run offers Re-run; the ba
   const panel = read('frontend/src/features/agent-session/index.tsx');
   assert.doesNotMatch(panel, /VenuePicker|data-agent-session-venue|HandoffDialog/, '#3078: Build left the bar');
   // The pills and Changes stay siblings: #2779's declared drawer check reads
-  // the bar as focus ~ change pill ~ Changes.
-  assert.match(panel, /data-agent-session-change-pill[\s\S]*?<\/span>\s*\{\/\*[\s\S]*?\*\/\}\s*<button\s+type="button"\s+data-agent-session-changes-button/);
+  // the bar as focus ~ change pill ~ Changes. The change pill now closes its
+  // label and optional PR spans before the comment and the button (#3577).
+  assert.match(
+    panel,
+    /data-agent-session-change-pill[\s\S]*?<\/span> : null\}\s*<\/span>\s*\{\/\*[\s\S]*?\*\/\}\s*<button\s+type="button"\s+data-agent-session-changes-button/,
+  );
   // The composer's sheet is Build with; the credits card's rows open it on their tab.
   assert.match(panel, /<BuildSheetBody\s+tab=\{buildTab\}/);
   assert.match(panel, /handoff=\{buildTab === 'homeroom' \? null : <HandoffPanel agent=\{buildTab\} onClose=\{closeSheet\} \/>\}/);

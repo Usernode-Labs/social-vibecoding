@@ -250,12 +250,13 @@ export function OpenAppButton({ target }: { target: { slug: string; name: string
       type="button"
       data-agent-session-open-app
       data-open-app={target.slug}
-      className="hidden lg:inline-flex shrink-0 items-center gap-1.5 rounded-full border border-zinc-200 bg-white px-3 py-1 text-xs font-semibold text-zinc-800 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
+      aria-label="Open app"
+      className="hidden lg:inline-flex shrink-0 items-center gap-1.5 rounded-full border border-zinc-200 bg-white px-3 py-1 text-xs font-semibold text-zinc-800 hover:bg-zinc-50 [@container(max-width:32rem)]:px-2 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
       title={`Open ${target.name || target.slug} with this chat docked beside it`}
       onClick={open}
     >
       <AppWindowIcon className="h-3.5 w-3.5" aria-hidden="true" />
-      <span className="truncate">Open app</span>
+      <span className="truncate [@container(max-width:32rem)]:hidden">Open app</span>
     </button>
   );
 }
@@ -292,59 +293,67 @@ function SessionBar({ session, about, embedded, action }: {
   const active = session?.activeChange || null;
   const count = session?.changes?.length || 0;
   const target = openAppTarget(active, about);
-  // It wraps on both surfaces (#3016). On a phone its five controls are wider
-  // than the screen, and a bar that cannot wrap made the whole conversation
-  // that wide: the right edge of every message and the Send button were off
-  // screen. Changes and the ⋯ sit at the end of whichever row they land on;
-  // from `sm` up everything fits on one, as before. (The Build picker that
-  // started the second row is the composer's "Build with" now, #3078.)
+  const changeLabel = active ? changeStatusLabel(active.status, building) : 'No change yet';
+  const changeTitle = active?.prNumber ? `${changeLabel} · PR #${active.prNumber}` : changeLabel;
+  // One row at every width (#3577). The bar used to wrap (#3016), which put
+  // "Changes · 1" and the ⋯ on a second line on a phone. Now the row never
+  // wraps and the two pills that name things give way in turn: the app's name
+  // truncates to its tile, then the status label truncates; the controls keep
+  // their width. The embedded title sits above the row at every width, so the
+  // pills always have the pane's full width. `min-w-0` keeps #3016: the row
+  // can never widen the conversation. (The Build picker that once started a
+  // second row is the composer's "Build with" now, #3078.)
   return (
-    <div className="flex flex-wrap items-center gap-x-2 gap-y-2 border-b border-zinc-200 px-4 py-2 dark:border-zinc-800" data-agent-session-bar>
+    <div className="border-b border-zinc-200 px-4 py-2 dark:border-zinc-800" data-agent-session-bar>
       {embedded ? (
-        <div className="mr-auto min-w-0 basis-full sm:basis-auto">
+        <div className="mb-2 min-w-0">
           <h2 className="truncate text-base font-semibold text-zinc-900 dark:text-zinc-100">{session?.title || 'New session'}</h2>
           <p className="truncate text-xs text-zinc-500 dark:text-zinc-400">
             Agent session{about?.focusApp?.name ? ` · started from ${about.focusApp.name}` : ''}
           </p>
         </div>
       ) : null}
-      <span
-        data-agent-session-focus
-        className="inline-flex min-w-0 max-w-[10rem] items-center gap-1.5 rounded-full border border-violet-200 bg-violet-50 px-2.5 py-1 text-xs font-semibold text-violet-800 dark:border-violet-800 dark:bg-violet-950/40 dark:text-violet-200"
-        title="The app this conversation is about when a request does not name one. The Mayor moves it when you ask."
-      >
-        {about?.focusApp ? (
-          <AppMark
-            name={about.focusApp.name}
-            slug={about.focusApp.selfHosted ? null : about.focusApp.slug}
-            iconUrl={about.focusApp.iconUrl}
-            iconEmoji={about.focusApp.iconEmoji}
-          />
-        ) : null}
-        <span className="truncate">{about?.focusApp?.name || 'Any app'}</span>
-      </span>
-      <span
-        data-agent-session-change-pill
-        className={`inline-flex shrink-0 items-center whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-semibold ${statusTone(active?.status)}`}
-      >
-        {active ? `${changeStatusLabel(active.status, building)}${active.prNumber ? ` · PR #${active.prNumber}` : ''}` : 'No change yet'}
-      </span>
-      {/* Siblings of the pills, not a group of their own: a declared check
-          reads the bar as focus ~ change pill ~ Changes. Where the work is
-          built is the composer's "Build with" now (#3078), not a pill here. */}
-      <button
-        type="button"
-        data-agent-session-changes-button
-        className="ml-auto inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-zinc-200 bg-white px-3 py-1 text-xs font-semibold text-zinc-800 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
-        onClick={() => setDrawerOpen(true)}
-        disabled={!session}
-        aria-haspopup="dialog"
-      >
-        Changes · {count}
-      </button>
-      <OpenAppButton target={target} />
-      {action}
-      <SessionMenu session={session} />
+      <div className="flex min-w-0 flex-nowrap items-center gap-2 [container-type:inline-size]" data-agent-session-pills>
+        <span
+          data-agent-session-focus
+          className="inline-flex min-w-[2.75rem] max-w-fit grow basis-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-violet-200 bg-violet-50 px-2.5 py-1 text-xs font-semibold text-violet-800 dark:border-violet-800 dark:bg-violet-950/40 dark:text-violet-200"
+          title={`${about?.focusApp?.name || 'Any app'}. The app this conversation is about when a request does not name one. The Mayor moves it when you ask.`}
+        >
+          {about?.focusApp ? (
+            <AppMark
+              name={about.focusApp.name}
+              slug={about.focusApp.selfHosted ? null : about.focusApp.slug}
+              iconUrl={about.focusApp.iconUrl}
+              iconEmoji={about.focusApp.iconEmoji}
+            />
+          ) : null}
+          <span className="min-w-0 max-w-[7rem] truncate">{about?.focusApp?.name || 'Any app'}</span>
+        </span>
+        <span
+          data-agent-session-change-pill
+          className={`inline-flex min-w-[3.5rem] items-center whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-semibold ${statusTone(active?.status)}`}
+          title={changeTitle}
+        >
+          <span className="min-w-0 truncate">{changeLabel}</span>
+          {active?.prNumber ? <span className="[@container(max-width:24rem)]:hidden">{` · PR #${active.prNumber}`}</span> : null}
+        </span>
+        {/* Siblings of the pills, not a group of their own: a declared check
+            reads the bar as focus ~ change pill ~ Changes. Where the work is
+            built is the composer's "Build with" now (#3078), not a pill here. */}
+        <button
+          type="button"
+          data-agent-session-changes-button
+          className="ml-auto inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-zinc-200 bg-white px-3 py-1 text-xs font-semibold text-zinc-800 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
+          onClick={() => setDrawerOpen(true)}
+          disabled={!session}
+          aria-haspopup="dialog"
+        >
+          Changes · {count}
+        </button>
+        <OpenAppButton target={target} />
+        {action}
+        <SessionMenu session={session} />
+      </div>
     </div>
   );
 }

@@ -29,15 +29,10 @@ const { loadTsx, createElement, renderToHtml } = require('./lib/render-tsx');
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 const panel = read('frontend/src/features/agent-session/index.tsx');
 
-test('#3016: the session bar wraps on every surface, and the panel cannot outgrow the screen', () => {
+test('#3016: the session bar cannot widen the conversation, and the panel cannot outgrow the screen', () => {
   const bar = panel.slice(panel.indexOf('function SessionBar('), panel.indexOf('function SessionMenu('));
-  assert.match(bar, /<div className="flex flex-wrap items-center gap-x-2 gap-y-2 [^"]*" data-agent-session-bar>/,
-    'wrapping is not the embedded variant\'s alone any more');
-  assert.doesNotMatch(bar, /embedded \? 'flex-wrap' : ''/);
-  assert.match(bar, /data-agent-session-change-pill\s+className=\{`inline-flex shrink-0 items-center whitespace-nowrap /,
-    'the change pill stays one line');
-  // Changes and the ⋯ end whichever row they land on. Build left the bar
-  // for the composer's "Build with" (#3078).
+  // Changes and the ⋯ end the row. Build left the bar for the composer's
+  // "Build with" (#3078).
   assert.doesNotMatch(bar, /VenuePicker/);
   assert.match(bar, /data-agent-session-changes-button\s+className="ml-auto [^"]*whitespace-nowrap[^"]*"/);
   assert.doesNotMatch(bar, /data-agent-session-changes-button\s+className="[^"]*sm:ml-0/, 'nothing before it to push it right any more');
@@ -45,6 +40,56 @@ test('#3016: the session bar wraps on every surface, and the panel cannot outgro
   assert.match(panel, /<div ref=\{root\} className=\{`relative flex min-h-0 min-w-0 flex-1 /,
     'the panel shrinks below its content, so nothing inside can widen the screen');
   assert.match(panel, /className="relative flex min-h-0 min-w-0 flex-1 flex-col" data-agent-session-chat/);
+});
+
+// #3577: on a phone the bar's second line held "Changes · 1" and the ⋯
+// (the screenshot on the request). The bar is one row at every width now,
+// and the two pills that name things give way in turn instead: the app's
+// name truncates to its tile, then the status label truncates. The controls
+// keep their width. The Messages pane's title sits above the row at every
+// width, so the pills always have the pane's full width.
+test('#3577: the session bar keeps its pills and controls on one line', () => {
+  const bar = panel.slice(panel.indexOf('function SessionBar('), panel.indexOf('function SessionMenu('));
+  assert.match(bar, /<div className="border-b border-zinc-200 px-4 py-2 dark:border-zinc-800" data-agent-session-bar>/,
+    'the bar is a block, not one wrapping row');
+  assert.match(bar, /<div className="mb-2 min-w-0">/, 'the embedded title is its own line at every width');
+  assert.match(bar, /<div className="flex min-w-0 flex-nowrap items-center gap-2 \[container-type:inline-size\]" data-agent-session-pills>/,
+    'one non-wrapping row, and the container the width rules measure');
+  assert.doesNotMatch(bar, /flex-wrap/, 'nothing wraps on any surface');
+
+  // Every control is a direct child of that row, in order, so the row binds
+  // them together and none lands on a line of its own.
+  const order = [
+    'data-agent-session-focus',
+    'data-agent-session-change-pill',
+    'data-agent-session-changes-button',
+    '<OpenAppButton target={target} />',
+    '{action}',
+    '<SessionMenu session={session} />',
+  ].map((needle) => bar.indexOf(needle));
+  assert.ok(order.every((at, i) => at >= 0 && (i === 0 || at > order[i - 1])), 'the controls are in the row, in order');
+  assert.match(bar, /<SessionMenu session=\{session\} \/>\s*<\/div>\s*<\/div>/, 'the row closes inside the bar');
+
+  // The pills give way; the app's name is capped so its tile always stays.
+  assert.match(bar, /data-agent-session-focus\s+className="inline-flex min-w-\[2\.75rem\] max-w-fit grow basis-0 items-center gap-1\.5 whitespace-nowrap /);
+  assert.match(bar, /<span className="min-w-0 max-w-\[7rem\] truncate">\{about\?\.focusApp\?\.name \|\| 'Any app'\}<\/span>/);
+  assert.match(bar, /title=\{`\$\{about\?\.focusApp\?\.name \|\| 'Any app'\}\. The app this conversation is about/,
+    'the full name, after truncation, is in the tooltip');
+
+  // The status label truncates to 3.5rem; the " · PR #N" suffix is what goes
+  // under 24rem first. The full text is the tooltip and Changes lists the PR.
+  assert.match(bar, /data-agent-session-change-pill\s+className=\{`inline-flex min-w-\[3\.5rem\] items-center whitespace-nowrap /);
+  assert.match(bar, /<span className="min-w-0 truncate">\{changeLabel\}<\/span>/);
+  assert.match(bar, /\[@container\(max-width:24rem\)\]:hidden">\{` · PR #\$\{active\.prNumber\}`\}<\/span>/);
+  assert.match(bar, /title=\{changeTitle\}/);
+  assert.match(bar, /const changeTitle = active\?\.prNumber \? `\$\{changeLabel\} · PR #\$\{active\.prNumber\}` : changeLabel;/);
+
+  // "Open app" keeps its mark and its accessible name when its words go.
+  const { OpenAppButton } = loadTsx('frontend/src/features/agent-session/index.tsx');
+  const html = renderToHtml(createElement(OpenAppButton, { target: { slug: 'notes-ab12', name: 'Notes' } }));
+  assert.match(html, /aria-label="Open app"/);
+  assert.match(html, /\[@container\(max-width:32rem\)\]:px-2/);
+  assert.match(html, /<span class="truncate \[@container\(max-width:32rem\)\]:hidden">Open app<\/span>/);
 });
 
 test('#3016: an empty message box is sized to its hint, measured without an input event', () => {
