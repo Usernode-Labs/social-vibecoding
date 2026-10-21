@@ -787,9 +787,12 @@ function ScreenRow({ view, touch, removes, held = false, onRelease, card = null 
   };
   const rowRef = useRef<HTMLElement | null>(null);
   const setRow = useCallback((el: HTMLElement | null) => { rowRef.current = el; }, []);
-  // #5580: a card's swipe saves as well as clears (a folded card has no save:
-  // a save is one notification's).
-  const cardSave = !!card && !groupIds;
+  // #5580: a card's swipe saves as well as clears.
+  // #5775: an older card (in no stack, `removes=false`) saves its newest
+  // notification even when it is folded — the same one the card opens. A
+  // folded stack card on Unread still has none: a save there is one
+  // notification's, and its stack card stands for several.
+  const cardSave = !!card && (!groupIds || !removes);
   useEffect(() => {
     const el = rowRef.current;
     const ui = kit();
@@ -1008,9 +1011,12 @@ function ScreenRow({ view, touch, removes, held = false, onRelease, card = null 
   // that opens the row.
   // #5289: a folded group has no bookmark: a save is one notification's,
   // and the row stands for several. Each one is on All, with its own.
+  // #5775: an older folded card is the exception (cardSave): it saves its
+  // newest notification, the one it opens, and says so with the filled
+  // bookmark beside its time once it is saved.
   // #5580: on a card it takes the time's place while the pointer is over
   // it, and on a phone the swipe's Save stands in for it.
-  const bookmark = groupIds || (card && touch) ? null : (
+  const bookmark = (groupIds && !cardSave) || (card && touch) ? null : (
     <button
       type="button"
       data-notification-save={view.id}
