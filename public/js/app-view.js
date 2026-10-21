@@ -7089,7 +7089,9 @@ const AppView = {
     // beside "Change #N" — "✓ Live", "Going live…", or the vote's own words.
     // A change still being built or closed has no pill worth repeating: its
     // card pill would read as a bare tally, and the Votes card under the
-    // title already says where those stand. The card's own state wins, so
+    // title already says where those stand. #5683: nor does the change page
+    // draw the vote states at all (topic/change-head.tsx VOTE_STATES), since
+    // that card says them in full; only the delivery states keep the pill. The card's own state wins, so
     // the kind (proposal or gov) and majority stay the card's.
     const statusState = ['active', 'paused', 'closed'].includes(item.status)
       ? null
@@ -23754,7 +23756,7 @@ const AppView = {
   // here, which is the half that was worth unit-testing anyway.
 
 
-  voteCountPill(pr, majority) {
+  voteCountPill(pr, majority, opts = {}) {
     if (!pr) return '';
     // #58: for merged PRs prefer the threshold snapshotted at merge time
     // (votes_required) so the denominator reflects history rather than the
@@ -23891,7 +23893,12 @@ const AppView = {
     }
     return `<span class="gc-vote-count gc-vote-count-${state}"${titleAttr}>`
       + fills
-      + `<span class="gc-vote-count-label">${yes} / ${maj}</span>`
+      // F18 (#5683): the inline card in a chat can ask for the tally in
+      // words ("4 of 3 yes votes") rather than "4 / 3"; the board and the
+      // vote panel keep the pair, which sits beside a bar.
+      + `<span class="gc-vote-count-label">${opts.words
+        ? PlatformI18n.htmlText('changes:badge.votePill.tallyWords', { yes, count: maj })
+        : `${yes} / ${maj}`}</span>`
       + `</span>` + advisoryChip + explicitChip;
   },
 

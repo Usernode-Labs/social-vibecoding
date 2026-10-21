@@ -75,10 +75,11 @@ import { EventRow } from './proposal-event';
 import { QuietCard } from './quiet-card';
 import { swatchFor } from './swatch';
 import { LinkEmbeds } from '../messages/link-cards';
+import { BOT_AVATAR } from '../messages/format';
 import { openAppTarget } from '../messages/bot-shared';
 import { setUserBlocked } from '../messages/store';
 import { firstUnreadId, transcriptRow } from '../messages/unread-anchor';
-import { displayName, openRequestSpec, replyCount, requestStream } from '../dev-board/topic/request-model';
+import { displayName, BOT_NAME, openRequestSpec, replyCount, requestStream } from '../dev-board/topic/request-model';
 import { changeLine, changeReplyCount, changeStream } from '../dev-board/topic/change-model';
 import { MessageActionBar, MessageMenu, placementFor, type MenuItem } from '../message-actions/action-bar';
 import { MessageActionSheet, useLongPress } from '../message-actions/action-sheet';
@@ -807,14 +808,21 @@ export const MessageRow = memo(function MessageRow({ msg, grouped = false, surfa
       {...(msg.postedVia ? { 'data-posted-via': msg.postedVia } : {})}
       {...longPress}
       avatar={(
-        <Avatar shape="square" size="md" color={swatchFor(msg.username)} aria-hidden="true">
-          {msg.username.charAt(0).toUpperCase()}
-        </Avatar>
+        displayName(msg.username) === BOT_NAME ? (
+          // F18 (#5683): Homeroom bot wears its own name and logo here, as
+          // Messages draws it, rather than reading as a person called
+          // "homeroom_bot" with a letter tile.
+          <img className="h-11 w-11 shrink-0 rounded-xl object-cover" src={BOT_AVATAR} alt="" data-bot-avatar="" />
+        ) : (
+          <Avatar shape="square" size="md" color={swatchFor(msg.username)} aria-hidden="true">
+            {msg.username.charAt(0).toUpperCase()}
+          </Avatar>
+        )
       )}
       name={(
         <>
           {msg.unread ? <span className="gc-unread-dot" aria-label={t('chat:group.row.unreadMention')} /> : null}
-          <span className={msg.mine ? 'gc-msg-username-self' : undefined}>{msg.username}</span>
+          <span className={msg.mine ? 'gc-msg-username-self' : undefined}>{displayName(msg.username)}</span>
           <PostedViaChip via={msg.postedVia} className="ml-1.5" />
         </>
       )}
@@ -1549,6 +1557,21 @@ export function TranscriptRows({ view, source }: {
         </div>
       ) : null}
       {drawn}
+      {/* #5683: a topic's channel that has nothing in it yet invites the
+          first post, centred, rather than saying so in a corner. Someone who
+          cannot post reads the same block without the invitation. */}
+      {view.lead.emptyChannel && !drawn.length ? (
+        <div className="gc-channel-empty" data-channel-empty={view.lead.emptyChannel.handle}>
+          <span className="gc-channel-empty-hash" aria-hidden="true">#</span>
+          <div className="gc-channel-empty-title">
+            {view.lead.emptyChannel.canPost
+              ? t('chat:group.topicChannel.start', { handle: view.lead.emptyChannel.handle })
+              : t('chat:group.topicChannel.empty')}
+          </div>
+          {view.lead.emptyChannel.about ? <p className="gc-channel-empty-about">{view.lead.emptyChannel.about}</p> : null}
+          {view.lead.emptyChannel.canPost ? <p className="gc-channel-empty-invite">{t('chat:group.topicChannel.invite')}</p> : null}
+        </div>
+      ) : null}
       {markers.length ? <TrailingMarkers markers={markers.slice(marker)} /> : null}
       {quiet ? <QuietCard {...quiet} /> : null}
     </>

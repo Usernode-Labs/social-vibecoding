@@ -485,6 +485,12 @@ export interface TranscriptLead {
   /** The placeholder line, or null when there are messages to show. */
   placeholder: string | null;
   /**
+   * #5683: a topic's channel that has loaded with nothing in it — the facts
+   * its centred invitation is drawn from (the channel's name, what it is for,
+   * and whether this viewer has a composer). Null or absent elsewhere.
+   */
+  emptyChannel?: { handle: string; about: string; canPost: boolean } | null;
+  /**
    * #2992: the history request failed — the line to show with a "Try again"
    * control, drawn whether or not live rows have landed since. Null or absent
    * when the last load succeeded.

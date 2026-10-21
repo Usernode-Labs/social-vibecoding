@@ -293,6 +293,15 @@ test('the header shows the status pill beside "Change #N", in the card\'s capsul
   const none = renderComponent(head, 'ChangeBar', { v: view(null), menuKey: '' });
   assert.doesNotMatch(none, /data-change-status|gc-vote-count/);
   assert.match(none, /<div class="messages-thread-name min-w-0">Change #81<\/div>/);
+  // #5683: the vote states are said in full by the Votes card under the
+  // title, so the header does not say them again...
+  for (const key of ['needs_vote', 'approvals', 'contested', 'no_vote', 'merge_countdown', 'reject_countdown']) {
+    const vote = renderComponent(head, 'ChangeBar', {
+      v: view({ tier: 4, key, label: 'Goes live in ~2 h', tone: 'ok' }), menuKey: '',
+    });
+    assert.doesNotMatch(vote, /data-change-status|gc-vote-count/, `${key} is the Votes card's to say`);
+    assert.match(vote, /Change #81<\/div><\/div>\s*<\/div>/, 'the title stands alone');
+  }
 });
 
 // #5329: where the ⋯ menu has a Details row (the change has a technical

@@ -285,3 +285,27 @@ test('the card\'s checks open the dialog and a failing run offers Re-run; the ba
   assert.equal(message('agent:session.composer.archivedNote'), 'This session is archived. Unarchive it to keep going.');
   assert.match(panel, /window\.AppView\?\.openSessionChecks\?\.\(item\.changeId\)/);
 });
+
+// ── #5683: the change pill says where the LATEST change stands ──────────
+
+test('the pill reads the latest change, even when it is no longer the active one; "No change yet" only with none', () => {
+  const page = 'frontend/src/features/agent-session/index.tsx';
+  const { SessionBar } = loadTsx(page);
+  const about = { focusApp: { slug: 'notes', name: 'Notes', selfHosted: false } };
+  const bar = (session) => renderToHtml(createElement(SessionBar, { session, about, embedded: false }));
+
+  // Nothing active, one merged change behind it: the pill is that change's.
+  const finished = bar({ id: 1, title: 'Dark mode', activeChange: null, changes: [change({ status: 'merged', prNumber: 14 })] });
+  const pill = /<span data-agent-session-change-pill[^>]*>([\s\S]*?)<\/span>\s*<button/.exec(finished);
+  assert.ok(pill, 'the pill sits before Changes');
+  assert.doesNotMatch(pill[1], /No change yet/);
+  assert.match(pill[0], /bg-emerald-100/, 'the latest change\'s own tone');
+  assert.match(pill[1], new RegExp(message('agent:session.changeStatus.live')));
+
+  // An active change still wins over an older one in the list.
+  const active = bar({ id: 1, title: 'Dark mode', activeChange: change({ id: 51, status: 'active' }), changes: [change({ status: 'merged' }), change({ id: 51 })] });
+  assert.match(active, new RegExp(`data-agent-session-change-pill[^>]*>\\s*<span[^>]*>${message('agent:session.changeStatus.inProgress')}`));
+
+  // No change at all: the old words.
+  assert.match(bar({ id: 1, title: 'Dark mode', activeChange: null, changes: [] }), /No change yet/);
+});

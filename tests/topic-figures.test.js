@@ -918,3 +918,48 @@ test('topic figures against the full schema', { timeout: 120000 }, async (t) => 
     assert.deepEqual(sidesOf(got['pipeline.reds-rerun']), [['homeroom', 'warn', '60%', '3 of 5 reds'], ['others', 'warn', '33%', '1 of 3 reds']]);
   });
 });
+
+// ── 4. #5683: a strip still waiting for people folds into one line ──────
+
+test('a figure under 10 people carries `few`, and the strip says the threshold it folds on', () => {
+  const waiting = figures.present('onboarding.first-project', { secs: 230, n: 4 });
+  assert.equal(waiting.few, true);
+  assert.equal(waiting.value, 'Not enough data');
+  const enough = figures.present('onboarding.first-project', { secs: 230, n: 34 });
+  assert.equal(enough.few, undefined, 'a figure with data is not marked');
+  assert.equal(figures.layoutFor(['onboarding.first-project']).peopleMin, 10);
+  assert.equal(figures.layoutFor(['bot.answered']).peopleMin, undefined, 'no people figure, no threshold');
+});
+
+const figure = (id, patch = {}) => ({
+  id, label: id, tip: `${id} means something`, group: null, column: null,
+  state: 'calm', value: '0%', sub: '0 of 18 visits', ...patch,
+});
+
+test('while most figures wait for people, the tiles fold into one quiet line naming what has data', () => {
+  const { TopicFiguresView } = loadTsx(STRIP);
+  const report = figure('onboarding.sign-in-errors', { label: 'Errors in a first session', state: 'ok' });
+  const folding = {
+    topic: 'onboarding', days: 30, peopleMin: 10, note: figures.NOTE_PEOPLE, layout: 'tiles',
+    figures: [report, figure('a', { few: true }), figure('b', { few: true }), figure('c', { few: true }), figure('d', { few: true })],
+  };
+  const html = renderToHtml(createElement(TopicFiguresView, { handle: 'onboarding', data: folding }));
+  assert.match(html, /data-topic-figures-layout="folded"/);
+  assert.doesNotMatch(html, /data-topic-figures-layout="tiles"/, 'no card of tiles');
+  assert.doesNotMatch(html, /class="dev-ws-figs-note"/, 'the note paragraph is replaced by the line');
+  assert.match(html, /Errors in a first session 0% \(0 of 18 visits\)\. The other 4 measures appear once 10 people are counted\./);
+  // The declared check reads a .dev-ws-fig-info inside [data-topic-figures].
+  assert.match(html, /onboarding[\s\S]*class="dev-ws-fig-info" aria-label="How these figures are counted"/);
+  assert.match(html, /<span id="[^"]+" hidden="">Totals only\./, 'its explanation is the note');
+
+  const none = renderToHtml(createElement(TopicFiguresView, { handle: 'onboarding', data: {
+    ...folding, figures: folding.figures.map((f) => ({ ...f, few: true })),
+  } }));
+  assert.match(none, /These 5 measures appear once 10 people are counted\./);
+
+  const mostly = renderToHtml(createElement(TopicFiguresView, { handle: 'onboarding', data: {
+    ...folding, figures: [report, report, report, figure('a', { few: true }), figure('b', { few: true })],
+  } }));
+  assert.match(mostly, /data-topic-figures-layout="tiles"/, 'half or more reporting keeps the card');
+  assert.match(mostly, /class="dev-ws-figs-note"/);
+});

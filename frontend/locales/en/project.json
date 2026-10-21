@@ -2811,6 +2811,14 @@
     "text": "More actions",
     "description": "Accessible name and tooltip of the ⋯ button in the header of a request's page: opens the menu with everything else that can be done with the request."
   },
+  "topic.request.bar.kickerDone": {
+    "text": "Request #{{number}} · done",
+    "description": "Small line above the title in the header of a request's page, once the request has been built and voted in. {{number}} is the request's number. \"Request\" is a noun: something a member asked to have built or fixed."
+  },
+  "topic.request.bar.kickerClosed": {
+    "text": "Request #{{number}} · closed",
+    "description": "Small line above the title in the header of a request's page, once the request was closed without anything being built for it. {{number}} is the request's number. \"Request\" is a noun: something a member asked to have built or fixed."
+  },
   "topic.request.words.showMore": {
     "text": "Show more",
     "description": "Button under a request's own words on its page, and under a change's summary on a change's page, while the text is folded after four lines: unfolds all of it."
@@ -4802,6 +4810,30 @@
   "places.topicFigures.demo": {
     "text": "Staging demo figures, not real numbers.",
     "description": "Small line under the card of numbers at the top of a topic's chat channel, shown only on a test copy of Homeroom: says the numbers are made up for testing."
+  },
+  "places.topicFigures.folded_one": {
+    "text": "{{figures}}. The other measure appears once {{min}} people are counted.",
+    "description": "Quiet line at the top of a topic's chat channel in place of the card of numbers, while most numbers still need more people. {{figures}} is the list of the numbers that do have data, for example \"Errors in a first session 0% (0 of 18 visits)\". {{min}} is how many people a number needs."
+  },
+  "places.topicFigures.folded_other": {
+    "text": "{{figures}}. The other {{count}} measures appear once {{min}} people are counted.",
+    "description": "Quiet line at the top of a topic's chat channel in place of the card of numbers, while most numbers still need more people. {{figures}} is the list of the numbers that do have data, for example \"Errors in a first session 0%\". {{count}} is how many numbers are still waiting. {{min}} is how many people a number needs."
+  },
+  "places.topicFigures.foldedNone_one": {
+    "text": "This measure appears once {{min}} people are counted.",
+    "description": "Quiet line at the top of a topic's chat channel in place of the card of numbers, while no number has data yet and there is one number. {{min}} is how many people a number needs."
+  },
+  "places.topicFigures.foldedNone_other": {
+    "text": "These {{count}} measures appear once {{min}} people are counted.",
+    "description": "Quiet line at the top of a topic's chat channel in place of the card of numbers, while no number has data yet. {{count}} is how many numbers there are. {{min}} is how many people a number needs."
+  },
+  "places.topicFigures.foldedItem": {
+    "text": "{{label}} {{reading}} ({{sub}})",
+    "description": "One number in the quiet line at the top of a topic's chat channel, while most numbers still need more people. {{label}} is the number's name, {{reading}} its value and {{sub}} its detail, for example \"Errors in a first session 0% (0 of 18 visits · target under 1%)\"."
+  },
+  "places.topicFigures.foldedInfo": {
+    "text": "How these figures are counted",
+    "description": "Accessible name of the small information button at the end of the quiet line at the top of a topic's chat channel: explains how the numbers are rounded and what \"not enough data\" means."
   },
   "places.topicSignals.label": {
     "text": "Open problems",

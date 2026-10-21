@@ -18,7 +18,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
-const { loadTsx, renderComponent } = require('./lib/render-tsx');
+const { loadTsx, renderComponent, renderToHtml, createElement } = require('./lib/render-tsx');
 
 const MODEL = 'frontend/src/features/dev-board/topic/request-model.ts';
 const TRANSCRIPT = 'frontend/src/features/group-chat/transcript.tsx';
@@ -351,4 +351,38 @@ test('GitHub comments are slotted into the thread by time, and the thread\'s own
   const gh = [{ key: 'b', at: '2026-10-08T12:00:00Z' }, { key: 'a', at: '2026-10-08T10:00:00Z' }];
   const merged = JSON.parse(JSON.stringify(GroupChat._mergeByTime(hr, gh).map((r) => r.id || r.key)));
   assert.deepEqual(merged, [1, 'a', 2, 3, 4, 'b']);
+});
+
+// ── F18 (#5683): the bar names the request, and the plan card wraps ────
+
+test('the bar shows the request\'s own title under a kicker that says its number and how it ended', () => {
+  const { RequestBar } = loadTsx(HEAD);
+  const bar = (status) => renderToHtml(createElement(RequestBar, { r: requestView(status) }));
+  const open = bar({});
+  assert.match(open, /<div class="messages-thread-kicker" data-request-kicker="">Request #4417<\/div>/);
+  assert.match(open, /<div class="messages-thread-name line-clamp-2 dev-request-bar-title">Add topics as discussion containers<\/div>/,
+    'the request\'s own title, up to two lines');
+  assert.match(open, /messages-thread-sub" data-request-category="">Communities &amp; projects<\/div>/, 'the category stays under it');
+  assert.match(bar({ stage: 'voted' }), /data-request-kicker="">Request #4417 · done<\/div>/);
+  assert.match(bar({ closed: 'This request was closed by vote.' }), /data-request-kicker="">Request #4417 · closed<\/div>/);
+  // The title the root post draws is unchanged (the declared check reads it).
+  const page = renderComponent(HEAD, 'RequestHead', { r: requestView() });
+  assert.match(page, /<h1 class="dev-request-title" data-issue-title="4417">Add topics as discussion containers<\/h1>/);
+});
+
+test('the plan card\'s title and byline wrap in full rather than being cut off', () => {
+  const html = renderComponent(HEAD, 'SpecCard', { card: {
+    key: 's7296', title: 'Let cashiers split one bill between two payment methods', version: 1,
+    by: 'Homeroom bot', at: '2026-10-08T14:01:11Z', time: '2 days ago', timeTitle: 'Oct 8, 2026',
+    read: { kind: 'text', title: 'x', markdown: '', html: '' },
+  } });
+  assert.doesNotMatch(html, /line-clamp-2|truncate/, 'nothing is clamped or ellipsised');
+  assert.match(html, /class="text-base font-semibold text-zinc-900 dark:text-zinc-100 break-words">Let cashiers split/);
+  assert.match(html, /dark:text-zinc-400 break-words">by Homeroom bot · <time/, 'Homeroom bot by name');
+});
+
+test('a plan Homeroom bot shared reads "Homeroom bot", not "homeroom_bot"', () => {
+  const { requestStream } = loadTsx(MODEL);
+  const out = requestStream([row({ id: 1, kind: 'spec_share', specShare: specShare(1, { sharedBy: 'homeroom_bot' }) })]);
+  assert.equal(out.specs[0].by, 'Homeroom bot');
 });

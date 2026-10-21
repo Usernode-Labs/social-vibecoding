@@ -305,7 +305,7 @@ function changeRef(change: AgentChange) {
 /** What the conversation is about: the session's, or the unsent draft's. */
 type About = Pick<AgentSession, 'focusApp' | 'focusContext'> | null;
 
-function SessionBar({ session, about, embedded, action }: {
+export function SessionBar({ session, about, embedded, action }: {
   session: AgentSession | null;
   about: About;
   embedded: boolean;
@@ -315,6 +315,11 @@ function SessionBar({ session, about, embedded, action }: {
   const t = useMessages('agent');
   const building = useAgentSessionSelector((s) => s.turn.running && s.turn.phase === 'cc');
   const active = session?.activeChange || null;
+  // #5683: the pill says where the work stands, taken from the LATEST change
+  // the conversation made — the one list is newest first — even once that
+  // change is no longer the active one. "No change yet" only when there is
+  // none at all; the active change still decides what "Open app" opens.
+  const latest = active || session?.changes?.[0] || null;
   const count = session?.changes?.length || 0;
   const target = openAppTarget(active, about);
   // #3577: THE PILLS ARE ONE ROW, at every width and on both surfaces.
@@ -353,10 +358,10 @@ function SessionBar({ session, about, embedded, action }: {
   const focusTitle = t('agent:session.bar.focusTitle');
   // A merge of Homeroom itself waiting for the platform's next release: the
   // pill keeps "Going live" and its title says when.
-  const releaseNow = useReleaseNow(active?.release);
-  const releaseLine = building ? null : changeReleaseLine(active, releaseNow);
-  const changeText = releaseLine || (active
-    ? changeStatusLabel(active.status, building)
+  const releaseNow = useReleaseNow(latest?.release);
+  const releaseLine = building ? null : changeReleaseLine(latest, releaseNow);
+  const changeText = releaseLine || (latest
+    ? changeStatusLabel(latest.status, building)
     : t('agent:session.bar.noChangeYet'));
   return (
     <div className="border-b border-zinc-200 px-4 py-2 dark:border-zinc-800" data-agent-session-bar>
@@ -392,11 +397,11 @@ function SessionBar({ session, about, embedded, action }: {
         </span>
         <span
           data-agent-session-change-pill
-          className={`inline-flex min-w-[3.5rem] items-center whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-semibold ${statusTone(active?.status)}`}
+          className={`inline-flex min-w-[3.5rem] items-center whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-semibold ${statusTone(latest?.status)}`}
           title={changeText}
         >
           <span className="min-w-0 truncate">
-            {active ? changeStatusLabel(active.status, building) : t('agent:session.bar.noChangeYet')}
+            {latest ? changeStatusLabel(latest.status, building) : t('agent:session.bar.noChangeYet')}
           </span>
         </span>
         <button
