@@ -11367,10 +11367,20 @@ const AppView = {
           .map(numberOf).filter((n) => n > 0);
         // Image pixels per CSS pixel; shots saved before density was recorded are 1.
         const density = Number(screen.density) >= 1 ? Number(screen.density) : 1;
+        // Close-ups of this screen's after side (served only to an account in
+        // the New Needs you experiment): a part of the screen, `rect` in CSS
+        // px, saved denser than the screen so a small change can be shown big.
+        const closeups = (Array.isArray(shots.artifacts) ? shots.artifacts : []).filter((a) => (
+          a && a.variant === 'closeup' && a.side === 'head' && a.media === 'png'
+          && a.storyId === screen.shot && a.viewport === screen.viewport && urlOk(a.url)
+          && Number(a.density) > 1 && box(a.rect && [a.rect.x, a.rect.y, a.rect.w, a.rect.h], 4)
+          && a.rect.w > 0 && a.rect.h > 0
+        )).map((a) => ({ url: a.url, rect: { x: a.rect.x, y: a.rect.y, w: a.rect.w, h: a.rect.h }, density: Number(a.density) }));
         return {
           viewport: screen.viewport,
           width,
           density,
+          closeups,
           before: { url: base.url, height: heightBefore },
           after: { url: head.url, height: heightAfter },
           regions,
