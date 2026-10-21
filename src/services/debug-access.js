@@ -499,6 +499,10 @@ function _getRoPool(config) {
     max: 2,
     idleTimeoutMillis: 30000,
     statement_timeout: QUERY_TIMEOUT_MS,
+    // Named and with a bounded wait, as every platform connection
+    // (src/db/pool.js connectionOptions).
+    application_name: require('../db/connection-options').connectionName('debug'),
+    connectionTimeoutMillis: (config && config.dbPoolWaitMs) || 10000,
   });
   _roPool.on('error', (err) => {
     log.warn('prod-debug', 'RO pool error', { err: err.message });

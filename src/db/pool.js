@@ -1,6 +1,7 @@
 const { Pool } = require('pg');
 const log = require('../services/logger');
 const { isConnectionLimitError } = require('./connection-census');
+const { connectionName, connectionOptions } = require('./connection-options');
 
 let pool;
 
@@ -26,7 +27,7 @@ function getPool(config) {
       connectionString: config.databaseUrl,
       max: config.dbPoolMax || 10,
       idleTimeoutMillis: 30000,
-      options: '-c jit=off',
+      ...connectionOptions(config, { name: connectionName('main'), extra: { jit: 'off' } }),
     });
     pool.on('error', (err) => {
       // #1771: name the one failure that is not this process's fault. A

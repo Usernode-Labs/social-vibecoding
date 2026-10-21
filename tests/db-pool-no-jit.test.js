@@ -15,11 +15,12 @@ test('every platform connection starts with jit=off', () => {
   const { getPool } = require('../src/db/pool');
   // Building the pool opens no connection; the first query would.
   const pool = getPool({ databaseUrl: 'postgres://user:secret@127.0.0.1:1/none' });
-  assert.equal(pool.options.options, '-c jit=off');
+  assert.match(pool.options.options, /(^| )-c jit=off( |$)/);
   // …and pg sends it as the startup `options` parameter, which Postgres
-  // applies to the session before the first statement.
+  // applies to the session before the first statement (with the session
+  // settings every platform connection has: src/db/connection-options.js).
   const params = new ConnectionParameters(pool.options);
-  assert.equal(params.options, '-c jit=off');
+  assert.match(params.options, /(^| )-c jit=off( |$)/);
   // The connection string the WebSocket bus reuses is untouched.
   assert.equal(pool.options.connectionString, 'postgres://user:secret@127.0.0.1:1/none');
 });

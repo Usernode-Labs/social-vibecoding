@@ -788,6 +788,10 @@ function load() {
     dbPoolMax: IS_STAGING()
       ? parseInt(process.env.STAGING_DB_POOL_MAX || '8', 10)
       : parseInt(process.env.DB_POOL_MAX || '10', 10),
+    // How long a caller waits for a connection (a full pool, a slow server)
+    // before that one request or attempt fails (src/db/pool.js). Every pool
+    // and dedicated client the platform opens waits at most this long.
+    dbPoolWaitMs: parseInt(process.env.DB_POOL_WAIT_MS || '10000', 10),
     // Session auto-pause: a DB-driven sweeper (server.js) flips idle
     // 'active' sessions to 'paused' so they stop counting against the
     // session caps. Now that pause is cheap (it no longer tears down

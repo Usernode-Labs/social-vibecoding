@@ -166,7 +166,9 @@ export async function startWorkflow(config: any, opts: { loops: boolean }): Prom
   await syncSettings(appPool);
   if (runtime) return;
   const workflowPool = new pg.Pool({
-    connectionString: config.databaseUrl, max: config.wfPoolMax, idleTimeoutMillis: 30000, application_name: 'homeroom-workflow',
+    connectionString: config.databaseUrl, max: config.wfPoolMax, idleTimeoutMillis: 30000,
+    application_name: legacy('db/connection-options').connectionName('workflow'),
+    connectionTimeoutMillis: config.dbPoolWaitMs || 10000,
     ...deadPeerOptions(),
   });
   // An idle connection the server drops (a restart, a failover, an admin's
