@@ -126,7 +126,7 @@ test('#3516: on a phone the Communities feed ends where the screen\'s clearance 
   const screen = read('frontend/src/features/workshop/index.tsx');
   assert.match(screen, /id="workshop-screen"\s+className="hidden flex-1 overflow-y-auto platform-safe-scroll"/,
     'the screen scrolls itself and carries the clearance');
-  assert.match(screen, /style=\{\{ position: 'relative' \}\}\s*>\s*\{\/\*[\s\S]*?\*\/\}\s*<div className="max-w-2xl mx-auto pb-8">/,
+  assert.match(screen, /style=\{\{ position: 'relative' \}\}\s+data-page-bounce=""\s*>\s*\{\/\*[\s\S]*?\*\/\}\s*<div className="max-w-2xl mx-auto pb-8">/,
     'its first element is the column');
   assert.match(screen, /\{state\.tab === 'needs' \? \(\n\s*<div data-workshop-pane="needs">/);
   const reel = read('frontend/src/features/workshop/needs-reel.tsx');
