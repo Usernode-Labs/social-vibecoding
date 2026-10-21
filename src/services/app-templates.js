@@ -603,7 +603,7 @@ const TEMPLATES = Object.freeze([
     summary: 'One 3D block world everyone builds in together, in first person: fly around it, pick a block from the hotbar, build and take blocks away, and see everyone else flying and building as they go.',
     icon: '🧱',
     features: [
-      '**First person, full screen**: drawn with three.js (included in the repository, never from a CDN). The mouse looks around, WASD walks, Space and Shift fly up and down, a click builds where the crosshair points and a right-click takes a block away. On a phone: drag to look, a stick to walk, and buttons to fly and build.',
+      '**First person, full screen**: drawn with three.js (included in the repository, never from a CDN). The mouse looks around, WASD walks, Space and Shift fly up and down, a click builds where the crosshair points and a right-click takes a block away. On a phone: drag to look, a stick to walk, and buttons to fly and build, each under its own thumb so you can walk and build at once, and a button beside who is here to play sideways.',
       '**A hotbar of twelve blocks**: grass, stone, wood, brick, glass and more, chosen with 1 to 9, 0, - and = or the scroll wheel.',
       '**Live for everyone**: every block placed or removed shows on every screen at once, and so does everyone else, as a blocky figure with their name and the block in their hand.',
       '**A title screen over the world**, the camera circling it, with who is building now. No lobby: one world, always on, saved as it is built.',
