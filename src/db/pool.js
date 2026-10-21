@@ -48,4 +48,14 @@ function getPool(config) {
   return pool;
 }
 
-module.exports = { getPool };
+// A draining process (server.js drainUntilIdle) starts no new work: its pool
+// shrinks to DRAIN_DB_POOL_MAX: connections beyond it close (idle ones now,
+// busy ones when given back), and none is opened past it again. Two releases
+// draining per role are budgeted at this size, not at the serving one (item
+// 4: workflow-foundation design-item4-connections.md).
+function shrinkForDrain(config) {
+  if (!pool) return null;
+  return require('./connection-options').shrinkPool(pool, (config && config.drainDbPoolMax) || 4);
+}
+
+module.exports = { getPool, shrinkForDrain };

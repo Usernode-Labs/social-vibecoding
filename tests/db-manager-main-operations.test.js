@@ -39,3 +39,31 @@ test('at most the cap at once on the main server; nesting never waits on itself;
   await assert.rejects(db._onMainServer('primary', async () => { throw new Error('boom'); }), /boom/);
   assert.equal(db._mainOperations.running, 0);
 });
+
+test('a draining process runs at most DB_ADMIN_CONNECTIONS_DRAINING at once, the ones running finishing first', async () => {
+  delete require.cache[require.resolve('../src/services/db-manager')];
+  const db = require('../src/services/db-manager');
+  let now = 0;
+  let most = 0;
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const order = [];
+  // Four running at the serving cap, six waiting; the waiting ones count
+  // themselves and everything still running when they start.
+  const running = Array.from({ length: 4 }, (_, i) => db._onMainServer('primary', async () => {
+    now += 1; await gate; await new Promise((r) => setTimeout(r, 5 * i)); now -= 1; order.push(`r${i}`);
+  }));
+  const waiting = Array.from({ length: 6 }, (_, i) => db._onMainServer('primary', async () => {
+    now += 1; most = Math.max(most, now);
+    await new Promise((r) => setTimeout(r, 10));
+    now -= 1; order.push(`w${i}`);
+  }));
+  await new Promise((r) => setTimeout(r, 10));
+  assert.equal(db._mainOperations.running, 4);
+  assert.equal(db.shrinkForDrain(), 1);
+  release();
+  await Promise.all([...running, ...waiting]);
+  assert.equal(most, 1, `one at a time once draining, none beside the four finishing (saw ${most})`);
+  assert.deepEqual(order.slice(0, 4), ['r0', 'r1', 'r2', 'r3']);
+  assert.equal(db._mainOperations.running, 0);
+});

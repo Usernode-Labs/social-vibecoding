@@ -792,6 +792,11 @@ function load() {
     // before that one request or attempt fails (src/db/pool.js). Every pool
     // and dedicated client the platform opens waits at most this long.
     dbPoolWaitMs: parseInt(process.env.DB_POOL_WAIT_MS || '10000', 10),
+    // What a draining process keeps (server.js drainUntilIdle): it starts no
+    // new work, so its main and workflow pools shrink to these, and two
+    // releases draining are budgeted at them (item 4, the connection budget).
+    drainDbPoolMax: parseInt(process.env.DRAIN_DB_POOL_MAX || '4', 10),
+    drainWfPoolMax: parseInt(process.env.DRAIN_WF_POOL_MAX || '2', 10),
     // Session auto-pause: a DB-driven sweeper (server.js) flips idle
     // 'active' sessions to 'paused' so they stop counting against the
     // session caps. Now that pause is cheap (it no longer tears down

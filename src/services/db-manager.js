@@ -180,10 +180,10 @@ const PREVIEW_ADMIN_URL_ENV = 'STAGING_DB_ADMIN_URL';
 const { AsyncLocalStorage } = require('node:async_hooks');
 const MAIN_SERVER_OPERATIONS = Math.max(1, parseInt(process.env.DB_ADMIN_CONNECTIONS_MAX || '4', 10) || 4);
 const inMainOperation = new AsyncLocalStorage();
-const mainOperations = { running: 0, waiting: [] };
+const mainOperations = { running: 0, waiting: [], limit: MAIN_SERVER_OPERATIONS };
 async function onMainServer(server, fn) {
   if ((server || PRIMARY_SERVER) !== PRIMARY_SERVER || inMainOperation.getStore()) return fn();
-  if (mainOperations.running >= MAIN_SERVER_OPERATIONS) {
+  if (mainOperations.running >= mainOperations.limit) {
     await new Promise((resolve) => { mainOperations.waiting.push(resolve); });
   } else {
     mainOperations.running += 1;
@@ -191,10 +191,19 @@ async function onMainServer(server, fn) {
   try {
     return await inMainOperation.run(true, fn);
   } finally {
-    const next = mainOperations.waiting.shift();
-    // A turn given back goes straight to the next in line (running stays).
+    // A turn given back goes straight to the next in line (running stays),
+    // while the limit allows (it is lower once the process drains).
+    const next = mainOperations.running <= mainOperations.limit ? mainOperations.waiting.shift() : null;
     if (next) next(); else mainOperations.running -= 1;
   }
+}
+
+// A draining process finishes what it holds with at most
+// DB_ADMIN_CONNECTIONS_DRAINING operations at a time (item 4).
+function shrinkForDrain() {
+  mainOperations.limit = Math.max(1, Math.min(mainOperations.limit,
+    parseInt(process.env.DB_ADMIN_CONNECTIONS_DRAINING || '1', 10) || 1));
+  return mainOperations.limit;
 }
 
 function parseAdminUrl(value, label) {
@@ -3723,6 +3732,7 @@ module.exports = {
   MAIN_SERVER_OPERATIONS,
   _mainOperations: mainOperations,
   _onMainServer: onMainServer,
+  shrinkForDrain,
   appDbName,
   stagingDbName,
   shotsDbName,

@@ -496,7 +496,9 @@ function _getRoPool(config) {
     database: decodeURIComponent(u.pathname.replace(/^\//, '')),
     user: ROLE,
     password: _roPassword,
-    max: 2,
+    // One: a debug query at a time per process is plenty, and every
+    // connection counts against the server's budget (item 4).
+    max: 1,
     idleTimeoutMillis: 30000,
     statement_timeout: QUERY_TIMEOUT_MS,
     // Named and with a bounded wait, as every platform connection
@@ -642,9 +644,19 @@ Everything here is strictly READ-ONLY and audit-logged; credential-bearing data 
 ==== END PRODUCTION DEBUG ====`;
 }
 
+// A draining process answers no new debug query: its pool goes (item 4: a
+// draining process holds as little as it can). A query that comes anyway
+// opens it again.
+function closePool() {
+  if (!_roPool) return;
+  _roPool.end().catch(() => {});
+  _roPool = null;
+}
+
 module.exports = {
   ROLE,
   ensureRole,
+  closePool,
   loadShared,
   isAvailable,
   runQuery,

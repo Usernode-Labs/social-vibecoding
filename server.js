@@ -1662,6 +1662,19 @@ function closeListener(timeoutMs) {
   }
 }
 
+// A draining process starts no new work, so it keeps small pools: two
+// releases draining per role are budgeted at these sizes beside the serving
+// ones (item 4, the connection budget; deploy/helm checks the sum).
+function shrinkPoolsForDrain(workflowPlatform) {
+  const shrink = (name, fn) => { try { return fn(); } catch (err) { log.warn('server', 'Could not shrink a pool for the drain', { pool: name, err: err.message }); return null; } };
+  return {
+    main: shrink('main', () => require('./src/db/pool').shrinkForDrain(config)),
+    workflow: shrink('workflow', () => workflowPlatform.shrinkForDrain(config)),
+    databaseOperations: shrink('db-manager', () => require('./src/services/db-manager').shrinkForDrain()),
+    debug: shrink('debug', () => { require('./src/services/debug-access').closePool(); return 0; }),
+  };
+}
+
 // A release replaced this process: send its tabs to the new Pod, and finish
 // what it holds (services/processes.js: its own, in memory), its background
 // work (inflight-work.js), its workflow work and its requests still
@@ -1672,6 +1685,7 @@ async function drainUntilIdle({ deadline, announced }) {
   const workflowPlatform = require('./src/workflow/platform.ts');
   await announced;
   const closed = ws.closeAllForRelease();
+  const pools = shrinkPoolsForDrain(workflowPlatform);
   const busy = () => ({
     holds: processes.localSnapshot(20),
     background: inflightWork.snapshot().slice(0, 20),
@@ -1679,7 +1693,7 @@ async function drainUntilIdle({ deadline, announced }) {
     requests: inflightRequests.pending(),
   });
   log.info('server', 'Finishing this process\'s work before exiting', {
-    sockets: closed, deadlineMs: Math.max(0, deadline - Date.now()), ...busy(),
+    sockets: closed, deadlineMs: Math.max(0, deadline - Date.now()), pools, ...busy(),
   });
   const maxDraining = drain.drainingMax();
   let why = null;

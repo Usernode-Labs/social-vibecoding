@@ -159,6 +159,14 @@ export function deadPeerOptions() {
   };
 }
 
+// A draining process's workflow pool shrinks to DRAIN_WF_POOL_MAX: its
+// outcome listener, and the lease renewals and results of the work it
+// still finishes (src/db/pool.js shrinkForDrain says why).
+export function shrinkForDrain(config: any): number | null {
+  if (!kernelPool) return null;
+  return legacy('db/connection-options').shrinkPool(kernelPool, Math.max(2, Number(config?.drainWfPoolMax) || 2));
+}
+
 export async function startWorkflow(config: any, opts: { loops: boolean }): Promise<void> {
   log = legacy('services/logger');
   appConfig = config;

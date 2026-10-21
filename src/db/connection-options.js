@@ -31,4 +31,29 @@ function connectionOptions(config, { name, idleInTransactionMs = IDLE_IN_TRANSAC
   };
 }
 
-module.exports = { connectionName, connectionOptions, IDLE_IN_TRANSACTION_MS };
+// Shrinks a pg Pool to `max` connections at most (a draining process, item 4).
+// pg-pool reads options.max only before it opens a connection, so the ones
+// above it are closed here: idle ones now, busy ones when they are given back
+// (pg-pool's own expiry, the one maxLifetimeSeconds uses). Pinned by
+// tests/connection-budget-postgres.test.js against the locked pg-pool.
+function shrinkPool(pool, max) {
+  if (!pool || !pool.options) return null;
+  pool.options.max = Math.max(1, Math.min(pool.options.max, max));
+  if (!Array.isArray(pool._clients) || !Array.isArray(pool._idle) || !pool._expired) return pool.options.max;
+  let over = pool._clients.length - pool.options.max;
+  for (const item of pool._idle.slice()) {
+    if (over <= 0) break;
+    pool._remove(item.client);
+    over -= 1;
+  }
+  const idle = new Set(pool._idle.map((item) => item.client));
+  for (const client of pool._clients) {
+    if (over <= 0) break;
+    if (idle.has(client) || pool._expired.has(client)) continue;
+    pool._expired.add(client);
+    over -= 1;
+  }
+  return pool.options.max;
+}
+
+module.exports = { connectionName, connectionOptions, shrinkPool, IDLE_IN_TRANSACTION_MS };

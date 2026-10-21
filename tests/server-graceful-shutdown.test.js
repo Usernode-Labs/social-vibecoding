@@ -356,6 +356,24 @@ test('the workflow runtime stops its loops as shutdown begins, its work only aft
   assert.doesNotMatch(body, /homeroom-bot-drain|waitForSafePoint|botDeadlineMs/, 'and nothing waits for the bot\'s builds');
 });
 
+test('a draining process shrinks its pools as its drain begins: main, workflow, database operations, debug', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+  // Item 4, the connection budget: two releases draining per role are
+  // counted at the drain sizes, so every drain shrinks first.
+  const drain = src.slice(src.indexOf('async function drainUntilIdle('), src.indexOf("process.on('SIGTERM', cleanup);"));
+  const announced = drain.indexOf('await announced;');
+  const shrunk = drain.indexOf('shrinkPoolsForDrain(workflowPlatform)');
+  const waits = drain.indexOf('await drain.untilIdle(');
+  assert.ok(announced > 0 && shrunk > announced && waits > shrunk, 'once the successor is announced, before the wait');
+  const shrink = src.slice(src.indexOf('function shrinkPoolsForDrain('), src.indexOf('async function drainUntilIdle('));
+  for (const call of ["require('./src/db/pool').shrinkForDrain(config)", 'workflowPlatform.shrinkForDrain(config)',
+    "require('./src/services/db-manager').shrinkForDrain()", "require('./src/services/debug-access').closePool()"]) {
+    assert.ok(shrink.includes(call), call);
+  }
+});
+
 test('cleanup survives a listener that throws on close', async () => {
   const { server, logs, restore } = loadServer();
   try {

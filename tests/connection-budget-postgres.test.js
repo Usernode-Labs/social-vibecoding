@@ -81,3 +81,39 @@ test('the bus listener closes a connection that opened but could not LISTEN', as
     delete require.cache[require.resolve('../src/services/ws-bus')];
   }
 });
+
+test('a draining process\'s pool shrinks: idle connections above it close now, busy ones when given back', { timeout: 30000 }, async (t) => {
+  const probe = new Pool({ connectionString: DSN, max: 1, connectionTimeoutMillis: 2000 });
+  try { await probe.query('SELECT 1'); } catch (err) {
+    await probe.end();
+    if (process.env.TEST_DATABASE_URL) throw err;
+    t.skip('PostgreSQL unavailable; set TEST_DATABASE_URL to require this check'); return;
+  }
+  t.after(() => probe.end());
+  const { shrinkPool } = require('../src/db/connection-options');
+  const name = `drain-shrink-${process.pid}`;
+  const pool = new Pool({ connectionString: DSN, max: 4, application_name: name, connectionTimeoutMillis: 300, idleTimeoutMillis: 60000 });
+  const given = new Set();
+  // Whatever an assertion left checked out goes back, so the pool can end.
+  t.after(() => { for (const c of given) c.release(true); return pool.end(); });
+  const back = (c) => { given.delete(c); c.release(); };
+  const open = async () => (await probe.query('SELECT count(*)::int AS n FROM pg_stat_activity WHERE application_name = $1', [name])).rows[0].n;
+  const until = async (n) => { for (let i = 0; i < 50 && (await open()) !== n; i++) await new Promise((r) => setTimeout(r, 20)); return open(); };
+
+  const clients = await Promise.all(Array.from({ length: 4 }, () => pool.connect()));
+  for (const c of clients) given.add(c);
+  back(clients[2]);
+  back(clients[3]);
+  assert.equal(await open(), 4);
+  assert.equal(shrinkPool(pool, 1), 1);
+  assert.equal(await until(2), 2, 'the two idle ones closed at once');
+  back(clients[0]);
+  back(clients[1]);
+  assert.equal(await until(1), 1, 'given back, the busy ones above it closed too');
+  // And none is opened past it again: a second caller waits, then fails.
+  const held = await pool.connect();
+  given.add(held);
+  await assert.rejects(pool.connect(), /timeout/i);
+  back(held);
+  assert.equal(await open(), 1);
+});
