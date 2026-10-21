@@ -1416,7 +1416,8 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         // new project gets one, You or the group unless it asked for another.
         if (rule && Array.isArray(rule.rules)) {
           const stored = rule.groups && rule.groups.length
-            ? await appManifest.storedRules(pool, rule)
+            // On the transaction's connection: the pool may have none to spare.
+            ? await appManifest.storedRules(db, rule)
             : require('../services/governance-rules').storedForm(rule);
           const { rows: governed } = await db.query(
             `UPDATE apps SET governance_rules = $1::jsonb WHERE id = $2 RETURNING *`,

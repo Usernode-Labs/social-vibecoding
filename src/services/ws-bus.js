@@ -395,7 +395,10 @@ async function _connect() {
   // property of the session and lasts as long as it does, so a pooled client
   // would either be held out of the pool forever or lose the subscription the
   // moment it was recycled.
-  const client = new Client({ connectionString: _connectionString });
+  // Named, with a bounded connect and the dead-peer settings every platform
+  // connection has (src/db/pool.js connectionOptions).
+  const { connectionName, connectionOptions } = require('../db/connection-options');
+  const client = new Client({ connectionString: _connectionString, ...connectionOptions(null, { name: connectionName('bus') }) });
   client.on('notification', _handleNotification);
   client.on('error', (err) => {
     log.warn('ws-bus', 'listener error, reconnecting', { err: err.message });
@@ -423,6 +426,11 @@ async function _connect() {
     _startPeerTimer();
   } catch (err) {
     log.warn('ws-bus', 'listener connect failed, retrying', { err: err.message });
+    // A connection that opened but could not LISTEN is closed, not left
+    // open beside the next try's; its error handler retries no more.
+    client.removeAllListeners('error');
+    client.on('error', () => {});
+    client.end().catch(() => {});
     _scheduleReconnect();
   }
 }

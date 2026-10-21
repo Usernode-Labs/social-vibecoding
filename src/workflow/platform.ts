@@ -159,6 +159,19 @@ export function deadPeerOptions() {
   };
 }
 
+// A draining process's workflow pool shrinks to DRAIN_WF_POOL_MAX: its
+// outcome listener, and the lease renewals and results of the work it
+// still finishes (src/db/pool.js shrinkForDrain says why).
+export function shrinkForDrain(config: any): number | null {
+  if (!kernelPool) return null;
+  return legacy('db/connection-options').shrinkPool(kernelPool, Math.max(2, Number(config?.drainWfPoolMax) || 2));
+}
+
+// What it still holds above its drain size (server.js drainUntilIdle).
+export function drainExcess(): number {
+  return legacy('db/connection-options').poolExcess(kernelPool);
+}
+
 export async function startWorkflow(config: any, opts: { loops: boolean }): Promise<void> {
   log = legacy('services/logger');
   appConfig = config;
@@ -166,7 +179,9 @@ export async function startWorkflow(config: any, opts: { loops: boolean }): Prom
   await syncSettings(appPool);
   if (runtime) return;
   const workflowPool = new pg.Pool({
-    connectionString: config.databaseUrl, max: config.wfPoolMax, idleTimeoutMillis: 30000, application_name: 'homeroom-workflow',
+    connectionString: config.databaseUrl, max: config.wfPoolMax, idleTimeoutMillis: 30000,
+    application_name: legacy('db/connection-options').connectionName('workflow'),
+    connectionTimeoutMillis: config.dbPoolWaitMs || 10000,
     ...deadPeerOptions(),
   });
   // An idle connection the server drops (a restart, a failover, an admin's

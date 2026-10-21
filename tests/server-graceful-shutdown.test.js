@@ -356,6 +356,47 @@ test('the workflow runtime stops its loops as shutdown begins, its work only aft
   assert.doesNotMatch(body, /homeroom-bot-drain|waitForSafePoint|botDeadlineMs/, 'and nothing waits for the bot\'s builds');
 });
 
+test('a draining process shrinks its pools as its drain begins: main, workflow, database operations, debug', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+  // Item 4, the connection budget: two releases draining per role are
+  // counted at the drain sizes, so every drain shrinks first.
+  const drain = src.slice(src.indexOf('async function drainUntilIdle('), src.indexOf("process.on('SIGTERM', cleanup);"));
+  const announced = drain.indexOf('await announced;');
+  const shrunk = drain.indexOf('shrinkPoolsForDrain(workflowPlatform)');
+  const waits = drain.indexOf('await drain.untilIdle(');
+  assert.ok(announced > 0 && shrunk > announced && waits > shrunk, 'once the successor is announced, before the wait');
+  const shrink = src.slice(src.indexOf('function shrinkPoolsForDrain('), src.indexOf('async function drainUntilIdle('));
+  // Still above its drain sizes when another process of its role starts:
+  // it hands its work over, first of the reasons to (the budget has room for
+  // one such process per role, in the surge slot).
+  const handover = drain.indexOf("if (retainedAboveDrain(workflowPlatform) > 0 && (await processes.startedSinceDrain()) > 0) { why = 'retained'; return true; }");
+  assert.ok(handover > waits && handover < drain.indexOf('processes.newerDraining()'), 'asked in superseded, before the others');
+  // It says what it still holds above its drain sizes once it shrank, and
+  // as that changes, until its wait ends.
+  const reported = drain.indexOf('  report();');
+  assert.ok(reported > drain.indexOf('shrinkPoolsForDrain(workflowPlatform)') && reported < waits);
+  assert.ok(drain.indexOf('clearInterval(reporting);') > waits);
+  assert.match(drain, /const report = \(\) => processes\.setAboveDrain\(retainedAboveDrain\(workflowPlatform\)\)/);
+  // Starting, a process waits until no older one it replaces holds more,
+  // after it registered (which is what makes them hand over) and before any
+  // of its work or its listener.
+  const boot = src.indexOf('await processes.start({ pool: getPool(config), role: ownRole });');
+  const gate = src.indexOf('const room = await processes.waitForRoom();');
+  assert.ok(boot > 0 && gate > boot, 'after registering');
+  assert.ok(gate < src.indexOf("startWorkflowClients(config)") && gate < src.indexOf("startWorkflow(config, { loops: false })")
+    && gate < src.indexOf('const server = app.listen(config.port'), 'before its work and its listener');
+  const retained = src.slice(src.indexOf('function retainedAboveDrain('), src.indexOf('async function drainUntilIdle('));
+  for (const part of ["require('./src/db/pool').drainExcess()", 'workflowPlatform.drainExcess()', "require('./src/services/db-manager').drainExcess()"]) {
+    assert.ok(retained.includes(part), part);
+  }
+  for (const call of ["require('./src/db/pool').shrinkForDrain(config)", 'workflowPlatform.shrinkForDrain(config)',
+    "require('./src/services/db-manager').shrinkForDrain()", "require('./src/services/debug-access').closePool()"]) {
+    assert.ok(shrink.includes(call), call);
+  }
+});
+
 test('cleanup survives a listener that throws on close', async () => {
   const { server, logs, restore } = loadServer();
   try {

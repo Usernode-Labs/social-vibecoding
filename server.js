@@ -1135,6 +1135,13 @@ async function start() {
   // (docs/plans/draining-releases.md): before anything here can start work.
   // Never fatal: holds stay this process's own until the database takes them.
   await processes.start({ pool: getPool(config), role: ownRole });
+  // The connection budget (item 4): nothing here starts work while a
+  // process this one replaces holds its capacity claim (connections above
+  // its drain sizes, until they close). Registered above, this process is
+  // what makes it hand over; it waits holding no pool connection
+  // (processes.js waitForRoom).
+  const room = await processes.waitForRoom();
+  if (room.waitedMs > 0) log.info('server', 'Older processes gave back their connections; starting', room);
   // The limiters that gate a send, a bill or a guess count in Postgres: one
   // budget for every process, kept across a deploy (services/rate-limit-store.js).
   require('./src/services/rate-limit-store').setPool(getPool(config));
@@ -1662,6 +1669,28 @@ function closeListener(timeoutMs) {
   }
 }
 
+// A draining process starts no new work, so it keeps small pools: two
+// releases draining per role are budgeted at these sizes beside the serving
+// ones (item 4, the connection budget; deploy/helm checks the sum).
+function shrinkPoolsForDrain(workflowPlatform) {
+  const shrink = (name, fn) => { try { return fn(); } catch (err) { log.warn('server', 'Could not shrink a pool for the drain', { pool: name, err: err.message }); return null; } };
+  return {
+    main: shrink('main', () => require('./src/db/pool').shrinkForDrain(config)),
+    workflow: shrink('workflow', () => workflowPlatform.shrinkForDrain(config)),
+    databaseOperations: shrink('db-manager', () => require('./src/services/db-manager').shrinkForDrain()),
+    debug: shrink('debug', () => { require('./src/services/debug-access').closePool(); return 0; }),
+  };
+}
+
+// Connections this draining process still holds above its drain sizes: the
+// ones checked out when it shrank, until they are given back.
+function retainedAboveDrain(workflowPlatform) {
+  try {
+    return require('./src/db/pool').drainExcess() + workflowPlatform.drainExcess()
+      + require('./src/services/db-manager').drainExcess();
+  } catch { return 0; }
+}
+
 // A release replaced this process: send its tabs to the new Pod, and finish
 // what it holds (services/processes.js: its own, in memory), its background
 // work (inflight-work.js), its workflow work and its requests still
@@ -1672,14 +1701,23 @@ async function drainUntilIdle({ deadline, announced }) {
   const workflowPlatform = require('./src/workflow/platform.ts');
   await announced;
   const closed = ws.closeAllForRelease();
+  const pools = shrinkPoolsForDrain(workflowPlatform);
+  // What it still holds above its drain sizes, at once and every second:
+  // at none its capacity claim goes, and a process starting stops waiting on
+  // it (processes.js waitForRoom).
+  const report = () => processes.setAboveDrain(retainedAboveDrain(workflowPlatform));
+  report();
+  const reporting = setInterval(report, 1000);
+  reporting.unref?.();
   const busy = () => ({
     holds: processes.localSnapshot(20),
     background: inflightWork.snapshot().slice(0, 20),
     workflowWork: workflowPlatform.workflowWorkRunning(),
     requests: inflightRequests.pending(),
+    aboveDrainSizes: retainedAboveDrain(workflowPlatform),
   });
   log.info('server', 'Finishing this process\'s work before exiting', {
-    sockets: closed, deadlineMs: Math.max(0, deadline - Date.now()), ...busy(),
+    sockets: closed, deadlineMs: Math.max(0, deadline - Date.now()), pools, ...busy(),
   });
   const maxDraining = drain.drainingMax();
   let why = null;
@@ -1690,17 +1728,24 @@ async function drainUntilIdle({ deadline, announced }) {
     // Too many newer processes draining, or no successor serving any more
     // (it died: the platform is going down): hand the rest over now.
     superseded: async () => {
+      // Still holding connections above its drain sizes when another
+      // process of its role starts: the budget has room for one such
+      // process per role, in the rollout's surge slot (processes.js
+      // startedSinceDrain).
+      if (retainedAboveDrain(workflowPlatform) > 0 && (await processes.startedSinceDrain()) > 0) { why = 'retained'; return true; }
       if ((await processes.newerDraining()) >= maxDraining) { why = 'crowded'; return true; }
       if ((await processes.servingOthers()) === 0) { why = 'alone'; return true; }
       return false;
     },
     describe: busy,
   });
+  clearInterval(reporting);
   if (outcome.reason === 'idle') {
     log.info('server', 'Finished this process\'s work', { waitedMs: outcome.waitedMs });
   } else {
     const message = outcome.reason === 'deadline' ? 'Drain deadline passed; handing the rest of this process\'s work over'
       : why === 'alone' ? 'No successor is serving any more; handing the rest of this process\'s work over'
+        : why === 'retained' ? 'A newer process started while this one still held connections above its drain sizes; handing its work over'
         : 'Newer processes are draining too; handing the rest of this one\'s work over';
     log.warn('server', message, { waitedMs: outcome.waitedMs, maxDraining, ...busy() });
   }

@@ -91,6 +91,60 @@ affinity:
 {{- end -}}
 {{- end -}}
 
+{{- /*
+The connection budget (postgresql.platformConnections): the most connections
+the platform's processes can hold at once on the main server must fit in the
+share reserved for its user. Each role counts its serving Pods plus one more
+(the Deployments' maxSurge 1), drainingMax replaced Pods per replica at
+platform.drainPools, and five connections per process outside its pools
+(the bus listener, presence, the lock connection, the debug pool, the
+build-retention guard). A database operation counts twice: one can hold two
+connections at once (pg_dump beside pg_restore; services/db-manager.js).
+A replaced Pod keeps the connections checked out when it shrank until they
+are given back, so for a while it holds more than its drain sizes. Until it
+does not, it holds a capacity claim (an advisory lock that goes no earlier
+than its connections). A Pod starting does not start its work while a Pod of
+its role holds one (processes.js waitForRoom), and that older Pod hands its
+work over as soon as it sees the new one (server.js drainUntilIdle). So
+while it is above, the new Pod holds only what its boot needs, and the two
+together fit the surge slot as long as a boot needs no more than a drain
+size. The migration Job adds its pool plus two (its
+administrative connection and a psql).
+*/}}
+{{- define "social-vibecoding-platform.connectionBudget" -}}
+{{- $p := .Values.platform -}}
+{{- $c := .Values.config -}}
+{{- $d := $p.drainPools -}}
+{{- if or (lt (int $d.dbPoolMax) 1) (lt (int $d.wfPoolMax) 2) (lt (int $d.databaseOperations) 1) -}}
+  {{- fail "platform.drainPools needs dbPoolMax 1 or more, wfPoolMax 2 or more (its outcome listener and one more) and databaseOperations 1 or more" -}}
+{{- end -}}
+{{- $outside := 5 -}}
+{{- $drainEach := add (int $d.dbPoolMax) (int $d.wfPoolMax) (mul 2 (int $d.databaseOperations)) $outside -}}
+{{- $roles := list -}}
+{{- if $p.conductor.enabled -}}
+  {{- $roles = append $roles (dict "name" "web" "replicas" (int $p.replicas) "serving" (add (int $c.dbPoolMax) (int $c.wfPoolMax) (mul 2 (int $c.databaseOperations)) $outside)) -}}
+  {{- $roles = append $roles (dict "name" "conductor" "replicas" (int $p.conductor.replicas) "serving" (add (int (default $c.dbPoolMax $p.conductor.dbPoolMax)) (int $p.conductor.wfPoolMax) (mul 2 (int $p.conductor.databaseOperations)) $outside)) -}}
+{{- else -}}
+  {{- $roles = append $roles (dict "name" "platform" "replicas" (int $p.replicas) "serving" (add (int $c.dbPoolMax) (int $p.conductor.wfPoolMax) (mul 2 (int $p.conductor.databaseOperations)) $outside)) -}}
+{{- end -}}
+{{- $total := 0 -}}
+{{- $parts := list -}}
+{{- range $roles -}}
+  {{- $n := add (mul (add .replicas 1) .serving) (mul .replicas (int $p.drainingMax) $drainEach) -}}
+  {{- $total = add $total $n -}}
+  {{- $parts = append $parts (printf "%s %d" .name $n) -}}
+{{- end -}}
+{{- if .Values.migration.enabled -}}
+  {{- $m := add (int .Values.migration.dbPoolMax) 2 -}}
+  {{- $total = add $total $m -}}
+  {{- $parts = append $parts (printf "migration %d" $m) -}}
+{{- end -}}
+{{- $reserve := int .Values.postgresql.platformConnections -}}
+{{- if and (gt $reserve 0) (gt $total $reserve) -}}
+  {{- fail (printf "the platform could hold %d connections at once on its database server (%s), more than postgresql.platformConnections (%d): lower a pool or platform.drainPools, or raise the reserve" $total (join ", " $parts) $reserve) -}}
+{{- end -}}
+{{- end -}}
+
 {{- define "social-vibecoding-platform.validate" -}}
 {{- if .Values.enabled -}}
   {{- if or .Values.platform.enabled .Values.migration.enabled -}}
@@ -110,6 +164,7 @@ affinity:
     {{- if or (lt $draining 0.0) (ne (float64 (int $draining)) $draining) -}}
       {{- fail "platform.drainingMax must be a whole number, 0 or more" -}}
     {{- end -}}
+    {{- include "social-vibecoding-platform.connectionBudget" . -}}
     {{- if .Values.platform.conductor.enabled -}}
       {{- $conductors := float64 .Values.platform.conductor.replicas -}}
       {{- if or (lt $conductors 1.0) (ne (float64 (int $conductors)) $conductors) -}}

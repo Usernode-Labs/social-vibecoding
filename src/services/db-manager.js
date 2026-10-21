@@ -168,6 +168,44 @@ const PRIMARY_SERVER = 'primary';
 const PREVIEW_SERVER = 'preview';
 const PREVIEW_ADMIN_URL_ENV = 'STAGING_DB_ADMIN_URL';
 
+// The connections this module opens outside the pools (a Client per clone
+// pass, psql, pg_dump | pg_restore) to the MAIN server, at most
+// DB_ADMIN_CONNECTIONS_MAX operations at a time per process (item 4: the
+// connection budget, workflow-foundation design-item4-connections.md); the
+// rest wait their turn. An operation that holds a turn opens its nested
+// connections in it (a clone's psql, pg_restore beside pg_dump) without
+// taking another, so nesting cannot wait on itself and an operation opens at
+// most two at once: the budget counts twice the cap. The preview server's
+// connections are its own server's budget and are not counted here.
+const { AsyncLocalStorage } = require('node:async_hooks');
+const MAIN_SERVER_OPERATIONS = Math.max(1, parseInt(process.env.DB_ADMIN_CONNECTIONS_MAX || '4', 10) || 4);
+const inMainOperation = new AsyncLocalStorage();
+const mainOperations = { running: 0, waiting: [], limit: MAIN_SERVER_OPERATIONS };
+async function onMainServer(server, fn) {
+  if ((server || PRIMARY_SERVER) !== PRIMARY_SERVER || inMainOperation.getStore()) return fn();
+  if (mainOperations.running >= mainOperations.limit) {
+    await new Promise((resolve) => { mainOperations.waiting.push(resolve); });
+  } else {
+    mainOperations.running += 1;
+  }
+  try {
+    return await inMainOperation.run(true, fn);
+  } finally {
+    // A turn given back goes straight to the next in line (running stays),
+    // while the limit allows (it is lower once the process drains).
+    const next = mainOperations.running <= mainOperations.limit ? mainOperations.waiting.shift() : null;
+    if (next) next(); else mainOperations.running -= 1;
+  }
+}
+
+// A draining process finishes what it holds with at most
+// DB_ADMIN_CONNECTIONS_DRAINING operations at a time (item 4).
+function shrinkForDrain() {
+  mainOperations.limit = Math.max(1, Math.min(mainOperations.limit,
+    parseInt(process.env.DB_ADMIN_CONNECTIONS_DRAINING || '1', 10) || 1));
+  return mainOperations.limit;
+}
+
 function parseAdminUrl(value, label) {
   let parsed;
   // Never echo the value: it carries the server's password.
@@ -411,6 +449,7 @@ async function createDatabase(dbName) {
   // superuser still can.
   await execInDb(`REVOKE CONNECT ON DATABASE ${dbName} FROM PUBLIC`);
   await execInDb(`GRANT ALL PRIVILEGES ON DATABASE ${dbName} TO ${role}`);
+  await applyAppConnectionLimit(dbName, { execute: execInDb });
 
   // Reassign any objects in the DB currently owned by the superuser
   // to the new role — a no-op for fresh CREATEs (no objects yet) but
@@ -507,8 +546,9 @@ async function dropDatabaseWith(dbName, { strict, execute, retry, server = PRIMA
 
 // ─── Per-preview connection ceiling (#1771) ─────────────────────────────
 //
-// One Postgres server backs the platform, every production app and every
-// staging preview, and its max_connections is the stock 100. Nothing in the
+// One Postgres server backed the platform, every production app and every
+// staging preview, with the stock 100 connections (previews have since moved
+// to a server of their own). Nothing in the
 // fleet was bounded against that number: each preview container brings its
 // own pg Pool, and a generated app's pool is whatever that app's code says
 // it is — code this platform does not own and cannot cap from here. Twenty
@@ -835,6 +875,42 @@ async function createFromTemplate(templateDb, targetDb, ownerRole, {
     label: 'Template copy',
     ...(wait ? { wait } : {}),
   });
+}
+
+// ─── Each production app's own connection cap (item 4) ──────────────────
+//
+// The child apps share the main server with the platform, and an app's pool
+// is whatever its code says. Each app's database is capped
+// (APP_DB_CONNECTION_LIMIT, 20: the starter's pool of 10, twice, for the
+// moment the app's own rollout runs its old and new container side by side),
+// so a runaway app meets its own cap, with Postgres naming the database, and
+// the apps' share of the server (what the platform's reserve leaves:
+// services/server-budget.js) holds. The platform's own database is never
+// capped. 0 or less turns the cap off.
+const DEFAULT_APP_DB_CONNECTION_LIMIT = 20;
+
+function appConnectionLimit() {
+  const raw = parseInt(process.env.APP_DB_CONNECTION_LIMIT || '', 10);
+  if (!Number.isFinite(raw)) return DEFAULT_APP_DB_CONNECTION_LIMIT;
+  return raw > 0 ? raw : -1;
+}
+
+function platformDatabaseName(databaseUrl = process.env.DATABASE_URL) {
+  try { return decodeURIComponent(new URL(databaseUrl).pathname.replace(/^\//, '')) || null; } catch { return null; }
+}
+
+// Best-effort, as the staging ceiling is: an app made without its cap is the
+// state every app was in before; a creation that fails over it is not.
+async function applyAppConnectionLimit(dbName, { execute: given = null } = {}) {
+  const limit = appConnectionLimit();
+  if (limit < 0 || !SAFE_IDENT.test(dbName) || dbName === platformDatabaseName()) return null;
+  try {
+    await (given || adminExecutor(PRIMARY_SERVER))(`ALTER DATABASE ${dbName} CONNECTION LIMIT ${limit}`);
+    return limit;
+  } catch (err) {
+    log.warn('db-manager', 'Could not cap the app database\'s connections', { dbName, limit, err: err.message });
+    return null;
+  }
 }
 
 /**
@@ -2010,7 +2086,11 @@ async function assertPreviewServerReachable(server) {
 // connection within one clone phase. Other administration keeps its existing
 // one-shot behavior. SQL stays in autocommit: CREATE/DROP DATABASE cannot run
 // inside a transaction, and a failed redaction must not abort later attempts.
-async function withDatabaseConnection(dbName, fn, { queryTimeoutMs = 30_000, server = PRIMARY_SERVER, as = null } = {}) {
+async function withDatabaseConnection(dbName, fn, opts = {}) {
+  return onMainServer(opts.server, () => withDatabaseConnectionNow(dbName, fn, opts));
+}
+
+async function withDatabaseConnectionNow(dbName, fn, { queryTimeoutMs = 30_000, server = PRIMARY_SERVER, as = null } = {}) {
   if (!SAFE_IDENT.test(dbName)) throw new Error(`Unsafe connection database: ${dbName}`);
   const timeoutMs = Math.max(30_000, Math.min(120_000, Number(queryTimeoutMs) || 30_000));
   let url;
@@ -2113,6 +2193,10 @@ function fromPreviewServer(err, server) {
 // psql process and so its own connection: nothing that must share a session
 // with another statement goes through here (see withDatabaseConnection).
 async function execInTarget(dbName, sql, opts = {}) {
+  return onMainServer(opts.server, () => execInTargetNow(dbName, sql, opts));
+}
+
+async function execInTargetNow(dbName, sql, opts = {}) {
   if (!SAFE_IDENT.test(dbName)) throw new Error(`execInTarget: unsafe dbName ${JSON.stringify(dbName)}`);
   const args = ['-X', '-v', 'ON_ERROR_STOP=1'];
   if (opts.tuplesOnly) {
@@ -2337,7 +2421,12 @@ async function extensionsOnlyAnAdminCanCreate(sourceDb, targetServer = PRIMARY_S
 // so nothing needs the administrator's rights. pg_dump's emitted SQL is
 // schema-qualified by construction, so the unprivileged session cannot
 // redirect it; the dump side stays administrative and reads only.
-async function dumpRestore(sourceDb, targetDb, excludeData = [], { targetServer = PRIMARY_SERVER, as = null } = {}) {
+// pg_dump reads the main server: one operation's turn, pg_restore beside it.
+async function dumpRestore(sourceDb, targetDb, excludeData = [], opts = {}) {
+  return onMainServer(PRIMARY_SERVER, () => dumpRestoreNow(sourceDb, targetDb, excludeData, opts));
+}
+
+async function dumpRestoreNow(sourceDb, targetDb, excludeData = [], { targetServer = PRIMARY_SERVER, as = null } = {}) {
   if (!SAFE_IDENT.test(sourceDb) || !SAFE_IDENT.test(targetDb)) {
     throw new Error(`dumpRestore: unsafe identifiers ${sourceDb}/${targetDb}`);
   }
@@ -3678,6 +3767,12 @@ async function retireStrayTemplates({ limit = 50 } = {}) {
 }
 
 module.exports = {
+  MAIN_SERVER_OPERATIONS,
+  _mainOperations: mainOperations,
+  _onMainServer: onMainServer,
+  shrinkForDrain,
+  // Operations still running above the drain limit (server.js drainUntilIdle).
+  drainExcess: () => Math.max(0, mainOperations.running - mainOperations.limit),
   appDbName,
   stagingDbName,
   shotsDbName,
@@ -3692,6 +3787,9 @@ module.exports = {
   isStagingCloneDb,
   isShotsCloneDb,
   applyStagingConnectionLimit,
+  applyAppConnectionLimit,
+  appConnectionLimit,
+  platformDatabaseName,
   // Disposable shots and staging-template databases.
   isDisposableDb,
   terminateDisposableSessions,

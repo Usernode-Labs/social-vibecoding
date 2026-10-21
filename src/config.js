@@ -772,9 +772,11 @@ function load() {
     // DB work. Tunable via env so prod can widen it without a code change.
     //
     // #1771: a STAGING PREVIEW gets its own, much smaller ceiling. Every
-    // preview is a separate clone on the SAME Postgres server as production,
-    // and that server's max_connections is the stock 100 — so the fleet, not
-    // any one process, is what the budget has to fit. A preview serves one
+    // preview is a separate clone on one Postgres server (production's when
+    // this was written, with the stock 100 connections; a server of its own
+    // now), so the fleet, not any one process, is what the budget has to fit.
+    // The platform's own pools are budgeted in the chart per role
+    // (postgresql.platformConnections, item 4). A preview serves one
     // reviewer and one capture run; capture drives 8 concurrent pages
     // (capture/capture.js `concurrency`), so 8 is the number of connections
     // it can actually use at once, and anything above that is a ceiling it
@@ -788,6 +790,15 @@ function load() {
     dbPoolMax: IS_STAGING()
       ? parseInt(process.env.STAGING_DB_POOL_MAX || '8', 10)
       : parseInt(process.env.DB_POOL_MAX || '10', 10),
+    // How long a caller waits for a connection (a full pool, a slow server)
+    // before that one request or attempt fails (src/db/pool.js). Every pool
+    // and dedicated client the platform opens waits at most this long.
+    dbPoolWaitMs: parseInt(process.env.DB_POOL_WAIT_MS || '10000', 10),
+    // What a draining process keeps (server.js drainUntilIdle): it starts no
+    // new work, so its main and workflow pools shrink to these, and two
+    // releases draining are budgeted at them (item 4, the connection budget).
+    drainDbPoolMax: parseInt(process.env.DRAIN_DB_POOL_MAX || '4', 10),
+    drainWfPoolMax: parseInt(process.env.DRAIN_WF_POOL_MAX || '2', 10),
     // Session auto-pause: a DB-driven sweeper (server.js) flips idle
     // 'active' sessions to 'paused' so they stop counting against the
     // session caps. Now that pause is cheap (it no longer tears down
@@ -1158,7 +1169,7 @@ function usesMockGithubForImports() {
 // github-mock.js stands in), and no fleet. What it does have is a timer
 // pool that queries every few seconds forever, which is why previews last
 // touched a week ago were measured holding six warm Postgres connections
-// each — twenty of them, on a server whose max_connections is 100. The pool
+// each — twenty of them, on a server whose max_connections was 100. The pool
 // never sheds them because idleTimeoutMillis only fires on a connection
 // nobody reuses, and the sweepers keep reusing them.
 //

@@ -81,16 +81,16 @@ const pool = {
       notified.deletions.push({ actorId: params[0], name: params[1], recipients: params[2] });
       return { rows: [] };
     }
+    // The purge's name lock (services/app-data-retention.js, #5121): the
+    // name's key, then its re-check under the lock, which finds the name held
+    // by no other app.
+    if (/SELECT hashtext\(\$1::text\) AS h/.test(source)) return { rows: [{ h: 1 }] };
+    if (/ AS held/.test(source)) return { rows: [{ held: false }] };
     if (/DELETE FROM apps WHERE id = \$1/.test(source)) {
       teardown.deletedRows.push(params[0]);
       return { rows: [], rowCount: 1 };
     }
     return { rows: [], rowCount: 0 };
-  },
-  // The purge's name lock (services/app-data-retention.js, #5121): a
-  // connection whose re-check finds the name held by no other app.
-  async connect() {
-    return { query: async () => ({ rows: [{ held: false }] }), release() {} };
   },
 };
 poolMod.getPool = () => pool;

@@ -1054,42 +1054,31 @@ test('a deployment that cannot verify GitHub identity refuses, and says whose pr
 
 // ── 9. The lock ────────────────────────────────────────────────────────
 
-test('the advisory lock is taken on the session and released in finally', async () => {
-  const calls = [];
-  const client = {
-    query: async (sql, params) => { calls.push({ sql, params }); return { rows: [{ got: true }] }; },
-    release: () => calls.push({ sql: 'RELEASE' }),
-  };
-  const out = await svc.withProposalLock({ connect: async () => client }, 501, async () => 'body ran');
-  assert.equal(out, 'body ran');
-  assert.match(calls[0].sql, /pg_try_advisory_lock/);
-  assert.equal(calls[0].params[1], 501, 'keyed on the session id');
-  assert.match(calls[1].sql, /pg_advisory_unlock/);
-  assert.equal(calls[2].sql, 'RELEASE');
-
-  // Released even when the body throws — a held session lock would wedge
-  // every later update of this proposal.
-  calls.length = 0;
-  await assert.rejects(
-    svc.withProposalLock({ connect: async () => client }, 501, async () => { throw new Error('nope'); }),
-    /nope/
-  );
-  assert.match(calls[1].sql, /pg_advisory_unlock/);
-});
-
-test('a pool that cannot lock still runs the update', async () => {
-  // Degrading to unlocked is right: the lease is what prevents a clobber, and
-  // a database that cannot hand out a client is not a reason to refuse
-  // finished work.
+test('the advisory lock is taken on the session, on the lock connection, and an update is never refused for want of it', async () => {
+  // The lock itself (src/db/session-locks.js: one connection per process,
+  // try-lock while waiting, given back after a throw) is
+  // tests/session-locks-postgres.test.js's; this pins what it is asked.
+  const locks = require('../src/db/session-locks');
+  const { PROPOSAL_UPDATE_LOCK } = require('../src/services/advisory-locks');
+  const asked = [];
+  const real = locks.withSessionLock;
+  locks.withSessionLock = async (pool, key, fn, opts) => { asked.push([key, opts]); return fn(); };
+  try {
+    const pool = { options: { connectionString: 'postgres://x/y' }, connect: async () => assert.fail('no pooled client') };
+    assert.equal(await svc.withProposalLock(pool, 501, async () => 'body ran'), 'body ran');
+    assert.deepEqual(asked, [[[PROPOSAL_UPDATE_LOCK, 501], { unlockedOnError: true }]],
+      'keyed on the session id; a lock it cannot ask for never refuses finished work');
+    // A nonsense session id is not lockable either — and must not be silently
+    // locked on 0, which would serialize unrelated updates against each other.
+    asked.length = 0;
+    assert.equal(await svc.withProposalLock(pool, 0, async () => 'ran'), 'ran');
+    assert.deepEqual(asked, []);
+  } finally {
+    locks.withSessionLock = real;
+  }
+  // Not a database pool (a test's stand-in): the update runs.
   assert.equal(await svc.withProposalLock({}, 501, async () => 'ran'), 'ran');
   assert.equal(await svc.withProposalLock(null, 501, async () => 'ran'), 'ran');
-  assert.equal(
-    await svc.withProposalLock({ connect: async () => { throw new Error('pool exhausted'); } }, 501, async () => 'ran'),
-    'ran'
-  );
-  // A nonsense session id is not lockable either — and must not be silently
-  // locked on 0, which would serialize unrelated updates against each other.
-  assert.equal(await svc.withProposalLock({ connect: async () => ({}) }, 0, async () => 'ran'), 'ran');
 });
 
 test('the lock is the one reserved for this path, not a borrowed key', () => {

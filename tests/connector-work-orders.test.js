@@ -233,21 +233,22 @@ test('a bad id is refused before anything is asked', async () => {
 });
 
 test('a close waits on the submit lock, so it cannot race the agent\'s own submit_work', async () => {
-  const lockCalls = [];
   const pool = fakePool([['UPDATE external_agent_tasks t', [{
     id: 41, issue_number: null, linked_issues: [], brief: 'x', target_session_id: null,
     held_slot: true, target_pr_number: null, app_slug: 'tiny', app_name: 'Tiny',
   }]]]);
-  pool.connect = async () => ({
-    query: async (sql, params) => { lockCalls.push({ sql, params }); return { rows: [] }; },
-    release: () => {},
-  });
-  await tasks.closeWorkOrder(pool, 7, 41);
+  pool.options = { connectionString: 'postgres://x/y' };
+  const sessionLocks = require('../src/db/session-locks');
+  const realLock = sessionLocks.withSessionLock;
+  const asked = [];
+  sessionLocks.withSessionLock = async (_pool, key, fn) => { asked.push(key); return fn(); };
+  try {
+    await tasks.closeWorkOrder(pool, 7, 41);
+  } finally {
+    sessionLocks.withSessionLock = realLock;
+  }
   const { EXTERNAL_TASK_SUBMIT_LOCK } = require('../src/services/advisory-locks');
-  assert.deepEqual(lockCalls.map((c) => c.sql), [
-    'SELECT pg_advisory_lock($1, $2)', 'SELECT pg_advisory_unlock($1, $2)',
-  ]);
-  assert.deepEqual(lockCalls[0].params, [EXTERNAL_TASK_SUBMIT_LOCK, 41], 'the same lock submitWork takes');
+  assert.deepEqual(asked, [[EXTERNAL_TASK_SUBMIT_LOCK, 41]], 'the same lock submitWork takes');
 });
 
 test('a submission against a closed work order says it was put away', async () => {

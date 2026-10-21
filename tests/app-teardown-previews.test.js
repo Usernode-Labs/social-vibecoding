@@ -41,10 +41,12 @@ const app = { id: 7, slug: 'shop', runtime_kind: 'kubernetes', runtime_name: 'sv
 const pool = { async query(text, params) {
   if (/FROM chat_sessions cs/.test(text)) return { rows: [{ id: 41 }, { id: 42 }] };
   if (/DELETE FROM apps/.test(text)) calls.push(['delete-app', params[0]]);
+  // The purge's name lock (#5121): the name's key, then the re-check under
+  // the lock, which finds no other app holding it.
+  if (/SELECT hashtext\(\$1::text\) AS h/.test(text)) return { rows: [{ h: 1 }] };
+  if (/ AS held/.test(text)) return { rows: [{ held: false }] };
   return { rows: [] };
-},
-// The purge's name lock (#5121): the re-check finds no other app holding it.
-async connect() { return { query: async () => ({ rows: [{ held: false }] }), release() {} }; } };
+} };
 
 test('a retirement the machine has not applied, or faulted on, stops the deletion before anything is removed', async () => {
   for (const status of ['pending', 'faulted']) {

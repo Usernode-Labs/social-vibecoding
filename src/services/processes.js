@@ -41,6 +41,7 @@ const crypto = require('crypto');
 const os = require('os');
 const log = require('./logger');
 const { successorRoles } = require('./process-role');
+const { CAPACITY_CLAIM_LOCKS } = require('./advisory-locks');
 
 const HEARTBEAT_MS = 10 * 1000;
 // A process that has not beaten for this long is gone (four beats missed).
@@ -48,6 +49,15 @@ const LIVE_SECONDS = 45;
 // Rows the process-reap clock deletes: long gone, so nothing could still
 // read them as live.
 const REAP_AFTER_SECONDS = 10 * 60;
+
+// Every statement of the roster about this process runs on the process's
+// lock connection, never through the main pool (db/session-locks.js
+// coordinationQuery): a draining process's pool can be all checked out by
+// the work it is finishing, and its heartbeat and its reads of who started
+// since must not wait behind that (item 4, the connection budget).
+function q(db, sql, params) {
+  return require('../db/session-locks').coordinationQuery(db, sql, params);
+}
 
 const KINDS = Object.freeze([
   'session',        // a turn or an operation on a dev session (active-workers.js)
@@ -64,6 +74,13 @@ let started = false;
 let role = 'all';
 let heartbeatTimer = null;
 let draining = null; // { since, deadline } once shutdown has begun
+// The capacity claim while draining (advisory-locks.js CAPACITY_CLAIM_LOCKS):
+// { release } while held, from markDraining until it holds nothing above its
+// drain sizes (setAboveDrain(0)).
+let claim = null;
+// What a process does when it cannot keep its claim while it still holds more
+// than its drain sizes (start's onClaimLost): it exits, which closes them.
+let onClaimLost = null;
 
 // key -> count, for this process. key = `${kind}\u0000${ref}`
 const local = new Map();
@@ -111,7 +128,7 @@ function writeHolds() {
     if (!started || !pool) return;
     const held = [...local.keys()].map(splitKey);
     try {
-      await pool.query(WRITE_HOLDS_SQL, [ID, held.map((h) => h.kind), held.map((h) => h.ref)]);
+      await q(pool, WRITE_HOLDS_SQL, [ID, held.map((h) => h.kind), held.map((h) => h.ref)]);
     } catch (err) {
       log.warn('processes', 'Could not write this process\'s holds; the next beat writes them', { err: err.message });
     }
@@ -207,7 +224,7 @@ function localSnapshot(limit = 50) {
 // The row, written again with every beat: a row the process-reap clock
 // reaped while this process was stalled comes back.
 function writeRow(db) {
-  return db.query(
+  return q(db,
     `INSERT INTO platform_processes (id, release, role, host, ip, state, drain_started_at, drain_deadline_at)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
      ON CONFLICT (id) DO UPDATE SET heartbeat_at = NOW(), state = EXCLUDED.state,
@@ -236,17 +253,18 @@ function every(ms, fn, label) {
  * first beat is done; a database that will not take it is logged and
  * retried by the timer, never thrown.
  */
-async function start({ pool: db, role: r = 'all' } = {}) {
+async function start({ pool: db, role: r = 'all', onClaimLost: lost = () => process.exit(1) } = {}) {
   if (started) return;
   pool = db;
   role = r;
+  onClaimLost = lost;
   // In a Kubernetes Pod the host is the Pod's name, and a Pod runs one
   // platform process: a row of the same host is this container's
   // predecessor, which died (an OOM kill, a failed liveness probe) and must
   // not be read as live for LIVE_SECONDS after its last beat. Elsewhere one machine may run several (tests, local development).
   if (process.env.KUBERNETES_SERVICE_HOST) {
     try {
-      const { rowCount } = await pool.query('DELETE FROM platform_processes WHERE host = $1 AND id <> $2', [os.hostname(), ID]);
+      const { rowCount } = await q(pool, 'DELETE FROM platform_processes WHERE host = $1 AND id <> $2', [os.hostname(), ID]);
       if (rowCount) log.info('processes', 'Removed the row of this Pod\'s previous process', { count: rowCount });
     } catch (err) {
       log.warn('processes', 'Could not remove this Pod\'s previous process', { err: err.message });
@@ -266,7 +284,8 @@ async function start({ pool: db, role: r = 'all' } = {}) {
 async function markDraining(deadline) {
   draining = { since: new Date(), deadline: deadline ? new Date(deadline) : null };
   if (!started || !pool) return;
-  await pool.query(
+  await takeClaim();
+  await q(pool,
     `UPDATE platform_processes SET state = 'draining', drain_started_at = $2, drain_deadline_at = $3,
             heartbeat_at = NOW() WHERE id = $1`, [ID, draining.since, draining.deadline]);
 }
@@ -282,7 +301,7 @@ async function markDraining(deadline) {
  */
 async function newerDraining() {
   if (!started || !pool || !draining) return 0;
-  const { rows: [row] } = await pool.query(
+  const { rows: [row] } = await q(pool,
     `SELECT count(DISTINCT COALESCE(release, id))::int AS n FROM platform_processes
       WHERE id <> $1 AND role = ANY($2::text[]) AND state = 'draining' AND drain_started_at > $3
         AND heartbeat_at > NOW() - make_interval(secs => $4)
@@ -302,13 +321,119 @@ async function newerDraining() {
  */
 async function servingOthers() {
   if (!started || !pool) return 0;
-  const { rows: [row] } = await pool.query(
+  const { rows: [row] } = await q(pool,
     `SELECT count(*)::int AS n FROM platform_processes p
       WHERE p.id <> $1 AND p.role = ANY($2::text[]) AND p.state = 'serving'
         AND p.heartbeat_at > NOW() - make_interval(secs => $3)
         AND p.started_at > COALESCE((SELECT started_at FROM platform_processes WHERE id = $1), '-infinity'::timestamptz)`,
     [ID, successorRoles(role), LIVE_SECONDS]);
   return row?.n || 0;
+}
+
+/**
+ * How many live processes that could replace this one started after its
+ * drain began, in any state: the next Pod of a rollout. The connection
+ * budget counts a draining process at its drain sizes, so one that still
+ * holds more (connections checked out when it shrank) hands its work over
+ * when another starts (server.js drainUntilIdle): no two processes of a
+ * role are above their drain sizes beside the serving ones.
+ */
+async function startedSinceDrain() {
+  if (!started || !pool || !draining) return 0;
+  const { rows: [row] } = await q(pool,
+    `SELECT count(*)::int AS n FROM platform_processes
+      WHERE id <> $1 AND role = ANY($2::text[]) AND started_at > $3
+        AND heartbeat_at > NOW() - make_interval(secs => $4)`,
+    [ID, successorRoles(role), draining.since, LIVE_SECONDS]);
+  return row?.n || 0;
+}
+
+// The claim's key: its role's classifier and this process's id, hashed.
+function claimKey(r = role) {
+  return [CAPACITY_CLAIM_LOCKS.get(r) ?? CAPACITY_CLAIM_LOCKS.get('all'), crypto.createHash('sha1').update(ID).digest().readInt32BE(0)];
+}
+
+// Takes the capacity claim on the lock connection; it stays held until
+// released or the connection closes. Fails closed: a claim that cannot be
+// taken, or that goes with its connection while it still stands for
+// connections above the drain sizes, leaves a process starting nothing to
+// wait on, so this one ends (onClaimLost: it exits, closing them all), as a
+// process that loses its presence lock does.
+async function takeClaim() {
+  if (claim) return;
+  let held;
+  const acquired = new Promise((resolve) => { held = resolve; });
+  const entry = { release: null, released: false };
+  const released = new Promise((resolve) => { entry.release = () => { entry.released = true; resolve(); }; });
+  claim = entry;
+  const fail = (what, err) => {
+    if (entry.released) return;
+    log.error('processes', what, { err: err?.message || null });
+    // Settled and forgotten: a claim taken after this is a new one.
+    if (claim === entry) claim = null;
+    entry.release();
+    onClaimLost?.();
+  };
+  require('../db/session-locks').withSessionLock(pool, claimKey(), () => { held(true); return released; },
+    { onLost: (err) => fail('The capacity claim went with its connection while it still held more than its drain sizes; exiting', err) })
+    .catch((err) => { held(false); fail('Could not take the capacity claim; exiting rather than drain unclaimed', err); })
+    .finally(() => { if (claim === entry) claim = null; });
+  await acquired;
+}
+
+/**
+ * A draining process reports how many connections it still holds above its
+ * drain sizes (server.js drainUntilIdle). At none, its capacity claim goes:
+ * what it holds now is within the drain sizes the budget counts it at.
+ */
+function setAboveDrain(n) {
+  if (claim && !(Number(n) > 0)) claim.release();
+}
+
+// The roles a process of `r` replaces (successorRoles read the other way).
+function replacedRoles(r) {
+  return ['all', 'web', 'conductor'].filter((x) => successorRoles(x).includes(r));
+}
+
+// Claims in the platform's own database only: pg_locks is the server's, and
+// an app's role may take the same key in its own.
+const CLAIMS_SQL = `SELECT count(*)::int AS processes FROM pg_locks
+  WHERE locktype = 'advisory' AND granted AND objsubid = 2 AND classid = ANY($1::int[]::oid[])
+    AND database = (SELECT oid FROM pg_database WHERE datname = current_database())
+    AND pid <> pg_backend_pid()`;
+
+/**
+ * Admission for the connection budget (item 4). The chart counts a draining
+ * process at its drain sizes and a rollout's next Pod at its full ones. A
+ * draining process can hold more (the connections checked out when it
+ * shrank): until it does not, it holds its capacity claim, which goes no
+ * earlier than its connections. It hands its work over once a process of
+ * its role starts (startedSinceDrain), and this process, starting, does not
+ * start its work while any process it replaces holds a claim. It waits on
+ * its lock connection (q), holding no pool. A read that fails is tried
+ * again: room it could not see is not room.
+ */
+async function waitForRoom({ pollMs = 1000, reportEveryMs = 10000, sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
+  read = () => q(pool, CLAIMS_SQL, [replacedRoles(role).map((r) => CAPACITY_CLAIM_LOCKS.get(r))]) } = {}) {
+  if (!started || !pool) return { waitedMs: 0 };
+  const began = Date.now();
+  let reported = began;
+  for (;;) {
+    let claims = null;
+    let failed = null;
+    try {
+      ({ rows: [claims] } = await read());
+    } catch (err) {
+      failed = err;
+    }
+    if (!failed && (!claims || claims.processes === 0)) return { waitedMs: Date.now() - began };
+    if (Date.now() - reported >= reportEveryMs) {
+      reported = Date.now();
+      if (failed) log.warn('processes', 'Could not read whether older processes still hold connections; trying again', { err: failed.message });
+      else log.info('processes', 'Waiting for older processes to give back connections above their drain sizes', claims);
+    }
+    await sleep(pollMs);
+  }
 }
 
 /** The process-reap clock: delete the rows of processes long gone. */
@@ -341,7 +466,7 @@ async function stop() {
   started = false;
   clearInterval(heartbeatTimer); heartbeatTimer = null;
   const db = pool;
-  if (db) await db.query('DELETE FROM platform_processes WHERE id = $1', [ID]).catch((err) => {
+  if (db) await q(db, 'DELETE FROM platform_processes WHERE id = $1', [ID]).catch((err) => {
     log.warn('processes', 'Could not remove this process\'s row; it lapses on its own', { err: err.message });
   });
 }
@@ -353,6 +478,9 @@ function _reset() {
   pool = null;
   role = 'all';
   draining = null;
+  if (claim) claim.release();
+  claim = null;
+  onClaimLost = null;
   local.clear();
   writes = Promise.resolve();
   writeQueued = false;
@@ -373,6 +501,9 @@ module.exports = {
   start,
   markDraining,
   newerDraining,
+  startedSinceDrain,
+  setAboveDrain,
+  waitForRoom,
   servingOthers,
   reap,
   list,

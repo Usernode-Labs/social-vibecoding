@@ -406,6 +406,26 @@ Deployment's replica count, so the rollout completes without waiting for it.
 When releases come faster than work finishes, at most `platform.drainingMax`
 replaced Pods finish at once; the oldest hands its work over first.
 
+A replaced Pod starts nothing new, so it keeps small pools while it finishes:
+`platform.drainPools` (its main pool, workflow pool and db-manager operations).
+That is what makes the overlap affordable. `postgresql.platformConnections` is
+the connection budget: the connections the main PostgreSQL server keeps from
+ordinary roles (`reserved_connections`), which the child apps cannot take; the
+platform's user is a superuser, which PostgreSQL never holds to them. The chart
+refuses values whose most connections at once exceed it, and its error names
+each role's share. Per role, that is its serving Pods plus one more for the
+rollout's surge at their full pools (`config.dbPoolMax`, `config.wfPoolMax`,
+`config.databaseOperations` for web; `platform.conductor`'s for the conductor),
+`drainingMax` replaced Pods per replica at `platform.drainPools`, and five
+connections per process outside the pools; a database operation counts twice
+(it can hold two connections, `pg_dump` beside `pg_restore`). A replaced Pod
+keeps the connections it had checked out when it shrank until they are given
+back. Until it holds no more than its drain sizes it keeps a capacity claim,
+an advisory lock that goes no earlier than its connections; a new Pod of its
+role waits on that claim before starting its work, and the old one hands its
+work over as soon as the new one appears, so the two share the surge slot. The migration Job adds
+`migration.dbPoolMax` plus two. `0` checks nothing.
+
 Both Pods may serve independent requests during the brief overlap, and a
 replaced Pod may still run work for as long as it drains. That is safe because
 `PLATFORM_LEADER_LOCK=1` uses the platform's PostgreSQL advisory-lock

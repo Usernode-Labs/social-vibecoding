@@ -178,10 +178,12 @@ test('a deleted app is purged from its receipt, retried, and the report lists id
   // nothing is dropped.
   await pool.query(
     "INSERT INTO deleted_app_purges (app_id, slug, db_name, storage_prefix, attempts, last_attempt_at) VALUES (999992, 'race-z', 'app_race_z', 'app/999992/', 1, NOW() - INTERVAL '2 hours')");
+  // The app is taken just before the purge takes its lock (the name's key is
+  // read right before it: services/app-data-retention.js underNameLock).
   const racing = Object.create(pool);
   let raced = false;
-  racing.connect = async () => {
-    if (!raced) {
+  racing.query = async (...args) => {
+    if (!raced && /SELECT hashtext\(\$1::text\) AS h/.test(String(args[0]))) {
       raced = true;
       const c = await pool.connect();
       try {
@@ -191,9 +193,8 @@ test('a deleted app is purged from its receipt, retried, and the report lists id
         await c.query('COMMIT');
       } finally { c.release(); }
     }
-    return pool.connect();
+    return pool.query(...args);
   };
-  racing.query = (...args) => pool.query(...args);
   dropped.length = 0;
   templates.length = 0;
   const race = await retention.retryPendingPurges(racing, {});

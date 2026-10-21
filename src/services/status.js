@@ -388,9 +388,9 @@ async function gatherFull(config) {
   //   db                    — pg pool saturation; `waiting > 0` means
   //                           handlers are queuing on connections. `server`
   //                           is the figure the pool is competing FOR
-  //                           (#1771): one Postgres backs the platform,
-  //                           every app and every preview, and its
-  //                           max_connections is the stock 100. A pool
+  //                           (#1771): the server's max_connections,
+  //                           shared with every app (and, on a preview's
+  //                           server, every other preview). A pool
   //                           reporting `total: 3, max: 60` looks healthy
   //                           right up to the server refusing the fourth.
   const sc = sessionCountsQ.rows[0] || {};

@@ -103,6 +103,8 @@ function notifications() { return require('./notifications'); }
 async function ring(pool, { userId, appId, kind, sourceUserId = null, chatMessageId = null }) {
   if (!KINDS.includes(kind) || !userId || !appId) return null;
   const client = await pool.connect();
+  let row = null;
+  let fresh = false;
   try {
     await client.query('BEGIN');
     // Two joins at once must not both ring: one key per (person, project, kind).
@@ -120,8 +122,8 @@ async function ring(pool, { userId, appId, kind, sourceUserId = null, chatMessag
         RETURNING id, user_id, app_id, chat_message_id, source_user_id, kind, detail, created_at`,
       [userId, appId, kind, sourceUserId, chatMessageId],
     );
-    let row = bumped[0] || null;
-    const fresh = !row;
+    row = bumped[0] || null;
+    fresh = !row;
     if (!row) {
       // The day's first owes its email (activity-mail.js NOTICE_MAIL_KINDS):
       // `mailed_at` NULL, which the notice-mail clock sends.
@@ -134,8 +136,6 @@ async function ring(pool, { userId, appId, kind, sourceUserId = null, chatMessag
       row = rows[0];
     }
     await client.query('COMMIT');
-    await notifications().hydrateAndPush(pool, row);
-    return { row, fresh };
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
     log.warn('invite-activity', 'Could not tell a link\'s maker', { kind, appId, err: err.message });
@@ -143,6 +143,9 @@ async function ring(pool, { userId, appId, kind, sourceUserId = null, chatMessag
   } finally {
     client.release();
   }
+  // After its connection went back: the bell's refresh reads the pool.
+  await notifications().hydrateAndPush(pool, row);
+  return { row, fresh };
 }
 
 /**

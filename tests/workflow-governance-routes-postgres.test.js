@@ -309,7 +309,7 @@ test('governance routes through the workflow machine', { timeout: 120000 }, asyn
     await new Promise((res) => setTimeout(res, 100));
     const { rows } = await pool.query(
       `SELECT pg_terminate_backend(pid) AS killed FROM pg_stat_activity
-        WHERE application_name = 'homeroom-workflow' AND datname = current_database() AND state = 'idle'`);
+        WHERE application_name LIKE 'homeroom-%-workflow' AND datname = current_database() AND state = 'idle'`);
     assert.ok(rows.length > 0, 'there were idle workflow connections to drop');
     await new Promise((res) => setTimeout(res, 300));
     const i = await issue('close_issue', { issueNumber: 33, issueTitle: 'm' });

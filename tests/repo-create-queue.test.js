@@ -13,6 +13,18 @@ const slowDown = (headers = {}) => Object.assign(
   new Error('You have exceeded a secondary rate limit and have been temporarily blocked from content creation. Please retry your request again later.'),
   { status: 403, response: { status: 403, headers } });
 
+// The lock each turn holds, recorded by a stand-in for src/db/session-locks.js
+// (tests/session-locks-postgres.test.js runs the real one, with this key form
+// excluding an older release's transaction lock).
+const lockEvents = [];
+const locksPath = require.resolve('../src/db/session-locks');
+require.cache[locksPath] = { id: locksPath, filename: locksPath, loaded: true, exports: {
+  withSessionLock: async (_pool, key, fn) => {
+    lockEvents.push(['take', key]);
+    try { return await fn(); } finally { lockEvents.push(['give', key]); }
+  },
+} };
+
 // A pool whose clients record what they are asked, in order, with which
 // client asked it.
 function recordingPool() {
@@ -32,9 +44,10 @@ function recordingPool() {
 
 test.afterEach(() => queue._forTest.resetTiming());
 
-test('one at a time: each task runs alone, under the advisory lock on its own client, and the gap follows it', async () => {
+test('one at a time: each task runs alone, under the advisory lock on the lock connection, and the gap follows it', async () => {
   queue._forTest.setTiming({ gapMs: 20 });
   const pool = recordingPool();
+  lockEvents.length = 0;
   const spans = [];
   const task = (name) => async () => {
     const start = Date.now();
@@ -47,11 +60,10 @@ test('one at a time: each task runs alone, under the advisory lock on its own cl
   for (let i = 1; i < spans.length; i += 1) {
     assert.ok(spans[i].start >= spans[i - 1].end + 15, `${spans[i].name} waited for ${spans[i - 1].name} and the gap`);
   }
-  const first = pool.events.filter((e) => e.client === 1);
-  assert.deepEqual(first.map((e) => e.sql || 'release'), [
-    'BEGIN', 'SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', 'ROLLBACK', 'release']);
-  assert.deepEqual(first[1].params, [queue._forTest.LOCK_KEY]);
-  assert.equal(new Set(pool.events.map((e) => e.client)).size, 3, 'a client per turn, returned after it');
+  const key = { extended: queue._forTest.LOCK_KEY };
+  assert.deepEqual(lockEvents, [['take', key], ['give', key], ['take', key], ['give', key], ['take', key], ['give', key]],
+    'each turn holds the lock, the gap included, and gives it back');
+  assert.deepEqual(pool.events, [], 'no pooled connection held for it');
 });
 
 test('a task that fails gives up its turn: the line goes on, and the lock is released', async () => {
@@ -59,9 +71,10 @@ test('a task that fails gives up its turn: the line goes on, and the lock is rel
   const pool = recordingPool();
   const failed = queue.inLine(pool, async () => { throw new Error('boom'); });
   const after = queue.inLine(pool, async () => 'next');
+  lockEvents.length = 0;
   await assert.rejects(failed, /boom/);
   assert.equal(await after, 'next');
-  assert.equal(pool.events.filter((e) => e.sql === 'ROLLBACK').length, 2);
+  assert.equal(lockEvents.filter((e) => e[0] === 'give').length, 2, 'given back after a failure too');
 });
 
 test('withRetries: a secondary-limit refusal waits and tries again, doubling its wait', async (t) => {

@@ -898,8 +898,9 @@ function unreachableOriginDetail(rows, origin) {
 // The same re-labelling as unreachableOriginDetail, for the other way the
 // platform breaks a preview without the diff being involved (#1771).
 //
-// One Postgres server backs the platform, every production app and every
-// preview, and its max_connections is the stock 100. When the fleet uses
+// One Postgres server backed the platform, every production app and every
+// preview, with the stock 100 connections (previews now have a server of
+// their own, the same holds there). When the fleet uses
 // them all, a preview's own queries throw, its API answers 500, and every
 // declared check records an assertion failure. Sixty-five of them citing
 // one endpoint reads exactly like a broken commit, which is how the author

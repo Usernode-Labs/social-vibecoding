@@ -2076,44 +2076,37 @@ test('a task belonging to somebody else is still refused, and says why plainly',
 });
 
 test('concurrent submits are serialized on the task, so one piece of work is one PR', async () => {
-  // A session-scoped advisory lock keyed on the task id: the second caller
-  // blocks, then re-reads the task and finds it submitted.
-  assert.match(SRC, /pg_advisory_lock\(\$1, \$2\)/);
-  assert.match(SRC, /pg_advisory_unlock\(\$1, \$2\)/);
-  assert.match(SRC, /EXTERNAL_TASK_SUBMIT_LOCK/);
+  // A session-scoped advisory lock keyed on the task id, on the process's
+  // lock connection (src/db/session-locks.js): the second caller waits, then
+  // re-reads the task and finds it submitted.
+  const lockFn = SRC.slice(SRC.indexOf('async function withTaskLock'), SRC.indexOf('// The caller\'s most recent open task'));
+  assert.match(lockFn, /withSessionLock\(pool, \[EXTERNAL_TASK_SUBMIT_LOCK, id\], fn, \{ unlockedOnError: true \}\)/);
   const locks = require('../src/services/advisory-locks');
   assert.equal(typeof locks.EXTERNAL_TASK_SUBMIT_LOCK, 'number');
   assert.notEqual(locks.EXTERNAL_TASK_SUBMIT_LOCK, locks.ADMIN_MUTATION_LOCK,
     'two locks that mean different things must not collide');
 
-  // The lock is released on the failure path too, or one bad submit wedges
-  // every later one for that task.
-  const lockFn = SRC.slice(SRC.indexOf('async function withTaskLock'), SRC.indexOf('// The caller\'s most recent open task'));
-  assert.match(lockFn, /finally \{/);
-  assert.match(lockFn, /client\.release\(\)/);
-
   // Two real concurrent calls: the first opens the PR, the second finds it
   // closed and returns the same proposal rather than opening a second one.
   let status = 'open';
   const created = [];
-  // A fake that BLOCKS the way pg_advisory_lock does — without it the test
-  // proves nothing, because two unblocked callers would both read 'open'
-  // and both create a pull request, which is exactly the bug.
-  let held = Promise.resolve();
+  // A stand-in that WAITS the way the lock does (the real one, and its
+  // release on the failure path, are tests/session-locks-postgres.test.js's)
+  // — without it the test proves nothing, because two unblocked callers
+  // would both read 'open' and both create a pull request, which is exactly
+  // the bug.
+  const sessionLocks = require('../src/db/session-locks');
+  const realLock = sessionLocks.withSessionLock;
+  const tails = new Map();
+  sessionLocks.withSessionLock = async (_pool, key, fn) => {
+    const id = key.join(':');
+    const prior = tails.get(id) || Promise.resolve();
+    const run = prior.then(fn, fn);
+    tails.set(id, run.catch(() => {}));
+    return run;
+  };
   const pool = {
-    connect: async () => {
-      let release;
-      const waitFor = held;
-      held = new Promise((r) => { release = r; });
-      return {
-        async query(sql) {
-          if (/pg_advisory_lock/.test(sql)) await waitFor;
-          if (/pg_advisory_unlock/.test(sql)) release();
-          return { rows: [] };
-        },
-        release: () => release(),
-      };
-    },
+    options: { connectionString: 'postgres://x/y' },
     async query(sql, params) {
       if (/WHERE t\.id = \$1 AND t\.user_id = \$2 AND t\.status = 'open'/.test(sql)) {
         return { rows: status === 'open' ? [TASK_ROW] : [] };
@@ -2136,7 +2129,13 @@ test('concurrent submits are serialized on the task, so one piece of work is one
     { pool, config: {}, gh, githubLink: linkedAs('someuser'), limits: okLimits },
     { user: { id: 3 }, taskId: 31, importProposal: async () => ({ ok: true, body: { sessionId: 81 } }) }
   );
-  const [first, second] = await withFetch(PUSHED_BRANCH, [], () => Promise.all([call(), call()]));
+  let first;
+  let second;
+  try {
+    [first, second] = await withFetch(PUSHED_BRANCH, [], () => Promise.all([call(), call()]));
+  } finally {
+    sessionLocks.withSessionLock = realLock;
+  }
   assert.equal(created.length, 1, 'exactly one pull request for one piece of work');
   assert.ok(first.ok && second.ok);
   assert.ok(first.alreadySubmitted || second.alreadySubmitted,
