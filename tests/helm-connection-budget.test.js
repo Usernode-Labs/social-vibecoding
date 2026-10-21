@@ -65,6 +65,7 @@ test('each role\'s pools reach its Pods, the conductor\'s work sizes where the P
   assert.deepEqual(pick(get('conductor')), { DB_POOL_MAX: '16', WF_POOL_MAX: '8', DB_ADMIN_CONNECTIONS_MAX: '3',
     DRAIN_DB_POOL_MAX: '5', DRAIN_WF_POOL_MAX: '2', DB_ADMIN_CONNECTIONS_DRAINING: '1' });
   assert.equal(get('migration').get('DB_POOL_MAX'), '4', 'the migration Job\'s own pool');
+  assert.equal(get('migration').get('DB_APPLICATION_NAME'), 'homeroom-migration', 'named as the migration, not a serving role');
 
   // The conductor off: the platform Pods do its work, at its sizes.
   const single = render(['platform.conductor.enabled=false', 'platform.conductor.wfPoolMax=8',

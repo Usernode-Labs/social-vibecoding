@@ -118,7 +118,8 @@ test('deploy.sh still waits out platform-DB pg_dumps before cutover', () => {
   // Ported from the workflow (2026-07-30 incident): an in-flight
   // staging-clone dump holds ACCESS SHARE locks that block boot
   // migrations and eat the whole health gate.
-  assert.match(deploySh, /application_name = 'pg_dump'/);
+  assert.match(deploySh, /application_name = 'pg_dump' OR application_name LIKE 'homeroom-%-dbcopy'/,
+    'a clone\'s pg_dump is named homeroom-<role>-dbcopy (db-manager postgresEnv)');
   assert.match(deploySh, /DUMP_WAITED" -lt 600/);
 });
 

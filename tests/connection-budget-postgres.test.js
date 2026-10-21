@@ -119,3 +119,30 @@ test('a draining process\'s pool shrinks: idle connections above it close now, b
   back(held);
   assert.equal(await open(), 1);
 });
+
+test('every connection the platform opens is named by connectionName: no literal application_name', () => {
+  // A connection named by hand drops out of the per-role view (pg_stat_activity
+  // and the infra metric group by homeroom-<role>). A child process's libpq
+  // name (psql, pg_dump) is set through PGAPPNAME the same way.
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const root = path.join(__dirname, '..');
+  const files = [];
+  const walk = (dir) => {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) walk(p);
+      else if (/\.(js|ts)$/.test(e.name)) files.push(p);
+    }
+  };
+  walk(path.join(root, 'src'));
+  files.push(path.join(root, 'server.js'), path.join(root, 'scripts', 'migrate-kubernetes.js'));
+  const literal = /(application_name|PGAPPNAME)\s*:\s*['"`]/;
+  const named = files.filter((f) => literal.test(fs.readFileSync(f, 'utf8'))).map((f) => path.relative(root, f));
+  assert.deepEqual(named, []);
+  const { connectionName } = require('../src/db/connection-options');
+  for (const pool of ['dbadmin', 'dbcopy', 'census', 'export', 'shots', 'retention', 'presence', 'admin']) {
+    assert.match(connectionName(pool, { PROCESS_ROLE: 'conductor' }), new RegExp(`^homeroom-conductor-${pool}$`));
+  }
+  assert.equal(connectionName('admin', { DB_APPLICATION_NAME: 'homeroom-migration' }), 'homeroom-migration-admin');
+});

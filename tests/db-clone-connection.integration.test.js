@@ -53,7 +53,7 @@ test('template clone reuses connections without changing real ownership or redac
     assert.equal(result.via, 'template');
     assert.equal(result.templateRefreshed, false);
     const sessions = await admin.query(`SELECT count(*)::int AS n FROM pg_stat_activity
-      WHERE application_name = 'social-template-clone' AND datname IN ('usernode', $1)`, [target]);
+      WHERE application_name LIKE 'homeroom-%-dbadmin' AND datname IN ('usernode', $1)`, [target]);
     assert.equal(sessions.rows[0].n, 0, 'clone must close administrative sessions before returning');
     const clone = await connect(target, targetRole, result.password);
     const people = (await clone.query('SELECT token, secret FROM people ORDER BY id')).rows;

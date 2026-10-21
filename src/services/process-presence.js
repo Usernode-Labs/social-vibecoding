@@ -31,7 +31,7 @@ function holder() {
 function createPresence({ makeClient = (config) => new Client({
   connectionString: config.databaseUrl,
   connectionTimeoutMillis: 5000,
-  application_name: 'homeroom-presence',
+  application_name: require('../db/connection-options').connectionName('presence'),
 }), onLost = () => process.exit(1) } = {}) {
   async function ensure(config) {
     if (state && !state.lost) return state.ready;
