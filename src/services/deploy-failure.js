@@ -35,6 +35,11 @@ const { redactString } = require('./log-redaction');
 const MAX_REASON = 280;
 const MAX_LOG = 16 * 1024;
 
+// A new repository GitHub refused with its secondary limit, after the
+// setup's waits (services/repo-create-queue.js). GitHub's own text is about
+// scraping and its terms of service; the server log keeps it.
+const REPO_SLOW_DOWN = 'GitHub is limiting how fast new projects can be made. Try again in a few minutes.';
+
 // Matches the "most specific error line" heuristic used by the staging
 // checks pipeline — the app's own crash message beats generic wrapper text.
 const ERR_LINE_RE = /(^error\b|Error:|errno|ECONNREFUSED|EADDRINUSE|panic|Unhandled|SQLSTATE|syntax error|does not exist|no unique or exclusion constraint|relation .* does not exist|cannot |failed)/i;
@@ -226,8 +231,9 @@ function classify(err, opts = {}) {
   // long enough to consume the whole 280-char budget on its own. Prefer the
   // process's own stderr line; failing that, drop the command line.
   const detail = pickReasonLine(stderr) || stripCommandFailedPrefix(message);
+  const slowDown = stage === 'repo' && require('./github-budget').isSecondaryRateLimitError(err);
   const reason = capReason(
-    stage === 'repo' ? `GitHub repo creation failed: ${detail}` : detail
+    slowDown ? REPO_SLOW_DOWN : stage === 'repo' ? `GitHub repo creation failed: ${detail}` : detail
   );
   return { stage, reason, log: stderr };
 }
@@ -286,6 +292,7 @@ function asRecord(value) {
 }
 
 module.exports = {
+  REPO_SLOW_DOWN,
   ROOT_IMAGE,
   ROOT_IMAGE_FIX,
   isRootImageRefusal,
