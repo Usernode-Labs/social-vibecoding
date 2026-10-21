@@ -278,6 +278,9 @@ const ACTING_TOOLS = Object.freeze([
   'create_test_phone_sign_in',
   'send_test_release_email',
   'retire_test_account',
+  // Writes a notification of every kind into a test account's bell, and
+  // rings its phone.
+  'send_test_notifications',
 ]);
 
 // One conventions section, at most. The largest current section (the native
@@ -8677,13 +8680,14 @@ function registerTools(server, ctx) {
 
   // ── Test accounts (full platform admins only) ──────────────────────────
   //
-  // Six tools over routes/test-accounts.js: make a genuinely new account for
+  // Seven tools over routes/test-accounts.js: make a genuinely new account for
   // first-time-user testing, mint a one-time phone sign-in for a test number
   // (the invite's Join sheet signs up with a phone), send the waitlist's
   // "you're in" mail to a test address (the sign-up from that mail makes a
-  // test account), list the live ones, retire one with the apps it made, and
+  // test account), list the live ones, retire one with the apps it made,
   // read a test project's run report (services/run-report.js), which retiring
-  // keeps. services/test-accounts.js has the whole design, and the charter's
+  // keeps, and send one a notification of every kind
+  // (services/test-notifications.js). services/test-accounts.js has the whole design, and the charter's
   // "test-accounts" section the rules for the session using them.
   //
   // Admin-only three times over, like the benchmark's: registered only for a
@@ -9003,6 +9007,64 @@ function registerTools(server, ctx) {
         reportsKept,
         nextStep: `Retired${appsDeleted.length ? `, with ${appsDeleted.length} app${appsDeleted.length === 1 ? '' : 's'}` : ''}. Its username and password no longer sign in.`
           + (reportsKept.length ? ` Run reports kept for ${reportsKept.join(', ')}: get_run_report with the slug.` : ''),
+      });
+    });
+
+    // One notification of every kind (or the kinds named) to a test account,
+    // through the real pipeline from the row on: its bell, its live frame and
+    // its phone's push (services/test-notifications.js has what each row
+    // points at). For seeing how each one looks on a phone or a simulator.
+    server.registerTool('send_test_notifications', {
+      title: 'Test accounts: send every kind of notification',
+      description: 'Admin only. Send a test account one notification of every kind (or only the kinds named): each shows in its bell at once and, where the kind pushes and the account has a phone signed in, arrives as a push within seconds, worded as a real one. For seeing how every notification looks on a phone or a simulator signed in as the account. A row about a project points at the account\'s own newest project (kinds that need one are skipped without it: create_test_account with everyTemplate gives it some) and the newest message in its discussion, which it never writes to (post one as the account first to see a message\'s words), the Messages kinds at a "Notification test" conversation of its own, and you, the admin asking, are who did each thing. By default it turns on every push category for the account first, so the reaction pushes too. Only a test account can be sent to. The result lists each row, whether it is in the bell, and how many pushes it queued; registrations 0 means no phone is signed in as the account.',
+      inputSchema: {
+        userId: z.number().int().positive().describe('The test account\'s id, from create_test_account or list_test_accounts.'),
+        kinds: z.array(z.string()).optional().describe('Only these notification kinds, for example ["mention", "conversation_message"]. Omit for every kind; an unknown kind is refused with the list.'),
+        allPushCategories: z.boolean().optional().describe('Turn on every push category for the account first (default true), so every kind that pushes does. false leaves its settings as they are.'),
+      },
+      outputSchema: {
+        userId: z.number(),
+        username: z.string(),
+        sent: z.array(z.object({ kind: z.string(), notificationId: z.number(), listed: z.boolean(), pushes: z.number() })),
+        skipped: z.array(z.object({ kind: z.string(), reason: z.string() })),
+        project: z.string().nullable(),
+        projectMessage: z.boolean(),
+        conversationId: z.number().nullable(),
+        registrations: z.number(),
+        nextStep: z.string(),
+      },
+      annotations: writeAnnotations,
+    }, async ({ userId, kinds, allPushCategories }) => {
+      const guard = scopeGuard(WRITE_SCOPE) || testAccountAdminOnly();
+      if (guard) return guard;
+      if (!Number.isInteger(userId) || userId <= 0) return toolError('invalid_request', 'userId must be a test account\'s id from list_test_accounts.');
+      const r = await callPlatform(baseUrl, accessToken, 'POST', `/api/test-accounts/${userId}/notifications`, { kinds, allPushCategories });
+      if (!r.ok) return testAccountRefusal(r);
+      const n = (r.body && r.body.notifications) || {};
+      const sent = (Array.isArray(n.sent) ? n.sent : []).map((s) => ({
+        kind: String(s && s.kind || ''), notificationId: num(s && s.notificationId), listed: !!(s && s.listed), pushes: num(s && s.pushes),
+      }));
+      const skipped = (Array.isArray(n.skipped) ? n.skipped : []).map((s) => ({ kind: String(s && s.kind || ''), reason: String(s && s.reason || '') }));
+      const registrations = num(n.registrations);
+      const pushed = sent.filter((s) => s.pushes > 0).length;
+      return toolResult({
+        userId: num(n.userId) || userId,
+        username: String(n.username || ''),
+        sent,
+        skipped,
+        project: typeof n.project === 'string' ? n.project : null,
+        projectMessage: !!n.projectMessage,
+        conversationId: n.conversationId == null ? null : num(n.conversationId),
+        registrations,
+        nextStep: `${sent.length} sent, in the account's bell now. `
+          + (registrations
+            ? `${pushed} queued a push, which arrives within seconds; a kind that does not push is in the bell only. `
+            : 'No phone is signed in as the account, so nothing pushed: sign in on the phone or simulator, allow notifications, and send again. ')
+          + (skipped.some((s) => s.reason === 'needs_project') ? 'Kinds about a project were skipped: the account has no project yet. ' : '')
+          + (typeof n.project === 'string' && !n.projectMessage
+            ? 'Its project\'s discussion has no message yet, so the kinds about one show no words: post one there as the account and send again to see them. '
+            : '')
+          + 'Opening Messages or a project marks its rows read, which stops pushes still on their way.',
       });
     });
 

@@ -320,6 +320,10 @@ const CONNECTOR_ALLOWED_ROUTES = Object.freeze([
   // about its first version, or the copy retiring the account kept
   // (services/run-report.js). Metadata and short excerpts, never a secret.
   { method: 'GET', pattern: '/api/test-accounts/run-report' },
+  // One notification of every kind to a test account, the same gate: the
+  // rows are fake, so only an account flagged as a test account takes them
+  // (services/test-notifications.js).
+  { method: 'POST', pattern: '/api/test-accounts/:id/notifications' },
   // The programme's challenges (routes/challenge-admin.js): the events, the
   // challenges in each, the templates they are stamped from and the rules
   // that score them, as the console's Season events, Challenge templates and

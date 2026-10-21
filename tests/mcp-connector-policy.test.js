@@ -676,15 +676,16 @@ test('the studio\'s twenty-five connector routes are allowed, and every one is f
   }
 });
 
-// Test accounts for first-run testing (routes/test-accounts.js). Six routes
+// Test accounts for first-run testing (routes/test-accounts.js). Seven routes
 // outside /api/admin and /api/auth (which a connector can never reach),
 // allowed because every handler refuses anybody who is not a full platform
 // admin before anything else runs: they mint a new sign-in, send the
 // waitlist's release mail to a test address, list accounts, delete one
-// with the apps it made, and read a test project's run report. The gate comes first, then the per-admin limiter,
+// with the apps it made, read a test project's run report, and send one a
+// notification of every kind. The gate comes first, then the per-admin limiter,
 // then the same-origin browser guard, on all of them; and no path carries a
 // `password` segment, which the canonical-target wall would refuse anyway.
-test('the six test-account routes are allowed, full-admin gated first, limited, and never under /password', () => {
+test('the seven test-account routes are allowed, full-admin gated first, limited, and never under /password', () => {
   for (const [method, target] of [
     ['POST', '/api/test-accounts'],
     ['GET', '/api/test-accounts'],
@@ -692,6 +693,7 @@ test('the six test-account routes are allowed, full-admin gated first, limited, 
     ['POST', '/api/test-accounts/phone-sign-ins'],
     ['POST', '/api/test-accounts/release-emails'],
     ['GET', '/api/test-accounts/run-report'],
+    ['POST', '/api/test-accounts/12/notifications'],
   ]) {
     assert.equal(policy.isConnectorApiRequest(method, target), true, `${method} ${target}`);
   }
@@ -711,6 +713,8 @@ test('the six test-account routes are allowed, full-admin gated first, limited, 
     ['POST', '/api/test-accounts/release-emails/12'],
     ['POST', '/api/test-accounts/run-report'],
     ['GET', '/api/test-accounts/run-report/12'],
+    ['GET', '/api/test-accounts/12/notifications'],
+    ['POST', '/api/test-accounts/12/notifications/extra'],
     // The admin console's own user routes stay out of reach.
     ['POST', '/api/admin/users'],
     ['POST', '/api/v4/admin/users'],
@@ -724,6 +728,7 @@ test('the six test-account routes are allowed, full-admin gated first, limited, 
     'GET /api/test-accounts',
     'GET /api/test-accounts/run-report',
     'POST /api/test-accounts',
+    'POST /api/test-accounts/:id/notifications',
     'POST /api/test-accounts/:id/retire',
     'POST /api/test-accounts/phone-sign-ins',
     'POST /api/test-accounts/release-emails',
@@ -734,7 +739,7 @@ test('the six test-account routes are allowed, full-admin gated first, limited, 
     assert.doesNotMatch(route, /password|credentials|secrets/, `${route} carries no credential segment`);
   }
   // Nothing else in the file registers a route.
-  assert.equal((src.match(/router\.(get|post|put|patch|delete|use|all)\(/g) || []).length, 6);
+  assert.equal((src.match(/router\.(get|post|put|patch|delete|use|all)\(/g) || []).length, 7);
 });
 
 // The programme's challenges (routes/challenge-admin.js). Twenty-two doors

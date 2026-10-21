@@ -2,8 +2,8 @@
 
 // Test accounts (services/test-accounts.js), for a full platform admin's
 // connector session: create_test_account, create_test_phone_sign_in,
-// send_test_release_email, list_test_accounts, retire_test_account and
-// get_run_report in services/mcp-tools.js.
+// send_test_release_email, list_test_accounts, retire_test_account,
+// get_run_report and send_test_notifications in services/mcp-tools.js.
 //
 // They live at their own prefix, outside /api/admin and /api/auth, because a
 // connector token can reach neither (services/cli-api-policy.js) — the same
@@ -25,6 +25,7 @@ const { testAccountLimiter } = require('../middleware/rate-limits');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 const log = require('../services/logger');
 const testAccounts = require('../services/test-accounts');
+const testNotifications = require('../services/test-notifications');
 
 function idParam(value) {
   const n = Number(value);
@@ -105,6 +106,19 @@ function testAccountRoutes(config) {
       userId, confirmation: req.body && req.body.confirm,
     }, { actorId: req.user.id, config });
     return { retired };
+  }));
+
+  // One notification of every kind (or the kinds named) to a test account,
+  // for seeing each one in its bell and on its phone
+  // (services/test-notifications.js). Only a test account: the rows are fake.
+  router.post('/api/test-accounts/:id/notifications', requireAdminWrite, testAccountLimiter, sameOriginBrowserOnly, handler('Send test notifications', async (req) => {
+    const userId = idParam(req.params.id);
+    if (!userId) throw new testAccounts.TestAccountError(400, 'invalid_request', 'Invalid account id.');
+    const b = req.body && typeof req.body === 'object' ? req.body : {};
+    const notifications = await testNotifications.send(pool, {
+      userId, kinds: b.kinds, allPushCategories: b.allPushCategories == null ? true : b.allPushCategories,
+    }, { actorId: req.user.id });
+    return { notifications };
   }));
 
   return router;
