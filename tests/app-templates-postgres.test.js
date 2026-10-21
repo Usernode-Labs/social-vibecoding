@@ -871,7 +871,9 @@ test('every ready-made app runs: seeds in staging only, serves its screen, refus
   });
 
   await t.test('find a time: suggested times, everyone\'s marks, the best rising, the starter setting it, and past by "now"', async () => {
-    await run('find-a-time-book-club', '/api/plans', (d) => demo(d.plans), async (app) => {
+    // The dates mode: game night and the trip. The book club finds a weekly
+    // time instead (below).
+    await run('find-a-time-game-night', '/api/plans', (d) => demo(d.plans), async (app) => {
       const get = async (as = ada, now) => (await app.call('GET', '/api/plans', { as, now })).data;
       const plan = async (id, as = ada, now) => (await get(as, now)).plans.find((p) => p.id === id);
       const slotAt = (p, iso) => p.slots.find((s) => s.startsAt === iso);
@@ -1005,6 +1007,81 @@ test('every ready-made app runs: seeds in staging only, serves its screen, refus
       assert.equal((await app.call('DELETE', `/api/plans/${trip.data.id}`, { as: grace })).status, 200);
       d = await get();
       assert.deepEqual(d.plans.map((x) => x.id), [900001], 'the seed is still there');
+    });
+  });
+
+  // Evan, 21 Oct 2026: "Book club times: shouldn't this be a weekly time?
+  // Not just a few times to choose between?"
+  await t.test('find a weekly time: everyone marks the hours of every week, and the hour most can make is named', async () => {
+    const fakes = (d) => d.people.filter((p) => p.username.startsWith('staging-demo-')).length;
+    await run('find-a-time-book-club', '/api/week', fakes, async (app) => {
+      const get = async (as = ada) => (await app.call('GET', '/api/week', { as })).data;
+      const mine = (as, hours) => app.call('PUT', '/api/week/mine', { as, body: { hours } });
+      const key = (b) => `${b.day}-${b.hour}`;
+
+      // The seed: five made-up people's weeks, Tuesday at 7 PM the best.
+      let d = await get();
+      assert.deepEqual([d.days, d.firstHour, d.lastHour], [7, 8, 22]);
+      assert.equal(fakes(d), 5);
+      assert.deepEqual(key(d.best[0]), '1-19');
+      assert.equal(d.free['1-19'].length, 4, 'four of the five');
+      // No plans in a weekly app: only its own mode's routes are there.
+      const plans = await app.call('GET', '/api/plans', { as: ada });
+      assert.ok(!(plans.data && plans.data.plans), 'no plans in a weekly app');
+      // Who still has to answer is the platform's member list.
+      assert.equal(d.members, 'ok');
+      assert.deepEqual(d.waiting.map((w) => [w.username, w.me]), [['ada', true], ['grace', false]]);
+
+      // Your week: hours of the grid only, replaced whole, an empty list
+      // taking your answer back.
+      for (const [hours, why] of [
+        [null, 'a list'],
+        [[[7, 19]], 'a day of the week'],
+        [[[1, 7]], 'from 8 AM'],
+        [[[1, 22]], 'until 10 PM'],
+        [[[1, 19.5]], 'whole hours'],
+        [[['1', 19]], 'numbers'],
+      ]) assert.equal((await mine(ada, hours)).status, 400, why);
+      assert.equal((await app.call('PUT', '/api/week/mine', { body: { hours: [[1, 19]] } })).status, 401, 'signed in to answer');
+      const graces = await listen(app, grace);
+      await graces.until((x) => x.text().includes(':ok'));
+      assert.deepEqual((await mine(ada, [[1, 19], [1, 20], [1, 19], [4, 18]])).data, { ok: true, hours: 3 }, 'each hour once');
+      await graces.until((x) => x.events() >= 1);
+      assert.doesNotMatch(graces.text(), /ada|19/, 'the stream says only that something changed');
+      await graces.close();
+      d = await get(grace);
+      assert.deepEqual(d.people[d.people.length - 1], { id: 101, username: 'ada', me: false }, 'the latest to answer is last');
+      assert.equal(d.free['1-19'].length, 5);
+      assert.ok(d.free['1-19'].includes(101) && d.free['4-18'].includes(101));
+      assert.deepEqual(key(d.best[0]), '1-19', 'now all five');
+      assert.deepEqual(d.waiting.map((w) => w.username), ['grace']);
+
+      // Grace answers first in a fresh week of her own; changing your week
+      // keeps your place.
+      await mine(grace, [[2, 18], [2, 19]]);
+      await mine(ada, [[1, 19], [2, 18], [2, 19]]);
+      d = await get(ada);
+      assert.deepEqual(d.people[0], { id: 101, username: 'ada', me: true }, 'you first');
+      assert.ok(!d.free['4-18'], 'an hour you took off is not yours any more');
+      assert.ok(d.people.findIndex((p) => p.username === 'grace') > 0);
+      assert.deepEqual(d.waiting, [], 'every member has answered');
+
+      // The best hours: the most free, then the hour after, then the
+      // earliest; an hour beside one already named is the same evening.
+      d = await get();
+      assert.ok(d.best.length <= 3);
+      for (let i = 1; i < d.best.length; i += 1) {
+        for (let j = 0; j < i; j += 1) {
+          assert.ok(!(d.best[i].day === d.best[j].day && Math.abs(d.best[i].hour - d.best[j].hour) <= 1), 'not the same evening twice');
+        }
+        assert.ok(d.free[key(d.best[i])].length <= d.free[key(d.best[i - 1])].length, 'most first');
+      }
+
+      // Taking your answer back.
+      assert.deepEqual((await mine(ada, [])).data, { ok: true, hours: 0 });
+      d = await get(ada);
+      assert.ok(!d.people.some((p) => p.id === 101));
+      assert.deepEqual(d.waiting.map((w) => w.username), ['ada']);
     });
   });
 

@@ -181,18 +181,61 @@ function groupPoll(id, { title, about, question, option, change }) {
  * One find-a-time app per occasion: the same app (app-templates/find-a-time),
  * with what the times are for filled in. `forWhat` finishes "Find a time
  * for …", and `example` is the new plan's name placeholder.
+ *
+ * `weekly` (`TIME_MODE`, chosen when the project is made): a group that
+ * meets every week, a book club, finds its regular weekly time instead of
+ * one date. Everyone marks the hours that work for them on a grid of the
+ * week, and the hour that suits the most people rises to the top (Evan,
+ * 21 Oct 2026: "Shouldn't this be a weekly time? Not just a few times to
+ * choose between?"). The others suggest a few dates and times.
  */
-function findATime(id, { title, forWhat, example, change }) {
-  return Object.freeze({
+function findATime(id, { title, forWhat, example, change, weekly = false }) {
+  const shared = {
     id,
     dir: 'find-a-time',
     ready: true,
     exampleScreen: exampleScreen(id),
     exampleChange: change,
     title,
-    summary: `Find a time for ${forWhat}: suggest a few times, everyone marks when they are free, and the best time rises to the top.`,
     icon: '📅',
-    fill: Object.freeze({ FOR_WHAT: forWhat, PLAN_EXAMPLE: example }),
+  };
+  if (weekly) {
+    return Object.freeze({
+      ...shared,
+      summary: `Find a weekly time for ${forWhat}: everyone marks the hours that work for them every week, and the time that suits the most people rises to the top.`,
+      fill: Object.freeze({
+        TIME_MODE: 'weekly',
+        PLAN_EXAMPLE: example,
+        TIME_INTRO: `Find a weekly time for ${forWhat}. Mark the hours that work for you every week, and the time that suits the most people rises to the top.`,
+      }),
+      features: Object.freeze([
+        '**Your week, once**: a grid of the days and the hours, 8 AM to 10 PM. Tap an hour that works for you every week, or hold and drag across several.',
+        '**Everyone\'s week**: each hour is shaded by how many people can make it, and tapping one shows who can and who can\'t.',
+        '**The best weekly time**: the hour that suits the most people is named at the top ("Tuesdays at 7 PM, 5 of 6 can make it"), with the next best and who still has to answer.',
+      ]),
+      tables: '`week_free`',
+      tests: Object.freeze([
+        {
+          id: 'week.grid',
+          name: 'The week shows how many people can make each hour',
+          path: '/',
+          expectSelector: '#week-grid [data-cell][data-free]',
+          visual: true,
+          impact: IMPACT,
+        },
+        { name: 'The best weekly time is named', path: '/', expectSelector: '#week-best[data-best]' },
+        { name: 'You can mark the hours that work for you', path: '/', expectSelector: '#week-toggle [data-view="yours"]' },
+      ]),
+    });
+  }
+  return Object.freeze({
+    ...shared,
+    summary: `Find a time for ${forWhat}: suggest a few times, everyone marks when they are free, and the best time rises to the top.`,
+    fill: Object.freeze({
+      TIME_MODE: 'dates',
+      PLAN_EXAMPLE: example,
+      TIME_INTRO: `Find a time for ${forWhat}. Suggest some times, everyone marks when they're free, and the best time rises to the top.`,
+    }),
     features: Object.freeze([
       '**Suggest some times**: whoever starts a plan suggests two to eight, each a day and a time or a whole day, and anyone can suggest another while it is open.',
       '**Free, if needed, or can\'t**: everyone marks each time with one tap and can change it any time. The grid shows who is free when, and who in the project has not answered yet.',
@@ -400,7 +443,7 @@ const TEMPLATES = Object.freeze([
       { name: 'Today’s count of finished sessions loads', path: '/', expectSelector: '#today[data-loaded]' },
     ]),
   }),
-  findATime('find-a-time-book-club', { title: 'Book club times', forWhat: 'our book club', example: 'e.g. November book club', change: 'show the book for each meeting' }),
+  findATime('find-a-time-book-club', { title: 'Book club times', forWhat: 'our book club', example: 'e.g. November book club', change: 'show the book for each meeting', weekly: true }),
   findATime('find-a-time-game-night', { title: 'Game night times', forWhat: 'game night', example: 'e.g. Game night this month', change: 'vote on which game to play' }),
   findATime('find-a-time-trip', { title: 'Trip dates', forWhat: 'our trip', example: 'e.g. Lake weekend', change: 'add a packing list' }),
   Object.freeze({
