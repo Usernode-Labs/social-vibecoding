@@ -298,24 +298,225 @@ test('the catalog holds the new entries, each with a description', () => {
 // 21 Oct 2026, on an iPhone: opening a card's history grew it for
 // "Loading…", snapped back up when the history landed, grew again, then
 // jumped down to its real height; folding it stopped 8px short and jumped.
-test('a history box resizes from where it is to exactly its content, and folds to nothing', () => {
-  const resize = STACKS_SRC.slice(STACKS_SRC.indexOf('function resizeBox('), STACKS_SRC.indexOf('export function CardHistory('));
-  assert.ok(resize.length > 0, 'resizeBox found');
-  // Where it is on screen is read BEFORE the running resize is cancelled, so
-  // the next one starts there instead of from a height read earlier.
-  const read = resize.indexOf('box.getBoundingClientRect().height');
-  const cancel = resize.indexOf('run.cancel()');
-  const measure = resize.indexOf('box.scrollHeight');
-  assert.ok(read > 0 && cancel > read && measure > cancel, 'read where it is, cancel, then measure the content');
-  // A grow lets go at the content's own height (no fill), a fold holds at 0.
-  assert.match(resize, /fill: to === 0 \? 'forwards' : 'none'/);
-  // A resize cut short by the next one runs none of its endings.
-  assert.match(resize, /\}, \(\) => \{ \/\* cut short by the next resize, which owns the box now \*\/ \}\);/);
-  // The history landing goes on from where the opening has it.
-  assert.match(STACKS_SRC, /if \(!box \|\| !open \|\| stillMotion\(\) \|\| !loaded \|\| loaded\.state === 'loading'\) return;\s*resizeBox\(box, null, 'content', 280\);/);
-  assert.match(STACKS_SRC, /resizeBox\(box, running\(box\) \? null : 0, 'content', 360\);/);
-  assert.match(STACKS_SRC, /resizeBox\(box, null, 0, 300, \(\) => setShown\(false\)\);/);
+// Then, in the app's web view, the `height` animation that fixed that stopped
+// advancing for up to 6 s while the page was free: WebKit runs a height
+// animation on the main thread. The history now moves by transforms alone
+// (moveHistory), which run in Core Animation. Run here over a fake column
+// layout: every box is as tall as its children, stacked top to bottom.
+
+function historyScene({ desk = false, scroll = null } = {}) {
+  const anims = [];
+  const frames = [];
+  const timers = [];
+  const transforms = new Map();
+  let boxH = 100;
+  class Box {
+    constructor(name, { h = 0, css = {}, cls = '' } = {}) {
+      const style = new Proxy({}, { get: (t, k) => (k in t ? t[k] : '') });
+      Object.assign(this, { name, h, css, cls, kids: [], parent: null, style, attrs: {} });
+    }
+    add(...kids) { for (const k of kids) { k.parent = this; this.kids.push(k); } return this; }
+    get parentElement() { return this.parent; }
+    get children() { return this.kids; }
+    get firstChild() { return this.kids[0] || null; }
+    get isConnected() { let n = this; while (n.parent) n = n.parent; return n.name === 'body'; }
+    sib(d) { const s = this.parent && this.parent.kids; return s ? s[s.indexOf(this) + d] || null : null; }
+    get nextElementSibling() { return this.sib(1); }
+    get previousElementSibling() { return this.sib(-1); }
+    insertBefore(child, ref) { child.parent = this; this.kids.splice(ref ? this.kids.indexOf(ref) : this.kids.length, 0, child); return child; }
+    remove() { if (this.parent) this.parent.kids.splice(this.parent.kids.indexOf(this), 1); this.parent = null; }
+    setAttribute(k, v) { this.attrs[k] = v; }
+    closest(sel) { let n = this; while (n && !(sel === '.notifications-row-slot' && n.cls === 'slot')) n = n.parent; return n || null; }
+    get height() {
+      if (this.style.display === 'none') return 0;
+      if (this.name === 'box') return boxH;
+      const flow = this.kids.filter((k) => k.style.position !== 'absolute');
+      return flow.length ? flow.reduce((sum, k) => sum + k.height, 0) : this.h;
+    }
+    get top() {
+      if (!this.parent) return 0;
+      let top = this.parent.top;
+      if (this.style.position === 'absolute') return top;
+      for (const k of this.parent.kids) { if (k === this) break; if (k.style.position !== 'absolute') top += k.height; }
+      return top;
+    }
+    getBoundingClientRect() { return { top: this.top, bottom: this.top + this.height, height: this.height }; }
+    animate(keyframes, timing) {
+      let resolve;
+      const run = {
+        el: this, keyframes, timing, state: 'running',
+        finished: new Promise((r) => { resolve = r; }),
+        get playState() { return this.state; },
+        pause() { this.state = 'paused'; },
+        play() { this.state = 'running'; },
+        cancel() { this.state = 'idle'; },
+        finish() { this.state = 'finished'; resolve(this); },
+      };
+      run.finished.catch(() => {});
+      anims.push(run);
+      return run;
+    }
+  }
+  const box = new Box('box');
+  const row = new Box('row', { h: 60 });
+  const surface = desk ? { backgroundColor: 'rgb(255, 255, 255)', boxShadow: 'rgba(0, 0, 0, 0.05) 0px 1px 2px 0px' } : {};
+  const card = new Box('card', { cls: 'slot', css: surface });
+  if (desk) card.add(row, box); else card.add(new Box('wrap').add(new Box('host').add(row, box)));
+  const stack = new Box('stack').add(new Box('head', { h: 30 }), card, new Box('next', { h: 60 }));
+  const scroller = new Box('scroller', { css: { overflowY: 'auto' } });
+  scroller.add(new Box('above', { h: 200 }), stack, new Box('below', { h: 200 }));
+  Object.assign(scroller, { scrollTop: 0, scrollHeight: 1000, clientHeight: 800, ...(scroll || {}) });
+  scroller.getBoundingClientRect = () => ({ top: 0, bottom: 800, height: 800 });
+  const body = new Box('body').add(scroller);
+  const env = {
+    window: {
+      innerHeight: 800,
+      getComputedStyle: (el) => ({
+        overflowY: el.css.overflowY || 'visible',
+        backgroundColor: el.style.background || el.css.backgroundColor || 'rgba(0, 0, 0, 0)',
+        boxShadow: el.style.boxShadow || el.css.boxShadow || 'none',
+        transform: transforms.has(el.name) ? `matrix(1, 0, 0, 1, 0, ${transforms.get(el.name)})` : 'none',
+        opacity: '1',
+      }),
+      requestAnimationFrame: (fn) => { frames.push(fn); return frames.length; },
+    },
+    document: { body, documentElement: body, scrollingElement: body, createElement: (tag) => new Box(tag) },
+    setTimeout: (fn, ms) => { timers.push({ fn, ms }); return timers.length; },
+    clearTimeout: () => {},
+  };
+  const saved = {};
+  for (const k of Object.keys(env)) { saved[k] = globalThis[k]; globalThis[k] = env[k]; }
+  const by = (name) => { const walk = (b) => (b.name === name ? b : b.kids.map(walk).find(Boolean)); return walk(body); };
+  return {
+    box, card, anims, frames, timers, transforms, by,
+    setHistory(h) { boxH = h; },
+    restore() { for (const k of Object.keys(saved)) globalThis[k] = saved[k]; },
+    live: () => anims.filter((a) => a.state !== 'idle'),
+    frames2() { for (let i = 0; i < 2; i++) for (const fn of frames.splice(0)) fn(16); },
+    kf: (name) => JSON.parse(JSON.stringify([...anims].reverse().find((a) => a.el.name === name && a.state !== 'idle').keyframes)),
+  };
+}
+const ty = (a, b) => [{ transform: `translateY(${a}px)` }, { transform: `translateY(${b}px)` }];
+
+test('a history grows by transforms: the card is the window, what is in it stands still, what follows moves with its edge', () => {
+  const s = historyScene();
+  try {
+    const motion = { current: null };
+    stacks.moveHistory(s.box, motion, true, 360);
+    // Laid out at its new size in one step; played back from where it was.
+    assert.deepEqual(s.kf('card'), ty(-100, 0), 'the card\'s edge starts where it was');
+    assert.deepEqual(s.kf('wrap'), ty(100, 0), 'the card\'s contents stand still');
+    assert.deepEqual(s.kf('next'), ty(-100, 0), 'the next card follows the edge');
+    assert.deepEqual(s.kf('below'), ty(-100, 0), 'so does everything under the stack');
+    assert.deepEqual(s.kf('box'), [{ opacity: 0 }, { opacity: 1 }]);
+    assert.equal(s.card.style.overflow, 'hidden', 'the card clips what is in it, at its own corners');
+    for (const run of s.anims) {
+      assert.ok(Object.keys(run.keyframes[0]).every((k) => k === 'transform' || k === 'opacity'), `${run.el.name}: transform and opacity only`);
+      assert.equal(run.timing.delay, undefined, 'no delay: WebKit keeps a delayed animation on the main thread');
+    }
+    // Held on its first frame until the frame after next.
+    assert.ok(s.live().every((run) => run.state === 'paused'));
+    s.frames2();
+    assert.ok(s.live().every((run) => run.state === 'running'));
+
+    // The history lands 40px into the grow, 60px taller than "Loading…": it
+    // goes on from where everything is, never back to an earlier height.
+    s.transforms.set('card', -40).set('wrap', 40).set('next', -40).set('below', -40);
+    s.setHistory(160);
+    stacks.moveHistory(s.box, motion, true, 280);
+    assert.deepEqual(s.kf('card'), ty(-100, 0));
+    assert.deepEqual(s.kf('wrap'), ty(100, 0));
+    assert.deepEqual(s.kf('next'), ty(-100, 0));
+    assert.equal(s.live().filter((run) => run.timing.duration === 360).length, 0, 'the first grow let go');
+    s.transforms.clear();
+    // It ends at exactly its layout: nothing is held, and the card is itself again.
+    s.frames2();
+    for (const run of s.live()) run.finish();
+    [...s.timers].reverse().find((t) => t.ms > 280).fn();
+    assert.equal(s.card.style.overflow, '');
+    assert.equal(s.card.style.isolation, '');
+    assert.ok(motion.current && motion.current.runs.size === 0, 'the card remembers the height it laid out');
+  } finally {
+    s.restore();
+  }
+});
+
+test('a history folds by transforms and leaves the layout in the same step its transforms let go', () => {
+  const s = historyScene();
+  try {
+    s.setHistory(160);
+    const motion = { current: null };
+    let folded = 0;
+    stacks.moveHistory(s.box, motion, false, 300, () => { folded++; });
+    assert.deepEqual(s.kf('card'), ty(0, -160));
+    assert.deepEqual(s.kf('wrap'), ty(0, 160));
+    assert.deepEqual(s.kf('next'), ty(0, -160));
+    assert.deepEqual(s.kf('box'), [{ opacity: 1 }, { opacity: 0 }]);
+    assert.ok(s.anims.every((run) => run.timing.fill === 'forwards'), 'a fold holds its end until the layout catches up');
+    assert.equal(s.box.style.display, '');
+    // A stalled main thread never reports the end; the timer does.
+    s.timers.find((t) => t.ms === 80).fn();
+    s.timers.find((t) => t.ms > 300).fn();
+    assert.equal(s.box.style.display, 'none', 'the box leaves the layout');
+    assert.ok(s.anims.every((run) => run.state === 'idle'), 'in the same step the held transforms let go');
+    assert.equal(folded, 1);
+    assert.equal(motion.current, null);
+  } finally {
+    s.restore();
+  }
+});
+
+test('a fold that leaves the list shorter than its scroller moves what is above down with it', () => {
+  // 1000 tall in an 800 view, scrolled to 100. Without the 160px history the
+  // list is 840 tall, so the scroller will pull back to 40: everything above
+  // the card's edge comes down 60 on the way, rather than at the end.
+  const s = historyScene({ scroll: { scrollTop: 100, scrollHeight: 1000, clientHeight: 800 } });
+  try {
+    s.setHistory(160);
+    stacks.moveHistory(s.box, { current: null }, false, 300, () => {});
+    assert.deepEqual(s.kf('head'), ty(0, 60));
+    assert.deepEqual(s.kf('above'), ty(0, 60));
+    assert.deepEqual(s.kf('card'), ty(0, -100), 'its edge ends where the pulled-back layout has it');
+    assert.deepEqual(s.kf('wrap'), ty(0, 160), 'its words come down with what is above');
+    assert.deepEqual(s.kf('next'), ty(0, -100));
+  } finally {
+    s.restore();
+  }
+});
+
+test('on a desk the card lends its surface to a layer under its contents while it moves', () => {
+  const s = historyScene({ desk: true });
+  try {
+    stacks.moveHistory(s.box, { current: null }, true, 360);
+    const surface = s.card.kids[0];
+    assert.equal(surface.name, 'span');
+    assert.equal(surface.style.background, 'rgb(255, 255, 255)');
+    assert.equal(surface.style.zIndex, '-1');
+    assert.equal(s.card.style.background, 'transparent', 'the card itself moves; its surface stands still with its contents');
+    assert.equal(s.card.style.isolation, 'isolate');
+    assert.deepEqual(s.kf('span'), ty(100, 0));
+    assert.deepEqual(s.kf('row'), ty(100, 0));
+    s.frames2();
+    for (const run of s.live()) run.finish();
+    [...s.timers].reverse().find((t) => t.ms > 360).fn();
+    assert.equal(s.card.kids[0].name, 'row', 'the layer goes when the motion ends');
+    assert.equal(s.card.style.background, '');
+    assert.equal(s.card.style.boxShadow, '');
+  } finally {
+    s.restore();
+  }
+});
+
+test('CardHistory opens, lands and folds through moveHistory, and a card that goes leaves nothing moved', () => {
+  assert.doesNotMatch(STACKS_SRC, /\{ height: `/, 'no height keyframes are left to stall');
+  assert.match(STACKS_SRC, /moveHistory\(box, motion, true, 360\);/);
+  assert.match(STACKS_SRC, /moveHistory\(box, motion, false, 300, \(\) => setShown\(false\)\);/);
+  assert.match(STACKS_SRC, /if \(open\) moveHistory\(box, motion, true, 280\);\s*else if \(motion\.current\) moveHistory\(box, motion, false, 300, \(\) => setShown\(false\)\);/,
+    'the history landing goes on from where the grow (or a fold) has it');
+  assert.match(STACKS_SRC, /useEffect\(\(\) => \(\) => \{\s*if \(motion\.current\) stopMotion\(motion\.current, true\);/);
   assert.doesNotMatch(STACKS_SRC, /lastHeight/, 'no height remembered from an earlier render');
-  // The padding is the inner box's, so the outer one is 0 tall at 0.
+  // Read where everything is before the running motion lets go.
+  const move = STACKS_SRC.slice(STACKS_SRC.indexOf('export function moveHistory('), STACKS_SRC.indexOf('function controller()'));
+  assert.ok(move.indexOf('offsetY(el)') < move.indexOf('stopMotion(prev'), 'read, then cancel');
   assert.match(STACKS_SRC, /<div ref=\{boxRef\} data-notif-history-list=\{view\.id\} className="col-start-1 row-start-2">\s*\{\/\*[\s\S]*?\*\/\}\s*<div className="pl-\[4\.75rem\] pr-4 pb-2">/);
 });

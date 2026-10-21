@@ -1533,6 +1533,156 @@
     }
   }, true);
 
+  // Closing a committed row's place. It used to be a CSS `height`
+  // transition on the wrap, which WebKit runs on the main thread: in an
+  // iPhone web view it once never advanced (no frame, no transitionend), so
+  // the row sat under its tray until the safety timer took it away. Now the
+  // row's place goes in ONE step (the wrap is 0 tall, its end state then as
+  // before) and everything that moved is played back from where it was with
+  // transform-only animations, which run in Core Animation whatever the
+  // main thread is doing:
+  //   - the tray stands in for the row, clipped by its own box, and that box
+  //     rises off the row's place while the buttons in it stay put, so the
+  //     tray closes from the bottom with what follows;
+  //   - every element around the row up to its scroller is measured before
+  //     and after (FLIP), so what follows slides up, and if the scroller has
+  //     to pull back because the list got shorter, what comes before slides
+  //     down instead of jumping;
+  //   - a box around the row that shows its own edge (a background, border,
+  //     shadow or clip, e.g. an .un-group card) cannot be resized by a
+  //     transform: it keeps its height through the step and then eases it
+  //     down, as before, and what is outside it follows it in the layout. If
+  //     that stalls, the rows in it still close up, and its edge is late.
+  // `done` runs once the motion has finished, on a timer too, since a
+  // stalled main thread never reports the end of an animation.
+  var SWIPE_GAP_MS = 300;
+  var SWIPE_GAP_EASE = 'cubic-bezier(0.3, 1, 0.4, 1)'; // --un-ease-spring-stiff
+
+  function scrollParentOf(el) {
+    for (var p = el.parentElement; p && p !== document.body && p !== document.documentElement; p = p.parentElement) {
+      var oy = getComputedStyle(p).overflowY;
+      if (oy === 'auto' || oy === 'scroll' || oy === 'overlay') return p;
+    }
+    return document.scrollingElement || document.documentElement;
+  }
+
+  function isClear(color) {
+    return !color || color === 'transparent' || /[,/]\s*0(\.0*)?\)$/.test(color);
+  }
+
+  // Whether a box shows where its edge is.
+  function showsEdge(el) {
+    var cs = getComputedStyle(el);
+    return cs.overflowY !== 'visible' || !isClear(cs.backgroundColor) ||
+      cs.backgroundImage !== 'none' || cs.boxShadow !== 'none' ||
+      parseFloat(cs.borderTopWidth) > 0 || parseFloat(cs.borderBottomWidth) > 0;
+  }
+
+  function closeSwipeGap(wrap, tray, rowEl, done) {
+    var h = wrap.offsetHeight;
+    if (prefersReducedMotion || !h || typeof wrap.animate !== 'function') { done(); return; }
+    var scroller = scrollParentOf(wrap);
+    var movers = [];
+    var edge = null;
+    for (var n = wrap; n && n !== scroller && n !== document.body; n = n.parentElement) {
+      var p = n.parentElement;
+      if (!p) break;
+      for (var s = p.firstElementChild; s; s = s.nextElementSibling) {
+        if (s !== n) movers.push(s);
+      }
+      if (p !== scroller && p !== document.body && showsEdge(p)) { edge = p; break; }
+    }
+    var i;
+    var before = [];
+    for (i = 0; i < movers.length; i++) before.push(movers[i].getBoundingClientRect().top);
+    var wrapTop = wrap.getBoundingClientRect().top;
+    var trayBase = tray.style.transform || '';
+    var corners = getComputedStyle(wrap);
+    var edgePin = edge ? edge.style.height : '';
+    var edgeFrom = edge ? getComputedStyle(edge).height : '';
+    var edgeTo = (parseFloat(edgeFrom) - h - parseFloat(corners.marginTop) - parseFloat(corners.marginBottom)) + 'px';
+
+    // One step: the row's place is gone; the tray keeps the row's size and
+    // corners and clips its own buttons, since the wrap no longer does. Its
+    // box rises, so the top corners are the end buttons' own.
+    tray.style.bottom = 'auto';
+    tray.style.height = h + 'px';
+    tray.style.overflow = 'hidden';
+    tray.style.borderRadius = corners.borderRadius;
+    if (tray.firstElementChild) tray.firstElementChild.style.borderTopLeftRadius = corners.borderTopLeftRadius;
+    if (tray.lastElementChild) tray.lastElementChild.style.borderTopRightRadius = corners.borderTopRightRadius;
+    rowEl.style.visibility = 'hidden';
+    wrap.style.overflow = 'visible';
+    wrap.style.height = '0px';
+    if (edge) edge.style.height = edgeFrom;
+
+    var opts = { duration: SWIPE_GAP_MS, easing: SWIPE_GAP_EASE };
+    var held = { duration: SWIPE_GAP_MS, easing: SWIPE_GAP_EASE, fill: 'forwards' };
+    var runs = [];
+    // Each one holds its first frame until the next frame (go, below).
+    function play(el, frames, timing) {
+      try {
+        var run = el.animate(frames, timing);
+        run.pause();
+        runs.push(run);
+      } catch (e) { /* the end state is already laid out */ }
+    }
+    var view = scroller === (document.scrollingElement || document.documentElement)
+      ? { top: 0, bottom: window.innerHeight }
+      : scroller.getBoundingClientRect();
+    for (i = 0; i < movers.length; i++) {
+      var r = movers[i].getBoundingClientRect();
+      var dy = before[i] - r.top;
+      if (Math.abs(dy) < 0.5) continue;
+      // Off screen at both ends: nothing to see, and no layer to make.
+      if (r.bottom + Math.max(dy, 0) < view.top || r.top + Math.min(dy, 0) > view.bottom) continue;
+      var base = getComputedStyle(movers[i]).transform;
+      base = base && base !== 'none' ? ' ' + base : '';
+      play(movers[i], [
+        { transform: 'translateY(' + dy + 'px)' + base },
+        { transform: 'translateY(0px)' + base },
+      ], opts);
+    }
+    // The wrap itself moved only if the scroller pulled back (pull >= 0).
+    var pull = wrap.getBoundingClientRect().top - wrapTop;
+    play(tray, [
+      { transform: trayBase + ' translateY(' + -pull + 'px)' },
+      { transform: trayBase + ' translateY(' + -h + 'px)' },
+    ], held);
+    for (var b = tray.firstElementChild; b; b = b.nextElementSibling) {
+      play(b, [{ transform: 'translateY(0px)' }, { transform: 'translateY(' + h + 'px)' }], held);
+    }
+    if (edge) play(edge, [{ height: edgeFrom }, { height: edgeTo }], held);
+
+    var ended = false;
+    // Played from the next frame: this one lays out the closed place and
+    // makes a layer of each moving part, and in Mobile Safari a motion
+    // started in it was first painted 42-70% of the way; started a frame
+    // later, 18-29%. A timer starts it if no frame comes.
+    var going = false;
+    function go() {
+      if (going || ended) return;
+      going = true;
+      for (var k = 0; k < runs.length; k++) runs[k].play();
+    }
+    requestAnimationFrame(go);
+    setTimeout(go, 50);
+    function end() {
+      if (ended) return;
+      ended = true;
+      clearTimeout(timer);
+      done();
+      for (var k = 0; k < runs.length; k++) {
+        try { runs[k].cancel(); } catch (e) { /* ignore */ }
+      }
+      if (edge) edge.style.height = edgePin;
+    }
+    var timer = setTimeout(end, SWIPE_GAP_MS + 150);
+    if (typeof Promise === 'function') {
+      Promise.all(runs.map(function (run) { return run.finished; })).then(end, function () {});
+    }
+  }
+
   // attachSwipeActions(rowEl, { actions: [{ label, color, destructive,
   // handler }] }). The LAST action is the full-swipe action when it is
   // destructive. The kit wraps rowEl in a .un-swipe container and renders
@@ -1606,10 +1756,10 @@
       }
     }
 
-    function springTo(to, velocity, preset, onRest) {
+    function springTo(to, velocity, preset, onRest, exit) {
       if (activeSpring) activeSpring.stop();
       activeSpring = spring(function (x) { setOffset(x); }, {
-        from: offset, to: to, velocity: velocity, preset: preset || 'default',
+        from: offset, to: to, velocity: velocity, preset: preset || 'default', exit: !!exit,
         onRest: function () { activeSpring = null; if (onRest) onRest(); },
       });
     }
@@ -1627,29 +1777,21 @@
 
     // Destructive commit: fires only from a release/click (never while a
     // finger is down — the drag handler only previews). Slide fully out,
-    // collapse the row's height, remove from DOM, then run the handler.
+    // close the row's place (closeSwipeGap), remove it from the DOM, then
+    // run the handler. The slide ends the way a dismissal does, once the row
+    // is within a pixel of gone: settling the last pixels out of sight held
+    // the tray still for ~0.4 s before its place began to close.
     function commit(action, velocity) {
       if (committing) return;
       committing = true;
       if (openSwipeRow && openSwipeRow.wrap === wrap) openSwipeRow = null;
       wrap.classList.add('un-committing');
       springTo(-rowWidth(), velocity || 0, 'stiff', function () {
-        wrap.style.height = wrap.offsetHeight + 'px';
-        // Next frame: transition height -> 0 (CSS handles the curve).
-        requestAnimationFrame(function () {
-          wrap.classList.add('un-collapsing');
-          wrap.style.height = '0px';
-          var fired = false;
-          function finish() {
-            if (fired) return;
-            fired = true;
-            if (wrap.parentNode) wrap.parentNode.removeChild(wrap);
-            action.handler && action.handler();
-          }
-          wrap.addEventListener('transitionend', finish, { once: true });
-          setTimeout(finish, 400); // safety if transitionend never fires
+        closeSwipeGap(wrap, tray, rowEl, function () {
+          if (wrap.parentNode) wrap.parentNode.removeChild(wrap);
+          action.handler && action.handler();
         });
-      });
+      }, true);
     }
 
     function onPointerDown(e) {
