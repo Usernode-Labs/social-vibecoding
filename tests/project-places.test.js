@@ -420,6 +420,45 @@ test('openPlace takes the door when it is asked to, even with the page\'s opener
   }
 });
 
+// #3620: A PRESS WHILE THE PAGE STILL LOADS MOVES IT IN PLACE. The page
+// registers its opener as it mounts and publishes its place only once
+// loaded; a press in between taken as a door pushed no entry (the address
+// is the page's already), so Back left the project instead of coming back
+// to the hub. Slowed down, the declared #3620 check failed that way.
+test('openPlace moves a mounted page in place while it still loads, so the press is a step Back undoes', () => {
+  const store = loadTsx(`${DIR}/place-store.ts`, {
+    stubs: {
+      './community-card': {
+        cachedCommunity: () => null,
+        communityInflight: () => false,
+        reloadCommunity: async () => {},
+      },
+    },
+  });
+  const had = Object.prototype.hasOwnProperty.call(globalThis, 'window');
+  const was = globalThis.window;
+  const opened = [];
+  const landed = [];
+  globalThis.window = {
+    location: { hash: '#app/garden/workshop' },
+    AppView: { _landOnTab: (slug, key) => landed.push([slug, key]) },
+    App: { _hubHref: (slug) => `#app/${slug}/workshop` },
+  };
+  const undo = store.registerPlaceOpener('garden', (key) => opened.push(key));
+  try {
+    assert.equal(store.placeStore.get().slug, null, 'nothing published yet: the page is loading');
+    assert.equal(store.openPlace('garden', 'workshop'), true, 'in place, not a door');
+    assert.deepEqual(opened, ['workshop'], 'through the page\'s own press, which pushes the entry');
+    assert.deepEqual(landed, [], 'no door');
+    // Another project's place is still a door.
+    assert.equal(store.openPlace('meadow', 'needs'), false);
+    assert.deepEqual(landed, [['meadow', 'needs']]);
+  } finally {
+    undo();
+    if (had) globalThis.window = was; else delete globalThis.window;
+  }
+});
+
 // A SWITCH KEEPS YOUR PAGE (the header's ⌄ menu, a row of All communities):
 // another community opens on the place you were on when it has it, else its
 // hub. keepPlace is the phone drawer's rule; the place is the one the project
