@@ -173,7 +173,7 @@
  * the same hairline, as on the make screen.
  */
 
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from 'react';
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject } from 'react';
 
 import { PLANE_FILL } from '@/components/ui/grouped-list';
 import { AppleIcon, ChevronLeftIcon, GoogleIcon, SpinnerArcIcon, XIcon } from '@/components/ui/icons';
@@ -296,7 +296,33 @@ const PROVIDER_BUTTON: Record<SignInProvider, string> = {
   apple: 'flex h-[50px] w-full items-center justify-center gap-2 rounded-full bg-black text-[17px] font-[650] text-white dark:bg-white dark:text-black disabled:opacity-60',
   google: 'flex h-[50px] w-full items-center justify-center gap-2 rounded-full bg-white text-[17px] font-[650] text-zinc-900 shadow-[inset_0_0_0_1px_rgba(0,0,0,0.15)] dark:bg-zinc-800 dark:text-zinc-100 dark:shadow-[inset_0_0_0_1px_rgba(255,255,255,0.15)] disabled:opacity-60',
 };
-const EMAIL_BUTTON = 'flex h-[50px] w-full items-center justify-center rounded-full bg-zinc-200 text-[17px] font-[650] text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100 disabled:opacity-60';
+// "Continue with email" says whether it has an address to send to (#5678):
+// the filled pill once there is one, an outline with muted ink while the
+// field is empty. It stays pressable either way, so a field the browser
+// filled in without saying so is never a dead button.
+export const EMAIL_BUTTON_READY = 'flex h-[50px] w-full items-center justify-center rounded-full bg-zinc-200 text-[17px] font-[650] text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100 disabled:opacity-60';
+export const EMAIL_BUTTON_EMPTY = 'flex h-[50px] w-full items-center justify-center rounded-full bg-transparent text-[17px] font-[650] text-zinc-400 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:text-zinc-500 disabled:opacity-60';
+
+/**
+ * The address the code went to, inside "Sent to <address> · Change"
+ * (#5678). It stays on one line on a phone: a long name part is shortened
+ * with an ellipsis, and the provider's part is never cut, so the line still
+ * says where it went. Hovering, or a long press, shows the whole address.
+ */
+export function SentAddress({ children, title }: { children?: ReactNode; title?: string }) {
+  const text = Array.isArray(children) ? children.join('') : String(children ?? '');
+  const at = text.lastIndexOf('@');
+  return (
+    <strong title={title} className="inline-flex min-w-0 overflow-hidden font-semibold text-zinc-900 dark:text-zinc-100">
+      {at > 0 ? (
+        <>
+          <span className="truncate">{text.slice(0, at)}</span>
+          <span className="shrink-0">{text.slice(at)}</span>
+        </>
+      ) : <span className="truncate">{text}</span>}
+    </strong>
+  );
+}
 
 // The server holds a second code back for this long (routes/auth.js); the
 // resend counts it down rather than pretending to send.
@@ -787,6 +813,9 @@ export function SignInSheet({
   const [error, setError] = useState<string | null>(null);
   const [details, setDetails] = useState<NativeLoginFailureDetails | null>(null);
   const [busy, setBusy] = useState(false);
+  // Whether the choose step's Email field holds anything, for the look of
+  // "Continue with email" (#5678).
+  const [hasAddress, setHasAddress] = useState(false);
   const [cooldownUntil, setCooldownUntil] = useState(0);
   const [now, setNow] = useState(() => Date.now());
   // Slides up one frame after it mounts, so the transition has a start.
@@ -910,6 +939,14 @@ export function SignInSheet({
     if (focus) field.current?.focus({ preventScroll: true });
   }, [open, step, needsUsername]);
 
+  // The choose step's Email field may already hold an address (a release
+  // link, or the step coming back): "Continue with email" starts ready
+  // then, rather than looking empty over a filled field.
+  useEffect(() => {
+    if (!open || step !== 'choose') return;
+    setHasAddress(!!firstField.current?.value.trim());
+  }, [open, step]);
+
   // The account step starts from the handle its field arrives holding.
   useEffect(() => {
     if (open && step === 'account' && needsUsername) setHandleDraft(suggestedUsername);
@@ -955,7 +992,12 @@ export function SignInSheet({
   const requestCode = useCallback(async (address: string) => {
     setError(null);
     const value = address.trim().toLowerCase();
-    if (!value || !value.includes('@')) { setError(translate('auth:signInSheet.email.invalid')); return; }
+    if (!value || !value.includes('@')) {
+      setError(translate('auth:signInSheet.email.invalid'));
+      // Said, and the caret put where the answer goes (#5678).
+      firstField.current?.focus({ preventScroll: true });
+      return;
+    }
     if (blockedOffline(setError)) return;
     setBusy(true);
     try {
@@ -1565,10 +1607,10 @@ export function SignInSheet({
               <div className={FIELD_GROUP}>
                 <div className={FIELD}>
                   <label htmlFor="sign-in-sheet-email" className={LABEL}>{t('auth:signInSheet.email.label')}</label>
-                  <input ref={firstField} id="sign-in-sheet-email" type="email" autoComplete="email" inputMode="email" enterKeyHint="go" defaultValue={email} className={INPUT} {...HANDLE_FIELD} />
+                  <input ref={firstField} id="sign-in-sheet-email" type="email" autoComplete="email" inputMode="email" enterKeyHint="go" defaultValue={email} className={INPUT} onInput={(e) => setHasAddress(!!e.currentTarget.value.trim())} onChange={(e) => setHasAddress(!!e.currentTarget.value.trim())} onFocus={(e) => setHasAddress(!!e.currentTarget.value.trim())} {...HANDLE_FIELD} />
                 </div>
               </div>
-              <button type="submit" data-sign-in-provider="email" disabled={busy} className={EMAIL_BUTTON} {...HOLD_FIELD_FOCUS}>
+              <button type="submit" data-sign-in-provider="email" data-sign-in-email-empty={hasAddress ? undefined : ''} disabled={busy} className={hasAddress ? EMAIL_BUTTON_READY : EMAIL_BUTTON_EMPTY} {...HOLD_FIELD_FOCUS}>
                 {busy ? t('auth:signInSheet.email.sending') : t('auth:signInSheet.continueWithEmail')}
               </button>
             </form>
@@ -1652,10 +1694,10 @@ export function SignInSheet({
         {step === 'code' ? (
           <form className="mt-1 flex flex-col gap-3" onSubmit={(e) => { e.preventDefault(); void verify(); }}>
             {/* Where it went, and the way to fix a typo in it, on one line. */}
-            <p data-sign-in-sheet-sent-to="" className="break-words text-[15px] leading-snug text-zinc-500 dark:text-zinc-400">
+            <p data-sign-in-sheet-sent-to="" className="flex min-w-0 items-baseline gap-x-1 whitespace-nowrap text-[15px] leading-snug text-zinc-500 dark:text-zinc-400">
               <RichMessage id="auth:signInSheet.code.sentTo" values={{ email }} components={[
-              <strong className="font-semibold text-zinc-900 dark:text-zinc-100" />,
-              <button type="button" className="font-medium text-violet-700 dark:text-violet-400 hover:underline" onClick={() => { setError(null); setLinkRefused(false); setStep('email'); }} />,
+              <SentAddress title={email} />,
+              <button type="button" className="shrink-0 font-medium text-violet-700 dark:text-violet-400 hover:underline" onClick={() => { setError(null); setLinkRefused(false); setStep('email'); }} />,
               ]} />
             </p>
             {/* Six boxes drawn under one real field: the keyboard's code from the mail, and a paste, fill all six. */}
