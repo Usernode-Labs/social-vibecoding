@@ -133,6 +133,10 @@ function boundSeenSet() {
 }
 
 async function poll(appPubkey, pool) {
+  // A link is only for a genesis address, and until this process has loaded
+  // the genesis set every address reads as not genesis: a transaction read
+  // now would be skipped and never read again. Wait for the set instead.
+  if (!genesisAccounts.isLoaded()) return;
   lastPolledAt = Date.now();
   if (!chainId) {
     try { await discoverChainId(); } catch (e) {

@@ -156,9 +156,12 @@ function getStatus() {
   };
 }
 
+// Fails closed: until this process has loaded the genesis set, no address is
+// genesis. It used to answer true until then, so a freshly started process
+// let any address register or link a wallet. A caller that must tell "not
+// genesis" from "not known yet" asks isLoaded() first.
 function isGenesisAddress(address) {
-  if (!loaded || genesisAddresses.size === 0) return true;
-  return genesisAddresses.has(address);
+  return loaded && genesisAddresses.has(address);
 }
 
 function isLoaded() { return loaded; }

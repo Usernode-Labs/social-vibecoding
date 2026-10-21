@@ -1637,6 +1637,14 @@ function authRoutes(config) {
   });
 
   // ── Wallet-based authentication ───────────────────────────────────
+  // Registering or linking a wallet is for genesis addresses only, and this
+  // process cannot tell one apart until it has loaded the genesis set: say
+  // so, retryably, rather than refuse a genesis participant.
+  function genesisNotLoaded(res) {
+    res.set('Retry-After', '30');
+    return res.status(503).json({ error: 'The genesis ledger is still loading. Try again in a minute.', code: 'genesis_loading' });
+  }
+
   const CHALLENGE_TTL_MS = 2 * 60 * 1000;
   const walletChallenges = new Map();
 
@@ -1693,7 +1701,10 @@ function authRoutes(config) {
         [pubkey.trim()]
       );
 
-      const isGenesis = genesisAccounts.isGenesisAddress(pubkey.trim());
+      // null while this process has not loaded the genesis set: the client
+      // treats only `false` as "not genesis", so a linked wallet keeps its
+      // sign-in path meanwhile (sign-in needs no genesis gate).
+      const isGenesis = genesisAccounts.isLoaded() ? genesisAccounts.isGenesisAddress(pubkey.trim()) : null;
 
       if (rows.length > 0) {
         const challenge = crypto.randomBytes(32).toString('hex');
@@ -2107,6 +2118,7 @@ function authRoutes(config) {
       return res.status(400).json({ error: 'username, password, and pubkey required' });
     }
 
+    if (!genesisAccounts.isLoaded()) return genesisNotLoaded(res);
     if (!genesisAccounts.isGenesisAddress(pubkey.trim())) {
       return res.status(403).json({ error: 'Only genesis ledger participants can register via wallet' });
     }
@@ -2173,6 +2185,7 @@ function authRoutes(config) {
       return res.status(400).json({ error: 'username, password, and pubkey required' });
     }
 
+    if (!genesisAccounts.isLoaded()) return genesisNotLoaded(res);
     if (!genesisAccounts.isGenesisAddress(pubkey.trim())) {
       return res.status(403).json({ error: 'Only genesis ledger participants can link a wallet' });
     }
