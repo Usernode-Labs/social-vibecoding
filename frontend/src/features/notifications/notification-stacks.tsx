@@ -42,6 +42,8 @@
 
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 
+import { BookmarkIcon, BookmarkSolidIcon } from '@/components/ui/icons';
+
 import { useMessages } from '../../lib/i18n/react';
 import { listText } from '../../lib/i18n/runtime';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
@@ -67,6 +69,8 @@ export type StoryRowView = {
   storyRef?: { number: number; title: string | null } | null;
   /** Set on a card that stands for one story's notifications, newest first. */
   story?: { members: StoryRowView[] } | null;
+  /** #5775: the viewer has bookmarked this notification for later. */
+  saved?: boolean;
 };
 
 export type StoryEntry<V extends StoryRowView = StoryRowView> = { type: 'notif'; key: string; at: number; view: V };
@@ -306,8 +310,11 @@ type HistoryLine = {
   at: number;
   what: string;
   words?: string;
-  /** One of the story's own notifications: it opens on its own, with its dot. */
-  notification?: { id: number; unread: boolean };
+  /**
+   * One of the story's own notifications: it opens on its own, with its dot,
+   * and it can be saved on its own (#5775).
+   */
+  notification?: { id: number; unread: boolean; saved: boolean };
 };
 
 const BOT_USERNAME = 'homeroom_bot';
@@ -393,7 +400,7 @@ export function historyLines(view: StoryRowView, steps: HistoryStep[], t: Transl
         at,
         what: member.label,
         words: plain(member.segments) || undefined,
-        notification: { id: member.id, unread: member.unread },
+        notification: { id: member.id, unread: member.unread, saved: !!member.saved },
       });
       continue;
     }
@@ -761,21 +768,44 @@ export function CardHistory({ view, open }: { view: StoryRowView; open: boolean 
           </>
         );
         const cls = 'relative block w-full text-left py-1.5 border-t border-black/[.06] dark:border-white/[.08]';
+        // #5775: a notification listed here can be saved on its own. The
+        // bookmark is a SIBLING of the line's open button, never inside it (a
+        // button in a button is neither focusable nor clickable), so the line
+        // gives the time room on its right (pr-8) for it to sit in.
         return line.notification ? (
-          <button
-            key={line.key}
-            type="button"
-            data-notif-history-row={line.notification.id}
-            className={cls + ' hover:text-violet-700 dark:hover:text-violet-400'}
-            onClick={(event) => {
-              // Stopped like every click in this sheet: the list re-renders
-              // under it, and an outside-click listener would close the sheet.
-              event.stopPropagation();
-              controller()?._onItemClick(line.notification!.id);
-            }}
-          >
-            {inner}
-          </button>
+          <div key={line.key} className="relative">
+            <button
+              type="button"
+              data-notif-history-row={line.notification.id}
+              className={cls + ' pr-8 hover:text-violet-700 dark:hover:text-violet-400'}
+              onClick={(event) => {
+                // Stopped like every click in this sheet: the list re-renders
+                // under it, and an outside-click listener would close the sheet.
+                event.stopPropagation();
+                controller()?._onItemClick(line.notification!.id);
+              }}
+            >
+              {inner}
+            </button>
+            <button
+              type="button"
+              data-notif-history-save={line.notification.id}
+              aria-pressed={line.notification.saved ? 'true' : 'false'}
+              aria-label={t(line.notification.saved ? 'notifications:row.unsave' : 'notifications:row.save')}
+              className={'absolute right-0 top-1 flex h-7 w-7 items-center justify-center rounded-full '
+                + 'transition-colors hover:bg-black/[.04] dark:hover:bg-white/[.06] '
+                + 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500'}
+              onClick={(event) => {
+                // Not the line's tap: saving never opens the notification.
+                event.stopPropagation();
+                controller()?.toggleSave(line.notification!.id);
+              }}
+            >
+              {line.notification.saved
+                ? <BookmarkSolidIcon aria-hidden="true" className="h-4 w-4 text-violet-700 dark:text-violet-400" />
+                : <BookmarkIcon aria-hidden="true" className="h-4 w-4 text-zinc-500 dark:text-zinc-400" />}
+            </button>
+          </div>
         ) : (
           <div key={line.key} className={cls}>{inner}</div>
         );

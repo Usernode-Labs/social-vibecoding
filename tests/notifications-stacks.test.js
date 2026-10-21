@@ -223,9 +223,19 @@ test('a history in words: newest first, the story\'s other notifications in plac
     '2 yes votes', 'You voted yes', 'Ready to try', 'Updated', '@ben commented', 'Homeroom bot put it up for a vote', 'You asked for it',
   ], 'its going live is the card itself');
   assert.equal(lines[0].words, '@ben, @cy', 'the voters in the order they voted');
-  assert.deepEqual(lines[2].notification, { id: 2, unread: false }, 'one of the story\'s notifications opens on its own');
+  assert.deepEqual(lines[2].notification, { id: 2, unread: false, saved: false }, 'one of the story\'s notifications opens on its own');
   assert.equal(lines[2].words, 'Plant shelf');
   assert.equal(lines[4].words, 'Works on my phone.');
+});
+
+test('#5775: a history line carries its notification\'s saved state', () => {
+  const t = englishPlatformI18n().t;
+  const now = Date.now();
+  const lead = view(1, { kind: 'build_live', createdAtMs: now - MIN, label: 'Live' });
+  const kept = view(2, { kind: 'build_ready', createdAtMs: now - 25 * MIN, unread: false, saved: true });
+  const card = { ...lead, story: { members: [lead, kept] } };
+  const lines = stacks.historyLines(card, [], t, null);
+  assert.deepEqual(lines.map((line) => line.notification), [{ id: 2, unread: false, saved: true }]);
 });
 
 // ── 4. the data ─────────────────────────────────────────────────────────

@@ -166,3 +166,47 @@ test('a read card\'s swipe is Save alone', () => {
   assert.match(SHEET_SRC, /if \(!\(clearable \|\| cardSave\) \|\| !touch \|\| !el \|\| !ui\?\.swipeActions\) return undefined;/);
   assert.match(SHEET_SRC, /actions: !clearable \? \[save\] : cardSave \? \[save, clear\] : \[clear\]/);
 });
+
+// ── 4. #5775: an older folded card saves, and a history line saves ─────
+
+test('an older folded card saves its newest notification, a folded stack card still does not', () => {
+  // An older card is in no stack, so `removes` is false: it saves even folded.
+  assert.match(SHEET_SRC, /const cardSave = !!card && \(!groupIds \|\| !removes\);/);
+  // The bookmark is withheld only from a folded card that does not save, and
+  // from every card on touch (the swipe is its Save).
+  assert.match(SHEET_SRC, /const bookmark = \(groupIds && !cardSave\) \|\| \(card && touch\) \? null : \(/);
+  assert.match(SHEET_SRC, /data-notification-save=\{view\.id\}/);
+  assert.match(SHEET_SRC, /controller\(\)\?\.toggleSave\(view\.id\);/);
+  // The older section still draws cards with removes={false}; Unread's stacks
+  // still draw theirs with removes, so their folded cards stay as they were.
+  const olderAt = SHEET_SRC.indexOf('const renderOlderSection = (section: OlderSection): ReactNode => (');
+  const olderFn = SHEET_SRC.slice(olderAt, SHEET_SRC.indexOf('const renderEntry = ', olderAt));
+  assert.match(olderFn, /removes=\{false\}/);
+  const cardAt = SHEET_SRC.indexOf('const renderCard = (entry: Entry, place: CardPlace): ReactNode => (');
+  const cardFn = SHEET_SRC.slice(cardAt, SHEET_SRC.indexOf('// `whitespace-nowrap`', cardAt));
+  assert.match(cardFn, /\n      removes\n/);
+});
+
+test('a card\'s history gives each of its notifications its own Save, beside the line, not inside it', () => {
+  const stacksSrc = fs.readFileSync(path.join(ROOT, 'frontend/src/features/notifications/notification-stacks.tsx'), 'utf8');
+  const at = stacksSrc.indexOf('return line.notification ? (');
+  assert.ok(at > 0);
+  const block = stacksSrc.slice(at, stacksSrc.indexOf('<div key={line.key} className={cls}>', at));
+  // The line is one wrapper: its open button first, then the bookmark as a
+  // SIBLING after the button closes (a button inside a button is neither
+  // focusable nor clickable).
+  const openAt = block.indexOf('data-notif-history-row={line.notification.id}');
+  const openEnd = block.indexOf('</button>', openAt);
+  const saveAt = block.indexOf('data-notif-history-save={line.notification.id}');
+  assert.ok(openAt > 0, 'the line still opens the notification');
+  assert.ok(openEnd > openAt && saveAt > openEnd, 'the bookmark is after the open button, not inside it');
+  assert.match(block, /<div key=\{line\.key\} className="relative">/);
+  assert.match(block, /className=\{cls \+ ' pr-8 hover:text-violet-700/);
+  // It is pressed state and name from the same catalog entries as the row's.
+  assert.match(block, /aria-pressed=\{line\.notification\.saved \? 'true' : 'false'\}/);
+  assert.match(block, /t\(line\.notification\.saved \? 'notifications:row\.unsave' : 'notifications:row\.save'\)/);
+  // Its click stops at the bookmark, then saves or unsaves that one.
+  assert.match(block, /event\.stopPropagation\(\);\s*controller\(\)\?\.toggleSave\(line\.notification!\.id\);/);
+  // The saved state comes from the member itself.
+  assert.match(stacksSrc, /notification: \{ id: member\.id, unread: member\.unread, saved: !!member\.saved \}/);
+});

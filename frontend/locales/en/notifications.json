@@ -301,11 +301,11 @@
   },
   "row.save": {
     "text": "Save notification",
-    "description": "Accessible name of the bookmark button at the right end of a notification row that is not saved: pins that notification in the Saved section at the top."
+    "description": "Accessible name of the bookmark button at the right end of a notification row that is not saved: pins that notification in the Saved section at the top. It also names the bookmark beside a notification listed in a card's history."
   },
   "row.unsave": {
     "text": "Unsave notification",
-    "description": "Accessible name of the bookmark button at the right end of a notification row the viewer has saved: removes it from the Saved section at the top. The button is the same one, pressed."
+    "description": "Accessible name of the bookmark button at the right end of a notification row the viewer has saved: removes it from the Saved section at the top. The button is the same one, pressed, and it also names the bookmark beside a saved notification listed in a card's history."
   },
   "row.swipeSave": {
     "text": "Save",
