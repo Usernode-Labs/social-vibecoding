@@ -102,6 +102,25 @@ test('session locks on a lock connection of their own', { timeout: 60000 }, asyn
     assert.equal(c.openConnections(), 0, 'closed once idle');
   });
 
+  await t.test('a waiter whose lock connection ends goes on waiting on a new one, never running unlocked beside the holder', async () => {
+    let release;
+    const gate = new Promise((r) => { release = r; });
+    let aIn = false;
+    let bRanBesideA = null;
+    const held = a.withSessionLock(pool, key, async () => { aIn = true; await gate; aIn = false; return 'a'; });
+    await sleep(100);
+    const waiting = b.withSessionLock(pool, key, async () => { bRanBesideA = aIn; return 'b'; }, { unlockedOnError: true });
+    await sleep(150);
+    // End only the waiter's lock connection (the one holding no lock).
+    await other.query(`SELECT pg_terminate_backend(a.pid) FROM pg_stat_activity a WHERE a.application_name LIKE 'homeroom-%-locks'
+      AND NOT EXISTS (SELECT 1 FROM pg_locks l WHERE l.pid = a.pid AND l.locktype = 'advisory' AND l.granted)`);
+    await sleep(1500);
+    assert.equal(bRanBesideA, null, 'still waiting while the other holds it');
+    release();
+    assert.deepEqual(await Promise.all([held, waiting]), ['a', 'b']);
+    assert.equal(bRanBesideA, false);
+  });
+
   await t.test('the connection closes when no lock is held, and one that died is replaced', async () => {
     await sleep(50);
     assert.equal(a.openConnections(), 0, 'closed with no lock held');
@@ -117,4 +136,24 @@ test('session locks on a lock connection of their own', { timeout: 60000 }, asyn
     assert.equal(await b.withSessionLock(pool, key, async () => 'next'), 'next', 'the lock is free again');
     assert.equal(await a.withSessionLock(pool, key, async () => 'again'), 'again', 'a new connection');
   });
+});
+
+test('a lock statement not answered in time gives the connection up, and the waiter asks again on a new one', async () => {
+  const made = [];
+  class Stand {
+    constructor() { this.n = made.length; this.ended = false; this.handlers = new Map(); made.push(this); }
+    on(ev, fn) { this.handlers.set(ev, fn); return this; }
+    async connect() {}
+    async query(sql) {
+      // The first connection went half-open: pg's query_timeout answers.
+      if (this.n === 0) throw new Error('Query read timeout');
+      return { rows: [{ got: true }] };
+    }
+    async end() { this.ended = true; }
+  }
+  const locks = createSessionLocks({ makeClient: () => new Stand(), idleMs: 0 });
+  const pool = { options: { connectionString: 'postgres://stand/in' }, connect: async () => {} };
+  assert.equal(await locks.withSessionLock(pool, [990003, 1], async () => 'ran'), 'ran');
+  assert.equal(made.length, 2, 'a new connection');
+  assert.equal(made[0].ended, true, 'the silent one given up');
 });

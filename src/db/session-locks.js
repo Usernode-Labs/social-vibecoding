@@ -24,9 +24,14 @@
 //     beside this one excludes the same: a session lock and a transaction
 //     lock on one key exclude each other across sessions.
 //   - The connection is opened when a lock is first taken and closed once the
-//     process has held none for IDLE_MS. If it ends while locks are held (a failover), the
-//     holders run on unprotected, as they did when a pooled connection
-//     holding their lock dropped; the next lock opens a new connection.
+//     process has held none for IDLE_MS. If it ends while locks are held (a
+//     failover), the holders run on unprotected, as they did when a pooled
+//     connection holding their lock dropped. A waiter goes on waiting on a new
+//     connection: only a new connection that fails too means the lock cannot
+//     be asked for.
+//   - Every statement on it is answered within QUERY_TIMEOUT_MS, or the
+//     connection is given up: one that went half-open would otherwise hold
+//     every lock of the process behind it until the OS gave up on it.
 //
 // `pool` names the database (its connection string): the pg Pool the caller
 // would otherwise have used. A pool that is not a pg Pool (a test's fake)
@@ -42,6 +47,9 @@ const RETRY_MIN_MS = 50;
 // a new connection.
 const IDLE_MS = 30000;
 const RETRY_MAX_MS = 1000;
+// A lock statement never waits on the server (try-lock, unlock): one not
+// answered in this long is on a connection that is gone.
+const QUERY_TIMEOUT_MS = 10000;
 const BUSY = Symbol('session-lock-busy');
 
 function keySql(key) {
@@ -55,6 +63,7 @@ function keySql(key) {
 
 function createSessionLocks({ makeClient = (connectionString) => new Client({
   connectionString, ...connectionOptions(null, { name: connectionName('locks'), idleInTransactionMs: 0 }),
+  query_timeout: QUERY_TIMEOUT_MS,
 }), idleMs = IDLE_MS } = {}) {
   // One lock connection per database, opened while any lock is held there.
   const byDatabase = new Map();
@@ -87,7 +96,8 @@ function createSessionLocks({ makeClient = (connectionString) => new Client({
       if (entry.idle) { clearTimeout(entry.idle); entry.idle = null; }
       return entry;
     }
-    entry = { users: 0, dead: false, ready: null, client: null, queue: Promise.resolve(), idle: null };
+    // users: holders and waiters on it; held: locks it holds.
+    entry = { users: 0, held: 0, dead: false, ready: null, client: null, queue: Promise.resolve(), idle: null, lost: null };
     byDatabase.set(connectionString, entry);
     const client = makeClient(connectionString);
     entry.client = client;
@@ -95,8 +105,9 @@ function createSessionLocks({ makeClient = (connectionString) => new Client({
       if (entry.dead) return;
       entry.dead = true;
       if (byDatabase.get(connectionString) === entry) byDatabase.delete(connectionString);
-      if (entry.users) log.warn('session-locks', 'The lock connection ended while locks were held', { users: entry.users, err: err?.message || null });
+      if (entry.held) log.warn('session-locks', 'The lock connection ended while locks were held', { held: entry.held, err: err?.message || null });
     };
+    entry.lost = lost;
     client.on('error', lost);
     client.on('end', () => lost());
     entry.ready = client.connect().catch((err) => { lost(err); throw err; });
@@ -108,7 +119,16 @@ function createSessionLocks({ makeClient = (connectionString) => new Client({
     const run = entry.queue.then(async () => {
       await entry.ready;
       if (entry.dead) throw new Error('The lock connection ended');
-      return entry.client.query(sql, params);
+      try {
+        return await entry.client.query(sql, params);
+      } catch (err) {
+        // Not answered in time (pg's query_timeout): the connection is gone.
+        if (/timeout/i.test(err.message) && !entry.dead) {
+          entry.lost(err);
+          entry.client.end().catch(() => {});
+        }
+        throw err;
+      }
     });
     entry.queue = run.catch(() => {});
     return run;
@@ -130,6 +150,7 @@ function createSessionLocks({ makeClient = (connectionString) => new Client({
 
   async function release(connectionString, entry, k) {
     try {
+      entry.held -= 1;
       if (!entry.dead) await onConnection(entry, `SELECT pg_advisory_unlock(${k.sql})`, k.params);
     } catch (err) {
       log.warn('session-locks', 'Could not give back a lock', { key: k.id, err: err.message });
@@ -155,23 +176,35 @@ function createSessionLocks({ makeClient = (connectionString) => new Client({
     try {
       await prior;
       closeWithPool(pool, connectionString);
-      const entry = connectionFor(connectionString);
+      let entry = connectionFor(connectionString);
       entry.users += 1;
       let held = false;
       try {
+        let renewed = false;
         for (let delay = RETRY_MIN_MS; ; delay = Math.min(RETRY_MAX_MS, delay * 2)) {
           let r;
           try {
             ({ rows: [r] } = await onConnection(entry, `SELECT pg_try_advisory_lock(${k.sql}) AS got`, k.params));
+            renewed = false;
           } catch (err) {
-            // The lock could not be asked for (the database refused the
-            // connection). A caller for whom that is never a reason to refuse
-            // its work runs it unlocked, as it always degraded.
+            // The connection went while this waited (a failover, a reset):
+            // go on asking on a new one. Another process may hold the lock
+            // all along, so this is never a reason to run unlocked.
+            if (entry.dead && !renewed) {
+              entry.users -= 1;
+              entry = connectionFor(connectionString);
+              entry.users += 1;
+              renewed = true;
+              continue;
+            }
+            // The lock cannot be asked for (a new connection failed too: the
+            // database refuses it). A caller for whom that is never a reason
+            // to refuse its work runs it unlocked, as it always degraded.
             if (!unlockedOnError) throw err;
             log.warn('session-locks', 'Lock unavailable, running unlocked', { key: k.id, err: err.message });
             break;
           }
-          if (r && r.got) { held = true; break; }
+          if (r && r.got) { held = true; entry.held += 1; break; }
           if (!wait) return BUSY;
           await new Promise((resolve) => setTimeout(resolve, delay));
         }

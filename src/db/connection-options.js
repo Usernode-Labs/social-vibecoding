@@ -24,7 +24,7 @@ function connectionOptions(config, { name, idleInTransactionMs = IDLE_IN_TRANSAC
   const settings = { ...SERVER_KEEPALIVE, idle_in_transaction_session_timeout: idleInTransactionMs, ...extra };
   return {
     application_name: name,
-    connectionTimeoutMillis: (config && config.dbPoolWaitMs) || 10000,
+    connectionTimeoutMillis: (config && config.dbPoolWaitMs) || parseInt(process.env.DB_POOL_WAIT_MS || '10000', 10) || 10000,
     keepAlive: true,
     keepAliveInitialDelayMillis: KEEPALIVE_INITIAL_DELAY_MS,
     options: Object.entries(settings).map(([k, v]) => `-c ${k}=${v}`).join(' '),
