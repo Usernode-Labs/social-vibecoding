@@ -1018,10 +1018,9 @@ function splitTurnSpend(totalCents, { turnByok = false, byokObservedCents = 0 } 
 //     clamped to the turn total — CC's self-reported costUsd is the
 //     authoritative sum). Remainder is platform spend.
 // Returns { platformCents, byokCents } so call sites can emit per-bucket
-// usage events. New durable turns supply turnId: the debit and its receipt
-// then commit in one transaction and recovery can replay the stored split
-// without incrementing llm_usage twice. Legacy callers keep the tolerant
-// best-effort behavior until their old active_turn records have drained.
+// usage events. The turn's id is required: the debit and its receipt then
+// commit in one transaction and recovery can replay the stored split
+// without incrementing llm_usage twice.
 async function settleTurnSpend(pool, userId, totalCents, {
   turnByok = false,
   byokObservedCents = 0,
@@ -1073,18 +1072,20 @@ async function settleTurnSpend(pool, userId, totalCents, {
       },
     });
     // #2598: the debit committed with its receipt — push the new weekly
-    // figure. The non-durable path below goes through recordSpend, which
-    // notifies for itself, so this is the one branch that would otherwise
-    // settle a whole Claude turn in silence.
+    // figure (recordSpendRequired does not notify for itself).
     budgetLive.notifySpend(pool, userId);
     return receipt.value || { platformCents: 0, byokCents: 0 };
   }
 
-  const split = splitTurnSpend(totalCents, { turnByok, byokObservedCents });
-  const { platformCents, byokCents } = split;
-  if (platformCents > 0) await recordSpend(pool, userId, platformCents, { byok: false });
-  if (byokCents > 0) await recordSpend(pool, userId, byokCents, { byok: true });
-  return split;
+  // No turn named: nothing can close its kept calls, so billing the reported
+  // total here would charge them twice once the clock settles them
+  // (settleOpenTurnSpend). They are the clock's, billed at what they cost,
+  // as a killed turn's are; a whole-turn BYOK figure (display only) goes
+  // unrecorded.
+  log.warn('limits', 'Turn spend settled without a turn id; its kept calls are left to the clock', {
+    userId, sessionId, effectKey, totalCents,
+  });
+  return { platformCents: 0, byokCents: 0 };
 }
 
 // #361: gate for "may the platform incur another merge-conflict /
@@ -1165,6 +1166,7 @@ module.exports = {
   TODAY_USER_SPEND_SQL,
   TODAY_GLOBAL_SPEND_SQL,
   claimByokSwitchNotice,
+  splitTurnSpend,
   settleTurnSpend,
   invalidate,
   getIdentityTier,
