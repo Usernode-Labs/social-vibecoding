@@ -767,14 +767,16 @@ function buildWorkOrder({
   //
   // #4263: the hand-in itself is the same as new work's. This task's id
   // belongs to the proposal, so a patch sent with it is applied on the
-  // proposal's head in the app's repository and advances THAT proposal, with
-  // a branch pushed to the fork as the fallback. The one exception is a
-  // proposal whose head is a branch in the author's own fork: only the author
-  // can write that, so it takes a push.
+  // proposal's head in the app's repository and advances THAT proposal; a
+  // branch pushed to the fork goes in with the proposal's id. The one
+  // exception is a proposal whose head is a branch in the author's own fork:
+  // only the author can write that, so it takes a push and nothing else.
   const update = targetProposal && Number(targetProposal.id) > 0 ? targetProposal : null;
   const updateRef = update ? String(Number(update.id)) : null;
   const forkIsHome = !!(update && update.branchHome === 'user_fork');
-  const patchFirst = hasTask && !forkIsHome;
+  // Whether a patch is a way in at all. It is the fallback, never the first
+  // choice: see the closing decision tree below.
+  const patchAccepted = hasTask && !forkIsHome;
   // #1071. The same continuation, against a session that is still being built
   // rather than a proposal up for a vote. Everything mechanical is identical —
   // same bot-owned branch, same fetch-from-upstream setup, same submit_work
@@ -945,11 +947,11 @@ function buildWorkOrder({
     ...setup,
     '',
     'RULES',
-    ...(patchFirst
+    ...(patchAccepted
       ? [
-        '- Hand the change in as a patch unless step 1 under WHEN YOU ARE DONE',
-        '  says a branch fits better. The choice is yours, never the user\'s.',
-        '  If you push a branch, push only to YOUR FORK. Do not push to the upstream',
+        '- Hand the change in as a branch pushed to YOUR FORK when you can push,',
+        '  and as a patch when you cannot; step 1 under WHEN YOU ARE DONE says how.',
+        '  The choice is yours, never the user\'s. Do not push to the upstream',
         '  repository — you do not have access to it, and Homeroom opens the pull',
         '  request for you.',
         '- A fork is needed only to push a branch. Homeroom has no write access to',
@@ -1089,19 +1091,30 @@ function buildWorkOrder({
     'per-repository "push access" toggle helps — that was tried and changed',
     'nothing. And it takes effect in the RUNNING session: once the user says they',
     'have done it, retry the push once. Do not start a new session and do not',
-    'stop and wait; report it once and carry on.'
+    'stop and wait; report it once and carry on.',
+    // A refused push used to end most runs (#2460). With a patch on offer it
+    // costs one try: the agent hands the patch in at once rather than waiting
+    // on a remedy only the user can apply.
+    ...(patchAccepted
+      ? ['When it is step 1\'s push that is refused, carrying on means handing in',
+        'the patch step 1 describes.']
+      : [])
   );
 
   // ── The closing decision tree ────────────────────────────────────────
   //
-  // New work is handed in as a patch first (#2460): submit_work applies it at
-  // the base commit in the app's own repository, so an ordinary change needs
-  // no fork and no GitHub write access — the push is what failed in most
-  // production runs. A branch stays the fallback for a change over the patch
-  // limit, or for an agent that already pushes to its fork. An update is
-  // handed in the same way (#4263): its patch is applied on the proposal's own
-  // head and advances that proposal. Only a proposal whose head is in the
-  // author's fork keeps the push, because nobody else can write that branch.
+  // A branch pushed to the fork first, a patch when the push is refused.
+  // #2460 had it the other way round, because the push was what failed in
+  // most production runs and a patch needs no fork and no GitHub write
+  // access. But an agent that CAN push then retyped its whole change into one
+  // tool call: slow, easy to get wrong, and past the inline limit for a large
+  // change (October 2026, a 163 KB update that could not be transcribed). A
+  // push costs nothing to try, so it goes first, and a refused one falls
+  // through to the patch at once rather than waiting on the GitHub remedy.
+  // An update is handed in the same way (#4263): its patch is applied on the
+  // proposal's own head and advances that proposal. Only a proposal whose
+  // head is in the author's fork has no patch, because nobody else can write
+  // that branch.
   //
   // #3687: which of the two is the AGENT's call, and the text says so. Given
   // a default and an exception and no owner for the choice, Claude Code on
@@ -1110,11 +1123,10 @@ function buildWorkOrder({
   // #4264: the one-time upload command, when prepare_work minted one for this
   // task. Inline stays the way in for a small patch and for a sandbox that
   // cannot reach Homeroom; the upload is for the patch too big to retype
-  // safely; the branch is the last resort. The token is printed here, in the
-  // work order its owner asked for, and nowhere else. New work only: an
-  // update's patch (#4263) travels inline through the proposal's update
-  // route, which an upload does not reach.
-  const upload = patchFirst && !update && patchUpload && patchUpload.token && patchUpload.url
+  // safely. The token is printed here, in the work order its owner asked for,
+  // and nowhere else. New work only: an update's patch (#4263) travels inline
+  // through the proposal's update route, which an upload does not reach.
+  const upload = patchAccepted && !update && patchUpload && patchUpload.token && patchUpload.url
     ? patchUpload
     : null;
   const uploadExpiry = upload && upload.expiresAt instanceof Date && !Number.isNaN(upload.expiresAt.getTime())
@@ -1125,11 +1137,17 @@ function buildWorkOrder({
     ? `${uploadBytes / (1024 * 1024)} MB`
     : `${Math.round(uploadBytes / 1024)} KB`;
   lines.push('', 'WHEN YOU ARE DONE', '');
-  if (patchFirst) {
+  if (patchAccepted) {
     lines.push(
-      '1. COMMIT, THEN MAKE A PATCH of your commits. This is the default way to',
-      '   hand the change in: you do NOT need GitHub write access, a fork or a',
-      '   push for it.',
+      '1. COMMIT, THEN PUSH A BRANCH to your fork. When you can push, this is the',
+      '   way to hand the change in: nothing is retyped, whatever its size. Any',
+      '   branch name:',
+      `${CMD}git push -u origin HEAD`,
+      `${CMD}git rev-parse --abbrev-ref HEAD`,
+      '   The second command prints the branch name you just pushed. You need it.',
+      '   IF THE PUSH IS REFUSED, or there is no fork you can push to, do not stop',
+      '   and do not wait: hand the change in as a PATCH of your commits instead.',
+      '   You do NOT need GitHub write access, a fork or a push for it.',
       `${CMD}git format-patch ${baseSha}..HEAD --stdout`,
       ...(upload
         ? [
@@ -1144,17 +1162,10 @@ function buildWorkOrder({
           '   never print, commit or share it. If it answers "ok":true, pass its',
           '   `uploadId` as `patchUploadId` in step 2 instead of `patch`; otherwise',
           `   send the patch inline. Uploads take up to ${uploadLimit}, inline patches`,
-          '   about 250 KB. For a change larger still, or when you already push to',
-          '   your fork, push a branch instead (any branch name):',
+          '   about 250 KB.',
         ]
-        : [
-          '   Patches over about 250 KB are refused. For a change that large, or when',
-          '   you already push to your fork, push a branch instead (any branch name):',
-        ]),
-      `${CMD}git push -u origin HEAD`,
-      `${CMD}git rev-parse --abbrev-ref HEAD`,
-      '   The second command prints the branch name you just pushed. You need it.',
-      '   Patch or branch is YOUR decision, by the rule above. Make it yourself and',
+        : ['   Patches over about 250 KB are refused.']),
+      '   Branch or patch is YOUR decision, by the rule above. Make it yourself and',
       '   never ask the user which to use: most users are not developers, and the',
       '   question only confuses them.'
     );
@@ -1176,9 +1187,9 @@ function buildWorkOrder({
     // be worse than silence: there is no pull request to open (the proposal
     // already has one), and "push again to the same branch" is exactly what
     // does NOT work when the proposal's head is bot-owned — the whole reason
-    // this path exists. The hand-in itself is new work's (#4263): a patch
-    // with this taskId by default, a branch with the proposalId as the
-    // fallback, except on a head in the author's fork, which takes a push.
+    // this path exists. The hand-in itself is new work's (#4263): a branch
+    // with the proposalId, a patch with this taskId when the push is
+    // refused, except on a head in the author's fork, which takes a push.
     const noun = continuing ? 'session' : 'proposal';
     const secondProposal = continuing
       ? 'for work this session already holds'
@@ -1189,29 +1200,28 @@ function buildWorkOrder({
     const againSteps = forkIsHome
       ? ['   again the same way: push to the same branch and call `submit_work` again.']
       : [
-        '   the same way again. A patch: fetch the `headSha` submit_work answered',
-        `   with, rebase onto it, and send the patch made from it with the same`,
-        `   taskId ${taskRef}. Each one is applied on the ${noun}'s newest commit:`,
+        '   the same way again. A branch: push to your fork, then call `submit_work`',
+        `   with the same proposalId ${updateRef}. Pushing to your fork alone does NOT`,
+        `   move the ${noun}: its head is in the app's repository, and \`submit_work\``,
+        '   is what moves it. A patch: fetch the `headSha` submit_work answered with,',
+        `   rebase onto it, and send the patch made from it with the same taskId`,
+        `   ${taskRef}. Each one is applied on the ${noun}'s newest commit:`,
         `${CMD}git fetch upstream <headSha>`,
         `${CMD}git rebase <headSha>`,
         `${CMD}git format-patch <headSha>..HEAD --stdout`,
-        '   A branch: push to your fork, then call `submit_work` with the same',
-        `   proposalId ${updateRef}. Pushing to your fork alone does NOT move the`,
-        `   ${noun}: its head is in the app's repository, and \`submit_work\` is what`,
-        '   moves it.',
       ];
     lines.push(
       '',
       `2. SUBMIT THE UPDATE, through the Homeroom connector. Call \`submit_work\``,
-      ...(patchFirst
+      ...(patchAccepted
         ? [
-          `   with taskId ${taskRef} and the patch text from step 1 as \`patch\` (or, if you`,
-          `   pushed instead, proposalId ${updateRef} and \`branch\` set to the branch you`,
-          `   pushed), agent "${agentValue}" and source "work_order".`,
-          `   Homeroom applies a patch ON THE ${noun.toUpperCase()}'S CURRENT COMMIT in the app's`,
-          `   own repository and moves this same ${noun} onto the result. For a`,
-          '   branch, it checks the branch is in your own fork and sits ON TOP of that',
-          `   commit, then moves the ${noun} onto it. Nothing is force-pushed past`,
+          `   with proposalId ${updateRef} and \`branch\` set to the branch you pushed (or,`,
+          `   if you handed in a patch, taskId ${taskRef} and the patch text from step 1`,
+          `   as \`patch\`), agent "${agentValue}" and source "work_order".`,
+          '   For a branch, Homeroom checks it is in your own fork and sits ON TOP of',
+          `   the ${noun}'s current commit, then moves the ${noun} onto it. A patch is`,
+          `   applied ON THE ${noun.toUpperCase()}'S CURRENT COMMIT in the app's own repository,`,
+          `   and this same ${noun} moves onto the result. Nothing is force-pushed past`,
           `   anybody else's work: if the ${noun} moved in the meantime the call is`,
           '   refused rather than overwriting it, and it never opens a second proposal.',
         ]
@@ -1258,13 +1268,13 @@ function buildWorkOrder({
       '   connector traffic goes out through your chat product\'s own',
       '   infrastructure, not through your container.',
       '',
-      ...(patchFirst
+      ...(patchAccepted
         ? [
           `3. IF submit_work ANSWERS \`branch_moved\`, somebody advanced the ${noun}`,
           '   while you were working. Its new commit is the error\'s `headSha` (or',
           '   `get_proposal`\'s `branch.headSha`). Fetch it, rebase your work onto it',
-          '   and submit again: a patch made from that commit, with `expectedHeadSha`',
-          '   set to it, or your branch pushed again.',
+          '   and submit again: your branch pushed again, or a patch made from that',
+          '   commit, with `expectedHeadSha` set to it.',
           `${CMD}git fetch upstream <headSha>`,
           `${CMD}git rebase <headSha>`,
           `${CMD}git format-patch <headSha>..HEAD --stdout`,
@@ -1277,10 +1287,11 @@ function buildWorkOrder({
           `${CMD}git push --force-with-lease origin HEAD`,
           '   None of these is a reason to start over or to open a second proposal.',
           '',
-          '4. IF THE PATCH IS REFUSED as too large, push a branch as in step 1 and',
-          `   call \`submit_work\` with proposalId ${updateRef} and that \`branch\` instead. If`,
-          '   that push is refused, the remedy above is the fix; report it and retry',
-          '   once. Do not call `prepare_work` for a new change: that opens a SECOND',
+          '4. IF THE PATCH IS REFUSED as too large, the branch in step 1 is the only',
+          '   way in: once the push goes through, call `submit_work` with proposalId',
+          `   ${updateRef} and that \`branch\`. While the push is refused, the remedy above is`,
+          '   the fix; report it and retry once.',
+          '   Do not call `prepare_work` for a new change: that opens a SECOND',
           `   proposal ${secondProposal},`,
           '   which is the one outcome to avoid.',
         ]
@@ -1316,14 +1327,14 @@ function buildWorkOrder({
       '6. IF THE USERNODE TOOLS ARE NOT AVAILABLE to you at all, the Homeroom',
       '   connector was never added to the Claude or ChatGPT account this session',
       '   runs in — it is per account, so a second account does not inherit the',
-      patchFirst
+      patchAccepted
         ? '   first one\'s. The work is not lost.'
         : '   first one\'s. Push the branch anyway; the work is not lost.',
       ...noToolsRemedy,
       '   Once they have, retry `submit_work` as in step 2 — in a fresh session',
       '   if the tools still do not appear in this one.',
       ...(startedFromWalkthrough
-        ? (patchFirst
+        ? (patchAccepted
           ? [
             '   Otherwise finish from Homeroom: push the branch as in step 1. The',
             '   walkthrough that produced this work order checks for it when the user',
@@ -1336,14 +1347,14 @@ function buildWorkOrder({
             '   tab, and its Submit button applies the update. Print the branch name',
             '   and the proposal id so they can confirm it.',
           ])
-        : patchFirst
+        : patchAccepted
           ? [
-            '   Otherwise hand it back: save the patch from step 1 to a `.patch` file',
-            '   (or print the branch name, if you pushed one) with the proposal id, and',
-            '   tell the user to give both to the assistant that started this — it can',
-            '   submit the update for you. If they started from the Homeroom tab',
-            '   instead, that tab checks for a pushed branch and its Submit button',
-            '   applies the update.',
+            '   Otherwise hand it back: print the branch name you pushed (or, if the',
+            '   push was refused, save the patch from step 1 to a `.patch` file) with',
+            '   the proposal id, and tell the user to give both to the assistant that',
+            '   started this — it can submit the update for you. If they started from',
+            '   the Homeroom tab instead, that tab checks for a pushed branch and its',
+            '   Submit button applies the update.',
           ]
           : [
             '   Otherwise hand it back: print the branch name you pushed and the',
@@ -1388,19 +1399,20 @@ function buildWorkOrder({
       '2. SUBMIT IT YOURSELF, through the Homeroom connector. Call `submit_work`',
       ...(upload
         ? [
-          `   with taskId ${taskRef} and the patch text from step 1 as \`patch\` (or the`,
-          '   `patchUploadId` its upload printed, or, if you pushed instead, `branch`',
-          '   set to the name you actually pushed),',
+          `   with taskId ${taskRef} and \`branch\` set to the name you actually pushed`,
+          '   (or, if you handed in a patch, the patch text from step 1 as `patch` or',
+          '   the `patchUploadId` its upload printed),',
         ]
         : [
-          `   with taskId ${taskRef} and the patch text from step 1 as \`patch\` (or, if`,
-          '   you pushed instead, `branch` set to the name you actually pushed),',
+          `   with taskId ${taskRef} and \`branch\` set to the name you actually pushed`,
+          '   (or, if you handed in a patch, the patch text from step 1 as `patch`),',
         ]),
       `   agent "${agentValue}", source "work_order", and a short title, plus`,
-      '   BOTH pieces of prose described next. Homeroom applies a patch at that',
-      '   exact commit in the app\'s own repository and opens the pull request',
-      '   itself. It answers with a link to the new proposal — give that link to',
-      '   the user and tell them it is up for the group\'s vote.',
+      '   BOTH pieces of prose described next. Homeroom brings the branch, or',
+      '   applies the patch at that exact commit, into the app\'s own repository',
+      '   and opens the pull request itself. It answers with a link to the new',
+      '   proposal — give that link to the user and tell them it is up for the',
+      '   group\'s vote.',
       // The two-audience rule, at the moment it is acted on. An agent that
       // sends only `description` produces a proposal whose About sheet shows
       // a non-technical voter nothing but the diff explained in developer
@@ -1485,14 +1497,16 @@ function buildWorkOrder({
       ...(upload
         ? [
           '4. IF THE PATCH IS REFUSED as too large, upload it as in step 1. If the',
-          '   upload cannot reach Homeroom or is too large as well, push a branch as',
-          `   in step 1 and call \`submit_work\` with taskId ${taskRef} and that`,
-          '   `branch` instead. If that push is refused, the remedy above is the fix.',
+          '   upload cannot reach Homeroom or is too large as well, the branch in',
+          '   step 1 is the only way in: once the push goes through, call',
+          `   \`submit_work\` with taskId ${taskRef} and that \`branch\`. While the push is`,
+          '   refused, the remedy above is the fix.',
         ]
         : [
-          '4. IF THE PATCH IS REFUSED as too large, push a branch as in step 1 and',
-          `   call \`submit_work\` with taskId ${taskRef} and that \`branch\` instead. If`,
-          '   that push is refused, the remedy above is the fix.',
+          '4. IF THE PATCH IS REFUSED as too large, the branch in step 1 is the only',
+          '   way in: once the push goes through, call `submit_work` with taskId',
+          `   ${taskRef} and that \`branch\`. While the push is refused, the remedy above is`,
+          '   the fix.',
         ]),
       '',
       '5. ON A CONNECTOR ERROR, relay it plainly rather than giving up:',
@@ -1523,11 +1537,11 @@ function buildWorkOrder({
           '   Print the branch name so they can confirm it.',
         ]
         : [
-          '   Otherwise hand it back: save the patch from step 1 to a `.patch` file',
-          '   (or print the branch name, if you pushed one), and tell the user to give',
-          '   it to the assistant that started this — it finishes the same way.',
-          '   If they started from the Homeroom tab instead, that tab checks for a',
-          '   pushed branch and its Submit button does it.',
+          '   Otherwise hand it back: print the branch name you pushed (or, if the',
+          '   push was refused, save the patch from step 1 to a `.patch` file), and',
+          '   tell the user to give it to the assistant that started this — it',
+          '   finishes the same way. If they started from the Homeroom tab instead,',
+          '   that tab checks for a pushed branch and its Submit button does it.',
         ]),
       '',
       // Submitting is not the finish line: checks GATE MERGE, so a proposal
@@ -1540,17 +1554,18 @@ function buildWorkOrder({
       `   passing cannot merge however the vote goes. Call \`get_proposal\` with the`,
       '   proposal id `submit_work` returned — it reports `checks` with the state,',
       '   the number of tests and the names of the failing ones. If any are failing,',
-      // #4263: an update work order takes a patch the way this one does, so
-      // revising needs no push either. The branch route is said accurately:
-      // a pushed branch is usually copied into the app's repository, so a
-      // push alone does not move the proposal.
-      '   fix them and revise THIS proposal. Call `prepare_work` with that id as',
-      '   `proposalId`: the update work order it returns takes your fix as a patch,',
-      '   just like this one, and Homeroom applies it on the proposal\'s current',
-      '   commit, so no push is needed. If you pushed a branch, you can instead',
+      // The fix goes in the way the change did. The branch route is said
+      // accurately: a pushed branch is usually copied into the app's
+      // repository, so a push alone does not move the proposal. #4263: an
+      // update work order takes a patch the way this one does, so an agent
+      // that could not push needs no push to revise either.
+      '   fix them and revise THIS proposal. If you pushed a branch,',
       '   push again to the SAME branch and call `submit_work` with the proposal',
       '   id and that branch: Homeroom usually copies a pushed branch into the',
-      '   app\'s own repository, so pushing alone does not move the proposal.',
+      '   app\'s own repository, so pushing alone does not move it. If you handed',
+      '   in a patch, call `prepare_work` with that id as `proposalId`: the update',
+      '   work order it returns takes your fix as a patch, just like this one,',
+      '   and Homeroom applies it on the proposal\'s current commit.',
       '   Do not call',
       '   `submit_work` again with this taskId and do not call `prepare_work`',
       '   without that id — the pull request already exists, and a second',
