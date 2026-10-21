@@ -168,8 +168,8 @@ test('every composer column reserves the keyboard inset, exactly once', () => {
   // or pan it), and it leaves the pin inert.
   const col = /html\.un-kb \.platform-kb-column\s*\{([^}]*)\}/.exec(APP_CSS);
   assert.ok(col, 'html.un-kb .platform-kb-column rule is missing');
-  assert.match(col[1], /padding-bottom:\s*var\(--un-kb-inset, 0px\)/,
-    'the column must reserve the kit-published keyboard inset');
+  assert.match(col[1], /padding-bottom:\s*calc\(var\(--un-kb-inset, 0px\) - var\(--platform-vv-top, 0px\)\)/,
+    'the column must reserve the kit-published keyboard inset, less the pan iOS makes to reveal the field');
   assert.match(col[1], /transition:\s*none/,
     'no transition while the keyboard is up — the bar tracks it exactly');
 

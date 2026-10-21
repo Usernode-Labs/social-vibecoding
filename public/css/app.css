@@ -384,13 +384,25 @@ html.un-kb .platform-safe-sheet {
 
    A column that takes this must NOT also carry `.un-kb-avoid` on its
    scroller — that would reserve the inset twice and leave dead space under
-   the transcript. */
+   the transcript.
+
+   AND THE PAN IS PART OF THE RESERVATION (#3571). The inset is measured
+   against the LAYOUT viewport and the column's foot is the layout viewport's
+   foot, so a padding of the whole inset assumes the visual viewport starts at
+   the layout viewport's top edge. On iOS it does not: Safari pans it down to
+   reveal the focused field, by up to the inset itself (`--platform-vv-top`,
+   published by frontend/src/lib/visual-viewport.ts, #2765). The composer was
+   then compensated twice — once here and once by the browser's pan — and sat
+   above the top of the screen while the viewer typed. What has to be left
+   below the composer is the distance from its foot to the visual viewport's
+   foot, which is the inset less the pan. On Android and desktop nothing pans,
+   so the property is 0px and this resolves to the bare inset. */
 .platform-kb-column {
   transition: padding-bottom 150ms ease-out;
 }
 
 html.un-kb .platform-kb-column {
-  padding-bottom: var(--un-kb-inset, 0px);
+  padding-bottom: calc(var(--un-kb-inset, 0px) - var(--platform-vv-top, 0px));
   transition: none;
 }
 

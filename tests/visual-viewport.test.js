@@ -245,6 +245,69 @@ test('pinch zoom is not a keyboard: the offset is ignored and the kit decides', 
   assert.deepEqual(place(frame), place(frame, { pan: false }));
 });
 
+// ── The chat composer's foot (#3571) ─────────────────────────────────────
+//
+// The composer columns (Messages, the app chat, the dev chat) reserve the
+// keyboard as a padding at the foot of a flex column whose own foot is the
+// LAYOUT viewport's foot. Reserving the whole inset assumes the visual
+// viewport starts at the layout viewport's top edge. iOS pans it down to
+// reveal the focused field, so the column takes the pan off as well and the
+// composer's foot lands on the keyboard line.
+
+const KB_COLUMN = rules(APP_CSS, 'html.un-kb .platform-kb-column');
+assert.equal(KB_COLUMN.length, 1, 'app.css has one keyboard-up composer-column rule');
+const KB_COLUMN_PAD = declared(KB_COLUMN[0], 'padding-bottom');
+
+/** Where the shipped column rule puts the composer's foot, in layout px. */
+function composer({ layout, vvHeight, offsetTop, scale = 1 }) {
+  const kb = physics.keyboardInset({ layoutHeight: layout, vvHeight, vvScale: scale });
+  const vars = {
+    '--un-kb-inset': kb,
+    '--platform-vv-top': visualViewportTop({ offsetTop, scale }),
+  };
+  const before = evalCss('var(--un-kb-inset, 0px)', { vars, percent: layout, vh: layout });
+  // A negative padding is not a length: CSS clamps it to zero.
+  const pad = Math.max(0, evalCss(KB_COLUMN_PAD, { vars, percent: layout, vh: layout }));
+  return { kb, before, pad, foot: layout - pad };
+}
+
+test('the composer\'s foot rests on the keyboard line at every pan iOS makes', () => {
+  for (const frame of [IOS_SAFARI, IOS_STANDALONE, ANDROID]) {
+    const { kb } = composer({ ...frame, offsetTop: 0 });
+    for (let offsetTop = 0; offsetTop <= kb; offsetTop += 1) {
+      const { foot, pad } = composer({ ...frame, offsetTop });
+      assert.ok(pad >= 0);
+      assert.equal(foot, offsetTop + frame.vvHeight,
+        `${frame.layout}px layout at pan ${offsetTop}: foot ${foot}, keyboard line ${offsetTop + frame.vvHeight}`);
+    }
+  }
+});
+
+test('the pan\'s maximum is the inset, so the padding never goes negative', () => {
+  for (const frame of [IOS_SAFARI, IOS_STANDALONE]) {
+    const { kb } = composer({ ...frame, offsetTop: 0 });
+    assert.equal(kb, frame.layout - frame.vvHeight, 'the kit\'s inset is the whole occlusion');
+    assert.equal(composer({ ...frame, offsetTop: kb }).pad, 0, 'fully panned: the column\'s foot is the keyboard line');
+  }
+});
+
+test('with no pan the column reserves the bare inset, exactly as before', () => {
+  // Android measured offsetTop 0 in the kit's own table, and a desktop has
+  // no keyboard at all, so neither moves.
+  for (const frame of [ANDROID, { layout: 844, vvHeight: 844, offsetTop: 0 }, { ...IOS_STANDALONE, offsetTop: 0 }]) {
+    const { pad, before, kb, foot } = composer(frame);
+    assert.equal(pad, before, `pan 0 must resolve to var(--un-kb-inset): ${frame.layout}px layout`);
+    // …and the foot is where the bare inset puts it.
+    assert.equal(foot, frame.layout - kb);
+  }
+});
+
+test('pinch zoom leaves the column inert, like the kit\'s inset', () => {
+  const frame = { layout: 844, vvHeight: 422, offsetTop: 300, scale: 2 };
+  assert.equal(composer(frame).pad, 0);
+  assert.equal(composer(frame).foot, frame.layout);
+});
+
 // ── The offset ───────────────────────────────────────────────────────────
 
 test('visualViewportTop: the pan in whole px, 0 for anything that is not one', () => {
