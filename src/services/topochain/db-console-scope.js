@@ -289,6 +289,10 @@ const CONSOLE_CREDENTIAL_COLUMNS = {
   // capability token it carries, and X's live PKCE verifier. How it ended
   // stays readable.
   waitlist_connect_states: ['state_hash', 'token', 'verifier'],
+  // A database export's download ticket, kept on its audit row as a hash
+  // until it is redeemed (services/db-export.js). The rest of the audit
+  // trail (who, when, how it ended) stays readable.
+  db_exports: ['ticket_hash'],
   social_identity_pending_replacements: ['provider_subject', 'handle'],
   // Public report share links. `share_token` is the SOLE access control on
   // the unauthenticated /reports/:token route (schema.sql says so outright),
