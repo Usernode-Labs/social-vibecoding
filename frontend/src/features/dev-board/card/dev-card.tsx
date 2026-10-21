@@ -727,7 +727,8 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
     if (sheet) { sheetRef.current = null; sheet.dismiss(); }
   }, []);
   // The box takes focus when the popover opens, and in either home the
-  // moment the switch lands on No — the side that needs a line. A layout
+  // moment the switch lands on No, so a line explaining it is one tap away.
+  // A layout
   // effect, so on touch the focus still counts as part of that tap and
   // raises the keyboard. Not on a sheet opening on Yes: a keyboard rising
   // over a one-tap "Vote yes" would be in the way.
@@ -789,10 +790,8 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
   const popMaxH = clampPopoverHeight({ height: h }, viewport);
   const spec = side === 'yes' ? yes : no;
   const trimmed = line.replace(/\s+/g, ' ').trim();
-  // A No needs its line; a Yes may go without one.
-  const canSend = !isVote || side === 'yes' || !!trimmed;
+  // The line is optional on either side.
   const submit = () => {
-    if (!canSend) return;
     send(spec, isVote ? (trimmed || null) : null);
   };
   const onBoxKey = (ev: globalThis.KeyboardEvent | { key: string; shiftKey: boolean; preventDefault: () => void }) => {
@@ -885,14 +884,13 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
  * The picker's one panel: a "Your vote" header over the two-way switch
  * across the top (Yes on by default, each half carrying its tally), the line
  * box under its own label, and Cancel beside the one button that reads
- * "Vote yes" or "Vote no" with the switch — off on a No until there is a
- * line. One drawing for both of its homes,
+ * "Vote yes" or "Vote no" with the switch. One drawing for both of its homes,
  * `VoteButton`'s anchored popover on desktop and its kit bottom sheet on
  * touch, so the wording and the rules cannot drift between the two.
  * `withLine` is false on a governance vote, which carries no line. `solo` is
  * a project that is just the viewer's: there is no group to address, so the
  * Yes side's optional line asks for a note instead. The No side is the same
- * either way, its line included. `approve` (#3977) is a solo change whose
+ * either way, its line optional too. `approve` (#3977) is a solo change whose
  * Yes is the one it needs: the header is "Your approval", the halves and the
  * button read "Approve" / "Don't approve", and neither half carries a tally.
  * Its Yes line is a note too, whatever `solo` says (#4346): an approval is
@@ -929,7 +927,6 @@ export function VotePicker({
 }): ReactNode {
   const t = useMessages('project');
   const tc = useMessages('core');
-  const trimmed = line.replace(/\s+/g, ' ').trim();
   const yesOn = side === 'yes';
   // The header over the switch is also the switch's accessible name.
   const headId = `${reasonId}-head`;
@@ -1003,9 +1000,7 @@ export function VotePicker({
         <button
           type="button"
           className={`dev-vote-reason-send dev-vote-reason-send-${side}`}
-          disabled={withLine && !yesOn && !trimmed}
-          // The line keeps focus through the press, so the sheet does not
-          // move under the tap as the keyboard goes (lib/keyboard-open.ts).
+          // The line is optional on either side, so a No sends without one.
           onMouseDown={(event) => event.preventDefault()}
           onClick={onSend}
         >

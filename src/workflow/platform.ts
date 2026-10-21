@@ -65,7 +65,6 @@ import { BOT_USERNAME } from './rules/bot-notes.ts';
 import { activeUserStats } from './rules/electorate.ts';
 import { appMetaFromRow } from './rules/governance-gate.ts';
 import { countedVotePredicateSql } from './rules/vote-predicate.ts';
-import { VOTE_REASON_MAX, VOTE_REASON_REQUIRED } from './rules/vote-reason.ts';
 import { BUS_CHANNEL, workflowBody } from './pushes.ts';
 import { TURN_OWNER_SQL } from './session-work.ts';
 
@@ -1221,9 +1220,6 @@ function failed(outcome: EventOutcome): Reply | null {
   if (outcome.status === 'pending') return { status: 202, body: { ok: true, pending: true, requestKey: outcome.requestKey } };
   if (outcome.status === 'faulted') return { status: 500, body: { error: 'Internal server error' } };
   if (outcome.status === 'rejected') {
-    if (outcome.reason === 'reason_required') {
-      return { status: 400, body: { error: 'reason_required', message: VOTE_REASON_REQUIRED, maxLength: VOTE_REASON_MAX } };
-    }
     return REJECTIONS.get(outcome.reason || '') || { status: 409, body: { error: outcome.reason } };
   }
   return null;

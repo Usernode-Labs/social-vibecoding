@@ -1760,20 +1760,6 @@ function issueRoutes(config) {
         return res.json({ ok: true, toggled: true });
       }
 
-      // #2603: a No comes with a line, so the proposer learns what is wrong
-      // rather than only that somebody minded — votes.js's rule, and its
-      // wording. Checked AFTER the toggle branch above: retracting a No is
-      // not casting one, and asking for a sentence to take a vote back would
-      // be a trap. The same-side re-cast votes.js exempts cannot arrive here
-      // at all, because on an issue that click is the retraction.
-      if (vote === 'down' && !reason) {
-        return res.status(400).json({
-          error: 'reason_required',
-          message: votesModule.VOTE_REASON_REQUIRED,
-          maxLength: votesModule.VOTE_REASON_MAX,
-        });
-      }
-
       // A flip REPLACES the line rather than keeping it: the old sentence
       // argued for the side this vote just left. (votes.js keeps an earlier
       // line on a same-side re-cast; here that click is the toggle above.)
