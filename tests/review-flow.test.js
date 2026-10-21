@@ -515,3 +515,30 @@ test('on a wide window the feed is one column as wide as the page, and the cards
   assert.match(src, /<p className="rf-feed-note [^"]*" data-needs-empty="" data-review-flow="">/);
   assert.match(src, /<div className="rf-feed rf-loading" data-review-flow=""/);
 });
+
+test('from 768px the change page is a panel under the header, its vote sheet at its foot, the pane dimmed behind it', () => {
+  const src = read('frontend/src/features/review-flow/review-flow.tsx');
+  const css = read('public/css/app.css');
+  const at = css.indexOf('.rf-page-dim { display: none; }');
+  assert.ok(at > 0, 'the dim is drawn on a wide window only');
+  // After the sheet's own rules, so the panel's foot overrides them at equal specificity.
+  assert.ok(at > css.indexOf('\n.rf-sheet {'), 'the panel block follows the sheet\'s rules');
+  const block = css.slice(at, css.indexOf('\n}\n', at) + 3);
+  assert.match(block, /@media \(min-width: 768px\) \{/, 'a phone keeps the full page');
+  // Under the app's header, measured by the shell's own tokens, never over it.
+  assert.match(block, /\.rf-page-wrap \{\s*top: calc\(var\(--browser-banner-h, 0px\) \+ var\(--platform-header-h\) \+ var\(--platform-safe-top, 0px\)\);/);
+  assert.match(block, /--rf-room: calc\(100dvh - var\(--browser-banner-h, 0px\) - var\(--platform-header-h\) - var\(--platform-safe-top, 0px\) - var\(--platform-tabs-h, 0px\) - 32px\);/, '16px clear above and below');
+  // A rounded panel as tall as what it holds, up to the room; the stage scrolls past it.
+  assert.match(block, /\.rf-page \{ top: 16px; bottom: auto; max-height: var\(--rf-room\); border-radius: 20px; box-shadow: 0 0 0 1px var\(--rf-line\), [^;]+; \}/);
+  assert.match(block, /\.rf-stage \{ flex: 0 1 auto; \}/);
+  // The vote sheet is the panel's foot, not a sheet pinned to the window.
+  assert.match(block, /\.rf-sheet \{ max-height: calc\(var\(--rf-room\) - 52px\); border-radius: 0; box-shadow: inset 0 1px 0 var\(--rf-line\); \}/);
+  // The pane behind is dimmed, and a click on it is Back.
+  assert.match(block, /\.rf-page-dim \{ display: block; position: absolute; inset: 0; [^}]*pointer-events: auto; \}/);
+  assert.match(src, /<div ref=\{dimRef\} className="rf-page-dim" onClick=\{close\} aria-hidden="true" \/>\s*<div ref=\{pageRef\} className="rf-page"/);
+  assert.match(src, /dimRef\.current\?\.animate\(\[\{ opacity: 0 \}, \{ opacity: 1 \}\], opts\)/, 'the dim fades in as the card opens');
+  assert.match(src, /dimRef\.current\?\.animate\(\[\{ opacity: 1 \}, \{ opacity: 0 \}\], opts\)/, 'and out as it closes');
+  // The card opens onto the panel's own corners and closes from them; a phone's are none.
+  assert.equal((src.match(/clipPath: `inset\(0px 0px 0px 0px round \$\{restRadius\(page\)\}\)`/g) || []).length, 2);
+  assert.match(src, /function restRadius\(page: HTMLElement\): string \{\s*return getComputedStyle\(page\)\.borderTopLeftRadius \|\| '0px';/);
+});

@@ -25067,6 +25067,29 @@ html.in-side-panel body {
   .rf-fresh .rf-said-mark, .rf-fresh .rf-said-mark path, .rf-fresh h2 { animation: none; }
 }
 
+/* From 768px the change page is a panel, not a phone page on a desktop.
+   It starts under the app's header (the shell's own header tokens, as the
+   rail does) and never covers it, 16px clear of it and of the window's
+   foot. It is as tall as what it holds, up to that room, and past it the
+   stage scrolls inside it. The vote sheet is its foot, right under the
+   claim, not pinned to the bottom of the window. The pane behind it is
+   dimmed (.rf-page-dim, not the sidebar or the header); a click there is
+   Back. review-flow.tsx opens the card onto these corners (restRadius).
+   A phone keeps the page above exactly as it was. */
+.rf-page-dim { display: none; }
+@media (min-width: 768px) {
+  .rf-page-wrap {
+    top: calc(var(--browser-banner-h, 0px) + var(--platform-header-h) + var(--platform-safe-top, 0px));
+    --rf-room: calc(100dvh - var(--browser-banner-h, 0px) - var(--platform-header-h) - var(--platform-safe-top, 0px) - var(--platform-tabs-h, 0px) - 32px);
+  }
+  .rf-page-dim { display: block; position: absolute; inset: 0; background: rgba(0,0,0,.32); pointer-events: auto; }
+  .dark .rf-page-dim { background: rgba(0,0,0,.56); }
+  .rf-page { top: 16px; bottom: auto; max-height: var(--rf-room); border-radius: 20px; box-shadow: 0 0 0 1px var(--rf-line), 0 24px 64px rgba(0,0,0,.18); }
+  .rf-head { padding-top: 4px; }
+  .rf-stage { flex: 0 1 auto; }
+  .rf-sheet { max-height: calc(var(--rf-room) - 52px); border-radius: 0; box-shadow: inset 0 1px 0 var(--rf-line); }
+}
+
 /* New Needs you (an experiment), pictures for every card: a drawn picture
    fills its card or hero; the shots run's own crop sits on a plate. */
 .rf-cover-drawn, .rf-hero-drawn { display: block; position: relative; overflow: hidden; }
