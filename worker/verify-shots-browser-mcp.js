@@ -208,9 +208,9 @@ async function main() {
       ['browser_guest', 1], ['browser_member_phone', 1], ['browser_member', 'device'], ['browser_member_phone', 'device']]) {
       fs.writeFileSync(diagnosticFile, '');
       const phone = persona.endsWith('_phone');
-      // 1x while the experiment is off; on, the iPhone 15 device's density,
-      // and the desktop browsers' own.
-      const density = mode === 1 ? 1 : phone ? 3 : 2;
+      // 1x while the experiment is off; on, 3: the iPhone 15 device's
+      // density, and the desktop browsers' own (write-shots-mcp-config.js).
+      const density = mode === 1 ? 1 : 3;
       // Close-ups are taken only in runs at device density.
       const tools = await verifyBrowser(configs[mode].mcpServers[persona], [], { density, closeup: mode !== 1 });
       const records = fs.readFileSync(diagnosticFile, 'utf8').trim().split('\n')

@@ -28,8 +28,10 @@ const proxyControlToken = String(process.env.SHOTS_PROXY_CONTROL_TOKEN || '');
 const shotsDir = String(process.env.SHOTS_DIR || '');
 // A run taken at the screen's own density (write-shots-mcp-config.js): its
 // phone browsers save at 3 device pixels per CSS pixel, its desktop ones at
-// 2, and each saved still says so, so Homeroom can keep a 1x copy of it.
+// 3 too, and each saved still says so, so Homeroom can keep a 1x copy of it.
 const deviceDensity = process.env.SHOTS_DEVICE_DENSITY === '1';
+const PHONE_DENSITY = 3;
+const DESKTOP_DENSITY = 3;
 const PERSONA_DIRS = Object.freeze([
   'member', 'admin', 'full_admin', 'guest', 'invited_member', 'invited_member_listed',
 ]);
@@ -116,7 +118,7 @@ function savedScreenshot(file) {
   return {
     image,
     origin: boundary.screenshotOrigin(path.join(shotsDir, found.dir), name, image),
-    density: deviceDensity ? (found.dir.endsWith('_phone') ? 3 : 2) : 1,
+    density: deviceDensity ? (found.dir.endsWith('_phone') ? PHONE_DENSITY : DESKTOP_DENSITY) : 1,
   };
 }
 
