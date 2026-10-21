@@ -537,6 +537,13 @@ function buildCopy(kind, context, now) {
         body: `${who} updated it${after}. One tap keeps your yes.`,
       };
     }
+    // #4396: a project this person joined while it was made is open: its
+    // first version went live (services/project-opened.js).
+    case 'project_opened':
+      return {
+        title: app ? `${app} is open` : 'A project you joined is open',
+        body: 'It’s ready to use. Take a look',
+      };
     // #4787: the change this person voted on went live. #2897's split, as
     // pr_merged above: a child app's merge is live when the row arrives; the
     // platform's own is released a few minutes after. `detail` is 'yes' when

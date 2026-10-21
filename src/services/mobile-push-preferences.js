@@ -61,7 +61,7 @@ const CATEGORY_DEFINITIONS = Object.freeze([
   Object.freeze({
     key: 'proposal_alerts',
     label: 'Change alerts',
-    description: 'Changes that need your attention or your vote, votes on yours, and changes you made or voted on going live.',
+    description: 'Changes that need your attention or your vote, votes on yours, changes you made or voted on going live, and projects you joined opening.',
     defaultEnabled: true,
     // #1374 adds three: a vote on your proposal, your proposal merging, and
     // the daily "what needs your vote" summary. All three are proposal
@@ -80,6 +80,9 @@ const CATEGORY_DEFINITIONS = Object.freeze([
       // B7: a change you can approve is ready to try.
       'change_ready',
       'voted_change_merged',
+      // #4396: a project you joined while it was made is open: its first
+      // version going live, the same lifecycle (services/project-opened.js).
+      'project_opened',
     ]),
   }),
   Object.freeze({

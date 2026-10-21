@@ -47,6 +47,7 @@ import { ControllerText } from './controller-text';
 import { Feedback, init as initFeedback } from './feedback-controller';
 import { FeedbackPreview, type FeedbackPreviewItem } from './feedback-preview';
 import { useDialog } from './use-dialog';
+import { SuggestionAsk } from '../notify-ask/suggestion-ask';
 
 /** Reserved for callers that still pass `{ fromDev: true }` — see #226/#312. */
 interface OpenOptions {
@@ -656,6 +657,11 @@ export function FeedbackDialog() {
               <ControllerText id="dialogs:feedback.sent.firstLine.unnamed" />
             </p>
           </div>
+          {/* Where Homeroom bot builds it: get a ping when it is ready? (the
+              notification ask). Its own React child, which the controller
+              never writes into; it only says when it is wanted
+              (../notify-ask/suggestion-ask.tsx). Nothing in the prerender. */}
+          <SuggestionAsk />
           {/* #5687: Done is what the sheet is for, so it is the filled
               primary button and comes first; everything else is a neutral
               button under it. */}

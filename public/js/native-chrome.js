@@ -903,14 +903,17 @@
     //              and record NOTHING, so the sheet can still be offered
     //              once the account asks to produce blocks (#2960)
     //   "present"  show the "Set up your device" sheet
+    //
+    // The sheet asks only for what block production needs (exact alarms,
+    // the battery). It used to ask every Android install for notifications
+    // too, on the first screen, before anybody knew what they were for; that
+    // ask is the notification ask's now, at the moments it means something
+    // (askForPing, frontend/src/features/notify-ask/, 21 Oct 2026).
     decideFirstRunSheet(state) {
       const s = state || {};
       if (s.isAndroid !== true) return 'skip';
-      if (!s.needsAlarm && !s.needsBattery && !s.needsNotifications) return 'done';
-      // The Android notification prompt has nothing to do with block
-      // production, so it never waits for the producer queue.
-      if (s.isAndroid === true && s.blockProduction !== true &&
-          !s.needsNotifications) return 'defer';
+      if (!s.needsAlarm && !s.needsBattery) return 'done';
+      if (s.blockProduction !== true) return 'defer';
       return 'present';
     },
 
@@ -992,13 +995,6 @@
       const perms = state.permissions || {};
       const isAndroid = perms.platform === 'android';
       let needsAlarm = !perms.exactAlarmGranted;
-      // Android notifications: asked of everyone whenever the build can
-      // ask for them on their own. An older build that does not report the
-      // permission is not asked.
-      const notificationsAskable = isAndroid &&
-        perms.notificationsGranted === false &&
-        typeof window.usernode.requestNotificationPermission === 'function' &&
-        (await NativeChrome.supports('requestNotificationPermission')) !== false;
 
       // Exact alarms and battery are only for people whose phone produces
       // blocks: a delegated account or a device with no wallet has no slots
@@ -1019,7 +1015,6 @@
       }
       const decision = NativeChrome.decideFirstRunSheet({
         isAndroid, needsAlarm, needsBattery, blockProduction,
-        needsNotifications: notificationsAskable,
       });
       // iOS (by the snapshot's own word) and the Android deferral both
       // present nothing and record nothing.
@@ -1036,7 +1031,6 @@
         isAndroid,
         blockProduction,
         productionDeferred,
-        notificationsAskable,
         // A dismissal that arrives before the sheet could physically be
         // read, from a user who touched nothing on it, is not an answer —
         // it is the opening gesture's ghost click landing on the backdrop.
@@ -1079,7 +1073,7 @@
     // that check pins is the kit sheet's ghost-click guard.
     //
     // opts: { perms, isAndroid, pushStatus, blockProduction,
-    // productionDeferred, notificationsAskable, onDismiss }. onDismiss is
+    // productionDeferred, onDismiss }. onDismiss is
     // called with { interacted, elapsedMs } — `interacted` is true once
     // the user has pressed anything ON the sheet, which is what lets the
     // caller tell a real answer from a stray dismissal. Returns the kit's
@@ -1089,11 +1083,10 @@
       const perms = opts.perms || {};
       const isAndroid = !!opts.isAndroid;
       let pushStatus = opts.pushStatus == null ? null : opts.pushStatus;
-      // Android: which of the three asks this sheet carries. The producer
-      // rows default to on so a caller that predates them keeps its sheet.
+      // Android: whether this sheet carries the producer asks. They default
+      // to on so a caller that predates them keeps its sheet.
       const producerAsks = opts.blockProduction !== false;
       const productionDeferred = opts.productionDeferred === true;
-      const notificationsAskable = opts.notificationsAskable === true;
       if (!window.PlatformUI || typeof PlatformUI.sheet !== 'function') return null;
 
       const el = (tag, cls, text) => {
@@ -1110,11 +1103,9 @@
       // turned iOS block production off — so the block-production pitch is
       // Android-only, and the iOS copy names what the OS will actually ask.
       panel.appendChild(el('p', 'text-sm text-zinc-600 dark:text-zinc-400 mb-3',
-        isAndroid && producerAsks
+        isAndroid
           ? PlatformI18n.t('shell:permissions.intro.androidProducer')
-          : isAndroid
-            ? PlatformI18n.t('shell:permissions.intro.android')
-            : PlatformI18n.t('shell:permissions.intro.ios')));
+          : PlatformI18n.t('shell:permissions.intro.ios')));
 
       const statusRow = (label, ok) => {
         const row = el('div', 'flex items-center gap-2 mt-1 text-sm');
@@ -1228,64 +1219,19 @@
       // as expected rather than alarming.
       // What is still missing on Android, given what this sheet asks for.
       const androidMissing = (p) => ({
-        notifications: notificationsAskable && p.notificationsGranted === false,
         alarm: producerAsks && !p.exactAlarmGranted,
         battery: producerAsks && p.batteryOptDisabled !== true,
       });
-      // After one "Allow notifications" that did not grant, Android shows no
-      // dialog again for a while, so the button becomes the settings page.
-      let notificationsAsked = false;
 
       const renderAndroid = (p) => {
         const missing = androidMissing(p);
-        if (notificationsAskable) {
-          body.appendChild(statusRow(PlatformI18n.t('shell:permissions.row.notifications'), !missing.notifications));
-        }
         if (producerAsks) {
           body.appendChild(statusRow(PlatformI18n.t('shell:permissions.row.exactAlarms'), !missing.alarm));
           body.appendChild(statusRow(PlatformI18n.t('shell:permissions.row.battery'), !missing.battery));
         }
 
         const btns = el('div', 'mt-4 space-y-2');
-        if (missing.notifications && !notificationsAsked) {
-          const b = primaryButton(PlatformI18n.t('shell:permissions.action.allowNotifications'));
-          b.addEventListener('click', async () => {
-            interacted = true;
-            b.disabled = true;
-            let next = null;
-            try {
-              next = await window.usernode.requestNotificationPermission();
-            } catch (e) {
-              console.warn('[native-chrome] requestNotificationPermission failed:', e);
-            } finally { b.disabled = false; }
-            notificationsAsked = true;
-            const nextPerms = next && next.permissions ? next.permissions : p;
-            if (next && next.granted === true) {
-              nextPerms.notificationsGranted = true;
-              // Register for pushes now rather than on the next resume.
-              if (window.SocialPush && typeof SocialPush.getState === 'function') {
-                SocialPush.getState();
-              }
-            }
-            const left = androidMissing(nextPerms);
-            if (!left.notifications && !left.alarm && !left.battery) {
-              if (sheet && sheet.dismiss) sheet.dismiss();
-              return;
-            }
-            body.textContent = '';
-            renderAndroid(nextPerms);
-          });
-          btns.appendChild(b);
-          btns.appendChild(hint(PlatformI18n.t('shell:permissions.hint.notifications')));
-        } else if (missing.notifications) {
-          const b = primaryButton(PlatformI18n.t('shell:permissions.action.openNotificationSettings'));
-          b.addEventListener('click', () => {
-            interacted = true;
-            window.usernode.openNotificationSettings().catch(() => {});
-          });
-          btns.appendChild(b);
-          btns.appendChild(hint(PlatformI18n.t('shell:permissions.hint.notificationsOff')));
-        } else if (missing.alarm) {
+        if (missing.alarm) {
           const b = primaryButton(PlatformI18n.t('shell:permissions.action.allowExactAlarms'));
           b.addEventListener('click', async () => {
             interacted = true;
@@ -1344,7 +1290,7 @@
           btns.appendChild(hint(PlatformI18n.t('shell:permissions.hint.productionDeferred')));
         }
 
-        const allDone = !missing.notifications && !missing.alarm && !missing.battery;
+        const allDone = !missing.alarm && !missing.battery;
         const done = el('button', 'w-full px-4 py-2 text-sm ' +
           'text-zinc-500 dark:text-zinc-400',
         allDone ? PlatformI18n.t('core:common.done') : PlatformI18n.t('shell:permissions.action.skip'));
@@ -1376,7 +1322,7 @@
         let nothingLeft;
         if (isAndroid) {
           const left = androidMissing(next);
-          nothingLeft = !left.notifications && !left.alarm && !left.battery;
+          nothingLeft = !left.alarm && !left.battery;
         } else {
           nothingLeft = pushStatus != null
             ? pushStatus === 'granted'
@@ -1463,9 +1409,18 @@
     // still undetermined. Denied (or already allowed) shows nothing, since
     // iOS would present no prompt and "Notify me" would be a button that
     // does nothing; Settings → Homeroom app, with its way to the OS
-    // settings page, is how a denial gets fixed. Android shows nothing
-    // either: requestPermissions() there is the exact-alarm permission, and
-    // its notification ask is the "Set up your device" sheet's.
+    // settings page, is how a denial gets fixed. Android asks the same way
+    // now (21 Oct 2026): its notification ask used to be the "Set up your
+    // device" sheet's, on the first screen of a fresh install, and that
+    // sheet keeps only the block-production permissions. On Android the OS
+    // prompt is requestNotificationPermission() (requestPermissions() there
+    // is the exact-alarm chain), and Android shows its dialog twice before
+    // it stops, so "denied" there also means asked already.
+    //
+    // Whether the moment was asked about before is the account's, not this
+    // device's (services/notification-asks.js): the made screen decides that
+    // before it calls here (frontend/src/features/dialogs/ping-ask.ts), and
+    // records the answer this resolves.
     //
     // Presented with PlatformUI.confirm, the kit's alert card: the create
     // dialog is a kit modal, and the alert is the kit surface that stacks
@@ -1519,16 +1474,29 @@
       if (s.isNative !== true || s.hasRequestMethod !== true) {
         return { verdict: 'skip', reason: 'not running inside the Homeroom app' };
       }
-      if (s.platform !== 'ios') {
-        return {
-          verdict: 'skip',
-          reason: 'only iOS asks here; Android asks in its first-run sheet',
-        };
+      if (s.platform !== 'ios' && s.platform !== 'android') {
+        return { verdict: 'skip', reason: 'not running on a phone' };
       }
       if (s.supported === false) {
         return {
           verdict: 'skip',
-          reason: 'this app build does not advertise requestPermissions',
+          reason: s.platform === 'android'
+            ? 'this app build does not advertise requestNotificationPermission'
+            : 'this app build does not advertise requestPermissions',
+        };
+      }
+      if (s.platform === 'android') {
+        // Android reports the permission in the settings snapshot, or not
+        // at all (an older build): then it is not asked here.
+        const reported = NativeChrome._permissionStatusOf(s.notificationPermission);
+        if (reported === 'undetermined') return { verdict: 'ask' };
+        return {
+          verdict: 'skip',
+          reason: reported === 'granted'
+            ? 'notifications are already allowed'
+            : reported === 'denied'
+              ? 'notifications are denied, or were asked for already'
+              : 'the notification permission could not be read',
         };
       }
       const reported = NativeChrome._permissionStatusOf(s.notificationPermission);
@@ -1565,18 +1533,22 @@
       const bridge = window.usernode;
       const isNative = !!bridge && bridge.isNative === true;
       const kit = window.unNative;
+      const platform = kit && typeof kit.platform === 'string' ? kit.platform : null;
+      // The OS prompt's method: the notification permission alone on
+      // Android, where requestPermissions() is the exact-alarm chain.
+      const method = platform === 'android'
+        ? 'requestNotificationPermission' : 'requestPermissions';
       const state = {
         isNative,
-        hasRequestMethod: isNative &&
-          typeof bridge.requestPermissions === 'function',
-        platform: kit && typeof kit.platform === 'string' ? kit.platform : null,
+        hasRequestMethod: isNative && typeof bridge[method] === 'function',
+        platform,
         supported: null,
         notificationPermission: undefined,
         pushStatus: null,
         promptedBefore: NativeChrome._pingAskPrompted(),
       };
-      if (!state.hasRequestMethod || state.platform === 'android') return state;
-      state.supported = await NativeChrome.supports('requestPermissions');
+      if (!state.hasRequestMethod) return state;
+      state.supported = await NativeChrome.supports(method);
       if (state.supported === false) return state;
       let perms = null;
       if (await NativeChrome.has('getSettingsState')) {
@@ -1587,6 +1559,13 @@
       }
       if (perms && typeof perms.platform === 'string') {
         state.platform = perms.platform;
+      }
+      // A kit that could not tell, and a snapshot that says Android: the
+      // prompt is Android's own method, which this build may lack.
+      if (state.platform === 'android' && method !== 'requestNotificationPermission') {
+        state.hasRequestMethod = typeof bridge.requestNotificationPermission === 'function';
+        state.supported = state.hasRequestMethod
+          ? await NativeChrome.supports('requestNotificationPermission') : false;
       }
       if (perms && perms.notificationPermission != null) {
         state.notificationPermission = perms.notificationPermission;
@@ -1655,28 +1634,18 @@
           if (attempt) telemetry.outcome(attempt, 'cancelled');
           return { shown, outcome: 'not-now' };
         }
-        NativeChrome._markPingAskPrompted();
-        let next = null;
-        try {
-          next = await window.usernode.requestPermissions();
-        } catch (err) {
-          console.warn('[native-chrome] requestPermissions failed:',
-            err && err.message ? err.message : err);
-          if (attempt) telemetry.outcome(attempt, 'failure', { errorCode: 'unknown' });
-          return { shown, outcome: 'notify', granted: false };
-        }
-        const perms = next && next.permissions;
-        const flag = !!(next && next.granted === true) ||
-          NativeChrome._permissionStatusOf(
-            perms && perms.notificationPermission) === 'granted';
-        // Same completion as the Settings row: wait out a lagging status,
-        // and start push registration now rather than on the next resume.
-        const settled = await NativeChrome.settleIosPushGrant(flag);
+        // The same tap Notify me on a plan card makes: the OS prompt for
+        // this platform, then push registration and this phone's Activity
+        // notifications on.
+        const answer = await NativeChrome.notifyWhenReady();
+        const granted = answer.outcome === 'granted';
         if (attempt) {
-          telemetry.outcome(attempt, settled.granted ? 'success' : 'failure',
-            settled.granted ? {} : { errorCode: 'access_denied' });
+          telemetry.outcome(attempt, granted ? 'success' : 'failure',
+            granted ? {} : {
+              errorCode: answer.outcome === 'denied' ? 'access_denied' : 'unknown',
+            });
         }
-        return { shown, outcome: 'notify', granted: settled.granted };
+        return { shown, outcome: 'notify', granted };
       } catch (err) {
         console.warn('[native-chrome] askForPing failed:',
           err && err.message ? err.message : err);
@@ -1753,8 +1722,14 @@
       const can = async (method) => typeof bridge[method] === 'function' &&
         (await NativeChrome.supports(method)) !== false;
       if (state.platform === 'android') {
-        if (perms && perms.notificationsGranted === true) state.permission = 'granted';
-        else if (perms && perms.notificationsGranted === false) state.permission = 'denied';
+        // `notificationPermission` tells never-asked from refused, which
+        // `notificationsGranted` cannot (false is both); an older build
+        // reports only the boolean, and its false is read as unknown.
+        state.permission = NativeChrome._permissionStatusOf(
+          perms && perms.notificationPermission);
+        if (!state.permission && perms && perms.notificationsGranted === true) {
+          state.permission = 'granted';
+        }
         state.canRequest = await can('requestNotificationPermission');
       } else {
         state.permission = NativeChrome._permissionStatusOf(
@@ -1781,6 +1756,50 @@
       }
     },
 
+    // How long, and how often, an Android grant is watched for after the
+    // dialog opened (see notifyWhenReady).
+    _ANDROID_GRANT_WATCH_MS: 30000,
+    _ANDROID_GRANT_POLL_MS: 1000,
+
+    // Whether Android's notification permission turns to allowed within
+    // _ANDROID_GRANT_WATCH_MS, read from the settings snapshot. Resolves
+    // true as soon as it is allowed, and false only at the end: a refusal
+    // cannot end it sooner, since those builds read "denied" the moment the
+    // dialog opens (it was asked for), before anybody has answered.
+    async _watchAndroidGrant() {
+      const bridge = window.usernode;
+      if (!bridge || typeof bridge.getSettingsState !== 'function') return false;
+      const started = Date.now();
+      while (Date.now() - started < NativeChrome._ANDROID_GRANT_WATCH_MS) {
+        await new Promise((resolve) => setTimeout(
+          resolve, NativeChrome._ANDROID_GRANT_POLL_MS));
+        let perms = null;
+        try {
+          const snapshot = await bridge.getSettingsState();
+          perms = snapshot && snapshot.permissions;
+        } catch (_) { /* unreadable this time: read again */ }
+        if (perms && (perms.notificationsGranted === true ||
+            NativeChrome._permissionStatusOf(perms.notificationPermission) === 'granted')) {
+          return true;
+        }
+      }
+      return false;
+    },
+
+    // The notification ask's read of this phone (frontend/src/features/
+    // notify-ask/): { isNative, platform, permission, canRequest,
+    // canOpenSettings }, permission 'granted' | 'denied' | 'undetermined' |
+    // null. Asks nothing. Never throws.
+    async notifyAskPermission() {
+      try {
+        return await NativeChrome._readyPingState();
+      } catch (err) {
+        console.warn('[native-chrome] notifyAskPermission failed:',
+          err && err.message ? err.message : err);
+        return { isNative: false, platform: null, permission: null, canRequest: false, canOpenSettings: false };
+      }
+    },
+
     // From the tap only. Never throws. Resolves { outcome, settings }:
     // outcome 'granted' | 'denied' | 'no-app' | 'unknown', and settings true
     // when a denial can be undone from the OS settings page
@@ -1795,8 +1814,16 @@
           const bridge = window.usernode;
           if (state.platform === 'android') {
             const next = await bridge.requestNotificationPermission();
-            const granted = !!(next && (next.granted === true ||
+            let granted = !!(next && (next.granted === true ||
               (next.permissions && next.permissions.notificationsGranted === true)));
+            // App builds before the fix resolve half a second after the
+            // dialog OPENS, long before anybody answers it: watch for the
+            // real answer a while before saying no.
+            // Not when it was refused before the tap: Android may then show
+            // no dialog at all, and the answer is already the real one.
+            if (!granted && state.permission !== 'denied') {
+              granted = await NativeChrome._watchAndroidGrant();
+            }
             outcome = granted ? 'granted' : 'denied';
           } else {
             // The same record askForPing keeps: this device has been asked.

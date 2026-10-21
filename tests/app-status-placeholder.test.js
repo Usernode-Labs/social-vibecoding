@@ -333,12 +333,23 @@ test('#4053: while it is being built, the thumbnail with its build line, and whe
   assert.equal((out.match(/<button/g) || []).length, 1);
   assert.match(out, /<\/span><\/span><\/div><\/div><\/div><button id="app-first-version-chat"[^>]*>Open Homeroom bot<\/button><p /);
   assert.match(out, /rounded-full bg-white shadow-sm[^"]*text-violet-600[^"]*min-h-9/, 'secondary and small: raised pill, accent ink');
-  // Members get no way into somebody else's chat, and no promise: nobody
-  // tells them (#4396), so they keep "It opens here when it’s ready."
-  const member = html(view(makeAppView().AppView, firstVersionApp({}, { mine: false, conversationId: null })));
-  assert.doesNotMatch(member, /<button|Open Homeroom bot/);
+  // Members get no way into somebody else's chat. Since 21 Oct 2026 they
+  // are told when it opens too (project_opened, #4396), so they keep "It
+  // opens here when it’s ready." with the promise under it, and the
+  // notification ask under that, drawn from an effect: nothing of it here.
+  const memberView = view(makeAppView().AppView, firstVersionApp({}, { mine: false, conversationId: null, member: true }));
+  assert.equal(memberView.ask, 'project_opens');
+  assert.equal('ask' in v, false, 'the maker was asked on the made screen');
+  const member = html(memberView);
+  assert.doesNotMatch(member, /Open Homeroom bot|app-first-version-chat/, 'no way into the maker\'s chat');
   assert.match(member, />It opens here when it’s ready\.</);
-  assert.doesNotMatch(member, /notify you|data-app-first-version-promise/);
+  assert.match(member, /data-app-first-version-promise=""[\s\S]*We’ll notify you when it’s live/);
+  assert.doesNotMatch(member, /data-notify-ask/, 'the ask is not in the first render');
+  // Somebody looking in who is not a member is told nothing: the line alone.
+  const visitorView = view(makeAppView().AppView, firstVersionApp({}, { mine: false, conversationId: null }));
+  assert.equal('promise' in visitorView, false);
+  assert.equal('ask' in visitorView, false);
+  assert.match(html(visitorView), />It opens here when it’s ready\.</);
 });
 
 test('#4053: the build line is one line under the card (8px below it), not a row inside it', () => {
@@ -764,7 +775,9 @@ test('#4396: a member who is not the maker waits with three things to do', () =>
     slug: 'plant-pal', name: 'Plant Pal', maker: 'ada', makerNote: 'Help me name the plants!', plan: MEMBER_PLAN,
   });
   assert.equal(v.action, null, 'no way into the maker\'s chat');
-  assert.deepEqual(v.lines, ['It opens here when it’s ready.'], 'the line stays, and no promise to tell them');
+  assert.deepEqual(v.lines, ['It opens here when it’s ready.'], 'the line stays');
+  assert.equal(v.promise, 'We’ll notify you when it’s live', 'and they are told when it opens (project_opened)');
+  assert.equal(v.ask, 'project_opens');
   const out = html(v);
   assert.match(out, /data-build-line="building"[^>]*>.*Building it · usually 10 to 25 min/);
   assert.match(out, /data-app-first-version-waiting=""/);
@@ -775,7 +788,8 @@ test('#4396: a member who is not the maker waits with three things to do', () =>
   assert.equal((out.match(/<button/g) || []).length, 3);
   // The card, then the line under it.
   assert.ok(out.indexOf('While you wait') < out.indexOf('It opens here when it’s ready.'));
-  assert.doesNotMatch(out, /let you know|notify/i);
+  assert.ok(out.indexOf('It opens here when it’s ready.') < out.indexOf('We’ll notify you when it’s live'),
+    'the promise under the line');
 });
 
 test('#4396: no note says Introduce yourself; no plan, no plan row; planning has no time note', () => {
