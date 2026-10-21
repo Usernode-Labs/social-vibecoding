@@ -109,6 +109,10 @@ test('workflow machines in a process of their own, and through its crash', { tim
     `INSERT INTO apps (name, slug, created_by, approvals_required, repo_url, self_hosted)
      VALUES ($1::text, $1::text, $2, 1, 'https://github.com/acme/' || $1::text, $3) RETURNING *`,
     [`procs-${++seq}`, author.id, !!o.selfHosted])).rows[0];
+  // Where a's own deploy or preview build stops at its clone. Every deploy
+  // and build an earlier step left failing there retries through the
+  // shared `github.clone`, so waiting on that reaches whichever came first.
+  const cloneOf = (a) => `github.clone:acme/${a.slug}`;
   const closeProposal = async (a, number) => (await pool.query(
     `INSERT INTO issues (app_id, title, kind, payload, created_by) VALUES ($1, 'Close it', 'close_issue', $2, $3) RETURNING *`,
     [a.id, JSON.stringify({ issueNumber: number, issueTitle: `Old ${number}` }), author.id])).rows[0];
@@ -317,8 +321,17 @@ test('workflow machines in a process of their own, and through its crash', { tim
     const shots = (state) => (c) => c.query(
       `INSERT INTO wf_instances (machine, key, state, data, version, machine_version)
        VALUES ('shots', $1, $2, $3::jsonb, 1, 1)
-       ON CONFLICT (machine, key) DO UPDATE SET state = EXCLUDED.state`,
+       ON CONFLICT (machine, key) DO UPDATE SET state = EXCLUDED.state, data = EXCLUDED.data`,
       [`session:${s.id}`, state, JSON.stringify({ sessionId: s.id, run: { id: 'r'.repeat(32) }, cleaning: [] })]);
+    await asWriter(shots('taking_shots'));
+    // A merge also retires the change's preview for good, and that closes a
+    // shots run (the preview's Closed): in the same transaction as the
+    // retire is asked for, so which the retire sees came first. Here the
+    // preview retired already (closing that run), and the run under way at
+    // the merge is a later one, which only its own row can keep the worker for.
+    await platform.retirePreview(s.id, a.id, 'closed', true);
+    await procs.until(async () => (await instance('preview', `session:${s.id}`))?.state === 'retired'
+      && (await instance('shots', `session:${s.id}`))?.state === 'closed', 'the preview retired, and the run it closed');
     await asWriter(shots('taking_shots'));
     await reportMerge({ sessionId: s.id, appId: a.id, mergeSha: SHA('c') });
     const retires = async () => (await pool.query(
@@ -447,11 +460,11 @@ test('workflow machines in a process of their own, and through its crash', { tim
   await t.test('the web side reads a build under way from the row while the workflow process builds it', async () => {
     const a = await app();
     const s = await promoted(a, SHA('a'));
-    await procs.arm(pool, 'github.clone');
+    await procs.arm(pool, cloneOf(a));
     const sent = await platform.submitRevision({ sessionId: s.id, appId: a.id, head: SHA('a'), source: 'test', trigger: 'commit-push' });
     assert.equal(sent.status, 'accepted');
     try {
-      await procs.reached(pool, 'github.clone');
+      await procs.reached(pool, cloneOf(a));
       const { rows: [row] } = await pool.query('SELECT * FROM chat_sessions WHERE id = $1', [s.id]);
       assert.deepEqual([row.check_state, row.check_phase, row.checks_commit_sha], ['pending', 'building', SHA('a')]);
       assert.equal(require('../src/services/staging').previewDisplayState(row).preview_state, 'building',
@@ -459,7 +472,7 @@ test('workflow machines in a process of their own, and through its crash', { tim
       await procs.until(() => heard.some((e) => e.k === 'session' && e.r?.sessionId === s.id && e.d?.event === 'checks_ready'
         && e.d.checkPhase === 'building'), 'browsers to hear it');
     } finally {
-      await procs.release(pool, 'github.clone');
+      await procs.release(pool, cloneOf(a));
     }
     await procs.until(async () => (await previewOf(s)).state === 'failed', 'the failed build to be recorded');
     const { rows: [row] } = await pool.query('SELECT check_state, checks_commit_sha FROM chat_sessions WHERE id = $1', [s.id]);
@@ -469,20 +482,20 @@ test('workflow machines in a process of their own, and through its crash', { tim
   await t.test('a preview build killed in the middle is resumed by the next process, and ends as an uninterrupted one', async () => {
     const a = await app();
     const s = await promoted(a, SHA('b'));
-    await procs.arm(pool, 'github.clone');
+    await procs.arm(pool, cloneOf(a));
     await platform.submitRevision({ sessionId: s.id, appId: a.id, head: SHA('b'), source: 'test', trigger: 'commit-push' });
-    await procs.reached(pool, 'github.clone');
+    await procs.reached(pool, cloneOf(a));
     await workflow.kill();
     const { rows: [mid] } = await pool.query('SELECT check_phase FROM chat_sessions WHERE id = $1', [s.id]);
     assert.equal(mid.check_phase, 'building', 'still building with no process at all: the next one builds it');
-    await procs.arm(pool, 'github.clone');
+    await procs.arm(pool, cloneOf(a));
     await procs.expireLeases(pool);
     await startWorkflow();
     try {
-      await procs.reached(pool, 'github.clone');
+      await procs.reached(pool, cloneOf(a));
       assert.equal(await ranIn('preview', `session:${s.id}`, 'preview.prepare'), 2, 'the build the crash interrupted, run by the next process');
     } finally {
-      await procs.release(pool, 'github.clone');
+      await procs.release(pool, cloneOf(a));
     }
     await procs.until(async () => (await previewOf(s)).state === 'failed', 'the failed build to be recorded');
     const i = await previewOf(s);
@@ -794,18 +807,15 @@ test('workflow machines in a process of their own, and through its crash', { tim
   await t.test('the version pill reads "deploying" while the workflow process deploys a merge', async () => {
     const a = await app();
     const s = await proposal(a);
-    await procs.arm(pool, 'github.clone');
+    await procs.arm(pool, cloneOf(a));
     await reportMerge({ sessionId: s.id, appId: a.id, mergeSha: SHA('d') });
     try {
-      await procs.reached(pool, 'github.clone');
-      // reached() says only that some deploy's work item hit the pause
-      // (a retry or a preview build shares the point); this app's row is
-      // committed by its own machine's transition. Wait for the row.
+      await procs.reached(pool, cloneOf(a));
       await procs.until(async () => deploying(a), 'the row to say the deploy is under way');
       await procs.until(() => heard.some((e) => e.k === 'global' && e.d?.type === 'app_redeploy_status' && e.d.appSlug === a.slug
         && e.d.deploying === true), 'browsers to hear it started');
     } finally {
-      await procs.release(pool, 'github.clone');
+      await procs.release(pool, cloneOf(a));
     }
   });
 
@@ -897,21 +907,21 @@ test('workflow machines in a process of their own, and through its crash', { tim
     await workflow.kill();
     // The admin's Redeploy, on the web side, with no workflow process running.
     await platform.requestDeploy(a.id, 'redeploy');
-    await procs.arm(pool, 'github.clone');
+    await procs.arm(pool, cloneOf(a));
     await startWorkflow();
-    await procs.reached(pool, 'github.clone');
+    await procs.reached(pool, cloneOf(a));
     assert.equal(await deploying(a), true);
     // Killed in the middle of the deploy: nothing says it ended.
     await workflow.kill();
     assert.equal(await deploying(a), true, 'still deploying with no process at all: the next one runs it again');
-    await procs.arm(pool, 'github.clone');
+    await procs.arm(pool, cloneOf(a));
     await procs.expireLeases(pool);
     await startWorkflow();
     try {
-      await procs.reached(pool, 'github.clone');
+      await procs.reached(pool, cloneOf(a));
       assert.equal(await ranIn('app-delivery', `app:${a.id}`, 'app.deploy'), 2, 'the deploy the crash interrupted, run by the next process');
     } finally {
-      await procs.release(pool, 'github.clone');
+      await procs.release(pool, cloneOf(a));
     }
   });
 
