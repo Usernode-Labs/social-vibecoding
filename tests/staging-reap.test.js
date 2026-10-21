@@ -521,6 +521,36 @@ test('a preview whose session was put up for a vote, or started a checks run, si
   }
 });
 
+test('a preview rebuilt with the current environment since the sweep listed it is kept, a stopped sweep resumed included', async () => {
+  const reap = setup();
+  kubeFleet(currentFp());
+  // 5806 is a live session's out-of-date preview. The sweep lists it, then
+  // stops; the preview machine rebuilds it with today's environment (same
+  // Deployment, its new label); the sweep is carried on.
+  const first = fleetJobRun();
+  fx.run = first;
+  fx.kubeExists = () => { first.stop(); return true; };
+  await assert.rejects(first.go(reap.runJob, { config: KUBE, pool: fakePool }));
+  fx.kubeExists = () => true;
+  const listed = first.run.checkpoint.items.find((i) => i.sessionId === 5806);
+  assert.ok(listed, 'listed as out of date');
+  for (const p of fx.kubePreviews) if (p.sessionId === 5806) p.labels = { ...p.labels, [require('../src/services/staging-env').LABEL_ENV_FP]: currentFp() };
+  fx.kubeRemoveCalls = []; fx.teardownCalls = [];
+  const again = fleetJobRun({ resumeFrom: first.run.checkpoint });
+  fx.run = again;
+  await again.go(reap.runJob, { config: KUBE, pool: fakePool });
+  const job = await reap.read(fakePool);
+  assert.equal(job.previews.find((p) => p.sessionId === 5806).state, 'skipped_current');
+  assert.ok(!fx.teardownCalls.some((c) => c.sessionId === 5806) && !fx.kubeRemoveCalls.some((c) => /s5806$/.test(c.name)),
+    'the healthy preview stays');
+  // One the runtime no longer lists is not torn down blind.
+  fx.kubePreviews = [];
+  const third = fleetJobRun({ resumeFrom: { started: new Date().toISOString(), items: [listed] } });
+  fx.run = third;
+  await third.go(reap.runJob, { config: KUBE, pool: fakePool });
+  assert.equal((await reap.read(fakePool)).previews[0].state, 'skipped_unseen');
+});
+
 test('a sweep carried on after a restart tears down only what it had not', async (t) => {
   const reap = setup();
   process.env.STAGING_REAP_CONCURRENCY = '1';

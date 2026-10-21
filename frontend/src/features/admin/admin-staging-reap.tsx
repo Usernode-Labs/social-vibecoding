@@ -88,6 +88,8 @@ const REAP_STATES: Record<string, { label: string; cls: string }> = {
   skipped_vote: { label: 'Skipped: now up for a vote', cls: NEUTRAL_CHIP },
   skipped_checks: { label: 'Skipped: checks now running', cls: NEUTRAL_CHIP },
   skipped_busy: { label: 'Skipped: now being worked on', cls: NEUTRAL_CHIP },
+  skipped_current: { label: 'Skipped: up to date now', cls: NEUTRAL_CHIP },
+  skipped_unseen: { label: 'Skipped: not in the runtime\'s list', cls: NEUTRAL_CHIP },
   failed: { label: 'Failed', cls: 'bg-red-100 dark:bg-red-950/60 text-red-700 dark:text-red-400' },
 };
 

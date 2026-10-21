@@ -750,10 +750,16 @@ async function runJob(ctx, { config, pool }) {
       log.info('staging-reap', 'Stale preview sweep listed', { examined: containers.length, total: selected.length });
       return selected.map(({ session: _session, ...item }) => ({ ...item, outOfDate: staleNames.has(item.name) }));
     },
-    // What listing it decided, decided again from its row now: minutes (or
-    // a restart) may have passed since the list was taken.
+    // What listing it decided, decided again now, from the runtime and the
+    // row as they are: minutes (or a stopped run's restart) may have passed
+    // since the list was taken, and the preview may have been rebuilt with
+    // the current environment meanwhile (same name, its new fingerprint).
     unit: async (item) => {
-      const [fresh] = await classify(pool, [item]);
+      const now = (await listPreviews(config)).find((p) => p.name === item.name);
+      // Not in the runtime's list (gone, or the list could not be read):
+      // nothing is torn down blind.
+      if (!now) return { outcome: 'skipped_unseen' };
+      const [fresh] = await classify(pool, [now]);
       const status = fresh.session ? fresh.session.status : null;
       if (status && !FINISHED_STATUSES.has(status)) {
         // Put up for a vote since: the preview machine rebuilds it in place.
@@ -765,6 +771,9 @@ async function runJob(ctx, { config, pool }) {
           return { outcome: 'skipped_busy' };
         }
       }
+      // Still out of date or abandoned, by the rule the list was taken by.
+      const { selected } = selectReapable([fresh], stagingEnv.expectedStagingFingerprint(config));
+      if (!selected.length) return { outcome: 'skipped_current' };
       return reapOne(fresh, config);
     },
     publish: broadcast,

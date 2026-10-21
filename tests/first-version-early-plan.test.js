@@ -217,6 +217,30 @@ test('the plan a claim owes is asked once, saved while its readers still wait, a
   row = { ...row, early_plan_status: 'pending', fresh: false };
   assert.deepEqual(await fvPlan.runEarlyPlan(pool, { appId: 3, steps: { has: () => false, once: async (_k, fn) => fn() } }, deps), { planned: false, skipped: 'too_late' });
   assert.equal(asked, 1, 'no second model call');
+  // Its process stopped after the plan was saved, before the work ended: the
+  // try carried on finds the plan its own step made, says it is planned (so
+  // its early look is still owed), and records its timeline stage once.
+  {
+    const recorded = [];
+    const resumedDeps = { ...deps, timeline: { async record(_pool, entry) { recorded.push(entry.stage); } } };
+    const keptHere = new Map();
+    const resumed = { has: (k) => keptHere.has(k), once: async (k, fn) => (keptHere.has(k) ? keptHere.get(k) : keptHere.set(k, await fn()).get(k)) };
+    row = { ...row, early_plan_status: 'pending', fresh: true };
+    saved = 1;
+    assert.deepEqual(await fvPlan.runEarlyPlan(pool, { appId: 3, steps: resumed }, resumedDeps), { planned: true });
+    keptHere.delete('timeline');
+    row = { ...row, early_plan_status: 'ready' };
+    const writes = sql.length;
+    assert.deepEqual(await fvPlan.runEarlyPlan(pool, { appId: 3, steps: resumed }, resumedDeps), { planned: true }, 'resumed after its save');
+    assert.ok(!sql.slice(writes).some((q) => /SET early_plan_status = \$2/.test(q.text)), 'not saved again');
+    assert.deepEqual(recorded, ['plan_written', 'plan_written'], 'the stage recorded by the try that had not');
+    const askedBefore = asked;
+    assert.deepEqual(await fvPlan.runEarlyPlan(pool, { appId: 3, steps: resumed }, resumedDeps), { planned: true });
+    assert.equal(asked, askedBefore, 'no second model call');
+    assert.equal(recorded.length, 2, 'and the stage once per try that reached it');
+    // Another item, which did not make it, finds it settled.
+    assert.deepEqual(await fvPlan.runEarlyPlan(pool, { appId: 3, steps: { has: () => false, once: async (_k, fn) => fn() } }, deps), { planned: false, skipped: 'settled' });
+  }
 });
 
 test('a plan\'s state: pending until written (a stopped process\'s reads failed), decided once answered or when it asks nothing', () => {

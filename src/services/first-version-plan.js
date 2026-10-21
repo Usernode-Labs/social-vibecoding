@@ -437,23 +437,29 @@ async function runEarlyPlan(pool, { appId, steps = null }, deps = {}) {
       WHERE f.app_id = $1`,
     [Number(appId), STALE_PENDING_MS / 1000],
   );
-  if (!row || row.early_plan_status !== 'pending') return { planned: false, skipped: row ? 'settled' : 'gone' };
+  if (!row) return { planned: false, skipped: 'gone' };
+  // A try carried on after this item saved its plan (its process stopped
+  // before the work ended): the plan is this item's, and its early look is
+  // still owed.
+  const saved = !!(steps && steps.has('plan')) && row.early_plan_status === 'ready';
+  if (row.early_plan_status !== 'pending' && !saved) return { planned: false, skipped: 'settled' };
   // Past the window its plan could be saved in (savePlan), the model is not
   // asked: what read it went on without it (an ask re-sent after a rollout).
   if (!row.fresh && !(steps && steps.has('plan'))) return { planned: false, skipped: 'too_late' };
   const app = { id: row.id, name: row.name, slug: row.slug };
   const ask = () => makePlan(pool, { app, user: { id: row.user_id }, brief: row.brief, deps });
   const made = steps ? await steps.once('plan', ask) : await ask();
-  if (!(await savePlan(pool, app.id, made))) return { planned: false, skipped: 'too_late' };
+  if (!saved && !(await savePlan(pool, app.id, made))) return { planned: false, skipped: 'too_late' };
   if (made.plan) {
     log.info('first-version-plan', 'A first version\'s plan is ready at Make it', {
       appId: app.id, questions: made.plan.questions.length, model: made.model,
     });
     // Its timeline's first stage (first-version-timeline.js), before
-    // there is a run.
-    await (deps.timeline || require('./first-version-timeline')).record(pool, {
+    // there is a run: once, a carried-on try included.
+    const record = () => (deps.timeline || require('./first-version-timeline')).record(pool, {
       appId: app.id, stage: 'plan_written', detail: { source: 'make_it', questions: made.plan.questions.length },
     });
+    await (steps ? steps.once('timeline', record) : record());
   } else {
     log.warn('first-version-plan', 'No plan at Make it; the triage plans it', {
       appId: app.id, error: made.error, model: made.model, ...(made.shape ? { why: made.shape.why, routedProvider: made.shape.routedProvider } : {}),
