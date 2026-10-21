@@ -33,7 +33,7 @@
 // The three examples are the make screen's front three (Evan, 8 Oct 2026,
 // #4354; examples.ts FRONT since 15 Oct): the same three here and there, the
 // tier list drawn as one.
-import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 import { Message, RichMessage } from '../../lib/i18n/react';
 import { FRONT } from '../first-session/examples';
@@ -99,7 +99,7 @@ export function nextStep(fit: number, footBottom: number, screenBottom: number):
   return fit + 1;
 }
 
-export function Story({ primaryClass, welcomeEmail = null, onStart, onSignIn, compact = false, actions = null }: {
+export function Story({ primaryClass, welcomeEmail = null, onStart, onSignIn, compact = false }: {
   primaryClass: string;
   /** The address a "You're in" mail's link names, greeted under the welcome. */
   welcomeEmail?: string | null;
@@ -109,18 +109,15 @@ export function Story({ primaryClass, welcomeEmail = null, onStart, onSignIn, co
   /**
    * THE SHORT STORY, over the guest Discover (features/guest/guest-discover.tsx):
    * the welcome, the headline and one line that says the apps below can be
-   * tried without an account, then the ways to make an account (`actions`).
-   * No examples (the real apps follow it) and, on a phone, no picture, so
-   * the first apps are near the first screen; nothing to fit, so no steps.
+   * looked around, and nothing to press: the page's bar carries the one
+   * Sign in and the one Sign up, whose sheet has every way in (Apple,
+   * Google, email, a phone). From the 21 Oct 2026 review: two Sign ins,
+   * then two Sign ups, on one screen read as a mistake, and four "Continue
+   * with" buttons made the top of the page tall. No examples (the real apps follow it)
+   * and, on a phone, no picture, so the first apps are near the first
+   * screen; nothing to fit, so no steps.
    */
   compact?: boolean;
-  /**
-   * What the short story offers in place of Continue and its Sign in line:
-   * the landing's sign-up buttons (sign-in-sheet.tsx SignUpButtons). The
-   * page's header has the one Sign in (Evan, 21 Oct 2026: two Sign ins on
-   * one screen read as a mistake).
-   */
-  actions?: ReactNode;
 }) {
   const t = useMessages('auth');
   const storyRef = useRef<HTMLDivElement>(null);
@@ -203,17 +200,12 @@ export function Story({ primaryClass, welcomeEmail = null, onStart, onSignIn, co
     </>
   );
   if (compact) {
+    // On the page itself, as the story always was, and short: the welcome,
+    // the headline and one line, with a small picture beside them from md.
+    // The ways in are the bar's, so the apps start high.
     return (
-      <div ref={storyRef} data-landing-story="" data-landing-story-compact="" className="px-4 pt-1 flex flex-col items-center text-center md:flex-row md:items-center md:gap-10 md:text-left">
-        <img
-          src="/brand/people.png"
-          alt=""
-          width={816}
-          height={612}
-          draggable={false}
-          className="hidden md:block h-auto w-[240px] shrink-0 max-w-full"
-        />
-        <div className="flex min-w-0 flex-col items-center md:items-start">
+      <div ref={storyRef} data-landing-story="" data-landing-story-compact="" className="px-4 pt-5 md:pt-8 flex items-center gap-10">
+        <div className="flex min-w-0 flex-1 flex-col items-start text-left">
           <div className={SMALL_CAPS}>{t('auth:story.welcome')}</div>
           {welcomeEmail ? (
             <div data-landing-story-email="" className="mt-1 max-w-full text-[15px] leading-5 font-semibold text-zinc-700 dark:text-zinc-300 [overflow-wrap:anywhere]">{welcomeEmail}</div>
@@ -222,10 +214,15 @@ export function Story({ primaryClass, welcomeEmail = null, onStart, onSignIn, co
             {t('auth:story.headline')}
           </h1>
           <p className="mt-2 text-base leading-[22px] text-zinc-500 dark:text-zinc-400 text-balance">{t('auth:guest.hero.line')}</p>
-          <div ref={footRef} className="mt-4 w-full max-w-sm sm:max-w-lg flex flex-col gap-3">
-            {actions}
-          </div>
         </div>
+        <img
+          src="/brand/people.png"
+          alt=""
+          width={816}
+          height={612}
+          draggable={false}
+          className="hidden md:block h-auto w-[200px] shrink-0"
+        />
       </div>
     );
   }

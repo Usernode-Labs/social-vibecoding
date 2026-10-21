@@ -35,7 +35,7 @@ import { useMessages } from '../../lib/i18n/react';
 import { useCommunityColor } from '../../lib/community-color';
 import { agoStamp } from '../../lib/timestamp';
 import { GuestCover, GuestIcon, TryLink } from './guest-discover';
-import { type GuestApp, type GuestOverview, type GuestVote, buildersOf, fetchOverview } from './guest-data';
+import { type GuestApp, type GuestOverview, type GuestVote, buildersOf, canTryHere, fetchOverview, inHomeroomApp } from './guest-data';
 
 /** What somebody tried to do: the sign-in sheet is titled for it. */
 export type GuestIntent =
@@ -183,7 +183,7 @@ export function GuestProject({ app, primaryClass, onIntent, onOpenInside, onShar
   ));
 
   return (
-    <div data-guest-project={app.slug} className="mx-auto flex w-full max-w-[1040px] flex-col gap-[18px] px-4">
+    <div data-guest-project={app.slug} className="mx-auto flex w-full flex-col gap-[18px] px-4">
       <section
         data-guest-project-band=""
         className="flex flex-wrap items-start gap-x-5 gap-y-3.5 rounded-3xl p-3 text-white"
@@ -208,7 +208,7 @@ export function GuestProject({ app, primaryClass, onIntent, onOpenInside, onShar
             {active > 0 ? <span>{t('auth:guest.project.active', { count: active })}</span> : null}
           </div>
           <div className="mt-0.5 flex gap-2">
-            {app.guest_ready ? (
+            {canTryHere(app, inHomeroomApp()) ? (
               <TryLink
                 app={app}
                 onOpenInside={onOpenInside}
