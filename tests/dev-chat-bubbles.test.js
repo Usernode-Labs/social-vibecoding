@@ -33,6 +33,7 @@ const APP_CSS = read('public/css/app.css');
 const TRANSCRIPT = read('frontend/src/features/dev-chat/transcript.tsx');
 
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
+const { makeDocument } = require('./lib/mini-dom');
 
 function rule(sel) {
   const at = APP_CSS.indexOf(`\n${sel} {`);
@@ -112,6 +113,41 @@ test('"You" is read, not shown — and the agent\'s label still is', () => {
     'the agent keeps a visible label: it opens a meta line that also carries '
     + 'the model and the cost, so it is a sentence rather than a tag');
   assert.match(theirs, /claude-opus · reply \$0\.03/);
+});
+
+test('#5728: a change chat\'s AI reply links its refs; a person\'s words and a projectless reply do not', () => {
+  const { Row } = loadTsx('frontend/src/features/dev-chat/transcript.tsx');
+  // The row model carries the project only for the AI (dev-chat.js): the
+  // turn that writes it is about a change in this conversation's app.
+  assert.match(read('frontend/src/features/dev-chat/dev-chat.js'),
+    /\.\.\.\(!isUser \? \{ appSlug: DevChat\._appSlug\(\) \|\| null \} : null\),/,
+    'only an AI row is told which project it is about');
+
+  const doc = makeDocument();
+  global.document = doc;
+  try {
+    const ai = renderToHtml(createElement(Row, {
+      r: {
+        t: 'msg', key: 'a', who: 'ai', model: '', stamp: '#1',
+        contentHtml: '<p>see #7 and PR#8</p>', appSlug: 'goal-champions',
+      },
+    }));
+    assert.match(ai, /<a href="#app\/goal-champions\/dev\/issues\/7" class="gc-ref gc-ref-issue"[^>]*>#7<\/a>/);
+    assert.match(ai, /<a href="#app\/goal-champions\/dev\/changes\/8" class="gc-ref gc-ref-pr"[^>]*>PR#8<\/a>/,
+      'a PR opens its change\'s proposal page');
+
+    const user = renderToHtml(createElement(Row, {
+      r: { t: 'msg', key: 'b', who: 'user', model: '', stamp: '#2', contentHtml: '<p>see #7 and PR#8</p>' },
+    }));
+    assert.doesNotMatch(user, /gc-ref|<a /, 'your own words stay words');
+
+    const projectless = renderToHtml(createElement(Row, {
+      r: { t: 'msg', key: 'c', who: 'ai', model: '', stamp: '#3', contentHtml: '<p>see #7 and PR#8</p>', appSlug: null },
+    }));
+    assert.doesNotMatch(projectless, /gc-ref|<a /, 'an AI reply with no project to open them on stays plain');
+  } finally {
+    delete global.document;
+  }
 });
 
 test('the two rows are still told apart by side and surface', () => {

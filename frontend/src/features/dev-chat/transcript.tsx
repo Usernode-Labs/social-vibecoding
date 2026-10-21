@@ -31,6 +31,7 @@ import {
 
 import { useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
+import { linkRefsInHtml } from '../messages/channels';
 import { createLogFollower, revealDisclosure, type LogFollower } from './log-follow';
 import {
   nowStore,
@@ -606,19 +607,32 @@ function PrCard({ r, embedded = false, historical = false }: { r: Extract<Transc
  * first frame lands (and after the turn seals, when `renderMessages` moves the
  * final text into the row model) it renders the model's own html.
  */
-function LiveContent({ rowKey, html }: { rowKey: string; html: string }): ReactNode {
+function LiveContent({ rowKey, html, appSlug = null }: { rowKey: string; html: string; appSlug?: string | null }): ReactNode {
   const s = useStoreState(streamStore);
   const live = s.key === rowKey ? s.html : '';
+  // The AI's #N / PR#N become links to this conversation's project, the
+  // same chips Messages draws. No slug (or no DOM) returns the html as it
+  // came, so a row that names no project renders exactly as before.
+  const body = useMemo(() => linkRefsInHtml(live || html, appSlug), [live, html, appSlug]);
   // `Html`, like every other sink: a transcript republish mid-turn (a
   // progress line, a status row) re-renders this row with the same frame,
   // and a new wrapper would rewrite the bubble the stream just painted.
-  return <Html className="dc-msg-content" html={live || html} />;
+  return <Html className="dc-msg-content" html={body} />;
 }
 
 function Bubble({ r }: { r: Extract<TranscriptRow, { t: 'msg' }> }): ReactNode {
   const more = useDetails(r.more ? r.more.details : { persistId: '', defaultOpen: false });
   const reasoning = useDetails(r.reasoning ? r.reasoning.details : { persistId: '', defaultOpen: false });
   const t = useMessages('devchat');
+  // The AI's reply is the only row a project is ever named for: its #N and
+  // PR#N chips link to that project's request and proposal pages. Memoised
+  // on the html, so an unchanged row's sink keeps its `{ __html }` object.
+  // The live row is decorated by LiveContent, once per streamed frame; here
+  // its html is kept as it came, unparsed.
+  const body = useMemo(
+    () => (r.live ? r.contentHtml : linkRefsInHtml(r.contentHtml, r.appSlug)),
+    [r.live, r.contentHtml, r.appSlug],
+  );
   const who = r.who === 'user' ? t('devchat:transcript.who.you') : r.who === 'cc' ? t('devchat:transcript.who.claudeCode') : t('devchat:transcript.who.ai');
   // "You" is READ, not shown. Side and surface already say whose turn it is —
   // the row is right-aligned and it is the only one drawn as a card — so the
@@ -640,8 +654,8 @@ function Bubble({ r }: { r: Extract<TranscriptRow, { t: 'msg' }> }): ReactNode {
         <span className="dc-msg-meta">{r.stamp}</span>
       </div>
       {r.live
-        ? <LiveContent rowKey={r.key} html={r.contentHtml} />
-        : <Html className="dc-msg-content" html={r.contentHtml} />}
+        ? <LiveContent rowKey={r.key} html={r.contentHtml} appSlug={r.appSlug} />
+        : <Html className="dc-msg-content" html={body} />}
       {r.more ? (
         <details
           className="dc-cc-log" style={{ marginTop: '6px' }}

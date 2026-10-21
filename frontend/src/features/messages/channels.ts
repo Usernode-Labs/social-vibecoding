@@ -20,6 +20,7 @@
  * Pure, so the test drives it with arrays rather than a store.
  */
 
+import { changeHref } from '../../lib/change-href';
 import type { AppDiscussion } from './inbox';
 import type { ConversationSummary } from './types';
 
@@ -147,8 +148,9 @@ export function issueRefHref(appSlug: string, num: string): string {
  * markup the sanitizer removed can come back through a reference.
  *
  * `appSlug` is the project the message is about, when it names one (#3770:
- * a Homeroom bot message carries its request's): its `#N` chips are links
- * to that project's requests.
+ * a Homeroom bot message carries its request's): its `#N` chip is a link to
+ * that project's request, and its `PR#N` chip a link to that change's
+ * proposal page.
  */
 export function decorateRefs(root: Element, handles: ReadonlySet<string>, me: string, appSlug?: string | null): void {
   const doc = root.ownerDocument;
@@ -179,11 +181,14 @@ export function decorateRefs(root: Element, handles: ReadonlySet<string>, me: st
         el.textContent = `@${seg.name}`;
         frag.appendChild(el);
       } else if (seg.type === 'ref') {
-        // An issue in a message that names its project is a link to the
-        // request (#3770). Anything else has no app to reveal it in — a DM
-        // belongs to none — so the chip names the ref without pretending to
-        // navigate, and app.css draws it as text there.
-        const href = !seg.isPr && appSlug ? issueRefHref(appSlug, seg.num) : null;
+        // A ref in a message that names its project is a link: an issue to
+        // the request (#3770), a PR to its change's proposal page. Anything
+        // else has no app to reveal it in — a DM belongs to none — so the
+        // chip names the ref without pretending to navigate, and app.css
+        // draws it as text there.
+        const href = appSlug
+          ? (seg.isPr ? changeHref(appSlug, null, seg.num) : issueRefHref(appSlug, seg.num))
+          : null;
         const chip = doc.createElement(href ? 'a' : 'span');
         if (href) chip.setAttribute('href', href);
         chip.className = seg.isPr ? 'gc-ref gc-ref-pr' : 'gc-ref gc-ref-issue';
@@ -203,4 +208,21 @@ export function decorateRefs(root: Element, handles: ReadonlySet<string>, me: st
     textNode.parentNode?.replaceChild(frag, textNode);
   };
   walk(root);
+}
+
+/**
+ * Decorate SANITIZED reply HTML out of React: parsed into a detached node,
+ * chipped, and returned as a string for `dangerouslySetInnerHTML`. An agent
+ * session and a change's chat draw the Mayor's replies this way, and its
+ * `#N` / `PR#N` open the request and the proposal page when the conversation
+ * names a project. With no project (or off the browser, where there is no
+ * DOM) the html comes back exactly as it went in.
+ */
+export function linkRefsInHtml(html: string, appSlug: string | null | undefined): string {
+  if (!html || !appSlug || typeof document === 'undefined') return html;
+  const root = document.createElement('div');
+  root.innerHTML = html;
+  const me = String((typeof window !== 'undefined' ? window.App?.user?.username : '') || '').toLowerCase();
+  decorateRefs(root, new Set(), me, appSlug);
+  return root.innerHTML;
 }

@@ -1,6 +1,6 @@
 'use strict';
 
-// #3770: `#N` chips in Messages.
+// #3770, #5728: `#N` and `PR#N` chips in Messages.
 //
 // The app chat sends a `.gc-ref` press to its activity drawer; Messages has
 // no drawer, so a chip there did nothing while app.css still drew it as a
@@ -8,9 +8,10 @@
 // 1.6:1 on the light sheet. Pinned here:
 //
 //   1. A message that names its project (a Homeroom bot message carries its
-//      request's app) chips `#N` as a real link to that project's request,
-//      at the address the server's own cards use; every other chip stays a
-//      span, and a `PR#N` is never a link.
+//      request's app) chips `#N` as a link to that project's request and
+//      `PR#N` as a link to that change's proposal page; with no project
+//      named, both stay spans. `linkRefsInHtml` gives an agent's or a
+//      change chat's reply the same treatment.
 //   2. The row hands the bot message's project to the markdown, and a press
 //      on a chip records the conversation as where it was opened from, as a
 //      shared card does.
@@ -67,6 +68,11 @@ function makeDocument() {
       if (found) found[1] = String(value); else this.attrs.push([name, String(value)]);
     }
     set textContent(value) { this.childNodes = []; this.appendChild(new Text(value)); }
+    get innerHTML() { return this.childNodes.map(html).join(''); }
+    set innerHTML(value) {
+      this.childNodes = [];
+      parseHtml(doc, this, String(value));
+    }
   }
   doc.createElement = (tag) => new Element(tag);
   doc.createTextNode = (value) => new Text(value);
@@ -81,6 +87,32 @@ function html(node) {
   const tag = node.tagName.toLowerCase();
   const attrs = node.attrs.map(([k, v]) => ` ${k}="${v.replace(/"/g, '&quot;')}"`).join('');
   return `<${tag}${attrs}>${inner}</${tag}>`;
+}
+
+const ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", '#39': "'", nbsp: ' ' };
+const decode = (s) => s.replace(/&(amp|lt|gt|quot|apos|#39|nbsp);/g, (_, e) => ENTITIES[e]);
+
+// Just enough parsing for the sanitized markup marked hands over: elements,
+// quoted attributes and text. `linkRefsInHtml` parses into a detached div.
+function parseHtml(doc, root, source) {
+  const token = /<(\/?)([a-zA-Z0-9]+)((?:\s+[a-zA-Z-]+="[^"]*")*)\s*(\/?)>|([^<]+)/g;
+  const stack = [root];
+  let m;
+  while ((m = token.exec(source)) !== null) {
+    const current = stack[stack.length - 1];
+    if (m[5] != null) {
+      current.appendChild(doc.createTextNode(decode(m[5])));
+      continue;
+    }
+    if (m[1]) {
+      if (stack.length > 1) stack.pop();
+      continue;
+    }
+    const el = doc.createElement(m[2]);
+    for (const a of (m[3] || '').matchAll(/([a-zA-Z-]+)="([^"]*)"/g)) el.setAttribute(a[1], decode(a[2]));
+    current.appendChild(el);
+    if (!m[4]) stack.push(el);
+  }
 }
 
 /** A message body as marked hands it over: a paragraph, a code span, and a link. */
@@ -102,7 +134,7 @@ function body(doc, text) {
 
 // ── 1. The chips ────────────────────────────────────────────────────────
 
-test('in a message that names its project, #N is a link to that project\'s request; PR#N and every other chip are not', () => {
+test('in a message that names its project, #N opens its request and PR#N its proposal; with no project both are text', () => {
   const { decorateRefs, issueRefHref } = loadTsx(CHANNELS);
   assert.equal(issueRefHref('ear-trainer-9aee0d', '14'), '#app/ear-trainer-9aee0d/dev/issues/14',
     'the address the server\'s object cards give a request');
@@ -113,17 +145,49 @@ test('in a message that names its project, #N is a link to that project\'s reque
   decorateRefs(bot, new Set(), 'ada', 'ear-trainer-9aee0d');
   assert.equal(html(bot),
     '<p>Filed as <a href="#app/ear-trainer-9aee0d/dev/issues/14" class="gc-ref gc-ref-issue" data-ref-type="issue" data-ref-number="14">#14</a>, '
-    + 'beside <span class="gc-ref gc-ref-pr" data-ref-type="pr" data-ref-number="9">PR#9</span> and '
+    + 'beside <a href="#app/ear-trainer-9aee0d/dev/changes/9" class="gc-ref gc-ref-pr" data-ref-type="pr" data-ref-number="9">PR#9</a> and '
     + '<a class="gc-mention gc-mention-self" href="#leaderboard/users/ada" data-mention="ada">@ada</a>. <code>#3</code><a href="https://example.test/">#4</a></p>',
-    'a real link, the chip\'s classes and data kept; a PR stays text; code and links are left alone');
+    'both refs are real links to the request and the change page; code and links are left alone');
+
+  const spaced = body(doc, 'see PR #9');
+  decorateRefs(spaced, new Set(), 'ada', 'ear-trainer-9aee0d');
+  assert.match(html(spaced), /<a href="#app\/ear-trainer-9aee0d\/dev\/changes\/9" class="gc-ref gc-ref-pr"[^>]*>PR#9<\/a>/,
+    'PR #9 is the same chip, as the app chat draws it');
 
   const person = body(doc, 'see #14');
   decorateRefs(person, new Set(), 'ada');
   assert.match(html(person), /<p>see <span class="gc-ref gc-ref-issue" data-ref-type="issue" data-ref-number="14">#14<\/span>/,
     'with no project named, the chip names the ref without pretending to navigate');
+  const noPr = body(doc, 'see PR#9');
+  decorateRefs(noPr, new Set(), 'ada', null);
+  assert.match(html(noPr), /<span class="gc-ref gc-ref-pr" data-ref-type="pr" data-ref-number="9">PR#9<\/span>/,
+    'a PR stays text too when there is no project to open it on');
   const none = body(doc, 'see #14');
   decorateRefs(none, new Set(), 'ada', null);
   assert.doesNotMatch(html(none), /<a href="#app/);
+});
+
+test('#5728: linkRefsInHtml chips a reply\'s refs only when it knows the project', () => {
+  const { linkRefsInHtml } = loadTsx(CHANNELS);
+  const source = '<p>The close proposal on #34 is up, and PR #118 changes it.</p>';
+  assert.equal(linkRefsInHtml(source, null), source, 'no project: the html comes back unchanged');
+  assert.equal(linkRefsInHtml(source, ''), source);
+  assert.equal(linkRefsInHtml('', 'goal-champions'), '');
+  assert.equal(typeof document, 'undefined', 'node has no DOM');
+  assert.equal(linkRefsInHtml(source, 'goal-champions'), source, 'and without a DOM it is left alone');
+
+  const doc = makeDocument();
+  global.document = doc;
+  try {
+    const out = linkRefsInHtml(`${source}<p><code>#3</code> <a href="https://example.test/">#4</a></p>`, 'goal-champions');
+    assert.match(out, /<a href="#app\/goal-champions\/dev\/issues\/34" class="gc-ref gc-ref-issue" data-ref-type="issue" data-ref-number="34">#34<\/a>/);
+    assert.match(out, /<a href="#app\/goal-champions\/dev\/changes\/118" class="gc-ref gc-ref-pr" data-ref-type="pr" data-ref-number="118">PR#118<\/a>/,
+      'the proposal page, at the change address the dev chat links');
+    assert.match(out, /<code>#3<\/code> <a href="https:\/\/example\.test\/">#4<\/a>/,
+      'code and an existing link are never decorated');
+  } finally {
+    delete global.document;
+  }
 });
 
 test('#4029: @name is a link to the person\'s page in Messages; Homeroom bot\'s stays text', () => {
@@ -188,6 +252,13 @@ test('in Messages a chip with nowhere to go is drawn as text, a link chip as a l
   assert.match(CSS, /\.messages-markdown a\.gc-ref \{ text-decoration: none; \}/, 'not the underline a markdown link wears');
   // The app chat's chips keep their pointer: its drawer opens from them.
   assert.match(CSS, /\.gc-ref \{\s*display: inline-flex;[^}]*cursor: pointer;/);
+  // #5728: an agent session and a change chat draw the same chips. The
+  // generic `.dc-msg-content a` rule (accent, underline, break-all) would
+  // make them ordinary links, so the chip restores its own ink and shape.
+  assert.match(CSS, /\.dc-msg-content a\.gc-ref \{ text-decoration: none; word-break: normal; \}/);
+  assert.match(CSS, /\.dc-msg-content a\.gc-ref-issue \{ color: var\(--state-ok\); \}/);
+  assert.match(CSS, /html:not\(\.dark\) \.dc-msg-content a\.gc-ref-issue \{ background: rgba\(16, 185, 129, 0\.05\); \}/);
+  assert.match(CSS, /@media \(hover: hover\) \{\s*\.dc-msg-content a\.gc-ref:hover \{ text-decoration: underline; \}\s*\}/);
 
   // The ink is --state-ok, which in dark IS the chip's own emerald: dark is unchanged.
   assert.match(CSS, /\.messages-markdown \.gc-ref-issue \{ color: var\(--state-ok\); \}/);

@@ -6625,6 +6625,20 @@ body:has(#platform-header.hidden) #app-frame-host {
 .dc-msg-content a { color: var(--accent); text-decoration: underline; word-break: break-all; }
 .dc-msg-content a:hover { color: var(--accent-light); }
 
+/* The agent's #N and PR#N chips (features/messages/channels.ts): the same
+   chips the project chat draws, in a reply that names its project. The
+   generic link rule above is too generous for them — no underline, no
+   breaking a chip across lines — and it outranks `.gc-ref` / `.gc-ref-pr`,
+   so the chip's own ink has to be restored at this specificity. The issue
+   chip takes --state-ok as it does in Messages, on the light wash there;
+   a PR chip keeps the accent ink the rule above gives it. */
+.dc-msg-content a.gc-ref { text-decoration: none; word-break: normal; }
+.dc-msg-content a.gc-ref-issue { color: var(--state-ok); }
+html:not(.dark) .dc-msg-content a.gc-ref-issue { background: rgba(16, 185, 129, 0.05); }
+@media (hover: hover) {
+  .dc-msg-content a.gc-ref:hover { text-decoration: underline; }
+}
+
 .dc-msg-content strong { font-weight: 600; color: var(--text-primary); }
 .dc-msg-content em { font-style: italic; color: var(--text-faint); }
 

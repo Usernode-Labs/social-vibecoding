@@ -237,6 +237,8 @@ export type TranscriptRow =
     model: string;
     stamp: string;
     contentHtml: string;
+    /** The project the AI's reply is about; its #N / PR#N chips open it. */
+    appSlug?: string | null;
     /** True on the one row a live turn is writing into — see the header. */
     live?: boolean;
     /** A user row's attachment strip. */

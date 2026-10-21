@@ -4166,8 +4166,9 @@ async function seedStagingAgentSession(pool, config) {
     await seedStagingAgentRuns(pool);
     await pool.query(
       `INSERT INTO chat_session_messages (session_id, agent_session_id, role, content, metadata, created_at)
-       VALUES ($2, $1, 'assistant', 'The change is built. When the preview looks right, confirm the card and I will put it up for the vote.',
-               $3::jsonb, NOW() - INTERVAL '3 minutes')`,
+       VALUES ($2, $1, 'assistant', 'The change is built. When the preview looks right, confirm the card and I will put it up for the vote.
+
+It closes #14 as PR #9.', $3::jsonb, NOW() - INTERVAL '3 minutes')`,
       [STAGING_AGENT_SESSION_ID, STAGING_AGENT_CHANGE_ID, JSON.stringify({ confirmations: [card] })]
     );
   } else {
