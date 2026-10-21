@@ -23919,7 +23919,7 @@ const AppView = {
   // here, which is the half that was worth unit-testing anyway.
 
 
-  voteCountPill(pr, majority) {
+  voteCountPill(pr, majority, opts = {}) {
     if (!pr) return '';
     // #58: for merged PRs prefer the threshold snapshotted at merge time
     // (votes_required) so the denominator reflects history rather than the
@@ -24056,7 +24056,12 @@ const AppView = {
     }
     return `<span class="gc-vote-count gc-vote-count-${state}"${titleAttr}>`
       + fills
-      + `<span class="gc-vote-count-label">${yes} / ${maj}</span>`
+      // F18 (#5683): the inline card in a chat can ask for the tally in
+      // words ("4 of 3 yes votes") rather than "4 / 3"; the board and the
+      // vote panel keep the pair, which sits beside a bar.
+      + `<span class="gc-vote-count-label">${opts.words
+        ? PlatformI18n.htmlText('changes:badge.votePill.tallyWords', { yes, count: maj })
+        : `${yes} / ${maj}`}</span>`
       + `</span>` + advisoryChip + explicitChip;
   },
 

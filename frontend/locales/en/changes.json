@@ -5623,6 +5623,14 @@
     "text": "needed {{needed}} of {{count}} active users at merge time",
     "description": "Tooltip of the small vote pill beside a proposal mentioned in a project's discussion on a merged proposal. {{needed}} is how many Yes votes it needed when it merged and {{count}} how many active members the project had then. Starts in lower case."
   },
+  "badge.votePill.tallyWords_one": {
+    "text": "{{yes}} of 1 yes vote",
+    "description": "The vote count on a proposal's card inside a chat, said in words: how many Yes votes it has and how many it needs to go live. Here it needs one vote."
+  },
+  "badge.votePill.tallyWords_other": {
+    "text": "{{yes}} of {{count}} yes votes",
+    "description": "The vote count on a proposal's card inside a chat, said in words: how many Yes votes it has and how many it needs to go live. {{yes}} is how many it has, {{count}} is how many it needs."
+  },
   "badge.merge.merging": {
     "text": "Merging…",
     "description": "Badge, beside a spinner, next to a proposal mentioned in a project's discussion while it is being merged. Keep the ellipsis."

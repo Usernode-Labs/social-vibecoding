@@ -230,7 +230,11 @@ const GroupChat = {
     const ref = c ? Number(c.ref) : NaN;
     if (!c || c.type !== 'category' || !Number.isSafeInteger(ref) || ref <= 0 || ref > 2147483647) return null;
     const markers = Array.isArray(c.markers) && c.markers.length ? c.markers : null;
-    return { type: 'category', ref, ...(markers ? { markers } : {}) };
+    // #5683: the channel's name and what it is for, so an empty one can
+    // invite the first post (render's `emptyChannel`).
+    const handle = typeof c.handle === 'string' && c.handle ? c.handle : null;
+    const about = typeof c.about === 'string' && c.about ? c.about : null;
+    return { type: 'category', ref, ...(markers ? { markers } : {}), ...(handle ? { handle } : {}), ...(about ? { about } : {}) };
   },
 
   // Is `scope` the stream the general pane shows? A frame's `thread`, or a
@@ -1309,12 +1313,19 @@ const GroupChat = {
     // when it was drawn as a thread, rather than with the app's quiet card;
     // and it draws its merged topics' cards by time.
     const channel = GroupChat._channel;
+    // #5683: a topic's channel that has loaded with nothing in it invites the
+    // first post, centred, instead of a line in the corner. React draws it
+    // (features/group-chat/transcript.tsx), from these facts alone.
+    const empty = channel && channel.handle && GroupChat._streamLoaded && !GroupChat.messages.length
+      ? { handle: channel.handle, about: channel.about || '', canPost: !GroupChat._readOnly() }
+      : null;
     GroupChat._react()?.publishTranscript(
       GroupChat.messages.map(GroupChat._messageView),
       'main',
       {
         earlier: false,
-        placeholder: channel && GroupChat._streamLoaded ? PlatformI18n.t('chat:group.topicChannel.empty') : null,
+        placeholder: channel && GroupChat._streamLoaded && !empty ? PlatformI18n.t('chat:group.topicChannel.empty') : null,
+        ...(empty ? { emptyChannel: empty } : {}),
         error: GroupChat._historyFailed ? PlatformI18n.t('chat:group.history.failed') : null,
         ...(channel && channel.markers ? { markers: channel.markers, moreBefore: !!GroupChat.hasMore } : {}),
         // The quiet card's three facts (features/group-chat/quiet-card.tsx).
@@ -4274,7 +4285,7 @@ const GroupChat = {
     let badge = '';
     if (pr.status === 'merging') badge = AppView.mergingBadgeHtml();
     else if (pr.status === 'merged') badge = AppView.mergedBadgeHtml();
-    return AppView.voteCountPill(pr, st.majority) + AppView.voteButtonsHtml(pr, { collapseVoted: true }) + badge;
+    return AppView.voteCountPill(pr, st.majority, { words: true }) + AppView.voteButtonsHtml(pr, { collapseVoted: true }) + badge;
   },
 
   // Row text-color class from the viewer's vote status: faded once voted,

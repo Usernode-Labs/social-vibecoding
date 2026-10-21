@@ -815,6 +815,14 @@ html.un-kb .platform-kb-column .un-kb-avoid {
 .messages-thread-name-link:hover { text-decoration: underline; text-underline-offset: 3px; }
 .messages-thread-name-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .messages-thread-sub { color: var(--text-muted); font-size: 15px; }
+/* #5683: a request's bar names the request under a small-caps line that says
+   its number and how it ended, as Messages' thread header does
+   (SectionHeader's literals), and the title itself wraps to two lines. */
+.messages-thread-kicker {
+  color: var(--text-muted); font-size: 12px; font-weight: 700;
+  letter-spacing: 0.06em; text-transform: uppercase;
+}
+.messages-thread-name.dev-request-bar-title { white-space: normal; -webkit-line-clamp: 2; }
 .messages-thread-menu {
   position: absolute;
   z-index: 30;
@@ -20322,6 +20330,32 @@ html[data-browser-scroller] .dev-ws[data-ws-tab^="c:"] {
 .dev-ws-figs-rowname { font-size: 15px; line-height: 20px; font-weight: 650; color: var(--text-primary); }
 .dev-ws-figs-rowabout { font-size: 12px; line-height: 16px; color: var(--text-muted); }
 .dev-ws-figs-note { margin: 6px 4px 0; font-size: 12px; line-height: 16px; color: var(--text-muted); }
+/* #5683: most of a strip's figures still waiting for enough people fold into
+   one quiet sentence under "Last 30 days", with the ⓘ that explains them. */
+.dev-ws-figs-folded {
+  display: block; margin: 6px 4px 0;
+  font-size: 13px; line-height: 18px; color: var(--text-muted);
+}
+@media (max-width: 767.98px) {
+  /* #5683: the topic's line and the figures' lines keep the page's 16px
+     gutter on a phone, as the room under them does. */
+  .dev-ws-topic-head,
+  .dev-ws-figs-head,
+  .dev-ws-figs-note,
+  .dev-ws-figs-folded { padding-left: 12px; padding-right: 12px; }
+}
+/* #5683: an empty topic channel invites the first post, centred, as the
+   Messages app's empty states are; a viewer who cannot post reads the same
+   block without the invitation. */
+.gc-channel-empty {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 4px; min-height: 240px; padding: 24px;
+  text-align: center; color: var(--text-muted);
+}
+.gc-channel-empty-hash { font-size: 28px; line-height: 32px; font-weight: 700; color: var(--text-muted); }
+.gc-channel-empty-title { font-size: 15px; line-height: 20px; font-weight: 650; color: var(--text-primary); }
+.gc-channel-empty-about,
+.gc-channel-empty-invite { margin: 0; font-size: 13px; line-height: 18px; }
 @container (max-width: 560px) {
   .dev-ws-figs-tiles { grid-auto-flow: row; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .dev-ws-figs-tiles > .dev-ws-fig:last-child:nth-child(odd) { grid-column: 1 / -1; }

@@ -428,7 +428,7 @@ function TopicChannel({ slug, name, data, topic, readOnly, onPlace }: {
         name,
         readOnly: readOnly || closed,
         archived: false,
-        channel: { type: 'category', ref, markers: markersRef.current },
+        channel: { type: 'category', ref, markers: markersRef.current, handle: topic.handle, about: String(topic.about || '').trim() },
         placeholder: t('project:discussion.topic.placeholder', { handle: topic.handle }),
         notice,
       });

@@ -220,3 +220,19 @@ test('the header\'s own 52px row is the split of 12 and 12 at every width now', 
     /^html\[data-community-tint\] body:has\(#app-view:not\(\.hidden\)\) #platform-header \{\n  padding-bottom: 0\.75rem;\n\}/m,
     'and stands at the top level instead');
 });
+
+// ── #5683: the header keeps to the community you are in ─────────────────
+
+test('a place is trusted while its community\'s record is unread, and never a channel of another one', () => {
+  assert.equal(ui.cachedTopics('nothing-read'), null, 'no record: nothing is known');
+  assert.equal(ui.livePlace('nothing-read', 'c:onboarding'), 'c:onboarding',
+    'unread record: the page\'s own place stands');
+  assert.equal(ui.livePlace('nothing-read', 'status'), 'status');
+  assert.equal(ui.livePlace('nothing-read', 'workshop'), 'workshop');
+  // The header follows the same rule as the drawer's own switch, so a
+  // channel left behind by another community gives way to the Hub.
+  assert.match(read(`${DIR}/place-bar.tsx`), /const shown = livePlace\(slug, place\);[\s\S]*\{handle \|\| placeName\(shown\)\}/);
+  assert.match(read('frontend/src/features/nav-drawer/nav-drawer.tsx'),
+    /pageUp && slug\s*\? livePlace\(slug, placed\.place\)\s*: keepPlace\(rememberedPlace\(\), slug \? cachedTopics\(slug\) : null\)/,
+    'the drawer checks the page\'s own place too, and its fallback keeps only what the community has');
+});

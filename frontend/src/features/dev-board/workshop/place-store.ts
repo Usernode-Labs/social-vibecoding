@@ -228,6 +228,21 @@ export function cachedTopics(slug: string): string[] | null {
 }
 
 /**
+ * #5683: the place a page shows, checked against the community it is in. A
+ * channel left over from another community (Homeroom's #onboarding under
+ * KasirKU's name) gives way to the Hub. A topic is stale only when this
+ * community's record HAS been read and does not list it: while the record is
+ * unread, a place from elsewhere is trusted, and the drawer's own switch
+ * (keepPlace) is what drops one it cannot see. Pure.
+ */
+export function livePlace(slug: string, place: PlaceKey): PlaceKey {
+  if (typeof place !== 'string' || !place.startsWith('c:')) return place;
+  const topics = cachedTopics(slug);
+  if (!topics) return place;
+  return topics.includes(place.slice(2)) ? place : 'status';
+}
+
+/**
  * A SWITCH KEEPS YOUR PAGE, on a desktop as in the phone's drawer. Picking
  * another community from the header's ⌄ menu or from All communities opens
  * it on the place you were on when it has that place, else on its hub: the
