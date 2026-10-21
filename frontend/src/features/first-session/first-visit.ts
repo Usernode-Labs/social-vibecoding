@@ -61,6 +61,12 @@ export type WalkRecord = {
 
 export const TIP_PREFIX = 'usernode:first-session:tip:';
 export const WALK_PREFIX = 'usernode:first-session:walk:';
+/**
+ * The four cards "Look around first" owes somebody still on the waitlist:
+ * none of what they point at exists on the waiting room (#5678), so the
+ * tour waits for the first Home after the account is let in.
+ */
+export const LOOK_PREFIX = 'usernode:first-session:look:';
 export const DONE = 'done';
 
 /** How often the island looks at the screen while a tip or a walk is owed. */
@@ -84,6 +90,10 @@ export function tipKey(uid: Uid): string {
 
 export function walkKey(uid: Uid): string {
   return `${WALK_PREFIX}${uid}`;
+}
+
+export function lookKey(uid: Uid): string {
+  return `${LOOK_PREFIX}${uid}`;
 }
 
 function readRecord<T extends { slug: string }>(key: string, store: KeyStore | null): T | typeof DONE | null {
@@ -158,6 +168,25 @@ export function claimWalk(uid: Uid, store: KeyStore | null = local()): boolean {
   return true;
 }
 
+/** "Look around first" is owed to this person's first Home with access: never run on the waiting room. */
+export function oweLook(uid: Uid, store: KeyStore | null = local()): void {
+  // Opened once, it stays opened: a second press does not owe it again.
+  let seen: string | null = null;
+  try { seen = store ? store.getItem(lookKey(uid)) : null; } catch { return; }
+  if (seen === DONE) return;
+  write(lookKey(uid), 'owed', store);
+}
+
+/** The look-around tour this person is owed, or null (none, or opened already). */
+export function lookOwed(uid: Uid, store: KeyStore | null = local()): boolean {
+  try { return store?.getItem(lookKey(uid)) === 'owed'; } catch { return false; }
+}
+
+/** It is opening: never again for this person on this browser. */
+export function clearLook(uid: Uid, store: KeyStore | null = local()): void {
+  write(lookKey(uid), DONE, store);
+}
+
 /**
  * Whether anything is owed on this device, to anybody: read once as the
  * island mounts (a reload in the middle of a first visit), so it looks at
@@ -168,7 +197,7 @@ export function anyOwed(store: KeyStore | null = local()): boolean {
   try {
     for (let i = 0; i < store.length; i += 1) {
       const key = store.key(i);
-      if (!key || !(key.startsWith(TIP_PREFIX) || key.startsWith(WALK_PREFIX))) continue;
+      if (!key || !(key.startsWith(TIP_PREFIX) || key.startsWith(WALK_PREFIX) || key.startsWith(LOOK_PREFIX))) continue;
       const value = store.getItem(key);
       if (value && value !== DONE) return true;
     }

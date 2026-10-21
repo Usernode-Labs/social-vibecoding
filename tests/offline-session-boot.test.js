@@ -195,7 +195,7 @@ test('a device that has booted here before paints before it asks', () => {
   // The snapshot read comes FIRST, and the boot returns on it without ever
   // awaiting the session read.
   const snapAt = init.indexOf('const snap = App.readSessionSnapshot();');
-  const readAt = init.indexOf('res = await App._fetchSession();');
+  const readAt = init.indexOf('res = await App._fetchSession({ optional: true });');
   assert.ok(snapAt !== -1 && readAt !== -1);
   assert.ok(snapAt < readAt, 'the snapshot is consulted before the network is');
   assert.match(init.slice(snapAt),
@@ -209,7 +209,7 @@ test('a device with no snapshot still waits for the answer', () => {
   // Nothing to be optimistic WITH: the read is the only answer there is, and
   // the three outcomes (#1021) are unchanged.
   const init = APP.slice(APP.indexOf('async init()'), APP.indexOf('async _fetchSession()'));
-  const tail = init.slice(init.indexOf('res = await App._fetchSession();'));
+  const tail = init.slice(init.indexOf('res = await App._fetchSession({ optional: true });'));
   assert.match(tail, /if \(res && res\.ok\)/);
   assert.match(tail, /App\._dropCachedSession\(\);\s*await App\.enterAnonymous\(\);/,
     'an answered 401 is still authoritative and still drops every cached trace');

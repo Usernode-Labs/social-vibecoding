@@ -74,8 +74,8 @@ import { invalidateAppAllowance } from '../dialogs/app-allowance-store.js';
 import { AppTip } from './app-tip';
 import { cardPosition } from './card-placement';
 import {
-  anyOwed, armWalk, claimWalk, FIRST_VISIT_CHECK_MS, noteTipShown, noteWalkRun, oweTip, owedTip, owedWalk, oweWalk,
-  readScreen, type TipRecord, type TipWho, tipDue, walkArms, walkDue, type WalkRecord,
+  anyOwed, armWalk, claimWalk, clearLook, FIRST_VISIT_CHECK_MS, lookOwed, noteTipShown, noteWalkRun, oweLook, oweTip,
+  owedTip, owedWalk, oweWalk, readScreen, type TipRecord, type TipWho, tipDue, walkArms, walkDue, type WalkRecord,
 } from './first-visit';
 import { type Made, type MakeEntry, MakeScreen } from './make';
 import { MadeScreen, madeAppOf, madeAppUrl } from './made';
@@ -117,6 +117,8 @@ type Legacy = {
     user?: {
       id?: number; username?: string; displayName?: string | null; needsCommunitiesChoice?: boolean; privateMember?: boolean;
       homeroomBotDm?: boolean;
+      /** false while the account is still on the waitlist: the shell shows the waiting room. */
+      hasPlatformAccess?: boolean;
       waitlistIdea?: string | null;
     } | null;
     _notePrivateHome?: () => void;
@@ -1252,6 +1254,9 @@ export function FirstSession() {
   // The tour's steps are built in the language on screen, and again when it changes.
   const t = useMessages('onboarding');
   const [mode, setMode] = useState<Mode>({ kind: 'none' });
+  // The mode as it stands, for the listeners that outlive a render.
+  const modeRef = useRef(mode);
+  modeRef.current = mode;
   // The tip over the app, while it is up (./app-tip.tsx).
   const [tip, setTip] = useState<TipRecord | null>(null);
   // Bumped when a tip or a walk is owed, so the watcher below looks again.
@@ -1291,6 +1296,29 @@ export function FirstSession() {
     const onAuthed = () => check(true);
     document.addEventListener('sv:authed', onAuthed);
     return () => document.removeEventListener('sv:authed', onAuthed);
+  }, []);
+
+  // "Look around first" pressed on the waitlist (#5678): the four cards open
+  // on the first Home after the account is let in, never on the waiting
+  // room. `sv:authed` fires only past the access gate, so the waiting room's
+  // in-place release reaches it, and so does every later boot here.
+  useEffect(() => {
+    const check = () => {
+      const app = legacy().App;
+      const user = app?.user;
+      const uid = user?.id;
+      if (uid == null || user?.hasPlatformAccess === false) return;
+      if (!lookOwed(uid)) return;
+      // Another screen of the first session is up: the record waits for a
+      // later `sv:authed` rather than opening under it.
+      if (modeRef.current.kind !== 'none') return;
+      clearLook(uid);
+      app?.navigateHome?.();
+      setMode({ kind: 'tour', info: LOOK_AROUND_INFO, path: 'look' });
+    };
+    if (legacy().App?.user) check();
+    document.addEventListener('sv:authed', check);
+    return () => document.removeEventListener('sv:authed', check);
   }, []);
 
   // The bridge App._followInvite calls. welcome() answers whether it will
@@ -1587,6 +1615,15 @@ export function FirstSession() {
           if (shot) { setMode({ kind: 'none' }); return; }
           noteAnswered();
           void recordLookAround();
+          // Still waiting: the waiting room is what the shell shows, and
+          // none of the tour's four places is there. The answer still
+          // counts; the cards open on the first Home after they are let in.
+          if (legacy().App?.user?.hasPlatformAccess === false) {
+            const uid = legacy().App?.user?.id;
+            if (uid != null) oweLook(uid);
+            setMode({ kind: 'none' });
+            return;
+          }
           legacy().App?.navigateHome?.();
           setMode({ kind: 'tour', info: LOOK_AROUND_INFO, path: 'look' });
         }}

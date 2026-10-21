@@ -437,7 +437,9 @@ const App = {
     // page, signed out in effect by a dropped packet.
     let res = null;
     try {
-      res = await App._fetchSession();
+      // No snapshot: this device has nothing to paint, so the read asks the
+      // way that is answered instead of refused (#5678).
+      res = await App._fetchSession({ optional: true });
     } catch (err) {
       res = null;
     }
@@ -547,8 +549,15 @@ const App = {
   // /api/auth/me with a deadline. Resolves to the Response, or throws when
   // nothing arrived in time — an open-but-stalled socket must not hold the
   // whole boot, which is what left the reported blank screen.
-  async _fetchSession() {
-    const response = await App._fetchWebSession();
+  //
+  // `optional` asks for the answer "nobody is signed in" instead of a 401
+  // (#5678): only the boot of a device with no snapshot, which then has no
+  // failed request in the console. A native shell may still hold the session
+  // in its keychain, so it keeps asking, and the answer is turned back into
+  // the 401 every reader here already knows.
+  async _fetchSession({ optional = false } = {}) {
+    let response = await App._fetchWebSession({ optional });
+    if (optional) response = await App._settleOptionalSession(response);
     if (window.NativeChrome && typeof NativeChrome.restoreWebSession === 'function') {
       try {
         const restored = await NativeChrome.restoreWebSession({ force: response.status === 401 });
@@ -562,12 +571,26 @@ const App = {
     return response;
   },
 
-  async _fetchWebSession() {
+  // The optional read's "nobody" as the 401 it stands for, so _answeredSignedOut,
+  // the 401 branch of init and NativeChrome's `force` behave exactly as before.
+  // A body that cannot be read is left as the real response.
+  async _settleOptionalSession(response) {
+    if (!response || response.status !== 200) return response;
+    let body = null;
+    try { body = await response.clone().json(); } catch (err) { return response; }
+    if (!body || body.user !== null) return response;
+    return new Response('{"error":"Not authenticated"}', {
+      status: 401,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  },
+
+  async _fetchWebSession({ optional = false } = {}) {
     let timer = null;
     const ctrl = typeof AbortController === 'function' ? new AbortController() : null;
     if (ctrl) timer = setTimeout(() => ctrl.abort(), App.BOOT_SESSION_TIMEOUT_MS);
     try {
-      return await fetch('/api/auth/me', ctrl ? { signal: ctrl.signal } : undefined);
+      return await fetch(optional ? '/api/auth/me?optional=1' : '/api/auth/me', ctrl ? { signal: ctrl.signal } : undefined);
     } finally {
       if (timer) clearTimeout(timer);
     }

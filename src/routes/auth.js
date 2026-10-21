@@ -823,6 +823,15 @@ function authRoutes(config) {
 
   router.get('/api/auth/me', async (req, res) => {
     if (!req.user) {
+      // A boot that knows there may be nobody (a device with no saved
+      // session, #5678) asks with ?optional=1, and is told plainly that
+      // nobody is signed in: a 401 would be logged by the browser as a
+      // failed request on every signed-out load. Never cached either way,
+      // and the plain read keeps its 401 for every other caller.
+      if (req.query.optional === '1') {
+        res.set('Cache-Control', 'no-store');
+        return res.json({ user: null });
+      }
       return res.status(401).json({ error: 'Not authenticated' });
     }
     // Include BYOK state (#30) so the settings modal can render

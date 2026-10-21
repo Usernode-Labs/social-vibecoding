@@ -606,6 +606,12 @@ function redirectOrReject(req, res, next) {
     return res.redirect(302, '/?return_to=' + encodeURIComponent(target) + '#login');
   }
   if (req.path.startsWith('/api/')) {
+    // The boot's optional session read (#5678): a device with no saved
+    // session asks this way, so a signed-out load is answered "nobody"
+    // instead of refused with a request the browser logs as failed. The
+    // route (routes/auth.js) is what answers it. Every other
+    // unauthenticated API request is still a 401.
+    if (req.method === 'GET' && req.path === '/api/auth/me' && req.query?.optional === '1') return next();
     return res.status(401).json({ error: 'Not authenticated' });
   }
   // The app-host authorize hop answers a signed-out visitor itself (back to

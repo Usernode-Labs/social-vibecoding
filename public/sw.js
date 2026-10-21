@@ -530,6 +530,10 @@ function classifyRequest(method, url, acceptHeader, mode, selfOrigin) {
   // Auth endpoints are online-only — EXCEPT /api/auth/me, which is cached
   // so the SPA's boot check succeeds offline for a logged-in user.
   if (p.startsWith('/api/auth/') && p !== '/api/auth/me') return 'bypass';
+  // The optional boot read (#5678): "nobody is signed in" must never be
+  // replayed from the cache, and offline it is a non-answer, as the
+  // no-snapshot boot always was.
+  if (p === '/api/auth/me' && u.searchParams.get('optional') === '1') return 'bypass';
 
   // Group-chat attachment responses are files, not JSON or SPA documents.
   // In particular, clicking an image opens this URL as a navigation. If the
