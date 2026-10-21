@@ -61,9 +61,11 @@ test('a draining process runs at most DB_ADMIN_CONNECTIONS_DRAINING at once, the
   await new Promise((r) => setTimeout(r, 10));
   assert.equal(db._mainOperations.running, 4);
   assert.equal(db.shrinkForDrain(), 1);
+  assert.equal(db.drainExcess(), 3, 'three running above the drain limit');
   release();
   await Promise.all([...running, ...waiting]);
   assert.equal(most, 1, `one at a time once draining, none beside the four finishing (saw ${most})`);
+  assert.equal(db.drainExcess(), 0);
   assert.deepEqual(order.slice(0, 4), ['r0', 'r1', 'r2', 'r3']);
   assert.equal(db._mainOperations.running, 0);
 });

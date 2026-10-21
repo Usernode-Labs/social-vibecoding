@@ -1675,6 +1675,15 @@ function shrinkPoolsForDrain(workflowPlatform) {
   };
 }
 
+// Connections this draining process still holds above its drain sizes: the
+// ones checked out when it shrank, until they are given back.
+function retainedAboveDrain(workflowPlatform) {
+  try {
+    return require('./src/db/pool').drainExcess() + workflowPlatform.drainExcess()
+      + require('./src/services/db-manager').drainExcess();
+  } catch { return 0; }
+}
+
 // A release replaced this process: send its tabs to the new Pod, and finish
 // what it holds (services/processes.js: its own, in memory), its background
 // work (inflight-work.js), its workflow work and its requests still
@@ -1691,6 +1700,7 @@ async function drainUntilIdle({ deadline, announced }) {
     background: inflightWork.snapshot().slice(0, 20),
     workflowWork: workflowPlatform.workflowWorkRunning(),
     requests: inflightRequests.pending(),
+    aboveDrainSizes: retainedAboveDrain(workflowPlatform),
   });
   log.info('server', 'Finishing this process\'s work before exiting', {
     sockets: closed, deadlineMs: Math.max(0, deadline - Date.now()), pools, ...busy(),
@@ -1704,6 +1714,11 @@ async function drainUntilIdle({ deadline, announced }) {
     // Too many newer processes draining, or no successor serving any more
     // (it died: the platform is going down): hand the rest over now.
     superseded: async () => {
+      // Still holding connections above its drain sizes when another
+      // process of its role starts: the budget has room for one such
+      // process per role, in the rollout's surge slot (processes.js
+      // startedSinceDrain).
+      if (retainedAboveDrain(workflowPlatform) > 0 && (await processes.startedSinceDrain()) > 0) { why = 'retained'; return true; }
       if ((await processes.newerDraining()) >= maxDraining) { why = 'crowded'; return true; }
       if ((await processes.servingOthers()) === 0) { why = 'alone'; return true; }
       return false;
@@ -1715,6 +1730,7 @@ async function drainUntilIdle({ deadline, announced }) {
   } else {
     const message = outcome.reason === 'deadline' ? 'Drain deadline passed; handing the rest of this process\'s work over'
       : why === 'alone' ? 'No successor is serving any more; handing the rest of this process\'s work over'
+        : why === 'retained' ? 'A newer process started while this one still held connections above its drain sizes; handing its work over'
         : 'Newer processes are draining too; handing the rest of this one\'s work over';
     log.warn('server', message, { waitedMs: outcome.waitedMs, maxDraining, ...busy() });
   }

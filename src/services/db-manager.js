@@ -3771,6 +3771,8 @@ module.exports = {
   _mainOperations: mainOperations,
   _onMainServer: onMainServer,
   shrinkForDrain,
+  // Operations still running above the drain limit (server.js drainUntilIdle).
+  drainExcess: () => Math.max(0, mainOperations.running - mainOperations.limit),
   appDbName,
   stagingDbName,
   shotsDbName,

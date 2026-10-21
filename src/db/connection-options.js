@@ -56,4 +56,11 @@ function shrinkPool(pool, max) {
   return pool.options.max;
 }
 
-module.exports = { connectionName, connectionOptions, shrinkPool, IDLE_IN_TRANSACTION_MS };
+// Connections a shrunk pool still holds above its size: the ones that were
+// checked out when it shrank, until they are given back.
+function poolExcess(pool) {
+  if (!pool || !pool.options) return 0;
+  return Math.max(0, (pool.totalCount || 0) - pool.options.max);
+}
+
+module.exports = { connectionName, connectionOptions, shrinkPool, poolExcess, IDLE_IN_TRANSACTION_MS };

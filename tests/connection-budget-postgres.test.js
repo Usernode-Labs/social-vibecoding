@@ -90,7 +90,7 @@ test('a draining process\'s pool shrinks: idle connections above it close now, b
     t.skip('PostgreSQL unavailable; set TEST_DATABASE_URL to require this check'); return;
   }
   t.after(() => probe.end());
-  const { shrinkPool } = require('../src/db/connection-options');
+  const { shrinkPool, poolExcess } = require('../src/db/connection-options');
   const name = `drain-shrink-${process.pid}`;
   const pool = new Pool({ connectionString: DSN, max: 4, application_name: name, connectionTimeoutMillis: 300, idleTimeoutMillis: 60000 });
   const given = new Set();
@@ -107,9 +107,11 @@ test('a draining process\'s pool shrinks: idle connections above it close now, b
   assert.equal(await open(), 4);
   assert.equal(shrinkPool(pool, 1), 1);
   assert.equal(await until(2), 2, 'the two idle ones closed at once');
+  assert.equal(poolExcess(pool), 1, 'one still above its size, checked out (server.js drainUntilIdle reads it)');
   back(clients[0]);
   back(clients[1]);
   assert.equal(await until(1), 1, 'given back, the busy ones above it closed too');
+  assert.equal(poolExcess(pool), 0);
   // And none is opened past it again: a second caller waits, then fails.
   const held = await pool.connect();
   given.add(held);

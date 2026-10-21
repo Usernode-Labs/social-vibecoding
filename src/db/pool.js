@@ -58,4 +58,9 @@ function shrinkForDrain(config) {
   return require('./connection-options').shrinkPool(pool, (config && config.drainDbPoolMax) || 4);
 }
 
-module.exports = { getPool, shrinkForDrain };
+// What it still holds above its drain size (server.js drainUntilIdle).
+function drainExcess() {
+  return require('./connection-options').poolExcess(pool);
+}
+
+module.exports = { getPool, shrinkForDrain, drainExcess };

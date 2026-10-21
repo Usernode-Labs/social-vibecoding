@@ -368,6 +368,15 @@ test('a draining process shrinks its pools as its drain begins: main, workflow, 
   const waits = drain.indexOf('await drain.untilIdle(');
   assert.ok(announced > 0 && shrunk > announced && waits > shrunk, 'once the successor is announced, before the wait');
   const shrink = src.slice(src.indexOf('function shrinkPoolsForDrain('), src.indexOf('async function drainUntilIdle('));
+  // Still above its drain sizes when another process of its role starts:
+  // it hands its work over, first of the reasons to (the budget has room for
+  // one such process per role, in the surge slot).
+  const handover = drain.indexOf("if (retainedAboveDrain(workflowPlatform) > 0 && (await processes.startedSinceDrain()) > 0) { why = 'retained'; return true; }");
+  assert.ok(handover > waits && handover < drain.indexOf('processes.newerDraining()'), 'asked in superseded, before the others');
+  const retained = src.slice(src.indexOf('function retainedAboveDrain('), src.indexOf('async function drainUntilIdle('));
+  for (const part of ["require('./src/db/pool').drainExcess()", 'workflowPlatform.drainExcess()', "require('./src/services/db-manager').drainExcess()"]) {
+    assert.ok(retained.includes(part), part);
+  }
   for (const call of ["require('./src/db/pool').shrinkForDrain(config)", 'workflowPlatform.shrinkForDrain(config)',
     "require('./src/services/db-manager').shrinkForDrain()", "require('./src/services/debug-access').closePool()"]) {
     assert.ok(shrink.includes(call), call);

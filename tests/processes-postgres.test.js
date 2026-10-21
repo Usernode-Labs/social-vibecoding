@@ -176,6 +176,18 @@ test('processes and the roster, against the full schema', { timeout: 120000 }, a
     } finally {
       if (own === undefined) delete process.env.GIT_SHA; else process.env.GIT_SHA = own;
     }
+    // Started since this drain began (item 4: a draining process still
+    // above its drain sizes hands over when one does): live, of a role that
+    // could replace this one, in any state; not one older than the drain.
+    await pool.query('DELETE FROM platform_processes WHERE id <> $1', [processes.ID]);
+    assert.equal(await processes.startedSinceDrain(), 0);
+    await pool.query(`INSERT INTO platform_processes (id, state, started_at) VALUES ('pod-before', 'serving', NOW() - interval '1 hour')`);
+    await other('pod-web-new', { role: 'web' });
+    await other('pod-dead-new', { ageSeconds: 600 });
+    assert.equal(await processes.startedSinceDrain(), 0, 'older, another role, or gone');
+    await other('pod-conductor-new', { role: 'conductor' });
+    await other('pod-all-new-draining', { state: 'draining', drainStartedAt: new Date() });
+    assert.equal(await processes.startedSinceDrain(), 2);
     // A beat keeps the drain: it does not put the row back to serving.
     await processes.beat();
     assert.equal((await pool.query('SELECT state FROM platform_processes WHERE id = $1', [processes.ID])).rows[0].state, 'draining');

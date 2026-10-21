@@ -167,6 +167,11 @@ export function shrinkForDrain(config: any): number | null {
   return legacy('db/connection-options').shrinkPool(kernelPool, Math.max(2, Number(config?.drainWfPoolMax) || 2));
 }
 
+// What it still holds above its drain size (server.js drainUntilIdle).
+export function drainExcess(): number {
+  return legacy('db/connection-options').poolExcess(kernelPool);
+}
+
 export async function startWorkflow(config: any, opts: { loops: boolean }): Promise<void> {
   log = legacy('services/logger');
   appConfig = config;

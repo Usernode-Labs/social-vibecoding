@@ -99,7 +99,13 @@ share reserved for its user. Each role counts its serving Pods plus one more
 platform.drainPools, and five connections per process outside its pools
 (the bus listener, presence, the lock connection, the debug pool, the
 build-retention guard). A database operation counts twice: one can hold two
-connections at once (pg_dump beside pg_restore; services/db-manager.js). The migration Job adds its pool plus two (its
+connections at once (pg_dump beside pg_restore; services/db-manager.js).
+A replaced Pod keeps the connections checked out when it shrank until they
+are given back, so for a while it holds more than its drain sizes. It is
+counted in its role's surge slot: it hands its work over and exits as soon
+as another process of its role starts (server.js drainUntilIdle,
+processes.js startedSinceDrain), so no two are above their drain sizes
+beside the serving Pods. The migration Job adds its pool plus two (its
 administrative connection and a psql).
 */}}
 {{- define "social-vibecoding-platform.connectionBudget" -}}

@@ -311,6 +311,24 @@ async function servingOthers() {
   return row?.n || 0;
 }
 
+/**
+ * How many live processes that could replace this one started after its
+ * drain began, in any state: the next Pod of a rollout. The connection
+ * budget counts a draining process at its drain sizes, so one that still
+ * holds more (connections checked out when it shrank) hands its work over
+ * when another starts (server.js drainUntilIdle): no two processes of a
+ * role are above their drain sizes beside the serving ones.
+ */
+async function startedSinceDrain() {
+  if (!started || !pool || !draining) return 0;
+  const { rows: [row] } = await pool.query(
+    `SELECT count(*)::int AS n FROM platform_processes
+      WHERE id <> $1 AND role = ANY($2::text[]) AND started_at > $3
+        AND heartbeat_at > NOW() - make_interval(secs => $4)`,
+    [ID, successorRoles(role), draining.since, LIVE_SECONDS]);
+  return row?.n || 0;
+}
+
 /** The process-reap clock: delete the rows of processes long gone. */
 async function reap(db = pool) {
   if (!db) return 0;
@@ -373,6 +391,7 @@ module.exports = {
   start,
   markDraining,
   newerDraining,
+  startedSinceDrain,
   servingOthers,
   reap,
   list,
