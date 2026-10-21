@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
-const { englishPlatformI18n } = require('./lib/platform-i18n');
+const { englishPlatformI18n, message } = require('./lib/platform-i18n');
 const source = fs.readFileSync(path.join(__dirname, '../frontend/src/features/dialogs/feedback-controller.js'), 'utf8')
   .replace(/^import .*$/gm, '').replace(/^export /gm, '') + '\nglobalThis.Feedback = Feedback;';
 const moment = { userId: 7, appSlug: 'filed-app', issueNumber: 41, canFix: true };
@@ -334,7 +334,9 @@ test('#3971: a first request the bot builds is the bot\'s answer, with the first
   assert.equal(h.el('feedback-sent-title').textContent, BOT_TITLE);
   assert.equal(h.el('feedback-sent-line').textContent, botLine(6));
   assert.equal(h.el('feedback-sent-first').classList.contains('hidden'), false, 'the first request says so');
-  assert.equal(h.el('feedback-sent-first-line').textContent, 'You just helped shape Other App.');
+  // #5757: this submits to Homeroom, so the box names Homeroom rather than
+  // the app that happened to be open.
+  assert.equal(h.el('feedback-sent-first-line').textContent, 'You just helped shape Homeroom.');
   assert.equal(h.el('feedback-sent-chat').classList.contains('hidden'), false, 'Open chat is still there, under Done');
   // Another account's moment is not this person's first request.
   const other = harness({ response: { firstFeedback: { ...moment, userId: 8 }, homeroomBot: BOT } });
@@ -346,6 +348,22 @@ test('#3971: a first request the bot builds is the bot\'s answer, with the first
   h.sandbox.fetch = async () => ({ ok: true, json: async () => ({ homeroomBot: BOT }) });
   await h.submit();
   assert.ok(h.el('feedback-sent-first').classList.contains('hidden'));
+});
+// #5757: the box names the place the request went to. A first request sent to
+// an app still names that app; and the box now says what the bot does next.
+test('#5757: a first request to an app names the app, and the box says the bot will look at it', async () => {
+  const h = harness({ response: { firstFeedback: moment, homeroomBot: BOT } });
+  h.el('feedback-text').value = 'The board jumps.';
+  h.el('feedback-target-app').click();
+  h.el('feedback-submit').click();
+  await settle();
+  assert.equal(h.el('feedback-sent-first-line').textContent, 'You just helped shape Other App.');
+  // The line is static React text, so the controller never writes into it.
+  const tsx = require('node:fs').readFileSync(require('node:path').join(__dirname, '../frontend/src/features/dialogs/feedback.tsx'), 'utf8');
+  const box = tsx.slice(tsx.indexOf('<div id="feedback-sent-first"'), tsx.indexOf('<div id="feedback-sent-first"') + 2000);
+  assert.match(box, /t\('dialogs:feedback\.sent\.firstBot'\)/);
+  assert.equal(message('dialogs:feedback.sent.firstBot'),
+    'Homeroom bot will pick up your request and look at it. It will message you in your chat with it: a question if something is unclear, a note if a person needs to decide, or a change to vote on if it can build it.');
 });
 test('#3971: the minutes fall back to 8 when the post does not say', async () => {
   const h = harness({ response: { homeroomBot: { ...BOT, typicalMinutes: null } } });

@@ -1735,6 +1735,10 @@
     "text": "You just helped shape this app.",
     "description": "Line under \"Your first request!\" in the confirmation, when the app's name is not known."
   },
+  "feedback.sent.firstBot": {
+    "text": "Homeroom bot will pick up your request and look at it. It will message you in your chat with it: a question if something is unclear, a note if a person needs to decide, or a change to vote on if it can build it.",
+    "description": "Line in the green \"Your first request!\" box of the confirmation, when Homeroom bot is taking the request. \"Homeroom bot\" is the assistant's name and stays as it is."
+  },
   "feedback.sent.chat": {
     "text": "Open chat",
     "description": "Main button of the confirmation when the assistant is building the request: opens the chat with Homeroom bot. \"Open\" is a verb."
