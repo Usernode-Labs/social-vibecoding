@@ -12,7 +12,7 @@ const log = require('./logger');
 function createGuard({ makeClient = (config) => new Client({
   connectionString: config.databaseUrl,
   connectionTimeoutMillis: 5000,
-  application_name: 'social-build-retention-guard',
+  application_name: require('../db/connection-options').connectionName('retention'),
 }), onLockLost = () => process.exit(1), retryMs = 250 } = {}) {
   let current = null;
   let tail = Promise.resolve();

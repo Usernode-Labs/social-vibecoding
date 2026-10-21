@@ -851,11 +851,8 @@ function load() {
     // app opened in the last week, re-drafting themes at most daily.
     workshopSweepIntervalMs: parseInt(process.env.WORKSHOP_THEMES_SWEEP_INTERVAL_MS || String(60 * 60 * 1000), 10),
     // How many 'error' verdicts in a row the checks' error lane re-runs on
-    // its own (staging-recovery.checkMaxAutoRetries, CHECK_MAX_AUTO_RETRIES).
-    checkMaxAutoRetries: (() => {
-      const n = Number.parseInt(process.env.CHECK_MAX_AUTO_RETRIES || '6', 10);
-      return Number.isFinite(n) ? n : 6;
-    })(),
+    // its own (workflow/rules/check-retries.ts, CHECK_MAX_AUTO_RETRIES).
+    checkMaxAutoRetries: require('./workflow/rules/check-retries.ts').checkMaxAutoRetries(),
     // Its own pool, so pipeline slots and the outcome listener never take
     // request connections, and how many slots each process runs, by role
     // (services/process-role.js runsWorkflow). A process that runs the

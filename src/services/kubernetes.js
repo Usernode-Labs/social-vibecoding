@@ -2231,7 +2231,15 @@ async function getWorkerRuntimeMetadata(config, runtimeName) {
   }
 }
 
-async function deleteWorker(config, sessionId, { deleteVolume = false } = {}) {
+// How long a deletion that waits (`waitGone`: an eviction, which a turn
+// starting on the session waits for, services/worker-eviction.js) waits for
+// its worker's Deployment to be gone. Foreground propagation keeps it,
+// marked for deletion, until its Pods have terminated; a worker ensured
+// meanwhile would update the Deployment about to go and wait for a bootstrap
+// that never comes.
+const WORKER_GONE_WAIT_MS = 3 * 60 * 1000;
+
+async function deleteWorker(config, sessionId, { deleteVolume = false, waitGone = false, waitMs = WORKER_GONE_WAIT_MS, pollMs = 1000 } = {}) {
   const namespace = config.kubernetes.workerNamespace;
   const name = dnsName(`sv-worker-s${sessionId}`);
   const { apps, core } = getClients();
@@ -2240,6 +2248,18 @@ async function deleteWorker(config, sessionId, { deleteVolume = false } = {}) {
     deleteIfPresent(core, 'deleteNamespacedSecret', withSuffix(name, 'env'), namespace),
   ]);
   if (deleteVolume) await deleteIfPresent(core, 'deleteNamespacedPersistentVolumeClaim', withSuffix(name, 'state'), namespace);
+  if (!waitGone) return;
+  const deadline = Date.now() + waitMs;
+  for (;;) {
+    try {
+      await apps.readNamespacedDeployment({ name, namespace });
+    } catch (err) {
+      if (isNotFound(err)) return;
+      throw err;
+    }
+    if (Date.now() >= deadline) throw new Error(`Worker ${name} is still being deleted after ${Math.round(waitMs / 1000)} s`);
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
+  }
 }
 
 // A session's worker resources by identity (their uids; null for one that

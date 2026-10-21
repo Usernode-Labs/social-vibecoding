@@ -2,10 +2,11 @@
 
 // What roadmap item 3.2 drops, against a database that still has it: the
 // schema, applied over a deployment that kept the old names and leases,
-// leaves none of them, and keeps what the release before it still reads
-// while it drains (process_holds, shots_eval_trials.proxy_cents,
-// apps.creating_owner / creating_heartbeat_at, starter_images.owner /
-// heartbeat_at, local_agent_turns.waiter_seen_at).
+// leaves none of them. What 3.2 kept one release for the release before it
+// (process_holds, shots_eval_trials.proxy_cents, apps.creating_owner /
+// creating_heartbeat_at, starter_images.owner / heartbeat_at) is gone too;
+// local_agent_turns.waiter_seen_at stays one release more, written by 3.2's
+// own release while it drains, its index gone.
 //
 // Skipped when no server is reachable, required when TEST_DATABASE_URL is set.
 // Run with: TEST_DATABASE_URL=postgres://... node --test tests/rollout-remnants-schema-postgres.test.js
@@ -19,7 +20,7 @@ const { Pool } = require('pg');
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
 const SCHEMA = fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8');
 
-test('the schema drops the rollout-only remnants of a deployment that has them, and keeps what the previous release reads', { timeout: 120000 }, async (t) => {
+test('the schema drops the rollout-only remnants of a deployment that has them, and keeps what the previous release writes', { timeout: 120000 }, async (t) => {
   const admin = new Pool({ connectionString: DSN, connectionTimeoutMillis: 2000 });
   try { await admin.query('SELECT 1'); } catch (err) {
     await admin.end();
@@ -56,7 +57,15 @@ test('the schema drops the rollout-only remnants of a deployment that has them, 
     DROP TRIGGER maintenance_campaign_apps_wf_owned ON maintenance_campaign_apps;
     CREATE TRIGGER maintenance_campaign_apps_wf_owned BEFORE UPDATE ON maintenance_campaign_apps FOR EACH ROW
       WHEN (wf_holds('campaign', 'campaign:' || OLD.campaign_id)) EXECUTE FUNCTION wf_guard_owned_columns('state', 'error', 'runner_id');
-    ALTER TABLE apps ALTER COLUMN creating_owner DROP DEFAULT;
+    CREATE TABLE process_holds (
+      process_id TEXT NOT NULL REFERENCES platform_processes(id) ON DELETE CASCADE,
+      kind TEXT NOT NULL, ref TEXT NOT NULL, since TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (process_id, kind, ref));
+    ALTER TABLE shots_eval_trials ADD COLUMN proxy_cents NUMERIC(12,4) NOT NULL DEFAULT 0;
+    ALTER TABLE apps ADD COLUMN creating_owner TEXT DEFAULT 'workflow', ADD COLUMN creating_heartbeat_at TIMESTAMPTZ;
+    ALTER TABLE starter_images ADD COLUMN owner TEXT, ADD COLUMN heartbeat_at TIMESTAMPTZ;
+    CREATE INDEX local_agent_turns_waiting_idx ON local_agent_turns (waiter_seen_at)
+      WHERE waiter_id IS NOT NULL AND tail_claimed_at IS NULL;
   `);
   await pool.query(SCHEMA);
 
@@ -73,7 +82,7 @@ test('the schema drops the rollout-only remnants of a deployment that has them, 
   assert.ok(sessions.includes('shots_state'), 'the renamed columns stay');
   const apps = await columns('apps');
   assert.equal(apps.includes('creating_redrives'), false);
-  assert.ok(apps.includes('creating_owner') && apps.includes('creating_heartbeat_at'), 'the previous release still reads these');
+  assert.deepEqual(apps.filter((c) => ['creating_owner', 'creating_heartbeat_at'].includes(c)), []);
   assert.deepEqual((await columns('maintenance_campaigns')).filter((c) => ['runner_id', 'lease_until'].includes(c)), []);
   assert.equal((await columns('maintenance_campaign_apps')).includes('runner_id'), false);
   // The guard triggers name only the columns that are there.
@@ -82,21 +91,19 @@ test('the schema drops the rollout-only remnants of a deployment that has them, 
   assert.equal(guards.length, 2);
   for (const g of guards) assert.doesNotMatch(g.def, /runner_id|lease_until/);
 
-  // What the release before this one reads as it drains stays.
-  assert.notEqual((await pool.query(`SELECT to_regclass('process_holds') AS t`)).rows[0].t, null);
-  assert.ok((await columns('shots_eval_trials')).includes('proxy_cents'));
-  assert.ok((await columns('starter_images')).includes('owner'));
+  // What 3.2 kept one release is gone.
+  assert.equal((await pool.query(`SELECT to_regclass('process_holds') AS t`)).rows[0].t, null);
+  assert.equal((await columns('shots_eval_trials')).includes('proxy_cents'), false);
+  assert.deepEqual((await columns('starter_images')).filter((c) => ['owner', 'heartbeat_at'].includes(c)), []);
+  // 3.2's own release still writes waiter_seen_at while it drains: the
+  // column stays one release more; its index (read by nothing) goes.
   assert.ok((await columns('local_agent_turns')).includes('waiter_seen_at'));
+  assert.equal((await pool.query(`SELECT to_regclass('local_agent_turns_waiting_idx') AS t`)).rows[0].t, null);
 
-  // A row inserted with no owner is the workflow's by default: the previous
-  // release's trigger, which a rollback applies again, starts only those.
+  // A project's insert starts its making.
   const { rows: [u] } = await pool.query(`INSERT INTO users (username, password) VALUES ('maker', 'x') RETURNING id`);
-  const { rows: [plain] } = await pool.query(
-    `INSERT INTO apps (name, slug, created_by, status) VALUES ('q', 'q', $1, 'running') RETURNING creating_owner`, [u.id]);
-  assert.equal(plain.creating_owner, 'workflow');
-  // A project's insert starts its making whatever its owner columns say.
   const { rows: [a] } = await pool.query(
-    `INSERT INTO apps (name, slug, created_by, status, creating_owner) VALUES ('p', 'p', $1, 'creating', 'old-token') RETURNING id`, [u.id]);
+    `INSERT INTO apps (name, slug, created_by, status) VALUES ('p', 'p', $1, 'creating') RETURNING id`, [u.id]);
   const { rows: events } = await pool.query(`SELECT type FROM wf_events WHERE machine = 'app-creation' AND key = $1`, [`app:${a.id}`]);
   assert.deepEqual(events.map((e) => e.type), ['Started']);
 });

@@ -59,7 +59,7 @@ function rowPool(turn, { session = SESSION } = {}) {
       turn.claims = (turn.claims || 0) + 1;
       return { rows: [{ ...turn.row }] };
     }
-    if (/SET waiter_seen_at = NOW\(\)\s+WHERE id = \$1 AND waiter_id = \$2 AND tail_claimed_at IS NULL/.test(text)) {
+    if (/SELECT id FROM local_agent_turns\s+WHERE id = \$1 AND waiter_id = \$2 AND tail_claimed_at IS NULL/.test(text)) {
       return { rows: params[1] === turn.row.waiter_id && !turn.row.tail_claimed_at ? [{ id: turn.row.id }] : [] };
     }
     if (/SET tail_finished_at = NOW\(\)/.test(text)) { turn.row.tail_finished_at = 'now'; return { rows: [] }; }

@@ -3305,6 +3305,14 @@ async function ensureWorker(sessionId, {
   }
   await accountDeletionGuard(sessionId);
   const containerName = workerRuntimeName(sessionId);
+  // Used from now (services/worker-eviction.js noteUsed): an eviction under
+  // way is waited for, so the status read below finds its worker gone, and
+  // an eviction about to claim it finds it used.
+  const usedPool = _getPoolSafe();
+  if (usedPool) {
+    await require('./worker-eviction').noteUsed(usedPool, sessionId)
+      .catch((err) => log.warn('worker', 'Could not note a worker as used', { sessionId, err: err.message }));
+  }
 
   // Coalesce concurrent ensures — if one's already racing, await it.
   const existing = _registryGet(sessionId);
@@ -5523,7 +5531,11 @@ async function evictWorker(sessionId) {
   const containerName = meta?.containerName || workerContainerName(sessionId);
   await rescueUnpushedCommit(sessionId);
   if (usesKubernetesWorkers()) {
-    await kubernetes.deleteWorker(kubernetesWorkerConfig(), sessionId, { deleteVolume: false }).catch(() => {});
+    // Gone before it returns: the eviction holds its session's lock until
+    // then, and a turn starting on the session waits for it
+    // (services/worker-eviction.js).
+    await kubernetes.deleteWorker(kubernetesWorkerConfig(), sessionId, { deleteVolume: false, waitGone: true })
+      .catch((err) => log.warn('worker', 'Evicted worker not confirmed gone', { containerName, err: err.message }));
   } else {
     await docker.stopAndRemove(containerName).catch(() => {});
   }

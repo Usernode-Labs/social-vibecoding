@@ -328,7 +328,6 @@ const ADOPTIONS: readonly Adoption[] = Object.freeze([
   ['mergeQueues', () => adoptMergeQueues()],
   ['previews', (release: string) => restPreviews(release)],
   ['platformFaults', () => retryPlatformFaults()],
-  // Up to a few thousand appends on the first release.
   ['closedProposals', (release: string) => retainClosedProposals(release)],
   // What the cluster runs for every app, as this build says: the shared
   // hosted-asset backend. (The app-host gate's routing is a clock only the
@@ -1089,9 +1088,10 @@ export async function previewEnvStale(sessionId: number, appId: number | null, a
 }
 
 // A closed proposal whose CC volume is still there and that has no purge
-// queued (closed before the proposal machine queued one with the close, or
-// never held by it) gets its retention purge: a held one by Rearm, an
-// unheld one by its adoption. Once per release. Resolves how many.
+// queued (one given up after its attempts, or retention switched on after
+// the close) gets its retention purge again, by Rearm. Once per release.
+// Every close is the proposal machine's (Close creates its instance), so no
+// archived proposal is without one. Resolves how many.
 async function retainClosedProposals(release: string): Promise<number> {
   if (!runtime || process.env.USERNODE_ENV === 'staging' || !(Number(appConfig?.archivedRetentionMs) > 0)) return 0;
   const { rows: held } = await kernelPool!.query(
@@ -1105,16 +1105,7 @@ async function retainClosedProposals(release: string): Promise<number> {
       { requestKey: `retain:${release}:${r.id}`, source: sys('release'), appId: r.app_id ?? undefined })
       .catch((err: Error) => log!.warn('workflow', 'Could not queue a closed proposal\'s purge', { sessionId: r.id, message: err.message }));
   }
-  const { rows: unheld } = await kernelPool!.query(
-    `SELECT cs.id, cs.app_id FROM chat_sessions cs
-      WHERE cs.status = 'archived' AND cs.cc_purged = FALSE AND cs.archived_at IS NOT NULL
-        AND NOT EXISTS (SELECT 1 FROM wf_instances w WHERE w.machine = $1 AND w.key = 'session:' || cs.id)
-      ORDER BY cs.id LIMIT 2000`, [PROPOSAL]);
-  for (const r of unheld) {
-    await proposalAdopted({ sessionId: r.id, appId: r.app_id })
-      .catch((err: Error) => log!.warn('workflow', 'Could not adopt a closed proposal', { sessionId: r.id, message: err.message }));
-  }
-  return held.length + unheld.length;
+  return held.length;
 }
 
 // A release is when a fix to the platform's own fault (a check Job refused
@@ -1303,25 +1294,35 @@ export async function adminApplyProposal(
 
 const count = (n: unknown) => (Number.isInteger(n) && (n as number) >= 0 ? n as number : null);
 
-// A merge found on GitHub that no attempt here reported (somebody merged the
-// pull request by hand while it was up for a vote: the merged-by-hand clock
-// looks every six hours, and the imported-prs clock at each imported one,
-// services/proposal-scans.js).
-// The tally is read again: the counted Yes votes on the version that merged,
-// and the app's active members.
-export async function mergeObserved(m: { sessionId: number; appId: number; mergeSha: string | null; mergedAt: string | null }): Promise<number> {
+// GitHub's word on a proposal's pull request, as a look read it: an
+// imported one's (services/pr-import-sync.js, the imported-prs clock and the
+// webhook) or a native one merged by hand while up for its vote (the
+// merged-by-hand clock, services/proposal-scans.js). The proposal machine
+// decides what follows (PrLooked). A merge carries the tally read here: the
+// counted Yes votes on the version that merged, and the app's active
+// members. Resolves whether the machine took it.
+export async function prLooked(m: { sessionId: number; appId: number; from: string; merged: boolean; closed: boolean;
+  mergeSha: string | null; mergedAt: string | null; closedAt: string | null }): Promise<boolean> {
   const pool = kernelPool!;
-  const { rows: [v] } = await pool.query(
-    `SELECT count(*)::int AS yes, cs.votes_required FROM pr_votes pv JOIN chat_sessions cs ON cs.id = pv.session_id
-      WHERE pv.session_id = $1 AND pv.vote = 'yes' AND ${countedVotePredicateSql('pv', 'cs')}
-      GROUP BY cs.votes_required`, [m.sessionId]);
-  const stats = await pool.query('SELECT self_hosted, collab_visibility FROM apps WHERE id = $1', [m.appId])
-    .then(({ rows: [a] }) => activeUserStats(pool, m.appId, appMetaFromRow(a))).catch(() => null);
-  return runtime!.append(MERGE, sessionKey(m.sessionId), { type: 'Merged', payload: {
-    sessionId: m.sessionId, mergeSha: m.mergeSha, mergedAt: m.mergedAt || new Date().toISOString(), force: false,
-    observedBy: 'recovery',
-    tally: { yes: v?.yes ?? 0, required: count(v?.votes_required), active: count(stats?.active) },
-  } }, { requestKey: `merged:${m.sessionId}:recovery`, source: { kind: 'system', name: 'recovery' }, appId: m.appId });
+  let tally = null;
+  if (m.merged) {
+    const { rows: [v] } = await pool.query(
+      `SELECT count(*)::int AS yes, cs.votes_required FROM pr_votes pv JOIN chat_sessions cs ON cs.id = pv.session_id
+        WHERE pv.session_id = $1 AND pv.vote = 'yes' AND ${countedVotePredicateSql('pv', 'cs')}
+        GROUP BY cs.votes_required`, [m.sessionId]);
+    const stats = await pool.query('SELECT self_hosted, collab_visibility FROM apps WHERE id = $1', [m.appId])
+      .then(({ rows: [a] }) => activeUserStats(pool, m.appId, appMetaFromRow(a))).catch(() => null);
+    tally = { yes: v?.yes ?? 0, required: count(v?.votes_required), active: count(stats?.active) };
+  }
+  const what = m.merged ? 'merged' : 'closed';
+  // The same reading within a minute (the webhook's and the clock's) is one
+  // event; a close still settling is looked at again on the next run.
+  const out = await proposalEvent('PrLooked', { from: m.from, merged: m.merged, closed: m.closed, mergeSha: m.mergeSha,
+    mergedAt: m.mergedAt, closedAt: m.closedAt, readAt: new Date().toISOString(), tally },
+  { sessionId: m.sessionId, appId: m.appId, source: sys('pr-look'), waitMs: 5000,
+    requestKey: `pr-looked:${m.sessionId}:${what}:${m.mergedAt || m.closedAt || '-'}:${Math.floor(Date.now() / 60000)}` });
+  // Taken once decided: one still pending is the next look's to report again.
+  return typeof out === 'object' && out != null && ['accepted', 'replayed'].includes((out as any).status);
 }
 
 // The platform's own app now runs `sha` (its release booting): every merge

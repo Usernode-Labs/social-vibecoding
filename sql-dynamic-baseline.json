@@ -1895,6 +1895,13 @@
     {
       "source": "src/services/worker-eviction.js",
       "kind": "structural-template",
+      "fingerprint": "45d5221ce0b9c759fbb8",
+      "count": 1,
+      "preview": "`DELETE FROM session_workers sw USING chat_sessions cs WHERE sw.session_id = $1 AND cs.id = sw.session_id AND sw.last_used_at = $2::timestamptz AND NOT ${worked"
+    },
+    {
+      "source": "src/services/worker-eviction.js",
+      "kind": "structural-template",
       "fingerprint": "c4aead63358129d5b7a9",
       "count": 1,
       "preview": "`SELECT sw.session_id, sw.last_used_at::text AS last_used_at FROM session_workers sw JOIN chat_sessions cs ON cs.id = sw.session_id WHERE sw.last_used_at < NOW("
@@ -2028,7 +2035,7 @@
     {
       "source": "src/workflow/platform.ts",
       "kind": "structural-template",
-      "fingerprint": "4cb190fab746c444e38d",
+      "fingerprint": "711477e07347eb54b0f4",
       "count": 1,
       "preview": "`SELECT count(*)::int AS yes, cs.votes_required FROM pr_votes pv JOIN chat_sessions cs ON cs.id = pv.session_id WHERE pv.session_id = $1 AND pv.vote = 'yes' AND"
     },

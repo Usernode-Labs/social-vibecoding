@@ -6,6 +6,7 @@ const { Client } = require('pg');
 const { load: loadConfig } = require('../src/config');
 const { migrate } = require('../src/db/migrate');
 const { getPool } = require('../src/db/pool');
+const { connectionName } = require('../src/db/connection-options');
 
 function databaseName(connectionString) {
   const name = decodeURIComponent(new URL(connectionString).pathname.replace(/^\//, ''));
@@ -20,7 +21,7 @@ async function ensureTargetDatabase(config) {
   if (!adminUrl) throw new Error('DB_ADMIN_URL is required for the Kubernetes migration Job');
 
   const target = databaseName(config.databaseUrl);
-  const client = new Client({ connectionString: adminUrl, application_name: 'social-vibecoding-migration' });
+  const client = new Client({ connectionString: adminUrl, application_name: connectionName('admin') });
   await client.connect();
   try {
     const existing = await client.query('SELECT 1 FROM pg_database WHERE datname = $1', [target]);
@@ -37,7 +38,7 @@ async function ensureTargetDatabase(config) {
 // The server's side of the connection budget (services/server-budget.js):
 // every app's database is capped. It never fails the release.
 async function ensureServerBudget(config, pool) {
-  const client = new Client({ connectionString: process.env.DB_ADMIN_URL, application_name: 'social-vibecoding-migration' });
+  const client = new Client({ connectionString: process.env.DB_ADMIN_URL, application_name: connectionName('admin') });
   try {
     await client.connect();
     const out = await require('../src/services/server-budget').ensureServerBudget(config, { admin: client, pool });

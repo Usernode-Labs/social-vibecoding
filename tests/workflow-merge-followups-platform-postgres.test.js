@@ -162,10 +162,13 @@ test('merge follow-ups through the platform runtime', { timeout: 120000 }, async
      UNION ALL SELECT 1 FROM wf_events WHERE machine = 'merge-followups' AND status = 'pending'`)).rows.length,
   'every follow-up settled');
 
-  // GitHub merged it: merge-followups is created by Merged, here as the
-  // leader's merged-by-hand lookup reports it (the proposal machine's attempt
-  // reports it by message: tests/workflow-merge-postgres.test.js M1).
-  const confirmed = (m) => platform.mergeObserved({ ...m, mergedAt: null });
+  // GitHub merged it: merge-followups is created by Merged, here appended as
+  // the proposal machine's message would bring it (its attempt's report:
+  // tests/workflow-merge-postgres.test.js M1; a look's, PrLooked, below).
+  const confirmed = (m) => require('../src/workflow/kernel/index.ts').appendEvent(pool, 'merge-followups', `session:${m.sessionId}`,
+    { type: 'Merged', payload: { sessionId: m.sessionId, mergeSha: m.mergeSha, mergedAt: m.mergedAt || new Date().toISOString(),
+      force: false, observedBy: 'recovery', tally: null } },
+    { requestKey: `merged:${m.sessionId}:test`, source: { kind: 'system', name: 'recovery' }, appId: m.appId });
 
   await t.test('every machine\'s guard is recorded for the ownership triggers', async () => {
     const { rows } = await pool.query(`SELECT key FROM wf_settings WHERE key LIKE 'enabled:%' ORDER BY key`);
@@ -210,11 +213,13 @@ test('merge follow-ups through the platform runtime', { timeout: 120000 }, async
     assert.equal(m.main_sha, SHA('a'));
   });
 
-  await t.test('recovery reports a lost merge with the tally read again', async () => {
+  await t.test('a merge GitHub made while it was up for a vote, as a look read it, is recorded with the tally read again', async () => {
     const s = await proposal('promoted');
     const { rows: [voter] } = await pool.query(`INSERT INTO users (username, password) VALUES ('voter', 'x') RETURNING id`);
     await pool.query(`INSERT INTO pr_votes (session_id, user_id, vote) VALUES ($1, $2, 'yes')`, [s.id, voter.id]);
-    await platform.mergeObserved({ sessionId: s.id, appId: app.id, mergeSha: SHA('a'), mergedAt: '2026-10-07T10:00:00Z' });
+    // The proposal machine decides (PrLooked): up for its vote, a merge.
+    assert.equal(await platform.prLooked({ sessionId: s.id, appId: app.id, from: 'promoted', merged: true, closed: true,
+      mergeSha: SHA('a'), mergedAt: '2026-10-07T10:00:00Z', closedAt: '2026-10-07T10:00:00Z' }), true);
     await until(async () => (await state(s)) === 'live', 'live');
     const { rows: [i] } = await pool.query(`SELECT data FROM wf_instances WHERE machine = 'merge-followups' AND key = $1`, [`session:${s.id}`]);
     assert.equal(i.data.tally.yes, 1);

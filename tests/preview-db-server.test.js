@@ -656,7 +656,8 @@ test('a preview-side child process takes its connection from the URL alone, what
       // the search_path pin (see execInTarget); the ambient PGOPTIONS —
       // which libpq would obey — must never leak through either way.
       const unpinned = pg.filter((key) => key !== 'PGOPTIONS');
-      assert.deepEqual(unpinned, ['PGDATABASE', 'PGHOST', 'PGPASSWORD', 'PGPORT', 'PGSSLMODE', 'PGUSER'], `${call.via}: only what the URL says`);
+      assert.deepEqual(unpinned, ['PGAPPNAME', 'PGDATABASE', 'PGHOST', 'PGPASSWORD', 'PGPORT', 'PGSSLMODE', 'PGUSER'], `${call.via}: only what the URL says, and its name`);
+      assert.match(call.env.PGAPPNAME, call.via === 'psql' ? /^homeroom-[a-z]+-dbadmin$/ : /^homeroom-[a-z]+-dbcopy$/);
       if (pg.includes('PGOPTIONS')) {
         assert.equal(call.env.PGOPTIONS, '-c search_path=pg_catalog', `${call.via}: the search_path is pinned to the built-ins, not the ambient one`);
       }

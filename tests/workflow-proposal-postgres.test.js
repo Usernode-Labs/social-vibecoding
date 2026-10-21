@@ -988,6 +988,61 @@ test('proposal machine against the full PostgreSQL schema', { timeout: 180000 },
   // A hosted build's diagram reaches the pull request as a GitHub move of the
   // proposal's (pr.diagram), owed by the write that stored it: it was a call
   // nobody waited for after the response, lost to a restart.
+  await t.test('P35 GitHub\'s word on its pull request, as a look read it: a merge while up for its vote is recorded, merged before it or closed once the close stood closes it, one being merged is left to its attempt', async () => {
+    defaults();
+    const instance = async (x) => (await pool.query('SELECT state, data FROM wf_instances WHERE machine = $1 AND key = $2', [MACHINE, sessionKey(x.id)])).rows[0];
+    // Up for its vote, merged on GitHub: a merge, merge-followups told with
+    // the tally the look read.
+    const s = await session({ status: 'promoted', promotedAgo: 0 });
+    const tally = { yes: 2, required: 3, active: 4 };
+    const merged = await send(s, 'PrLooked', { from: 'promoted', merged: true, closed: true, mergeSha: 'c'.repeat(40),
+      mergedAt: '2026-10-21T10:00:00Z', closedAt: '2026-10-21T10:00:00Z', tally });
+    await settle();
+    assert.equal((await outcome(merged)).result, 'accepted');
+    assert.equal((await instance(s)).state, 'merging');
+    const { rows: [told] } = await pool.query(
+      `SELECT payload FROM wf_events WHERE machine = 'merge-followups' AND key = $1 AND type = 'Merged'`, [sessionKey(s.id)]);
+    assert.deepEqual([told.payload.tally, told.payload.observedBy, told.payload.mergeSha], [tally, 'recovery', 'c'.repeat(40)]);
+
+    // Closed on GitHub: not while the close may still be undone (an author
+    // re-running CI), then closed.
+    const a = await session({ status: 'active' });
+    const now = () => new Date().toISOString();
+    const early = await send(a, 'PrLooked', { from: 'active', merged: false, closed: true, closedAt: new Date(Date.now() - 60000).toISOString(), readAt: now() });
+    await settle();
+    assert.equal((await outcome(early)).reason, 'settling');
+    assert.equal((await row(a)).status, 'active');
+    // A close read long ago (refused during a rollout, asked again since)
+    // may predate a reopen: refused, the next look reads GitHub anew.
+    const old = await send(a, 'PrLooked', { from: 'active', merged: false, closed: true,
+      closedAt: new Date(Date.now() - 3600000).toISOString(), readAt: new Date(Date.now() - 40 * 60000).toISOString() });
+    await settle();
+    assert.equal((await outcome(old)).reason, 'stale');
+    assert.equal((await row(a)).status, 'active');
+    await send(a, 'PrLooked', { from: 'active', merged: false, closed: true, closedAt: new Date(Date.now() - 600000).toISOString(), readAt: now() });
+    await settle();
+    assert.equal((await row(a)).status, 'archived');
+    assert.equal((await instance(a)).data.reason, 'pr-closed');
+    // Merged before it went up for a vote: closed, as merged on GitHub.
+    const b = await session({ status: 'active' });
+    await send(b, 'PrLooked', { from: 'active', merged: true, closed: true });
+    await settle();
+    assert.equal((await instance(b)).data.reason, 'pr-merged');
+
+    // Being merged: its attempt's to settle. Still open, a stale reading,
+    // or anyone but the system: nothing.
+    const m = await session({ status: 'merging' });
+    const left = await send(m, 'PrLooked', { from: 'merging', merged: true, closed: true });
+    const o = await session({ status: 'promoted', promotedAgo: 0 });
+    const open = await send(o, 'PrLooked', { from: 'promoted', merged: false, closed: false });
+    const stale = await send(o, 'PrLooked', { from: 'active', merged: true, closed: true });
+    const byRoute = await send(o, 'PrLooked', { from: 'promoted', merged: true, closed: true }, route);
+    await settle();
+    assert.deepEqual([(await outcome(left)).reason, (await outcome(open)).reason, (await outcome(stale)).reason, (await outcome(byRoute)).reason],
+      ['merging', 'open', 'overtaken', 'internal_only']);
+    assert.equal((await row(o)).status, 'promoted');
+  });
+
   await t.test('P34 a stored diagram owes its pull request the block, one GitHub move at a time, the newest waiting', async () => {
     defaults();
     const store = (s) => pool.connect().then(async (c) => {

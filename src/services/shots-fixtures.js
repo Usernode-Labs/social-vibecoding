@@ -112,7 +112,7 @@ async function withClient(databaseUrl, fn, { at = null } = {}) {
     connectionTimeoutMillis: 15_000,
     statement_timeout: 30_000,
     query_timeout: 30_000,
-    application_name: 'social-shots-fixture',
+    application_name: require('../db/connection-options').connectionName('shots'),
   });
   await client.connect();
   try { return await fn(at == null ? client : atMoment(client, at)); }

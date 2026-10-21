@@ -124,6 +124,7 @@ function postgresEnv(dbName) {
     PGUSER: decodeURIComponent(url.username || DB_USER),
     PGPASSWORD: decodeURIComponent(url.password || ''),
     PGDATABASE: dbName,
+    PGAPPNAME: require('../db/connection-options').connectionName('export'),
     ...(url.searchParams.get('sslmode') ? { PGSSLMODE: url.searchParams.get('sslmode') } : {}),
   };
 }

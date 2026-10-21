@@ -3,8 +3,8 @@
 // What the clocks read about proposals from outside (src/services/
 // proposal-scans.js): each scan lists every target with no LIMIT, skips a
 // session somebody works on or a spent GitHub budget, and hands what it
-// found to the machine that decides (a merge on GitHub to merge-followups,
-// through platform.mergeObserved; a head to pr-import-sync). The fixed-check
+// found to the machine that decides (a merge on GitHub to the proposal
+// machine, through platform.prLooked; a head to pr-import-sync). The fixed-check
 // sync logs a decline once, from the previous run's result rather than a
 // process's memory.
 
@@ -33,7 +33,7 @@ fakeModule('../src/services/pr-import-sync', {
   syncImportedProposal: async ({ session }) => { synced.push(session.id); return 'unchanged'; },
 });
 const merges = [];
-fakeModule('../src/workflow/platform.ts', { mergeObserved: async (m) => { merges.push(m); return 1; } });
+fakeModule('../src/workflow/platform.ts', { prLooked: async (m) => { merges.push(m); return true; } });
 const sweeps = [];
 const fixed = fakeModule('../src/services/fixed-check-sync', {
   isEnabled: () => true,
@@ -82,9 +82,29 @@ test('the targets are paged, so a list longer than a run takes is gone through a
 test('a clock that lists proposals hands its last page on to its next run', () => {
   const clocks = require('node:fs').readFileSync(require.resolve('../src/workflow/clock/services.ts'), 'utf8');
   assert.match(clocks, /const page = \(ctx: WorkContext\) => \(\{ after: \(ctx\.input\.previous as any\)\?\.after \?\? null, limit: MAX_ITEMS \}\);/);
-  for (const call of ['importedTargets(pool, page(ctx))', 'mergedByHandTargets(pool, page(ctx))', 'revisionTargets(pool, page(ctx))', 'leftovers(config, page(ctx))']) {
+  for (const call of ['importedTargets(pool, githubPage(ctx, importedEveryMs()))', 'mergedByHandTargets(pool, githubPage(ctx, 6 * HOUR))',
+    'revisionTargets(pool, githubPage(ctx, HOUR))', 'leftovers(config, page(ctx))']) {
     assert.ok(clocks.includes(call), call);
   }
+});
+
+test('the imported-PR clock reads at most its share of GitHub reads an hour, paging through the rest', async () => {
+  // Every imported PR is a GitHub read: at 600 an hour and a run every three
+  // minutes, a run hands back 30, and the runs after it the rest.
+  const { JOBS, GITHUB_READS_PER_HOUR } = require('../src/workflow/clock/services.ts');
+  assert.equal(GITHUB_READS_PER_HOUR, 600);
+  const job = JOBS.find((j) => j.name === 'imported-prs');
+  const ids = Array.from({ length: 500 }, (_, i) => i + 1);
+  const p = { query: async (_sql, [after, limit]) => ({ rows: ids.filter((id) => id > after).slice(0, limit).map((id) => ({ id })) }) };
+  const seen = new Set();
+  let previous = null;
+  for (let run = 0; run < 17; run++) {
+    const out = await job.run({ input: { previous }, signal: new AbortController().signal }, { pool: p, config: {} });
+    assert.ok(out.items.length <= 30, `run ${run}: ${out.items.length} reads`);
+    for (const item of out.items) seen.add(item.input.sessionId);
+    previous = out;
+  }
+  assert.equal(seen.size, 500, 'every PR within the hour\'s runs');
 });
 
 test('an imported look skips a session worked on or a spent budget, and otherwise syncs it', async () => {
@@ -101,13 +121,14 @@ test('an imported look skips a session worked on or a spent budget, and otherwis
   assert.deepEqual(await scans.lookImported({}, pool([[/WHERE cs.id = \$1/, [{ ...row, status: 'archived' }]]]), 7), { skipped: 'gone' });
 });
 
-test('a native pull request merged by hand is handed to merge-followups; an open one is not', async () => {
+test('a native pull request merged by hand is reported to the proposal machine, from the status read; an open one is not', async () => {
   const row = { id: 8, app_id: 4, pr_number: 12, status: 'promoted', repo_url: 'https://github.com/acme/demo' };
   const p = pool([[/WHERE cs.id = \$1/, [row]]]);
   assert.deepEqual(await scans.lookMergedByHand(p, 8), { merged: false });
   github.getPR = async () => ({ merged: true, merge_commit_sha: 'c'.repeat(40), merged_at: '2026-10-19T09:00:00Z' });
   assert.deepEqual(await scans.lookMergedByHand(p, 8), { merged: true });
-  assert.deepEqual(merges, [{ sessionId: 8, appId: 4, mergeSha: 'c'.repeat(40), mergedAt: '2026-10-19T09:00:00Z' }]);
+  assert.deepEqual(merges, [{ sessionId: 8, appId: 4, from: 'promoted', merged: true, closed: false,
+    mergeSha: 'c'.repeat(40), mergedAt: '2026-10-19T09:00:00Z', closedAt: null }]);
   github.getPR = async () => { throw new Error('API rate limit exceeded'); };
   assert.deepEqual(await scans.lookMergedByHand(p, 8), { skipped: 'budget' }, 'a refusal for the limit is a look skipped');
 });

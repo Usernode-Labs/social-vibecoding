@@ -40,10 +40,6 @@ const githubMock = require('./github-mock');
 const { usesMockGithubForImports } = require('../config');
 const { sameSha } = require('./pr-vote-revision');
 
-// How long a pull request closed on GitHub stays closed before its proposal
-// is closed here (services/proposal-scans.js looks every three minutes).
-const CLOSE_SETTLES_MS = 5 * 60 * 1000;
-
 function parseRepo(url) {
   const [, owner, repo] = (url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
   return owner && repo ? { owner, repo } : null;
@@ -151,29 +147,18 @@ async function syncImportedProposal({ config, pool, session }) {
     }
 
     // GitHub's word on the pull request itself: merged or closed there, the
-    // proposal is settled here. Up for a vote, a merge is merge-followups'
-    // (it records it and runs every follow-up); a pull request that was
-    // never up for one, or one closed without merging, closes the proposal
-    // (the proposal machine decides, from the status read here). One being
-    // merged is the proposal machine's merge attempt's to settle.
-    if ((pr.merged || pr.state === 'closed') && session.status === 'merging') return 'skipped';
-    if (pr.merged && session.status === 'promoted') {
-      await require('../workflow/platform.ts').mergeObserved({
-        sessionId: session.id, appId: session.app_id, mergeSha: pr.merge_commit_sha || null, mergedAt: pr.merged_at || null,
-      });
-      return 'merged';
-    }
-    // A close is settled once it has stood a few minutes: an author closes
-    // and reopens a pull request to run its CI again, and the webhook's
-    // `closed` delivery comes first. The next look settles it.
-    const closedAt = pr.closed_at ? Date.parse(pr.closed_at) : NaN;
-    if (!pr.merged && pr.state === 'closed' && Number.isFinite(closedAt) && Date.now() - closedAt < CLOSE_SETTLES_MS) return 'unchanged';
+    // proposal machine is told what was read, from the status read here, and
+    // decides (PrLooked): up for a vote, a merge is merge-followups'; one
+    // never up for one, or closed (once the close has stood a few minutes),
+    // closes the proposal; one being merged is its merge attempt's to settle.
     if (pr.merged || pr.state === 'closed') {
-      const closed = await require('./session-lifecycle').archiveSession({
-        pool, sessionId: session.id, reason: pr.merged ? 'pr-merged' : 'pr-closed', from: session.status,
+      const taken = await require('../workflow/platform.ts').prLooked({
+        sessionId: session.id, appId: session.app_id, from: session.status, merged: !!pr.merged, closed: pr.state === 'closed',
+        mergeSha: pr.merge_commit_sha || null, mergedAt: pr.merged_at || null, closedAt: pr.closed_at || null,
       });
-      log.info('pr-import-sync', 'Imported pull request settled on GitHub; the proposal is closed', {
-        sessionId: session.id, prNumber: session.pr_number, merged: !!pr.merged, archived: !!closed?.archived,
+      if (!taken) return 'unchanged';
+      log.info('pr-import-sync', 'Imported pull request settled on GitHub', {
+        sessionId: session.id, prNumber: session.pr_number, merged: !!pr.merged,
       });
       return pr.merged ? 'merged' : 'closed';
     }

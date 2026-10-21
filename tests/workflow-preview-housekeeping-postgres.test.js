@@ -362,4 +362,16 @@ test('preview machine housekeeping against the full PostgreSQL schema', { timeou
     assert.deepEqual([(await outcome(fired)).result, (await outcome(sent)).result], ['accepted', 'accepted']);
     assert.equal((await deadline(s))?.[0], 'RetryDue', 'the retry stands');
   });
+
+  await t.test('H10 a run that answers a person\'s fresh request leaves no ChecksDue for it', async () => {
+    const s = await proposal(await app(), { status: 'active' });
+    await pool.query('UPDATE chat_sessions SET unit_suite_fresh_sha = $2 WHERE id = $1', [s.id, SHA('a1')]);
+    await submit(s, SHA('a1'));
+    await settle();
+    const r = await row(s.id);
+    assert.deepEqual([r.check_state, r.unit_suite_fresh_sha], ['passing', null], 'the request is answered');
+    // The rest is the state this settlement leaves, not the one before it,
+    // whose request was still owed: a ChecksDue then would only run nothing.
+    assert.equal((await deadline(s))?.[0], 'IdleDue');
+  });
 });

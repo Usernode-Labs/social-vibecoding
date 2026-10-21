@@ -205,7 +205,7 @@ test('the poller is kept as the fallback', () => {
   // so the webhook is an optimisation not a dependency.
   const clocks = read('src/workflow/clock/services.ts');
   const job = clocks.slice(clocks.indexOf("name: 'imported-prs'"), clocks.indexOf("name: 'merged-by-hand'"));
-  assert.match(job, /run: \(ctx: WorkContext, \{ pool \}: JobDeps\) => legacy\('services\/proposal-scans'\)\.importedTargets\(pool, page\(ctx\)\),/);
+  assert.match(job, /run: \(ctx: WorkContext, \{ pool \}: JobDeps\) => legacy\('services\/proposal-scans'\)\.importedTargets\(pool, githubPage\(ctx, importedEveryMs\(\)\)\),/);
   assert.match(job, /legacy\('services\/proposal-scans'\)\.lookImported\(config, pool, Number\(ctx\.input\.input\?\.sessionId\)\)/);
   const scans = read('src/services/proposal-scans.js');
   assert.match(scans, /return \{ outcome: await require\('\.\/pr-import-sync'\)\.syncImportedProposal\(\{ config, pool, session \}\) \};/);

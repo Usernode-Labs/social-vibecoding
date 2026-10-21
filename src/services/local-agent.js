@@ -61,7 +61,7 @@ const TURN_TIMEOUT_MS = 60 * 60 * 1000;
 // The platform's own side of a turn is a waiter in the process that
 // dispatched it (awaitTurnResult), and a restart kills it while the laptop
 // keeps working. A turn is its dispatching work item's (its `owner`), which
-// takes it over when it is claimed again; the waiter renews its id every
+// takes it over when it is claimed again; the waiter checks its id every
 // WAITER_RENEW_MS, which is how a waiter left behind learns it was taken
 // over.
 const WAITER_RENEW_MS = 10 * 1000;
@@ -433,8 +433,8 @@ async function enqueueTurn(pool, {
     const { rows } = await pool.query(
       `INSERT INTO local_agent_turns
          (session_id, lease_id, user_id, prompt, base_sha, branch_name, mode,
-          waiter_id, waiter_seen_at, owner)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), $9::jsonb)
+          waiter_id, owner)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)
        RETURNING *`,
       [sessionId, lease.id, userId, prompt, baseSha || null, branchName || null, mode, waiterId,
         owner ? JSON.stringify(owner) : null]
@@ -595,9 +595,9 @@ async function finishTurn(pool, {
 // streams a worker's.
 //
 // `waiterId` (enqueueTurn's, or the item's next claim's after it took the
-// turn over) makes this the turn's one waiter: it keeps waiter_seen_at
-// fresh while it waits, and a terminal turn is returned only once its tail
-// is claimed with that id. A waiter that finds its id gone (its item's next
+// turn over) makes this the turn's one waiter: it checks while it waits that
+// the id is still the turn's, and a terminal turn is returned only once its
+// tail is claimed with that id. A waiter that finds its id gone (its item's next
 // claim took the turn over) or the tail already claimed answers 'adopted':
 // the tail is someone else's to run.
 async function awaitTurnResult(pool, turnId, {
@@ -624,7 +624,7 @@ async function awaitTurnResult(pool, turnId, {
       return settle(turn.status, turn);
     }
     if (waiterId && Date.now() - lastRenewed >= WAITER_RENEW_MS) {
-      if (!await renewWaiter(pool, turnId, waiterId)) return { outcome: 'adopted', turn };
+      if (!await stillWaiter(pool, turnId, waiterId)) return { outcome: 'adopted', turn };
       lastRenewed = Date.now();
     }
     if (onProgress && String(turn.updated_at) !== lastSeenUpdate) {
@@ -665,14 +665,12 @@ async function awaitTurnResult(pool, turnId, {
   }
 }
 
-// The waiter is still here. Leaves updated_at alone: that is the progress
-// signal awaitTurnResult's onProgress keys on. False when the id is no
-// longer the turn's (taken over) or its tail is already claimed.
-async function renewWaiter(pool, turnId, waiterId) {
+// Whether this waiter still holds the turn: false when the id is no longer
+// the turn's (taken over) or its tail is already claimed.
+async function stillWaiter(pool, turnId, waiterId) {
   const { rows } = await pool.query(
-    `UPDATE local_agent_turns SET waiter_seen_at = NOW()
-      WHERE id = $1 AND waiter_id = $2 AND tail_claimed_at IS NULL
-      RETURNING id`,
+    `SELECT id FROM local_agent_turns
+      WHERE id = $1 AND waiter_id = $2 AND tail_claimed_at IS NULL`,
     [turnId, waiterId]
   );
   return rows.length > 0;
@@ -682,7 +680,7 @@ async function renewWaiter(pool, turnId, waiterId) {
 // its id. Resolves the turn row when this call claimed it, else null.
 async function claimTail(pool, turnId, waiterId) {
   const { rows } = await pool.query(
-    `UPDATE local_agent_turns SET tail_claimed_at = NOW(), waiter_seen_at = NOW()
+    `UPDATE local_agent_turns SET tail_claimed_at = NOW()
       WHERE id = $1 AND waiter_id = $2 AND tail_claimed_at IS NULL
       RETURNING *`,
     [turnId, waiterId]
@@ -699,7 +697,7 @@ async function claimTail(pool, turnId, waiterId) {
 async function takeOverOwnedTurn(pool, workId) {
   const { rows } = await pool.query(
     `UPDATE local_agent_turns
-        SET waiter_id = gen_random_uuid(), waiter_seen_at = NOW()
+        SET waiter_id = gen_random_uuid()
       WHERE id = (
         SELECT id FROM local_agent_turns
          WHERE owner->>'workId' = $1 AND waiter_id IS NOT NULL AND tail_claimed_at IS NULL
@@ -894,7 +892,7 @@ module.exports = {
   finishTurn,
   awaitTurnResult,
   WAITER_RENEW_MS,
-  renewWaiter,
+  stillWaiter,
   claimTail,
   markTailFinished,
   takeOverOwnedTurn,

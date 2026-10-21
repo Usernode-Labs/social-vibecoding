@@ -131,7 +131,8 @@ test('enqueueTurn carries the base commit and branch to the machine', async () =
   // it waits and claims the tail under (local-agent-recovery.js).
   assert.match(insert.params[7], /^[0-9a-f-]{36}$/);
   assert.equal(result.waiterId, insert.params[7]);
-  assert.match(insert.sql, /waiter_seen_at, owner\)\s+VALUES \([^)]*NOW\(\), \$9::jsonb\)/);
+  assert.match(insert.sql, /waiter_id, owner\)\s+VALUES \([^)]*\$8, \$9::jsonb\)/);
+  assert.doesNotMatch(insert.sql, /waiter_seen_at/, 'retired: nothing reads when the waiter was last seen');
   assert.equal(insert.params[8], null, 'no work item dispatched it: the recovery pass is its waiter\'s stand-in');
 });
 

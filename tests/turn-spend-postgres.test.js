@@ -4,7 +4,8 @@
 // against the FULL PostgreSQL schema: a running turn counts against the caps
 // at once (whichever process its calls reached), its end settles it into
 // llm_usage once, a turn that reported no cost is charged what its calls
-// cost, and calls no live turn will settle are settled by the clock.
+// cost, calls no live turn will settle are settled by the clock, and a
+// settlement that names no turn leaves its calls to the clock.
 //
 // Skipped when no server is reachable, required when TEST_DATABASE_URL is set.
 
@@ -95,6 +96,24 @@ test('a turn\'s spend as it happens, against the full PostgreSQL schema', { time
     assert.equal(await limits.settleOpenTurnSpend(pool), 1);
     assert.deepEqual(await usage(), { platform: 92, byok: 2 });
     assert.equal(await open(), 1, 'the live turn\'s call waits for its end');
+  });
+
+  await t.test('a settlement that names no turn bills nothing itself: the clock bills its kept calls, once', async () => {
+    const { rows: [u] } = await pool.query("INSERT INTO users (username, password) VALUES ('unnamed-spender', 'x') RETURNING id");
+    const mine = async () => (await pool.query(
+      `SELECT COALESCE(SUM(total_cost_cents), 0)::float8 AS platform FROM llm_usage WHERE user_id = $1`, [u.id])).rows[0].platform;
+    const T = crypto.randomUUID();
+    const { rows: [{ id: s }] } = await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, active_turn) VALUES ($1, $2, 'b', 'active', $3::jsonb) RETURNING id`,
+      [app.id, u.id, JSON.stringify({ turnId: T, phase: 'executing' })]);
+    await limits.noteTurnSpend(pool, { sessionId: s, userId: u.id, cents: 12 });
+    await limits.noteTurnSpend(pool, { sessionId: s, userId: u.id, cents: 8 });
+    const r = await limits.settleTurnSpend(pool, u.id, 500, { turnId: null, sessionId: s });
+    assert.deepEqual(r, { platformCents: 0, byokCents: 0 });
+    assert.equal(await mine(), 0, 'not the reported 500 on top of the kept calls');
+    await pool.query('UPDATE chat_sessions SET active_turn = NULL WHERE id = $1', [s]);
+    await limits.settleOpenTurnSpend(pool, { olderThanMinutes: 0 });
+    assert.equal(await mine(), 20, 'the calls\' cost, once');
   });
 
   await t.test('a call whose write lands after its turn settled is reconciled with that settlement: never counted or billed twice', async () => {

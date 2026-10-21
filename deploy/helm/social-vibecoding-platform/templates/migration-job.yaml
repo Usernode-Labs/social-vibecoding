@@ -45,6 +45,9 @@ spec:
           env:
             - {name: NODE_ENV, value: production}
             - {name: DB_POOL_MAX, value: {{ .Values.migration.dbPoolMax | int64 | quote }}}
+            # Its connections say they are the migration's (homeroom-migration,
+            # -admin, -dbadmin), not a serving role's.
+            - {name: DB_APPLICATION_NAME, value: "homeroom-migration"}
             - {name: APP_RUNTIME, value: kubernetes}
             - {name: WORKER_RUNTIME, value: kubernetes}
             - {name: CAPTURE_RUNTIME, value: kubernetes}

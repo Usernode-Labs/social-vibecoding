@@ -192,7 +192,7 @@ test('a fixture write that loses a real deadlock is written on the next attempt'
   for (let waited = 0; ; waited += 20) {
     const { rows } = await pg.admin.query(
       `SELECT count(*)::int AS n FROM pg_stat_activity
-        WHERE datname = $1 AND application_name = 'social-shots-fixture' AND wait_event_type = 'Lock'`, [db]);
+        WHERE datname = $1 AND application_name LIKE 'homeroom-%-shots' AND wait_event_type = 'Lock'`, [db]);
     if (rows[0].n === 1) break;
     if (waited > 10_000) throw new Error('the fixture write never waited on the held row');
     await new Promise((resolve) => { setTimeout(resolve, 20); });

@@ -3,6 +3,7 @@ const { execFile, spawn } = require('child_process');
 const { promisify } = require('util');
 const { Client } = require('pg');
 const log = require('./logger');
+const { connectionName } = require('../db/connection-options');
 const { withResourceUse } = require('./build-retention-guard');
 const { STAGING_TEMPLATE_LOCK } = require('./advisory-locks');
 const dbRetry = require('./db-retry');
@@ -374,7 +375,10 @@ function targetExecutor(server = PRIMARY_SERVER) {
 // `as` ({ user, password }) runs the child as a different role than the
 // administrator — the copy's own unprivileged owner role for the redaction
 // passes — keeping the server's address, TLS and the rest of the environment.
-function postgresEnv(dbName, server = PRIMARY_SERVER, as = null) {
+// `pool` names the connection (application_name, src/db/connection-options.js
+// connectionName): `dbadmin` for psql, `dbcopy` for a clone's pg_dump and
+// pg_restore (which scripts/deploy.sh waits out before a host cutover).
+function postgresEnv(dbName, server = PRIMARY_SERVER, as = null, pool = 'dbadmin') {
   const admin = adminConnection(server);
   // For the preview server the URL is the whole connection. libpq also reads
   // its own environment, and some of it outranks what is set below: a
@@ -394,6 +398,7 @@ function postgresEnv(dbName, server = PRIMARY_SERVER, as = null) {
     PGUSER: as && as.user ? as.user : decodeURIComponent(admin.username || DB_USER),
     PGPASSWORD: as && as.password != null ? as.password : decodeURIComponent(admin.password || ''),
     PGDATABASE: dbName,
+    PGAPPNAME: connectionName(pool),
     // The preview server: plain, said outright (libpq's own default would
     // try TLS first and the other two clients would not).
     ...(serverKey(server) !== PRIMARY_SERVER ? { PGSSLMODE: 'disable' }
@@ -2110,7 +2115,7 @@ async function withDatabaseConnectionNow(dbName, fn, { queryTimeoutMs = 30_000, 
     connectionTimeoutMillis: 30000,
     statement_timeout: timeoutMs,
     query_timeout: timeoutMs,
-    application_name: 'social-template-clone',
+    application_name: connectionName('dbadmin'),
   });
   let lost;
   let failed = false;
@@ -2470,7 +2475,7 @@ async function dumpRestoreNow(sourceDb, targetDb, excludeData = [], { targetServ
     ...adminExtensions.map(({ name }) => `--exclude-extension=${name}`),
   ];
   const dump = spawn('pg_dump', dumpArgs, {
-    env: postgresEnv(sourceDb), stdio: ['ignore', 'pipe', 'pipe'],
+    env: postgresEnv(sourceDb, PRIMARY_SERVER, null, 'dbcopy'), stdio: ['ignore', 'pipe', 'pipe'],
   });
   // pg_restore does not infer "restore into a database" from PGDATABASE:
   // without -d/--dbname it expects -f and exits before reading stdin. Keep
@@ -2478,7 +2483,7 @@ async function dumpRestoreNow(sourceDb, targetDb, excludeData = [], { targetServ
   // provides the network credentials — the copy's own owner role when `as`
   // says so, the administrator otherwise.
   const restore = spawn('pg_restore', pgRestoreArgs(targetDb), {
-    env: postgresEnv(targetDb, targetServer, as), stdio: ['pipe', 'ignore', 'pipe'],
+    env: postgresEnv(targetDb, targetServer, as, 'dbcopy'), stdio: ['pipe', 'ignore', 'pipe'],
   });
   dump.stdout.pipe(restore.stdin);
   // --exit-on-error stops pg_restore at its first failed statement while
@@ -3573,7 +3578,7 @@ function previewServerQueryable() {
         connectionTimeoutMillis: 10_000,
         statement_timeout: 30_000,
         query_timeout: 30_000,
-        application_name: 'social-preview-census',
+        application_name: connectionName('census'),
       });
       client.on('error', () => {});
       await client.connect();

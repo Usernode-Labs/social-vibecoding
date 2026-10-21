@@ -93,8 +93,8 @@ test('processes and the roster, against the full schema', { timeout: 120000 }, a
 
     const late = processes.hold('handoff', 12);
     await processes.beat();
-    assert.deepEqual((await pool.query('SELECT * FROM process_holds')).rows, [],
-      'none written where a release before roadmap item 3.2 reads them');
+    assert.equal((await pool.query(`SELECT to_regclass('process_holds') AS t`)).rows[0].t, null,
+      'holds are this process\'s own: no table for them');
     assert.equal((await pool.query(`SELECT to_regclass('leader_sweeps') AS t`)).rows[0].t, null, 'the leader\'s sweep times are gone');
     assert.equal(require('../src/services/turn-leftovers').olderProcessHolding, undefined, 'and nothing reads another process\'s');
     late(); early();

@@ -39,7 +39,7 @@
       "SELECT m.content, m.created_at, u.username FROM chat_messages m LEFT JOIN users u ON u.id = m.user_id WHERE m.app_id = $… <sha:b8a1d28b89ac3d11 len:246> :: [31,\"session\",4242]",
       "INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata) VALUES ($1, 'assistant', $2, $3, $4, $5, $6) :: [4242,\"Request #34 asks for exactly this. Want a quick spec first?\",\"claude-opus-5-5\",150,1.5,{\"json\":{\"quickReplies\":[\"Write the spec for #34\",\"Keep the toggle in the toolbar\",\"Which screens change?\"],\"quickRepliesSource\":\"model\"}}]",
       "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]",
-      "UPDATE local_agent_turns SET waiter_id = gen_random_uuid(), waiter_seen_at = NOW() WHERE id = ( SELECT id FROM local_age… <sha:02869ef4a305436d len:260> :: [\"test-1\"]",
+      "UPDATE local_agent_turns SET waiter_id = gen_random_uuid() WHERE id = ( SELECT id FROM local_agent_turns WHERE owner->>'… <sha:12bc5f8c69ed2ca8 len:236> :: [\"test-1\"]",
       "SELECT id FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-1\"]",
       "SELECT id, active_turn FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-1\"]"
     ],
@@ -142,7 +142,7 @@
       "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Thinking about what came back...\",{\"json\":{}}]",
       "INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata) VALUES ($1, 'assistant', $2, $3, $4, $5, $6) :: [4242,\"The page says hello, so there is nothing to change yet.\",\"claude-opus-5-5\",150,1.5,{\"json\":{\"quickReplies\":[\"Draft a spec anyway\",\"Read the issue list\",\"What would change?\"],\"quickRepliesSource\":\"model\"}}]",
       "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]",
-      "UPDATE local_agent_turns SET waiter_id = gen_random_uuid(), waiter_seen_at = NOW() WHERE id = ( SELECT id FROM local_age… <sha:02869ef4a305436d len:260> :: [\"test-2\"]",
+      "UPDATE local_agent_turns SET waiter_id = gen_random_uuid() WHERE id = ( SELECT id FROM local_agent_turns WHERE owner->>'… <sha:12bc5f8c69ed2ca8 len:236> :: [\"test-2\"]",
       "SELECT id FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-2\"]",
       "SELECT id, active_turn FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-2\"]"
     ],
@@ -309,7 +309,7 @@
       "INSERT INTO events (user_id, app_id, session_id, event_type, metadata) VALUES ($1, $2, $3, $4, $5::jsonb) :: [7,31,4242,\"model_refusal\",{\"json\":{\"requested\":\"claude-opus-5-5\",\"served\":\"claude-fallback\",\"category\":\"cyber\",\"source\":\"mayor\"}}]",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Opus 5.5's safety classifiers declined this request (safety classifier: cyber) and the fallback couldn't complete it. Try rephrasing or switching models.\",{\"json\":{\"modelRefusal\":{\"requested\":\"claude-opus-5-5\",\"category\":\"cyber\"},\"quickReplies\":[\"Try that again\",\"What went wrong?\"]}}]",
       "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]",
-      "UPDATE local_agent_turns SET waiter_id = gen_random_uuid(), waiter_seen_at = NOW() WHERE id = ( SELECT id FROM local_age… <sha:02869ef4a305436d len:260> :: [\"test-3\"]",
+      "UPDATE local_agent_turns SET waiter_id = gen_random_uuid() WHERE id = ( SELECT id FROM local_agent_turns WHERE owner->>'… <sha:12bc5f8c69ed2ca8 len:236> :: [\"test-3\"]",
       "SELECT id FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-3\"]",
       "SELECT id, active_turn FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-3\"]"
     ],
@@ -404,7 +404,7 @@
       "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Opus 5.5 declined part of this request (safety classifier: bio). It was completed by Sonnet 5.5.\",{\"json\":{\"modelFallback\":{\"requested\":\"claude-opus-5-5\",\"served\":\"claude-sonnet-5-5\",\"category\":\"bio\"}}}]",
       "INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata) VALUES ($1, 'assistant', $2, $3, $4, $5, $6) :: [4242,\"Here is the plan.\",\"claude-sonnet-5-5\",150,1.5,{\"json\":{\"quickReplies\":[\"Build the spec\",\"Change the toggle icon\",\"What files change?\"],\"quickRepliesSource\":\"model\"}}]",
       "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]",
-      "UPDATE local_agent_turns SET waiter_id = gen_random_uuid(), waiter_seen_at = NOW() WHERE id = ( SELECT id FROM local_age… <sha:02869ef4a305436d len:260> :: [\"test-4\"]",
+      "UPDATE local_agent_turns SET waiter_id = gen_random_uuid() WHERE id = ( SELECT id FROM local_agent_turns WHERE owner->>'… <sha:12bc5f8c69ed2ca8 len:236> :: [\"test-4\"]",
       "SELECT id FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-4\"]",
       "SELECT id, active_turn FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-4\"]"
     ],
@@ -496,7 +496,7 @@
       "SELECT m.content, m.created_at, u.username FROM chat_messages m LEFT JOIN users u ON u.id = m.user_id WHERE m.app_id = $… <sha:b8a1d28b89ac3d11 len:246> :: [31,\"session\",4242]",
       "INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata) VALUES ($1, 'assistant', $2, $3, $4, $5, $6) :: [4242,\"Sure, happy to help.\",\"claude-opus-5-5\",150,1.5,{\"json\":{\"quickReplies\":[\"Keep the moon icon\",\"Default to the system theme\",\"Which pages get dark colours?\"],\"quickRepliesSource\":\"enforced\"}}]",
       "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]",
-      "UPDATE local_agent_turns SET waiter_id = gen_random_uuid(), waiter_seen_at = NOW() WHERE id = ( SELECT id FROM local_age… <sha:02869ef4a305436d len:260> :: [\"test-5\"]",
+      "UPDATE local_agent_turns SET waiter_id = gen_random_uuid() WHERE id = ( SELECT id FROM local_agent_turns WHERE owner->>'… <sha:12bc5f8c69ed2ca8 len:236> :: [\"test-5\"]",
       "SELECT id FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-5\"]",
       "SELECT id, active_turn FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-5\"]"
     ],
@@ -593,7 +593,7 @@
       "SELECT m.content, m.created_at, u.username FROM chat_messages m LEFT JOIN users u ON u.id = m.user_id WHERE m.app_id = $… <sha:b8a1d28b89ac3d11 len:246> :: [31,\"session\",4242]",
       "INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata) VALUES ($1, 'assistant', $2, $3, $4, $5, $6) :: [4242,\"Sure, happy to help.\",\"claude-opus-5-5\",150,1.5,{\"json\":{\"quickReplies\":[\"Use a darker grey\",\"Keep the toolbar light\",\"What about exports?\"],\"quickRepliesSource\":\"generated\"}}]",
       "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]",
-      "UPDATE local_agent_turns SET waiter_id = gen_random_uuid(), waiter_seen_at = NOW() WHERE id = ( SELECT id FROM local_age… <sha:02869ef4a305436d len:260> :: [\"test-6\"]",
+      "UPDATE local_agent_turns SET waiter_id = gen_random_uuid() WHERE id = ( SELECT id FROM local_agent_turns WHERE owner->>'… <sha:12bc5f8c69ed2ca8 len:236> :: [\"test-6\"]",
       "SELECT id FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-6\"]",
       "SELECT id, active_turn FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-6\"]"
     ],
@@ -696,7 +696,7 @@
       "SELECT m.content, m.created_at, u.username FROM chat_messages m LEFT JOIN users u ON u.id = m.user_id WHERE m.app_id = $… <sha:b8a1d28b89ac3d11 len:246> :: [31,\"session\",4242]",
       "INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata) VALUES ($1, 'assistant', $2, $3, $4, $5, $6) :: [4242,\"1. Should it follow the system theme?\",\"claude-opus-5-5\",150,1.5,{\"json\":{\"suggestions\":[{\"question\":\"Should it follow the system theme?\",\"answers\":[\"Yes\",\"No, always light by default\"]}]}}]",
       "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]",
-      "UPDATE local_agent_turns SET waiter_id = gen_random_uuid(), waiter_seen_at = NOW() WHERE id = ( SELECT id FROM local_age… <sha:02869ef4a305436d len:260> :: [\"test-7\"]",
+      "UPDATE local_agent_turns SET waiter_id = gen_random_uuid() WHERE id = ( SELECT id FROM local_agent_turns WHERE owner->>'… <sha:12bc5f8c69ed2ca8 len:236> :: [\"test-7\"]",
       "SELECT id FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-7\"]",
       "SELECT id, active_turn FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-7\"]"
     ],
@@ -785,7 +785,7 @@
       "SELECT m.content, m.created_at, u.username FROM chat_messages m LEFT JOIN users u ON u.id = m.user_id WHERE m.app_id = $… <sha:b8a1d28b89ac3d11 len:246> :: [31,\"session\",4242]",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Stopped by @tester.\",{\"json\":{\"quickReplies\":[\"Try that again\",\"What went wrong?\"]}}]",
       "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]",
-      "UPDATE local_agent_turns SET waiter_id = gen_random_uuid(), waiter_seen_at = NOW() WHERE id = ( SELECT id FROM local_age… <sha:02869ef4a305436d len:260> :: [\"test-8\"]",
+      "UPDATE local_agent_turns SET waiter_id = gen_random_uuid() WHERE id = ( SELECT id FROM local_agent_turns WHERE owner->>'… <sha:12bc5f8c69ed2ca8 len:236> :: [\"test-8\"]",
       "SELECT id FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-8\"]",
       "SELECT id, active_turn FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-8\"]"
     ],
@@ -871,7 +871,7 @@
       "SELECT active_turn FROM chat_sessions WHERE id = $1 :: [4242]",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"This turn failed: The AI provider is overloaded right now. Try again in a minute. Send your message again to retry.\",{\"json\":{\"turnError\":true,\"quickReplies\":[\"Try that again\",\"What went wrong?\"]}}]",
       "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]",
-      "UPDATE local_agent_turns SET waiter_id = gen_random_uuid(), waiter_seen_at = NOW() WHERE id = ( SELECT id FROM local_age… <sha:02869ef4a305436d len:260> :: [\"test-9\"]",
+      "UPDATE local_agent_turns SET waiter_id = gen_random_uuid() WHERE id = ( SELECT id FROM local_agent_turns WHERE owner->>'… <sha:12bc5f8c69ed2ca8 len:236> :: [\"test-9\"]",
       "SELECT id FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-9\"]",
       "SELECT id, active_turn FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-9\"]"
     ],
@@ -953,7 +953,7 @@
       "SELECT a.self_hosted, u.is_admin, cs.user_id FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id JOIN users u ON u.id = cs.user_id WHERE cs.id = $1 :: [4242]",
       "SELECT m.content, m.created_at, u.username FROM chat_messages m LEFT JOIN users u ON u.id = m.user_id WHERE m.app_id = $… <sha:b8a1d28b89ac3d11 len:246> :: [31,\"session\",4242]",
       "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]",
-      "UPDATE local_agent_turns SET waiter_id = gen_random_uuid(), waiter_seen_at = NOW() WHERE id = ( SELECT id FROM local_age… <sha:02869ef4a305436d len:260> :: [\"test-10\"]",
+      "UPDATE local_agent_turns SET waiter_id = gen_random_uuid() WHERE id = ( SELECT id FROM local_agent_turns WHERE owner->>'… <sha:12bc5f8c69ed2ca8 len:236> :: [\"test-10\"]",
       "SELECT id FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-10\"]",
       "SELECT id, active_turn FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-10\"]"
     ],
@@ -1067,7 +1067,7 @@
       "UPDATE turn_effects SET state = 'completed', result = $3::jsonb, completed_at = NOW(), updated_at = NOW() WHERE turn_id = $1 AND effect_key = $2 :: [\"turn-scout-1\",\"turn_wrapup_message\",{\"json\":{\"persisted\":true}}]",
       "COMMIT :: []",
       "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]",
-      "UPDATE local_agent_turns SET waiter_id = gen_random_uuid(), waiter_seen_at = NOW() WHERE id = ( SELECT id FROM local_age… <sha:02869ef4a305436d len:260> :: [\"test-11\"]",
+      "UPDATE local_agent_turns SET waiter_id = gen_random_uuid() WHERE id = ( SELECT id FROM local_agent_turns WHERE owner->>'… <sha:12bc5f8c69ed2ca8 len:236> :: [\"test-11\"]",
       "SELECT id FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-11\"]",
       "SELECT id, active_turn FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-11\"]"
     ],
@@ -1306,7 +1306,7 @@
       "UPDATE turn_effects SET state = 'completed', result = $3::jsonb, completed_at = NOW(), updated_at = NOW() WHERE turn_id = $1 AND effect_key = $2 :: [\"turn-build-1\",\"turn_wrapup_message\",{\"json\":{\"persisted\":true}}]",
       "COMMIT :: []",
       "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]",
-      "UPDATE local_agent_turns SET waiter_id = gen_random_uuid(), waiter_seen_at = NOW() WHERE id = ( SELECT id FROM local_age… <sha:02869ef4a305436d len:260> :: [\"test-12\"]",
+      "UPDATE local_agent_turns SET waiter_id = gen_random_uuid() WHERE id = ( SELECT id FROM local_agent_turns WHERE owner->>'… <sha:12bc5f8c69ed2ca8 len:236> :: [\"test-12\"]",
       "SELECT id FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-12\"]",
       "SELECT id, active_turn FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-12\"]"
     ],
@@ -1551,7 +1551,7 @@
       "UPDATE turn_effects SET state = 'completed', result = $3::jsonb, completed_at = NOW(), updated_at = NOW() WHERE turn_id = $1 AND effect_key = $2 :: [\"turn-build-2\",\"turn_wrapup_message\",{\"json\":{\"persisted\":true}}]",
       "COMMIT :: []",
       "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]",
-      "UPDATE local_agent_turns SET waiter_id = gen_random_uuid(), waiter_seen_at = NOW() WHERE id = ( SELECT id FROM local_age… <sha:02869ef4a305436d len:260> :: [\"test-14\"]",
+      "UPDATE local_agent_turns SET waiter_id = gen_random_uuid() WHERE id = ( SELECT id FROM local_agent_turns WHERE owner->>'… <sha:12bc5f8c69ed2ca8 len:236> :: [\"test-14\"]",
       "SELECT id FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-14\"]",
       "SELECT id, active_turn FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-14\"]"
     ],
@@ -1754,7 +1754,7 @@
       "UPDATE chat_sessions SET last_turn_runner = $2, local_agent_label = $3 WHERE id = $1 :: [4242,\"platform\",null]",
       "UPDATE chat_sessions SET last_activity_at = NOW() WHERE id = $1 :: [4242]",
       "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]",
-      "UPDATE local_agent_turns SET waiter_id = gen_random_uuid(), waiter_seen_at = NOW() WHERE id = ( SELECT id FROM local_age… <sha:02869ef4a305436d len:260> :: [\"test-15\"]",
+      "UPDATE local_agent_turns SET waiter_id = gen_random_uuid() WHERE id = ( SELECT id FROM local_agent_turns WHERE owner->>'… <sha:12bc5f8c69ed2ca8 len:236> :: [\"test-15\"]",
       "SELECT id FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-15\"]",
       "SELECT id, active_turn FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-15\"]"
     ],
@@ -1864,7 +1864,7 @@
       "SELECT m.content, m.created_at, u.username FROM chat_messages m LEFT JOIN users u ON u.id = m.user_id WHERE m.app_id = $… <sha:b8a1d28b89ac3d11 len:246> :: [31,\"session\",4242]",
       "INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata) VALUES ($1, 'assistant', $2, $3, $4, $5, $6) :: [4242,\"The coding agent is still running. I will wait for it.\",\"claude-opus-5-5\",150,1.5,{\"json\":{\"quickReplies\":[\"How is it going?\",\"Stop this build\",\"What is it doing?\"],\"quickRepliesSource\":\"model\"}}]",
       "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]",
-      "UPDATE local_agent_turns SET waiter_id = gen_random_uuid(), waiter_seen_at = NOW() WHERE id = ( SELECT id FROM local_age… <sha:02869ef4a305436d len:260> :: [\"test-16\"]",
+      "UPDATE local_agent_turns SET waiter_id = gen_random_uuid() WHERE id = ( SELECT id FROM local_agent_turns WHERE owner->>'… <sha:12bc5f8c69ed2ca8 len:236> :: [\"test-16\"]",
       "SELECT id FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-16\"]",
       "SELECT id, active_turn FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-16\"]"
     ],
@@ -1953,7 +1953,7 @@
       "SELECT m.content, m.created_at, u.username FROM chat_messages m LEFT JOIN users u ON u.id = m.user_id WHERE m.app_id = $… <sha:b8a1d28b89ac3d11 len:246> :: [31,\"session\",4242]",
       "INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata) VALUES ($1, 'assistant', $2, $3, $4, $5, $6) :: [4242,\"Sure. Should the toggle live in the toolbar?\",\"openai/gpt-5.3-codex\",150,1.5,{\"json\":{\"quickReplies\":[\"Put it in the toolbar\",\"Put it in settings\",\"What changes for users?\"],\"quickRepliesSource\":\"model\"}}]",
       "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]",
-      "UPDATE local_agent_turns SET waiter_id = gen_random_uuid(), waiter_seen_at = NOW() WHERE id = ( SELECT id FROM local_age… <sha:02869ef4a305436d len:260> :: [\"test-17\"]",
+      "UPDATE local_agent_turns SET waiter_id = gen_random_uuid() WHERE id = ( SELECT id FROM local_agent_turns WHERE owner->>'… <sha:12bc5f8c69ed2ca8 len:236> :: [\"test-17\"]",
       "SELECT id FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-17\"]",
       "SELECT id, active_turn FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-17\"]"
     ],
@@ -2097,7 +2097,7 @@
       "UPDATE turn_effects SET state = 'completed', result = $3::jsonb, completed_at = NOW(), updated_at = NOW() WHERE turn_id = $1 AND effect_key = $2 :: [\"turn-or-1\",\"turn_wrapup_message\",{\"json\":{\"persisted\":true}}]",
       "COMMIT :: []",
       "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]",
-      "UPDATE local_agent_turns SET waiter_id = gen_random_uuid(), waiter_seen_at = NOW() WHERE id = ( SELECT id FROM local_age… <sha:02869ef4a305436d len:260> :: [\"test-18\"]",
+      "UPDATE local_agent_turns SET waiter_id = gen_random_uuid() WHERE id = ( SELECT id FROM local_agent_turns WHERE owner->>'… <sha:12bc5f8c69ed2ca8 len:236> :: [\"test-18\"]",
       "SELECT id FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-18\"]",
       "SELECT id, active_turn FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-18\"]"
     ],
@@ -2249,7 +2249,7 @@
       "UPDATE turn_effects SET state = 'completed', result = $3::jsonb, completed_at = NOW(), updated_at = NOW() WHERE turn_id = $1 AND effect_key = $2 :: [\"turn-or-1\",\"turn_wrapup_message\",{\"json\":{\"persisted\":true}}]",
       "COMMIT :: []",
       "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]",
-      "UPDATE local_agent_turns SET waiter_id = gen_random_uuid(), waiter_seen_at = NOW() WHERE id = ( SELECT id FROM local_age… <sha:02869ef4a305436d len:260> :: [\"test-19\"]",
+      "UPDATE local_agent_turns SET waiter_id = gen_random_uuid() WHERE id = ( SELECT id FROM local_agent_turns WHERE owner->>'… <sha:12bc5f8c69ed2ca8 len:236> :: [\"test-19\"]",
       "SELECT id FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-19\"]",
       "SELECT id, active_turn FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-19\"]"
     ],
@@ -2370,7 +2370,7 @@
       "UPDATE turn_effects SET state = 'completed', result = $3::jsonb, completed_at = NOW(), updated_at = NOW() WHERE turn_id = $1 AND effect_key = $2 :: [\"turn-or-1\",\"turn_wrapup_message\",{\"json\":{\"persisted\":true}}]",
       "COMMIT :: []",
       "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]",
-      "UPDATE local_agent_turns SET waiter_id = gen_random_uuid(), waiter_seen_at = NOW() WHERE id = ( SELECT id FROM local_age… <sha:02869ef4a305436d len:260> :: [\"test-20\"]",
+      "UPDATE local_agent_turns SET waiter_id = gen_random_uuid() WHERE id = ( SELECT id FROM local_agent_turns WHERE owner->>'… <sha:12bc5f8c69ed2ca8 len:236> :: [\"test-20\"]",
       "SELECT id FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-20\"]",
       "SELECT id, active_turn FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-20\"]"
     ],
@@ -2495,7 +2495,7 @@
       "SELECT m.content, m.created_at, u.username FROM chat_messages m LEFT JOIN users u ON u.id = m.user_id WHERE m.app_id = $… <sha:b8a1d28b89ac3d11 len:246> :: [31,\"session\",4242]",
       "INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata) VALUES ($1, 'assistant', $2, $3, $4, $5, $6) :: [4242,\"Done on your laptop. The toggle is in the toolbar.\",\"claude-opus-5-5\",150,1.5,{\"json\":{\"quickReplies\":[\"Try it in the preview\",\"What did it change?\"],\"quickRepliesSource\":\"model\"}}]",
       "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]",
-      "UPDATE local_agent_turns SET waiter_id = gen_random_uuid(), waiter_seen_at = NOW() WHERE id = ( SELECT id FROM local_age… <sha:02869ef4a305436d len:260> :: [\"test-13\"]",
+      "UPDATE local_agent_turns SET waiter_id = gen_random_uuid() WHERE id = ( SELECT id FROM local_agent_turns WHERE owner->>'… <sha:12bc5f8c69ed2ca8 len:236> :: [\"test-13\"]",
       "SELECT id FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-13\"]",
       "SELECT id, active_turn FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1 :: [\"test-13\"]"
     ],
