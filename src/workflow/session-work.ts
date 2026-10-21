@@ -48,6 +48,13 @@ export function previewWorkingSql(sessionId: string): string {
                      AND p.status IN ('queued', 'running', 'reported'))`;
 }
 
+// The recorded operations that do not move a proposal's branch: a worker's
+// turn record (the turn is read from its journal, chat_sessions.active_turn)
+// and a hand-off's pipeline (it checks the very commit being proposed). Every
+// other live operation keeps a proposal `moving` (proposal/facts.ts), and its
+// end is what asks the merge queue again (preview/machine.ts opEnded).
+export const NOT_MOVING_KINDS: readonly string[] = Object.freeze(['turn', 'handoff-pipeline']);
+
 // True while an operation recorded on that instance is held by a live
 // process. `exceptParam`: an SQL value naming one operation not to count (a
 // caller's own record, read by a decision it asks for while it holds it);

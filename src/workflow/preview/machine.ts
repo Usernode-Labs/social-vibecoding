@@ -33,6 +33,7 @@ import { createCheckFailedNotification } from '../rules/change-notifications.ts'
 import { toBotChange, writeBotChange } from '../rules/bot-notes.ts';
 import { OPEN, readFacts } from './facts.ts';
 import type { Facts } from './facts.ts';
+import { NOT_MOVING_KINDS } from '../session-work.ts';
 
 export const MACHINE = 'preview';
 export const sessionKey = (sessionId: number) => `session:${sessionId}`;
@@ -290,6 +291,18 @@ const toShots = (d: Data, type: string, payload: Record<string, Json> = {}): Mes
 export const mergeWanted = (d: Data, f: Facts, state: string): MessageRequest[] =>
   ((state === 'passing' || state === 'skipped') && f.session?.status === 'promoted'
     ? [{ to: { machine: 'merge-queue', key: `app:${d.appId}` }, event: { type: 'MergeWanted', payload: { appId: d.appId, sessionId: d.sessionId, reason: 'checks' } }, appId: d.appId }]
+    : []);
+// The same ask when the last operation that kept a proposal in review
+// moving ends (any kind but session-work.ts NOT_MOVING_KINDS). An ask that
+// came while it was live, its own verdict's or a vote's, was declined as
+// busy (proposal/machine.ts askRefusal), and nothing asked again before the
+// queue's sweep four minutes on: 17 of the 22 merges that took over two
+// minutes from 16 to 21 Oct 2026 waited so. A hand-off's check run is such
+// an operation: it ends just after its own verdict (routes/proposal-handoff.js).
+export const stoppedMoving = (d: Data, f: Facts, ended: Operation | undefined, left: readonly Operation[]): MessageRequest[] =>
+  (ended && !NOT_MOVING_KINDS.includes(ended.kind) && f.session?.status === 'promoted'
+    && !left.some((o) => !NOT_MOVING_KINDS.includes(o.kind))
+    ? [{ to: { machine: 'merge-queue', key: `app:${d.appId}` }, event: { type: 'MergeWanted', payload: { appId: d.appId, sessionId: d.sessionId, reason: 'operation-ended' } }, appId: d.appId }]
     : []);
 // To the proposal machine: a promoted proposal's preview will not start
 // because main moved underneath it, and a sync with main is the fix
@@ -959,8 +972,11 @@ function rawTransitions(deps: Deps): Record<string, Record<string, Entry>> {
   };
   const opEnded: Entry = {
     guard: (s, e) => (s.data.operations.some((o: Operation) => o.id === e.payload.id) ? ok() : reject('no_such_operation')),
-    to: (s, e, f) => step({ name: s.name, data: { ...s.data,
-      operations: s.data.operations.filter((o: Operation) => o.id !== e.payload.id && f.alive.has(o.holder)) } }),
+    to: (s, e, f) => {
+      const ended = s.data.operations.find((o: Operation) => o.id === e.payload.id);
+      const operations = s.data.operations.filter((o: Operation) => o.id !== e.payload.id && f.alive.has(o.holder));
+      return step({ name: s.name, data: { ...s.data, operations }, messages: stoppedMoving(s.data, f, ended, operations) });
+    },
   };
   const ops = { OperationStarted: opStarted, OperationEnded: opEnded };
 
