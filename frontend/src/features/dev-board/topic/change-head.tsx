@@ -40,7 +40,8 @@ import { swatchFor } from '../../group-chat/swatch';
 import { useInlineImageViewer } from '../../image-viewer/image-viewer';
 import { ActionButton, StatusPill, TitleContent, VoteButton, isVoteSpec } from '../card/dev-card';
 import type { ActionSpec, DevCardModel } from '../card/model';
-import type { ChangeGateView, ChangeThreadView, TopicBody } from './model';
+import type { ChangeGateView, ChangeThreadView, FixChecksView, TopicBody } from './model';
+import { useChecksExplanation, useFixAsk, useFixing } from './failed-checks';
 import { RequestWords, SpecCard, sentences } from './request-head';
 import { TopicBack } from './topic-back';
 import { holdVotesInView, onVotesAsked, takeVotesInView } from './votes-in-view';
@@ -102,34 +103,99 @@ export function ChangeBar({ v, menuKey, detailsId = null }: { v: ChangeThreadVie
 }
 
 /**
+ * The Testing card's Fix it, for the change's author, with the re-run beside
+ * it (./failed-checks.ts askFix): the dev chat's own Fix it message, sent to
+ * the change's build conversation in the author's name, without leaving the
+ * page. A refusal ("still working", no credits) is said under the row.
+ */
+function FixRow({ fix, rerun }: { fix: FixChecksView; rerun: ReactNode }): ReactNode {
+  const t = useMessages('project');
+  const { asking, refused, tap } = useFixAsk(fix);
+  return (
+    <>
+      <div className="dev-change-gate-fix">
+        <button
+          type="button"
+          className="gc-vote-btn gc-vote-btn-accent"
+          data-change-fix-checks={fix.changeId}
+          disabled={asking}
+          onClick={tap}
+        >
+          {asking ? t('project:topic.change.gate.fixAsking') : t('project:topic.change.gate.fix')}
+        </button>
+        {rerun}
+      </div>
+      {refused ? <p className="dev-change-gate-refused" role="alert">{refused}</p> : null}
+    </>
+  );
+}
+
+/**
  * One card: its name and figure over its bar, its button beside them, and
  * one line under. A bar still moving is drawn in the lit ink; a finished
  * one is full and green, with a green check and figure (AGENTS.md: a
  * finished progress bar may be green).
+ *
+ * The Testing card whose checks failed says what went wrong in plain words
+ * over that line (`explain`: the model's sentence once read, the failure's
+ * own words until then), and offers its author Fix it with the re-run
+ * beside it (`fix`, `rerun`). From the tap until the build conversation's
+ * turn ends it reads "Fixing", with a door into that conversation.
  */
-function GateCard({ which, g, action, id }: { which: 'votes' | 'testing'; g: ChangeGateView; action: ReactNode; id: number | null }): ReactNode {
+function GateCard({ which, g, action, rerun = null, id }: {
+  which: 'votes' | 'testing'; g: ChangeGateView; action: ReactNode; rerun?: ReactNode; id: number | null;
+}): ReactNode {
   const t = useMessages('project');
   const open = () => (window as any).AppView?.openTechnicalDetails?.(id, 'checks');
+  const watch = () => (window as any).AppView?.openChangeWorkspace?.(id);
   // A merge of Homeroom itself: when its release comes, counted down here
   // rather than frozen when the page was read.
   const now = useReleaseNow(g.release);
   const release = g.release ? releaseSentence(g.release, now) : null;
+  const explanation = useChecksExplanation(g.explain);
+  const fixing = useFixing(g.fix);
+  const shown: ChangeGateView = fixing ? {
+    ...g,
+    figure: t('project:topic.change.gate.fixing'),
+    tone: 'muted',
+    segments: [{ weight: 1, pct: 100, state: 'moving' }],
+    label: t('project:topic.change.gate.fixingLabel'),
+    note: [t('project:topic.change.gate.fixingNote')],
+    explain: null,
+    fix: null,
+    authorNote: null,
+    details: false,
+  } : g;
+  // What went wrong, over the line: the lead ("One of the app's tests
+  // failed.") and the sentence, as one paragraph in the card's own ink.
+  const why = shown.explain ? sentences([...shown.note, explanation || shown.explain.fallback]) : '';
   // The note's sentences arrive worded (AppView._changeThreadView); the door
   // into Details rides at the paragraph's end, in one message with them.
-  const note = sentences(release ? [...g.note, t('project:topic.change.gate.release', { release })] : g.note);
+  const lines = shown.explain
+    ? [shown.authorNote, shown.fix ? t('project:topic.change.gate.fixNote') : null]
+    : (release ? [...shown.note, t('project:topic.change.gate.release', { release })] : shown.note);
+  const note = sentences(lines);
   const door = <button type="button" className="dev-change-gate-link" onClick={open} />;
   return (
-    <div className="dev-change-gate" data-change-gate={which} data-done={g.done ? 'true' : 'false'} data-tone={g.tone} role="group" aria-label={g.name}>
+    <div
+      className="dev-change-gate"
+      data-change-gate={which}
+      data-done={shown.done ? 'true' : 'false'}
+      data-tone={shown.tone}
+      data-change-fixing={fixing ? '' : undefined}
+      role="group"
+      aria-label={shown.name}
+    >
       <div className="dev-change-gate-main">
         <div className="dev-change-gate-head">
           <span className="dev-change-gate-name">
-            {g.done ? <CheckIcon className="dev-change-gate-check" aria-hidden="true" /> : null}
-            {g.name}
+            {shown.done ? <CheckIcon className="dev-change-gate-check" aria-hidden="true" /> : null}
+            {shown.name}
           </span>
-          <span className="dev-change-gate-figure">{g.figure}</span>
+          <span className="dev-change-gate-figure">{shown.figure}</span>
         </div>
-        <div className="dev-change-bar" role="img" aria-label={g.label}>
-          {g.segments.map((seg, i) => (
+        <div className="dev-change-bar" role="img" aria-label={shown.label}>
+          {shown.segments.map((seg, i) => (
             <span key={i} className="dev-change-bar-seg" style={{ flexGrow: seg.weight, flexBasis: 0 }}>
               <span className="dev-change-bar-fill" data-state={seg.state} style={{ width: `${Math.max(0, Math.min(100, seg.pct))}%` }} />
             </span>
@@ -137,16 +203,26 @@ function GateCard({ which, g, action, id }: { which: 'votes' | 'testing'; g: Cha
         </div>
       </div>
       {action ? <div className="dev-change-gate-act">{action}</div> : null}
-      {g.noteDetail ? (
+      {why ? <p className="dev-change-gate-why" data-change-gate-why={explanation ? 'explained' : 'own-words'}>{why}</p> : null}
+      {shown.fix ? <FixRow fix={shown.fix} rerun={rerun} /> : null}
+      {shown.noteDetail ? (
         <details className="dev-change-gate-note" data-change-gate-explanation="">
-          <summary className="cursor-pointer rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-violet-500" title={g.noteDetail}>
+          <summary className="cursor-pointer rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-violet-500" title={shown.noteDetail}>
             {note}
           </summary>
-          <p className="mt-2">{g.noteDetail}</p>
+          <p className="mt-2">{shown.noteDetail}</p>
         </details>
-      ) : note || (g.details && id) ? (
+      ) : fixing && id ? (
+        <p className="dev-change-gate-note">
+          <RichMessage
+            id="project:topic.change.gate.noteWatch"
+            values={{ note }}
+            components={[<button type="button" className="dev-change-gate-link" data-change-fix-watch="" onClick={watch} />]}
+          />
+        </p>
+      ) : note || (shown.details && id) ? (
         <p className="dev-change-gate-note" data-change-release={release ? '' : undefined}>
-          {g.details && id
+          {shown.details && id
             ? (note
               ? <RichMessage id="project:topic.change.gate.noteSeeFailed" values={{ note }} components={[door]} />
               : <button type="button" className="dev-change-gate-link" onClick={open}>{t('project:topic.change.gate.seeFailed')}</button>)
@@ -199,9 +275,13 @@ export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSave
   const preview = all.find((a) => a.preview);
   const openApp = all.find((a) => a.key === 'open-app');
   const voteAction = yes && no ? <VoteButton yes={yes} no={no} /> : (submit ? <ActionButton a={submit} /> : null);
-  const testAction = (preview || openApp || (v.testing.actions || []).length) ? (
+  // With Fix it on the card, the re-run sits beside it, under the line; the
+  // card's corner keeps Preview.
+  const testingActions = (v.testing.actions || []).map((a) => <ActionButton key={a.key} a={a} />);
+  const withFix = !!v.testing.fix;
+  const testAction = (preview || openApp || (!withFix && testingActions.length)) ? (
     <>
-      {(v.testing.actions || []).map((a) => <ActionButton key={a.key} a={a} />)}
+      {withFix ? null : testingActions}
       {/* A preview that did not start is the card's own words and its retry. */}
       {openApp ? <ActionButton a={openApp} />
         : (preview && !(v.testing.actions || []).some((a) => a.key === 'retry-preview') ? <ActionButton a={preview} /> : null)}
@@ -274,7 +354,7 @@ export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSave
           {body.note ? <p className="dev-change-stale">{body.note}</p> : null}
           <div ref={pair} className="dev-change-pair">
             <GateCard which="votes" g={v.votes} action={voteAction} id={id} />
-            <GateCard which="testing" g={v.testing} action={testAction} id={id} />
+            <GateCard which="testing" g={v.testing} action={testAction} rerun={withFix ? testingActions : null} id={id} />
           </div>
           {v.shots ? <ShotsCard s={v.shots} /> : null}
         </div>

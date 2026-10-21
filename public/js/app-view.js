@@ -6552,8 +6552,11 @@ const AppView = {
       if (g.key === 'checks') {
         step.run = AppView._checksRunView(item, g);
         if (g.state === 'blocked') {
+          // The author's Fix it leads, as on the Testing card, and the re-run
+          // beside it is the quieter of the two.
+          step.fix = AppView._fixChecksView(item);
           const recheck = AppView._recheckAction(item);
-          if (recheck) step.actions.push(recheck);
+          if (recheck) step.actions.push(step.fix ? { ...recheck, cls: 'gc-vote-btn' } : recheck);
           if (!AppView.readOnly && !item.staging_url && item.staging_error && item.status !== 'merged') {
             step.actions.push({ key: 'retry-preview', cls: 'gc-vote-btn', label: PlatformI18n.t('changes:page.actions.retryPreview'),
               act: { fn: 'swapToStagingForSession', args: [item.id, ''] } });
@@ -6705,7 +6708,10 @@ const AppView = {
     // the bars and the names are what a reader came for. A run that will go
     // again on its own opens too, so its reason is read without a tap.
     const retrying = g.state === 'active' && item.check_state === 'error';
-    return { live, phase: item.check_phase || null, open: live || retrying || g.state === 'blocked', build, checks, unit, fails, noted, note };
+    // A failed run says what went wrong in plain words over its failures,
+    // once that is read (the Testing card's own sentence, one read for both).
+    const explain = item.check_state === 'failing' ? AppView._checksExplainView(item, v) : null;
+    return { live, phase: item.check_phase || null, open: live || retrying || g.state === 'blocked', build, checks, unit, fails, noted, note, explain };
   },
 
   // One detail model for a change before and after it enters review.
@@ -7319,6 +7325,86 @@ const AppView = {
     return Math.round(ms / 60000);
   },
 
+  // The Testing card's first sentence on a failed run: how many of the app's
+  // tests failed when its own test suite is all that failed, else how many
+  // of its checks. Blocking failures are counted; advisory ones only when
+  // nothing else failed.
+  _failedLead(v) {
+    const all = v ? v.failures : [];
+    const blocking = all.filter((r) => !r.advisory);
+    const rows = blocking.length ? blocking : all;
+    if (!rows.length) return PlatformI18n.t('changes:page.testing.note.checkFailed');
+    if (rows.length === 1 && rows[0].unit) {
+      const r = rows[0];
+      const n = (r.unitTally && r.unitTally.failed) || (r.details && r.details.length) || 1;
+      return PlatformI18n.t('changes:page.testing.lead.tests', { count: n });
+    }
+    return PlatformI18n.t('changes:page.testing.lead.checks', { count: rows.length });
+  },
+
+  // The failure's own words, which the Testing card shows until the
+  // plain-words sentence is read (and when there is none): the first failing
+  // test and the message it failed with, or the first failing check and
+  // what it reported.
+  _failureInWords(v) {
+    const all = v ? v.failures : [];
+    const r = all.find((row) => !row.advisory) || all[0];
+    if (!r) return null;
+    if (r.unit) {
+      const d = r.details && r.details[0];
+      if (!d) return null;
+      return d.said
+        ? PlatformI18n.t('changes:page.testing.why.testSaid', { test: d.test, said: d.said })
+        : PlatformI18n.t('changes:page.testing.why.test', { test: d.test });
+    }
+    const reason = String(r.reason || '').replace(/\s+/g, ' ').trim();
+    const said = reason.length > 160 ? `${reason.slice(0, 159).trimEnd()}…` : reason;
+    return said
+      ? PlatformI18n.t('changes:page.testing.why.checkSaid', { check: r.name, said })
+      : PlatformI18n.t('changes:page.testing.why.check', { check: r.name });
+  },
+
+  // The failed run the plain-words sentence is read for
+  // (frontend/src/features/dev-board/topic/failed-checks.ts), with the
+  // failure's own words to show until then.
+  _checksExplainView(item, v) {
+    if (!item || item.id == null || item.check_state !== 'failing' || !item.checks_checked_at) return null;
+    return { id: Number(item.id), at: String(item.checks_checked_at), fallback: AppView._failureInWords(v) };
+  },
+
+  // Fix it from the change's page (failed-checks.ts askFix): what the dev
+  // chat's own Fix it card would send (agent-session/fix-checks.ts), from the
+  // run's blocking failures as the server shapes them for that card
+  // (services/agent-sessions.js FAILING_CHECKS_SQL), and the build
+  // conversation it goes to. Only for the change's author, on a change built
+  // in an agent session (the Build door's own rule) that is still open to
+  // more work. Anybody else, and a change with no conversation to ask, keeps
+  // the re-run alone.
+  FIX_CHECKS_SHOWN: 5,
+  _fixChecksView(item) {
+    if (!item || AppView.readOnly || item.check_state !== 'failing' || !item.checks_checked_at) return null;
+    if (!['active', 'paused', 'promoted'].includes(item.status)) return null;
+    if (!(typeof App !== 'undefined' && App.user && Number(item.user_id) === Number(App.user.id))) return null;
+    const door = AppView._buildDoorView(item);
+    const agentSessionId = (door && door.agentSessionId) || AppView._agentSessionDoorId(item.id);
+    if (!agentSessionId) return null;
+    const rows = (Array.isArray(item.test_results) ? item.test_results : [])
+      .filter((r) => r && typeof r === 'object' && r.status !== 'pass' && !r.advisory);
+    if (!rows.length) return null;
+    const firstError = (r) => (Array.isArray(r.consoleErrors) && r.consoleErrors[0] && r.consoleErrors[0].message) || '';
+    return {
+      agentSessionId: Number(agentSessionId),
+      changeId: Number(item.id),
+      prNumber: parseInt(item.pr_number, 10) || null,
+      total: rows.length,
+      checks: rows.slice(0, AppView.FIX_CHECKS_SHOWN).map((r) => ({
+        name: String(r.name || r.path || PlatformI18n.t('changes:verdict.row.unnamedCheck')).trim().slice(0, 200),
+        reason: String(r.failureReason || firstError(r)).trim().slice(0, 300),
+      })),
+      at: String(item.checks_checked_at),
+    };
+  },
+
   // #4452 — the Testing card: the preview build and both kinds of checks
   // (the declared checks and the unit suite) as ONE bar, split by how long
   // each part usually takes on this project (`checks_estimate`, the median
@@ -7383,14 +7469,21 @@ const AppView = {
       return { name: PlatformI18n.t('changes:page.testing.name.testing'), figure: PlatformI18n.t('changes:page.testing.figure.skipped'), tone: 'muted', done: false, segments: full('idle'), label: PlatformI18n.t('changes:page.testing.label.skipped'), note: [PlatformI18n.t('changes:page.testing.note.skipped')], actions };
     }
     if (cs === 'failing') {
+      // What went wrong in plain words, and for its author Fix it, with the
+      // re-run beside it as the quieter of the two: running the same code
+      // again does not fix a test that fails every time.
       const v = AppView._checksVerdictView(item);
-      const failed = v ? v.failures.length : 0;
+      const fix = AppView._fixChecksView(item);
       const rerun = recheck();
-      if (rerun) actions.push(rerun);
+      if (rerun) actions.push(fix ? { ...rerun, cls: 'gc-vote-btn' } : rerun);
+      const mine = !!(App.user && Number(item.user_id) === Number(App.user.id));
       return {
         name: PlatformI18n.t('changes:page.testing.name.testing'), figure: PlatformI18n.t('changes:page.testing.figure.failing'), tone: 'bad', done: false, segments: full('bad'),
         label: PlatformI18n.t('changes:page.testing.label.failing'),
-        note: [failed ? PlatformI18n.t('changes:page.testing.note.checksFailed', { count: failed }) : PlatformI18n.t('changes:page.testing.note.checkFailed')], actions, details: true,
+        note: [AppView._failedLead(v)], actions, details: true,
+        explain: AppView._checksExplainView(item, v),
+        fix,
+        authorNote: mine ? null : PlatformI18n.t('changes:page.testing.note.authorFixes'),
       };
     }
     if (cs && cs !== 'pending') {
@@ -19020,6 +19113,60 @@ const AppView = {
     return base ? PlatformI18n.t('changes:checks.reason.failedRunsWith', values) : PlatformI18n.t('changes:checks.reason.failedRuns', values);
   },
 
+  // The repo unit suite's row, by the identity the run gives it
+  // (src/services/unit-suite-row.js isUnitSuiteRow).
+  _isUnitSuiteRow(r) {
+    return !!r && typeof r === 'object'
+      && (r.index === -3 || (r.name === 'Repo unit suite (npm test) passes' && r.path === 'package.json'));
+  },
+
+  // How many of the suite's tests ran and failed, from the TAP tally its
+  // reason ends with ("… | # tests 26 | # pass 25 | # fail 1"). Null when
+  // the reason does not carry one.
+  _unitSuiteTally(reason) {
+    const text = String(reason || '');
+    const tests = text.match(/#\s*tests\s+(\d+)/);
+    const failed = text.match(/#\s*fail\s+(\d+)/);
+    if (!failed) return null;
+    return { failed: Number(failed[1]), total: tests ? Number(tests[1]) : null };
+  },
+
+  // A failing test's line and error message, read off its excerpt's YAML
+  // block (unit-suite.js excerptOfTest): `location: '…/tests/x.test.js:133:1'`
+  // and `error: "…"`, or `error: |-` with the message indented under it.
+  // Either is null when the excerpt does not carry it.
+  _excerptFacts(excerpt, file) {
+    const lines = String(excerpt || '').split('\n');
+    let line = null;
+    let said = null;
+    const unquote = (v) => {
+      const s = v.trim().replace(/,$/, '');
+      if (/^".*"$/.test(s)) return s.slice(1, -1).replace(/\\n/g, ' ').replace(/\\(["\\])/g, '$1');
+      if (/^'.*'$/.test(s)) return s.slice(1, -1).replace(/''/g, '\'');
+      return s;
+    };
+    for (let i = 0; i < lines.length; i += 1) {
+      const l = lines[i];
+      const loc = !line && l.match(/^\s*location:\s*['"]?(.*?):(\d+):\d+['"]?\s*$/);
+      if (loc && (!file || loc[1].endsWith(file))) line = Number(loc[2]);
+      const err = !said && l.match(/^(\s*)error:\s*(.*)$/);
+      if (!err) continue;
+      if (/^[|>][-+]?$/.test(err[2].trim())) {
+        const indent = err[1].length;
+        const block = [];
+        for (let j = i + 1; j < lines.length; j += 1) {
+          const next = lines[j];
+          if (next.length - next.trimStart().length <= indent) break;
+          block.push(next.trim());
+        }
+        said = block.join(' ').trim() || null;
+      } else {
+        said = unquote(err[2]) || null;
+      }
+    }
+    return { line, said: said ? said.slice(0, 300) : null };
+  },
+
   _flakePercent(rate) {
     const n = Number(rate);
     if (!Number.isFinite(n) || n < AppView.FLAKE_CHIP_FLOOR) return null;
@@ -19076,15 +19223,6 @@ const AppView = {
       // the verdict view otherwise drops for anything green; so does one
       // with a note.
       keepReason: !!(r && (r.passedOnRetry || (r.cohortFallback && r.authored === true))),
-      // #3978: the repo unit suite row's per-test excerpts, each with the
-      // file, the test name and the captured error text. Only that row
-      // carries failureDetails; the caps here mirror the capture side's, so
-      // a hostile stored row cannot flood the fold.
-      details: (Array.isArray(r && r.failureDetails) ? r.failureDetails : []).slice(0, 10).map((d) => ({
-        file: (d && d.file) ? String(d.file).slice(0, 200) : null,
-        test: String((d && d.test) || PlatformI18n.t('changes:verdict.row.unnamedTestLong')).slice(0, 200),
-        excerpt: String((d && d.excerpt) || '').slice(0, 2048),
-      })),
       errors: (Array.isArray(r && r.consoleErrors) ? r.consoleErrors : []).map((e) => ({
         kind: (e && e.kind) ? String(e.kind) : 'console',
         message: String((e && e.message) || '').slice(0, 500),
@@ -19092,14 +19230,22 @@ const AppView = {
       })),
       // #3978. The repo unit suite's per-test failure excerpts (error,
       // expected/actual, first stack frames), already bounded and redacted
-      // when the run stored them.
+      // when the run stored them. Each also carries the line it failed on
+      // and its error message, read off the excerpt, for the row that says
+      // which test failed before it shows the output.
       details: (Array.isArray(r && r.failureDetails) ? r.failureDetails : []).slice(0, 10)
         .filter((d) => d && d.excerpt)
         .map((d) => ({
           file: d.file ? String(d.file).slice(0, 200) : null,
           test: String(d.test || PlatformI18n.t('changes:verdict.row.unnamedTest')).slice(0, 200),
           excerpt: String(d.excerpt).slice(0, 1500),
+          ...AppView._excerptFacts(d.excerpt, d.file),
         })),
+      // The app's own test suite (`npm test`) is one row among the declared
+      // checks; it is drawn by what it is, with how many of its tests
+      // failed, rather than by the check's name and the TAP tally.
+      unit: AppView._isUnitSuiteRow(r),
+      unitTally: AppView._isUnitSuiteRow(r) ? AppView._unitSuiteTally(r && r.failureReason) : null,
     });
 
     const blockingRows = results.filter((r) => r && r.status !== 'pass' && !r.advisory);

@@ -2323,9 +2323,57 @@
     "text": "{{reason}}<0> · on {{path}}</0>",
     "description": "The opened reason of a failed automated check, followed by the page it ran on. {{reason}} is the recorded reason, or the word for \"failed\"; {{path}} is the address of the page inside the app, for example /settings. <0></0> dims the second part; keep the dot and the space before it inside the tag."
   },
-  "topic.check.testInFile": {
-    "text": "<0>{{test}}</0><1> · in {{file}}</1>",
-    "description": "One failing unit test listed under a failed check on a change's page. {{test}} is the test's name and {{file}} the source file it is in. <0></0> and <1></1> style the two parts; keep the dot and the space before it inside the second tag."
+  "topic.check.unit.name": {
+    "text": "The app’s own tests",
+    "description": "Name of one row in a change's list of automated checks: the app's own test suite, which its code comes with. Shown when that suite failed."
+  },
+  "topic.check.unit.failedOf_one": {
+    "text": "{{failed}} of {{total}} failed",
+    "description": "At the end of the \"The app's own tests\" row in a change's list of checks: {{failed}} of the suite's {{total}} tests failed, both already formatted (\"1,284\"). {{count}} is the number that failed, for the plural."
+  },
+  "topic.check.unit.failedOf_other": {
+    "text": "{{failed}} of {{total}} failed",
+    "description": "At the end of the \"The app's own tests\" row in a change's list of checks: {{failed}} of the suite's {{total}} tests failed, both already formatted (\"1,284\"). {{count}} is the number that failed, for the plural."
+  },
+  "topic.check.unit.failed_one": {
+    "text": "{{failed}} failed",
+    "description": "At the end of the \"The app's own tests\" row in a change's list of checks, when the total is not known: {{failed}} of its tests failed, already formatted (\"1,284\"). {{count}} is the same number, for the plural."
+  },
+  "topic.check.unit.failed_other": {
+    "text": "{{failed}} failed",
+    "description": "At the end of the \"The app's own tests\" row in a change's list of checks, when the total is not known: {{failed}} of its tests failed, already formatted (\"1,284\"). {{count}} is the same number, for the plural."
+  },
+  "topic.check.unit.testsThatFailed_one": {
+    "text": "The test that failed",
+    "description": "Small heading over the failing test in the \"The app's own tests\" row of a change's list of checks. {{count}} is how many tests are listed under it; English does not show it."
+  },
+  "topic.check.unit.testsThatFailed_other": {
+    "text": "The tests that failed",
+    "description": "Small heading over the failing tests in the \"The app's own tests\" row of a change's list of checks. {{count}} is how many tests are listed under it; English does not show it."
+  },
+  "topic.check.unit.said": {
+    "text": "Failed with: {{said}}",
+    "description": "Under one failing test's name in a change's list of checks: the message it failed with. {{said}} is that message as the app's code wrote it, usually in English."
+  },
+  "topic.check.unit.fileLine": {
+    "text": "{{file}}, line {{line}}",
+    "description": "Under one failing test's name in a change's list of checks: where the test is. {{file}} is a file path in the app's code and {{line}} a line number in it."
+  },
+  "topic.check.unit.showOutput": {
+    "text": "Show the test output",
+    "description": "Link-like label that unfolds the raw output the app's failing tests printed, in a change's list of checks. It is technical text for whoever fixes the tests."
+  },
+  "topic.checks.explain.title": {
+    "text": "What went wrong",
+    "description": "Small heading over a plain explanation of why a change's automated checks failed, in its list of checks."
+  },
+  "topic.checks.explain.source": {
+    "text": "Homeroom’s reading of the test output.",
+    "description": "Small note under the plain explanation of why a change's checks failed: the explanation was written by Homeroom (with AI) from the tests' technical output, so it may be imperfect. Homeroom is the product's name; do not translate it."
+  },
+  "topic.checks.fixing": {
+    "text": "Fixing…",
+    "description": "Text of the disabled Fix it button in a change's list of checks while the AI agent is fixing the checks that failed."
   },
   "topic.checks.showPassing_one": {
     "text": "Show {{count}} passing checks",
@@ -2490,6 +2538,34 @@
   "topic.change.gate.seeFailed": {
     "text": "See what failed",
     "description": "Link-style button under the Testing card on a change's page when its checks failed and there is nothing else to say: opens the Details sheet at the failed checks."
+  },
+  "topic.change.gate.fix": {
+    "text": "Fix it",
+    "description": "Main button on the Testing card of a change's page when its automated checks failed, shown to the change's author: asks the AI agent that built the change to fix what failed. \"It\" is what failed."
+  },
+  "topic.change.gate.fixAsking": {
+    "text": "Asking…",
+    "description": "Text of the Fix it button on the Testing card of a change's page while the request to the AI agent is being sent."
+  },
+  "topic.change.gate.fixNote": {
+    "text": "Fix it asks the agent that built this change to fix what failed, using your credits. You can stay on this page: the checks run again by themselves when it’s done.",
+    "description": "Line under the Fix it button on the Testing card of a change's page, shown to the change's author. \"The agent\" is the AI coding agent; credits are what an agent's work is paid with. \"It\" in the last sentence is the agent."
+  },
+  "topic.change.gate.fixing": {
+    "text": "Fixing",
+    "description": "Status at the right of the Testing card's name on a change's page while the AI agent is fixing the checks that failed."
+  },
+  "topic.change.gate.fixingLabel": {
+    "text": "The agent is fixing what failed",
+    "description": "Accessible name of the Testing card's progress bar on a change's page while the AI agent is fixing the checks that failed."
+  },
+  "topic.change.gate.fixingNote": {
+    "text": "The agent is fixing what failed. When it’s done, the checks run again by themselves.",
+    "description": "Line under the Testing card of a change's page while the AI agent is fixing the checks that failed. \"It\" is the agent."
+  },
+  "topic.change.gate.noteWatch": {
+    "text": "{{note}} <0>Watch it work</0>",
+    "description": "The line under the Testing card on a change's page while the AI agent fixes the checks that failed. {{note}} is one or more whole sentences, already worded. <0></0> is a link-style button that opens the conversation where the agent is working."
   },
   "topic.change.shots.title": {
     "text": "Before and after",
