@@ -353,17 +353,12 @@ test('the build\'s own work against the full PostgreSQL schema', { timeout: 1200
     const waited = await starter.imageFor(config, pool, { key: second.input.key, slug: 's' }, { waitMs: 50, pollMs: 10 });
     assert.equal(waited, null, 'waited for it, then built its own');
     assert.equal(await starter.requestRebuild(config, pool, second.input.template), false, 'not while its build runs');
-    // An older build's process building it (its owner's heartbeat live,
-    // during a rollout) is left to it; once that heartbeat lapses it is taken,
-    // and marked the workflow's for good.
+    // A row a builder from before the clock marked as its own (its owner's
+    // heartbeat live) is not waited for: the clock's target is the one builder.
     runtime.build = async () => ({ imageRef: 'usernode-starter:2', buildRef: null });
-    const owned = (heartbeat) => pool.query(
-      `UPDATE starter_images SET status = 'building', owner = 'old-process', heartbeat_at = now() - make_interval(secs => $3)
-        WHERE template = $1 AND context_key = $2`, [second.input.template, second.input.key, heartbeat]);
-    await owned(5);
-    assert.deepEqual(await starter.buildTarget(config, pool, second.input), { skipped: 'ready_or_building' });
-    assert.equal((await row(second.input)).status, 'building');
-    await owned(300);
+    await pool.query(
+      `UPDATE starter_images SET status = 'building', owner = 'old-process', heartbeat_at = now()
+        WHERE template = $1 AND context_key = $2`, [second.input.template, second.input.key]);
     assert.equal((await starter.buildTarget(config, pool, second.input)).ready, second.input.template);
     assert.equal((await row(second.input)).status, 'ready');
   });

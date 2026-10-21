@@ -73,7 +73,7 @@ export interface Data {
   selfHosted: boolean;
   includedIn: CarrierRef | null;   // role 'included': the change that carried it
   included: number[];              // role 'merge': the changes it carried, as found
-  deliveries: number;              // app-delivery requests (or app.deliver items, before) so far
+  deliveries: number;              // app-delivery requests so far (app.deliver items, in a merge recorded before)
   delivery?: typeof DELIVERY;      // the deploy is asked of app-delivery (absent: self-hosted, or a merge recorded before every deploy was app-delivery's)
   answered?: boolean;              // app-delivery has answered this merge's own request
   deliveredSha: string | null;

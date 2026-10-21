@@ -777,11 +777,15 @@ ALTER TABLE apps ADD COLUMN IF NOT EXISTS last_failure JSONB;
 -- machine's (src/workflow/app-creation/): its insert starts its making (the
 -- apps_wf_enrol_creation trigger). Before it, an owner token of the process
 -- driving the row (`creating_owner`, 'workflow' once the machine took it)
--- with its heartbeat (`creating_heartbeat_at`): written and read by nothing
--- in this release, but read by the app-creation machine of the release before
--- roadmap item 3.2 (its facts). Drop them once no process of that release
--- (22ac79e7a) is live. Its redrives, read by nothing, are gone.
+-- with its heartbeat (`creating_heartbeat_at`): read by nothing in this
+-- release, but by the release before roadmap item 3.2 (22ac79e7a): its
+-- machine's facts, and its insert trigger, which a rollback to it applies
+-- again and which starts only a row whose owner is 'workflow' (any other it
+-- waits up to ten minutes for, as an older build's). So a row inserted with
+-- no owner is the workflow's by default. Drop both, and the default, once
+-- no process of that release is live and a rollback to it is over.
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS creating_owner TEXT;
+ALTER TABLE apps ALTER COLUMN creating_owner SET DEFAULT 'workflow';
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS creating_heartbeat_at TIMESTAMPTZ;
 ALTER TABLE apps DROP COLUMN IF EXISTS creating_redrives;
 -- Retired: a production redeploy the old governance paths owed an app (the
@@ -9963,7 +9967,19 @@ END $$;
 
 DROP TRIGGER IF EXISTS chat_sessions_shots_legacy_sync ON chat_sessions;
 DROP FUNCTION IF EXISTS chat_sessions_shots_legacy_sync();
-DROP VIEW IF EXISTS visual_evidence_runs, visual_evidence_artifacts, visual_evidence_diagnostic_artifacts;
+DO $$
+DECLARE
+  old TEXT;
+BEGIN
+  -- Views only: a database that still holds the old tables beside the new
+  -- ones (never renamed) is not this statement's to touch.
+  FOREACH old IN ARRAY ARRAY['visual_evidence_runs', 'visual_evidence_artifacts', 'visual_evidence_diagnostic_artifacts'] LOOP
+    IF EXISTS (SELECT 1 FROM pg_class WHERE relname = old AND relkind = 'v'
+                 AND relnamespace = current_schema()::regnamespace) THEN
+      EXECUTE format('DROP VIEW %I', old);
+    END IF;
+  END LOOP;
+END $$;
 ALTER TABLE chat_sessions
   DROP COLUMN IF EXISTS visual_evidence_state,
   DROP COLUMN IF EXISTS visual_evidence_run_id,
@@ -15584,9 +15600,13 @@ $$;
 --   status     queued    to build: a new key, or Rebuild in Admin
 --              building  the starter-images clock's target is building it
 --                        (`owner` and `heartbeat_at`: the lease a builder from
---                        before the clock held, written by nothing now but
---                        the release before roadmap item 3.2; drop them once
---                        no process of that release, 22ac79e7a, is live)
+--                        before the clock held, read and written now only by
+--                        the release before roadmap item 3.2, whose claim
+--                        leaves a row building with no owner alone: after a
+--                        rollback to it, a build this release's process was
+--                        cut in reads building until an admin's Rebuild.
+--                        Drop them once no process of that release,
+--                        22ac79e7a, is live)
 --              ready     image_ref is the image
 --              failed    the last attempt failed (`error`); retried a few
 --                        times on its own (attempts), then left for Rebuild

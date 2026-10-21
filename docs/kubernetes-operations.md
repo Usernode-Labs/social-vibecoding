@@ -757,9 +757,16 @@ person".
 leader gone) is not supported: roadmap item 3.2 deleted what a release from before it needed from
 the releases beside it (the holds it read in `process_holds`, its conversations' claims
 renewed, its Stop forward, the turn-spend mark). A rollback to a release that contains
-#5714 is an ordinary one: its migration Job recreates the empty `leader_sweeps` it still
-names. Turns this release recorded carry no turn-spend mark, so that release keeps none of
-their calls: a turn that ends without Claude Code's report is billed nothing for them.
+#5714 is an ordinary one: its migration Job recreates what it still names (`leader_sweeps`,
+the campaign lease columns, `apps.creating_redrives`, all empty), and this release keeps
+what it reads (`process_holds`, `shots_eval_trials.proxy_cents`, the `apps.creating_owner`
+and `starter_images.owner` columns, `apps.creating_owner` defaulting to `workflow` so its
+insert trigger starts every project). Two things it does with this release's state:
+
+- Turns this release recorded carry no turn-spend mark, so it keeps none of their calls: a
+  turn that ends without Claude Code's report is billed nothing for them.
+- A ready-made app's image whose build a process of this release was cut in reads
+  `building` until an admin presses Rebuild (Admin › Templates).
 
 ## State that decides, on the workflow (roadmap item 3)
 

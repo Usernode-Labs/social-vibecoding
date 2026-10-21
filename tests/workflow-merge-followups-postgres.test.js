@@ -406,7 +406,7 @@ test('merge-followups machine against the full PostgreSQL schema', { timeout: 12
     assert.deepEqual([asks[0].source.from.machine, asks[0].source.from.key], [MACHINE, sessionKey(s.id)]);
     assert.deepEqual((await instance(s)).data.followups.teardown, { kind: 'preview.retire', input: { sessionId: s.id }, status: 'done' },
       'recorded done, so no later answer asks again');
-    assert.ok(!(await workOf(s)).some((w) => w.kind === WORK.teardown), 'no teardown work of its own');
+    assert.ok(!(await workOf(s)).some((w) => w.kind === 'preview.teardown'), 'no teardown work of its own');
     // A later deploy's report changes nothing.
     await send(s, 'Deployed', { sha: SHA('a') });
     await settle();

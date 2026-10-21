@@ -48,7 +48,7 @@ export const AGENT_RETRY_MS = 20 * 1000;
 // How long a trial's cleanup waits for copies it stopped to say so.
 export const AWAIT_COPIES_MS = 10 * 60 * 1000;
 // With nothing due, a look this often all the same: an ask to look that was
-// lost (a launch whose Look failed, an older release's wake) waits no longer.
+// lost (a launch whose Look failed) waits no longer.
 export const IDLE_LOOK_MS = 10 * 60 * 1000;
 const MAX_BUSY_RETRIES = 2;
 const MIN_RETRY_LEFT_MS = 60 * 1000;
@@ -367,9 +367,9 @@ export function shotsEval(deps: Deps) {
       open: { Look: look, Tick: clock, EvalCancelled: cancel, WorkSucceeded: results, WorkFailed: results, WorkExhausted: results },
     } as any,
     writes: {
-      // A trial no longer planned here was changed outside this lock (an
-      // older release's process): the transition is tried again on what
-      // the rows say now, so no work goes for a claim that did not happen.
+      // A trial no longer planned here was changed outside this lock: the
+      // transition is tried again on what the rows say now, so no work goes
+      // for a claim that did not happen.
       claim: async (tx, w) => {
         const { rowCount } = await tx.query(
           `UPDATE shots_eval_trials

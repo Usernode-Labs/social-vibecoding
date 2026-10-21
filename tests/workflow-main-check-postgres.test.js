@@ -649,7 +649,13 @@ test('the main check against the full PostgreSQL schema', { timeout: 240000 }, a
     assert.equal((await send(rt, a, 'Resume', {}, route)).status, 'accepted');
     assert.equal((await inst(a)).state, 'idle', 'no run is carried on from the row');
     assert.deepEqual(await suiteWork(a), []);
-    assert.deepEqual([(await row(a)).paused, (await row(a)).resumed], [null, S1]);
+    assert.deepEqual([(await row(a)).state, (await row(a)).paused, (await row(a)).resumed], ['error', null, S1],
+      'its run had nothing behind it');
+    // So the next check of that commit runs it, rather than reading it checked.
+    script(a, green);
+    await ask(rt, a, S1);
+    await settle();
+    assert.equal((await row(a)).state, 'passing');
   });
 
 

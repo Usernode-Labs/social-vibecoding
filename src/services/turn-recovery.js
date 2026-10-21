@@ -1609,8 +1609,8 @@ async function resumeDetachedTurnInner({
   // The Homeroom bot's turns never reach this: a turn workflow work runs
   // (its builds, reads and fixes, the bench's trials) is its work item's to
   // follow (services/durable-turn.js), and adoptOrphanWorker leaves it
-  // alone; an older release's bot turn is abandoned there
-  // (isRecoveredBotSession), its request read again.
+  // alone; a bot turn no work item owns is stopped there
+  // (isRecoveredBotSession) and its record released.
 
   let result;
   try {

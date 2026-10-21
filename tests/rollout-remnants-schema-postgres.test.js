@@ -50,6 +50,13 @@ test('the schema drops the rollout-only remnants of a deployment that has them, 
     ALTER TABLE apps ADD COLUMN creating_redrives INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE maintenance_campaigns ADD COLUMN runner_id TEXT, ADD COLUMN lease_until TIMESTAMPTZ;
     ALTER TABLE maintenance_campaign_apps ADD COLUMN runner_id TEXT;
+    DROP TRIGGER maintenance_campaigns_wf_owned ON maintenance_campaigns;
+    CREATE TRIGGER maintenance_campaigns_wf_owned BEFORE UPDATE ON maintenance_campaigns FOR EACH ROW
+      EXECUTE FUNCTION wf_guard_owned_columns('@enrolled=campaign/campaign:', 'status', 'completed_at', 'runner_id', 'lease_until');
+    DROP TRIGGER maintenance_campaign_apps_wf_owned ON maintenance_campaign_apps;
+    CREATE TRIGGER maintenance_campaign_apps_wf_owned BEFORE UPDATE ON maintenance_campaign_apps FOR EACH ROW
+      WHEN (wf_holds('campaign', 'campaign:' || OLD.campaign_id)) EXECUTE FUNCTION wf_guard_owned_columns('state', 'error', 'runner_id');
+    ALTER TABLE apps ALTER COLUMN creating_owner DROP DEFAULT;
   `);
   await pool.query(SCHEMA);
 
@@ -81,8 +88,13 @@ test('the schema drops the rollout-only remnants of a deployment that has them, 
   assert.ok((await columns('starter_images')).includes('owner'));
   assert.ok((await columns('local_agent_turns')).includes('waiter_seen_at'));
 
-  // A project's insert starts its making whatever its owner columns say.
+  // A row inserted with no owner is the workflow's by default: the previous
+  // release's trigger, which a rollback applies again, starts only those.
   const { rows: [u] } = await pool.query(`INSERT INTO users (username, password) VALUES ('maker', 'x') RETURNING id`);
+  const { rows: [plain] } = await pool.query(
+    `INSERT INTO apps (name, slug, created_by, status) VALUES ('q', 'q', $1, 'running') RETURNING creating_owner`, [u.id]);
+  assert.equal(plain.creating_owner, 'workflow');
+  // A project's insert starts its making whatever its owner columns say.
   const { rows: [a] } = await pool.query(
     `INSERT INTO apps (name, slug, created_by, status, creating_owner) VALUES ('p', 'p', $1, 'creating', 'old-token') RETURNING id`, [u.id]);
   const { rows: events } = await pool.query(`SELECT type FROM wf_events WHERE machine = 'app-creation' AND key = $1`, [`app:${a.id}`]);

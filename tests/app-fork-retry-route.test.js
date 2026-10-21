@@ -265,8 +265,8 @@ test('a remix is inserted as Just you with reference-only lineage', async () => 
     assert.equal(res.status, 201, JSON.stringify(body));
     const insert = queries.find((q) => /WITH new_app AS/.test(q.sql));
     assert.ok(insert, 'the copy row is inserted');
-    assert.match(insert.sql, /VALUES \(\$1, \$2, \$3, 'creating', 'private', 'private', \$4::jsonb, 'workflow', 'infinity'\)/,
-      'private to build and to view: Just you; the workflow makes it');
+    assert.match(insert.sql, /VALUES \(\$1, \$2, \$3, 'creating', 'private', 'private', \$4::jsonb\)/,
+      'private to build and to view: Just you');
     assert.ok(!insert.params.includes('public'), 'the original\'s audience is not passed through');
     const lineage = JSON.parse(insert.params[3]);
     assert.deepEqual(Object.keys(lineage), ['appId', 'slug', 'forkedAt']);

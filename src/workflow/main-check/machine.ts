@@ -419,8 +419,12 @@ export function mainCheck(given: Partial<Deps> = {}): Machine<MCState, Facts> {
     },
     to: (s: MCState, e: Event<any>, f: Facts, ctx: TransitionContext) => {
       if (s.name !== NONE) return resume(s as Live, e);
-      // A paused row no instance holds: the pause lifts.
-      return resume({ name: 'idle', data: fromRow(e.payload.appId, f.row!) }, e);
+      // A paused row no instance holds: the pause lifts. A run it says is
+      // under way has nothing behind it, so it reads `error`, which the next
+      // check of that commit claims again.
+      const d = fromRow(e.payload.appId, f.row!);
+      const underWay = d.state === 'running' || d.state === 'confirming';
+      return resume({ name: 'idle', data: underWay ? { ...d, state: 'error' } : d }, e);
     },
   };
   const results = {

@@ -721,7 +721,7 @@ test('campaign routes: meta, merge-green, retry and stop are admin-gated; each i
 });
 
 test('campaign routes: the machine\'s refusals answer what an admin can act on', async () => {
-  const reasons = new Map([['RetryApp', 'not_retryable'], ['Stop', 'stopped']]);
+  const reasons = new Map([['RetryApp', 'not_retryable'], ['Stop', 'stopped'], ['AutoMerge', 'no_instance']]);
   const { router, restore } = loadCampaignRoutes(makePool([[/SELECT 1 FROM maintenance_campaigns/, [{ '?column?': 1 }]]]),
     { answer: (type) => ({ status: type === 'MergeGreen' ? 'faulted' : 'rejected', reason: reasons.get(type) }) });
   try {
@@ -733,6 +733,15 @@ test('campaign routes: the machine\'s refusals answer what an admin can act on',
     const st = mockRes();
     await stop({ params: { id: '5' }, user: { id: 2, canAdminWrite: true } }, st);
     assert.deepEqual([st.statusCode, st.body.reason], [409, 'stopped']);
+    // A campaign whose Start the machine has not applied yet: starting, not
+    // "taken over by this release".
+    const starting = await (async () => {
+      const auto = routeHandler(router, '/api/campaigns/:id/auto-merge', 'post');
+      const res = mockRes();
+      await auto({ params: { id: '5' }, body: { on: true }, user: { id: 2, canAdminWrite: true } }, res);
+      return res;
+    })();
+    assert.deepEqual([starting.statusCode, starting.body.error], [409, 'The campaign is starting. Try again in a moment.']);
     const mg = routeHandler(router, '/api/campaigns/:id/merge-green', 'post');
     const broken = mockRes();
     await mg({ params: { id: '5' }, user: { id: 2, canAdminWrite: true } }, broken);
