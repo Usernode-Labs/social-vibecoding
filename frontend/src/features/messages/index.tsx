@@ -12,6 +12,7 @@ import {
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 import { placeUnderAnchor, type AnchorRect } from '../../lib/anchor-popover';
 import { cardRunLabel, cardRunStarts } from '../../lib/card-runs';
+import { useComposerKeyboard } from '../../lib/composer-keyboard';
 import { unmountLegacyPortal } from '../../lib/legacy-portals';
 import { confirmAction } from '../../lib/confirm';
 import { useMenuKeyboard } from '../../lib/menu-keys';
@@ -1566,6 +1567,7 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
   const snap = useMessagesSnapshot();
   const channels = useChannelHandles();
   const scroller = useRef<HTMLDivElement>(null);
+  useComposerKeyboard(scroller);
   const previousLast = useRef<number | null>(null);
   const initialScroll = useRef<number | null>(null);
   const conversationId = snap.route.conversationId;
@@ -1717,10 +1719,10 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
     <section className={`flex messages-thread-pane platform-kb-column dc-lift dc-lift-session messages-thread-${kind}${embedded ? ' messages-thread-embedded' : ''}`} aria-label={snap.active?.title || 'Conversation'}>
       {embedded ? null : <ThreadHeader />}
       <InvitationBanner />
-      {/* No `un-kb-avoid` here: the column reserves the keyboard inset now
-          (`platform-kb-column` above), and the kit's class would pad the
-          inside of this scroller on top of that — the inset twice over, as
-          dead space under the last message. */}
+      {/* The kit ADDS `un-kb-avoid` to this scroller at runtime (the pin
+          `useComposerKeyboard` above attaches), and app.css zeroes the
+          padding that class would otherwise add inside the reserving column
+          — the inset stays reserved once, on the column above. */}
       <div ref={scroller} className="messages-thread-scroll platform-safe-scroll" aria-live="polite">
         {/* Only a thread with nothing to show yet says it is loading (#2907).
             A refresh of the visible thread — the realtime echo of every send
@@ -1797,6 +1799,7 @@ function ReplyThreadPanel() {
   const rootId = snap.route.threadRootId;
   const thread = snap.thread && snap.thread.rootId === rootId ? snap.thread : null;
   const scroller = useRef<HTMLDivElement>(null);
+  useComposerKeyboard(scroller);
   const count = useRef(0);
   useEffect(() => {
     if (conversationId && rootId && !snap.loadingThread && snap.active?.id === conversationId) {

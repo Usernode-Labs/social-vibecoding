@@ -367,16 +367,29 @@ html.un-kb .platform-safe-sheet {
    to reveal the focused field, and `settledPin()` — which runs on EVERY
    settled viewport event, not only on focus — reset that pan with
    `window.scrollTo(0, 0)`. Typing resizes the visual viewport (QuickType), so
-   the page snapped back once per keypress and took the transcript with it.
+   the page snapped back once per keypress and took the transcript with it —
+   destructive only because nothing reserved the inset the composer was still
+   sitting behind.
    Android never had that half: Chrome does not pan (measured: scrollY stays
    0), though its composer was covered just the same.
 
-   Reserving the inset on the column fixes both, and is what native does — iOS
-   Messages and Android Messages both shrink the content area by the keyboard's
-   height and pin the composer above it rather than covering or panning.
-   The scroller loses that height instead of being covered, so the transcript
-   stays visible, the composer sits above the keys, and nothing needs to pan,
-   which leaves the settled pin inert rather than destructive.
+   Reserving the inset on the column is what native does — iOS Messages and
+   Android Messages both shrink the content area by the keyboard's height and
+   pin the composer above it rather than covering it. The scroller loses that
+   height instead of being covered, so the transcript stays visible and the
+   composer sits above the keys.
+
+   On iOS Safari that reservation alone is NOT enough, which is what left
+   Messages broken (#3571). Before any inset exists, Safari PANS the page to
+   reveal the tapped field by the full keyboard height; the column then lifts
+   the composer by the same inset inside a page already moved up. The two
+   movements add, and the composer ends above the top of the screen with only
+   its bottom edge left. The pan is put back by the kit's settled pin, so a
+   reserving column still needs `attachKeyboardAvoidance` on its scroller: the
+   legacy screens get it from `PlatformUI.attachScreenFx`, and React's own
+   columns (Messages) attach it with `lib/composer-keyboard.ts`. The pin is
+   therefore NOT inert on a reserving column — it is the other half of the
+   fix.
 
    Transition shape copied from the kit's own `.un-kb-avoid`: none while the
    keyboard is up so the bar tracks it exactly, eased on the way out so the
