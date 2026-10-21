@@ -14,9 +14,9 @@
 //      never moves what it compares; the seam resists past an edge and
 //      settles softly on the edges of what changed.
 //   3. THE VOTE. Votes go through the platform's castVote with the epoch;
-//      a No carries its line; Undo goes through retractVote; Next change
-//      moves to the next change without a vote, and Done on the last one
-//      shows the all-done message.
+//      a No counts in one tap and may carry a line after; your own answer
+//      again goes through retractVote; Next change moves to the next change
+//      without a vote, and Done on the last one closes onto the feed's end.
 //   4. THE COPY. Every message the flow asks for exists in English.
 
 const test = require('node:test');
@@ -189,7 +189,7 @@ test('the seam resists past an edge and settles softly near what changed', () =>
   assert.ok(stops.every((x, i) => i === 0 || stops[i - 1] <= x), 'in order');
 });
 
-test('the pill names the side most of the window shows, with hysteresis, and colour follows share', () => {
+test('the switch names the side most of the window shows, with hysteresis, and colour follows share', () => {
   assert.equal(compare.viewFor(0.55, 'after'), 'after');
   assert.equal(compare.viewFor(0.6, 'after'), 'before');
   assert.equal(compare.viewFor(0.45, 'before'), 'before');
@@ -235,9 +235,45 @@ test('a still press of a third of a second opens the magnifier; moving early doe
   assert.match(css, /\.rf-compare \{[^}]*\-webkit-touch-callout: none;/);
   assert.match(
     css,
-    /@media \(prefers-reduced-motion: reduce\) \{\n  \.rf-sheet, \.rf-scrim, \.rf-seam, \.rf-tab, \.rf-pill \{ transition: none; \}\n  \.rf-lens \{ animation: none; \}/,
+    /@media \(prefers-reduced-motion: reduce\) \{\n  \.rf-sheet, \.rf-scrim, \.rf-seam, \.rf-cap, \.rf-switch, [^}]*\{ transition: none; \}\n  \.rf-lens \{ animation: none; \}/,
     'the magnifier opens at once when motion is reduced',
   );
+});
+
+test('each side carries its own caption, and the seam wipes it with its picture', () => {
+  const src = read('frontend/src/features/review-flow/compare.tsx');
+  // The After caption lies over the after picture; the Before caption is
+  // inside the clip with the before picture, so the seam cuts both alike.
+  assert.match(src, /<div className="rf-cap rf-cap-after"[\s\S]*?<div className="rf-layer-clip"/);
+  assert.match(src, /<div className="rf-layer-clip"[^>]*>\s*<div className="rf-layer"[^>]*>\{img\(before, 'before'\)\}<\/div>\s*<div className="rf-cap rf-cap-before"/);
+  assert.match(src, /RichMessage id="communities:review\.compare\.captionAfter"/);
+  assert.match(src, /RichMessage id="communities:review\.compare\.captionBefore"/);
+  assert.equal(message('communities:review.compare.captionBefore'), 'Before <0>· Today</0>');
+  assert.equal(message('communities:review.compare.captionAfter'), '<0>If it passes ·</0> After');
+  assert.doesNotMatch(src, /rf-pill|rf-tab/, 'the pill and the ›› tab are gone');
+});
+
+test('the switch flips the view and its knob says which side, a press leans the seam in', () => {
+  const src = read('frontend/src/features/review-flow/compare.tsx');
+  assert.match(src, /role="switch"\s+aria-checked=\{word === 'before'\}/);
+  assert.match(src, /const LEAN = 0\.08;/);
+  assert.match(src, /onPointerDown=\{switchDown\}/);
+  assert.match(src, /onClick=\{flip\}/);
+  // A flip pins the knob to where it was sent while the seam glides there.
+  assert.match(src, /pinned\.current = true;\s*setView\(to > 0 \? 'before' : 'after'\);\s*glide\(to, 320/);
+  assert.match(src, /closest\('\[data-rf-switch\]'\)\) return;/, 'a press on the switch never starts a drag');
+  const css = read('public/css/app.css');
+  assert.match(css, /\.rf-switch \{ position: absolute; left: 50%; bottom: 12px;[^}]*width: 72px; height: 40px;/);
+  assert.match(css, /\.rf-switch\[data-view="before"\] \.rf-knob \{ left: 2\.5px;/, 'Before on the left');
+  assert.match(css, /\.rf-knob \{ position: absolute; top: 2\.5px; left: 34\.5px;/, 'After on the right');
+});
+
+test('the hero takes the page\'s free height, never shorter than 4:3 or taller than 3:2', () => {
+  const flow = loadTsx('frontend/src/features/review-flow/review-flow.tsx');
+  assert.equal(flow.heroHeight(351, 704, false), 704 - 292, 'a phone: what the page leaves');
+  assert.equal(flow.heroHeight(351, 400, false), Math.round(351 * 0.75), 'a short window keeps 4:3');
+  assert.equal(flow.heroHeight(351, 2000, false), Math.round(351 * 1.5), 'a tall one stops at 3:2');
+  assert.equal(flow.heroHeight(351, 704, true), 704 - 292 - 76, 'thumbnails take their row');
 });
 
 // ── 2b. The preview card ────────────────────────────────────────────────
@@ -257,19 +293,19 @@ test('the change page sets its picture and thumbnails apart in an inset card', (
   const css = read('public/css/app.css');
   const rule = css.match(/\n\.rf-preview \{[^}]*\}/)[0];
   assert.match(rule, /margin: 12px 12px 0;/);
-  assert.match(rule, /border-radius: 16px;/);
+  assert.match(rule, /border-radius: 24px;/);
   assert.match(rule, /background: var\(--rf-sheet\);/);
   assert.match(rule, /box-shadow: 0 0 0 1px var\(--rf-line\);/);
   assert.match(css, /\.rf-preview \.rf-thumb\[aria-pressed="true"\] \{ box-shadow: 0 0 0 2px var\(--rf-sheet\), 0 0 0 4px var\(--lit-ink\); \}/);
   assert.match(css, /\.rf-claim \{ margin: 0; padding: 20px 16px 0 20px;/, 'the description starts further below the card');
   // The opening ghost lands on the inset card, edges rounded like it.
   assert.match(src, /const k = \(page\.width - PREVIEW_INSET \* 2\) \/ card\.width;/);
-  assert.equal((src.match(/heroTransform\(cr, pr, headH\), borderRadius: '16px'/g) || []).length, 2);
+  assert.equal((src.match(/heroTransform\(cr, pr, headH\), borderRadius: '24px'/g) || []).length, 2);
 });
 
 // ── 3. The vote ──────────────────────────────────────────────────────────
 
-test('votes go through castVote with the epoch, a No carries its line, Undo goes through retractVote', () => {
+test('votes go through castVote with the epoch, a No may carry a line, a vote taken back goes through retractVote', () => {
   const src = read('frontend/src/features/review-flow/review-flow.tsx');
   assert.match(src, /callAppView\('castVote', item\.id, v, item\.epoch, opts\)/);
   assert.match(src, /v === 'no' \? \{ reason: reason \|\| '' \} : \{ reason: null \}/);
@@ -298,72 +334,77 @@ test('Next change goes to the next change with no vote, wraps to an earlier one,
   assert.equal(model.nextIndex(withDecision, 2, { a: 'yes' }), -1, 'and it does not keep all-done from showing');
 });
 
-test('the sheet covers the page only while it is open', () => {
-  assert.equal(sheet.sheetOpen('ask'), false);
-  assert.equal(sheet.sheetOpen('voted'), false);
-  assert.equal(sheet.sheetOpen('alldone'), false);
-  for (const s of ['unsure', 'no', 'askq', 'talk', 'try', 'about', 'more']) assert.equal(sheet.sheetOpen(s), true, s);
+test('the sheet covers the page only while its help or menu is open', () => {
+  for (const s of ['ask', 'voted', 'reason']) assert.equal(sheet.sheetOpen(s), false, s);
+  for (const s of ['unsure', 'askq', 'talk', 'try', 'about', 'more']) assert.equal(sheet.sheetOpen(s), true, s);
 });
 
 function sheetHtml(props) {
   const [item] = model.toReviewItems([feedItem()], () => ({ screens: [SCREEN] }));
   return renderToHtml(createElement(sheet.VoteSheet, {
     item, vote: null, state: 'ask', setState() {}, onVote: async () => true, onUndo: async () => true,
-    onNext() {}, hasNext: true, onDone() {}, doneLabel: 'Back', maxHeight: 600, fresh: false, ...props,
+    onNext() {}, hasNext: true, maxHeight: 600, ...props,
   }));
 }
 
-test('the all-done sheet says everything is voted on, with one way back and no Undo', () => {
-  const html = sheetHtml({ vote: 'yes', state: 'alldone', doneLabel: 'Back to your communities' });
-  assert.match(html, /data-rf-alldone=""/);
-  // The apostrophe is escaped in the markup the renderer writes.
-  assert.ok(html.replace(/&#x27;/g, "'").includes(message('communities:review.alldone.line')));
-  assert.match(html, /data-rf-alldone-btn=""/);
-  assert.ok(html.includes('Back to your communities'));
-  assert.doesNotMatch(html, /data-rf-undo/, 'nothing is left to take back from here');
-});
-
-test('Next change passes the votes, and Done on the last one opens the all-done sheet instead of closing', () => {
+test('Next change passes the votes, and Done on the last one closes onto the feed\'s end', () => {
   const src = read('frontend/src/features/review-flow/review-flow.tsx');
   assert.match(src, /nextIndex\(list, open\.index, votes\)/);
-  assert.match(src, /setSheet\('alldone'\)/);
-  const at = src.indexOf('const goNext = ');
-  assert.ok(at > 0, 'goNext is where the test expects it');
-  const goNext = src.slice(at, src.indexOf('useLayoutEffect', at));
-  assert.doesNotMatch(goNext, /close\(\)/, 'the last Done no longer closes silently');
+  assert.match(src, /if \(n < 0\) \{ finishAll\(\); return; \}/);
+  const at = src.indexOf('const finishAll = ');
+  const finish = src.slice(at, src.indexOf('};', at));
+  assert.match(finish, /takeDown\(\)/);
+  assert.match(finish, /\[data-rf-end\]/, 'the feed\'s own end comes into view');
+  assert.doesNotMatch(finish, /onDone\(\)/, 'Done no longer leaves the feed');
+  // A list your votes emptied shows the end, centred, not the empty line.
+  assert.match(src, /if \(!list\.length && Object\.keys\(votes\)\.length\) \{[\s\S]*?rf-end rf-end-alone/);
+  assert.match(read('public/css/app.css'), /\.rf-end-alone \{ min-height: 56vh; justify-content: center;/);
 });
 
-test('at rest the sheet asks Yes or No, with Not sure? under them', () => {
+test('at rest the vote is part of the page: Yes | No and ⋯, no sheet', () => {
   const html = sheetHtml({});
-  assert.match(html, /data-rf-vote="yes"/);
-  assert.match(html, /data-rf-vote="no"/);
-  assert.ok(html.includes(message('communities:review.unsure.open')));
+  assert.match(html, /class="rf-sheet rf-sheet-rest"/);
+  assert.doesNotMatch(html, /rf-grab/, 'no handle while it rests');
+  assert.match(html, /role="radiogroup"/);
+  assert.match(html, /data-rf-vote="yes"[\s\S]*rf-pair-div[\s\S]*data-rf-vote="no"/);
+  assert.match(html, /data-rf-morph="help"[^>]*data-rf-unsure=""/);
+  assert.match(html, /class="rf-why rf-why-off"/, 'the room for a reason is kept, empty');
 });
 
-test('Not sure? opens the four help rows', () => {
+test('⋯ opens the four help rows in a sheet', () => {
   const html = sheetHtml({ state: 'unsure' });
+  assert.match(html, /class="rf-sheet"/);
+  assert.match(html, /rf-grab/);
   for (const to of ['askq', 'talk', 'try', 'about']) assert.match(html, new RegExp(`data-rf-help="${to}"`));
 });
 
-test('after a vote: a large mark, what you said, Undo beside Next change', () => {
-  const html = sheetHtml({ vote: 'yes', state: 'voted', fresh: true });
-  assert.match(html, /data-rf-said="yes"/);
-  assert.ok(html.includes(message('communities:review.said.yes')));
-  assert.match(html, /data-rf-undo=""[\s\S]*data-rf-next=""/);
+test('after a vote the row stays: the pair shows the choice, ⋯ becomes Next change', () => {
+  const html = sheetHtml({ vote: 'yes', state: 'voted' });
+  assert.match(html, /data-rf-voted="yes"/);
+  assert.match(html, /aria-checked="true"[^>]*data-rf-vote="yes"/);
+  assert.match(html, /data-rf-morph="next"[^>]*data-rf-next=""/);
   assert.ok(html.includes(message('communities:review.said.next')));
-  const last = sheetHtml({ vote: 'no', state: 'voted', hasNext: false });
-  assert.ok(last.includes(message('communities:review.said.no')));
+  assert.ok(html.includes(message('communities:review.said.yes')), 'said for a screen reader');
+  assert.doesNotMatch(html, /data-rf-undo/, 'your own answer again takes it back');
+  const last = sheetHtml({ vote: 'yes', state: 'voted', hasNext: false });
   assert.ok(last.includes(message('communities:review.said.done')));
+  const src = read('frontend/src/features/review-flow/vote-sheet.tsx');
+  assert.match(src, /if \(vote === v\) \{ void undo\(\); return; \}/);
 });
 
-test('a No asks for its line, held to the server\'s limit, and sends without one', () => {
-  const html = sheetHtml({ state: 'no' });
-  assert.ok(html.includes(message('communities:review.no.ask')));
-  assert.match(html, /maxLength="280"/);
-  assert.match(html, /aria-pressed="true"/);
-  const send = message('communities:review.no.send');
-  assert.ok(html.includes(`class="rf-go">${send}</button>`), 'Send is enabled with an empty line');
-  assert.ok(!html.includes('class="rf-go" disabled'), 'not greyed out until a line is written');
+test('a No counts in one tap; a reason is offered after, held to the server\'s limit', () => {
+  const src = read('frontend/src/features/review-flow/vote-sheet.tsx');
+  assert.match(src, /void cast\(v\);/, 'the tap casts, nothing is asked first');
+  const offered = sheetHtml({ vote: 'no', state: 'voted' });
+  assert.match(offered, /data-rf-voted="no"/);
+  assert.match(offered, /data-rf-why=""/);
+  assert.ok(offered.includes(message('communities:review.reason.add')));
+  const writing = sheetHtml({ vote: 'no', state: 'reason' });
+  assert.match(writing, /class="rf-why-form"/);
+  assert.match(writing, /maxLength="280"/);
+  assert.ok(writing.includes(`class="rf-share">${message('communities:review.reason.share')}</button>`), 'Share sits inside the field');
+  assert.match(src, /if \(await cast\('no', text\)\) setShared\(text\);/);
+  assert.doesNotMatch(sheetHtml({ vote: 'yes', state: 'voted' }), /data-rf-why=""/, 'a Yes is not asked why');
 });
 
 // ── 4. The copy ──────────────────────────────────────────────────────────

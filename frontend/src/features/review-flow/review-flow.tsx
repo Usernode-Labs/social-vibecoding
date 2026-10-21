@@ -16,16 +16,17 @@
  * Tapping a card EXPANDS it: one sheet grows out of the card, its coloured
  * ground shrinks into the header, and the title travels up into the header.
  * The feed recedes behind it. The page is fixed above the tab bar, which
- * stays. Its hero is the before/after slider (./compare.tsx), with
- * thumbnails when the change has several screens; under it, what the change
- * does; at the foot the vote sheet (./vote-sheet.tsx).
+ * stays. Its hero is the before/after slider (./compare.tsx), as tall as the
+ * page leaves room for, with thumbnails when the change has several screens;
+ * under it, what the change does; at the foot the vote (./vote-sheet.tsx),
+ * part of the page until its help opens over it.
  *
  * Next change PUSHES the next one in from the side: the page you leave
  * slides a little left and dims, the next one slides in, the title changes,
  * and the slider's handle and pill arrive a moment after it lands. The feed
  * behind scrolls quietly to that card, so Back lands on it. It goes only to
  * a change you have not voted on; with none left the button says Done, and
- * Done shows that everything is voted on, then takes you back.
+ * Done closes the page onto the feed's own end.
  *
  * ── Island rules ────────────────────────────────────────────────────────
  * Rendered only while the Needs you pane shows, from data the controller
@@ -55,6 +56,20 @@ const PREVIEW_INSET = 12;
 const OPEN_MS = 380;
 const PUSH_MS = 440;
 const MARKS_AFTER = 160;
+/**
+ * What the change page holds besides the hero, for its height: the header,
+ * the card's top margin, a claim of up to three lines and the vote at rest
+ * (the room for a No's reason, the row, their padding). The hero takes the
+ * rest, never shorter than the card's own 4:3 and never taller than 3:2.
+ */
+const PAGE_CHROME = 52 + 12 + 92 + 136;
+const THUMBS_H = 76;
+
+/** The hero's height on a page `pageH` tall, `inner` wide. */
+export function heroHeight(inner: number, pageH: number, thumbs: boolean): number {
+  const room = pageH - PAGE_CHROME - (thumbs ? THUMBS_H : 0);
+  return Math.round(Math.max(inner * 0.75, Math.min(inner * 1.5, room)));
+}
 /**
  * The feed's column and the change page are one width: 520px at most, the
  * feed's 16px gutters included (app.css `.rf-feed`, `.rf-page`). The cards
@@ -178,11 +193,11 @@ function TitleShot({ item, width }: { item: ReviewItem; width: number }): ReactN
 
 /* ── One change's page body (hero, thumbnails, words) ─────────────────── */
 
-function PageBody({ item, width, marks, near }: { item: ReviewItem; width: number; marks: boolean; near: boolean }): ReactNode {
+function PageBody({ item, width, pageH, marks, near }: { item: ReviewItem; width: number; pageH: number; marks: boolean; near: boolean }): ReactNode {
   const [shot, setShot] = useState(0);
   useEffect(() => setShot(0), [item.key]);
   const inner = Math.max(0, width - PREVIEW_INSET * 2);
-  const height = Math.round(inner * 0.75);
+  const height = heroHeight(inner, pageH, item.screens.length > 1);
   const screen = item.screens[shot] || null;
   const visual = !!screen || !!(item.pair && (item.pair.after || item.pair.before));
   const t = useMessages('communities');
@@ -256,13 +271,13 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
   const stageRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
   const [pageWidth, setPageWidth] = useState(0);
+  const [pageHeight, setPageHeight] = useState(0);
   // The list stays as it was while a page is open: a vote takes its item out
   // of the controller's feed, and the list under an open page must not move.
   const [list, setList] = useState<ReviewItem[]>([]);
   const [open, setOpen] = useState<Open | null>(null);
   const [marks, setMarks] = useState(false);
   const [votes, setVotes] = useState<Record<string, Vote>>({});
-  const [fresh, setFresh] = useState(false);
   const [sheet, setSheet] = useState<SheetState>('ask');
   const busy = useRef(false);
   const timers = useRef<number[]>([]);
@@ -312,7 +327,6 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
     }
     busy.current = true;
     setMarks(false);
-    setFresh(false);
     setSheet(votes[target.key] ? 'voted' : 'ask');
     setOpen({ index, from: null, phase: 'opening' });
   };
@@ -322,6 +336,7 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
     const page = pageRef.current;
     const pr = page.getBoundingClientRect();
     setPageWidth(Math.min(COLUMN, pr.width));
+    setPageHeight(pr.height);
     const card = cardOf(open.index);
     const cover = card?.querySelector<HTMLElement>('[data-rf-cover]');
     const done = () => {
@@ -356,7 +371,7 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
       { transform: 'none', borderRadius: '20px', opacity: 1 },
       { opacity: 1, offset: 0.2 },
       { opacity: 0, offset: 0.6 },
-      { transform: heroTransform(cr, pr, headH), borderRadius: '16px', opacity: 0 },
+      { transform: heroTransform(cr, pr, headH), borderRadius: '24px', opacity: 0 },
     ], { ...opts, fill: 'forwards' }).finished.catch(() => {}).finally(() => pic.remove());
     rootRef.current?.animate(
       [{ transform: 'none', filter: 'none' }, { transform: 'scale(0.96)', filter: 'brightness(0.94)' }],
@@ -414,7 +429,7 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
     // The hero hands over to the card's own picture, which lands exactly on the card.
     const pic = coverGhost(cover, cr);
     pic.animate([
-      { transform: heroTransform(cr, pr, headH), borderRadius: '16px', opacity: 0 },
+      { transform: heroTransform(cr, pr, headH), borderRadius: '24px', opacity: 0 },
       { opacity: 0, offset: 0.2 },
       { opacity: 1, offset: 0.6 },
       { transform: 'none', borderRadius: '20px', opacity: 1 },
@@ -428,10 +443,9 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
   const goNext = () => {
     if (!open || busy.current) return;
     const n = nextIndex(list, open.index, votes);
-    if (n < 0) { setSheet('alldone'); return; }
+    if (n < 0) { finishAll(); return; }
     busy.current = true;
     setMarks(false);
-    setFresh(false);
     setSheet(votes[list[n].key] ? 'voted' : 'ask');
     // The feed behind follows, so Back lands on the right card.
     cardOf(n)?.scrollIntoView({ block: 'center' });
@@ -462,7 +476,6 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
     if (!item) return false;
     const key = item.key;
     setVotes((cur) => ({ ...cur, [key]: v }));
-    setFresh(true);
     setSheet('voted');
     const opts = v === 'no' ? { reason: reason || '' } : { reason: null };
     let ok = false;
@@ -486,7 +499,6 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
     } catch { ok = false; }
     if (!ok) return false;
     setVotes((cur) => { const copy = { ...cur }; delete copy[key]; return copy; });
-    setFresh(false);
     setSheet('ask');
     onRetracted?.(item.id);
     return true;
@@ -504,11 +516,13 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
     setSheet('ask');
   };
 
-  // Done on the last change: the all-done message's button takes the page
-  // down the same way, then goes where the list's own end goes.
+  // Done on the last change: the page comes down onto the feed, whose own
+  // end says that nothing else is waiting.
   const finishAll = () => {
     takeDown();
-    onDone();
+    requestAnimationFrame(() => {
+      rootRef.current?.querySelector<HTMLElement>('[data-rf-end]')?.scrollIntoView({ block: 'center', behavior: reducedMotion() ? 'auto' : 'smooth' });
+    });
   };
 
   // Going anywhere else (a link on the page, a tab, Back) takes the page
@@ -544,11 +558,26 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
   if (!items && !list.length) {
     return <div className="rf-feed rf-loading" data-review-flow="" aria-busy="true" aria-label={t('communities:reel.loading')} />;
   }
+  if (!list.length && Object.keys(votes).length) {
+    // Everything here had your vote: the end, centred where the list was.
+    return (
+      <div className="rf-feed rf-feed-done" data-review-flow="">
+        <div className="rf-end rf-end-alone" data-rf-end="">
+          <span className="rf-end-mark" aria-hidden="true">
+<CheckIcon width={24} height={24} strokeWidth="2.2" />
+          </span>
+          <p className="rf-end-line">{t('communities:review.end.line')}</p>
+          <button type="button" className="rf-end-btn" onClick={onDone}>{doneLabel || t('communities:reel.done')}</button>
+        </div>
+      </div>
+    );
+  }
   if (!list.length) {
     return <p className="rf-feed-note px-4 pt-3 text-sm text-zinc-500 dark:text-zinc-400" data-needs-empty="" data-review-flow="">{t('communities:reel.empty')}</p>;
   }
 
   const pw = pageWidth || Math.min(COLUMN, width + GUTTERS);
+  const ph = pageHeight || (typeof window !== 'undefined' ? window.innerHeight - 64 : 700);
   const page = open && item ? createPortal(
     <div className="rf-page-wrap" data-rf-page="">
       <div ref={pageRef} className="rf-page" role="dialog" aria-modal="false" aria-label={item.title}>
@@ -565,11 +594,11 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
         <div ref={stageRef} className="rf-stage">
           {leaving ? (
             <div className="rf-stage-layer rf-stage-leaving" data-rf-leaving="" aria-hidden="true">
-              <PageBody item={leaving} width={pw} marks={false} near />
+              <PageBody item={leaving} width={pw} pageH={ph} marks={false} near />
             </div>
           ) : null}
           <div className={leaving ? 'rf-stage-layer rf-stage-arriving' : 'rf-stage-layer'} data-rf-arriving="">
-            <PageBody item={item} width={pw} marks={marks} near />
+            <PageBody item={item} width={pw} pageH={ph} marks={marks} near />
           </div>
         </div>
         <div className={sheetOpen(sheet) ? 'rf-scrim rf-scrim-on' : 'rf-scrim'} onClick={() => setSheet(votes[item.key] ? 'voted' : 'ask')} aria-hidden="true" />
@@ -582,10 +611,7 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
           onUndo={undo}
           onNext={goNext}
           hasNext={next >= 0}
-          onDone={finishAll}
-          doneLabel={doneLabel || t('communities:reel.done')}
           maxHeight={Math.max(240, (typeof window !== 'undefined' ? window.innerHeight : 800) * 0.82)}
-          fresh={fresh}
         />
       </div>
     </div>,

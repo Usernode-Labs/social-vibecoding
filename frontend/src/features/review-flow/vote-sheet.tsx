@@ -1,24 +1,26 @@
 /**
- * The change page's vote sheet, pinned above the tab bar.
+ * The change page's vote, at its foot above the tab bar.
  *
- * At rest it asks one thing: Yes or No, with "Not sure?" under them. Every
- * other way to look closer opens from there, one tap away and never in the
- * way: Ask privately, Discussion, Try it, About this change. After a vote the
- * sheet says what you said, with a large check to land on, and offers Undo
- * (the server takes the vote back while voting is open, DELETE
- * /api/sessions/:id/vote through `AppView.retractVote`) beside Next change.
- * Next change goes to the next change still waiting on you; once none is
- * left the button says Done, and Done shows that nothing else is waiting,
- * under a check, with the way back.
+ * At rest it is part of the page, not a sheet over it: one pair, Yes | No,
+ * and a round ⋯ beside it. The row never moves. A tap on Yes or No counts at
+ * once; the pair shows the choice (a filled thumb under it, with its mark),
+ * and the ⋯ grows into Next change, or Done on the last one. A tap on the
+ * other answer changes the vote; a tap on your own answer takes it back (the
+ * server takes a vote back while voting is open, DELETE /api/sessions/:id/vote
+ * through `AppView.retractVote`). On a No, "Add a reason" appears in the room
+ * kept for it above the row, and a line written there goes with the No.
+ *
+ * ⋯ opens the help as a sheet over the page: Ask privately, Discussion, Try
+ * it, About this change. The page's header ⋯ opens its own menu the same way.
  *
  * Votes go through the platform's own `AppView.castVote`, with the approval
  * epoch the server checks, so every other screen hears about them the usual
- * way. A No may carry its line.
+ * way.
  */
 
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 
-import { CheckIcon, ChevronLeftIcon, ChevronRightIcon, ChevronUpIcon, ChatIcon, InfoCircleIcon, PlayIcon, SparklesIcon, XIcon } from '@/components/ui/icons';
+import { CheckIcon, ChevronLeftIcon, ChevronRightIcon, ChatIcon, EllipsisHorizontalIcon, InfoCircleIcon, PlayIcon, SparklesIcon, XIcon } from '@/components/ui/icons';
 
 import { useMessages } from '../../lib/i18n/react';
 import { agoStamp } from '../../lib/timestamp';
@@ -28,24 +30,24 @@ import { FeedThread } from '../dev-board/card/feed-thread';
 import { readAskStream } from '../dev-board/workshop/ask-stream';
 import type { ReviewItem } from './model';
 
-export type SheetState = 'ask' | 'unsure' | 'no' | 'voted' | 'alldone' | 'askq' | 'talk' | 'try' | 'about' | 'more';
+export type SheetState = 'ask' | 'voted' | 'reason' | 'unsure' | 'askq' | 'talk' | 'try' | 'about' | 'more';
 export type Vote = 'yes' | 'no';
 
 /** The longest line a No may carry (the server's VOTE_REASON_MAX). */
 export const NO_LINE_MAX = 280;
 
-/** Whether the sheet covers the page (everything but its resting, voted and all-done states). */
+/** Whether the sheet covers the page (everything but the vote row's own states). */
 export function sheetOpen(state: SheetState): boolean {
-  return state !== 'ask' && state !== 'voted' && state !== 'alldone';
+  return state !== 'ask' && state !== 'voted' && state !== 'reason';
 }
 
 const Icon = {
-  check: <CheckIcon aria-hidden="true" width={18} height={18} strokeWidth="2.2" />,
-  x: <XIcon aria-hidden="true" width={18} height={18} strokeWidth="2.2" />,
-  up: <ChevronUpIcon aria-hidden="true" width={16} height={16} />,
+  check: <CheckIcon aria-hidden="true" width={18} height={18} strokeWidth="2.4" />,
+  x: <XIcon aria-hidden="true" width={16} height={16} strokeWidth="2.4" />,
   back: <ChevronLeftIcon aria-hidden="true" width={22} height={22} strokeWidth="2.2" />,
   chev: <ChevronRightIcon aria-hidden="true" width={20} height={20} />,
   next: <ChevronRightIcon aria-hidden="true" width={18} height={18} strokeWidth="2.2" />,
+  dots: <EllipsisHorizontalIcon aria-hidden="true" width={22} height={22} />,
   spark: <SparklesIcon aria-hidden="true" width={20} height={20} />,
   chat: <ChatIcon aria-hidden="true" width={20} height={20} />,
   play: <PlayIcon aria-hidden="true" width={20} height={20} />,
@@ -54,7 +56,7 @@ const Icon = {
 
 type AskMsg = { who: 'you' | 'ai'; text: string; pending?: boolean };
 
-export function VoteSheet({ item, vote, state, setState, onVote, onUndo, onNext, hasNext, onDone, doneLabel, maxHeight, fresh }: {
+export function VoteSheet({ item, vote, state, setState, onVote, onUndo, onNext, hasNext, maxHeight }: {
   item: ReviewItem;
   vote: Vote | null;
   state: SheetState;
@@ -62,27 +64,24 @@ export function VoteSheet({ item, vote, state, setState, onVote, onUndo, onNext,
   /** Cast a vote; resolves once the server has it (false: it did not take). */
   onVote: (vote: Vote, reason?: string) => Promise<boolean>;
   onUndo: () => Promise<boolean>;
+  /** Next change, or Done on the last one: the flow decides where it goes. */
   onNext: () => void;
   hasNext: boolean;
-  /** The way back from the all-done message: closes the page and goes where the list's own end goes. */
-  onDone: () => void;
-  /** The all-done message's button: "Back to your communities", or the project's own way back. */
-  doneLabel: string;
   maxHeight: number;
-  /** The vote was cast this moment: the check draws itself in. */
-  fresh: boolean;
 }) {
   const t = useMessages('communities');
   const ref = useRef<HTMLElement>(null);
   const [height, setHeight] = useState<number | null>(null);
   const [line, setLine] = useState('');
+  // The reason sent with this change's No, shown where it was written.
+  const [shared, setShared] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [asks, setAsks] = useState<AskMsg[]>([]);
   const [question, setQuestion] = useState('');
   const [copied, setCopied] = useState(false);
 
   // A new change starts with an empty line and no questions.
-  useEffect(() => { setLine(''); setAsks([]); setQuestion(''); setCopied(false); }, [item.key]);
+  useEffect(() => { setLine(''); setShared(null); setAsks([]); setQuestion(''); setCopied(false); }, [item.key]);
 
   // The sheet grows and shrinks to what it holds, animated (app.css .rf-sheet).
   useLayoutEffect(() => {
@@ -144,39 +143,50 @@ export function VoteSheet({ item, vote, state, setState, onVote, onUndo, onNext,
     tail({ who: 'ai', text: answer });
   };
 
-  const cast = async (v: Vote, reason?: string) => {
-    if (busy) return;
+  const cast = async (v: Vote, reason?: string): Promise<boolean> => {
+    if (busy) return false;
     setBusy(true);
-    try { await onVote(v, reason); } finally { setBusy(false); }
+    try { return await onVote(v, reason); } finally { setBusy(false); }
   };
   const undo = async () => {
     if (busy) return;
     setBusy(true);
-    try { await onUndo(); } finally { setBusy(false); }
+    try {
+      if (await onUndo()) { setShared(null); setLine(''); }
+    } finally { setBusy(false); }
   };
+  // Your own answer again takes the vote back; the other one changes it.
+  const tap = (v: Vote) => {
+    if (vote === v) { void undo(); return; }
+    if (v === 'yes') setShared(null);
+    void cast(v);
+  };
+  const shareReason = async () => {
+    const text = line.trim();
+    if (!text) { setState('voted'); return; }
+    if (await cast('no', text)) setShared(text);
+  };
+  const rest = vote ? 'voted' : 'ask';
 
   const grab = (
     <button
       type="button"
       className="rf-grab"
-      aria-label={state === 'ask' ? t('communities:review.sheet.more') : t('communities:review.sheet.close')}
-      onClick={() => setState(state === 'ask' ? 'unsure' : vote ? 'voted' : 'ask')}
+      aria-label={t('communities:review.sheet.close')}
+      onClick={() => setState(rest)}
     ><span /></button>
   );
-  const yesNo = (pressedNo = false) => (
-    <div className="rf-yn">
-      <button type="button" className="rf-pill-btn" data-rf-vote="yes" disabled={busy} onClick={() => cast('yes')}>
-        {Icon.check}<span>{item.approve ? t('communities:review.vote.approve') : t('communities:review.vote.yes')}</span>
+  const pair = () => (
+    <div className="rf-pair" role="radiogroup" aria-label={t('communities:review.sheet.label')} data-rf-voted={vote || undefined}>
+      <span className="rf-pair-thumb" aria-hidden="true" />
+      <button type="button" role="radio" aria-checked={vote === 'yes'} className="rf-pair-btn" data-rf-vote="yes" disabled={busy} onClick={() => tap('yes')}>
+        <span className="rf-pair-mark">{Icon.check}</span>
+        <span>{item.approve ? t('communities:review.vote.approve') : t('communities:review.vote.yes')}</span>
       </button>
-      <button
-        type="button"
-        className={pressedNo ? 'rf-pill-btn rf-pill-no' : 'rf-pill-btn'}
-        data-rf-vote="no"
-        aria-pressed={pressedNo}
-        disabled={busy}
-        onClick={() => setState('no')}
-      >
-        {Icon.x}<span>{item.approve ? t('communities:review.vote.dontApprove') : t('communities:review.vote.no')}</span>
+      <span className="rf-pair-div" aria-hidden="true" />
+      <button type="button" role="radio" aria-checked={vote === 'no'} className="rf-pair-btn" data-rf-vote="no" disabled={busy} onClick={() => tap('no')}>
+        <span className="rf-pair-mark">{Icon.x}</span>
+        <span>{item.approve ? t('communities:review.vote.dontApprove') : t('communities:review.vote.no')}</span>
       </button>
     </div>
   );
@@ -210,48 +220,14 @@ export function VoteSheet({ item, vote, state, setState, onVote, onUndo, onNext,
             setCopied(true);
           }}
         >{copied ? t('communities:review.more.copied') : t('communities:review.more.copy')}</button>
-        <button role="menuitem" type="button" className="rf-row rf-menu-row rf-menu-cancel" onClick={() => setState(vote ? 'voted' : 'ask')}>
+        <button role="menuitem" type="button" className="rf-row rf-menu-row rf-menu-cancel" onClick={() => setState(rest)}>
           {t('communities:review.more.cancel')}
         </button>
       </div>
     );
-  } else if (state === 'alldone') {
-    body = (
-      <>
-        <div className="rf-said" role="status" data-rf-alldone="">
-          <span className="rf-said-mark" aria-hidden="true">
-            <CheckIcon width={40} height={40} strokeWidth="2.4" />
-          </span>
-          <h2>{t('communities:review.alldone.line')}</h2>
-        </div>
-        <div className="rf-yn">
-          <button type="button" className="rf-pill-btn rf-pill-primary" data-rf-alldone-btn="" onClick={onDone}>{doneLabel}</button>
-        </div>
-      </>
-    );
-  } else if (vote && (state === 'ask' || state === 'voted')) {
-    body = (
-      <>
-        <div className={fresh ? 'rf-said rf-fresh' : 'rf-said'} role="status" data-rf-said={vote}>
-          <span className="rf-said-mark" aria-hidden="true">
-            {vote === 'yes'
-              ? <CheckIcon width={40} height={40} strokeWidth="2.4" />
-              : <XIcon width={40} height={40} strokeWidth="2.4" />}
-          </span>
-          <h2>{vote === 'yes' ? t('communities:review.said.yes') : t('communities:review.said.no')}</h2>
-        </div>
-        <div className="rf-yn">
-          <button type="button" className="rf-pill-btn" data-rf-undo="" disabled={busy} onClick={undo}>{t('communities:review.said.undo')}</button>
-          <button type="button" className="rf-pill-btn rf-pill-primary" data-rf-next="" onClick={onNext}>
-            <span>{hasNext ? t('communities:review.said.next') : t('communities:review.said.done')}</span>{Icon.next}
-          </button>
-        </div>
-      </>
-    );
   } else if (state === 'unsure') {
     body = (
       <>
-        {yesNo()}
         <p className="rf-line">{t('communities:review.unsure.line')}</p>
         <nav aria-label={t('communities:review.unsure.label')}>
           {row('askq', Icon.spark, t('communities:review.unsure.ask.title'), t('communities:review.unsure.ask.line'))}
@@ -261,33 +237,10 @@ export function VoteSheet({ item, vote, state, setState, onVote, onUndo, onNext,
         </nav>
       </>
     );
-  } else if (state === 'no') {
-    const left = NO_LINE_MAX - line.length;
-    body = (
-      <form
-        onSubmit={(e: FormEvent) => { e.preventDefault(); void cast('no', line.trim() || undefined); }}
-      >
-        {yesNo(true)}
-        <label className="rf-ask-label" htmlFor="rf-no-line">{t('communities:review.no.ask')}</label>
-        <textarea
-          id="rf-no-line"
-          className="rf-textarea"
-          maxLength={NO_LINE_MAX}
-          placeholder={item.author ? t('communities:review.no.placeholder', { name: item.author }) : t('communities:review.no.placeholderNoName')}
-          value={line}
-          onChange={(e) => setLine(e.target.value)}
-        />
-        {left < 40 ? <p className="rf-line rf-line-tight">{t('communities:review.no.left', { count: left })}</p> : null}
-        <div className="rf-ends">
-          <button type="button" className="rf-cancel" onClick={() => setState(vote ? 'voted' : 'ask')}>{t('communities:review.no.cancel')}</button>
-          <button type="submit" className="rf-go" disabled={busy}>{t('communities:review.no.send')}</button>
-        </div>
-      </form>
-    );
   } else if (state === 'askq') {
     body = (
       <>
-        {yesNo()}
+        {pair()}
         {sub(t('communities:review.unsure.ask.title'))}
         <div className="rf-body">
           <p className="rf-note">{t('communities:review.ask.note')}</p>
@@ -315,7 +268,7 @@ export function VoteSheet({ item, vote, state, setState, onVote, onUndo, onNext,
   } else if (state === 'talk') {
     body = (
       <>
-        {yesNo()}
+        {pair()}
         {sub(t('communities:review.unsure.talk.title'))}
         <div className="rf-body rf-thread">
           <FeedThread slug={item.app.slug} type="session" refId={item.id} canPost />
@@ -325,7 +278,7 @@ export function VoteSheet({ item, vote, state, setState, onVote, onUndo, onNext,
   } else if (state === 'try') {
     body = (
       <>
-        {yesNo()}
+        {pair()}
         {sub(t('communities:review.unsure.try.title'))}
         <div className="rf-body">
           {item.stagingUrl ? (
@@ -350,7 +303,7 @@ export function VoteSheet({ item, vote, state, setState, onVote, onUndo, onNext,
   } else if (state === 'about') {
     body = (
       <>
-        {yesNo()}
+        {pair()}
         {sub(t('communities:review.unsure.about.title'))}
         <div className="rf-body">
           {item.summary ? (
@@ -373,26 +326,67 @@ export function VoteSheet({ item, vote, state, setState, onVote, onUndo, onNext,
       </>
     );
   } else {
+    // At rest: the row on the page. The room above it is kept for a No's
+    // reason, so nothing moves when one appears.
+    let why: ReactNode = null;
+    if (vote === 'no' && state === 'reason') {
+      why = (
+        <form className="rf-why-form" onSubmit={(e: FormEvent) => { e.preventDefault(); void shareReason(); }}>
+          <input
+            autoFocus
+            aria-label={t('communities:review.reason.label')}
+            placeholder={item.author ? t('communities:review.no.placeholder', { name: item.author }) : t('communities:review.no.placeholderNoName')}
+            maxLength={NO_LINE_MAX}
+            value={line}
+            onChange={(e) => setLine(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setState('voted'); } }}
+          />
+          <button type="submit" className="rf-share" disabled={busy}>{t('communities:review.reason.share')}</button>
+        </form>
+      );
+    } else if (vote === 'no' && shared) {
+      why = <span className="rf-why-said" data-rf-why-said="">&ldquo;{shared}&rdquo;</span>;
+    } else if (vote === 'no') {
+      why = <button type="button" className="rf-why-add" data-rf-why="" onClick={() => setState('reason')}>{t('communities:review.reason.add')}</button>;
+    }
     body = (
-      <>
-        {yesNo()}
-        <button type="button" className="rf-quiet" data-rf-unsure="" onClick={() => setState('unsure')}>
-          <span>{t('communities:review.unsure.open')}</span>{Icon.up}
-        </button>
-      </>
+      <div className="rf-vote">
+        <div className={why ? 'rf-why' : 'rf-why rf-why-off'}>{why}</div>
+        <div className="rf-vrow">
+          {pair()}
+          <button
+            type="button"
+            className="rf-morph"
+            data-rf-morph={vote ? 'next' : 'help'}
+            data-rf-next={vote ? '' : undefined}
+            data-rf-unsure={vote ? undefined : ''}
+            aria-label={vote ? (hasNext ? t('communities:review.said.next') : t('communities:review.said.done')) : t('communities:review.unsure.label')}
+            onClick={vote ? onNext : () => setState('unsure')}
+          >
+            <span className="rf-morph-in rf-morph-dots" aria-hidden="true">{Icon.dots}</span>
+            <span className="rf-morph-in rf-morph-next" aria-hidden="true">
+              <span>{hasNext ? t('communities:review.said.next') : t('communities:review.said.done')}</span>{Icon.next}
+            </span>
+          </button>
+        </div>
+        <p className="sr-only" role="status" data-rf-said={vote || undefined}>
+          {vote === 'yes' ? t('communities:review.said.yes') : vote === 'no' ? t('communities:review.said.no') : ''}
+        </p>
+      </div>
     );
   }
 
+  const open = sheetOpen(state);
   return (
     <section
       ref={ref}
-      className="rf-sheet"
+      className={open ? 'rf-sheet' : 'rf-sheet rf-sheet-rest'}
       aria-label={t('communities:review.sheet.label')}
       style={height == null ? undefined : { height }}
       data-rf-sheet={state}
     >
       <div className="rf-sheet-inner">
-        {grab}
+        {open ? grab : null}
         {body}
       </div>
     </section>

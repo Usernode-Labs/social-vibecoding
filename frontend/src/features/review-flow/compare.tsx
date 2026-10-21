@@ -3,18 +3,18 @@
  * the other, with a seam between them. Ported from the title-shots factory
  * prototype (the "restrained slider"), with its tuned values fixed:
  *
- * - At rest the seam sits on the left edge: the whole window is After. A
- *   black ›› handle hugs that edge.
+ * - At rest the seam sits on the left edge: the whole window is After.
+ * - Each side carries its own caption, printed on it in the title cards'
+ *   mono capitals ("◷ Before · Today", "If it passes · After ✦"). The seam
+ *   wipes a caption with its picture, so what is printed is what you see and
+ *   nothing has to light up.
  * - Drag anywhere sideways to move the seam. Past an edge it resists the way
  *   iOS does (rubber band); near the edges of what changed it settles softly
- *   (soft stops); a quick flick goes all the way. While it moves, the handle
- *   fades and the line thins, so the picture has the room.
- * - The pill at the bottom centre (where a thumb on it hides the least of
- *   the shot) names what most of the window shows (it
- *   changes at 60/40, not 50/50, so it never flickers). Its dark part is a
- *   little map of the seam. Tap it to flip the whole view at once; only the
- *   handle travels, a moment later, so tapping again and again to compare
- *   is calm. Hold it to peek at the other side.
+ *   (soft stops); a quick flick goes all the way.
+ * - The small switch at the bottom centre flips the whole view: Before on
+ *   its left, After on its right, its knob on the side most of the window
+ *   shows (it changes at 60/40, not 50/50, so it never flickers). A press
+ *   leans the seam in, so the switch shows it slides before it is let go.
  * - Each side keeps its colour while it holds at least half the window and
  *   fades to grey below that, so the eye goes to the side being looked at.
  * - Hold the shot still for a moment and a round magnifier opens under the
@@ -27,19 +27,17 @@
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react';
 
-import { ChevronDoubleLeftIcon, ChevronDoubleRightIcon, GripBarsIcon } from '@/components/ui/icons';
+import { HistoryIcon, SparklesIcon } from '@/components/ui/icons';
 
-import { useMessages } from '../../lib/i18n/react';
+import { RichMessage, useMessages } from '../../lib/i18n/react';
 import {
   densityOf, focusBox, magnet, placeBox, rubberBand, seamStops,
   type Placement, type ReviewScreen,
 } from './model';
 
-const TAB_W = 30;
-const TAB_H = 60;
 const SWITCH_AT = 0.6;
-const HANDLE_DELAY = 350;
-const HOLD_TO_PEEK = 180;
+/** How far a press on the switch leans the seam in, as a share of the window. */
+const LEAN = 0.08;
 const FLICK = 700;
 const SNAP = 24;
 /** Holding still this long opens the magnifier; moving further than the slop cancels it. */
@@ -89,11 +87,6 @@ export function lensBox(point: { x: number; y: number }, size: { w: number; h: n
   };
 }
 
-function Chevrons({ dir }: { dir: 'right' | 'left' | 'bars' }) {
-  const Glyph = dir === 'bars' ? GripBarsIcon : dir === 'right' ? ChevronDoubleRightIcon : ChevronDoubleLeftIcon;
-  return <Glyph width={18} height={18} strokeWidth="2.2" aria-hidden="true" />;
-}
-
 export function CompareSlider({ screen, pair, ground, width, height, marks, near = true }: {
   screen: ReviewScreen | null;
   /** An older change's capture pair, with no regions: drawn whole. */
@@ -101,7 +94,7 @@ export function CompareSlider({ screen, pair, ground, width, height, marks, near
   ground: string;
   width: number;
   height: number;
-  /** Whether the handle and pill show (they arrive a moment after the page lands). */
+  /** Whether the captions and the switch show (they arrive a moment after the page lands). */
   marks: boolean;
   /** Load the images (false while the page is still far away). */
   near?: boolean;
@@ -121,14 +114,11 @@ export function CompareSlider({ screen, pair, ground, width, height, marks, near
   const [pos, setPos] = useState(0);
   const [view, setView] = useState<'after' | 'before'>('after');
   const [dragging, setDragging] = useState(false);
-  const [peek, setPeek] = useState(false);
-  // The handle's own edge while it travels after a flip ('hidden' while away).
-  const [handle, setHandle] = useState<'shown' | 'hidden'>('shown');
+  const [pressed, setPressed] = useState(false);
   const posRef = useRef(0);
   const anim = useRef(0);
-  const handleTimer = useRef(0);
-  const holdTimer = useRef(0);
-  const peeked = useRef(false);
+  // Where the seam was when a press on the switch leaned it in.
+  const leanFrom = useRef<number | null>(null);
   // The magnifier: its point in the window, and whether a finger (not a
   // mouse) put it there, so it can be raised clear of the fingertip.
   const [lens, setLens] = useState<{ x: number; y: number; touch: boolean } | null>(null);
@@ -140,20 +130,23 @@ export function CompareSlider({ screen, pair, ground, width, height, marks, near
     setLens(at);
   }, []);
 
+  // While a flip glides, the knob keeps the side it was sent to.
+  const pinned = useRef(false);
   const put = useCallback((x: number) => {
     posRef.current = x;
     setPos(x);
-    setView((v) => viewFor(Math.max(0, Math.min(1, x / Math.max(1, W))), v));
+    if (!pinned.current) setView((v) => viewFor(Math.max(0, Math.min(1, x / Math.max(1, W))), v));
   }, [W]);
 
   // A new screen starts at rest.
   useLayoutEffect(() => {
     cancelAnimationFrame(anim.current);
     clearTimeout(zoomTimer.current);
-    posRef.current = 0; setPos(0); setView('after'); setHandle('shown'); setPeek(false);
+    posRef.current = 0; setPos(0); setView('after'); setPressed(false);
+    leanFrom.current = null; pinned.current = false;
     putLens(null);
   }, [before, after, putLens]);
-  useEffect(() => () => { cancelAnimationFrame(anim.current); clearTimeout(handleTimer.current); clearTimeout(holdTimer.current); clearTimeout(zoomTimer.current); }, []);
+  useEffect(() => () => { cancelAnimationFrame(anim.current); clearTimeout(zoomTimer.current); }, []);
 
   // `touch-action` is fixed when a touch starts, so scrolling is held off
   // with a native listener while the magnifier is open.
@@ -165,7 +158,7 @@ export function CompareSlider({ screen, pair, ground, width, height, marks, near
     return () => el.removeEventListener('touchmove', hold);
   }, []);
 
-  const glide = useCallback((to: number, ms = 300) => {
+  const glide = useCallback((to: number, ms = 300, done?: () => void) => {
     cancelAnimationFrame(anim.current);
     const from = posRef.current;
     const t0 = performance.now();
@@ -173,6 +166,7 @@ export function CompareSlider({ screen, pair, ground, width, height, marks, near
       const p = Math.min(1, (now - t0) / ms);
       put(from + (to - from) * easeOut(p));
       if (p < 1) anim.current = requestAnimationFrame(step);
+      else done?.();
     };
     anim.current = requestAnimationFrame(step);
   }, [put]);
@@ -184,9 +178,10 @@ export function CompareSlider({ screen, pair, ground, width, height, marks, near
     return { x: e.clientX - rect.left, y: e.clientY - rect.top };
   };
   const onPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
-    if (!marks || !near || (!before && !after) || (e.target as HTMLElement).closest('[data-rf-pill]')) return;
+    if (!marks || !near || (!before && !after) || (e.target as HTMLElement).closest('[data-rf-switch]')) return;
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     cancelAnimationFrame(anim.current);
+    pinned.current = false;
     drag.current = { id: e.pointerId, x0: e.clientX, y0: e.clientY, from: posRef.current, live: false, lastX: e.clientX, lastT: performance.now(), v: 0 };
     const id = e.pointerId;
     const from = pointAt(e);
@@ -252,34 +247,34 @@ export function CompareSlider({ screen, pair, ground, width, height, marks, near
     glide(target, 280);
   };
 
-  /* ── The pill: tap flips, hold peeks ── */
+  /* ── The switch: a press leans the seam in, a tap flips ── */
   const flip = () => {
     if (!canCompare) return;
-    cancelAnimationFrame(anim.current);
-    const to = posRef.current > W / 2 ? 0 : W;
-    // The view cuts straight to the other side; only the handle travels,
-    // after a short wait, so rapid taps do not send it back and forth.
-    setHandle('hidden');
-    put(to);
+    const from = leanFrom.current ?? posRef.current;
+    leanFrom.current = null;
+    setPressed(false);
+    const to = from > W / 2 ? 0 : W;
+    // The knob says where the view is going at once; the seam glides there.
+    pinned.current = true;
     setView(to > 0 ? 'before' : 'after');
-    clearTimeout(handleTimer.current);
-    handleTimer.current = window.setTimeout(() => setHandle('shown'), HANDLE_DELAY);
+    glide(to, 320, () => { pinned.current = false; });
   };
-  const pillDown = () => {
-    peeked.current = false;
-    clearTimeout(holdTimer.current);
-    holdTimer.current = window.setTimeout(() => { peeked.current = true; setPeek(true); }, HOLD_TO_PEEK);
+  const switchDown = () => {
+    if (!canCompare) return;
+    leanFrom.current = posRef.current;
+    setPressed(true);
+    glide(posRef.current > W / 2 ? posRef.current - W * LEAN : posRef.current + W * LEAN, 140);
   };
-  const pillUp = () => {
-    clearTimeout(holdTimer.current);
-    if (peek) setPeek(false);
-  };
-  const pillClick = () => {
-    if (peeked.current) { peeked.current = false; return; }
-    flip();
+  // Let go off the switch, or the press was taken away: the seam goes back.
+  const switchLeave = () => {
+    if (leanFrom.current == null) return;
+    const back = leanFrom.current;
+    leanFrom.current = null;
+    setPressed(false);
+    glide(back, 160);
   };
   const onKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
-    if (!canCompare) return;
+    if (!canCompare || (e.target as HTMLElement).closest('[data-rf-switch]')) return;
     if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
       e.preventDefault();
       const step = W * 0.05 * (e.key === 'ArrowRight' ? 1 : -1);
@@ -293,14 +288,10 @@ export function CompareSlider({ screen, pair, ground, width, height, marks, near
 
   const clamped = Math.max(0, Math.min(W, pos));
   const share = W ? clamped / W : 0;
-  // While peeking, the other side fills the window.
-  const shown = peek ? (share > 0.5 ? 0 : W) : clamped;
+  const shown = clamped;
   const satBefore = saturationFor(shown / Math.max(1, W));
   const satAfter = saturationFor(1 - shown / Math.max(1, W));
-  const word = peek ? (view === 'after' ? 'before' : 'after') : view;
-  const atRight = clamped > W / 2;
-  const tabX = Math.max(0, Math.min(W - TAB_W, clamped - (clamped <= 1 ? 0 : clamped >= W - 1 ? TAB_W : TAB_W / 2)));
-  const chev = clamped <= 1 ? 'right' : clamped >= W - 1 ? 'left' : share < 0.25 ? 'right' : share > 0.75 ? 'left' : 'bars';
+  const word = view;
 
   const lensSide: 'before' | 'after' = canCompare
     ? (lens && lens.x < shown ? 'before' : 'after')
@@ -344,41 +335,47 @@ export function CompareSlider({ screen, pair, ground, width, height, marks, near
     >
       <div className="rf-layer" style={layerStyle(satAfter)} aria-hidden="true">{img(after || before, after ? 'after' : 'before')}</div>
       {canCompare ? (
+        <div className="rf-cap rf-cap-after" style={{ opacity: marks ? 1 : 0 }} aria-hidden="true">
+          <span className="rf-cap-line">
+            <RichMessage id="communities:review.compare.captionAfter" components={[<span className="rf-cap-dim" />]} />
+            <SparklesIcon width={13} height={13} strokeWidth="2" />
+          </span>
+        </div>
+      ) : null}
+      {canCompare ? (
         <div className="rf-layer-clip" style={{ clipPath: `inset(0 ${(W - shown).toFixed(2)}px 0 0)` }} aria-hidden="true">
           <div className="rf-layer" style={layerStyle(satBefore)}>{img(before, 'before')}</div>
+          <div className="rf-cap rf-cap-before" style={{ opacity: marks ? 1 : 0 }}>
+            <span className="rf-cap-line">
+              <HistoryIcon width={13} height={13} strokeWidth="2.2" />
+              <RichMessage id="communities:review.compare.captionBefore" components={[<span className="rf-cap-dim" />]} />
+            </span>
+          </div>
         </div>
       ) : null}
       {canCompare ? (
         <>
-          <span className="rf-seam" style={{ transform: `translateX(${shown.toFixed(2)}px)`, opacity: marks && !peek ? 1 : 0 }} aria-hidden="true" />
-          <span
-            className={`rf-tab${atRight ? ' rf-tab-right' : ''}${clamped > 1 && clamped < W - 1 ? ' rf-tab-mid' : ''}`}
-            style={{
-              transform: `translate(${tabX.toFixed(2)}px, ${((height - TAB_H) / 2).toFixed(1)}px)`,
-              opacity: marks && handle === 'shown' && !peek ? 1 : 0,
-            }}
-            aria-hidden="true"
-          >
-            <Chevrons dir={chev} />
-          </span>
+          <span className="rf-seam" style={{ transform: `translateX(${shown.toFixed(2)}px)`, opacity: marks ? 1 : 0 }} aria-hidden="true" />
           <button
             type="button"
-            className="rf-pill"
-            data-rf-pill=""
+            className={pressed ? 'rf-switch rf-switch-pressed' : 'rf-switch'}
+            data-rf-switch=""
             data-view={word}
-            style={{ opacity: marks ? 1 : 0, ['--rf-g' as string]: `${(shown / Math.max(1, W)) * 100}%` }}
-            aria-label={t(word === 'after' ? 'communities:review.compare.pillAfter' : 'communities:review.compare.pillBefore')}
-            onPointerDown={pillDown}
-            onPointerUp={pillUp}
-            onPointerLeave={pillUp}
-            onPointerCancel={pillUp}
+            role="switch"
+            aria-checked={word === 'before'}
+            aria-label={t('communities:review.compare.switch')}
+            style={{ opacity: marks ? 1 : 0 }}
+            onPointerDown={switchDown}
+            onPointerLeave={switchLeave}
+            onPointerCancel={switchLeave}
             onContextMenu={(e) => e.preventDefault()}
-            onClick={pillClick}
-            tabIndex={-1}
+            onClick={flip}
           >
-            <span className="rf-pill-word">{word === 'after' ? t('communities:review.compare.after') : t('communities:review.compare.before')}</span>
-            <span className="rf-pill-dark" aria-hidden="true">
-              <span className="rf-pill-word">{word === 'after' ? t('communities:review.compare.after') : t('communities:review.compare.before')}</span>
+            <span className="rf-switch-mark rf-switch-mark-before" aria-hidden="true"><HistoryIcon width={14} height={14} strokeWidth="2.2" /></span>
+            <span className="rf-switch-mark rf-switch-mark-after" aria-hidden="true"><SparklesIcon width={14} height={14} strokeWidth="2" /></span>
+            <span className="rf-knob" aria-hidden="true">
+              <span className="rf-knob-icon rf-knob-before"><HistoryIcon width={16} height={16} strokeWidth="2.2" /></span>
+              <span className="rf-knob-icon rf-knob-after"><SparklesIcon width={16} height={16} strokeWidth="2" /></span>
             </span>
           </button>
         </>
