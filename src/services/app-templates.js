@@ -460,17 +460,20 @@ const TEMPLATES = Object.freeze([
       '**Talk about it**: react to a dish, comment on it ("is it vegetarian?"), and chat with everyone coming.',
     ]),
     tables: '`potlucks`, `potluck_dishes`, `potluck_reactions`, `potluck_comments` and `potluck_messages`',
+    // The list, a potluck of its own (the staging seed's, 900001, at its
+    // address) and planning one are three screens.
     tests: Object.freeze([
       {
         id: 'potluck.next',
-        name: 'The next potluck shows who is bringing what',
-        path: '/',
-        expectSelector: '#potlucks [data-potluck] [data-course] [data-dish]',
+        name: 'A potluck shows who is bringing what',
+        path: '/#/p/900001',
+        expectSelector: '#potluck [data-potluck] [data-course] [data-dish]',
         visual: true,
         impact: IMPACT,
       },
-      { name: 'A potluck can be planned', path: '/', expectSelector: '#plan-form input[name="title"]' },
-      { name: 'Each potluck has its chat', path: '/', expectSelector: '#potlucks [data-potluck] [data-chat] [data-message]' },
+      { name: 'The potlucks coming up are listed', path: '/', expectSelector: '#potlucks [data-potluck]' },
+      { name: 'A potluck can be planned', path: '/#/plan', expectSelector: '#plan-form input[name="title"]' },
+      { name: 'Each potluck has its chat', path: '/#/p/900001', expectSelector: '#potluck [data-potluck] [data-chat] [data-message]' },
     ]),
   }),
   // One app (app-templates/signup-sheet) with two ways to answer, set when

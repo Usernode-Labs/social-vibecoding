@@ -386,7 +386,10 @@ const SAMPLES = {
   },
   'potluck-planner': {
     name: 'Potluck Planner',
-    ready: '#potlucks [data-potluck] [data-dish]',
+    // A potluck of its own, the screen that shows what the app is for (its
+    // first screen lists the potlucks, each opening one like this).
+    hash: '#/p/1',
+    ready: '#potluck [data-potluck] [data-dish]',
     api: {
       '/api/potlucks': {
         me: ME,
@@ -860,7 +863,7 @@ async function main() {
       buildStarter(id, sample.name, dir);
       const server = await serve(dir, sample.api);
       try {
-        const png = compact(await shoot(cdp, `http://127.0.0.1:${server.address().port}/?token=example`, sample.ready));
+        const png = compact(await shoot(cdp, `http://127.0.0.1:${server.address().port}/?token=example${sample.hash || ''}`, sample.ready));
         const out = path.join(ROOT, 'public', appTemplates.get(id).exampleScreen);
         fs.mkdirSync(path.dirname(out), { recursive: true });
         fs.writeFileSync(out, png);
