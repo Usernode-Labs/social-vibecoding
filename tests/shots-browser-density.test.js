@@ -45,7 +45,9 @@ test('the patched tool takes a close-up of a screen region at a density, through
   assert.ok(handler.indexOf('if (params.closeup)') < handler.indexOf('const fileType'), 'before an ordinary screenshot');
   assert.match(handler, /visualViewport\.pageLeft/);
   assert.match(handler, /visualViewport\.scale/);
-  assert.match(handler, /Page\.captureScreenshot", \{ format: "png", clip: \{ x: at\.x \+ c\.x \/ at\.k, y: at\.y \+ c\.y \/ at\.k, width: c\.width \/ at\.k, height: c\.height \/ at\.k, scale: c\.scale \* at\.k \} \}/);
+  // In whole page pixels: Chrome cuts a fractional clip down before scaling
+  // it, so a zoomed-out phone page saved 128 x 63 for 130 x 65.
+  assert.match(handler, /Page\.captureScreenshot", \{ format: "png", clip: \{ x: Math\.round\(at\.x \+ c\.x \/ at\.k\), y: Math\.round\(at\.y \+ c\.y \/ at\.k\), width: Math\.max\(1, Math\.round\(c\.width \/ at\.k\)\), height: Math\.max\(1, Math\.round\(c\.height \/ at\.k\)\), scale: c\.scale \* at\.k \} \}/);
   assert.match(handler, /cdp\.detach\(\)/);
   // It answers with no image: nobody but the shots tools reads it.
   const closeup = handler.slice(handler.indexOf('if (params.closeup)'), handler.indexOf('const fileType'));
