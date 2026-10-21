@@ -406,6 +406,13 @@ test('the Workshop is a row in the menu, not a toggle (#2761)', () => {
     'the row that replaced it');
   // The strip's Workshop segment carried the vote count; it rides the row now.
   assert.match(SHEET, /id="app-menu-workshop-owed"/);
+  // AND IT DECIDES WHERE THE ROW LANDS (#5726). Showing a count, the row opens
+  // Needs you — the queue that count is of; with none, the hub it always did.
+  const at = SHEET.indexOf('id="app-menu-row-workshop"');
+  const row = SHEET.slice(at, SHEET.indexOf('</MenuRow>', at));
+  assert.match(row, /_landOnTab\?\.\(slug, 'needs'\)/,
+    'a count on the row means it opens the votes page');
+  assert.match(row, /_landOnHub\?\.\(slug\)/, 'and with no count it still opens the hub');
   assert.ok(!/In this app/.test(SHEET.replace(/\{\/\*[\s\S]*?\*\/\}/g, '')),
     'and no caption left behind — comments explaining a move are fine, '
     + 'rendered text is not');

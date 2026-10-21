@@ -152,6 +152,13 @@ test('the Workshop row says what it owes you, and stays silent when it cannot', 
   assert.match(sheet, /aria-label=\{t\('agent:appContext\.row\.toVote', \{ count: owed \}\)\}/);
   assert.equal(message('agent:appContext.row.toVote', { count: 3 }), '3 to vote');
 
+  // THE FIGURE NAMES WHERE THE ROW LANDS (#5726). A row that says "2 to vote"
+  // sent you to the hub, where you had to find the votes again; it opens the
+  // queue the figure counts — the project's Needs you — whenever there is a
+  // figure at all, and the hub when there is not.
+  assert.match(sheet, /if \(owed\) view\?\._landOnTab\?\.\(slug, 'needs'\);\s*\n\s*else view\?\._landOnHub\?\.\(slug\);/,
+    'with votes owed it opens Needs you, the queue the count counts');
+
   // ONE SOURCE, TWO READERS: /api/workshop/counts is the Workshop tab's own
   // endpoint, so this is the same figure that screen shows on the same app's
   // row rather than a second count computed a second way.
