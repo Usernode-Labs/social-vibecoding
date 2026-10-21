@@ -314,6 +314,12 @@ export function goToCommunity(slug: string | null): void {
   if (!slug) {
     setScope(null);
     try { app?._forgetWorkshopView?.(); } catch { /* nothing to forget */ }
+    // The list is the page, named in the address WITHOUT a step (#3620):
+    // the switcher is changing which community the tab shows, not leaving
+    // somewhere Back should return to.
+    try {
+      (window as any).UsernodeReact?.workshop?.setTab?.('status', { push: false });
+    } catch { /* the store moves the page when it is there */ }
     if (window.location.hash !== '#communities') window.location.hash = '#communities';
     return;
   }

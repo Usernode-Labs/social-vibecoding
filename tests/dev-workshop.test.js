@@ -4003,7 +4003,9 @@ test('the ⋯ asks to be wired when it mounts, because the module wires it befor
   assert.match(WORKSHOP, /onMore=\{\(\) => openTab\('workshop'\)\}/);
   assert.match(WORKSHOP, /onBack=\{\(\) => openTab\(pageParent\(tab\)\)\}/);
   // Every tab turns the page, Homeroom's Discussion (#general) included (#3494).
-  assert.match(WORKSHOP, /const openTab = \(next: TabKey\) => \{\s*setTab\(next\);\s*callAppView\('_setWorkshopTab', next\);/);
+  // #3620: the press writes its step first; the page still turns through
+  // `setTab` and still remembers it through `_setWorkshopTab`.
+  assert.match(WORKSHOP, /const openTab = \(next: TabKey\) => \{[\s\S]{0,400}?callAppView\('_pushWorkshopTab', v\.slug, next\);\s*setTab\(next\);\s*callAppView\('_setWorkshopTab', next\);/);
   const setTab = APP_VIEW_SRC.slice(APP_VIEW_SRC.indexOf('  _setWorkshopTab(key) {'));
   const setTabBody = setTab.slice(0, setTab.indexOf('\n  },'));
   assert.match(setTabBody, /localStorage\.setItem\(AppView\.WORKSHOP_TAB_KEY, next\)/);
@@ -4747,7 +4749,9 @@ test('the project page opens on the page you last used', () => {
   assert.match(WORKSHOP, /onOpen=\{\(\) => openTab\('needs'\)\}/);
   assert.match(WORKSHOP, /onBack=\{\(\) => openTab\(pageParent\(tab\)\)\}/);
   // Every tab turns the page, Homeroom's Discussion (#general) included (#3494).
-  assert.match(WORKSHOP, /const openTab = \(next: TabKey\) => \{\s*setTab\(next\);\s*callAppView\('_setWorkshopTab', next\);/);
+  // #3620: the press writes its step first; the page still turns through
+  // `setTab` and still remembers it through `_setWorkshopTab`.
+  assert.match(WORKSHOP, /const openTab = \(next: TabKey\) => \{[\s\S]{0,400}?callAppView\('_pushWorkshopTab', v\.slug, next\);\s*setTab\(next\);\s*callAppView\('_setWorkshopTab', next\);/);
 });
 
 test('a category card is raised off the pane it sits on', () => {
@@ -5377,4 +5381,90 @@ test('a refetch keeps every theme where it was; only a chip press re-sorts', () 
   assert.deepEqual(orderThemesStable(held, [theme('a', 9)], 'people').map((t) => t.id), ['a']);
   assert.deepEqual(orderThemesStable({ key: 'activity', ids: ['b', 'a'] },
     [theme('a', 9), theme('b', 3)], 'people').map((t) => t.id), ['a', 'b']);
+});
+
+// ── #3620: a tab press is a history step ──────────────────────────────
+//
+// The page's places used to be state and a remembered preference alone, so
+// Back skipped off the page. `_pushWorkshopTab` writes the tab into the
+// address (one entry), `_landOnTab` (a door) writes it without one, and the
+// router tells the page which tab a traversal landed on.
+
+test('#3620: a tab press pushes the tab into the address, and the open tab pushes nothing', () => {
+  const calls = [];
+  const App = {
+    currentApp: 'demo-app',
+    embeddedPanel: false,
+    _hereUrl: () => '/app/demo-app/workshop',
+    _workshopTabFromUrl: () => 'status',
+    _setWorkshopTabAddress: (tab, opts) => calls.push([tab, !!(opts && opts.push)]),
+  };
+  const AppView = makeAppView({ globals: { App } });
+  assert.equal(AppView._pushWorkshopTab('demo-app', 'workshop'), true);
+  assert.deepEqual(plain(calls), [['workshop', true]], 'one entry, naming the tab');
+  // The address already names the tab the press asks for: no second entry.
+  const same = [];
+  const AppOn = {
+    currentApp: 'demo-app',
+    embeddedPanel: false,
+    _hereUrl: () => '/app/demo-app/workshop',
+    _workshopTabFromUrl: () => 'workshop',
+    _setWorkshopTabAddress: (tab, opts) => same.push([tab, !!(opts && opts.push)]),
+  };
+  const OnView = makeAppView({ globals: { App: AppOn } });
+  assert.equal(OnView._pushWorkshopTab('demo-app', 'workshop'), true);
+  assert.deepEqual(plain(same), [], 'pressing the open tab adds no step');
+});
+
+test('#3620: a press only names the project the page is showing, and never beside a running app', () => {
+  const calls = [];
+  const App = {
+    currentApp: 'demo-app',
+    embeddedPanel: false,
+    _hereUrl: () => '/app/demo-app/workshop',
+    _workshopTabFromUrl: () => null,
+    _setWorkshopTabAddress: (tab, opts) => calls.push([tab, !!(opts && opts.push)]),
+  };
+  const AppView = makeAppView({ globals: { App } });
+  assert.equal(AppView._pushWorkshopTab('another-app', 'needs'), false, 'a stale page cannot write it');
+  assert.equal(AppView._pushWorkshopTab(null, 'needs'), false);
+  const Embedded = makeAppView({
+    globals: {
+      App: {
+        currentApp: 'demo-app',
+        embeddedPanel: true,
+        _hereUrl: () => '/app/demo-app/workshop',
+        _workshopTabFromUrl: () => null,
+        _setWorkshopTabAddress: (tab, opts) => calls.push([tab, !!(opts && opts.push)]),
+      },
+    },
+  });
+  assert.equal(Embedded._pushWorkshopTab('demo-app', 'needs'), false,
+    'the side panel\'s controller owns that document\'s history');
+  assert.deepEqual(plain(calls), []);
+});
+
+test('#3620: a door names its tab before it dispatches, and hands a far door to the navigation', () => {
+  const calls = [];
+  const App = {
+    currentApp: 'demo-app',
+    embeddedPanel: false,
+    _hereUrl: () => '/app/demo-app/workshop',
+    _setWorkshopTabAddress: (tab, opts) => calls.push([tab, !!(opts && opts.replace)]),
+  };
+  const AppView = makeAppView({ globals: { App } });
+  AppView._landOnTab('demo-app', 'needs');
+  assert.deepEqual(plain(calls), [['needs', true]], 'a door replaces: it is not a tab press');
+  assert.deepEqual(plain(App._workshopDoorTab), { slug: 'demo-app', tab: 'needs' });
+  AppView._landOnTab('other-app', 'discussion');
+  assert.equal(calls.length, 1, 'another project\'s address is the navigation\'s to write');
+  assert.deepEqual(plain(App._workshopDoorTab), { slug: 'other-app', tab: 'discussion' });
+});
+
+test('#3620: the page listens for a tab history landed on, and ignores the one already shown', () => {
+  assert.match(WORKSHOP, /window\.addEventListener\('usernode:workshop-restore', onRestore\);/);
+  assert.match(WORKSHOP, /if \(detail\.tab === tab\) return;/, 'a restore that moved nothing scrolls nothing');
+  assert.match(WORKSHOP, /callAppView\('_pushWorkshopTab', v\.slug, next\);/,
+    'a press goes through the address');
+  assert.match(WORKSHOP, /const openTab = \(next: TabKey\) => \{\s*if \(next === tab\) \{/);
 });

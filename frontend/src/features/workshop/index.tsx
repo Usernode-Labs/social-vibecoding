@@ -665,9 +665,46 @@ export const workshopController = {
   isOpen() {
     return workshopStore.get().open;
   },
-  /** Show one of the two tabs. */
-  setTab(tab: TabKey) {
-    workshopStore.set({ tab: tab === 'needs' ? 'needs' : 'status' });
+  /**
+   * Show one of the two pages. Each is a place (#3620), so the tab is
+   * written into the address and a press leaves a history entry Back
+   * returns to; `push: false` moves the address in place for a caller that
+   * is changing the page without going anywhere (the switcher's All
+   * communities), and a page already named adds no step.
+   */
+  setTab(tab: TabKey, options?: { push?: boolean }) {
+    const next = tab === 'needs' ? 'needs' : 'status';
+    // Only the screen's own pages are in its address; a store write from a
+    // page that is not on screen (a late callback) must not name a tab on
+    // somebody else's route.
+    if (!workshopController.isOpen()) {
+      workshopStore.set({ tab: next });
+      return;
+    }
+    let app: any = null;
+    let here = '';
+    let named: string | null = null;
+    try {
+      app = (window as any).App;
+      here = window.location.href;
+      named = app?._workshopTabFromUrl?.(here) || null;
+    } catch { /* no window (a test, a server render) */ }
+    if (named !== next) {
+      try {
+        app?._setWorkshopTabAddress?.(next, { push: options?.push !== false });
+      } catch { /* the store still moves the page */ }
+    }
+    workshopStore.set({ tab: next });
+  },
+  /**
+   * The router's word on which page the address names (#3620), read before
+   * `navigateToWorkshop`'s already-open guard so a traversal back from
+   * Needs you lands on the list. No parameter is the list.
+   */
+  syncTabFromUrl() {
+    let asked: TabKey | null = null;
+    try { asked = tabFromQuery(location.search); } catch { asked = null; }
+    workshopStore.set({ tab: asked || 'status' });
   },
   async reload() {
     const demo = demoQuery();

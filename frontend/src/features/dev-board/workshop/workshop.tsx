@@ -3427,12 +3427,40 @@ export function DevWorkshop(): ReactNode {
   // offset was the OLD tab's, and coming back to the page later (Back from
   // another screen) laid it over the new one: the hub again, scrolled under
   // its own strip. A zero is how that memory is told the page is at its top.
+  //
+  // EACH MOVE IS A HISTORY STEP (#3620): `_pushWorkshopTab` writes the tab
+  // into the address with one entry, so Back returns to the page you were
+  // on. Pressing the tab already open is not a move, so it adds none and
+  // only goes back to the top.
   const openTab = (next: TabKey) => {
+    if (next === tab) {
+      callAppView('_saveFeedScroll', v.slug, 0);
+      scrollToHead(hostRef.current);
+      return;
+    }
+    callAppView('_pushWorkshopTab', v.slug, next);
     setTab(next);
     callAppView('_setWorkshopTab', next);
     callAppView('_saveFeedScroll', v.slug, 0);
     scrollToHead(hostRef.current);
   };
+  // BACK AND FORWARD BETWEEN THE PAGE'S TABS (#3620). A traversal onto
+  // another entry of this same page is read back by the router, which says
+  // which tab that entry names. A restore naming the tab already shown is
+  // ignored, so a Back that did not move the page never scrolls it.
+  useEffect(() => {
+    const onRestore = (event: Event) => {
+      const detail = (event as CustomEvent<{ slug: string | null; tab: TabKey } | null>).detail;
+      if (!detail || (detail.slug && detail.slug !== v.slug)) return;
+      if (detail.tab === tab) return;
+      setTab(detail.tab);
+      callAppView('_setWorkshopTab', detail.tab);
+      callAppView('_saveFeedScroll', v.slug, 0);
+      scrollToHead(hostRef.current);
+    };
+    window.addEventListener('usernode:workshop-restore', onRestore);
+    return () => window.removeEventListener('usernode:workshop-restore', onRestore);
+  }, [v.slug, tab]);
   // ...AND AGAIN WHEN THE PUBLISH LANDS, which is what the seed alone could
   // not do. The seed runs against whatever the store holds AT MOUNT, and that
   // is EMPTY_WORKSHOP_VIEW: the module publishes `_workshopView()` after its

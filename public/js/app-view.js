@@ -8134,6 +8134,39 @@ const AppView = {
     AppView._workshopTabUrlOverride = null;
     try { window.localStorage.setItem(AppView.WORKSHOP_TAB_KEY, next); } catch {}
   },
+  // FORGET THE CACHED `?ws=` READ (#3620). The address is the answer, and a
+  // route pass has just read it; without this a traversal would keep the tab
+  // the pass before it saw. `_workshopTabParam` re-reads on the next ask.
+  _resetWorkshopTabParam() {
+    AppView._workshopTabUrlOverride = undefined;
+  },
+  /**
+   * A TAB PRESS IS SOMEWHERE BACK RETURNS TO (#3620). Moving between the
+   * page's places (Hub, Discussion, Needs you, Workshop, All items) used to
+   * change React state and the remembered tab alone, so the address never
+   * moved and Back skipped straight off the page. The tab is written into
+   * the address with one history entry instead; a press on the tab already
+   * named adds none.
+   *
+   * Only for the project the page is actually showing, and never beside a
+   * running app: the side panel's controller owns that document's history.
+   */
+  _pushWorkshopTab(slug, tab) {
+    if (typeof App === 'undefined' || !slug) return false;
+    if (App.embeddedPanel) return false;
+    if (App.currentApp !== slug) return false;
+    const key = AppView.WORKSHOP_TABS.indexOf(tab) !== -1 ? tab : 'status';
+    let named = null;
+    try { named = App._workshopTabFromUrl(App._hereUrl()); } catch (_) { named = null; }
+    if (named !== key) {
+      try {
+        if (!App._setWorkshopTabAddress) return false;
+        App._setWorkshopTabAddress(key, { push: true });
+      } catch (_) { return false; }
+    }
+    AppView._resetWorkshopTabParam();
+    return true;
+  },
   /**
    * A DOOR TO A PROJECT'S HUB OPENS THE HUB. The page reopens on the tab you
    * last chose (_workshopTab), which is right when you come BACK to it and
@@ -8169,6 +8202,18 @@ const AppView = {
   _landOnTab(slug, tab) {
     const key = AppView.WORKSHOP_TABS.indexOf(tab) !== -1 ? tab : 'status';
     AppView._setWorkshopTab(key);
+    // THE DOOR NAMES ITS TAB IN THE ADDRESS (#3620), before it navigates,
+    // so a `?ws=` carried over from the screen it was pressed on can never
+    // win over the door. On the page already, that is a replace (a door is
+    // not a tab press and adds no step). To another project the address at
+    // this moment is the departing page's, so the tab is handed to
+    // App.navigateToApp, which writes it on the destination.
+    try {
+      if (typeof App !== 'undefined' && App._setWorkshopTabAddress && !App.embeddedPanel) {
+        if (slug) App._workshopDoorTab = { slug, tab: key };
+        if (!slug || App.currentApp === slug) App._setWorkshopTabAddress(key, { replace: true });
+      }
+    } catch (_) { /* the page still opens on the tab */ }
     try {
       window.dispatchEvent(new CustomEvent('usernode:workshop-tab', { detail: { slug: slug || null, tab: key } }));
     } catch {}

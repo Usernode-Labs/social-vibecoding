@@ -3829,6 +3829,147 @@ const App = {
     )}`;
   },
 
+  // ── The page's tab in the address (`?ws=`) — #3620 ───────────────────
+  //
+  // A project page's tabs (Hub, Discussion, Needs you, Workshop, and All
+  // items under Workshop) and the Communities screen's two pages used to be
+  // React state and a localStorage preference alone. A press changed no
+  // address, so it left no history entry, and Back from a tab took the
+  // viewer out of the page to whatever screen was below it. Each of those
+  // pages is a place, so its tab is NAMED in the address: a press pushes
+  // `?ws=<tab>`, a traversal reads it back, and the address is the one
+  // spelling Back, Forward, a reload and a copied link all agree on.
+  //
+  // `ws` belongs to those two screens ONLY: everywhere else it is dropped,
+  // in place and without adding an entry, so it cannot follow a viewer
+  // around. The helpers below are that rule, in one place.
+  _hereUrl() {
+    return `${location.pathname}${location.search}${location.hash}`;
+  },
+
+  // A project page (`/app/<slug>/workshop` or `/board`) or the Communities
+  // screen (`#communities`, `#workshop`). A legacy hash outranks the
+  // pathname, exactly as the router reads it.
+  _isWorkshopRoute(url) {
+    let u;
+    try { u = new URL(String(url || ''), 'https://homeroom.test/'); } catch (_) { return false; }
+    const hash = String(u.hash || '').replace(/^#/, '').split('?')[0];
+    if (hash) return hash === 'communities' || hash === 'workshop';
+    return /^\/app\/[a-z0-9][a-z0-9-]{0,254}\/(workshop|board)$/.test(u.pathname);
+  },
+
+  // The tab a `ws` parameter names, or null. Validated against the tabs the
+  // project page actually has when app-view.js is there to ask.
+  _workshopTabFromUrl(url) {
+    let v;
+    try { v = new URL(String(url || ''), 'https://homeroom.test/').searchParams.get('ws'); } catch (_) { return null; }
+    if (!v) return null;
+    const tabs = (typeof AppView !== 'undefined' && Array.isArray(AppView.WORKSHOP_TABS)
+      && AppView.WORKSHOP_TABS.length)
+      ? AppView.WORKSHOP_TABS
+      : ['status', 'discussion', 'workshop', 'needs', 'all'];
+    return tabs.indexOf(v) !== -1 ? v : null;
+  },
+
+  // `url` with `ws` set to `tab`, every other parameter kept byte for byte
+  // and in its original order.
+  _withWorkshopTab(url, tab) {
+    const s = String(url || '');
+    const hashAt = s.indexOf('#');
+    const before = hashAt === -1 ? s : s.slice(0, hashAt);
+    const after = hashAt === -1 ? '' : s.slice(hashAt);
+    const qAt = before.indexOf('?');
+    const base = qAt === -1 ? before : before.slice(0, qAt);
+    const raw = qAt === -1 ? '' : before.slice(qAt + 1);
+    const value = `ws=${encodeURIComponent(String(tab || ''))}`;
+    let found = false;
+    const kept = [];
+    for (const part of (raw ? raw.split('&') : [])) {
+      if (!part) continue;
+      const key = part.split('=', 1)[0];
+      let decoded = key;
+      try { decoded = decodeURIComponent(key.replace(/\+/g, ' ')); } catch (_) { decoded = key; }
+      if (decoded === 'ws') {
+        if (!found) { kept.push(value); found = true; }
+        continue;
+      }
+      kept.push(part);
+    }
+    if (!found) kept.push(value);
+    return `${base}?${kept.join('&')}${after}`;
+  },
+
+  // `url` with `ws` removed, and the `?` too when it held nothing else.
+  _withoutWorkshopTab(url) {
+    const s = String(url || '');
+    const hashAt = s.indexOf('#');
+    const before = hashAt === -1 ? s : s.slice(0, hashAt);
+    const after = hashAt === -1 ? '' : s.slice(hashAt);
+    const qAt = before.indexOf('?');
+    if (qAt === -1) return s;
+    const kept = before.slice(qAt + 1).split('&').filter((part) => {
+      if (!part) return false;
+      const key = part.split('=', 1)[0];
+      try { return decodeURIComponent(key.replace(/\+/g, ' ')) !== 'ws'; } catch (_) { return key !== 'ws'; }
+    });
+    return `${before.slice(0, qAt)}${kept.length ? `?${kept.join('&')}` : ''}${after}`;
+  },
+
+  // Write the tab into the address. A tab PRESS pushes one entry (the page
+  // is a place Back returns to); a door, a heal or a screen boundary
+  // replaces in place. The cached `?ws=` read app-view keeps is dropped so
+  // the next read parses what was just written.
+  _setWorkshopTabAddress(tab, options) {
+    const opts = options || {};
+    if (App.embeddedPanel) return;
+    const here = App._hereUrl();
+    const next = App._withWorkshopTab(here, tab);
+    if (next !== here) {
+      try {
+        if (opts.push) {
+          history.pushState(null, '', next);
+          App._historyPushes += 1;
+        } else {
+          history.replaceState(null, '', next);
+        }
+      } catch (_) { /* opaque origin: the page still shows the tab */ }
+    }
+    try {
+      if (typeof AppView !== 'undefined' && AppView._resetWorkshopTabParam) AppView._resetWorkshopTabParam();
+    } catch (_) { /* no app-view yet */ }
+  },
+
+  // Drop `ws` from the current address, in place. Used when a navigation
+  // leaves for another project or another kind of screen: the departing
+  // page's tab must not be read as the destination's.
+  _dropWorkshopTabParam() {
+    if (App.embeddedPanel) return;
+    const here = App._hereUrl();
+    let has = false;
+    try { has = new URL(here, 'https://homeroom.test/').searchParams.has('ws'); } catch (_) { has = false; }
+    if (!has) return;
+    try { history.replaceState(null, '', App._withoutWorkshopTab(here)); } catch (_) { return; }
+    try {
+      if (typeof AppView !== 'undefined' && AppView._resetWorkshopTabParam) AppView._resetWorkshopTabParam();
+    } catch (_) { /* no app-view yet */ }
+  },
+
+  // Drop a `ws` that is not this screen's. Called as the router lands, in
+  // place, so the parameter never adds a step of its own.
+  _healWorkshopTabParam() {
+    if (App.embeddedPanel) return;
+    const here = App._hereUrl();
+    // On a project page the tab is written once the route has chosen it
+    // (restoreFromHash, after the board aliases); on Communities a missing
+    // parameter already means the list.
+    if (App._isWorkshopRoute(here)) return;
+    if (App._workshopTabFromUrl(here) == null) return;
+    try { history.replaceState(null, '', App._withoutWorkshopTab(here)); } catch (_) { return; }
+    try {
+      if (typeof AppView !== 'undefined' && AppView._resetWorkshopTabParam) AppView._resetWorkshopTabParam();
+    } catch (_) { /* no app-view yet */ }
+  },
+
   // The token of an invite link's path, or null. Same shape the server's
   // isSpaDocumentPath lets through (src/middleware/auth.js).
   _inviteTokenFromPath(pathname) {
@@ -3899,13 +4040,32 @@ const App = {
   restoreFromHash() {
     App._isRestoring = true;
     try {
+      // THE `?ws=` CACHE BELONGS TO THE ADDRESS THE LAST PASS SAW (#3620).
+      // A traversal can land on another tab of the same page, so the cached
+      // read has to go before anything asks which tab is named.
+      try {
+        if (typeof AppView !== 'undefined' && AppView._resetWorkshopTabParam) AppView._resetWorkshopTabParam();
+      } catch (_) { /* no app-view yet */ }
+      // A `ws` carried onto a screen that does not read it is dropped in
+      // place; the project page's own is written once its route has chosen
+      // a tab (see the app branch below).
+      App._healWorkshopTabParam();
       const rawHash = location.hash.replace('#', '');
       const pathRoute = App._appRouteFromPath(location.pathname);
       // A fragment names a non-app platform screen, so it outranks the clean
       // app pathname it was assigned from. Heal the mixed address in place;
       // all the existing hash-writing modules can stay small and correct.
       if (rawHash && pathRoute && !rawHash.startsWith('app/')) {
-        try { history.replaceState(null, '', App._rootUrl(`#${rawHash}`)); } catch (_) {}
+        // A PROJECT PAGE'S `ws` IS NOT THE COMMUNITIES SCREEN'S (#3620):
+        // `?ws=needs` names a project's Needs you page and this screen's
+        // Needs you feed, two different places. Arriving at Communities (or
+        // its old name) from a project page's address, the tab named is the
+        // list, which is what the tab press means.
+        let healed = App._rootUrl(`#${rawHash}`);
+        if (/^(communities|workshop)(?:[?#/]|$)/.test(rawHash)) {
+          healed = App._withWorkshopTab(App._withoutWorkshopTab(healed), 'status');
+        }
+        try { history.replaceState(null, '', healed); } catch (_) {}
       }
       // Fragment-query (#743): a chromeless deep link carries the app's
       // inner path after a `?` INSIDE the fragment
@@ -4509,6 +4669,24 @@ const App = {
         const currentAppUrl = `${location.pathname}${location.search}${location.hash}`;
         if (currentAppUrl !== canonicalAppUrl) {
           try { history.replaceState(null, '', canonicalAppUrl); } catch (_) {}
+        }
+        // THE PROJECT PAGE'S TAB IS NAMED IN ITS ADDRESS (#3620), and a
+        // traversal onto another of its entries reads it back. An arrival
+        // with no parameter opens the tab the page remembers and is
+        // corrected in place, so the entry below the first tab press knows
+        // its own tab too; then the page is told which tab history landed
+        // on. On a cold load the island is not listening yet and reads the
+        // same parameter itself when it mounts.
+        if (App._isWorkshopRoute(canonicalAppUrl) && typeof AppView !== 'undefined') {
+          let named = App._workshopTabFromUrl(`${location.pathname}${location.search}${location.hash}`);
+          if (!named) {
+            named = (typeof AppView._workshopTab === 'function' && AppView._workshopTab()) || 'status';
+            App._setWorkshopTabAddress(named, { replace: true });
+          }
+          try {
+            window.dispatchEvent(new CustomEvent('usernode:workshop-restore',
+              { detail: { slug, tab: named } }));
+          } catch (_) { /* no CustomEvent: the address still names the tab */ }
         }
         if (App.currentApp !== slug) {
           App.navigateToApp(slug, tab, ref, subTab);
@@ -5835,6 +6013,10 @@ const App = {
   // hashchange land in the same tick, and `_revealedScreen` is not assigned
   // until the callback runs, so it would let the second run straight through.
   navigateToWorkshop() {
+    // THE ADDRESS SAYS WHICH PAGE (#3620): the list or its Needs you feed.
+    // Read before the already-open guard, which is exactly the case a
+    // traversal back from Needs you lands on.
+    try { window.UsernodeReact?.workshop?.syncTabFromUrl?.(); } catch (_) { /* no island yet */ }
     if (App._inWorkshop && !App.currentApp) return;
     // The selector is now the view the tab returns to (#2776).
     App._forgetWorkshopView();
@@ -6520,6 +6702,11 @@ const App = {
       newUrl = App._rootUrl();
     }
 
+    // `ws` names a tab on a project page or Communities and nowhere else
+    // (#3620). The app-URL serializer carries every query parameter over, so
+    // the drop happens here, on the destination, rather than at each caller.
+    if (!App._isWorkshopRoute(newUrl)) newUrl = App._withoutWorkshopTab(newUrl);
+
     // The Workshop tab's memory (#2776) is this address, when it is one.
     App._noteWorkshopView(newUrl);
 
@@ -6699,6 +6886,9 @@ const App = {
     // The side panel never runs an app — not even to warm its frame. An App
     // tab asked for in there is the running app's job, beside it.
     if (App.embeddedPanel && App._forwardAppTab(slug, tab, ref, subTab)) return false;
+    // Read before `App.currentApp` is committed below: whether this is a
+    // jump from one project to another (#3620, the `?ws=` drop).
+    const crossApp = !!(App.currentApp && App.currentApp !== slug);
     const generation = ++App._appNavigationGeneration;
     // Clean up whatever app we had mounted. This is a no-op on the first
     // navigation into any app, but without it a direct app-A → app-B
@@ -6744,6 +6934,28 @@ const App = {
     // platform screens with the rail beside them (#2740 review).
     if (initialRoute.tab === 'app') App._noteAppReturn(slug);
     else App._appReturn = null;
+    // THE TAB THIS DESTINATION OPENS ON IS ITS OWN (#3620). Whatever `ws`
+    // the departing address carried belongs to the project it named, so it
+    // is dropped; a door pressed just before this (AppView._landOnTab) wrote
+    // the tab it opens at, and that one is kept. The page's own route then
+    // shows the tab the address names, which is the same one the island
+    // reads when it mounts.
+    {
+      const door = App._workshopDoorTab && App._workshopDoorTab.slug === slug
+        ? App._workshopDoorTab.tab : null;
+      App._workshopDoorTab = null;
+      if (!App.embeddedPanel && (crossApp || door || App._workshopTabFromUrl(App._hereUrl()))) {
+        App._dropWorkshopTabParam();
+        if (door) App._setWorkshopTabAddress(door, { replace: true });
+        else if (initialRoute.tab === 'dev' && typeof AppView !== 'undefined'
+            && typeof AppView._workshopTab === 'function') {
+          // No door: the page opens on the tab it remembers, and the address
+          // names it, so Back from the first tab press has an entry to go to.
+          AppView._resetWorkshopTabParam();
+          App._setWorkshopTabAddress(AppView._workshopTab() || 'status', { replace: true });
+        }
+      }
+    }
     App.updateHash({ ref: initialRoute.ref });
     App._pinAppReturn();
     // Resolved BEFORE the _exitX flags are cleared — _departingScreen

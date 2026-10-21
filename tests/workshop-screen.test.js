@@ -797,8 +797,10 @@ test('the app\'s own Workshop switches communities through Your communities, the
   assert.match(ws, /name=\{app\.name \|\| undefined\}/);
 
   // ALL COMMUNITIES IS THE WAY BACK UP: a hash assignment, so the tab and
-  // this are one route, and the page the tab reopened is forgotten.
-  assert.match(scope, /if \(!slug\) \{\s*setScope\(null\);\s*try \{ app\?\._forgetWorkshopView\?\.\(\); \}[\s\S]{0,160}window\.location\.hash = '#communities';/);
+  // this are one route, and the page the tab reopened is forgotten. #3620:
+  // the list is named in the address BEFORE the hash moves, without adding
+  // a step, so a page that was on Needs you turns back to the list.
+  assert.match(scope, /if \(!slug\) \{\s*setScope\(null\);\s*try \{ app\?\._forgetWorkshopView\?\.\(\); \}[\s\S]{0,600}?workshop\?\.setTab\?\.\('status', \{ push: false \}\)[\s\S]{0,200}?window\.location\.hash = '#communities';/);
   // The community you are already on goes nowhere: re-navigating to the
   // current route would throw the page's scroll away. It turns to the hub.
   assert.match(scope, /try \{ \(window as any\)\.AppView\?\._landOnHub\?\.\(slug\); \}/);
@@ -1015,5 +1017,52 @@ test('#3270: the controller reads the Needs you feed alongside, and survives los
   } finally {
     if (priorWindow === undefined) delete global.window; else global.window = priorWindow;
     global.fetch = priorFetch;
+  }
+});
+
+// ── #3620: the list and Needs you are two places ───────────────────────
+//
+// The screen's two pages used to be store state alone, so Back from Needs
+// you left Communities. Each page is named in the address now (`?ws=`), a
+// press leaves one entry, and the router reads a traversal back.
+
+test('#3620: a Communities page press is a step, All communities is not, and the router reads it back', () => {
+  const mod = loadTsx('frontend/src/features/workshop/index.tsx');
+  const priorWindow = global.window;
+  const priorLocation = global.location;
+  const writes = [];
+  let named = 'needs';
+  global.window = {
+    location: { href: 'https://homeroom.test/?ws=needs#communities' },
+    App: {
+      _workshopTabFromUrl: () => named,
+      _setWorkshopTabAddress: (tab, opts) => writes.push([tab, !!(opts && opts.push)]),
+    },
+  };
+  global.location = { search: '?ws=needs', href: 'https://homeroom.test/?ws=needs#communities' };
+  try {
+    // The screen is on screen: `open()` is the liveness flag the shell sets.
+    mod.workshopStore.set({ open: true });
+    // The way back to the list: one entry, so Back returns to Needs you.
+    mod.workshopController.setTab('status');
+    assert.deepEqual(writes, [['status', true]]);
+    assert.equal(mod.workshopStore.get().tab, 'status');
+    // Pressing the page already named adds nothing.
+    named = 'status';
+    mod.workshopController.setTab('status');
+    assert.equal(writes.length, 1);
+    // The switcher's All communities row moves in place, never a step.
+    named = 'needs';
+    mod.workshopController.setTab('status', { push: false });
+    assert.deepEqual(writes[1], ['status', false]);
+    // A traversal onto an entry of this screen: its tab is read back.
+    mod.workshopController.syncTabFromUrl();
+    assert.equal(mod.workshopStore.get().tab, 'needs');
+    global.location = { search: '' };
+    mod.workshopController.syncTabFromUrl();
+    assert.equal(mod.workshopStore.get().tab, 'status', 'no parameter is the list');
+  } finally {
+    if (priorWindow === undefined) delete global.window; else global.window = priorWindow;
+    if (priorLocation === undefined) delete global.location; else global.location = priorLocation;
   }
 });
