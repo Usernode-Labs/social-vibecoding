@@ -3,7 +3,7 @@ import { Button } from '@/components/ui/button';
 import { useMessages } from '../../lib/i18n/react';
 import { t as translate } from '../../lib/i18n/runtime';
 import { useStoreState } from '../../lib/use-store-state';
-import { appAllowanceStore, refreshAppAllowance, requestMoreApps } from './app-allowance-store.js';
+import { appAllowanceStore, cancelAppAllowanceRequest, refreshAppAllowance, requestMoreApps } from './app-allowance-store.js';
 
 export interface AppCreationQuota {
   used: number | null;
@@ -128,6 +128,16 @@ const REQUEST_BUTTON = {
   pane: { variant: 'pillNeutral', ink: 'neutral', className: 'dark:bg-zinc-700 dark:hover:bg-zinc-600' },
 } as const;
 
+/**
+ * "Undo request" (#5737) sits beside the greyed-out "Request pending": the
+ * same box, the same shape and size as "Request more", quietly neutral, so
+ * the pending state stays the thing being said and this is the way out of it.
+ */
+const UNDO_BUTTON = {
+  inset: { variant: 'neutral', ink: 'neutral' },
+  pane: { variant: 'pillNeutral', ink: 'neutral', className: 'dark:bg-zinc-700 dark:hover:bg-zinc-600' },
+} as const;
+
 export function AppAllowance({ id, surface = 'inset', quiet = false }: {
   id?: string;
   surface?: keyof typeof SURFACE;
@@ -146,6 +156,13 @@ export function AppAllowance({ id, surface = 'inset', quiet = false }: {
     setRequestError('');
     try { await requestMoreApps(); }
     catch (err: any) { setRequestError(err.message || t('dialogs:allowance.error.request')); }
+    finally { setBusy(false); }
+  };
+  const undo = async () => {
+    setBusy(true);
+    setRequestError('');
+    try { await cancelAppAllowanceRequest(); }
+    catch (err: any) { setRequestError(err.message || t('dialogs:allowance.error.undo')); }
     finally { setBusy(false); }
   };
   return (
@@ -185,9 +202,16 @@ export function AppAllowance({ id, surface = 'inset', quiet = false }: {
       ) : null}
       {quota && quota.limit !== null && !serverFull ? (
         <div className="mt-2">
-          <Button type="button" size="sm" {...REQUEST_BUTTON[surface]} disabled={busy || !!requestedAt} disabledStyle="block" onClick={request}>
-            {busy ? t('dialogs:allowance.request.sending') : requestedAt ? t('dialogs:allowance.request.pending') : t('dialogs:allowance.request.more')}
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" size="sm" {...REQUEST_BUTTON[surface]} disabled={busy || !!requestedAt} disabledStyle="block" onClick={request}>
+              {requestedAt ? t('dialogs:allowance.request.pending') : busy ? t('dialogs:allowance.request.sending') : t('dialogs:allowance.request.more')}
+            </Button>
+            {requestedAt ? (
+              <Button id={id ? `${id}-undo` : undefined} type="button" size="sm" {...UNDO_BUTTON[surface]} disabled={busy} disabledStyle="block" onClick={undo}>
+                {busy ? t('dialogs:allowance.request.undoing') : t('dialogs:allowance.request.undo')}
+              </Button>
+            ) : null}
+          </div>
           {requestedAt ? <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">{t('dialogs:allowance.request.note')}</p> : null}
         </div>
       ) : null}

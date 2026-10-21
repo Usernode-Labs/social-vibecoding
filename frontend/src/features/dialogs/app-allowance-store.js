@@ -96,6 +96,23 @@ export async function requestMoreApps(fetcher = (url, init) => fetch(url, init))
   }
 }
 
+export async function cancelAppAllowanceRequest(fetcher = (url, init) => fetch(url, init)) {
+  // As in requestMoreApps: a GET started before the undo must not bring the
+  // pending state back once the server has cleared it.
+  const current = ++revision;
+  pending = null;
+  appAllowanceStore.set({ loading: false });
+  const res = await fetcher('/api/me/app-allowance/request', { method: 'DELETE', credentials: 'same-origin' });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || t('dialogs:allowance.error.undo'));
+  if (current === revision) {
+    revision++;
+    pending = null;
+    appAllowanceStore.set({ loading: false });
+    publish(data);
+  }
+}
+
 if (typeof window !== 'undefined' && typeof document !== 'undefined'
     && typeof document.addEventListener === 'function' && typeof window.addEventListener === 'function') {
   window.UsernodeReact = window.UsernodeReact || {};

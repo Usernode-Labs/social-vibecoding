@@ -1211,6 +1211,20 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
     }
   });
 
+  // Taking that request back (#5737). Shares the request's limiter, so going
+  // back and forth cannot flood the admins with new requests.
+  router.delete('/api/me/app-allowance/request', appAllowanceRequestLimiter, sameOriginBrowserOnly, async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
+    if (req.user.canAdminWrite) return res.status(400).json({ error: 'Your account already has unlimited app slots.' });
+    try {
+      res.json(await appAllowance.cancelOwn(pool, req.user, { maxApps: await appLimit.effective(pool, config) }));
+    } catch (err) {
+      log.error('apps', 'App allowance request undo failed', { message: err.message });
+      res.status(500).json({ error: 'Could not undo your request. Please try again.' });
+    }
+  });
+
   // The create dialog's suggested one-line "What is it?", from what the
   // person said the project should do (#3624, asked of everyone making a
   // project since). Any signed-in person who can reach the create dialog;
