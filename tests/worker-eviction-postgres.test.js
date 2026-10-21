@@ -107,12 +107,57 @@ test('idle workers are the eviction clock\'s, against the full PostgreSQL schema
     runtime.running = [raced];
     const realQuery = pool.query.bind(pool);
     pool.query = async (sql, params) => {
-      if (/DELETE FROM session_workers WHERE session_id = \$1 AND last_used_at = \$2/.test(sql)) {
+      if (/DELETE FROM session_workers sw USING chat_sessions cs/.test(sql)) {
         await realQuery('UPDATE session_workers SET last_used_at = NOW() WHERE session_id = $1', [raced]);
       }
       return realQuery(sql, params);
     };
     try { await sweep(); } finally { pool.query = realQuery; }
     assert.deepEqual(runtime.evicted, []);
+  });
+
+  await t.test('a turn that starts between the read and the claim keeps its worker', async () => {
+    reset();
+    const raced = await session();
+    await used(raced, '20 minutes');
+    runtime.running = [raced];
+    const realQuery = pool.query.bind(pool);
+    pool.query = async (sql, params) => {
+      if (/DELETE FROM session_workers sw USING chat_sessions cs/.test(sql)) {
+        // Its turn is recorded; its note of use has not come yet.
+        await realQuery(`UPDATE chat_sessions SET active_turn = '{"turnId":"t-raced"}'::jsonb WHERE id = $1`, [raced]);
+      }
+      return realQuery(sql, params);
+    };
+    try { await sweep(); } finally { pool.query = realQuery; }
+    assert.deepEqual(runtime.evicted, []);
+  });
+
+  await t.test('a turn that comes while its worker is evicted waits for the eviction, then finds the worker gone', async () => {
+    reset();
+    const evicting = await session();
+    await used(evicting, '20 minutes');
+    runtime.running = [evicting];
+    let release;
+    const gate = new Promise((r) => { release = r; });
+    const realEvict = worker.evictWorker;
+    worker.evictWorker = async (id) => { runtime.evicted.push(id); await gate; };
+    try {
+      const swept = sweep();
+      for (let i = 0; i < 200 && !runtime.evicted.length; i++) await new Promise((r) => setTimeout(r, 10));
+      assert.deepEqual(runtime.evicted, [evicting], 'the eviction is under way');
+      let noted = false;
+      const note = eviction.noteUsed(pool, evicting).then(() => { noted = true; });
+      await new Promise((r) => setTimeout(r, 300));
+      assert.equal(noted, false, 'its note of use waits for the eviction');
+      release();
+      await swept;
+      await note;
+      const { rows: [row] } = await pool.query('SELECT last_used_at > NOW() - interval \'1 minute\' AS fresh FROM session_workers WHERE session_id = $1', [evicting]);
+      assert.equal(row.fresh, true, 'and it is used from now: the next ensure starts the worker again');
+    } finally {
+      worker.evictWorker = realEvict;
+      release();
+    }
   });
 });

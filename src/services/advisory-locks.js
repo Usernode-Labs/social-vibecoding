@@ -126,8 +126,15 @@ const SESSION_BRANCH_LOCK = 991020;
 // stands for. One classifier per role, so a process starting waits only on
 // the claims of the roles it replaces.
 const CAPACITY_CLAIM_LOCKS = new Map([['all', 991021], ['web', 991022], ['conductor', 991023]]);
+// A change's worker evicted or about to be used (services/worker-eviction.js):
+// `pg_advisory_lock(classifier, sessionId)`, session-scoped, on the
+// process's lock connection, held by the eviction clock over its claim and
+// the eviction, and by a turn's ensureWorker over its note of use. A turn
+// starting while its worker is evicted waits, then finds it gone; an
+// eviction about to claim a worker a turn just used sees it used.
+const WORKER_EVICTION_LOCK = 991024;
 
 module.exports = { ADMIN_MUTATION_LOCK, EXTERNAL_TASK_SUBMIT_LOCK, PROPOSAL_UPDATE_LOCK, BUILD_RETENTION_LOCK,
   STAGING_BUILD_LOCK, PRODUCTION_BUILD_LOCK, STAGING_TEMPLATE_LOCK,
   VOTE_DIGEST_LOCK, CHALLENGE_SCORER_LOCK, HOMEROOM_BOT_LOCK, HOMEROOM_BOT_CARDS_LOCK,
-  CHECKS_QUEUE_LOCK, PREVIEW_DOCKER_DEPLOY_LOCK, PROCESS_PRESENCE_LOCK, APP_NAME_PURGE_LOCK, SESSION_BRANCH_LOCK, CAPACITY_CLAIM_LOCKS };
+  CHECKS_QUEUE_LOCK, PREVIEW_DOCKER_DEPLOY_LOCK, PROCESS_PRESENCE_LOCK, APP_NAME_PURGE_LOCK, SESSION_BRANCH_LOCK, CAPACITY_CLAIM_LOCKS, WORKER_EVICTION_LOCK };

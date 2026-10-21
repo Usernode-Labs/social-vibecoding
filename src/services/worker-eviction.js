@@ -16,14 +16,18 @@
 //   3. a worker idle past the window, whose change nothing works on
 //      (session-work.ts workedOnSql: a turn, a local agent's, a shots run, a
 //      durable build, a sync, the bot's look, a recorded operation), is
-//      evicted: its row is deleted only if nobody used it since it was read
-//      (its time compared whole, as text: a JavaScript Date drops the
-//      microseconds),
-//      and the eviction follows (a turn that starts after that ensures the
-//      worker again).
+//      evicted, under its session's WORKER_EVICTION_LOCK: its row is deleted
+//      only if nobody used it since it was read (its time compared whole, as
+//      text: a JavaScript Date drops the microseconds) and nothing works on
+//      it still, and the eviction follows. A turn's ensureWorker notes its
+//      use under the same lock (noteUsed): one that comes during an
+//      eviction waits for it and then ensures the worker again; one that
+//      comes before the claim makes the claim miss.
 
 const log = require('./logger');
 const { workedOnSql } = require('../workflow/session-work.ts');
+const { withSessionLock } = require('../db/session-locks');
+const { WORKER_EVICTION_LOCK } = require('./advisory-locks');
 
 // How long a worker may sit unused (WORKER_IDLE_EVICTION_MS, default ten
 // minutes).
@@ -62,12 +66,17 @@ async function sweep(pool, { idleMs = IDLE_MS, deps = {} } = {}) {
       ORDER BY sw.last_used_at LIMIT 200`, [Math.round(idleMs / 1000)]);
   let evicted = 0;
   for (const r of idle) {
-    const { rows: [claimed] } = await pool.query(
-      'DELETE FROM session_workers WHERE session_id = $1 AND last_used_at = $2::timestamptz RETURNING session_id',
-      [r.session_id, r.last_used_at]);
-    if (!claimed) continue;
     try {
-      await worker.evictWorker(Number(r.session_id));
+      const done = await withSessionLock(pool, [WORKER_EVICTION_LOCK, Number(r.session_id)], async () => {
+        const { rows: [claimed] } = await pool.query(
+          `DELETE FROM session_workers sw USING chat_sessions cs
+            WHERE sw.session_id = $1 AND cs.id = sw.session_id AND sw.last_used_at = $2::timestamptz AND NOT ${workedOnSql()}
+            RETURNING sw.session_id`, [r.session_id, r.last_used_at]);
+        if (!claimed) return false;
+        await worker.evictWorker(Number(r.session_id));
+        return true;
+      });
+      if (!done) continue;
       evicted += 1;
       log.info('worker-eviction', 'Idle worker evicted', { sessionId: r.session_id, lastUsedAt: r.last_used_at });
     } catch (err) {
@@ -77,4 +86,13 @@ async function sweep(pool, { idleMs = IDLE_MS, deps = {} } = {}) {
   return { evicted, destroyed };
 }
 
-module.exports = { sweep, IDLE_MS };
+// A worker about to be used (worker.js ensureWorker), noted as used under
+// its session's lock: an eviction under way is waited for, and one about to
+// claim it finds it used. A lock that cannot be asked for notes it anyway.
+async function noteUsed(pool, sessionId) {
+  return withSessionLock(pool, [WORKER_EVICTION_LOCK, Number(sessionId)], () => pool.query(
+    `INSERT INTO session_workers (session_id, last_used_at) SELECT id, NOW() FROM chat_sessions WHERE id = $1
+     ON CONFLICT (session_id) DO UPDATE SET last_used_at = NOW()`, [Number(sessionId)]), { unlockedOnError: true });
+}
+
+module.exports = { sweep, noteUsed, IDLE_MS };

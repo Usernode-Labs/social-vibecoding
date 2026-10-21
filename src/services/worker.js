@@ -3305,6 +3305,14 @@ async function ensureWorker(sessionId, {
   }
   await accountDeletionGuard(sessionId);
   const containerName = workerRuntimeName(sessionId);
+  // Used from now (services/worker-eviction.js noteUsed): an eviction under
+  // way is waited for, so the status read below finds its worker gone, and
+  // an eviction about to claim it finds it used.
+  const usedPool = _getPoolSafe();
+  if (usedPool) {
+    await require('./worker-eviction').noteUsed(usedPool, sessionId)
+      .catch((err) => log.warn('worker', 'Could not note a worker as used', { sessionId, err: err.message }));
+  }
 
   // Coalesce concurrent ensures — if one's already racing, await it.
   const existing = _registryGet(sessionId);
