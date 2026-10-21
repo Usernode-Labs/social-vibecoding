@@ -302,6 +302,10 @@ function dmText(kind, dm, context) {
       return `${line}\n\nI looked into this and can't build it as it's written: ${clip(dm.reason, 600)}\n\n`
         + 'Reply to this message with more detail and I\'ll look again.';
     case 'build_failed':
+      if (dm.lost) {
+        return `${line}\n\nMy work on ${it} was interrupted by a platform restart, and nothing was built. `
+          + 'The request is back in the queue, and I will look again.';
+      }
       return `${line}\n\nI tried to build ${it} but couldn't finish (${clip(dm.reason, 300) || 'unknown reason'}). `
         + 'A person can pick it up from here.';
     case 'person':

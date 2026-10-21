@@ -96,9 +96,10 @@ test('what it says has no em dashes', () => {
 
 function harness({
   proposalStatus = 'promoted', revisions = 0, comments = [], issueThread = [], proposalThread = [],
+  session = {},
   result = { lastResultText: '```json\n{"action":"answer","reply":"Because the platform uses it."}\n```', pushOk: true, sha: OLD_HEAD },
 } = {}) {
-  const calls = { queries: [], exec: [], loop: null, posts: [], reconciled: [], seen: [] };
+  const calls = { queries: [], exec: [], loop: null, posts: [], queue: [], reconciled: [], seen: [] };
   const pool = {
     async query(sql, params) {
       const s = String(sql);
@@ -108,10 +109,11 @@ function harness({
       }
       if (/SELECT id, thread_seen_at FROM homeroom_bot_runs/.test(s)) return { rows: [{ id: 800, thread_seen_at: SEEN }] };
       if (/SELECT cs\.\*, a\.slug AS app_slug/.test(s)) {
-        return { rows: [{ id: 5001, user_id: 77, app_id: 9, status: 'promoted', branch_name: 'dev/homeroom_bot-5001', pr_number: 25, reviewed_head_sha: OLD_HEAD, app_slug: APP.slug, repo_url: APP.repo_url }] };
+        return { rows: [{ id: 5001, user_id: 77, app_id: 9, status: 'promoted', branch_name: 'dev/homeroom_bot-5001', pr_number: 25, reviewed_head_sha: OLD_HEAD, app_slug: APP.slug, repo_url: APP.repo_url, ...session }] };
       }
       if (/COUNT\(\*\)::int AS n FROM homeroom_bot_runs/.test(s)) return { rows: [{ n: revisions }] };
       if (/INSERT INTO homeroom_bot_runs/.test(s)) return { rows: [{ id: 901 }] };
+      if (/INSERT INTO homeroom_bot_queue/.test(s)) { calls.queue.push({ s, params }); return { rows: [] }; }
       return { rows: [] };
     },
   };
@@ -192,9 +194,29 @@ test('a question in the proposal\'s discussion is answered there and on the issu
   assert.match(h.calls.posts[0].text, /Because the platform uses it/);
   const insert = insertOf(h);
   assert.equal(insert.params[4], 'answer');
-  assert.equal(insert.params.at(-1), 5001, 'tied to the proposal');
+  assert.equal(insert.params[20], 5001, 'tied to the proposal');
   assert.equal(h.calls.seen[0].proposalSessionId, 5001, 'a reply there during the turn means it looks again');
   assert.ok(h.calls.queries.some((q) => /DELETE FROM homeroom_bot_queue WHERE id = \$1/.test(q.s) && q.params[0] === 31));
+});
+
+test('a person\'s reply still comes first, and a still-due checks fix is queued for the next pass', async (t) => {
+  const checks = [{
+    name: 'Text size', path: 'tests/tap', status: 'fail',
+    failureReason: 'expected "Text size", the button says "Aa"',
+  }];
+  const h = harness({
+    comments: [{ author: 'evan', body: 'What about the failing check?', createdAt: '2026-09-26T11:30:00Z' }],
+    session: { check_state: 'failing', checks_commit_sha: OLD_HEAD, reviewed_head_sha: OLD_HEAD, test_results: checks },
+    // An answer changes nothing, so the head stays where it was.
+    result: { lastResultText: '```json\n{"action":"answer","reply":"I will look at it."}\n```', pushOk: true, sha: OLD_HEAD },
+  });
+  const out = await run(t, h);
+  assert.equal(out.verdict, 'answer', 'the person is answered first');
+  assert.equal(h.calls.exec.length, 1, 'one reply turn, not a checks turn');
+  assert.equal(h.calls.posts[0].kind, 'followup_answer');
+  const requeue = h.calls.queue.find((q) => /checks_failing/.test(q.s));
+  assert.ok(requeue, 'the checks fix is put back for the next pass');
+  assert.deepEqual(requeue.params, [9, 24, ITEM.thread_seen_at]);
 });
 
 test('a clear change is made on the proposal, and the proposal is reconciled like any revision', async (t) => {

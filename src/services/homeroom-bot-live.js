@@ -141,6 +141,15 @@ function buildFailedText(reason) {
     + 'A person could pick it up from here.';
 }
 
+// #3471: a live build whose worker, or whose spec turn, a platform restart
+// lost. The request is put back in the queue, so this says the work was
+// interrupted and that the bot will look again, not that a person must
+// pick it up.
+function lostText() {
+  return 'Homeroom bot\'s work on this request was interrupted by a platform restart, and nothing was built. '
+    + 'The request is back in the queue, and it will look again.';
+}
+
 // #3152: a verdict a live cap held. One line, so the person who filed the
 // issue is not left with silence, and a promise the refresh keeps: a held
 // issue is queued again as soon as the cap that held it has room.
@@ -928,6 +937,65 @@ async function post({
 }
 
 /**
+ * One message in a proposal's own discussion, and its record in
+ * homeroom_bot_posts. A checks fix says what changed only there: the request
+ * itself is not commented on and the requester is not messaged. Mentions are
+ * the caller's (live.mentionTargets), and their notifications are written
+ * from the handles alone, as post does. Never throws.
+ */
+async function postOnProposal({
+  pool, ws, app, issueNumber, proposalSessionId, kind, runId = null, text,
+  msgType = 'system', metadata = null, mentions = null, sender = null, senderId = null, notifications = null,
+}) {
+  const thread = { type: 'session', ref: Number(proposalSessionId) };
+  const tagged = [...new Set((mentions || []).filter(Boolean))];
+  const handles = tagged.map((n) => `@${n}`).join(' ');
+  const { rows } = await pool.query(
+    `INSERT INTO homeroom_bot_posts (app_id, issue_number, run_id, kind)
+     VALUES ($1, $2, $3, $4)
+     RETURNING id`,
+    [app.id, issueNumber, runId, kind],
+  ).catch((err) => {
+    log.warn('homeroom-bot', 'Could not record a proposal post', { app: app.slug, issueNumber, kind, err: err.message });
+    return { rows: [] };
+  });
+  const postId = rows[0]?.id || null;
+  let message = null;
+  try {
+    const content = handles ? `${handles} ${text}` : text;
+    message = sender
+      ? await ws.sendBotMessage(pool, app.id, { user: sender, content, metadata, thread, msgType })
+      : await ws.sendSystemMessage(pool, app.id, content, msgType, metadata, thread);
+  } catch (err) {
+    log.warn('homeroom-bot', 'Proposal thread post failed (continuing)', { app: app.slug, issueNumber, kind, err: err.message });
+  }
+  let notified = 0;
+  if (handles && message?.id) {
+    try {
+      const notify = notifications || require('./notifications');
+      const mentionsRows = await notify.createMentionNotifications(pool, {
+        appId: app.id, chatMessageId: message.id, senderId: senderId ?? sender?.id ?? null, content: handles,
+      });
+      await Promise.all(mentionsRows.map((row) => notify.hydrateAndPush(pool, row)));
+      notified = mentionsRows.length;
+    } catch (err) {
+      log.warn('homeroom-bot', 'Proposal poster mention failed (post kept)', { app: app.slug, issueNumber, kind, err: err.message });
+    }
+  }
+  if (postId) {
+    await pool.query(
+      'UPDATE homeroom_bot_posts SET thread_message_id = $2 WHERE id = $1',
+      [postId, message?.id ?? null],
+    ).catch(() => {});
+  }
+  log.info('homeroom-bot', 'Posted on a proposal', {
+    app: app.slug, issueNumber, kind, sessionId: Number(proposalSessionId),
+    thread: !!message, ...(tagged.length ? { mentioned: tagged, notified } : {}),
+  });
+  return { postId, thread: !!message, notified };
+}
+
+/**
  * The GitHub account the bot comments as, or null when it cannot be read.
  * `github.getBotUsername()` is async. Used unawaited, the Promise reached
  * the triage seed, where tagging a GitHub comment called .toLowerCase() on
@@ -1472,6 +1540,7 @@ module.exports = {
   emptyText,
   proposalText,
   buildFailedText,
+  lostText,
   heldText,
   heldKind,
   lastPostKind,
@@ -1485,6 +1554,7 @@ module.exports = {
   parseStopMentioning,
   MAX_MENTIONS,
   post,
+  postOnProposal,
   advanceSeen,
   botUsernameOf,
   openBotProposal,

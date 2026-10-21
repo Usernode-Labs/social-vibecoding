@@ -372,4 +372,92 @@ test('the shadow-build lane against the full PostgreSQL schema', { timeout: 1800
     assert.equal((await row(blocked)).build_ok, false);
     assert.deepEqual(await bot.buildLaneSummary(pool), before, 'the shadow lane\'s counts and cost are its own');
   });
+
+  await t.test('a checks_failing row survives the refresh while the issue is open, and is the next batch (#3471)', async () => {
+    const checksApp = await app('checks-fix', 'https://github.com/usernode-bot/checks-fix');
+    const checksRepo = { ...checksApp, repo_url: 'https://github.com/usernode-bot/checks-fix' };
+    // The failing check's verdict is already the issue's last run, and the
+    // head it looked at is recorded, so the issue looks unchanged.
+    await pool.query(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, thread_seen_at,
+                                      proposal_session_id, checks_head_sha)
+       VALUES ($1, 1, 'live', 'revise', NOW(), NULL, $2)`,
+      [checksApp.id, 'e'.repeat(40)],
+    );
+    await pool.query('DELETE FROM homeroom_bot_queue');
+    await pool.query(
+      `INSERT INTO homeroom_bot_queue (app_id, issue_number, priority, reason, thread_seen_at)
+       VALUES ($1, 1, 1, 'checks_failing', NOW() - INTERVAL '1 hour')`,
+      [checksApp.id],
+    );
+    await pool.query(
+      `INSERT INTO homeroom_bot_queue (app_id, issue_number, priority, reason, thread_seen_at)
+       VALUES ($1, 2, 1, 'checks_failing', NOW() - INTERVAL '1 hour')`,
+      [checksApp.id],
+    );
+    const github = {
+      async fetchPublicIssues() {
+        return { issues: [
+          { number: 1, state: 'open', updatedAt: '2020-01-01T00:00:00Z' },
+          { number: 2, state: 'closed', updatedAt: '2020-01-01T00:00:00Z' },
+        ] };
+      },
+    };
+    const out = await bot.refreshApp(pool, checksRepo, { github, bot: { id: 77 } });
+    assert.equal(out.queued, 1, 'the open issue is kept');
+    const { rows } = await pool.query(
+      `SELECT issue_number, priority, reason FROM homeroom_bot_queue
+        WHERE app_id = $1 ORDER BY issue_number`, [checksApp.id],
+    );
+    assert.deepEqual(rows, [{ issue_number: 1, priority: 1, reason: 'checks_failing' }],
+      'the closed issue\'s fix is dropped, the open one survives unchanged');
+
+    const batch = await bot.nextBatch(pool, { batchSize: 5, excludeAppIds: [], pausedApps: [] });
+    assert.equal(batch.app.slug, 'checks-fix');
+    assert.deepEqual(batch.items.map((i) => [i.issue_number, i.reason]), [[1, 'checks_failing']],
+      'the next pass takes it');
+    await pool.query('DELETE FROM homeroom_bot_queue');
+  });
+
+  await t.test('a failing verdict on the bot\'s own live proposal queues one checks fix (#3471)', async () => {
+    const noteApp = await app('checks-note', 'https://github.com/usernode-bot/checks-note');
+    const botUser = (await pool.query(
+      `INSERT INTO users (username, password, is_synthetic) VALUES ('homeroom_bot', 'x', TRUE)
+       ON CONFLICT (username) DO UPDATE SET password = EXCLUDED.password RETURNING id`,
+    )).rows[0];
+    const head = 'f'.repeat(40);
+    const proposal = (await pool.query(
+      `INSERT INTO chat_sessions
+         (app_id, user_id, branch_name, status, linked_issues, pr_number,
+          check_state, checks_commit_sha, reviewed_head_sha, test_results)
+       VALUES ($1, $2, 'homeroom_bot/checks', 'promoted', '{1}', 9500,
+               'failing', $3, $3, $4::jsonb)
+       RETURNING id`,
+      [noteApp.id, botUser.id, head, JSON.stringify([
+        { name: 'Text size', path: 'tests/tap', status: 'fail', failureReason: 'the button says "Aa"' },
+      ])],
+    )).rows[0];
+    await setting('homeroom_bot_mode', 'live');
+    await setting('homeroom_bot_live_apps', JSON.stringify(['checks-note']));
+    await pool.query('DELETE FROM homeroom_bot_queue');
+
+    assert.equal(await bot.noteProposalChecks(pool, proposal.id), true);
+    assert.equal(await bot.noteProposalChecks(pool, proposal.id), true, 'the upsert keeps one row');
+    const { rows } = await pool.query(
+      'SELECT app_id, issue_number, priority, reason FROM homeroom_bot_queue WHERE app_id = $1',
+      [noteApp.id],
+    );
+    assert.deepEqual(rows, [{
+      app_id: noteApp.id, issue_number: 1, priority: 1, reason: 'checks_failing',
+    }], 'one row at priority 1, on the proposal\'s own first linked issue');
+
+    await pool.query(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, proposal_session_id, checks_head_sha)
+       VALUES ($1, 1, 'live', 'person', $2, $3)`,
+      [noteApp.id, proposal.id, head],
+    );
+    assert.equal(await bot.noteProposalChecks(pool, proposal.id), false,
+      'a head a run already looked at is not queued again');
+    await pool.query('DELETE FROM homeroom_bot_queue');
+  });
 });

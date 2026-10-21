@@ -424,7 +424,7 @@ test('a budget stop records WHICH limit tripped, in a column of its own', async 
   const harness = triageHarness({ verdictText: 'x', sessionId: 856 });
   await runToWallClock(t, harness);
   const insert = harness.calls.queries.find((q) => /INSERT INTO homeroom_bot_runs/.test(q.s));
-  assert.match(insert.s, /budget_stop, proposal_session_id\)/, 'the insert names the column');
+  assert.match(insert.s, /budget_stop, proposal_session_id,?\s*checks_head_sha\)/, 'the insert names the column');
   assert.ok(insert.params.includes('wall clock'),
     'the limit is stored as data, not left to be grepped out of the error text');
   assert.ok(insert.params.includes('budget: wall clock'), 'and the error line still reads the same');
@@ -1031,6 +1031,8 @@ test('refreshApp queues eligible issues, skips busy and unchanged ones, and drop
       if (/created_from_issue_number AS n/.test(s)) return { rows: [] };
       if (/FROM chat_messages/.test(s)) return { rows: [{ n: 2, last_at: '2026-09-10T00:00:00Z' }] };
       if (/FROM homeroom_bot_runs/.test(s)) return { rows: [{ issue_number: 2, thread_seen_at: '2026-09-10T00:00:00Z' }, { issue_number: 5, thread_seen_at: '2026-09-01T00:00:00Z' }] };
+      // #3471: no checks-fix rows queued on this app.
+      if (/SELECT issue_number FROM homeroom_bot_queue/.test(s)) return { rows: [] };
       if (/INSERT INTO homeroom_bot_queue/.test(s)) { inserts.push(params); return { rows: [] }; }
       if (/DELETE FROM homeroom_bot_queue/.test(s)) { deleted = params; return { rowCount: 2, rows: [] }; }
       throw new Error(`unexpected query: ${s.slice(0, 60)}`);
@@ -1072,6 +1074,7 @@ function heldPool({ inserts }) {
         ] };
       }
       if (/INSERT INTO homeroom_bot_queue/.test(s)) { inserts.push(params); return { rows: [] }; }
+      if (/SELECT issue_number FROM homeroom_bot_queue/.test(s)) return { rows: [] };
       if (/DELETE FROM homeroom_bot_queue/.test(s)) return { rowCount: 0, rows: [] };
       throw new Error(`unexpected query: ${s.slice(0, 60)}`);
     },
@@ -1143,7 +1146,7 @@ test('refreshApp treats a degraded GitHub read as "no answer", not "no issues"',
 // ── What makes shadow mode shadow (source pins) ─────────────────────────
 
 test('the triage turn is a read-only scout: no build mode, no push, no posting, no claims', () => {
-  const dispatch = SRC.slice(SRC.indexOf('async function runTriage'), SRC.indexOf('// ── The work loop'));
+  const dispatch = SRC.slice(SRC.indexOf('async function runTriage'), SRC.indexOf('async function runFollowUp'));
   assert.match(dispatch, /mode: 'scout'/, 'the ledger loop runs in scout mode');
   // The container exec carries the token half of the budget between the
   // mode and the prompt now (#2737), and #2870's note on where that limit

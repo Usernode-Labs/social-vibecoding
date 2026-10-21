@@ -302,7 +302,10 @@ function stubLive({ promote = { status: 200, body: { ok: true, prNumber: 77 } },
   live.promoteAsBot = async ({ sessionId }) => { liveCalls.push(['promote', sessionId, workerCalls.map((c) => c[0]).join(',')]); return promote; };
   // #3518: named and described before the route runs, as the live path does.
   live.prepareProposal = async ({ sessionId, spec, buildText }) => { liveCalls.push(['prepare', sessionId, spec, buildText || null]); return {}; };
-  live.post = async ({ kind, text, metadata }) => { liveCalls.push(['post', kind, text, metadata || null]); return {}; };
+  live.post = async (args) => {
+    liveCalls.push(['post', args.kind, args.text, args.metadata || null, args.dm || null]);
+    return {};
+  };
   live.postSpecOnProposal = async ({ sessionId, version, spec }) => { liveCalls.push(['specOnProposal', sessionId, version, spec]); };
   live.mentionTargets = async () => [];
   live.botUsernameOf = async () => 'usernode-bot';
@@ -363,6 +366,8 @@ test('a live spec turn sends the issue back to be triaged, and a BLOCKED one say
   const [requeue] = requeues(pool);
   assert.ok(requeue, 'back in the queue: its row was gone with the pass');
   assert.deepEqual(requeue.params, [5, 12, 'restart']);
+  assert.deepEqual(liveOutcome(pool).slice(0, 3), [950, false, 'the spec turn was interrupted by a restart; the request is queued again'],
+    'recorded, so the run does not look unfinished');
   assert.deepEqual(liveCalls.filter((c) => c[0] === 'post'), [], 'nothing said: the fresh triage speaks');
 
   stubLive();
@@ -385,6 +390,18 @@ test('a live build whose worker did not survive sends the issue back to be triag
   await adopt(pool, session, 'exited');
   assert.deepEqual(requeues(pool).map((c) => c.params), [[5, 12, 'restart']]);
   assert.equal(liveCalls.some((c) => c[0] === 'promote'), false);
+  // #3471: the run says the work was lost, instead of looking unfinished, and
+  // one line on the request says it is queued again.
+  const outcome = liveOutcome(pool);
+  assert.equal(outcome[0], 950);
+  assert.equal(outcome[1], false);
+  assert.match(outcome[2], /^the work was lost in a platform restart \(the worker is gone\); the request is queued again/);
+  assert.equal(outcome[6], 0.42, 'the debited cost is on the run too');
+  const said = liveCalls.find((c) => c[0] === 'post' && c[1] === 'build_failed');
+  assert.ok(said, 'the lost-build note is posted');
+  assert.match(said[2], /interrupted by a platform restart, and nothing was built/);
+  assert.match(said[2], /back in the queue, and it will look again/);
+  assert.equal(said[4].lost, true, 'the DM says the same, not that a person must pick it up');
 });
 
 test('an issue a restart sent back is not told "looking" a second time', () => {
