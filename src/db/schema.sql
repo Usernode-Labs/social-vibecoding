@@ -580,6 +580,13 @@ UPDATE apps SET last_deploy_at = created_at WHERE last_deploy_at IS NULL;
 -- truth for "what does this dapp create".
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS manifest_snapshot JSONB;
 
+-- The starter a new project was created from (services/create-options.js
+-- START_TEMPLATES): 'empty' for the base scaffold, or one of the four
+-- starters under src/templates/starters/. Written once at create and read
+-- only at create/retry/heal time, so a retry rebuilds the same screen.
+-- Existing rows predate starters and are the empty scaffold.
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS template VARCHAR(32) NOT NULL DEFAULT 'empty';
+
 -- #416: detail of the last build/deploy failure so the UI can show a
 -- build log instead of a bare "Error" status. Shape:
 --   { stage, reason, log, at, sha }

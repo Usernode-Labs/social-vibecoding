@@ -72,6 +72,7 @@ const NON_SECRET_APP_COLUMNS = [
   'id', 'name', 'slug', 'repo_url', 'container_id', 'status', 'retry_count',
   'created_by', 'created_at', 'main_sha', 'main_pr_number', 'last_deploy_at',
   'manifest_snapshot', 'last_failure', 'locked', 'self_hosted', 'moderation_suspended_at',
+  'template',
   'collab_visibility', 'view_visibility', 'approver_policy',
   'approvals_required', 'screenshot_device_scale', 'icon_emoji',
   'icon_image_id', 'icon_color', 'featured_illustration', 'forked_from', 'admin_usernames',

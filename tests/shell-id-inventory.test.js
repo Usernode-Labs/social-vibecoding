@@ -966,6 +966,15 @@ const ADDED_IDS = {
   // Channels filter (#2783, added above as messages-filter-channels) is gone
   // with the section it narrowed to; it was never in the baseline.
   'platform-tabs-badge-communities': 'The Communities tab\'s quiet count: how many of your communities\' channels (#general, Homeroom\'s, among them) have unread messages. The channels live on each community\'s hub now rather than in Messages, so the count moved with them. Rendered always, hidden at zero, for the same reason as #platform-tabs-badge.',
+  // ── The create dialog's template picker (#3521) ────────────────────
+  // The block ships in the prerendered document on every step and is
+  // folded by app.css until "Start from a template" is pressed; the four
+  // rows are static markup, so they are all in the prerendered card.
+  'create-template-block': 'The create dialog\'s template picker: the four starters under "Start from a template", shown only while that row is the answer. Folded by app.css, never mounted and unmounted, because every step ships on every step.',
+  'create-template-social': 'The picker\'s Social productivity starter (a shared task board).',
+  'create-template-media': 'The picker\'s Multimedia social starter (a photo board).',
+  'create-template-game2d': 'The picker\'s 2D game starter (catch the stars).',
+  'create-template-game3d': 'The picker\'s 3D game starter (a gem trail).',
 };
 
 test('the shell still carries every id in the frozen baseline', () => {

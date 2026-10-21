@@ -315,11 +315,18 @@ connector registered under some other name.
 // Discover and the project's page show) and the first sentence of
 // CLAUDE.md's About section, so the coding agent starts from the same
 // intent. Absent, both stay as they were.
-function getTemplateFiles(appName, slug, dbUrl, repoUrl = null, { governance = null, description = null } = {}) {
+// `template` names the starter a new project was created from
+// (services/create-options.js START_TEMPLATES, apps.template). A starter
+// under src/templates/starters/ replaces exactly `server.js` and
+// `public/index.html`; every other entry — package.json, the Dockerfile,
+// dapp.json, .claude/ and CLAUDE.md — stays the base scaffold's, so the
+// platform rules are inherited rather than copied. An absent, `empty` or
+// unrecognised key keeps the base scaffold byte for byte.
+function getTemplateFiles(appName, slug, dbUrl, repoUrl = null, { governance = null, description = null, template = null } = {}) {
   const canonicalRepoFile = getCanonicalRepoFile(repoUrl);
   const governanceBlock = require('./create-options').governanceBlock(governance);
   const about = typeof description === 'string' && description.trim() ? description.trim() : null;
-  return [
+  const files = [
     {
       path: 'CLAUDE.md',
       content: `# ${appName} — notes for Claude Code
@@ -989,6 +996,19 @@ start().catch(err => { console.error(err); process.exit(1); });
 `,
     },
   ];
+
+  // A starter replaces the two files its screen and API live in. Required
+  // lazily: src/templates/starters/scaffold.js reuses DEV_CONSOLE_FORWARDER
+  // from this module, and a top-level require here would close that cycle
+  // before the forwarder exists.
+  const { starterFor } = require('../templates/starters');
+  const starter = starterFor(template);
+  if (!starter) return files;
+  return files.map((file) => {
+    if (file.path === 'server.js') return { path: file.path, content: starter.server(slug) };
+    if (file.path === 'public/index.html') return { path: file.path, content: starter.document(appName) };
+    return file;
+  });
 }
 
 function escapeHtml(str) {
@@ -997,6 +1017,7 @@ function escapeHtml(str) {
 
 module.exports = {
   getTemplateFiles,
+  DEV_CONSOLE_FORWARDER,
   getConnectorScaffoldFiles,
   getCanonicalRepoFile,
   canonicalRepoUrl,

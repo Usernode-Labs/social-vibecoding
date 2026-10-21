@@ -12357,6 +12357,30 @@ html.in-native-webview.un-android .un-modal.un-in:has(> #create-card) {
 /* The repo URL and its check belong to "Import a GitHub repo" alone. */
 #create-card:not([data-mode="import"]) .create-import-block { display: none; }
 
+/* The four starters belong to "Start from a template" alone: they appear
+   under that row once it is pressed, and the chosen one takes the same
+   accent fill as every other answer. The row and the starter are both
+   filled on purpose — the row answers "how", the starter answers "which". */
+#create-card:not([data-mode="template"]) .create-template-block { display: none; }
+#create-card .create-template-pill { color: var(--text-primary); cursor: pointer; }
+#create-card .create-template-pill .create-choice-caption { color: var(--text-muted); }
+#create-card[data-mode="template"] .create-mode-pill[data-mode-pill="template"],
+#create-card[data-template="social"] .create-template-pill[data-template-pill="social"],
+#create-card[data-template="media"] .create-template-pill[data-template-pill="media"],
+#create-card[data-template="game2d"] .create-template-pill[data-template-pill="game2d"],
+#create-card[data-template="game3d"] .create-template-pill[data-template-pill="game3d"] {
+  background: #0a6ee0;
+  color: #ffffff;
+}
+#create-card[data-mode="template"] .create-mode-pill[data-mode-pill="template"] .create-choice-caption,
+#create-card[data-template="social"] .create-template-pill[data-template-pill="social"] .create-choice-caption,
+#create-card[data-template="media"] .create-template-pill[data-template-pill="media"] .create-choice-caption,
+#create-card[data-template="game2d"] .create-template-pill[data-template-pill="game2d"] .create-choice-caption,
+#create-card[data-template="game3d"] .create-template-pill[data-template-pill="game3d"] .create-choice-caption {
+  color: inherit;
+  opacity: 0.9;
+}
+
 /* THE STEPS UNFOLD IN ONE CARD (#1911; six of them since the rework).
    Every step's section ships on every step — the declared checks select on
    the same ids whichever steps are showing — and #create-card[data-step] is

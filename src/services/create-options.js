@@ -76,10 +76,22 @@
  * it shows (two lines in the hub hero, on Discover and on the join screen,
  * three beside the icon in the About pane), and the line in dapp.json stays
  * as it was written.
+ *
+ * ── How it starts ──────────────────────────────────────────────────────
+ *
+ * `template` names the starter screen the new repository is seeded with
+ * (src/templates/starters/): `social`, `media`, `game2d` or `game3d`, or
+ * `empty` for the base scaffold. Absent is `empty`, so an older client gets
+ * today's Press! page. A template applies only to a new project: an import
+ * keeps its own repository, and sending both is a 400 rather than a starter
+ * seeded over somebody's code.
  */
 
 const AUDIENCES = new Set(['solo', 'invited', 'open']);
 const VISIBILITIES = new Set(['public', 'private']);
+// The starters a new project can begin from (src/templates/starters/).
+// `empty` is the base scaffold, and the answer when nobody picks one.
+const START_TEMPLATES = new Set(['empty', 'social', 'media', 'game2d', 'game3d']);
 const MAX_INVITEES = 20;
 const MAX_APPROVALS_REQUIRED = 50;
 const USERNAME_MAX = 64;
@@ -164,6 +176,18 @@ function parseGovernance(raw) {
   return { governance: { approverPolicy: approvers, approvalsRequired } };
 }
 
+/** The starter key, or an error. Absent is the empty template. */
+function parseTemplate(raw, imported) {
+  if (raw == null) return { template: 'empty' };
+  if (typeof raw !== 'string' || !START_TEMPLATES.has(raw)) {
+    return { error: 'template must be "empty", "social", "media", "game2d" or "game3d"' };
+  }
+  if (imported && raw !== 'empty') {
+    return { error: 'A template only applies to a new project, not an import.' };
+  }
+  return { template: raw };
+}
+
 /** The one line, tidied, or null when blank. */
 function parseDescription(raw) {
   if (raw == null) return { description: null };
@@ -180,9 +204,12 @@ function parseDescription(raw) {
  * Everything POST /api/apps needs to know about who a new project is for.
  * Returns `{ error }` for a 400, otherwise
  * `{ audience, collabVisibility, viewVisibility, invitees, inviteEmails,
- * governance, description }`.
+ * governance, description, template }`.
  */
-function parseCreateOptions(body = {}) {
+function parseCreateOptions(body = {}, { imported = false } = {}) {
+  const tpl = parseTemplate(body.template, imported);
+  if (tpl.error) return { error: tpl.error };
+
   let audience = null;
   let collabVisibility;
   let viewVisibility;
@@ -222,6 +249,7 @@ function parseCreateOptions(body = {}) {
     inviteEmails: mail.emails,
     governance: gov.governance,
     description: desc.description,
+    template: tpl.template,
   };
 }
 
@@ -245,6 +273,7 @@ module.exports = {
   AUDIENCES,
   MAX_INVITEES,
   DESCRIPTION_MAX,
+  START_TEMPLATES,
   parseCreateOptions,
   governanceBlock,
   visibilityForAudience,

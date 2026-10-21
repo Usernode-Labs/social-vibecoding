@@ -165,6 +165,26 @@ test('creating a project for someone, against the full schema', { timeout: 18000
     assert.match(long.data.error, /90 characters or fewer/);
   });
 
+  await t.test('a starter template is stored on the row and handed to the build', async () => {
+    const res = await create({ name: 'Seed board', audience: 'solo', template: 'social' });
+    assert.equal(res.status, 201, JSON.stringify(res.data));
+    assert.equal(res.data.app.template, 'social', 'the API returns the starter it stored');
+    const { rows } = await pool.query('SELECT template FROM apps WHERE id = $1', [res.data.app.id]);
+    assert.equal(rows[0].template, 'social', 'the apps row remembers the starter');
+    const handed = built.find((row) => row.id === res.data.app.id);
+    assert.equal(handed.template, 'social', 'createApp receives the row that names the starter');
+    const bare = await pool.query(`SELECT template FROM apps WHERE name = 'Undescribed'`);
+    assert.equal(bare.rows[0].template, 'empty', 'no answer is the empty scaffold');
+    // A starter never seeds over an import, and the server says so even to a
+    // client that skipped the dialog.
+    viewer = { id: other.id, username: other.username, isAdmin: false, canAdminWrite: false };
+    const refused = await create({
+      name: 'Starter import', audience: 'solo', template: 'media', repoUrl: 'https://github.com/o/r',
+    });
+    assert.equal(refused.status, 400);
+    assert.match(refused.data.error, /only applies to a new project/);
+  });
+
   await t.test('a group invited by address: an account is invited as itself, anyone else is stored and mailed', async () => {
     viewer = { id: mailer.id, username: mailer.username, isAdmin: false, canAdminWrite: false };
     const res = await create({

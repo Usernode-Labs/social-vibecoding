@@ -83,6 +83,22 @@ test('invite emails are addresses, for a private community only, lowercased, ded
     'usernames and addresses together hold at most twenty people');
 });
 
+test('a start template is one of the five, empty by default, and never an import', () => {
+  const parse = (template, opts) => options.parseCreateOptions({ audience: 'solo', template }, opts);
+  assert.equal(parse(undefined).template, 'empty', 'an older client gets the empty scaffold');
+  assert.equal(parse(null).template, 'empty');
+  assert.equal(parse('empty').template, 'empty');
+  for (const key of ['social', 'media', 'game2d', 'game3d']) {
+    assert.equal(parse(key).template, key, key);
+  }
+  assert.deepEqual([...options.START_TEMPLATES].sort(), ['empty', 'game2d', 'game3d', 'media', 'social']);
+  assert.equal(parse('socials').error, 'template must be "empty", "social", "media", "game2d" or "game3d"');
+  assert.equal(parse(42).error, 'template must be "empty", "social", "media", "game2d" or "game3d"');
+  assert.equal(parse('social', { imported: true }).error,
+    'A template only applies to a new project, not an import.');
+  assert.equal(parse('empty', { imported: true }).template, 'empty', 'the empty answer is no starter at all');
+});
+
 test('the new repository\'s dapp.json carries a non-default rule, and only then', () => {
   const dapp = (governance) => JSON.parse(getTemplateFiles('Notes', 'notes-abc123', 'postgres://x', null, { governance })
     .find((f) => f.path === 'dapp.json').content);
@@ -97,8 +113,8 @@ test('the new repository\'s dapp.json carries a non-default rule, and only then'
   assert.deepEqual(readGovernance(dapp({ approverPolicy: 'invited', approvalsRequired: 3 })),
     { approvers: 'invited', approvals: 3 });
   const creator = fs.readFileSync(path.join(__dirname, '../src/services/app-creator.js'), 'utf8');
-  assert.equal((creator.match(/\{ governance: governanceOf\(appRow\), description: descriptionOf\(appRow\) \}/g) || []).length, 2,
-    'both template paths (GitHub and local) pass the row\'s rule and its line');
+  assert.equal((creator.match(/\{ governance: governanceOf\(appRow\), description: descriptionOf\(appRow\), template: templateOf\(appRow\) \}/g) || []).length, 2,
+    'both template paths (GitHub and local) pass the row\'s rule, its line and its starter');
 });
 
 test('"What is it?" is one optional line, tidied and bounded', () => {
