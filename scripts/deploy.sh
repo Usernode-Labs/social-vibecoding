@@ -541,7 +541,7 @@ fi
 DUMP_WAITED=0
 while [ "$DUMP_WAITED" -lt 600 ]; do
   ACTIVE_DUMPS=$(docker exec usernode-db psql -U usernode -d postgres -Atc \
-    "SELECT count(*) FROM pg_stat_activity WHERE (application_name = 'pg_dump' OR application_name LIKE 'homeroom-%-dbcopy') AND datname = '$NEW_DB'" \
+    "SELECT count(*) FROM pg_stat_activity WHERE (application_name = 'pg_dump' OR application_name ~ '^homeroom-.*-(dbcopy|export)\$') AND datname = '$NEW_DB'" \
     2>/dev/null || echo 0)
   if [ "${ACTIVE_DUMPS:-0}" = "0" ]; then break; fi
   if [ "$DUMP_WAITED" -eq 0 ]; then
