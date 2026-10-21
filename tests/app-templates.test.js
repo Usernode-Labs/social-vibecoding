@@ -396,7 +396,9 @@ test('find a time: the book club finds a weekly time, the others suggest dates, 
     // Homeroom's native kit, by relative path: a tap outside a field closes
     // the keyboard, and the page stays put instead of dragging Homeroom along.
     assert.match(html, /<link rel="stylesheet" href="\/usernode-native\/v1\/native\.css">[\s\S]*<link rel="stylesheet" href="\/tailwind\.css">/, id);
-    assert.match(html, /<script src="\/usernode-bridge\/v1\/bridge\.js"><\/script>\s*<script src="\/usernode-native\/v1\/native\.js"><\/script>/, id);
+    // The kit's script after the theme script, which comes first after the
+    // bridge (tests/new-app-theme.test.js).
+    assert.match(html, /<script src="\/usernode-bridge\/v1\/bridge\.js"><\/script>[\s\S]*applyTheme\(\);[\s\S]*<\/script>\s*(?:<!--[\s\S]*?-->\s*)?<script src="\/usernode-native\/v1\/native\.js"><\/script>/, id);
     assert.match(html, /viewport-fit=cover/, id);
     assert.match(html, /html \{ overscroll-behavior-y: contain; overscroll-behavior-x: none; touch-action: pan-y pinch-zoom; \}/, id);
   }
