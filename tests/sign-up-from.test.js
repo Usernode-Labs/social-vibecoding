@@ -34,7 +34,9 @@ test('only a known button is recorded; anything else records the sign-up as befo
   assert.equal(signUpFrom(req()), null);
   assert.equal(signUpFrom({}), null);
   assert.equal(signUpFrom(null), null);
-  assert.deepEqual(signUpMetadata(req('join_card'), { via: 'email' }), { via: 'email', from: 'join_card' });
+  assert.deepEqual(signUpMetadata(req('vote'), { via: 'email' }), { via: 'email', from: 'vote' });
+  // The "Want to join in?" card is gone, and its name with it.
+  assert.deepEqual(signUpMetadata(req('join_card'), { via: 'email' }), { via: 'email' });
   assert.deepEqual(signUpMetadata(req('nonsense'), { via: 'google' }), { via: 'google' });
 });
 
@@ -60,7 +62,6 @@ test('every way an account is made records the sign-up with the button it came f
 test('each button notes itself as its sheet opens', () => {
   const where = {
     'frontend/src/features/auth/story.tsx': ['hero', 'story', 'story_sign_in'],
-    'frontend/src/features/guest/guest-discover.tsx': ['join_card'],
     'frontend/src/features/auth/landing.tsx': ['header_sign_in', 'header_sign_up', 'link'],
   };
   for (const [file, kinds] of Object.entries(where)) {
