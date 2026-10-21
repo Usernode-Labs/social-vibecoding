@@ -185,6 +185,36 @@ test('a post goes to both surfaces, scoped to the issue, and is recorded', async
   assert.ok(h.calls.queries.some((q) => /UPDATE homeroom_bot_posts SET github_comment_id/.test(q.sql) && q.params[1] === 1234 && q.params[2] === 777));
 });
 
+test('a post on the proposal only writes its own thread, and is recorded (#3603)', async () => {
+  const calls = { queries: [], comments: [], messages: [] };
+  const pool = {
+    async query(sql, params) {
+      calls.queries.push({ sql: String(sql), params });
+      if (/INSERT INTO homeroom_bot_posts/.test(sql)) return { rows: [{ id: 56 }] };
+      return { rows: [] };
+    },
+  };
+  const github = { async createIssueComment() { calls.comments.push(1); return { id: 1 }; } };
+  const ws = {
+    async sendBotMessage(pool_, appId, opts) {
+      calls.messages.push({ appId, ...opts });
+      return { id: 778 };
+    },
+    async sendSystemMessage() { calls.messages.push({ system: true }); return { id: 779 }; },
+  };
+  const out = await live.postOnProposal({
+    pool, ws, app: APP, issueNumber: 12, kind: 'checks_revise', runId: 900,
+    text: 'Homeroom bot fixed the failing checks on its proposal (PR #82): fixed.', sender: BOT, proposalSessionId: 5001,
+  });
+  assert.deepEqual(out, { postId: 56, githubCreatedAt: null, github: false, thread: true });
+  assert.deepEqual(calls.comments, [], 'nothing on the request');
+  assert.equal(calls.messages.length, 1);
+  assert.deepEqual(calls.messages[0].thread, { type: 'session', ref: 5001 }, 'in the proposal\'s own discussion');
+  assert.equal(calls.messages[0].user, BOT, 'as its own user, like its other posts');
+  const insert = calls.queries.find((q) => /INSERT INTO homeroom_bot_posts/.test(q.sql));
+  assert.deepEqual(insert.params, [9, 12, 900, 'checks_revise']);
+});
+
 test('"looking" is posted once per issue: a second claim sends nothing', async () => {
   const h = postHarness({ claimed: false });
   const out = await live.post({ ...h, app: APP, repo: REPO, issueNumber: 12, kind: 'looking', text: live.lookingText() });
@@ -708,7 +738,7 @@ test('a backlog pass holds silently, and still speaks when it has something to s
 test('a "Triage this app again" item is triaged without the "looking" post, and held quietly', () => {
   assert.equal(bot.APP_AGAIN_REASON, 'app_again');
   assert.match(BOT_SRC, /SELECT \$1, q\.n, 0, 'app_again', \$4/, 'retriageApp queues with that reason');
-  assert.match(BOT_SRC, /const looked = item\.reason === RESTART_REASON \|\| item\.reason === APP_AGAIN_REASON \? null : await live\.post\(/);
+  assert.match(BOT_SRC, /const looked = item\.reason === RESTART_REASON \|\| item\.reason === APP_AGAIN_REASON\n\s+\|\| item\.reason === CHECKS_FAILING_REASON \? null : await live\.post\(/);
   assert.match(BOT_SRC, /quietHold: item\.reason === APP_AGAIN_REASON,/);
   // The refresh keeps a priority-0 row's reason, so a comment before the
   // row runs does not turn it back into a "looking" one mid-pass.

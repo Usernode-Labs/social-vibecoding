@@ -304,6 +304,9 @@ function dmText(kind, dm, context) {
     case 'build_failed':
       return `${line}\n\nI tried to build ${it} but couldn't finish (${clip(dm.reason, 300) || 'unknown reason'}). `
         + 'A person can pick it up from here.';
+    case 'build_lost':
+      return `${line}\n\nI lost the build when the platform restarted, so nothing was proposed. `
+        + 'I\'m looking at the request again and will reply here.';
     case 'person':
     case 'followup_person':
       return `${line}\n\nThis needs a person to decide, so I've left it for the group: ${clip(dm.reason, 600)}`;

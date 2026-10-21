@@ -129,6 +129,7 @@ const KINDS = {
   followup_revise: { summary: 'Made it darker.', link: 'https://app.onhomeroom.com/#app/x/dev/proposals/9' },
   blocked: { reason: 'There is no calendar to read.' },
   build_failed: { reason: 'tests failed' },
+  build_lost: { mode: 'build' },
   person: { reason: 'It is a policy choice.' },
   followup_person: { reason: 'It is a policy choice.' },
   empty: { reason: 'Nothing here.' },

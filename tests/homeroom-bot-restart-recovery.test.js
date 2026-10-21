@@ -387,8 +387,48 @@ test('a live build whose worker did not survive sends the issue back to be triag
   assert.equal(liveCalls.some((c) => c[0] === 'promote'), false);
 });
 
+test('a build lost to a restart records an outcome and says so, before the requeue (#3603)', async () => {
+  stubLive();
+  const session = botSession();
+  const pool = makePool({ session, run: null, liveRun: LIVE_RUN });
+  await adopt(pool, session, 'exited');
+
+  assert.deepEqual(liveOutcome(pool).slice(0, 3),
+    [950, false, 'interrupted: the build was lost when the platform restarted'],
+    'a lost run is never left as neither built nor failed');
+  const lost = liveCalls.find((c) => c[0] === 'post' && c[1] === 'build_lost');
+  assert.ok(lost, 'the request is told, so nobody waits on a build that is gone');
+  assert.match(lost[2], /lost this build when the platform restarted/);
+  assert.match(lost[2], /looking at the request again/);
+  assert.deepEqual(requeues(pool).map((c) => c.params), [[5, 12, 'restart']], 'and it is looked at again');
+});
+
+test('a spec turn lost to a restart says its own words, and still requeues', async () => {
+  stubLive();
+  const session = botSession({ active_turn: turn({ mode: 'scout' }) });
+  const pool = makePool({ session, run: null, liveRun: LIVE_RUN });
+  await adopt(pool, session, 'exited');
+  assert.deepEqual(liveOutcome(pool).slice(0, 3),
+    [950, false, 'interrupted: the spec turn was lost when the platform restarted']);
+  const lost = liveCalls.find((c) => c[0] === 'post' && c[1] === 'build_lost');
+  assert.match(lost[2], /was still writing the spec for this request when the platform restarted/);
+  assert.deepEqual(requeues(pool).map((c) => c.params), [[5, 12, 'restart']]);
+});
+
+test('a lost build on a closed issue records its outcome and posts nothing', async () => {
+  stubLive({ issueState: 'closed' });
+  const session = botSession();
+  const pool = makePool({ session, run: null, liveRun: LIVE_RUN });
+  await adopt(pool, session, 'exited');
+  assert.deepEqual(liveOutcome(pool).slice(0, 3),
+    [950, false, 'interrupted: the build was lost when the platform restarted']);
+  assert.deepEqual(liveCalls.filter((c) => c[0] === 'post'), [], 'nobody is waiting on it');
+  assert.deepEqual(requeues(pool).map((c) => c.params), [[5, 12, 'restart']]);
+});
+
 test('an issue a restart sent back is not told "looking" a second time', () => {
   const src = require('node:fs').readFileSync(require.resolve('../src/services/homeroom-bot'), 'utf8');
   assert.equal(bot.RESTART_REASON, 'restart');
-  assert.match(src, /const looked = item\.reason === RESTART_REASON \|\| item\.reason === APP_AGAIN_REASON \? null : await live\.post\(\{\n\s+pool, github, ws: liveD\.ws, app, repo, issueNumber,\n\s+kind: 'looking'/);
+  assert.match(src, /const looked = item\.reason === RESTART_REASON \|\| item\.reason === APP_AGAIN_REASON\n\s+\|\| item\.reason === CHECKS_FAILING_REASON \? null : await live\.post\(\{\n\s+pool, github, ws: liveD\.ws, app, repo, issueNumber,\n\s+kind: 'looking'/);
+  assert.equal(bot.CHECKS_FAILING_REASON, 'checks_failing', '#3603: a checks fix is not a first look either');
 });
