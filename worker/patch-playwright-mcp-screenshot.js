@@ -32,6 +32,10 @@
 //   viewport, in screen points); Chrome's clip is the document's, so the
 //   scroll offset is added and, on a phone page drawn zoomed out (no
 //   viewport meta: laid out wider than the screen), the zoom divided out.
+//   Chrome cuts a clip's width and height down to whole CSS pixels before
+//   it scales them (a 49.87 x 24.94 clip at 2.6 saved 128 x 63, not
+//   130 x 65), so the zoomed region is rounded to whole page pixels: the
+//   saved size is then within half a page pixel of the one asked for.
 //   Such a call answers with no image: nobody but the shots tools reads it.
 //
 // Each edit must match exactly once, so a pin bump that moves the code fails
@@ -59,7 +63,8 @@ const CLOSEUP_HANDLER = '    if (params.closeup) {\n'
   + '      const cdp = await tab.page.context().newCDPSession(tab.page);\n'
   + '      try {\n'
   + '        const shot = await cdp.send("Page.captureScreenshot", { format: "png",'
-  + ' clip: { x: at.x + c.x / at.k, y: at.y + c.y / at.k, width: c.width / at.k, height: c.height / at.k, scale: c.scale * at.k } });\n'
+  + ' clip: { x: Math.round(at.x + c.x / at.k), y: Math.round(at.y + c.y / at.k),'
+  + ' width: Math.max(1, Math.round(c.width / at.k)), height: Math.max(1, Math.round(c.height / at.k)), scale: c.scale * at.k } });\n'
   + '        await require("fs").promises.writeFile(fileName, Buffer.from(shot.data, "base64"));\n'
   + '      } finally {\n'
   + '        await cdp.detach().catch(() => {});\n'
