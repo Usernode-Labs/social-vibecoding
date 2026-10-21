@@ -689,6 +689,19 @@
         });
       }
 
+      // New look (an experiment), kept on the device by the head's
+      // window.Skin: the change is the save, and the look applies at once.
+      const lookToggle = document.getElementById('new-look-enabled');
+      if (lookToggle) {
+        lookToggle.addEventListener('change', (e) => {
+          window.Skin?.set?.(e.target.checked ? 'brand' : 'standard');
+        });
+        // Another tab flipping it re-paints the switch here too.
+        window.Skin?.onChange?.(() => {
+          lookToggle.checked = window.Skin?.get?.() === 'brand';
+        });
+      }
+
       // Platform-level language preference (issue #757). Server-side
       // per-user BCP-47 tag (default unset = "Auto"); apps read it via
       // the iframe JWT claim and usernode.getUserLocale(). Fires the
@@ -1651,6 +1664,8 @@
       const review = document.getElementById('review-flow-enabled');
       const reviewPref = typeof window !== 'undefined' ? window.UsernodeReact?.reviewFlow : null;
       if (review) review.checked = !!reviewPref?.enabled();
+      const look = document.getElementById('new-look-enabled');
+      if (look) look.checked = window.Skin?.get?.() === 'brand';
       this._renderLocalAgentsSection();
     },
 
