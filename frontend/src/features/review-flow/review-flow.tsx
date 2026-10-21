@@ -20,6 +20,11 @@
  * thumbnails when the change has several screens; under it, what the change
  * does; at the foot the vote sheet (./vote-sheet.tsx).
  *
+ * From 768px the same page is a panel (app.css): under the app's header,
+ * rounded, as tall as what it holds, with the vote sheet as its foot and
+ * the pane behind it dimmed. The card grows into the panel's own corners
+ * (`restRadius`), and a click on the dim closes it like Back.
+ *
  * Next change PUSHES the next one in from the side: the page you leave
  * slides a little left and dims, the next one slides in, the title changes,
  * and the slider's handle and pill arrive a moment after it lands. The feed
@@ -254,6 +259,7 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
   const headRef = useRef<HTMLDivElement>(null);
   const titleRef = useRef<HTMLSpanElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
+  const dimRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
   const [pageWidth, setPageWidth] = useState(0);
   // The list stays as it was while a page is open: a vote takes its item out
@@ -340,9 +346,10 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
     const clipFrom = `inset(0px ${Math.max(0, pr.width - cr.width)}px ${Math.max(0, pr.height - cr.height)}px 0px round 20px)`;
     const opts = { duration: OPEN_MS, easing: EASE };
     const moving = page.animate(
-      [{ transform: `translate(${dx}px, ${dy}px)`, clipPath: clipFrom }, { transform: 'none', clipPath: 'inset(0px 0px 0px 0px round 0px)' }],
+      [{ transform: `translate(${dx}px, ${dy}px)`, clipPath: clipFrom }, { transform: 'none', clipPath: `inset(0px 0px 0px 0px round ${restRadius(page)})` }],
       opts,
     );
+    dimRef.current?.animate([{ opacity: 0 }, { opacity: 1 }], opts);
     const ground = list[open.index].ground;
     bandRef.current?.animate(
       [{ height: `${cr.height}px`, background: ground, opacity: 1 }, { height: `${headH}px`, background: 'var(--rf-page)', opacity: 1 }],
@@ -399,7 +406,7 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
     const headH = headRef.current ? headRef.current.getBoundingClientRect().height : 56;
     const opts = { duration: OPEN_MS * 0.85, easing: EASE, fill: 'forwards' as FillMode };
     const moving = page.animate(
-      [{ transform: 'none', clipPath: 'inset(0px 0px 0px 0px round 0px)' }, {
+      [{ transform: 'none', clipPath: `inset(0px 0px 0px 0px round ${restRadius(page)})` }, {
         transform: `translate(${cr.left - pr.left}px, ${cr.top - pr.top}px)`,
         clipPath: `inset(0px ${Math.max(0, pr.width - cr.width)}px ${Math.max(0, pr.height - cr.height)}px 0px round 20px)`,
       }],
@@ -411,6 +418,7 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
     );
     headRef.current?.animate([{ opacity: 1 }, { opacity: 0, offset: 0.3 }, { opacity: 0 }], opts);
     stageRef.current?.animate([{ opacity: 1 }, { opacity: 0, offset: 0.5 }, { opacity: 0 }], opts);
+    dimRef.current?.animate([{ opacity: 1 }, { opacity: 0 }], opts);
     // The hero hands over to the card's own picture, which lands exactly on the card.
     const pic = coverGhost(cover, cr);
     pic.animate([
@@ -551,6 +559,8 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
   const pw = pageWidth || Math.min(COLUMN, width + GUTTERS);
   const page = open && item ? createPortal(
     <div className="rf-page-wrap" data-rf-page="">
+      {/* From 768px, the pane behind the panel, dimmed; a click on it is Back. */}
+      <div ref={dimRef} className="rf-page-dim" onClick={close} aria-hidden="true" />
       <div ref={pageRef} className="rf-page" role="dialog" aria-modal="false" aria-label={item.title}>
         <div ref={bandRef} className="rf-band" aria-hidden="true" />
         <div ref={headRef} className="rf-head">
@@ -634,6 +644,15 @@ function coverGhost(cover: HTMLElement, at: DOMRect): HTMLElement {
   Object.assign(g.style, { left: `${at.left}px`, top: `${at.top}px`, width: `${at.width}px`, height: `${at.height}px` });
   document.body.appendChild(g);
   return g;
+}
+
+/**
+ * The page's own corners at rest: none on a phone, where it fills the
+ * screen, and the panel's 20px from 768px (app.css). The card's clip opens
+ * onto them and closes from them, so nothing snaps at either end.
+ */
+function restRadius(page: HTMLElement): string {
+  return getComputedStyle(page).borderTopLeftRadius || '0px';
 }
 
 /** Where the card's picture lands: the inset preview card, under the header. */

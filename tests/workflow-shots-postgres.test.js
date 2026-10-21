@@ -284,6 +284,48 @@ test('shots machine against the full PostgreSQL schema', { timeout: 180000 }, as
     }
   });
 
+  // Close-ups (services/shots-closeups.js) publish with their number,
+  // region and density; two of one screen sit side by side.
+  await t.test('S9c close-ups publish beside the stills, two of one screen apart by their number', async () => {
+    defaults();
+    const CLOSE = Buffer.from('fake-closeup');
+    const sha = (v) => crypto.createHash('sha256').update(v).digest('hex');
+    work.answer.set(WORK.agent, async (input) => {
+      await saved(input.runId, 'base');
+      await saved(input.runId, 'head');
+      for (const part of [1, 2]) {
+        await pool.query(
+          `INSERT INTO shot_run_files (run_id, slot, story_id, viewport, side, variant, media, content_type, data, width, height, bytes, sha256,
+                                       part, scale, focus_rect)
+           VALUES ($1, $2, 'c1', 'desktop', 'head', 'closeup', 'png', 'image/png', $3, 594, 360, $4, $5, $6, $7, $8::jsonb)`,
+          [input.runId, `c1/desktop/head/closeup/${part}`, CLOSE, CLOSE.length, sha(`c${part}`), part, part === 1 ? 9 : 8.2,
+            JSON.stringify({ x: 40 * part, y: 30, w: 66, h: 40 })]);
+      }
+      return { ...passed(input), slots: [...passed(input).slots, 'c1/desktop/head/closeup/1', 'c1/desktop/head/closeup/2'] };
+    });
+    const s = await proposal();
+    await declare(s);
+    await rt.drain();
+    await send(s, 'HeadReady', { head: SHA('a') }, fromPreview);
+    await settle();
+    const [run] = await runs(s);
+    assert.equal(run.state, 'verified');
+    const { rows } = await pool.query(
+      `SELECT variant, part, scale::float AS scale, focus_rect FROM shot_artifacts WHERE run_id = $1 ORDER BY variant, side, part`, [run.id]);
+    assert.deepEqual(rows.filter((r) => r.variant === 'closeup'), [
+      { variant: 'closeup', part: 1, scale: 9, focus_rect: { x: 40, y: 30, w: 66, h: 40 } },
+      { variant: 'closeup', part: 2, scale: 8.2, focus_rect: { x: 80, y: 30, w: 66, h: 40 } },
+    ]);
+    assert.ok(rows.filter((r) => r.variant !== 'closeup').every((r) => r.part === 0 && r.scale === null));
+    // A close-up without its number or region, or a still with a number, is refused.
+    for (const [variant, part, scale, rect] of [['closeup', 0, 9, '{}'], ['closeup', 1, null, '{}'], ['closeup', 1, 9, null], ['context', 1, null, null]]) {
+      await assert.rejects(pool.query(
+        `INSERT INTO shot_artifacts (id, run_id, story_id, viewport, side, variant, media, content_type, data, bytes, sha256, part, scale, focus_rect)
+         VALUES ($1, $2, 'c1', 'phone', 'head', $3, 'png', 'image/png', '\\x00', 1, $4, $5, $6, $7::jsonb)`,
+        [crypto.randomBytes(16).toString('hex'), run.id, variant, sha('x'), part, scale, rect]), /variant_closeup_check/, `${variant} ${part}`);
+    }
+  });
+
   await t.test('S2 a declaration on a head already ready starts at once; the same one again changes nothing', async () => {
     defaults();
     const s = await proposal({ ready: true });

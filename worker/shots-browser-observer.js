@@ -229,6 +229,15 @@ function createObserver({
     noteAnswer(text) {
       try { notePage(reportedPageUrl(text)); } catch { /* the next answer says */ }
     },
+    // A close-up the shots tools had this browser save (startControl): it
+    // shows the page the browser is on now, so it is stamped with that site,
+    // as the agent's own screenshots are.
+    stampCloseup(name) {
+      try {
+        const file = path.join(outputDir || '', path.basename(String(name || '')));
+        if (insideOutput(file)) provenance.stampScreenshot(outputDir, file, pageUrl);
+      } catch { /* unstamped: the bridge refuses it */ }
+    },
     pending() {
       for (const call of active.values()) {
         const { startedAt, ...event } = call;
@@ -601,7 +610,18 @@ function sameToken(value, expected) {
   return crypto.timingSafeEqual(Buffer.from(value), Buffer.from(expected));
 }
 
-function startControl({ dir, name, token, samplesDir, parker, emit = () => {}, browser = {}, onAnswer = null }) {
+// A close-up (patch-playwright-mcp-screenshot.js `closeup`): a region of the
+// screen at a density, saved under a name the observer chooses.
+const CLOSEUP_MAX_SCALE = 16;
+function closeupArgs(message) {
+  const rect = message?.rect || {};
+  const scale = Number(message?.scale);
+  const ok = ['x', 'y', 'w', 'h'].every((key) => Number.isSafeInteger(rect[key]) && rect[key] >= 0 && rect[key] <= 20000)
+    && rect.w > 0 && rect.h > 0 && scale > 1 && scale <= CLOSEUP_MAX_SCALE;
+  return ok ? { x: rect.x, y: rect.y, width: rect.w, height: rect.h, scale: Math.round(scale * 10) / 10 } : null;
+}
+
+function startControl({ dir, name, token, samplesDir, parker, emit = () => {}, browser = {}, onAnswer = null, onCloseup = null }) {
   if (!dir || !/^[0-9a-f]{64}$/.test(String(token || ''))
       || !/^(member|admin|full_admin|guest)(_phone)?$/.test(String(name || ''))) return null;
   const socketPath = path.join(dir, `${name}.sock`);
@@ -610,6 +630,16 @@ function startControl({ dir, name, token, samplesDir, parker, emit = () => {}, b
     let message;
     try { message = JSON.parse(line); } catch { return { ok: false, code: 'invalid_request' }; }
     if (!sameToken(message?.token, token)) return { ok: false, code: 'forbidden' };
+    if (message.action === 'closeup') {
+      const closeup = closeupArgs(message);
+      if (!closeup) return { ok: false, code: 'invalid_closeup' };
+      const file = `closeup-${crypto.randomBytes(8).toString('hex')}.png`;
+      const answer = await parker.inject('browser_take_screenshot', { filename: file, closeup });
+      emit({ kind: 'closeup', ...browser, outcome: answer.outcome });
+      if (answer.outcome !== 'ok') return { ok: false, code: 'closeup_failed', outcome: answer.outcome };
+      try { onCloseup?.(file); } catch { /* unstamped: refused later */ }
+      return { ok: true, file };
+    }
     if (message.action !== 'upload') return { ok: false, code: 'unknown_action' };
     let paths;
     try { paths = samples.samplePaths(message.files, samplesDir); }
@@ -696,6 +726,7 @@ function start({ persona, phone = false, args, binary = null,
     dir: controlDir, name: `${safePersona}${phone === true ? '_phone' : ''}`, token: controlToken,
     samplesDir, parker, emit, browser: { persona: safePersona, ...(phone === true ? { phone: true } : {}) },
     onAnswer: (answer) => observer.noteAnswer(answer.text),
+    onCloseup: (file) => observer.stampCloseup(file),
   });
   stdin.pipe(inputTap).pipe(parker.input).pipe(child.stdin);
   child.stdout.pipe(parker.output)
@@ -740,6 +771,6 @@ if (require.main === module) {
 }
 
 module.exports = {
-  MARKER, lineTap, createObserver, createPointerParker, startControl, start, reportedPageUrl, savedScreenshotPath,
+  MARKER, lineTap, createObserver, createPointerParker, startControl, closeupArgs, start, reportedPageUrl, savedScreenshotPath,
   browserCommand, browserName,
 };

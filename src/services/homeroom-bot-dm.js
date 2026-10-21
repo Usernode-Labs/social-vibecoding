@@ -3950,7 +3950,7 @@ async function postOnProposal(pool, {
 
 // ── A No vote's line, on one of its own changes (#3977) ──────────────────
 //
-// A No comes with a line (#1688), and on a change the bot built that line
+// A No may come with a line (#1688), and on a change the bot built that line
 // is what it should fix. It used to stop at the vote row in the change's
 // discussion, a system row the bot neither wakes on nor reads (its
 // follow-up reads people's messages there, homeroom-bot.js runFollowUp).

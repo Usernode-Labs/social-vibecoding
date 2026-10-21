@@ -439,6 +439,12 @@ const ADDED_IDS = {
   'settings-phones-section': '#4938: the Linked phones page root, inside its [data-settings-section="phones"] wrapper.',
   'settings-phones-list': '#4938: the list of phones signed in with the Homeroom app, one row per phone with Unlink; empty until the account is read.',
   'settings-high-contrast': '#3969: the High contrast switch (the RailPinnedRow pattern, at every width).',
+  // ── #4289: comment mode stops being an experiment ───────────────
+  //
+  // #suggest-shortcut-enabled leaves THIS map rather than entering
+  // RETIRED_IDS, because the frozen baseline never recorded it: comment mode
+  // is the default now, so the switch in Settings → Experimental is gone.
+  //
   // ── #2718: the platform's destinations leave the app's menu ──────
   //
   // Eleven ids leave THIS map rather than entering RETIRED_IDS, because the
@@ -800,10 +806,6 @@ const ADDED_IDS = {
   // live: Settings → Experimental, beside the other per-user preview flag.
   'session-bridge-enabled': 'Opt-in switch for the session-CLI bridge venue (#1281).',
   'session-bridge-status': 'Save/error line for the session-bridge switch (#1281).',
-  // #4289 — the experimental C shortcut for Suggest an improvement, beside
-  // the other opt-ins in Settings → Experimental. Kept on the device
-  // (features/improve/suggest-shortcut.ts), so it has no save/error line.
-  'suggest-shortcut-enabled': 'Opt-in switch for pressing C to open Suggest an improvement on a computer (#4289).',
   // Username changes — Settings -> Username, the change-your-@handle form. It sits in
   // Settings rather than the profile edit sheet because the endpoint requires
   // the current password, which is the same reason Change password is here.

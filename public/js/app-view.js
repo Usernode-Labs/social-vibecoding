@@ -26176,9 +26176,9 @@ const AppView = {
   // took a second identical rejection — one head move, two toasts.
   _seenEpoch: new Map(),
   // #1688: the line behind a vote, asked for through the kit's prompt card.
-  // A No needs one (the server refuses a No without it); a Yes may skip.
-  // Resolves the line to send (a string), null for "none", or false when
-  // the voter backed out — a cancelled No casts nothing.
+  // The line is optional on either side. Resolves the line to send (a
+  // string), null for "none", or false when the voter backed out — a
+  // cancelled No casts nothing.
   async _askVoteReason(vote) {
     const no = vote === 'no';
     const pu = window.PlatformUI;
@@ -26194,10 +26194,6 @@ const AppView = {
     });
     if (answer === null) return no ? false : null;
     const line = String(answer).replace(/\s+/g, ' ').trim();
-    if (no && !line) {
-      pu.toast(PlatformI18n.t('changes:vote.reason.noNeedsLine'));
-      return false;
-    }
     return line || null;
   },
   // The options bag's `reason` key: a string is sent as the line, null sends
@@ -26339,10 +26335,7 @@ const AppView = {
         // verifies, then the same vote again (features/auth/verify-identity.tsx).
         if (data.code === 'identity_required' && AppView._verifyThenVote(
           () => AppView.castVote(sessionId, vote, expectedEpoch, opts))) return false;
-        // #1688: a No the server would not take without its line says so in
-        // the server's own words rather than as an opaque failure.
-        PlatformUI.toast((data.error === 'reason_required' && data.message)
-          || data.error || PlatformI18n.t('changes:vote.toast.failedHttp', { status: res.status }));
+        PlatformUI.toast(data.error || PlatformI18n.t('changes:vote.toast.failedHttp', { status: res.status }));
         return false;
       }
       AppView._seenEpoch.delete(sessionId);
@@ -26592,10 +26585,8 @@ const AppView = {
           AppView.refreshDevData('vote');
           return;
         }
-        // #2603: a No the server would not take without its line says so in
-        // the server's own words rather than as an opaque failure.
-        PlatformUI.toast((data.error === 'reason_required' && data.message)
-          || data.error || PlatformI18n.t('changes:vote.toast.failedHttp', { status: res.status }));
+        // #2603: the server's own words when it refuses this vote.
+        PlatformUI.toast(data.error || PlatformI18n.t('changes:vote.toast.failedHttp', { status: res.status }));
         AppView.refreshDevData('vote');
         return;
       }

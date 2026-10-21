@@ -696,9 +696,16 @@ function ScreenRow({ view, touch, removes, held = false, onRelease, card = null 
     press.current = null;
   }, []);
   useEffect(() => letGo, [letGo]);
+  // A story card (several notifications about one request or proposal)
+  // opens its history on the first tap or click, on a phone and a computer
+  // alike (Evan, 20 Oct 2026: on a computer only its chevron did, and a click
+  // went straight to the newest). With the history open, the card opens the
+  // newest, as before; the chevron folds it away.
+  const expands = !!story && hasHistory;
   const open = () => {
     if (Date.now() - heldAt.current < 700) return;
     if (closedTop) { closedTop.open(); return; }
+    if (expands && !historyOpen) { setHistoryOpen(true); return; }
     if (groupIds) controller()?.openGroupRow(view.id, groupIds);
     else controller()?._onItemClick(view.id);
   };
@@ -880,7 +887,7 @@ function ScreenRow({ view, touch, removes, held = false, onRelease, card = null 
     >
       <button
         className={card ? 'min-w-0 flex-1 w-full text-left flex items-start gap-3' : 'min-w-0 flex-1 text-left flex items-center gap-4'}
-        aria-expanded={closedTop ? 'false' : undefined}
+        aria-expanded={closedTop ? 'false' : expands ? (historyOpen ? 'true' : 'false') : undefined}
         onClick={(event) => {
           event.stopPropagation();
           open();
@@ -904,7 +911,7 @@ function ScreenRow({ view, touch, removes, held = false, onRelease, card = null 
           + 'hover:bg-black/[.02] dark:hover:bg-white/[.03] transition-colors flex items-start gap-3'
         : 'notifications-row w-full text-left pl-4 pr-16 py-3.5 '
           + 'hover:bg-black/[.03] dark:hover:bg-white/[.04] transition-colors flex items-center gap-4'}
-      aria-expanded={closedTop ? 'false' : undefined}
+      aria-expanded={closedTop ? 'false' : expands ? (historyOpen ? 'true' : 'false') : undefined}
       onClick={(event) => {
         event.stopPropagation();
         open();

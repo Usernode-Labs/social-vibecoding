@@ -1439,14 +1439,6 @@
     "text": "Adds <0>Your computer · Homeroom session</0> to the list of places a session can be built. You keep the platform chat exactly as it is, with the same transcript, branch and proposal, but its turns run through the Homeroom CLI on your own machine, on your own Claude plan. It needs the CLI installed and attached, so it stays off until you ask for it.",
     "description": "Explanation under the Session bridge switch in Settings > Experimental. The tagged part is the name of an option in another list, shown in a monospace font; translate it as that option is translated. CLI is the command-line tool; Claude is a product name; a \"turn\" is one request and answer of the coding agent."
   },
-  "experimental.suggestShortcut.label": {
-    "text": "Comment on the page",
-    "description": "Label of a switch in Settings > Experimental: with it on, \"Suggest an improvement\" opens a screenshot of the page to tap or click and comment on, instead of a form. \"The page\" is whatever screen the person is on."
-  },
-  "experimental.suggestShortcut.description": {
-    "text": "Suggest an improvement opens on a screenshot of the page. Tap or click what should change and say what; it's posted as a suggestion with the screenshot and your pin. Add more comments to the same suggestion, or post each on its own. The form is one switch away. On a computer, pressing C opens it too. Saved on this device only.",
-    "description": "Explanation under the \"Comment on the page\" switch in Settings > Experimental. \"Suggest an improvement\" is the name of a button elsewhere; translate it as that button is translated. \"The form\" is the other, written way to suggest an improvement. C is a key on the keyboard; keep it."
-  },
   "experimental.reviewFlow.label": {
     "text": "New Needs you",
     "description": "Label of a switch in Settings, Experimental. When on, the Needs you list on the Communities tab becomes a calm list of changes, each opening into its own page with a before and after slider and a vote sheet."
@@ -2356,7 +2348,7 @@
     "description": "Not shown on screen. Extra search words for \"Global Chat (experimental)\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words."
   },
   "nav.keywords.experimental": {
-    "text": "beta labs progress estimate session bridge local agent keyboard shortcut suggest improvement",
+    "text": "beta labs progress estimate session bridge local agent",
     "description": "Not shown on screen. Extra search words for \"Experimental\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words."
   },
   "nav.keywords.theme": {

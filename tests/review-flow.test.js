@@ -199,6 +199,47 @@ test('the pill names the side most of the window shows, with hysteresis, and col
   assert.equal(compare.saturationFor(0), 0);
 });
 
+test('the magnifier shows what is under the finger at the zoom, and stays inside the window', () => {
+  const place = { scale: 1.2, tx: -10, ty: -40 };
+  const lens = compare.lensPlace(place, { x: 100, y: 80 }, 2.5, 132);
+  assert.equal(lens.scale, 3, 'the drawn scale times the zoom');
+  const layerX = (100 - place.tx) / place.scale;
+  const layerY = (80 - place.ty) / place.scale;
+  assert.ok(Math.abs(lens.tx + layerX * lens.scale - 66) < 1e-9, 'the point lands at the circle\'s centre');
+  assert.ok(Math.abs(lens.ty + layerY * lens.scale - 66) < 1e-9);
+  const identity = compare.lensPlace(null, { x: 50, y: 20 }, 2.5, 132);
+  assert.equal(identity.scale, 2.5, 'a whole pair magnifies by the zoom alone');
+
+  const size = { w: 366, h: 275 };
+  assert.deepEqual(compare.lensBox({ x: 183, y: 200 }, size, 132, 0), { x: 117, y: 134 }, 'a mouse: centred under the pointer');
+  assert.deepEqual(compare.lensBox({ x: 183, y: 200 }, size, 132, 24), { x: 117, y: 44 }, 'a finger: raised clear of the fingertip');
+  assert.deepEqual(compare.lensBox({ x: 0, y: 0 }, size, 132, 0), { x: 0, y: 0 });
+  assert.deepEqual(compare.lensBox({ x: 366, y: 275 }, size, 132, 0), { x: 234, y: 143 });
+  assert.deepEqual(compare.lensBox({ x: 366, y: 275 }, size, 132, 24), { x: 234, y: 119 }, 'inside at every edge');
+});
+
+test('a still press of a third of a second opens the magnifier; moving early does not', () => {
+  const src = read('frontend/src/features/review-flow/compare.tsx');
+  assert.match(src, /const HOLD_TO_ZOOM = 300;/);
+  assert.match(src, /const LENS_ZOOM = 2\.5;/);
+  assert.match(src, /Math\.hypot\(dx, dy\) > HOLD_SLOP\) clearTimeout\(zoomTimer\.current\)/, 'moving off the spot cancels the hold');
+  assert.match(src, /Math\.abs\(dy\) > 8 && Math\.abs\(dy\) > Math\.abs\(dx\)/, 'the vertical threshold is unchanged');
+  assert.match(src, /Math\.abs\(dx\) < 6/, 'the drag threshold is unchanged');
+  assert.match(src, /addEventListener\('touchmove', hold, \{ passive: false \}\)/, 'the page does not scroll while the magnifier is open');
+  assert.match(src, /if \(lensRef\.current\) \{\n\s+const p = pointAt\(e\)/, 'once open it follows the finger, not the seam');
+  assert.match(src, /className="rf-lens"\s+aria-hidden="true"/, 'the magnifier is visual only');
+  assert.match(src, /onContextMenu=\{\(e\) => e\.preventDefault\(\)\}/, 'the phone\'s long-press menu stays shut');
+
+  const css = read('public/css/app.css');
+  assert.match(css, /\n\.rf-lens \{ position: absolute; left: 0; top: 0; z-index: 6; width: 132px; height: 132px; border-radius: 999px;/);
+  assert.match(css, /\.rf-compare \{[^}]*\-webkit-touch-callout: none;/);
+  assert.match(
+    css,
+    /@media \(prefers-reduced-motion: reduce\) \{\n  \.rf-sheet, \.rf-scrim, \.rf-seam, \.rf-tab, \.rf-pill \{ transition: none; \}\n  \.rf-lens \{ animation: none; \}/,
+    'the magnifier opens at once when motion is reduced',
+  );
+});
+
 // ── 2b. The preview card ────────────────────────────────────────────────
 
 test('the change page sets its picture and thumbnails apart in an inset card', () => {
@@ -315,11 +356,14 @@ test('after a vote: a large mark, what you said, Undo beside Next change', () =>
   assert.ok(last.includes(message('communities:review.said.done')));
 });
 
-test('a No asks for its line, held to the server\'s limit', () => {
+test('a No asks for its line, held to the server\'s limit, and sends without one', () => {
   const html = sheetHtml({ state: 'no' });
   assert.ok(html.includes(message('communities:review.no.ask')));
   assert.match(html, /maxLength="280"/);
   assert.match(html, /aria-pressed="true"/);
+  const send = message('communities:review.no.send');
+  assert.ok(html.includes(`class="rf-go">${send}</button>`), 'Send is enabled with an empty line');
+  assert.ok(!html.includes('class="rf-go" disabled'), 'not greyed out until a line is written');
 });
 
 // ── 4. The copy ──────────────────────────────────────────────────────────
@@ -540,4 +584,31 @@ test('_workshopVisuals passes a screen\'s close-ups through, and only valid ones
   const src = read('public/js/app-view.js');
   assert.match(src, /a\.variant === 'closeup' && a\.side === 'head' && a\.media === 'png'\s*&& a\.storyId === screen\.shot && a\.viewport === screen\.viewport && urlOk\(a\.url\)/);
   assert.match(src, /Number\(a\.density\) > 1/);
+});
+
+test('from 768px the change page is a panel under the header, its vote sheet at its foot, the pane dimmed behind it', () => {
+  const src = read('frontend/src/features/review-flow/review-flow.tsx');
+  const css = read('public/css/app.css');
+  const at = css.indexOf('.rf-page-dim { display: none; }');
+  assert.ok(at > 0, 'the dim is drawn on a wide window only');
+  // After the sheet's own rules, so the panel's foot overrides them at equal specificity.
+  assert.ok(at > css.indexOf('\n.rf-sheet {'), 'the panel block follows the sheet\'s rules');
+  const block = css.slice(at, css.indexOf('\n}\n', at) + 3);
+  assert.match(block, /@media \(min-width: 768px\) \{/, 'a phone keeps the full page');
+  // Under the app's header, measured by the shell's own tokens, never over it.
+  assert.match(block, /\.rf-page-wrap \{\s*top: calc\(var\(--browser-banner-h, 0px\) \+ var\(--platform-header-h\) \+ var\(--platform-safe-top, 0px\)\);/);
+  assert.match(block, /--rf-room: calc\(100dvh - var\(--browser-banner-h, 0px\) - var\(--platform-header-h\) - var\(--platform-safe-top, 0px\) - var\(--platform-tabs-h, 0px\) - 32px\);/, '16px clear above and below');
+  // A rounded panel as tall as what it holds, up to the room; the stage scrolls past it.
+  assert.match(block, /\.rf-page \{ top: 16px; bottom: auto; max-height: var\(--rf-room\); border-radius: 20px; box-shadow: 0 0 0 1px var\(--rf-line\), [^;]+; \}/);
+  assert.match(block, /\.rf-stage \{ flex: 0 1 auto; \}/);
+  // The vote sheet is the panel's foot, not a sheet pinned to the window.
+  assert.match(block, /\.rf-sheet \{ max-height: calc\(var\(--rf-room\) - 52px\); border-radius: 0; box-shadow: inset 0 1px 0 var\(--rf-line\); \}/);
+  // The pane behind is dimmed, and a click on it is Back.
+  assert.match(block, /\.rf-page-dim \{ display: block; position: absolute; inset: 0; [^}]*pointer-events: auto; \}/);
+  assert.match(src, /<div ref=\{dimRef\} className="rf-page-dim" onClick=\{close\} aria-hidden="true" \/>\s*<div ref=\{pageRef\} className="rf-page"/);
+  assert.match(src, /dimRef\.current\?\.animate\(\[\{ opacity: 0 \}, \{ opacity: 1 \}\], opts\)/, 'the dim fades in as the card opens');
+  assert.match(src, /dimRef\.current\?\.animate\(\[\{ opacity: 1 \}, \{ opacity: 0 \}\], opts\)/, 'and out as it closes');
+  // The card opens onto the panel's own corners and closes from them; a phone's are none.
+  assert.equal((src.match(/clipPath: `inset\(0px 0px 0px 0px round \$\{restRadius\(page\)\}\)`/g) || []).length, 2);
+  assert.match(src, /function restRadius\(page: HTMLElement\): string \{\s*return getComputedStyle\(page\)\.borderTopLeftRadius \|\| '0px';/);
 });

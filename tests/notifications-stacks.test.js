@@ -155,6 +155,26 @@ test('a story card says its request and how many notifications it is, and clears
   assert.doesNotMatch(html, /data-notif-history-list/, 'closed until asked for');
 });
 
+test('a story card opens its history on the first tap or click, on a phone and a computer alike', () => {
+  // Evan, 20 Oct 2026: on a computer only the chevron opened it, and a click
+  // went straight to the newest; a phone and a computer now do the same.
+  const story = { storyKey: 'r:5:5580', storyRef: { number: 5580, title: 'Plant shelf' } };
+  const list = [view(1, { ...story, label: 'Live' }), view(2, { ...story, label: 'Ready to try' })];
+  for (const touch of [false, true]) {
+    const html = renderSheet({ touch, list });
+    assert.match(html, /<button data-notif-id="1" data-notif-group-size="2" class="[^"]*" aria-expanded="false"/,
+      `the card itself says it opens (${touch ? 'phone' : 'computer'})`);
+  }
+  const sheet = read(SHEET_PATH);
+  assert.match(sheet, /const expands = !!story && hasHistory;/, 'a story card only: one notification still opens on the first click');
+  assert.match(sheet, /if \(closedTop\) \{ closedTop\.open\(\); return; \}\s+if \(expands && !historyOpen\) \{ setHistoryOpen\(true\); return; \}\s+if \(groupIds\) controller\(\)\?\.openGroupRow\(view\.id, groupIds\);/,
+    'the first opens the history; with it open, the card opens the newest');
+  // Not a story: a single card with a history, and a fold by kind, open as before.
+  const single = renderSheet({ list: [view(1, { storyKey: 's:5:1', storyRef: { number: 41, title: 'x' } })] });
+  assert.match(single, /<button type="button" data-notif-history="1"/);
+  assert.doesNotMatch(single, /<button data-notif-id="1"[^>]*aria-expanded/);
+});
+
 test('a fold by kind is several things, not one story: no history', () => {
   const html = renderSheet({ list: [view(1, { storyKey: 's:5:1' }), view(2, { storyKey: 's:5:2' })] });
   assert.match(html, /<button data-notif-id="1" data-notif-group-size="2"/);

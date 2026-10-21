@@ -99,8 +99,8 @@ export function FeedbackDialog() {
   // Text only React writes follows the language here. A node the controller
   // writes too starts from <ControllerText>, which React never updates.
   const t = useMessages('dialogs');
-  // Experimental (#4289): the form's switch to comment mode, offered where
-  // the device's switch is on (not in the side panel). Read on every open,
+  // #4289: the form's switch to comment mode, offered where the device
+  // has not turned it off (not in the side panel). Read on every open,
   // since the setting lives on the device and can change between opens.
   const [offersComment, setOffersComment] = useState(false);
   // #5687: the attached picture or clip a thumbnail asked to see full size.
@@ -195,13 +195,12 @@ export function FeedbackDialog() {
         <button id="feedback-form-mine" type="button" className="-mt-3 mb-4 block text-xs text-zinc-500 underline underline-offset-2 dark:text-zinc-400">
           {t('dialogs:feedback.form.mine')}
         </button>
-        {/* Experimental (#4289): this form, or comment mode, where a click on
-            the page is the comment. With the switch on, "Suggest an
-            improvement" opens comment mode, and this form is reached from its
-            Form switch; this is the way back. React's own node, which the
-            controller never writes; hidden in the prerendered shell (the
-            class, as the rest of this card is), since the switch is off until
-            a person turns it on. */}
+        {/* #4289: this form, or comment mode, where a click on the page is
+            the comment. "Suggest an improvement" opens comment mode, and this
+            form is reached from its Form switch; this is the way back.
+            React's own node, which the controller never writes; hidden in the
+            prerendered shell (the class, as the rest of this card is), since
+            `offersComment` starts false until the dialog opens. */}
         <div className={offersComment ? '-mt-1 mb-4 flex items-center gap-2' : 'hidden'}>
           <span className="inline-flex gap-0.5 rounded-full bg-zinc-100 p-[3px] dark:bg-zinc-800" role="radiogroup" aria-label={t('dialogs:feedback.mode.label')}>
             <button
