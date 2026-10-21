@@ -182,7 +182,7 @@ function deps(over = {}, log = {}) {
     applyPatch: over.applyPatch,
     // Both of these are real behaviours elsewhere; here they only have to be
     // observable, so a test can assert the update ran INSIDE them.
-    serialize: over.serialize || (async (id, fn) => {
+    lock: over.lock || (async (_pool, id, fn) => {
       (log.serialized = log.serialized || []).push(id);
       return fn();
     }),
@@ -369,7 +369,7 @@ test('an app-repo proposal is advanced with a lease pinned to the head just read
 test('the update runs inside the session queue, the lock and a session operation', async () => {
   const log = {};
   await run({}, {}, log);
-  assert.deepEqual(log.serialized, [501], 'serialized on the session, as the handoff pipeline is');
+  assert.deepEqual(log.serialized, [501], 'under the session\'s proposal lock, as the handoff pipeline is');
   assert.deepEqual(log.began, [501]);
   assert.deepEqual(log.released, [501], 'and released — a leaked operation marks the session busy forever');
 });
@@ -1057,12 +1057,12 @@ test('a deployment that cannot verify GitHub identity refuses, and says whose pr
 test('the advisory lock is taken on the session and released in finally', async () => {
   const calls = [];
   const client = {
-    query: async (sql, params) => { calls.push({ sql, params }); return { rows: [] }; },
+    query: async (sql, params) => { calls.push({ sql, params }); return { rows: [{ got: true }] }; },
     release: () => calls.push({ sql: 'RELEASE' }),
   };
   const out = await svc.withProposalLock({ connect: async () => client }, 501, async () => 'body ran');
   assert.equal(out, 'body ran');
-  assert.match(calls[0].sql, /pg_advisory_lock/);
+  assert.match(calls[0].sql, /pg_try_advisory_lock/);
   assert.equal(calls[0].params[1], 501, 'keyed on the session id');
   assert.match(calls[1].sql, /pg_advisory_unlock/);
   assert.equal(calls[2].sql, 'RELEASE');

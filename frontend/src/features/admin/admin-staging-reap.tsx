@@ -84,6 +84,12 @@ const REAP_STATES: Record<string, { label: string; cls: string }> = {
   torn_down: { label: 'Shut down', cls: 'bg-green-100 dark:bg-green-950/60 text-green-700 dark:text-green-400' },
   torn_down_no_db: { label: 'Shut down: database kept', cls: 'bg-green-100 dark:bg-green-950/60 text-green-700 dark:text-green-400' },
   skipped_gone: { label: 'Skipped: already gone', cls: NEUTRAL_CHIP },
+  skipped_workflow: { label: 'Skipped: its workflow retires it', cls: NEUTRAL_CHIP },
+  skipped_vote: { label: 'Skipped: now up for a vote', cls: NEUTRAL_CHIP },
+  skipped_checks: { label: 'Skipped: checks now running', cls: NEUTRAL_CHIP },
+  skipped_busy: { label: 'Skipped: now being worked on', cls: NEUTRAL_CHIP },
+  skipped_current: { label: 'Skipped: up to date now', cls: NEUTRAL_CHIP },
+  skipped_unseen: { label: 'Skipped: not in the runtime\'s list', cls: NEUTRAL_CHIP },
   failed: { label: 'Failed', cls: 'bg-red-100 dark:bg-red-950/60 text-red-700 dark:text-red-400' },
 };
 
@@ -284,8 +290,10 @@ function StalePreviewsSection() {
       const res = await fetch('/api/admin/staging-reap', { method: 'POST' });
       const data = await res.json().catch(() => ({}));
       if (res.status === 409) {
-        // Singleton job: a second press is a no-op, not an error.
-        (window as any).PlatformUI?.toast?.('A sweep is already in progress.');
+        // Singleton job: a second press is a no-op, not an error. Refused for
+        // another reason (a release rolling out), the server says why.
+        (window as any).PlatformUI?.toast?.(data && data.reason && data.reason !== 'running' && data.error
+          ? data.error : 'A sweep is already in progress.');
         if (data && data.job && alive.current) setJob(data.job);
         return;
       }
@@ -411,8 +419,10 @@ const AdminStagingReap = {
   // the job changes over the socket — the counts and the availability trio
   // come from the GET and are unaffected, which is what the old
   // _paintStagingReap did too.
-  handleStatus(data: { job?: ReapJob | null } | null) {
+  // A job too big for one frame comes as a nudge (`changed`): read it again.
+  handleStatus(data: { job?: ReapJob | null; changed?: boolean } | null) {
     if (!data || !live) return;
+    if (data.changed && data.job === undefined) { live.reload(); return; }
     live.paint(data.job || null);
   },
 

@@ -1035,11 +1035,13 @@ async function notifySessionDone(pool, sessionId) {
 // chat handler's done hook picks this one when the turn persisted a failure
 // row (turnError) and nobody pressed stop; the restart recovery, the
 // stale-turn watchdog and a system pause call it directly.
-async function notifySessionStalled(pool, sessionId) {
-  return notifySessionTurnEnd(pool, sessionId, 'session_stalled');
+// `strict` (a workflow machine's work): a failure is thrown, so it is tried
+// again.
+async function notifySessionStalled(pool, sessionId, { strict = false } = {}) {
+  return notifySessionTurnEnd(pool, sessionId, 'session_stalled', { strict });
 }
 
-async function notifySessionTurnEnd(pool, sessionId, kind) {
+async function notifySessionTurnEnd(pool, sessionId, kind, { strict = false } = {}) {
   try {
     const { rows } = await pool.query(
       `UPDATE chat_sessions SET notify_on_done = FALSE
@@ -1056,6 +1058,7 @@ async function notifySessionTurnEnd(pool, sessionId, kind) {
     });
     if (created.length) await notifications.hydrateAndPush(pool, created[0]);
   } catch (err) {
+    if (strict) throw err;
     log.warn('sessions', `${kind} notify failed`, { sessionId, err: err.message });
   }
 }
@@ -6674,15 +6677,18 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       //
       // Folded into what holds the session, the head is still owed a unit
       // suite that really runs (services/unit-suite-reuse.js): a verdict
-      // stored before this press no longer stands for it, so it reads
-      // pending (and merge-blocked) until one does, and once the session is
-      // idle again the owed run starts if nothing has answered it. The stale
-      // sweep, whose scope covers an owed head, re-drives it after a restart.
-      const busyNow = () => isSessionBusyAnywhere(sessionId, { pool });
-      if (await busyNow()) {
-        await require('../services/unit-suite-reuse').owePendingRun({
-          pool, stagingRecovery, config, session, busy: busyNow, head: requestedHead,
-        });
+      // stored before this press no longer stands for it, so the preview
+      // machine stamps it pending (and merge-blocked) until one does
+      // (RecheckFolded), and starts the owed run once nobody works on the
+      // session if nothing has answered it (its ChecksDue).
+      if (await isSessionBusyAnywhere(sessionId, { pool })) {
+        if (requestedHead) {
+          await require('../workflow/platform.ts').recheckFolded({
+            sessionId: Number(session.id), appId: Number(session.app_id), head: String(requestedHead).toLowerCase(),
+          }).catch((err) => {
+            log.warn('sessions', 'Could not stamp a folded recheck pending', { sessionId, err: err.message });
+          });
+        }
         return res.json({ status: 'running' });
       }
       recheckInFlight.add(sessionId);

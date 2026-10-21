@@ -82,75 +82,27 @@ function workingDeps(overrides = {}) {
   return { deps, seen };
 }
 
+// What its work (the app-creation machine's app.earlyLook) reads first: the
+// first version's row, its plan written.
+const FIRST_VERSION_ROW = [/FROM homeroom_bot_first_versions f JOIN apps a/, [{
+  user_id: USER.id, brief: 'Polls for the club', early_plan: PLAN, early_plan_status: 'ready', id: APP.id, name: APP.name, slug: APP.slug,
+}]];
+const look = (pool, deps, bot = BOT) => early.runEarlyLook(pool, { appId: APP.id, config: {} }, { ...deps, botUser: bot });
+
 const lookPool = (extra = []) => fakePool([
+  FIRST_VERSION_ROW,
   [/INSERT INTO first_version_early_looks/, [{ app_id: APP.id }]],
   [/FROM apps WHERE id = \$1/, [{ id: APP.id, slug: APP.slug, name: APP.name, repo_url: 'https://github.com/o/club-votes', self_hosted: false, status: 'running' }]],
   [/SET status = 'ready'/, [{ saved_at: new Date() }]],
   ...extra,
 ]);
 
-// ── It starts after the plan at Make it ──────────────────────────────────
-
-test('the early first look is started once the plan at Make it is written, from that plan, and not waited on', async () => {
-  const order = [];
-  const started = [];
-  const deps = {
-    llm: {
-      isEnabled: () => true,
-      estimateCostCents: () => 0,
-      async generateFirstVersionPlan() {
-        return { text: JSON.stringify({ plan: PLAN.bullets, choices: [], build_note: PLAN.buildNote, assumptions: [] }), usage: null, model: 'z-ai/glm-5.3-flash' };
-      },
-    },
-    limits: { async recordSpend() {} },
-    bot: { projectMembers: async () => null, starterOfApp: async () => null },
-    botConfigs: { async currentVersion() { return null; } },
-    timeline: { async record(_pool, entry) { order.push(entry.stage); return true; } },
-    earlyLook: {
-      startEarlyLook(_pool, args) {
-        order.push('early_look');
-        started.push(args);
-        return new Promise(() => {}); // never settles: nothing may wait on it
-      },
-    },
-  };
-  const pool = fakePool([
-    [/SET early_plan_status = 'pending'/, [{ app_id: APP.id }]],
-    [/SELECT username, locale FROM users/, [{ username: 'evan', locale: null }]],
-  ]);
-  const config = { openrouterDefaultCodexModel: 'x' };
-  assert.equal(await fvPlan.startEarlyPlan(pool, { app: APP, user: USER, brief: 'Polls', config, bot: BOT }, deps), true);
-  const made = await fvPlan._pendingForTests.get(APP.id);
-  assert.ok(made.plan, 'the plan is in, though the early look never settles');
-  assert.deepEqual(order, ['plan_written', 'early_look'], 'started right after the plan_written stage');
-  assert.equal(started.length, 1);
-  assert.deepEqual(started[0].plan.bullets, PLAN.bullets);
-  assert.equal(started[0].config, config);
-  assert.equal(started[0].bot, BOT);
-  assert.equal(started[0].app, APP);
-
-  // No plan: no early look.
-  const none = [];
-  const failing = {
-    ...deps,
-    llm: { ...deps.llm, async generateFirstVersionPlan() { return { text: 'sorry', usage: null }; } },
-    earlyLook: { startEarlyLook: (...args) => { none.push(args); return Promise.resolve(false); } },
-  };
-  assert.equal(await fvPlan.startEarlyPlan(pool, { app: { ...APP, id: 4 }, user: USER, brief: 'Polls', config, bot: BOT }, failing), true);
-  await fvPlan._pendingForTests.get(4);
-  assert.equal(none.length, 0);
-  // And the DM passes the server's config and the bot to it.
-  assert.match(read('src/services/homeroom-bot-dm.js'),
-    /if \(bot && earlyPlan\) await require\('\.\/first-version-plan'\)\.startEarlyPlan\(pool, \{ app, user, brief: text, config, bot \}\);/);
-});
-
 // ── It saves the first look ──────────────────────────────────────────────
 
 test('it draws the screen with Sonnet at low effort, pictures it in the bot session\'s worker and saves it as the first look, from: early', async () => {
   const { deps, seen } = workingDeps();
   const pool = lookPool();
-  assert.equal(await early.startEarlyLook(pool, { app: APP, user: USER, brief: 'Polls for the club', plan: PLAN, config: {}, bot: BOT }, deps), true);
-  const done = await early._pendingForTests.get(APP.id);
+  const done = await look(pool, deps);
   assert.deepEqual(done, { ok: true, error: null });
 
   // The call: its own helper wrapper, the model and effort chosen, and the plan's suggested answer.
@@ -196,9 +148,9 @@ test('it draws the screen with Sonnet at low effort, pictures it in the bot sess
   assert.ok(require('../src/services/first-version-timeline').STAGES.includes('first_look_saved'));
 
   // Once per project: a second start claims nothing.
-  const again = fakePool();
-  assert.equal(await early.startEarlyLook(again, { app: APP, user: USER, brief: 'x', plan: PLAN, config: {}, bot: BOT }, deps), false);
-  assert.equal(again.calls.length, 1);
+  const again = fakePool([FIRST_VERSION_ROW]);
+  assert.deepEqual(await look(again, deps), { skipped: 'claimed' });
+  assert.equal(again.calls.length, 2, 'its row read, its claim refused');
 });
 
 test('its picture waits for the project\'s repository, and is drawn the one way a first look is', async () => {
@@ -253,8 +205,7 @@ test('run eight: a text that is only the words APP NAME is drawn as the app\'s n
   const { deps, seen } = workingDeps();
   deps.llm.generateFirstLook = async (args) => { seen.llm.push(args); return { text: labelled, usage: null, model: 'claude-sonnet-5-5' }; };
   const pool = lookPool();
-  assert.equal(await early.startEarlyLook(pool, { app: APP, user: USER, brief: 'Decisions for our club', plan: PLAN, config: {}, bot: BOT }, deps), true);
-  assert.deepEqual(await early._pendingForTests.get(APP.id), { ok: true, error: null });
+  assert.deepEqual(await look(pool, deps), { ok: true, error: null });
   assert.match(seen.llm[0].user, /write "Club Votes"/);
   const drawn = pool.calls.find((c) => /SET status = 'drawn'/.test(c.sql));
   assert.equal(drawn.params[1], labelled.replace('<p>APP NAME</p>', '<p>Club Votes</p>'));
@@ -271,7 +222,7 @@ test('HOMEROOM_BOT_EARLY_FIRST_LOOK=0 turns it off: nothing drawn, shown or hand
   assert.equal(early.enabled({ HOMEROOM_BOT_EARLY_FIRST_LOOK: ' 0 ' }), false);
   const { deps, seen } = workingDeps({ env: { HOMEROOM_BOT_EARLY_FIRST_LOOK: '0' } });
   const pool = lookPool();
-  assert.equal(await early.startEarlyLook(pool, { app: APP, user: USER, brief: 'x', plan: PLAN, config: {}, bot: BOT }, deps), false);
+  assert.deepEqual(await look(pool, deps), { skipped: 'off' });
   assert.equal(pool.calls.length, 0);
   assert.equal(seen.llm.length, 0);
 
@@ -311,9 +262,7 @@ test('a failure never throws, records why, and leaves the first look to the spec
     const { deps, seen } = workingDeps(overrides);
     const pool = lookPool();
     // eslint-disable-next-line no-await-in-loop
-    assert.equal(await early.startEarlyLook(pool, { app: APP, user: USER, brief: 'x', plan: PLAN, config: {}, bot: BOT }, deps), true, what);
-    // eslint-disable-next-line no-await-in-loop
-    const done = await early._pendingForTests.get(APP.id);
+    const done = await look(pool, deps);
     assert.deepEqual(done, { ok: false, error }, what);
     const failed = pool.calls.find((c) => /SET status = 'failed'/.test(c.sql));
     assert.ok(failed, `${what}: recorded`);
@@ -323,15 +272,15 @@ test('a failure never throws, records why, and leaves the first look to the spec
   }
   // Nothing to draw from, or no bot to draw in: not started at all.
   const { deps } = workingDeps();
-  for (const args of [{ plan: null }, { bot: null }, { app: null }]) {
-    const pool = lookPool();
+  const row = FIRST_VERSION_ROW[1][0];
+  for (const [rows, bot, why] of [[[{ ...row, early_plan_status: 'failed', early_plan: null }], BOT, 'no_plan'], [[], BOT, 'no_plan'], [[row], {}, 'no_bot']]) {
+    const pool = fakePool([[FIRST_VERSION_ROW[0], rows]]);
     // eslint-disable-next-line no-await-in-loop
-    assert.equal(await early.startEarlyLook(pool, { app: APP, user: USER, brief: 'x', plan: PLAN, config: {}, bot: BOT, ...args }, deps), false);
-    assert.equal(pool.calls.length, 0);
+    assert.deepEqual(await look(pool, deps, bot), { skipped: why });
+    assert.equal(pool.calls.some((c) => /INSERT INTO first_version_early_looks/.test(c.sql)), false, why);
   }
-  // A database that is down: not started, and nothing thrown.
-  assert.equal(await early.startEarlyLook({ query: async () => { throw new Error('down'); } },
-    { app: APP, user: USER, brief: 'x', plan: PLAN, config: {}, bot: BOT }, deps), false);
+  // A database that is down: thrown, so its work tries again.
+  await assert.rejects(look({ query: async () => { throw new Error('down'); } }, deps), /down/);
   assert.equal(await early.forSpec({ query: async () => { throw new Error('down'); } }, { appId: 1, buildNote: 'x' }), null);
 });
 

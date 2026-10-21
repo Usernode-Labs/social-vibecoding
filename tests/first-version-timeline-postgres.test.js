@@ -179,14 +179,18 @@ test('a first version\'s timings are recorded where a run report reads them', { 
     });
     const base = { limits: { async recordSpend() {} }, bot: { projectMembers: async () => null, starterOfApp: async () => null }, botConfigs: { async currentVersion() { return null; } } };
     const secret = 'A private sentence about the club';
-    assert.equal(await fvPlan.startEarlyPlan(pool, { app: madeApp, user: maker, brief: 'Trivia' }, {
+    // Claimed with its making's work (PlanOwed → app.plan), which writes it.
+    const unusable = {
       ...base,
       llm: llm({
         text: JSON.stringify({ plan: [{ line: secret }], choices: [], build_note: secret, assumptions: [] }),
         reply: { finishReason: 'tool_calls', toolCallCount: 1, textChars: 0, routedProvider: 'Z.AI' },
       }),
-    }), true);
-    await fvPlan._pendingForTests.get(madeApp.id);
+    };
+    assert.equal(await fvPlan.startEarlyPlan(pool, { app: madeApp, user: maker, brief: 'Trivia' }, unusable), true);
+    const { rows: owed } = await pool.query(`SELECT machine, key, payload FROM wf_events WHERE type = 'PlanOwed' AND app_id = $1`, [madeApp.id]);
+    assert.deepEqual(owed.map((e) => [e.machine, e.key, e.payload.appId]), [['app-creation', `app:${madeApp.id}`, madeApp.id]]);
+    assert.deepEqual(await fvPlan.runEarlyPlan(pool, { appId: madeApp.id }, unusable), { planned: false });
     const { rows: [failed] } = await pool.query(
       'SELECT early_plan_status, early_plan_error, early_plan_reply FROM homeroom_bot_first_versions WHERE app_id = $1', [madeApp.id],
     );
@@ -206,11 +210,12 @@ test('a first version\'s timings are recorded where a run report reads them', { 
       `INSERT INTO homeroom_bot_first_versions (app_id, user_id, brief, bot_builds) VALUES ($1, $2, 'Books', TRUE)`,
       [usedApp.id, maker.id],
     );
-    await fvPlan.startEarlyPlan(pool, { app: usedApp, user: maker, brief: 'Books' }, {
+    const usable = {
       ...base,
       llm: llm({ text: JSON.stringify({ plan: ['Swap books', 'See who has what', 'Ask for one'], choices: [], build_note: 'One list.', assumptions: [] }) }),
-    });
-    await fvPlan._pendingForTests.get(usedApp.id);
+    };
+    await fvPlan.startEarlyPlan(pool, { app: usedApp, user: maker, brief: 'Books' }, usable);
+    assert.deepEqual(await fvPlan.runEarlyPlan(pool, { appId: usedApp.id }, usable), { planned: true });
     const { rows: [used] } = await pool.query(
       'SELECT early_plan_status, early_plan_reply FROM homeroom_bot_first_versions WHERE app_id = $1', [usedApp.id],
     );

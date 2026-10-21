@@ -43,7 +43,7 @@ function fixture(patch = {}) {
     save: (description, expectedVersion = 4, extra = {}) => edit.edit({
       pool, gh, sessionId: 42, userId: 7,
       input: edit.parseEdit({ description, expectedVersion }),
-      serialize: (_id, fn) => fn(), lock: (_pool, _id, fn) => fn(), ...extra,
+      lock: (_pool, _id, fn) => fn(), ...extra,
     }) };
 }
 

@@ -10,7 +10,7 @@
 // instead. `metadata.stage` is one of STAGES:
 //
 //   plan_written      its plan exists: written at Make it (source 'make_it',
-//                     first-version-plan.js startEarlyPlan, before there is a
+//                     first-version-plan.js runEarlyPlan, before there is a
 //                     run), or by the triage of its request (source
 //                     'triage', homeroom-bot.js awaitGo). { source, questions }
 //   go_ahead          Build it, or the made screen's Submit (goAhead).

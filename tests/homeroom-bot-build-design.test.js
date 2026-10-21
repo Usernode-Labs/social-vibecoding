@@ -441,29 +441,41 @@ test('a live first version passes the flag to its build, and a benchmark trial r
 
 // #4387: once a first version's spec is written, its drawn screens are
 // handed on for the App tab's first look, with the worker they can be drawn
-// in, and the build goes straight on without waiting for it.
-test('a first version\'s spec screens are handed to its first look, and nothing waits on it', async () => {
+// in. Drawn inside its step: the step is kept only once it is drawn, where a
+// drawing left running past it was lost to a restart with the step saying
+// it was done. A drawing that fails is not the build's failure.
+test('a first version\'s spec screens are handed to its first look, kept as drawn only once drawn', async () => {
   const HTML_SPEC = '<article data-spec><h1>Plants</h1><section data-spec-tab="user"><figure data-screens>'
     + '<template data-screen data-size="phone"><div data-side="after" data-change="1">Today</div></template>'
     + '<ol data-changes><li>The list</li></ol></figure><p>What changes.</p></section>'
     + '<section data-spec-tab="tech"><p>How.</p></section></article>';
-  const h = buildHarness();
-  h.deps.seesImages = true;
-  const exec = h.deps.worker.execInWorker;
-  h.deps.worker.execInWorker = async (id, opts) => (opts.mode === 'scout' ? { lastResultText: HTML_SPEC } : exec(id, opts));
+  const { steps } = require('../src/workflow/kernel/steps.ts');
+  const run = async (onFirstLook) => {
+    const h = buildHarness();
+    h.deps.seesImages = true;
+    const saved = [];
+    h.deps.durable = steps({ checkpoint: async (v) => { saved.push(v); if ('first_look' in v && !order.includes('kept')) order.push('kept'); } });
+    const exec = h.deps.worker.execInWorker;
+    h.deps.worker.execInWorker = async (id, opts) => (opts.mode === 'scout' ? { lastResultText: HTML_SPEC } : exec(id, opts));
+    const built = await live.buildAndPropose({ pool: h.pool, deps: h.deps, ...ARGS, model: 'm', firstVersion: true, onFirstLook: (a) => onFirstLook(a, saved) });
+    return { built, saved };
+  };
   const looks = [];
-  let release;
-  const held = new Promise((r) => { release = r; });
-  const built = await live.buildAndPropose({
-    pool: h.pool, deps: h.deps, ...ARGS, model: 'm', firstVersion: true,
-    onFirstLook: async (args) => { looks.push(args); await held; },
+  const order = [];
+  const { built, saved } = await run(async (args) => {
+    looks.push(args);
+    await new Promise((r) => setTimeout(r, 5));
+    order.push('drawn');
   });
-  release();
-  assert.equal(built.ok, true, 'built while the first look was still being drawn');
+  assert.deepEqual(order, ['drawn', 'kept'], 'kept as drawn only once it is');
+  assert.equal(built.ok, true);
   assert.equal(looks.length, 1);
   assert.equal(looks[0].containerName, 'w');
   assert.ok(looks[0].specHtml.includes('<template data-screen data-size="phone">'));
   assert.equal('specHtml' in built, false, 'the HTML is never carried onto the result');
+  assert.ok(saved.some((v) => v.first_look === true), 'kept once drawn');
+  const failed = await run(async () => { throw new Error('no worker'); });
+  assert.equal(failed.built.ok, true, 'a drawing that fails is not the build\'s failure');
 
   // A markdown spec draws nothing to look at.
   const md = buildHarness();

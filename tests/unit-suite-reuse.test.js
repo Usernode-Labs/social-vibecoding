@@ -830,7 +830,7 @@ test('postgres, real settlement: a pass becomes reusable only when its history o
   assert.match(read('src/workflow/preview/machine.ts'), /if \(w\.unitObserved && history\.some\(\(h: any\) => h && h\.checkKey === w\.unitObserved\s+&& \(Number\.isInteger\(h\.passes\) \? h\.passes > 0 : !!h\.passed\)\)\) \{\s+await store\.markUnitPassObserved/);
 });
 
-test('postgres: a request folded into a busy session stamps the head pending and starts the owed run once idle', async (t) => {
+test('postgres: a request folded into a busy session is owed a fresh suite; the machine stamps it and runs it once idle', async (t) => {
   const pool = await fullSchemaDb(t);
   if (!pool) return;
   const { rows: [app] } = await pool.query("INSERT INTO apps (slug, name, repo_url) VALUES ('busy-test', 'T', 'https://github.com/o/r') RETURNING id");
@@ -847,51 +847,21 @@ test('postgres: a request folded into a busy session stamps the head pending and
   await reuse.markFreshOwed(pool, { sessionId: s.id, commitSha: SHA });
   assert.equal((await row()).check_state, 'passing');
   assert.equal(unitSuiteRow.freshSuiteOwed(await row()), true, 'the merge gate reads it as not checked, real old pass or not');
-  let busy = 2;
-  const rechecks = [];
-  // The stamp is the preview machine's (RecheckFolded, through the real
-  // runtime in tests/unit-suite-reuse-machine-postgres.test.js); here its
-  // write stands in for it.
-  const folded = [];
-  const platform = { recheckFolded: async (o) => {
-    folded.push(o);
-    await rowStore.setChecksPending(pool, o.sessionId, o.head, null, 'manual-recheck');
-  } };
-  await reuse.owePendingRun({
-    pool, platform, config: {}, session: { ...s, checks_commit_sha: SHA }, busy: () => busy-- > 0, pollMs: 10,
-    stagingRecovery: { recheckSessionChecks: async (args) => { rechecks.push(args.reason); } },
-  });
-  assert.deepEqual(folded, [{ sessionId: s.id, appId: app.id, head: SHA }], 'the machine is asked, for the head they asked about');
-  let r = await row();
-  assert.equal(r.check_state, 'pending', 'the old pass no longer stands');
-  assert.equal(r.check_trigger, 'manual-recheck');
-  assert.equal(unitSuiteRow.freshSuiteOwed(r), true);
-  // Pending and owed: in the error lane's scope, and the machine's own
-  // ChecksDue runs it if this process goes (the drain test below).
-  assert.equal(require('../src/services/staging-recovery').isStuckCheckRecoveryScope({ ...r, status: 'active', source: 'native' }), true);
-  for (let i = 0; i < 100 && !rechecks.length; i += 1) await new Promise((res) => setTimeout(res, 10));
-  assert.deepEqual(rechecks, ['manual-recheck'], 'idle again: the owed run starts');
+
+  // The stamp and the owed run are the preview machine's (RecheckFolded and
+  // its ChecksDue, through the real runtime in
+  // tests/unit-suite-reuse-machine-postgres.test.js): the route's own poll
+  // of the session in its process's memory, lost to a restart, is gone.
+  assert.equal(typeof reuse.owePendingRun, 'undefined');
+  const route = read('src/routes/sessions.js');
+  const recheck = route.slice(route.indexOf("router.post('/api/sessions/:id/recheck'"), route.indexOf("router.post('/api/sessions/:id/recheck'") + 9000);
+  assert.match(recheck, /if \(await isSessionBusyAnywhere\(sessionId, \{ pool \}\)\) \{\s+if \(requestedHead\) \{\s+await require\('\.\.\/workflow\/platform\.ts'\)\.recheckFolded\(\{/);
 
   // The owed run's real suite settles it.
   assert.equal(await rowStore.storeChecks(pool, s.id, SHA, { state: 'passing', results: [realUnit] }), true);
-  r = await row();
+  const r = await row();
   assert.equal(r.unit_suite_fresh_sha, null);
   assert.equal(unitSuiteRow.freshSuiteOwed(r), false);
-
-  // Already answered by the time the session is idle: nothing more starts.
-  await reuse.markFreshOwed(pool, { sessionId: s.id, commitSha: SHA });
-  const more = [];
-  await reuse.owePendingRun({
-    pool, platform, config: {}, session: { ...s, checks_commit_sha: SHA }, busy: () => false, pollMs: 10,
-    stagingRecovery: { recheckSessionChecks: async (args) => { more.push(args.reason); } },
-  });
-  await rowStore.storeChecks(pool, s.id, SHA, { state: 'passing', results: [realUnit] });
-  await new Promise((res) => setTimeout(res, 60));
-  assert.deepEqual(more, []);
-
-  const route = read('src/routes/sessions.js');
-  const recheck = route.slice(route.indexOf("router.post('/api/sessions/:id/recheck'"), route.indexOf("router.post('/api/sessions/:id/recheck'") + 9000);
-  assert.match(recheck, /const busyNow = \(\) => isSessionBusyAnywhere\(sessionId, \{ pool \}\);\s+if \(await busyNow\(\)\) \{\s+await require\('\.\.\/services\/unit-suite-reuse'\)\.owePendingRun\(\{\s+pool, stagingRecovery, config, session, busy: busyNow, head: requestedHead,\s+\}\);\s+return res\.json\(\{ status: 'running' \}\);/);
 });
 
 // The settlement's view of a run with no unit-suite row while a fresh run is
@@ -982,8 +952,7 @@ test('postgres, real settlement: a unit pass behind as many browser checks as th
 
 test('postgres: once the in-process drain is gone, the preview machine itself runs every open proposal\'s owed fresh run of its head', async (t) => {
   // The route's busy branch folds a person's request into what the session
-  // is doing (owePendingRun → the machine's RecheckFolded) and waits in
-  // process for it to be idle. When that process goes, the machine's own
+  // is doing (the machine's RecheckFolded), and the machine's own
   // deadline (ChecksDue, src/workflow/preview/machine.ts) runs the request
   // once nobody works on the session. It replaced the leader's stuck-checks
   // sweeps. The real machine and kernel; the work kinds are faked, as in
@@ -1092,7 +1061,9 @@ test('postgres: once the in-process drain is gone, the preview machine itself ru
     const i = await instance(id);
     assert.equal(i.deadline_event?.type, 'ChecksDue', 'the machine owes the run itself');
     const inMs = new Date(i.deadline_at).getTime() - Date.now();
-    assert.ok(inMs > 9 * 60 * 1000 && inMs <= 10 * 60 * 1000, `ten minutes on: ${inMs}`);
+    // A minute on, and every minute while somebody works there: the route's
+    // own poll of the session (lost to a restart) is gone.
+    assert.ok(inMs > 50 * 1000 && inMs <= 60 * 1000, `a minute on: ${inMs}`);
   }
   // Any transition reads what the row owes: the release's IdleDue to an
   // instance with no deadline arms nothing for one that owes nothing.

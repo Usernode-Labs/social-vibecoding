@@ -64,12 +64,14 @@ const MAX_TESTS = 50;
 const COMMIT_UPLOAD_JSON_LIMIT = '12mb';
 const RFC3339_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
 
-// The staging/visuals tail and its per-session serialization moved to
-// services/handoff-pipeline.js in #907, so a local coding agent attached to
-// an ordinary native session finishes through exactly the same code path this
-// route has always used. Re-exported below for existing importers and tests.
+// The staging/visuals tail moved to services/handoff-pipeline.js in #907, so
+// a local coding agent attached to an ordinary native session finishes
+// through exactly the same code path this route has always used.
+// Re-exported below for existing importers and tests. A submission's
+// adoption is ordered per session by the proposal lock, on any process: an
+// older request can never persist its SHA after a newer one and regress the
+// durable reviewed head (it was a promise chain in each process).
 const {
-  serializeHandoffSubmission,
   hasInFlightHandoffPipeline,
   beginHandoffPipeline,
   startHandoffPipeline,
@@ -1443,7 +1445,7 @@ function proposalHandoffRoutes(config) {
         return res.status(500).json({ error: 'Internal server error' });
       }
       try {
-        return await serializeHandoffSubmission(sessionId, async () => {
+        return await proposalUpdate.withProposalLock(pool, sessionId, async () => {
         const session = await loadOwnedHandoff(pool, sessionId, req.user.id);
         if (!session) return res.status(404).json({ error: 'Handoff session not found' });
         const revisionKind = managedRevisionKind(session);
@@ -1624,7 +1626,7 @@ function proposalHandoffRoutes(config) {
       return res.status(500).json({ error: 'Internal server error' });
     }
     try {
-      return await serializeHandoffSubmission(sessionId, async () => {
+      return await proposalUpdate.withProposalLock(pool, sessionId, async () => {
         const session = await loadOwnedHandoff(pool, sessionId, req.user.id);
         if (!session) return res.status(404).json({ error: 'Handoff session not found' });
         const revisionKind = managedRevisionKind(session);
@@ -2055,7 +2057,6 @@ module.exports = {
   startRequestFingerprint,
   publicSessionStatus,
   currentCheckedHead,
-  serializeHandoffSubmission,
   hasInFlightHandoffPipeline,
   ValidationError,
   SOURCE,

@@ -35,7 +35,7 @@ function stub(id, exports) {
 
 // A proposal up for a vote at epoch 2, with the viewer's current Yes on it.
 function makePool({ status = 'promoted', epoch = 2, vote = { vote: 'yes', epoch: 2 }, missing = false } = {}) {
-  const state = { status, epoch, vote, missing };
+  const state = { status, epoch, vote, missing, told: [] };
   const log = [];
   const sessionRow = () => ({
     id: 7, app_id: 5, user_id: 9, status: state.status, pr_number: 26, pr_title: 'Dark mode',
@@ -58,6 +58,10 @@ function makePool({ status = 'promoted', epoch = 2, vote = { vote: 'yes', epoch:
         if (!v || v.epoch !== state.epoch) return { rows: [], rowCount: 0 };
         state.vote = null;
         return { rows: [{ vote: v.vote, reason: v.reason || null }], rowCount: 1 };
+      }
+      if (/INSERT INTO wf_events/.test(text)) {
+        state.told.push({ text, params });
+        return { rows: [{}] };
       }
       throw new Error(`unexpected client query: ${text.slice(0, 80)}`);
     },
@@ -98,7 +102,7 @@ function loadVotes(pool, { member = true, reopened = 1 } = {}) {
 
   const seen = {
     systemMessages: [], voteUpdates: [], bells: [], withdrawn: [], events: [],
-    reopened: [], noted: [], merges: [],
+    reopened: [], merges: [],
   };
   stub(ids.logger, { info() {}, warn() {}, error() {}, debug() {} });
   stub(ids.pool, { getPool: () => pool });
@@ -135,7 +139,6 @@ function loadVotes(pool, { member = true, reopened = 1 } = {}) {
   stub(ids.botDm, {
     ...realBotDm,
     noteApprovalWithdrawn: async (_pool, sessionId, userId) => { seen.reopened.push({ sessionId, userId }); return reopened; },
-    noteVoted: async (_pool, sessionId, deps) => { seen.noted.push({ sessionId, deps }); return null; },
   });
   stub(ids.platform, {
     wantMerge: async (m) => { seen.merges.push(m); },
@@ -182,14 +185,18 @@ test('a current Yes is taken back under the row lock, and everything derived fro
     assert.equal(r.status, 200);
     assert.deepEqual(await r.json(), { ok: true, retracted: true, merged: false, vote: 'yes', readyReopened: true });
     assert.equal(pool.state.vote, null, 'the row is gone');
-    assert.deepEqual(pool.log, ['BEGIN', 'SELECT status, approval_epoch', 'DELETE FROM pr_votes', 'COMMIT'],
+    assert.deepEqual(pool.log, ['BEGIN', 'SELECT status, approval_epoch', 'DELETE FROM pr_votes', 'WITH told AS', 'COMMIT'],
       'the lock first, then the delete, in one transaction');
     assert.equal(pool.client.released, 1);
 
     assert.deepEqual(ctx.seen.withdrawn, [{ sessionId: 7, voterId: 3 }], 'the author\'s "voted yes" goes');
     assert.deepEqual(ctx.seen.bells, [{ userId: 9, msg: { type: 'notifications_changed' } }], 'and their bell re-syncs');
     assert.deepEqual(ctx.seen.reopened, [{ sessionId: 7, userId: 3 }], 'a Yes reopens the ready cards it settled');
-    assert.deepEqual(ctx.seen.noted, [{ sessionId: 7, deps: {} }], 'the asker\'s card is read again, with no "approved it" line');
+    // The bot's change machine hears it in the retraction's own transaction:
+    // the asker's card is read again, with no "approved it" line.
+    assert.equal(pool.state.told.length, 1);
+    assert.match(pool.state.told[0].text, /'Voted'[\s\S]*'retracted'[\s\S]*wi\.machine = 'bot-change' AND wi\.key = 'session:' \|\| \$1::int/);
+    assert.deepEqual(pool.state.told[0].params, [7, 3, 2]);
 
     assert.equal(ctx.seen.systemMessages.length, 1);
     const line = ctx.seen.systemMessages[0];

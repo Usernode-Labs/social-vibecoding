@@ -594,19 +594,18 @@ function agentSessionRoutes(config, { scheduleInteractiveRecovery = null } = {})
           attachments,
           clientMessageId,
           title: session.title ? null : agentTurn.titleFromMessage(message),
+          // #3752: a conversation opened on a request is named after the
+          // request, not after this message: work of the turn's own (the
+          // turn machine's turn.name, beside its run), since the request is
+          // read from GitHub and the turn never waits on that.
           ask: (db, { messageId }) => asked({
             messageText: message, attachments, recorded: { id: messageId, clientMessageId },
+            ...(!session.title && session.focusContext && session.focusContext.issueNumber ? { nameFromRequest: true } : {}),
           })(db),
         });
         if (started.duplicate) return duplicate(started);
         if (started.busy) {
           return res.status(409).json({ error: 'The Mayor is already answering in this conversation.', busy: true });
-        }
-        // #3752: a conversation opened on a request is named after the
-        // request, not after this message. Not awaited: the request is read
-        // from GitHub, and the turn never waits on that.
-        if (!session.title && session.focusContext && session.focusContext.issueNumber) {
-          void agentSessions.nameFromRequest(pool, { agentSessionId: id, userId: req.user.id });
         }
       }
       res.writeHead(200, {

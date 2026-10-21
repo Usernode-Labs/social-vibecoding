@@ -2315,15 +2315,34 @@ function parseExpectedEpoch(raw) {
   return Number.isFinite(n) ? n : null;
 }
 
+// A vote on one of the Homeroom bot's changes is told to its bot-change
+// machine (src/workflow/bot-change/: its requester's tray reads again, and a
+// yes is said in the request's thread) in the vote's own statement, so a
+// restart after the commit loses nothing. `vote` is 'retracted' for one taken
+// back. Only a change the machine follows has an instance: any other vote
+// tells nobody. The machine and its key are rules/bot-notes.ts BOT_CHANGE and
+// botChangeKey.
+// Each value is SQL: a parameter or a column of `from`, a row source the
+// statement already has.
+const botChangeVotedSql = ({ from = null, sessionId, voterId, voter, vote, epoch }) => `
+  INSERT INTO wf_events (machine, key, app_id, type, payload, source, actor, request_key, caused_by)
+  SELECT wi.machine, wi.key, wi.app_id, 'Voted',
+         jsonb_build_object('sessionId', ${sessionId}, 'voterId', ${voterId}, 'voter', ${voter}, 'vote', ${vote}, 'epoch', ${epoch}),
+         '{"kind":"route","name":"vote"}'::jsonb, NULL, 'voted:' || gen_random_uuid(), NULL
+    FROM ${from ? `${from}, ` : ''}wf_instances wi
+   WHERE wi.machine = 'bot-change' AND wi.key = 'session:' || ${sessionId}
+  RETURNING id`;
+
 async function recordVote({
-  pool, session, userId, vote, headSha, revisionEnforced, reason = null, expectedEpoch = null,
+  pool, session, userId, vote, headSha, revisionEnforced, reason = null, expectedEpoch = null, voter = null,
 }) {
   // One statement for every proposal, an imported one's included (bug 5):
   // the row is locked and must be up for a vote, so a vote racing an
   // unpromote either lands before it (and is voided with the epoch it
   // bumps) or finds the proposal Underway and is refused. The stamp is the
   // epoch read under that lock. An epoch the voter's screen was drawn at
-  // (#2782) is held to when the revision is enforced.
+  // (#2782) is held to when the revision is enforced. The bot's change
+  // machine hears it in the same statement (botChangeVotedSql).
   return pool.query(
     `WITH current_session AS (
        SELECT id, approval_epoch
@@ -2331,7 +2350,8 @@ async function recordVote({
         WHERE id = $1
           AND status IN ('promoted', 'merging')
         FOR UPDATE
-     )
+     ),
+     v AS (
      INSERT INTO pr_votes (session_id, user_id, vote, head_sha, approval_epoch, reason)
      SELECT id, $2, $3, $4, approval_epoch, $5 FROM current_session
       WHERE $6::integer IS NULL OR approval_epoch = $6::integer
@@ -2339,8 +2359,12 @@ async function recordVote({
        SET vote = EXCLUDED.vote, head_sha = EXCLUDED.head_sha,
            approval_epoch = EXCLUDED.approval_epoch, created_at = NOW(),
            ${VOTE_REASON_UPSERT_SQL}
-     RETURNING id, reason`,
-    [session.id, userId, vote, headSha, reason, revisionEnforced ? parseExpectedEpoch(expectedEpoch) : null]
+     RETURNING id, reason, session_id, approval_epoch
+     ),
+     told AS (${botChangeVotedSql({ from: 'v', sessionId: 'v.session_id', voterId: '$2::int', voter: '$7::text', vote: '$3::text', epoch: 'v.approval_epoch' })})
+     SELECT v.id, v.reason, (SELECT pg_notify('wf_events', 'bot-change') FROM told LIMIT 1) IS NOT NULL AS told
+       FROM v`,
+    [session.id, userId, vote, headSha, reason, revisionEnforced ? parseExpectedEpoch(expectedEpoch) : null, voter]
   );
 }
 
@@ -2388,6 +2412,15 @@ async function retractVote({ pool, sessionId, userId, expectedEpoch = null }) {
         RETURNING pv.vote, pv.reason`,
       [sessionId, userId]
     );
+    // Whoever asked the bot for this change reads their card again, so it
+    // names who it waits on now (no "approved it" line: there is no vote).
+    if (removed) {
+      await client.query(
+        `WITH told AS (${botChangeVotedSql({ sessionId: '$1::int', voterId: '$2::int', voter: 'NULL::text', vote: "'retracted'", epoch: '$3::int' })})
+         SELECT (SELECT pg_notify('wf_events', 'bot-change') FROM told LIMIT 1)`,
+        [sessionId, userId, epoch || 0]
+      );
+    }
     await client.query('COMMIT');
     if (removed) {
       out.vote = removed.vote;
@@ -3326,6 +3359,7 @@ function voteRoutes(config) {
         revisionEnforced: !!revision.enforced,
         reason,
         expectedEpoch: req.body?.expectedEpoch,
+        voter: req.user.username || null,
       });
       // The line the row now carries: the one sent, or the earlier one the
       // upsert kept for a same-side re-cast (a Yes carried onto a new
@@ -3424,10 +3458,9 @@ function voteRoutes(config) {
         return res.json({ ok: true, merged: false, unchanged: false, reasonUpdated: true, ...readyCard });
       }
       // 5 Oct: whoever asked Homeroom bot for this change reads their ready
-      // card again, so it says who it still waits on now. One indexed read
-      // when it is not the bot's. Never throws.
-      // One story: a yes is said in the request's thread too (noteVoted).
-      void require('../services/homeroom-bot-dm').noteVoted(pool, session.id, { voter: req.user, vote });
+      // card again, so it says who it still waits on now, and a yes is said
+      // in the request's thread too: the bot's change machine heard the vote
+      // in its own statement (recordVote).
 
       const voteLabel = session.pr_title
         ? `PR #${session.pr_number || session.id}: ${session.pr_title}`
@@ -3614,9 +3647,8 @@ function voteRoutes(config) {
         ? await botDm.noteApprovalWithdrawn(pool, sessionId, req.user.id)
         : 0;
       const readyCard = reopened ? { readyReopened: true } : {};
-      // Whoever asked the bot for this change reads their card again, so it
-      // names who it waits on now. No vote, so no "approved it" line.
-      void botDm.noteVoted(pool, sessionId, {});
+      // Whoever asked the bot for this change reads their card again: the
+      // bot's change machine heard the retraction in its own transaction.
 
       // The vote's own line stays in the proposal's thread, as a flip's
       // earlier line does; this line says it no longer stands.
@@ -5785,10 +5817,12 @@ async function evaluateMergeGate(config, pool, session, options = {}) {
     const freshSuiteOwed = require('../services/unit-suite-row').freshSuiteOwed(checkRows[0]);
     // A verdict deferred while the head conflicted (check_phase 'deferred',
     // services/check-admission.js). The integration gate just measured this
-    // head clean, so the run that judges it can start now — the same kick
-    // integration.onBecameClean makes, made here too so a merge attempt
-    // never waits on a hook that did not fire. The preview machine joins a
-    // second kick for the same head, so a double kick costs nothing.
+    // head clean, so the run that judges it can start now. The measurement
+    // that flipped it told the preview machine in its own statement
+    // (integration.measure); this covers a head deferred after that flip
+    // (its run reported 'deferred' once the head already merged cleanly), so
+    // a merge attempt never waits on it. The machine joins a second kick for
+    // the same head, so a double kick costs nothing.
     const checksDeferred = checkRows[0]?.check_state === 'pending'
       && checkRows[0]?.check_phase === 'deferred';
     // A run waiting for a checks slot (services/checks-queue.js): built, in
@@ -6631,6 +6665,7 @@ module.exports = {
   MAX_IMPORT_SUMMARY,
   MAX_IMPORT_LINKED_ISSUES,
   recordVote,
+  retractVote,
   parseExpectedEpoch,
   settleVoteInBackground,
   // #1688: the line on a vote and the names at merge, unit-tested directly.

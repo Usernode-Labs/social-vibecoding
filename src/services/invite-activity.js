@@ -39,7 +39,9 @@
 // or joins: nothing can tell them apart before then.
 //
 // Everything here is best-effort and never throws: a join, a page view or a
-// message must not fail because telling somebody about it did.
+// message must not fail because telling somebody about it did. The email is
+// the exception: it is owed by the notice that rang (`mailed_at` NULL), and
+// sent by the notice-mail clock as work that tries again (activity-mail.js).
 
 const crypto = require('crypto');
 const events = require('./events');
@@ -121,11 +123,13 @@ async function ring(pool, { userId, appId, kind, sourceUserId = null, chatMessag
     let row = bumped[0] || null;
     const fresh = !row;
     if (!row) {
+      // The day's first owes its email (activity-mail.js NOTICE_MAIL_KINDS):
+      // `mailed_at` NULL, which the notice-mail clock sends.
       const { rows } = await client.query(
-        `INSERT INTO notifications (user_id, app_id, chat_message_id, source_user_id, kind)
-         VALUES ($1, $2, $3, $4, $5)
+        `INSERT INTO notifications (user_id, app_id, chat_message_id, source_user_id, kind, mailed_at)
+         VALUES ($1, $2, $3, $4, $5, CASE WHEN $6 THEN NULL ELSE NOW() END)
          RETURNING id, user_id, app_id, chat_message_id, source_user_id, kind, detail, created_at`,
-        [userId, appId, chatMessageId, sourceUserId, kind],
+        [userId, appId, chatMessageId, sourceUserId, kind, require('./activity-mail').NOTICE_MAIL_KINDS.has(kind)],
       );
       row = rows[0];
     }
@@ -139,17 +143,6 @@ async function ring(pool, { userId, appId, kind, sourceUserId = null, chatMessag
   } finally {
     client.release();
   }
-}
-
-/**
- * The email that stands in for a push the maker cannot get
- * (services/activity-mail.js). Only for the first moment of the day.
- */
-function mailFor(pool, result, { appName, appSlug, line }) {
-  if (!result?.fresh) return;
-  void require('./activity-mail').emailIfNoPush(pool, {
-    userId: result.row.user_id, kind: 'invite_activity', appName, appSlug, line,
-  });
 }
 
 /**
@@ -171,12 +164,7 @@ async function noteJoined(pool, { inviteId, user, browser = null }) {
     const invite = rows[0];
     if (!invite || invite.created_by == null || !user?.id || Number(invite.created_by) === Number(user.id)) return null;
     await settleOpen(pool, { makerId: invite.created_by, appId: invite.app_id, userId: user.id, browser });
-    const result = await ring(pool, { userId: invite.created_by, appId: invite.app_id, kind: 'member_joined', sourceUserId: user.id });
-    mailFor(pool, result, {
-      appName: invite.name, appSlug: invite.slug,
-      line: `${invite.username ? `@${invite.username}` : 'Someone'} joined ${invite.name} through your invite.`,
-    });
-    return result;
+    return await ring(pool, { userId: invite.created_by, appId: invite.app_id, kind: 'member_joined', sourceUserId: user.id });
   } catch (err) {
     log.warn('invite-activity', 'Could not tell a link\'s maker about a join', { inviteId, err: err.message });
     return null;
@@ -481,14 +469,9 @@ async function noteFirstMessage(pool, { appId, userId, chatMessageId }) {
     );
     const hello = rows[0];
     if (!hello) return null;
-    const result = await ring(pool, {
+    return await ring(pool, {
       userId: hello.created_by, appId, kind: 'first_message', sourceUserId: userId, chatMessageId,
     });
-    mailFor(pool, result, {
-      appName: hello.name, appSlug: hello.slug,
-      line: `@${hello.username} said hi in ${hello.name}.`,
-    });
-    return result;
   } catch (err) {
     log.warn('invite-activity', 'Could not tell a link\'s maker about a first message', { appId, err: err.message });
     return null;

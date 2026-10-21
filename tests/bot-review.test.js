@@ -626,7 +626,6 @@ test('a last look is written into the run\'s stored review once, beside its roun
   assert.equal(failed.error, 'HTTP 503');
   assert.equal(JSON.parse(failing.queries[1].params[2]).error, 'HTTP 503');
   assert.equal(await review.startFinalLook({ pool: lookPool({ fail: /jsonb_set/ }), runId: 900, state: out, review: reviewer }), null);
-  await review.finalLooksSettled();
 });
 
 test('a run keeps its review slim: where each screenshot is, never the checks\' samples or the boot log', () => {
@@ -1025,6 +1024,11 @@ test('run seven: a first version stopped by its round limit gets a last look tha
   };
   const states = [];
   const progress = [];
+  // On the build item's steps: the look runs beside them, and the item's
+  // last act (its flush) waits for it, so a restart takes it again rather
+  // than losing it.
+  const kept = [];
+  h.deps.durable = require('../src/workflow/kernel/steps.ts').steps({ checkpoint: async (v) => { kept.push(v); } });
   const out = await live.buildAndPropose({
     pool, deps: h.deps, ...ARGS, harnessOf: live.recipeHarness, onProgress: (line) => progress.push(line),
     review: { reviewer: { ...REVIEWER, maxRounds: 2 }, owner: { botRunId: 900 }, onState: async (s) => { states.push(s); } },
@@ -1036,7 +1040,8 @@ test('run seven: a first version stopped by its round limit gets a last look tha
   assert.equal(out.review.rounds.length, 2);
   assert.deepEqual(review.summaryOf(out.review), { rounds: 2, stop: 'round_limit' });
   assert.ok(Math.abs(out.review.costUsd - (0.2 + 0.13 + 0.2 + 0.13)) < 1e-9, 'the review\'s own cost, without the look');
-  await review.finalLooksSettled();
+  await h.deps.durable.flush();
+  assert.ok(h.deps.durable.has('final_look'), 'kept once taken');
   // Then the look: the final capture, with round 2's issue as PREVIOUS ISSUES.
   assert.equal(reviewerCalls.length, 3);
   assert.match(reviewerCalls[2], /^ROUND 3 of 3\./);

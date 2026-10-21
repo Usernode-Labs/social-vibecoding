@@ -18,8 +18,10 @@
 // The sentence is kept per change and language (check_explanations) for the
 // run it was written for (`run_at`, the run's checks_checked_at), so every
 // later viewer of that run in that language reads the same row, and a new
-// run is written again the first time it is read. Concurrent first readers
-// share one call.
+// run is written again the first time it is read. Concurrent first readers,
+// on any process, share one call: the first claims the row for its run (a
+// lease, `generating_until`, a crash lets lapse) and the others wait for what
+// it writes. It was a promise in each process's memory: two Pods, two calls.
 //
 // WHEN IT CANNOT. No model configured, the call failed, or nothing in the
 // run names a failure: the answer is null and the page shows the failure's
@@ -40,6 +42,11 @@ try {
 } catch { /* English only */ }
 
 const RETRY_MS = 30 * 60 * 1000;
+// How long a call holds its row, and how long a reader who found it held
+// waits for what it writes before answering with none.
+const CLAIM_LEASE_MS = 2 * 60 * 1000;
+const WAIT_MS = 20 * 1000;
+const WAIT_STEP_MS = 400;
 // What one call reads: the first few failing checks, the first few failing
 // tests of the unit suite, each clipped. The diagnosis is in the first lines.
 const MAX_CHECKS = 4;
@@ -136,45 +143,66 @@ async function writeCached(pool, { sessionId, language, runAt, explanation = nul
        explanation = EXCLUDED.explanation,
        model = EXCLUDED.model,
        failed_at = EXCLUDED.failed_at,
+       generating_until = NULL,
        updated_at = NOW()
      WHERE check_explanations.run_at <= EXCLUDED.run_at`,
     [sessionId, language, runAt, explanation, model ? String(model).slice(0, 64) : null, !!failed]
   );
 }
 
-// One call per run and language per process at a time; later askers share it.
-const inFlight = new Map();
+// The one call for a run and language, on any process: its row claimed for
+// the run (what an earlier run's row said goes; one already written for this
+// run, or a newer run's, is kept), unless another call holds it.
+async function claim(pool, sessionId, language, runAt) {
+  const { rows } = await pool.query(
+    `INSERT INTO check_explanations (session_id, language, run_at, generating_until, updated_at)
+     VALUES ($1, $2, $3, NOW() + make_interval(secs => $4::double precision / 1000), NOW())
+     ON CONFLICT (session_id, language) DO UPDATE SET
+       run_at = EXCLUDED.run_at, explanation = NULL, model = NULL, failed_at = NULL,
+       generating_until = EXCLUDED.generating_until, updated_at = NOW()
+     WHERE check_explanations.run_at <= EXCLUDED.run_at
+       AND (check_explanations.generating_until IS NULL OR check_explanations.generating_until < NOW())
+       AND NOT (check_explanations.run_at = EXCLUDED.run_at AND check_explanations.explanation IS NOT NULL)
+     RETURNING generating_until`,
+    [sessionId, language, runAt, CLAIM_LEASE_MS]
+  );
+  return rows.length > 0;
+}
 
-function generate(pool, session, language, runAt) {
-  const key = `${session.id}:${toMs(runAt)}:${language}`;
-  if (inFlight.has(key)) return inFlight.get(key);
+// What the call another reader claimed wrote, read until it is there (or it
+// failed, or a newer run took the row), for at most `waitMs`.
+async function written(pool, sessionId, language, runAt, waitMs) {
+  const until = Date.now() + waitMs;
+  for (;;) {
+    const row = await readCached(pool, sessionId, language);
+    if (row && toMs(row.run_at) === runAt.getTime() && row.explanation) return row.explanation;
+    if (!row || toMs(row.run_at) !== runAt.getTime() || row.failed_at) return null;
+    if (Date.now() >= until) return null;
+    await new Promise((resolve) => setTimeout(resolve, WAIT_STEP_MS));
+  }
+}
+
+async function generate(pool, session, language, runAt, { waitMs = WAIT_MS } = {}) {
   const input = explanationInput(session.test_results);
-  if (!input) return Promise.resolve(null);
-  // Started in a microtask, so the entry is in the map before the body can
-  // reach its `finally` and take it out.
-  const run = Promise.resolve().then(async () => {
+  if (!input) return null;
+  if (!(await claim(pool, session.id, language, runAt))) return written(pool, session.id, language, runAt, waitMs);
+  try {
+    const out = await llm.generateChecksExplanation({
+      input,
+      language: `${LANGUAGES[language]} (${language})`,
+      telemetryContext: { pool, appId: session.app_id, sessionId: session.id },
+    });
+    await writeCached(pool, { sessionId: session.id, language, runAt, explanation: out.explanation, model: out.model });
+    return out.explanation;
+  } catch (err) {
+    log.warn('checks-explanation', 'generation failed', { sessionId: session.id, message: err.message });
     try {
-      const out = await llm.generateChecksExplanation({
-        input,
-        language: `${LANGUAGES[language]} (${language})`,
-        telemetryContext: { pool, appId: session.app_id, sessionId: session.id },
-      });
-      await writeCached(pool, { sessionId: session.id, language, runAt, explanation: out.explanation, model: out.model });
-      return out.explanation;
-    } catch (err) {
-      log.warn('checks-explanation', 'generation failed', { sessionId: session.id, message: err.message });
-      try {
-        await writeCached(pool, { sessionId: session.id, language, runAt, failed: true });
-      } catch (writeErr) {
-        log.warn('checks-explanation', 'failure record failed', { sessionId: session.id, message: writeErr.message });
-      }
-      return null;
-    } finally {
-      inFlight.delete(key);
+      await writeCached(pool, { sessionId: session.id, language, runAt, failed: true });
+    } catch (writeErr) {
+      log.warn('checks-explanation', 'failure record failed', { sessionId: session.id, message: writeErr.message });
     }
-  });
-  inFlight.set(key, run);
-  return run;
+    return null;
+  }
 }
 
 /**
@@ -185,7 +213,7 @@ function generate(pool, session, language, runAt) {
  * checks_checked_at, test_results). The caller has already decided the
  * viewer may read that row.
  */
-async function explain(pool, session, { language = 'en', now = Date.now() } = {}) {
+async function explain(pool, session, { language = 'en', now = Date.now(), waitMs = WAIT_MS } = {}) {
   if (!session || session.check_state !== 'failing' || !session.checks_checked_at) return null;
   const runAt = new Date(session.checks_checked_at);
   if (Number.isNaN(runAt.getTime())) return null;
@@ -196,7 +224,7 @@ async function explain(pool, session, { language = 'en', now = Date.now() } = {}
   if (sameRun && cached.failed_at && now - toMs(cached.failed_at) < RETRY_MS) return null;
   if (cached && toMs(cached.run_at) > runAt.getTime()) return null;
   if (!llm.isEnabled()) return null;
-  return generate(pool, session, lang, runAt);
+  return generate(pool, session, lang, runAt, { waitMs });
 }
 
 module.exports = {
@@ -204,5 +232,5 @@ module.exports = {
   explanationInput,
   languageOf,
   RETRY_MS,
-  _inFlight: inFlight,
+  CLAIM_LEASE_MS,
 };

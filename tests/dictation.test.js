@@ -5,6 +5,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const express = require('express');
+const { withDictationClaims } = require('./lib/dictation-claims');
 const { loadTsx, renderToHtml } = require('./lib/render-tsx');
 const { message } = require('./lib/platform-i18n');
 const { pcmWav, appendTranscript, DictationSession } = loadTsx('frontend/src/features/dictation/session.ts');
@@ -57,10 +58,12 @@ test('the provider receives actual WAV bytes and only returns bounded plain text
 });
 
 let nextUserId = 7000;
-async function serverFor(t, { user = { id: nextUserId++ }, config = {}, ...deps } = {}) {
+// `claims`: the dictation_claims rows every server given the same map shares
+// (tests/lib/dictation-claims.js), as two processes share the database.
+async function serverFor(t, { user = { id: nextUserId++ }, config = {}, pool = { query: async () => ({ rows: [] }) }, claims, ...deps } = {}) {
   const app = express();
   app.use((req, _res, next) => { req.user = user; next(); });
-  app.use(dictationRoutes(config, { pool: { query: async () => ({ rows: [] }) },
+  app.use(dictationRoutes(config, { pool: withDictationClaims(pool, claims),
     readMetadata: async () => ({ revision: 1, metadata: { source: 'personal' } }),
     readSecret: async () => 'test-key', checkBudget: async () => ({ ok: true }), recordSpend: async () => {}, ...deps }));
   const server = await new Promise(resolve => { const s = app.listen(0, '127.0.0.1', () => resolve(s)); });
@@ -142,15 +145,21 @@ test('route gates authentication, cross-origin requests, MIME, byte limits and a
   assert.deepEqual(Object.keys(await good.json()).sort(), ['requestId', 'seconds', 'text']); assert.equal(calls, 1);
 });
 
-test('only one provider request per user is in flight and completion frees the slot', async t => {
-  let release; let started;
+test('only one provider request per user is in flight, on any process, and completion frees the slot', async t => {
+  let release; let started; let calls = 0;
   const begun = new Promise(r => { started = r; });
   const waiting = new Promise(r => { release = r; });
-  const url = await serverFor(t, { transcribe: async () => { started(); await waiting; return { text: 'ok', seconds: 1, usage: {} }; } });
+  const user = { id: nextUserId++ };
+  const claims = new Map();
+  const transcribe = async () => { calls++; started(); await waiting; return { text: 'ok', seconds: 1, usage: {} }; };
+  const url = await serverFor(t, { user, claims, transcribe });
+  const other = await serverFor(t, { user, claims, transcribe });
   const data = await recording(); const first = post(url, data); await begun;
   assert.equal((await post(url, data)).status, 429);
+  assert.equal((await post(other, data)).status, 429, 'another process sees the claim');
+  assert.equal(calls, 1);
   release(); assert.equal((await first).status, 200);
-  assert.equal((await post(url, data)).status, 200);
+  assert.equal((await post(other, data)).status, 200);
 });
 
 test('a provider timeout aborts its work and frees the user to try again', async t => {

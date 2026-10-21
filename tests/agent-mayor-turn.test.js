@@ -154,11 +154,11 @@ async function runTurn({
   const opened = [];
   const { deps, spend, events } = turnDeps({ model, shim, opened, agentSessions, actionsDeps, extra });
   res = res || fakeRes();
-  await agentTurn.runAgentTurn({
+  const result = await agentTurn.runAgentTurn({
     pool, config: CONFIG, user: USER, agentSessionId: 5, turnId: 'turn-0001-aaaa',
     messageText: message, followUp, mayor: mayor(model), res, deps,
   });
-  return { model, shim, pool, res, spend, events, opened };
+  return { model, shim, pool, res, spend, events, opened, result };
 }
 
 // ── The turn ───────────────────────────────────────────────────────────
@@ -413,39 +413,22 @@ test('a failed turn says so, records it, and still releases everything', async (
   assert.deepEqual(shim.closed, ['turn_finished']);
 });
 
-test('#4729: a failed turn bells "Session stopped before finishing" against its change, when nobody watches', async () => {
+test('#4729: a failed turn owes "Session stopped before finishing" against its change, a stop does not', async () => {
+  // Owed by the turn's end, as its machine's work (turn/machine.ts
+  // turn.stalled, services/turns.js tellStalled, which looks who watches
+  // then): belled after the catch instead, a restart lost it.
   const steps = [() => { throw new Error('provider down'); }];
-  // The user left: the turn's stream is closed and nobody follows the events.
   const left = fakeRes();
   left.destroyed = true;
-  const stalled = [];
   const done = [];
-  const { events } = await runTurn({
+  const { events, result } = await runTurn({
     steps,
     res: left,
-    extra: {
-      notifyStalled: async (_pool, changeId) => { stalled.push(changeId); },
-      notifyDone: async (_pool, changeId) => { done.push(changeId); },
-    },
+    extra: { notifyDone: async (_pool, changeId) => { done.push(changeId); } },
   });
   assert.deepEqual(events.map((e) => e.event), ['turn_failed']);
-  assert.deepEqual(stalled, [50], 'the change the turn was on');
+  assert.deepEqual(result, { stalled: 50 }, 'the change the turn was on');
   assert.deepEqual(done, [], 'a turn that did not finish is not a finished one');
-
-  // Somebody watching — the conversation screen following its events — sees
-  // it happen, and the bell says nothing.
-  const watchingRes = fakeRes();
-  watchingRes.destroyed = true;
-  const watched = [];
-  await runTurn({
-    steps,
-    res: watchingRes,
-    extra: {
-      notifyStalled: async (_pool, id) => { watched.push(id); },
-      sessionBus: { publish() {}, clearSession() {}, subscriberCount: () => 1 },
-    },
-  });
-  assert.deepEqual(watched, []);
 
   // A stop was answered where it happened, with the composer's own words:
   // it stays out of the bell.
@@ -458,16 +441,31 @@ test('#4729: a failed turn bells "Session stopped before finishing" against its 
     started();
     args.signal.addEventListener('abort', () => reject(new Error('aborted')));
   });
-  const stopped = [];
-  const turn = runTurn({
-    steps: [step],
-    res: stopRes,
-    extra: { notifyStalled: async (_pool, id) => { stopped.push(id); } },
-  });
+  const turn = runTurn({ steps: [step], res: stopRes });
   await running;
   agentTurn.stopAgentTurn(5, { by: 'ada' });
-  await turn;
-  assert.deepEqual(stopped, []);
+  assert.deepEqual((await turn).result, {});
+});
+
+test('#4729: the owed notice bells nobody who is watching the conversation, and a failed bell is thrown to be tried again', async () => {
+  const turns = require('../src/services/turns');
+  const bus = require('../src/services/session-bus');
+  const sessions = require('../src/routes/sessions');
+  const realCount = bus.subscriberCount;
+  const realStalled = sessions.notifySessionStalled;
+  const belled = [];
+  let watchers = 0;
+  bus.subscriberCount = async (key) => { belled.push(['looked', key]); return watchers; };
+  sessions.notifySessionStalled = async (_pool, id, opts) => { belled.push(['belled', id, opts]); };
+  try {
+    assert.deepEqual(await turns.tellStalled({ pool: {} }, { sessionId: 50, agentSessionId: 5 }), { told: true });
+    watchers = 1;
+    assert.deepEqual(await turns.tellStalled({ pool: {} }, { sessionId: 50, agentSessionId: 5 }), { watched: true });
+    assert.deepEqual(belled, [['looked', agentTurn.busKey(5)], ['belled', 50, { strict: true }], ['looked', agentTurn.busKey(5)]]);
+  } finally {
+    bus.subscriberCount = realCount;
+    sessions.notifySessionStalled = realStalled;
+  }
 });
 
 test('stop aborts the model call and is not reported as a failure', async () => {

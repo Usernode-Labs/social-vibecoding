@@ -239,22 +239,45 @@ function renameHeadFailure(result, branch) {
 // and push take seconds of network, and holding a transaction open across
 // that is worse than the race it prevents. Degrades to running unlocked when
 // the pool has no `connect()`, which is never a reason to refuse an update.
+//
+// A writer waiting for it holds no client while it waits: it tries the lock
+// and, refused, gives its client back before it tries again (every revision
+// writer of a proposal takes it, a hand-off upload or build included). A
+// waiter blocked in pg_advisory_lock kept its client, and enough of them
+// left the holder's own queries no client to run on.
+const LOCK_RETRY_MIN_MS = 50;
+const LOCK_RETRY_MAX_MS = 1000;
 async function withProposalLock(pool, sessionId, fn) {
   const id = Number(sessionId);
   if (!Number.isSafeInteger(id) || id <= 0 || !pool || typeof pool.connect !== 'function') {
     return fn();
   }
   let client;
-  try {
-    client = await pool.connect();
-  } catch (err) {
-    log.warn('proposal-update', 'update lock unavailable, proceeding unlocked', {
-      sessionId: id, err: err.message,
-    });
-    return fn();
+  for (let wait = LOCK_RETRY_MIN_MS; ; wait = Math.min(LOCK_RETRY_MAX_MS, wait * 2)) {
+    try {
+      client = await pool.connect();
+    } catch (err) {
+      log.warn('proposal-update', 'update lock unavailable, proceeding unlocked', {
+        sessionId: id, err: err.message,
+      });
+      return fn();
+    }
+    let got;
+    try {
+      const { rows: [r] } = await client.query('SELECT pg_try_advisory_lock($1, $2) AS got', [PROPOSAL_UPDATE_LOCK, id]);
+      got = !!(r && r.got);
+    } catch (err) {
+      client.release();
+      log.warn('proposal-update', 'update lock unavailable, proceeding unlocked', {
+        sessionId: id, err: err.message,
+      });
+      return fn();
+    }
+    if (got) break;
+    client.release();
+    await new Promise((resolve) => setTimeout(resolve, wait));
   }
   try {
-    await client.query('SELECT pg_advisory_lock($1, $2)', [PROPOSAL_UPDATE_LOCK, id]);
     return await fn();
   } finally {
     try {
@@ -344,8 +367,8 @@ async function updateProposalFromForkBranch(deps, params) {
   const votes = deps.votes || require('../routes/votes');
   const prImportSync = deps.prImportSync || require('./pr-import-sync');
   const githubPublic = deps.githubPublic || require('./external-agent-tasks').githubPublic;
-  const serialize = deps.serialize
-    || require('./handoff-pipeline').serializeHandoffSubmission;
+  // Ordered per session with every other revision writer, on any process.
+  const lock = deps.lock || withProposalLock;
 
   const { user, origin } = params;
 
@@ -422,7 +445,7 @@ async function updateProposalFromForkBranch(deps, params) {
   }
 
   const sessionId = Number(params.session.id);
-  return serialize(sessionId, () => withProposalLock(pool, sessionId, async () => {
+  return lock(pool, sessionId, async () => {
     // Everything from here on judges the row as it is NOW, not as it was
     // when the caller queued.
     const session = (await reloadSession(pool, sessionId)) || params.session;
@@ -502,7 +525,7 @@ async function updateProposalFromForkBranch(deps, params) {
     } finally {
       releaseOperation();
     }
-  }));
+  });
 }
 
 // A managed local upload has already advanced the bot-owned PR branch. Apply

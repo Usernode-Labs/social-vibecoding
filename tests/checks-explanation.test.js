@@ -9,7 +9,8 @@
 //   - it runs only for a failed run, the first time somebody reads it, and
 //     the sentence is kept per change and language for that run: a later
 //     read is the stored row, a new run is written again;
-//   - concurrent first readers share one call; a failure answers null (the
+//   - concurrent first readers share one call (the first claims the row,
+//     the others wait for what it writes); a failure answers null (the
 //     page keeps the failure's own words) and is asked again only after
 //     RETRY_MS; no model configured answers null without asking;
 //   - an unknown language reads as English; a known one is named to the
@@ -73,14 +74,25 @@ test('the model reads the failing checks and their tests\' output, fenced as dat
   assert.match(capped, /And 2 more failed checks, not shown\.$/);
 });
 
-// A pool that answers the two statements the service makes, keeping the row.
+// A pool that answers the statements the service makes, keeping the row
+// and its claim (tests/checks-explanation-postgres.test.js runs the SQL).
 function fakePool(initial = null) {
-  const state = { row: initial, writes: [] };
+  const state = { row: initial, writes: [], claimedUntil: 0 };
   return {
     state,
     async query(sql, params) {
       if (/FROM check_explanations/.test(sql)) return { rows: state.row ? [state.row] : [] };
+      if (/RETURNING generating_until/.test(sql)) {
+        const [, , runAt] = params;
+        const at = new Date(runAt).getTime();
+        const r = state.row;
+        if (r && (Date.parse(r.run_at) > at || state.claimedUntil > Date.now() || (Date.parse(r.run_at) === at && r.explanation))) return { rows: [] };
+        state.row = { run_at: new Date(runAt), explanation: null, failed_at: null };
+        state.claimedUntil = Date.now() + explainer.CLAIM_LEASE_MS;
+        return { rows: [{}] };
+      }
       if (/INSERT INTO check_explanations/.test(sql)) {
+        state.claimedUntil = 0;
         const [sessionId, language, runAt, explanation, model, failed] = params;
         state.writes.push({ sessionId, language, runAt, explanation, model, failed });
         if (!state.row || Date.parse(state.row.run_at) <= new Date(runAt).getTime()) {
@@ -163,18 +175,19 @@ test('a failure answers null, is recorded, and is asked again only after RETRY_M
   }, { reply: new Error('provider down') });
 });
 
-test('concurrent first readers share one call', async () => {
+test('concurrent first readers, on any process, share one call: the others wait for what it writes', async () => {
   let release;
   const gate = new Promise((resolve) => { release = resolve; });
   await withModel(async (calls) => {
     const pool = fakePool();
     const a = explainer.explain(pool, SESSION, { now: NOW });
-    const b = explainer.explain(pool, SESSION, { now: NOW });
     await new Promise((resolve) => setImmediate(resolve));
+    const b = explainer.explain(pool, SESSION, { now: NOW, waitMs: 5000 });
+    await new Promise((resolve) => setTimeout(resolve, 50));
     release();
     assert.deepEqual(await Promise.all([a, b]), ['Shared.', 'Shared.']);
     assert.equal(calls.length, 1);
-    assert.equal(explainer._inFlight.size, 0);
+    assert.equal(pool.state.claimedUntil, 0, 'the claim ends with the call');
   }, { reply: async () => { await gate; return { explanation: 'Shared.', model: 'm' }; } });
 });
 

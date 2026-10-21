@@ -338,12 +338,9 @@ function internalRoutes(_config) {
         } catch (err) {
           return res.status(400).json({ ok: false, code: 'invalid_diagram', message: err.message });
         }
-        const proposalDiagram = require('../services/proposal-diagram');
-        const stored = await proposalDiagram.store(pool, sessionId, record, 'author');
+        // The row and the pull request's block it owes commit together.
+        const stored = await require('../services/proposal-diagram').storeDeclared(pool, sessionId, record);
         if (!stored) return res.status(500).json({ ok: false, code: 'diagram_not_stored', message: 'The diagram could not be stored.' });
-        proposalDiagram.syncPrBlock(pool, sessionId).catch((err) => {
-          log.warn('internal-api', 'Could not write the diagram into the pull request', { sessionId, err: err.message });
-        });
         return res.json({ ok: true, diagram: record });
       } catch (err) {
         log.error('internal-api', 'declare_diagram failed', { sessionId, err: err.message });

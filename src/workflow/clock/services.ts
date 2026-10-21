@@ -16,6 +16,10 @@ export interface Job {
   // How long after a run ends the next is due; 0 runs it again at once.
   everyMs: number;
   leaseMs?: number;
+  // Asked for, not scheduled (an admin's fleet job): run only when an admin
+  // asked (RunNow: the run's `asked`). A run nobody asked for (an older
+  // build arms the job on its interval) does nothing.
+  onDemand?: boolean;
   // What it does depends on the build (its keys, its catalogs, its
   // environment): only the newest release's processes run it. An older
   // build's run during a rollout does nothing (`skipped: older_build`), and
@@ -67,6 +71,7 @@ export function clockServices(jobs: readonly Job[], deps: JobDeps): Record<strin
       leaseMs: job.leaseMs ?? 120000,
       concurrency: 1,
       async run(ctx) {
+        if (job.onDemand && !ctx.input.asked) return { skipped: 'not_asked' };
         if (!job.newestOnly) return json(await job.run(ctx, deps));
         const release = bootRelease();
         if (!await newestBuild(deps.pool)) return { skipped: 'older_build' };
@@ -188,6 +193,19 @@ export const JOBS: readonly Job[] = Object.freeze([
     // rows stay.
     name: 'ip-retention', everyMs: 24 * HOUR,
     run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/ip-retention').purgeExpiredIps(pool),
+  },
+  {
+    // Wallet links read off the chain (services/chain-poller.js): a run
+    // every 4 seconds, backing off to a minute while the explorer is down,
+    // its cursor the last run's result.
+    name: 'wallet-links', everyMs: 0,
+    run: (ctx: WorkContext, { pool, config }: JobDeps) => legacy('services/chain-poller').poll(config, pool, ctx.input.previous ?? null),
+  },
+  {
+    // The shared limiters' counts past their window
+    // (services/rate-limit-store.js).
+    name: 'rate-limit-retention', everyMs: HOUR,
+    run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/rate-limit-store').prune(pool),
   },
   {
     // An agent session's delegated connector grants, a week after their turn.
@@ -359,6 +377,19 @@ export const JOBS: readonly Job[] = Object.freeze([
     run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/welcome-dm').sweep(pool),
   },
   {
+    // The email a notice owes when no phone could take its push (an invite
+    // moment, a project opening, the vote digest): each notice that owes one
+    // (its `mailed_at` NULL, written with it) a target, sent once and marked
+    // (services/activity-mail.js).
+    name: 'notice-mail', everyMs: MIN,
+    run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/activity-mail').noticeMailTargets(pool, { limit: MAX_ITEMS }),
+    item: {
+      concurrency: 2,
+      maxAttempts: 5,
+      run: (ctx: WorkContext, { pool }: JobDeps) => legacy('services/activity-mail').mailNotice(pool, Number(ctx.input.input?.notificationId), ctx.steps()),
+    },
+  },
+  {
     // "Your agent is waiting on you", once its delay has passed.
     name: 'connector-input-waits', everyMs: MIN,
     run: async (_ctx: WorkContext, { pool }: JobDeps) => ({ sent: await legacy('services/connector-input-waits').sweepDue(pool) }),
@@ -463,6 +494,28 @@ export const JOBS: readonly Job[] = Object.freeze([
   // ── Previews: outside facts about the runtimes and the servers ───────
   // (What the preview machine decides about a preview it holds, its idle
   // give-back and the checks it owes, is its own deadline: preview/.)
+  // ── The workflow's own ──────────────────────────────────────────────
+  {
+    // Events an older build refused as unknown during a rollout, asked
+    // again once no older build serves (platform.ts reaskRefused).
+    name: 'reask-refused', everyMs: MIN, newestOnly: true,
+    run: async (_ctx: WorkContext, { pool }: JobDeps) => (await import('../platform.ts')).reaskRefused(pool),
+  },
+  // ── An admin's fleet jobs ───────────────────────────────────────────
+  // Run when an admin asks (Admin › Rollover, Admin › Staging), one at a
+  // time across every process; each unit (an app, a preview) is a step of
+  // the run, so a restart carries the job on (services/fleet-job.js).
+  {
+    // Every running app's container recreated with a freshly assembled
+    // environment.
+    name: 'container-rollover', everyMs: 0, onDemand: true, leaseMs: 10 * MIN,
+    run: (ctx: WorkContext, { config, pool }: JobDeps) => legacy('services/app-rollover').runJob(ctx, { config, pool }),
+  },
+  {
+    // Every out-of-date or abandoned preview torn down at once.
+    name: 'preview-reap', everyMs: 0, onDemand: true, leaseMs: 10 * MIN,
+    run: (ctx: WorkContext, { config, pool }: JobDeps) => legacy('services/staging-reap').runJob(ctx, { config, pool }),
+  },
   {
     // A vote-backed preview whose runtime or database is gone is reported
     // lost; the preview machine builds it again.
@@ -608,6 +661,20 @@ export const JOBS: readonly Job[] = Object.freeze([
     item: {
       concurrency: 2,
       run: (ctx: WorkContext, { config }: JobDeps) => legacy('services/title-heal').healTarget(config, ctx.input.input),
+    },
+  },
+  {
+    // The Workshop passes a board change or a page view owed (each app's
+    // reconcile_due_at, services/workshop-themes.js), once the board has
+    // been quiet since its first change: each app a target of its own.
+    name: 'workshop-changes', everyMs: 10 * 1000,
+    run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/workshop-themes').changeTargets({ pool, limit: MAX_ITEMS }),
+    item: {
+      concurrency: 2,
+      leaseMs: 5 * MIN,
+      run: (ctx: WorkContext, { pool }: JobDeps) => legacy('services/workshop-themes').changeApp({
+        pool, appId: Number(ctx.input.input?.appId), due: String(ctx.input.input?.due),
+      }),
     },
   },
   {

@@ -69,66 +69,33 @@ const session = {
   app_slug: 'app', integration_block_reasons: ['awaiting_approval'],
 };
 
-function hook() {
-  const calls = [];
-  integration.onBecameClean((s) => { calls.push(s); });
-  return { calls, off: () => integration.onBecameClean(null) };
-}
-
-const tick = () => new Promise((r) => setImmediate(r));
-
-test('conflicting → clean on the SAME head fires the hook with the head named', async () => {
+// The flip is told to the preview machine in the write's own statement
+// (tests/workflow-preview-postgres.test.js P6b runs it against PostgreSQL):
+// a hook after the commit was lost by a restart in between, with the row
+// already saying clean.
+test('conflicting → clean on the SAME head is told in the measurement\'s own statement', async () => {
   const restore = stubMirror({ clean: true });
-  const h = hook();
   try {
     const pool = fakePool({ wasClean: false, wasHead: HEAD });
     const out = await integration.measure({ pool, session }, { force: true });
     assert.equal(out.mergesClean, true);
-    await tick();
-    assert.equal(h.calls.length, 1);
-    assert.equal(h.calls[0].id, 9);
-    assert.equal(h.calls[0].integration_head_sha, HEAD);
+    const writes = pool.calls.filter((c) => /UPDATE chat_sessions/.test(c.sql));
+    assert.equal(writes.length, 1, 'one statement: the write and the event commit together');
+    const [write] = writes;
     // The comparison is against the STORED answer, read in the write itself.
-    const write = pool.calls.find((c) => /RETURNING/.test(c.sql));
     assert.match(write.sql, /WITH prev AS/);
     assert.match(write.sql, /SELECT was_clean FROM prev/);
-  } finally { h.off(); restore(); }
+    assert.match(write.sql, /INSERT INTO wf_events[\s\S]*'ConflictResolved'/);
+    assert.match(write.sql, /prev\.was_clean = FALSE AND \$7::boolean IS TRUE AND lower\(prev\.was_head\) = lower\(\$2::text\)/);
+    assert.match(write.sql, /wi\.machine = 'preview' AND wi\.key = 'session:' \|\| \$1::int/);
+    const { MACHINE, sessionKey } = require('../src/workflow/preview/machine.ts');
+    assert.equal(MACHINE, 'preview');
+    assert.equal(sessionKey(9), 'session:9');
+  } finally { restore(); }
 });
 
-test('a NEW head measuring clean does not fire: its push already started its checks', async () => {
-  const restore = stubMirror({ clean: true, head: 'f'.repeat(40) });
-  const h = hook();
-  try {
-    const pool = fakePool({ wasClean: false, wasHead: HEAD });
-    await integration.measure({ pool, session }, { force: true });
-    await tick();
-    assert.equal(h.calls.length, 0, 'a hook here would run the new head\'s checks twice');
-  } finally { h.off(); restore(); }
-});
-
-test('clean → clean, conflict → conflict, and a first measurement all stay quiet', async () => {
-  const h = hook();
-  try {
-    for (const [clean, wasClean] of [[true, true], [false, false], [true, null], [false, null]]) {
-      const restore = stubMirror({ clean });
-      try {
-        await integration.measure({ pool: fakePool({ wasClean, wasHead: HEAD }), session }, { force: true });
-        await tick();
-      } finally { restore(); }
-    }
-    assert.equal(h.calls.length, 0);
-  } finally { h.off(); }
-});
-
-test('a hook that throws is logged, not propagated into the measurement', async () => {
-  const restore = stubMirror({ clean: true });
-  integration.onBecameClean(() => { throw new Error('recheck exploded'); });
-  try {
-    const out = await integration.measure({ pool: fakePool({ wasClean: false, wasHead: HEAD }), session }, { force: true });
-    await tick();
-    assert.equal(out.mergesClean, true);
-    assert.equal(out.error, null);
-  } finally { integration.onBecameClean(null); restore(); }
+test('no hook is left to register', () => {
+  assert.equal(integration.onBecameClean, undefined);
 });
 
 // The merge gate writes the block reasons. A measurement that copied the
