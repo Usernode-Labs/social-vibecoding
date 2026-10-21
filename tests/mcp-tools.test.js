@@ -3032,45 +3032,48 @@ test('prepare_work chooses self-execution before handoff', () => {
   assert.match(desc, /do not relay `guidance` or send the user elsewhere/);
   assert.match(body, /FIRST inspect the tools available in THIS conversation/);
   assert.match(body, /do not render guidance and do not send/);
-  assert.match(body, /the patch you produced, or the branch if the work order's/);
+  assert.match(body, /the branch you pushed, or the patch you produced if the/);
   assert.match(body, /Only if this conversation lacks code-editing tools/);
 });
 
 // #3687. Every surface named a patch as the default and a branch as the
 // exception, and none said whose choice that was, so Claude Code on the web
 // asked the user "patch or branch?", a question a non-developer cannot answer.
-// Each place the hand-in is described now says the agent decides, a patch by
-// default, and never puts the choice to the user.
+// Each place the hand-in is described now says the agent decides, and never
+// puts the choice to the user. Since October 2026 the default is a branch
+// whenever the agent can push, and a patch when it cannot.
 test('patch or branch is the agent\'s call on every surface, never the user\'s', () => {
   const charter = require('../src/services/mcp-charter');
 
   // The always-delivered instructions, which a host that never calls
   // get_connector_guidance still reads, within the same budget.
-  assert.match(tools.SERVER_INSTRUCTIONS, /submit_work yourself \(patch by default; you choose, not the user\)/);
+  assert.match(tools.SERVER_INSTRUCTIONS, /submit_work yourself \(push a branch, else patch; you choose, not the user\)/);
 
   // The charter carries the whole rule, including the exceptions.
   const handling = charter.CHARTER_SECTIONS.find((s) => s.id === 'work-order-handling');
-  assert.match(handling.text, /fallback for a patch over about 250 KB, or for an agent that already pushes there/);
+  assert.match(handling.text, /a branch pushed to the user's own fork whenever the agent can push/);
+  assert.match(handling.text, /falls back at once to a patch through submit_work/);
   assert.match(handling.text, /coding agent's decision, never the user's/);
   assert.match(handling.text, /do not ask the user to choose/);
   const both = charter.CHARTER_SECTIONS.find((s) => s.id === 'you-may-be-both');
-  assert.match(both.text, /a patch by default/);
+  assert.match(both.text, /a branch pushed to your fork whenever you can push and a patch only when you cannot/);
   assert.match(both.text, /never a question for the user/);
   assert.doesNotMatch(both.text, /Then push and call submit_work/,
-    'a patch needs no push, so the charter no longer tells the agent to push first');
+    'the hand-in is the work order\'s rule, a push with a patch behind it, not a bare push');
 
   // prepare_work: its description, and the nextStep a capable host acts on.
   const idx = SRC.indexOf("server.registerTool('prepare_work'");
   const desc = SRC.slice(idx, SRC.indexOf('inputSchema:', idx));
   const body = SRC.slice(idx, SRC.indexOf("server.registerTool('submit_work'"));
-  assert.match(desc, /with your patch \(or branch: your call, never the user's\)/);
+  assert.match(desc, /with your branch \(or a patch: your call, never the user's\)/);
   assert.match(body, /never ask the user to choose between a patch and a branch/);
 
   // submit_work: shapes (1) and (2) say whose choice separates them, and the
   // `patch` field repeats it where the argument is filled in.
   const sIdx = SRC.indexOf("server.registerTool('submit_work'");
   const sDesc = SRC.slice(sIdx, SRC.indexOf('inputSchema:', sIdx));
-  assert.match(sDesc, /if the patch is over about 250 KB or you already push to your fork/);
+  assert.match(sDesc, /\(1\) `taskId` plus the `branch` you pushed to your fork, any name, the default whenever you can push; \(2\) `taskId` plus `patch` when you cannot/);
+  assert.match(sDesc, /`share: true` on shape \(1\)/, 'share takes the branch, which is shape (1) now');
   assert.match(sDesc, /your call between \(1\) and \(2\), never the user's/);
   const sBlock = SRC.slice(sIdx, SRC.indexOf("server.registerTool('start_platform_build'"));
   assert.match(sBlock, /Patch or branch is your decision: never ask the user to choose/);
@@ -5098,11 +5101,10 @@ test('#2136 — a work order that revises a proposal names its pull request, and
     assert.equal(revise.proposalId, 4223);
     assert.equal(revise.prNumber, 2151, 'the number the person will recognise, beside the id');
     assert.match(revise.nextStep, /REVISES PR #2151 \(proposal 4223\), and it starts at that proposal's own current/);
-    // #4263: an app-repo proposal is revised by patch first, with the update
-    // task's id, and the branch keeps the proposal id. Each argument is still
-    // spelled as the argument.
-    assert.match(revise.nextStep, /submit_work with taskId 88 and the patch you produced, or the branch/);
-    assert.match(revise.nextStep, /\(with proposalId 4223\)/, 'the argument is still spelled as the argument');
+    // #4263: an app-repo proposal is revised by a pushed branch with the
+    // proposal id, or by a patch with the update task's id when the push is
+    // refused. Each argument is still spelled as the argument.
+    assert.match(revise.nextStep, /submit_work with proposalId 4223 and the branch you pushed, or, if the push was refused, taskId 88 and the patch you produced/);
     assert.match(revise.nextStep, /never ask the user to choose between a patch and a branch/);
     // A head in the author's own fork still moves only by their push.
     extra = { branchHome: 'user_fork' };

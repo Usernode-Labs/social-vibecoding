@@ -449,7 +449,7 @@ const UPLOAD = {
   maxBytes: patchSvc.MAX_UPLOADED_PATCH_BYTES,
 };
 
-test('the work order offers the upload for a large patch, keeps inline for small ones and the branch last', () => {
+test('the work order offers the upload for a large patch, keeps inline for small ones, both after the branch', () => {
   const order = orderWith({ patchUpload: UPLOAD });
   const done = order.slice(order.lastIndexOf('WHEN YOU ARE DONE'));
   // The command, verbatim and runnable: the base commit, the token, the URL.
@@ -464,10 +464,11 @@ test('the work order offers the upload for a large patch, keeps inline for small
   assert.doesNotMatch(done, /hosted\s+sandbox usually cannot/, 'and guesses at no sandbox (#4263)');
   assert.match(done, /pass its\s+`uploadId` as `patchUploadId` in step 2 instead of `patch`/);
   assert.match(done, /Uploads take up to 1 MB, inline patches\s+about 250 KB/);
-  // Order of preference: inline first, upload for large, branch last.
+  // Order of preference: the branch when the push goes through, then the
+  // patch inline, then the upload for a large one.
+  assert.ok(done.indexOf('git push -u origin HEAD') < done.indexOf('git format-patch'));
   assert.ok(done.indexOf('git format-patch') < done.indexOf('UPLOAD it'));
-  assert.ok(done.indexOf('UPLOAD it') < done.indexOf('git push -u origin HEAD'));
-  assert.match(done, /as `patch` \(or the\n {3}`patchUploadId` its upload printed/);
+  assert.match(done, /the patch text from step 1 as `patch` or\n {3}the `patchUploadId` its upload printed/);
   assert.match(done, /4\. IF THE PATCH IS REFUSED as too large, upload it as in step 1/);
   // The token appears in the command and nowhere else in the order.
   assert.equal(order.split(TOKEN).length - 1, 1);
@@ -477,8 +478,8 @@ test('the work order offers the upload for a large patch, keeps inline for small
 test('without a credential, and on an update, the work order is exactly what it was', () => {
   const plain = orderWith();
   assert.doesNotMatch(plain, /svpu_|patchUploadId|Bearer /);
-  assert.match(plain, /Patches over about 250 KB are refused\. For a change that large, or when/);
-  assert.match(plain, /4\. IF THE PATCH IS REFUSED as too large, push a branch as in step 1 and/);
+  assert.match(plain, /Patches over about 250 KB are refused\.\n {3}Branch or patch is YOUR decision/);
+  assert.match(plain, /4\. IF THE PATCH IS REFUSED as too large, the branch in step 1 is the only\n {3}way in/);
   assert.equal(orderWith({ patchUpload: null }), plain);
 
   // An update's patch (#4263) is sent inline through the update route, so
