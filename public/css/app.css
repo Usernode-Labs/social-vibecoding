@@ -3488,6 +3488,33 @@ html[data-browser-scroller="auth-landing-scroll"] #app-viewer {
   overscroll-behavior-y: contain;
   overflow-x: hidden;
 }
+/* THE FOOT OF HOME GIVES (#3566). On iOS a scroll container only rubber-bands
+   when it has scrollable range. A short Home — a new account's, where the grid
+   and the panels all fit — has none, so the drag went to the document, which
+   the bounded shell holds still, and the bottom edge felt like a wall. A
+   project page's foot already gives this way (the "A SHORT TAB STILL HAS
+   SOMETHING TO SCROLL" block below); this is the same mechanism: an out-of-flow
+   1px box hung 1px below the root's bottom edge, which is one invisible pixel
+   of absolute overflow whatever the content does. Home's root is already
+   `position: relative` inline (features/home/index.tsx), so its padding box is
+   the containing block the box offsets against.
+
+   ONLY WHERE THE ROOT IS THE SCROLLER AND ONLY ON A TOUCH SCREEN. In a phone
+   browser `browser-scroll.ts` sets `data-browser-scroller` and the root is
+   `overflow-y: visible`, so the pixel is off there; the document's own bounce
+   is untouched. `pointer: coarse` keeps the pixel off a mouse-driven window,
+   where it would put a scrollbar on Home for nothing. */
+@media (pointer: coarse) {
+  html:not([data-browser-scroller]) #home-screen[data-page-bounce] {
+    position: relative;
+  }
+  html:not([data-browser-scroller]) #home-screen[data-page-bounce]::after {
+    content: '';
+    position: absolute; left: 0; bottom: -1px;
+    width: 1px; height: 1px;
+    pointer-events: none;
+  }
+}
 
 /* ── `.touch-target-32`: the kit's hit-slop, sized for a dense row ──────
    QA 2026-09-24 Q19. `.un-touch-target` (native.css) grows a control's hit
