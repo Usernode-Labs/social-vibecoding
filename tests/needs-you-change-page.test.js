@@ -910,17 +910,17 @@ test('the picture: verified shots are the viewer specs use, a run under way is a
   const av = context();
   const claim = { id: 's1', claim: 'The preview waits for sign-in', viewports: ['desktop'], steps: ['Open a preview'] };
   const building = render(av, { ...PR, shots: { state: 'exploring', claims: [claim], artifacts: [] } }).page;
-  assert.match(building, /<section class="dev-change-shots dev-change-shots-plain" data-change-shots="exploring" aria-label="Before and after"><div class="dev-change-card-name">Before and after<\/div><p class="dev-change-shots-line"><span class="dc-status-spinner-arc" aria-hidden="true"><\/span><span>Taking the shots\. They show up here when they are ready\.<\/span><\/p>/);
+  assert.match(building, /<section class="dev-change-shots dev-change-shots-plain" data-change-shots="exploring" aria-label="Before and after"><div class="dev-change-card-name">Before and after<\/div><p class="dev-change-shots-line"><span class="dc-status-spinner-arc" aria-hidden="true"><\/span><span>Taking the screenshots\. They show up here when they are ready\.<\/span><\/p>/);
   assert.ok(!building.includes('data-shots="1"'), 'no panel for a run still going');
   const failed = render(av, { ...PR, shots: { state: 'failed', failureReason: 'The dialog never opened.', claims: [claim], artifacts: [] } }).page;
-  assert.match(failed, /data-change-shots="failed"[\s\S]*<span>Couldn’t take the shots\. The dialog never opened\.<\/span>/);
+  assert.match(failed, /data-change-shots="failed"[\s\S]*<span>Couldn’t take the screenshots\. The dialog never opened\.<\/span>/);
   assert.ok(!failed.includes('dc-status-spinner-arc'));
   // Interrupted by a restart, with an automatic retry coming: under way.
   const retrying = render(av, { ...PR, shots: {
     state: 'failed', failureCode: 'shots_run_interrupted', automaticRetryPending: true,
     failureReason: 'Homeroom restarted.', claims: [claim], artifacts: [],
   } }).page;
-  assert.match(retrying, /<span class="dc-status-spinner-arc" aria-hidden="true"><\/span><span>Taking the shots\./);
+  assert.match(retrying, /<span class="dc-status-spinner-arc" aria-hidden="true"><\/span><span>Taking the screenshots\./);
   // Verified: the side-by-side viewer, its title in the switch's row; the
   // steps and the screen size are Shot details' (Details), not the card's.
   const url = (side) => `/api/apps/example/proposals/4090/shots/${side.repeat(32)}`;
@@ -932,15 +932,15 @@ test('the picture: verified shots are the viewer specs use, a run under way is a
   assert.match(verified, /<div class="shots-bar"><span class="dev-change-card-name">Before and after<\/span><span class="shots-seg shots-seg-side"/);
   assert.match(verified, /shots-seg-both/, 'side by side is one of its sides');
   assert.match(verified, /shots-side-auto/, 'and it starts side by side when there is room');
-  assert.doesNotMatch(verified, /shots-view-meta|Open a preview|Taken on the exact|Shots ready|Shot details|Take the shots again/);
+  assert.doesNotMatch(verified, /shots-view-meta|Open a preview|Taken on the exact|Screenshots ready|Screenshot details|Take the screenshots again/);
   const shot = av.shotsHtml(shots, { sessionId: 4090, details: true });
   assert.match(shot, /<strong>The preview waits for sign-in<\/strong>[\s\S]*Desktop · seen as a member[\s\S]*Open a preview/);
   assert.match(shot, /Taken on the exact before and after builds of this change/);
   const menu = (item) => { const v = av._topicViewFor('proposal', item); return av._cardMenuItems(v.card.rail.menuKey).map((a) => a.label); };
-  assert.ok(menu({ ...PR, shots }).includes('Shot details'));
-  assert.ok(!menu({ ...PR, user_id: 42, shots: { ...shots, state: 'exploring' } }).includes('Take the shots again'), 'not while a run is going');
-  assert.ok(menu({ ...PR, user_id: 42, shots }).includes('Take the shots again'), 'the author can take them again');
-  assert.ok(!menu({ ...PR, shots }).includes('Take the shots again'), 'somebody else cannot');
+  assert.ok(menu({ ...PR, shots }).includes('Screenshot details'));
+  assert.ok(!menu({ ...PR, user_id: 42, shots: { ...shots, state: 'exploring' } }).includes('Take the screenshots again'), 'not while a run is going');
+  assert.ok(menu({ ...PR, user_id: 42, shots }).includes('Take the screenshots again'), 'the author can take them again');
+  assert.ok(!menu({ ...PR, shots }).includes('Take the screenshots again'), 'somebody else cannot');
 });
 
 test('the capture tiles are checked on a live proposal page, against the staging captures they are seeded with (#4269)', () => {
@@ -1047,10 +1047,10 @@ test('a fresh planned run is in progress, and says so in the words the state use
   const v = av._shotsView(evidence);
   assert.equal(v.label, 'Before & after queued');
   assert.equal(v.notStarted, false);
-  assert.match(v.sentence, /^Before & after: getting ready to take the shots\. Homeroom shows each declared change before and after, on this exact proposal build\.$/);
+  assert.match(v.sentence, /^Before & after: getting ready to take the screenshots\. Homeroom shows each declared change before and after, on this exact proposal build\.$/);
   // It is still a run under way, so the card keeps its quiet spinner line.
   const { page } = render(av, { ...PR, shots: evidence });
-  assert.match(page, /data-change-shots="planned"[^]*<span class="dc-status-spinner-arc" aria-hidden="true"><\/span><span>Taking the shots\. They show up here when they are ready\.<\/span>/);
+  assert.match(page, /data-change-shots="planned"[^]*<span class="dc-status-spinner-arc" aria-hidden="true"><\/span><span>Taking the screenshots\. They show up here when they are ready\.<\/span>/);
 });
 
 test('a failed run quotes its reason as written and promises no shots', () => {
@@ -1059,7 +1059,7 @@ test('a failed run quotes its reason as written and promises no shots', () => {
     state: 'failed', failureCode: 'shots_capture_incomplete',
     failureReason: 'API returned 500 on the members list.', claims: [CLAIM], artifacts: [],
   });
-  assert.equal(v.sentence, 'Couldn\u2019t take the shots. API returned 500 on the members list.');
+  assert.equal(v.sentence, 'Couldn\u2019t take the screenshots. API returned 500 on the members list.');
   assert.ok(!/Homeroom shows each declared change/.test(v.sentence));
 });
 
@@ -1082,12 +1082,12 @@ test('a planned run untouched past five minutes has not started: no spinner, the
 
   const { page } = render(av, { ...PR, user_id: 42, shots: evidence });
   assert.ok(!page.includes('dc-status-spinner-arc'), 'nothing spins on a run that is not moving');
-  assert.ok(!page.includes('Taking the shots'));
+  assert.ok(!page.includes('Taking the screenshots'));
   // The card says it has not started, and why; the retry is the ⋯'s.
   assert.match(page, /data-change-shots="planned"/);
   assert.match(page, /Before &amp; after not started\. Before &amp; after shots are not being taken on this deployment\./);
   const v2 = av._topicViewFor('proposal', { ...PR, user_id: 42, shots: evidence });
-  assert.ok(av._cardMenuItems(v2.card.rail.menuKey).some((a) => a.label === 'Take the shots again'));
+  assert.ok(av._cardMenuItems(v2.card.rail.menuKey).some((a) => a.label === 'Take the screenshots again'));
   assert.doesNotMatch(page, /Visual change preview|Retry visual/);
 });
 
@@ -1121,7 +1121,7 @@ test('the card tag follows the same split, and only the moving one spins', () =>
     .find((r) => r.key === 'shots');
 
   const moving = reasons({ state: 'planned', updatedAt: ago(10 * 1000), required: true });
-  assert.equal(moving.label, 'Taking before & after shots');
+  assert.equal(moving.label, 'Taking before & after screenshots');
   assert.equal(moving.running, true);
 
   const stuck = reasons({
@@ -1133,7 +1133,7 @@ test('the card tag follows the same split, and only the moving one spins', () =>
   assert.equal(stuck.detail, 'No staging preview was built for this commit.');
 
   const failed = reasons({ state: 'failed', updatedAt: ago(IDLE * 2), required: true, failureReason: 'The dialog never opened.' });
-  assert.equal(failed.label, 'Couldn\u2019t take the shots');
+  assert.equal(failed.label, 'Couldn\u2019t take the screenshots');
   assert.equal(failed.running, false);
   assert.equal(failed.detail, 'The dialog never opened.');
   // Interrupted by a restart, with an automatic retry coming: under way.
@@ -1141,18 +1141,18 @@ test('the card tag follows the same split, and only the moving one spins', () =>
     state: 'failed', updatedAt: ago(10 * 1000), required: true, failureCode: 'shots_run_interrupted',
     automaticRetryPending: true, failureReason: 'Homeroom restarted. You can take them again.',
   });
-  assert.equal(retrying.label, 'Trying the shots again');
+  assert.equal(retrying.label, 'Trying the screenshots again');
   assert.equal(retrying.running, true);
   assert.match(retrying.detail, /starts them again on its own in a moment/);
   const exploring = reasons({ state: 'exploring', updatedAt: ago(IDLE * 2), required: true });
-  assert.equal(exploring.label, 'Taking before & after shots');
+  assert.equal(exploring.label, 'Taking before & after screenshots');
   assert.equal(exploring.running, true);
   // A set that is neither moving nor failed (a newer commit made it stale)
   // still owes the proposal its shots.
   const stale = reasons({ state: 'stale', updatedAt: ago(IDLE * 2), required: true });
   assert.equal(stale.label, 'Before & after needed');
   assert.equal(stale.running, false);
-  assert.equal(stale.detail, 'This proposal has no before & after shots for its current commit yet.');
+  assert.equal(stale.detail, 'This proposal has no before & after screenshots for its current commit yet.');
   // Shots that are ready, waived or not needed owe nothing.
   for (const state of ['verified', 'overridden', 'not_required']) {
     assert.equal(reasons({ state, required: true }), undefined, state);
@@ -1165,16 +1165,16 @@ test('every state reads in the before & after words', () => {
   const at = copy({ state: 'planned', updatedAt: ago(10 * 1000) });
   assert.equal(at.planned[0], 'Before & after queued');
   assert.equal(at.provisioning[0], 'Building before and after');
-  assert.equal(at.exploring[0], 'Taking the shots');
-  assert.equal(at.reviewing[0], 'Saving the shots');
-  assert.equal(at.failed[0], 'Couldn\u2019t take the shots');
-  assert.equal(at.stale[0], 'Shots are out of date');
-  assert.equal(at.cancelled[0], 'Shots cancelled');
+  assert.equal(at.exploring[0], 'Taking the screenshots');
+  assert.equal(at.reviewing[0], 'Saving the screenshots');
+  assert.equal(at.failed[0], 'Couldn\u2019t take the screenshots');
+  assert.equal(at.stale[0], 'Screenshots are out of date');
+  assert.equal(at.cancelled[0], 'Screenshots cancelled');
   assert.equal(at.not_required[0], 'No before & after needed');
-  assert.equal(at.overridden[0], 'Shots waived');
-  assert.equal(copy({ state: 'failed', failureCode: 'shots_stopped' }).failed[0], 'Shots stopped');
+  assert.equal(at.overridden[0], 'Screenshots waived');
+  assert.equal(copy({ state: 'failed', failureCode: 'shots_stopped' }).failed[0], 'Screenshots stopped');
   // A verified run's strip label is the card's badge.
-  assert.equal(av._shotsView({ state: 'verified', claims: [CLAIM] }).label, 'Shots ready');
+  assert.equal(av._shotsView({ state: 'verified', claims: [CLAIM] }).label, 'Screenshots ready');
   assert.doesNotMatch(JSON.stringify(at), /visual change preview|visual preview/i);
 });
 
