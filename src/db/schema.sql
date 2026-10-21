@@ -15850,3 +15850,9 @@ COMMENT ON TABLE dictation_claims IS 'staging:private';
 -- minute: a few rows, not every event of the last days.
 CREATE INDEX IF NOT EXISTS wf_events_refused_unknown_idx
   ON wf_events (id) WHERE result = 'rejected' AND reason = 'unknown_event';
+
+-- The one model call writing a run's explanation, on any process
+-- (services/checks-explanation.js): its row claimed for the run until the
+-- call ends or this lease lapses; other readers wait for what it writes. It
+-- was a promise in each process's memory.
+ALTER TABLE check_explanations ADD COLUMN IF NOT EXISTS generating_until TIMESTAMPTZ;

@@ -103,6 +103,35 @@ test('the checks explanation against the full PostgreSQL schema', { timeout: 180
     assert.equal((await row()).run_at.toISOString(), '2026-10-21T12:00:00.000Z');
   });
 
+  await t.test('two readers on two processes make one call; a claim whose call died lapses', async () => {
+    const other = new Pool({ connectionString: String(url), max: 2 });
+    const run = { ...session, checks_checked_at: new Date('2026-10-21T13:00:00Z') };
+    let release;
+    const gate = new Promise((resolve) => { release = resolve; });
+    const before = calls;
+    reply = 'Once.';
+    const slow = llm.generateChecksExplanation;
+    llm.generateChecksExplanation = async (args) => { await gate; return slow(args); };
+    const a = explainer.explain(pool, run);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const b = explainer.explain(other, run, { waitMs: 10000 });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    release();
+    assert.deepEqual(await Promise.all([a, b]), ['Once.', 'Once.']);
+    await other.end();
+    assert.equal(calls - before, 1, 'one call');
+    llm.generateChecksExplanation = slow;
+    // A call whose process died holds the row until its lease lapses.
+    const next = { ...session, checks_checked_at: new Date('2026-10-21T14:00:00Z') };
+    await pool.query(`UPDATE check_explanations SET run_at = $2, explanation = NULL, generating_until = NOW() + interval '1 minute'
+      WHERE session_id = $1 AND language = 'en'`, [session.id, next.checks_checked_at]);
+    assert.equal(await explainer.explain(pool, next, { waitMs: 0 }), null, 'held: no second call');
+    assert.equal(calls - before, 1);
+    await pool.query(`UPDATE check_explanations SET generating_until = NOW() - interval '1 second' WHERE session_id = $1`, [session.id]);
+    assert.equal(await explainer.explain(pool, next), 'Once.', 'lapsed: called again');
+    assert.equal((await row()).run_at.toISOString(), '2026-10-21T14:00:00.000Z');
+  });
+
   await t.test('deleting the change deletes its rows', async () => {
     await pool.query('DELETE FROM chat_sessions WHERE id = $1', [session.id]);
     const { rows } = await pool.query('SELECT 1 FROM check_explanations WHERE session_id = $1', [session.id]);
