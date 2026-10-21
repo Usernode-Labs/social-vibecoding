@@ -657,13 +657,24 @@ export function FeedbackDialog() {
             </p>
           </div>
           {/* #5687: Done is what the sheet is for, so it is the filled
-              primary button and comes first; everything else is a neutral
-              button under it. */}
+              primary button and comes first. Open chat is the one neutral
+              button under it, where Homeroom bot builds the request:
+              following the build is the useful next step there. See your
+              requests and Edit are one row of quiet links under the buttons
+              ("See your requests · Edit"); Edit stays because it is the only
+              place a request can be edited after posting.
+              The controller toggles `hidden` on each link, so the row reads
+              their state in CSS rather than being told: the dot shows only
+              between two shown links, and the row itself hides when neither
+              shows, so no empty row keeps a gap. */}
           <div className="flex flex-col gap-3">
             <Button id="feedback-sent-done" className="min-h-[44px]">{t('core:common.done')}</Button>
             <Button id="feedback-sent-chat" variant="neutral" ink="neutral" className="hidden min-h-[44px]">{t('dialogs:feedback.sent.chat')}</Button>
-            <Button id="feedback-sent-mine" variant="neutral" ink="neutral" className="min-h-[44px]">{t('dialogs:feedback.sent.mine')}</Button>
-            <Button id="feedback-sent-edit" variant="neutral" ink="neutral" className="hidden min-h-[44px]">{t('dialogs:feedback.edit.button')}</Button>
+            <div className="flex items-center justify-center [&:not(:has(>:not(.hidden)))]:hidden">
+              <Button id="feedback-sent-mine" type="button" variant="unstyled" size="inline" ink="none" className="min-h-[44px] px-2 text-zinc-500 underline underline-offset-2 dark:text-zinc-400">{t('dialogs:feedback.sent.mine')}</Button>
+              <span aria-hidden="true" className="hidden text-sm text-zinc-500 dark:text-zinc-400 [:not(.hidden)+&:has(+:not(.hidden))]:inline">·</span>
+              <Button id="feedback-sent-edit" type="button" variant="unstyled" size="inline" ink="none" className="hidden min-h-[44px] px-2 text-zinc-500 underline underline-offset-2 dark:text-zinc-400">{t('dialogs:feedback.edit.button')}</Button>
+            </div>
             <button id="feedback-sent-fix" type="button" className="hidden self-center text-xs text-zinc-500 underline underline-offset-2 dark:text-zinc-400">
               {t('dialogs:feedback.sent.fix')}
             </button>

@@ -1700,8 +1700,8 @@
     "description": "Heading of the confirmation after a request was posted and the assistant (Homeroom bot) has started building it."
   },
   "feedback.sent.line": {
-    "text": "Your idea is on the board now. Find it on your profile, under Your requests.",
-    "description": "Line of the confirmation after a request was posted. The board is the app's list of requests; \"Your requests\" is the name of a list on the profile screen."
+    "text": "Your idea is on the board now.",
+    "description": "Line of the confirmation after a request was posted. The board is the app's list of requests. A \"See your requests\" link under it opens the person's own list, so the line does not say where that is."
   },
   "feedback.sent.botLine_one": {
     "text": "Homeroom bot is building it now, usually about {{count}} minutes. You'll get a message when it's ready to try.",
@@ -1729,7 +1729,7 @@
   },
   "feedback.sent.mine": {
     "text": "See your requests",
-    "description": "Button of the confirmation after a request was posted: opens the list of this person's own requests on their profile."
+    "description": "Small link under the buttons of the confirmation after a request was posted: opens the list of this person's own requests on their profile. It can sit beside an \"Edit\" link, with a dot between them."
   },
   "feedback.sent.fix": {
     "text": "Build it now with a coding agent",
@@ -3429,7 +3429,7 @@
   },
   "feedback.edit.button": {
     "text": "Edit",
-    "description": "Button on a sent-feedback confirmation: correct this request during its five-minute edit window."
+    "description": "Button or small link on a sent-feedback confirmation: correct this request during its five-minute edit window."
   },
   "feedback.edit.heading": {
     "text": "Edit your request",
