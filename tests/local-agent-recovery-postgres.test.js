@@ -68,14 +68,6 @@ async function enqueue(client, workId = WORK_ID) {
   });
 }
 
-// The dispatching process died this long ago.
-async function silence(client, turnId, seconds) {
-  await client.query(
-    `UPDATE local_agent_turns SET waiter_seen_at = NOW() - make_interval(secs => $2) WHERE id = $1`,
-    [turnId, seconds]
-  );
-}
-
 test('the tail is claimed once, by the waiter holding it, and a claimed turn is never taken over', async (t) => {
   const client = await connect(t);
   if (!client) return;
@@ -85,7 +77,6 @@ test('the tail is claimed once, by the waiter holding it, and a claimed turn is 
     [queued.turn.id, 'c'.repeat(40)]
   );
   // The laptop finished while the platform was down; the old waiter is gone.
-  await silence(client, queued.turn.id, 600);
   const adopted = await localAgent.takeOverOwnedTurn(client, WORK_ID);
 
   const result = await localAgent.awaitTurnResult(client, adopted.id, { waiterId: adopted.waiter_id });
@@ -106,7 +97,6 @@ test('a turn the lease sweeper failed is still finished: the sweep and the takeo
   await client.query(`UPDATE local_agent_turns SET status = 'running', accepted_at = NOW() WHERE id = $1`, [queued.turn.id]);
   // The machine stopped heartbeating, and the platform restarted meanwhile.
   await client.query(`UPDATE session_agent_leases SET expires_at = NOW() - INTERVAL '1 second', last_seen_at = created_at`);
-  await silence(client, queued.turn.id, 600);
 
   assert.equal(await localAgent.sweepExpiredLeases(client), 1);
   const { rows: [swept] } = await client.query('SELECT status, error_detail FROM local_agent_turns WHERE id = $1', [queued.turn.id]);
@@ -127,14 +117,14 @@ test('a turn its work item dispatched is its item\'s: no pass takes it, and the 
   const queued = await enqueue(client);
   assert.equal(queued.turn.owner.workId, workId);
   assert.match(queued.waiterId, /^[0-9a-f-]{36}$/);
-  assert.equal(await localAgent.renewWaiter(client, queued.turn.id, queued.waiterId), true, 'a live waiter renews');
+  assert.equal(await localAgent.stillWaiter(client, queued.turn.id, queued.waiterId), true, 'a live waiter holds it');
   assert.equal(localAgent.adoptOrphanedTurns, undefined, 'no pass takes a quiet turn: the item is its waiter');
 
   assert.equal(await localAgent.takeOverOwnedTurn(client, 'another-item'), null, 'only its own item');
   const taken = await localAgent.takeOverOwnedTurn(client, workId);
   assert.equal(String(taken.id), String(queued.turn.id));
   assert.notEqual(taken.waiter_id, queued.waiterId, 'the next claim waits under an id of its own');
-  assert.equal(await localAgent.renewWaiter(client, queued.turn.id, queued.waiterId), false,
+  assert.equal(await localAgent.stillWaiter(client, queued.turn.id, queued.waiterId), false,
     'so the waiter a process that lost the item left answers \'adopted\' and leaves the tail');
 
   await client.query(`UPDATE local_agent_turns SET status = 'completed', finished_at = NOW() WHERE id = $1`, [taken.id]);

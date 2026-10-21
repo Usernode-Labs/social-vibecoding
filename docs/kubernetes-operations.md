@@ -753,15 +753,14 @@ route allowlist names them (`alertname =~ "SocialWorkflow.*"`, namespace
 process, is not "nobody takes it". Admin → Workflows shows the same signs under "Needs a
 person".
 
-**Rolling back past this release.** A rollback past #5714 (turns as workflow work, the
-leader gone) is not supported: roadmap item 3.2 deleted what a release from before it needed from
-the releases beside it (the holds it read in `process_holds`, its conversations' claims
-renewed, its Stop forward, the turn-spend mark). A rollback to a release that contains
-#5714 needs one step (the first item below): its migration Job recreates what it still names (`leader_sweeps`,
-the campaign lease columns, `apps.creating_redrives`, all empty), and this release keeps
-what it reads (`process_holds`, `shots_eval_trials.proxy_cents`, the `apps.creating_owner`
-and `starter_images.owner` columns, `apps.creating_owner` defaulting to `workflow` so its
-insert trigger starts every project). What it does with this release's state:
+**Rolling back past this release.** A rollback past roadmap item 3.2 (#5793) is not
+supported: the release after it dropped what a release from before 3.2 still reads
+(`process_holds`, `shots_eval_trials.proxy_cents`, the `apps.creating_owner` and
+`starter_images.owner` columns), and 3.2 itself deleted what a release from before #5714
+needed from the releases beside it (the holds it read, its conversations' claims renewed,
+its Stop forward, the turn-spend mark). A rollback to #5793 itself needs one step (the
+first item below): its migration Job recreates what it names, all empty, and sets
+`apps.creating_owner`'s default again. What it does with the newer releases' state:
 
 - The `turn` instances this release wrote are at version 3 (a change's dev chat turn that
   did not end its own way owes `turn.repair`), which that release leaves alone: a person's

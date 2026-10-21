@@ -773,20 +773,10 @@ ALTER TABLE apps ADD COLUMN IF NOT EXISTS manifest_snapshot JSONB;
 -- the app's creator / collaborators / admins — see routes/apps.js.
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS last_failure JSONB;
 
--- Who was setting a project up. A project's making is the app-creation
--- machine's (src/workflow/app-creation/): its insert starts its making (the
--- apps_wf_enrol_creation trigger). Before it, an owner token of the process
--- driving the row (`creating_owner`, 'workflow' once the machine took it)
--- with its heartbeat (`creating_heartbeat_at`): read by nothing in this
--- release, but by the release before roadmap item 3.2 (22ac79e7a): its
--- machine's facts, and its insert trigger, which a rollback to it applies
--- again and which starts only a row whose owner is 'workflow' (any other it
--- waits up to ten minutes for, as an older build's). So a row inserted with
--- no owner is the workflow's by default. Drop both, and the default, once
--- no process of that release is live and a rollback to it is over.
-ALTER TABLE apps ADD COLUMN IF NOT EXISTS creating_owner TEXT;
-ALTER TABLE apps ALTER COLUMN creating_owner SET DEFAULT 'workflow';
-ALTER TABLE apps ADD COLUMN IF NOT EXISTS creating_heartbeat_at TIMESTAMPTZ;
+-- Retired: who was setting a project up before the app-creation machine
+-- (an owner token and its heartbeat), kept one release after roadmap item
+-- 3.2 for the release before it. A project's making is the machine's.
+ALTER TABLE apps DROP COLUMN IF EXISTS creating_owner, DROP COLUMN IF EXISTS creating_heartbeat_at;
 ALTER TABLE apps DROP COLUMN IF EXISTS creating_redrives;
 -- Retired: a production redeploy the old governance paths owed an app (the
 -- deleted services/owed-redeploy.js). Every deploy is app-delivery's request.
@@ -1695,20 +1685,22 @@ END $$;
 -- post-turn tail (commit → PR → staging → checks → completion card →
 -- wrap-up). The waiter lives in the process that dispatched the turn, so a
 -- restart kills it while the laptop keeps working; without these, nothing
--- ever finished such a turn. The waiter renews `waiter_seen_at` while it
--- waits, under its `waiter_id`. When its process goes, the next claim of
+-- ever finished such a turn. The waiter holds the turn under its
+-- `waiter_id`. When its process goes, the next claim of
 -- the work item that dispatched it (`owner`, below) takes the waiter id over
 -- (services/local-agent-recovery.js). Whoever holds
 -- the id when the turn ends claims `tail_claimed_at`, once, and runs the
 -- tail; `tail_finished_at` says the recovered tail got to its end. Rows from
 -- before this existed have no waiter id and are never taken over.
 ALTER TABLE local_agent_turns ADD COLUMN IF NOT EXISTS waiter_id UUID;
+-- Retired: when the waiter last said it was waiting, which only the deleted
+-- stale-waiter scan read. Nothing in this release writes or reads it; the
+-- release before it (f3b2246ef) still writes it while it drains. Drop it
+-- once no process of that release is live.
 ALTER TABLE local_agent_turns ADD COLUMN IF NOT EXISTS waiter_seen_at TIMESTAMPTZ;
+DROP INDEX IF EXISTS local_agent_turns_waiting_idx;
 ALTER TABLE local_agent_turns ADD COLUMN IF NOT EXISTS tail_claimed_at TIMESTAMPTZ;
 ALTER TABLE local_agent_turns ADD COLUMN IF NOT EXISTS tail_finished_at TIMESTAMPTZ;
-CREATE INDEX IF NOT EXISTS local_agent_turns_waiting_idx
-  ON local_agent_turns (waiter_seen_at)
-  WHERE waiter_id IS NOT NULL AND tail_claimed_at IS NULL;
 -- The work item whose turn dispatched it (src/workflow/turn/: its
 -- `turnOwner`, as a coding turn's record names it). Its waiter is that item:
 -- when the item's process goes, the process that claims the item next takes
@@ -14965,22 +14957,10 @@ CREATE TABLE IF NOT EXISTS platform_processes (
 CREATE INDEX IF NOT EXISTS idx_platform_processes_heartbeat ON platform_processes (heartbeat_at);
 COMMENT ON TABLE platform_processes IS 'staging:private';
 
--- What a process held, `kind` for `ref`. Nothing in this release writes or
--- reads it (a process's holds are its own drain's, in its memory). Kept
--- while the release before roadmap item 3.2 can still serve: it writes its
--- own holds here and reads them back (its turn-leftovers pass, its adoption,
--- its Stop route), and without the table its adoption fails closed and a
--- recover turn's last ask would end a record it could have carried on. Drop
--- it once no process of that release (22ac79e7a) is live.
-CREATE TABLE IF NOT EXISTS process_holds (
-  process_id TEXT NOT NULL REFERENCES platform_processes(id) ON DELETE CASCADE,
-  kind       TEXT NOT NULL,
-  ref        TEXT NOT NULL,
-  since      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  PRIMARY KEY (process_id, kind, ref)
-);
-CREATE INDEX IF NOT EXISTS idx_process_holds_ref ON process_holds (kind, ref);
-COMMENT ON TABLE process_holds IS 'staging:private';
+-- Retired: what a process held, written for a release from before the turn
+-- machine and kept one release after roadmap item 3.2. A process's holds are
+-- its own drain's, in its memory.
+DROP TABLE IF EXISTS process_holds;
 
 -- The read-only database roles the leader sets up at its election
 -- (services/debug-access.js usernode_debug_ro, topochain/db-console-role.js
@@ -15100,13 +15080,9 @@ CREATE TABLE IF NOT EXISTS shots_eval_trials (
     CHECK (state IN ('planned', 'provisioning', 'exploring', 'reviewing', 'verified', 'failed', 'cancelled')),
   CONSTRAINT shots_eval_trials_repetition_check CHECK (repetition BETWEEN 1 AND 3)
 );
--- What the Anthropic proxy billed for a trial an older release's runner ran.
--- Nothing writes or reads it: every trial is billed per attempt
--- (shots_eval_attempt_costs). Kept while the release before roadmap item
--- 3.2 can still serve: its shots-eval machine reads it in its transitions (a
--- missing column would fault them) and its proxy's billFor in its calls.
--- Drop it once no process of that release (22ac79e7a) is live.
-ALTER TABLE shots_eval_trials ADD COLUMN IF NOT EXISTS proxy_cents NUMERIC(12,4) NOT NULL DEFAULT 0;
+-- Retired: what the proxy billed a trial an older release's runner ran.
+-- Every trial is billed per attempt (shots_eval_attempt_costs).
+ALTER TABLE shots_eval_trials DROP COLUMN IF EXISTS proxy_cents;
 -- When the shots-eval machine decided a running trial ends (a cancel, a
 -- phase past its time, its row ended elsewhere): its work stops at its next
 -- step from then, though the row reads active until its cleanup is done
@@ -15616,14 +15592,6 @@ $$;
 --
 --   status     queued    to build: a new key, or Rebuild in Admin
 --              building  the starter-images clock's target is building it
---                        (`owner` and `heartbeat_at`: the lease a builder from
---                        before the clock held, read and written now only by
---                        the release before roadmap item 3.2, whose claim
---                        leaves a row building with no owner alone: after a
---                        rollback to it, a build this release's process was
---                        cut in reads building until an admin's Rebuild.
---                        Drop them once no process of that release,
---                        22ac79e7a, is live)
 --              ready     image_ref is the image
 --              failed    the last attempt failed (`error`); retried a few
 --                        times on its own (attempts), then left for Rebuild
@@ -15642,8 +15610,6 @@ CREATE TABLE IF NOT EXISTS starter_images (
   build_ms      INTEGER,
   error         TEXT,
   attempts      INTEGER NOT NULL DEFAULT 0,
-  owner         TEXT,
-  heartbeat_at  TIMESTAMPTZ,
   started_at    TIMESTAMPTZ,
   built_at      TIMESTAMPTZ,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -15652,6 +15618,9 @@ CREATE TABLE IF NOT EXISTS starter_images (
 );
 CREATE INDEX IF NOT EXISTS idx_starter_images_key
   ON starter_images (context_key) WHERE image_ref IS NOT NULL;
+-- Retired: the lease a builder from before the starter-images clock held,
+-- kept one release after roadmap item 3.2.
+ALTER TABLE starter_images DROP COLUMN IF EXISTS owner, DROP COLUMN IF EXISTS heartbeat_at;
 
 -- What a turn shows as it happens (services/session-bus.js): every event a
 -- live turn streams to a browser, for a change (`stream_key` its id) or a

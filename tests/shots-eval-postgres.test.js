@@ -680,9 +680,7 @@ test('shots evals, end to end (PostgreSQL)', { timeout: 180_000 }, async (t) => 
     // release's runner dispatched): no eval's, so never the platform's to pay.
     await setTurn(MERGED_TWO, { turnId: 't', mode: 'shots', telemetryCorrelationId: trial.attempt_id });
     assert.equal(await evals.billFor(pool, MERGED_TWO), null);
-    // The machine's turn: on its attempt's costs, and only those (what an
-    // older runner's proxy left on the trial's row is no one's to charge).
-    await pool.query('UPDATE shots_eval_trials SET proxy_cents = 40 WHERE id = $1', [trial.id]);
+    // The machine's turn: on its attempt's costs, and only those.
     await setTurn(MERGED_TWO, ownedTurn(trial));
     const bill = await evals.billFor(pool, MERGED_TWO);
     await bill.noteSpend(5);

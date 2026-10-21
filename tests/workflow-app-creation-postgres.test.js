@@ -182,13 +182,11 @@ test('app-creation machine against the full PostgreSQL schema', { timeout: 12000
     assert.deepEqual(phases, ['database', 'build'], 'the made screen hears its making start, and its first deploy start');
   });
 
-  await t.test('C2: every insert starts its making at once, whatever its owner columns say: nothing waits for an older build', async () => {
+  await t.test('C2: every insert starts its making at once: nothing waits for another builder', async () => {
     reset();
-    // What a builder from before the machine wrote: an owner of its own,
-    // its heartbeat live.
     const { rows: [a] } = await pool.query(
-      `INSERT INTO apps (name, slug, created_by, status, creating_owner, creating_heartbeat_at)
-       VALUES ('made-old', 'made-old', $1, 'creating', 'old-process-token', now()) RETURNING *`, [owner.id]);
+      `INSERT INTO apps (name, slug, created_by, status)
+       VALUES ('made-old', 'made-old', $1, 'creating') RETURNING *`, [owner.id]);
     await settle();
     assert.equal((await inst(a)).state, 'running');
     assert.deepEqual(setups.calls.map((c) => c.key), ['setup:1']);
