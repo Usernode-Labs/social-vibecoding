@@ -6,6 +6,31 @@
  * (the toast, the loading shapes' animation) follow the page's look.
  */
 
+/* A game is played with taps, drags and long presses, never read like a
+   page: none of them selects text, opens the copy and look-up callout or
+   lifts a picture to drag (public/app.js keeps the long-press menu shut
+   too), and a quick second tap never zooms. The fields people type in
+   stay ordinary fields. */
+body {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+input,
+textarea,
+[contenteditable] {
+  -webkit-user-select: text;
+  user-select: text;
+  -webkit-touch-callout: default;
+}
+img,
+svg,
+canvas {
+  -webkit-user-drag: none;
+}
+
 .scene {
   --felt: #0f5a50;
   --felt-light: #1b7a6b;
@@ -274,7 +299,8 @@
   height: 100%;
   width: 100%;
 }
-/* A piece hops from square to square. */
+/* A piece settling into its place on a square, beside any other piece
+   there. A move itself is drawn frame by frame (public/app.js travel). */
 .piece {
   transition: transform 0.13s ease-out;
 }
