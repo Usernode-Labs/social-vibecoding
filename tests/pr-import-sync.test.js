@@ -92,14 +92,16 @@ fakeModule('../src/services/integration', {
 // machine's guard and statement would, against the pool the test is using
 // (recordingPool below), and records each ask on it.
 let movePool = null;
-// GitHub's word on the pull request itself: a merge of one up for a vote is
-// merge-followups' (platform.mergeObserved); any other merge or close closes
-// the proposal (session-lifecycle.archiveSession). Both recorded.
-const observedMerges = [];
+// GitHub's word on the pull request itself is the proposal machine's to act
+// on (platform.prLooked, PrLooked): the sync reports what it read, from the
+// status it read, and decides nothing. Each report recorded; `answers` is
+// whether the machine takes the next one.
+const looked = [];
+const answers = [];
 const closes = [];
 fakeModule('../src/workflow/platform.ts', {
   moveReviewHead: async (p) => movePool.move(p),
-  mergeObserved: async (m) => { observedMerges.push(m); return 1; },
+  prLooked: async (m) => { looked.push(m); return answers.length ? answers.shift() : true; },
 });
 fakeModule('../src/services/session-lifecycle', {
   archiveSession: async (args) => { closes.push({ sessionId: args.sessionId, reason: args.reason, from: args.from }); return { archived: true }; },
@@ -957,52 +959,42 @@ test('applyHeadChange: a late sweep keeps an author summary recorded for the hea
 
 // ── A pull request merged or closed on GitHub settles the proposal ─────
 
-test('syncImportedProposal: merged on GitHub while up for a vote is recorded as a merge; nothing else moves', async () => {
-  observedMerges.length = 0; closes.length = 0;
+test('syncImportedProposal: merged or closed on GitHub is reported to the proposal machine, from the status read; nothing else moves', async () => {
+  looked.length = 0; closes.length = 0; answers.length = 0;
   await withStubs([
     [fakeGithub, 'getPR', async () => ({ merged: true, state: 'closed', merge_commit_sha: 'c'.repeat(40), merged_at: '2026-10-19T10:00:00Z',
-      head: { sha: 'b'.repeat(40) } })],
+      closed_at: '2026-10-19T10:00:00Z', head: { sha: 'b'.repeat(40) } })],
   ], async () => {
     const pool = recordingPool();
     const res = await prImportSync.syncImportedProposal({ config: {}, pool, session: { ...SESSION } });
     assert.equal(res, 'merged');
-    assert.deepEqual(observedMerges, [{ sessionId: 321, appId: 9, mergeSha: 'c'.repeat(40), mergedAt: '2026-10-19T10:00:00Z' }]);
-    assert.deepEqual(closes, []);
+    assert.deepEqual(looked, [{ sessionId: 321, appId: 9, from: 'promoted', merged: true, closed: true,
+      mergeSha: 'c'.repeat(40), mergedAt: '2026-10-19T10:00:00Z', closedAt: '2026-10-19T10:00:00Z' }]);
     assert.equal(pool.moves.length, 0, 'a merged head is not installed for a vote');
   });
+  // Closed: reported with when; a close the machine does not take yet (one
+  // still settling) is unchanged, and the next look reports it again.
+  looked.length = 0;
+  const closedAt = new Date(Date.now() - 60000).toISOString();
+  answers.push(false, true);
+  for (const expected of ['unchanged', 'closed']) {
+    await withStubs([[fakeGithub, 'getPR', async () => ({ merged: false, state: 'closed', closed_at: closedAt,
+      head: { sha: 'a'.repeat(40) }, mergeable: true })]], async () => {
+      const res = await prImportSync.syncImportedProposal({ config: {}, pool: recordingPool(), session: { ...SESSION, status: 'active' } });
+      assert.equal(res, expected);
+    });
+  }
+  assert.deepEqual(looked.map((m) => [m.from, m.merged, m.closed, m.closedAt]), [['active', false, true, closedAt], ['active', false, true, closedAt]]);
+  assert.deepEqual(closes, [], 'the sync closes nothing itself');
 });
 
-test('syncImportedProposal: closed on GitHub, or merged before it went up, closes the proposal', async () => {
-  observedMerges.length = 0; closes.length = 0;
-  // Closed a minute ago (an author re-running CI closes and reopens): not
-  // settled yet; closed for longer, it is.
-  await withStubs([[fakeGithub, 'getPR', async () => ({ merged: false, state: 'closed', closed_at: new Date(Date.now() - 60000).toISOString(),
-    head: { sha: 'a'.repeat(40) }, mergeable: true })]], async () => {
-    const res = await prImportSync.syncImportedProposal({ config: {}, pool: recordingPool(), session: { ...SESSION } });
-    assert.equal(res, 'unchanged');
-  });
-  assert.deepEqual(closes, []);
-  await withStubs([[fakeGithub, 'getPR', async () => ({ merged: false, state: 'closed', closed_at: new Date(Date.now() - 600000).toISOString(),
-    head: { sha: 'b'.repeat(40) } })]], async () => {
-    const res = await prImportSync.syncImportedProposal({ config: {}, pool: recordingPool(), session: { ...SESSION } });
-    assert.equal(res, 'closed');
-  });
-  await withStubs([[fakeGithub, 'getPR', async () => ({ merged: true, state: 'closed', head: { sha: 'b'.repeat(40) } })]], async () => {
-    const res = await prImportSync.syncImportedProposal({ config: {}, pool: recordingPool(), session: { ...SESSION, status: 'active' } });
-    assert.equal(res, 'merged');
-  });
-  assert.deepEqual(closes, [
-    { sessionId: 321, reason: 'pr-closed', from: 'promoted' },
-    { sessionId: 321, reason: 'pr-merged', from: 'active' },
-  ], 'the proposal machine decides each close, from the status read');
-  assert.deepEqual(observedMerges, []);
-});
-
-test('syncImportedProposal: a proposal being merged is left to its merge attempt', async () => {
-  observedMerges.length = 0; closes.length = 0;
+test('syncImportedProposal: a proposal being merged is reported as read, and the machine leaves it to its merge attempt', async () => {
+  looked.length = 0; closes.length = 0; answers.length = 0;
+  answers.push(false);
   await withStubs([[fakeGithub, 'getPR', async () => ({ merged: true, state: 'closed', head: { sha: 'b'.repeat(40) } })]], async () => {
     const res = await prImportSync.syncImportedProposal({ config: {}, pool: recordingPool(), session: { ...SESSION, status: 'merging' } });
-    assert.equal(res, 'skipped');
+    assert.equal(res, 'unchanged');
   });
-  assert.deepEqual([observedMerges, closes], [[], []]);
+  assert.deepEqual(looked.map((m) => m.from), ['merging']);
+  assert.deepEqual(closes, []);
 });

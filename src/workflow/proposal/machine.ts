@@ -229,6 +229,10 @@ export const OBSERVE_MAX_MS = 10 * 60 * 1000;
 // A sync whose machinery broke is not asked again for two minutes, doubling
 // to half an hour.
 export const SYNC_BACKOFF_MS = 2 * 60 * 1000;
+// A pull request closed on GitHub closes its proposal once the close has
+// stood this long: an author closes and reopens one to run its CI again, and
+// the webhook's `closed` comes first. The next look settles it.
+export const PR_CLOSE_SETTLES_MS = 5 * 60 * 1000;
 // A merge merge-followups has not recorded yet is told again after this,
 // doubling to the max (MERGED_RESEND_MAX_MS).
 export const MERGED_RESEND_MS = 5 * 60 * 1000;
@@ -340,6 +344,17 @@ const EVENTS = {
   // merge-followups moved it into 'merged' (a merge, or a change carried by
   // another's).
   Merged: (p: any) => ({ ...session(p) }),
+  // GitHub's word on its pull request, as a look read it (an import's,
+  // services/pr-import-sync.js, or a native one's merged by hand,
+  // proposal-scans.js): merged, or closed and when. `tally`: the votes it
+  // stood at, for a merge's record.
+  PrLooked: (p: any) => ({ ...session(p), from: from(p), merged: !!p?.merged, closed: !!p?.closed,
+    mergeSha: text(p?.mergeSha, 64), mergedAt: text(p?.mergedAt, 40), closedAt: text(p?.closedAt, 40),
+    tally: p?.tally == null ? null : {
+      yes: Math.max(0, Number(p.tally.yes) | 0),
+      required: p.tally.required == null ? null : Math.max(0, Number(p.tally.required) | 0),
+      active: p.tally.active == null ? null : Math.max(0, Number(p.tally.active) | 0),
+    } }),
   // The revision the group votes on moved (Q3): the reviewed head (native)
   // or the pull request's head (imported), from `from` (what the caller read
   // there; null: bound for the first time) to `to`. `keepVotes`: a mechanical
@@ -703,6 +718,13 @@ function close(s: Live, e: Event<any>, f: Facts, reason: string, more: { byOwner
 const closeEvent: Handler = (s, e, f) =>
   close(s, e, f, e.payload.reason, { byOwner: e.payload.userId != null && e.payload.userId === f.row!.userId, purgeCc: e.payload.purgeCc });
 
+// GitHub merged or closed its pull request (the guard left the rest): merged
+// while up for its vote is a merge, which merge-followups records; merged
+// before it, or closed, closes the proposal.
+const prLooked: Handler = (s, e, f, ctx) => (e.payload.merged && s.name === 'in_review'
+  ? mergedOnGithub(s, f, ctx, { sha: e.payload.mergeSha, mergedAt: e.payload.mergedAt, tally: e.payload.tally }, 'recovery')
+  : close(s, e, f, e.payload.merged ? 'pr-merged' : 'pr-closed'));
+
 const reopen: Handler = (s, e, f, ctx, deps) => {
   const n = s.data.n + 1;
   // Its worker's destroy and its CC volume's purge, if still owed, go: the
@@ -880,7 +902,7 @@ function mergedOnGithub(s: Live, f: Facts, ctx: TransitionContext, r: any, obser
   const a = s.data.attempt;
   const report: Record<string, Json> = {
     mergeSha: r?.sha ?? null, mergedAt: r?.mergedAt || ctx.now.toISOString(), force: !!a?.force,
-    forcedBy: a?.forcedBy ?? null, observedBy, tally: (a?.tally ?? null) as Json,
+    forcedBy: a?.forcedBy ?? null, observedBy, tally: (a?.tally ?? r?.tally ?? null) as Json,
   };
   const merging: Attempt = a ? { ...a, stage: 'merged', report, resends: 0 }
     : { n: s.data.n, queueN: 0, force: false, forcedBy: null, stage: 'merged', head: f.row?.head ?? null, epoch: f.row?.epoch ?? 0,
@@ -1304,6 +1326,14 @@ const GUARDS = new Map<string, (s: Live, e: Event<any>, f: Facts, ctx: Transitio
     () => (sameReading(statusOf(s), e.payload.from) ? ok() : reject('overtaken')),
     () => owner(e, f),
   )],
+  ['PrLooked', (s, e, f, ctx) => all(
+    // One being merged is its merge attempt's to settle.
+    () => (['underway', 'proposing', 'in_review'].includes(s.name) ? ok()
+      : reject(s.name === 'closed' ? 'already_closed' : s.name === 'merging' || s.name === 'unconfirmed' ? 'merging' : 'merged')),
+    () => (sameReading(statusOf(s), e.payload.from) ? ok() : reject('overtaken')),
+    () => (e.payload.merged ? ok() : !e.payload.closed ? reject('open')
+      : ctx.now.getTime() - Date.parse(e.payload.closedAt || '') < PR_CLOSE_SETTLES_MS ? reject('settling') : ok()),
+  )],
   ['Reopen', (s, e, f) => all(
     () => (s.name === 'closed' ? ok() : reject('not_closed')),
     () => read(s, e),
@@ -1343,7 +1373,7 @@ const GUARDS = new Map<string, (s: Live, e: Event<any>, f: Facts, ctx: Transitio
 
 const HANDLERS = new Map<string, Handler>([
   ['Promote', promote], ['Unpromote', unpromote], ['Pause', pause], ['Resume', resume],
-  ['IdleCheck', idleCheck], ['ReviewCheck', reviewCheck], ['Close', closeEvent], ['Reopen', reopen],
+  ['IdleCheck', idleCheck], ['ReviewCheck', reviewCheck], ['Close', closeEvent], ['PrLooked', prLooked], ['Reopen', reopen],
   ['Merged', merged],
   ['ReviewHeadMoved', headMoved], ['ApprovalsCleared', approvalsCleared],
   ['MergeRequested', mergeRequested], ['ForceMerge', forceMerge], ['SyncRequested', syncRequested], ['ObserveDue', observeDue],
@@ -1354,7 +1384,7 @@ const HANDLERS = new Map<string, Handler>([
 ]);
 // The events that may create the instance (every one but the clock's): the
 // first adopts the proposal from its row, then is handled as for one held.
-const CREATE = ['Adopted', 'Promote', 'Unpromote', 'Pause', 'Resume', 'Close', 'Reopen',
+const CREATE = ['Adopted', 'Promote', 'Unpromote', 'Pause', 'Resume', 'Close', 'PrLooked', 'Reopen',
   'Merged', 'ReviewHeadMoved', 'ApprovalsCleared', 'MergeRequested', 'ForceMerge', 'SyncRequested', 'DiagramStored'];
 // The queue's asks are answered whatever the proposal's state: a rejection
 // would leave the queue waiting for an answer that never comes.
@@ -1499,6 +1529,7 @@ export function proposal(deps: Deps): Machine<PState, Facts> {
       IdleCheck: timer,
       ReviewCheck: timer,
       Close: (e: Event<any>): Check => (closer(e) === true || fromCampaign(e) ? ok() : reject('not_a_producer')),
+      PrLooked: system,
       Reopen: person,
       Merged: fromMerge,
       ReviewHeadMoved: routeOrSystem,

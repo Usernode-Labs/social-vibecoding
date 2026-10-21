@@ -3,8 +3,8 @@
 // What the clocks read about proposals from outside (src/services/
 // proposal-scans.js): each scan lists every target with no LIMIT, skips a
 // session somebody works on or a spent GitHub budget, and hands what it
-// found to the machine that decides (a merge on GitHub to merge-followups,
-// through platform.mergeObserved; a head to pr-import-sync). The fixed-check
+// found to the machine that decides (a merge on GitHub to the proposal
+// machine, through platform.prLooked; a head to pr-import-sync). The fixed-check
 // sync logs a decline once, from the previous run's result rather than a
 // process's memory.
 
@@ -33,7 +33,7 @@ fakeModule('../src/services/pr-import-sync', {
   syncImportedProposal: async ({ session }) => { synced.push(session.id); return 'unchanged'; },
 });
 const merges = [];
-fakeModule('../src/workflow/platform.ts', { mergeObserved: async (m) => { merges.push(m); return 1; } });
+fakeModule('../src/workflow/platform.ts', { prLooked: async (m) => { merges.push(m); return true; } });
 const sweeps = [];
 const fixed = fakeModule('../src/services/fixed-check-sync', {
   isEnabled: () => true,
@@ -121,13 +121,14 @@ test('an imported look skips a session worked on or a spent budget, and otherwis
   assert.deepEqual(await scans.lookImported({}, pool([[/WHERE cs.id = \$1/, [{ ...row, status: 'archived' }]]]), 7), { skipped: 'gone' });
 });
 
-test('a native pull request merged by hand is handed to merge-followups; an open one is not', async () => {
+test('a native pull request merged by hand is reported to the proposal machine, from the status read; an open one is not', async () => {
   const row = { id: 8, app_id: 4, pr_number: 12, status: 'promoted', repo_url: 'https://github.com/acme/demo' };
   const p = pool([[/WHERE cs.id = \$1/, [row]]]);
   assert.deepEqual(await scans.lookMergedByHand(p, 8), { merged: false });
   github.getPR = async () => ({ merged: true, merge_commit_sha: 'c'.repeat(40), merged_at: '2026-10-19T09:00:00Z' });
   assert.deepEqual(await scans.lookMergedByHand(p, 8), { merged: true });
-  assert.deepEqual(merges, [{ sessionId: 8, appId: 4, mergeSha: 'c'.repeat(40), mergedAt: '2026-10-19T09:00:00Z' }]);
+  assert.deepEqual(merges, [{ sessionId: 8, appId: 4, from: 'promoted', merged: true, closed: false,
+    mergeSha: 'c'.repeat(40), mergedAt: '2026-10-19T09:00:00Z', closedAt: null }]);
   github.getPR = async () => { throw new Error('API rate limit exceeded'); };
   assert.deepEqual(await scans.lookMergedByHand(p, 8), { skipped: 'budget' }, 'a refusal for the limit is a look skipped');
 });

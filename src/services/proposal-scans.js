@@ -110,11 +110,12 @@ async function lookMergedByHand(pool, sessionId) {
     throw err;
   }
   if (!pr || !pr.merged) return { merged: false };
-  await platform().mergeObserved({
-    sessionId: row.id, appId: row.app_id, mergeSha: pr.merge_commit_sha || null, mergedAt: pr.merged_at || null,
+  const taken = await platform().prLooked({
+    sessionId: row.id, appId: row.app_id, from: row.status, merged: true, closed: pr.state === 'closed',
+    mergeSha: pr.merge_commit_sha || null, mergedAt: pr.merged_at || null, closedAt: pr.closed_at || null,
   });
-  log.info('proposal-scans', 'A pull request merged by hand on GitHub was recorded', { sessionId: row.id, prNumber: row.pr_number });
-  return { merged: true };
+  if (taken) log.info('proposal-scans', 'A pull request merged by hand on GitHub was recorded', { sessionId: row.id, prNumber: row.pr_number });
+  return { merged: taken };
 }
 
 // ── Revisions of proposals in review ────────────────────────────────────

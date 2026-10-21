@@ -129,9 +129,13 @@ test('workflow machines in a process of their own, and through its crash', { tim
     `SELECT status FROM wf_work WHERE machine = $1 AND key = $2 AND kind = $3 ORDER BY created_at DESC LIMIT 1`,
     [machine, key, kind])).rows[0]?.status === 'settled';
 
-  // GitHub merged it: merge-followups is created by Merged, here as the
-  // merged-by-hand clock reports it (the merge itself, below).
-  const reportMerge = async (m) => { await platform.mergeObserved({ ...m, mergedAt: null }); return { status: 'accepted' }; };
+  // GitHub merged it: merge-followups is created by Merged, here appended
+  // as the proposal machine's message would bring it (the merge itself, below).
+  const appendMerged = (m) => require('../src/workflow/kernel/index.ts').appendEvent(pool, 'merge-followups', `session:${m.sessionId}`,
+    { type: 'Merged', payload: { sessionId: m.sessionId, mergeSha: m.mergeSha, mergedAt: m.mergedAt || new Date().toISOString(),
+      force: false, observedBy: 'recovery', tally: null } },
+    { requestKey: `merged:${m.sessionId}:test`, source: { kind: 'system', name: 'recovery' }, appId: m.appId });
+  const reportMerge = async (m) => { await appendMerged(m); return { status: 'accepted' }; };
 
   await platform.startWorkflow({ ...flags, databaseUrl, wfSlots: 0 }, { loops: false });
   await startWorkflow();

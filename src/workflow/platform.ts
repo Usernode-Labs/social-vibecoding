@@ -1303,25 +1303,34 @@ export async function adminApplyProposal(
 
 const count = (n: unknown) => (Number.isInteger(n) && (n as number) >= 0 ? n as number : null);
 
-// A merge found on GitHub that no attempt here reported (somebody merged the
-// pull request by hand while it was up for a vote: the merged-by-hand clock
-// looks every six hours, and the imported-prs clock at each imported one,
-// services/proposal-scans.js).
-// The tally is read again: the counted Yes votes on the version that merged,
-// and the app's active members.
-export async function mergeObserved(m: { sessionId: number; appId: number; mergeSha: string | null; mergedAt: string | null }): Promise<number> {
+// GitHub's word on a proposal's pull request, as a look read it: an
+// imported one's (services/pr-import-sync.js, the imported-prs clock and the
+// webhook) or a native one merged by hand while up for its vote (the
+// merged-by-hand clock, services/proposal-scans.js). The proposal machine
+// decides what follows (PrLooked). A merge carries the tally read here: the
+// counted Yes votes on the version that merged, and the app's active
+// members. Resolves whether the machine took it.
+export async function prLooked(m: { sessionId: number; appId: number; from: string; merged: boolean; closed: boolean;
+  mergeSha: string | null; mergedAt: string | null; closedAt: string | null }): Promise<boolean> {
   const pool = kernelPool!;
-  const { rows: [v] } = await pool.query(
-    `SELECT count(*)::int AS yes, cs.votes_required FROM pr_votes pv JOIN chat_sessions cs ON cs.id = pv.session_id
-      WHERE pv.session_id = $1 AND pv.vote = 'yes' AND ${countedVotePredicateSql('pv', 'cs')}
-      GROUP BY cs.votes_required`, [m.sessionId]);
-  const stats = await pool.query('SELECT self_hosted, collab_visibility FROM apps WHERE id = $1', [m.appId])
-    .then(({ rows: [a] }) => activeUserStats(pool, m.appId, appMetaFromRow(a))).catch(() => null);
-  return runtime!.append(MERGE, sessionKey(m.sessionId), { type: 'Merged', payload: {
-    sessionId: m.sessionId, mergeSha: m.mergeSha, mergedAt: m.mergedAt || new Date().toISOString(), force: false,
-    observedBy: 'recovery',
-    tally: { yes: v?.yes ?? 0, required: count(v?.votes_required), active: count(stats?.active) },
-  } }, { requestKey: `merged:${m.sessionId}:recovery`, source: { kind: 'system', name: 'recovery' }, appId: m.appId });
+  let tally = null;
+  if (m.merged) {
+    const { rows: [v] } = await pool.query(
+      `SELECT count(*)::int AS yes, cs.votes_required FROM pr_votes pv JOIN chat_sessions cs ON cs.id = pv.session_id
+        WHERE pv.session_id = $1 AND pv.vote = 'yes' AND ${countedVotePredicateSql('pv', 'cs')}
+        GROUP BY cs.votes_required`, [m.sessionId]);
+    const stats = await pool.query('SELECT self_hosted, collab_visibility FROM apps WHERE id = $1', [m.appId])
+      .then(({ rows: [a] }) => activeUserStats(pool, m.appId, appMetaFromRow(a))).catch(() => null);
+    tally = { yes: v?.yes ?? 0, required: count(v?.votes_required), active: count(stats?.active) };
+  }
+  const what = m.merged ? 'merged' : 'closed';
+  // The same reading within a minute (the webhook's and the clock's) is one
+  // event; a close still settling is looked at again on the next run.
+  const out = await proposalEvent('PrLooked', { from: m.from, merged: m.merged, closed: m.closed, mergeSha: m.mergeSha,
+    mergedAt: m.mergedAt, closedAt: m.closedAt, tally },
+  { sessionId: m.sessionId, appId: m.appId, source: sys('pr-look'), waitMs: 5000,
+    requestKey: `pr-looked:${m.sessionId}:${what}:${m.mergedAt || m.closedAt || '-'}:${Math.floor(Date.now() / 60000)}` });
+  return typeof out === 'object' && out != null && ['accepted', 'replayed', 'pending'].includes((out as any).status);
 }
 
 // The platform's own app now runs `sha` (its release booting): every merge

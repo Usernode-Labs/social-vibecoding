@@ -2028,7 +2028,7 @@
     {
       "source": "src/workflow/platform.ts",
       "kind": "structural-template",
-      "fingerprint": "4cb190fab746c444e38d",
+      "fingerprint": "711477e07347eb54b0f4",
       "count": 1,
       "preview": "`SELECT count(*)::int AS yes, cs.votes_required FROM pr_votes pv JOIN chat_sessions cs ON cs.id = pv.session_id WHERE pv.session_id = $1 AND pv.vote = 'yes' AND"
     },
