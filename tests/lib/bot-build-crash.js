@@ -261,24 +261,24 @@ function forkChild({ databaseUrl, config, env = {}, label = '' }) {
     exited,
     get exitInfo() { return exitInfo; },
     stderr: () => stderr,
-    async start({ killAt = null, killMode = 'kill' } = {}) {
+    async start({ killAt = null, killMode = 'kill', killAfter = null } = {}) {
       await loaded;
       const ready = new Promise((resolve, reject) => {
         const on = (m) => { if (m?.ready) { child.off('message', on); resolve(); } };
         child.on('message', on);
         exited.then(({ code, signal }) => reject(new Error(`the workflow child exited (${signal || code}) before it was ready\n${stderr.slice(-4000)}`)));
       });
-      child.send({ start: { killAt, killMode } });
+      child.send({ start: { killAt, killMode, killAfter } });
       await ready;
     },
     // The next build's kill point, for a child already running.
-    async arm({ killAt = null, killMode = 'kill' } = {}) {
+    async arm({ killAt = null, killMode = 'kill', killAfter = null } = {}) {
       const armed = new Promise((resolve, reject) => {
         const on = (m) => { if (m?.armed) { child.off('message', on); resolve(); } };
         child.on('message', on);
         exited.then(({ code, signal }) => reject(new Error(`the workflow child exited (${signal || code}) before it was armed`)));
       });
-      child.send({ arm: { killAt, killMode } });
+      child.send({ arm: { killAt, killMode, killAfter } });
       await armed;
     },
     async kill() {
