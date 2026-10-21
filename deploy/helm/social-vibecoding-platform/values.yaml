@@ -30,6 +30,15 @@ platform:
   # When releases come faster than work finishes, the oldest hands its work
   # over first rather than keep one Pod per release.
   drainingMax: 2
+  # What a replaced Pod keeps while it finishes its work: it starts nothing
+  # new, so its pools shrink to these (DRAIN_DB_POOL_MAX, DRAIN_WF_POOL_MAX,
+  # DB_ADMIN_CONNECTIONS_DRAINING). The connection budget
+  # (postgresql.platformConnections) counts drainingMax of them per replica
+  # at these sizes.
+  drainPools:
+    dbPoolMax: 4
+    wfPoolMax: 2
+    databaseOperations: 1
   replicas: 1
   # The web and conductor split (docs/plans/web-and-conductor.md). On, the
   # Pods above serve people's requests, never lead and decide nothing
@@ -50,6 +59,13 @@ platform:
     resources: {}
     # Its own request pool (DB_POOL_MAX): it serves nobody's requests.
     dbPoolMax: 30
+    # Its workflow pool (WF_POOL_MAX): the pipeline slots, the outcome
+    # listener, work leases and results.
+    wfPoolMax: 10
+    # db-manager's database operations on the main server at once (a clone,
+    # a teardown, a restore; DB_ADMIN_CONNECTIONS_MAX), each a connection or
+    # two outside the pools.
+    databaseOperations: 4
     # The workflow's metrics (GET /metrics, src/workflow/metrics.ts), on a
     # port of their own that the Service does not expose.
     metricsPort: 9464
@@ -98,6 +114,14 @@ postgresql:
   database: usernode
   applicationDatabase: app_usernode_2d5619
   username: usernode
+  # The connection budget. The connections the main server keeps for the
+  # platform's own user (its reserved_connections, granted to that user
+  # through pg_use_reserved_connections): the child apps cannot take them.
+  # The chart refuses pools that could open more than this at once: every
+  # role's serving Pods plus one more each for a rollout's surge, drainingMax
+  # replaced Pods per replica at platform.drainPools, and the migration Job.
+  # 0 checks nothing (the bundled server, a local cluster).
+  platformConnections: 0
   storage:
     size: 50Gi
     storageClassName: openebs-lvm-retain
@@ -141,6 +165,9 @@ previewPostgresql:
 
 migration:
   enabled: true
+  # The migration Job's pool (DB_POOL_MAX); it also opens one administrative
+  # connection and a psql. It runs beside every Pod of a rollout.
+  dbPoolMax: 4
   activeDeadlineSeconds: 1800
   ttlSecondsAfterFinished: 3600
   backoffLimit: 1
@@ -221,7 +248,12 @@ config:
   # spread over every node. See the chart README.
   checkNodePool: ""
   # Match application defaults here; each cluster declares its own capacity.
+  # The web Pods' pools (the conductor's are platform.conductor's). With the
+  # conductor off, the platform Pods do its work and take its wfPoolMax and
+  # databaseOperations.
   dbPoolMax: 10
+  wfPoolMax: 2
+  databaseOperations: 2
   maxGlobalSessions: 25
   maxUserSessions: 3
   maxUserPromotedSessions: 5

@@ -44,6 +44,7 @@ spec:
                 name: {{ include "social-vibecoding-platform.secretName" . }}
           env:
             - {name: NODE_ENV, value: production}
+            - {name: DB_POOL_MAX, value: {{ .Values.migration.dbPoolMax | int64 | quote }}}
             - {name: APP_RUNTIME, value: kubernetes}
             - {name: WORKER_RUNTIME, value: kubernetes}
             - {name: CAPTURE_RUNTIME, value: kubernetes}

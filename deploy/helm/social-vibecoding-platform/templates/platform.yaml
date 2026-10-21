@@ -236,6 +236,15 @@ the chart's context plus processRole: "" (all: serves and stands for leader),
             {{- else }}
             - {name: DB_POOL_MAX, value: {{ .Values.config.dbPoolMax | int64 | quote }}}
             {{- end }}
+            # The rest of the connection budget (postgresql.platformConnections):
+            # the workflow pool and db-manager's operations, the conductor's
+            # work's sizes where this Pod does it, and what a replaced Pod keeps.
+            {{- $conductorWork := or (eq .processRole "conductor") (not .Values.platform.conductor.enabled) }}
+            - {name: WF_POOL_MAX, value: {{ ternary .Values.platform.conductor.wfPoolMax .Values.config.wfPoolMax $conductorWork | int64 | quote }}}
+            - {name: DB_ADMIN_CONNECTIONS_MAX, value: {{ ternary .Values.platform.conductor.databaseOperations .Values.config.databaseOperations $conductorWork | int64 | quote }}}
+            - {name: DRAIN_DB_POOL_MAX, value: {{ .Values.platform.drainPools.dbPoolMax | int64 | quote }}}
+            - {name: DRAIN_WF_POOL_MAX, value: {{ .Values.platform.drainPools.wfPoolMax | int64 | quote }}}
+            - {name: DB_ADMIN_CONNECTIONS_DRAINING, value: {{ .Values.platform.drainPools.databaseOperations | int64 | quote }}}
             {{- if and (eq .processRole "conductor") .Values.platform.conductor.metricsPort }}
             # The workflow's metrics (src/workflow/metrics.ts).
             - {name: WF_METRICS_PORT, value: {{ .Values.platform.conductor.metricsPort | int64 | quote }}}

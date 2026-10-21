@@ -545,8 +545,9 @@ async function dropDatabaseWith(dbName, { strict, execute, retry, server = PRIMA
 
 // ─── Per-preview connection ceiling (#1771) ─────────────────────────────
 //
-// One Postgres server backs the platform, every production app and every
-// staging preview, and its max_connections is the stock 100. Nothing in the
+// One Postgres server backed the platform, every production app and every
+// staging preview, with the stock 100 connections (previews have since moved
+// to a server of their own). Nothing in the
 // fleet was bounded against that number: each preview container brings its
 // own pg Pool, and a generated app's pool is whatever that app's code says
 // it is — code this platform does not own and cannot cap from here. Twenty

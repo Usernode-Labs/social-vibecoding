@@ -772,9 +772,11 @@ function load() {
     // DB work. Tunable via env so prod can widen it without a code change.
     //
     // #1771: a STAGING PREVIEW gets its own, much smaller ceiling. Every
-    // preview is a separate clone on the SAME Postgres server as production,
-    // and that server's max_connections is the stock 100 — so the fleet, not
-    // any one process, is what the budget has to fit. A preview serves one
+    // preview is a separate clone on one Postgres server (production's when
+    // this was written, with the stock 100 connections; a server of its own
+    // now), so the fleet, not any one process, is what the budget has to fit.
+    // The platform's own pools are budgeted in the chart per role
+    // (postgresql.platformConnections, item 4). A preview serves one
     // reviewer and one capture run; capture drives 8 concurrent pages
     // (capture/capture.js `concurrency`), so 8 is the number of connections
     // it can actually use at once, and anything above that is a ceiling it
@@ -1167,7 +1169,7 @@ function usesMockGithubForImports() {
 // github-mock.js stands in), and no fleet. What it does have is a timer
 // pool that queries every few seconds forever, which is why previews last
 // touched a week ago were measured holding six warm Postgres connections
-// each — twenty of them, on a server whose max_connections is 100. The pool
+// each — twenty of them, on a server whose max_connections was 100. The pool
 // never sheds them because idleTimeoutMillis only fires on a connection
 // nobody reuses, and the sweepers keep reusing them.
 //
