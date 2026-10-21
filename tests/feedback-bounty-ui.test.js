@@ -191,7 +191,11 @@ test('_applyFeedbackShot handles both feedback and feedback-spent', () => {
     appJs.indexOf('renderAdminButton() {')
   );
   assert.match(shot, /shot !== 'feedback' && shot !== 'feedback-spent'/);
-  assert.match(shot, /App\.openFeedbackModal\(\)/);
+  // Every ?shot=feedback state is the FORM's: naming it is what keeps a
+  // device where comment mode is the default (all of them now) from opening
+  // the page layer instead, which photographed the home feed under all of
+  // these checks.
+  assert.match(shot, /App\.openFeedbackModal\(\{ mode: 'form' \}\)/, 'the form by name, past the routing');
   // The spent variant forces a client-side zero so the disabled state is
   // reviewable without writing kudos rows for a real user. The display pin
   // must also beat an initial budget request that was already in flight.
