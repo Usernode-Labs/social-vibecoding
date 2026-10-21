@@ -211,7 +211,7 @@ export function homeWalkSteps({ slug, name, example = null }: HomeWalkProject): 
       title: translate('onboarding:firstSession.walk.bot.title'),
       text: example
         ? translate('onboarding:firstSession.walk.bot.textExample', { example })
-        : translate('onboarding:firstSession.walk.bot.text'),
+        : translate('onboarding:firstSession.walk.bot.text', { app }),
     },
     {
       // Its key is still `workshop`.
