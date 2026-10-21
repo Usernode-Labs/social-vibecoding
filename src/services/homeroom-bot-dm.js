@@ -5131,17 +5131,11 @@ function firstVersionIssue({ name, username, brief, botBuilds = true, card = nul
 // GitHub's answer and its record finds it rather than filing a second.
 const firstRequestMarker = (appId) => `<!-- homeroom-first-version:app-${appId} -->`;
 
-// The claim: a waiting row, or one left filing that nothing else can be
-// filing. An older build's filing holds no lease; it is over once no
-// process of another build is alive (draining or serving), and that build's
-// own sweep let a filing row go after FILING_LAPSE_MINUTES. Two processes of
-// this build never file one project: its making's work item is the one.
-const FILING_LAPSE_MINUTES = 30;
+// The claim: a waiting row, or one left filing (this work's own try that
+// stopped before it kept its claim). Its making's work item is the only
+// filer of a project, so nothing else can be filing it.
 const CLAIM_SQL = `UPDATE homeroom_bot_first_versions f SET status = 'filing', attempts = f.attempts + 1
-   WHERE f.app_id = $1 AND (f.status = 'waiting' OR (f.status = 'filing' AND (
-     f.created_at < NOW() - make_interval(mins => $3)
-     OR NOT EXISTS (SELECT 1 FROM platform_processes p
-                     WHERE p.heartbeat_at > NOW() - INTERVAL '45 seconds' AND p.release IS DISTINCT FROM $2::text))))`;
+   WHERE f.app_id = $1 AND f.status IN ('waiting', 'filing')`;
 
 /**
  * File one project's first request (app-creation's `app.firstRequest`
@@ -5177,19 +5171,12 @@ async function fileFirstRequest(pool, config, appId, { steps, last = false, deps
   const card = cardRow ? { ...cardRow, committed: !!sketchRow.committed_at } : null;
   const { title, body } = firstVersionIssue({ name, username, brief: row.brief, botBuilds, card });
   try {
-    // Claimed once, from waiting: an older build's sweep, still running
-    // during a rollout, claims the same way, so the two never both file it.
-    // A row left filing (a process that died filing it: an older build's,
-    // or this work's own try that stopped before it kept its claim) is
-    // taken once nothing else can be filing it; until then this waits.
+    // Claimed once, from waiting, or from a filing this work's own try left.
     await steps.once('claim', async () => {
-      for (;;) {
-        const { rowCount } = await pool.query(CLAIM_SQL, [appId, process.env.GIT_SHA || null, FILING_LAPSE_MINUTES]);
-        if (rowCount) return true;
-        const { rows: [now] } = await pool.query('SELECT status FROM homeroom_bot_first_versions WHERE app_id = $1', [appId]);
-        if (now?.status !== 'filing') throw Object.assign(new Error(`it is ${now?.status ?? 'gone'}`), { settled: now?.status ?? 'none' });
-        await steps.race(new Promise((r) => setTimeout(r, deps.claimWaitMs ?? 15000)));
-      }
+      const { rowCount } = await pool.query(CLAIM_SQL, [appId]);
+      if (rowCount) return true;
+      const { rows: [now] } = await pool.query('SELECT status FROM homeroom_bot_first_versions WHERE app_id = $1', [appId]);
+      throw Object.assign(new Error(`it is ${now?.status ?? 'gone'}`), { settled: now?.status ?? 'none' });
     });
     const parsed = (typeof github.parseGithubUrl === 'function' && row.repo_url && github.parseGithubUrl(row.repo_url))
       || (() => {

@@ -81,10 +81,6 @@ function _onBusMessage({ kind, routing, data, oversize, fromWorkflow }) {
       void require('./account-deletion-runtime').receive(_pool, r.userId)
         .catch(() => log.warn('ws', 'Account stream cleanup will retry'));
       return;
-    case 'agent_stop':
-      // An older release's wake for a Mayor turn's stop: a turn's Stop is its
-      // machine's now (src/workflow/turn/), read from the turn's claim.
-      return;
     case 'issues_closed':
       // From a workflow transition only: issues it closed on GitHub, for
       // this process's own copy of the open-issues list (github.js keeps one
@@ -117,17 +113,6 @@ function _onBusMessage({ kind, routing, data, oversize, fromWorkflow }) {
       // shareIssuesChange), for this process's own copy. Nothing is sent to
       // sockets: the sender's issue_update tells browsers to re-read.
       if (!oversize && r.owner && r.repo) require('./github').applyIssuesChange(r.owner, r.repo, payload);
-      return;
-    case 'homeroom_bot':
-      // An older release's wake for the bot's loop, which is the workflow's
-      // now (bot-request, bot-lane): nothing to do.
-      return;
-    // ROLLOUT-ONLY: an older release's stop forward, for a turn it saw this
-    // release hold: the process running it asks the turn's machine
-    // (turn-leftovers.js receiveOlderStop). Never a socket event.
-    case 'session_stop':
-      if (!oversize) void require('./turn-leftovers').receiveOlderStop(payload)
-        .catch((err) => log.warn('ws', 'A stop an older release forwarded failed', { err: err.message }));
       return;
     // A turn's stream has a new row (services/session-bus.js): this
     // process's subscribers to it read on. Never a socket event.

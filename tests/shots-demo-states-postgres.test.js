@@ -302,13 +302,6 @@ test('each demo state reads back the way its screen needs it', { timeout: 180000
   assert.deepEqual(busy.map((s) => s.id).sort(), [demoStates.IDS.runningSession, demoStates.IDS.stoppingSession]);
   assert.ok(busy.every((s) => !s.title && !s.activeChange));
   assert.equal(sessions.filter((s) => s.title).length, 6, 'the preview change and five more');
-  // Nothing in a copy renews a claim, and a build from before the turn
-  // machine (a pair's before side may run one) reads one not renewed for 90
-  // seconds as interrupted: the fixture's is renewed past the pair's life.
-  const { rows: leases } = await pool.query(
-    `SELECT (active_turn->>'renewedAt')::timestamptz > NOW() + INTERVAL '1 hour' AS ahead
-       FROM agent_sessions WHERE active_turn IS NOT NULL`);
-  assert.deepEqual(leases.map((row) => row.ahead), [true, true]);
   const running = await agentSessions.readState(pool, { userId: member, id: demoStates.IDS.runningSession });
   assert.equal(running.busy !== false && !!running.lease, true, 'its turn reads as running');
   assert.equal(running.lease.stopping, false);
@@ -877,7 +870,7 @@ test('both copies hold the same demo-state rows, every time in them from the pai
   const { rows: [running] } = await head.pool.query(
     'SELECT last_activity_at, active_turn FROM agent_sessions WHERE id = $1', [demoStates.IDS.runningSession]);
   assert.equal(running.last_activity_at.toISOString(), new Date(Date.parse(at) - 60000).toISOString());
-  assert.equal(Date.parse(running.active_turn.renewedAt), Date.parse(at) + 6 * 3600000);
+  assert.equal(Date.parse(running.active_turn.startedAt), Date.parse(at) - 40000);
   const { rows: [remix] } = await base.pool.query('SELECT forked_from FROM apps WHERE id = $1', [demoStates.IDS.memberRemix]);
   assert.equal(remix.forked_from.forkedAt, new Date(Date.parse(at) - 2 * 86400000).toISOString());
   // Two moments for one pair are refused.

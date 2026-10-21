@@ -4,14 +4,9 @@ import type { Tx } from '../kernel/index.ts';
 
 export interface Facts {
   app: { id: number; slug: string; status: string; selfHosted: boolean; repoUrl: string | null } | null;
-  // An older build's process makes it still: its owner's heartbeat is live
-  // (the owner lease that made projects before this machine), or it has no
-  // owner yet and is younger than that build's rule for ownerless rows (ten
-  // minutes: it is between its insert and its owner's first write).
-  ownedElsewhere: boolean;
   // A first request is owed: the project was made with a description
   // (homeroom_bot_first_versions, written with the row) and has a
-  // repository to file it in. Read when a setup ends, or when one is owed.
+  // repository to file it in. Read when a setup ends.
   firstRequestOwed: boolean;
   // The one-line reason of the failure the row records.
   failureReason: string | null;
@@ -22,18 +17,10 @@ export interface Facts {
   delivery: { asked: boolean; lastDeployAt: string | null } | null;
 }
 
-// An older build's owner lapsed after this long without a heartbeat, and
-// took an ownerless row only once it was this old.
-const OWNER_LAPSE_SECONDS = 90;
-const OWNERLESS_AFTER_MINUTES = 10;
-
 export async function readFacts(tx: Tx, appId: number, { firstRequest = false, delivery = false } = {}): Promise<Facts> {
   const { rows: [a] } = await tx.query(
-    `SELECT id, slug, status, self_hosted, repo_url, last_failure->>'reason' AS reason,
-            ((creating_owner IS NOT NULL AND creating_owner <> 'workflow'
-              AND creating_heartbeat_at > NOW() - make_interval(secs => $2))
-             OR (creating_owner IS NULL AND created_at > NOW() - make_interval(mins => $3))) AS owned_elsewhere
-       FROM apps WHERE id = $1`, [appId, OWNER_LAPSE_SECONDS, OWNERLESS_AFTER_MINUTES]);
+    `SELECT id, slug, status, self_hosted, repo_url, last_failure->>'reason' AS reason
+       FROM apps WHERE id = $1`, [appId]);
   const app = a ? { id: a.id, slug: a.slug, status: String(a.status), selfHosted: !!a.self_hosted, repoUrl: a.repo_url || null } : null;
   let firstRequestOwed = false;
   if (firstRequest && app?.repoUrl) {
@@ -51,5 +38,5 @@ export async function readFacts(tx: Tx, appId: number, { firstRequest = false, d
          FROM wf_instances WHERE machine = 'app-delivery' AND key = 'app:' || $1::text`, [appId]);
     held = { asked: !!d?.asked, lastDeployAt: d?.last_at ?? null };
   }
-  return { app, ownedElsewhere: !!a?.owned_elsewhere, firstRequestOwed, failureReason: a?.reason ?? null, delivery: held };
+  return { app, firstRequestOwed, failureReason: a?.reason ?? null, delivery: held };
 }

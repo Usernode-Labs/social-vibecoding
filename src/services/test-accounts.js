@@ -157,8 +157,8 @@ async function makeEveryTemplate(client, userId, { pool, config = {} } = {}) {
     const { rows: [app] } = await client.query(
       `WITH new_app AS (
          INSERT INTO apps (name, slug, repo_url, created_by, status,
-                           collab_visibility, view_visibility, creating_owner, creating_heartbeat_at)
-         VALUES ($1, $2, NULL, $3, 'creating', $4, $5, 'workflow', 'infinity')
+                           collab_visibility, view_visibility)
+         VALUES ($1, $2, NULL, $3, 'creating', $4, $5)
          RETURNING *
        ), membership AS (
          INSERT INTO app_collaborators (app_id, user_id, status, accepted_at)

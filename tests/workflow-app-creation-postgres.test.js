@@ -54,12 +54,11 @@ test('app-creation machine against the full PostgreSQL schema', { timeout: 12000
   let seq = 0;
   const { rows: [owner] } = await pool.query(`INSERT INTO users (username, password) VALUES ('maker', 'x') RETURNING id`);
   // A project as a route inserts it: the workflow makes it.
-  async function project({ by = 'workflow', status = 'creating', heartbeat = null } = {}) {
+  async function project({ status = 'creating' } = {}) {
     const slug = `made-${++seq}`;
     const { rows: [a] } = await pool.query(
-      `INSERT INTO apps (name, slug, created_by, status, creating_owner, creating_heartbeat_at)
-       VALUES ($1, $1, $2, $3, $4, $5) RETURNING *`,
-      [slug, owner.id, status, by, heartbeat]);
+      `INSERT INTO apps (name, slug, created_by, status) VALUES ($1, $1, $2, $3) RETURNING *`,
+      [slug, owner.id, status]);
     return a;
   }
   const owe = (a) => pool.query(
@@ -183,39 +182,24 @@ test('app-creation machine against the full PostgreSQL schema', { timeout: 12000
     assert.deepEqual(phases, ['database', 'build'], 'the made screen hears its making start, and its first deploy start');
   });
 
-  await t.test('C2: a row an older build inserts during a rollout is waited for: that build makes it, or it is made here once left', async () => {
+  await t.test('C2: every insert starts its making at once, whatever its owner columns say: nothing waits for an older build', async () => {
     reset();
-    // Inserted without an owner: that build writes its owner just after.
-    const a = await project({ by: null });
-    await settle();
-    assert.equal((await inst(a)).state, 'waiting');
-    assert.equal(setups.calls.length, 0, 'that build makes it');
-    // That build finished it: the instance lands where the row is.
-    await pool.query(`UPDATE apps SET status = 'running' WHERE id = $1`, [a.id]);
-    await due(a);
-    await rt.fireTimers();
+    // What a builder from before the machine wrote: an owner of its own,
+    // its heartbeat live.
+    const { rows: [a] } = await pool.query(
+      `INSERT INTO apps (name, slug, created_by, status, creating_owner, creating_heartbeat_at)
+       VALUES ('made-old', 'made-old', $1, 'creating', 'old-process-token', now()) RETURNING *`, [owner.id]);
     await settle();
     assert.equal((await inst(a)).state, 'running');
-    assert.equal(setups.calls.length, 0);
-    // One its build finished as failed reads failed (a Retry is the way on).
-    const f = await project({ by: null });
-    await rt.drain();
-    await pool.query(`UPDATE apps SET status = 'error' WHERE id = $1`, [f.id]);
-    await due(f);
-    await rt.fireTimers();
-    await settle();
-    assert.equal((await inst(f)).state, 'failed');
-    // One left ownerless past that build's ten minutes: made here.
-    const b = await project({ by: null });
-    await rt.drain();
-    await pool.query(`UPDATE apps SET created_at = now() - interval '11 minutes' WHERE id = $1`, [b.id]);
-    await due(b);
-    await rt.fireTimers();
-    await settle();
-    assert.equal((await inst(b)).state, 'running');
     assert.deepEqual(setups.calls.map((c) => c.key), ['setup:1']);
-    assert.equal((await row(b)).creating_owner, 'workflow');
+    const m = creation.appCreation();
+    for (const gone of ['Adopted', 'Recheck', 'FirstRequestOwed']) assert.equal(m.events.has(gone), false, `${gone} is no event`);
+    assert.equal(m.states.has('waiting'), false);
+    const { rows: started } = await pool.query(
+      `SELECT type FROM wf_events WHERE machine = $1 AND key = $2 ORDER BY id LIMIT 1`, [creation.MACHINE, creationKey(a.id)]);
+    assert.deepEqual(started.map((r) => r.type), ['Started']);
   });
+
 
   await t.test('C3: a failed setup reads failed with its record; Retry sets it up again, counted', async () => {
     reset();
@@ -350,27 +334,6 @@ test('app-creation machine against the full PostgreSQL schema', { timeout: 12000
     assert.deepEqual(filings.calls.map((c) => c.key), ['plan'], 'no plan, no look');
   });
 
-  await t.test('C8: a row an older build is still making is waited for, then made from where it is', async () => {
-    reset();
-    const a = await project({ by: 'old-process-token', heartbeat: new Date() });
-    await rt.append(machine, creationKey(a.id), { type: 'Adopted', payload: { appId: a.id } },
-      { requestKey: `adopt:${a.id}`, appId: a.id, source: { kind: 'system', name: 'release' } });
-    await rt.drain();
-    let i = await inst(a);
-    assert.equal(i.state, 'waiting', 'its owner is alive');
-    assert.equal(i.deadline_event.type, 'Recheck');
-    assert.equal(setups.calls.length, 0);
-    // Its owner went quiet.
-    await pool.query(`UPDATE apps SET creating_heartbeat_at = now() - interval '5 minutes' WHERE id = $1`, [a.id]);
-    await due(a);
-    await rt.fireTimers();
-    await settle();
-    i = await inst(a);
-    assert.equal(i.state, 'running');
-    assert.equal((await row(a)).creating_owner, 'workflow', 'the workflow\'s now: an older sweep never takes it');
-    assert.equal(Number((await row(a)).creating_heartbeat_at), Infinity, 'its heartbeat never lapses (an older sweep takes a lapsed one)');
-  });
-
   await t.test('C11: a first deploy an older build\'s app delivery refused is asked again; never taken up by its time limit, it was interrupted', async () => {
     reset();
     const a = await project();
@@ -413,43 +376,6 @@ test('app-creation machine against the full PostgreSQL schema', { timeout: 12000
     assert.equal(r.status, 'error');
     assert.equal(r.last_failure.reason, creation.INTERRUPTED);
     assert.equal(r.last_failure.interrupted, true);
-  });
-
-  await t.test('C12: a first request an older build left open is filed here, once, in the state its row is in', async () => {
-    reset();
-    // Made by an older build: running, with a repository, no instance.
-    const { rows: [a] } = await pool.query(
-      `INSERT INTO apps (name, slug, created_by, status, repo_url) VALUES ('owed-1', 'owed-1', $1, 'running', 'https://github.com/bot/owed-1') RETURNING *`,
-      [owner.id]);
-    await owe(a);
-    const ask = (key) => rt.append(machine, creationKey(a.id), { type: 'FirstRequestOwed', payload: { appId: a.id } },
-      { requestKey: key, appId: a.id, source: { kind: 'system', name: 'release' } });
-    const first = await ask('owed-1');
-    await settle();
-    assert.equal((await outcomeOf(first)).result, 'accepted');
-    assert.equal((await inst(a)).state, 'running');
-    assert.deepEqual(filings.calls.map((c) => c.key), ['first-request']);
-    await ask('owed-2');
-    await settle();
-    assert.equal(filings.calls.length, 1, 'once: its key');
-    // One this machine made, running, whose filing an older build's sweep
-    // left open.
-    const m = await project();
-    await settle();
-    await owe(m);
-    await rt.append(machine, creationKey(m.id), { type: 'FirstRequestOwed', payload: { appId: m.id } },
-      { requestKey: 'owed-m', appId: m.id, source: { kind: 'system', name: 'release' } });
-    await settle();
-    assert.deepEqual(filings.calls.map((c) => c.input.appId), [a.id, m.id]);
-    // Owed nothing: no repository to file it in, or nothing described.
-    const { rows: [n] } = await pool.query(
-      `INSERT INTO apps (name, slug, created_by, status) VALUES ('owed-2', 'owed-2', $1, 'running') RETURNING *`, [owner.id]);
-    await owe(n);
-    const none = await rt.append(machine, creationKey(n.id), { type: 'FirstRequestOwed', payload: { appId: n.id } },
-      { requestKey: 'owed-3', appId: n.id, source: { kind: 'system', name: 'release' } });
-    await rt.drain();
-    assert.equal((await outcomeOf(none)).reason, 'not_owed');
-    assert.equal(await inst(n), undefined);
   });
 
   await t.test('C13: a first deploy that failed is tried again by a Retry, though app delivery keeps its request open', async () => {

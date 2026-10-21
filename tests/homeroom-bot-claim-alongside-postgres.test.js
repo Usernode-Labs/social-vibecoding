@@ -10,9 +10,9 @@
 // holds the bot off, as it always did (#17's rule, kept for that side).
 //
 // The queue is the bot-request machine's projection: the rows below are
-// written as an older release would have, adopted by their machines (as
-// platform.adoptBotQueue does at boot), and the refresh's Owed and NotOwed
-// are applied by a runtime of the bot's two machines with its work faked.
+// written with their machines' instances as those leave them
+// (tests/lib/bot-request-fixture.js), and the refresh's Owed and NotOwed are
+// applied by a runtime of the bot's two machines with its work faked.
 //
 // Skips when no PostgreSQL is reachable, like the repository's other
 // postgres tests.
@@ -44,20 +44,9 @@ function botLoop(pool) {
     machines: [requestMachine.botRequest({ staging: false }), laneMachine.botLane({ staging: false })],
   });
 }
-// Each queue row no machine holds yet is adopted by its request's machine.
-async function adoptQueue(pool, rt) {
-  const { rows } = await pool.query(
-    `SELECT q.* FROM homeroom_bot_queue q
-      WHERE NOT EXISTS (SELECT 1 FROM wf_instances w WHERE w.machine = 'bot-request' AND w.key = 'request:' || q.app_id || ':' || q.issue_number)`);
-  for (const q of rows) {
-    await rt.append(requestMachine.MACHINE, requestMachine.requestKey(q.app_id, q.issue_number), {
-      type: 'Adopted', payload: {
-        appId: q.app_id, issueNumber: q.issue_number, reason: q.reason, priority: q.priority,
-        enqueuedAt: q.enqueued_at.toISOString(), startedAt: q.started_at ? q.started_at.toISOString() : null,
-      },
-    }, { requestKey: `adopt:${q.id}`, source: { kind: 'system', name: 'adopt' } });
-  }
-  await rt.drain();
+// Each queue row no machine holds yet gets its request's instance.
+async function adoptQueue(pool) {
+  await require('./lib/bot-request-fixture').seedRequests(pool);
 }
 
 async function openDatabase(t) {

@@ -429,9 +429,7 @@ test('noteIssueActivity: a message or an edit is heard by the request\'s instanc
 
 test('activity reaches the bot from every place an issue changes on the platform', () => {
   const ws = read('src/services/ws.js');
-  const busCase = ws.slice(ws.indexOf("case 'homeroom_bot':"), ws.indexOf("case 'homeroom_bot':") + 300);
-  assert.match(busCase, /case 'homeroom_bot':[\s\S]*?return;/, 'an older release\'s bus wake is heard and dropped');
-  assert.doesNotMatch(busCase, /onBusMessage/);
+  assert.doesNotMatch(ws, /case 'homeroom_bot':|case 'agent_stop':/, 'no bus wake of the bot\'s or a Mayor stop\'s: nothing sends one');
   const push = ws.slice(ws.indexOf('function pushIssueUpdate(data)'));
   assert.match(push.slice(0, 700), /noteIssueActivityForBot\(data\.appId, data\.issueNumber, data\.action\)/,
     'an edit or an unclaim reaches the bot');

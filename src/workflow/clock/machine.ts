@@ -74,7 +74,7 @@ const optTime = (v: unknown) => (typeof v === 'string' && Number.isFinite(Date.p
 
 const EVENTS = {
   // The release arms the job: its interval, and on first arming when its
-  // first run is due (the job's last run under the leader, else now).
+  // first run is due (within two minutes of the release that armed it).
   Arm: (p: any) => ({ job: job(p?.job), everyMs: every(p?.everyMs), firstDueAt: optTime(p?.firstDueAt), onDemand: !!p?.onDemand }),
   // Its deadline.
   Tick: () => ({}),

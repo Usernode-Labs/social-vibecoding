@@ -593,7 +593,7 @@ async function auditDuplicatePrSessions(pool) {
 
 // #155: headless runs interrupted by a restart used to be blanket-failed
 // here because the loop lived entirely in the dead process. They are now
-// resumable: runHeadlessSession checkpoints its position in
+// resumable: runHeadlessSessionInner checkpoints its position in
 // chat_sessions.headless_step ('planning' / 'cc_running' / 'wrapping'),
 // and the run's turn work item (services/turns.js) carries a 'generating'
 // row forward from that checkpoint — marking 'failed' only the rows it
@@ -11279,7 +11279,7 @@ async function seedStagingSpecUserShareFixtures(pool, config) {
 // copied schema-only).
 //
 // user_id is deliberately NULL on every fixture session: a headless run is
-// only resumed for a user (services/turn-leftovers.js, routes/sessions.js
+// only resumed for a user (routes/sessions.js
 // reloadRecoverableHeadlessSession), so NULL keeps the 'generating'
 // fixture from being "resumed" (which would hit GitHub for a mock issue
 // number and fail the run); the issue panel and notification queries both

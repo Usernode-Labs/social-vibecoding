@@ -288,27 +288,6 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
     log.info('server', 'A turn on this worker is live in this process; not adopting it', { containerName, sessionId });
     return;
   }
-  // Nor one an older release's live process is following (ROLLOUT-ONLY: it
-  // finishes its turns while it drains, docs/plans/draining-releases.md,
-  // holding their sessions until they end). This release's turns are their
-  // work items' (workflow_owned, below). Read exactly: a session whose
-  // holders cannot be read is retried, not taken.
-  let holders = [];
-  try {
-    if (!owned) {
-      const holder = await require('./turn-leftovers').olderProcessHolding(pool, sessionId);
-      if (holder) holders = [holder];
-    }
-  } catch (err) {
-    throw retryRuntimeRecovery(`could not read who holds the session: ${err.message}`);
-  }
-  if (holders.length) {
-    log.info('server', 'A turn on this worker is live in another process; not adopting it', {
-      containerName, sessionId, holders,
-    });
-    return;
-  }
-
   // A durable build's session, or a turn workflow work runs (its record
   // names its work item, still outstanding): its worker and its turn are
   // that work's, which the next leader claims and carries on from its last
@@ -1630,8 +1609,8 @@ async function resumeDetachedTurnInner({
   // The Homeroom bot's turns never reach this: a turn workflow work runs
   // (its builds, reads and fixes, the bench's trials) is its work item's to
   // follow (services/durable-turn.js), and adoptOrphanWorker leaves it
-  // alone; an older release's bot turn is abandoned there
-  // (isRecoveredBotSession), its request read again.
+  // alone; a bot turn no work item owns is stopped there
+  // (isRecoveredBotSession) and its record released.
 
   let result;
   try {

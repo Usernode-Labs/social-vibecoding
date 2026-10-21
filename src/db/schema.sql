@@ -773,16 +773,21 @@ ALTER TABLE apps ADD COLUMN IF NOT EXISTS manifest_snapshot JSONB;
 -- the app's creator / collaborators / admins — see routes/apps.js.
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS last_failure JSONB;
 
--- Who is setting a project up. A project's making is the app-creation
--- machine's (src/workflow/app-creation/): `creating_owner = 'workflow'`
--- says so, and an insert that names it starts its making (the
+-- Who was setting a project up. A project's making is the app-creation
+-- machine's (src/workflow/app-creation/): its insert starts its making (the
 -- apps_wf_enrol_creation trigger). Before it, an owner token of the process
--- driving the row with its heartbeat (`creating_heartbeat_at`) and its
--- redrives (`creating_redrives`): read now only to wait for a row an older
--- build is still making during a rollout. To drop once no older build runs.
+-- driving the row (`creating_owner`, 'workflow' once the machine took it)
+-- with its heartbeat (`creating_heartbeat_at`): read by nothing in this
+-- release, but by the release before roadmap item 3.2 (22ac79e7a): its
+-- machine's facts, and its insert trigger, which a rollback to it applies
+-- again and which starts only a row whose owner is 'workflow' (any other it
+-- waits up to ten minutes for, as an older build's). So a row inserted with
+-- no owner is the workflow's by default. Drop both, and the default, once
+-- no process of that release is live and a rollback to it is over.
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS creating_owner TEXT;
+ALTER TABLE apps ALTER COLUMN creating_owner SET DEFAULT 'workflow';
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS creating_heartbeat_at TIMESTAMPTZ;
-ALTER TABLE apps ADD COLUMN IF NOT EXISTS creating_redrives INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE apps DROP COLUMN IF EXISTS creating_redrives;
 -- Retired: a production redeploy the old governance paths owed an app (the
 -- deleted services/owed-redeploy.js). Every deploy is app-delivery's request.
 ALTER TABLE apps DROP COLUMN IF EXISTS redeploy_owed_at;
@@ -1691,9 +1696,9 @@ END $$;
 -- wrap-up). The waiter lives in the process that dispatched the turn, so a
 -- restart kills it while the laptop keeps working; without these, nothing
 -- ever finished such a turn. The waiter renews `waiter_seen_at` while it
--- waits, under its `waiter_id`. A waiter that stops renewing (its process
--- died) is taken over by the leader's recovery pass
--- (services/local-agent-recovery.js), which takes the waiter id over. Whoever holds
+-- waits, under its `waiter_id`. When its process goes, the next claim of
+-- the work item that dispatched it (`owner`, below) takes the waiter id over
+-- (services/local-agent-recovery.js). Whoever holds
 -- the id when the turn ends claims `tail_claimed_at`, once, and runs the
 -- tail; `tail_finished_at` says the recovered tail got to its end. Rows from
 -- before this existed have no waiter id and are never taken over.
@@ -1708,7 +1713,7 @@ CREATE INDEX IF NOT EXISTS local_agent_turns_waiting_idx
 -- `turnOwner`, as a coding turn's record names it). Its waiter is that item:
 -- when the item's process goes, the process that claims the item next takes
 -- the waiter id over and finishes the turn (services/turns.js), and no
--- recovery pass touches it. NULL on a turn no item dispatched.
+-- recovery pass touches it. NULL only on a turn from before the turn machine.
 ALTER TABLE local_agent_turns ADD COLUMN IF NOT EXISTS owner JSONB;
 CREATE INDEX IF NOT EXISTS local_agent_turns_owner_idx
   ON local_agent_turns ((owner->>'workId'))
@@ -2302,14 +2307,13 @@ CREATE TABLE IF NOT EXISTS maintenance_campaign_apps (
   updated_at  TIMESTAMPTZ DEFAULT NOW(),
   UNIQUE(campaign_id, app_id)
 );
--- The lease an older release's driver held on a campaign (its runner and
--- until when) and the runner that claimed each app row. Read only during a
--- rollout: the campaign machine adopts a campaign once no older driver
--- holds it and fences it off ('workflow', 'infinity'). Dropped once no
--- release older than the campaign machine can run.
-ALTER TABLE maintenance_campaigns ADD COLUMN IF NOT EXISTS runner_id TEXT;
-ALTER TABLE maintenance_campaigns ADD COLUMN IF NOT EXISTS lease_until TIMESTAMPTZ;
-ALTER TABLE maintenance_campaign_apps ADD COLUMN IF NOT EXISTS runner_id TEXT;
+-- The lease a driver from before the campaign machine held (its runner and
+-- until when, and the runner of each app row): read and written by nothing.
+-- The guard triggers below stop naming them first.
+DROP TRIGGER IF EXISTS maintenance_campaigns_wf_owned ON maintenance_campaigns;
+DROP TRIGGER IF EXISTS maintenance_campaign_apps_wf_owned ON maintenance_campaign_apps;
+ALTER TABLE maintenance_campaigns DROP COLUMN IF EXISTS runner_id, DROP COLUMN IF EXISTS lease_until;
+ALTER TABLE maintenance_campaign_apps DROP COLUMN IF EXISTS runner_id;
 
 -- PR votes
 CREATE TABLE IF NOT EXISTS pr_votes (
@@ -9901,19 +9905,14 @@ ALTER TABLE check_runs ADD COLUMN IF NOT EXISTS admitted_at TIMESTAMPTZ DEFAULT 
 CREATE INDEX IF NOT EXISTS idx_check_runs_app ON check_runs (app_id) WHERE app_id IS NOT NULL;
 
 -- Renamed from visual_evidence_* when visual evidence became before & after
--- shots. Guarded so boot is idempotent either way: an existing deployment
--- renames in place and keeps its rows, a fresh one falls straight through
--- to the CREATEs below.
+-- shots (#3380, 2026-09-29). Guarded so boot is idempotent either way: an
+-- existing deployment renames in place and keeps its rows, a fresh one falls
+-- straight through to the CREATEs below.
 --
--- The previous release's pods keep serving through the rolling update after
--- this runs, and they still name the old tables and columns. So a renamed
--- deployment also keeps the old names answering for them: a view under each
--- old table name, and a legacy copy of each chat_sessions column that
--- chat_sessions_shots_legacy_sync() keeps equal to the new one, in both
--- directions. Nothing in this release reads either. Once no deployment runs
--- an older release, drop the three views, the trigger and its function, and
--- the four chat_sessions.visual_evidence_* columns. A rollback past this
--- release needs the views dropped and the renames reversed by hand first.
+-- What kept the old names answering for the release before the rename (a
+-- view under each old table name, and a legacy copy of each chat_sessions
+-- column a trigger kept equal) is dropped below: no release that names them
+-- can run.
 DO $$
 DECLARE
   pair TEXT[];
@@ -9931,7 +9930,6 @@ BEGIN
                 WHERE table_schema = current_schema() AND table_name = pair[2])
     THEN
       EXECUTE format('ALTER TABLE %I RENAME TO %I', pair[1], pair[2]);
-      EXECUTE format('CREATE VIEW %I AS SELECT * FROM %I', pair[1], pair[2]);
     END IF;
   END LOOP;
   -- Constraint and index names carry the old table names too.
@@ -9971,56 +9969,29 @@ BEGIN
     ALTER TABLE chat_sessions RENAME COLUMN visual_evidence_run_id TO shots_run_id;
     ALTER TABLE chat_sessions RENAME COLUMN visual_evidence_detail TO shots_detail;
     ALTER TABLE chat_sessions RENAME COLUMN visual_evidence_updated_at TO shots_updated_at;
-    ALTER TABLE chat_sessions
-      ADD COLUMN visual_evidence_state VARCHAR(24),
-      ADD COLUMN visual_evidence_run_id VARCHAR(32),
-      ADD COLUMN visual_evidence_detail JSONB,
-      ADD COLUMN visual_evidence_updated_at TIMESTAMPTZ;
-    UPDATE chat_sessions
-       SET visual_evidence_state = shots_state, visual_evidence_run_id = shots_run_id,
-           visual_evidence_detail = shots_detail, visual_evidence_updated_at = shots_updated_at
-     WHERE shots_state IS NOT NULL OR shots_run_id IS NOT NULL
-        OR shots_detail IS NOT NULL OR shots_updated_at IS NOT NULL;
-  END IF;
-  IF EXISTS (SELECT 1 FROM information_schema.columns
-              WHERE table_schema = current_schema() AND table_name = 'chat_sessions'
-                AND column_name = 'visual_evidence_state')
-  THEN
-    CREATE OR REPLACE FUNCTION chat_sessions_shots_legacy_sync() RETURNS trigger AS $fn$
-    BEGIN
-      IF TG_OP = 'INSERT' THEN
-        NEW.shots_state := COALESCE(NEW.shots_state, NEW.visual_evidence_state);
-        NEW.shots_run_id := COALESCE(NEW.shots_run_id, NEW.visual_evidence_run_id);
-        NEW.shots_detail := COALESCE(NEW.shots_detail, NEW.visual_evidence_detail);
-        NEW.shots_updated_at := COALESCE(NEW.shots_updated_at, NEW.visual_evidence_updated_at);
-      ELSE
-        IF NEW.shots_state IS NOT DISTINCT FROM OLD.shots_state THEN
-          NEW.shots_state := NEW.visual_evidence_state;
-        END IF;
-        IF NEW.shots_run_id IS NOT DISTINCT FROM OLD.shots_run_id THEN
-          NEW.shots_run_id := NEW.visual_evidence_run_id;
-        END IF;
-        IF NEW.shots_detail IS NOT DISTINCT FROM OLD.shots_detail THEN
-          NEW.shots_detail := NEW.visual_evidence_detail;
-        END IF;
-        IF NEW.shots_updated_at IS NOT DISTINCT FROM OLD.shots_updated_at THEN
-          NEW.shots_updated_at := NEW.visual_evidence_updated_at;
-        END IF;
-      END IF;
-      NEW.visual_evidence_state := NEW.shots_state;
-      NEW.visual_evidence_run_id := NEW.shots_run_id;
-      NEW.visual_evidence_detail := NEW.shots_detail;
-      NEW.visual_evidence_updated_at := NEW.shots_updated_at;
-      RETURN NEW;
-    END $fn$ LANGUAGE plpgsql;
-    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'chat_sessions_shots_legacy_sync'
-                     AND tgrelid = 'chat_sessions'::regclass AND NOT tgisinternal) THEN
-      CREATE TRIGGER chat_sessions_shots_legacy_sync
-        BEFORE INSERT OR UPDATE ON chat_sessions
-        FOR EACH ROW EXECUTE FUNCTION chat_sessions_shots_legacy_sync();
-    END IF;
   END IF;
 END $$;
+
+DROP TRIGGER IF EXISTS chat_sessions_shots_legacy_sync ON chat_sessions;
+DROP FUNCTION IF EXISTS chat_sessions_shots_legacy_sync();
+DO $$
+DECLARE
+  old TEXT;
+BEGIN
+  -- Views only: a database that still holds the old tables beside the new
+  -- ones (never renamed) is not this statement's to touch.
+  FOREACH old IN ARRAY ARRAY['visual_evidence_runs', 'visual_evidence_artifacts', 'visual_evidence_diagnostic_artifacts'] LOOP
+    IF EXISTS (SELECT 1 FROM pg_class WHERE relname = old AND relkind = 'v'
+                 AND relnamespace = current_schema()::regnamespace) THEN
+      EXECUTE format('DROP VIEW %I', old);
+    END IF;
+  END LOOP;
+END $$;
+ALTER TABLE chat_sessions
+  DROP COLUMN IF EXISTS visual_evidence_state,
+  DROP COLUMN IF EXISTS visual_evidence_run_id,
+  DROP COLUMN IF EXISTS visual_evidence_detail,
+  DROP COLUMN IF EXISTS visual_evidence_updated_at;
 
 -- #2380: agent-authored, revision-scoped before & after shots. The hot proposal
 -- reads need only the current state and a bounded public summary; executable
@@ -12340,9 +12311,9 @@ BEGIN
 END;
 $$;
 
--- The conversation's own row. Only what a screen draws bumps it: renewing
--- the turn lease every half minute, reading the conversation (seen_at) and
--- the compaction summary do not. A write that already moved state_version
+-- The conversation's own row. Only what a screen draws bumps it: a claim's
+-- `renewedAt` (which only a release before roadmap item 3.2 stamps),
+-- reading the conversation (seen_at) and the compaction summary do not. A write that already moved state_version
 -- (the triggers above) is left as it is.
 CREATE OR REPLACE FUNCTION agent_session_state_touch() RETURNS trigger
 LANGUAGE plpgsql AS $$
@@ -13734,10 +13705,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_bench_trials_side_build
 -- charged for all of them.
 ALTER TABLE bench_trials ADD COLUMN IF NOT EXISTS build_key TEXT;
 ALTER TABLE bench_trials ADD COLUMN IF NOT EXISTS session_ids INTEGER[] NOT NULL DEFAULT '{}';
--- A trial is claimed by the lane's machine only. An older build's lane,
--- still running during a rollout, counts only its own process's claims, so
--- its claims could pass the limits and the caps the machine keeps: they are
--- refused, and its passes start nothing.
+-- A trial is claimed by the lane's machine only, which keeps the limits and
+-- the caps under its own lock: a claim written anywhere else is refused.
 CREATE OR REPLACE FUNCTION wf_guard_bench_claim() RETURNS TRIGGER AS $$
 BEGIN
   IF current_setting('app.wf_writer', true) IS DISTINCT FROM 'transition' THEN
@@ -14527,24 +14496,13 @@ CREATE TRIGGER chat_sessions_wf_enrol_proposal
 -- (src/workflow/app-creation/): its row's insert appends Started, keyed as
 -- one, in the inserting transaction, so its setup starts once everything the
 -- route wrote with it has committed. Every door inserts it so: Make it, an
--- import, a ready-made app, a remix, the bench studio's host, naming the
--- workflow as its maker (creating_owner = 'workflow'). A row an older build
--- inserts during a rollout (no such owner yet) appends Adopted instead: the
--- machine waits for that build's own process to let it go, and makes it
--- only if it was left unfinished.
+-- import, a ready-made app, a remix, the bench studio's host.
 CREATE OR REPLACE FUNCTION wf_enrol_app_creation() RETURNS TRIGGER AS $$
 BEGIN
-  IF NEW.creating_owner IS NOT DISTINCT FROM 'workflow' THEN
-    INSERT INTO wf_events (machine, key, app_id, type, payload, source, request_key)
-    VALUES ('app-creation', 'app:' || NEW.id, NEW.id, 'Started',
-            jsonb_build_object('appId', NEW.id), '{"kind": "system", "name": "create"}'::jsonb,
-            'start:' || NEW.id);
-  ELSE
-    INSERT INTO wf_events (machine, key, app_id, type, payload, source, request_key)
-    VALUES ('app-creation', 'app:' || NEW.id, NEW.id, 'Adopted',
-            jsonb_build_object('appId', NEW.id), '{"kind": "system", "name": "older-build"}'::jsonb,
-            'adopt:' || NEW.id);
-  END IF;
+  INSERT INTO wf_events (machine, key, app_id, type, payload, source, request_key)
+  VALUES ('app-creation', 'app:' || NEW.id, NEW.id, 'Started',
+          jsonb_build_object('appId', NEW.id), '{"kind": "system", "name": "create"}'::jsonb,
+          'start:' || NEW.id);
   PERFORM pg_notify('wf_events', 'app-creation');
   RETURN NULL;
 END;
@@ -14558,23 +14516,20 @@ CREATE TRIGGER apps_wf_enrol_creation
 
 -- campaign (src/workflow/campaign/) owns a fleet maintenance campaign once it
 -- holds it: the campaign's status, when it ended, and each app's record (its
--- state and error), projected from the instance; and the lease columns an
--- older release's driver used, written by nothing now and dropped in a later
--- release. INSERTs are not guarded (the
+-- state and error), projected from the instance. INSERTs are not guarded (the
 -- governance apply inserts the campaign, the machine its app rows), nor are
 -- the columns a foreign key empties (a deleted proposal, issue or author).
 DROP TRIGGER IF EXISTS maintenance_campaigns_wf_owned ON maintenance_campaigns;
 CREATE TRIGGER maintenance_campaigns_wf_owned
   BEFORE UPDATE ON maintenance_campaigns
   FOR EACH ROW
-  EXECUTE FUNCTION wf_guard_owned_columns('@enrolled=campaign/campaign:',
-    'status', 'completed_at', 'runner_id', 'lease_until');
+  EXECUTE FUNCTION wf_guard_owned_columns('@enrolled=campaign/campaign:', 'status', 'completed_at');
 DROP TRIGGER IF EXISTS maintenance_campaign_apps_wf_owned ON maintenance_campaign_apps;
 CREATE TRIGGER maintenance_campaign_apps_wf_owned
   BEFORE UPDATE ON maintenance_campaign_apps
   FOR EACH ROW
   WHEN (wf_holds('campaign', 'campaign:' || OLD.campaign_id))
-  EXECUTE FUNCTION wf_guard_owned_columns('state', 'error', 'runner_id');
+  EXECUTE FUNCTION wf_guard_owned_columns('state', 'error');
 
 CREATE OR REPLACE FUNCTION wf_guard_shot_runs() RETURNS TRIGGER AS $$
 BEGIN
@@ -14980,14 +14935,8 @@ CREATE INDEX IF NOT EXISTS idx_private_request_comments_request
 COMMENT ON TABLE private_request_comments IS 'staging:private';
 
 -- The leader's sweep times, gone with the leader: every scheduled job is a
--- clock of the workflow now (src/workflow/clock/services.ts), whose instance
--- keeps its last run. ROLLOUT-ONLY: a release from before it still leads
--- while it runs beside this one, and records its sweeps here; drop the
--- table with the other rollout-only parts (services/turn-leftovers.js).
-CREATE TABLE IF NOT EXISTS leader_sweeps (
-  name        TEXT PRIMARY KEY,
-  last_run_at TIMESTAMPTZ NOT NULL
-);
+-- clock of the workflow, whose instance keeps its last run.
+DROP TABLE IF EXISTS leader_sweeps;
 
 -- The platform's processes, and what each one is doing that no other may
 -- adopt, tear down, duplicate or call idle (services/processes.js,
@@ -14997,7 +14946,7 @@ CREATE TABLE IF NOT EXISTS leader_sweeps (
 -- writes its row at boot, beats it every 10 seconds, marks it `draining`
 -- (with its deadline) as shutdown begins and deletes it as it exits; one
 -- whose beat is older than 45 seconds is gone, whatever the row says, and the
--- leader deletes such rows (holds go with them). Private to staging clones:
+-- process-reap clock deletes such rows. Private to staging clones:
 -- a preview copying production's rows would believe production's work its
 -- own, live.
 CREATE TABLE IF NOT EXISTS platform_processes (
@@ -15016,13 +14965,13 @@ CREATE TABLE IF NOT EXISTS platform_processes (
 CREATE INDEX IF NOT EXISTS idx_platform_processes_heartbeat ON platform_processes (heartbeat_at);
 COMMENT ON TABLE platform_processes IS 'staging:private';
 
--- ROLLOUT-ONLY: what a process holds, `kind` (a session's turn, a sync, ...)
--- for `ref` (its id), written as it works. A release from before the turn
--- machine reads it to decide what is left behind; this one keeps its holds
--- in memory for its own drain and writes them here only for that release
--- (services/processes.js writeHolds), and reads it only to leave alone what
--- another live process holds (services/turn-leftovers.js). Drop once no such
--- release can run.
+-- What a process held, `kind` for `ref`. Nothing in this release writes or
+-- reads it (a process's holds are its own drain's, in its memory). Kept
+-- while the release before roadmap item 3.2 can still serve: it writes its
+-- own holds here and reads them back (its turn-leftovers pass, its adoption,
+-- its Stop route), and without the table its adoption fails closed and a
+-- recover turn's last ask would end a record it could have carried on. Drop
+-- it once no process of that release (22ac79e7a) is live.
 CREATE TABLE IF NOT EXISTS process_holds (
   process_id TEXT NOT NULL REFERENCES platform_processes(id) ON DELETE CASCADE,
   kind       TEXT NOT NULL,
@@ -15151,11 +15100,12 @@ CREATE TABLE IF NOT EXISTS shots_eval_trials (
     CHECK (state IN ('planned', 'provisioning', 'exploring', 'reviewing', 'verified', 'failed', 'cancelled')),
   CONSTRAINT shots_eval_trials_repetition_check CHECK (repetition BETWEEN 1 AND 3)
 );
--- What the Anthropic proxy billed for a trial an older release's runner
--- runs (during a rollout; that runner settles it itself), on whichever
--- process each call reached (services/shots-eval.js billFor). The shots-eval
--- machine's trials are billed per attempt (shots_eval_attempt_costs); when
--- one ends, what is here for its attempt moves there and is emptied.
+-- What the Anthropic proxy billed for a trial an older release's runner ran.
+-- Nothing writes or reads it: every trial is billed per attempt
+-- (shots_eval_attempt_costs). Kept while the release before roadmap item
+-- 3.2 can still serve: its shots-eval machine reads it in its transitions (a
+-- missing column would fault them) and its proxy's billFor in its calls.
+-- Drop it once no process of that release (22ac79e7a) is live.
 ALTER TABLE shots_eval_trials ADD COLUMN IF NOT EXISTS proxy_cents NUMERIC(12,4) NOT NULL DEFAULT 0;
 -- When the shots-eval machine decided a running trial ends (a cancel, a
 -- phase past its time, its row ended elsewhere): its work stops at its next
@@ -15163,10 +15113,9 @@ ALTER TABLE shots_eval_trials ADD COLUMN IF NOT EXISTS proxy_cents NUMERIC(12,4)
 -- and its end written. Emptied when the trial is put back.
 ALTER TABLE shots_eval_trials ADD COLUMN IF NOT EXISTS stopping_at TIMESTAMPTZ;
 -- A trial is claimed (planned to provisioning) and put back (to planned)
--- by the shots-eval machine only (src/workflow/shots-eval/). An older
--- build's runner, still running during a rollout, counts only its own
--- process's trials: its claims and its recovery are refused, and the
--- trials it already runs finish there.
+-- by the shots-eval machine only (src/workflow/shots-eval/), which keeps
+-- the concurrency and the caps under its own lock: a write anywhere else is
+-- refused.
 CREATE OR REPLACE FUNCTION wf_guard_eval_claim() RETURNS TRIGGER AS $$
 BEGIN
   IF current_setting('app.wf_writer', true) IS DISTINCT FROM 'transition' THEN
@@ -15666,8 +15615,15 @@ $$;
 -- whose key is its own.
 --
 --   status     queued    to build: a new key, or Rebuild in Admin
---              building  `owner` is building it, alive while its
---                        heartbeat_at is fresh
+--              building  the starter-images clock's target is building it
+--                        (`owner` and `heartbeat_at`: the lease a builder from
+--                        before the clock held, read and written now only by
+--                        the release before roadmap item 3.2, whose claim
+--                        leaves a row building with no owner alone: after a
+--                        rollback to it, a build this release's process was
+--                        cut in reads building until an admin's Rebuild.
+--                        Drop them once no process of that release,
+--                        22ac79e7a, is live)
 --              ready     image_ref is the image
 --              failed    the last attempt failed (`error`); retried a few
 --                        times on its own (attempts), then left for Rebuild

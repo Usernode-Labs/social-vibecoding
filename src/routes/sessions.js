@@ -6817,7 +6817,7 @@ const SCREENSHOT_FETCH_NOTE = 'If the issue body embeds a screenshot URL like `h
 // into implementation if (and only if) the spec is straightforward. The
 // criteria live here in prompt text so they're tunable without flow
 // changes; the hard limits (one build max, budget re-check, no PR/staging)
-// are enforced in code in runHeadlessSession.
+// are enforced in code in runHeadlessSessionInner.
 function buildHeadlessDecisionAddendum(issueNumber) {
   return `
 
@@ -7188,14 +7188,6 @@ async function settleHeadlessMayorUsage({
     emit('usage', { costCents, model: billModel, byok: !!userApiKey });
   }
   return costCents;
-}
-
-// A resumed planning step's run (resumeOneHeadlessRun). The run is its
-// turn's work item's wherever it runs (services/turns.js); the hold is
-// what a release from before the turn machine reads (turn-leftovers.js).
-function runHeadlessSession(args) {
-  const release = require('../services/processes').hold('session', Number(args.session.id));
-  return runHeadlessSessionInner(args).finally(release);
 }
 
 async function runHeadlessSessionInner({
@@ -8692,7 +8684,7 @@ async function resumeOneHeadlessRunInner({ pool, config, session, owner = null, 
     const { comments } = await github.fetchIssueComments(repoOwner, repoName, issueNumber);
     let botUsername = null;
     try { botUsername = await github.getBotUsername(); } catch {}
-    return runHeadlessSession({
+    return runHeadlessSessionInner({
       pool, config, session, user, selectedModel,
       repoOwner, repoName, userApiKey, issueNumber, issue,
       comments, botUsername,
@@ -10505,26 +10497,6 @@ const sleepMs = (ms) => new Promise((r) => setTimeout(r, ms));
 // receives an HTTP-shaped result with common ownership, durable intent and
 // confirmation. Agent conversations request immediate hard cancellation;
 // classic sessions retain their existing stop/force escalation policy.
-// ROLLOUT-ONLY (requestSessionStop): a stop for a turn another process
-// holds the session for, forwarded over the bus as a release from before the
-// turn machine expects it (its `session_stop`). True when one was sent.
-async function forwardStopToOlder(pool, { sessionId, user, force, immediate, expectedTurnId }) {
-  let holder = null;
-  try {
-    holder = await require('../services/turn-leftovers').olderProcessHolding(pool, sessionId, { otherRelease: true });
-  } catch (err) {
-    log.warn('sessions', 'Could not read who holds the session for a stop', { sessionId, err: err.message });
-  }
-  if (!holder) return false;
-  require('../services/ws-bus').publish('session_stop', null, {
-    sessionId: Number(sessionId),
-    user: { id: user.id, username: user.username, canAdminWrite: user.canAdminWrite === true },
-    force: force === true, immediate: immediate === true, expectedTurnId: expectedTurnId || null,
-  });
-  log.info('sessions', 'Stop forwarded to the process holding the session', { sessionId, holder, by: user.username });
-  return true;
-}
-
 async function requestSessionStop({ pool, sessionId, user, force = false, immediate = false, expectedTurnId = null, scheduleInteractiveRecovery = null, forwarded = false }) {
     // #1378: owner OR an admin who is allowed to WRITE. GET
     // /api/sessions/:id is admin-readable and GET .../status has no
@@ -10568,16 +10540,6 @@ async function requestSessionStop({ pool, sessionId, user, force = false, immedi
       const owned = await platform.stopWorkflowTurn({ sessionId: Number(sessionId), by: user.username, expectedTurnId });
       if (owned) return owned;
     }
-    // ROLLOUT-ONLY: a turn a release from before the turn machine runs in a
-    // process of its own has no instance here, and in its Mayor phase no
-    // record. That release forwards a stop to the process holding the
-    // session (its receiveSessionStop acts where the turn's handle is), so
-    // this one does too, still taking the durable path below, and never
-    // answers "nothing to stop" or clears the bookkeeping of a turn it
-    // handed on. Delete with turn-leftovers.js's rollout parts.
-    const handedOn = !forwarded && !stopRegistry.get(sessionId)
-      && await forwardStopToOlder(pool, { sessionId, user, force, immediate, expectedTurnId });
-    const stoppingThere = { status: 202, body: { ok: true, stopped: true, stopping: true, phase: null } };
 
     // #937: In classic sessions, `{ force: true }` is offered after a
     // normal stop has visibly failed to land (its 40s rung). Strictly
@@ -10621,7 +10583,6 @@ async function requestSessionStop({ pool, sessionId, user, force = false, immedi
       await pool.query('UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1', [sessionId]);
     }
 
-    if (handedOn && (action === 'force_orphan' || action === 'force_without_stop')) return stoppingThere;
     if (action === 'no_active_turn') {
       const durable = await turnLifecycle.loadActiveTurn(pool, sessionId);
       if (durable && turnLifecycle.RECOVERABLE_PHASES.has(turnLifecycle.phaseOf(durable))) {
@@ -10646,7 +10607,6 @@ async function requestSessionStop({ pool, sessionId, user, force = false, immedi
       // (`busy`) and what this process holds (`handle`), because that gap
       // IS the bug class: a turn adopted by another process, or one whose
       // handle was cleared while the tail is still unwinding.
-      if (handedOn) return stoppingThere;
       let hasDurableTurn = false;
       try {
         hasDurableTurn = !!(await turnLifecycle.loadActiveTurn(pool, sessionId));
@@ -12446,9 +12406,8 @@ ${isCodexSession ? `${OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE}\n` : ''}${guidan
         },
       });
       if (outcome === 'adopted') {
-        // Restart recovery took this turn over while this process looked
-        // dead (it stopped renewing for longer than WAITER_STALE_SECONDS),
-        // and runs its tail itself. Running it here too would post every
+        // The turn's item was claimed again while this process lost it, and
+        // that claim took the turn over and runs its tail itself. Running it here too would post every
         // card twice.
         const adopted = new Error(`${lease.label}'s turn is being finished by restart recovery`);
         adopted.code = 'local_turn_adopted';

@@ -1,10 +1,9 @@
 // What the shots eval machine reads inside a transition, under its own lock
 // (one instance, so two trials are never granted at once): the evals still
 // running and what each has spent, the trials waiting in their order, every
-// trial whose row reads active (this machine's, and an older build's
-// runner's during a rollout), the rows of the trials it holds, which
-// proposals are busy (their own shots, or any turn), whether two releases
-// serve at once, and what a trial is estimated to cost. And, for a cancel,
+// trial whose row reads active, the rows of the trials it holds, which
+// proposals are busy (their own shots, or any turn), and what a trial is
+// estimated to cost. And, for a cancel,
 // the eval it names.
 
 import type { Tx } from '../kernel/index.ts';
@@ -24,7 +23,7 @@ export interface Planned {
   baseSha: string; headSha: string; intent: unknown; appSlug: string | null;
 }
 // `proxyCents` / `reportedCents`: what its attempt has cost so far, not yet charged.
-export interface Active { id: number; evalId: number; sessionId: number; attemptId: string; attempts: number; proxyCents: number; reportedCents: number; stale: boolean; appSlug: string | null; evalStatus: string }
+export interface Active { id: number; evalId: number; sessionId: number; attemptId: string; proxyCents: number; reportedCents: number; appSlug: string | null }
 export interface Facts {
   evals: Eval[];
   planned: Planned[];
@@ -34,9 +33,6 @@ export interface Facts {
   liveShots: ReadonlySet<number>;
   // The rows of the trials this machine holds: their attempt and state now.
   mine: ReadonlyMap<number, { attemptId: string; state: string }>;
-  // More than one release serving (a rollout under way): a trial's calls
-  // could reach an older one, which does not bill them to the trial.
-  rollout: boolean;
   estimateCents: number;
   // The eval a cancel names.
   eval: { id: number; status: string } | null;
@@ -44,25 +40,17 @@ export interface Facts {
 
 const num = (v: unknown) => (Number.isFinite(Number(v)) ? Number(v) : 0);
 
-// A trial an older build's runner kept beat every 30 seconds (its
-// heartbeat); quiet this long, its process is gone.
-export const STALE_SECONDS = 5 * 60;
-// A process that has beaten this recently is alive (processes.js LIVE_SECONDS).
-const SERVING_SECONDS = 45;
-
 export async function readFacts(tx: Tx, p: { evalId?: number | null; mine?: number[] }): Promise<Facts> {
   const { rows: evalRows } = await tx.query(
     `SELECT id, cap_cents::float8 AS cap, spent_cents::float8 AS spent FROM shots_eval_runs WHERE status = 'running' ORDER BY id`);
   const { rows: activeRows } = await tx.query(
-    `SELECT t.id, t.eval_run_id, t.session_id, t.attempt_id, t.attempts,
-            (t.proxy_cents + COALESCE(c.proxy_cents, 0))::float8 AS proxy, COALESCE(c.reported_cents, 0)::float8 AS reported,
-            t.updated_at < NOW() - make_interval(secs => $2) AS stale, a.slug AS app_slug, r.status AS eval_status
+    `SELECT t.id, t.eval_run_id, t.session_id, t.attempt_id,
+            COALESCE(c.proxy_cents, 0)::float8 AS proxy, COALESCE(c.reported_cents, 0)::float8 AS reported, a.slug AS app_slug
        FROM shots_eval_trials t
-       JOIN shots_eval_runs r ON r.id = t.eval_run_id
        LEFT JOIN shots_eval_attempt_costs c ON c.attempt_id = t.attempt_id AND c.settled_at IS NULL
        LEFT JOIN chat_sessions cs ON cs.id = t.session_id
        LEFT JOIN apps a ON a.id = cs.app_id
-      WHERE t.state = ANY($1::text[])`, [ACTIVE_STATES, STALE_SECONDS]);
+      WHERE t.state = ANY($1::text[])`, [ACTIVE_STATES]);
   const { rows: plannedRows } = await tx.query(
     `SELECT * FROM (
        SELECT t.id, t.eval_run_id, t.session_id, t.attempt_id, t.attempts, t.base_sha, t.head_sha, t.intent, t.position,
@@ -100,9 +88,6 @@ export async function readFacts(tx: Tx, p: { evalId?: number | null; mine?: numb
     const { rows } = await tx.query('SELECT id, attempt_id, state FROM shots_eval_trials WHERE id = ANY($1::int[])', [p.mine]);
     for (const r of rows) mine.set(Number(r.id), { attemptId: String(r.attempt_id), state: String(r.state) });
   }
-  const { rows: [releases] } = await tx.query(
-    `SELECT COUNT(DISTINCT release)::int AS n FROM platform_processes
-      WHERE state = 'serving' AND heartbeat_at > NOW() - make_interval(secs => $1)`, [SERVING_SECONDS]);
   let named: Facts['eval'] = null;
   if (p.evalId) {
     const { rows: [e] } = await tx.query('SELECT id, status FROM shots_eval_runs WHERE id = $1', [p.evalId]);
@@ -117,11 +102,10 @@ export async function readFacts(tx: Tx, p: { evalId?: number | null; mine?: numb
     })),
     active: activeRows.map((r: any) => ({
       id: Number(r.id), evalId: Number(r.eval_run_id), sessionId: Number(r.session_id), attemptId: String(r.attempt_id),
-      attempts: num(r.attempts), proxyCents: num(r.proxy), reportedCents: num(r.reported), stale: !!r.stale, appSlug: r.app_slug ?? null, evalStatus: String(r.eval_status),
+      proxyCents: num(r.proxy), reportedCents: num(r.reported), appSlug: r.app_slug ?? null,
     })),
     liveShots,
     mine,
-    rollout: num(releases?.n) > 1,
     estimateCents,
     eval: named,
   };

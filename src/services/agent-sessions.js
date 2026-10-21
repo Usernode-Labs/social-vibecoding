@@ -874,9 +874,7 @@ async function setFocusApp(pool, { agentSessionId, user, slug }) {
 // item ends, whichever process ran it (the machine's `released` write; the
 // turn releases it itself a moment earlier when it finishes its own way).
 // So it never goes stale, and a conversation reads busy while, and only
-// while, its turn runs. (Its `renewedAt` is stamped while it runs only for a
-// release from before the turn machine, which reads it: services/turns.js
-// renewClaim, rollout-only.)
+// while, its turn runs.
 //
 // `ask(db)`: what starts the turn, in the claim's transaction (the route's
 // `Asked`): a claim with no turn behind it cannot be written.

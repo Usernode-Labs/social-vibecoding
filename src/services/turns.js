@@ -25,9 +25,8 @@
 //   headless  an auto session on a request (routes/sessions.js
 //             runHeadlessSessionInner). Resumed: carried on from the
 //             change's row (resumeOneHeadlessRun).
-//   recover   a coding record no work item holds (an older release's, with
-//             no owner, or one its settled item left), taken through the
-//             leader's adoption (turn-leftovers.js).
+//   recover   a coding record no work item holds (one its settled item
+//             left), taken through the leader's adoption (turn-leftovers.js).
 //
 // What the turn shows goes to its stream (services/session-bus.js), which
 // the request that asked for it follows from any process. A coding record
@@ -115,9 +114,7 @@ async function runAgent(ctx, { config, pool }, input) {
   const agentTurn = require('./mayor/agent-turn');
   const agentSessionId = Number(input.agentSessionId);
   // Asked with its claim, so the claim names it until it ends. One that no
-  // longer does was ended while it waited (ROLLOUT-ONLY: a release from
-  // before the turn machine ends a claim not renewed for 90 seconds, and its
-  // lease may then take it for a turn of its own): over, without running.
+  // longer does was ended while it waited: over, without running.
   const { rows: [claim] } = await pool.query(
     `SELECT active_turn->>'id' AS turn_id FROM agent_sessions WHERE id = $1`, [agentSessionId]);
   if (!claim || claim.turn_id !== String(input.turnId)) {
@@ -392,10 +389,10 @@ async function resumeHeadless(ctx, { config, pool }, input) {
 
 // ── A coding record nothing carries (services/turn-leftovers.js) ──────
 
-// A coding run's record no work item holds (an older release's, with no
-// owner, or one whose item settled without releasing it): the adoption the
-// leader ran, as it ran it (a turn a live process still runs is left alone
-// there too), tried again as an owned one is.
+// A coding run's record no work item holds (its item settled without
+// releasing it): the adoption the leader ran, as it ran it (a turn this
+// process still follows is left alone there too), tried again as an owned
+// one is.
 async function runRecover(ctx, { config, pool }, input) {
   const sessionId = Number(input.sessionId);
   try {
@@ -415,53 +412,6 @@ async function runRecover(ctx, { config, pool }, input) {
   log.error('turns', 'Ending a turn record no recovery could take to its end', { sessionId, identity: input.identity });
   await require('../routes/sessions').forceStopSession(pool, sessionId, 'homeroom', null);
   return { ended: 'ended' };
-}
-
-// ROLLOUT-ONLY: a release from before the turn machine reads a
-// conversation's claim as abandoned once it has not been renewed for 90
-// seconds: its leader ends the turn as interrupted, and its lease takes the
-// claim for a turn of its own. While a process of that release may run
-// beside this one, the claim of the turn this item runs is renewed as that
-// release renewed it (agent-sessions.js renewTurnLease, before the turn
-// machine), which no screen redraws for (schema.sql agent_session_state_touch).
-// Delete with turn-leftovers.js's rollout parts.
-const CLAIM_RENEW = { ms: 30 * 1000 };
-
-// One renewal at a time (a tick while one is on its way is skipped). The
-// first has landed before the run starts, and `stop` waits for the one on
-// its way, so none lands after the item ends: on a busy database neither
-// held when the renewals were fired and forgotten.
-function renewClaim(pool, input) {
-  if (input.kind !== 'agent') return { ready: Promise.resolve(), stop: async () => {} };
-  let inFlight = null;
-  let stopped = false;
-  const renew = () => {
-    if (stopped || inFlight) return inFlight;
-    inFlight = pool.query(
-      `UPDATE agent_sessions SET active_turn = active_turn || jsonb_build_object('renewedAt', NOW())
-        WHERE id = $1 AND active_turn->>'id' = $2`, [Number(input.agentSessionId), String(input.turnId)])
-      .catch((err) => log.warn('turns', 'Could not renew the conversation\'s claim', { agentSessionId: input.agentSessionId, err: err.message }))
-      .finally(() => { inFlight = null; });
-    return inFlight;
-  };
-  const ready = renew();
-  const timer = setInterval(renew, CLAIM_RENEW.ms);
-  timer.unref?.();
-  return {
-    ready,
-    stop: async () => { stopped = true; clearInterval(timer); await inFlight; },
-  };
-}
-
-// ROLLOUT-ONLY: a headless run holds its session for the whole of its item,
-// as it held it before the turn machine (routes/sessions.js
-// runHeadlessSession): a release from before it resumes a 'generating' run
-// no process holds (its resumeHeadlessRuns, at its leader's election and
-// every few minutes), and reads this process's holds as processes.js writes
-// them for it. Delete with turn-leftovers.js's rollout parts.
-function holdHeadlessRun(input) {
-  if (input.kind !== 'headless' || !(Number(input.sessionId) > 0)) return () => {};
-  return require('./processes').hold('session', Number(input.sessionId));
 }
 
 const KINDS = new Map([
@@ -511,12 +461,7 @@ async function run(ctx, deps) {
   const input = ctx.input || {};
   const kind = KINDS.get(input.kind);
   if (!kind) throw Object.assign(new Error(`not a turn kind: ${input.kind}`), { permanent: true });
-  // A turn asked to resume (an older release's headless run:
-  // turn-leftovers.js) starts where its row says it is, as a resumed one.
-  const resumed = !!ctx.resumeFrom || (Number(ctx.lostAttempts) || 0) > 0 || input.resume === true;
-  const renewal = renewClaim(deps.pool, input);
-  await renewal.ready;
-  const releaseRun = holdHeadlessRun(input);
+  const resumed = !!ctx.resumeFrom || (Number(ctx.lostAttempts) || 0) > 0;
   const settledHere = endOnLostLease(ctx, deps.pool);
   try {
     // Its end on its stream, which the request that asked for it waits for,
@@ -526,8 +471,6 @@ async function run(ctx, deps) {
     return await (resumed ? kind.resume : kind.run)(ctx, deps, input);
   } finally {
     settledHere();
-    releaseRun();
-    await renewal.stop();
     // Unless this process lost the item (the next claim carries it on), a
     // coding record it still holds is released as it ends.
     if (!(ctx.signal && ctx.signal.aborted)) {
@@ -536,6 +479,17 @@ async function run(ctx, deps) {
       });
     }
   }
+}
+
+// The dev chat's repair (#786: turn-recovery.js repairUnansweredTurn), owed
+// by a change's classic turn that did not end its own way (the turn
+// machine's turn.repair). Not while another turn runs on the change: that
+// one answers the conversation.
+async function repairCut({ pool }, { sessionId }) {
+  const { rows: [busy] } = await pool.query(
+    `SELECT 1 FROM wf_instances WHERE machine = 'turn' AND key = $1 AND state = 'running'`, [`session:${Number(sessionId)}`]);
+  if (busy) return { skipped: 'running' };
+  return { repaired: await require('./turn-recovery').repairUnansweredTurn(pool, Number(sessionId)) };
 }
 
 // "Session stopped before finishing" (#4729), owed by an agent turn that
@@ -550,4 +504,4 @@ async function tellStalled({ pool }, { sessionId, agentSessionId }) {
   return { told: true };
 }
 
-module.exports = { run, tellStalled, ownedChange, RECOVERY_RETRY, STOP_POLL, CLAIM_RENEW, LOST_LEASE, NO_RESPONSE };
+module.exports = { run, tellStalled, repairCut, ownedChange, RECOVERY_RETRY, STOP_POLL, LOST_LEASE, NO_RESPONSE };

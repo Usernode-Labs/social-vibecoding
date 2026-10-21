@@ -691,10 +691,9 @@ test('the benchmark lane against the full PostgreSQL schema', { timeout: 180000 
   // ── What a rollout or a lost record leaves (the step 4 review) ─────────
 
   const asTx = (sql, params = []) => require('./lib/as-transition').asTransition(pool, sql, params);
-  // A bot-build an older release's lane started: its key names no claim's
-  // nonce the trial knows (build_key stays empty on the trial's row).
-  const oldBuild = async (trialId, state = 'building') => {
-    const key = `trial:${trialId}@old`;
+  // A bot-build, its key and the trial it runs (as the lane's own builds,
+  // and an older release's lane's, wrote it).
+  const buildOf = async (trialId, key, state = 'building') => {
     await asTx(`INSERT INTO wf_instances (machine, key, state, data, machine_version) VALUES ('bot-build', $1, $2, $3::jsonb, 1)`,
       [key, state, JSON.stringify({ target: 'trial', id: trialId })]);
     return key;
@@ -706,22 +705,25 @@ test('the benchmark lane against the full PostgreSQL schema', { timeout: 180000 
   const stopsTo = async (key) => (await pool.query(
     "SELECT COUNT(*)::int AS n FROM wf_events WHERE machine = 'bot-build' AND key = $1 AND type = 'StopRequested'", [key])).rows[0].n;
 
-  await t.test('O1: a trial an older release\'s lane claimed (no build named on it) is stopped by its build on a cancel', async () => {
+  await t.test('O1: a cancel stops a running trial by the build its claim names, and only that build', async () => {
     await closeAll();
     const { run } = await lane.launchRun(pool, { suiteId: suite.id, models: ['z-ai/glm-5.3-flash'], stages: ['triage'], repeats: 1, concurrency: 1 });
     const [a, b] = await trials(run.id);
-    await claimAs(a.id, null, { ago: '1 minute' });
+    const ka = await buildOf(a.id, `trial:${a.id}@c1.g1`);
+    await claimAs(a.id, null, { buildKey: ka, ago: '1 minute' });
+    // A claim that names no build (only an older release's lane wrote one):
+    // a build that runs its trial is not looked up by the trial's id.
     await claimAs(b.id, null, { ago: '1 minute' });
-    const ka = await oldBuild(a.id);
-    const kb = await oldBuild(b.id);
+    const kb = await buildOf(b.id, `trial:${b.id}@old`);
     try {
       const out = await lane.cancelTrial(pool, a.id, { platform: { benchCancelTrial: (id, o) => cancel(laneOnly, 'TrialCancelled', { trialId: id, by: o.by }) } });
       assert.deepEqual(out, { ok: true, status: 'stopping' });
       assert.equal(await stopsTo(ka), 1, 'its build told to stop');
       assert.notEqual((await cancel(laneOnly, 'RunCancelled', { runId: run.id })).status, 'rejected');
-      assert.equal(await stopsTo(kb), 1, 'the run\'s other running trial\'s build too');
+      assert.equal(await stopsTo(kb), 0, 'a build no claim names is not the lane\'s to stop');
     } finally { await dropBuild(ka); await dropBuild(kb); }
   });
+
 
   await t.test('O2: a run holding its heavy trials finds its light ones behind more heavy ones than a queue read holds', async () => {
     await closeAll();
@@ -753,8 +755,8 @@ test('the benchmark lane against the full PostgreSQL schema', { timeout: 180000 
     await claimAs(a.id, null, { buildKey: ka, ago: '30 minutes' });
     await asTx(`INSERT INTO wf_instances (machine, key, state, data, machine_version, updated_at)
                 VALUES ('bot-build', $1, 'failed', $2::jsonb, 1, NOW() - interval '20 minutes')`, [ka, JSON.stringify({ target: 'trial', id: a.id })]);
-    // b: an older release's claim whose build was never asked for.
-    await claimAs(b.id, null, { ago: '2 hours' });
+    // b: a claim whose build never started.
+    await claimAs(b.id, null, { buildKey: `trial:${b.id}@c1.g3`, ago: '2 hours' });
     // c: claimed just now, its build not yet started: left alone.
     await claimAs(c.id, null, { buildKey: `trial:${c.id}@c1.g2`, ago: '1 minute' });
     try {

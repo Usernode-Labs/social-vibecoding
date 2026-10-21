@@ -18,8 +18,8 @@ export const LATER_SIDE_RUN_KIND = 'bot_config_later';
 // holding its heavy ones still finds its next light one.
 const QUEUE_READ = 60;
 // How long a trial may read running after its build ended (the build's own
-// record runs before it ends; `build.lost` right after), and how long an
-// older release's claim may wait for a build that never came.
+// record runs before it ends; `build.lost` right after), and how long a
+// claim may wait for a build that never came.
 export const UNRECORDED_AFTER_SECONDS = 10 * 60;
 export const NO_BUILD_AFTER_SECONDS = 60 * 60;
 // A provider refusing the bench's key for its spending limit (bench/lane.js
@@ -30,8 +30,8 @@ export const PROVIDER_LIMIT_PAUSE_MS = 30 * 60 * 1000;
 export interface Run { id: number; kind: string | null; concurrency: number; cap: number; spent: number }
 export interface Trial { id: number; runId: number; est: number; heavy: boolean; laterSide: boolean; appId: number | null; claims: number; buildKey: string | null }
 // A trial running whose build ended without recording it (its record
-// failed for good), or that never had one (an older release's claim whose
-// build was never asked for): recorded lost by the lane (`bench.lost`).
+// failed for good), or that never had one: recorded lost by the lane
+// (`bench.lost`).
 export interface Unrecorded { id: number; buildKey: string | null }
 export interface Facts {
   liveAtOnce: number;
@@ -75,21 +75,16 @@ export async function readFacts(tx: Tx, p: { runId?: number | null; trialId?: nu
     if (r) run = { ...runOf(r), status: String(r.status), pending: num(r.pending) };
   }
   // Every trial running, whatever its run's state: a cancelled run's trial
-  // still holds its slot until its build has recorded it.
-  // A trial an older release's lane claimed names no build: its build is
-  // found the way that lane stopped it (platform.ts stopBuilds), so a
-  // cancel reaches it. With the build's state, for the trials it ended
-  // without recording.
+  // still holds its slot until its build has recorded it. With its build's
+  // state, for the trials it ended without recording.
   const { rows: runningRows } = await tx.query(
-    `SELECT tr.id, tr.run_id, tr.est_cost_usd::float8 AS est, tr.claims, COALESCE(tr.build_key, w.key) AS build_key,
+    `SELECT tr.id, tr.run_id, tr.est_cost_usd::float8 AS est, tr.claims, tr.build_key,
             t.stage, t.app_id, r.kind AS run_kind, w.state AS build_state, w.updated_at < $1::timestamptz - make_interval(secs => $2) AS build_quiet,
             tr.started_at < $1::timestamptz - make_interval(secs => $3) AS claimed_long_ago
        FROM bench_trials tr JOIN bench_tasks t ON t.id = tr.task_id JOIN bench_runs r ON r.id = tr.run_id
        LEFT JOIN LATERAL (
-         SELECT i.key, i.state, i.updated_at FROM wf_instances i
-          WHERE i.machine = 'bot-build'
-            AND (i.key = tr.build_key OR (tr.build_key IS NULL AND i.data->>'target' = 'trial' AND (i.data->>'id')::int = tr.id))
-          ORDER BY (i.state = 'building') DESC, i.updated_at DESC LIMIT 1) w ON TRUE
+         SELECT i.state, i.updated_at FROM wf_instances i
+          WHERE i.machine = 'bot-build' AND i.key = tr.build_key) w ON TRUE
       WHERE tr.status = 'running'`, [now, UNRECORDED_AFTER_SECONDS, NO_BUILD_AFTER_SECONDS]);
   const unrecorded: Unrecorded[] = runningRows
     .filter((r: any) => (r.build_state != null ? ['done', 'failed'].includes(r.build_state) && r.build_quiet : r.claimed_long_ago))
@@ -128,10 +123,7 @@ export async function readFacts(tx: Tx, p: { runId?: number | null; trialId?: nu
   let trial: Facts['trial'] = null;
   if (p.trialId) {
     const { rows: [t] } = await tx.query(
-      `SELECT tr.id, tr.run_id, tr.status, COALESCE(tr.build_key, (
-                SELECT i.key FROM wf_instances i WHERE i.machine = 'bot-build' AND i.state = 'building'
-                   AND i.data->>'target' = 'trial' AND (i.data->>'id')::int = tr.id LIMIT 1)) AS build_key
-         FROM bench_trials tr WHERE tr.id = $1`, [p.trialId]);
+      `SELECT tr.id, tr.run_id, tr.status, tr.build_key FROM bench_trials tr WHERE tr.id = $1`, [p.trialId]);
     if (t) trial = { id: Number(t.id), runId: Number(t.run_id), status: String(t.status), buildKey: t.build_key ?? null };
   }
   return {

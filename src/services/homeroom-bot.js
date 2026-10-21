@@ -341,7 +341,6 @@ const FIRST_PASS_DELAY_MS = 60 * 1000;
 const BUSY_PASS_DELAY_MS = 2 * 1000;
 const IDLE_PASS_DELAY_MS = 30 * 1000;
 const REFRESH_INTERVAL_MS = 5 * 60 * 1000;
-const BUS_KIND = 'homeroom_bot';
 // One turn for a burst. People write a thought in two or three messages, or
 // a message and then a bare "@Homeroom bot" (PR #4584, 9 Oct 2026: a message
 // and its ping 2 seconds apart were answered twice, 23 seconds apart). A
@@ -4393,20 +4392,13 @@ async function recordBuildSnapshot(pool, {
 // A read, a reply or a fix is its look's work item's (bot-request's
 // bot.look): the item follows its turn through a restart, and recovery
 // leaves a turn whose record names a work item still under way alone. What
-// is left here is a bot turn no work item owns: one an older release ran
-// (before its looks were workflow work), stopped, its record released, and
-// its request read again (the request's instance adopted it, older_turn).
-
-// The mark an older release put on its follow-up's turn record (on a change
-// up for a vote: `promoted`, never active or paused).
-const OLDER_FOLLOW_UP_MARK = 'homeroomBotFollowUp';
+// is left here is a bot turn no work item owns (one a release from before
+// its looks were workflow work ran): stopped, and its record released.
 
 /**
  * True when restart recovery should hand this session to the bot rather than
  * to a person's dev-chat tail: the bot's own session, while `active`, or
- * `paused` with a turn record on it, or one whose record an older release's
- * follow-up marked (a person's tail would publish its answer as the
- * change's spec, with no clock, #4533). A session a durable build owns
+ * `paused` with a turn record on it. A session a durable build owns
  * (`workflow_owner`) is that build's, and server.js leaves it alone before
  * it asks this.
  */
@@ -4414,9 +4406,7 @@ function isRecoveredBotSession(session) {
   return !!session
     && session.username === live.BOT_USERNAME
     && session.user_is_synthetic === true
-    && (session.status === 'active' || (session.status === 'paused' && !!session.active_turn)
-      || !!(session.active_turn && typeof session.active_turn === 'object'
-        && session.active_turn[OLDER_FOLLOW_UP_MARK] && !session.active_turn.owner));
+    && (session.status === 'active' || (session.status === 'paused' && !!session.active_turn));
 }
 
 // What a restart may cost a turn that runs on through it (durable-turn.js).
@@ -9753,7 +9743,6 @@ module.exports = {
   KEY_BUILD_CONCURRENCY,
   KEY_SHADOW_BUILD_PLATFORM,
   refreshApps,
-  BUS_KIND,
   MAX_BATCH_SIZE,
   // Pure, exported for tests.
   classifyIssue,

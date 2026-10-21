@@ -188,15 +188,12 @@ test('only the bot\'s own active sessions are handed to it; a person\'s, and the
     'a follow-up on the bot\'s proposal: updating its PR and staging is the right end');
 });
 
-// An older release's follow-up on the bot's change up for a vote (its record
-// marked homeroomBotFollowUp, no work item owning it): a person's tail would
-// publish its answer as the change's spec, with no clock (#4533). It is the
-// bot's: stopped, its record released, and its request read again.
-test('an older release\'s follow-up on the bot\'s change up for a vote is the bot\'s; a look\'s own turn is its item\'s', () => {
+// A mark only a release from before the bot's looks were workflow work put
+// on a follow-up's turn record makes nothing the bot's: a look's turn is its
+// item's, and a change up for a vote keeps its own end.
+test('a turn record marked homeroomBotFollowUp on the bot\'s change up for a vote is not handed to the bot', () => {
   const mark = { followUp: 'reply', appId: 9, issueNumber: 3, deadlineAt: '2026-10-17T12:00:00Z' };
-  assert.equal(bot.isRecoveredBotSession(botSession({ status: 'promoted', active_turn: { turnId: 't', homeroomBotFollowUp: mark } })), true);
-  assert.equal(bot.isRecoveredBotSession(botSession({ status: 'promoted',
-    active_turn: { turnId: 't', homeroomBotFollowUp: mark, owner: { machine: 'bot-request', key: 'request:9:3' } } })), false);
+  assert.equal(bot.isRecoveredBotSession(botSession({ status: 'promoted', active_turn: { turnId: 't', homeroomBotFollowUp: mark } })), false);
 });
 
 // ── A bot session found paused under a turn (#1006) ──────────────────────
@@ -233,15 +230,14 @@ test('a durable build\'s worker is left to its build: kept, never stopped, follo
     const pool = makePool({ session });
     await adopt(pool, session, 'running');
     assert.deepEqual(workerCalls, [['adoptWarmWorker', 6001]], 'kept and registered, nothing else');
-    assert.deepEqual(pool.calls.map((c) => (/FROM process_holds/.test(c.sql) ? 'older-holds' : 'read')), ['read', 'older-holds'],
-      'nothing but the reads of the session and of who holds it: no run, session or turn record is touched');
+    assert.equal(pool.calls.length, 1, 'nothing but the read of the session: no run, session or turn record is touched');
     assert.deepEqual(ledger, []);
 
     workerCalls.length = 0;
     const exited = makePool({ session });
     await adopt(exited, session, 'exited');
     assert.deepEqual(workerCalls, [], 'a worker that did not survive is not removed either: the build reads that for itself');
-    assert.equal(exited.calls.filter((c) => !/FROM process_holds/.test(c.sql)).length, 1);
+    assert.equal(exited.calls.length, 1);
   }
 });
 

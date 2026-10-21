@@ -72,8 +72,8 @@ const int = (v: unknown, what: string) => {
 const optInt = (v: unknown) => (Number.isInteger(v) && (v as number) > 0 ? (v as number) : null);
 
 const EVENTS = {
-  // They wrote in their DM with the bot. `attempt`: a later try an older
-  // release owed (its adoption), else 0.
+  // They wrote in their DM with the bot. `attempt`: 0 (a later try is the
+  // instance's own timer).
   Wrote: (p: any) => ({
     userId: int(p?.userId, 'userId'), messageId: int(p?.messageId, 'messageId'),
     conversationId: int(p?.conversationId, 'conversationId'),

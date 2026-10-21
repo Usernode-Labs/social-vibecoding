@@ -12,26 +12,22 @@
 // uploaded sat on the branch with no PR, preview, card or wrap-up, and the
 // conversation offered Retry, which could build it all again.
 //
-// A turn a work item dispatched (a conversation's turn: src/workflow/turn/)
+// A turn a work item dispatched (every person's turn: src/workflow/turn/)
 // names that item as its owner, and the item is its waiter: when the item's
 // process goes, the process that claims the item next takes the waiter id
-// over (localAgent.takeOverOwnedTurn) and runs finishAdoptedTurn below
-// (services/turns.js). For a turn no item dispatched, the waiter keeps a
-// heartbeat on the turn row (waiter_id, waiter_seen_at), and this pass, run
-// by the leader at boot and after every lease sweep (server.js
-// startLocalAgentLeaseSweeper), takes over each one whose waiter has gone
-// quiet (localAgent.adoptOrphanedTurns: a new waiter id, one conditional
-// UPDATE, so no turn has two waiters), waits for it like
-// the dead waiter would have, claims its tail once with that id, and runs
-// the post-turn path restart recovery runs for a worker's turn: server.js
-// finalizeRecoveredTurn for a build, the spec publication for a scout, then
-// the wrap-up (routes/sessions.js runRecoveredWrapUp, which writes a
-// conversation's into the conversation). The lease sweeper still fails a
-// turn whose machine stopped heartbeating ('abandoned'); this finishes that
-// turn too, with the honest "disconnected" card the live waiter writes.
+// over (localAgent.takeOverOwnedTurn: a new waiter id, one conditional
+// UPDATE, so no turn has two waiters) and runs finishAdoptedTurn below
+// (services/turns.js), which waits for it like the dead waiter would have,
+// claims its tail once with that id, and runs the post-turn path restart
+// recovery runs for a worker's turn: server.js finalizeRecoveredTurn for a
+// build, the spec publication for a scout, then the wrap-up
+// (routes/sessions.js runRecoveredWrapUp, which writes a conversation's into
+// the conversation). The lease sweeper still fails a turn whose machine
+// stopped heartbeating ('abandoned'); this finishes that turn too, with the
+// honest "disconnected" card the live waiter writes.
 //
 // Exactly once: the tail is claimed under the waiter id (localAgent.claimTail),
-// so the live waiter, a second pass and this one cannot all run it. A
+// so the live waiter and this one cannot both run it. A
 // recovery that dies inside the tail is not repeated (the tail has no
 // durable receipts on this path, as a legacy record's does not); the turn
 // keeps tail_claimed_at without tail_finished_at.
@@ -64,25 +60,6 @@ function defaults(deps = {}) {
     finalizeRecoveredTurn: deps.finalizeRecoveredTurn,
     buildRecoveryStopHandle: deps.buildRecoveryStopHandle,
   };
-}
-
-// One pass. Resolves how many turns it took over; `settled` resolves when
-// each of them has been finished (a turn still running on the laptop is
-// waited for, so that can be a while).
-async function recoverOrphanedLocalTurns({ config, pool, deps = {} } = {}) {
-  const d = defaults(deps);
-  const adopted = await d.localAgent.adoptOrphanedTurns(pool);
-  const runs = adopted.map((turn) => {
-    log.info('local-agent', 'Took over a local turn whose waiter died with its process', {
-      turnId: String(turn.id), sessionId: turn.session_id, status: turn.status,
-    });
-    return finishAdoptedTurn({ config, pool, turn, deps }).catch((err) => {
-      log.warn('local-agent', 'Recovered local turn could not be finished', {
-        turnId: String(turn.id), sessionId: turn.session_id, err: err.message,
-      });
-    });
-  });
-  return { adopted: adopted.length, settled: Promise.all(runs) };
 }
 
 async function finishAdoptedTurn({ config, pool, turn, deps = {} }) {
@@ -125,7 +102,6 @@ async function finishAdoptedTurn({ config, pool, turn, deps = {} }) {
   const emit = handle.send;
   const agentMeta = { agentBackend: 'claude_code', agentModel: null, runner: 'local', localAgentLabel: label, localMode: mode };
 
-  let tailHeartbeat = null;
   try {
     // ── Wait, as the dead waiter would have ────────────────────────────
     // The progress card is rebuilt wholesale from the turn's own lines (the
@@ -166,13 +142,7 @@ async function finishAdoptedTurn({ config, pool, turn, deps = {} }) {
       // Someone else holds the tail now, or the turn is gone with its change.
       return { outcome };
     }
-    // The tail is this process's now (claimTail). Its heartbeat keeps saying
-    // so while it runs: a staging build alone can take minutes, and a
-    // conversation must not be ended as interrupted meanwhile.
-    tailHeartbeat = setInterval(() => {
-      d.localAgent.touchWaiter(pool, turn.id, turn.waiter_id).catch(() => {});
-    }, d.localAgent.WAITER_RENEW_MS);
-    if (typeof tailHeartbeat.unref === 'function') tailHeartbeat.unref();
+    // The tail is this process's now (claimTail).
     const terminalLines = progressFor(finished);
     // Lines the laptop posted after the last poll, then the card's end.
     for (const text of terminalLines.slice(sent)) emit('cc_progress', { text, ...agentMeta });
@@ -311,7 +281,6 @@ async function finishAdoptedTurn({ config, pool, turn, deps = {} }) {
     });
     return { outcome, wrapUp: wrapUpOutcome };
   } finally {
-    if (tailHeartbeat) clearInterval(tailHeartbeat);
     d.stopRegistry.deleteIf(sessionId, handle);
     d.activeWorkers.activeWorkers.delete(sessionId);
     emit('done', {});
@@ -325,4 +294,4 @@ async function finishAdoptedTurn({ config, pool, turn, deps = {} }) {
   }
 }
 
-module.exports = { recoverOrphanedLocalTurns, finishAdoptedTurn };
+module.exports = { finishAdoptedTurn };

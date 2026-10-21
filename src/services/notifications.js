@@ -1074,7 +1074,7 @@ async function createAgentAwaitingInputNotification(pool, { userId, appId }) {
 }
 
 // #161: headless auto-solve completion (kind='auto_solve_done').
-// Always created at runHeadlessSession's terminal writes (no arming —
+// Always created at runHeadlessSessionInner's terminal writes (no arming —
 // starting an auto-solve opts you into its completion notification).
 // `detail` carries the outcome: 'spec' | 'code' | 'spec_code' (#170) |
 // 'question' | 'failed'.

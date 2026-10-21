@@ -817,21 +817,17 @@ const TURN_SPEND_LOCK_SQL = `SELECT pg_advisory_xact_lock(hashtextextended('turn
 /**
  * The turn a model call starting now on session `sessionId` belongs to, read
  * as it starts (anthropic-proxy.js), so its cost is kept against that turn
- * however late its write lands: `{ turnId, keep }`, `turnId` null when no
- * turn is recorded. ROLLOUT-ONLY `keep`: false for a turn an older release
- * recorded (no `spendKept`: turn-lifecycle.js persistNewTurn), which settles
- * its spend from Claude Code's report alone and never these rows.
+ * however late its write lands: `{ turnId }`, null when no turn is recorded.
  */
 async function turnSpendTarget(pool, sessionId) {
   try {
     const { rows: [r] } = await pool.query(
-      `SELECT active_turn->>'turnId' AS turn_id, active_turn->>'spendKept' AS kept FROM chat_sessions
+      `SELECT active_turn->>'turnId' AS turn_id FROM chat_sessions
         WHERE id = $1 AND active_turn IS NOT NULL`, [Number(sessionId)]);
-    if (!r || !r.turn_id) return { turnId: null, keep: true };
-    return { turnId: r.turn_id, keep: r.kept === 'true' };
+    return { turnId: (r && r.turn_id) || null };
   } catch (err) {
     log.warn('limits', 'Could not read which turn a call belongs to', { sessionId, err: err.message });
-    return { turnId: null, keep: true };
+    return { turnId: null };
   }
 }
 
@@ -850,7 +846,6 @@ async function noteTurnSpend(pool, { sessionId = null, userId, cents, byok = fal
   const n = Number(cents);
   if (!userId || !(Number.isFinite(n) && n > 0)) return;
   const target = turn || await turnSpendTarget(pool, sessionId);
-  if (!target.keep) return;
   const params = [target.turnId, sessionId ? Number(sessionId) : null, Number(userId), n, !!byok];
   if (!target.turnId) {
     try {

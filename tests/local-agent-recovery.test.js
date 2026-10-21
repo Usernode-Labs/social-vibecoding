@@ -5,9 +5,9 @@
 // waiter returns. A restart killed both while the laptop kept working: the
 // commits it uploaded stayed on the branch with no PR, preview, card or
 // wrap-up, the conversation said "interrupted, Retry", and Retry could build
-// it all again. services/local-agent-recovery.js takes over each turn whose
-// waiter went quiet and finishes it through the post-turn path restart
-// recovery uses for a worker's turn.
+// it all again. The turn's work item's next claim takes it over
+// (services/turns.js) and services/local-agent-recovery.js finishes it
+// through the post-turn path restart recovery uses for a worker's turn.
 //
 // The orchestration is driven here against a stateful fake of the turn row
 // and recording fakes for the tail; the SQL that makes it exactly-once runs
@@ -232,30 +232,14 @@ test('a change closed while the platform was down only stops the laptop', async 
   assert.equal(seen.finalize.length, 0);
 });
 
-test('a pass takes over each quiet turn and finishes it in the background', async () => {
-  const turn = { row: turnRow() };
-  const pool = rowPool(turn);
-  const { deps, seen } = tailFakes();
-  const adopted = [];
-  const { adopted: count, settled } = await recovery.recoverOrphanedLocalTurns({
-    config: {}, pool,
-    deps: { ...deps, localAgent: { ...localAgent, adoptOrphanedTurns: async () => { adopted.push(1); return [{ ...turn.row }]; } } },
-  });
-  assert.equal(count, 1);
-  await settled;
-  assert.equal(seen.finalize.length, 1);
-});
-
 // ── Wiring ─────────────────────────────────────────────────────────────
 
-test('the pass runs on the turn-leftovers clock, for turns no work item dispatched, well inside the waiter\'s stale window', () => {
+test('no pass takes a quiet local turn over: its turn\'s work item does, on its next claim', () => {
+  assert.equal(recovery.recoverOrphanedLocalTurns, undefined);
+  assert.equal(localAgent.adoptOrphanedTurns, undefined);
   const leftovers = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'turn-leftovers.js'), 'utf8');
-  assert.match(leftovers, /require\('\.\/local-agent-recovery'\)\.recoverOrphanedLocalTurns\(\{/);
-  const clock = fs.readFileSync(path.join(__dirname, '..', 'src', 'workflow', 'clock', 'services.ts'), 'utf8');
-  assert.match(clock, /name: 'turn-leftovers', everyMs: MIN,/);
-  assert.ok(localAgent.WAITER_STALE_SECONDS * 1000 + 60 * 1000 <= 2 * 60 * 1000,
-    'a quiet waiter is taken over within its stale window plus one pass: two minutes');
-  assert.ok(localAgent.WAITER_RENEW_MS * 3 < localAgent.WAITER_STALE_SECONDS * 1000,
-    'a live waiter can miss renewals before it is taken for dead');
+  assert.doesNotMatch(leftovers, /local-agent-recovery/);
+  const turns = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'turns.js'), 'utf8');
+  assert.match(turns, /require\('\.\/local-agent'\)\.takeOverOwnedTurn\(pool, ctx\.workId\)/);
   assert.doesNotMatch(fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8'), /recoverLocalAgentTurns|recoverOrphanedLocalTurns/);
 });

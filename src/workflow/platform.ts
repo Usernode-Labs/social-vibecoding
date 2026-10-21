@@ -309,18 +309,15 @@ export async function startWorkflowLoops(): Promise<void> {
 // What a new build owes what an older one left, in order (release/services.ts):
 // the bot lane's clock, the scheduled jobs, open governance rows no instance
 // holds, the sessions the proposal machine does not hold, waits with no
-// clock, the merge queues, deferred DM answers, main checks mid-run, the
-// previews (a deadline for each, the vote-backed rows no instance holds,
-// and the idle ones none does), the platform's own faults, and the closed
-// proposals' volumes.
+// clock, the merge queues, the previews (a deadline for each, the
+// vote-backed rows no instance holds, and the idle ones none does), the
+// platform's own faults, and the closed proposals' volumes.
 const ADOPTIONS: readonly Adoption[] = Object.freeze([
   // First: the bot's whole loop waits on its clock.
   ['botLane', (release: string) => startLaneClock(release)],
-  // The App bench's lane looks at what is waiting (and holds the slots of
-  // trials an older build's lane claimed: they are running rows).
+  // The App bench's lane looks at what is waiting.
   ['benchLane', (release: string) => startBenchLane(release)],
-  // The shots evals' trials: what is waiting, and what an older build's
-  // runner left (cleaned up once its heartbeat is quiet).
+  // The shots evals' trials: what is waiting.
   ['shotsEvals', (release: string) => startEvals(release)],
   // The platform's scheduled jobs: each armed with this build's interval,
   // and the ones it no longer defines retired.
@@ -329,13 +326,8 @@ const ADOPTIONS: readonly Adoption[] = Object.freeze([
   ['proposals', () => adoptProposals()],
   ['waitingProposals', () => rearmWaitingProposals()],
   ['mergeQueues', () => adoptMergeQueues()],
-  ['deferredDms', () => adoptDeferredDms()],
-  ['mainChecks', () => adoptMainChecks()],
   ['previews', (release: string) => restPreviews(release)],
   ['platformFaults', () => retryPlatformFaults()],
-  // Projects an older build was making: made here once its owner lets go.
-  ['appCreations', () => adoptAppCreations()],
-  ['firstRequests', () => adoptFirstRequests()],
   // Up to a few thousand appends on the first release.
   ['closedProposals', (release: string) => retainClosedProposals(release)],
   // What the cluster runs for every app, as this build says: the shared
@@ -383,47 +375,6 @@ async function materializeBenchSuites(): Promise<Json> {
   }
   out.taste = await legacy('services/bench/taste').materialize(pool, appConfig);
   return out as Json;
-}
-
-// Every project still being made that no app-creation instance holds: an
-// older build made it (with the owner lease that came before the machine),
-// and its process may still be at it. Its instance waits until that owner's
-// heartbeat lapses, then makes it from where the row is. Keyed per row, so
-// an older release's adoption appends nothing twice.
-// Not on a staging preview: its rows are a copy of production's, and a
-// production project is never made from a preview.
-async function adoptAppCreations(): Promise<number> {
-  if (!runtime || !legacy('config').runsClusterMaintenance()) return 0;
-  const { rows } = await kernelPool!.query(
-    `SELECT a.id FROM apps a
-      WHERE a.status = 'creating' AND a.self_hosted IS NOT TRUE
-        AND NOT EXISTS (SELECT 1 FROM wf_instances w WHERE w.machine = $1 AND w.key = 'app:' || a.id)
-      ORDER BY a.id LIMIT 500`, [CREATION]);
-  for (const r of rows) {
-    await runtime.append(CREATION, creationKey(r.id), { type: 'Adopted', payload: { appId: r.id } },
-      { requestKey: `adopt:${r.id}`, source: { kind: 'system', name: 'release' }, appId: r.id });
-  }
-  if (rows.length) log!.info('workflow', 'Adopted projects being made', { count: rows.length });
-  return rows.length;
-}
-
-// Every first request an older build left open (a try that failed, a
-// process that died filing it) on a project with a repository, which
-// nothing files now its sweeps are gone: its project's making files it.
-async function adoptFirstRequests(): Promise<number> {
-  if (!runtime || !legacy('config').runsClusterMaintenance()) return 0;
-  const { rows } = await kernelPool!.query(
-    `SELECT f.app_id FROM homeroom_bot_first_versions f JOIN apps a ON a.id = f.app_id
-      WHERE f.status IN ('waiting', 'filing') AND a.repo_url IS NOT NULL
-        AND a.status IN ('running', 'awaiting_secrets')
-        AND NOT EXISTS (SELECT 1 FROM wf_work w WHERE w.machine = $1 AND w.key = 'app:' || a.id AND w.kind = 'app.firstRequest')
-      ORDER BY f.app_id LIMIT 500`, [CREATION]);
-  for (const r of rows) {
-    await runtime.append(CREATION, creationKey(r.app_id), { type: 'FirstRequestOwed', payload: { appId: r.app_id } },
-      { requestKey: `owed:${r.app_id}`, source: { kind: 'system', name: 'release' }, appId: r.app_id });
-  }
-  if (rows.length) log!.info('workflow', 'Adopted first requests left open', { count: rows.length });
-  return rows.length;
 }
 
 // ── The shots evals (shots-eval) ────────────────────────────────────────
@@ -805,34 +756,6 @@ export async function resumeMainCheck(appId: number, user: { id: number; usernam
   return 'not_paused';
 }
 
-// Rows an older release left in the middle of a run, or paused with a
-// recheck to come, that no instance holds yet: taken from the row, once per
-// release. Transitional: deleted once no release older than the main-check
-// machine can run.
-async function adoptMainChecks(): Promise<number> {
-  if (!runtime) return 0;
-  const { rows } = await kernelPool!.query(
-    `SELECT a.id, dead.run_id FROM apps a
-       LEFT JOIN LATERAL (
-         -- The older release's own run of the row's commit, admitted: its
-         -- Jobs are read rather than the suite run again.
-         SELECT cr.run_id FROM check_runs cr
-          WHERE cr.kind = 'main' AND cr.app_id = a.id AND lower(cr.commit_sha) = lower(a.main_check_sha)
-            AND cr.admitted_at IS NOT NULL
-          ORDER BY cr.started_at DESC LIMIT 1) dead ON a.main_check_state IN ('running', 'confirming')
-      WHERE (a.main_check_state IN ('running', 'confirming')
-             OR (a.main_check_state = 'failing' AND lower(coalesce(a.main_check_paused_sha, '')) = lower(coalesce(a.main_check_sha, ''))))
-        AND NOT EXISTS (SELECT 1 FROM wf_instances w WHERE w.machine = $1 AND w.key = 'app:' || a.id)
-      ORDER BY a.id`, [MAIN_CHECK]);
-  for (const r of rows) {
-    await runtime.append(MAIN_CHECK, mainCheckKey(r.id), { type: 'Adopted', payload: { appId: r.id, runId: r.run_id ?? null } },
-      { requestKey: `adopt:${r.id}`, source: { kind: 'system', name: 'adopt' }, appId: r.id })
-      .catch((err: Error) => log!.warn('workflow', 'Could not adopt a main check', { appId: r.id, message: err.message }));
-  }
-  if (rows.length) log!.info('workflow', 'Adopted main checks', { count: rows.length });
-  return rows.length;
-}
-
 // The bot's change machine hears `type` about session `sessionId`: from the
 // bot's loop (FixRoundEnded, homeroom-bot.js). Only for a session of the
 // bot's; the machine's guard refuses one no run of the bot's proposed.
@@ -950,10 +873,10 @@ export async function insertHeard(db: Queryable, insertSql: string, values: unkn
 
 // A person wrote in their DM with the bot (routes/conversations.js, in
 // conversations.sendMessage's own transaction, `db`).
-export async function dmWritten(db: Queryable, p: { userId: number; conversationId: number; messageId: number; attempt?: number }): Promise<void> {
+export async function dmWritten(db: Queryable, p: { userId: number; conversationId: number; messageId: number }): Promise<void> {
   await appendEvent(db, BOT_DM, dmKey(p.userId),
-    { type: 'Wrote', payload: { userId: p.userId, conversationId: p.conversationId, messageId: p.messageId, attempt: p.attempt || 0 } },
-    { requestKey: `wrote:${p.messageId}${p.attempt ? `:d${p.attempt}` : ''}`, source: { kind: 'route', name: 'dm' } });
+    { type: 'Wrote', payload: { userId: p.userId, conversationId: p.conversationId, messageId: p.messageId, attempt: 0 } },
+    { requestKey: `wrote:${p.messageId}`, source: { kind: 'route', name: 'dm' } });
 }
 
 // A message of the bot's that rang `userId` owes them its email when no
@@ -1033,29 +956,6 @@ export async function tapDmAction(p: { userId: number; actionId: number; choice:
     { type: 'Tapped', payload: { userId: p.userId, actionId: p.actionId, choice: p.choice, answers: (p.answers || []) as any } },
     { requestKey: `tap-action:${p.actionId}:${randomUUID()}`, source: { kind: 'route', name: 'bot-action' }, actor: `user:${p.userId}` });
   return tapAnswer(out, DM_TAP);
-}
-
-// A later try an older release owed (homeroom-bot-mayor.js's in-memory
-// deferred tries, which a restart lost: its turn rows say so), taken by the
-// person's DM machine once, at the leader's boot. Transitional: an answer
-// deferred since this release is the machine's own timer.
-export async function adoptDeferredDms(): Promise<number> {
-  if (!runtime) return 0;
-  const { rows } = await kernelPool!.query(
-    `SELECT t.message_id, t.conversation_id, t.user_id, t.tries FROM (
-       SELECT DISTINCT ON (message_id) message_id, conversation_id, user_id, fallback,
-              COUNT(*) OVER (PARTITION BY message_id)::int AS tries
-         FROM homeroom_bot_dm_turns
-        WHERE message_id IS NOT NULL AND created_at > NOW() - INTERVAL '20 minutes'
-        ORDER BY message_id, id DESC) t
-      WHERE t.fallback IN ('deferred', 'plain_later') AND t.tries <= 3 AND t.conversation_id IS NOT NULL
-        AND NOT EXISTS (SELECT 1 FROM wf_instances w WHERE w.machine = $1 AND w.key = 'person:' || t.user_id)`, [BOT_DM]);
-  for (const r of rows) {
-    await dmWritten(kernelPool!, { userId: Number(r.user_id), conversationId: Number(r.conversation_id), messageId: Number(r.message_id), attempt: Number(r.tries) })
-      .catch((err: Error) => log!.warn('workflow', 'Could not adopt a DM answer to ask again', { messageId: r.message_id, message: err.message }));
-  }
-  if (rows.length) log!.info('workflow', 'Adopted DM answers to ask again', { count: rows.length });
-  return rows.length;
 }
 
 // An admin's moves on a campaign (routes/campaigns.js): retry one app, force

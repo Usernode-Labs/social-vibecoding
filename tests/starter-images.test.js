@@ -247,7 +247,7 @@ test('a clock only the newest build runs builds them ahead, each key a target, a
   // clock gives one still running no second item).
   const src = read('src/services/starter-images.js');
   assert.match(src, /AND \(status IN \('queued', 'building'\)\s+OR \(status = 'failed' AND attempts < \$3/);
-  assert.doesNotMatch(src, /heartbeat_at = NOW\(\)|owner = \$3/, 'no lease of its own: the workflow\'s');
+  assert.doesNotMatch(src, /heartbeat_at|owner = 'workflow'|owner IS DISTINCT/, 'no lease of its own, nor a wait for a builder from before the clock: the clock\'s target is the one builder');
   // The build is the starter as generated: it writes the shared layer cache.
   assert.match(src, /starterTree: true,/);
   // Its source is a commit with no parent, on the template's own branch.

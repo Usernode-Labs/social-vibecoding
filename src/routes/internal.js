@@ -311,10 +311,6 @@ function internalRoutes(_config) {
   };
   router.post('/api/internal/sessions/:sessionId/visible-changes',
     visibleChangesAuth, visibleChangesLimiter, declareVisibleChanges);
-  // The path before the rename, for a worker still on the previous release's
-  // image while a deploy rolls out.
-  router.post('/api/internal/sessions/:sessionId/visual-evidence-intent',
-    visibleChangesAuth, visibleChangesLimiter, declareVisibleChanges);
 
   // #4490: a hosted build's diagram of its change (worker/visible-changes-mcp.js
   // declare_diagram), on the same boundary as its visible changes: its own

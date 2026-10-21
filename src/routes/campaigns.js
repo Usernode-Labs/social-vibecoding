@@ -46,9 +46,9 @@ const REFUSALS = new Map([
   ['done', [409, 'The campaign is already done']],
   ['running', [409, 'The campaign is already running']],
   ['nothing_to_resume', [409, 'Every app was reached before the stop: there is nothing to resume']],
-  // A campaign an older release started, not taken by the machine yet (it
-  // is within a minute of a release).
-  ['no_instance', [409, 'The campaign is being taken over by this release. Try again in a minute.']],
+  // A campaign whose Start the machine has not applied yet (the moment after
+  // its governance apply inserted it).
+  ['no_instance', [409, 'The campaign is starting. Try again in a moment.']],
 ]);
 function refused(res, outcome) {
   if (outcome.status === 'faulted') return res.status(500).json({ error: 'Internal server error' });

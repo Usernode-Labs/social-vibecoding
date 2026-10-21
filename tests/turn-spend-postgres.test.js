@@ -39,12 +39,11 @@ test('a turn\'s spend as it happens, against the full PostgreSQL schema', { time
   const { rows: [user] } = await pool.query("INSERT INTO users (username, password) VALUES ('spender', 'x') RETURNING id");
   const { rows: [app] } = await pool.query(
     "INSERT INTO apps (name, slug, status, created_by) VALUES ('Spend', 'spend', 'running', $1) RETURNING id", [user.id]);
-  // A turn record as this release writes it (turn-lifecycle.js
-  // persistNewTurn marks it `spendKept`), or as an older release did.
-  const session = async (turnId, { older = false } = {}) => (await pool.query(
+  // A turn record, as turn-lifecycle.js persistNewTurn writes it.
+  const session = async (turnId) => (await pool.query(
     `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, active_turn)
      VALUES ($1, $2, 'b', 'active', $3::jsonb) RETURNING id`,
-    [app.id, user.id, turnId ? JSON.stringify({ turnId, phase: 'executing', ...(older ? {} : { spendKept: true }) }) : null])).rows[0].id;
+    [app.id, user.id, turnId ? JSON.stringify({ turnId, phase: 'executing' }) : null])).rows[0].id;
   const A = crypto.randomUUID();
   const B = crypto.randomUUID();
   const LIVE = crypto.randomUUID();
@@ -105,17 +104,17 @@ test('a turn\'s spend as it happens, against the full PostgreSQL schema', { time
     const today = async () => Number((await pool.query(`SELECT ${limits.TODAY_USER_SPEND_SQL} AS n`, [u.id])).rows[0].n);
     const sessionOf = async (turnId) => (await pool.query(
       `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, active_turn) VALUES ($1, $2, 'b', 'active', $3::jsonb) RETURNING id`,
-      [app.id, u.id, JSON.stringify({ turnId, phase: 'executing', spendKept: true })])).rows[0].id;
+      [app.id, u.id, JSON.stringify({ turnId, phase: 'executing' })])).rows[0].id;
 
     // Claude Code reported 10 cents, which holds every call; one call's write
     // lands after the settlement, its turn read as the call started.
     const R = crypto.randomUUID();
     const s = await sessionOf(R);
     const turn = await limits.turnSpendTarget(pool, s);
-    assert.deepEqual(turn, { turnId: R, keep: true });
+    assert.deepEqual(turn, { turnId: R });
     await limits.settleTurnSpend(pool, u.id, 10, { turnId: R });
     // The next turn has its record by now: the late call is still its own turn's.
-    await pool.query(`UPDATE chat_sessions SET active_turn = $2::jsonb WHERE id = $1`, [s, JSON.stringify({ turnId: crypto.randomUUID(), spendKept: true })]);
+    await pool.query(`UPDATE chat_sessions SET active_turn = $2::jsonb WHERE id = $1`, [s, JSON.stringify({ turnId: crypto.randomUUID() })]);
     await limits.noteTurnSpend(pool, { sessionId: s, userId: u.id, cents: 10, turn });
     assert.equal(await mine(), 10, 'in the reported total already');
     assert.equal(await today(), 10, 'not counted again by the caps');
@@ -168,18 +167,15 @@ test('a turn\'s spend as it happens, against the full PostgreSQL schema', { time
     assert.equal(await today(), 25, 'the reported total held it: kept as settled');
   });
 
-  await t.test('ROLLOUT-ONLY: an older release\'s turn keeps none of its calls: it settles its spend from Claude Code\'s report alone', async () => {
+  await t.test('every turn record keeps its calls, with no mark of its own: no release that settles from the report alone runs', async () => {
     const before = await open();
-    const older = await session(crypto.randomUUID(), { older: true });
-    await limits.noteTurnSpend(pool, { sessionId: older, userId: user.id, cents: 11 });
-    assert.equal(await open(), before, 'nothing kept, so nothing for the clock to bill again');
-    const { rows: [today] } = await pool.query(`SELECT ${limits.TODAY_USER_SPEND_SQL} AS n`, [user.id]);
-    assert.equal(Number(today.n), 92 + 7, 'nor counted against the caps twice');
-    // A record this release writes carries the mark.
     const lifecycle = require('../src/services/turn-lifecycle');
     const fresh = await session(null);
     await lifecycle.persistNewTurn(pool, fresh, { turnId: crypto.randomUUID(), mode: 'build' });
+    const { rows: [rec] } = await pool.query('SELECT active_turn FROM chat_sessions WHERE id = $1', [fresh]);
+    assert.equal(rec.active_turn.spendKept, undefined);
     await limits.noteTurnSpend(pool, { sessionId: fresh, userId: user.id, cents: 5 });
     assert.equal(await open(), before + 1);
   });
+
 });

@@ -20,13 +20,7 @@
 // record, its row marked stopping so its work stops at its next step), and
 // the trial is cleaned up as any other; copies still being built are left
 // to stop there, and their cleanup waits for them. A phase past its time
-// ends the trial the same way, and so does its row ended elsewhere (an
-// older release's process during a rollout). A trial an older build's
-// runner left (its heartbeat quiet: its process is gone) is cleaned up and
-// queued again, once. The rows of the trials it runs are kept beating as
-// that runner's were, so an older release's runner, during a rollout, never
-// takes one for its own lost one. While two releases serve, nothing new is
-// granted: an older one's proxy would bill a trial's calls to the author.
+// ends the trial the same way, and so does its row ended elsewhere.
 //
 // workflow-foundation's design-step4-lanes.md is the design.
 
@@ -44,9 +38,6 @@ export const WORK = Object.freeze({
 
 export const DEFAULT_CONCURRENCY = 2;
 export const MAX_CONCURRENCY = 4;
-// A trial is put back once when a restart (an older build's runner) cut it.
-export const MAX_ATTEMPTS = 2;
-export const INTERRUPTED_REASON = 'Homeroom restarted while this trial was being taken, twice.';
 // How long building the copies may take, and the agent past its budget.
 export const COPIES_MS = 30 * 60 * 1000;
 export const AGENT_SLACK_MS = 10 * 60 * 1000;
@@ -56,17 +47,14 @@ export const COMPARE_MS = 10 * 60 * 1000;
 export const AGENT_RETRY_MS = 20 * 1000;
 // How long a trial's cleanup waits for copies it stopped to say so.
 export const AWAIT_COPIES_MS = 10 * 60 * 1000;
-// The rows of running trials beat this often (an older release's runner
-// takes one quiet for STALE_SECONDS, five minutes, for its own lost one).
-export const BEAT_MS = 2 * 60 * 1000;
 // With nothing due, a look this often all the same: an ask to look that was
-// lost (a launch whose Look failed, an older release's wake) waits no longer.
+// lost (a launch whose Look failed) waits no longer.
 export const IDLE_LOOK_MS = 10 * 60 * 1000;
 const MAX_BUSY_RETRIES = 2;
 const MIN_RETRY_LEFT_MS = 60 * 1000;
 
 type Phase = 'copies' | 'agent' | 'compare' | 'cleanup';
-type End = { state: 'verified' | 'failed' | 'cancelled' | 'requeue'; code?: string | null; reason?: string | null;
+type End = { state: 'verified' | 'failed' | 'cancelled'; code?: string | null; reason?: string | null;
   verdict?: Json; planHash?: string | null; trace?: Json };
 export interface Trial {
   id: number; evalId: number; sessionId: number; attempt: string; appSlug: string | null;
@@ -150,8 +138,7 @@ function apply(st: Step, c: Ending) {
 // time, and a minute while trials wait on a proposal busy with its own.
 function decide(s0: Step, f: Facts, ctx: TransitionContext, deps: Deps): Outcome<EState> {
   // A trial of this machine's whose row no longer reads it running (ended
-  // or put back elsewhere: an older release's process during a rollout, an
-  // older release's cancel): stopped and cleaned up here.
+  // or put back elsewhere): stopped and cleaned up here.
   const st: Step = { ...s0, writes: s0.writes.slice(), work: s0.work.slice(), cancel: s0.cancel.slice() };
   for (const t of Object.values(s0.data.trials)) {
     if (t.phase === 'cleanup') continue;
@@ -166,22 +153,7 @@ function decide(s0: Step, f: Facts, ctx: TransitionContext, deps: Deps): Outcome
   const workOut = st.work;
   const cancel = st.cancel;
   const now = ctx.now.getTime();
-  // An older build's runner's trial whose process is gone: cleaned up here,
-  // then queued again (or failed).
   const active = f.active.filter((a) => !s0.ended.has(a.id));
-  for (const a of active) {
-    if (d.trials[a.id] || !a.stale) continue;
-    const t: Trial = {
-      id: a.id, evalId: a.evalId, sessionId: a.sessionId, attempt: a.attemptId, appSlug: a.appSlug, phase: 'cleanup', due: null,
-      agentMs: deps.defaultAgentMs, agentStarted: null, dispatches: 0, busy: 0, died: false, retryAt: null, stopTurn: true,
-      end: null, attempts: a.attempts,
-    };
-    const again = a.attempts < MAX_ATTEMPTS && a.evalStatus === 'running';
-    const c = cleanup(t, again ? { state: 'requeue' } : { state: 'failed', code: 'shots_eval_interrupted', reason: INTERRUPTED_REASON }, ctx);
-    d = { trials: { ...d.trials, [a.id]: c.trial } };
-    if (c.work) workOut.push(c.work);
-    writes.push(...c.writes);
-  }
   const mine = Object.values(d.trials);
   const sessionsBusy = new Set<number>([...active.map((a) => a.sessionId), ...mine.map((t) => t.sessionId)]);
   const activeIds = new Set<number>([...active.map((a) => a.id), ...mine.map((t) => t.id)]);
@@ -195,9 +167,7 @@ function decide(s0: Step, f: Facts, ctx: TransitionContext, deps: Deps): Outcome
     .reduce((sum, id) => sum + Math.max(spentSoFar.get(id) || 0, f.estimateCents), 0);
   const skip = new Set<number>();
   let waiting = false;
-  // Two releases serving: nothing new until the rollout is over.
-  if (f.rollout && f.planned.length) waiting = true;
-  for (const p of f.rollout ? [] : f.planned) {
+  for (const p of f.planned) {
     if (running >= deps.concurrency) break;
     if (skip.has(p.evalId) || sessionsBusy.has(p.sessionId)) continue;
     if (f.liveShots.has(p.sessionId)) { waiting = true; continue; }
@@ -230,18 +200,12 @@ function decide(s0: Step, f: Facts, ctx: TransitionContext, deps: Deps): Outcome
     const left = f.planned.some((p) => p.evalId === ev.id) || [...activeIds].some((id) => evalOf(id) === ev.id);
     if (!left) writes.push({ type: 'done', evalId: ev.id });
   }
-  // The rows of the trials it holds beat.
-  const held = Object.values(d.trials).map((t) => t.id);
-  if (held.length) writes.push({ type: 'beat', trialIds: held });
   const times: number[] = [];
   for (const t of Object.values(d.trials)) {
     if (t.due) times.push(Date.parse(t.due));
     if (t.retryAt) times.push(Date.parse(t.retryAt));
   }
-  if (held.length) times.push(now + BEAT_MS);
   if (waiting) times.push(now + 60 * 1000);
-  // An older build's runner's trials: looked at again once they could be stale.
-  if (active.some((a) => !d.trials[a.id])) times.push(now + 60 * 1000);
   const due = times.filter((x) => Number.isFinite(x) && x > now);
   if (!due.length) due.push(now + IDLE_LOOK_MS);
   const timer = due.length ? { at: new Date(Math.min(...due)), event: { type: 'Tick' } } : null;
@@ -286,14 +250,6 @@ function cancelled(s: EState, e: Event<any>, f: Facts, ctx: TransitionContext, d
   for (const t of Object.values(st.data.trials)) {
     if (t.evalId !== evalId || t.phase === 'cleanup') continue;
     apply(st, cleanup(t, { state: 'cancelled' }, ctx));
-  }
-  // An older release's runner's trials of it (a rollout): their turns
-  // stopped and their copies removed here; that runner, if it is still at
-  // one, finds its row cancelled at its next step.
-  for (const a of f.active) {
-    if (a.evalId !== evalId || st.data.trials[a.id]) continue;
-    st.work.push({ kind: WORK.cleanup, key: `cleanup:${a.id}:${a.attemptId}:other`,
-      input: { attemptId: a.attemptId, sessionId: a.sessionId, appSlug: a.appSlug, stopTurn: true } as Json });
   }
   // As the write leaves it: no longer running, nothing of it waiting.
   const after: Facts = { ...f, evals: f.evals.filter((ev) => ev.id !== evalId), planned: f.planned.filter((p) => p.evalId !== evalId) };
@@ -411,9 +367,9 @@ export function shotsEval(deps: Deps) {
       open: { Look: look, Tick: clock, EvalCancelled: cancel, WorkSucceeded: results, WorkFailed: results, WorkExhausted: results },
     } as any,
     writes: {
-      // A trial no longer planned here was changed outside this lock (an
-      // older release's process): the transition is tried again on what
-      // the rows say now, so no work goes for a claim that did not happen.
+      // A trial no longer planned here was changed outside this lock: the
+      // transition is tried again on what the rows say now, so no work goes
+      // for a claim that did not happen.
       claim: async (tx, w) => {
         const { rowCount } = await tx.query(
           `UPDATE shots_eval_trials
@@ -425,11 +381,6 @@ export function shotsEval(deps: Deps) {
         await tx.query('UPDATE shots_eval_trials SET stopping_at = COALESCE(stopping_at, NOW()) WHERE id = $1 AND attempt_id = $2',
           [w.trialId, w.attemptId]);
       },
-      beat: async (tx, w) => {
-        await tx.query(
-          `UPDATE shots_eval_trials SET updated_at = NOW()
-            WHERE id = ANY($1::int[]) AND state IN ('provisioning', 'exploring', 'reviewing')`, [w.trialIds]);
-      },
       moved: async (tx, w) => {
         await tx.query(
           `UPDATE shots_eval_trials
@@ -439,21 +390,11 @@ export function shotsEval(deps: Deps) {
       },
       // The trial's end, its attempt's cost settled on it and on its eval
       // (costs.ts: the larger of what the proxy billed and what Claude Code
-      // reported; what comes later charges only what it adds). Put back (a restart cut it): a fresh
-      // attempt, its earlier files gone.
+      // reported; what comes later charges only what it adds).
       ended: async (tx, w) => {
         const e = (w.end || { state: 'failed', code: 'shots_eval_failed', reason: 'The trial ended without shots.' }) as End;
         await settleAttempt(tx, { trialId: w.trialId, attemptId: w.attemptId });
         const trace = { ...((e.trace as object) || {}), ...(w.cleaned ? {} : { cleanupFailed: true }) };
-        if (e.state === 'requeue') {
-          await tx.query('DELETE FROM shots_eval_artifacts WHERE trial_id = $1', [w.trialId]);
-          await tx.query(
-            `UPDATE shots_eval_trials
-                SET state = 'planned', attempt_id = md5(random()::text || clock_timestamp()::text), started_at = NULL, updated_at = NOW(), stopping_at = NULL,
-                    recipe = NULL, hard_verdict = NULL, plan_hash = NULL, trace_summary = NULL, failure_code = NULL, failure_reason = NULL
-              WHERE id = $1 AND attempt_id = $2 AND state IN ('provisioning', 'exploring', 'reviewing')`, [w.trialId, w.attemptId]);
-          return;
-        }
         await tx.query(
           `UPDATE shots_eval_trials
               SET state = CASE WHEN state = 'cancelled' THEN 'cancelled' ELSE $3 END,

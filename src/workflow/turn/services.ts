@@ -36,6 +36,14 @@ export function turnServices({ config, pool }: Deps): Record<string, WorkHandler
         }),
       }),
     },
+    // A dev chat turn that did not end its own way: its change repaired
+    // (the reply's pills, or the "didn't answer" note), unless another turn
+    // runs on it by then.
+    [WORK.repair]: {
+      maxAttempts: 5,
+      backoffMs: (n) => Math.min(5 * 60 * 1000, 15 * 1000 * 2 ** (n - 1)),
+      run: async ({ input }) => (lateNotice(input.owedAt) ? { skipped: 'late' } : legacy('services/turns').repairCut({ pool }, input)),
+    },
     // A failed turn's "Session stopped before finishing", once per turn,
     // unless somebody watches the conversation when it runs.
     [WORK.stalled]: {

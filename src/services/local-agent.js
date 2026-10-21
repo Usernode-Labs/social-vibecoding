@@ -60,14 +60,11 @@ const TURN_TIMEOUT_MS = 60 * 60 * 1000;
 
 // The platform's own side of a turn is a waiter in the process that
 // dispatched it (awaitTurnResult), and a restart kills it while the laptop
-// keeps working. The waiter says it is alive every WAITER_RENEW_MS. A turn
-// a work item dispatched is that item's (its `owner`), which takes it over
-// when it is claimed again; one silent for WAITER_STALE_SECONDS that no item
-// dispatched (an older release's) is taken over by the turn-leftovers
-// clock's local pass (services/local-agent-recovery.js), which then
-// finishes the turn.
+// keeps working. A turn is its dispatching work item's (its `owner`), which
+// takes it over when it is claimed again; the waiter renews its id every
+// WAITER_RENEW_MS, which is how a waiter left behind learns it was taken
+// over.
 const WAITER_RENEW_MS = 10 * 1000;
-const WAITER_STALE_SECONDS = 45;
 
 const MAX_PROGRESS_LINES = 500;
 const MAX_PROGRESS_LINE_CHARS = 2000;
@@ -597,12 +594,12 @@ async function finishTurn(pool, {
 // is what lets dev chat stream a local run's progress lines the same way it
 // streams a worker's.
 //
-// `waiterId` (enqueueTurn's, or the recovery pass's after it took the
+// `waiterId` (enqueueTurn's, or the item's next claim's after it took the
 // turn over) makes this the turn's one waiter: it keeps waiter_seen_at
 // fresh while it waits, and a terminal turn is returned only once its tail
-// is claimed with that id. A waiter that finds its id gone (recovery
-// took the turn over while this process looked dead) or the tail already
-// claimed answers 'adopted': the tail is someone else's to run.
+// is claimed with that id. A waiter that finds its id gone (its item's next
+// claim took the turn over) or the tail already claimed answers 'adopted':
+// the tail is someone else's to run.
 async function awaitTurnResult(pool, turnId, {
   onProgress,
   offerTimeoutMs = OFFER_TIMEOUT_MS,
@@ -670,7 +667,7 @@ async function awaitTurnResult(pool, turnId, {
 
 // The waiter is still here. Leaves updated_at alone: that is the progress
 // signal awaitTurnResult's onProgress keys on. False when the id is no
-// longer the turn's (recovery took it over) or its tail is already claimed.
+// longer the turn's (taken over) or its tail is already claimed.
 async function renewWaiter(pool, turnId, waiterId) {
   const { rows } = await pool.query(
     `UPDATE local_agent_turns SET waiter_seen_at = NOW()
@@ -693,34 +690,9 @@ async function claimTail(pool, turnId, waiterId) {
   return rows[0] || null;
 }
 
-// Restart recovery: take over the turns whose waiter died with its process,
-// live or already finished on the laptop. One conditional UPDATE per pass,
-// so two passes (or a pass and a waiter that comes back to life) cannot
-// both hold a turn: the new waiter id is the turn's from here on. Rows written
-// before waiters had ids are never taken, nor a turn a work item dispatched:
-// the item carries it on (takeOverOwnedTurn). Resolves the taken rows, each
-// with the `waiter_id` the recovery now waits under.
-async function adoptOrphanedTurns(pool, { limit = 10, staleSeconds = WAITER_STALE_SECONDS } = {}) {
-  const { rows } = await pool.query(
-    `UPDATE local_agent_turns t
-        SET waiter_id = gen_random_uuid(), waiter_seen_at = NOW()
-      WHERE t.id IN (
-        SELECT id FROM local_agent_turns
-         WHERE waiter_id IS NOT NULL AND tail_claimed_at IS NULL AND owner IS NULL
-           AND waiter_seen_at < NOW() - make_interval(secs => $1)
-         ORDER BY id ASC
-         LIMIT $2
-         FOR UPDATE SKIP LOCKED
-      )
-      RETURNING t.*`,
-    [staleSeconds, limit]
-  );
-  return rows;
-}
-
 // The turn work item `workId` dispatched, carried on by the item's next
 // claim after its process went (services/turns.js): its waiter id taken
-// over, as adoptOrphanedTurns takes it, so the waiter that process left (in
+// over (one conditional UPDATE), so the waiter that process left (in
 // a process still running, the one that lost the item) finds it gone and
 // leaves the tail to this one. Resolves the row with its new `waiter_id`, or
 // null when the item dispatched none still waited for.
@@ -738,15 +710,6 @@ async function takeOverOwnedTurn(pool, workId) {
     [String(workId)]
   );
   return rows[0] || null;
-}
-
-// The recovered tail is still running: it keeps its claim's heartbeat fresh
-// (hasUnfinishedTurn reads it), as its waiting did.
-async function touchWaiter(pool, turnId, waiterId) {
-  await pool.query(
-    'UPDATE local_agent_turns SET waiter_seen_at = NOW() WHERE id = $1 AND waiter_id = $2',
-    [turnId, waiterId]
-  );
 }
 
 // The recovered tail got to its end.
@@ -931,11 +894,8 @@ module.exports = {
   finishTurn,
   awaitTurnResult,
   WAITER_RENEW_MS,
-  WAITER_STALE_SECONDS,
   renewWaiter,
   claimTail,
-  adoptOrphanedTurns,
-  touchWaiter,
   markTailFinished,
   takeOverOwnedTurn,
   buildTurnResult,
