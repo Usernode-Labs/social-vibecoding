@@ -2364,8 +2364,9 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
   if (!conversationId) return <section className="hidden md:flex messages-thread-pane messages-no-selection"><h2>{t('messages:thread.empty.title')}</h2><p>{t('messages:thread.empty.body')}</p></section>;
   // The kind is on the SECTION — `messages-thread-direct`, `-group` or
   // `-channel` — so the scroller's class string below stays the one the
-  // safe-area test pins. It no longer changes the rows' shape: every kind is
-  // the same named-row transcript (#2783).
+  // safe-area test pins. It decides the rows' shape: a DM and a group draw
+  // their own message on its sender's side (#5680), a channel keeps the
+  // named-row transcript (#2783) — ./message-row.tsx.
   const kind = snap.active?.kind || 'direct';
   const rows: ReactNode[] = [];
   let previousDay = '';

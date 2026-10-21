@@ -1044,30 +1044,33 @@ html.dark .messages-markdown .gc-ref-issue.gc-ref-request { color: hsl(var(--req
 .messages-bot-block-first, .messages-bot-block-middle { padding-bottom: 0; }
 .messages-bot-block-middle, .messages-bot-block-last { padding-top: 0; }
 
-/* ── The bubble transcript (a direct conversation) ───────────────────────
-   Two participants, one of them you, so side and surface say who is
-   speaking and no name is drawn. Theirs is an opaque white bubble on the
-   left; yours is on the right in the accent as a TINT — the same 8% the dev
-   chat gives your turns, with the page's own ink, so a quoted reply or a
-   link inside it keeps its normal colours and no inverted token is needed.
-   The gutter is the cue; the tint confirms it. */
+/* ── A conversation has sides (#5680) ───────────────────────────────────
+   A direct message and a group chat draw each message on its sender's side,
+   in a bubble: yours on the right in the accent as a TINT — the same 8% the
+   general chat gives your turns, with the page's own ink, so a quoted reply
+   or a link inside it keeps its normal colours and no inverted token is
+   needed — and theirs on the left in the opaque surface. The name and the
+   time still read name-then-time (#2392), only against that side: a row
+   runs right to left for its own author, so the head, the bubble and
+   everything under it line up at the right edge. A channel keeps its named
+   rows (#2783) and is untouched by any of this. */
 .messages-message-bubble {
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 6px;
   padding: 4px 16px;
 }
-.messages-message-bubble.messages-message-self { align-items: flex-end; }
-.messages-bubble-wrap {
+.messages-message-bubble.messages-message-self { flex-direction: row-reverse; }
+.messages-message-bubble > .messages-bubble-wrap {
   position: relative;
   display: flex;
   flex-direction: column;
-  align-items: inherit;
-  max-width: 78%;
+  align-items: flex-start;
+  gap: 6px;
   min-width: 0;
 }
+.messages-message-bubble.messages-message-self > .messages-bubble-wrap { align-items: flex-end; }
+.messages-message-self .messages-message-head { justify-content: flex-end; }
 .messages-bubble {
   min-width: 0;
+  max-width: 78%;
   border-radius: 20px;
   padding: 10px 16px;
   color: var(--text-primary);
@@ -1079,6 +1082,11 @@ html.dark .messages-markdown .gc-ref-issue.gc-ref-request { color: hsl(var(--req
 .messages-message-self .messages-bubble { background: var(--accent-tint); }
 .messages-message-bubble .messages-attachments,
 .messages-message-bubble .messages-object-list { width: 100%; max-width: 78%; }
+/* A saved message in a bubble is outlined in the accent: the inset bar a
+   flat row wears excludes bubble rows (below). */
+.messages-message-bubble.messages-message-saved .messages-bubble {
+  box-shadow: inset 0 0 0 1.5px var(--accent);
+}
 .messages-message-meta {
   padding: 0 6px;
   color: var(--text-muted);
