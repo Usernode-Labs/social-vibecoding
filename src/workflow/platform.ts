@@ -1318,10 +1318,11 @@ export async function prLooked(m: { sessionId: number; appId: number; from: stri
   // The same reading within a minute (the webhook's and the clock's) is one
   // event; a close still settling is looked at again on the next run.
   const out = await proposalEvent('PrLooked', { from: m.from, merged: m.merged, closed: m.closed, mergeSha: m.mergeSha,
-    mergedAt: m.mergedAt, closedAt: m.closedAt, tally },
+    mergedAt: m.mergedAt, closedAt: m.closedAt, readAt: new Date().toISOString(), tally },
   { sessionId: m.sessionId, appId: m.appId, source: sys('pr-look'), waitMs: 5000,
     requestKey: `pr-looked:${m.sessionId}:${what}:${m.mergedAt || m.closedAt || '-'}:${Math.floor(Date.now() / 60000)}` });
-  return typeof out === 'object' && out != null && ['accepted', 'replayed', 'pending'].includes((out as any).status);
+  // Taken once decided: one still pending is the next look's to report again.
+  return typeof out === 'object' && out != null && ['accepted', 'replayed'].includes((out as any).status);
 }
 
 // The platform's own app now runs `sha` (its release booting): every merge

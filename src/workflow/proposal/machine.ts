@@ -233,6 +233,11 @@ export const SYNC_BACKOFF_MS = 2 * 60 * 1000;
 // stood this long: an author closes and reopens one to run its CI again, and
 // the webhook's `closed` comes first. The next look settles it.
 export const PR_CLOSE_SETTLES_MS = 5 * 60 * 1000;
+// A close reading is acted on only while it is this fresh: one asked again
+// long after it was read (refused during a rollout, re-asked once the older
+// release is gone) may predate a reopen. The next look reads GitHub anew. A
+// merge is final, whenever it was read.
+export const PR_LOOK_STALE_MS = 10 * 60 * 1000;
 // A merge merge-followups has not recorded yet is told again after this,
 // doubling to the max (MERGED_RESEND_MAX_MS).
 export const MERGED_RESEND_MS = 5 * 60 * 1000;
@@ -349,7 +354,7 @@ const EVENTS = {
   // proposal-scans.js): merged, or closed and when. `tally`: the votes it
   // stood at, for a merge's record.
   PrLooked: (p: any) => ({ ...session(p), from: from(p), merged: !!p?.merged, closed: !!p?.closed,
-    mergeSha: text(p?.mergeSha, 64), mergedAt: text(p?.mergedAt, 40), closedAt: text(p?.closedAt, 40),
+    mergeSha: text(p?.mergeSha, 64), mergedAt: text(p?.mergedAt, 40), closedAt: text(p?.closedAt, 40), readAt: text(p?.readAt, 40),
     tally: p?.tally == null ? null : {
       yes: Math.max(0, Number(p.tally.yes) | 0),
       required: p.tally.required == null ? null : Math.max(0, Number(p.tally.required) | 0),
@@ -1332,7 +1337,8 @@ const GUARDS = new Map<string, (s: Live, e: Event<any>, f: Facts, ctx: Transitio
       : reject(s.name === 'closed' ? 'already_closed' : s.name === 'merging' || s.name === 'unconfirmed' ? 'merging' : 'merged')),
     () => (sameReading(statusOf(s), e.payload.from) ? ok() : reject('overtaken')),
     () => (e.payload.merged ? ok() : !e.payload.closed ? reject('open')
-      : ctx.now.getTime() - Date.parse(e.payload.closedAt || '') < PR_CLOSE_SETTLES_MS ? reject('settling') : ok()),
+      : !(ctx.now.getTime() - Date.parse(e.payload.readAt || '') <= PR_LOOK_STALE_MS) ? reject('stale')
+        : ctx.now.getTime() - Date.parse(e.payload.closedAt || '') < PR_CLOSE_SETTLES_MS ? reject('settling') : ok()),
   )],
   ['Reopen', (s, e, f) => all(
     () => (s.name === 'closed' ? ok() : reject('not_closed')),

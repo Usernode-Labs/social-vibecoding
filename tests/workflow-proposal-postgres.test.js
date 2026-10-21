@@ -1007,11 +1007,19 @@ test('proposal machine against the full PostgreSQL schema', { timeout: 180000 },
     // Closed on GitHub: not while the close may still be undone (an author
     // re-running CI), then closed.
     const a = await session({ status: 'active' });
-    const early = await send(a, 'PrLooked', { from: 'active', merged: false, closed: true, closedAt: new Date(Date.now() - 60000).toISOString() });
+    const now = () => new Date().toISOString();
+    const early = await send(a, 'PrLooked', { from: 'active', merged: false, closed: true, closedAt: new Date(Date.now() - 60000).toISOString(), readAt: now() });
     await settle();
     assert.equal((await outcome(early)).reason, 'settling');
     assert.equal((await row(a)).status, 'active');
-    await send(a, 'PrLooked', { from: 'active', merged: false, closed: true, closedAt: new Date(Date.now() - 600000).toISOString() });
+    // A close read long ago (refused during a rollout, asked again since)
+    // may predate a reopen: refused, the next look reads GitHub anew.
+    const old = await send(a, 'PrLooked', { from: 'active', merged: false, closed: true,
+      closedAt: new Date(Date.now() - 3600000).toISOString(), readAt: new Date(Date.now() - 40 * 60000).toISOString() });
+    await settle();
+    assert.equal((await outcome(old)).reason, 'stale');
+    assert.equal((await row(a)).status, 'active');
+    await send(a, 'PrLooked', { from: 'active', merged: false, closed: true, closedAt: new Date(Date.now() - 600000).toISOString(), readAt: now() });
     await settle();
     assert.equal((await row(a)).status, 'archived');
     assert.equal((await instance(a)).data.reason, 'pr-closed');
