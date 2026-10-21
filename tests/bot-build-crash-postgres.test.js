@@ -39,7 +39,8 @@
 //
 // Besides: the fix turn still running when the next process attaches (bench
 // run 193's shape), a turn whose push was refused while nobody was up, a
-// second kill of the process that followed a turn, and the fakes' points
+// second kill of the process that followed a turn, a kill while the trial's
+// paused triage session still had its worker being removed, and the fakes' points
 // hit with a clean stop (the runtime stops, the build unwinds and gives its
 // lease up, keeping a step it finished), as a release's SIGTERM gives one.
 //
@@ -327,6 +328,18 @@ test('bot builds and bench trials carried on through a crash at every step they 
       plan: { turns: { ...turns, [step]: { ...turns[step], ms: 1500 } } },
     });
   }
+  // Killed while its triage session's worker was still being removed (the
+  // session paused as its turn ended): the removal's item is held by the
+  // killed process too, and the build carried on resumes that session,
+  // which waits for a teardown under way until its item's lease lapses.
+  const triaged = baselines.trial.saves.find((s) => s.label === '+triage');
+  if (triaged) {
+    fakes.push({
+      id: 'trial', point: `save:${triaged.n}:before`, saveLabel: triaged.label,
+      label: 'its triage session\'s worker still being removed', killAfter: 'removing',
+      plan: { removeWorkerHold: true },
+    });
+  }
   const points = [...fakes, ...saves, ...stops];
   const where = (p) => `${p.mode === 'stop' ? 'stopped' : 'killed'} at ${p.point}${p.then ? `, then at ${p.then}` : ''}`;
   const nameOf = (p) => `${p.id} ${where(p)} (${p.label})`;
@@ -345,7 +358,8 @@ test('bot builds and bench trials carried on through a crash at every step they 
       const scenario = p.plan ? { ...SCENARIOS[p.id], plan: { ...SCENARIOS[p.id].plan, ...p.plan } } : SCENARIOS[p.id];
       try {
         results[i] = await lane.run(scenario, {
-          killAt: p.then ? [p.point, p.then] : p.point, killMode: p.mode || 'kill', restartAfterTurns: !!p.restartAfterTurns,
+          killAt: p.then ? [p.point, p.then] : p.point, killMode: p.mode || 'kill', killAfter: p.killAfter || null,
+          restartAfterTurns: !!p.restartAfterTurns,
         });
       } catch (err) {
         results[i] = { error: err };
@@ -433,7 +447,7 @@ function compare(b, got, p) {
   if (got.timedOut) problems.push(`it did not end: ${got.why}`);
   // The n-th save of this build is the uninterrupted run's n-th: the steps
   // run in one order.
-  if (/^save:/.test(p.point) && got.killLabels[0] !== p.label) {
+  if (/^save:/.test(p.point) && got.killLabels[0] !== (p.saveLabel || p.label)) {
     problems.push(`killed at a different step than the uninterrupted run's save of that number: ${got.killLabels[0]}`);
   }
   same('instance', got.state, 'done');
@@ -518,13 +532,13 @@ function makeLane(name, index, childEnv, deadline = Infinity) {
     setImmediate(() => { if (!warm && !closed) warm = fresh(); });
     return child;
   };
-  async function runner(killAt, killMode) {
+  async function runner(killAt, killMode, killAfter = null) {
     if (current && !current.exitInfo) {
-      await current.arm({ killAt, killMode });
+      await current.arm({ killAt, killMode, killAfter });
       return current;
     }
     current = takeWarm();
-    await current.start({ killAt, killMode });
+    await current.start({ killAt, killMode, killAfter });
     // A process is up again: a worker's push goes through.
     await pool.query('UPDATE crash_world_platform SET up = TRUE');
     return current;
@@ -546,7 +560,7 @@ function makeLane(name, index, childEnv, deadline = Infinity) {
     return mine;
   }
 
-  async function runOne(scenario, { killAt = null, killMode = 'kill', restartAfterTurns = false } = {}) {
+  async function runOne(scenario, { killAt = null, killMode = 'kill', killAfter = null, restartAfterTurns = false } = {}) {
     const timing = [];
     // A wait the lane's deadline (the suite's time budget) cut short is
     // remembered: if that wait then times out, the run is past what the
@@ -576,7 +590,7 @@ function makeLane(name, index, childEnv, deadline = Infinity) {
     // first, the one that takes the build over at the second, and so on.
     const chain = Array.isArray(killAt) ? killAt : killAt ? [killAt] : [];
     const children = [];
-    let child = await runner(chain[0] || null, killMode);
+    let child = await runner(chain[0] || null, killMode, killAfter);
     children.push(child);
     mark('started');
     // What the bot's dispatch, or the bench lane, appends (platform.ts requestBuild).
@@ -621,10 +635,19 @@ function makeLane(name, index, childEnv, deadline = Infinity) {
         }
         if (await effectOf('killed', child.pid)) {
           kills += 1;
-          // Its lease runs out (time passing, as after a crash).
+          // Its leases run out (time passing, as after a crash): the build's,
+          // and every other item the killed process held. One killed as its
+          // triage session's worker was being removed (the session paused as
+          // its turn ended) held that removal, and the build carried on
+          // resumes the session, which waits for a teardown under way
+          // (proposal services.ts, WORK.destroy) until its lease lapses: a
+          // minute, after a real crash, past this suite's wait.
           await pool.query(
-            `UPDATE wf_work SET lease_until = now() - interval '1 second'
-              WHERE machine = 'bot-build' AND key = $1 AND status = 'running'`, [key]);
+            `UPDATE wf_work w SET lease_until = now() - interval '1 second'
+              WHERE w.status = 'running'
+                AND ((w.machine = 'bot-build' AND w.key = $1)
+                  OR EXISTS (SELECT 1 FROM wf_work_attempts a WHERE a.id = w.claim_id AND a.service_id LIKE $2))`,
+            [key, `%:${child.pid}:%`]);
         } else if (await effectOf('stopping', child.pid)) {
           stopped = true;
           const { rows: [w] } = await pool.query(

@@ -621,43 +621,93 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 120000 }, 
   });
 
   await t.test('K7 a stopping process reports work that finished anyway, and nothing for work that ended on the stop', async () => {
-    await create('k7s');
-    let release;
-    const gate = new Promise((r) => { release = r; });
-    const started = new Set();
-    // One finishes its step whatever the signal says (a deploy); one gives up on it.
-    handlers['k7s-done'] = async () => { started.add('done'); await gate; return { finished: true }; };
-    handlers['k7s-quit'] = async (ctx) => {
-      if (ctx.attempt > 1) return { resumed: ctx.resumeFrom };
-      started.add('quit');
-      await new Promise((resolve) => ctx.signal.addEventListener('abort', resolve, { once: true }));
-      // The step it was in had done its part when the stop came: kept, under
-      // the lease this process still holds, before it gives up.
-      await ctx.checkpoint({ step: 'done before the stop' });
-      throw ctx.signal.reason;
-    };
-    await route('k7s', 'Work', { keys: ['k7s-done', 'k7s-quit'], workKey: 'k7s-done' });
-    await rt.drain();
-    const r = make({ slots: 1 });
-    await r.start({ loops: true, slots: false });
-    while (started.size < 2) await sleep(20);
-    const stopped = r.stop();
-    release();
-    await stopped;
-    const items = new Map((await pool.query(`SELECT work_key, status FROM wf_work WHERE work_key LIKE 'k7s-%'`)).rows.map((w) => [w.work_key, w.status]));
-    assert.equal(items.get('k7s-done'), 'reported', 'its result is kept, not run again after the lease');
-    assert.equal(items.get('k7s-quit'), 'running', 'nothing reported; the next claim resumes it');
-    const { rows: [kept] } = await pool.query(`SELECT checkpoint FROM wf_work WHERE work_key = 'k7s-quit'`);
-    assert.deepEqual(kept.checkpoint, { step: 'done before the stop' }, 'a stopping process still checkpoints under its lease');
-    // The stopping process gave its lease up: the next process need not wait it out.
-    const { rows: [quit] } = await pool.query(`SELECT lease_until <= now() AS given_up FROM wf_work WHERE work_key = 'k7s-quit'`);
-    assert.equal(quit.given_up, true, 'a stopped item\'s lease is given up at once');
-    await rt.drain();
-    assert.deepEqual((await inst('k7s')).data.results.map((x) => x.slice(0, 2)), [['ok', 'k7s-done']]);
-    // The next claim finishes it, so no later test meets it.
-    await rt.runServices();
-    await rt.drain();
-    assert.equal((await pool.query(`SELECT status FROM wf_work WHERE work_key = 'k7s-quit'`)).rows[0].status, 'settled');
+    // The stopping process's own pipeline slot may be part way into a pick
+    // when the stop comes (a loaded suite). That pick can apply the result
+    // the stop reported, so the item reads settled rather than reported:
+    // either way the result was kept and the step was not run again. The
+    // second round holds that pick until the result is in, so it takes that
+    // order every time.
+    for (const held of [false, true]) {
+      const key = held ? 'k7s-held' : 'k7s';
+      await create(key);
+      let release;
+      const gate = new Promise((r) => { release = r; });
+      const started = new Set();
+      // One finishes its step whatever the signal says (a deploy); one gives up on it.
+      handlers[`${key}-done`] = async () => { started.add('done'); await gate; return { finished: true }; };
+      handlers[`${key}-quit`] = async (ctx) => {
+        if (ctx.attempt > 1) return { resumed: ctx.resumeFrom };
+        started.add('quit');
+        await new Promise((resolve) => ctx.signal.addEventListener('abort', resolve, { once: true }));
+        // The step it was in had done its part when the stop came: kept, under
+        // the lease this process still holds, before it gives up.
+        await ctx.checkpoint({ step: 'done before the stop' });
+        throw ctx.signal.reason;
+      };
+      await route(key, 'Work', { keys: [`${key}-done`, `${key}-quit`], workKey: `${key}-done` });
+      await rt.drain();
+      // Held: the slot's picks wait while `picks` is set; it polls every 1 ms.
+      let picks = null;
+      let letPicksGo = () => {};
+      const own = held ? new Pool({ connectionString: String(url), max: 4 }) : null;
+      const wrapped = new WeakSet();
+      const heldPool = held && new Proxy(own, {
+        get(target, prop) {
+          if (prop === 'connect') {
+            return async () => {
+              const c = await target.connect();
+              if (!wrapped.has(c)) {
+                wrapped.add(c);
+                const query = c.query.bind(c);
+                c.query = async (...a) => {
+                  if (picks && typeof a[0] === 'string' && a[0].includes('WITH pick AS')) await picks;
+                  return query(...a);
+                };
+              }
+              return c;
+            };
+          }
+          const value = target[prop];
+          return typeof value === 'function' ? value.bind(target) : value;
+        },
+      });
+      const r = make({ slots: 1, ...(held ? { pool: heldPool, pollMs: 1 } : {}) });
+      await r.start({ loops: true, slots: false });
+      while (started.size < 2) await sleep(20);
+      if (held) {
+        picks = new Promise((resolve) => { letPicksGo = resolve; });
+        await sleep(30); // its slot is now in a pick
+      }
+      const stopped = r.stop();
+      release();
+      if (held) {
+        while ((await pool.query('SELECT status FROM wf_work WHERE work_key = $1', [`${key}-done`])).rows[0].status === 'running') await sleep(10);
+        letPicksGo();
+      }
+      await stopped;
+      if (held) {
+        runtimes.splice(runtimes.indexOf(r), 1);
+        await own.end();
+      }
+      const { rows: [done] } = await pool.query('SELECT id, status, attempt_count FROM wf_work WHERE work_key = $1', [`${key}-done`]);
+      assert.ok(['reported', 'settled'].includes(done.status), `its result is kept (${done.status})`);
+      if (held) assert.equal(done.status, 'settled', 'the stopping process\'s own slot applied it');
+      assert.equal(done.attempt_count, 1, 'and it was not run again after the lease');
+      const doneAttempts = (await pool.query('SELECT outcome FROM wf_work_attempts WHERE work_id = $1 ORDER BY number', [done.id])).rows;
+      assert.deepEqual(doneAttempts.map((a) => a.outcome), ['succeeded']);
+      const { rows: [quit] } = await pool.query(
+        'SELECT status, checkpoint, lease_until <= now() AS given_up FROM wf_work WHERE work_key = $1', [`${key}-quit`]);
+      assert.equal(quit.status, 'running', 'nothing reported; the next claim resumes it');
+      assert.deepEqual(quit.checkpoint, { step: 'done before the stop' }, 'a stopping process still checkpoints under its lease');
+      // The stopping process gave its lease up: the next process need not wait it out.
+      assert.equal(quit.given_up, true, 'a stopped item\'s lease is given up at once');
+      await rt.drain();
+      assert.deepEqual((await inst(key)).data.results.map((x) => x.slice(0, 2)), [['ok', `${key}-done`]]);
+      // The next claim finishes it, so no later test meets it.
+      await rt.runServices();
+      await rt.drain();
+      assert.equal((await pool.query('SELECT status FROM wf_work WHERE work_key = $1', [`${key}-quit`])).rows[0].status, 'settled');
+    }
   });
 
   await t.test('K7 a resumable item\'s lost attempts are not its tries; errors are, and lost ones are bounded', async () => {
@@ -1046,9 +1096,16 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 120000 }, 
     for (let i = 0; i < 6; i++) for (const key of keys) await route(key, 'Add', { n: i + 1, sleepMs: 10 });
     await a.start({ loops: true });
     await b.start({ loops: true });
+    // A drain that runs out of time says what held it (an event in backoff,
+    // or an instance a fault or a stall flagged), not just that it did.
     const deadline = Date.now() + 30000;
-    while ((await pool.query(`SELECT count(*)::int AS n FROM wf_events WHERE key LIKE 'k15-%' AND status <> 'processed'`)).rows[0].n) {
-      assert.ok(Date.now() < deadline, 'events drained');
+    for (;;) {
+      const { rows: left } = await pool.query(
+        `SELECT e.key, e.type, e.attempts, e.retry_at, e.error, i.flag, i.flag_detail FROM wf_events e
+           LEFT JOIN wf_instances i ON i.machine = e.machine AND i.key = e.key
+          WHERE e.key LIKE 'k15-%' AND e.status <> 'processed' ORDER BY e.id`);
+      if (!left.length) break;
+      assert.ok(Date.now() < deadline, `events drained; ${left.length} left, first: ${JSON.stringify(left.slice(0, 3))}`);
       await sleep(50);
     }
     await a.stop();

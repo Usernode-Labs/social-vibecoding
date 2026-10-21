@@ -145,8 +145,12 @@ module.exports = function install(fakes) {
         await fakes.pause('github.createPR.done');
         return { number, html_url: `https://github.com/${owner}/${repo}/pull/${number}`, title };
       },
-      // A production deploy starts by cloning; `github.clone` stops there.
+      // A production deploy starts by cloning; `github.clone` stops there,
+      // and `github.clone:<owner>/<repo>` only that repository's. Every
+      // deploy and build that failed here earlier retries through this
+      // point, so a test that waits on one app's arms its own.
       async getCloneUrl(owner, repo) {
+        await fakes.pause(`github.clone:${owner}/${repo}`);
         await fakes.pause('github.clone');
         throw Object.assign(new Error(`clone of ${owner}/${repo} is not faked`), { code: 'ECONNREFUSED' });
       },

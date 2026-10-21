@@ -427,16 +427,30 @@ async function runRecover(ctx, { config, pool }, input) {
 // Delete with turn-leftovers.js's rollout parts.
 const CLAIM_RENEW = { ms: 30 * 1000 };
 
+// One renewal at a time (a tick while one is on its way is skipped). The
+// first has landed before the run starts, and `stop` waits for the one on
+// its way, so none lands after the item ends: on a busy database neither
+// held when the renewals were fired and forgotten.
 function renewClaim(pool, input) {
-  if (input.kind !== 'agent') return () => {};
-  const renew = () => pool.query(
-    `UPDATE agent_sessions SET active_turn = active_turn || jsonb_build_object('renewedAt', NOW())
-      WHERE id = $1 AND active_turn->>'id' = $2`, [Number(input.agentSessionId), String(input.turnId)])
-    .catch((err) => log.warn('turns', 'Could not renew the conversation\'s claim', { agentSessionId: input.agentSessionId, err: err.message }));
-  renew();
+  if (input.kind !== 'agent') return { ready: Promise.resolve(), stop: async () => {} };
+  let inFlight = null;
+  let stopped = false;
+  const renew = () => {
+    if (stopped || inFlight) return inFlight;
+    inFlight = pool.query(
+      `UPDATE agent_sessions SET active_turn = active_turn || jsonb_build_object('renewedAt', NOW())
+        WHERE id = $1 AND active_turn->>'id' = $2`, [Number(input.agentSessionId), String(input.turnId)])
+      .catch((err) => log.warn('turns', 'Could not renew the conversation\'s claim', { agentSessionId: input.agentSessionId, err: err.message }))
+      .finally(() => { inFlight = null; });
+    return inFlight;
+  };
+  const ready = renew();
   const timer = setInterval(renew, CLAIM_RENEW.ms);
   timer.unref?.();
-  return () => clearInterval(timer);
+  return {
+    ready,
+    stop: async () => { stopped = true; clearInterval(timer); await inFlight; },
+  };
 }
 
 // ROLLOUT-ONLY: a headless run holds its session for the whole of its item,
@@ -500,7 +514,8 @@ async function run(ctx, deps) {
   // A turn asked to resume (an older release's headless run:
   // turn-leftovers.js) starts where its row says it is, as a resumed one.
   const resumed = !!ctx.resumeFrom || (Number(ctx.lostAttempts) || 0) > 0 || input.resume === true;
-  const stopRenewing = renewClaim(deps.pool, input);
+  const renewal = renewClaim(deps.pool, input);
+  await renewal.ready;
   const releaseRun = holdHeadlessRun(input);
   const settledHere = endOnLostLease(ctx, deps.pool);
   try {
@@ -512,7 +527,7 @@ async function run(ctx, deps) {
   } finally {
     settledHere();
     releaseRun();
-    stopRenewing();
+    await renewal.stop();
     // Unless this process lost the item (the next claim carries it on), a
     // coding record it still holds is released as it ends.
     if (!(ctx.signal && ctx.signal.aborted)) {

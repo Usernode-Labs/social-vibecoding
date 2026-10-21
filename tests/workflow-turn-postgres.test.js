@@ -499,28 +499,45 @@ test('turn machine against the full PostgreSQL schema', { timeout: 180000 }, asy
          FROM agent_sessions WHERE id = $1`, [c.id])).rows[0];
     const claim = (c, id) => pool.query(
       `UPDATE agent_sessions SET active_turn = jsonb_build_object('id', $2::text, 'startedAt', NOW() - interval '5 minutes') WHERE id = $1`, [c.id, id]);
+    // A database slow to take the renewals (a loaded suite, where this
+    // failed both ways before they were awaited): each lands 40 ms late.
+    const slow = new Proxy(pool, {
+      get(target, key) {
+        if (key === 'query') {
+          return (sql, ...rest) => (typeof sql === 'string' && sql.includes("'renewedAt', NOW()")
+            ? new Promise((r) => setTimeout(r, 40)).then(() => target.query(sql, ...rest))
+            : target.query(sql, ...rest));
+        }
+        const value = target[key];
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    });
+    const cs = [];
     try {
-      const c = await conversation();
-      await claim(c, 'h8');
-      const during = [];
-      mayorRun = async () => {
-        during.push(await claimOf(c));
-        await new Promise((r) => setTimeout(r, 80));
-        during.push(await claimOf(c));
-      };
-      await turns.run(await ctxFor(c, 'h8', { claim: false }), { config: {}, pool });
-      assert.equal(during[0].live, true, 'renewed as it starts, though asked five minutes ago');
-      assert.ok(during[1].renewed > during[0].renewed, 'and again while it runs');
-      const after = (await claimOf(c)).renewed;
-      await new Promise((r) => setTimeout(r, 60));
-      assert.equal((await claimOf(c)).renewed, after, 'not once its item ended');
+      for (const [db, how] of [[pool, ''], [slow, ', with renewals slow to land']]) {
+        const c = await conversation();
+        cs.push(c);
+        await claim(c, 'h8');
+        const during = [];
+        mayorRun = async () => {
+          during.push(await claimOf(c));
+          await new Promise((r) => setTimeout(r, 150));
+          during.push(await claimOf(c));
+        };
+        await turns.run(await ctxFor(c, 'h8', { claim: false }), { config: {}, pool: db });
+        assert.equal(during[0].live, true, `renewed as it starts, though asked five minutes ago${how}`);
+        assert.ok(during[1].renewed > during[0].renewed, `and again while it runs${how}`);
+        const after = (await claimOf(c)).renewed;
+        await new Promise((r) => setTimeout(r, 100));
+        assert.equal((await claimOf(c)).renewed, after, `not once its item ended${how}`);
+      }
 
       const other = await conversation();
       await claim(other, 'someone-else');
       await turns.run(await ctxFor(other, 'h8b', { claim: false }), { config: {}, pool });
       assert.equal((await claimOf(other)).renewed, null, 'a claim another turn holds is not its to renew');
       // Nothing left for the leftover pass below to count.
-      await pool.query('UPDATE agent_sessions SET active_turn = NULL WHERE id = ANY($1::int[])', [[c.id, other.id]]);
+      await pool.query('UPDATE agent_sessions SET active_turn = NULL WHERE id = ANY($1::int[])', [[...cs.map((c) => c.id), other.id]]);
     } finally {
       turns.CLAIM_RENEW.ms = was;
     }

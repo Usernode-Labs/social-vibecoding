@@ -842,6 +842,44 @@ test('preview machine against the full PostgreSQL schema', { timeout: 120000 }, 
     }
   });
 
+  await t.test('P28 the end of the last operation that kept a proposal in review moving asks the merge queue', async () => {
+    // 21 Oct 2026: an ask that came while a hand-off's check run held its
+    // operation was declined as busy, and nothing asked again for four
+    // minutes (the queue's sweep).
+    const s = await proposal(await app(), { status: 'promoted', pin: SHA('a'), extra: {
+      checks_commit_sha: SHA('a'), check_state: 'passing' } });
+    const live = await pool.connect();
+    await live.query('SELECT pg_advisory_lock($1, hashtext($2) & 2147483647)', [PROCESS_PRESENCE_LOCK, 'p28-host']);
+    const op = (id, kind, on = s) => send(on, 'OperationStarted', { sessionId: on.id, id, kind, holder: 'p28-host' });
+    // What the end sent the merge queue: each message is an event of its own.
+    const end = async (id, on = s) => {
+      const e = await send(on, 'OperationEnded', { id });
+      await rt.drain();
+      const sent = ((await outcome(e)).emitted?.messages || []).filter((m) => m.machine === 'merge-queue');
+      return Promise.all(sent.map(async (m) => {
+        const { rows: [q] } = await pool.query('SELECT key, type, payload FROM wf_events WHERE id = $1', [m.eventId]);
+        return [q.key, q.type, q.payload];
+      }));
+    };
+    try {
+      for (const [id, kind] of [['op:a', 'operation'], ['op:b', 'operation'], ['op:h', 'handoff-pipeline'], ['op:t', 'turn']]) await op(id, kind);
+      await rt.drain();
+      assert.deepEqual(await end('op:h'), [], 'a hand-off\'s pipeline does not keep it moving (session-work.ts NOT_MOVING_KINDS)');
+      assert.deepEqual(await end('op:a'), [], 'another operation still keeps it moving');
+      const asked = await end('op:b');
+      assert.deepEqual(asked, [[`app:${s.app.id}`, 'MergeWanted', { appId: s.app.id, sessionId: s.id, reason: 'operation-ended' }]],
+        'the last one asks');
+      assert.deepEqual(await end('op:t'), [], 'a worker\'s turn record asks nothing: its journal is the turn');
+      // Not in review: nothing to ask for.
+      const draft = await proposal(await app(), { status: 'active' });
+      await op('op:d', 'operation', draft);
+      await rt.drain();
+      assert.deepEqual(await end('op:d', draft), []);
+    } finally {
+      live.release(true);
+    }
+  });
+
   await t.test('P18c a folded recheck on a session with no instance yet, its head reading pending, owes a look', async () => {
     const s = await proposal(await app(), { pin: SHA('e') });
     assert.equal(await instance(s), undefined, 'no instance yet');
