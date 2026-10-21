@@ -5531,7 +5531,11 @@ async function evictWorker(sessionId) {
   const containerName = meta?.containerName || workerContainerName(sessionId);
   await rescueUnpushedCommit(sessionId);
   if (usesKubernetesWorkers()) {
-    await kubernetes.deleteWorker(kubernetesWorkerConfig(), sessionId, { deleteVolume: false }).catch(() => {});
+    // Gone before it returns: the eviction holds its session's lock until
+    // then, and a turn starting on the session waits for it
+    // (services/worker-eviction.js).
+    await kubernetes.deleteWorker(kubernetesWorkerConfig(), sessionId, { deleteVolume: false, waitGone: true })
+      .catch((err) => log.warn('worker', 'Evicted worker not confirmed gone', { containerName, err: err.message }));
   } else {
     await docker.stopAndRemove(containerName).catch(() => {});
   }
