@@ -367,8 +367,9 @@ test('the rail renders Recents between Workshop and Me, empty until mounted', ()
   assert.match(list, /useHiddenClass\(ref, items\.length === 0 && active\.length === 0\);/);
   // A distinct glyph per kind.
   assert.match(list, /app: AppWindowIcon,\s*direct: UserIcon,\s*group: UserGroupIcon,\s*channel: HashIcon,\s*agent: SparklesIcon,/);
-  // Resuming an app goes through the router, as the Resume strip did.
-  assert.match(list, /window\.App\?\.openAppTab\?\.\(slug, 'app'\);/);
+  // Resuming an app goes through the router, as the Resume strip did; a
+  // Resume row also hands over the row it was pressed on (#3618).
+  assert.match(list, /window\.App\?\.openAppTab\?\.\(slug, 'app', resume && row \? \{ fromEl: row \} : undefined\);/);
 
   const html = read('public/index.html');
   const at = html.indexOf('id="platform-recents"');
@@ -578,6 +579,82 @@ test('#3074: the Active rows are Recents\' rows, the current one lit, and nothin
   assert.doesNotMatch(list, /data-close|aria-label="Close/, 'no close button');
   const live = read('frontend/src/features/app-frame/live-apps.tsx');
   assert.match(live, /export function useCurrentAppSlug\(\): string \| null \{\s*return useStoreState\(appFrameStore\)\.slug \|\| null;/);
+});
+
+// ── #3618: Resume on every Active row but the one you are in ──────────
+//
+// The way back into a running app was something to guess at. Each Active row
+// now ends with a small Resume pill — inside the row's one link, so the row
+// stays a single target — and not on the row of the app you are in, where
+// resuming would change nothing. Recents rows are untouched: a row there is
+// an app that was replaced, and it reloads when opened.
+
+test('#3618: a running app\'s Active row ends with Resume, the current one does not', () => {
+  const { ActiveApps, RecentsByDay } = loadTsx('frontend/src/features/nav/recents-list.tsx');
+  const apps = [
+    recentApp('notes', '2026-09-20T10:00:00Z', { iconEmoji: '📝' }),
+    recentApp('chess', '2026-09-20T09:00:00Z'),
+  ];
+  const items = buildActive({ live: ['notes', 'chess'], current: 'notes', apps });
+  const html = renderToHtml(createElement(ActiveApps, { items }));
+  const rows = html.match(/<a class="platform-recent"[\s\S]*?<\/a>/g);
+  assert.equal(rows.length, 2);
+
+  // The app you are in: lit, and no pill, because resuming it changes nothing.
+  assert.doesNotMatch(rows[0], /platform-recent-resume/);
+  assert.match(rows[0], /aria-label="App: Notes, still open"/);
+
+  // The other running app: the pill, after the green dot, in the row's link.
+  assert.match(rows[1],
+    /<span class="app-live-dot platform-recent-live"[^>]*><\/span><span class="platform-recent-resume" aria-hidden="true">Resume<\/span><\/a>$/,
+    'the last thing in the row, inside the one anchor');
+  assert.match(rows[1], /<\/span><\/a>$/);
+  assert.doesNotMatch(rows[1], /<button/, 'a span, not a second target beside the row');
+  assert.match(rows[1], /aria-label="App: Chess, still open, Resume"/, 'the accessible name says it too');
+
+  // Recents' own rows are not offered one, even for an app.
+  const recents = renderToHtml(createElement(RecentsByDay, {
+    items: buildRecents({ apps, conversations: [], discussions: [], agents: [], active: ['chess'] }),
+    live: [], showOlder: false, onToggleOlder: () => {},
+  }));
+  assert.match(recents, /data-recent-key="app:notes"/);
+  assert.doesNotMatch(recents, /platform-recent-resume/);
+});
+
+test('#3618: Resume hands its row to the router, and the router grows out of it', () => {
+  const list = read('frontend/src/features/nav/recents-list.tsx');
+  // Active passes it for every row that is not the one on screen.
+  assert.match(list, /<RecentRow key=\{item\.key\} item=\{item\} live resume=\{!item\.current\} \/>/);
+  // The click forwards the pressed anchor, and only a resume row does.
+  assert.match(list, /const row = event\.currentTarget;/);
+  assert.match(list, /window\.App\?\.openAppTab\?\.\(slug, 'app', resume && row \? \{ fromEl: row \} : undefined\);/);
+  assert.match(list, /\? \(event\) => onAppClick\(event, item\.app!\.slug, resuming\)/);
+
+  const app = read('public/js/app.js');
+  // openAppTab forwards its opts; navigateToApp takes the source from them.
+  assert.match(app, /return App\.navigateToApp\(slug, tab, ref, subTab, opts\);/);
+  assert.match(app, /async navigateToApp\(slug, tab, ref, subTab, opts\) \{/);
+  assert.match(app, /fromEl: \(\) => \(opts && opts\.fromEl\) \|\| App\._tileFor\(slug\),/);
+  // Closing to Home shrinks into the Active row, and falls back to the tile.
+  assert.match(app, /_appHandleFor\(leavingSlug\) \|\| App\._tileFor\(leavingSlug\)/);
+  assert.match(app, /_appHandleFor\(slug\) \{[\s\S]*?if \(App\._isPhoneLayout\(\)\) return null;/);
+  assert.match(app, /#platform-active \.platform-recent\[data-recent-key="\$\{sel\}"\]/);
+});
+
+test('#3618: the Resume pill is the shell\'s action blue on its pale tint', () => {
+  const css = read('public/css/app.css');
+  const desktop = css.indexOf('THE SAME FIVE TABS, STANDING UP');
+  const at = css.indexOf('.platform-recent-resume {');
+  assert.ok(desktop > 0 && at > desktop, 'inside the desktop rail block');
+  const rule = css.slice(at, css.indexOf('}', at));
+  assert.match(rule, /flex: none;/);
+  assert.match(rule, /height: 22px;/);
+  assert.match(rule, /padding: 0 8px;/);
+  assert.match(rule, /border-radius: 999px;/);
+  assert.match(rule, /background: var\(--accent-tint\);/);
+  assert.match(rule, /color: var\(--accent-tint-ink\);/);
+  assert.match(rule, /font-size: 12px;/);
+  assert.match(rule, /font-weight: 600;/);
 });
 
 // ── #3096: only the app ON SCREEN is lit ──────────────────────────────

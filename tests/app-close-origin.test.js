@@ -139,6 +139,9 @@ const APPS = [
 function router(start, opts = {}) {
   const elements = new Map();
   const transitions = [];
+  // What each zoom was asked to grow out of / shrink into (#3618), resolved
+  // the way the kit resolves it: after `fn`, before `after`.
+  const sources = [];
   const parks = [];
   const slots = [];
   const presence = [];
@@ -153,15 +156,19 @@ function router(start, opts = {}) {
         if (!elements.has(id)) elements.set(id, fakeElement());
         return elements.get(id);
       },
-      querySelector: () => null, querySelectorAll: () => [],
+      querySelector: opts.querySelector || (() => null), querySelectorAll: () => [],
       addEventListener() {}, dispatchEvent() {},
     },
+    // app.js's _tileFor and _appHandleFor escape through it; without it the
+    // synchronous prefix of a navigation throws.
+    CSS: { escape: (s) => String(s).replace(/(^[0-9])|([^a-zA-Z0-9_-])/g, '\\$&') },
     addEventListener() {},
     localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
     PlatformUI: new Proxy({
       transition(fn, o) {
         transitions.push(o?.type || 'none');
         fn();
+        sources.push(typeof o?.fromEl === 'function' ? o.fromEl() : (o?.fromEl || null));
         o?.after?.();
       },
     }, { get: (t, k) => (k in t ? t[k] : noop) }),
@@ -192,7 +199,7 @@ function router(start, opts = {}) {
   App.bindEvents();
   const back = context.document.getElementById('back-btn');
   return {
-    App, h, transitions, parks, slots, presence,
+    App, h, transitions, sources, parks, slots, presence,
     // A plain click on the header's back slot, as the anchor's own handler sees it.
     clickClose() {
       back.setAttribute('href', slots.length ? slots[slots.length - 1][1] : '/');
@@ -345,6 +352,68 @@ test('without the Navigation API, a cold deep link still goes Home in place', as
   r.clickClose();
   assert.equal(r.h.route(), '/');
   assert.equal(r.h.history.length, 1);
+});
+
+// ── Where the zoom finds its handle (#3618) ───────────────────────────────
+//
+// Home is the one exit that shrinks, and a running app now has a row in the
+// rail's Active list saying Resume — so that row, not the app's tile on the
+// Home grid, is where the close lands. Resuming from the row grows back out
+// of the same one.
+
+function activeRow(width = 200) {
+  return {
+    ...fakeElement(),
+    getBoundingClientRect: () => ({ width, height: width ? 34 : 0, top: 0, left: 0 }),
+  };
+}
+
+test('#3618: closing to Home shrinks the app into its Active row, not its tile', async () => {
+  const row = activeRow();
+  const tile = activeRow();
+  const r = router('/', {
+    querySelector: (sel) => (sel.includes('platform-active') ? row : (sel.includes('app-list') ? tile : null)),
+  });
+  await boot(r);
+  await r.App.navigateToApp('garden-ab12');
+  r.transitions.length = 0;
+  r.sources.length = 0;
+  r.clickClose();
+  assert.deepEqual(r.transitions, ['zoom-out'], 'still the zoom back Home');
+  assert.equal(r.sources.at(-1), row, 'out of the Active row, where Resume lives');
+  assert.notEqual(r.sources.at(-1), tile);
+});
+
+test('#3618: an app with no Active row (a folded rail) still lands on its Home tile', async () => {
+  const tile = activeRow();
+  const r = router('/', {
+    // The row is in the DOM but the folded rail gives it no rect.
+    querySelector: (sel) => (sel.includes('platform-active') ? activeRow(0) : (sel.includes('app-list') ? tile : null)),
+  });
+  await boot(r);
+  await r.App.navigateToApp('garden-ab12');
+  r.sources.length = 0;
+  r.clickClose();
+  assert.equal(r.sources.at(-1), tile);
+  assert.equal(r.App._appHandleFor('garden-ab12'), null, 'no handle from a row with no area');
+});
+
+test('#3618: a Resume row grows the app back out of itself', async () => {
+  const row = activeRow();
+  const tile = activeRow();
+  const r = router('/', {
+    querySelector: (sel) => (sel.includes('platform-active') ? row : (sel.includes('app-list') ? tile : null)),
+  });
+  await boot(r);
+  r.sources.length = 0;
+  await r.App.openAppTab('garden-ab12', 'app', { fromEl: row });
+  assert.equal(r.App.currentApp, 'garden-ab12');
+  assert.equal(r.sources.at(-1), row, 'the pressed row, not the tile');
+  // The plain callers (a notification, the parked strip) keep the tile.
+  await r.App.navigateHome();
+  r.sources.length = 0;
+  await r.App.openAppTab('recipes-cd34', 'app');
+  assert.equal(r.sources.at(-1), tile, 'no fromEl: the Home tile, as before');
 });
 
 test('the origin is noted before the app\'s entry is written, and never from a restore', async () => {

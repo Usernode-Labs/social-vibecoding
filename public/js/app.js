@@ -6623,6 +6623,26 @@ const App = {
     } catch { return null; }
   },
 
+  // The rail's Active row for `slug` (#3618) — the handle a running app
+  // shrinks into when it is closed back to Home, and the one it grows out of
+  // when its Resume pill is pressed. Found by the key Recents gives the row
+  // (frontend/src/features/nav/recents-list.tsx, `app:<slug>`).
+  //
+  // Null below 768px: the phone has no rail and keeps its own Resume bar. Null
+  // for a row with no positive rect too, which covers a folded or otherwise
+  // hidden rail — the kit rejects a 0×0 source and falls back on its own, and
+  // the caller falls back to the Home tile before asking the kit anything.
+  _appHandleFor(slug) {
+    if (App._isPhoneLayout()) return null;
+    try {
+      const sel = CSS.escape(`app:${slug}`);
+      const row = document.querySelector(`#platform-active .platform-recent[data-recent-key="${sel}"]`);
+      if (!row || !row.getBoundingClientRect) return null;
+      const rect = row.getBoundingClientRect();
+      return rect && rect.width > 0 && rect.height > 0 ? row : null;
+    } catch { return null; }
+  },
+
   // The screen the app view is expanding OUT of — home normally, the
   // browse screen when the tap came from there. The kit needs it twice:
   // as `outEl` (hidden for the synchronous pre-paint measurement so the
@@ -6695,7 +6715,10 @@ const App = {
   _appNavigationGeneration: 0,
   _appLoad: null,
 
-  async navigateToApp(slug, tab, ref, subTab) {
+  // `opts.fromEl` (#3618): the element the app grows OUT of, when the caller
+  // knows better than the tile lookup — an Active row's Resume pill. Anything
+  // else passes nothing and keeps the zoom out of the Home tile.
+  async navigateToApp(slug, tab, ref, subTab, opts) {
     // The side panel never runs an app — not even to warm its frame. An App
     // tab asked for in there is the running app's job, beside it.
     if (App.embeddedPanel && App._forwardAppTab(slug, tab, ref, subTab)) return false;
@@ -6817,7 +6840,7 @@ const App = {
     }, {
       type: App._entryTransition('zoom-in', appViewEl, viaTab),
       el: document.getElementById('app-view'),
-      fromEl: () => App._tileFor(slug),
+      fromEl: () => (opts && opts.fromEl) || App._tileFor(slug),
       // The outgoing screen: the kit hides it while measuring the
       // destination so the flex-sibling split doesn't skew the target
       // rect (see the comment block above).
@@ -6997,7 +7020,13 @@ const App = {
     }, {
       type: App._entryTransition('zoom-out', av, viaTab),
       el: av,
-      fromEl: () => (leavingSlug ? App._tileFor(leavingSlug) : null),
+      // Home is the one exit with a shrink, and a running app now has a row in
+      // the rail's Active list (#3618) that says "Resume" — so that row is
+      // where it lands, and the tile is the fallback for an app with none
+      // (a folded rail, a phone, an app no row lists).
+      fromEl: () => (leavingSlug
+        ? (App._appHandleFor(leavingSlug) || App._tileFor(leavingSlug))
+        : null),
       fallback: fallbackType,
       after: () => {
         av.classList.add('hidden');
@@ -7533,7 +7562,9 @@ const App = {
       : (opts && opts.ref != null ? opts.ref : null);
     const subTab = (opts && opts.subTab) || null;
     if (App.currentApp !== slug) {
-      return App.navigateToApp(slug, tab, ref, subTab);
+      // `opts` rides along for the zoom's source (#3618): a Recents row's
+      // Resume passes the row it was pressed on as `fromEl`.
+      return App.navigateToApp(slug, tab, ref, subTab, opts);
     } else {
       // Same app: switchTab normalizes legacy names, re-renders, and
       // syncs the clean route — idempotent when nothing changed, a forced

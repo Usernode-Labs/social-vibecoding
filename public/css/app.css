@@ -20002,6 +20002,25 @@ html.un-kb #platform-parked {
     white-space: nowrap;
     line-height: 1.35;
   }
+  /* THE WAY BACK IN, SAID OUT LOUD (#3618). A running app's row ends with
+     this pill, in the shell's action blue on its pale tint so it reads as
+     something to press — the same offer the phone's Resume bar makes, in the
+     row that replaced it on the desktop (#2802). It is a span inside the
+     row's one link, so the whole row stays a single target. Never on the row
+     of the app you are in: resuming that would change nothing. */
+  .platform-recent-resume {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    height: 22px;
+    padding: 0 8px;
+    border-radius: 999px;
+    background: var(--accent-tint);
+    color: var(--accent-tint-ink);
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1;
+  }
   /* UNREAD IS A DOT, not a count: the count lives on the Messages tab and
      on the row in Messages, and a 224px rail has room for one mark. */
   .platform-recent-dot {
