@@ -239,46 +239,61 @@ export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSave
     return () => { off(); release?.(); };
   }, [id]);
   // #5725: the Votes card repeated after the last reply, so a long page does
-  // not send people back up to find where the vote stands. It is drawn once,
-  // in the thread's foot host, and HIDDEN while the card at the top is on
-  // screen, so a page short enough to show both still shows one. Present
-  // from the first paint (hidden), so a reader who scrolled before this
-  // mounted still gets it.
+  // not send people back up to find where the vote stands. It is drawn in the
+  // thread's foot host and HIDDEN while the card at the top is on screen, so
+  // a page short enough to show both still shows one. It is in the DOM from
+  // the first paint (hidden), so a reader who scrolled before this mounted
+  // still gets it.
   //
-  // What counts as "on screen" is measured against the reader's own box: the
-  // card's nearest scrolling ancestor (`#gc-thread-scroll` when the page is a
-  // thread) and the window, whichever is tighter. It is NOT an
-  // IntersectionObserver rooted at a document-wide `#gc-thread-scroll`
-  // lookup: another pane's hidden scroller can win that lookup (#4640), and
-  // an element that is not the box clamping the card never reports it as
-  // gone, which left the repeat unshown on a long page.
-  const foot = host('gc-thread-foot');
+  // BOTH ends are found from the card itself, never by a document-wide id:
+  // the foot host through the scroller that holds the card, and "on screen"
+  // through an observer with no root. A second thread — the Workshop's panel,
+  // another pane — can hold a host of the same id, and a document-wide
+  // `#gc-thread-scroll` can be that thread's box (#4640), which clamps nothing
+  // this card is in and so never reports it gone.
+  //
+  // The observer's root is the viewport (#5725, second run): it applies every
+  // clipping ancestor itself, so the card counts as in view only where a
+  // reader can see it, whichever box moved it — the thread's own scroller,
+  // the page, a restored scroll position on reload, or a reflow of the words
+  // above it. A `scroll` listener only hears the scroller it was attached to,
+  // and the card stayed hidden when that was not the box that moved.
+  const [foot, setFoot] = useState<Element | null>(null);
   const [topInView, setTopInView] = useState(true);
   useEffect(() => {
     const card = pair.current?.querySelector<HTMLElement>('[data-change-gate="votes"]');
+    const scroller = card ? card.closest<HTMLElement>('#gc-thread-scroll') : null;
+    setFoot(scroller ? scroller.querySelector('#gc-thread-foot') : null);
     if (!card) { setTopInView(true); return; }
-    const scroller = card.closest<HTMLElement>('#gc-thread-scroll');
+    if (typeof IntersectionObserver === 'function') {
+      const io = new IntersectionObserver((entries) => {
+        const entry = entries[entries.length - 1];
+        if (entry) setTopInView(entry.isIntersecting);
+      });
+      io.observe(card);
+      return () => io.disconnect();
+    }
+    // No IntersectionObserver: the card's box against its nearest scroller
+    // and the window, re-measured on any scroll of the document (capture, so
+    // it hears every scroller) and on resize.
     const view = () => {
       const box = card.getBoundingClientRect();
-      const clip = scroller ? scroller.getBoundingClientRect() : { top: 0, bottom: 0 };
+      const clip = scroller ? scroller.getBoundingClientRect() : { top: 0, bottom: window.innerHeight || 0 };
       const top = Math.max(clip.top, 0);
-      const bottom = Math.min(scroller ? clip.bottom : Infinity, window.innerHeight || 0);
+      const bottom = Math.min(clip.bottom, window.innerHeight || 0);
       return box.height > 0 && box.bottom > top && box.top < bottom;
     };
     let frame = 0;
     const measure = () => { frame = 0; if (card.isConnected) setTopInView(view()); };
     const schedule = () => { if (!frame) frame = window.requestAnimationFrame(measure); };
     measure();
-    const target: HTMLElement | Window = scroller || window;
-    target.addEventListener('scroll', schedule, { passive: true });
-    if (scroller) window.addEventListener('scroll', schedule, { passive: true });
+    document.addEventListener('scroll', schedule, { capture: true, passive: true });
     window.addEventListener('resize', schedule);
     const ro = typeof ResizeObserver === 'function' ? new ResizeObserver(schedule) : null;
-    if (ro) { ro.observe(card); if (scroller) ro.observe(scroller); }
+    ro?.observe(card);
     return () => {
       if (frame) window.cancelAnimationFrame(frame);
-      target.removeEventListener('scroll', schedule);
-      if (scroller) window.removeEventListener('scroll', schedule);
+      document.removeEventListener('scroll', schedule, { capture: true });
       window.removeEventListener('resize', schedule);
       ro?.disconnect();
     };

@@ -164,22 +164,25 @@ test('the shell draws a change page as the request page’s sheet, with Messages
 test('the Votes card repeats at the foot of a change’s page, while the top one is out of view', () => {
   const src = read('frontend/src/features/dev-board/topic/change-head.tsx');
   // The repeat portals into the shell's foot host, in its own class, and is
-  // drawn from the first paint: a reader who scrolled before it mounted
-  // still finds it. While the top card is on screen it is hidden, so a short
-  // page shows one card, not two.
-  assert.match(src, /const foot = host\('gc-thread-foot'\);/);
+  // drawn whether or not the top card is on screen: a reader who scrolled
+  // before it mounted still finds it. While the top card is on screen it is
+  // hidden, so a short page shows one card, not two.
   assert.match(src, /\{foot \? createPortal\(\s*<div className="dev-change-gate-repeat" hidden=\{topInView\}>/);
   assert.match(src, /<GateCard which="votes" g=\{v\.votes\} action=\{voteAction\} id=\{id\} repeat \/>/);
   assert.match(read('public/css/app.css'), /\.dev-change-gate-repeat\[hidden\] \{ display: none; \}/);
-  // Visibility is the reader's own box: the card's nearest scroller through
-  // `closest`, and the window, whichever clips it first. Never an
-  // IntersectionObserver rooted at a document-wide id lookup, and never a
-  // `#gc-thread-scroll` that is some other pane's.
-  assert.match(src, /const scroller = card\.closest<HTMLElement>\('#gc-thread-scroll'\);/);
-  assert.doesNotMatch(src, /document\.getElementById\('gc-thread-scroll'\)/);
-  assert.match(src, /const top = Math\.max\(clip\.top, 0\);/);
-  assert.match(src, /const bottom = Math\.min\(scroller \? clip\.bottom : Infinity, window\.innerHeight \|\| 0\);/);
-  assert.match(src, /if \(card\.isConnected\) setTopInView\(view\(\)\);/);
+  // BOTH ends come from the card: the foot host through the scroller that
+  // holds it, and visibility through an observer with no root, which applies
+  // every clipping ancestor itself. Never a document-wide id: another pane's
+  // `#gc-thread-scroll` or `#gc-thread-foot` can win that lookup (#4640).
+  assert.match(src, /const scroller = card \? card\.closest<HTMLElement>\('#gc-thread-scroll'\) : null;/);
+  assert.match(src, /setFoot\(scroller \? scroller\.querySelector\('#gc-thread-foot'\) : null\);/);
+  assert.doesNotMatch(src, /document\.getElementById\('gc-thread-(scroll|foot)'\)/);
+  assert.doesNotMatch(src, /host\('gc-thread-foot'\)/);
+  assert.match(src, /const io = new IntersectionObserver\(\(entries\) => \{[\s\S]*?setTopInView\(entry\.isIntersecting\);[\s\S]*?\}\);/);
+  assert.doesNotMatch(src, /root: document\.getElementById/);
+  // A scroll listener only hears the scroller it was attached to; the
+  // fallback for a browser without the observer hears every one.
+  assert.match(src, /document\.addEventListener\('scroll', schedule, \{ capture: true, passive: true \}\);/);
   assert.match(src, /const \[topInView, setTopInView\] = useState\(true\);/);
   // A repeat is the same card in every state, including with no action.
   assert.match(src, /repeat\?: boolean/);
