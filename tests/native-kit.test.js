@@ -34,6 +34,9 @@ const {
   PTR_LIMIT,
   PTR_LAYER_H,
   decideSheetRelease,
+  decideSheetDrag,
+  SHEET_PULL_SLOP,
+  holdsSheetPull,
   remeasuredSheetY,
   keyboardInset,
   isTextEntryField,
@@ -219,6 +222,55 @@ test('sheet release: flick dismisses, deep drag dismisses, shallow drag cancels'
   assert.equal(decideSheetRelease({ y: 80, v: 0, sheetHeight: 400 }), false);
   // Past the line but drifting back UP at release: cancels.
   assert.equal(decideSheetRelease({ y: 230, v: -1, sheetHeight: 400 }), false);
+});
+
+// A sheet that holds a list (the platform's notifications and messages
+// sheets, `touch-action: pan-y`). On 21 Oct 2026 a pull on the bell's list
+// moved the whole sheet ~35pt, then the browser took the pan for the list,
+// cancelled the pointer, and the sheet sprang back while the list bounced.
+test('sheet drag on a list: the list\'s, unless it is at its top and the drag pulls down', () => {
+  // Outside any list (the grabber, the title), every vertical drag is the sheet's.
+  assert.equal(decideSheetDrag({ dy: 20, scrollTop: null }), true);
+  assert.equal(decideSheetDrag({ dy: -20, scrollTop: null }), true);
+  // A list at its top: a pull down drags the sheet, as on an iOS sheet...
+  assert.equal(decideSheetDrag({ dy: 12, scrollTop: 0 }), true);
+  // ...a push up scrolls the list.
+  assert.equal(decideSheetDrag({ dy: -12, scrollTop: 0 }), false);
+  // A list scrolled away from its top keeps every drag, down included.
+  assert.equal(decideSheetDrag({ dy: 12, scrollTop: 140 }), false);
+  assert.equal(decideSheetDrag({ dy: -12, scrollTop: 140 }), false);
+});
+
+test('a pull from the list\'s top is held back from the browser past a tap\'s jitter, downward only', () => {
+  assert.equal(SHEET_PULL_SLOP, 3);
+  // A tap's jitter stays the browser's, so the tap still clicks.
+  assert.equal(holdsSheetPull({ atTop: true, dx: 0, dy: 2 }), false);
+  assert.equal(holdsSheetPull({ atTop: true, dx: 1, dy: 3 }), false);
+  // A pull down from the top: held, so the list does not bounce under it.
+  assert.equal(holdsSheetPull({ atTop: true, dx: 1, dy: 6 }), true);
+  // Sideways (a row's swipe) and upward (a scroll) are never held.
+  assert.equal(holdsSheetPull({ atTop: true, dx: -9, dy: 5 }), false);
+  assert.equal(holdsSheetPull({ atTop: true, dx: 0, dy: -8 }), false);
+  // Away from the top the list scrolls back toward it: never held.
+  assert.equal(holdsSheetPull({ atTop: false, dx: 0, dy: 30 }), false);
+});
+
+test('presentSheet: a drag that began in a list asks decideSheetDrag, and the blocking touchmove waits for the top', () => {
+  const at = NATIVE_JS.indexOf('  function presentSheet(options) {');
+  const fn = NATIVE_JS.slice(at, NATIVE_JS.indexOf('\n  function ', at + 40));
+  // The list a drag began in is found at pointerdown (not when caught mid-spring).
+  assert.match(fn, /scroller: immediate \? null : scrollerAt\(e\.target\)/);
+  // Asked at the axis lock, before the sheet claims the finger.
+  assert.match(fn, /if \(!decideSheetDrag\(\{ dy: dy, scrollTop: drag\.scroller \? drag\.scroller\.scrollTop : null \}\)\) \{ drag = null; return; \}\s*if \(!gestures\.claim/);
+  // The non-passive touchmove is bound and unbound as the list crosses its
+  // top, never left on for a list scrolled away from it.
+  assert.match(fn, /sheet\.addEventListener\('touchmove', onTouchMove, \{ passive: false \}\)/);
+  assert.match(fn, /sheet\.removeEventListener\('touchmove', onTouchMove, \{ passive: false \}\)/);
+  assert.match(fn, /bindMove\(t\.scrollTop <= 0 \|\| !!\(drag && drag\.locked\)\)/);
+  assert.match(fn, /sheet\.addEventListener\('scroll', onInnerScroll, \{ capture: true, passive: true \}\)/);
+  // Once the sheet has the drag, the browser gets none of it.
+  assert.match(fn, /if \(drag && drag\.locked === 'y'\) \{ e\.preventDefault\(\); return; \}/);
+  assert.match(fn, /if \(holdsSheetPull\(\{ atTop: touch\.top, dx: dx, dy: dy \}\)\) e\.preventDefault\(\);/);
 });
 
 // ── Sheet re-measure (issue #742) ──────────────────────────────────────

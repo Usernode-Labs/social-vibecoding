@@ -107,6 +107,7 @@ import {
 
 import { Button } from '@/components/ui/button';
 import { Chip, ChipRail } from '@/components/ui/chip';
+import { SectionHeader } from '@/components/ui/grouped-list';
 import { IconTile } from '@/components/ui/icon-tile';
 import {
   BookmarkIcon, BookmarkSolidIcon, ChevronDownIcon, ChevronUpIcon, SearchIcon, XIcon,
@@ -366,7 +367,7 @@ function groupName(group: AppGroup): string {
   return group.appName || group.appLine;
 }
 
-function groupUnreadByApp(rows: ScreenRowView[], t: Translate): AppGroup[] {
+export function groupUnreadByApp(rows: ScreenRowView[], t: Translate): AppGroup[] {
   const groups: AppGroup[] = [];
   const byKey = new Map<string, AppGroup>();
   for (const view of rows) {
@@ -717,7 +718,9 @@ function ScreenRow({ view, touch, removes, held = false, onRelease, card = null 
   useEffect(() => {
     const el = rowRef.current;
     const ui = kit();
-    if (!clearable || !touch || !el || !ui?.swipeActions) return undefined;
+    // A read card still saves: on a phone the swipe is its only Save (the
+    // older rows' stacks are read cards), with nothing to clear beside it.
+    if (!(clearable || cardSave) || !touch || !el || !ui?.swipeActions) return undefined;
     const clear = {
       label: t('notifications:row.clear'),
       // The kit's full swipe belongs to its destructive action, and it
@@ -734,7 +737,7 @@ function ScreenRow({ view, touch, removes, held = false, onRelease, card = null 
       color: 'var(--un-action-neutral)',
       handler: () => { void controller()?.toggleSave(view.id); },
     };
-    const swipe = ui.swipeActions(el, { actions: cardSave ? [save, clear] : [clear] });
+    const swipe = ui.swipeActions(el, { actions: !clearable ? [save] : cardSave ? [save, clear] : [clear] });
     return () => swipe.detach();
   }, [clearable, touch, removes, shape, view.id, groupIds?.join(','), t, onRelease, cardSave, view.saved]);
 
@@ -1377,7 +1380,14 @@ export function NotificationsSheetView() {
   // order (newest first), so groupUnreadByApp's insertion order keeps the
   // groups newest-first too.
   const groupedUnread = tab === 'unread' && !olderShown;
-  const appGroups = groupedUnread ? groupUnreadByApp(unread, t) : [];
+  // Evan, 21 Oct 2026: the older rows were a flat list, so revealing them
+  // undid the stacks the tab opened on. Revealed, Unread keeps its stacks,
+  // and the rows it does not list follow under Earlier as stacks of their
+  // own, one per project, folded the same way.
+  const olderGrouped = tab === 'unread' && olderShown;
+  const appGroups = groupedUnread || olderGrouped ? groupUnreadByApp(unread, t) : [];
+  const listedIds = new Set(unread.map((view) => view.id));
+  const olderGroups = olderGrouped ? groupUnreadByApp(all.filter((view) => !listedIds.has(view.id)), t) : [];
   // #5580: each project is a stack of cards (./notification-stacks.tsx),
   // under the same heading and its Mark read.
   const renderAppGroup = (group: AppGroup): ReactNode => {
@@ -1402,6 +1412,33 @@ export function NotificationsSheetView() {
           />
         )}
         renderCard={renderCard}
+      />
+    );
+  };
+  // The older rows' stacks: read, so no Mark read, and a cleared card (an
+  // unread plain message) stays where it is. Keyed apart from the unread
+  // stack of the same project.
+  const renderOlderGroup = (group: AppGroup): ReactNode => {
+    const label = group.key === 'other' || !group.appLine ? t('notifications:sheet.group.other') : groupName(group);
+    const key = `older:${group.key}`;
+    return (
+      <ProjectStack
+        key={key}
+        groupKey={key}
+        name={label}
+        entries={group.entries}
+        sheetOpen={open}
+        head={(showLess) => <AppGroupHead groupKey={key} label={label} appId={null} onShowLess={showLess} />}
+        renderCard={(entry, place) => (
+          <ScreenRow
+            key={entry.key}
+            view={entry.view}
+            touch={!!snap.touch}
+            removes={false}
+            onRelease={held.release}
+            card={place}
+          />
+        )}
       />
     );
   };
@@ -1638,7 +1675,19 @@ export function NotificationsSheetView() {
           </p>
         )
       ) : null}
-      {!searching && (groupedUnread ? appGroups.map(renderAppGroup) : (
+      {!searching && (groupedUnread ? appGroups.map(renderAppGroup) : olderGrouped ? (
+        <>
+          {appGroups.map(renderAppGroup)}
+          {olderGroups.length ? (
+            <>
+              <SectionHeader data-notif-older-head="" className="pb-0">
+                {t('notifications:sheet.earlier')}
+              </SectionHeader>
+              {olderGroups.map(renderOlderGroup)}
+            </>
+          ) : null}
+        </>
+      ) : (
         <>
           {today.length ? (
             <>

@@ -306,7 +306,10 @@ test('on touch there is no × at all: the swipe is the way to clear', () => {
   // A card's save is the swipe's first button on a phone (no hover there to
   // show it), so the card draws no bookmark of its own.
   assert.doesNotMatch(html, /data-notification-save="10"/);
-  assert.match(SHEET_SRC, /const swipe = ui\.swipeActions\(el, \{ actions: cardSave \? \[save, clear\] : \[clear\] \}\);/);
+  assert.match(SHEET_SRC, /const swipe = ui\.swipeActions\(el, \{ actions: !clearable \? \[save\] : cardSave \? \[save, clear\] : \[clear\] \}\);/);
+  // A read card (one Unread held, or one of the older rows' stacks) still
+  // saves: the swipe is its only Save on a phone, with nothing to clear.
+  assert.match(SHEET_SRC, /if \(!\(clearable \|\| cardSave\) \|\| !touch \|\| !el \|\| !ui\?\.swipeActions\) return undefined;/);
   assert.match(SHEET_SRC, /label: t\(view\.saved \? 'notifications:row\.swipeUnsave' : 'notifications:row\.swipeSave'\)/);
   assert.doesNotMatch(html, /data-notification-clear/,
     'no hover on a phone, and an invisible target on a tile corner would clear by accident');
@@ -315,11 +318,13 @@ test('on touch there is no × at all: the swipe is the way to clear', () => {
 test('only an unread row offers a clear', () => {
   assert.match(SHEET_SRC, /const clearable = view\.unread;/);
   assert.match(SHEET_SRC, /\{clearable && !touch \? \(\s*<button\s+type="button"\s+data-notification-clear=\{view\.id\}/);
-  assert.match(SHEET_SRC, /if \(!clearable \|\| !touch \|\| !el \|\| !ui\?\.swipeActions\) return undefined;/);
+  // The swipe is attached for a read card too, but only to save (above).
+  assert.match(SHEET_SRC, /if \(!\(clearable \|\| cardSave\) \|\| !touch \|\| !el \|\| !ui\?\.swipeActions\) return undefined;/);
+  assert.match(SHEET_SRC, /actions: !clearable \? \[save\] :/);
 });
 
 test('the swipe is the kit\'s, neutral, and a full swipe only where the row leaves', () => {
-  const effect = SHEET_SRC.slice(SHEET_SRC.indexOf('if (!clearable || !touch || !el || !ui?.swipeActions) return undefined;'),
+  const effect = SHEET_SRC.slice(SHEET_SRC.indexOf('if (!(clearable || cardSave) || !touch || !el || !ui?.swipeActions) return undefined;'),
     SHEET_SRC.indexOf("}, [clearable, touch, removes, shape, view.id, groupIds?.join(','), t, onRelease, cardSave, view.saved]);"));
   assert.ok(effect.length > 0, 'the swipe effect found');
   assert.match(effect, /label: t\('notifications:row\.clear'\)/);
