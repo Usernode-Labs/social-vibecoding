@@ -39,11 +39,19 @@ import { ThreadSummaryChip } from '../message-actions/thread-summary';
 import { useDismiss } from '../message-actions/use-dismiss';
 
 /*
- * ONE SHAPE, DISCORD'S (#2783). Every chat — a DM, a group, #general and an
- * app's channel — draws its messages as named rows: square avatar, bold name,
- * muted time, flat text. A DM used to be a bubble transcript, on the reading
- * that with two participants the side says who is speaking; it no longer is,
- * so a conversation reads the same whichever list it came from.
+ * A CONVERSATION HAS SIDES (#5680). A direct message and a group chat — the
+ * two-or-more-people conversations, the bot's chat among them — draw each
+ * message on its sender's side: yours on the right in the accent tint and
+ * without your face, everyone else's on the left in the plain surface with
+ * their avatar, name and time, each in a bubble. The side says who is
+ * speaking, so the transcript is read rather than decoded.
+ *
+ * A CHANNEL KEEPS ITS NAMED ROWS (#2783). #general and every project and
+ * topic channel is not a conversation between a few people but a room, so a
+ * row there stays the flat named row — square avatar, bold name, muted time —
+ * whoever said it. So do the bot's cards, plans, questions, step lines and
+ * change blocks wherever they land: they are not something a person said, and
+ * a bubble would clip them.
  *
  * CONSECUTIVE MESSAGES GROUP. A message from the same person, close behind
  * their previous one (`groupsWithPrevious`, @/components/ui/chat.tsx — the app
@@ -315,6 +323,18 @@ export const MessageRow = memo(function MessageRow({
     ? <BotHeadWords head={head} objects={message.objects} channels={channels} />
     : <MessageMarkdown content={message.content} channels={channels} appSlug={botMeta(message)?.appSlug} requestColors={!!botMeta(message)} />;
 
+  // #5680: which rows have a side. A DM and a group do; a channel does not
+  // (#2783), and neither does a row that is not something a person said: the
+  // bot's cards and plans, its step lines, a platform notice, and a change
+  // block, whose outline runs edge to edge. `head` is the bot's line naming a
+  // request or a change, drawn as that thing's card (./bot-head-card.tsx);
+  // `question`/`actions` is its card with taps on it (./bot-question.tsx).
+  const isCardMessage = isThanksMessage(message) || isActivityMessage(message) || isPlanMessage(message)
+    || isTwoQuestions(message) || isReadyMessage(message) || !!head
+    || (!!message.sender.bot && (message.metadata?.homeroomBot?.question || message.metadata?.homeroomBot?.actions?.length)
+      && !isTwoQuestions(message) && !isReadyMessage(message));
+  const sided = kind !== 'channel' && !block && !step && !message.system && !isCardMessage;
+
   // The quoted reply, the body and the inline editor: the part of the
   // message that stands as the row's text. A deleted message says so in its
   // place and nothing else (#2387).
@@ -454,11 +474,15 @@ export const MessageRow = memo(function MessageRow({
   const blockAttrs = block ? { 'data-bot-block': block.key, 'data-bot-block-part': block.part } : {};
 
   return (
-    <article id={`messages-message-${message.id}`} data-message-id={message.id} className={`messages-message group ${grouped ? 'messages-message-grouped' : ''}${blockClass} ${stateClasses}`} {...blockAttrs} {...longPress}>
+    <article id={`messages-message-${message.id}`} data-message-id={message.id} className={`messages-message group ${sided ? 'messages-message-bubble ' : ''}${grouped ? 'messages-message-grouped' : ''}${blockClass} ${stateClasses}`} {...blockAttrs} {...longPress}>
+      {/* #5680: your own message is already on its side — the tint and the
+          right edge say whose it is — so it needs no face, as ChatMessageRow
+          draws a turn (`from="me"`) in the general chat. A channel row keeps
+          it: there the side says nothing. */}
       {grouped
         ? <time className="messages-message-gutter" dateTime={message.createdAt} title={fullTime(message.createdAt)}>{shortTime}</time>
-        : <UserAvatar user={message.sender} size="md" shape="square" />}
-      <div className={block ? 'min-w-0 flex-1 messages-bot-block-body' : 'min-w-0 flex-1'}>
+        : sided && mine ? null : <UserAvatar user={message.sender} size="md" shape="square" />}
+      <div className={block ? 'min-w-0 flex-1 messages-bot-block-body' : sided ? 'min-w-0 flex-1 messages-bubble-wrap' : 'min-w-0 flex-1'}>
         {grouped ? null : <div className="messages-message-head"><span className={`messages-message-author ${mine ? 'text-violet-700 dark:text-violet-300' : ''}`}>{senderName(message.sender, { bare })}</span>{message.sender.bot ? <span className="messages-bot-badge">{t('messages:row.aiBadge')}</span> : null}<time dateTime={message.createdAt} title={fullTime(message.createdAt)}>{time}</time>{status}</div>}
         {/* #4564: the dropped card's own label, spoken: a screen reader still
             hears which request these words are about, as the block's top
@@ -472,7 +496,10 @@ export const MessageRow = memo(function MessageRow({
             onClick={() => openThread(message.threadRootId as number)}
           >{inChatLabel}</button>
         ) : null}
-        {body}
+        {/* #5680: in a conversation the words sit in a bubble on their
+            sender's side; the head above them, and everything under them
+            (pictures, shared items, reactions, a thread) stays outside it. */}
+        {sided ? <div className="messages-bubble">{body}</div> : body}
         {extras}
         {grouped && message.editedAt && !message.deleted ? <div className="messages-message-meta">{status}</div> : null}
         {failedNote}
