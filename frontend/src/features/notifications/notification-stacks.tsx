@@ -425,6 +425,36 @@ export function historyLines(view: StoryRowView, steps: HistoryStep[], t: Transl
 
 type Loaded = { state: 'loading' } | { state: 'failed' } | { state: 'ready'; steps: HistoryStep[] };
 
+/** Whether something is already sizing the box (a fold, a grow). */
+function running(box: HTMLElement): boolean {
+  return typeof box.getAnimations === 'function' && box.getAnimations().length > 0;
+}
+
+/**
+ * Size a history's box from `from` (null: wherever it is on screen now) to
+ * its content's height or to nothing. Read before anything moves: a box in
+ * the middle of an earlier resize is where that resize has it, and the new
+ * one starts there. It ends at exactly the height the content gives it, so
+ * nothing moves when the animation lets go, whenever WebKit paints that frame
+ * (on an iPhone it was once 6 s late). A resize cut short by the next one
+ * runs none of its endings.
+ */
+function resizeBox(box: HTMLElement, from: number | null, to: 'content' | 0, ms: number, onEnd?: () => void): void {
+  const start = from == null ? box.getBoundingClientRect().height : from;
+  const fade = from == null ? Number(window.getComputedStyle(box).opacity) : 0;
+  if (typeof box.getAnimations === 'function') for (const run of box.getAnimations()) run.cancel();
+  const end = to === 'content' ? box.scrollHeight : 0;
+  box.style.overflow = 'hidden';
+  const run = box.animate(
+    [{ height: `${start}px`, opacity: Number.isFinite(fade) ? fade : 1 }, { height: `${end}px`, opacity: to === 0 ? 0 : 1 }],
+    { duration: ms, easing: EASE, fill: to === 0 ? 'forwards' : 'none' },
+  );
+  run.finished.then(() => {
+    if (to === 'content') box.style.overflow = '';
+    onEnd?.();
+  }, () => { /* cut short by the next resize, which owns the box now */ });
+}
+
 function controller(): any {
   return (typeof window !== 'undefined' ? (window as any).Notifications : null) || null;
 }
@@ -459,37 +489,28 @@ export function CardHistory({ view, open }: { view: StoryRowView; open: boolean 
   }, [open, view.id]);
 
   // Opening shows it at once and grows it; closing folds it, then lets it go.
+  // A box still folding (opened again mid-fold) grows from where it is; a
+  // new one from nothing.
   useIsomorphicLayoutEffect(() => {
     const box = boxRef.current;
     if (open) {
       setShown(true);
       if (!box || stillMotion()) return;
-      const h = box.scrollHeight;
-      box.style.overflow = 'hidden';
-      const run = box.animate([{ height: '0px', opacity: 0 }, { height: `${h}px`, opacity: 1 }], { duration: 360, easing: EASE });
-      const done = () => { box.style.overflow = ''; };
-      run.finished.then(done, done);
+      resizeBox(box, running(box) ? null : 0, 'content', 360);
       return;
     }
     if (!box || stillMotion()) { setShown(false); return; }
-    box.style.overflow = 'hidden';
-    const run = box.animate([{ height: `${box.offsetHeight}px`, opacity: 1 }, { height: '0px', opacity: 0 }],
-      { duration: 300, easing: EASE, fill: 'forwards' });
-    const done = () => setShown(false);
-    run.finished.then(done, done);
+    resizeBox(box, null, 0, 300, () => setShown(false));
   }, [open]);
 
-  // The history lands after it opened on "Loading…": grow to it, not jump.
-  const lastHeight = useRef(0);
+  // The history lands after it opened on "Loading…": it goes on growing from
+  // wherever the opening has it to the whole history, rather than starting
+  // again from a height read before (21 Oct 2026: it snapped back up, grew
+  // again, and then jumped down to its real height when the first grow let go).
   useIsomorphicLayoutEffect(() => {
     const box = boxRef.current;
-    const was = lastHeight.current;
-    lastHeight.current = box ? box.offsetHeight : 0;
-    if (!box || !open || !was || stillMotion() || Math.abs(box.offsetHeight - was) < 1) return;
-    box.style.overflow = 'hidden';
-    const run = box.animate([{ height: `${was}px` }, { height: `${box.offsetHeight}px` }], { duration: 280, easing: EASE });
-    const done = () => { box.style.overflow = ''; };
-    run.finished.then(done, done);
+    if (!box || !open || stillMotion() || !loaded || loaded.state === 'loading') return;
+    resizeBox(box, null, 'content', 280);
   }, [loaded]);
 
   if (!open && !shown) return null;
@@ -501,11 +522,10 @@ export function CardHistory({ view, open }: { view: StoryRowView; open: boolean 
   const on = !view.story && view.storyRef ? view.storyRef : null;
   const onTitle = on && on.title && on.title !== plain(view.segments) ? on.title : null;
   return (
-    <div
-      ref={boxRef}
-      data-notif-history-list={view.id}
-      className="col-start-1 row-start-2 pl-[4.75rem] pr-4 pb-2"
-    >
+    <div ref={boxRef} data-notif-history-list={view.id} className="col-start-1 row-start-2">
+      {/* The padding is the inner box's, so the outer one folds to nothing
+          at height 0 instead of stopping 8px short of it. */}
+      <div className="pl-[4.75rem] pr-4 pb-2">
       {on ? (
         <div className="py-1.5 border-t border-black/[.06] dark:border-white/[.08]">
           <span className="block text-xs font-semibold text-zinc-900 dark:text-zinc-100 truncate">
@@ -570,6 +590,7 @@ export function CardHistory({ view, open }: { view: StoryRowView; open: boolean 
           <div key={line.key} className={cls}>{inner}</div>
         );
       })}
+      </div>
     </div>
   );
 }

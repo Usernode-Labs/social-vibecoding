@@ -13,10 +13,20 @@ function getPool(config) {
     // the pool shed idle connections back down after a burst — but only for
     // a connection nothing reuses, which is why a preview running the fleet
     // sweepers on a timer never shed any.
+    //
+    // NO JIT (21 Oct 2026). Postgres compiles a query to machine code when the
+    // planner's ESTIMATE crosses jit_above_cost, and inlines and optimizes it
+    // past 500,000, on every execution. Our estimates are inflated by
+    // correlated subqueries that mostly never run, so the notifications feed
+    // did ~43 ms of work and spent 2.9 s compiling it (EXPLAIN ANALYZE on the
+    // replica); pg_stat_statements on the primary had compiling as ~99% of
+    // every compiled statement's time, 14,610 s since 9 Sep. JIT pays off for
+    // long analytic scans, which the web's queries are not.
     pool = new Pool({
       connectionString: config.databaseUrl,
       max: config.dbPoolMax || 10,
       idleTimeoutMillis: 30000,
+      options: '-c jit=off',
     });
     pool.on('error', (err) => {
       // #1771: name the one failure that is not this process's fault. A

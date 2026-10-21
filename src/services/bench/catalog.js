@@ -106,25 +106,33 @@ async function catalogFigures(pool, ids) {
 
 /**
  * The models to offer, with what the catalog says of each: the candidates
- * above plus any `extra` ids (models already used in a run).
+ * above plus any `extra` ids (models already used in a run). An extra id may
+ * be an arm at an effort (`vendor/model@max`, services/bench/arms.js): its
+ * entry is its model's, priced and sized as it is, under its own id and a
+ * label that names the effort (`effort`).
  */
 async function listModels(pool, extra = []) {
+  const arms = require('./arms');
   const ids = [...new Set([...CANDIDATES.map((c) => c.id), ...extra.filter((x) => typeof x === 'string')])];
-  const figures = await catalogFigures(pool, ids);
+  const figures = await catalogFigures(pool, [...new Set(ids.map((id) => arms.modelOf(id)))]);
   return ids.map((id) => {
-    const known = CANDIDATES.find((c) => c.id === id) || {};
-    const f = figures.get(id) || {};
+    const { model, effort } = arms.parseArm(id);
+    const known = CANDIDATES.find((c) => c.id === model) || {};
+    const f = figures.get(model) || {};
+    const label = known.label || f.name || model;
     return {
       id,
-      label: known.label || f.name || id,
-      role: known.role || null,
+      label: effort ? `${label} at ${effort} effort` : label,
+      ...(effort ? { model, effort } : {}),
+      // An arm at an effort is not its model's baseline or candidate entry.
+      role: effort ? null : known.role || null,
       stages: known.stages || null,
       contextTokens: f.contextTokens || known.contextTokens || null,
       inputPerMillion: f.inputPerMillion ?? null,
       outputPerMillion: f.outputPerMillion ?? null,
       cacheReadPerMillion: f.cacheReadPerMillion ?? null,
       cacheWritePerMillion: f.cacheWritePerMillion ?? null,
-      inCatalog: figures.has(id),
+      inCatalog: figures.has(model),
     };
   });
 }

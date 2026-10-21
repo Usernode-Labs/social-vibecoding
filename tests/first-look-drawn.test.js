@@ -373,7 +373,7 @@ test('the made screen\'s first look card: the drawn screen faded in over the out
 test('the hub\'s first look card: the drawn screen in the picture\'s box', () => {
   const hub = loadTsx('frontend/src/features/dev-board/workshop/hub-cards.tsx');
   const html = renderToHtml(createElement(hub.FirstLookView, { slug: 'club-votes', name: 'Club Votes', src: DRAWN_URL }));
-  assert.match(html, /^<section class="dev-ws-strip dev-ws-first-look" data-ws-first-look=""><div class="dev-ws-first-look-shot relative overflow-hidden"><div role="img" aria-label="The first look at Club Votes&#x27;s main screen" data-first-look-drawn=""/);
+  assert.match(html, /^<section class="dev-ws-strip dev-ws-hub-first dev-ws-first-look" data-ws-first-look=""><div class="dev-ws-first-look-shot relative overflow-hidden"><div role="img" aria-label="The first look at Club Votes&#x27;s main screen" data-first-look-drawn=""/);
   assert.match(html, /sandbox=""[^>]*style="transform:scale\(0\.1641025641025641\)"/, '64px wide');
   assert.doesNotMatch(html, /<img/);
   const src = read('frontend/src/features/dev-board/workshop/hub-cards.tsx');

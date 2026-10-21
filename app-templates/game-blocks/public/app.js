@@ -14,7 +14,10 @@
 // block away, 1 to 9, 0, - and = (or the scroll wheel) to choose a block.
 // Esc lets the mouse go. Where the browser will not lend the mouse, drag to
 // look and click to build. On a touch screen: drag to look, the stick to
-// walk, and buttons to fly, build and take away.
+// walk, and buttons to fly, build and take away. Each of those follows its
+// own finger, so one thumb walks or looks while the other builds. A phone
+// held upright can also play sideways: the play area under the header turns
+// a quarter turn (see "Sideways").
 //
 // The world is a scene of its own, the same daylight in both looks
 // (CLAUDE.md "## Design"). Rendering builds elements and sets textContent,
@@ -38,8 +41,10 @@ const el = {
   enter: $('enter'),
   keys: $('keys'),
   stage: $('stage'),
+  hudTop: $('hud-top'),
   toTitle: $('to-title'),
   here: $('here'),
+  turn: $('turn'),
   handName: $('hand-name'),
   hotbar: $('hotbar'),
   touch: $('touch'),
@@ -439,7 +444,7 @@ const slots = BLOCKS.map((b, i) => {
   slot.setAttribute('role', 'radio');
   slot.setAttribute('aria-label', b.name);
   slot.style.backgroundColor = b.colour;
-  slot.addEventListener('click', () => choose(i));
+  thumb(slot, { tap: () => choose(i) });
   el.hotbar.appendChild(slot);
   return slot;
 });
@@ -470,6 +475,7 @@ function show(next) {
   stopMoving();
   if (screen === 'title' && document.pointerLockElement) document.exitPointerLock();
   if (view) drawTitle();
+  layOut();
 }
 
 let entered = false;
@@ -543,7 +549,6 @@ window.addEventListener('keyup', (e) => {
 });
 window.addEventListener('blur', stopMoving);
 
-el.canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 el.canvas.addEventListener('mousemove', (e) => {
   if (locked) look(e.movementX, e.movementY, LOOK);
 });
@@ -564,13 +569,15 @@ el.canvas.addEventListener('pointerdown', (e) => {
     takeMouse();
     return;
   }
+  // One finger looks at a time: a second one on the world is ignored, not
+  // handed the look (it may be a thumb on its way to a button).
+  if (lookDrag) return;
   lookDrag = { id: e.pointerId, x: e.clientX, y: e.clientY, moved: 0, button: e.button, touch: e.pointerType !== 'mouse' };
   el.canvas.setPointerCapture(e.pointerId);
 });
 el.canvas.addEventListener('pointermove', (e) => {
   if (!lookDrag || e.pointerId !== lookDrag.id) return;
-  const dx = e.clientX - lookDrag.x;
-  const dy = e.clientY - lookDrag.y;
+  const [dx, dy] = inPlay(e.clientX - lookDrag.x, e.clientY - lookDrag.y);
   lookDrag.moved += Math.abs(dx) + Math.abs(dy);
   lookDrag.x = e.clientX;
   lookDrag.y = e.clientY;
@@ -587,9 +594,14 @@ function endLook(e) {
 }
 el.canvas.addEventListener('pointerup', endLook);
 el.canvas.addEventListener('pointercancel', endLook);
+// A finger the browser took away without an up (it never builds).
+el.canvas.addEventListener('lostpointercapture', (e) => {
+  if (lookDrag && e.pointerId === lookDrag.id) lookDrag = null;
+});
 
 // The stick: how far the knob is from the middle is how fast you walk.
 el.stick.addEventListener('pointerdown', (e) => {
+  if (stick.id !== null) return; // already held by another finger
   stick.id = e.pointerId;
   const r = el.stick.getBoundingClientRect();
   stick.x = r.left + r.width / 2;
@@ -600,8 +612,7 @@ el.stick.addEventListener('pointerdown', (e) => {
 function moveStick(e) {
   if (stick.id !== e.pointerId) return;
   const max = el.stick.clientWidth / 2;
-  let dx = (e.clientX - stick.x) / max;
-  let dy = (e.clientY - stick.y) / max;
+  let [dx, dy] = inPlay((e.clientX - stick.x) / max, (e.clientY - stick.y) / max);
   const len = Math.hypot(dx, dy);
   if (len > 1) { dx /= len; dy /= len; }
   stick.dx = dx;
@@ -609,7 +620,9 @@ function moveStick(e) {
   el.knob.style.transform = `translate(${dx * max * 0.7}px, ${dy * max * 0.7}px)`;
 }
 function endStick(e) {
-  if (stick.id !== e.pointerId) return;
+  if (stick.id === e.pointerId) releaseStick();
+}
+function releaseStick() {
   stick.id = null;
   stick.dx = 0;
   stick.dy = 0;
@@ -618,15 +631,125 @@ function endStick(e) {
 el.stick.addEventListener('pointermove', moveStick);
 el.stick.addEventListener('pointerup', endStick);
 el.stick.addEventListener('pointercancel', endStick);
+el.stick.addEventListener('lostpointercapture', endStick);
 
+// Up and Down fly while any finger holds them, and stop when that finger
+// lifts, whatever another finger is doing.
 function hold(button, key) {
-  button.addEventListener('pointerdown', (e) => { e.preventDefault(); move[key] = 1; });
-  for (const ev of ['pointerup', 'pointercancel', 'pointerleave']) button.addEventListener(ev, () => { move[key] = 0; });
+  const fingers = new Set();
+  const set = () => { move[key] = fingers.size ? 1 : 0; };
+  button.addEventListener('pointerdown', (e) => { e.preventDefault(); fingers.add(e.pointerId); set(); });
+  for (const ev of ['pointerup', 'pointercancel', 'pointerleave', 'lostpointercapture']) {
+    button.addEventListener(ev, (e) => { fingers.delete(e.pointerId); set(); });
+  }
 }
 hold(el.flyUp, 'up');
 hold(el.flyDown, 'down');
-el.place.addEventListener('click', build);
-el.remove.addEventListener('click', takeAway);
+
+// A button a thumb presses while the other thumb walks or looks. It listens
+// to the finger itself: a browser makes no click for a tap made while
+// another finger is down, so a click alone never came mid-walk. `press`
+// runs as the finger lands (Build, Remove); `tap` runs as it lifts without
+// having slid (a hotbar slot, in a bar that also scrolls). The click a
+// lone touch makes afterwards is not a second press; a mouse, a key or a
+// screen reader still arrives as a click alone.
+function thumb(button, { press, tap }) {
+  let finger = null;
+  let touched = false; // a touch acted, and its click may follow
+  button.addEventListener('pointerdown', (e) => {
+    if (e.pointerType === 'mouse' || finger) return;
+    finger = { id: e.pointerId, x: e.clientX, y: e.clientY };
+    if (press) {
+      e.preventDefault();
+      touched = true;
+      press();
+    }
+  });
+  button.addEventListener('pointerup', (e) => {
+    if (!finger || e.pointerId !== finger.id) return;
+    const slid = Math.hypot(e.clientX - finger.x, e.clientY - finger.y) > 12;
+    finger = null;
+    if (tap && !slid) {
+      touched = true;
+      tap();
+    }
+  });
+  button.addEventListener('pointercancel', (e) => {
+    if (finger && e.pointerId === finger.id) finger = null;
+  });
+  button.addEventListener('click', (e) => {
+    // A key or a screen reader clicks with no detail: always a press.
+    const fromTouch = touched && e.detail !== 0;
+    touched = false;
+    if (!fromTouch) (press || tap)();
+  });
+}
+thumb(el.place, { press: build });
+thumb(el.remove, { press: takeAway });
+
+// A long press anywhere in the game is only a press: never the browser's
+// menu, a text selection (public/scene.css) or a drag.
+el.canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+for (const node of [el.world, el.stage]) {
+  node.addEventListener('contextmenu', (e) => e.preventDefault());
+  node.addEventListener('dragstart', (e) => e.preventDefault());
+}
+
+// ── Sideways ─────────────────────────────────────────────────────────────
+
+// A phone held upright can play sideways: the play area under the header
+// (the world and #play) turns a quarter turn clockwise, so a phone turned
+// a quarter turn the other way plays wide. The header stays where it is,
+// with the button that turns it back. Only on a touch screen whose window
+// is taller than wide, and remembered on this device.
+const SIDEWAYS_KEY = 'blocks:sideways';
+let wantSideways = false;
+try {
+  wantSideways = window.localStorage.getItem(SIDEWAYS_KEY) === '1';
+} catch (e) {
+  // No storage here: upright, until the button says otherwise.
+}
+let sideways = false;
+
+// A move on the screen, in the play area's own directions.
+function inPlay(dx, dy) {
+  return sideways ? [dy, -dx] : [dx, dy];
+}
+
+function layOut() {
+  const upright = window.innerHeight > window.innerWidth;
+  el.turn.hidden = !COARSE || !upright;
+  el.turn.setAttribute('aria-pressed', wantSideways ? 'true' : 'false');
+  el.turn.setAttribute('aria-label', wantSideways ? 'Play upright' : 'Play sideways');
+  const next = COARSE && upright && wantSideways && screen === 'stage';
+  if (next) {
+    // The play area: under the header, as wide as the window is tall.
+    const top = Math.round(el.hudTop.getBoundingClientRect().bottom);
+    const root = document.documentElement.style;
+    root.setProperty('--side-top', top + 'px');
+    root.setProperty('--side-w', Math.max(0, window.innerHeight - top) + 'px');
+    root.setProperty('--side-h', window.innerWidth + 'px');
+  }
+  if (next !== sideways) {
+    sideways = next;
+    document.documentElement.classList.toggle('sideways', sideways);
+    // A finger still down was moving in the other directions.
+    releaseStick();
+    lookDrag = null;
+    stopMoving();
+  }
+  resize();
+}
+el.turn.addEventListener('click', () => {
+  wantSideways = !wantSideways;
+  try {
+    window.localStorage.setItem(SIDEWAYS_KEY, wantSideways ? '1' : '0');
+  } catch (e) {
+    // Kept for this visit only.
+  }
+  layOut();
+});
+window.addEventListener('resize', layOut);
 
 // ── The title screen ─────────────────────────────────────────────────────
 
@@ -761,7 +884,6 @@ if (canDraw()) {
   renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
   renderer.setClearColor(0x000000, 0);
   resize();
-  window.addEventListener('resize', resize);
 } else {
   el.no3d.hidden = false;
   el.enter.disabled = true;

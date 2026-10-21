@@ -396,7 +396,7 @@ test('the config writer gives each persona its own shots directory and records c
       }
       assert.equal(fs.existsSync(path.join(path.dirname(off.output), 'shots-desktop-browser.json')), false);
     }
-    // On, every desktop browser draws at 2 device pixels per CSS pixel, from
+    // On, every desktop browser draws at 3 device pixels per CSS pixel, from
     // a private config beside the MCP config (Playwright takes a density only
     // with a fixed viewport, the size the browser opened at before), and every
     // browser, the phone's included, saves at device scale.
@@ -407,7 +407,7 @@ test('the config writer gives each persona its own shots directory and records c
       const file = args[args.indexOf('--config') + 1];
       assert.equal(path.dirname(file), path.dirname(dense.output));
       assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')),
-        { browser: { contextOptions: { viewport: { width: 1280, height: 720 }, deviceScaleFactor: 2 } } });
+        { browser: { contextOptions: { viewport: { width: 1280, height: 720 }, deviceScaleFactor: 3 } } });
       assert.equal(fs.statSync(file).mode & 0o777, 0o600);
       assert.equal(args.includes('--device'), false, 'a desktop browser presents as no device');
     }
@@ -1192,8 +1192,8 @@ test('a shots turn samples the worker\'s memory through the proxy, which the ima
   assert.ok(asked < runner.indexOf('node /usr/local/bin/shots-origin-proxy.js &'), 'before the proxy starts');
 });
 
-test('in a run taken at device density each saved still says its density: 3 from a phone browser, 2 from a desktop one', async (t) => {
-  for (const [density, expected] of [['1', { desktop: '2', phone: '3' }], [undefined, { desktop: undefined, phone: undefined }]]) {
+test('in a run taken at device density each saved still says its density: 3 from a phone browser and from a desktop one', async (t) => {
+  for (const [density, expected] of [['1', { desktop: '3', phone: '3' }], [undefined, { desktop: undefined, phone: undefined }]]) {
     const bridge = bridgeFixture(t);
     const env = { ...bridge.env, ...(density ? { SHOTS_DEVICE_DENSITY: density } : {}) };
     const { tools } = loadBridge(env, bridge.platformFetch);

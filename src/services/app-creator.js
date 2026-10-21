@@ -26,6 +26,7 @@ const appTemplates = require('./app-templates');
 const appSketch = require('./app-sketch');
 const creationTiming = require('./app-creation-timing');
 const starterImages = require('./starter-images');
+const repoQueue = require('./repo-create-queue');
 const { pushAppCreationPhase } = require('./ws');
 
 // Tell connected clients which step creation is on (the frame the made
@@ -144,28 +145,37 @@ async function setUp(config, pool, appId, ctx) {
 // A try that resumes finds its own first commit at the repository's head
 // and does not push it again. Without GitHub there is no repository: the
 // first deploy builds the starter's files.
+//
+// The create and the first push wait their turn, one project at a time,
+// and a refusal for GitHub's secondary limit waits and tries again
+// (services/repo-create-queue.js). A try after a refused push finds its
+// repository there, and adopts it.
 async function seedStarter(config, pool, row, sketch, ctx) {
   if (!github.isEnabled()) return { sha: null, repoUrl: null, offer: null };
   try {
     const botUsername = await github.getBotUsername();
-    // adoptExisting: a try after one that died between GitHub's create and
-    // the repo_url write has the SAME slug, so the repository is there.
-    const repo = await github.createRepo(botUsername, row.slug, {
-      description: `${row.name}: built on Homeroom`,
-      adoptExisting: true,
-    });
-    const repoUrl = repo.html_url;
-    // repoUrl makes the template name this repo as the app's canonical one
-    // (.claude/homeroom-canonical-repo, read by the freshness check). No
-    // database URL: none goes into a repository.
-    const files = starterFiles(row, { repoUrl, sketch });
-    // An adopted repository's head is read, never guessed: a read that fails
-    // fails the setup (Retry makes it again), rather than push the commit
-    // twice.
-    const head = repo.adopted ? await github.headCommit(botUsername, row.slug) : null;
-    const commit = head && head.message === initMessage(row.name)
-      ? head
-      : await github.pushFiles(botUsername, row.slug, files, { message: initMessage(row.name) });
+    const made = await repoQueue.withRetries(pool, async () => {
+      // adoptExisting: a try after one that died between GitHub's create and
+      // the repo_url write has the SAME slug, so the repository is there.
+      const repo = await github.createRepo(botUsername, row.slug, {
+        description: `${row.name}: built on Homeroom`,
+        adoptExisting: true,
+      });
+      const repoUrl = repo.html_url;
+      // repoUrl makes the template name this repo as the app's canonical one
+      // (.claude/homeroom-canonical-repo, read by the freshness check). No
+      // database URL: none goes into a repository.
+      const files = starterFiles(row, { repoUrl, sketch });
+      // An adopted repository's head is read, never guessed: a read that fails
+      // fails the setup (Retry makes it again), rather than push the commit
+      // twice.
+      const head = repo.adopted ? await github.headCommit(botUsername, row.slug) : null;
+      const commit = head && head.message === initMessage(row.name)
+        ? head
+        : await github.pushFiles(botUsername, row.slug, files, { message: initMessage(row.name) });
+      return { repoUrl, files, commit };
+    }, { signal: ctx?.signal, label: { appId: row.id, slug: row.slug } });
+    const { repoUrl, files, commit } = made;
     const sha = String(commit?.sha || '').toLowerCase() || null;
     await pool.query('UPDATE apps SET repo_url = $1 WHERE id = $2', [repoUrl, row.id]);
     if (sketch) await appSketch.markCommitted(pool, row.id).catch(() => {});

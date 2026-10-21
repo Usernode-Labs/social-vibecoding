@@ -380,6 +380,7 @@
     var note = h('input', 'field min-w-0 flex-1');
     note.name = 'note';
     note.type = 'text';
+    note.enterKeyHint = 'done';
     note.maxLength = 80;
     note.value = e.answer.note || '';
     note.placeholder = 'Add a note, e.g. +1 or bringing snacks';
@@ -631,4 +632,10 @@
   // few seconds regardless.
   var first = load();
   if (window.usernode && window.usernode.ready) window.usernode.ready(first);
+
+  // Pull down to fetch again, as a native list does. The native kit
+  // (/usernode-native/v1/native.js) draws the spinner and bounces the page
+  // in place, so a drag past the top no longer carries Homeroom's header
+  // with it. Not on a computer, where the kit leaves the page alone.
+  if (window.unNative) first.then(function () { window.unNative.attachPullToRefresh(window, load); });
 })();

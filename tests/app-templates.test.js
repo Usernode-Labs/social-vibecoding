@@ -380,6 +380,46 @@ test('every ready-made app hears its own writes, and every screen that shares an
   }
 });
 
+// Evan, 21 Oct 2026: "Book club times: shouldn't this be a weekly time? Not
+// just a few times to choose between?" and "If you type in 'what's it for',
+// it's unclear how to close the keyboard." One find-a-time app, two modes:
+// the book club marks the hours of every week; game night and the trip
+// suggest dates. tests/app-templates-postgres.test.js runs both.
+test('find a time: the book club finds a weekly time, the others suggest dates, and the keyboard closes', () => {
+  const modes = { 'find-a-time-book-club': 'weekly', 'find-a-time-game-night': 'dates', 'find-a-time-trip': 'dates' };
+  for (const [id, mode] of Object.entries(modes)) {
+    const files = generate(id);
+    const html = file(files, 'public/index.html');
+    assert.equal(appTemplates.get(id).fill.TIME_MODE, mode, id);
+    assert.match(html, new RegExp(`<main id="app" class="[^"]*" data-mode="${mode}">`), id);
+    assert.match(file(files, 'api.js'), new RegExp(`const MODE = '${mode}' === 'weekly' \\? 'weekly' : 'dates';`), id);
+    // Homeroom's native kit, by relative path: a tap outside a field closes
+    // the keyboard, and the page stays put instead of dragging Homeroom along.
+    assert.match(html, /<link rel="stylesheet" href="\/usernode-native\/v1\/native\.css">[\s\S]*<link rel="stylesheet" href="\/tailwind\.css">/, id);
+    // The kit's script after the theme script, which comes first after the
+    // bridge (tests/new-app-theme.test.js).
+    assert.match(html, /<script src="\/usernode-bridge\/v1\/bridge\.js"><\/script>[\s\S]*applyTheme\(\);[\s\S]*<\/script>\s*(?:<!--[\s\S]*?-->\s*)?<script src="\/usernode-native\/v1\/native\.js"><\/script>/, id);
+    assert.match(html, /viewport-fit=cover/, id);
+    assert.match(html, /html \{ overscroll-behavior-y: contain; overscroll-behavior-x: none; touch-action: pan-y pinch-zoom; \}/, id);
+  }
+  const html = file(generate('find-a-time-book-club'), 'public/index.html');
+  assert.match(html, /Find a weekly time for our book club\./);
+  assert.match(html, /\[data-mode="weekly"\] \[data-dates-only\], \[data-mode="dates"\] \[data-weekly-only\] \{ display: none !important; \}/);
+  assert.match(html, /<section id="week" [^>]*data-weekly-only hidden>/);
+  assert.match(html, /<div id="plans" [^>]*data-dates-only hidden><\/div>/);
+  assert.match(file(generate('find-a-time-trip'), 'public/index.html'), /Find a time for our trip\./);
+  const script = fs.readFileSync(path.join(appTemplates.STARTERS_DIR, 'find-a-time/public/app.js'), 'utf8');
+  assert.match(script, /var refresh = weekly \? week\.load : load;/);
+  assert.match(script, /window\.unNative\.attachPullToRefresh\(window, refresh\)/);
+  // A hold, then a drag, marks a block of hours without scrolling the page;
+  // a quick swipe is left to the page.
+  assert.match(script, /w\.grid\.addEventListener\('touchmove', function \(e\) \{\s+var t = e\.touches\[0\];\s+if \(paint\) \{\s+e\.preventDefault\(\);/);
+  assert.match(script, /\}, \{ passive: false \}\);/);
+  // The name's Done key closes the keyboard rather than starting a plan half done.
+  assert.match(html, /id="plan-name"[^>]*\s+enterkeyhint="done"/);
+  assert.match(script, /if \(e\.key !== 'Enter'\) return;\s+e\.preventDefault\(\);\s+e\.target\.blur\(\);/);
+});
+
 for (const id of READY) {
   test(`the ${id} app is a whole repository on the platform's conventions`, () => {
     const files = generate(id);

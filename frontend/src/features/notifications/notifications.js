@@ -222,8 +222,15 @@ const Notifications = {
       const invalidation = networkOnly
         ? `&native_invalidation=1&native_invalidation_nonce=${encodeURIComponent(invalidationNonce)}`
         : '';
-      // The boot read's: the network's answer rather than the worker's copy.
-      const fresh = !networkOnly && !!(options && options.fresh === true);
+      // EVERY READ OF THE FEED ASKS FOR THE NETWORK'S ANSWER, not only the
+      // boot read's (21 Oct 2026). Past its 1 s deadline the worker answers an
+      // API read from its copy, and this feed can take longer than that. On a
+      // socket reconnect the bell was drawn from a copy from hours before
+      // ("0" over three unread) and stayed so for 36 minutes: the worker's
+      // `api-updated` correction re-runs the visible screen's loader, never
+      // this feed's. A fresh read uses the copy only when the network fails
+      // (public/sw.js wantsFreshAnswer).
+      const fresh = !networkOnly;
       let timeout = null;
       let controller = null;
       if (networkOnly && typeof AbortController === 'function') {
@@ -748,7 +755,12 @@ const Notifications = {
     // updates live, instead of waiting for the network round-trip (which
     // is why a clicked item used to stay unread until close/reopen).
     const item = Notifications.items.find((n) => n.id === id);
-    if (item && !item.readAt) {
+    // Already read here: whatever read it (a clear, a conversation read, the
+    // server's own rows) has told the server, and a second request would only
+    // race it for the count (21 Oct 2026: opening a folded row sent the row's
+    // own read beside its group's, and the slower answer won).
+    if (item && item.readAt) return true;
+    if (item) {
       item.readAt = new Date().toISOString();
       if (Notifications.unread > 0) Notifications.unread -= 1;
       Notifications._reconcileCompletionTitle();
@@ -786,18 +798,18 @@ const Notifications = {
   // row standing for `count` of them, unread together
   // (collapseConversationRuns). Clearing only the newest would split the run
   // and put an unread row for the rest straight back where the cleared one
-  // was, so the whole run the row draws is cleared, each through the one-id
-  // path the row click uses.
+  // was, so the whole run the row draws is cleared, in one request with the
+  // rest of the clear.
   //
   // OPTIMISTIC, AND PUT BACK ON FAILURE. A swipe has taken the row off the
   // screen before anything is asked (the kit collapses it, then calls in), so
   // waiting for the server the way markAllRead does is not on offer. What
   // markAllRead's rule protects still holds: a clear the server refused must
   // not leave the screen claiming it worked. Every member is flipped here
-  // first, in one render, so the row leaves in one step; _markOneRead then
-  // finds each one already read and does only its request and its reconcile
-  // of the server's count. Anything refused is unread again, the count goes
-  // back up, and a toast says so.
+  // first, in one render, so the row leaves in one step; one request then
+  // reads them all (_markIdsRead) and the server's count is adopted.
+  // Anything refused is unread again, the count goes back up, and a toast
+  // says so.
   //
   // Resolves true when the row's notifications are read, false when the
   // server refused some of them.
@@ -833,18 +845,19 @@ const Notifications = {
     // #449's reason, for one row: an open chat may be drawing a dot for a
     // mention that was just cleared.
     window.GroupChat?.reconcileDotsFromNotifications?.();
-    const answers = await Promise.all(members.map((n) => Notifications._markOneRead(n.id)));
-    if (answers.every(Boolean)) return true;
+    // ONE REQUEST FOR THE WHOLE CLEAR (21 Oct 2026). A story card is several
+    // notifications, and one request per member raced: each answer carried
+    // the count after its own row only, so the slower one put "Unread (2)"
+    // back on screen after the clear had said 1. `{ ids }` reads them all in
+    // one statement and answers with the count after all of them.
+    if (await Notifications._markIdsRead(members.map((n) => n.id))) return true;
     // A refresh that landed meanwhile replaced `items` with the server's own
     // rows, which already say what is true. Only a notification still in
-    // hand, still carrying this clear's stamp, is this clear's to put back.
-    const refused = members.filter((n, index) => !answers[index]
-      && n.readAt === stamp && Notifications.items.includes(n));
+    // hand, still carrying this clear's stamp, is this clear's to put back,
+    // and the count goes back up by what was put back.
+    const refused = members.filter((n) => n.readAt === stamp && Notifications.items.includes(n));
     for (const n of refused) n.readAt = null;
-    // The count goes back up by what was put back, unless a request that did
-    // go through has already replaced it with the server's own figure, which
-    // counts the refused ones as the unread they still are.
-    if (answers.every((ok) => !ok)) Notifications.unread += refused.length;
+    Notifications.unread += refused.length;
     Notifications._renderBadge();
     Notifications._renderList();
     window.GroupChat?.reconcileDotsFromNotifications?.();
@@ -860,8 +873,32 @@ const Notifications = {
   // were before it went; All still lists each one.
   openGroupRow(id, groupIds) {
     const rest = (Array.isArray(groupIds) ? groupIds : []).filter((other) => other !== id);
-    if (rest.length) void Notifications.clearNotification(rest[0], rest.slice(1));
+    // The opened one with the rest, in the clear's one request: the click's
+    // own read finds it already read and asks nothing (_markOneRead).
+    void Notifications.clearNotification(id, rest);
     return Notifications._onItemClick(id);
+  },
+
+  // The server side of a clear: `{ id }` for one notification (the row
+  // click's request), `{ ids }` for several. Adopts the server's count,
+  // which is the count after every one of them. Resolves whether it took.
+  async _markIdsRead(ids) {
+    try {
+      const res = await fetch('/api/notifications/read', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(ids.length === 1 ? { id: ids[0] } : { ids }),
+      });
+      if (!res.ok) return false;
+      const data = await res.json();
+      Notifications.unread = data.unread || 0;
+      Notifications.messageUnread = Number(data.messageUnread) || 0;
+      Notifications._renderBadge();
+      return true;
+    } catch (err) {
+      console.warn('[notifications] clear failed', err);
+      return false;
+    }
   },
 
   // The notifications one sheet row stands for: its own, plus the rest of

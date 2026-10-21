@@ -9,10 +9,10 @@
 //   show over it when somebody wins.
 //
 // Every move goes to the server, whose rules (game/rules.js) decide what
-// happens; this page only shows it, stepping a piece square by square so a
-// roll can be followed. The board is one SVG drawn from the game's state
-// (its squares, shortcuts and slides), so a different board needs no new
-// drawing code.
+// happens; this page only shows it, gliding a piece square by square and
+// then up its ladder or down its slide, so a roll can be followed. The
+// board is one SVG drawn from the game's state (its squares, shortcuts and
+// slides), so a different board needs no new drawing code.
 //
 // Rendering builds elements and sets textContent, never innerHTML with
 // people's words in it. Class names are whole literals so the Tailwind
@@ -77,7 +77,16 @@
   var ROW_TINTS = ['#fde3a7', '#cfeccb', '#cde3f7', '#fbd2c4', '#e3d7f6'];
   var DEFAULT = { squares: 30, shortcuts: { 3: 15, 8: 20, 12: 24, 21: 28 }, slides: { 16: 4, 23: 11, 27: 22, 29: 18 } };
   var FACES = { 1: [4], 2: [0, 8], 3: [0, 4, 8], 4: [0, 2, 6, 8], 5: [0, 2, 4, 6, 8], 6: [0, 2, 3, 5, 6, 8] };
-  var STEP_MS = 140;
+  // The die tumbles a few faces this far apart before it shows the roll.
+  var TUMBLE_MS = 140;
+  // A move, shown: a hop of this long to each square, then the ladder or
+  // the slide at about this many milliseconds per board unit (a square is
+  // 100 wide), within these bounds.
+  var HOP_MS = 190;
+  var RIDE_MS_PER_UNIT = 1.6;
+  var RIDE_MIN_MS = 420;
+  var RIDE_MAX_MS = 1100;
+  var reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
 
   var view = null;
   var screen = 'title'; // or 'stage'
@@ -86,7 +95,8 @@
   // Where each piece is drawn, which trails the game while a move is shown.
   var shown = {};
   var animatedRoll = 0;
-  var stepping = null;
+  var tumbling = null;
+  var travelling = null;
   var rolling = false;
 
   function h(tag, className, text) {
@@ -150,6 +160,10 @@
     var cellH = CELL;
     var piecesLayer = null;
     var pieceNodes = {};
+    // Where each piece was last put, and the move being shown, whose piece
+    // place() leaves where the move has it.
+    var placed = {};
+    var travel = null;
 
     function fitHeight(forRows) {
       if (!opts.fit) return CELL;
@@ -170,9 +184,10 @@
     function boardHeight() {
       return PAD * 2 + rows * cellH + (rows - 1) * GAP;
     }
-    // A piece at the start waits in the lane under the board.
+    // A piece at the start waits in the lane under the board, lined up
+    // from under square 1, where it sets off.
     function startSpot(k) {
-      return { x: PAD + 118 + k * 62, y: boardHeight() + LANE / 2 + 4 };
+      return { x: PAD + CELL / 2 + k * 62, y: boardHeight() + LANE / 2 + 4 };
     }
 
     function ladder(layer, from, to) {
@@ -204,7 +219,9 @@
       });
     }
 
-    function slide(layer, from, to) {
+    // A slide is a cubic curve from its top square to its bottom one; a
+    // piece sliding down follows the same curve (slideAt).
+    function slideCurve(from, to) {
       var a = centre(from);
       var b = centre(to);
       var dx = b.x - a.x;
@@ -213,10 +230,23 @@
       var px = -dy / len;
       var py = dx / len;
       var bend = Math.min(40, len * 0.2);
+      return [a, { x: a.x + px * bend + dx * 0.25, y: a.y + py * bend + dy * 0.25 },
+        { x: b.x - px * bend - dx * 0.25, y: b.y - py * bend - dy * 0.25 }, b];
+    }
+    function slideAt(curve, t) {
+      var u = 1 - t;
+      var w = [u * u * u, 3 * u * u * t, 3 * u * t * t, t * t * t];
+      return {
+        x: w[0] * curve[0].x + w[1] * curve[1].x + w[2] * curve[2].x + w[3] * curve[3].x,
+        y: w[0] * curve[0].y + w[1] * curve[1].y + w[2] * curve[2].y + w[3] * curve[3].y,
+      };
+    }
+
+    function slide(layer, from, to) {
+      var c = slideCurve(from, to);
+      var a = c[0];
       var d = 'M' + a.x + ' ' + a.y +
-        ' C' + (a.x + px * bend + dx * 0.25) + ' ' + (a.y + py * bend + dy * 0.25) +
-        ' ' + (b.x - px * bend - dx * 0.25) + ' ' + (b.y - py * bend - dy * 0.25) +
-        ' ' + b.x + ' ' + b.y;
+        ' C' + c[1].x + ' ' + c[1].y + ' ' + c[2].x + ' ' + c[2].y + ' ' + c[3].x + ' ' + c[3].y;
       var g = s('g', { opacity: '0.95' }, layer);
       s('path', { d: d, fill: 'none', stroke: C.coralDeep, 'stroke-width': 30, 'stroke-linecap': 'round' }, g);
       s('path', { d: d, fill: 'none', stroke: C.coral, 'stroke-width': 22, 'stroke-linecap': 'round' }, g);
@@ -226,6 +256,8 @@
     }
 
     function drawStatic(next, nextCellH) {
+      // A move being shown ends where it ends: the board is redrawn under it.
+      if (travel) travel.finish();
       config = next;
       rows = Math.ceil(config.squares / COLS);
       cellH = nextCellH;
@@ -275,15 +307,11 @@
         var num = s('text', { x: q.x - CELL / 2 + 11, y: q.y - cellH / 2 + 25 }, numbers);
         num.textContent = String(m);
       }
-      // The start lane.
-      if (opts.lane) {
-        var lane = s('g', {}, svg);
-        s('rect', { x: PAD, y: height + 12, width: 96, height: LANE - 18, rx: 18, fill: 'rgba(255,248,231,0.14)' }, lane);
-        var startLabel = s('text', { x: PAD + 48, y: height + 12 + (LANE - 18) / 2 + 6, 'text-anchor': 'middle', 'font-size': 18, 'font-weight': 800, fill: '#fff8e7' }, lane);
-        startLabel.textContent = 'Start';
-      }
+      // The lane under the board (opts.lane) is open table: pieces wait
+      // there before their first roll, and nothing is drawn in it.
       piecesLayer = s('g', {}, svg);
       pieceNodes = {};
+      placed = {};
     }
 
     function pieceNode(id, username, seat) {
@@ -303,13 +331,21 @@
     function place(all) {
       // Without the lane, pieces at the start are not drawn.
       var pieces = opts.lane ? all : all.filter(function (p) { return p.pos > 0; });
+      var moving = travel ? travel.id : null;
+      // Pieces sharing a square stand side by side; the one on the move is
+      // not in anybody's way until it stops.
       var at = {};
-      pieces.forEach(function (p) { (at[p.pos] = at[p.pos] || []).push(p); });
+      pieces.forEach(function (p) { if (p.id !== moving) (at[p.pos] = at[p.pos] || []).push(p); });
       var keep = {};
       pieces.forEach(function (p) {
         keep[p.id] = true;
         var node = pieceNodes[p.id];
         if (!node) node = pieceNodes[p.id] = pieceNode(p.id, p.username, p.seat);
+        if (p.id === moving) {
+          node.classList.toggle('piece-now', !!p.now);
+          node.querySelector('.piece-ring').setAttribute('opacity', p.now ? 1 : 0);
+          return;
+        }
         var group = at[p.pos];
         var k = group.indexOf(p);
         var x;
@@ -332,6 +368,7 @@
           }
         }
         node.style.transform = 'translate(' + x + 'px, ' + y + 'px) scale(' + scale + ')';
+        placed[p.id] = { x: x, y: y, scale: scale };
         node.classList.toggle('piece-now', !!p.now);
         node.querySelector('.piece-ring').setAttribute('opacity', p.now ? 1 : 0);
         // The one whose turn it is stands on top.
@@ -341,8 +378,99 @@
         if (!keep[id]) {
           piecesLayer.removeChild(pieceNodes[id]);
           delete pieceNodes[id];
+          delete placed[id];
         }
       });
+    }
+
+    // Show a move (game/rules.js lastMove: { id, from, landed, to }): the
+    // piece hops along each square from where it stands to where it
+    // landed, then climbs the ladder or rides the slide to where it ends,
+    // as one unbroken motion. hooks.square(n) as it reaches each square,
+    // hooks.done() once it stands still (also when finish() cuts it short).
+    // Returns { finish() }.
+    function easeInOut(t) { return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2; }
+    function rideMs(a, b) {
+      return Math.max(RIDE_MIN_MS, Math.min(RIDE_MAX_MS, Math.hypot(b.x - a.x, b.y - a.y) * RIDE_MS_PER_UNIT));
+    }
+    function startTravel(move, hooks) {
+      if (travel) travel.finish();
+      var node = pieceNodes[move.id];
+      var landedAt = Math.min(move.landed, config ? config.squares : move.landed);
+      if (!node || !config || reduceMotion.matches) {
+        hooks.square(move.to);
+        hooks.done();
+        return { finish: function () {} };
+      }
+      var lift = function (c) { return { x: c.x, y: c.y + 8 }; };
+      var here = placed[move.id] || startSpot(0);
+      var legs = [];
+      var from = { x: here.x, y: here.y };
+      for (var n = move.from + 1; n <= landedAt; n++) {
+        var to = lift(centre(n));
+        legs.push({ kind: 'hop', a: from, b: to, ms: HOP_MS, square: n });
+        from = to;
+      }
+      if (move.to !== move.landed) {
+        var end = lift(centre(Math.min(move.to, config.squares)));
+        if (move.to < move.landed) {
+          var curve = slideCurve(landedAt, move.to).map(lift);
+          legs.push({ kind: 'slide', a: from, b: end, curve: curve, ms: rideMs(from, end) * 1.1, square: move.to });
+        } else {
+          legs.push({ kind: 'climb', a: from, b: end, ms: rideMs(from, end), square: move.to });
+        }
+      }
+      var leg = 0;
+      var legStart = null;
+      var frame = null;
+      var self = {
+        id: move.id,
+        finish: function () {
+          if (travel !== self) return;
+          cancelAnimationFrame(frame);
+          travel = null;
+          node.style.transition = '';
+          hooks.square(move.to);
+          hooks.done();
+        },
+      };
+      travel = self;
+      node.style.transition = 'none';
+      piecesLayer.appendChild(node);
+      function at(l, t) {
+        if (l.kind === 'slide') {
+          // Down a slide picks up speed, as anything sliding does.
+          return { p: slideAt(l.curve, t * t * (1.6 - 0.6 * t)), scale: 1 };
+        }
+        var e = easeInOut(t);
+        var p = { x: l.a.x + (l.b.x - l.a.x) * e, y: l.a.y + (l.b.y - l.a.y) * e };
+        // A hop lifts the piece off the board and sets it down again.
+        if (l.kind === 'hop') {
+          var up = Math.sin(Math.PI * t);
+          return { p: { x: p.x, y: p.y - up * 16 }, scale: 1 + up * 0.1 };
+        }
+        return { p: p, scale: 1 };
+      }
+      function step(now) {
+        if (travel !== self) return;
+        if (legStart == null) legStart = now;
+        var l = legs[leg];
+        var t = l ? Math.min(1, (now - legStart) / l.ms) : 1;
+        if (l) {
+          var pos = at(l, t);
+          node.style.transform = 'translate(' + pos.p.x + 'px, ' + pos.p.y + 'px) scale(' + pos.scale + ')';
+          placed[move.id] = { x: pos.p.x, y: pos.p.y, scale: pos.scale };
+        }
+        if (!l || t >= 1) {
+          if (l) hooks.square(l.square);
+          leg += 1;
+          legStart = now;
+          if (leg >= legs.length) { self.finish(); return; }
+        }
+        frame = requestAnimationFrame(step);
+      }
+      frame = requestAnimationFrame(step);
+      return self;
     }
 
     return {
@@ -351,6 +479,7 @@
         if (!config || Math.abs(h - cellH) > 1 || JSON.stringify(config) !== JSON.stringify(next)) drawStatic(next, h);
         place(pieces);
       },
+      travel: startTravel,
     };
   }
 
@@ -392,35 +521,44 @@
     el.die.setAttribute('aria-label', n ? 'The die shows ' + n : 'The die');
   }
 
-  // A new roll: the die tumbles, then the piece steps to where it landed and
-  // takes any shortcut or slide.
+  // A new roll: the die tumbles, then the piece glides to where it landed
+  // and up its ladder or down its slide (makeBoard's travel). A roll that
+  // comes in while one is still being shown finishes that one at once.
   function showMove(move) {
-    clearInterval(stepping);
+    clearInterval(tumbling);
+    if (travelling) travelling.finish();
+    // Only this move is being shown: every other piece stands where it is.
+    shown = {};
+    shown[move.id] = move.from;
     rolling = true;
     el.die.classList.add('die-rolling');
     var ticks = 0;
-    stepping = setInterval(function () {
+    tumbling = setInterval(function () {
       ticks += 1;
       if (ticks < 5) {
         setDie(1 + Math.floor(Math.random() * 6));
         return;
       }
+      clearInterval(tumbling);
+      tumbling = null;
       el.die.classList.remove('die-rolling');
       setDie(move.die);
-      var pos = shown[move.id] != null ? shown[move.id] : move.from;
-      if (pos < move.landed) shown[move.id] = pos + 1;
-      else if (pos !== move.to) shown[move.id] = move.to;
-      else {
-        clearInterval(stepping);
-        stepping = null;
-        rolling = false;
-        delete shown[move.id];
-        drawOver();
-      }
-      drawBoards();
-      drawTray();
-      drawTurnOrder();
-    }, STEP_MS);
+      var self = travelling = stageBoard.travel(move, {
+        square: function (n) {
+          shown[move.id] = n;
+          drawTurnOrder();
+        },
+        done: function () {
+          if (travelling === self) travelling = null;
+          rolling = false;
+          delete shown[move.id];
+          drawBoards();
+          drawTray();
+          drawTurnOrder();
+          drawOver();
+        },
+      });
+    }, TUMBLE_MS);
   }
 
   function drawTray() {
@@ -581,10 +719,7 @@
     if (g && g.lastMove && g.lastMove.rollNo > animatedRoll) {
       var first = !before || !before.game || before.gameNo !== view.gameNo;
       animatedRoll = g.lastMove.rollNo;
-      if (!first && screen === 'stage') {
-        shown[g.lastMove.id] = g.lastMove.from;
-        showMove(g.lastMove);
-      }
+      if (!first && screen === 'stage') showMove(g.lastMove);
     }
     if (!g) { animatedRoll = 0; shown = {}; }
     chooseScreen();
@@ -634,4 +769,13 @@
       el.roll.click();
     }
   });
+
+  // A long press opens no browser menu and a drag lifts no picture, so
+  // playing never turns into copying (scene.css keeps text from being
+  // selected). The fields people type in keep their own.
+  function inField(target) {
+    return !!(target && target.closest && target.closest('input, textarea, [contenteditable]'));
+  }
+  document.addEventListener('contextmenu', function (e) { if (!inField(e.target)) e.preventDefault(); });
+  document.addEventListener('dragstart', function (e) { if (!inField(e.target)) e.preventDefault(); });
 })();

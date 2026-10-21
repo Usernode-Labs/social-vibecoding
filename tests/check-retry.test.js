@@ -205,6 +205,7 @@ test('the unit suite\'s failure excerpts reach the verdict row and are drawn und
   assert.equal(v.failures[0].details.length, 1);
   assert.equal(v.failures[0].details[0].excerpt, 'error: boom');
   const tsx = read('frontend/src/features/dev-board/topic/topic-head.tsx');
-  assert.match(tsx, /r\.details\.map\(/);
+  assert.match(tsx, /<TestOutput details=\{r\.details\} \/>/);
+  assert.match(tsx, /\{details\.map\(\(d, i\) => \(/);
   assert.match(tsx, /<pre className="dev-ledger-why-excerpt/);
 });

@@ -43,6 +43,7 @@
 
 const crypto = require('crypto');
 const log = require('../logger');
+const arms = require('./arms');
 const catalog = require('./catalog');
 const runner = require('./runner');
 const dmSim = require('./dm-sim');
@@ -93,15 +94,17 @@ function httpError(status, error) {
 // ── Launching ────────────────────────────────────────────────────────────
 
 function validateLaunch(body) {
-  const bot = require('../homeroom-bot');
   const suites = require('./suites');
   const suiteId = Number(body.suiteId);
   if (!Number.isInteger(suiteId) || suiteId <= 0) return httpError(400, 'Pick a suite');
-  const models = [...new Set((Array.isArray(body.models) ? body.models : []).map((m) => String(m || '').trim()).filter(Boolean))];
+  // Each an arm: a model, or a model at an effort of its own
+  // (`vendor/model@max`, services/bench/arms.js), as written once.
+  const models = [...new Set((Array.isArray(body.models) ? body.models : [])
+    .map((m) => arms.parseArm(m).arm).filter(Boolean))];
   if (!models.length) return httpError(400, 'Pick at least one model');
   if (models.length > MAX_MODELS) return httpError(400, `At most ${MAX_MODELS} models in one run`);
-  const bad = models.find((m) => !bot.MODEL_ID_RE.test(m));
-  if (bad) return httpError(400, `${bad} is not an OpenRouter model id`);
+  const bad = models.find((m) => !arms.validArm(m));
+  if (bad) return httpError(400, `${bad} is not an OpenRouter model id, or one at an effort (vendor/model@${arms.EFFORTS.join(', @')})`);
   const stages = [...new Set(Array.isArray(body.stages) ? body.stages : [])];
   if (!stages.length || stages.some((s) => !suites.TASK_STAGES.includes(s))) {
     return httpError(400, `stages must be some of ${suites.TASK_STAGES.join(', ')}`);
@@ -125,7 +128,10 @@ function validateLaunch(body) {
     }
     repeatStages = [...new Set(body.repeatStages)].filter((s) => !SINGLE_ATTEMPT_STAGES.includes(s));
   }
-  const baseline = models.includes(catalog.BASELINE) ? catalog.BASELINE : models[0];
+  // The catalog's baseline when it is in the run; else its first arm at the
+  // bot's own effort, so an effort is read against its model's default.
+  const baseline = models.includes(catalog.BASELINE) ? catalog.BASELINE
+    : models.find((m) => !arms.parseArm(m).effort) || models[0];
   return {
     ok: true, suiteId, models, stages, repeats, capUsd: Math.round(capUsd * 100) / 100, concurrency, baseline, repeatStages,
     note: body.note ? String(body.note).slice(0, 500) : null,
@@ -735,7 +741,10 @@ async function executeTrial(pool, config, trialRow, deps = {}) {
     const app = { id: row.app_id, slug: row.app_slug, name: row.app_name, repo_url: row.repo_url, self_hosted: row.self_hosted };
     const task = { id: row.task_id, stage: row.stage, reference: row.reference || {}, tags: row.tags || {} };
     const studio = await studioContext(pool, config, row, settings);
-    const model = studio.stageModels ? studio.stageModels.build : row.model;
+    // A core run's arm may name an effort (`vendor/model@max`): the trial
+    // runs its model, every turn at that effort (runner.turnEffort).
+    const arm = arms.parseArm(row.model);
+    const model = studio.stageModels ? studio.stageModels.build : arm.model;
     // The skills it reached for and the looks it took, kept as they change,
     // and carried on with the trial after a restart.
     const seen = steps.get('watch') || null;
@@ -768,6 +777,7 @@ async function executeTrial(pool, config, trialRow, deps = {}) {
       deps: d, budgets: runner.budgetsFor(settings, app, config, row.stage, studio.clocks || null),
       title: `Homeroom benchmark: run ${row.run_id}, trial ${row.id}`,
       ...studio,
+      ...(arm.effort && !studio.stageModels ? { effort: arm.effort } : {}),
       onStep: (name) => watch.step(name),
       onActivity: (line) => watch.note(line),
       // Its run cancelled: nothing after this starts (a trial cancelled on

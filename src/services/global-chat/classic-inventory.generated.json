@@ -10919,6 +10919,21 @@
     {
       "source": "src/routes/sessions.js",
       "method": "GET",
+      "path": "/api/sessions/:id/checks-explanation",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "development.get.sessions.item.checks.explanation.d46201c0",
+      "domain": "development",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "session",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#workshop"
+    },
+    {
+      "source": "src/routes/sessions.js",
+      "method": "GET",
       "path": "/api/sessions/:id",
       "expression": null,
       "status": "mapped",

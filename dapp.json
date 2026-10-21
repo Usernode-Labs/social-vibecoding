@@ -3791,9 +3791,15 @@
       "expectText": "Why it failed"
     },
     {
-      "name": "A failing unit-suite row lists each failing test with its error excerpt under Why it failed (#3978)",
+      "name": "A failing unit-suite row says which test failed and what it failed with, then its error excerpt once, under Show the test output (#3978)",
       "path": "/?demo=1&details=1#app/usernode-2d5619/dev/proposals/9000093",
-      "expectSelector": ".dev-step-blocked[data-note=\"checks\"] .dev-step-run .dev-ledger-fails > .dev-ledger-check-why > .dev-ledger-why > .dev-ledger-why-body > .dev-ledger-why-details > li .dev-ledger-why-excerpt"
+      "expectSelector": ".dev-step-blocked[data-note=\"checks\"] .dev-step-run .dev-ledger-fails > [data-check-unit]:has(.dev-ledger-unit-said) > .dev-ledger-why > .dev-ledger-why-body > .dev-ledger-why-details > li .dev-ledger-why-excerpt"
+    },
+    {
+      "name": "A change whose checks failed tells its author what went wrong in plain words, with Fix it beside a quieter Re-run checks",
+      "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000494",
+      "expectSelector": "[data-change-gate=\"testing\"][data-tone=\"bad\"]:has(.dev-change-gate-fix > .gc-vote-btn-accent[data-change-fix-checks] + .gc-vote-btn:not(.gc-vote-btn-accent)[data-act=\"castRecheck\"]) > .dev-change-gate-why[data-change-gate-why=\"explained\"]",
+      "expectText": "needs a Spanish version"
     },
     {
       "name": "Freshness (#1442): a conflicting proposal says so on its merge step, with its votes still open above it",

@@ -315,6 +315,7 @@
     var input = h('input', 'field min-w-0 flex-1');
     input.id = id;
     input.type = 'text';
+    input.enterKeyHint = 'done';
     input.maxLength = 80;
     input.placeholder = OPTION_EXAMPLE;
     input.value = drafts[poll.id] || '';
@@ -579,8 +580,21 @@
     paintForm();
   }
 
+  // Pull down to fetch the polls again, as a native list does. The native
+  // kit (/usernode-native/v1/native.js) draws the spinner and bounces the
+  // list in place, so a drag past the top no longer carries Homeroom's
+  // header with it. Only the list pulls: starting a poll is a form. Not on
+  // a computer, where the kit leaves the page alone.
+  var pull = null;
+  function pullToRefresh(on) {
+    if (!window.unNative) return;
+    if (on && !pull) pull = window.unNative.attachPullToRefresh(window, load, { content: el.main });
+    if (!on && pull) { pull.detach(); pull = null; }
+  }
+
   function openNew() {
     paintForm();
+    pullToRefresh(false);
     el.main.hidden = true;
     el.newView.hidden = false;
     window.scrollTo(0, 0);
@@ -590,6 +604,7 @@
   function closeNew() {
     el.newView.hidden = true;
     el.main.hidden = false;
+    pullToRefresh(true);
     el.start.focus();
   }
 
@@ -674,4 +689,5 @@
   // few seconds regardless.
   var first = load();
   if (window.usernode && window.usernode.ready) window.usernode.ready(first);
+  first.then(function () { pullToRefresh(el.newView.hidden); });
 })();

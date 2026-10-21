@@ -123,7 +123,7 @@ test('the sheet lists the held rows, counts the unread ones, and dims what was r
     'the × lets the row go before clearing it');
 });
 
-test('the boot read asks the service worker for the network\'s answer', async () => {
+test('every read of the feed asks the service worker for the network\'s answer', async () => {
   const src = read('frontend/src/features/notifications/notifications.js');
   assert.match(src, /if \(window\.App && App\.user\) Notifications\.refresh\(\{ fresh: true \}\);/);
   assert.match(src, /\(\) => Notifications\.refresh\(\{ fresh: true \}\), \{ once: true \}\);/);
@@ -155,10 +155,13 @@ test('the boot read asks the service worker for the network\'s answer', async ()
   vm.runInContext(src.replace(/^import \{ agoStamp \}.*$/m, ''), sandbox);
   await sandbox.Notifications.refresh({ fresh: true });
   await sandbox.Notifications.refresh();
+  // 21 Oct 2026: the read on open (and on a reconnect, and after a clear) too.
+  // On the ordinary deadline a reconnect drew the bell from the worker's
+  // copy, and nothing corrected it for 36 minutes.
   assert.deepEqual(calls, [
     ['/api/notifications?limit=100', { cache: 'no-cache' }],
-    ['/api/notifications?limit=100', undefined],
-  ], 'only the boot read; the read on open keeps the ordinary deadline');
+    ['/api/notifications?limit=100', { cache: 'no-cache' }],
+  ], 'every read of the feed waits for the network');
 });
 
 // ── 2. N6: the row ─────────────────────────────────────────────────────
