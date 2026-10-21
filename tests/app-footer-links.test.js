@@ -109,6 +109,8 @@ test('inside the platform the app menu carries Privacy beside Report app', () =>
   assert.ok(foot.length > 0, 'Privacy comes first in the foot, then Report app');
   assert.match(foot, /id="app-menu-privacy"\s+href=\{privacyHref\}\s+target="_blank"\s+rel="noopener noreferrer"/);
   assert.match(foot, /\{t\('agent:appContext\.privacy'\)\}/);
+  assert.match(sheet, /id="app-menu-legal" className="[^"]*\bjustify-center\b/,
+    'the foot is centred under the rows above it (#5788)');
   assert.match(sheet, /if \(!open \|\| privacyHref\) return undefined;/,
     'the notice’s address is asked for when the sheet opens, not at boot');
   assert.equal(message('agent:appContext.privacy'), 'Privacy');

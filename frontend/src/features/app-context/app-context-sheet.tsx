@@ -935,7 +935,7 @@ export function AppsSwitcherSheet(): ReactNode {
               its own address. Privacy is Homeroom's notice, in a new tab.
           */}
           {(slug && canReport) || privacyHref ? (
-            <div id="app-menu-legal" className="flex flex-wrap items-center gap-x-2 px-5 pt-3 pb-1 text-xs text-zinc-500 dark:text-zinc-400">
+            <div id="app-menu-legal" className="flex flex-wrap items-center justify-center gap-x-2 px-5 pt-3 pb-1 text-xs text-zinc-500 dark:text-zinc-400">
               {privacyHref ? (
                 <a
                   id="app-menu-privacy"
