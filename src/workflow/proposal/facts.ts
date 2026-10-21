@@ -28,7 +28,7 @@ import type { GovernedGate } from '../rules/governance-gate.ts';
 import { appMetaFromRow, governanceFromRow } from '../rules/governance-gate.ts';
 import { electorate, getApproverSet } from '../rules/electorate.ts';
 import { parseGithubUrl } from '../rules/github-url.ts';
-import { botLookingSql, buildHoldSql, operationsLiveSql, shotsRunningSql, syncWorkingSql } from '../session-work.ts';
+import { NOT_MOVING_KINDS, botLookingSql, buildHoldSql, operationsLiveSql, shotsRunningSql, syncWorkingSql } from '../session-work.ts';
 
 export interface Row {
   id: number;
@@ -165,7 +165,7 @@ async function readRow(tx: Tx, sessionId: number, ownOperation: string | null): 
             -- A sync and the Homeroom bot's look are their machines' own work
             -- (session-work.ts), counted as the operations they once recorded.
             (${operationsLiveSql('cs.id', '$2::text')} OR ${syncWorkingSql('cs.id')} OR ${botLookingSql('cs.id')}) AS operations,
-            (${operationsLiveSql('cs.id', '$2::text', ['turn', 'handoff-pipeline'])} OR ${syncWorkingSql('cs.id')}) AS moving_operations,
+            (${operationsLiveSql('cs.id', '$2::text', NOT_MOVING_KINDS)} OR ${syncWorkingSql('cs.id')}) AS moving_operations,
             ${shotsRunningSql('cs.id')} AS shots_running,
             ${buildHoldSql('cs')} AS build_hold,
             EXISTS (SELECT 1 FROM pending_secret_declarations p

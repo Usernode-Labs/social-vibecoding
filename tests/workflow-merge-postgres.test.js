@@ -21,6 +21,8 @@ const { proposal, sessionKey, MACHINE, WORK, CLAIM_STALE_MS } = require('../src/
 const { inspect } = require('../src/workflow/kernel/index.ts');
 const { attentionStates } = require('../src/workflow/platform.ts');
 const { mergeQueue, MACHINE: QUEUE, appKey } = require('../src/workflow/merge-queue/machine.ts');
+const { preview } = require('../src/workflow/preview/machine.ts');
+const { PROCESS_PRESENCE_LOCK } = require('../src/workflow/rules/presence.ts');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
 const SHA = (c) => c.repeat(40).slice(0, 40);
@@ -898,6 +900,78 @@ test('the merge against the full PostgreSQL schema', { timeout: 240000 }, async 
       await fire(QUEUE, appKey(s.app.id));
       assert.equal(calls(WORK.attempt).length, asked + 1, 'the sweep, which names nobody, asks again');
     }
+  });
+
+  // Production, 16 to 21 Oct 2026: 17 of the 22 merges that took over two
+  // minutes were an ask declined as busy (most a verdict's, while a
+  // hand-off's check run still held its operation), then nothing until the
+  // queue's sweep four minutes on.
+  await t.test('M28 an ask declined as busy is asked again when the operation that kept the proposal moving ends, with no sweep', async () => {
+    defaults();
+    const s = await proposalRow();
+    await vote(s, await user(), 'yes');
+    // The preview machine records the operation and its end, on a runtime of
+    // its own (this suite's runs the proposal and the queue).
+    const vm = preview({ maxRetries: 6, retireAfterMs: 0 });
+    const prt = createRuntime({ pool, machines: [vm], pollMs: 50, publish: async () => {}, services: {} });
+    runtimes.push(prt);
+    const toPreview = (type, payload) => prt.append(vm, sessionKey(s.id), { type, payload },
+      { requestKey: `p-${++rk}`, source: system, appId: s.app_id });
+    const live = await pool.connect();
+    await live.query('SELECT pg_advisory_lock($1, hashtext($2) & 2147483647)', [PROCESS_PRESENCE_LOCK, 'm28-host']);
+    try {
+      await toPreview('OperationStarted', { sessionId: s.id, id: 'op:m28', kind: 'operation', holder: 'm28-host' });
+      await prt.drain();
+      // Its verdict asks while the check run still holds the operation.
+      await want(s.app, { sessionId: s.id, reason: 'checks' });
+      await settle();
+      const ended = async () => (await sentTo(QUEUE, appKey(s.app.id))).filter((e) => e.type === 'AttemptEnded')
+        .map((e) => [e.payload.outcome, e.payload.reason ?? null]);
+      assert.deepEqual(await ended(), [['declined', 'busy']]);
+      assert.equal(calls(WORK.gate).length, 0, 'not measured while it moves');
+      const q = await qInst(s.app);
+      assert.equal(q.state, 'idle');
+      assert.ok(q.deadline_at, 'only the sweep would look at it again');
+      // The operation ends: its end asks, and the merge follows; no timer fires.
+      await toPreview('OperationEnded', { id: 'op:m28' });
+      await prt.drain();
+      await settle();
+      assert.deepEqual((await sentTo(QUEUE, appKey(s.app.id))).filter((e) => e.type === 'MergeWanted').map((e) => e.payload.reason),
+        ['operation-ended']);
+      assert.equal(calls(WORK.attempt).length, 1, 'merged');
+      assert.deepEqual(await ended(), [['declined', 'busy'], ['merged', null]]);
+    } finally {
+      live.release(true);
+    }
+  });
+
+  await t.test('M29 an ask that names a proposal this pass declined tries it again, though a resolution holds the pass', async () => {
+    defaults();
+    const owner = await user();
+    const a = await app(owner);
+    const busy = await proposalRow({ appRow: a, owner });
+    const conflicting = await proposalRow({ appRow: a, owner, clean: false });
+    for (const s of [busy, conflicting]) await vote(s, await user(), 'yes');
+    await pool.query(`UPDATE chat_sessions SET active_turn = '{"id":"m29","phase":"executing"}'::jsonb WHERE id = $1`, [busy.id]);
+    let release;
+    work.hold.set(WORK.sync, new Promise((r) => { release = r; }));
+    await want(a);
+    await rt.drain();
+    const running = rt.runServices();
+    await new Promise((r) => setTimeout(r, 100));
+    await rt.drain();
+    assert.equal(calls(WORK.sync).length, 1, 'the conflicting one is being resolved');
+    assert.equal(calls(WORK.gate).length, 0, 'the busy one was declined');
+    // Its turn ends and its end asks: tried now, not after the resolution.
+    await pool.query('UPDATE chat_sessions SET active_turn = NULL WHERE id = $1', [busy.id]);
+    await want(a, { sessionId: busy.id });
+    for (let i = 0; i < 4; i++) { await rt.drain(); await rt.runServices(); }
+    await rt.drain();
+    assert.equal(calls(WORK.attempt).length, 1, 'merged while the resolution still runs');
+    assert.equal((await row(busy)).status, 'merging');
+    release();
+    await running;
+    await settle();
   });
 
   void DAY;
