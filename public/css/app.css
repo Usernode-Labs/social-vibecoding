@@ -17094,8 +17094,11 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .dev-change-pair { margin-top: 12px; display: grid; gap: 8px; }
 /* #5725: the Votes card repeated at the foot of a change's thread, after the
    last reply and above the Reply box. It sits in the transcript's column,
-   with a message's own side padding. */
+   with a message's own side padding. It is drawn from the first paint and
+   hidden while the card at the top is on screen, so a short page shows one
+   card and not two. */
 .dev-change-gate-repeat { padding: 8px 16px 12px; }
+.dev-change-gate-repeat[hidden] { display: none; }
 .dev-change-gate {
   min-width: 0;
   display: grid;

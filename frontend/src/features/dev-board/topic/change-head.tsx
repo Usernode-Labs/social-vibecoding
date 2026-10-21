@@ -239,29 +239,56 @@ export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSave
     return () => { off(); release?.(); };
   }, [id]);
   // #5725: the Votes card repeated after the last reply, so a long page does
-  // not send people back up to find where the vote stands. It shows only
-  // while the card at the top is out of the scroller; a page short enough to
-  // show both would otherwise show it twice. Without IntersectionObserver
-  // the state stays true and the page looks as it did.
+  // not send people back up to find where the vote stands. It is drawn once,
+  // in the thread's foot host, and HIDDEN while the card at the top is on
+  // screen, so a page short enough to show both still shows one. Present
+  // from the first paint (hidden), so a reader who scrolled before this
+  // mounted still gets it.
+  //
+  // What counts as "on screen" is measured against the reader's own box: the
+  // card's nearest scrolling ancestor (`#gc-thread-scroll` when the page is a
+  // thread) and the window, whichever is tighter. It is NOT an
+  // IntersectionObserver rooted at a document-wide `#gc-thread-scroll`
+  // lookup: another pane's hidden scroller can win that lookup (#4640), and
+  // an element that is not the box clamping the card never reports it as
+  // gone, which left the repeat unshown on a long page.
   const foot = host('gc-thread-foot');
   const [topInView, setTopInView] = useState(true);
   useEffect(() => {
-    setTopInView(true);
     const card = pair.current?.querySelector<HTMLElement>('[data-change-gate="votes"]');
-    if (!card || typeof IntersectionObserver !== 'function') return;
-    const io = new IntersectionObserver((entries) => {
-      const entry = entries[entries.length - 1];
-      if (entry) setTopInView(entry.isIntersecting);
-    }, { root: document.getElementById('gc-thread-scroll'), threshold: 0 });
-    io.observe(card);
-    return () => { io.disconnect(); };
+    if (!card) { setTopInView(true); return; }
+    const scroller = card.closest<HTMLElement>('#gc-thread-scroll');
+    const view = () => {
+      const box = card.getBoundingClientRect();
+      const clip = scroller ? scroller.getBoundingClientRect() : { top: 0, bottom: 0 };
+      const top = Math.max(clip.top, 0);
+      const bottom = Math.min(scroller ? clip.bottom : Infinity, window.innerHeight || 0);
+      return box.height > 0 && box.bottom > top && box.top < bottom;
+    };
+    let frame = 0;
+    const measure = () => { frame = 0; if (card.isConnected) setTopInView(view()); };
+    const schedule = () => { if (!frame) frame = window.requestAnimationFrame(measure); };
+    measure();
+    const target: HTMLElement | Window = scroller || window;
+    target.addEventListener('scroll', schedule, { passive: true });
+    if (scroller) window.addEventListener('scroll', schedule, { passive: true });
+    window.addEventListener('resize', schedule);
+    const ro = typeof ResizeObserver === 'function' ? new ResizeObserver(schedule) : null;
+    if (ro) { ro.observe(card); if (scroller) ro.observe(scroller); }
+    return () => {
+      if (frame) window.cancelAnimationFrame(frame);
+      target.removeEventListener('scroll', schedule);
+      if (scroller) window.removeEventListener('scroll', schedule);
+      window.removeEventListener('resize', schedule);
+      ro?.disconnect();
+    };
   }, [id]);
   return (
     <>
       {back ? createPortal(<TopicBack />, back) : null}
       {bar ? createPortal(<ChangeBar v={v} menuKey={card.rail?.menuKey || ''} detailsId={id && body.changeId ? id : null} />, bar) : null}
-      {foot && !topInView ? createPortal(
-        <div className="dev-change-gate-repeat">
+      {foot ? createPortal(
+        <div className="dev-change-gate-repeat" hidden={topInView}>
           <GateCard which="votes" g={v.votes} action={voteAction} id={id} repeat />
         </div>,
         foot,
