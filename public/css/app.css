@@ -25068,6 +25068,8 @@ html.in-side-panel body {
 .rf-end-line { margin: 14px 0 20px; font-size: 15px; line-height: 21px; color: var(--rf-muted); }
 .rf-end-btn { align-self: stretch; height: 48px; border: 0; border-radius: 999px; background: var(--rf-fill); color: var(--rf-ink); font: inherit; font-size: 15px; font-weight: 600; cursor: pointer; }
 .rf-capped { margin: -12px 0 0; font-size: 12px; color: var(--rf-muted); text-align: center; }
+/* Everything had your vote: the end alone, centred where the list was. */
+.rf-end-alone { min-height: 56vh; justify-content: center; padding: 0 24px 48px; }
 
 /* The change page: fixed above the tab bar, which stays. From 768px it
    starts after the sidebar (--platform-rail-w, 0 on a phone and while the
@@ -25088,7 +25090,7 @@ html.in-side-panel body {
 .rf-stage-arriving { position: relative; z-index: 1; }
 .rf-page-body { padding-bottom: 16px; }
 /* The shot and its thumbnails read as one object, set apart from the page. */
-.rf-preview { margin: 12px 12px 0; border-radius: 16px; overflow: hidden; background: var(--rf-sheet); box-shadow: 0 0 0 1px var(--rf-line); }
+.rf-preview { margin: 12px 12px 0; border-radius: 24px; overflow: hidden; background: var(--rf-sheet); box-shadow: 0 0 0 1px var(--rf-line); }
 .rf-claim { margin: 0; padding: 20px 16px 0 20px; font-size: 17px; font-weight: 600; line-height: 23px; text-wrap: pretty; }
 .rf-thumbs { display: flex; gap: 8px; padding: 10px 14px 4px; overflow-x: auto; scrollbar-width: none; }
 .rf-thumbs::-webkit-scrollbar { display: none; }
@@ -25101,7 +25103,7 @@ html.in-side-panel body {
 .rf-scrim { position: absolute; inset: 0; z-index: 5; background: rgba(0,0,0,.62); opacity: 0; pointer-events: none; transition: opacity .22s cubic-bezier(0.22,1,0.36,1); }
 .rf-scrim-on { opacity: 1; pointer-events: auto; }
 
-/* The slider. The pill sits at the foot of the picture, where a thumb
+/* The slider. The switch sits at the foot of the picture, where a thumb
    pressing it covers the least of the shot. */
 .rf-compare { position: relative; overflow: hidden; touch-action: pan-y; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; outline: none; }
 .rf-compare:focus-visible { box-shadow: inset 0 0 0 2px var(--accent); }
@@ -25111,37 +25113,82 @@ html.in-side-panel body {
 .rf-shot-whole { width: 100%; height: auto; }
 .rf-seam { position: absolute; top: 0; bottom: 0; left: 0; width: 2px; margin-left: -1px; background: var(--rf-black); z-index: 3; pointer-events: none; transition: opacity .18s cubic-bezier(0.22,1,0.36,1), width .15s ease-out; }
 .rf-dragging .rf-seam { width: 1px; opacity: .5 !important; }
-.rf-tab { position: absolute; left: 0; top: 0; width: 30px; height: 60px; z-index: 4; display: grid; place-items: center; border-radius: 0 14px 14px 0; background: var(--rf-black); color: var(--rf-cream); pointer-events: none; transition: opacity .18s cubic-bezier(0.22,1,0.36,1); }
-.rf-tab-right { border-radius: 14px 0 0 14px; }
-.rf-tab-mid { border-radius: 14px; }
-.rf-dragging .rf-tab { opacity: 0 !important; transition: opacity .12s cubic-bezier(0.22,1,0.36,1); }
-.rf-pill { position: absolute; left: 50%; bottom: 12px; z-index: 5; width: 104px; height: 36px; margin-left: -52px; padding: 0; border: 0; border-radius: 999px; overflow: hidden; background: var(--rf-cream); color: var(--rf-black); box-shadow: inset 0 0 0 1px var(--rf-black); font: 560 14px/36px var(--font-sans, ui-sans-serif, system-ui, sans-serif); cursor: pointer; touch-action: manipulation; -webkit-touch-callout: none; transition: opacity .3s cubic-bezier(0.22,1,0.36,1), scale .12s; }
-.rf-pill::before { content: ''; position: absolute; left: 50%; top: 50%; width: 120px; height: 44px; transform: translate(-50%, -50%); }
-.rf-pill:active { scale: .96; }
-.rf-pill-word { position: relative; display: block; text-align: center; }
-.rf-pill-dark { position: absolute; inset: 0; background: var(--rf-black); color: var(--rf-cream); clip-path: inset(0 calc(100% - var(--rf-g, 0%)) 0 0); }
-.rf-pill[data-view="before"] { background: var(--rf-black); color: var(--rf-cream); }
+/* Each side's caption is printed on its own picture, under a short shade
+   that keeps it legible on any shot, and the seam wipes it with the picture. */
+.rf-cap { position: absolute; left: 0; right: 0; top: 0; height: 70px; background: linear-gradient(rgba(12,12,14,.5), rgba(12,12,14,0)); pointer-events: none; transition: opacity .3s cubic-bezier(0.22,1,0.36,1); }
+.rf-cap-line { position: absolute; top: 18px; display: flex; align-items: center; gap: 6px; font: 600 11px/1 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .14em; text-transform: uppercase; color: var(--rf-cream); white-space: nowrap; }
+.rf-cap-after .rf-cap-line { right: 20px; }
+.rf-cap-before .rf-cap-line { left: 20px; }
+.rf-cap-dim { opacity: .62; }
+/* The switch: Before on its left, After on its right, its knob on the side
+   most of the window shows, carrying that side's mark. Flat and inked, like
+   the captions it names. */
+.rf-switch { position: absolute; left: 50%; bottom: 12px; z-index: 5; width: 72px; height: 40px; margin-left: -36px; padding: 0; box-sizing: border-box; border: 1.5px solid var(--rf-black); border-radius: 999px; background: var(--rf-cream); color: var(--rf-black); cursor: pointer; touch-action: manipulation; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; transition: opacity .3s cubic-bezier(0.22,1,0.36,1), background .2s, color .2s; }
+.rf-switch::before { content: ''; position: absolute; left: 50%; top: 50%; width: 88px; height: 48px; transform: translate(-50%, -50%); }
+.rf-switch:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.rf-switch[data-view="before"] { background: var(--rf-black); color: var(--rf-cream); }
+.rf-switch-mark { position: absolute; top: 11.5px; display: flex; opacity: .45; }
+.rf-switch-mark-before { left: 11.5px; }
+.rf-switch-mark-after { left: 43.5px; }
+.rf-knob { position: absolute; top: 2.5px; left: 34.5px; width: 32px; height: 32px; border-radius: 16px; background: var(--rf-black); color: var(--rf-cream); transition: left .35s cubic-bezier(.34,1.3,.64,1), width .18s cubic-bezier(0.22,1,0.36,1), background .2s, color .2s; }
+.rf-switch[data-view="before"] .rf-knob { left: 2.5px; background: var(--rf-cream); color: var(--rf-black); }
+.rf-switch-pressed .rf-knob { left: 24.5px; width: 42px; }
+.rf-switch-pressed[data-view="before"] .rf-knob { left: 2.5px; }
+.rf-knob-icon { position: absolute; inset: 0; display: grid; place-items: center; transition: opacity .25s, transform .4s cubic-bezier(.34,1.56,.64,1); }
+.rf-knob-before { opacity: 0; transform: rotate(-120deg) scale(.6); }
+.rf-switch[data-view="before"] .rf-knob-before { opacity: 1; transform: none; }
+.rf-switch[data-view="before"] .rf-knob-after { opacity: 0; transform: rotate(120deg) scale(.6); }
 
-/* Held still, the shot opens a round magnifier: the pill's cream and
+/* Held still, the shot opens a round magnifier: the switch's cream and
    near-black ring, the plates' own soft shadow. */
 .rf-lens { position: absolute; left: 0; top: 0; z-index: 6; width: 132px; height: 132px; border-radius: 999px; overflow: hidden; pointer-events: none; box-shadow: 0 0 0 2px var(--rf-cream), 0 0 0 3px var(--rf-black), 0 8px 24px rgba(0,0,0,.18); animation: rf-lens-in .12s cubic-bezier(0.22,1,0.36,1); }
 @keyframes rf-lens-in { from { opacity: 0; scale: .85; } }
 
-/* The vote sheet, pinned at the page's foot. */
-.rf-sheet { position: relative; z-index: 6; flex: none; overflow: hidden; border-radius: 20px 20px 0 0; background: var(--rf-sheet); box-shadow: 0 -8px 32px rgba(0,0,0,.18), inset 0 1px 0 rgba(255,255,255,.06); transition: height .26s cubic-bezier(0.22,1,0.36,1); }
+/* The vote at the page's foot: part of the page at rest, a sheet over it
+   while its help or the header's menu is open. */
+.rf-sheet { position: relative; z-index: 6; flex: none; overflow: hidden; border-radius: 20px 20px 0 0; background: var(--rf-sheet); box-shadow: 0 -8px 32px rgba(0,0,0,.18), inset 0 1px 0 rgba(255,255,255,.06); transition: height .26s cubic-bezier(0.22,1,0.36,1), background .22s, box-shadow .22s; }
+.rf-sheet-rest { background: var(--rf-page); box-shadow: none; }
+.rf-sheet-rest .rf-sheet-inner { padding-top: 4px; padding-bottom: 12px; }
 .rf-sheet-inner { display: flex; flex-direction: column; max-height: inherit; padding: 0 16px 10px; }
 .rf-sheet button, .rf-sheet input, .rf-sheet textarea { font-family: inherit; }
 .rf-grab { flex: none; display: block; width: 100%; height: 27px; margin: 0; padding: 0; border: 0; background: none; cursor: pointer; }
 .rf-grab span { display: block; width: 36px; height: 5px; margin: 8px auto 14px; border-radius: 999px; background: var(--rf-line); }
-.rf-yn { flex: none; display: flex; gap: 10px; }
-.rf-pill-btn { flex: 1; height: 52px; border: 0; border-radius: 999px; background: var(--rf-fill); color: var(--rf-ink); display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 17px; font-weight: 600; cursor: pointer; }
-.rf-pill-btn:active { scale: .98; }
-.rf-pill-btn:disabled { opacity: .6; }
-.rf-pill-no { background: rgba(239,68,68,.16); color: #dc2626; }
-.dark .rf-pill-no { background: rgba(239,68,68,.18); color: #f87171; }
-.rf-pill-primary { background: var(--accent); color: #fff; }
-.dark .rf-pill-primary { background: #0a6ee0; }
-.rf-quiet { flex: none; width: 100%; min-height: 44px; margin-top: 4px; border: 0; background: none; display: flex; align-items: center; justify-content: center; gap: 6px; color: var(--rf-muted); font-size: 15px; font-weight: 500; cursor: pointer; }
+/* The row never moves: the room above it is kept for a No's reason, the
+   pair shows your choice in place, and the round ⋯ grows into Next change. */
+.rf-vote { flex: none; display: flex; flex-direction: column; }
+.rf-why { flex: none; height: 44px; margin-bottom: 8px; display: flex; align-items: center; justify-content: center; transition: opacity .25s, transform .3s cubic-bezier(0.22,1,0.36,1); }
+.rf-why-off { opacity: 0; transform: translateY(6px); pointer-events: none; }
+.rf-why-add { min-height: 44px; padding: 0 6px; border: 0; background: none; color: var(--rf-muted); font-size: 15px; font-weight: 500; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+.rf-why-said { max-width: 100%; font-size: 15px; line-height: 20px; color: var(--rf-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rf-why-form { display: flex; align-items: center; gap: 6px; width: 100%; height: 44px; box-sizing: border-box; margin: 0; padding: 0 4px 0 16px; border-radius: 999px; background: var(--rf-fill); }
+.rf-why-form:focus-within { box-shadow: 0 0 0 2px var(--lit-ink); }
+.rf-why-form input { flex: 1; min-width: 0; height: 100%; padding: 0; border: 0; background: transparent; color: var(--rf-ink); font-size: 16px; outline: 0; }
+.rf-why-form input::placeholder { color: var(--rf-muted); }
+.rf-share { flex: none; height: 36px; padding: 0 14px; border: 0; border-radius: 999px; background: #0a6ee0; color: #fff; font-size: 15px; font-weight: 600; cursor: pointer; }
+.rf-share:disabled { opacity: .6; }
+.rf-vrow { flex: none; display: flex; gap: 12px; }
+.rf-pair { position: relative; flex: 1; min-width: 0; display: flex; padding: 4px; border-radius: 999px; background: var(--rf-fill); }
+.rf-sheet:not(.rf-sheet-rest) .rf-pair { flex: none; }
+.rf-pair-thumb { position: absolute; top: 4px; bottom: 4px; left: 4px; width: calc(50% - 4px); border-radius: 999px; background: var(--rf-ink); opacity: 0; transform: scale(.92); pointer-events: none; transition: left .32s cubic-bezier(.34,1.25,.64,1), opacity .18s, transform .32s cubic-bezier(.34,1.4,.64,1); }
+.rf-pair[data-rf-voted] .rf-pair-thumb { opacity: 1; transform: none; }
+.rf-pair[data-rf-voted="no"] .rf-pair-thumb { left: 50%; }
+.rf-pair-btn { position: relative; flex: 1; min-width: 0; height: 44px; border: 0; border-radius: 999px; background: none; color: var(--rf-ink); display: flex; align-items: center; justify-content: center; font-size: 17px; font-weight: 600; cursor: pointer; transition: color .2s; }
+.rf-pair-btn[aria-checked="true"] { color: var(--rf-page); }
+.rf-pair-btn:disabled { opacity: .6; }
+.rf-pair-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.rf-pair-mark { display: flex; width: 0; overflow: hidden; opacity: 0; transition: width .26s cubic-bezier(0.22,1,0.36,1), margin .26s cubic-bezier(0.22,1,0.36,1), opacity .2s; }
+.rf-pair-btn[aria-checked="true"] .rf-pair-mark { width: 18px; margin-right: 6px; opacity: 1; }
+.rf-pair-div { position: relative; flex: none; align-self: center; width: 1px; height: 22px; background: var(--rf-muted); opacity: .4; transition: opacity .15s; }
+.rf-pair[data-rf-voted] .rf-pair-div { opacity: 0; }
+.rf-morph { position: relative; flex: none; width: 52px; height: 52px; padding: 0; border: 0; border-radius: 26px; overflow: hidden; background: var(--rf-fill); color: var(--rf-ink); cursor: pointer; transition: width .38s cubic-bezier(.34,1.2,.64,1), background .25s, color .25s; }
+.rf-morph[data-rf-morph="next"] { width: 158px; background: var(--accent); color: #fff; }
+.dark .rf-morph[data-rf-morph="next"] { background: #0a6ee0; }
+.rf-morph:active { scale: .97; }
+.rf-morph:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.rf-morph-in { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: 6px; white-space: nowrap; font-size: 17px; font-weight: 600; transition: opacity .2s, transform .3s cubic-bezier(0.22,1,0.36,1); }
+.rf-morph-next { opacity: 0; transform: translateX(10px); }
+.rf-morph[data-rf-morph="next"] .rf-morph-dots { opacity: 0; transform: scale(.5); }
+.rf-morph[data-rf-morph="next"] .rf-morph-next { opacity: 1; transform: none; }
 .rf-line { margin: 12px 4px 6px; font-size: 13px; line-height: 18px; color: var(--rf-muted); }
 .rf-line-tight { margin: 6px 4px 0; }
 .rf-row { position: relative; width: 100%; display: flex; align-items: center; gap: 14px; min-height: 64px; padding: 10px 0; border: 0; background: none; color: var(--rf-ink); text-align: left; text-decoration: none; cursor: pointer; }
@@ -25176,30 +25223,15 @@ html.in-side-panel body {
 .rf-chips { display: flex; flex-wrap: wrap; gap: 8px; }
 .rf-chip { height: 44px; padding: 0 13px; border: 0; border-radius: 999px; background: var(--rf-fill); color: var(--rf-ink); font-size: 15px; font-weight: 500; white-space: nowrap; cursor: pointer; }
 .rf-ask-form { flex: none; display: flex; align-items: center; gap: 8px; margin: 0; padding: 4px 0 8px; }
-.rf-ask-form input, .rf-textarea { flex: 1; min-width: 0; box-sizing: border-box; border: 0; background: var(--rf-fill); box-shadow: inset 0 0 0 1px var(--rf-line); color: var(--rf-ink); font-size: 16px; line-height: 22px; outline: 0; }
+.rf-ask-form input { flex: 1; min-width: 0; box-sizing: border-box; border: 0; background: var(--rf-fill); box-shadow: inset 0 0 0 1px var(--rf-line); color: var(--rf-ink); font-size: 16px; line-height: 22px; outline: 0; }
 .rf-ask-form input { height: 44px; padding: 0 16px; border-radius: 999px; }
-.rf-textarea { display: block; width: 100%; height: 76px; padding: 10px 12px; border-radius: 12px; resize: none; }
-.rf-ask-label { display: block; margin: 18px 4px 8px; font-size: 15px; font-weight: 600; line-height: 20px; }
-.rf-ends { display: flex; justify-content: flex-end; align-items: center; gap: 8px; padding-top: 12px; }
-.rf-cancel { height: 44px; padding: 0 16px; border: 0; background: none; color: var(--rf-muted); font-size: 15px; font-weight: 600; cursor: pointer; }
 .rf-go { flex: none; height: 44px; padding: 0 20px; border: 0; border-radius: 999px; background: #0a6ee0; color: #fff; font-size: 15px; font-weight: 600; cursor: pointer; }
 .rf-go:disabled { opacity: .5; cursor: default; }
 .rf-go-wide { align-self: stretch; height: 48px; }
 .rf-thread { min-height: 200px; }
-.rf-said { display: flex; flex-direction: column; align-items: center; padding: 14px 0 24px; }
-.rf-said-mark { width: 72px; height: 72px; border-radius: 999px; background: var(--lit-tint); color: var(--lit-ink); display: grid; place-items: center; }
-.rf-said h2 { margin: 14px 0 0; font-size: 20px; font-weight: 700; line-height: 26px; letter-spacing: -.01em; }
-.rf-said + .rf-yn { margin-bottom: 6px; }
-@keyframes rf-mark-in { 0% { transform: scale(.6); opacity: 0; } 60% { transform: scale(1.06); opacity: 1; } 100% { transform: none; } }
-@keyframes rf-draw { from { stroke-dashoffset: 40; } }
-@keyframes rf-rise { from { opacity: 0; transform: translateY(4px); } }
-.rf-fresh .rf-said-mark { animation: rf-mark-in .42s cubic-bezier(0.22,1,0.36,1); }
-.rf-fresh .rf-said-mark path { stroke-dasharray: 40; animation: rf-draw .36s .12s cubic-bezier(0.22,1,0.36,1) both; }
-.rf-fresh h2 { animation: rf-rise .3s .08s cubic-bezier(0.22,1,0.36,1) both; }
 @media (prefers-reduced-motion: reduce) {
-  .rf-sheet, .rf-scrim, .rf-seam, .rf-tab, .rf-pill { transition: none; }
+  .rf-sheet, .rf-scrim, .rf-seam, .rf-cap, .rf-switch, .rf-knob, .rf-knob-icon, .rf-pair-thumb, .rf-pair-mark, .rf-morph, .rf-morph-in, .rf-why { transition: none; }
   .rf-lens { animation: none; }
-  .rf-fresh .rf-said-mark, .rf-fresh .rf-said-mark path, .rf-fresh h2 { animation: none; }
 }
 
 /* From 768px the change page is a panel, not a phone page on a desktop.

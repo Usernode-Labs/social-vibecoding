@@ -440,15 +440,14 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // sidebar of rows, which the prerender never is.
     'M4 5.5h10.5a1.5 1.5 0 011.5 1.5v5.5a1.5 1.5 0 01-1.5 1.5H9l-3.5 3v-3H4a1.5 1.5 0 01-1.5-1.5V7A1.5 1.5 0 014 5.5z',
     'M19 9h.5a1.5 1.5 0 011.5 1.5v5a1.5 1.5 0 01-1.5 1.5H19v3l-3.5-3h-3',
-    // ── New Needs you (an experiment): the before/after slider's handle ──
+    // ── New Needs you (an experiment): the before/after switch ──
     //
-    // ChevronDoubleRightIcon, ChevronDoubleLeftIcon and GripBarsIcon draw
-    // only on a change's page in the new review flow
+    // HistoryIcon draws only on a change's page in the new review flow
     // (features/review-flow/compare.tsx), which is client-rendered behind
     // its switch.
-    'M5.25 4.5l7.5 7.5-7.5 7.5m6-15l7.5 7.5-7.5 7.5',
-    'M18.75 19.5l-7.5-7.5 7.5-7.5m-6 15L5.25 12l7.5-7.5',
-    'M9.75 5.25v13.5m4.5-13.5v13.5',
+    'M3 12a9 9 0 1 0 2.64-6.36',
+    'M3 4.5V9h4.5',
+    'M12 7.5V12l3 2',
   ];
   assert.deepEqual(absent.sort(), expected.sort());
 });

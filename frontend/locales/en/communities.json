@@ -439,21 +439,17 @@
     "text": "Showing the screen before the change",
     "description": "Screen reader value of the before and after slider when most of it shows the screen before the change."
   },
-  "review.compare.after": {
-    "text": "After",
-    "description": "Word on the small pill at the top of the before and after slider when most of it shows the screen after the change. Keep it to one short word."
+  "review.compare.captionBefore": {
+    "text": "Before <0>· Today</0>",
+    "description": "Caption printed at the top left of the before picture on a change's page (new Needs you flow, an experiment), in small capitals. <0> wraps the quieter part. Keep it very short."
   },
-  "review.compare.before": {
-    "text": "Before",
-    "description": "Word on the small pill at the top of the before and after slider when most of it shows the screen before the change. Keep it to one short word."
+  "review.compare.captionAfter": {
+    "text": "<0>If it passes ·</0> After",
+    "description": "Caption printed at the top right of the after picture on a change's page (new Needs you flow, an experiment), in small capitals: the screen as it will be if the vote passes. <0> wraps the quieter part. Keep it very short."
   },
-  "review.compare.pillAfter": {
-    "text": "Showing after. Tap to see before",
-    "description": "Accessible name of the pill on the before and after slider while it shows the after screen: tapping it shows the before screen, holding it peeks."
-  },
-  "review.compare.pillBefore": {
-    "text": "Showing before. Tap to see after",
-    "description": "Accessible name of the pill on the before and after slider while it shows the before screen: tapping it shows the after screen, holding it peeks."
+  "review.compare.switch": {
+    "text": "Show the screen before the change",
+    "description": "Accessible name of the small switch at the foot of the before and after picture (new Needs you flow, an experiment). On: the before screen fills the picture. Off: the after screen."
   },
   "review.sheet.label": {
     "text": "Your vote",
@@ -486,10 +482,6 @@
   "review.vote.dontApprove": {
     "text": "Don't approve",
     "description": "No button in the vote sheet on a change to a project that is just yours."
-  },
-  "review.unsure.open": {
-    "text": "Not sure?",
-    "description": "Quiet button under Yes and No in the vote sheet: opens the ways to look closer before voting."
   },
   "review.unsure.line": {
     "text": "Your vote counts once. If most members say yes, it goes live for everyone.",
@@ -535,10 +527,6 @@
     "text": "What it does, who made it",
     "description": "Second line of the About this change help row in the vote sheet."
   },
-  "review.no.ask": {
-    "text": "What would make it a yes?",
-    "description": "Question over the line a person writes when they vote No in the vote sheet. The line is optional; it goes to the person who made the change."
-  },
   "review.no.placeholder": {
     "text": "One line for {{name}}",
     "description": "Placeholder in the box for a No vote's line, which is optional. {{name}} is the username of the person who made the change."
@@ -547,21 +535,17 @@
     "text": "One line for whoever made it",
     "description": "Placeholder in the box for a No vote's line, when the change's maker is not known."
   },
-  "review.no.left_one": {
-    "text": "{{count}} character left",
-    "description": "Small line under a No vote's box when it is nearly full."
+  "review.reason.add": {
+    "text": "Add a reason",
+    "description": "Quiet link above the vote buttons after someone voted No on a change (new Needs you flow, an experiment). The reason is optional."
   },
-  "review.no.left_other": {
-    "text": "{{count}} characters left",
-    "description": "Small line under a No vote's box when it is nearly full."
+  "review.reason.label": {
+    "text": "Your reason, optional",
+    "description": "Accessible name of the one-line field where someone adds a reason to their No vote (new Needs you flow, an experiment)."
   },
-  "review.no.cancel": {
-    "text": "Cancel",
-    "description": "Button that leaves the No vote's line without voting."
-  },
-  "review.no.send": {
-    "text": "Send",
-    "description": "Button that casts the No vote, with its line if one is written."
+  "review.reason.share": {
+    "text": "Share",
+    "description": "Button inside the one-line reason field: sends the reason with the No vote (new Needs you flow, an experiment)."
   },
   "review.said.yes": {
     "text": "You said yes",
@@ -582,10 +566,6 @@
   "review.said.done": {
     "text": "Done",
     "description": "Button in the vote sheet after voting on the last change without your vote: opens the all-done message, which says that nothing else is waiting and offers the way back to the list."
-  },
-  "review.alldone.line": {
-    "text": "That's everything for now",
-    "description": "Heading of the vote sheet in the new Needs you flow (an experiment), under a check, after Done on the last change waiting on your vote. Same words as the end of the Needs you list."
   },
   "review.ask.note": {
     "text": "Only you see this. Answers come from the change itself.",
