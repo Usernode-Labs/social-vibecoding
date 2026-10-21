@@ -94,6 +94,10 @@ const PUBLIC_PATHS = [
   // NB: keep single quotes out of comments in this array — tests parse
   // every quoted string here as a public prefix (see history.test.js).
   '/vendor/',
+  // Self-hosted typefaces (public/fonts, provenance beside each), the same
+  // static-only tier as /vendor/: the new look (an experiment) draws every
+  // screen in Geist, the signed-out ones included.
+  '/fonts/',
   '/usernode-bridge.js',
   '/usernode-bridge/',
   // Native-feel UI kit (public/usernode-native/v1/) — centrally hosted for

@@ -138,6 +138,58 @@ test('the switch copy is English source with descriptions', () => {
   }
 });
 
+// ── The app.css rules ────────────────────────────────────────────────────
+
+// The new look's block: from its heading to the end of the sheet.
+function lookBlock() {
+  const css = read('public', 'css', 'app.css');
+  const at = css.indexOf('/* ── THE NEW LOOK, AN EXPERIMENT');
+  assert.ok(at > 0, 'app.css carries the new look block');
+  return css.slice(at);
+}
+
+test('every rule of the new look is scoped to the flag, in light mode only', () => {
+  const block = lookBlock().replace(/\/\*[\s\S]*?\*\//g, '');
+  const rules = block.split('}').map((r) => r.trim()).filter(Boolean);
+  let selectors = 0;
+  for (const rule of rules) {
+    const head = rule.slice(0, rule.indexOf('{')).trim();
+    if (!head || head === '@font-face') continue;
+    for (const sel of head.split(',').map((s) => s.trim())) {
+      selectors += 1;
+      assert.ok(
+        sel.startsWith('html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"])'),
+        `"${sel}" must start from the flag, outside dark mode and dark apps`,
+      );
+    }
+  }
+  assert.ok(selectors > 10, 'the block is read whole');
+});
+
+test('the block lives last and redeclares none of the counted wallpaper tokens', () => {
+  const css = read('public', 'css', 'app.css');
+  const block = lookBlock();
+  assert.ok(css.trimEnd().endsWith(block.trimEnd()), 'appended at the very end of app.css');
+  for (const token of ['--home-washes:', '--home-wallpaper:', '--dc-sheet-fill:', '--dc-frost:']) {
+    assert.ok(!block.includes(token), `${token} is counted elsewhere and must not be redeclared here`);
+  }
+});
+
+test('Geist loads from our own origin by an absolute path, and only for the new look', () => {
+  const block = lookBlock();
+  assert.match(block, /@font-face\s*\{[^}]*font-family:\s*'Geist'[^}]*url\('\/fonts\/geist\/Geist-Variable\.woff2'\)/,
+    'the face points at the self-hosted file by an absolute, same-origin path');
+  const css = read('public', 'css', 'app.css');
+  const before = css.slice(0, css.indexOf('/* ── THE NEW LOOK, AN EXPERIMENT'));
+  assert.ok(!/Geist/.test(before), 'nothing outside the new look names Geist');
+});
+
+test('/fonts/ is a public static prefix, like /vendor/', () => {
+  const auth = read('src', 'middleware', 'auth.js');
+  const m = auth.match(/const PUBLIC_PATHS = \[([\s\S]*?)\];/);
+  assert.ok(m && /'\/fonts\/'/.test(m[1]), 'signed-out screens fetch the font too');
+});
+
 // ── The typeface ─────────────────────────────────────────────────────────
 
 test('Geist is served from our own origin with its licence beside it', () => {
