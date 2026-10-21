@@ -3,8 +3,8 @@
 //
 // One board, two rankings. "The group's" puts every item in the tier its
 // average lands in. "Yours" is the same board with your own tiers on it:
-// drag an item into a tier (press and hold first on a touch screen, so a
-// swipe still scrolls). Below F, and not a tier, is Want to (go, hike, play:
+// drag an item into a tier (on a touch screen it lifts as soon as the
+// finger moves; the page scrolls from anywhere but an item). Below F, and not a tier, is Want to (go, hike, play:
 // index.html's data-verb): drag one there that you have not got to yet. It
 // counts toward no tier, and the group's board lists there every one
 // somebody wants to, with how many people. Dragging it back to "Not ranked
@@ -54,8 +54,11 @@
   // Whole class names per tier, so the build and the <style> block see them.
   var TIER_CLASS = { S: 'tier-s', A: 'tier-a', B: 'tier-b', C: 'tier-c', D: 'tier-d', F: 'tier-f' };
   var TIERS = ['S', 'A', 'B', 'C', 'D', 'F'];
-  var CHIP = 'inline-flex min-h-9 max-w-full items-center rounded-lg bg-raised px-2.5 py-1.5 text-left text-small font-medium hover:bg-line';
-  var CHIP_MOVABLE = 'inline-flex min-h-9 max-w-full cursor-grab touch-manipulation select-none items-center rounded-lg border border-line bg-surface px-2.5 py-1.5 text-left text-small font-medium shadow-sm';
+  // Each item is a 44 px target. One you can move holds the finger
+  // (touch-none): pressing it and moving drags it at once, with no hold to
+  // time (Evan, 21 Oct 2026: "you need to hold on it just right").
+  var CHIP = 'inline-flex min-h-11 max-w-full items-center rounded-lg bg-raised px-3 py-2 text-left text-small font-medium hover:bg-line';
+  var CHIP_MOVABLE = 'inline-flex min-h-11 max-w-full cursor-grab touch-none select-none items-center rounded-lg border border-line bg-surface px-3 py-2 text-left text-small font-medium shadow-sm';
   var NAME_CHIP = 'inline-flex max-w-full items-center rounded-lg bg-raised px-2.5 py-1.5 text-small font-medium';
   // Want to (W, a place but not a tier): what to, as this tier list says it.
   var WANT_VERB = el.want.getAttribute('data-verb') || 'try';
@@ -67,8 +70,12 @@
   // so somebody new can drag straight away; once they switch, that sticks.
   var view = 'yours';
   try { if (localStorage.getItem('tier-list:view') === 'group') view = 'group'; } catch (e) { /* yours */ }
-  // A drag under way: { id, chip, ghost, x, y, pointerId, touch, active, timer }.
+  // A drag under way: { id, chip, ghost, x, y, pointerId, touch, active, lastX, lastY, frame }.
   var drag = null;
+  // How far a press moves before it is a drag rather than a tap, and the band
+  // at the top and bottom of the screen that scrolls the page under a drag.
+  var SLOP_PX = 6;
+  var EDGE_PX = 72;
   var justDragged = false;
   // The sheet that is open, if any: { id, opener, data, failed }.
   var detail = null;
@@ -204,20 +211,22 @@
   function onPointerDown(e) {
     if (view !== 'yours' || e.button > 0) return;
     var chip = e.currentTarget;
-    drag = { id: Number(chip.getAttribute('data-item')), chip: chip, x: e.clientX, y: e.clientY, pointerId: e.pointerId, touch: e.pointerType !== 'mouse', active: false, timer: null };
-    // On a touch screen a drag starts after a short hold, so a swipe still scrolls.
-    if (drag.touch) drag.timer = setTimeout(begin, 220);
+    drag = { id: Number(chip.getAttribute('data-item')), chip: chip, x: e.clientX, y: e.clientY, pointerId: e.pointerId, touch: e.pointerType !== 'mouse', active: false, frame: 0 };
     window.addEventListener('pointermove', onPointerMove);
     window.addEventListener('pointerup', onPointerUp);
     window.addEventListener('pointercancel', endDrag);
   }
 
+  // The press has moved: it is a drag. On a touch screen it joins the native
+  // UI kit's gesture arbiter first, so pulling to refresh never starts under it.
   function begin() {
-    if (!drag || drag.active) return;
+    if (!drag || drag.active) return false;
+    var gestures = window.unNative && window.unNative.gestures;
+    if (drag.touch && gestures && !gestures.claim('touch', 'tier-drag')) { endDrag(); return false; }
     drag.active = true;
     var rect = drag.chip.getBoundingClientRect();
     var ghost = drag.chip.cloneNode(true);
-    ghost.className = 'pointer-events-none fixed z-50 inline-flex items-center rounded-lg border border-accent bg-surface px-2.5 py-1.5 text-small font-medium shadow-lg';
+    ghost.className = 'pointer-events-none fixed z-50 inline-flex min-h-11 items-center rounded-lg border border-accent bg-surface px-3 py-2 text-small font-medium shadow-lg';
     ghost.style.left = rect.left + 'px';
     ghost.style.top = rect.top + 'px';
     ghost.style.width = rect.width + 'px';
@@ -226,19 +235,37 @@
     document.body.appendChild(ghost);
     drag.ghost = ghost;
     drag.chip.classList.add('opacity-40');
+    return true;
   }
 
   function onPointerMove(e) {
     if (!drag || e.pointerId !== drag.pointerId) return;
     if (!drag.active) {
-      if (Math.abs(e.clientX - drag.x) + Math.abs(e.clientY - drag.y) < 6) return;
-      // Moving before the hold is a scroll on a touch screen; with a mouse it is a drag.
-      if (drag.touch) { endDrag(); return; }
-      begin();
+      if (Math.abs(e.clientX - drag.x) + Math.abs(e.clientY - drag.y) < SLOP_PX) return;
+      if (!begin()) return;
     }
+    drag.lastX = e.clientX;
+    drag.lastY = e.clientY;
     drag.ghost.style.left = (e.clientX - drag.offsetX) + 'px';
     drag.ghost.style.top = (e.clientY - drag.offsetY) + 'px';
     highlight(dropTargetAt(e.clientX, e.clientY));
+    if (!drag.frame) drag.frame = requestAnimationFrame(edgeScroll);
+  }
+
+  // Held near the top or bottom of the screen, a drag scrolls the page, faster
+  // the closer it is, so a tier off screen can still be reached: the page does
+  // not scroll under the finger by itself while it holds an item.
+  function edgeScroll() {
+    if (!drag || !drag.active) return;
+    drag.frame = 0;
+    var y = drag.lastY;
+    var step = y < EDGE_PX ? -(EDGE_PX - y) / 4 : y > window.innerHeight - EDGE_PX ? (y - (window.innerHeight - EDGE_PX)) / 4 : 0;
+    if (!step) return;
+    var before = window.scrollY;
+    window.scrollBy(0, Math.round(step));
+    if (window.scrollY === before) return;
+    highlight(dropTargetAt(drag.lastX, drag.lastY));
+    drag.frame = requestAnimationFrame(edgeScroll);
   }
 
   function onPointerUp(e) {
@@ -255,7 +282,7 @@
 
   function endDrag() {
     if (!drag) return;
-    clearTimeout(drag.timer);
+    if (drag.frame) cancelAnimationFrame(drag.frame);
     if (drag.ghost) drag.ghost.remove();
     drag.chip.classList.remove('opacity-40');
     highlight(null);
@@ -377,7 +404,7 @@
       el.tray.hidden = !waiting.length;
       el.tray.removeAttribute('data-drop');
       el.want.removeAttribute('data-drop');
-      el.hint.textContent = 'Tap one to see who ranked it what. ' + WANT_LABEL + ' doesn\'t count toward any tier.';
+      el.hint.textContent = 'Tap one to see who ranked it what.';
     }
     el.hint.hidden = false;
   }
@@ -684,4 +711,10 @@
   // few seconds regardless.
   var first = load();
   if (window.usernode && window.usernode.ready) window.usernode.ready(first);
+
+  // Pulled down at the top, the board is fetched again and the page bounces
+  // in place, as a phone's own lists do, instead of dragging Homeroom's
+  // header along with it (the native UI kit, /usernode-native/v1/native.js;
+  // nothing on a computer).
+  if (window.unNative) window.unNative.attachPullToRefresh(window, refresh);
 })();

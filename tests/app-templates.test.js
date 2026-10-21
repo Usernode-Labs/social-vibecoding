@@ -266,6 +266,16 @@ test('a tier list ranks by dragging, and tapping one shows who ranked it what', 
   assert.doesNotMatch(html, /picked-actions/);
   assert.match(script, /var label = h\('div', 'flex w-14 shrink-0 items-center justify-center text-heading ' \+ TIER_CLASS\[tier\], tier\);/,
     'a tier\'s label is not a button any more');
+  // A press that moves drags at once, with no hold to time, from a 44 px
+  // target that holds the finger; the page scrolls from anywhere else, and
+  // under a drag held at the screen's edge (Evan, 21 Oct 2026: "you need to
+  // hold on it just right to start dragging").
+  assert.match(script, /var CHIP_MOVABLE = 'inline-flex min-h-11 [^']*touch-none select-none /);
+  assert.match(script, /var CHIP = 'inline-flex min-h-11 /);
+  assert.doesNotMatch(script, /setTimeout\(begin/, 'no hold before a drag');
+  assert.match(script, /if \(Math\.abs\(e\.clientX - drag\.x\) \+ Math\.abs\(e\.clientY - drag\.y\) < SLOP_PX\) return;\s+if \(!begin\(\)\) return;/);
+  assert.match(script, /gestures\.claim\('touch', 'tier-drag'\)/, 'a drag owns the gesture, so pulling to refresh never starts under it');
+  assert.match(script, /function edgeScroll\(\)/);
   // A tap (a press that was not a drag) opens the item's sheet, on either board.
   assert.match(script, /chip\.addEventListener\('click', function \(\) \{\s*if \(!justDragged\) openDetail\(item\.id, chip\);/);
   assert.match(script, /chip = h\('button', CHIP, item\.name\);/, 'the group\'s board too');
@@ -434,7 +444,9 @@ for (const id of READY) {
     assert.match(html, /window\.usernode && window\.usernode\.theme/);
     assert.match(html, /<script src="\/app\.js"><\/script>\s*<\/body>/);
     assert.match(html, /<title>\{\{APP_NAME\}\}<\/title>/);
-    assert.match(html, /<h1 class="text-title">\{\{APP_NAME\}\}<\/h1>/);
+    // A tier list leaves its name to Homeroom's header (Evan, 21 Oct 2026),
+    // keeping it for a screen reader.
+    assert.match(html, appTemplates.dirOf(id) === 'tier-list' ? /<h1 class="sr-only">\{\{APP_NAME\}\}<\/h1>/ : /<h1 class="text-title">\{\{APP_NAME\}\}<\/h1>/);
     // No CDN: every script and stylesheet is the app's own or the platform's, by path.
     for (const m of html.matchAll(/<(?:script|link)[^>]+(?:src|href)="([^"]+)"/g)) {
       assert.ok(m[1].startsWith('/') || m[1].startsWith('data:'), `${id}: ${m[1]} is not fetched from another origin`);
