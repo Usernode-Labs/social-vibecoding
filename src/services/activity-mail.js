@@ -2,12 +2,16 @@
 
 // WP-E: the email that stands in for a push somebody cannot get.
 //
-// Two moments only: something they asked Homeroom bot for is ready to try
+// Four moments only: something they asked Homeroom bot for is ready to try
 // (`build_ready`; for a project's first version, its going live instead, the
-// moment its maker was promised: homeroom-bot-dm.js sendDm), and the first
+// moment its maker was promised: homeroom-bot-dm.js sendDm), the first
 // of a day's news about the people their invite link brought
-// (`invite_activity`, services/invite-activity.js). Sent only when ALL of
-// these hold:
+// (`invite_activity`, services/invite-activity.js), a project they joined
+// while it was made opening (`project_opened`, services/project-opened.js),
+// and the day's changes waiting on their vote (`votes_owed`,
+// services/vote-digest.js). Each is a moment the notification ask promises
+// "Until then, we'll email you" for (frontend/src/features/notify-ask/
+// decide.ts EMAILED_MOMENTS). Sent only when ALL of these hold:
 //   - they have no phone that could take the push (no live registration,
 //     the same test schema.sql enqueue_mobile_push_deliveries makes). A
 //     phone with the category switched off is a choice, not a gap: no mail.
@@ -26,7 +30,7 @@
 const crypto = require('crypto');
 const { PRODUCTION_ORIGIN } = require('./cli-auth-constants');
 
-const KINDS = Object.freeze(['build_ready', 'invite_activity']);
+const KINDS = Object.freeze(['build_ready', 'invite_activity', 'project_opened', 'votes_owed']);
 
 // The platform config, for the mail transport and the secret the
 // unsubscribe links are signed with. server.js hands it over at boot; until
@@ -116,7 +120,7 @@ async function readyRow(pool, { userId, conversationId, messageId = null }) {
  */
 async function emailIfNoPush(pool, {
   userId, kind, appName = null, appSlug = null, line = null, conversationId = null, notWorking = false,
-  detail = null, threadRootId = null, messageId: rangFor = null,
+  detail = null, threadRootId = null, messageId: rangFor = null, count = null, hashRoute = null,
 }) {
   if (!config || !KINDS.includes(kind) || !userId) return 'off';
   const unsubscribe = unsubscribeUrl(userId);
@@ -148,12 +152,77 @@ async function emailIfNoPush(pool, {
     to: user.email,
     appName: appName || 'Your project',
     line,
+    ...(count != null ? { count } : {}),
     ...(notWorking ? { notWorking: true } : {}),
     ...(words ? { subject: words.subject, lead: words.lead } : {}),
-    url: openUrl({ appSlug, conversationId, threadRootId: root, messageId }),
+    // `hashRoute`: a shell screen of no one project (the vote digest's
+    // Needs you), as `#communities`.
+    url: typeof hashRoute === 'string' && /^#[a-z][a-z0-9/_-]*$/.test(hashRoute)
+      ? `${origin()}/${hashRoute}`
+      : openUrl({ appSlug, conversationId, threadRootId: root, messageId }),
     unsubscribeUrl: unsubscribe,
   });
   return 'sent';
+}
+
+// ── Emails owed by a notice ─────────────────────────────────────────────
+//
+// A notice that rang somebody (an invite moment's day's first, a project
+// they joined opening, the vote digest) owes this email in its own insert:
+// `notifications.mailed_at` NULL. The notice-mail clock
+// (src/workflow/clock/services.ts) sends each as a target of its own
+// (noticeMailTargets), whose item sends it once and marks it handled
+// (mailNotice). Past a day it is not news any more, and is not sent. Each was
+// a call after the notice's commit, which a restart lost.
+
+const NOTICE_MAIL_KINDS = new Set(['member_joined', 'first_message', 'project_opened', 'vote_digest']);
+const NOTICE_MAIL_WITHIN_HOURS = 24;
+
+async function noticeMailTargets(pool, { limit = 200 } = {}) {
+  const { rows } = await pool.query(
+    `SELECT id FROM notifications
+      WHERE mailed_at IS NULL AND kind = ANY($1::text[])
+        AND created_at > NOW() - make_interval(hours => $2::int)
+      ORDER BY id LIMIT $3`,
+    [[...NOTICE_MAIL_KINDS], NOTICE_MAIL_WITHIN_HOURS, limit],
+  );
+  return { owed: rows.length, items: rows.map((r) => ({ target: `notification:${r.id}`, input: { notificationId: r.id } })) };
+}
+
+// The email a notice stands for, from the notice: its kind, words and link.
+function noticeEmail(row) {
+  const app = { appName: row.app_name || null, appSlug: row.app_slug || null };
+  if (row.kind === 'first_message') return { kind: 'invite_activity', ...app, line: `@${row.username} said hi in ${row.app_name}.` };
+  if (row.kind === 'member_joined') {
+    return { kind: 'invite_activity', ...app, line: `${row.username ? `@${row.username}` : 'Someone'} joined ${row.app_name} through your invite.` };
+  }
+  if (row.kind === 'project_opened') return { kind: 'project_opened', ...app };
+  // The vote digest: how many wait on them; several open Needs you, which
+  // lists them all (no one project).
+  const count = Number(row.detail) || null;
+  return { kind: 'votes_owed', count, ...(row.app_slug ? app : { hashRoute: '#communities' }) };
+}
+
+/**
+ * Send notice `notificationId`'s email when no phone could take its push,
+ * then mark it handled. `steps` (the item's, kernel/steps.ts) keeps the send
+ * to once across tries; a send cut off before it was kept may be sent again.
+ * Resolves what was said, or why nothing was sent.
+ */
+async function mailNotice(pool, notificationId, steps) {
+  const { rows: [row] } = await pool.query(
+    `SELECT n.id, n.user_id, n.kind, n.detail, n.mailed_at, n.created_at > NOW() - make_interval(hours => $2::int) AS recent,
+            a.slug AS app_slug, a.name AS app_name, u.username
+       FROM notifications n
+       LEFT JOIN apps a ON a.id = n.app_id
+       LEFT JOIN users u ON u.id = n.source_user_id
+      WHERE n.id = $1`,
+    [notificationId, NOTICE_MAIL_WITHIN_HOURS],
+  );
+  if (!row || row.mailed_at || !NOTICE_MAIL_KINDS.has(row.kind)) return { said: 'settled' };
+  const said = !row.recent ? 'stale' : await steps.once('sent', () => emailIfNoPush(pool, { userId: row.user_id, ...noticeEmail(row) }));
+  await pool.query('UPDATE notifications SET mailed_at = NOW() WHERE id = $1 AND mailed_at IS NULL', [row.id]);
+  return { said };
 }
 
 /** The unsubscribe link: turns these emails off for good. */
@@ -175,5 +244,8 @@ module.exports = {
   canPush,
   openUrl,
   emailIfNoPush,
+  NOTICE_MAIL_KINDS,
+  noticeMailTargets,
+  mailNotice,
   turnOff,
 };

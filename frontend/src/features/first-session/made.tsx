@@ -138,6 +138,7 @@ import type { Made, MakeEntry } from './make';
 import type { FirstVersionStage } from './tour-steps';
 import { type Person, PeopleRow } from './people-row';
 import { SketchCard, showsCard, useSketch } from './sketch-card';
+import { NotifyAsk } from '../notify-ask/notify-ask';
 
 /** B6: the plan Homeroom bot waits on before it builds anything. */
 export type WaitingPlan = {
@@ -836,6 +837,9 @@ export function InviteSheet({ made, me, onClose, onSent }: {
         </div>
         {status ? <p role="status" data-first-session-invite-status="" className="mt-3 text-center text-[14px] text-emerald-700 dark:text-emerald-400">{status}</p> : null}
         {error ? <p id="first-session-invite-error" role="alert" className="mt-3 text-center text-[14px] text-red-600 dark:text-red-400">{error}</p> : null}
+        {/* Once the link has gone out: hear when they join? (the
+            notification ask, ../notify-ask/notify-ask.tsx), then Done. */}
+        {out ? <NotifyAsk moment="invite_sent" tone="white" className="mt-3" /> : null}
         {/* Once the link has gone out the sheet stays, with Done to close it. */}
         {out ? (
           <Button
@@ -1998,6 +2002,11 @@ export function MadeScreen({ made, me, onContinue, onOpenChat, entry = 'first-se
           {/* The first session asks for no answer here. From Create, its
               card is the way to the chat where the plan is answered. */}
           {plan && !stalled && fromCreate && !asked ? <PlanWaitsCard name={made.name} onOpenChat={() => onOpenChat(plan.conversationId ?? made.conversationId)} /> : null}
+          {/* In a browser, while Homeroom bot builds it: get the app to hear
+              when it is ready (the notification ask). In the Homeroom app
+              the same moment is askForPingWhileBotBuilds's modal, and this
+              draws nothing. */}
+          {botBuilds && busy && !stalled && !asked && !checking ? <NotifyAsk moment="app_building" className="mt-4 w-full text-left" /> : null}
         </div>
         {/* QUICK QUESTIONS: in place of the invite line and its buttons
             until they are answered, right under the project while the body

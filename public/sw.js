@@ -426,6 +426,10 @@ const NO_FALLBACK_PAGES = [
   // app shell. Serving the cached SPA shell for it offline would show a
   // page that looks signed in but cannot approve anything.
   '/connect/authorize',
+  // The notification ask's code to scan (routes/public-api.js /get-app): a
+  // redirect to the phone's own store, never a shell route. The cached shell
+  // answering it would open Homeroom's home screen instead of the store.
+  '/get-app',
 ];
 
 // Prefix-matched counterpart of NO_FALLBACK_PAGES, for standalone pages

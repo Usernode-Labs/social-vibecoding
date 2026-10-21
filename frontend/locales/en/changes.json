@@ -97,7 +97,7 @@
   },
   "firstVersion.notifyWhenLive": {
     "text": "We’ll notify you when it’s live",
-    "description": "Line beside a small check under a new project's card on its App tab, for the person who started the project, while its first version is being made: a promise that Homeroom will send them a notification once the app is live. \"It\" is the app; \"live\" means published and running for everyone."
+    "description": "Line beside a small check under a new project's card on its App tab while its first version is being made, for the person who started the project and for its other members: a promise that Homeroom will send them a notification once the app is live. \"It\" is the app; \"live\" means published and running for everyone."
   },
   "firstVersion.tryAgain": {
     "text": "Try again",

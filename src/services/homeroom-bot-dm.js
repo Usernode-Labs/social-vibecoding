@@ -645,6 +645,11 @@ async function sendDm(pool, {
     // Built, but part of it failed when Homeroom tried it: not "ready to try".
     ...(Array.isArray(metadata?.ready?.broken) && metadata.ready.broken.length ? { notWorking: true } : {}),
   } : null;
+  // #4396: a first version's live tells the people who joined while it was
+  // made that it is open (services/project-opened.js), whatever its maker
+  // chose for their own: owed in the message's own transaction.
+  const opens = story === 'live' && !!metadata?.firstVersion && !!metadata?.appSlug;
+  let toldOpen = [];
   const hooks = {
     ...(hello?.kind ? {
       prepare: async (db) => {
@@ -656,10 +661,11 @@ async function sendDm(pool, {
           : null;
       },
     } : {}),
-    ...(hello?.kind || mail ? {
+    ...(hello?.kind || mail || opens ? {
       afterInsert: async (db, { messageId: id }) => {
         if (greeted) await db.query('UPDATE homeroom_bot_hellos SET message_id = $2 WHERE user_id = $1', [Number(userId), id]);
         if (mail) await require('../workflow/platform.ts').dmMailOwed(db, { userId: Number(userId), messageId: id, mail });
+        if (opens) toldOpen = await require('./project-opened').oweTold(db, { appSlug: metadata.appSlug, makerId: userId });
       },
     } : {}),
   };
@@ -681,6 +687,10 @@ async function sendDm(pool, {
     return null;
   }
   const messageId = result.messageId ?? result.message?.id ?? null;
+  // #4396: after the commit, the bells of the members its "live" told
+  // (their notices, phone pushes and emails are owed in the message's own
+  // transaction: afterInsert).
+  if (toldOpen.length) await require('./project-opened').pushTold(pool, toldOpen);
   if (!result.duplicate) {
     await retireSuggestions(pool, {
       botId: bot.id, conversationId: opened.conversationId, keepMessageId: messageId, userId,

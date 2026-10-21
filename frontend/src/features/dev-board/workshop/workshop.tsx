@@ -96,6 +96,7 @@ import {
   communityPending, leaveCommunity, useCommunity,
 } from './community-card';
 import { FirstVersionCard, ForYouCard, HubSkeleton, RecentlyLive, hubAlone, owesVote } from './hub-cards';
+import { CommunityAsk } from '../../notify-ask/community-ask';
 import { useHubDismissed } from './hub-dismissed';
 import { ProjectDiscussion } from './project-discussion';
 import {
@@ -5073,6 +5074,9 @@ export function DevWorkshop(): ReactNode {
           who is around is the hero's faces and names. On a project nobody
           else is in, the vote line's zero is left out (`alone`). See
           ./hub-cards.tsx. */}
+      {/* Somebody in this community who did not make it: hear from it?
+          (the notification ask, ../../notify-ask/community-ask.tsx). */}
+      {slug ? <CommunityAsk data={community} name={app.name || slug} /> : null}
       {slug ? (
         <ForYouCard
           slug={slug}

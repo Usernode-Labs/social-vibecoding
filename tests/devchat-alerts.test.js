@@ -297,9 +297,12 @@ test('dev-chat.js no longer plays the tone directly (chime is arrival-driven)', 
   // fired solely from Notifications.handleIncoming → DevAlerts.onCompletion
   // on the WS notification's arrival. dev-chat.js must not call playDoneTone.
   assert.doesNotMatch(src, /playDoneTone/, 'dev-chat.js must not ring the chime directly');
-  // sendMessage still unlocks audio + requests permission (user gesture).
+  // sendMessage still unlocks audio (user gesture), and offers the
+  // notification permission explained first, once per device; never the
+  // browser's bare prompt (21 Oct 2026, tests/notify-ask.test.js).
   assert.match(src, /DevAlerts\._unlockAudio\(\)/);
-  assert.match(src, /DevAlerts\.requestNotifyPermission\(\)/);
+  assert.match(src, /DevAlerts\.offerNotifyPermission\(\)/);
+  assert.doesNotMatch(src, /DevAlerts\.requestNotifyPermission\(\)/);
 });
 
 test('DevAlerts.TEST_DELAY_MS is a whole number of seconds (clean countdown)', () => {

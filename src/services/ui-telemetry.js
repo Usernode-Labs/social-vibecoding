@@ -25,6 +25,11 @@ const JOURNEY_SCREENS = Object.freeze(new Set([
   // The first-session plan: "Get a ping when it's ready?" in the Homeroom
   // app (NativeChrome.askForPing), the ask its push_permission answers.
   'ping_ask',
+  // The notification ask at its other moments (frontend/src/features/
+  // notify-ask/): an invite sent, a suggestion, a reply, a community, a
+  // project opening. Which moment is the account's record
+  // (services/notification-asks.js), not this event's.
+  'notify_ask',
 ]));
 // Navigation (#3369): one code per screen root the shell reveals, so a
 // person's path can be read in the order they took it. `app` is the running

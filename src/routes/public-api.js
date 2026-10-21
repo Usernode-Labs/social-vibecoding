@@ -769,7 +769,47 @@ function publicApiRoutes(config) {
     res.json(urls);
   });
 
+  // GET /get-app — where the notification ask's code to scan goes
+  // (frontend/src/features/notify-ask/get-app-sheet.tsx). A computer shows
+  // the code; the phone that scans it lands here and is sent on to its own
+  // store, from the same listing as above. A phone the user agent does not
+  // name (an iPad asking as a Mac) goes to the only listing when there is
+  // one, else home. Only an http(s) listing is ever a redirect target: the
+  // URL is an admin's free text.
+  router.get('/get-app', async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    let urls = { ios: null, android: null };
+    try {
+      urls = await loadMobileAppUrls(pool);
+    } catch (err) {
+      log.error('public-api', 'get-app urls failed', { message: err.message });
+    }
+    res.redirect(302, getAppTarget(urls, req.get('user-agent') || ''));
+  });
+
   return router;
+}
+
+function safeStoreUrl(raw) {
+  const value = String(raw || '').trim();
+  if (!value) return null;
+  try {
+    const { protocol } = new URL(value);
+    return protocol === 'https:' || protocol === 'http:' ? value : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+/** Where /get-app sends a phone: its own store, the only store, or home. */
+function getAppTarget(urls, userAgent) {
+  const ios = safeStoreUrl(urls && urls.ios);
+  const android = safeStoreUrl(urls && urls.android);
+  if (/Android/i.test(userAgent)) return android || '/';
+  if (/iPhone|iPad|iPod/i.test(userAgent)) return ios || '/';
+  if (ios && !android) return ios;
+  if (android && !ios) return android;
+  return '/';
 }
 
 module.exports = {
@@ -778,4 +818,5 @@ module.exports = {
   loadContributors,
   shapeContributor,
   HIDDEN_APP_STATUSES,
+  getAppTarget,
 };

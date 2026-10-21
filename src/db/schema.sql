@@ -5775,6 +5775,10 @@ INSERT INTO mobile_push_kind_categories (kind, category, default_enabled) VALUES
   -- switch in services/notification-preferences.js (voted_changes_live) is
   -- the first gate.
   ('voted_change_merged', 'proposal_alerts', TRUE),
+  -- #4396: a project you joined while it was made is open
+  -- (services/project-opened.js). Its first version going live is the
+  -- change lifecycle Change alerts already carries.
+  ('project_opened', 'proposal_alerts', TRUE),
   ('issue_opened', 'app_alerts', TRUE),
   ('app_health', 'app_alerts', TRUE),
   -- A server-wide cap nearing its ceiling, for full admins only
@@ -5849,7 +5853,9 @@ DELETE FROM mobile_push_kind_categories
    'platform_incident',
    -- WP-E.
    'build_ready', 'build_needs_you', 'build_stopped', 'build_live',
-   'invite_opened', 'member_joined', 'first_message'
+   'invite_opened', 'member_joined', 'first_message',
+   -- #4396.
+   'project_opened'
  );
 
 -- Sparse account overrides. The closed policy above supplies defaults, so
@@ -13163,13 +13169,13 @@ CREATE INDEX IF NOT EXISTS idx_community_invite_opens_notice
   ON community_invite_opens (notification_id) WHERE notification_id IS NOT NULL;
 COMMENT ON TABLE community_invite_opens IS 'staging:private';
 
--- WP-E: the email that stands in for an invite moment's push the maker
--- cannot get (services/invite-activity.js), owed by the notice that rang
--- (a day's first "Joined through your invite" or "said hi") and sent by the
--- invite-mail clock, which sets this once it has handled it. NULL is owed:
--- only those inserts write it, so every other row, and every row before it,
--- reads as settled. Sent after the commit before, a restart in between lost
--- the email for good.
+-- WP-E: the email that stands in for a push somebody cannot get
+-- (services/activity-mail.js), owed by the notice that rang (an invite
+-- moment's day's first, a project they joined opening, the vote digest) and
+-- sent by the notice-mail clock, which sets this once it has handled it. NULL
+-- is owed: only those inserts write it, so every other row, and every row
+-- before it, reads as settled. Sent after the commit before, a restart in
+-- between lost the email for good.
 ALTER TABLE notifications ADD COLUMN IF NOT EXISTS mailed_at TIMESTAMPTZ DEFAULT NOW();
 CREATE INDEX IF NOT EXISTS idx_notifications_mail_owed
   ON notifications (id) WHERE mailed_at IS NULL;
@@ -15856,3 +15862,21 @@ CREATE INDEX IF NOT EXISTS wf_events_refused_unknown_idx
 -- call ends or this lease lapses; other readers wait for what it writes. It
 -- was a promise in each process's memory.
 ALTER TABLE check_explanations ADD COLUMN IF NOT EXISTS generating_until TIMESTAMPTZ;
+
+-- The notification ask (services/notification-asks.js): when Homeroom asked
+-- somebody to turn notifications on, at which moment, on which surface
+-- ('app', the Homeroom app on a phone; 'web', a browser, where the ask is to
+-- get the app), and what they said. Kept per account so a Not now holds on
+-- every device. One row per ask: a later answer replaces the earlier one.
+CREATE TABLE IF NOT EXISTS notification_asks (
+  user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  surface     VARCHAR(8) NOT NULL CHECK (surface IN ('app', 'web')),
+  moment      VARCHAR(32) NOT NULL CHECK (moment IN (
+                'app_building', 'invite_sent', 'suggestion', 'reply',
+                'community', 'project_opens'
+              )),
+  answer      VARCHAR(16) NOT NULL CHECK (answer IN ('yes', 'not_now')),
+  answered_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (user_id, surface, moment)
+);
+COMMENT ON TABLE notification_asks IS 'staging:private';

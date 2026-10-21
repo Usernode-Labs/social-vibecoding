@@ -1760,7 +1760,7 @@
     "description": "Name of a phone notification category in Settings > Mobile push categories. \"Change\" is a noun: a proposed change to a project."
   },
   "alerts.push.proposalAlerts.description": {
-    "text": "Changes that need your attention or your vote, votes on yours, and changes you made or voted on going live.",
+    "text": "Changes that need your attention or your vote, votes on yours, changes you made or voted on going live, and projects you joined opening.",
     "description": "What the Change alerts category covers, under its name in Settings > Mobile push categories. \"Changes\" are proposed changes to a project; \"yours\" means the person's own proposed changes."
   },
   "alerts.push.appAlerts.label": {

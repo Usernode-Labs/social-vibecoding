@@ -5245,6 +5245,19 @@
     );
   };
 
+  // requestNotificationPermission() → refreshed settings state plus
+  // { granted }. The notification permission alone: on Android the
+  // POST_NOTIFICATIONS dialog, where requestPermissions() is the
+  // block-production chain (exact alarms, battery). The app has served it
+  // since the granular permission surface; SV asks it at its own moments
+  // (NativeChrome.notifyWhenReady, frontend/src/features/notify-ask/).
+  // May pend on the OS dialog.
+  window.usernode.requestNotificationPermission = function () {
+    return callNativeChromeAction(
+      "requestNotificationPermission", {}, _PERMISSION_REQUEST_TIMEOUT_MS
+    );
+  };
+
   // signInWithProvider({ provider, nonce }) → { idToken }. The app's own
   // Sign in with Apple or Google sheet, for the sign-in sheet's buttons
   // inside the app, whose web view the providers' own pages refuse.
