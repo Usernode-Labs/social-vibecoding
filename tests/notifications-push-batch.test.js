@@ -100,6 +100,38 @@ test('hydrateNotifications keys the batch by id and keeps the first row of each'
   assert.equal((await notifications.hydrateNotifications(pool, [])).size, 0);
 });
 
+test('through the real socket push and bus, a batch is one read and a few NOTIFYs, not one per person', async (t) => {
+  // Nothing stubbed but the two pools: the push is ws.pushNotificationToUser,
+  // and the bus is ws-bus with its pool (no listener, so it never thinks it
+  // is alone and publishes as production with several instances does). Each
+  // push was a pg_notify on the main pool of its own: 28 recipients, 28
+  // queries at once (review of #5830).
+  const bus = require('../src/services/ws-bus');
+  const busCalls = [];
+  bus.start({ pool: { query: (sql, params) => { busCalls.push({ sql, params }); return Promise.resolve({ rows: [] }); } },
+    connectionString: null, onMessage: () => {} });
+  t.after(() => { bus.flushBatches(); bus.start({ pool: null, connectionString: null }); });
+  const recipients = Array.from({ length: 28 }, (_, i) => [600 + i, 7000 + i]);
+  const pool = stubPool(new Map(recipients));
+  await Promise.all(recipients.map(([id]) => notifications.hydrateAndPush(pool, { id })));
+  bus.flushBatches();
+  assert.equal(pool.calls.length, 1, 'one read for the 28');
+  assert.ok(busCalls.every((c) => /pg_notify/.test(c.sql)));
+  // The first at once, the rest of its window together, as many as fit a
+  // NOTIFY (about 550 bytes each: 28 come to 4, against 28 before).
+  const bytes = busCalls.map((c) => Buffer.byteLength(c.params[1], 'utf8'));
+  assert.ok(bytes.every((b) => b <= bus.MAX_PAYLOAD_BYTES), 'each fits a NOTIFY');
+  const fit = Math.ceil(bytes.reduce((a, b) => a + b, 0) / (bus.MAX_PAYLOAD_BYTES - 200));
+  assert.ok(busCalls.length <= 1 + fit, `${busCalls.length} NOTIFYs, ${1 + fit} at most for these bytes`);
+  assert.ok(busCalls.length * 4 <= recipients.length, `${busCalls.length} NOTIFYs for ${recipients.length} recipients`);
+  const delivered = busCalls.flatMap((c) => {
+    const env = JSON.parse(c.params[1]);
+    return env.k === 'batch' ? env.b : [env];
+  });
+  assert.deepEqual(delivered.map((e) => [e.k, e.r.userId, e.d.notification.id]),
+    recipients.map(([id, userId]) => ['user', userId, id]), 'every recipient, in order, as a user push');
+});
+
 test('the main and workflow pools close an unused connection after 10 seconds', () => {
   const { POOL_IDLE_MS } = require('../src/db/connection-options');
   assert.equal(POOL_IDLE_MS, 10000);
