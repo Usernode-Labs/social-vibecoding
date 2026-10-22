@@ -276,11 +276,13 @@ test('the switch flips the view and its knob says which side, a press leans the 
 
 test('the picture takes the page\'s free height, up to 3:2, and gives way to 2:1 before the line does', () => {
   const flow = loadTsx('frontend/src/features/review-flow/review-flow.tsx');
-  // The page holds the line it leads with (18 + 46 + 14) and the vote at rest (120).
-  assert.equal(flow.heroHeight(351, 704, false), 704 - 198, 'a phone: what the page leaves');
+  // The page holds the line it leads with (6 + 42 + 14, .rf-claim) and the vote at rest (120).
+  assert.equal(flow.heroHeight(351, 704, false), 704 - 182, 'a phone: what the page leaves');
   assert.equal(flow.heroHeight(351, 300, false), Math.round(351 * 0.5), 'a short window: 2:1 at least');
   assert.equal(flow.heroHeight(351, 2000, false), Math.round(351 * 1.5), 'a tall one stops at 3:2');
-  assert.equal(flow.heroHeight(351, 704, true), 704 - 198 - 76, 'the strip takes its row');
+  assert.equal(flow.heroHeight(351, 704, true), 704 - 182 - 56, 'the strip takes its row: 12 above, 44 tall');
+  assert.match(read('frontend/src/features/review-flow/review-flow.tsx'), /const PAGE_CHROME = 6 \+ 42 \+ 14 \+ 120;/);
+  assert.match(read('public/css/app.css'), /\.rf-claim \{ flex: none; margin: 0 0 14px; padding: 6px 16px 0; min-height: 42px;/, 'the budget is the line\'s own box');
 });
 // ── 2b. The preview card ────────────────────────────────────────────────
 
@@ -301,7 +303,33 @@ test('the page leads with what the change does, then its picture, then the strip
   assert.match(css, /\.rf-bar-title \{ [^}]*font-size: 17px; font-weight: 650;/, 'the title is the one strong line');
   assert.match(css, /\.rf-claim \{ display: -webkit-box; -webkit-line-clamp: 2;/);
   assert.match(css, /\.rf-picture \{ position: relative; margin: 0 12px; border-radius: 32px; overflow: hidden; isolation: isolate; \}/);
-  assert.match(css, /\.rf-strip \{ position: relative; flex: none; height: 64px; margin: 12px 12px 0; \}/);
+  assert.match(css, /\.rf-strip \{ position: relative; flex: none; height: 44px; margin: 12px 12px 0; \}/);
+});
+
+test('the strip is pictograms: an outline per screen, a bar on every place it changed, on grey tiles', () => {
+  const src = read('frontend/src/features/review-flow/review-flow.tsx');
+  const strip = src.slice(src.indexOf('function Strip('), src.indexOf('/* ── One change\'s page body'));
+  assert.doesNotMatch(strip, /<img/, 'no screenshots under the picture');
+  assert.match(strip, /const marks = pictoMarks\(s, inW, inH\);/);
+  assert.match(strip, /<span key=\{b\.screen\} className="rf-gbar" aria-hidden="true" style=\{\{ left: b\.x, top: b\.y, width: b\.w, height: b\.h \}\} \/>/, 'the overview glyph stays as it is whichever screen is open');
+  assert.match(src, /const TILE = 44;/);
+  const css = read('public/css/app.css');
+  assert.match(css, /\.rf-strip-all, \.rf-tile \{ position: absolute; padding: 0; border: 0; background: var\(--rf-fill\); color: var\(--rf-muted\);/, 'a grey ground says it can be pressed');
+  assert.match(css, /\.rf-strip-all\[aria-current\], \.rf-tile\[aria-current\] \{ background: var\(--lit-tint\); color: var\(--lit-ink\); \}/, 'where you are: the lit tint and ink');
+  assert.doesNotMatch(css, /\.rf-lit \{|\.rf-tile-in \{/);
+
+  // Where the marks go: the screen's first phone-height, stretched to its lowest change.
+  const screen = (regions, height = 844) => ({ viewport: 'phone', width: 390, after: { url: 'a.png', height }, before: null, regions });
+  const r = (x, y, w, h) => ({ n: 1, b: null, a: [x, y, w, h] });
+  assert.deepEqual(model.pictoMarks(screen([r(0, 422, 390, 84)]), 14, 24), [{ x: 0, y: 12, w: 14, h: 2.5 }], 'halfway down, the width of the screen');
+  const two = model.pictoMarks(screen([r(20, 40, 100, 60), r(200, 700, 150, 80)]), 14, 24);
+  assert.equal(two.length, 2, 'two places far apart, two marks');
+  assert.ok(two[0].y < two[1].y, 'top to bottom');
+  assert.equal(model.pictoMarks(screen([r(20, 100, 350, 40), r(20, 145, 350, 40)]), 14, 24).length, 1, 'touching at this size: one mark');
+  assert.equal(model.pictoMarks(screen([r(0, 10, 50, 20), r(0, 200, 50, 20), r(0, 400, 50, 20), r(0, 600, 50, 20)]), 14, 24).length, 3, 'at most three');
+  assert.deepEqual(model.pictoMarks(screen([]), 14, 24), [], 'nothing recorded: the outline alone, not a mark somewhere');
+  const low = model.pictoMarks(screen([r(0, 1800, 390, 60)], 2400), 14, 24);
+  assert.ok(low[0].y + low[0].h <= 24 && low[0].y > 20, 'a change below the first screenful still lands inside, at the foot');
 });
 // ── 3. The vote ──────────────────────────────────────────────────────────
 
@@ -346,7 +374,13 @@ test('the run\'s bar: back, the title and ⌄; the title, ⌄ or the line opens 
   assert.doesNotMatch(read('frontend/src/features/header/header-title.tsx'), /reviewRun/);
   assert.doesNotMatch(read('frontend/src/features/header/platform-header.tsx'), /reviewRun/);
   const css = read('public/css/app.css');
-  assert.match(css, /\n\.rf-page-wrap \{ position: fixed; left: var\(--platform-rail-w, 0px\); right: 0; top: 0; bottom: var\(--platform-tabs-h, 0px\);/);
+  // A detail view: on a phone the page covers the header and the tab bar
+  // (z 30) top to bottom; the vote bar clears the home indicator itself, and
+  // the page's height budget counts that inset.
+  assert.match(css, /\n\.rf-page-wrap \{ position: fixed; left: var\(--platform-rail-w, 0px\); right: 0; top: 0; bottom: 0; z-index: 35;/);
+  assert.match(css, /\.rf-sheet-inner \{ display: flex; flex-direction: column; max-height: inherit; padding: 0 16px calc\(10px \+ var\(--platform-safe-bottom, 0px\)\); \}/);
+  assert.match(css, /\.rf-safe-probe \{ [^}]*height: var\(--platform-safe-bottom, 0px\);/);
+  assert.match(src, /const h = \(Number\.isFinite\(max\) && max > 0 \? max : pr\.height\) - bar - safe;/);
   assert.match(css, /\.rf-bar\[data-open\] \.rf-bar-title \{ white-space: normal;/, 'open, the whole title');
   assert.match(css, /\.rf-bar-toggle\[aria-expanded="true"\] svg \{ transform: rotate\(180deg\); \}/);
   assert.match(css, /\.rf-desc-wrap\[data-open\] \.rf-desc \{ transform: none;/);

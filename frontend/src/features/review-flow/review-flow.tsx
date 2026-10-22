@@ -57,7 +57,7 @@ import { CompareSlider } from './compare';
 import { Illustration } from './illustrations';
 import { readInks, useInks } from './ink';
 import {
-  composeSheet, glyphBars, nextIndex, openPlace, orderForReview, screenLine, tileCrop, toReviewItems,
+  composeSheet, glyphBars, nextIndex, openPlace, orderForReview, pictoMarks, screenLine, toReviewItems,
   type AreaKind, type BenefitKind, type DecisionKind, type GlyphBar, type Ink, type Placement, type ReviewItem, type SheetPlate,
 } from './model';
 import { VoteSheet, sheetOpen, type SheetState, type Vote } from './vote-sheet';
@@ -74,18 +74,20 @@ const ONE_SCREEN_AFTER = 650;
 /** The picture's side margin (app.css `.rf-picture`). */
 const INSET = 12;
 /** The strip: 64pt tiles, 8 apart, 12 under the picture (app.css `.rf-strip`). */
-const TILE = 64;
+const TILE = 44;
 const TILE_GAP = 8;
+/** A screen's pictogram inside its tile: a phone's outline, and its inside. */
+const PICTO = { w: 20, h: 30, inset: 3 };
 const STRIP_H = 12 + TILE;
 /**
- * What the page holds besides the picture: the line it leads with (18pt
- * under the header, up to two lines, 14pt above the picture) and the vote at
+ * What the page holds besides the picture: the line it leads with (6pt
+ * under the bar, up to two lines, 14pt above the picture) and the vote at
  * rest (the room for a No's reason, the row, their padding). The strip is
  * added when there is one. The picture takes the rest, up to 3:2. On a short
  * screen (a small phone, a low window's panel) it gives way down to 2:1
  * before the line does: only past that does the page scroll.
  */
-const PAGE_CHROME = 18 + 46 + 14 + 120;
+const PAGE_CHROME = 6 + 42 + 14 + 120;
 
 /** The picture's height on a page `pageH` tall, `inner` wide. */
 export function heroHeight(inner: number, pageH: number, strip: boolean): number {
@@ -165,15 +167,17 @@ function Drawn({ item, width, height, play }: { item: ReviewItem; width: number;
 /* ── The strip ────────────────────────────────────────────────────────── */
 
 /**
- * Its own row under the picture: the glyph, then one tile per screen, every
- * one 64pt square and 8 apart, never stretched to fill the row. Where you
- * are is a ring of lit ink inside the tile. When a change arrives its tiles
- * start folded on the glyph's bars and unfold once into their places.
+ * Its own row under the picture: the sheet's glyph, then one pictogram per
+ * screen, each on a 44pt grey tile 8 apart, never stretched to fill the
+ * row. A pictogram is the screen's outline with a bar on every place it
+ * changed (model.ts pictoMarks): no screenshots here, so the picture above
+ * stays the one thing with pixels in it. The glyph is the overview and
+ * stays as it is whichever screen is open; where you are is the tile in the
+ * lit tint and ink. When a change arrives its tiles start folded on the
+ * glyph's bars and unfold once into their places.
  */
-function Strip({ item, plates, inks, shot, folded, ready, onAll, onTile }: {
+function Strip({ item, plates, shot, folded, ready, onAll, onTile }: {
   item: ReviewItem;
-  /** The screens' after stills, read: each tile ends on blank pixels. */
-  inks: Record<string, Ink>;
   plates: SheetPlate[];
   /** The open screen, or null on the sheet. */
   shot: number | null;
@@ -185,9 +189,11 @@ function Strip({ item, plates, inks, shot, folded, ready, onAll, onTile }: {
 }): ReactNode {
   const t = useMessages('communities');
   const n = item.screens.length;
-  const bars = glyphBars(plates, 35, 14.5);
+  const bars = glyphBars(plates, 24, 10);
   const barOf = (k: number): GlyphBar | undefined => bars.find((b) => b.screen === k);
   const slot = (k: number) => (k + 1) * (TILE + TILE_GAP);
+  const inW = PICTO.w - PICTO.inset * 2;
+  const inH = PICTO.h - PICTO.inset * 2;
   return (
     <div className="rf-strip" role="group" aria-label={t('communities:review.thumbs.label')} data-rf-strip="">
       <button
@@ -200,12 +206,13 @@ function Strip({ item, plates, inks, shot, folded, ready, onAll, onTile }: {
       >
         <span className="rf-gbox" aria-hidden="true" />
         {bars.map((b) => (
-          <span key={b.screen} className="rf-gbar" aria-hidden="true" style={{ left: b.x, top: b.y, width: b.w, height: b.h, opacity: shot == null || b.screen === shot ? 1 : 0.3 }} />
+          <span key={b.screen} className="rf-gbar" aria-hidden="true" style={{ left: b.x, top: b.y, width: b.w, height: b.h }} />
         ))}
       </button>
       {item.screens.map((s, k) => {
         const bar = barOf(k);
-        const box = folded && bar ? { x: bar.x, y: bar.y, w: bar.w, h: bar.h, r: 2 } : { x: slot(k), y: 0, w: TILE, h: TILE, r: 20 };
+        const box = folded && bar ? { x: bar.x, y: bar.y, w: bar.w, h: bar.h, r: 2 } : { x: slot(k), y: 0, w: TILE, h: TILE, r: 14 };
+        const marks = pictoMarks(s, inW, inH);
         return (
           <button
             key={`${s.viewport}-${k}`}
@@ -217,16 +224,17 @@ function Strip({ item, plates, inks, shot, folded, ready, onAll, onTile }: {
             tabIndex={folded ? -1 : 0}
             data-rf-tile={k}
             data-folded={folded ? '' : undefined}
-            style={{ left: box.x, top: box.y, width: box.w, height: box.h, borderRadius: box.r, background: folded ? 'var(--rf-ink)' : item.ground }}
+            style={{ left: box.x, top: box.y, width: box.w, height: box.h, borderRadius: box.r }}
             onClick={ready ? () => onTile(k) : undefined}
           >
-            <span className="rf-tile-in">
-              <img src={s.after.url} alt="" draggable={false} style={{ width: s.width, height: s.after.height, transform: cam(tileCrop(s, TILE, undefined, inks[s.after.url])) }} />
+            <span className="rf-picto" aria-hidden="true">
+              {marks.map((m, i) => (
+                <span key={i} className="rf-picto-mark" style={{ left: PICTO.inset + m.x, top: PICTO.inset + m.y, width: m.w, height: m.h }} />
+              ))}
             </span>
           </button>
         );
       })}
-      <span className="rf-lit" aria-hidden="true" style={{ left: shot == null ? 0 : slot(shot) }} />
     </div>
   );
 }
@@ -460,7 +468,6 @@ function ChangeBody({ item, width, pageH, arrive, still = null, onView, onMore }
         <Strip
           item={item}
           plates={plates}
-          inks={inks}
           shot={view.phase === 'closing' ? null : view.shot}
           folded={folded}
           ready={ready}
@@ -498,6 +505,7 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
   const [size, setSize] = useState<{ w: number; h: number } | null>(null);
   const barRef = useRef<HTMLDivElement>(null);
   const foldedBar = useRef(0);
+  const safeRef = useRef<HTMLDivElement>(null);
   // What the change does in full, dropped from under the bar over the page.
   const [desc, setDesc] = useState(false);
   const [barTop, setBarTop] = useState(0);
@@ -545,11 +553,13 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
       const pr = page.getBoundingClientRect();
       // From 768px the panel is as tall as what it holds, up to its room.
       const max = parseFloat(getComputedStyle(page).maxHeight);
-      // Less the bar over it, which on a phone also holds the status bar's inset.
+      // Less the bar over it, which on a phone also holds the status bar's
+      // inset, and the home indicator's inset the vote bar keeps clear of.
+      const safe = safeRef.current ? safeRef.current.offsetHeight : 0;
       // The folded bar's: open, it grows to the whole title over the page.
       if (barRef.current && !barRef.current.hasAttribute('data-open')) foldedBar.current = barRef.current.getBoundingClientRect().height;
       const bar = foldedBar.current;
-      const h = (Number.isFinite(max) && max > 0 ? max : pr.height) - bar;
+      const h = (Number.isFinite(max) && max > 0 ? max : pr.height) - bar - safe;
       setSize({ w: Math.min(COLUMN, pr.width), h });
     };
     measure();
@@ -731,6 +741,7 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
       {/* From 768px, the pane behind the panel, dimmed; a click on it is Back. */}
       <div ref={dimRef} className="rf-page-dim" onClick={onDone} aria-hidden="true" />
       <div ref={pageRef} className="rf-page" role="dialog" aria-modal="false" aria-label={item.title}>
+        <div ref={safeRef} className="rf-safe-probe" aria-hidden="true" />
         <div ref={barRef} className="rf-bar" data-open={desc ? '' : undefined}>
           <button type="button" className="rf-back" onClick={onDone} aria-label={backName} data-rf-back="">
             <ChevronLeftIcon aria-hidden="true" width={24} height={24} strokeWidth="2.2" />

@@ -902,6 +902,37 @@ function changeFocus(screen: ReviewScreen, pad: number): Box {
 }
 
 /**
+ * A screen as a pictogram (the strip's tile): the screen's outline at a
+ * phone's proportions, `w` by `h`, and a bar on every place it changed, so
+ * each pictogram points at where on that screen to look. The outline stands
+ * for the screen's first phone-height, stretched down to take in the lowest
+ * change. Marks that touch at this size are one mark; at most three, the
+ * largest, top to bottom. A removed part (a line, no height) still gets a
+ * bar; a screen with no place recorded is the outline alone, rather than a
+ * mark that points somewhere nothing changed.
+ */
+export function pictoMarks(screen: ReviewScreen, w: number, h: number): Box[] {
+  const W = screen.width;
+  const boxes = changedRegions(screen).map(afterBox).filter((b): b is Box => !!b && b.w > 0);
+  if (!boxes.length) return [];
+  const lowest = Math.max(...boxes.map((b) => b.y + Math.max(b.h, 2)));
+  const H = Math.max(1, Math.min(screen.after.height, Math.max(W * 2.17, lowest)));
+  const q = (v: number) => Math.round(v * 2) / 2;
+  const marks = boxes.map((b) => {
+    const mw = Math.max(3, q((Math.min(b.w, W) / W) * w));
+    const mh = Math.max(2.5, q((Math.min(b.h, H) / H) * h));
+    return { x: Math.max(0, Math.min(w - mw, q((b.x / W) * w))), y: Math.max(0, Math.min(h - mh, q((b.y / H) * h))), w: mw, h: mh };
+  });
+  const merged: Box[] = [];
+  for (const m of marks) {
+    const hit = merged.findIndex((o) => near(o, m, 1.5));
+    if (hit < 0) merged.push(m);
+    else merged[hit] = union2(merged[hit], m);
+  }
+  return merged.sort((a, b) => boxArea(b) - boxArea(a)).slice(0, 3).sort((a, b) => a.y - b.y);
+}
+
+/**
  * A screen's tile in the strip: a square of the screen round where its
  * declared change starts (text reads from its start), as large as the
  * still's pixels allow at `size` points. Returns where the screen goes in it.
