@@ -1,7 +1,7 @@
 const { Pool } = require('pg');
 const log = require('../services/logger');
 const { isConnectionLimitError } = require('./connection-census');
-const { connectionName, connectionOptions } = require('./connection-options');
+const { connectionName, connectionOptions, POOL_IDLE_MS } = require('./connection-options');
 
 let pool;
 
@@ -26,7 +26,7 @@ function getPool(config) {
     pool = new Pool({
       connectionString: config.databaseUrl,
       max: config.dbPoolMax || 10,
-      idleTimeoutMillis: 30000,
+      idleTimeoutMillis: POOL_IDLE_MS,
       ...connectionOptions(config, { name: connectionName('main'), extra: { jit: 'off' } }),
     });
     pool.on('error', (err) => {

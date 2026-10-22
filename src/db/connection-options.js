@@ -13,6 +13,13 @@
 //     workflow runtime's settings, services/db-locks.js), so a session
 //     advisory lock or a row lock does not outlive its process.
 const IDLE_IN_TRANSACTION_MS = 60000;
+
+// How long a pooled connection nobody is using stays open: the main and
+// workflow pools close it after this. 30 s kept a burst's connections open
+// long after it, so on 22 Oct 2026 the platform held 27 to 46 while running
+// at most 5, and every one of them counts against the server's
+// connections. A connection costs a few milliseconds to open again.
+const POOL_IDLE_MS = 10000;
 function connectionName(pool = 'main', env = process.env) {
   if (env.DB_APPLICATION_NAME) return `${env.DB_APPLICATION_NAME}${pool === 'main' ? '' : `-${pool}`}`;
   const role = require('../services/process-role').processRole(env);
@@ -63,4 +70,4 @@ function poolExcess(pool) {
   return Math.max(0, (pool.totalCount || 0) - pool.options.max);
 }
 
-module.exports = { connectionName, connectionOptions, shrinkPool, poolExcess, IDLE_IN_TRANSACTION_MS };
+module.exports = { connectionName, connectionOptions, shrinkPool, poolExcess, IDLE_IN_TRANSACTION_MS, POOL_IDLE_MS };
