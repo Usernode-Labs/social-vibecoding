@@ -2521,9 +2521,16 @@ function deliverToUser(userId, payload) {
 // One person's tabs are not guaranteed to land on one instance, so an
 // @mention delivered only locally reaches whichever half of their sessions
 // happens to share a pod with the emitter.
+//
+// To the other instances in one batched stream (ws-bus publishBatched): a
+// push is a pg_notify on the main pool, and a notification to many people,
+// or an event for every member of a conversation, was one each, all at once
+// (28 queries for 28 recipients, the pool filled to its limit; 22 Oct 2026).
+// The first after a quiet spell goes at once and the rest of its window
+// together, in order; this instance's own sockets get theirs immediately.
 function pushToUser(userId, payload) {
   const sent = deliverToUser(userId, payload);
-  wsBus.publish('user', { userId }, payload);
+  wsBus.publishBatched('user', 'user', { userId }, payload);
   // #2904: every read path announces itself with this event, so it is also
   // where the iOS icon badge learns the count moved. Only the emitting
   // instance gets here (bus peers call deliverToUser), so one change is one

@@ -1412,6 +1412,13 @@
     {
       "source": "src/services/notifications.js",
       "kind": "structural-template",
+      "fingerprint": "2143c30b78b24f117d56",
+      "count": 1,
+      "preview": "`${HYDRATE_SELECT_SQL} WHERE n.id = $1 AND ${HYDRATE_LISTED_SQL}`"
+    },
+    {
+      "source": "src/services/notifications.js",
+      "kind": "structural-template",
       "fingerprint": "2d0d87933561ba11fb65",
       "count": 1,
       "preview": "`SELECT COUNT(*)::int AS c FROM notifications AS n WHERE n.user_id = $1 AND n.read_at IS NULL AND NOT ${DECIDED_ASK_SETTLED_SQL} AND ${CONVERSATION_ACCESS_SQL} "
@@ -1426,9 +1433,9 @@
     {
       "source": "src/services/notifications.js",
       "kind": "structural-template",
-      "fingerprint": "aa51f2c75742f9b9e953",
+      "fingerprint": "8df84d5c03ed14a817a3",
       "count": 1,
-      "preview": "`SELECT n.id, n.kind, n.user_id, CASE WHEN n.read_at IS NULL AND ${DECIDED_ASK_SETTLED_SQL} THEN COALESCE(cs.merged_at, cs.archived_at, n.created_at) ELSE n.rea"
+      "preview": "`${HYDRATE_SELECT_SQL} WHERE n.id = ANY($1::int[]) AND ${HYDRATE_LISTED_SQL}`"
     },
     {
       "source": "src/services/notifications.js",

@@ -1218,28 +1218,9 @@ async function notifyManagedOpenRouterReviewAdmins(pool, args) {
   return rows;
 }
 
-// Hydrate one freshly-inserted notification row with the same joins
-// listForUser performs and push it to its recipient over WS as a
-// notification_new. Best-effort: completion notifications ride inside
-// SSE/turn pipelines that must never fail because of a push.
-async function hydrateAndPush(pool, row) {
-  if (!row || !row.id) return;
-  try {
-    const hydrated = await hydrateNotification(pool, row.id);
-    if (!hydrated) return;
-    const { pushNotificationToUser } = require('./ws');
-    pushNotificationToUser(hydrated.userId, { type: 'notification_new', notification: hydrated.notification });
-  } catch (err) {
-    log.warn('notifications', 'hydrateAndPush failed', { id: row.id, err: err.message });
-  }
-}
-
-// One notification as the bell reads it, and whose it is, or null when the
-// viewer may no longer see it. One read: a workflow transition calls it in
-// its transaction and publishes the push itself.
-async function hydrateNotification(q, id) {
-  const { rows } = await q.query(
-    `SELECT n.id, n.kind, n.user_id,
+// The bell's read of notifications (listForUser's joins), for
+// hydrateNotification (one) and hydrateNotifications (a batch).
+const HYDRATE_SELECT_SQL = `SELECT n.id, n.kind, n.user_id,
             CASE WHEN n.read_at IS NULL AND ${DECIDED_ASK_SETTLED_SQL}
                  THEN COALESCE(cs.merged_at, cs.archived_at, n.created_at)
                  ELSE n.read_at END AS read_at,
@@ -1279,20 +1260,90 @@ async function hydrateNotification(q, id) {
        ON conversation_message.id = n.conversation_message_id
      LEFT JOIN users su ON su.id = n.source_user_id
      LEFT JOIN pr_votes pv ON pv.session_id = n.session_id AND pv.user_id = n.source_user_id
-     ${FILED_MESSAGE_JOIN_SQL}
-     WHERE n.id = $1 AND ${CONVERSATION_ACCESS_SQL} AND ${CHAT_SENDER_ACCESS_SQL}
+     ${FILED_MESSAGE_JOIN_SQL}`;
+
+// Only what the bell lists (listForUser's own rules: a parked kind, and news
+// about a change that has merged, #4795/#5487), with MERGED_HIDDEN_KINDS as
+// $2. A row it will never list was pushed anyway, drawn, and dropped by the
+// next read of the feed: on 21 Oct 2026 a notification showed in the opened
+// sheet for a moment and then disappeared. The phone push is the
+// mobile_push_deliveries trigger's, at the insert, and is unchanged.
+const HYDRATE_LISTED_SQL = `${CONVERSATION_ACCESS_SQL} AND ${CHAT_SENDER_ACCESS_SQL}
        AND ${PARKED_KINDS_SQL}
-       AND NOT (n.kind = ANY($2::text[]) AND cs.status IS NOT DISTINCT FROM 'merged')`,
-    // Only what the bell lists (listForUser's own rules: a parked kind, and
-    // news about a change that has merged, #4795/#5487). A row it will never
-    // list was pushed anyway, drawn, and dropped by the next read of the
-    // feed: on 21 Oct 2026 a notification showed in the opened sheet for a
-    // moment and then disappeared. The phone push is the mobile_push_deliveries
-    // trigger's, at the insert, and is unchanged.
+       AND NOT (n.kind = ANY($2::text[]) AND cs.status IS NOT DISTINCT FROM 'merged')`;
+
+// Hydrate freshly-inserted notification rows with the same joins listForUser
+// performs and push each to its recipient over WS as a notification_new.
+// Best-effort: completion notifications ride inside SSE/turn pipelines that
+// must never fail because of a push.
+//
+// Calls on the same pool in the same turn share one read: a notification to
+// many people is written `Promise.all(rows.map((row) => hydrateAndPush(pool,
+// row)))` (17 places), and each row was its own query, all at once. Up to 93
+// in the same second (a weekly digest), each holding a connection of the
+// caller's pool (22 Oct 2026). Each call still resolves once its row has been
+// pushed, or skipped.
+const pendingPushes = new Map(); // pool -> { ids: Set, done: Promise }
+
+function hydrateAndPush(pool, row) {
+  if (!row || !row.id) return Promise.resolve();
+  let batch = pendingPushes.get(pool);
+  if (!batch) {
+    batch = { ids: new Set() };
+    // Read once the caller's synchronous loop has queued every row.
+    batch.done = Promise.resolve().then(() => pushBatch(pool, batch));
+    pendingPushes.set(pool, batch);
+  }
+  batch.ids.add(Number(row.id));
+  return batch.done;
+}
+
+async function pushBatch(pool, batch) {
+  pendingPushes.delete(pool);
+  const ids = [...batch.ids];
+  try {
+    // A batch of one, the usual push, is the single read it always was.
+    const hydrated = ids.length === 1
+      ? new Map([[ids[0], await hydrateNotification(pool, ids[0])]])
+      : await hydrateNotifications(pool, ids);
+    const { pushNotificationToUser } = require('./ws');
+    for (const id of ids) {
+      const one = hydrated.get(id);
+      if (one) pushNotificationToUser(one.userId, { type: 'notification_new', notification: one.notification });
+    }
+  } catch (err) {
+    log.warn('notifications', 'hydrateAndPush failed', { ids, err: err.message });
+  }
+}
+
+// One notification as the bell reads it, and whose it is, or null when the
+// viewer may no longer see it. One read: a workflow transition calls it in
+// its transaction and publishes the push itself.
+async function hydrateNotification(q, id) {
+  const { rows } = await q.query(
+    `${HYDRATE_SELECT_SQL}
+     WHERE n.id = $1 AND ${HYDRATE_LISTED_SQL}`,
     [id, MERGED_HIDDEN_KINDS]
   );
   if (!rows.length) return null;
   return { userId: rows[0].user_id, notification: serialize(rows[0]) };
+}
+
+// hydrateNotification for several at once: Map(id -> { userId, notification })
+// of those the bell lists, one read for them all.
+async function hydrateNotifications(q, ids) {
+  const hydrated = new Map();
+  if (!ids.length) return hydrated;
+  const { rows } = await q.query(
+    `${HYDRATE_SELECT_SQL}
+     WHERE n.id = ANY($1::int[]) AND ${HYDRATE_LISTED_SQL}`,
+    [ids, MERGED_HIDDEN_KINDS]
+  );
+  for (const row of rows) {
+    const id = Number(row.id);
+    if (!hydrated.has(id)) hydrated.set(id, { userId: row.user_id, notification: serialize(row) });
+  }
+  return hydrated;
 }
 
 // PR-proposed (vote-request) notification. Fired when a session is
@@ -2317,6 +2368,7 @@ module.exports = {
   notifyManagedOpenRouterReviewAdmins,
   hydrateAndPush,
   hydrateNotification,
+  hydrateNotifications,
   createPrProposedNotifications,
   createChangeReadyNotifications,
   createAppDeleteAttemptNotifications,

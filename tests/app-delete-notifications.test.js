@@ -36,8 +36,11 @@ function fakePool() {
         return { rows: recipients.map((userId, i) => ({ id: i + 1, user_id: userId })) };
       }
       if (/^SELECT n\.id, n\.kind/i.test(sql)) {
-        state.hydrated.push(params[0]);
-        return { rows: [{ id: params[0], user_id: 5, kind: 'x' }] };
+        // One row (n.id = $1) or a batch (n.id = ANY($1)): hydrateAndPush
+        // reads the rows it was handed in one turn together.
+        const ids = Array.isArray(params[0]) ? params[0] : [params[0]];
+        state.hydrated.push(...ids);
+        return { rows: ids.map((id) => ({ id, user_id: 5, kind: 'x' })) };
       }
       throw new Error(`unexpected query: ${sql}`);
     },

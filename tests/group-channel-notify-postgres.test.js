@@ -66,6 +66,8 @@ test('small-group discussions against the full schema', { timeout: 120000 }, asy
   const frames = [];
   const wsBus = require('../src/services/ws-bus');
   wsBus.publish = (kind, routing, data) => frames.push({ kind, routing, data });
+  // A person's pushes ride one batched stream (ws.js pushToUser).
+  wsBus.publishBatched = (_key, kind, routing, data) => frames.push({ kind, routing, data });
   const ws = require('../src/services/ws');
   const appChat = require('../src/services/app-chat');
   const group = require('../src/services/group-channel-notify');

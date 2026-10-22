@@ -179,7 +179,8 @@ export async function startWorkflow(config: any, opts: { loops: boolean }): Prom
   await syncSettings(appPool);
   if (runtime) return;
   const workflowPool = new pg.Pool({
-    connectionString: config.databaseUrl, max: config.wfPoolMax, idleTimeoutMillis: 30000,
+    connectionString: config.databaseUrl, max: config.wfPoolMax,
+    idleTimeoutMillis: legacy('db/connection-options').POOL_IDLE_MS,
     application_name: legacy('db/connection-options').connectionName('workflow'),
     connectionTimeoutMillis: config.dbPoolWaitMs || 10000,
     ...deadPeerOptions(),

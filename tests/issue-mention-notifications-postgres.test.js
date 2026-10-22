@@ -59,6 +59,8 @@ test('mentions in a request\'s text against the full schema', { timeout: 120000 
   const frames = [];
   const wsBus = require('../src/services/ws-bus');
   wsBus.publish = (kind, routing, data) => frames.push({ kind, routing, data });
+  // A person's pushes ride one batched stream (ws.js pushToUser).
+  wsBus.publishBatched = (_key, kind, routing, data) => frames.push({ kind, routing, data });
   // GitHub, stood in for: the route files the request there first.
   const github = require('../src/services/github');
   const filed = [];

@@ -66,6 +66,8 @@ test('app channels against the full schema', { timeout: 120000 }, async (t) => {
   const frames = [];
   const wsBus = require('../src/services/ws-bus');
   wsBus.publish = (kind, routing, data) => frames.push({ kind, routing, data });
+  // A person's pushes ride one batched stream (ws.js pushToUser).
+  wsBus.publishBatched = (_key, kind, routing, data) => frames.push({ kind, routing, data });
   const ws = require('../src/services/ws');
   const appChat = require('../src/services/app-chat');
   const { chatRoutes } = require('../src/routes/chat');
