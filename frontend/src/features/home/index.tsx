@@ -121,6 +121,48 @@ export function HomeScreen() {
   // until a hold actually starts edit mode.
   const grid = useStoreState(gridStore);
 
+  // ALL / CONTRIBUTING (#5823). The switch is the HEADING'S, not the row's
+  // action: it sits immediately after the words "My apps" and names which of
+  // them the grid is showing, so it is drawn small and in the heading's own
+  // muted greys rather than as a right-hand control. Home.render() decides
+  // whether it shows at all (only when My apps mixes the two kinds, or
+  // Contributing is on and there must be a way back); a search and edit mode
+  // hide it. The action seat keeps exactly what it carries on main: Done and
+  // Add apps while arranging, otherwise the compact New project entry when
+  // the folded grid holds its trailing tile back.
+  const appsFilter = grid.filterable ? (
+    <span
+      role="group"
+      aria-label={t('home:grid.filter.group')}
+      className="home-apps-filter inline-flex shrink-0 items-center gap-0.5 rounded-full bg-zinc-100 p-0.5 dark:bg-zinc-800"
+    >
+      {(['all', 'contributing'] as const).map((key) => {
+        const selected = grid.filter === key;
+        return (
+          <Chip
+            key={key}
+            size="bar"
+            className={
+              'home-apps-filter-chip h-6 px-2.5 text-[12px] font-medium '
+              + (selected
+                // The selected half is a quiet raised segment, not the dark
+                // inversion the browse directory's header chips wear: at this
+                // size beside a 16px label, a filled pill would outrank the
+                // name it belongs to.
+                ? 'bg-white text-zinc-800 hover:bg-white dark:bg-zinc-700 dark:text-zinc-100 dark:hover:bg-zinc-700'
+                : 'bg-transparent text-zinc-500 hover:bg-transparent hover:text-zinc-700 dark:bg-transparent dark:text-zinc-400 dark:hover:bg-transparent dark:hover:text-zinc-200')
+            }
+            data-filter={key}
+            selected={selected}
+            onClick={() => { (window as any).Home?.setAppsFilter?.(key); }}
+          >
+            {t(key === 'all' ? 'home:grid.filter.all' : 'home:grid.filter.contributing')}
+          </Chip>
+        );
+      })}
+    </span>
+  ) : null;
+
   return (
     <main ref={screenRef} id="home-screen" className="flex-1 overflow-y-auto" style={{ position: 'relative' }} data-page-bounce="">
       {/*
@@ -268,6 +310,7 @@ export function HomeScreen() {
               because two names for one collection is worse than either.
           */}
           <SectionHeading
+            beside={appsFilter}
             action={grid.editing ? (
               /* The screen's one job while the tiles wiggle is arranging them,
                  and "Done" is its primary action. The treatment is BrowseLink's
@@ -301,33 +344,6 @@ export function HomeScreen() {
                 >
                   <span className="whitespace-nowrap">{t('home:edit.done')}</span>
                 </button>
-              </span>
-            ) : grid.filterable ? (
-              /* ALL / CONTRIBUTING (#5823), at the right end of the heading
-                 row where Done and Add apps sit while arranging. The same
-                 filter chip Discover's directory leads with, at the `bar`
-                 size shrunk to fit this row: the selected one filled dark,
-                 the other white. Home.render() decides whether they show at
-                 all (only when My apps mixes the two kinds, or Contributing
-                 is on and there must be a way back); a search and edit mode
-                 hide them. */
-              <span
-                role="group"
-                aria-label={t('home:grid.filter.group')}
-                className="flex shrink-0 items-center gap-1.5"
-              >
-                {(['all', 'contributing'] as const).map((key) => (
-                  <Chip
-                    key={key}
-                    size="bar"
-                    className="home-apps-filter-chip h-7 px-3 text-[13px]"
-                    data-filter={key}
-                    selected={grid.filter === key}
-                    onClick={() => { (window as any).Home?.setAppsFilter?.(key); }}
-                  >
-                    {t(key === 'all' ? 'home:grid.filter.all' : 'home:grid.filter.contributing')}
-                  </Chip>
-                ))}
               </span>
             ) : grid.create?.heldBack ? (
               <CreateCompact view={grid.create} />
