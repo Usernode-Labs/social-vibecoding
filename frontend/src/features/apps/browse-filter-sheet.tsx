@@ -4,7 +4,9 @@
  *
  * The seam is the one features/home/add-apps-sheet.tsx uses: the kit owns the
  * sheet (PlatformUI.sheet), React owns what is in it, a legacy portal is
- * mounted on open and dropped on dismiss. Nothing goes on `window`, because no
+ * mounted on open and dropped on dismiss. From 768px the same panel is the
+ * kit's centred dialog (PlatformUI.modal) instead: a sheet rising from the
+ * bottom of a wide screen reads as a phone screen stretched. Nothing goes on `window`, because no
  * legacy caller opens it: the Filters button calls openBrowseFilterSheet
  * directly.
  *
@@ -73,10 +75,12 @@ interface SheetProps {
   admin: boolean;
   /** The live filter state, copied into the draft when the sheet opens. */
   initial: Draft;
+  /** Shown as a centred dialog, whose card carries its own padding. */
+  dialog: boolean;
   onClose: () => void;
 }
 
-function BrowseFilterSheet({ types, view, admin, initial, onClose }: SheetProps) {
+function BrowseFilterSheet({ types, view, admin, initial, dialog, onClose }: SheetProps) {
   const t = useMessages('discover');
   const [draft, setDraft] = useState<Draft>(initial);
   const set = (patch: Partial<Draft>) => setDraft((prev) => ({ ...prev, ...patch }));
@@ -98,7 +102,7 @@ function BrowseFilterSheet({ types, view, admin, initial, onClose }: SheetProps)
   const count = browse()?.countFor?.({ ...draft, view }) ?? 0;
 
   return (
-    <div data-browse-filter-sheet="" className="px-4 pb-5">
+    <div data-browse-filter-sheet="" data-dialog={dialog ? '' : undefined} className={dialog ? undefined : 'px-4 pb-5'}>
       {/* Reset · title · ✕, as the sheet's header row. Reset clears the DRAFT
           only; the list behind stays as it was until Show is pressed. */}
       <div className="grid grid-cols-3 items-center gap-2 pt-1">
@@ -109,7 +113,7 @@ function BrowseFilterSheet({ types, view, admin, initial, onClose }: SheetProps)
         >
           {t('discover:filters.reset')}
         </button>
-        <h2 className="justify-self-center text-[17px] font-[650] text-zinc-900 dark:text-zinc-100">
+        <h2 id="browse-filters-title" className="justify-self-center text-[17px] font-[650] text-zinc-900 dark:text-zinc-100">
           {t('discover:filters.title')}
         </h2>
         <button
@@ -132,7 +136,11 @@ function BrowseFilterSheet({ types, view, admin, initial, onClose }: SheetProps)
                 <Chip
                   key={c.key}
                   size="bar"
-                  className="browse-category-chip px-4"
+                  className={/* On the dialog's white card an unpicked chip's
+                    own white would vanish: it takes a control's grey there. */
+                    dialog && !picked
+                    ? 'browse-category-chip px-4 bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700'
+                    : 'browse-category-chip px-4'}
                   selected={picked}
                   data-category={c.key}
                   onClick={() => set({ category: picked ? 'all' : c.key })}
@@ -224,14 +232,23 @@ function BrowseFilterSheet({ types, view, admin, initial, onClose }: SheetProps)
   );
 }
 
-type SheetKit = { sheet?: (opts: { contentEl: HTMLElement; onDismiss?: () => void }) => { dismiss: () => void } | null };
+type KitHandle = { dismiss: () => void; el?: HTMLElement } | null;
+type SheetKit = {
+  sheet?: (opts: { contentEl: HTMLElement; onDismiss?: () => void }) => KitHandle;
+  modal?: (opts: { contentEl: HTMLElement; onDismiss?: () => void }) => KitHandle;
+};
+
+// A dialog from 768px, the shell's phone/desktop line; a sheet below it.
+function wide(): boolean {
+  try { return !!window.matchMedia && window.matchMedia('(min-width: 768px)').matches; } catch { return false; }
+}
 
 let openOnce: (() => void) | null = null;
 
 /** Open the sheet, one at a time — a second tap while one is up is a no-op. */
 export function openBrowseFilterSheet(): void {
   if (openOnce) return;
-  const kit = (typeof window !== 'undefined' ? (window as any).PlatformUI : null) || null;
+  const kit: SheetKit | null = (typeof window !== 'undefined' ? (window as any).PlatformUI : null) || null;
   if (!kit || typeof kit.sheet !== 'function' || typeof document === 'undefined') return;
   const controller = browse();
   if (!controller) return;
@@ -244,8 +261,15 @@ export function openBrowseFilterSheet(): void {
     unmountLegacyPortal(panel);
   };
   openOnce = finish;
-  const handle = kit.sheet({ contentEl: panel, onDismiss: finish });
+  const dialog = wide() && typeof kit.modal === 'function';
+  const handle = dialog
+    ? kit.modal!({ contentEl: panel, onDismiss: finish })
+    : kit.sheet({ contentEl: panel, onDismiss: finish });
   if (!handle) { finish(); return; }
+  if (dialog && handle.el) {
+    handle.el.style.width = 'min(440px, calc(100vw - 32px))';
+    handle.el.setAttribute('aria-labelledby', 'browse-filters-title');
+  }
   const leave = () => { finish(); handle?.dismiss(); };
   const state = browseStore.get() as any;
   mountLegacyPortal(panel, (
@@ -253,6 +277,7 @@ export function openBrowseFilterSheet(): void {
       types={controller.categoryOptions?.() || []}
       view={state.view || 'foryou'}
       admin={!!state.adminFilters}
+      dialog={dialog}
       initial={{
         only: [...(state.only || [])],
         category: state.category || 'all',

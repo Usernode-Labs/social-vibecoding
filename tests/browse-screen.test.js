@@ -2644,3 +2644,14 @@ test('the cold deep-link fetch unwraps the { app } envelope the route sends', as
   assert.equal(state.detail.name, 'Cold App');
   assert.equal(Browse._detailMissing, false);
 });
+
+test('Filters is a centred dialog from 768px and a bottom sheet on a phone', () => {
+  const src = read('frontend/src/features/apps/browse-filter-sheet.tsx');
+  assert.match(src, /window\.matchMedia\('\(min-width: 768px\)'\)\.matches/);
+  assert.match(src, /const dialog = wide\(\) && typeof kit\.modal === 'function';/);
+  assert.match(src, /\? kit\.modal!\(\{ contentEl: panel, onDismiss: finish \}\)\s+: kit\.sheet\(\{ contentEl: panel, onDismiss: finish \}\)/);
+  // The dialog's card brings its own padding; the sheet's panel pads itself.
+  assert.match(src, /className=\{dialog \? undefined : 'px-4 pb-5'\}/);
+  assert.match(src, /setAttribute\('aria-labelledby', 'browse-filters-title'\)/);
+  assert.match(src, /<h2 id="browse-filters-title"/);
+});
