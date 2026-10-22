@@ -1677,7 +1677,11 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   //
   // A mismatch says what the count is, what it is pinned at, and what to do
   // (tests/lib/check-cap.js) — it used to print only `812 !== 811`.
-  checkCap.assertPinned(DAPP.tests.length, 739);
+  //
+  // 739 → 740: +1: Admin → SMS delivery shows the provider switch, the
+  // Sender IDs and the recent texts (?demo=1#admin/sms), a route no other
+  // check reaches. 740 leaves 140 slots.
+  checkCap.assertPinned(DAPP.tests.length, 740);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

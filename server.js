@@ -235,6 +235,9 @@ app.use(explorerProxyRoutes(config));
 // no secret is configured. src/routes/github-webhook.js carries the rest.
 app.use(githubWebhookRoutes(config));
 app.use(require('./src/routes/mail-webhooks').mailWebhookRoutes(config));
+// Brevo's SMS webhook (STOP replies and delivery receipts), HERE for the
+// same reasons: Brevo has no session, and the token is the whole check.
+app.use(require('./src/routes/sms-webhooks').smsWebhookRoutes(config));
 // Alertmanager's webhook (src/routes/alerts-webhook.js): HERE for the same
 // second reason, a caller with no session, authenticated by its own token.
 // It parses its own JSON body.
@@ -1138,6 +1141,11 @@ async function start() {
     });
   }
   const servicesStartedAt = Date.now();
+  // Prime the SMS provider choice once, so the synchronous offer gate
+  // (firebase-phone-auth.js offered()) sees an admin's saved switch before
+  // the first phone-auth request. Never fatal: an unreadable setting falls
+  // back to the deploy's default.
+  await require('./src/services/sms/select').selection(getPool(config)).catch(() => {});
   // This process, and what it holds, for every other one to see
   // (docs/plans/draining-releases.md): before anything here can start work.
   // Never fatal: holds stay this process's own until the database takes them.

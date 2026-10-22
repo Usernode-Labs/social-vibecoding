@@ -41,6 +41,8 @@ const stagingEnv = require('../services/staging-env');
 const mail = require('../services/mail');
 const phoneAuth = require('../services/firebase-phone-auth');
 const phoneFailureLog = require('../services/phone-failure-log');
+const smsSelect = require('../services/sms/select');
+const smsSenders = require('../services/sms/senders');
 const mobilePushDiagnostics = require('../services/mobile-push-diagnostics');
 const applicationRuntime = require('../services/application-runtime');
 const managedOpenRouter = require('../services/openrouter-managed-keys');
@@ -3182,27 +3184,65 @@ function adminRoutes(config) {
 
   // ── SMS delivery (Admin → SMS delivery) ──────────────────────────────
   //
-  // Texts go out only through Firebase Phone Auth, as sign-in codes
-  // (services/firebase-phone-auth.js), so the test send is exactly that
-  // send. The status read names the platform variables that are missing,
-  // never what any of them hold, and is open to any admin.
-  router.get('/api/admin/sms/status', (req, res) => {
-    const missing = [];
-    if (config.firebasePhoneAuthEnabled !== true) missing.push('FIREBASE_PHONE_AUTH_ENABLED');
-    if (!config.firebaseWebApiKey) missing.push('FIREBASE_WEB_API_KEY');
-    if (!config.firebaseProjectId) missing.push('FIREBASE_PROJECT_ID');
-    if (!config.firebaseServiceAccountJsonB64) missing.push('FIREBASE_SERVICE_ACCOUNT_JSON_B64');
+  // Texts are sent by the provider chosen in the switch below: Firebase
+  // (today's path) or Brevo. The status read names the platform variables
+  // that are missing, never what any of them hold, and is open to any admin.
+  router.get('/api/admin/sms/status', async (req, res) => {
+    const chosen = await smsSelect.selection(pool).catch(() => null);
+    const provider = smsSelect.describe(config, chosen);
+    const selectedOption = provider.options.find((o) => o.name === provider.selected);
+    const firebaseMissing = smsSelect.firebaseMissing(config);
     res.json({
       offered: phoneAuth.offered(config),
-      // Texts go out only through Firebase; test numbers (PHONE_TEST_CODE,
-      // never in production) sign in without one.
-      texts: phoneAuth.firebaseOffered(config),
+      // Texts go out only when the SELECTED provider is configured; test
+      // numbers (PHONE_TEST_CODE, never in production) need none.
+      texts: !!(selectedOption && selectedOption.ready),
       testNumbers: phoneAuth.testNumbersOn(config),
       enabled: config.firebasePhoneAuthEnabled === true,
       projectId: config.firebaseProjectId || null,
-      missing,
+      missing: firebaseMissing,
       canSendTest: !!req.user?.canAdminWrite,
+      provider,
+      senders: smsSenders.list(config),
+      stagingLogOnly: provider.stagingLogOnly,
     });
+  });
+
+  // Change who sends texts. Full admins only, and a provider that is not
+  // ready cannot be chosen: the point of the switch is a working path, not
+  // a way to close phone sign-in by accident. 409 carries what is missing.
+  router.put('/api/admin/sms/provider', requireAdminWrite, async (req, res) => {
+    try {
+      const name = typeof req.body?.provider === 'string'
+        ? req.body.provider.trim().toLowerCase()
+        : '';
+      const option = smsSelect.describe(config, null)
+        .options.find((o) => o.name === name);
+      if (!option) {
+        return res.status(400).json({ error: 'Unknown SMS provider.', code: 'unknown_provider' });
+      }
+      if (!option.ready) {
+        return res.status(409).json({
+          error: 'That provider is not ready yet.',
+          code: 'not_ready',
+          missing: option.missing,
+        });
+      }
+      const before = await smsSelect.selection(pool).catch(() => null);
+      await smsSelect.setProvider(pool, name, req.user.id);
+      events.record(pool, {
+        type: events.EVENT_TYPES.SMS_PROVIDER_CHANGED,
+        userId: req.user.id,
+        metadata: { from: before ? before.provider : null, to: name },
+      });
+      log.warn('admin', 'Admin changed the SMS provider', {
+        by: req.user.username, from: before ? before.provider : null, to: name,
+      });
+      res.json({ ok: true, provider: smsSelect.describe(config, { provider: name, source: 'admin' }) });
+    } catch (err) {
+      log.error('admin', 'sms provider change failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
   });
 
   // Send one diagnostic text. Full admins only (it is a real, billed text
@@ -3217,7 +3257,7 @@ function adminRoutes(config) {
         const body = req.body || {};
         let outcome;
         try {
-          outcome = await phoneAuth.sendTestCode(config, body.phoneNumber, body.recaptchaToken);
+          outcome = await phoneAuth.sendTestCode(config, body.phoneNumber, body.recaptchaToken, { pool });
         } catch (err) {
           if (err instanceof phoneAuth.PhoneAuthError) {
             return res.status(err.status).json({ error: err.message, code: err.code });
@@ -3235,7 +3275,13 @@ function adminRoutes(config) {
         events.record(pool, {
           type: events.EVENT_TYPES.SMS_TEST_SENT,
           userId: req.user.id,
-          metadata: { status: outcome.status, providerCode: outcome.providerCode, phoneLast4 },
+          metadata: {
+            status: outcome.status,
+            provider: outcome.provider || null,
+            country: outcome.country || null,
+            providerCode: outcome.providerCode,
+            phoneLast4,
+          },
         });
 
         log.warn('admin', 'Admin sent a test SMS', {
@@ -3251,6 +3297,26 @@ function adminRoutes(config) {
         res.status(500).json({ error: 'Internal server error' });
       }
     });
+
+  // The delivery log: every send through the SMS layer, whatever its
+  // outcome, with the country, the Sender ID, Brevo's message id and the
+  // number's last four digits. Any admin, as the failure log is.
+  router.get('/api/admin/sms/deliveries', async (req, res) => {
+    try {
+      const { rows } = await pool.query(
+        `SELECT id, kind, provider, country, sender_id, phone_last4, status,
+                error_code, provider_code, provider_message_id, attempts,
+                delivery_status, created_at
+           FROM sms_deliveries
+          ORDER BY created_at DESC, id DESC
+          LIMIT 50`
+      );
+      return res.json({ deliveries: rows });
+    } catch (err) {
+      log.error('admin', 'sms deliveries read failed', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
 
   // The failure log the test send cannot answer on its own: every failed
   // phone code request, verification and link attempt real callers made

@@ -154,6 +154,18 @@ function shotsPhoneTestCodeFrom(env) {
   return { code: raw, refused: null };
 }
 
+// PLATFORM_SMS_PROVIDER: which provider sends texts until an admin saves a
+// choice from Admin → SMS delivery. firebase (default) or brevo; an unknown
+// value is loud and falls back to firebase, the mail selection's rule.
+function smsProviderFrom(env) {
+  const raw = typeof env.PLATFORM_SMS_PROVIDER === 'string'
+    ? env.PLATFORM_SMS_PROVIDER.trim().toLowerCase()
+    : '';
+  if (!raw || raw === 'firebase' || raw === 'brevo') return raw || 'firebase';
+  console.error(`  PLATFORM_SMS_PROVIDER=${raw} is not a known provider — using firebase`);
+  return 'firebase';
+}
+
 function canonicalCliOrigin(value, { allowLoopbackHttp = false } = {}) {
   if (typeof value !== 'string' || !value) return null;
   try {
@@ -978,6 +990,20 @@ function load() {
     // Test numbers (phoneTestCodeFrom above, or shotsPhoneTestCodeFrom on a
     // before & after shots copy). Never set in production.
     phoneTestCode: phoneTestCodeFrom(process.env).code || shotsPhoneTestCodeFrom(process.env).code,
+    // Which provider sends texts. An admin's saved choice (platform_settings,
+    // services/sms/select.js) wins; this is the deploy's default until one
+    // is saved, and Firebase is the default so today's behaviour holds.
+    // A staging preview never sends a real text whatever this says.
+    smsProviderDefault: smsProviderFrom(process.env),
+    // Brevo SMS. BREVO_API_KEY is private and travels as the api-key header.
+    // BREVO_SMS_SENDER_IDS is the operator-maintained country registry, parsed
+    // once here (an invalid document is dropped and reported, never fatal).
+    // BREVO_SMS_WEBHOOK_TOKEN authenticates Brevo's STOP/unsubscribe webhook.
+    brevoApiKey: process.env.BREVO_API_KEY || '',
+    brevoSmsSenderIds: require('./services/sms/senders').parseRegistry(
+      process.env.BREVO_SMS_SENDER_IDS || '{}'
+    ),
+    brevoSmsWebhookToken: process.env.BREVO_SMS_WEBHOOK_TOKEN || '',
     // Platform outbound mail (login codes, waitlist confirmations,
     // waitlist release notices). src/services/mail/select.js picks the
     // transport once, here, from platform_env: Gmail API, a generic HTTP
@@ -1115,6 +1141,10 @@ function load() {
   console.log(`  FIREBASE_PROJECT_ID=${config.firebaseProjectId || '(not set)'}`);
   console.log(`  FIREBASE_SERVICE_ACCOUNT=${config.firebaseServiceAccountJsonB64 ? '(set)' : '(not set)'}`);
   console.log(`  FIREBASE_PHONE_AUTH=${config.firebasePhoneAuthEnabled ? 'enabled' : 'disabled'}${config.firebaseWebApiKey ? '' : ' (no web API key — phone endpoints answer 404 not_offered)'}`);
+  console.log(`  PLATFORM_SMS_PROVIDER=${config.smsProviderDefault} (an admin's saved choice wins)`);
+  console.log(`  BREVO_API_KEY=${config.brevoApiKey ? '(set)' : '(not set — Brevo sends nothing)'}`);
+  console.log(`  BREVO_SMS_SENDER_IDS=${Object.keys(config.brevoSmsSenderIds || {}).length} country entries`);
+  console.log(`  BREVO_SMS_WEBHOOK_TOKEN=${config.brevoSmsWebhookToken ? '(set)' : '(not set — Brevo webhook answers 404)'}`);
   const phoneTest = phoneTestCodeFrom(process.env);
   if (phoneTest.code) {
     console.log('  PHONE_TEST_CODE=(set) — +1 … 555 0100–0199 sign in with it as test accounts; no text is sent');
