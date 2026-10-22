@@ -1069,6 +1069,48 @@ test('#5275: a row\'s details open under it, and pressing it again folds them', 
   assert.match(standingsTsx, /aria-expanded=\{openIndex === row\.index\}/);
 });
 
+test('#5807: the drill asks for a row\'s activities by its row reference first, keeping the fallbacks', () => {
+  // A season row carries no wallet and often no Discord handle, so the
+  // server now issues every row a `row_ref` and the drill sends it first.
+  function drillWith(row) {
+    const { TL } = loadStandings();
+    const urls = [];
+    TL._eventId = () => 8;
+    TL._renderDrill = () => {};
+    TL.fetchJson = (url) => { urls.push(url); return new Promise(() => {}); };
+    TL._openDrill(row);
+    return urls;
+  }
+  const base = { rank: 16, display_name: 'Marleee', wallet_address: null, bech32m: null };
+
+  // The sandbox has no window/dict of its own: the module reaches for the
+  // page's PlatformI18n for the epoch note, exactly as it does live.
+  const previous = globalThis.PlatformI18n;
+  globalThis.PlatformI18n = { t: (id) => id };
+  try {
+    const withRef = drillWith({ ...base, row_ref: 'ABCDEFGHIJKLMNOPQRSTUV', discord: 'marleee' });
+    assert.equal(withRef.length, 1, 'one activities fetch, the epoch one has no wallet');
+    assert.match(withRef[0], /^\/api\/v4\/leaderboard\/user-activities\?season_event_id=8&participant_ref=ABCDEFGHIJKLMNOPQRSTUV$/);
+
+    const handleOnly = drillWith({ ...base, row_ref: null, bech32m: 'addr-9', discord: 'marleee' });
+    assert.equal(handleOnly.length, 1);
+    assert.match(handleOnly[0], /participant_identifier=addr-9$/, 'the wallet still falls back');
+
+    // Neither: the old line, and no request at all.
+    const { TL } = loadStandings();
+    TL._eventId = () => 8;
+    TL._renderDrill = () => {};
+    let asked = 0;
+    TL.fetchJson = () => { asked += 1; return new Promise(() => {}); };
+    TL._openDrill({ ...base, row_ref: null, discord: null });
+    assert.equal(asked, 0);
+    assert.equal(TL._drillActivities.error, 'leaderboard:drill.noIdentifier');
+  } finally {
+    if (previous === undefined) delete globalThis.PlatformI18n;
+    else globalThis.PlatformI18n = previous;
+  }
+});
+
 test('a standings row opens from the keyboard, and says what it opens', () => {
   // Like the Kudos rows: Tab reaches a row, Enter or Space opens its details,
   // and a screen reader hears "Open <user>'s details". The row keeps its
