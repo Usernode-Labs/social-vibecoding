@@ -124,8 +124,9 @@ export function MembersDialog() {
             className="flex w-full min-h-[44px] items-center gap-3 text-left"
             onClick={() => {
               const slug = window.AppView?.appData?.slug;
-              dialog.close();
-              window.UsernodeReact?.dialogs?.whoDecides?.open({ slug });
+              // Same hand-off as App settings: wait until this dialog's back
+              // record is spent, or the queued traversal closes the sheet.
+              dialog.closeThen(() => window.UsernodeReact?.dialogs?.whoDecides?.open({ slug }));
             }}
           >
             <span className="min-w-0 flex-1">

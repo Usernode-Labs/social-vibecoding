@@ -307,8 +307,10 @@ test('#4960: competing access changes are allowed, with a warning in the summary
 test('every way in opens the one sheet', () => {
   const card = read(CARD);
   assert.match(card, /data-ws-rules-edit=""[\s\S]{0,200}onClick=\{\(\) => window\.UsernodeReact\?\.dialogs\?\.whoDecides\?\.open\(\{ slug \}\)\}/);
-  assert.match(read('frontend/src/features/dialogs/members.tsx'), /data-members-who-decides=""[\s\S]{0,400}whoDecides\?\.open\(\{ slug \}\)/);
-  assert.match(read('frontend/src/features/dialogs/app-settings.tsx'), /id="app-access-open"[\s\S]{0,300}whoDecides\?\.open\(\{ slug: target \}\)/);
+  // Both rows hand off through closeThen: opening in the same task as the
+  // close let the queued traversal close the sheet (#5801).
+  assert.match(read('frontend/src/features/dialogs/members.tsx'), /data-members-who-decides=""[\s\S]{0,600}dialog\.closeThen\(\(\) => window\.UsernodeReact\?\.dialogs\?\.whoDecides\?\.open\(\{ slug \}\)/);
+  assert.match(read('frontend/src/features/dialogs/app-settings.tsx'), /id="app-access-open"[\s\S]{0,600}dialog\.closeThen\(\(\) => window\.UsernodeReact\?\.dialogs\?\.whoDecides\?\.open\(\{ slug: target \}\)/);
   assert.match(read('frontend/src/features/dev-board/workshop/workshop.tsx'), /onWhoDecides=\{community\?\.can_manage/);
   // The platform's own project keeps its approvals in Members; every other
   // project's Members points at the sheet.

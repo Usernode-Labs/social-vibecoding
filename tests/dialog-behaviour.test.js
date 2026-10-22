@@ -185,6 +185,46 @@ test('open/close run the island’s populate and reset halves', () => {
   assert.match(USE_DIALOG, /useIsomorphicLayoutEffect\(\(\) => \{\n\s*if \(!mounted\.current\)/);
 });
 
+test('the Who can see & change it hand-off waits for the closing dialog’s record', () => {
+  // #5801: App settings closed and opened the sheet in the same tap. The close
+  // spends its history record with a queued history.back(); opening the sheet
+  // in that same task pushed a record on top and cleared the flag that marked
+  // the traversal as ours, so when it landed it was read as a Back press and
+  // closed the sheet. The open must wait for the close to settle.
+  assert.match(USE_DIALOG, /afterBackSettles/,
+    'use-dialog asks the back stack when the closing record has been spent');
+  const closeThenAt = USE_DIALOG.indexOf('const closeThen');
+  assert.ok(closeThenAt >= 0, 'useDialog should expose closeThen');
+  assert.match(USE_DIALOG.slice(closeThenAt, closeThenAt + 200),
+    /if \(dismiss\(\)\) afterBackSettles\(next\)/,
+    'closeThen opens the next surface only after a close that actually happened');
+  assert.match(USE_DIALOG,
+    /if \(opts\.current\.canClose && !opts\.current\.canClose\(\)\) return false;/,
+    'a vetoed close answers false, so closeThen opens nothing');
+
+  const handler = (source, marker, end) => {
+    const start = source.indexOf(marker);
+    assert.ok(start >= 0, `${marker} should still be in the source`);
+    const stop = source.indexOf(end, start);
+    return source.slice(start, stop < 0 ? start + 700 : stop);
+  };
+  const settings = handler(dialog('app-settings.tsx'), 'id="app-access-open"', '</Button>');
+  assert.match(settings, /dialog\.closeThen\(\(\) => window\.UsernodeReact\?\.dialogs\?\.whoDecides\?\.open/,
+    'App settings opens the sheet inside closeThen');
+  assert.doesNotMatch(settings, /dialog\.close\(\)/,
+    'and never after a bare close, whose traversal would close it');
+
+  const members = handler(dialog('members.tsx'), 'data-members-who-decides', '</button>');
+  assert.match(members, /dialog\.closeThen\(\(\) => window\.UsernodeReact\?\.dialogs\?\.whoDecides\?\.open/,
+    'the Members row takes the same path');
+  assert.doesNotMatch(members, /dialog\.close\(\)/, 'with no bare close either');
+
+  // The slug is read before closing, while the source that answers it is
+  // still current — App settings from its loaded app, Members from AppView.
+  assert.ok(settings.indexOf('const target') < settings.indexOf('closeThen'));
+  assert.ok(members.indexOf('const slug') < members.indexOf('closeThen'));
+});
+
 test('the MOUNT pass is not an exit', () => {
   // This shipped broken to a staging preview and failed 435 of 459 checks with
   // "1 console error on load" on essentially every route, so it is pinned hard.
@@ -337,7 +377,9 @@ test('a late kit dismissal cannot tear down a newer presentation (#1284)', () =>
 });
 
 test('canClose can veto a dismiss, and import-pr uses it', () => {
-  assert.match(USE_DIALOG, /if \(opts\.current\.canClose && !opts\.current\.canClose\(\)\) return;/);
+  // The veto answers false now, so a close-then-open hand-off knows the
+  // dialog did not close and opens nothing (#5801).
+  assert.match(USE_DIALOG, /if \(opts\.current\.canClose && !opts\.current\.canClose\(\)\) return false;/);
   assert.match(dialog('import-pr.tsx'), /canClose: \(\) => !busyRef\.current/);
 });
 
