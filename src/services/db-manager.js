@@ -15,8 +15,18 @@ const DB_USER = process.env.DB_USER || 'usernode';
 // All app DBs and their dedicated roles use these names. Slugs are
 // already passed through the same regex on the way in, so the worst
 // case here is a name we refuse to act on; better than splicing user
-// input into DDL even by accident.
-const SAFE_IDENT = /^[a-z_][a-z0-9_]*$/i;
+// input into DDL even by accident. At most 63 characters: Postgres keeps
+// the first 63 bytes of an identifier and drops the rest without an error,
+// so a longer name addresses whatever is stored under its first 63. On 22
+// Oct 2026 every preview attempt of one session was the same database that
+// way, and each retirement of an attempt dropped the next one's.
+const POSTGRES_NAME_BYTES = 63;
+const SAFE_IDENT = /^[a-z_][a-z0-9_]{0,62}$/i;
+// A name of those characters, too long to be one. A drop leaves it and a
+// lookup does not find it, without an error even for a strict caller: no
+// retry would ever address it exactly, and a retirement that threw on it
+// would never close. Its first 63 bytes are never dropped in its place.
+const OVERLONG_IDENT = /^[a-z_][a-z0-9_]{63,}$/i;
 const SAFE_QUALIFIED_IDENT = /^[a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*$/i;
 
 // The role name suffix is hard-coded so callers don't need to think
@@ -70,8 +80,12 @@ function legacyShotsDbName(slug, runId, side) {
   return shotsDbName(slug, runId, side, 'evidence');
 }
 
+// As Postgres stores it: the first 63 bytes. A database name of 58 to 63
+// bytes (made before names were kept to 57) still has its own role, the
+// whole database name and part of the suffix; none of the names this module
+// builds ends in a part of `_owner`, so no other database's role is that.
 function ownerRoleName(dbName) {
-  return `${dbName}${ROLE_SUFFIX}`;
+  return `${dbName}${ROLE_SUFFIX}`.slice(0, POSTGRES_NAME_BYTES);
 }
 
 function generatePassword() {
@@ -492,6 +506,10 @@ async function createDatabase(dbName) {
 async function dropDatabase(dbName, { strict = false, execute = null, retry = {}, server = null } = {}) {
   log.info('db-manager', 'Dropping database', { dbName });
 
+  if (OVERLONG_IDENT.test(dbName)) {
+    log.warn('db-manager', 'Leaving a database whose name is too long to address exactly', { dbName });
+    return;
+  }
   if (!SAFE_IDENT.test(dbName)) {
     log.warn('db-manager', 'Refusing to drop database with unsafe name', { dbName });
     if (strict) throw new Error('dropDatabase: unsafe database name');
@@ -2021,6 +2039,7 @@ async function ensureRoleExists(dbName, password) {
 }
 
 async function databaseExists(dbName, { strict = false } = {}) {
+  if (OVERLONG_IDENT.test(dbName)) return false;
   if (!SAFE_IDENT.test(dbName)) {
     if (strict) throw new Error('databaseExists: unsafe database name');
     return false;
@@ -3654,7 +3673,6 @@ async function appDatabaseNames(server, { fresh = false } = {}) {
 // and the check digests each name in `pg_database` the same way.
 const LABEL_PREVIEW_DB = 'usernode.db.id';
 const LABEL_PREVIEW_DB_SERVER = 'usernode.db.server';
-const POSTGRES_NAME_BYTES = 63;
 
 function storedDatabaseName(dbName) {
   return Buffer.from(String(dbName || ''), 'utf8').subarray(0, POSTGRES_NAME_BYTES).toString('utf8');

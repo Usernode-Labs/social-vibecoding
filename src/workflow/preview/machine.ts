@@ -73,6 +73,7 @@ export interface Served extends Attempt {
   containerId: string | null;
   imageRef: string | null;
   buildRef: string | null;
+  since?: string;                // when it started serving (absent: before version 8)
 }
 export interface Run { key: string; n: number; head: string }
 // An attempt waiting for its preview.retireAttempt: the item's key, and
@@ -99,6 +100,7 @@ export interface Data {
   platformFault: boolean;        // that error is the platform's (its own retry allowance)
   streak: number;                // consecutive errors on this head
   firstFailureAt: string | null;
+  losses?: number;               // serving attempts of this head lost soon after they started, in a row (lost)
   episode: number;               // deferred episodes, for ConflictResolved's key
   retiring: Retiring[];          // attempts whose preview.retireAttempt is outstanding
   exit: { reason: string; terminal: boolean; key: string; attempts: Attempt[]; failed?: string } | null;
@@ -219,10 +221,17 @@ const EVENTS = {
 
 // The attempt's database: [main]'s pattern (app_<slug>_staging_s<sid>_<6
 // hex>), so [main]'s orphan sweep can still collect it after a rollback,
-// with a tag only this instance gives out.
+// with a tag only this instance gives out. Postgres keeps the first 63
+// bytes of a name and drops the rest without an error, so the slug is cut
+// to keep the name at 57 and its `_owner` role at 63 (db-manager's
+// shotsDbName does the same): with the whole name kept, a 43-character slug
+// made every attempt of session 10542 one database, and each retirement of
+// the attempt before dropped the one that had just started serving.
+const ATTEMPT_DB_BYTES = 63 - '_owner'.length;
 export function attemptDb(slug: string, sessionId: number, seed: number, n: number, claim = 1): string {
   const tag = createHash('sha256').update(`preview:${sessionId}:${seed}:${n}${claim > 1 ? `:c${claim}` : ''}`).digest('hex').slice(0, 6);
-  return `app_${slug.replace(/[^a-z0-9_]/g, '_')}_staging_s${sessionId}_${tag}`;
+  const suffix = `_staging_s${sessionId}_${tag}`;
+  return `app_${slug.replace(/[^a-z0-9_]/g, '_').slice(0, ATTEMPT_DB_BYTES - 'app_'.length - suffix.length)}${suffix}`;
 }
 // As many as a build's work item has claims (services.ts PREPARE_ATTEMPTS).
 export const PREPARE_CLAIMS = 3;
@@ -230,7 +239,9 @@ const attemptDbs = (slug: string, sessionId: number, seed: number, n: number) =>
   Array.from({ length: PREPARE_CLAIMS }, (_, i) => attemptDb(slug, sessionId, seed, n, i + 1));
 // Every database an attempt may have made.
 const dbsOf = (a: Attempt) => a.dbs ?? [a.db];
-// db-manager.stagingDbName, for a preview [main] built.
+// db-manager.stagingDbName, for a preview [main] built: the name it was
+// built with, uncut (db-manager refuses one past 63 bytes rather than drop
+// whatever Postgres stored under its first 63).
 const legacyDb = (slug: string, sessionId: number, head: string) =>
   `app_${slug.replace(/[^a-z0-9_]/g, '_')}_staging_s${sessionId}_${head.slice(0, 6)}`;
 
@@ -267,6 +278,9 @@ export interface Deps {
 const CHECKS_DUE_MS = 10 * 60 * 1000;
 const WORKED_RECHECK_MS = 60 * 1000;
 const IDLE_FLOOR_MS = 30 * 1000;
+// A serving attempt lost sooner than this after it started counts as lost
+// again in a row (lost): the preview-runtimes clock looks every 2 minutes.
+const LOST_SOON_MS = 30 * 60 * 1000;
 
 interface Step {
   name: Name;
@@ -397,6 +411,8 @@ function begin(s: Live, head: string, trigger: string | null, ctx: TransitionCon
     ...d0, head, trigger, last: n, preparing: attempt, run: null, verdict: null, ...(previewOnly ? { previewOnly: true } : {}),
     failure: sameHead ? d0.failure : null, platformFault: sameHead ? d0.platformFault : false,
     streak: sameHead ? d0.streak : 0, firstFailureAt: sameHead ? d0.firstFailureAt : null,
+    // A person's retry counts the losses afresh, as a new head does.
+    losses: sameHead && trigger !== 'manual-recheck' ? (d0.losses ?? 0) : 0,
     retiring: old.retiring, exit: null, pending: null,
   };
   // The unit suite starts with the build rather than after it (its own Jobs,
@@ -884,9 +900,22 @@ function rawTransitions(deps: Deps): Record<string, Record<string, Entry>> {
     to: (s, e, f, ctx) => (folded.to as any)(standing(adopt(e, f, priorOf(s)), f), e, f, ctx),
   };
 
+  // A lost preview is built again at once. One lost again soon after it was
+  // rebuilt (LOST_SOON_MS) is likely to be lost the same way, so from the
+  // second loss in a row it is an error of its head (lostAgain): rebuilt
+  // after the error lane's backoff, at most deps.maxRetries times in a row,
+  // then left for a person. A verdict does not end the count (the checks of
+  // a preview that goes down fail), a preview that served for longer or a
+  // new head does. On 22 Oct 2026 one had been rebuilt every 2 minutes for
+  // two days, each rebuild dropping its own database on the way.
   const lost: Entry = {
     guard: (s, e) => (s.data.serving?.n === e.payload.attempt ? ok() : reject('not_serving')),
-    to: (s, e, f, ctx) => begin(s, s.data.head || s.data.serving.head, 'stuck-sweep', ctx, deps),
+    to: (s, e, f, ctx) => {
+      const since = Date.parse(s.data.serving.since ?? '');
+      const losses = ctx.now.getTime() - since < LOST_SOON_MS ? (s.data.losses ?? 0) + 1 : 1;
+      if (losses > 1) return lostAgain(s, e, losses, f, ctx, deps);
+      return begin({ name: s.name, data: { ...s.data, losses } }, s.data.head || s.data.serving.head, 'stuck-sweep', ctx, deps);
+    },
   };
 
   // Exit (archive, merge, included, app deletion) is terminal; idle and
@@ -1305,6 +1334,7 @@ function prepared(s: Live, e: Event<any>, outcome: string, f: Facts, ctx: Transi
     const served: Served = {
       ...attempt, db: servedDb, dbs: [servedDb], url: String(r.url), runtimeKind: String(r.runtimeKind),
       runtimeName: String(r.runtimeName), containerId: r.containerId ?? null, imageRef: r.imageRef ?? null, buildRef: r.buildRef ?? null,
+      since: ctx.now.toISOString(),
     };
     const previous = d0.serving && d0.serving.n !== served.n ? d0.serving : null;
     const gone = previous ? retire(d0, previous, ctx, deps) : null;
@@ -1386,6 +1416,39 @@ function prepared(s: Live, e: Event<any>, outcome: string, f: Facts, ctx: Transi
         { error: detail, errorName: 'PreviewFailed', missingKeys: [] }),
     ],
     timer: errorTimer(d, f, deps, ctx, streakBefore),
+  });
+}
+
+// A preview lost again soon after it was rebuilt (lost): its head's error,
+// as a failed build's is, with the losses as its count. What serves is left
+// as it is, for the rebuild to retire; the run against it stops. The author
+// hears of it once it is left for a person, not while rebuilds are to come.
+function lostAgain(s: Live, e: Event<any>, losses: number, f: Facts, ctx: TransitionContext, deps: Deps): Outcome<PState> {
+  const d0 = s.data;
+  const head = d0.head || d0.serving!.head;
+  const old = obsolete(d0, ctx, deps);
+  const detail = `The preview stopped soon after it started, ${losses} times in a row`
+    + (e.payload.detail ? ` (${e.payload.detail})` : '');
+  const d: Data = {
+    ...d0, run: null, verdict: 'error', failure: detail, platformFault: false, streak: d0.streak + 1,
+    firstFailureAt: d0.firstFailureAt ?? ctx.now.toISOString(), losses, retiring: old.retiring,
+  };
+  const timer = f.session?.retryScope && losses <= deps.maxRetries
+    ? { at: new Date(ctx.now.getTime() + retryDelayMs(losses - 2)), event: { type: 'RetryDue' } } : null;
+  return step({
+    name: 'failed', data: d,
+    cancel: old.cancel,
+    writes: [{
+      type: 'prepareFailed', eventId: e.id, sessionId: d.sessionId, appId: d.appId, userId: d.userId, head,
+      detail, infrastructure: !!timer, platformFault: false, aboutMain: null, sync: false,
+      source: f.session?.source ?? null, prNumber: f.session?.prNumber ?? null,
+    }],
+    work: old.work,
+    push: [
+      checksReady(d, ctx, head, 'error'),
+      sessionEvent(route(d), 'staging_failed', seq(ctx, 3), { error: detail, errorName: 'PreviewFailed', missingKeys: [] }),
+    ],
+    timer,
   });
 }
 
@@ -1540,7 +1603,10 @@ export function preview(deps: Deps): Machine<PState, Facts> {
     // ChecksDue), EnvStale from the release, and a promote that re-arms the
     // error lane: the leader's idle GC, heal and stuck-checks sweeps are
     // gone, so an older Pod must not decide an instance relying on them.
-    version: 7,
+    // 8: a preview lost again soon after it was rebuilt is its head's error
+    // (lostAgain), counted by `losses`, which an older Pod would neither keep
+    // nor read: it would rebuild such a preview every time it is lost.
+    version: 8,
     events: EVENTS,
     create: ['RevisionSubmitted', 'PreviewRequested', 'ChecksSkipped', 'OperationStarted', 'RetireRequested', 'ChecksCleared', 'RecheckFolded'],
     terminal: ['retired'],
