@@ -11415,6 +11415,12 @@ html .un-backdrop.platform-backdrop-dim {
     align-items: flex-end;
     padding: 0;
   }
+  /* THE CARD'S PERCENTAGES NEED A DEFINITE HEIGHT (#5802). The wrapper has
+     only `min-h-full`, so a percentage `max-height` on the card resolved to
+     `none` and Safari left the card at its layout place under the keys. The
+     root is `fixed inset-0`, so its height is definite: the wrapper takes it
+     and the card's cap below (and the keyboard rule's) resolves. */
+  #feedback-modal[data-dialog-sheet] [data-modal-backdrop] { height: 100%; }
   [data-dialog-sheet] [data-modal-backdrop] > div {
     width: 100%;
     max-width: none;
@@ -11426,6 +11432,16 @@ html .un-backdrop.platform-backdrop-dim {
     overscroll-behavior: contain;
     transform: translateY(100%);
     transition: transform 200ms ease-out;
+  }
+  /* THE CARD LIFTS ONTO THE KEYS, AND A FOCUSED FIELD CLEARS THE BUTTONS
+     (#5802). The keyboard rule below moves the card with `bottom`, which a
+     static box ignores; `position: relative` makes the card that box. The
+     scroll padding is the action row (12px + a 36px button + 48px) and an
+     8px gap, the #4542 rule for the sheet, so a field revealed at the
+     scroller's foot stays above Cancel and Post request. */
+  #feedback-modal[data-dialog-sheet] [data-modal-backdrop] > div {
+    position: relative;
+    scroll-padding-bottom: 104px;
   }
   [data-dialog-sheet][data-dialog-sheet-shown] [data-modal-backdrop] > div {
     transform: translateY(0);
@@ -11449,14 +11465,19 @@ html .un-backdrop.platform-backdrop-dim {
   }
   /* Cancel and Post stay at the sheet's foot while the form above scrolls,
      the same rule the kit modal carries (.un-modal .feedback-actions, #4033)
-     — here the card is the scroller, and its bottom padding is 24px. */
+     — here the card is the scroller, and its bottom padding is 24px.
+     #5802: a sticky box is held inside the scroller's padding, so `bottom: 0`
+     lifted the row 24px above its place even at maximum scroll and covered
+     the last 24px of content (the Private request note's second line). The
+     negative bottom lets the row reach the scroller's edge; the 48px foot
+     puts the buttons 48px above the card's foot, where they already were. */
   [data-dialog-sheet] .feedback-actions {
     position: sticky;
-    bottom: 0;
+    bottom: -24px;
     z-index: 1;
     margin-top: 4px;
     margin-bottom: -24px;
-    padding: 12px 0 24px;
+    padding: 12px 0 48px;
     background-color: var(--dc-sheet-solid);
     box-shadow: 0 -1px 0 var(--app-sheet-line);
   }

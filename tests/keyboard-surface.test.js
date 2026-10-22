@@ -176,10 +176,12 @@ function rig({ platform = 'ios', keysUp = false, reduced = false } = {}) {
   field.blur = () => { field.blurred += 1; doc.activeElement = null; };
   const scrolls = [];
   const animations = [];
+  const rows = [];
   const scroller = fakeEl({
     scrollTop: 0, scrollHeight: 900, clientHeight: 325, offsetTop: 500,
     getBoundingClientRect: () => ({ top: 52, bottom: 377 }),
     contains: (node) => node === field || node === submit,
+    querySelectorAll: (sel) => (sel === '.feedback-actions' ? rows : []),
     scrollTo({ top }) { scrolls.push(top); scroller.scrollTop = top; },
     animate(keyframes, options) { animations.push({ keyframes, options }); },
   });
@@ -218,7 +220,7 @@ function rig({ platform = 'ios', keysUp = false, reduced = false } = {}) {
     scroller.fire('touchmove', { touches: [{ clientX: 10, clientY: 40 }] });
     scroller.fire('touchend', { touches: [], cancelable: true });
   };
-  return { scroller, field, submit, win, doc, vv, rootClasses, scrolls, animations, advance, flush, tap, drag };
+  return { scroller, field, submit, win, doc, vv, rootClasses, scrolls, animations, rows, advance, flush, tap, drag };
 }
 
 test('a tap on a field is taken: focused with preventScroll, so iOS does not pan the page', () => {
@@ -269,6 +271,44 @@ test('once the keys settle the field is revealed in the scroller, with its form\
   quiet.tap();
   quiet.advance(surface.FALLBACK_MS);
   assert.equal(quiet.scrolls.length, 1);
+});
+
+test('a sticky row at the sheet\'s foot is the view\'s bottom (#5802)', () => {
+  // The feedback sheet's form has no submit button, so `actionOf` finds
+  // nothing; the row that covers the scroller's foot names itself.
+  const r = rig({ keysUp: true });
+  r.field.form = null;
+  const row = fakeEl();
+  row.getBoundingClientRect = () => ({ top: 360, bottom: 377, width: 300, height: 17 });
+  const hidden = fakeEl();
+  hidden.getBoundingClientRect = () => ({ top: 0, bottom: 0, width: 0, height: 0 });
+  // A form and an edit section, one hidden at a time: the last shown one wins.
+  r.rows.push(hidden, row);
+  surface.attachKeyboardSurface(r.scroller, r.win, r.doc, { foot: '.feedback-actions' });
+  r.doc.activeElement = r.field;
+  r.scroller.fire('focusin', { target: r.field });
+  r.flush();
+  assert.deepEqual(r.scrolls, [460 - (360 - 12)], 'the field\'s foot 12px above the row\'s top');
+
+  // A zero-height match (a hidden section) is not the foot: today's view.
+  const zero = rig({ keysUp: true });
+  zero.field.form = null;
+  const noRow = fakeEl();
+  noRow.getBoundingClientRect = () => ({ top: 0, bottom: 0, width: 0, height: 0 });
+  zero.rows.push(noRow);
+  surface.attachKeyboardSurface(zero.scroller, zero.win, zero.doc, { foot: '.feedback-actions' });
+  zero.doc.activeElement = zero.field;
+  zero.scroller.fire('focusin', { target: zero.field });
+  zero.flush();
+  assert.deepEqual(zero.scrolls, [460 - (377 - 12)], 'the scroller\'s own foot');
+
+  // Without the option, and with a button to chase, nothing changes.
+  const plain = rig({ keysUp: true });
+  surface.attachKeyboardSurface(plain.scroller, plain.win, plain.doc);
+  plain.doc.activeElement = plain.field;
+  plain.scroller.fire('focusin', { target: plain.field });
+  plain.flush();
+  assert.deepEqual(plain.scrolls, [520 - (377 - 12)], 'the form\'s button as before');
 });
 
 test('a focus moved by code with the keys up is revealed at once; a desktop attaches nothing', () => {
