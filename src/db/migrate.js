@@ -7218,6 +7218,108 @@ async function seedStagingVoteCardChat(pool) {
         WHERE viewer.username = 'usernode-capture'
        ON CONFLICT (app_id, user_id) DO NOTHING`
     );
+    // #5816: the same card on a project the capture member MADE, under Two
+    // yeses, up for a vote. Their own Yes approves it on its own now, so the
+    // card reads "Waiting for your approval" and says their yes is enough,
+    // where before it counted the yeses other people had to give.
+    await pool.query(
+      `INSERT INTO apps (id, name, slug, status, collab_visibility, view_visibility, created_by, governance_rules)
+       SELECT 900130, 'Staging demo: my own project', 'staging-demo-my-own-project', 'running',
+              'private', 'public', viewer.id,
+              '{"preset": "two_yeses", "groups": [], "rules": [{"group": "members", "kind": "atLeast", "n": 2}]}'::jsonb
+         FROM users viewer
+        WHERE viewer.username = 'usernode-capture'
+       ON CONFLICT DO NOTHING`
+    );
+    await pool.query(
+      `INSERT INTO chat_sessions
+         (id, app_id, user_id, branch_name, pr_number, pr_title, status, promoted_at, created_at)
+       SELECT 900130, 900130, viewer.id, 'staging-demo/my-own-proposal', 900130,
+              'Staging demo: a proposal on my own project', 'promoted',
+              NOW() - INTERVAL '1 hour', NOW() - INTERVAL '2 hours'
+         FROM users viewer
+        WHERE viewer.username = 'usernode-capture'
+       ON CONFLICT DO NOTHING`
+    );
+    // A second member, so Two yeses actually asks for a second yes and the
+    // card has something to count. Obviously fake, never a login.
+    await pool.query(
+      `INSERT INTO users (id, username, password)
+       VALUES (900132, 'staging-demo-teammate', 'staging-demo-not-a-login')
+       ON CONFLICT DO NOTHING`
+    );
+    await pool.query(
+      `INSERT INTO community_members (community_id, user_id)
+       SELECT a.community_id, m.id
+         FROM apps a JOIN users m ON m.id = 900132
+        WHERE a.id = 900130
+       ON CONFLICT DO NOTHING`
+    );
+    await pool.query(
+      `INSERT INTO community_members (community_id, user_id)
+       SELECT a.community_id, viewer.id FROM apps a JOIN users viewer ON viewer.username = 'usernode-capture'
+        WHERE a.id = 900130
+       ON CONFLICT DO NOTHING`
+    );
+    await pool.query(
+      `INSERT INTO app_collaborators (app_id, user_id, status, invited_by, accepted_at)
+       SELECT 900130, 900132, 'member', 900132, NOW()
+       ON CONFLICT (app_id, user_id) DO NOTHING`
+    );
+    // Both of them active, so the project is a two-person one and the card
+    // asks the maker for the second yes rather than counting them alone.
+    await pool.query(
+      `INSERT INTO app_activity (app_id, user_id, date, seconds_spent)
+       SELECT 900130, u.id, CURRENT_DATE, 120
+         FROM users u
+        WHERE u.id = 900132 OR u.username = 'usernode-capture'
+       ON CONFLICT DO NOTHING`
+    );
+    await pool.query(
+      `INSERT INTO app_collaborators (app_id, user_id, status, invited_by, accepted_at)
+       SELECT 900130, viewer.id, 'member', viewer.id, NOW()
+         FROM users viewer
+        WHERE viewer.username = 'usernode-capture'
+       ON CONFLICT (app_id, user_id) DO NOTHING`
+    );
+    // A second change on the same project that the maker has already said
+    // yes to: after #5816 that one yes is the approval, so the card reads
+    // "1 of 1 yes" and says whose yes it was.
+    await pool.query(
+      `INSERT INTO chat_sessions
+         (id, app_id, user_id, branch_name, pr_number, pr_title, status, promoted_at, created_at, approval_epoch)
+       SELECT 900133, 900130, viewer.id, 'staging-demo/my-own-proposal-yes', 900133,
+              'Staging demo: a proposal I have already said yes to', 'promoted',
+              NOW() - INTERVAL '1 hour', NOW() - INTERVAL '2 hours', 0
+         FROM users viewer
+        WHERE viewer.username = 'usernode-capture'
+       ON CONFLICT DO NOTHING`
+    );
+    await pool.query(
+      `INSERT INTO pr_votes (session_id, user_id, vote, approval_epoch)
+       SELECT 900133, viewer.id, 'yes', 0
+         FROM users viewer
+        WHERE viewer.username = 'usernode-capture'
+       ON CONFLICT DO NOTHING`
+    );
+    await pool.query(
+      `INSERT INTO chat_messages (id, app_id, user_id, content, msg_type, metadata, thread_type, thread_ref, created_at)
+       VALUES
+         (900134, 900130, (SELECT id FROM users WHERE username = 'homeroom_bot'),
+          'I built this. It''s up for a vote: Staging demo: a proposal I have already said yes to',
+          'message', '{"vote": {"sessionId": 900133, "prNumber": 900133}}', NULL, NULL,
+          NOW() - INTERVAL '20 minutes')
+       ON CONFLICT DO NOTHING`
+    );
+    await pool.query(
+      `INSERT INTO chat_messages (id, app_id, user_id, content, msg_type, metadata, thread_type, thread_ref, created_at)
+       VALUES
+         (900131, 900130, (SELECT id FROM users WHERE username = 'homeroom_bot'),
+          'I built this. It''s up for a vote: Staging demo: a proposal on my own project',
+          'message', '{"vote": {"sessionId": 900130, "prNumber": 900130}}', NULL, NULL,
+          NOW() - INTERVAL '30 minutes')
+       ON CONFLICT DO NOTHING`
+    );
     log.info('db', 'Staging vote-card chat fixtures seeded');
   } catch (err) {
     log.warn('db', 'Staging vote-card chat seeding failed', { message: err.message });

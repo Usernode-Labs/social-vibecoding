@@ -434,3 +434,111 @@ test('a new project is created on You or the group unless it asks otherwise', ()
   const old = createOptions.parseCreateOptions({ audience: 'solo', governance: { approvers: 'invited' } });
   assert.deepEqual(createOptions.governanceBlock(old.governance), { approvers: 'invited', approvals: 'default' });
 });
+
+// ── §5816: a builder's Yes approves an ordinary change on its own ─────
+//
+// The people who can already force a change through, plus the person who
+// made the project. Read off the same facts the rules read; a protected
+// change keeps its own rule.
+
+const BUILDER_FACTS = facts({ adminIds: [ANA], platformAdminIds: [7] });
+const PLATFORM_ADMIN = 7;
+
+function builderGate(gov, {
+  yes = [], no = [], author = MAYA, f = BUILDER_FACTS, explicitApproval = false, reason,
+  builderYes = true, approverIds = null, openedAt = OPENED, now = NOW,
+} = {}) {
+  return governance.computeGate(gov, f.membersActive, yes.length, no.length, openedAt, now, {
+    voters: { yes: new Set(yes), no: new Set(no) },
+    rulesFacts: f,
+    authorId: author,
+    memberCount: f.memberCount,
+    explicitApproval,
+    ...(reason !== undefined ? { explicitReason: reason } : {}),
+    ...(builderYes ? { builderYes: true } : {}),
+    ...(approverIds ? { approverIds } : {}),
+  });
+}
+
+for (const key of ['you_or_the_group', 'two_yeses', 'open_floor', 'group_vote']) {
+  test(`§5816 ${key}: the maker’s yes approves an ordinary change alone`, () => {
+    const g = builderGate(preset(key), { yes: [EVAN] });
+    assert.equal(g.mergeable, true);
+    assert.deepEqual(g.builderYes, { userId: EVAN, role: 'creator' });
+    assert.equal(g.thresholdMet, true);
+    assert.ok(g.required >= 1);
+  });
+
+  test(`§5816 ${key}: an app admin’s yes approves an ordinary change alone`, () => {
+    const g = builderGate(preset(key), { yes: [ANA] });
+    assert.equal(g.mergeable, true);
+    assert.deepEqual(g.builderYes, { userId: ANA, role: 'admin' });
+  });
+
+  test(`§5816 ${key}: a Homeroom admin’s yes approves an ordinary change alone`, () => {
+    const g = builderGate(preset(key), { yes: [PLATFORM_ADMIN] });
+    assert.equal(g.mergeable, true);
+    assert.deepEqual(g.builderYes, { userId: PLATFORM_ADMIN, role: 'platform_admin' });
+  });
+
+  test(`§5816 ${key}: without builderYes the gate is what it was`, () => {
+    // Evan made it and proposes it: on Two yeses and Group vote that is one
+    // member's yes and nothing more.
+    const g = builderGate(preset(key), { yes: [EVAN], author: EVAN, builderYes: false });
+    assert.equal(g.builderYes, undefined);
+    // The presets that already let the creator's yes through keep doing so;
+    // the ones that count them as one member do not.
+    assert.equal(g.mergeable, ['you_or_the_group', 'open_floor'].includes(key));
+  });
+}
+
+test('§5816: someone who is not a builder changes nothing', () => {
+  const f = facts({ creatorId: null, adminIds: [] });
+  const g = builderGate(preset('two_yeses'), { yes: [SNAIT], f });
+  assert.equal(g.builderYes, null);
+  assert.equal(g.mergeable, true, 'Two yeses: the author’s and one more');
+});
+
+test('§5816: a builder’s yes is recorded even when the rule already passed', () => {
+  const g = builderGate(preset('two_yeses'), { yes: [SNAIT, EVAN] });
+  assert.equal(g.mergeable, true);
+  assert.deepEqual(g.builderYes, { userId: EVAN, role: 'creator' });
+  assert.equal(g.required, 2);
+});
+
+test('§5816: a change to who decides keeps WHO_DECIDES and the member floor', () => {
+  // Evan made it and votes too: WHO_DECIDES is satisfied, but the floor
+  // still wants a yes from someone other than the author.
+  const g = builderGate(preset('two_yeses'), {
+    author: EVAN, yes: [EVAN], explicitApproval: true, reason: 'admins',
+  });
+  assert.equal(g.builderYes, undefined, 'a flagged change is not shortcut');
+  // WHO_DECIDES is the creator rule plus the members' majority: the
+  // creator's yes passes it, exactly as before.
+  assert.equal(g.mergeable, true);
+  assert.equal(g.whoDecides, true);
+  // What the shortcut must not do: a member who is not the creator gets
+  // nowhere on their own yes.
+  const other = builderGate(preset('two_yeses'), {
+    author: SNAIT, yes: [SNAIT], explicitApproval: true, reason: 'admins',
+  });
+  assert.equal(other.builderYes, undefined);
+  assert.equal(other.mergeable, false);
+});
+
+test('§5816: a change to the project’s keys still follows the project’s rule', () => {
+  const opts = { yes: [EVAN], explicitApproval: true, reason: 'secrets' };
+  const g = builderGate(preset('two_yeses'), opts);
+  const without = builderGate(preset('two_yeses'), { ...opts, builderYes: false });
+  assert.equal(g.builderYes, undefined, 'no shortcut');
+  assert.deepEqual([g.mergeable, g.required, g.qualifiedYes],
+    [without.mergeable, without.required, without.qualifiedYes]);
+});
+
+test('§5816: the platform’s own project has no maker, only admins', () => {
+  const f = facts({ creatorId: null, adminIds: [ANA] });
+  assert.equal(builderGate(preset('two_yeses'), { yes: [EVAN], author: EVAN, f }).builderYes, null);
+  const g = builderGate(preset('group_vote'), { yes: [ANA], author: EVAN, f });
+  assert.equal(g.mergeable, true);
+  assert.deepEqual(g.builderYes, { userId: ANA, role: 'admin' });
+});

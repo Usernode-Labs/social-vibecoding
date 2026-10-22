@@ -362,8 +362,13 @@ test('governedGate: an unflagged proposal pays for none of it', () => withActive
   const pool = floorPool({ yes: 1, otherYes: 0, members: 2 });
   const g = await governance.governedGate(pool, 903, { kind: 'pr', id: 57, openedAt: ago(DAY), now: NOW });
   assert.equal(g.memberFloor, null);
-  assert.ok(!pool.seen.some((c) => /community_members|IS DISTINCT FROM|author_id/.test(c.sql)),
-    'the common path keeps its exact queries');
+  // §5816: the builder's-Yes rule reads the app's facts on every PR, so the
+  // common path now makes that one read. It still evaluates no floor and
+  // reads no author.
+  assert.ok(!pool.seen.some((c) => /IS DISTINCT FROM|author_id/.test(c.sql)),
+    'no floor, and no author read, on the common path');
+  assert.ok(pool.seen.some((c) => /community_members/.test(c.sql)),
+    'the builder rule reads the app facts');
 }));
 
 test('governedGate: a secret-change issue reads issues.created_by as its author', () => withActiveUsers(3, async () => {

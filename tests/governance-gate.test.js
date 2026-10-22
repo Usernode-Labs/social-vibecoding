@@ -644,3 +644,76 @@ test('viewerDecides: a signed-out viewer is never flagged', () => {
   };
   assert.equal(governance.viewerDecides(gov, { facts: { creatorId: 5, adminIds: [], groups: new Map() } }, null), true);
 });
+
+// ── §5816: a builder's Yes approves an ordinary change on its own ─────
+
+const BUILDER_FACTS = {
+  creatorId: 5, memberCount: 3, membersActive: 3,
+  adminIds: [6], platformAdminIds: [7], groups: new Map(), activeIds: null,
+};
+const NOW5816 = Date.UTC(2026, 9, 20, 12);
+const OPENED5816 = new Date(NOW5816 - 60 * 1000).toISOString();
+
+function columnsGate(gov, yesVoters, {
+  explicitApproval = false, builderYes = true, approverIds = null, yesCount = yesVoters.length,
+} = {}) {
+  return governance.computeGate(gov, 3, yesCount, 0, OPENED5816, NOW5816, {
+    voters: { yes: new Set(yesVoters), no: new Set() },
+    rulesFacts: BUILDER_FACTS,
+    ...(builderYes ? { builderYes: true } : {}),
+    ...(approverIds ? { approverIds } : {}),
+    explicitApproval,
+  });
+}
+
+test('§5816 columns (default): the maker’s yes approves, its count agrees', () => {
+  const gov = { approverPolicy: 'anyone', approvalsRequired: null };
+  const without = columnsGate(gov, [5], { builderYes: false });
+  assert.equal(without.mergeable, false, 'one of three is not the majority');
+  const g = columnsGate(gov, [5]);
+  assert.equal(g.mergeable, true);
+  assert.deepEqual(g.builderYes, { userId: 5, role: 'creator' });
+  assert.equal(g.required, g.qualifiedYes);
+  assert.equal(g.windowEndsAt, null);
+  assert.equal(g.lazyArmed, false);
+  assert.equal(g.rejectionArmed, false);
+});
+
+test('§5816 columns (at least N): an app admin’s yes is enough', () => {
+  const gov = { approverPolicy: 'anyone', approvalsRequired: 2 };
+  assert.equal(columnsGate(gov, [6], { builderYes: false }).mergeable, false);
+  const g = columnsGate(gov, [6]);
+  assert.equal(g.mergeable, true);
+  assert.deepEqual(g.builderYes, { userId: 6, role: 'admin' });
+  assert.equal(g.required, g.qualifiedYes);
+});
+
+test('§5816 columns (invited): a creator outside the roster is counted', () => {
+  const gov = { approverPolicy: 'invited', approvalsRequired: 2 };
+  // The roster is 6; the maker (5) is not in it, so their Yes is not in the
+  // count the columns read.
+  const g = columnsGate(gov, [5], { yesCount: 0, approverIds: [6] });
+  assert.equal(g.mergeable, true);
+  assert.equal(g.qualifiedYes, 1);
+  assert.equal(g.required, 1);
+});
+
+test('§5816 columns: a protected change is not shortcut', () => {
+  const gov = { approverPolicy: 'anyone', approvalsRequired: 2 };
+  const g = columnsGate(gov, [5], { explicitApproval: true });
+  assert.equal(g.builderYes, undefined);
+  assert.equal(g.mergeable, false);
+});
+
+test('§5816 columns: the first version still wins', () => {
+  const gov = { approverPolicy: 'anyone', approvalsRequired: 2 };
+  const g = governance.computeGate(gov, 3, 0, 0, OPENED5816, NOW5816, {
+    voters: { yes: new Set(), no: new Set() },
+    rulesFacts: BUILDER_FACTS,
+    builderYes: true,
+    firstVersion: true,
+  });
+  assert.equal(g.firstVersion, true);
+  assert.equal(g.required, 0);
+  assert.equal(g.mergeable, true);
+});

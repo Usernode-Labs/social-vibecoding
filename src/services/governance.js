@@ -381,6 +381,9 @@ function viewerDecides(gov, { approverIds, facts, explicitApproval, explicitReas
   if (viewerId == null) return true;
   const id = parseInt(viewerId, 10);
   if (!Number.isFinite(id)) return true;
+  // §5816: a builder's Yes approves an ordinary change whatever the rules
+  // say, so their vote is never advisory on one.
+  if (!explicitApproval && isBuilder(facts, id)) return true;
   if (gov && gov.rules) {
     const value = explicitApproval && isWhoDecidesReason(explicitReason ?? null)
       ? { rules: governanceRules.WHO_DECIDES }
@@ -398,6 +401,31 @@ function viewerDecides(gov, { approverIds, facts, explicitApproval, explicitReas
   return true;
 }
 
+// §5816: who a builder's Yes belongs to. The people who can already force a
+// change through (app admins, Homeroom's full admins) plus the project's
+// maker. Read off the same facts the gate reads, so the card and the merge
+// cannot disagree.
+function isBuilder(facts, userId) {
+  return !!gateRules.isBuilder(facts, userId);
+}
+
+// The fields a serialized proposal row carries for §5816, from its gate and
+// its app facts: whose Yes approved it (`builder_yes_role`,
+// `builder_yes_user_id`, both null when no builder's Yes did), and whether
+// this viewer's own Yes would approve it (`my_yes_decides`: the viewer is a
+// builder, the row is not a protected change, and not a first version).
+function builderRowFields(row, gate, facts, viewerId) {
+  const by = gate && gate.builderYes ? gate.builderYes : null;
+  const id = viewerId == null ? null : parseInt(viewerId, 10);
+  return {
+    builder_yes_role: by ? by.role : null,
+    builder_yes_user_id: by ? by.userId : null,
+    my_yes_decides: !(row && row.requires_explicit_approval)
+      && !(row && row.first_version)
+      && Number.isFinite(id) && isBuilder(facts, id),
+  };
+}
+
 // ── #4666: what a rules project's gate reads ───────────────────────────
 
 // Who made the project, how many are in its community, its active-member
@@ -411,17 +439,19 @@ async function rulesFacts(pool, appId, gov, { fresh = false } = {}) {
   const { rows } = await pool.query(
     `SELECT a.created_by, a.self_hosted, a.collab_visibility,
             (SELECT COUNT(*)::int FROM community_members m WHERE m.community_id = a.community_id) AS member_count,
-            COALESCE((SELECT array_agg(ad.user_id) FROM app_admins ad WHERE ad.app_id = a.id), '{}') AS admin_ids
+            COALESCE((SELECT array_agg(ad.user_id) FROM app_admins ad WHERE ad.app_id = a.id), '{}') AS admin_ids,
+            COALESCE((SELECT array_agg(u.id) FROM users u WHERE u.is_admin AND NOT u.admin_readonly), '{}') AS platform_admin_ids
        FROM apps a WHERE a.id = $1`,
     [appId]
   );
   const r = rows[0] || {};
-  const { active } = await activeUsers().getActiveUserStats(pool, appId, activeUsers().appMetaFromRow(r));
+  const { active } = await activeUsers().getActiveUserStats(pool, appId, gateRules.appMetaFromRow(r));
   const value = {
     creatorId: !r.self_hosted && r.created_by ? parseInt(r.created_by, 10) : null,
     memberCount: parseInt(r.member_count, 10) || 0,
     membersActive: Math.max(parseInt(active, 10) || 0, 1),
     adminIds: (r.admin_ids || []).map((id) => parseInt(id, 10)).filter(Number.isFinite),
+    platformAdminIds: (r.platform_admin_ids || []).map((id) => parseInt(id, 10)).filter(Number.isFinite),
     activeIds: null,
   };
   // The active people are a heavier read, wanted only by a share-of-active
@@ -531,14 +561,20 @@ async function botAuthoredBatch(pool, kind, ids) {
  * project without rules, so the common path issues no extra query. Use with
  * rulesGateOpts(ctx, id, authorId, reason).
  */
-async function rulesContext(pool, appId, gov, kind, ids) {
-  if (!gov || !gov.rules) return null;
+async function rulesContext(pool, appId, gov, kind, ids, { approverIds = null } = {}) {
+  // §5816: a PR's gate asks about a builder's Yes whatever the project's
+  // regime, so every project gets a context for 'pr'. An issue has no such
+  // rule, and a project without rules has no use for one.
+  if (kind === 'issue' && (!gov || !gov.rules)) return null;
   const [facts, voters, botAuthored] = await Promise.all([
     rulesFacts(pool, appId, gov),
     voterSetsBatch(pool, kind, ids),
     botAuthoredBatch(pool, kind, ids),
   ]);
-  return { facts, voters, botAuthored };
+  return {
+    kind, facts, voters, botAuthored,
+    approverIds: kind === 'pr' && Array.isArray(approverIds) ? approverIds.map(Number) : null,
+  };
 }
 
 /** The computeGate options for one proposal out of a rulesContext. */
@@ -550,6 +586,8 @@ function rulesGateOpts(ctx, id, authorId, explicitReason) {
     authorId: authorId ?? null,
     authorIsBot: !!(ctx.botAuthored && ctx.botAuthored.has(parseInt(id, 10))),
     memberCount: ctx.facts.memberCount,
+    // §5816: a PR's Yes from the project's maker or an admin approves it.
+    ...(ctx.kind === 'pr' ? { builderYes: true, approverIds: ctx.approverIds || null } : {}),
     ...(explicitReason !== undefined ? { explicitReason } : {}),
   };
 }
@@ -607,6 +645,8 @@ async function governedGate(pool, appId, {
       authorIsBot: author != null ? await authorIsBot(pool, author) : false,
       rulesFacts: facts, memberCount: facts.memberCount,
       firstVersion: first,
+      // §5816: the project's maker or an admin approves on their own Yes.
+      builderYes: true,
     });
   }
   const electorate = await getElectorate(pool, appId, gov);
@@ -624,10 +664,18 @@ async function governedGate(pool, appId, {
     pool, kind, id, electorate.approverIds, floorOpts
   );
   const memberCount = explicitApproval ? await communityMemberCount(pool, appId) : undefined;
+  // §5816: a builder's Yes approves an ordinary change in every regime, so
+  // the columns' gate reads the same voters and app facts the rules do.
+  const [facts, voters] = kind === 'pr'
+    ? await Promise.all([rulesFacts(pool, appId, gov, { fresh }), voterSets(pool, kind, id)])
+    : [null, null];
   // #788: the no-timer modifier rides on top of whatever regime the app
   // configured — see applyNoTimerMerge — and with it the member floor.
   const gate = computeGate(gov, electorate.active, yes, no, openedAt, now, {
     explicitApproval, otherYes, memberCount, firstVersion: first,
+    ...(kind === 'pr' ? {
+      voters, rulesFacts: facts, builderYes: true, approverIds: electorate.approverIds || null,
+    } : {}),
   });
   if (electorate.adminFallback && gov.approverPolicy === 'invited') {
     log.debug('governance', 'Approver roster empty; full admins acting as approvers', { appId });
@@ -737,6 +785,8 @@ module.exports = {
   isFirstVersion,
   applyFirstVersion: gateRules.applyFirstVersion,
   rulesFromColumn,
+  isBuilder,
+  builderRowFields,
   isWhoDecidesReason,
   electorateAtPromote,
   requiredAtPromote,

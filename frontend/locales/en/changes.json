@@ -8415,6 +8415,26 @@
     "text": "Any of the {{count}} members can give it.",
     "description": "One sentence of the line under the figure on the Votes card of a change's page while it is short of Yes votes. \"It\" is the Yes vote the figure above asks for; {{count}} is how many active members the project has (always more than one)."
   },
+  "page.votes.note.yourYesDecides": {
+    "text": "Your yes is enough on its own to put it live.",
+    "description": "One sentence of the line under the figure on the Votes card of a change's page. The person reading made the project or is one of its admins, their Yes is still missing, and that Yes alone approves the change. \"Put it live\" means apply the change to the running app."
+  },
+  "page.votes.note.builderYes.you": {
+    "text": "Your yes is enough on its own.",
+    "description": "One sentence of the line under the figure on the Votes card of a change's page, after the line saying who said yes. The viewer's own Yes approved the change (they made the project or are one of its admins), so no more votes are needed."
+  },
+  "page.votes.note.builderYes.creator": {
+    "text": "A yes from the project’s maker is enough on its own.",
+    "description": "One sentence of the line under the figure on the Votes card of a change's page. The person who made the project voted yes, and that one Yes approved the change, whatever the project's approval rule."
+  },
+  "page.votes.note.builderYes.admin": {
+    "text": "A yes from one of the project’s admins is enough on its own.",
+    "description": "One sentence of the line under the figure on the Votes card of a change's page. One of the project's admins voted yes, and that one Yes approved the change, whatever the project's approval rule."
+  },
+  "page.votes.note.builderYes.platformAdmin": {
+    "text": "A yes from a Homeroom admin is enough on its own.",
+    "description": "One sentence of the line under the figure on the Votes card of a change's page. A Homeroom administrator (an admin of the platform itself, not of this project) voted yes, and that one Yes approved the change."
+  },
   "page.votes.note.mergeCountdown": {
     "text": "It goes live when the countdown ends, unless someone objects.",
     "description": "One sentence of the line under the figure on the Votes card of a change's page while a timer is running after which the change is applied to the running app."

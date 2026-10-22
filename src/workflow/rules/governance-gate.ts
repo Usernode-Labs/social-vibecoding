@@ -520,6 +520,9 @@ export interface GovernedGate extends Gate {
   qualifiedYes: number;
   qualifiedNo: number;
   activeCount: number;
+  // The builder whose Yes approved this change on its own (applyBuilderYes),
+  // or null when none did. Absent when the gate was not asked (an issue).
+  builderYes?: BuilderYes | null;
   // A rules project's gate (computeRulesGate) adds these.
   preset?: PresetKey | null;
   whoDecides?: boolean;
@@ -541,10 +544,20 @@ export interface GateRules {
 }
 const RULES: GateRules = { mergeGate, oppositionWindowMs };
 
+export type BuilderRole = 'creator' | 'admin' | 'platform_admin';
+export interface BuilderYes { userId: number; role: BuilderRole }
+
 export interface GateOpts {
   explicitApproval?: boolean;
   memberCount?: Count;
   otherYes?: Count;
+  // §5816: this is a PR's gate, so a Yes from the project's maker, one of its
+  // admins or a Homeroom admin approves it on its own (applyBuilderYes).
+  // Issues never opt in.
+  builderYes?: boolean;
+  // The app's approvers, when it has a roster: a builder outside it is not in
+  // `qualifiedYes`, so their Yes is added rather than counted twice.
+  approverIds?: number[] | null;
   // #4666, a rules project: why it was flagged, the counted voters, the
   // author, and the app facts its rules read (governance.js rulesFacts).
   explicitReason?: string | null;
@@ -601,6 +614,93 @@ export function applyFirstVersion<G extends Gate>(gate: G, { explicitApproval = 
   };
 }
 
+// ── A builder's Yes (§5816) ─────────────────────────────────────────────
+//
+// The people who can already force a change through, plus the person who
+// made the project: its maker (apps.created_by, the rules' `creator` group),
+// its admins (app_admins, the rules' `admins` group) and Homeroom's full
+// admins (read-only admins are not). Their Yes on an ordinary change IS the
+// approval, in every project, whatever preset or columns it picked: it saves
+// them the second step of force-merging what they themselves just approved.
+//
+// It passes the APPROVALS step and nothing else: the checks, the shots, the
+// integration, main's health and a locked app's admin Yes all still apply.
+// A protected change (explicitApproval) keeps its own rule, because who
+// decides, the keys and the member floor are exactly what must not be
+// shortcut by one person's Yes where it already is not.
+//
+// A builder the app's approver roster does not include is not in
+// `qualifiedYes`, so their Yes is added to it; the required count follows the
+// count, so the card reads "1 of 1 yes" rather than a threshold they passed
+// alone looking unmet.
+export function builderYesOf(facts: RulesFacts | null | undefined, yesIds: Set<number>): BuilderYes | null {
+  if (!facts) return null;
+  const order: Array<{ id: Count; role: BuilderRole }> = [
+    { id: facts.creatorId, role: 'creator' },
+    ...(facts.adminIds || []).map((id) => ({ id, role: 'admin' as BuilderRole })),
+    ...(facts.platformAdminIds || []).map((id) => ({ id, role: 'platform_admin' as BuilderRole })),
+  ];
+  for (const { id, role } of order) {
+    if (id == null) continue;
+    const n = int(id);
+    if (Number.isFinite(n) && yesIds.has(n)) return { userId: n, role };
+  }
+  return null;
+}
+
+// Whether `userId` is one of the people whose Yes decides (§5816).
+export function isBuilder(facts: RulesFacts | null | undefined, userId: Count): boolean {
+  if (!facts || userId == null) return false;
+  const id = int(userId);
+  if (!Number.isFinite(id)) return false;
+  return facts.creatorId === id
+    || (facts.adminIds || []).includes(id)
+    || (facts.platformAdminIds || []).includes(id);
+}
+
+// The builder's-Yes modifier. Runs only for a caller that opted in
+// (`opts.builderYes`, every PR path) and only when the gate was handed the
+// voters and the app facts it takes to answer; anything else is unchanged.
+export function applyBuilderYes<G extends GovernedGate>(gate: G, opts: GateOpts = {}): G {
+  if (opts.builderYes !== true) return gate;
+  // A protected change keeps WHO_DECIDES, its keys rule and the member floor.
+  if (opts.explicitApproval) return gate;
+  const facts = opts.rulesFacts;
+  if (!facts || !opts.voters) return gate;
+  const yesIds = opts.voters.yes instanceof Set
+    ? opts.voters.yes as Set<number>
+    : new Set<number>([...(opts.voters.yes || [])].map(int));
+  const by = builderYesOf(facts, yesIds);
+  if (!by) return { ...gate, builderYes: null };
+  // Already approved by the group's own rule: only record whose Yes it was.
+  if (gate.mergeable) return { ...gate, builderYes: by };
+  const approvers = Array.isArray(opts.approverIds)
+    ? opts.approverIds.map((n) => int(n)) : null;
+  const uncounted = approvers && !approvers.includes(by.userId) ? 1 : 0;
+  const qualifiedYes = Math.max((Number(gate.qualifiedYes) || 0) + uncounted, 1);
+  return {
+    ...gate,
+    qualifiedYes,
+    required: qualifiedYes,
+    thresholdMet: true,
+    contested: false,
+    // No clock: the approval is here now, so nothing is waited on.
+    windowMs: 0,
+    windowEndsAt: null,
+    windowElapsed: true,
+    lazyArmed: false,
+    lazyWindowMs: null,
+    mergeable: true,
+    rejectionWindowMs: null,
+    rejectionArmed: false,
+    rejectionEndsAt: null,
+    rejectable: false,
+    builderYes: by,
+  };
+}
+
+
+//
 // Pure mode dispatch given already-resolved governance + counts.
 //
 // `opts.explicitApproval` layers the #788 no-timer modifier on top of
@@ -622,7 +722,10 @@ export function computeGate(
   const gate = gov && gov.rules
     ? computeRulesGate(gov, active, yesCount, noCount, openedAt, now, opts, rules)
     : computeColumnsGate(gov, active, yesCount, noCount, openedAt, now, opts, rules);
-  return opts.firstVersion ? applyFirstVersion(gate, { explicitApproval: !!opts.explicitApproval }) : gate;
+  // §5816: a builder's Yes, before the first version (which waives the vote
+  // anyway) and after whichever regime decided.
+  const approved = applyBuilderYes(gate, opts);
+  return opts.firstVersion ? applyFirstVersion(approved, { explicitApproval: !!opts.explicitApproval }) : approved;
 }
 
 // The two columns' regimes (default, at least N), with the #788 modifier.

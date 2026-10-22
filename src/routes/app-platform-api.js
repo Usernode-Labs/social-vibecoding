@@ -311,6 +311,7 @@ function appPlatformApiRoutes(config) {
       const { rows } = await pool.query(
         `SELECT cs.id, cs.pr_number, cs.pr_title, cs.pr_summary_md, cs.status,
                 cs.promoted_at, cs.created_at, cs.merged_at, cs.votes_required,
+                cs.user_id, cs.requires_explicit_approval, cs.explicit_approval_reason,
                 u.username AS author,
                 ${activityExpr} AS activity_at,
                 (SELECT COUNT(*)::int FROM pr_votes pv
@@ -357,9 +358,17 @@ function appPlatformApiRoutes(config) {
           const q = qualifiedByRow
             ? (qualifiedByRow.get(row.id) || { yes: 0, no: 0 })
             : { yes: row.yes_count, no: row.no_count };
+          // §5816: a builder's Yes approves an ordinary change here too, so
+          // votes_required agrees with what the merge gate will decide.
+          const rulesCtx = await governance.rulesContext(pool, appId, gov, 'pr', [row.id],
+            { approverIds: electorate.approverIds });
           gates.set(row.id, governance.computeGate(
             gov, electorate.active, q.yes, q.no,
-            row.promoted_at || row.created_at
+            row.promoted_at || row.created_at, null,
+            {
+              explicitApproval: !!row.requires_explicit_approval,
+              ...governance.rulesGateOpts(rulesCtx, row.id, row.user_id ?? null, row.explicit_approval_reason || null),
+            }
           ));
         }
       }
