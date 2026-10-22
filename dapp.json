@@ -4289,7 +4289,7 @@
       "name": "Discover's search and filters sit over the list's card, with the rows inside the card (communities prototype; #1919)",
       "path": "/#apps",
       "expectSelector": "#browse-screen > #browse-search-bar.browse-pane-head:not(.hidden) + #browse-list-level > #browse-list.browse-pane-body .browse-row",
-      "expectText": "Sort"
+      "expectText": "Filters"
     },
     {
       "name": "Shared report link serves the report document without a session",

@@ -472,10 +472,13 @@ test('the guest bar: the wordmark at the column\'s left, Sign in and Sign up at 
   assert.match(header, /<div className="w-7 h-7 shrink-0 flex items-center justify-center">/);
   assert.match(header, /\[\[data-guest-top\]_&\]:px-0 \[\[data-guest-top\]_&\]:text-left/);
   assert.match(header, /<div className="w-7 shrink-0 \[\[data-guest-top\]_&\]:hidden" aria-hidden="true" \/>/);
-  // Sign in and Sign up, both at least a 44px tap target (#5782 review).
+  // Sign in and Sign up, both at the row's 28px with no padding of their own:
+  // the landing bar is a 28px content row on every screen
+  // (tests/header-height-parity.test.js), so a taller control would grow the
+  // whole bar.
   const actions = header.slice(header.indexOf('data-landing-actions'));
   assert.match(actions.slice(0, 300), /hiddenLast\(session \|\| !guestPages, guestTop \? 'flex shrink-0 items-center gap-1\.5' : `absolute bottom-4 right-4 /);
-  assert.match(actions, /data-landing-sign-in=""\s+className=\{hiddenLast\(session \|\| !guestPages, 'inline-flex min-h-11 min-w-11 items-center justify-center rounded-full px-2 /);
+  assert.match(actions, /data-landing-sign-in=""\s+className=\{hiddenLast\(session \|\| !guestPages, 'h-7 rounded-full px-2 /);
   assert.match(actions, /onClick=\{\(\) => \{ noteSignUpFrom\('header_sign_in'\); setSheet\('signin'\); \}\}/);
   assert.match(actions, /<Button\s+type="button"\s+variant="pillAccent"\s+size="none"\s+ink="solid"\s+data-landing-sign-up=""/);
   assert.match(actions, /data-landing-sign-up=""\s+className=[^\n]+\s+onClick=\{\(\) => \{ noteSignUpFrom\('header_sign_up'\); setSheet\('start'\); \}\}/);

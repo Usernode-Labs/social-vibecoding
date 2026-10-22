@@ -1689,7 +1689,7 @@ export function LandingScreen() {
           <button
             type="button"
             data-landing-sign-in=""
-            className={hiddenLast(session || !guestPages, 'inline-flex min-h-11 min-w-11 items-center justify-center rounded-full px-2 text-[15px] font-semibold text-zinc-950 hover:text-zinc-600 dark:text-white dark:hover:text-zinc-300')}
+            className={hiddenLast(session || !guestPages, 'h-7 rounded-full px-2 text-[15px] font-semibold text-zinc-950 hover:text-zinc-600 dark:text-white dark:hover:text-zinc-300')}
             onClick={() => { noteSignUpFrom('header_sign_in'); setSheet('signin'); }}
           >
             {t('auth:guest.header.signIn')}
@@ -1700,7 +1700,7 @@ export function LandingScreen() {
             size="none"
             ink="solid"
             data-landing-sign-up=""
-            className={guestTop ? 'min-h-11 min-w-11 px-3.5 text-[15px] font-semibold' : 'hidden md:inline-flex min-h-11 min-w-11 px-3.5 text-[15px] font-semibold'}
+            className={guestTop ? 'h-7 px-3.5 text-[15px] font-semibold' : 'hidden md:inline-flex h-7 px-3.5 text-[15px] font-semibold'}
             onClick={() => { noteSignUpFrom('header_sign_up'); setSheet('start'); }}
           >
             {t('auth:guest.header.signUp')}
