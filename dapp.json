@@ -437,7 +437,7 @@
       "key": "BREVO_SMS_SENDER_IDS",
       "group": "Phone sign-in",
       "default": "{}",
-      "description": "Country-to-Sender-ID registry: a JSON object keyed by ISO 3166 alpha-2 country, each value either a sender string or {sender, registered, optOut}. Example: {\"FR\":\"Homeroom\",\"US\":{\"sender\":\"18885550100\",\"registered\":true}}. Sender IDs are registered in Brevo's own dashboard, not here. A country that is not listed is refused; US and Canada also need registered:true with a numeric sender. An empty or malformed registry means Brevo is not ready."
+      "description": "Country-to-Sender-ID registry: a JSON object keyed by ISO 3166 alpha-2 country, each value a sender string or {sender, registered, optOut}. Example: {\"FR\":\"Homeroom\",\"US\":{\"sender\":\"18885550100\",\"registered\":true}}. Register Sender IDs in Brevo's dashboard. An unlisted country is refused; US and Canada need registered:true with a numeric sender. Empty or malformed means Brevo is not ready."
     },
     {
       "key": "BREVO_SMS_WEBHOOK_TOKEN",

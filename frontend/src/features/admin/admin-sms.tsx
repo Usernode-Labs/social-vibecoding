@@ -245,9 +245,9 @@ function ProviderCard({ provider, write, onSaved }: {
             className="mt-1"
           />
           <span>
-            <span className="font-medium">{o.label}</span>{' '}
+            <span className="font-medium">{o.label}</span>
             {o.ready ? (
-              <span className="text-xs text-emerald-700 dark:text-emerald-400">Ready</span>
+              <span className="text-xs text-emerald-700 dark:text-emerald-400">{' Ready'}</span>
             ) : (
               <span className="text-xs text-amber-700 dark:text-amber-400">
                 {'Needs '}<MissingList missing={o.missing} />

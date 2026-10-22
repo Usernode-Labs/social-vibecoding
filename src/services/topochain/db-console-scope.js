@@ -217,6 +217,12 @@ const CONSOLE_CREDENTIAL_COLUMNS = {
   // 6-digit code, and a token hash is a bearer credential in the
   // lookup-by-hash schemes these tables use.
   mobile_otp_codes: ['code_hash'],
+  // Homeroom's own SMS sign-in codes (services/sms/otp.js), used when Brevo
+  // sends the text: the session handed to the client and the code are
+  // stored as SHA-256 hashes, and a six-digit code's hash is
+  // offline-guessable, so both are masked. attempts/expires_at stay
+  // readable, which is what "my code did not work" needs.
+  sms_otp_codes: ['session_hash', 'code_hash'],
   // Account email proof and the password snapshot are both offline-guessable.
   account_email_verifications: ['code_hash', 'password_hash'],
   // #5281: the username-change proof, the same two secrets as the row above.
