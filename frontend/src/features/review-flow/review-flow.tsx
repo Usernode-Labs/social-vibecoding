@@ -505,6 +505,7 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
   const [size, setSize] = useState<{ w: number; h: number } | null>(null);
   const barRef = useRef<HTMLDivElement>(null);
   const foldedBar = useRef(0);
+  const safeRef = useRef<HTMLDivElement>(null);
   // What the change does in full, dropped from under the bar over the page.
   const [desc, setDesc] = useState(false);
   const [barTop, setBarTop] = useState(0);
@@ -552,11 +553,13 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
       const pr = page.getBoundingClientRect();
       // From 768px the panel is as tall as what it holds, up to its room.
       const max = parseFloat(getComputedStyle(page).maxHeight);
-      // Less the bar over it, which on a phone also holds the status bar's inset.
+      // Less the bar over it, which on a phone also holds the status bar's
+      // inset, and the home indicator's inset the vote bar keeps clear of.
+      const safe = safeRef.current ? safeRef.current.offsetHeight : 0;
       // The folded bar's: open, it grows to the whole title over the page.
       if (barRef.current && !barRef.current.hasAttribute('data-open')) foldedBar.current = barRef.current.getBoundingClientRect().height;
       const bar = foldedBar.current;
-      const h = (Number.isFinite(max) && max > 0 ? max : pr.height) - bar;
+      const h = (Number.isFinite(max) && max > 0 ? max : pr.height) - bar - safe;
       setSize({ w: Math.min(COLUMN, pr.width), h });
     };
     measure();
@@ -738,6 +741,7 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
       {/* From 768px, the pane behind the panel, dimmed; a click on it is Back. */}
       <div ref={dimRef} className="rf-page-dim" onClick={onDone} aria-hidden="true" />
       <div ref={pageRef} className="rf-page" role="dialog" aria-modal="false" aria-label={item.title}>
+        <div ref={safeRef} className="rf-safe-probe" aria-hidden="true" />
         <div ref={barRef} className="rf-bar" data-open={desc ? '' : undefined}>
           <button type="button" className="rf-back" onClick={onDone} aria-label={backName} data-rf-back="">
             <ChevronLeftIcon aria-hidden="true" width={24} height={24} strokeWidth="2.2" />

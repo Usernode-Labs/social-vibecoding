@@ -25184,11 +25184,15 @@ html.in-side-panel body {
 /* Everything had your vote: the end alone, centred where the list was. */
 .rf-end-alone { min-height: 56vh; justify-content: center; padding: 0 24px 48px; }
 
-/* The change page: between the shell's header, which says where you are
-   (features/header/review-run-store.js), and the tab bar, which stays. From
-   768px it starts after the sidebar (--platform-rail-w, 0 on a phone and
-   while the rail is folded), so it centres over the pane's column. */
-.rf-page-wrap { position: fixed; left: var(--platform-rail-w, 0px); right: 0; top: 0; bottom: var(--platform-tabs-h, 0px); z-index: 35; pointer-events: none; }
+/* The change page. A change is a detail view: on a phone the page covers the
+   shell's header AND its tab bar (z 30 under this 35), top to bottom, so
+   nothing but the change and its decision is on screen; its own bar is the
+   way back, and the vote bar clears the home indicator itself
+   (.rf-sheet-inner). The tab bar's visibility stays the router's; the page
+   only sits over it. From 768px it starts after the sidebar
+   (--platform-rail-w, 0 on a phone and while the rail is folded), so it
+   centres over the pane's column. */
+.rf-page-wrap { position: fixed; left: var(--platform-rail-w, 0px); right: 0; top: 0; bottom: 0; z-index: 35; pointer-events: none; }
 .rf-page { position: absolute; top: 0; bottom: 0; left: max(0px, calc(50% - 260px)); width: min(100%, 520px); display: flex; flex-direction: column; overflow: hidden; background: var(--rf-page); color: var(--rf-ink); pointer-events: auto; -webkit-font-smoothing: antialiased; }
 .rf-stage { position: relative; flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; }
 .rf-stage-layer { background: var(--rf-page); }
@@ -25319,8 +25323,10 @@ button.rf-claim-row:active .rf-claim { color: var(--rf-ink); }
    while its help or the header's menu is open. */
 .rf-sheet { position: relative; z-index: 6; flex: none; overflow: hidden; border-radius: 20px 20px 0 0; background: var(--rf-sheet); box-shadow: 0 -8px 32px rgba(0,0,0,.18), inset 0 1px 0 rgba(255,255,255,.06); transition: height .26s cubic-bezier(0.22,1,0.36,1), background .22s, box-shadow .22s; }
 .rf-sheet-rest { background: var(--rf-page); box-shadow: none; }
-.rf-sheet-rest .rf-sheet-inner { padding-top: 4px; padding-bottom: 12px; }
-.rf-sheet-inner { display: flex; flex-direction: column; max-height: inherit; padding: 0 16px 10px; }
+/* How tall the home indicator's inset is, for the page's height budget. */
+.rf-safe-probe { position: absolute; left: 0; top: 0; width: 0; height: var(--platform-safe-bottom, 0px); visibility: hidden; pointer-events: none; }
+.rf-sheet-rest .rf-sheet-inner { padding-top: 4px; padding-bottom: calc(12px + var(--platform-safe-bottom, 0px)); }
+.rf-sheet-inner { display: flex; flex-direction: column; max-height: inherit; padding: 0 16px calc(10px + var(--platform-safe-bottom, 0px)); }
 .rf-sheet button, .rf-sheet input, .rf-sheet textarea { font-family: inherit; }
 .rf-grab { flex: none; display: block; width: 100%; height: 27px; margin: 0; padding: 0; border: 0; background: none; cursor: pointer; }
 .rf-grab span { display: block; width: 36px; height: 5px; margin: 8px auto 14px; border-radius: 999px; background: var(--rf-line); }

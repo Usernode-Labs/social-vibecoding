@@ -374,7 +374,13 @@ test('the run\'s bar: back, the title and ⌄; the title, ⌄ or the line opens 
   assert.doesNotMatch(read('frontend/src/features/header/header-title.tsx'), /reviewRun/);
   assert.doesNotMatch(read('frontend/src/features/header/platform-header.tsx'), /reviewRun/);
   const css = read('public/css/app.css');
-  assert.match(css, /\n\.rf-page-wrap \{ position: fixed; left: var\(--platform-rail-w, 0px\); right: 0; top: 0; bottom: var\(--platform-tabs-h, 0px\);/);
+  // A detail view: on a phone the page covers the header and the tab bar
+  // (z 30) top to bottom; the vote bar clears the home indicator itself, and
+  // the page's height budget counts that inset.
+  assert.match(css, /\n\.rf-page-wrap \{ position: fixed; left: var\(--platform-rail-w, 0px\); right: 0; top: 0; bottom: 0; z-index: 35;/);
+  assert.match(css, /\.rf-sheet-inner \{ display: flex; flex-direction: column; max-height: inherit; padding: 0 16px calc\(10px \+ var\(--platform-safe-bottom, 0px\)\); \}/);
+  assert.match(css, /\.rf-safe-probe \{ [^}]*height: var\(--platform-safe-bottom, 0px\);/);
+  assert.match(src, /const h = \(Number\.isFinite\(max\) && max > 0 \? max : pr\.height\) - bar - safe;/);
   assert.match(css, /\.rf-bar\[data-open\] \.rf-bar-title \{ white-space: normal;/, 'open, the whole title');
   assert.match(css, /\.rf-bar-toggle\[aria-expanded="true"\] svg \{ transform: rotate\(180deg\); \}/);
   assert.match(css, /\.rf-desc-wrap\[data-open\] \.rf-desc \{ transform: none;/);
