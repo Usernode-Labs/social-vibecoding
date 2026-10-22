@@ -27,6 +27,10 @@ const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const { Pool } = require('pg');
+// The route's own view of work on a session (checkRuntime): this process's
+// operations, and what the durable record says any process is doing.
+const activeWorkers = require('../src/services/active-workers');
+const sessionWork = require('../src/workflow/session-work.ts');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
 const SHA = (c) => c.repeat(40).slice(0, 40);
@@ -221,6 +225,24 @@ test('a promoted CLI upload reaches its checks', { timeout: 120000 }, async (t) 
     const r = await row(s);
     return m?.state === 'settled' && m.data.head === head && r.check_state === 'passing' && r.checks_commit_sha === head;
   }, `settled and passing on ${head.slice(0, 8)}`, s);
+  // The route says a revision is ready (revisionBuildState) from the verdict
+  // AND from nothing still working on the session. A check run keeps a
+  // session operation open across its detached rerun and releases it just
+  // after the verdict is written, so a submit taken at the verdict itself
+  // can still answer 202 "checking" or 409 session_busy. Wait for the state
+  // the route reads, never for a delay.
+  const readyOn = (s, head) => until(async () => {
+    const m = await machine(s);
+    const r = await row(s);
+    if (!(m?.state === 'settled' && m.data.head === head
+          && r.check_state === 'passing' && r.checks_commit_sha === head)) return false;
+    if (activeWorkers.isSessionBusy(s.id)) return false;
+    const { rows: [work] } = await pool.query(
+      `SELECT ${sessionWork.workedOnSql()} AS worked_on,
+              ${sessionWork.operationOfKindLiveSql('cs.id', 'handoff-pipeline')} AS pipeline
+         FROM chat_sessions cs WHERE cs.id = $1`, [s.id]);
+    return !work.worked_on && !work.pipeline;
+  }, `ready on ${head.slice(0, 8)}`, s);
   // The rows are written a moment after the work starts: the machine moves
   // through preparing and checking and the kernel runs its work in memory, so
   // a single poll for quiet rows can land in that gap. At rest is all of these
@@ -296,7 +318,13 @@ test('a promoted CLI upload reaches its checks', { timeout: 120000 }, async (t) 
   };
   const prepared = (s, head) => count(s, 'prepare', head);
 
-  await t.test('checks on H1, upload H2, submit H2: the submit is taken and the machine checks H2', async () => {
+  // The sub-tests share one database, one preview machine and the workflow
+  // kernel, so they run one at a time. Each is awaited below; the option
+  // keeps that explicit, so a later edit cannot turn them into parallel
+  // copies competing for the database server's shared memory.
+  const serial = { concurrency: false };
+
+  await t.test('checks on H1, upload H2, submit H2: the submit is taken and the machine checks H2', serial, async () => {
     const s = await promotedOnH1();
     await uploadHead(s, H2, H1);
     let r = await row(s);
@@ -319,7 +347,10 @@ test('a promoted CLI upload reaches its checks', { timeout: 120000 }, async (t) 
     assert.equal(r.handoff_upload_checked_sha, null);
     assert.equal(prepared(s, H2), 1, 'the machine built H2 once');
 
-    // A retry after a lost response is the idempotent early return.
+    // A retry after a lost response is the idempotent early return. Wait for
+    // the check run's operation to be released, or the retry can still read
+    // the revision as checking and answer 202 instead of 200.
+    await readyOn(s, H2);
     const before = callsOf(s).length;
     const retry = await submit(s, H2);
     assert.equal(retry.statusCode, 200, JSON.stringify(retry.body));
@@ -327,7 +358,7 @@ test('a promoted CLI upload reaches its checks', { timeout: 120000 }, async (t) 
     assert.equal(callsOf(s).length, before, 'a retry starts nothing');
   });
 
-  await t.test('"Run checks again" with the machine on H1 and the reviewed head on H2 checks H2, and a submit after it builds nothing twice', async () => {
+  await t.test('"Run checks again" with the machine on H1 and the reviewed head on H2 checks H2, and a submit after it builds nothing twice', serial, async () => {
     const s = await promotedOnH1();
     await uploadHead(s, H2, H1);
     const h1Builds = prepared(s, H1);
@@ -349,7 +380,9 @@ test('a promoted CLI upload reaches its checks', { timeout: 120000 }, async (t) 
     assert.equal(prepared(s, H2), h2Builds, 'a recheck of the head the machine holds builds nothing');
 
     // The submit adopts the upload (its checks are already on it) and the
-    // revision joins what the machine holds: no second build.
+    // revision joins what the machine holds: no second build. Wait for the
+    // recheck's operation to be released, or the submit answers 409 busy.
+    await readyOn(s, H2);
     const res = await submit(s, H2);
     assert.equal(res.statusCode, 202, JSON.stringify(res.body));
     assert.equal((await row(s)).handoff_head_sha, H2);
@@ -357,7 +390,7 @@ test('a promoted CLI upload reaches its checks', { timeout: 120000 }, async (t) 
     assert.equal(prepared(s, H2), h2Builds, 'the submit\'s revision of the same head is joined');
   });
 
-  await t.test('the submit still refuses a moved branch, a newer upload, and checks pinned to a third commit', async () => {
+  await t.test('the submit still refuses a moved branch, a newer upload, and checks pinned to a third commit', serial, async () => {
     const s = await promotedOnH1();
     await uploadHead(s, H2, H1);
     // The upload cleared the verdict, so the machine sweeps the head people
@@ -366,6 +399,9 @@ test('a promoted CLI upload reaches its checks', { timeout: 120000 }, async (t) 
     // whether the machine's own sweep ran.
     await settledOn(s, H2);
     await drain(s);
+    // A refused submit must reach its own refusal, not a 409 for work that
+    // is still finishing: the route tests busy before it reads the branch.
+    await readyOn(s, H2);
     const builds = prepared(s, H2);
 
     gh.remote = H3;
