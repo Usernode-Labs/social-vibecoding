@@ -217,7 +217,7 @@ export function ProjectLink({ slug, children, ...rest }: { slug: string; childre
   return <a href={projectPath(slug)} onClick={onClick} {...rest}>{children}</a>;
 }
 
-const TRY_SMALL = 'flex h-8 items-center justify-center rounded-full bg-black/5 px-3.5 text-sm font-semibold text-zinc-900 hover:bg-black/10 dark:bg-white/10 dark:text-zinc-100 dark:hover:bg-white/15';
+const TRY_SMALL = 'flex min-h-11 items-center justify-center rounded-full bg-black/5 px-3.5 text-sm font-semibold text-zinc-900 hover:bg-black/10 dark:bg-white/10 dark:text-zinc-100 dark:hover:bg-white/15';
 
 /**
  * A big card. Its picture and its name open the project's page, its votes
@@ -248,7 +248,7 @@ function Card({ app, eager, sort, tryable, inside, onOpenInside }: {
             phone's two narrow columns the words get the room instead. */}
         {app.illustration_url ? <span className="hidden md:block"><GuestIcon app={app} size="sm" eager={eager} /></span> : null}
         <span className="min-w-0 flex-1">
-          <ProjectLink slug={app.slug} data-guest-card-link="" className="block truncate text-[15px] font-[650] text-zinc-900 outline-offset-4 dark:text-zinc-100">
+          <ProjectLink slug={app.slug} data-guest-card-link="" className="block truncate -my-[11px] py-[11px] text-[15px] font-[650] text-zinc-900 outline-offset-4 dark:text-zinc-100">
             {app.name}
           </ProjectLink>
           <CardFacts app={app} sort={sort} />
@@ -285,7 +285,7 @@ function MoreRow({ app, sort, tryable, inside, onOpenInside, last }: {
       data-guest-row={app.slug}
       className={cn('flex min-h-[64px] items-center gap-3 px-3.5 py-2.5', last ? '' : 'shadow-[inset_0_-1px_0_var(--app-sheet-line)]')}
     >
-      <ProjectLink slug={app.slug} className="flex min-w-0 flex-1 items-center gap-3 outline-offset-4">
+      <ProjectLink slug={app.slug} className="flex min-h-11 min-w-0 flex-1 items-center gap-3 outline-offset-4">
         <GuestIcon app={app} />
         <span className="min-w-0 flex-1">
           <span className="block truncate text-[15px] font-[650] text-zinc-900 dark:text-zinc-100">{app.name}</span>
@@ -363,7 +363,7 @@ function Featured({ app, primaryClass, inside, onOpenInside }: {
         <div className="flex items-start gap-3">
           {app.illustration_url ? <GuestIcon app={app} eager /> : null}
           <div className="min-w-0 flex-1">
-            <ProjectLink slug={app.slug} className="block truncate text-[15px] font-[650] text-zinc-900 outline-offset-4 dark:text-zinc-100">
+            <ProjectLink slug={app.slug} className="block truncate -my-[11px] py-[11px] text-[15px] font-[650] text-zinc-900 outline-offset-4 dark:text-zinc-100">
               {app.name}
             </ProjectLink>
             <CardFacts app={app} sort="trending" />
@@ -401,7 +401,7 @@ function SortControl({ sort, onSort }: { sort: GuestSort; onSort: (s: GuestSort)
           data-guest-sort={s}
           onClick={() => onSort(s)}
           className={cn(
-            'h-8 rounded-full px-3 text-[13px] font-semibold',
+            'min-h-11 rounded-full px-3 text-[13px] font-semibold',
             s === sort
               ? 'bg-white text-zinc-950 shadow-sm dark:bg-zinc-800 dark:text-white'
               : 'text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200',
@@ -483,17 +483,17 @@ export function GuestDiscover({ apps, failed, hero, primaryClass, onOpenInside, 
             onChange={(e) => setQuery(e.target.value)}
             placeholder={t('auth:guest.search.placeholder')}
             aria-label={t('auth:guest.search.label')}
-            className="min-w-0 flex-1 bg-transparent text-base text-zinc-900 outline-none placeholder:text-zinc-400 dark:text-zinc-100 dark:placeholder:text-zinc-500"
+            className="h-11 min-w-0 flex-1 bg-transparent text-base text-zinc-900 outline-none placeholder:text-zinc-400 dark:text-zinc-100 dark:placeholder:text-zinc-500"
           />
         </label>
 
         {kinds.length ? (
           <ChipRail role="group" aria-label={t('auth:guest.categories.label')} className="-mx-4 -my-2 gap-2">
-            <Chip size="bar" selected={!category} data-guest-category="all" onClick={() => setCategory(null)}>
+            <Chip size="bar" className="min-h-11" selected={!category} data-guest-category="all" onClick={() => setCategory(null)}>
               {t('auth:guest.category.all')}
             </Chip>
             {kinds.map((k) => (
-              <Chip key={k} size="bar" selected={category === k} data-guest-category={k} onClick={() => setCategory(category === k ? null : k)}>
+              <Chip key={k} size="bar" className="min-h-11" selected={category === k} data-guest-category={k} onClick={() => setCategory(category === k ? null : k)}>
                 {t(`auth:guest.category.${k}`)}
               </Chip>
             ))}
@@ -543,7 +543,7 @@ export function GuestDiscover({ apps, failed, hero, primaryClass, onOpenInside, 
                 <button
                   type="button"
                   data-guest-show-more=""
-                  className="h-10 self-center rounded-full bg-white px-5 text-[15px] font-semibold text-zinc-900 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] hover:bg-zinc-50 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
+                  className="min-h-11 self-center rounded-full bg-white px-5 text-[15px] font-semibold text-zinc-900 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] hover:bg-zinc-50 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
                   onClick={() => setRowsShown((n) => n + ROWS_STEP)}
                 >
                   {t('auth:guest.showMore')}
@@ -552,7 +552,9 @@ export function GuestDiscover({ apps, failed, hero, primaryClass, onOpenInside, 
             </div>
           ) : null}
           {apps && !list.length ? (
-            <p className="py-6 text-center text-[15px] text-zinc-500 dark:text-zinc-400">{t('auth:guest.empty')}</p>
+            <p className="py-6 text-center text-[15px] text-zinc-500 dark:text-zinc-400">
+              {browsing ? t('auth:guest.emptyAll') : t('auth:guest.empty')}
+            </p>
           ) : null}
         </section>
       </div>
