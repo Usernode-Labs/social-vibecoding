@@ -305,6 +305,40 @@ test('#5581: level 0 is one list under the page\'s audience chips, with no secti
   assert.doesNotMatch(read(`${DIR}/outer-level.tsx`), /groupRows|<Section\b/);
 });
 
+// #5821: under the Needs you card the chips touched it. The drawer's list
+// gets the same twelve the Communities screen keeps (section + .workshop-search),
+// from the card's section to the chip row and only then.
+test('#5821: the chips sit a 12px gap under the Needs you card', async () => {
+  const mod = loadTsx(`${DIR}/outer-level.tsx`);
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    if (String(url).includes('/api/workshop/counts')) {
+      return { ok: true, json: async () => ({ counts: { owed: { needs: 2, owed: ['a', 'b'] } } }) };
+    }
+    return {
+      ok: true,
+      json: async () => ({
+        apps: [{ slug: 'owed', name: 'Owed one', audience: 'open', is_member: true, last_active_at: '2026-10-18T12:00:00Z' }],
+      }),
+    };
+  };
+  const hadWindow = typeof globalThis.window !== 'undefined';
+  if (!hadWindow) globalThis.window = {};
+  try {
+    await mod.readCommunities();
+  } finally {
+    globalThis.fetch = realFetch;
+    if (!hadWindow) delete globalThis.window;
+  }
+  const html = renderToHtml(createElement(mod.OuterLevel, { current: null, searching: false, wanted: false, onPick() {}, listRef: null }));
+  // The section heads the chip row: the rule's selector needs them adjacent.
+  assert.match(html, /<\/section><div[^>]*class="[^"]*\baudience-chips\b/,
+    'the Needs you section is the chips\' previous sibling');
+  const css = read('public/css/app.css');
+  assert.match(css, /\.nav-drawer-outer-list section \+ \.audience-chips \{\s*margin-top: 12px;/,
+    'twelve under the card, as the Communities screen keeps');
+});
+
 test('the header takes the drawer\'s arrow and titles only while it applies', () => {
   const header = read('frontend/src/features/header/platform-header.tsx');
   assert.match(header, /<HeaderPlace slug=\{backSlug\} name=\{appName \|\| ''\} \/>[\s\S]*?<DrawerBack \/>\s*<\/div>/,

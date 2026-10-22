@@ -142,20 +142,20 @@ export function CreateTile({ view, style }: { view: CreateTileView; style?: stri
 // When a collapsed grid's last shown row is full the tile is held back
 // (#3047), and before #4757 that was the end of it: a viewer with many apps
 // saw no way to create at all until they expanded the grid and scrolled its
-// end. AppsMore draws this instead, on the "Show all N apps" line — the same
-// label, tooltip, locked treatment and dialog as the tile, at the button's
-// size rather than a tile's.
+// end. The My apps heading draws this instead, in its action seat (#5825; it
+// sat on the "Show all N apps" line before) — the same label, tooltip, locked
+// treatment and dialog as the tile, at the button's size rather than a tile's.
 //
 // It carries the tile's id and `data-panel-slot="create"` because exactly one
 // of tile and compact entry exists at a time (the grid draws no tile while
-// this is up, and this is up only while moreCount > 0), so the declared
+// this is up, and this is up only while the grid holds the tile back), so the declared
 // checks' and the tour's `#home-create-tile` still land on the one Create
 // control on screen. It deliberately has NO `home-create-tile` class: the
 // drag-time `#app-list > .home-create-tile` rules in app.css are about the
 // grid's canvas, which this does not live in. `.home-create-btn:focus-visible`
 // still applies.
 //
-// #5654: it is the line's one button — the app's white surface (dark grey in
+// #5654: it is the row's one button — the app's white surface (dark grey in
 // dark mode) inside the hairline border, fully rounded, with the plus in
 // front — while Show all stays a text link. No new colour: zinc at rest, the
 // blue accent on hover. The dashed box around the plus is the grid tile's,

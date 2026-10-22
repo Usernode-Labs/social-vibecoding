@@ -91,6 +91,7 @@ import { SearchIcon } from '@/components/ui/icons';
 import { AppGrid } from './app-grid';
 import { openAddAppsSheet } from './add-apps-sheet';
 import { AppsMore } from './apps-more';
+import { CreateCompact } from './create-tile';
 import { ChallengesSection, DiscoverSection } from './panels/sections';
 import { SectionHeading } from './panels/ui';
 import { VerifyCard } from './verify-card';
@@ -274,7 +275,15 @@ export function HomeScreen() {
                  Discover's link does. "Add apps" rides beside it (#4669): the
                  mode's second entry, opening the same sheet the tile menu's
                  "Add to My apps" opens, so growing the shelf does not cost the
-                 trailing tile its place. */
+                 trailing tile its place.
+
+                 #5825: otherwise the seat carries New project whenever the
+                 folded grid holds its trailing tile back — the grid draws no
+                 tile then, and this is where the one Create control on the
+                 screen rides, the way Discover's "See all" rides its heading.
+                 With few apps, or unfolded, the tile ends the grid and the
+                 heading has no action. `heldBack` is never true while
+                 editing, so the two branches cannot both draw. */
               <span className="flex items-center gap-4">
                 <button
                   type="button"
@@ -320,6 +329,8 @@ export function HomeScreen() {
                   </Chip>
                 ))}
               </span>
+            ) : grid.create?.heldBack ? (
+              <CreateCompact view={grid.create} />
             ) : null}
           >
             {t('home:grid.heading')}

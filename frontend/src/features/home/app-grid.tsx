@@ -549,8 +549,9 @@ export function AppGrid() {
           (index.tsx), beside "Done".
 
           A held-back tile (#4757) draws nothing HERE: that grid state's
-          compact New project entry lives on the "Show all N apps" line
-          outside this canvas, so the markup in every state is what it was.
+          compact New project entry rides the My apps heading (#5825; it was
+          on the "Show all N apps" line before), outside this canvas, so the
+          markup in every state is what it was.
       */}
       {state.create && !state.create.heldBack ? (
         <CreateTile view={state.create} style={placementStyle(state.create.placement)} />
