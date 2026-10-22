@@ -16,7 +16,10 @@
  * "Add a reason" opens the same sheet.
  *
  * ⋯ opens the help as a sheet over the page: Ask privately, Discussion, Try
- * it, About this change. The page's header ⋯ opens its own menu the same way.
+ * it, About this change, Open the change page, and at its foot Skip for now, which moves on
+ * without a vote (the change keeps waiting in Needs you). Next carries how
+ * many changes are still waiting after this one, as a quieter figure after
+ * the word: the Communities tab's badge, said where you press to go on.
  *
  * Votes go through the platform's own `AppView.castVote`, with the approval
  * epoch the server checks, so every other screen hears about them the usual
@@ -25,7 +28,7 @@
 
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 
-import { CheckIcon, ChevronLeftIcon, ChevronRightIcon, ChatIcon, EllipsisHorizontalIcon, InfoCircleIcon, PlayIcon, SparklesIcon, XIcon } from '@/components/ui/icons';
+import { CheckIcon, ChevronLeftIcon, ChevronRightIcon, ChatIcon, DescriptionIcon, EllipsisHorizontalIcon, InfoCircleIcon, PlayIcon, SparklesIcon, XIcon } from '@/components/ui/icons';
 
 import { useMessages } from '../../lib/i18n/react';
 import { agoStamp } from '../../lib/timestamp';
@@ -35,7 +38,7 @@ import { FeedThread } from '../dev-board/card/feed-thread';
 import { readAskStream } from '../dev-board/workshop/ask-stream';
 import type { ReviewItem } from './model';
 
-export type SheetState = 'ask' | 'voted' | 'reason' | 'unsure' | 'askq' | 'talk' | 'try' | 'about' | 'more';
+export type SheetState = 'ask' | 'voted' | 'reason' | 'unsure' | 'askq' | 'talk' | 'try' | 'about';
 export type Vote = 'yes' | 'no';
 
 /** The longest line a No may carry (the server's VOTE_REASON_MAX). */
@@ -60,11 +63,12 @@ const Icon = {
   chat: <ChatIcon aria-hidden="true" width={20} height={20} />,
   play: <PlayIcon aria-hidden="true" width={20} height={20} />,
   info: <InfoCircleIcon aria-hidden="true" width={20} height={20} />,
+  page: <DescriptionIcon aria-hidden="true" width={20} height={20} />,
 };
 
 type AskMsg = { who: 'you' | 'ai'; text: string; pending?: boolean };
 
-export function VoteSheet({ item, vote, state, setState, onVote, onUndo, onNext, hasNext, maxHeight }: {
+export function VoteSheet({ item, vote, state, setState, onVote, onUndo, onNext, hasNext, maxHeight, left = 0, onSkip }: {
   item: ReviewItem;
   vote: Vote | null;
   state: SheetState;
@@ -76,6 +80,10 @@ export function VoteSheet({ item, vote, state, setState, onVote, onUndo, onNext,
   onNext: () => void;
   hasNext: boolean;
   maxHeight: number;
+  /** How many changes still wait after this one (Next's number). */
+  left?: number;
+  /** Move on without a vote; absent when nothing else is waiting. */
+  onSkip?: () => void;
 }) {
   const t = useMessages('communities');
   const ref = useRef<HTMLElement>(null);
@@ -88,10 +96,9 @@ export function VoteSheet({ item, vote, state, setState, onVote, onUndo, onNext,
   const [busy, setBusy] = useState(false);
   const [asks, setAsks] = useState<AskMsg[]>([]);
   const [question, setQuestion] = useState('');
-  const [copied, setCopied] = useState(false);
 
   // A new change starts with an empty line, no answer and no questions.
-  useEffect(() => { setLine(''); setChoice(null); setShared(null); setAsks([]); setQuestion(''); setCopied(false); }, [item.key]);
+  useEffect(() => { setLine(''); setChoice(null); setShared(null); setAsks([]); setQuestion(''); }, [item.key]);
 
   const whyChoices: { key: NoChoice; text: string }[] = [
     { key: 'notWorking', text: t('communities:review.why.notWorking') },
@@ -233,26 +240,7 @@ export function VoteSheet({ item, vote, state, setState, onVote, onUndo, onNext,
   const href = item.app ? changeHref(item.app.slug, item.id, item.number) : '';
 
   let body: ReactNode;
-  if (state === 'more') {
-    body = (
-      <div className="rf-menu" role="menu">
-        <a role="menuitem" className="rf-row rf-menu-row" href={href}>{t('communities:review.more.open')}</a>
-        <button
-          role="menuitem"
-          type="button"
-          className="rf-row rf-menu-row"
-          onClick={() => {
-            const url = `${location.origin}/${href}`;
-            try { void navigator.clipboard?.writeText(url); } catch { /* nothing to copy into */ }
-            setCopied(true);
-          }}
-        >{copied ? t('communities:review.more.copied') : t('communities:review.more.copy')}</button>
-        <button role="menuitem" type="button" className="rf-row rf-menu-row rf-menu-cancel" onClick={() => setState(rest)}>
-          {t('communities:review.more.cancel')}
-        </button>
-      </div>
-    );
-  } else if (state === 'unsure') {
+  if (state === 'unsure') {
     body = (
       <>
         <p className="rf-line">{t('communities:review.unsure.line')}</p>
@@ -261,7 +249,19 @@ export function VoteSheet({ item, vote, state, setState, onVote, onUndo, onNext,
           {row('talk', Icon.chat, t('communities:review.unsure.talk.title'), t('communities:review.unsure.talk.line'))}
           {row('try', Icon.play, t('communities:review.unsure.try.title'), item.stagingUrl ? t('communities:review.unsure.try.line') : t('communities:review.unsure.try.none'))}
           {row('about', Icon.info, t('communities:review.unsure.about.title'), t('communities:review.unsure.about.line'))}
+          {href ? (
+            <a className="rf-row" href={href} data-rf-help="page">
+              <span className="rf-row-icon">{Icon.page}</span>
+              <span className="rf-row-text"><b>{t('communities:review.more.open')}</b><i>{t('communities:review.unsure.page.line')}</i></span>
+              {Icon.chev}
+            </a>
+          ) : null}
         </nav>
+        {onSkip ? (
+          <button type="button" className="rf-skip" data-rf-skip="" onClick={onSkip}>
+            {t('communities:review.unsure.skip')}{Icon.next}
+          </button>
+        ) : null}
       </>
     );
   } else if (state === 'askq') {
@@ -409,12 +409,13 @@ export function VoteSheet({ item, vote, state, setState, onVote, onUndo, onNext,
             data-rf-morph={vote ? 'next' : 'help'}
             data-rf-next={vote ? '' : undefined}
             data-rf-unsure={vote ? undefined : ''}
-            aria-label={vote ? (hasNext ? t('communities:review.said.next') : t('communities:review.said.done')) : t('communities:review.unsure.label')}
+            aria-label={vote ? (hasNext ? t('communities:review.said.nextLeft', { count: left }) : t('communities:review.said.done')) : t('communities:review.unsure.label')}
             onClick={vote ? onNext : () => setState('unsure')}
           >
             <span className="rf-morph-in rf-morph-dots" aria-hidden="true">{Icon.dots}</span>
             <span className="rf-morph-in rf-morph-next" aria-hidden="true">
-              <span>{hasNext ? t('communities:review.said.next') : t('communities:review.said.done')}</span>{Icon.next}
+              <span>{hasNext ? t('communities:review.said.nextShort') : t('communities:review.said.done')}</span>
+              {hasNext && left > 0 ? <span className="rf-count" data-rf-count="" aria-hidden="true">{left > 99 ? '99+' : left}</span> : null}
             </span>
           </button>
         </div>

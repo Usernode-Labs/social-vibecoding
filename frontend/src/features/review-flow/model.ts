@@ -46,6 +46,8 @@ export type ReviewScreen = {
   before: { url: string; height: number };
   after: { url: string; height: number };
   regions: Region[];
+  /** The declared changes this screen shows, by number (1 is the first claim). */
+  changes?: number[];
 };
 /** What a card's picture is drawn from, best first. */
 export type Picture =
@@ -85,6 +87,8 @@ export type ReviewItem = {
   picture: Picture;
   /** The change in one short line, under its picture on its page. */
   line: string;
+  /** Each declared change in one short line, by number less one: an opened screen's line. */
+  claims: string[];
   approve: boolean;
   advisory: boolean;
   uncounted: boolean;
@@ -289,6 +293,7 @@ export function toReviewItems(
       titleImage,
       picture,
       line: changeLine(claim, summary),
+      claims: (Array.isArray(shots.claims) ? shots.claims : []).map((c) => changeLine(c && c.claim, '')),
       approve: !!item.approve,
       advisory: !!item.advisory,
       uncounted: !!item.uncounted,
@@ -303,6 +308,37 @@ export function regionBox(r: Region, side: 'before' | 'after'): Box | null {
   const mark = side === 'before' ? r.bMark : r.aMark;
   if (mark && mark.length === 3) return { x: mark[0], y: mark[1], w: mark[2], h: 0 };
   return null;
+}
+
+/**
+ * A region that only moved: the same size on both sides, somewhere else. A
+ * row pushed down by the change is marked as a region too, but it is not
+ * what the change does, so pictures never frame or crop round it.
+ */
+export function onlyMoved(r: Region): boolean {
+  if (!r.b || !r.a || r.b.length !== 4 || r.a.length !== 4) return false;
+  const same = Math.abs(r.b[2] - r.a[2]) <= 2 && Math.abs(r.b[3] - r.a[3]) <= 2;
+  return same && (Math.abs(r.b[0] - r.a[0]) >= 2 || Math.abs(r.b[1] - r.a[1]) >= 2);
+}
+
+/**
+ * Where a region is on the after screen: its after box, or, for a part the
+ * change took away (the after side keeps only a mark line), the box it had
+ * before, which is where it was.
+ */
+export function afterBox(r: Region): Box | null {
+  const a = regionBox(r, 'after');
+  if (a && a.h > 0) return a;
+  const b = regionBox(r, 'before');
+  return b && b.h > 0 ? b : a;
+}
+
+/** The regions that say what changed: the declared ones when there are any, and never one that only moved. */
+export function changedRegions(screen: ReviewScreen): Region[] {
+  const moved = screen.regions.filter((r) => !onlyMoved(r));
+  const real = moved.length ? moved : screen.regions;
+  const named = real.filter((r) => r.n > 0);
+  return named.length ? named : real;
 }
 
 /** Everything that differs, on the given sides, with room around it, kept on the screen. */
@@ -504,7 +540,8 @@ export function piecesOf(screens: ReviewScreen[], max = 6): TitlePiece[] {
   for (const screen of screens) {
     const H = screen.after.height;
     const W = screen.width;
-    const all = screen.regions.map((r) => ({ r, b: regionBox(r, 'after') })).filter((x) => x.b && x.b.w > 2) as Array<{ r: Region; b: Box }>;
+    const kept = screen.regions.filter((r) => !onlyMoved(r));
+    const all = (kept.length ? kept : screen.regions).map((r) => ({ r, b: afterBox(r) })).filter((x) => x.b && x.b.w > 2) as Array<{ r: Region; b: Box }>;
     const named = all.filter((x) => x.r.n > 0);
     let boxes = (named.length ? named : all).map((x) => x.b);
     // Near areas are one piece; a speck beside a real change is not a piece.
@@ -676,4 +713,295 @@ export function composeTitle(pieces: TitlePiece[], card: { w: number; h: number 
     plates.push({ x: (card.w - w) / 2, y: top + i * COVER.peek, w, h: H, r: leadPlate.r, img: null, fill: mixHex('#ffffff', ground, VEIL[i - 1]), z: 10 - i });
   }
   return { rule: 'deck', plates };
+}
+
+/* ── Where a crop may end ─────────────────────────────────────────────────
+ *
+ * A crop that ends through a line of text reads as a mistake: half a
+ * heading, a word cut short. So every crop's edges move, a little, onto
+ * rows (and, for a tile, a column) where the still is one flat colour.
+ * `Ink` is the after still read once at one sample per screen point
+ * (./ink.ts); without it the crops stay as computed.
+ */
+
+export type Ink = { w: number; h: number; lum: Uint8Array };
+
+/** How much a row may vary and still count as blank (0 to 255). */
+const FLAT = 10;
+
+function rowFlat(ink: Ink, y: number, x0: number, x1: number): boolean {
+  const r = Math.round(y);
+  if (r <= 0 || r >= ink.h) return true;
+  let lo = 255; let hi = 0;
+  for (let x = Math.max(0, Math.floor(x0)); x < Math.min(ink.w, Math.ceil(x1)); x++) {
+    const v = ink.lum[r * ink.w + x];
+    if (v < lo) lo = v;
+    if (v > hi) hi = v;
+    if (hi - lo > FLAT) return false;
+  }
+  return true;
+}
+
+function colFlat(ink: Ink, x: number, y0: number, y1: number): boolean {
+  const c = Math.round(x);
+  if (c <= 0 || c >= ink.w) return true;
+  let lo = 255; let hi = 0;
+  for (let y = Math.max(0, Math.floor(y0)); y < Math.min(ink.h, Math.ceil(y1)); y++) {
+    const v = ink.lum[y * ink.w + c];
+    if (v < lo) lo = v;
+    if (v > hi) hi = v;
+    if (hi - lo > FLAT) return false;
+  }
+  return true;
+}
+
+/** Offsets 0, -1, 1, -2, 2 … to `reach`: the nearest first. */
+function* nearest(reach: number): Generator<number> {
+  yield 0;
+  for (let d = 1; d <= reach; d++) { yield -d; yield d; }
+}
+
+/**
+ * A crop with its top and bottom moved onto blank rows near them: never into
+ * `keep` (the change) when the change fits, and never taller than `maxH`.
+ */
+export function snapRows(b: Box, ink: Ink | null | undefined, keep: Box | null, maxH: number, reach = 24): Box {
+  if (!ink) return b;
+  const fits = !!keep && keep.h + 4 <= maxH;
+  const H = ink.h;
+  for (const dt of nearest(reach)) {
+    const top = b.y + dt;
+    if (top < 0 || top > H) continue;
+    if (fits && top > keep!.y) continue;
+    if (!rowFlat(ink, top, b.x, b.x + b.w)) continue;
+    for (const db of nearest(reach)) {
+      const bottom = b.y + b.h + db;
+      if (bottom > H || bottom - top > maxH || bottom - top < 24) continue;
+      if (fits && bottom < keep!.y + keep!.h) continue;
+      if (rowFlat(ink, bottom, b.x, b.x + b.w)) return { x: b.x, y: top, w: b.w, h: bottom - top };
+    }
+  }
+  return b;
+}
+
+/* ── The sheet: every screen of a change at once ────────────────────────
+ *
+ * A change lands on its sheet: one plate per screen, each that screen's
+ * main piece (its largest, widened the way the title shot widens it), all
+ * at ONE scale on the change's ground. It is never a deck, so every screen
+ * can be tapped: the plates stack when they are wide (a phone's rows), or
+ * sit two to a row when they are narrow, whichever shows them larger. A
+ * plate taller than its share is cut to a window round its change. A tap
+ * opens that screen in place (review-flow.tsx), and the strip under the
+ * picture holds the same screens as tiles.
+ */
+
+const SHEET = { wide: 0.92, gap: 16, centre: 0.5 };
+
+export type SheetPlate = TitlePlate & {
+  screen: number;
+  /** The part of the screen the plate shows (screen points) and its scale: where an opening screen starts. */
+  box: Box;
+  s: number;
+};
+
+/** A screen's main piece: its largest, or the top of the screen when nothing is marked. */
+export function mainPiece(screen: ReviewScreen): TitlePiece {
+  if (onlySpeck(screen)) {
+    return { screen, box: { x: 0, y: 0, w: screen.width, h: Math.min(screen.after.height, screen.width * 1.2) } };
+  }
+  const all = piecesOf([screen]);
+  const best = all.reduce<TitlePiece | null>((a, p) => (!a || boxArea(p.box) > boxArea(a.box) ? p : a), null);
+  return best || { screen, box: { x: 0, y: 0, w: screen.width, h: Math.min(screen.after.height, screen.width * 0.75) } };
+}
+
+/** A window `h` tall from `b`, starting `top` (16pt above its change) and kept inside `b`. */
+function windowOf(b: Box, h: number, top: number): Box {
+  if (b.h <= h) return b;
+  const y = Math.max(b.y, Math.min(b.y + b.h - h, top));
+  return { x: b.x, y, w: b.w, h };
+}
+
+/** The sheet for `screens` on a card of `card` points: one plate per screen. */
+export function composeSheet(screens: ReviewScreen[], card: { w: number; h: number }, display?: number, inks?: Record<string, Ink>): SheetPlate[] {
+  if (!screens.length) return [];
+  const pieces = screens.map(mainPiece);
+  const boxes = pieces.map(padded);
+  const n = pieces.length;
+  const W = SHEET.wide * card.w;
+  const H = SHEET.wide * card.h;
+  const g = SHEET.gap;
+  const dens = (p: TitlePiece, b: Box) => pieceDensity(p, b, display);
+  // Each layout's columns and rows; every piece takes one cell.
+  const shapes = n === 1 ? [{ cols: 1, rows: 1 }] : [{ cols: 1, rows: n }, ...(n >= 2 ? [{ cols: 2, rows: Math.ceil(n / 2) }] : [])];
+  let best: { s: number; cols: number; rows: number; cut: Box[]; cellH: number } | null = null;
+  for (const { cols, rows } of shapes) {
+    const cellW = (W - (cols - 1) * g) / cols;
+    const cellH = (H - (rows - 1) * g) / rows;
+    // One scale: as wide as the widest piece allows, never past its pixels,
+    // and never so large that a cell has to cut into its change (its 16pt
+    // of air round it included).
+    let s = Math.min(...boxes.map((b, i) => Math.min(cellW / b.w, cellH / Math.min(b.h, pieces[i].box.h + 32), dens(pieces[i], b))));
+    // A lone piece is also kept inside the card's height.
+    if (n === 1) s = Math.min(s, cellH / boxes[0].h);
+    const cut = boxes.map((b, i) => windowOf(b, cellH / s, pieces[i].box.y - 16));
+    if (!best || s > best.s + 1e-6) best = { s, cols, rows, cut, cellH };
+  }
+  const { s, cols, rows, cellH } = best!;
+  // Each crop ends on blank rows, inside its cell.
+  const cut = best!.cut.map((b, i) => snapRows(b, inks && inks[screens[i].after.url], pieces[i].box, cellH / s));
+  const colW = Math.max(...cut.map((b) => b.w * s));
+  const rowH = (r: number) => Math.max(...cut.filter((_, i) => Math.floor(i / cols) === r).map((b) => b.h * s));
+  const heights = Array.from({ length: rows }, (_, r) => rowH(r));
+  const total = heights.reduce((a, v) => a + v, 0) + (rows - 1) * g;
+  const x0 = (card.w - (cols * colW + (cols - 1) * g)) / 2;
+  let y = card.h * SHEET.centre - total / 2;
+  const plates: SheetPlate[] = [];
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const i = r * cols + c;
+      if (i >= n) break;
+      // A row's last lone plate sits in the middle.
+      const lone = cols > 1 && i === n - 1 && n % cols;
+      const cx = lone ? card.w / 2 : x0 + c * (colW + g) + colW / 2;
+      plates.push({ ...plateFor(pieces[i], cut[i], s, cx, y + heights[r] / 2, 10), screen: i, box: cut[i], s });
+    }
+    y += heights[r] + g;
+  }
+  return plates;
+}
+
+/** The declared change a screen shows (its main piece's own area, unwidened), else its largest area. */
+function changeOf(screen: ReviewScreen): Box | null {
+  const boxes = changedRegions(screen).map(afterBox).filter((b): b is Box => !!b && b.w > 2);
+  if (!boxes.length) return largestRegion(screen);
+  return boxes.reduce((a, b) => (boxArea(b) > boxArea(a) ? b : a));
+}
+
+/**
+ * A screen that declares nothing and differs only by a speck (a clock that
+ * ticked): what it is about is the screen itself, from its top.
+ */
+function onlySpeck(screen: ReviewScreen): boolean {
+  if (screen.regions.some((r) => r.n > 0 && !onlyMoved(r))) return false;
+  const speck = changeOf(screen);
+  return !speck || speck.w * Math.max(speck.h, 2) < 4000;
+}
+
+/** The declared change on both sides, with room round it: what an opened screen is framed on. */
+function changeFocus(screen: ReviewScreen, pad: number): Box {
+  const W = screen.width;
+  const H = Math.max(screen.before.height, screen.after.height);
+  const boxes = changedRegions(screen).flatMap((r) => [regionBox(r, 'before'), regionBox(r, 'after')]).filter((b): b is Box => !!b);
+  if (!boxes.length) return focusBox(screen, ['before', 'after'], pad);
+  const x0 = Math.max(0, Math.min(...boxes.map((b) => b.x)) - pad);
+  const y0 = Math.max(0, Math.min(...boxes.map((b) => b.y)) - pad);
+  const x1 = Math.min(W, Math.max(...boxes.map((b) => b.x + b.w)) + pad);
+  const y1 = Math.min(H, Math.max(...boxes.map((b) => b.y + Math.max(b.h, 2))) + pad);
+  return { x: x0, y: y0, w: Math.max(1, x1 - x0), h: Math.max(1, y1 - y0) };
+}
+
+/**
+ * A screen's tile in the strip: a square of the screen round where its
+ * declared change starts (text reads from its start), as large as the
+ * still's pixels allow at `size` points. Returns where the screen goes in it.
+ */
+export function tileCrop(screen: ReviewScreen, size: number, display?: number, ink?: Ink | null): Placement {
+  const big = (!onlySpeck(screen) && changeOf(screen)) || { x: 8, y: 8, w: screen.width - 16, h: 128 };
+  const H = screen.after.height;
+  const start = Math.max(96, Math.min(144, Math.min(big.w, Math.max(big.h, 2)) + 16, screen.width));
+  const x = Math.max(0, Math.min(screen.width - start, big.x - 8));
+  const yAt = (side: number) => (big.h + 16 >= side
+    ? Math.max(0, Math.min(H - side, big.y - 8))
+    : Math.max(0, Math.min(H - side, big.y + big.h / 2 - side / 2)));
+  let side = start;
+  let y = yAt(start);
+  // The square's right edge and its top and bottom on blank pixels, so no
+  // word is cut: the nearest size and place that has them.
+  if (ink) {
+    let best: { side: number; y: number; cost: number } | null = null;
+    for (let s2 = 96; s2 <= Math.min(144, screen.width - x); s2++) {
+      for (const dy of nearest(12)) {
+        const y2 = yAt(s2) + dy;
+        if (y2 < 0 || y2 + s2 > H) continue;
+        const cost = Math.abs(s2 - start) + Math.abs(dy);
+        if (best && cost >= best.cost) continue;
+        if (colFlat(ink, x + s2, y2, y2 + s2) && rowFlat(ink, y2, x, x + s2) && rowFlat(ink, y2 + s2, x, x + s2)) best = { side: s2, y: y2, cost };
+      }
+    }
+    if (best) { side = best.side; y = best.y; }
+  }
+  const scale = Math.min(densityOf(screen, display), size / side);
+  const pad = (size - side * scale) / 2;
+  return { scale, tx: pad - x * scale, ty: pad - y * scale };
+}
+
+/**
+ * Where an opened screen sits in the picture: the change it declares (both
+ * sides, never a row it only pushed along), as large as fits and never past
+ * its pixels (densityOf), framed again below
+ * the captions' band when its largest change would sit under them, and
+ * ending above the switch when that change would sit under it. `cut` is
+ * the largest change at that framing, in screen points: the hole the
+ * landing dim leaves around it.
+ */
+export function openPlace(screen: ReviewScreen, view: { w: number; h: number }, display?: number): { place: Placement; cut: Box | null } {
+  const CAP = 36;
+  const BOT = 62;
+  const SWITCH = 36;
+  const focus = changeFocus(screen, 16);
+  const max = densityOf(screen, display);
+  const big = changeOf(screen);
+  const fit = (top: number, bot: number): Placement => {
+    const p = placeBox(screen, focus, { w: view.w, h: view.h - top - bot }, max);
+    const H = Math.max(screen.before.height, screen.after.height) * p.scale;
+    let ty = p.ty + top;
+    if (H >= view.h - bot) ty = Math.max(view.h - bot - H, Math.min(0, ty));
+    return { ...p, ty };
+  };
+  let place = fit(0, 0);
+  if (big) {
+    const at = (p: Placement) => ({ x: big.x * p.scale + p.tx, y: big.y * p.scale + p.ty, w: big.w * p.scale, h: big.h * p.scale });
+    const top = at(place).y < CAP ? CAP : 0;
+    if (top) place = fit(top, 0);
+    const b = at(place);
+    const under = b.x < view.w / 2 + SWITCH && b.x + b.w > view.w / 2 - SWITCH && b.y + b.h > view.h - 54 && b.y < view.h - 14;
+    if (under) place = fit(top, BOT);
+  }
+  if (!big) return { place, cut: null };
+  // The hole: the largest change, kept 4pt inside what the picture shows.
+  const vx = Math.max(0, place.tx); const vy = Math.max(0, place.ty);
+  const vr = Math.min(view.w, place.tx + screen.width * place.scale);
+  const vb = Math.min(view.h, place.ty + Math.max(screen.before.height, screen.after.height) * place.scale);
+  const x0 = Math.max(vx + 4, big.x * place.scale + place.tx); const y0 = Math.max(vy + 4, big.y * place.scale + place.ty);
+  const x1 = Math.min(vr - 4, (big.x + big.w) * place.scale + place.tx); const y1 = Math.min(vb - 4, (big.y + Math.max(big.h, 2)) * place.scale + place.ty);
+  if (x1 <= x0 || y1 <= y0) return { place, cut: null };
+  return { place, cut: { x: (x0 - place.tx) / place.scale, y: (y0 - place.ty) / place.scale, w: (x1 - x0) / place.scale, h: (y1 - y0) / place.scale } };
+}
+
+export type GlyphBar = { screen: number; x: number; y: number; w: number; h: number };
+
+/**
+ * The sheet in miniature: its plates as bars fitted into an `size` box at
+ * `offset`, every edge on a whole device pixel. The strip's first tile and
+ * the Next button draw it.
+ */
+export function glyphBars(plates: SheetPlate[], size: number, offset = 0, display = typeof window === 'undefined' ? 1 : window.devicePixelRatio || 1): GlyphBar[] {
+  if (!plates.length) return [];
+  const x0 = Math.min(...plates.map((p) => p.x)); const y0 = Math.min(...plates.map((p) => p.y));
+  const bw = Math.max(...plates.map((p) => p.x + p.w)) - x0; const bh = Math.max(...plates.map((p) => p.y + p.h)) - y0;
+  const f = Math.min((26 * size) / 37 / bw, (27 * size) / 37 / bh);
+  const ox = offset + (size - bw * f) / 2; const oy = offset + (size - bh * f) / 2;
+  const q = (v: number) => Math.round(v * display) / display;
+  const gap = size < 30 ? 0.5 : 1;
+  return plates.map((p) => {
+    const x = q(ox + (p.x - x0) * f + gap); const y = q(oy + (p.y - y0) * f + gap);
+    return { screen: p.screen, x, y, w: q(ox + (p.x - x0 + p.w) * f - gap) - x, h: q(oy + (p.y - y0 + p.h) * f - gap) - y };
+  });
+}
+
+/** The line under an opened screen: the change it shows, else the whole change's. */
+export function screenLine(item: ReviewItem, screen: ReviewScreen | null): string {
+  const n = screen && Array.isArray(screen.changes) ? screen.changes.find((k) => k > 0 && item.claims[k - 1]) : undefined;
+  return n ? item.claims[n - 1] : item.line;
 }

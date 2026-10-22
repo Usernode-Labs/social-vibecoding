@@ -5479,8 +5479,9 @@ export function DevWorkshop(): ReactNode {
       {tab === 'needs' && reviewFlow && slug ? (
         // EXPERIMENTAL (Settings, Experimental, "New Needs you"): the
         // project's Needs you drawn by the new review flow, the same one the
-        // Communities tab draws. ../../review-flow/.
-        <ProjectReviewFlow slug={slug} onDone={() => openTab('workshop')} />
+        // Communities tab draws. ../../review-flow/. Its back, "‹ <community>",
+        // leaves the run for the community's hub, never an earlier change.
+        <ProjectReviewFlow slug={slug} onDone={() => openTab('status')} />
       ) : tab === 'needs' ? (
         <NeedsFeed
           rows={v.queue}

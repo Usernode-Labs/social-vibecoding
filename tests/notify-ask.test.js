@@ -10,8 +10,8 @@
 //   4. The card renders nothing until its effect has read the answers, so
 //      nothing of it is in the prerendered shell.
 //   5. Members are told when a project they joined while it was made opens
-//      (services/project-opened.js), and the emails that stand in for a
-//      push: project_opened and votes_owed.
+//      (services/project-opened.js), and the email that stands in for a
+//      push: project_opened. The vote digest is not emailed (#5794).
 //   6. The agent session's browser prompt is explained first, once.
 //
 // Run with: node --test tests/notify-ask.test.js
@@ -76,15 +76,20 @@ test('on the web: get the app, only when there is one and no phone takes the pus
     'no confirmed address (or emails off): no "we\'ll email you"');
   assert.deepEqual(web({ moment: 'reply' }), { show: 'web', email: false },
     'a reply is not emailed, so the web ask does not say it is');
+  assert.deepEqual(web({ moment: 'community' }), { show: 'web', email: false },
+    'the vote reminder is not emailed any more (#5794)');
+  assert.deepEqual(web({ moment: 'invite_sent' }), { show: 'web', email: true },
+    'invite news still is');
 });
 
 test('"we\'ll email you" only where activity-mail really sends', () => {
   assert.deepEqual([...EMAILED_MOMENTS].sort(),
-    ['app_building', 'community', 'invite_sent', 'project_opens', 'suggestion']);
+    ['app_building', 'invite_sent', 'project_opens', 'suggestion']);
   const mail = require('../src/services/activity-mail');
   // app_building and suggestion are build_ready, invite_sent invite_activity,
-  // community the votes it promises, project_opens the opening.
-  assert.deepEqual([...mail.KINDS].sort(), ['build_ready', 'invite_activity', 'project_opened', 'votes_owed']);
+  // project_opens the opening. The votes owed (community) are not emailed
+  // any more (#5794).
+  assert.deepEqual([...mail.KINDS].sort(), ['build_ready', 'invite_activity', 'project_opened']);
 });
 
 // ── 2. The account's record ────────────────────────────────────────────
@@ -308,47 +313,43 @@ test('project_opened is a Change alert, in the push policy, the seed and the bel
   assert.match(bell, /item\.kind === 'project_opened' && item\.appSlug/, 'and opens the app');
 });
 
-test('the two new emails are activity mail: framed, throttled, and say why they came', () => {
+test('the new email is activity mail: framed, throttled, and says why it came', () => {
   const templates = require('../src/services/mail/templates');
   const rateLimit = require('../src/services/mail/rate-limit');
   const opened = templates.buildMessage('project_opened', { appName: 'Run Club', url: 'https://x/app/run-club', unsubscribeUrl: 'https://x/u' });
   assert.equal(opened.subject, 'Run Club is open');
   assert.match(opened.html, /no phone to send it to/);
-  const one = templates.buildMessage('votes_owed', { count: 1, appName: 'Run Club', url: 'https://x' });
-  assert.equal(one.subject, 'A change in Run Club needs your vote');
-  const many = templates.buildMessage('votes_owed', { count: 4, url: 'https://x' });
-  assert.equal(many.subject, '4 changes need your vote');
-  for (const kind of ['project_opened', 'votes_owed']) {
-    assert.ok(rateLimit.RULES[kind], `${kind} is throttled`);
-    assert.ok(rateLimit.ACTIVITY_KINDS.has(kind), `${kind} spends activity mail's own budget`);
-  }
+  assert.equal(rateLimit.RULES.project_opened !== undefined, true, 'project_opened is throttled');
+  assert.equal(rateLimit.ACTIVITY_KINDS.has('project_opened'), true, 'project_opened spends activity mail\'s own budget');
+  assert.equal(rateLimit.RULES.votes_owed, undefined, 'the votes owed have no rule left (#5794)');
 });
 
-test('the vote digest is emailed when no phone can take it, owed by its notice', async () => {
+test('the vote digest is not emailed: it owes nothing, and nothing sends one', async () => {
   const src = read('src', 'services', 'vote-digest.js');
-  assert.match(src, /kind, detail, mailed_at\)\s+SELECT \$1, \$3, \$4, NULL, 'vote_digest', \$2, NULL/);
+  assert.match(src, /kind, detail, mailed_at\)\s+SELECT \$1, \$3, \$4, NULL, 'vote_digest', \$2, NOW\(\)/,
+    'mailed_at is written with the notice, so it owes no email');
   assert.doesNotMatch(src, /emailIfNoPush|emailDigest/, 'no send after the commit');
-  // What the notice-mail clock sends for it (services/activity-mail.js).
+  const templates = require('../src/services/mail/templates');
+  assert.throws(() => templates.buildMessage('votes_owed', { count: 4 }), /unknown mail kind/);
+  // What the notice-mail clock does with a vote digest row (#5794).
   const activityMail = require('../src/services/activity-mail');
-  const real = activityMail.emailIfNoPush;
   const sent = [];
+  const real = activityMail.emailIfNoPush;
   activityMail.emailIfNoPush = async (_pool, args) => { sent.push(args); return 'sent'; };
   try {
     const steps = { once: async (_k, fn) => fn() };
     for (const row of [
       { id: 1, user_id: 7, kind: 'vote_digest', detail: '4', mailed_at: null, recent: true, app_slug: null, app_name: null },
-      { id: 2, user_id: 7, kind: 'vote_digest', detail: '1', mailed_at: null, recent: true, app_slug: 'run-club', app_name: 'Run Club' },
-      { id: 3, user_id: 8, kind: 'project_opened', detail: null, mailed_at: null, recent: true, app_slug: 'run-club', app_name: 'Run Club' },
+      { id: 2, user_id: 8, kind: 'project_opened', detail: null, mailed_at: null, recent: true, app_slug: 'run-club', app_name: 'Run Club' },
     ]) {
       const pool = { query: async (sql) => (/FROM notifications n/.test(sql) ? { rows: [row] } : { rows: [], rowCount: 1 }) };
-      assert.deepEqual(await activityMail.mailNotice(pool, row.id, steps), { said: 'sent' });
+      assert.deepEqual(await activityMail.mailNotice(pool, row.id, steps),
+        { said: row.kind === 'vote_digest' ? 'settled' : 'sent' });
     }
   } finally { activityMail.emailIfNoPush = real; }
   assert.deepEqual(sent, [
-    { userId: 7, kind: 'votes_owed', count: 4, hashRoute: '#communities' },
-    { userId: 7, kind: 'votes_owed', count: 1, appName: 'Run Club', appSlug: 'run-club' },
     { userId: 8, kind: 'project_opened', appName: 'Run Club', appSlug: 'run-club' },
-  ], 'several open Needs you, as the bell\'s row does; one opens its project');
+  ], 'only the project opening is sent; the digest owes no email');
 });
 
 // ── 6. The agent session's browser prompt ───────────────────────────────
