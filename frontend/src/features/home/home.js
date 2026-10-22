@@ -1049,9 +1049,10 @@ const Home = {
       //
       // A collapsed grid the tile would add a row to (createHidden above)
       // holds it back with the hidden rows — but it is not DROPPED there
-      // (#4757): heldBack marks it, and "Show all N apps" draws a compact
-      // New project entry on its own line (apps-more.tsx), so creating stays
-      // one tap away without expanding and without a new tile row. Exactly
+      // (#4757): heldBack marks it, and the My apps heading draws a compact
+      // New project entry in its action seat (#5825; it was on the "Show all"
+      // line before), so creating stays one tap away without expanding and
+      // without a new tile row. Exactly
       // one of tile and compact entry is on screen: the grid draws its tile
       // only when not held back (app-grid.tsx).
       //
