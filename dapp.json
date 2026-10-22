@@ -1396,15 +1396,15 @@
       "expectText": "staging-demo-lead"
     },
     {
-      "name": "Discover leads its list with filter chips, All / Featured / Not joined / Joined / New, with All pressed (the prototype's scrDiscover, #5267)",
+      "name": "Discover leads with the For you / Browse / Joined switch and a Filters button that shows no count by default",
       "path": "/#apps",
-      "expectSelector": "#browse-screen:not(.hidden) #browse-search-bar > #browse-filter-chips[role=\"group\"] > [data-filter=\"all\"][aria-pressed=\"true\"] + [data-filter=\"featured\"] + [data-filter=\"notjoined\"][aria-pressed=\"false\"] + [data-filter=\"yours\"] + [data-filter=\"new\"]",
-      "expectText": "Not joined"
+      "expectSelector": "#browse-screen:not(.hidden):has(#browse-view-switch > [data-view=\"foryou\"][aria-current=\"page\"] + [data-view=\"browse\"] + [data-view=\"joined\"]):has(#browse-type-row #browse-filters-btn:not([data-active-count]))",
+      "expectText": "For you"
     },
     {
-      "name": "The Featured chip narrows Discover to the admin's featured apps (?filter=featured)",
+      "name": "The Featured switch narrows Discover to the admin's featured apps (?filter=featured)",
       "path": "/?demo=1&filter=featured#apps",
-      "expectSelector": "#browse-screen:has(#browse-filter-chips > [data-filter=\"featured\"][aria-pressed=\"true\"]) #browse-list[data-filter=\"featured\"]:not(:has(.browse-row[data-slug=\"staging-demo-popular-1\"])) .browse-row[data-slug=\"staging-demo-featured\"]"
+      "expectSelector": "#browse-screen:has(#browse-filters-btn[data-active-count=\"1\"]) #browse-list[data-filter=\"featured\"]:not(:has(.browse-row[data-slug=\"staging-demo-popular-1\"])) .browse-row[data-slug=\"staging-demo-featured\"]"
     },
     {
       "name": "A stored sample without a live runtime does not offer a nonexistent Share link",
@@ -4385,10 +4385,10 @@
       "expectSelector": "#messages-screen:not(.hidden):has([data-improve-row=\"task\"]) [data-inbox-session] a[data-improve-row=\"session\"][href^=\"#messages/session/\"]"
     },
     {
-      "name": "The all-apps directory offers a Sort control, defaulting to Recommended (#1383)",
+      "name": "The all-apps directory offers its Sort order inside the Filters sheet, defaulting to Recommended (#1383)",
       "path": "/#apps",
-      "expectSelector": "#browse-search-bar #browse-sort-select",
-      "expectText": "Recommended"
+      "expectSelector": "#browse-screen:has(#browse-search-bar #browse-filters-btn) #browse-list[data-sort=\"recommended\"]",
+      "expectText": "Filters"
     },
     {
       "name": "?sort= orders the touch directory, under a bar with no back slot (#1383, #2718)",

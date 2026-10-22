@@ -56,24 +56,45 @@ export const browseStore = createStore({
    */
   sort: 'recommended',
   /**
-   * Which chip is on: a key of Browse.FILTERS ('all' | 'featured' |
-   * 'notjoined' | 'yours' | 'new') or, for an admin, of Browse.ADMIN_FILTERS.
-   * 'all' is the PRERENDER value, for the same reason as `sort`: ?filter= and
-   * the session's own choice are applied on screen entry
+   * Which of Browse.VIEWS is showing ('foryou' | 'browse' | 'joined').
+   * 'foryou' is the PRERENDER value, for the same reason as `sort`: ?filter=
+   * and the session's own choice are applied on screen entry
    * (Browse._applyInitialFilter), never during render.
+   */
+  view: 'foryou',
+  /**
+   * The Show only switches that are on: keys of Browse.SHOW_ONLY, plus
+   * 'unreviewed' for an admin. Empty is the PRERENDER value.
+   */
+  only: [],
+  /**
+   * How many filter choices differ from the defaults: the switches that are
+   * on, a picked type and a non-Recommended order. The number beside Filters;
+   * 0 hides it. Derived by Browse.activeFilterCount(), never stored as a
+   * preference. 0 is the PRERENDER value.
+   */
+  activeCount: 0,
+  /**
+   * The filter key DERIVED from `view` and `only`, not a control of its own:
+   * 'yours' in the Joined view, otherwise the switches joined with a space,
+   * 'all' when none. Read by #browse-list[data-filter] and the empty line.
+   * 'all' is the PRERENDER value, for the same reason as `sort`.
    */
   filter: 'all',
   /**
-   * Whether the admin-only chips (Browse.ADMIN_FILTERS) are drawn (#5267).
-   * False is the PRERENDER value: who is viewing is known only after boot,
-   * so the chip appears on screen entry, never in the first render.
+   * Whether the admin-only "Not yet reviewed" switch (Browse.ADMIN_SHOW_ONLY)
+   * is drawn (#5267). False is the PRERENDER value: who is viewing is known
+   * only after boot, so the switch appears on screen entry, never in the
+   * first render.
    */
   adminFilters: false,
   /**
-   * The "Filter by type" row (#3962): the type chips Browse.presentCategories
-   * found ({ key, label } each), in order. Empty hides the whole row, and is
-   * the PRERENDER value: which types the directory holds is known only once
-   * /api/apps answers, so the row never appears in the first render.
+   * The type chips (#3962) the page row shows, from
+   * Browse.presentCategories: the types at least one app has, 'other' aside
+   * unless a real type is present too ({ key, label } each), in order. Empty
+   * hides the whole row, and is the PRERENDER value: which types the
+   * directory holds is known only once /api/apps answers, so the row never
+   * appears in the first render.
    */
   categories: [],
   /** The pressed type chip: 'all' or a key of Browse.CATEGORIES. */

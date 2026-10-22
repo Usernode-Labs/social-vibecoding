@@ -183,7 +183,11 @@ function makeBrowse(opts = {}) {
   vm.runInContext(BROWSE_SRC, sandbox);
   // The store ./mount.ts plants, with the same initial value browse-store.js
   // ships (which is also the shell's prerendered empty state).
-  const state = { level: 'list', rows: null, empty: null, error: false, detail: null, sort: 'recommended', filter: 'all' };
+  const state = {
+    level: 'list', rows: null, empty: null, error: false, detail: null,
+    sort: 'recommended', view: 'foryou', only: [], activeCount: 0, filter: 'all',
+    categories: [], category: 'all', adminFilters: false,
+  };
   sandbox.Browse._store = {
     get: () => state,
     set: (patch) => Object.assign(state, patch),
@@ -565,51 +569,59 @@ test('?sort=recommended is honoured as an explicit choice', () => {
   assert.equal(Browse._sort, 'recommended', 'the default is still a value you can link to');
 });
 
-test("the screen's <option> list is a faithful copy of Browse.SORTS", () => {
+test("the sheet's radio list is a faithful copy of Browse.SORTS", () => {
   const { Browse } = makeBrowse();
-  // browse-screen.tsx cannot read the controller: window.Browse does not
+  // browse-filter-sheet.tsx cannot read the controller: window.Browse does not
   // exist in the SSG prerender pass, so it carries its own copy of the five
   // labels. This is the guard that keeps the copy honest.
-  const src = read('frontend/src/features/apps/browse-screen.tsx');
+  const src = read('frontend/src/features/apps/browse-filter-sheet.tsx');
   const block = src.match(/const SORT_OPTIONS[\s\S]*?\n\];/);
-  assert.ok(block, 'SORT_OPTIONS is still declared in browse-screen.tsx');
+  assert.ok(block, 'SORT_OPTIONS is still declared in browse-filter-sheet.tsx');
   const copied = [...block[0].matchAll(/\{\s*key:\s*'([^']+)',\s*label:\s*'([^']+)'\s*\}/g)]
     .map((m) => ({ key: m[1], label: m[2] }));
   // Array.from, not .map: SORTS is the vm realm's array, and its .map would
   // hand back an array whose prototype deepStrictEqual refuses to match.
   assert.deepEqual(copied, Array.from(Browse.SORTS, (s) => ({ key: s.key, label: s.label })),
-    'the <option> list and the comparators must name the same five orders');
+    'the radio list and the comparators must name the same five orders');
 });
 
-// ── Filter chips: All / Featured / Joined / New (the prototype's scrDiscover) ──
+// ── The view switch and the Filters sheet's switches ─────────────────
 
 const DAY = 24 * 60 * 60 * 1000;
 const NOW = Date.parse('2026-09-23T12:00:00Z');
 const ago = (days) => new Date(NOW - days * DAY).toISOString();
 
-test("the chip row is a faithful copy of Browse.FILTERS, in the prototype's order", () => {
+test("the switch is a faithful copy of Browse.VIEWS, in its order", () => {
   const { Browse } = makeBrowse();
-  // The labels are message ids; the catalog holds the words.
-  assert.deepEqual(Array.from(Browse.FILTERS, (f) => f.label),
-    ['discover:filter.all', 'discover:filter.featured', 'discover:filter.notJoined', 'discover:filter.joined', 'discover:filter.new']);
-  assert.deepEqual(Array.from(Browse.FILTERS, (f) => message(f.label)), ['All', 'Featured', 'Not joined', 'Joined', 'New']);
-  // The admin's chip (#5267), copied the same way.
-  assert.deepEqual(Array.from(Browse.ADMIN_FILTERS, (f) => message(f.label)), ['Not yet reviewed']);
-  // Same reason SORT_OPTIONS is a copy: window.Browse does not exist in the
-  // SSG pass, so the chips carry their own labels.
+  assert.deepEqual(Array.from(Browse.VIEWS, (v) => v.key), ['foryou', 'browse', 'joined']);
+  assert.deepEqual(Array.from(Browse.VIEWS, (v) => message(v.label)), ['For you', 'Browse', 'Joined']);
+  // A copy for the same reason SORT_OPTIONS is one: window.Browse does not
+  // exist in the SSG pass.
   const src = read('frontend/src/features/apps/browse-screen.tsx');
-  const block = src.match(/const FILTER_CHIPS[\s\S]*?\n\];/);
-  assert.ok(block, 'FILTER_CHIPS is still declared in browse-screen.tsx');
+  const block = src.match(/const VIEW_TABS[\s\S]*?\n\];/);
+  assert.ok(block, 'VIEW_TABS is still declared in browse-screen.tsx');
   const copied = [...block[0].matchAll(/\{\s*key:\s*'([^']+)',\s*label:\s*'([^']+)'\s*\}/g)]
     .map((m) => ({ key: m[1], label: m[2] }));
-  assert.deepEqual(copied, Array.from(Browse.FILTERS, (f) => ({ key: f.key, label: f.label })));
-  const adminBlock = src.match(/const ADMIN_FILTER_CHIPS[\s\S]*?\n\];/);
-  assert.ok(adminBlock, 'ADMIN_FILTER_CHIPS is declared in browse-screen.tsx');
-  const adminCopied = [...adminBlock[0].matchAll(/\{\s*key:\s*'([^']+)',\s*label:\s*'([^']+)'\s*\}/g)]
-    .map((m) => ({ key: m[1], label: m[2] }));
-  assert.deepEqual(adminCopied, Array.from(Browse.ADMIN_FILTERS, (f) => ({ key: f.key, label: f.label })));
-  // Drawn only when the store says so, which the prerender never does.
-  assert.match(src, /\{state\.adminFilters \? ADMIN_FILTER_CHIPS\.map/);
+  assert.deepEqual(copied, Array.from(Browse.VIEWS, (v) => ({ key: v.key, label: v.label })));
+});
+
+test("the sheet's Show only switches are a faithful copy of Browse.SHOW_ONLY", () => {
+  const { Browse } = makeBrowse();
+  assert.deepEqual(Array.from(Browse.SHOW_ONLY, (o) => o.key), ['featured', 'new', 'notjoined']);
+  assert.deepEqual(Array.from(Browse.SHOW_ONLY, (o) => message(o.label)),
+    ['Featured', 'New', 'Hide apps I’ve joined']);
+  assert.deepEqual(Array.from(Browse.ADMIN_SHOW_ONLY, (o) => message(o.label)), ['Not yet reviewed']);
+  const src = read('frontend/src/features/apps/browse-filter-sheet.tsx');
+  for (const [name, controller] of [['SHOW_ONLY', Browse.SHOW_ONLY], ['ADMIN_SHOW_ONLY', Browse.ADMIN_SHOW_ONLY]]) {
+    const block = src.match(new RegExp(`const ${name}[\\s\\S]*?\\n\\];`));
+    assert.ok(block, `${name} is declared in browse-filter-sheet.tsx`);
+    const copied = [...block[0].matchAll(/\{\s*key:\s*'([^']+)',\s*label:\s*'([^']+)'\s*\}/g)]
+      .map((m) => ({ key: m[1], label: m[2] }));
+    assert.deepEqual(copied, Array.from(controller, (o) => ({ key: o.key, label: o.label })));
+  }
+  // The admin switch is drawn only when the store says so, which the
+  // prerender never does.
+  assert.match(src, /admin=\{!!state\.adminFilters\}/);
   assert.match(read('frontend/src/features/apps/browse-store.js'), /adminFilters: false,/);
 });
 
@@ -650,9 +662,9 @@ test('filterApps: each chip admits the set its name promises', () => {
   // Not joined is the rest of it (#5267): exactly what Joined leaves out.
   assert.deepEqual(keys(Browse.filterApps(apps, 'notjoined', NOW)), ['plain', 'curated', 'pinned-only', 'fresh']);
   assert.deepEqual(keys(Browse.filterApps(apps, 'new', NOW)), ['fresh'], 'created in the last 14 days');
-  // Pure: the input is untouched and the default key is the current chip.
+  // Pure: the input is untouched and no key means the current switches.
   assert.equal(apps.length, 7);
-  Browse._filter = 'featured';
+  Browse._only = ['featured'];
   assert.deepEqual(keys(Browse.filterApps(apps)), ['curated', 'curated-mine']);
 });
 
@@ -673,41 +685,145 @@ test('New is the last 14 days, or the newest six when nothing is that young', ()
   assert.deepEqual(keys(Browse.newApps([], NOW)), [], 'an empty directory is still empty');
 });
 
-test('the chip picks the set, Sort orders it, and the search narrows it', () => {
+test('the view and switches pick the set, Sort orders it, and the search narrows it', () => {
   const { Browse, state } = makeBrowse();
   Browse._apps = [
     app({ slug: 'f-few', name: 'Chess Few', featured: true, featured_order: 0, active_users: 1 }),
     app({ slug: 'f-many', name: 'Chess Many', featured: true, featured_order: 1, active_users: 50 }),
     app({ slug: 'loud', name: 'Chess Loud', active_users: 999 }),
   ];
-  Browse.setFilter('featured');
-  assert.equal(state.filter, 'featured', 'the chips and #browse-list[data-filter] read the store');
+  Browse.applyFilters({ only: ['featured'], category: 'all', sort: 'recommended' });
+  assert.equal(state.filter, 'featured', 'the switches and #browse-list[data-filter] read the store');
   assert.deepEqual(slugs(state), ['f-few', 'f-many'], 'Recommended keeps the curated order');
   Browse.setSort('users');
-  assert.deepEqual(slugs(state), ['f-many', 'f-few'], 'Sort works WITHIN the chip');
+  assert.deepEqual(slugs(state), ['f-many', 'f-few'], 'Sort works WITHIN the switches');
   Browse.setQuery('many', { immediate: true });
   assert.deepEqual(slugs(state), ['f-many'], 'and the search narrows it further');
   Browse.setQuery('', { immediate: true });
-  Browse.setFilter('all');
-  assert.deepEqual(slugs(state), ['loud', 'f-many', 'f-few'], 'All brings the rest back, still sorted');
-  assert.equal(state.sort, 'users', 'and switching chips never lost the order');
+  Browse.applyFilters({ only: [], category: 'all', sort: 'users' });
+  assert.deepEqual(slugs(state), ['loud', 'f-many', 'f-few'], 'no switch brings the rest back, still sorted');
+  assert.equal(state.sort, 'users', 'and switching filters never lost the order');
+  assert.equal(state.filter, 'all');
 });
 
-test('an empty chip says which set is empty', () => {
+test('an empty set says which filter is empty', () => {
   const { Browse, state } = makeBrowse();
   Browse._apps = [app({ slug: 'plain', name: 'Plain' })];
-  Browse.setFilter('featured');
+  Browse.applyFilters({ only: ['featured'] });
   assert.equal(state.empty, 'No featured apps yet.');
-  Browse.setFilter('yours');
-  assert.equal(state.empty, 'You haven’t joined anything yet. Join apps from All.');
+  Browse.setView('joined');
+  assert.equal(state.empty, 'You haven’t joined anything yet. Join apps from Browse.');
   Browse.setQuery('zzz', { immediate: true });
   assert.equal(state.empty, 'Nothing you’ve joined matches “zzz”.');
-  Browse.setFilter('featured');
+  Browse.setView('foryou');
+  Browse.applyFilters({ only: ['featured'] });
   assert.equal(state.empty, 'No featured apps match “zzz”.');
-  Browse.setFilter('new');
+  Browse.applyFilters({ only: ['new'] });
   assert.equal(state.empty, 'No new apps match “zzz”.');
-  Browse.setFilter('all');
-  assert.equal(state.empty, 'No apps match “zzz”.', 'All keeps the sentence it always had');
+  // More than one switch: the generic sentence, not one switch's name.
+  Browse.applyFilters({ only: ['featured', 'new'] });
+  assert.equal(state.empty, 'No apps match “zzz” with these filters.');
+  Browse.applyFilters({ only: [] });
+  assert.equal(state.empty, 'No apps match “zzz”.', 'no switch keeps the sentence it always had');
+  assert.equal(Browse.emptyText('', 'featured new', 'all'), 'No apps match these filters.');
+});
+
+// ── The view, the switches and the sheet's count ─────────────────────
+
+test('narrowApps: the Joined view, each switch, and their composition', () => {
+  const { Browse } = makeBrowse();
+  const apps = [
+    app({ slug: 'plain', created_at: ago(90) }),
+    app({ slug: 'curated', featured: true, featured_order: 0, created_at: ago(60) }),
+    app({ slug: 'curated-mine', featured: true, is_favorited: true, is_member: true, created_at: ago(40) }),
+    app({ slug: 'member', is_collaborator: true, is_member: true, created_at: ago(30) }),
+    app({ slug: 'fresh', created_at: ago(3) }),
+  ];
+  const keys = (list) => Array.from(list, (a) => a.slug);
+  assert.deepEqual(keys(Browse.narrowApps(apps, { view: 'browse', only: [] }, NOW)), keys(apps),
+    'Browse is every app');
+  assert.deepEqual(keys(Browse.narrowApps(apps, { view: 'foryou', only: [] }, NOW)), keys(apps),
+    'For you is every app too; its order and grouping are the difference');
+  assert.deepEqual(keys(Browse.narrowApps(apps, { view: 'joined', only: [] }, NOW)),
+    ['curated-mine', 'member'], 'Joined keeps the communities you are in');
+  assert.deepEqual(keys(Browse.narrowApps(apps, { view: 'browse', only: ['featured'] }, NOW)),
+    ['curated', 'curated-mine']);
+  assert.deepEqual(keys(Browse.narrowApps(apps, { view: 'browse', only: ['new'] }, NOW)), ['fresh']);
+  assert.deepEqual(keys(Browse.narrowApps(apps, { view: 'browse', only: ['notjoined'] }, NOW)),
+    ['plain', 'curated', 'fresh']);
+  // Featured AND New is their intersection, in the switches' order. (New
+  // keeps its "newest six when nothing is that young" behaviour, so an old
+  // featured set still answers.)
+  assert.deepEqual(keys(Browse.narrowApps(apps, { view: 'browse', only: ['featured', 'new'] }, NOW)),
+    ['curated-mine', 'curated'], 'New keeps its newest-first fallback inside Featured');
+  const freshFeatured = app({ slug: 'fresh-featured', featured: true, created_at: ago(2) });
+  assert.deepEqual(
+    keys(Browse.narrowApps(apps.concat([freshFeatured]), { view: 'browse', only: ['featured', 'new'] }, NOW)),
+    ['fresh-featured'],
+  );
+  assert.equal(apps.length, 5, 'pure: the input is untouched');
+});
+
+test('showOnlyKeys drops unknown keys, keeps the fixed order, and gates unreviewed', () => {
+  const { Browse } = makeBrowse();
+  assert.deepEqual(Array.from(Browse.showOnlyKeys(['new', 'featured', 'bogus', 'new'])), ['featured', 'new']);
+  assert.deepEqual(Array.from(Browse.showOnlyKeys(['unreviewed'])), [], 'not for a member');
+  const admin = makeBrowse({ user: { id: 2, isAdmin: true } }).Browse;
+  assert.deepEqual(Array.from(admin.showOnlyKeys(['unreviewed', 'featured'])), ['featured', 'unreviewed']);
+  assert.deepEqual(Array.from(Browse.showOnlyKeys(null)), []);
+});
+
+test('visibleApps and countFor take a draft; the live search still applies', () => {
+  const { Browse, state } = makeBrowse();
+  Browse._apps = [
+    typed('chess', 'games', { active_users: 5, featured: true }),
+    typed('quiz', 'games', { active_users: 50 }),
+    typed('notes', 'tools', { active_users: 99 }),
+  ];
+  // A draft does not change the live state behind the sheet.
+  assert.equal(Browse.countFor({ view: 'browse', only: [], category: 'games', sort: 'recommended' }), 2);
+  assert.equal(Browse.countFor({ view: 'browse', only: [], category: 'tools', sort: 'recommended' }), 1);
+  assert.equal(Browse.countFor({ view: 'browse', only: [], category: 'all', sort: 'recommended' }), 3);
+  assert.equal(state.category, 'all', 'the draft stayed a draft');
+  // The live query counts too: the button counts the search.
+  Browse.setQuery('quiz', { immediate: true });
+  assert.equal(Browse.countFor({ view: 'browse', only: [], category: 'all', sort: 'recommended' }), 1);
+  Browse.setQuery('', { immediate: true });
+  assert.deepEqual(
+    Array.from(Browse.visibleApps({ view: 'joined', only: [], category: 'all', sort: 'recommended' }), (a) => a.slug),
+    [],
+    'the Joined view shows nothing you are not in',
+  );
+});
+
+test('activeFilterCount counts the switches, a type and a non-default order', () => {
+  const { Browse } = makeBrowse();
+  assert.equal(Browse.activeFilterCount(), 0);
+  Browse._only = ['featured', 'new'];
+  assert.equal(Browse.activeFilterCount(), 2);
+  Browse._category = 'games';
+  assert.equal(Browse.activeFilterCount(), 3);
+  Browse._sort = 'users';
+  assert.equal(Browse.activeFilterCount(), 4);
+  Browse._view = 'joined';
+  assert.equal(Browse.activeFilterCount(), 4, 'the view tab is never counted');
+});
+
+test('only For you with the defaults is grouped; Browse and Joined are one flat list', () => {
+  const { Browse, state } = makeBrowse();
+  Browse._apps = [
+    app({ slug: 'f', featured: true, featured_order: 0 }),
+    app({ slug: 'other' }),
+  ];
+  Browse.render();
+  assert.equal(state.grouped, true);
+  assert.equal(state.rows.filter((r) => r.recommended).length, 1);
+  Browse.setView('browse');
+  assert.equal(state.grouped, false);
+  assert.equal(state.rows.some((r) => r.recommended), false);
+  Browse.setView('joined');
+  assert.equal(state.grouped, false);
+  assert.equal(state.rows.some((r) => r.recommended), false);
 });
 
 // ── Type chips (#3962) ────────────────────────────────────────────
@@ -720,7 +836,6 @@ test('the type chips are a labelled copy of dapp.json\'s category list, in its o
   assert.deepEqual(Array.from(Browse.CATEGORIES, (c) => c.key), Array.from(APP_CATEGORIES));
   assert.deepEqual(Array.from(Browse.CATEGORIES, (c) => message(c.label)),
     ['Games', 'Social', 'Tools', 'Learning', 'Creative', 'Other']);
-  assert.equal(message('discover:category.all'), 'All types');
   assert.equal(message('discover:category.groupLabel'), 'Filter by type');
 });
 
@@ -743,9 +858,18 @@ test('presentCategories: only types some app has, and no row for Other alone', (
     'All types and Other alone would sort nothing');
   assert.deepEqual(keys(Browse.presentCategories([typed('a', 'tools'), typed('b', 'other'), typed('c', 'games'), app({})])),
     ['games', 'tools', 'other'], 'in the list\'s order');
+  // The Filters sheet lists every type present, with Other always included
+  // once anything is tagged, and no Type section at all when nothing is.
+  assert.deepEqual(keys(Browse.categoryOptions([typed('a', 'tools')])), ['tools', 'other']);
+  assert.deepEqual(keys(Browse.categoryOptions([typed('a', 'other')])), ['other']);
+  assert.deepEqual(keys(Browse.categoryOptions([app({})])), []);
+  // resolveCategory can pick Other (the sheet offers it) but never a type the
+  // directory does not have.
+  assert.equal(Browse.resolveCategory('other', [typed('a', 'other')]), 'other');
+  assert.equal(Browse.resolveCategory('learning', [typed('a', 'tools')]), 'all');
 });
 
-test('a type narrows the chip\'s set, before Sort and the search', () => {
+test('a type narrows the view\'s set, before Sort and the search', () => {
   const { Browse, state } = makeBrowse();
   Browse._apps = [
     typed('chess', 'games', { active_users: 5, is_member: true }),
@@ -760,9 +884,9 @@ test('a type narrows the chip\'s set, before Sort and the search', () => {
   Browse.setCategory('games');
   assert.equal(state.category, 'games');
   assert.deepEqual(slugs(state), ['quiz', 'chess'], 'only games, still in Sort\'s order');
-  Browse.setFilter('yours');
-  assert.deepEqual(slugs(state), ['chess'], 'composes with the filter chip');
-  Browse.setFilter('all');
+  Browse.setView('joined');
+  assert.deepEqual(slugs(state), ['chess'], 'composes with the Joined view');
+  Browse.setView('foryou');
   Browse.setQuery('qu', { immediate: true });
   assert.deepEqual(slugs(state), ['quiz'], 'and with the search');
   Browse.setQuery('', { immediate: true });
@@ -776,19 +900,24 @@ test('an emptied type says so, and a search keeps its own sentence', () => {
   const { Browse, state } = makeBrowse();
   Browse._apps = [typed('quiz', 'games'), typed('notes', 'tools')];
   Browse.setCategory('games');
-  Browse.setFilter('featured');
+  Browse.applyFilters({ only: ['featured'], category: 'games' });
   assert.equal(state.empty, 'No apps of this type here.');
   Browse.setQuery('zzz', { immediate: true });
   assert.equal(state.empty, 'No featured apps match “zzz”.');
 });
 
-test('the type row is absent from the prerender and drawn from the store', () => {
+test('the type row is always drawn, but its rail waits for the store', () => {
   const store = read('frontend/src/features/apps/browse-store.js');
   assert.match(store, /categories: \[\],/);
   assert.match(store, /category: 'all',/);
   assert.doesNotMatch(INDEX, /browse-category-chips/, 'which types exist is known only after /api/apps');
+  // The row and the Filters button ARE prerendered; only the rail is not.
+  assert.match(INDEX, /id="browse-type-row"/);
+  assert.match(INDEX, /id="browse-filters-btn"/);
   const src = read('frontend/src/features/apps/browse-screen.tsx');
-  assert.match(src, /\{state\.categories && state\.categories\.length \? \(\s*<ChipRail\s+id="browse-category-chips"/);
+  assert.match(src, /\{typeChips\.length \? \(\s*<ChipRail\s+id="browse-category-chips"/);
+  // The page row drops Other unless it is picked; the sheet keeps it.
+  assert.match(src, /c\.key !== 'other' \|\| category === 'other'/);
 });
 
 // ── Open site (#5364) ─────────────────────────────────────────────
@@ -868,42 +997,77 @@ test('the site row renders first and Enter opens it', () => {
   assert.match(read('frontend/src/features/apps/browse-store.js'), /site: null,/);
 });
 
-test('the chip is remembered for the session only, and ?filter= seeds the first entry', () => {
+test('the view and switches are remembered for the session, and ?filter= seeds the first entry', () => {
   const { Browse, state, storage } = makeBrowse({ search: '?filter=new' });
   Browse._load = () => {};
   Browse.open(null);
-  assert.equal(state.filter, 'new', 'a link lands on its chip');
-  Browse.setFilter('featured');
+  assert.equal(state.filter, 'new', 'a link turns on its switch');
+  assert.deepEqual(Array.from(state.only), ['new']);
+  assert.equal(state.view, 'foryou');
+  Browse.applyFilters({ only: ['featured'], category: 'all', sort: 'recommended' });
   Browse.close();
   Browse.open(null);
   assert.equal(state.filter, 'featured',
     'the choice survives leaving Discover, and the spent link does not override it');
   assert.equal(Object.keys(storage).some((k) => /filter/i.test(k)), false,
-    'nothing is stored: a reload starts on All');
+    'nothing is stored: a reload starts on For you with no switches');
   const fresh = makeBrowse();
   fresh.Browse._load = () => {};
   fresh.Browse.open(null);
   assert.equal(fresh.state.filter, 'all');
+  assert.equal(fresh.state.view, 'foryou');
   const junk = makeBrowse({ search: '?filter=bananas' });
   junk.Browse._load = () => {};
   junk.Browse.open(null);
   assert.equal(junk.state.filter, 'all');
 });
 
-test('the chips prerender with All pressed, from the store\'s initial value', () => {
+test('?filter= maps onto the switch and the sheet: yours is Joined, the rest are switches', () => {
+  const cases = [
+    ['?filter=yours', { view: 'joined', only: [] }],
+    ['?filter=featured', { view: 'foryou', only: ['featured'] }],
+    ['?filter=new', { view: 'foryou', only: ['new'] }],
+    ['?filter=notjoined', { view: 'foryou', only: ['notjoined'] }],
+    ['?filter=all', { view: 'foryou', only: [] }],
+    // A member cannot reach the admin switch, so the link lands on defaults.
+    ['?filter=unreviewed', { view: 'foryou', only: [] }],
+  ];
+  for (const [search, want] of cases) {
+    const { Browse, state } = makeBrowse({ search });
+    Browse._load = () => {};
+    Browse.open(null);
+    assert.equal(state.view, want.view, search);
+    assert.deepEqual(Array.from(state.only), want.only, search);
+  }
+  const admin = makeBrowse({ search: '?filter=unreviewed', user: { id: 2, isAdmin: true } });
+  admin.Browse._load = () => {};
+  admin.Browse.open(null);
+  assert.deepEqual(Array.from(admin.state.only), ['unreviewed'], 'an admin can land on it');
+  assert.equal(admin.state.activeCount, 1, 'and the button counts it');
+});
+
+test('the controls prerender from the store\'s initial values', () => {
   const src = read('frontend/src/features/apps/browse-store.js');
+  assert.match(src, /view: 'foryou',/);
+  assert.match(src, /only: \[\],/);
+  assert.match(src, /activeCount: 0,/);
   assert.match(src, /filter: 'all',/);
   // Applied on ENTRY, never during render: location.search does not exist in
   // the SSG pass.
   assert.match(BROWSE_SRC, /Browse\._applyInitialSort\(\);\n\s+Browse\._applyInitialFilter\(\);/);
-  const bar = INDEX.slice(INDEX.indexOf('id="browse-search-bar"'), INDEX.indexOf('id="browse-sort-bar"'));
-  const chips = [...bar.matchAll(/<button[^>]*aria-pressed="(true|false)"[^>]*data-filter="([a-z]+)"[^>]*>([^<]+)</g)]
-    .map((m) => `${m[2]}:${m[1]}:${m[3]}`);
-  assert.deepEqual(chips, ['all:true:All', 'featured:false:Featured', 'notjoined:false:Not joined', 'yours:false:Joined', 'new:false:New']);
-  assert.doesNotMatch(bar, /data-filter="unreviewed"/, 'the admin chip is never prerendered');
-  assert.match(bar, /id="browse-filter-chips" role="group" aria-label="Filter apps"/);
-  assert.match(INDEX, /id="browse-list"[^>]*data-filter="all"/);
-  // The language's own filter chip, not a hand-rolled one.
+  const start = INDEX.indexOf('id="browse-search-bar"');
+  const bar = INDEX.slice(start, INDEX.indexOf('id="browse-list-level"', start));
+  // For you is the pressed part; the other two are not.
+  assert.match(bar, /data-view="foryou" aria-current="page"/);
+  assert.match(bar, /data-view="browse" aria-current="false"/);
+  assert.match(bar, /data-view="joined" aria-current="false"/);
+  // The Filters button is there, with no count: nothing is on by default.
+  assert.match(bar, /id="browse-filters-btn"/);
+  assert.doesNotMatch(bar, /data-active-count/);
+  assert.doesNotMatch(bar, /browse-filter-chips|browse-sort-bar|browse-sort-select|browse-category-chips/);
+  assert.match(INDEX, /id="browse-list"[^>]*data-sort="recommended"/);
+  assert.match(INDEX, /id="browse-list"[^>]*data-view="foryou"[^>]*data-filter="all"/);
+  // The language's own chip, not a hand-rolled one.
   assert.match(read('frontend/src/features/apps/browse-screen.tsx'), /from '@\/components\/ui\/chip'/);
 });
 
@@ -1961,7 +2125,7 @@ test('#5267: the default list leads with Recommended for you, the featured apps 
   assert.ok(slugs(state).includes('f-mine'), 'a joined featured app is still in the list below');
   // Only the default list: another chip, a metric sort or a search is one
   // list in its own order, with no section.
-  for (const go of [() => Browse.setFilter('featured'), () => Browse.setSort('users'),
+  for (const go of [() => Browse.applyFilters({ only: ['featured'] }), () => Browse.setSort('users'),
     () => Browse.setQuery('f', { immediate: true })]) {
     go();
     assert.equal(state.grouped, false);
@@ -1982,7 +2146,7 @@ test('#5267: Join keeps the row where it was, now offering Open', () => {
   assert.equal(row.recommended, true, 'still in Recommended for you for this visit');
   assert.equal(row.added, true);
   assert.equal(row.addTitle, 'Open Pick');
-  Browse.setFilter('notjoined');
+  Browse.applyFilters({ only: ['notjoined'] });
   assert.deepEqual(slugs(state), ['other'], 'a new list is built without it');
   Browse.toggleRowAdded(rowFor(state, 'other'));
   assert.deepEqual(slugs(state), ['other'], 'Not joined keeps a row joined from it');
@@ -2013,30 +2177,38 @@ test('#5267: "Not yet reviewed" is an admin\'s chip, not a heading in everybody\
   member.Browse._apps = apps();
   member.Browse._load = () => {};
   member.Browse.open(null);
-  assert.equal(member.state.adminFilters, false, 'a member gets no admin chip');
+  assert.equal(member.state.adminFilters, false, 'a member gets no admin switch');
   // Unreviewed apps are NOT hidden from anyone: they still follow the
   // reviewed ones in the default list, as they always have.
   assert.deepEqual(slugs(member.state), ['ok', 'new', 'demo']);
-  member.Browse.setFilter('unreviewed');
-  assert.equal(member.state.filter, 'all', 'and cannot reach the chip by hand');
+  member.Browse.applyFilters({ only: ['unreviewed'] });
+  assert.equal(member.state.filter, 'all', 'and cannot reach the switch by hand');
 
   const admin = makeBrowse({ user: { id: 2, isAdmin: true } });
   admin.Browse._apps = apps();
   admin.Browse._load = () => {};
   admin.Browse.open(null);
   assert.equal(admin.state.adminFilters, true);
-  admin.Browse.setFilter('unreviewed');
+  admin.Browse.applyFilters({ only: ['unreviewed'] });
   assert.equal(admin.state.filter, 'unreviewed');
   assert.deepEqual(slugs(admin.state), ['new']);
   admin.Browse._apps = [apps()[0]];
   admin.Browse.render();
   assert.equal(admin.state.empty, 'Every app has been reviewed.');
+  // A switch remembered from an admin session is dropped once the viewer is
+  // no longer an admin ("View as non-admin"), as the old chip was.
+  const stale = makeBrowse();
+  stale.Browse._apps = apps();
+  stale.Browse._only = ['unreviewed'];
+  stale.Browse.render();
+  assert.deepEqual(Array.from(stale.state.only), []);
+  assert.equal(stale.state.filter, 'all');
 });
 
-test('#5267: an empty Not joined chip says so', () => {
+test('#5267: an empty Hide apps I’ve joined says so', () => {
   const { Browse, state } = makeBrowse();
   Browse._apps = [app({ slug: 'mine', name: 'Mine', is_member: true })];
-  Browse.setFilter('notjoined');
+  Browse.applyFilters({ only: ['notjoined'] });
   assert.equal(state.empty, 'You’ve joined every app here.');
   Browse.setQuery('zzz', { immediate: true });
   assert.equal(state.empty, 'Nothing you haven’t joined matches “zzz”.');

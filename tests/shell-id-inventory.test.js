@@ -995,13 +995,9 @@ const ADDED_IDS = {
   'settings-openrouter-included': 'Included OpenRouter key status card (#2568) — the key\'s state, its last four and its allowance, with nothing to press.',
   'settings-openrouter-included-status': 'The sentence inside it, written from the credential and managed-key state (#2568).',
   'settings-openrouter-personal-controls': 'Personal-BYOK controls hidden while a managed key owns the credential slot (#1344).',
-  // #1383 — the #apps directory's Sort control. It rides INSIDE
-  // #browse-search-bar rather than in a strip of its own: both narrow the
-  // same list, and one sticky row costs the phone less of the fold than two.
-  // The <select> is controlled off browse-store's `sort`, so the remembered
-  // choice, a ?sort= deep link and a hand change all show the same value.
-  'browse-sort-bar': 'Sort row inside the browse search bar (#1383).',
-  'browse-sort-select': 'The five-order Sort control for the all-apps directory (#1383).',
+  // #1383's Sort control moved into the Filters sheet, which is mounted on
+  // reveal and never ships in the prerender, so its ids left this map with
+  // it: 'browse-sort-bar' and 'browse-sort-select' are retired.
   // ── Streamlined Concept: the Board Filters dialog ────────────────
   // The Figma board (Streamlined Concept / Dev Sessions and Navigation)
   // moves the Board's filter selects and the needs-vote toggle off the
@@ -1089,8 +1085,10 @@ const ADDED_IDS = {
   'side-panel-close': 'Close ("Close panel"): closes only the panel; the app keeps running beside where it was.',
   'side-panel-body': 'The panel\'s body: the one <iframe> of the panel\'s document (#side-panel-frame, rendered only while open, so absent here) and the loading spinner after it.',
   'side-panel-loading': 'The spinner shown over the panel\'s body until its document has booted and drawn its first page. Ships hidden.',
-  // ── Discover's filter chips (the prototype's scrDiscover) ──────────
-  'browse-filter-chips': 'The All / Featured / Your apps / New chip row in the directory\'s sticky head, between the search and Sort. A chip picks which apps the list holds (Browse.filterApps); ships with All pressed, the store\'s prerender value.',
+  // ── Discover's view switch, type row and Filters button ────────────
+  'browse-view-switch': 'The For you / Browse / Joined switch under Discover\'s search field. It replaced the All / Featured / Not joined / Joined / New chip row; the store\'s prerender value (For you) is the pressed part.',
+  'browse-type-row': 'The always-drawn row holding Discover\'s app-type chips and the Filters button at its end. It is rendered even when no project has a type, because the Filters button lives here and must stay reachable.',
+  'browse-filters-btn': 'The Filters button at the end of Discover\'s type row. It opens the Filters sheet, and carries data-active-count (the number of filters on) only when one is on.',
   // The prototype's History segment (#leaderboard-history-root, added above
   // as the Leaderboard screen's fourth pane) retired with the seasons it
   // listed (the Semi design, 2026-10-16); #leaderboard/seasons lands on

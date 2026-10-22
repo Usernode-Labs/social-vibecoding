@@ -216,6 +216,9 @@ export const HomeIcon = strokedPath(
 );
 
 export const SearchIcon = stroked('SearchIcon', 'M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z');
+
+// Discover's Filters button: the three shortening rules of a filter control.
+export const FilterIcon = stroked('FilterIcon', 'M4 6h16M7 12h10M10 18h4');
 /** Discover's tab (v3, 18 Oct 2026): a compass, the place you go to find something new, where the magnifier said "search". */
 export const CompassIcon = stroked('CompassIcon', ['M12 3.5a8.5 8.5 0 110 17 8.5 8.5 0 010-17z', 'M15.5 8.5l-2 5-5 2 2-5z']);
 
