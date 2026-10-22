@@ -193,6 +193,11 @@ const Home = {
       // most common reason this fetch throws. "Failed to load apps" in
       // red reads like the platform is broken; say what actually happened
       // and offer the retry. Anything already cached stays on screen.
+      //
+      // Both notices below are the grid's whole answer, so each clears the
+      // filter state: no filter note or chips over an empty error grid (the
+      // chip selection itself is kept, so the next successful paint still
+      // honours it — #5823).
       let offline = false;
       try { offline = !!(window.Offline && Offline.isOffline()); } catch (_) { offline = false; }
       if (!Home._appsLoaded) {
@@ -208,11 +213,7 @@ const Home = {
             resultsHeading: null, emptyQuery: null, create: null,
             // load() has already cleared edit mode; the merge would keep it.
             editing: false,
-            // A load notice is the grid's whole answer: no filter note or
-            // chips over an empty error grid (the chip selection itself is
-            // kept, so the next successful paint still honours it).
-            filtered: false,
-            filterEmpty: false,
+            filtered: false, filterEmpty: false,
             notice: {
               text: message('home:grid.notice.offline'),
               tone: 'muted',
@@ -229,9 +230,7 @@ const Home = {
         resultsHeading: null, emptyQuery: null, create: null,
         // load() has already cleared edit mode; the merge would keep it.
         editing: false,
-        // Same as the offline branch: the error card is the whole answer.
-        filtered: false,
-        filterEmpty: false,
+        filtered: false, filterEmpty: false,
         // #1899: the grid draws this as the shared error card
         // (features/apps/load-error.tsx) with a Retry that re-runs load().
         notice: { text: message('home:grid.notice.loadFailed'), tone: 'error' },
