@@ -194,8 +194,9 @@ export function AppSettingsDialog() {
           size="sm"
           onClick={() => {
             const target = app?.slug || slug.current;
-            dialog.close();
-            window.UsernodeReact?.dialogs?.whoDecides?.open({ slug: target });
+            // The sheet opens once this dialog's back record is spent: opening
+            // it in the same task let the queued traversal close it (#5801).
+            dialog.closeThen(() => window.UsernodeReact?.dialogs?.whoDecides?.open({ slug: target }));
           }}
         >
           {t('dialogs:appSettings.access.open')}

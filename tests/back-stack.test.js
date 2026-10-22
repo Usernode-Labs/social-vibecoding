@@ -531,6 +531,69 @@ test('Q16: without the Navigation API, a record with its state replaced is left,
   assert.equal(b.at, 1);
 });
 
+// ── #5801: closing one surface and opening another in the same task ──────
+//
+// App settings' "Who can see & change it" button did exactly that: close(),
+// then whoDecides.open(). The close spends its record with a queued
+// history.back(); the open pushes a record on top, which clears the flag that
+// marked the traversal as ours. The traversal lands, looks like a Back press,
+// and closes the sheet that just opened.
+
+test('closing one surface and opening another in one task, the new one survives', () => {
+  const b = browser();
+  let closed = 0;
+  const release = b.stack.push(() => {});
+  release();
+  b.stack.afterSpent(() => b.stack.push(() => { closed += 1; }));
+  b.flush();
+
+  assert.equal(closed, 0, 'the surface opened by the hand-off is still open');
+  assert.equal(b.stack.size, 1, 'and claims the next press');
+  assert.deepEqual(b.routed, [], 'the hand-off never reached the router');
+
+  b.press();
+  assert.equal(closed, 1, 'one press closes it');
+  assert.equal(b.at, 0, 'and lands on the page');
+  assert.deepEqual(b.routed, [], 'at the same address, so no rebuild');
+});
+
+test('the old ordering is what closed the sheet', () => {
+  // Pins the cause. Kept so the reason for `afterSpent` stays visible: if
+  // push() ever stops clearing selfSpent, this is where the change shows.
+  const b = browser();
+  let closed = 0;
+  const release = b.stack.push(() => {});
+  release();
+  b.stack.push(() => { closed += 1; });
+  b.flush();
+
+  assert.equal(closed, 1, 'opening in the same task as the close is what closed it');
+  assert.equal(b.stack.size, 0);
+});
+
+test('afterSpent runs at once when nothing is being spent', () => {
+  const b = browser();
+  let ran = 0;
+  b.stack.afterSpent(() => { ran += 1; });
+  assert.equal(ran, 1, 'no traversal to wait for');
+});
+
+test('afterSpent’s fallback runs once if the traversal never lands', () => {
+  const b = browser();
+  // A history that accepts the back() and never reports it, as a dropped
+  // traversal looks: the hand-off must still open, exactly once.
+  b.win.history.back = () => {};
+  let ran = 0;
+  const release = b.stack.push(() => {});
+  release();
+  b.stack.afterSpent(() => { ran += 1; });
+  assert.equal(ran, 0, 'it waits for the record to be spent');
+  b.flush();
+  assert.equal(ran, 1);
+  b.flush();
+  assert.equal(ran, 1, 'and only once');
+});
+
 // #3623: the header switches the native back-swipe off while a surface is
 // open, so it has to hear every change to `size`, however the surface closed.
 test('subscribers hear every open and close, by back press or by release', () => {

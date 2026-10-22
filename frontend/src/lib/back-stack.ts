@@ -70,6 +70,19 @@
  * navigated (Leave group does exactly that) would otherwise send the viewer
  * back to the page they just left.
  *
+ * ── Handing off to another surface ─────────────────────────────────────
+ *
+ * One surface can close and another open in the same task: App settings'
+ * "Who can see & change it" button, and the same row in Members. The close
+ * spends its record with `history.back()`, which is queued; opening the next
+ * surface in that same task pushes a record on top and clears the flag that
+ * marked the traversal as ours. When the traversal lands it looks like a Back
+ * press, so it closes the surface that just opened (#5801). `afterSpent(fn)`
+ * runs `fn` only once the close's record has been spent, and the module-level
+ * `afterBackSettles` is the form `useDialog`'s `closeThen` uses. A navigating
+ * release defers its own `spend()` through `later()`, so `afterSpent` cannot
+ * see it coming; a hand-off therefore uses a plain close.
+ *
  * ── A record nobody owns is a step to pass through ─────────────────────
  *
  * Every record carries an id, so a record whose surface has gone is
@@ -118,6 +131,11 @@ export interface BackStack {
   /** Run one back press. True when a surface consumed it. */
   handlePop(): boolean;
   /**
+   * Run `fn` once a self-spent traversal has landed — at once when none is
+   * pending. See the header on handing off to another surface.
+   */
+  afterSpent(fn: () => void): void;
+  /**
    * Run one popstate: `handlePop`, plus whether the traversal belonged
    * entirely to a surface — a press it consumed, or a release spending its own
    * record — and left the address unchanged. True means the rest of the page
@@ -156,6 +174,11 @@ type WindowLike = {
 export const DISMISS_STATE_KEY = '__unDismissDepth';
 /** Which surface a record belongs to. Unique per document. */
 export const DISMISS_ID_KEY = '__unDismissId';
+/**
+ * How long a hand-off waits for the close's traversal before opening anyway.
+ * Long enough for any browser's popstate, short enough not to feel stuck.
+ */
+const SPENT_FALLBACK_MS = 400;
 
 export function createBackStack(win: WindowLike): BackStack {
   const stack: BackStackEntry[] = [];
@@ -167,6 +190,9 @@ export function createBackStack(win: WindowLike): BackStack {
   let selfSpent = false;
   // Where that self-spent traversal started — see handlePopstate.
   let spentFrom: string | null = null;
+  // Callbacks waiting for that traversal to land (a close-then-open hand-off).
+  const spentWaiters: Array<() => void> = [];
+  let spentTimer: unknown = null;
   // Which way a pass through an unowned record is going, while it goes.
   let skipping: 'back' | 'forward' | null = null;
 
@@ -258,6 +284,28 @@ export function createBackStack(win: WindowLike): BackStack {
     else fn();
   };
 
+  // Each queued callback runs exactly once, from whichever path gets here
+  // first: the traversal's popstate, or the fallback timer below.
+  const drainSpent = () => {
+    const waiting = spentWaiters.splice(0);
+    for (const fn of waiting) fn();
+  };
+
+  function afterSpent(fn: () => void): void {
+    if (!selfSpent) {
+      fn();
+      return;
+    }
+    spentWaiters.push(fn);
+    // A browser can drop the traversal (a history it will not move, a record
+    // replaced under us). The hand-off must never be left unopened.
+    if (spentTimer == null) {
+      const schedule = win.setTimeout || (typeof setTimeout === 'function' ? setTimeout : null);
+      if (schedule) spentTimer = schedule(() => { spentTimer = null; drainSpent(); }, SPENT_FALLBACK_MS);
+      else drainSpent();
+    }
+  }
+
   const record = (entry: BackStackEntry) => {
     try {
       const prev = (win.history.state ?? null) as Record<string, unknown> | null;
@@ -346,6 +394,9 @@ export function createBackStack(win: WindowLike): BackStack {
   function handlePop(): boolean {
     if (selfSpent) {
       selfSpent = false;
+      // A hand-off's open runs a task later, once the popstate listener has
+      // finished — including any passThrough it decides on below.
+      if (spentWaiters.length) later(drainSpent);
       return false;
     }
     const top = stack[stack.length - 1];
@@ -387,6 +438,7 @@ export function createBackStack(win: WindowLike): BackStack {
     push,
     handlePop,
     handlePopstate,
+    afterSpent,
     get size() {
       return stack.length;
     },
@@ -418,6 +470,20 @@ export function backStack(): BackStack | null {
 export function pushDismissible(close: () => DismissResult): Release {
   if (!shared) return () => {};
   return shared.push(close);
+}
+
+/**
+ * Run `fn` once the back stack has finished spending a record it queued —
+ * used when one surface closes and another opens in the same task. Runs at
+ * once where there is no shared stack (prerender, side panel) and where
+ * nothing is being spent.
+ */
+export function afterBackSettles(fn: () => void): void {
+  if (!shared) {
+    fn();
+    return;
+  }
+  shared.afterSpent(fn);
 }
 
 const noSubscription = () => () => {};
