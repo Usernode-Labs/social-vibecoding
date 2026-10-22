@@ -1681,6 +1681,12 @@ export function LandingScreen() {
             from running under it. Making an account is still the body's
             Continue, under the sentence that says what this place is.
             Not for a waiting-room session, which is signed in already.
+
+            `un-touch-target` on this button and the one beside it: both are
+            DRAWN at 28px so the bar keeps its height, and the kit's ::after
+            (public/usernode-native/v1/native.css) grows only the HIT BOX to
+            max(100%, 44px) — the same token the bar's back disc carries.
+            Without it both were 28px to the finger (review of this build).
         */}
         <div
           data-landing-actions=""
@@ -1689,7 +1695,7 @@ export function LandingScreen() {
           <button
             type="button"
             data-landing-sign-in=""
-            className={hiddenLast(session || !guestPages, 'h-7 rounded-full px-2 text-[15px] font-semibold text-zinc-950 hover:text-zinc-600 dark:text-white dark:hover:text-zinc-300')}
+            className={hiddenLast(session || !guestPages, 'un-touch-target h-7 rounded-full px-2 text-[15px] font-semibold text-zinc-950 hover:text-zinc-600 dark:text-white dark:hover:text-zinc-300')}
             onClick={() => { noteSignUpFrom('header_sign_in'); setSheet('signin'); }}
           >
             {t('auth:guest.header.signIn')}
@@ -1700,7 +1706,7 @@ export function LandingScreen() {
             size="none"
             ink="solid"
             data-landing-sign-up=""
-            className={guestTop ? 'h-7 px-3.5 text-[15px] font-semibold' : 'hidden md:inline-flex h-7 px-3.5 text-[15px] font-semibold'}
+            className={guestTop ? 'un-touch-target h-7 px-3.5 text-[15px] font-semibold' : 'un-touch-target hidden md:inline-flex h-7 px-3.5 text-[15px] font-semibold'}
             onClick={() => { noteSignUpFrom('header_sign_up'); setSheet('start'); }}
           >
             {t('auth:guest.header.signUp')}
