@@ -159,9 +159,9 @@
     {
       "source": "src/routes/app-platform-api.js",
       "kind": "structural-template",
-      "fingerprint": "dc6931c003b9292462cb",
+      "fingerprint": "6a998ea235fb6a6562da",
       "count": 1,
-      "preview": "`SELECT cs.id, cs.pr_number, cs.pr_title, cs.pr_summary_md, cs.status, cs.promoted_at, cs.created_at, cs.merged_at, cs.votes_required, u.username AS author, ${a"
+      "preview": "`SELECT cs.id, cs.pr_number, cs.pr_title, cs.pr_summary_md, cs.status, cs.promoted_at, cs.created_at, cs.merged_at, cs.votes_required, cs.user_id, cs.requires_e"
     },
     {
       "source": "src/routes/apps.js",

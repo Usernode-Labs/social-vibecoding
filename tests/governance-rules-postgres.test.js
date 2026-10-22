@@ -130,13 +130,13 @@ test('a project’s rules, stored by the reconcile and read by the gate', { time
     const stored = (await pool.query('SELECT governance_rules FROM apps WHERE id = $1', [app.id])).rows[0].governance_rules;
     assert.deepEqual(stored.groups[0].ids, [maya.id, snait.id].sort((a, b) => a - b));
 
+    // #5816: one lifeguard is not the group's two, but the maker's own Yes
+    // approves whatever group the rules name.
     const his = await proposal(evan);
-    await vote(his, evan, 'yes');
-    assert.equal((await gate(his)).mergeable, false, 'the creator is not a lifeguard');
     await vote(his, maya, 'yes');
-    assert.equal((await gate(his)).mergeable, false);
-    await vote(his, snait, 'yes');
-    assert.equal((await gate(his)).mergeable, true);
+    assert.equal((await gate(his)).mergeable, false, 'one lifeguard is not two');
+    await vote(his, evan, 'yes');
+    assert.equal((await gate(his)).mergeable, true, 'the maker’s Yes approves on its own');
 
     // Proposing counts as a yes from a lifeguard who makes the change.
     const hers = await proposal(maya);

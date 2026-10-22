@@ -335,11 +335,14 @@ test('B7: who approves, who is told, and the card, against the full PostgreSQL s
     [key, value],
   );
   await set('homeroom_bot_mode', 'live');
-  const project = async (slug, label, { view = 'private', members = [] } = {}) => {
+  // §5816: `owner` is who made the app, when it is not the first member.
+  // The scenarios about WHO ELSE approves keep their makers out of the card,
+  // because a maker's own Yes now approves the change on its own.
+  const project = async (slug, label, { view = 'private', members = [], owner = null } = {}) => {
     const { rows: [inserted] } = await pool.query(
       `INSERT INTO apps (name, slug, status, created_by, view_visibility, collab_visibility)
        VALUES ($1, $2, 'running', $3, $4, $4) RETURNING id`,
-      [label, slug, members[0].id, view],
+      [label, slug, (owner || members[0]).id, view],
     );
     const app = (await pool.query('SELECT id, slug, name, community_id FROM apps WHERE id = $1', [inserted.id])).rows[0];
     for (const m of members) {
@@ -412,7 +415,7 @@ test('B7: who approves, who is told, and the card, against the full PostgreSQL s
   });
 
   await t.test('a private community: the others active on it are told once per version, and the asker sees who it waits on', async () => {
-    const club = await project('supper-club', 'Supper Club', { members: [ben, ada] });
+    const club = await project('supper-club', 'Supper Club', { members: [ben, ada], owner: maya });
     await active(club, [ben, ada]);
     const id = await change(club, ben, 4);
     const state = await dm.approvalState(pool, { sessionId: id, userId: ben.id });
@@ -543,7 +546,7 @@ test('B7: who approves, who is told, and the card, against the full PostgreSQL s
   });
 
   await t.test('a public community tells nobody this way, unless it names its approvers', async () => {
-    const town = await project('town-square', 'Town Square', { view: 'public', members: [ben, ada, maya] });
+    const town = await project('town-square', 'Town Square', { view: 'public', members: [ben, ada, maya], owner: maya });
     await active(town, [ben, ada, maya]);
     const id = await change(town, ben, 6);
     const state = await dm.approvalState(pool, { sessionId: id, userId: ben.id });
