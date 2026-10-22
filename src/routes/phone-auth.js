@@ -131,7 +131,14 @@ function phoneAuthRoutes(config) {
     return res.status(500).json({ error: 'Internal server error' });
   }
 
-  function requireOffered(req, res, next) {
+  // The offer gate is fail-closed and depends on the SELECTED provider
+  // (services/sms/select.js). Its read is cached for ten seconds, but the
+  // middleware still awaits it so an admin's saved switch is seen here
+  // rather than only after the next boot.
+  async function requireOffered(req, res, next) {
+    try {
+      await require('../services/sms/select').selection(pool);
+    } catch { /* selection() never throws; belt and braces */ }
     if (!phoneAuth.offered(config)) {
       return res.status(404).json({ error: 'That sign-in is not set up.', code: 'not_offered' });
     }
@@ -174,7 +181,8 @@ function phoneAuthRoutes(config) {
         const sent = await phoneAuth.requestCode(
           config,
           req.body?.phoneNumber,
-          req.body?.recaptchaToken
+          req.body?.recaptchaToken,
+          { pool }
         );
         return res.json({ ok: true, sessionInfo: sent.sessionInfo });
       } catch (error) {
@@ -366,7 +374,7 @@ function phoneAuthRoutes(config) {
     signedIn,
     async (req, res) => {
       try {
-        const sent = await phoneAuth.requestCode(config, req.body?.phoneNumber, req.body?.recaptchaToken);
+        const sent = await phoneAuth.requestCode(config, req.body?.phoneNumber, req.body?.recaptchaToken, { pool });
         return res.json({ ok: true, sessionInfo: sent.sessionInfo });
       } catch (error) {
         return fail(res, error, 'Phone link code request', {

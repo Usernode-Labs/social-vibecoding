@@ -422,6 +422,31 @@
       "description": "The Firebase project's Identity Toolkit web API key, used by the server for the send-verification-code and verify-phone-number REST calls. Required only while FIREBASE_PHONE_AUTH_ENABLED is true. Not private: a web API key is a public-in-client identifier."
     },
     {
+      "key": "PLATFORM_SMS_PROVIDER",
+      "group": "Phone sign-in",
+      "default": "firebase",
+      "description": "Who sends Homeroom's text messages until an admin saves a choice in Admin → SMS delivery: firebase (default, today's Firebase Phone Auth path) or brevo. An admin's saved choice wins. An unknown value is logged and falls back to firebase. A staging preview never sends a real text whatever this says."
+    },
+    {
+      "key": "BREVO_API_KEY",
+      "group": "Phone sign-in",
+      "private": true,
+      "description": "Brevo API key, sent as the api-key header on POST https://api.brevo.com/v3/transactionalSMS/send. Private: it can send texts and is never returned by any API — the admin status card reports only whether it is present. Not needed on staging, which logs instead of sending."
+    },
+    {
+      "key": "BREVO_SMS_SENDER_IDS",
+      "group": "Phone sign-in",
+      "default": "{}",
+      "description": "Country-to-Sender-ID registry: a JSON object keyed by ISO 3166 alpha-2 country, each value a sender string or {sender, registered, optOut}. Example: {\"FR\":\"Homeroom\",\"US\":{\"sender\":\"18885550100\",\"registered\":true}}. Register Sender IDs in Brevo's dashboard. An unlisted country is refused; US and Canada need registered:true with a numeric sender. Empty or malformed means Brevo is not ready."
+    },
+    {
+      "key": "BREVO_SMS_WEBHOOK_TOKEN",
+      "group": "Phone sign-in",
+      "private": true,
+      "required": false,
+      "description": "Bearer token Brevo's SMS webhook must send to POST /api/sms/webhooks/brevo. Private: it authorizes STOP replies and delivery receipts. Unset leaves the webhook answering 404."
+    },
+    {
       "key": "PLATFORM_MAIL_PROVIDER",
       "group": "Platform mail",
       "default": "auto",
@@ -5017,6 +5042,12 @@
       "expectSelector": "#auth-landing-screen:not(.hidden):has([data-landing-story]:not([data-landing-story-compact]) [data-landing-story-start]):not(:has([data-guest-discover])) [data-landing-story] a[data-landing-story-look][href=\"#apps\"]",
       "expectText": "Look around first",
       "allowConsoleErrors": true
+    },
+    {
+      "name": "SMS delivery section shows the provider switch, Sender IDs and recent texts (22 Oct 2026)",
+      "path": "/?demo=1#admin/sms",
+      "expectSelector": "#admin-sms-provider, #admin-sms-deliveries",
+      "expectText": "Text messages are sent by"
     }
   ],
   "governance": {

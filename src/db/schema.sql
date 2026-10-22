@@ -349,6 +349,69 @@ CREATE INDEX IF NOT EXISTS idx_phone_auth_failures_created
   ON phone_auth_failures (created_at DESC);
 COMMENT ON TABLE phone_auth_failures IS 'staging:private';
 
+-- Homeroom's own sign-in codes, used when Brevo is the selected SMS
+-- provider (services/sms/otp.js): Brevo carries the text but cannot check
+-- the code. Only hashes are stored — of the session handed to the client
+-- and of `session:code` — and the row expires after ten minutes, allows
+-- five tries and is consumed once. The Firebase path never writes here.
+CREATE TABLE IF NOT EXISTS sms_otp_codes (
+  id            BIGSERIAL PRIMARY KEY,
+  session_hash  VARCHAR(64) NOT NULL UNIQUE CHECK (session_hash ~ '^[0-9a-f]{64}$'),
+  phone_e164    VARCHAR(16) NOT NULL CHECK (phone_e164 ~ '^\+[1-9][0-9]{1,14}$'),
+  code_hash     VARCHAR(64) NOT NULL CHECK (code_hash ~ '^[0-9a-f]{64}$'),
+  attempts      INTEGER NOT NULL DEFAULT 0 CHECK (attempts BETWEEN 0 AND 5),
+  expires_at    TIMESTAMPTZ NOT NULL,
+  consumed_at   TIMESTAMPTZ,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_sms_otp_codes_phone
+  ON sms_otp_codes (phone_e164);
+CREATE INDEX IF NOT EXISTS idx_sms_otp_codes_expires
+  ON sms_otp_codes (expires_at);
+COMMENT ON TABLE sms_otp_codes IS 'staging:private';
+
+-- One row per outbound SMS attempt (services/sms/index.js): what kind, the
+-- provider, the recipient country and Sender ID, the outcome, Brevo's own
+-- code and message id, and the number's last four digits only. Read by
+-- Admin → SMS delivery (routes/admin.js GET /api/admin/sms/deliveries);
+-- reaped after 30 days by firebase-phone-auth.js cleanupExpired.
+CREATE TABLE IF NOT EXISTS sms_deliveries (
+  id                  BIGSERIAL PRIMARY KEY,
+  kind                TEXT NOT NULL CHECK (kind IN ('otp', 'marketing', 'test')),
+  provider            TEXT NOT NULL,
+  country             CHAR(2),
+  sender_id           TEXT,
+  phone_last4         VARCHAR(4) CHECK (phone_last4 ~ '^[0-9]{4}$'),
+  status              TEXT NOT NULL CHECK (status IN ('sent', 'logged', 'refused', 'failed')),
+  error_code          TEXT,
+  provider_code       TEXT,
+  provider_message_id TEXT,
+  attempts            INTEGER NOT NULL DEFAULT 0,
+  delivery_status     TEXT,
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_sms_deliveries_created
+  ON sms_deliveries (created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_sms_deliveries_provider_message
+  ON sms_deliveries (provider, provider_message_id)
+  WHERE provider_message_id IS NOT NULL;
+COMMENT ON TABLE sms_deliveries IS 'staging:private';
+
+-- Marketing-SMS consent, keyed by number so it outlives an account: a
+-- deletion nulls user_id but keeps the opt-out, which is the compliance
+-- record. No screen records opt-ins yet (services/sms/index.js
+-- recordConsent/recordOptOut have no caller UI).
+CREATE TABLE IF NOT EXISTS sms_marketing_consents (
+  phone_e164      VARCHAR(16) PRIMARY KEY CHECK (phone_e164 ~ '^\+[1-9][0-9]{1,14}$'),
+  user_id         INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  opted_in_at     TIMESTAMPTZ,
+  opt_in_source   TEXT,
+  opted_out_at    TIMESTAMPTZ,
+  opt_out_source  TEXT,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+COMMENT ON TABLE sms_marketing_consents IS 'staging:private';
+
 -- Global CLI device authorization and opaque access tokens. These are
 -- deliberately independent from browser sessions and iframe/app identity.
 CREATE TABLE IF NOT EXISTS cli_device_authorizations (
