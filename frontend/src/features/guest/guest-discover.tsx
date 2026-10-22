@@ -217,7 +217,7 @@ export function ProjectLink({ slug, children, ...rest }: { slug: string; childre
   return <a href={projectPath(slug)} onClick={onClick} {...rest}>{children}</a>;
 }
 
-const TRY_SMALL = 'flex h-8 items-center justify-center rounded-full bg-black/5 px-3.5 text-sm font-semibold text-zinc-900 hover:bg-black/10 dark:bg-white/10 dark:text-zinc-100 dark:hover:bg-white/15';
+const TRY_SMALL = 'flex min-h-11 items-center justify-center rounded-full bg-black/5 px-3.5 text-sm font-semibold text-zinc-900 hover:bg-black/10 dark:bg-white/10 dark:text-zinc-100 dark:hover:bg-white/15';
 
 /**
  * A big card. Its picture and its name open the project's page, its votes
@@ -248,7 +248,7 @@ function Card({ app, eager, sort, tryable, inside, onOpenInside }: {
             phone's two narrow columns the words get the room instead. */}
         {app.illustration_url ? <span className="hidden md:block"><GuestIcon app={app} size="sm" eager={eager} /></span> : null}
         <span className="min-w-0 flex-1">
-          <ProjectLink slug={app.slug} data-guest-card-link="" className="block truncate text-[15px] font-[650] text-zinc-900 outline-offset-4 dark:text-zinc-100">
+          <ProjectLink slug={app.slug} data-guest-card-link="" className="block truncate -my-[11px] py-[11px] text-[15px] font-[650] text-zinc-900 outline-offset-4 dark:text-zinc-100">
             {app.name}
           </ProjectLink>
           <CardFacts app={app} sort={sort} />
@@ -285,7 +285,7 @@ function MoreRow({ app, sort, tryable, inside, onOpenInside, last }: {
       data-guest-row={app.slug}
       className={cn('flex min-h-[64px] items-center gap-3 px-3.5 py-2.5', last ? '' : 'shadow-[inset_0_-1px_0_var(--app-sheet-line)]')}
     >
-      <ProjectLink slug={app.slug} className="flex min-w-0 flex-1 items-center gap-3 outline-offset-4">
+      <ProjectLink slug={app.slug} className="flex min-h-11 min-w-0 flex-1 items-center gap-3 outline-offset-4">
         <GuestIcon app={app} />
         <span className="min-w-0 flex-1">
           <span className="block truncate text-[15px] font-[650] text-zinc-900 dark:text-zinc-100">{app.name}</span>
@@ -363,7 +363,7 @@ function Featured({ app, primaryClass, inside, onOpenInside }: {
         <div className="flex items-start gap-3">
           {app.illustration_url ? <GuestIcon app={app} eager /> : null}
           <div className="min-w-0 flex-1">
-            <ProjectLink slug={app.slug} className="block truncate text-[15px] font-[650] text-zinc-900 outline-offset-4 dark:text-zinc-100">
+            <ProjectLink slug={app.slug} className="block truncate -my-[11px] py-[11px] text-[15px] font-[650] text-zinc-900 outline-offset-4 dark:text-zinc-100">
               {app.name}
             </ProjectLink>
             <CardFacts app={app} sort="trending" />
