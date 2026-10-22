@@ -567,20 +567,11 @@ async function storedExplicitReason(pool, kind, id) {
   return rows[0]?.explicit_approval_reason || null;
 }
 
-// When one of the project's admins last voted No on this proposal, in its
-// current approval epoch, or null (#5803). One query; only PRs have votes.
-async function readAdminNoAt(pool, id) {
-  const { rows } = await pool.query(
-    `SELECT ${adminNoAtSql('cs')} AS admin_no_at FROM chat_sessions cs WHERE cs.id = $1`, [id]
-  );
-  return rows.length ? (rows[0].admin_no_at ?? null) : null;
-}
-
-/**
- * The same read for a whole list: Map<sessionId, adminNoAt> with an entry only
- * where an admin has a counted No. One query per list, for the card reads in
- * routes/votes.js (#5803).
- */
+// #5803: when one of the project's admins last voted No on these proposals,
+// in their current approval epoch. Map<sessionId, adminNoAt> with an entry
+// only where an admin has a counted No: one query for a list, for the card
+// reads in routes/votes.js. The deciding gate reads the same value on the
+// statement it already issues (workflow/rules/pr-gate.ts GATE_SQL).
 async function adminNoTimes(pool, sessionIds) {
   const ids = [...new Set((sessionIds || []).map((id) => parseInt(id, 10)).filter(Number.isFinite))];
   const out = new Map();
@@ -623,8 +614,6 @@ async function governedGate(pool, appId, {
   const first = firstVersion !== undefined
     ? !!firstVersion
     : (kind === 'pr' ? await isFirstVersion(pool, id) : false);
-  // #5803: an admin's lone No sets the change aside after a week.
-  const adminNo = kind === 'pr' ? await readAdminNoAt(pool, id) : null;
   if (gov.rules) {
     // #4666: a rules project reads who voted and what its groups are; the
     // author always, because proposing counts as their yes, and whether they
@@ -641,7 +630,7 @@ async function governedGate(pool, appId, {
       explicitApproval, explicitReason: reason, authorId: author, voters,
       authorIsBot: author != null ? await authorIsBot(pool, author) : false,
       rulesFacts: facts, memberCount: facts.memberCount,
-      firstVersion: first, adminNoAt: adminNo,
+      firstVersion: first,
     });
   }
   const electorate = await getElectorate(pool, appId, gov);
@@ -655,6 +644,11 @@ async function governedGate(pool, appId, {
   // longer pass a revision, because the revision was never the right key —
   // a proposal's commit changes for reasons that have nothing to do with
   // whether the approvals still describe it.
+  // #5803: an admin's lone No is not read here. The deciding gate (the
+  // proposal machine's rules/pr-gate.ts) carries it on the statement it
+  // already issues, and the cards read it with adminNoTimes below; adding a
+  // read to this convenience path would change the queries every existing
+  // caller and test pins for no behaviour they use.
   const { yes, no, otherYes } = await qualifiedCounts(
     pool, kind, id, electorate.approverIds, floorOpts
   );
@@ -662,7 +656,7 @@ async function governedGate(pool, appId, {
   // #788: the no-timer modifier rides on top of whatever regime the app
   // configured — see applyNoTimerMerge — and with it the member floor.
   const gate = computeGate(gov, electorate.active, yes, no, openedAt, now, {
-    explicitApproval, otherYes, memberCount, firstVersion: first, adminNoAt: adminNo,
+    explicitApproval, otherYes, memberCount, firstVersion: first,
   });
   if (electorate.adminFallback && gov.approverPolicy === 'invited') {
     log.debug('governance', 'Approver roster empty; full admins acting as approvers', { appId });
