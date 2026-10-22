@@ -24,7 +24,12 @@ test('the card\'s own rules: the same constants the New Needs you card draws wit
   assert.ok(cover, 'model.ts COVER');
   assert.deepEqual([Number(cover[1]), Number(cover[2]), Number(cover[3])],
     [closeups.COVER.share, closeups.COVER.wide, closeups.COVER.pad]);
-  assert.match(flow, new RegExp(`const height = Math\\.round\\(width \\* ${closeups.TITLE_SHAPE}\\);`), 'the title shot\'s shape');
+  // The run's sheet (model.ts composeSheet) draws each plate no larger than
+  // its close-up allows (pieceDensity), so a close-up asked for the title
+  // card's shape can never be stretched there; at worst a plate is drawn a
+  // little smaller than the sheet's room would allow.
+  assert.match(flow, /composeSheet\(item\.screens, \{ w: inner, h: height \}, undefined, inks\)/, 'the sheet the close-ups serve');
+  assert.match(model, /Math\.min\(cellW \/ b\.w, [^;]*dens\(pieces\[i\], b\)\)/, 'its scale is capped by the close-up\'s density');
   assert.deepEqual(closeups.CARDS.map((card) => [card.w, card.dpr]), [[358, 3], [488, 2]]);
 });
 

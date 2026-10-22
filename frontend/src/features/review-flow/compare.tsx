@@ -22,6 +22,15 @@
  *   follows the finger until you let go; the seam does not move while it is
  *   open.
  *
+ * - Opened from the sheet, the change page hands it its framing (`place`)
+ *   and the change to light: for a moment everything else on the screen is
+ *   dimmed round one hard-edged hole (`veil`), drawn on each side's own
+ *   picture so it rides every move and the seam wipes it with its side. Any
+ *   touch on the picture ends it (`onTouch`).
+ * - The after side's close-ups (denser stills of small parts of it) are
+ *   laid over its screen still where they belong, so a change opened from
+ *   a close-up plate, or held under the magnifier, stays sharp.
+ *
  * Arrow keys move the seam, Enter or Space flips.
  */
 
@@ -32,7 +41,7 @@ import { HistoryIcon, SparklesIcon } from '@/components/ui/icons';
 import { RichMessage, useMessages } from '../../lib/i18n/react';
 import {
   densityOf, focusBox, magnet, placeBox, rubberBand, seamStops,
-  type Placement, type ReviewScreen,
+  type Box, type Placement, type ReviewScreen,
 } from './model';
 
 const SWITCH_AT = 0.6;
@@ -87,7 +96,7 @@ export function lensBox(point: { x: number; y: number }, size: { w: number; h: n
   };
 }
 
-export function CompareSlider({ screen, pair, ground, width, height, marks, near = true }: {
+export function CompareSlider({ screen, pair, ground, width, height, marks, near = true, place: given = null, veil = null, onTouch }: {
   screen: ReviewScreen | null;
   /** An older change's capture pair, with no regions: drawn whole. */
   pair?: { before: string | null; after: string | null } | null;
@@ -98,6 +107,12 @@ export function CompareSlider({ screen, pair, ground, width, height, marks, near
   marks: boolean;
   /** Load the images (false while the page is still far away). */
   near?: boolean;
+  /** Where the screen sits, when the page has framed it (model.ts openPlace). */
+  place?: Placement | null;
+  /** The landing dim: the hole it leaves, in screen points, and whether it shows. */
+  veil?: { cut: Box | null; on: boolean } | null;
+  /** A touch on the picture or the switch (it ends the landing dim). */
+  onTouch?: () => void;
 }) {
   const t = useMessages('communities');
   const W = width;
@@ -106,7 +121,7 @@ export function CompareSlider({ screen, pair, ground, width, height, marks, near
   const canCompare = !!before && !!after;
 
   const place: Placement | null = screen && W > 0
-    ? placeBox(screen, focusBox(screen, ['before', 'after'], 16), { w: W, h: height }, densityOf(screen))
+    ? given || placeBox(screen, focusBox(screen, ['before', 'after'], 16), { w: W, h: height }, densityOf(screen))
     : null;
   const stops = screen && place ? seamStops(screen, place, W) : [];
 
@@ -178,6 +193,7 @@ export function CompareSlider({ screen, pair, ground, width, height, marks, near
     return { x: e.clientX - rect.left, y: e.clientY - rect.top };
   };
   const onPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
+    onTouch?.();
     if (!marks || !near || (!before && !after) || (e.target as HTMLElement).closest('[data-rf-switch]')) return;
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     cancelAnimationFrame(anim.current);
@@ -250,6 +266,7 @@ export function CompareSlider({ screen, pair, ground, width, height, marks, near
   /* ── The switch: a press leans the seam in, a tap flips ── */
   const flip = () => {
     if (!canCompare) return;
+    onTouch?.();
     const from = leanFrom.current ?? posRef.current;
     leanFrom.current = null;
     setPressed(false);
@@ -303,6 +320,24 @@ export function CompareSlider({ screen, pair, ground, width, height, marks, near
     ? { width: screen!.width, transform: `translate(${place.tx}px, ${place.ty}px) scale(${place.scale})`, transformOrigin: '0 0', filter: sat >= 0.999 ? 'none' : `grayscale(${(1 - sat).toFixed(3)})` }
     : { width: '100%', filter: sat >= 0.999 ? 'none' : `grayscale(${(1 - sat).toFixed(3)})` });
 
+  // The dim rides the layer's own transform, so it is on from the first frame
+  // of a move and never trails it; it comes on at once and fades out.
+  const veilAt = veil && veil.cut && place && screen ? (
+    <span
+      className="rf-veil-box"
+      style={{ width: screen.width, height: Math.max(screen.before.height, screen.after.height), opacity: veil.on ? 1 : 0, transition: veil.on ? 'none' : undefined }}
+      aria-hidden="true"
+    >
+      <span className="rf-veil" style={{ left: veil.cut.x, top: veil.cut.y, width: veil.cut.w, height: veil.cut.h, borderRadius: 10 / place.scale }} />
+    </span>
+  ) : null;
+
+  const closeups = (which: 'before' | 'after') => (which === 'after' && near && place && screen && screen.closeups
+    ? screen.closeups.map((c) => (
+      <img key={c.url} src={c.url} alt="" draggable={false} className="rf-closeup" style={{ left: c.rect.x, top: c.rect.y, width: c.rect.w, height: c.rect.h }} />
+    ))
+    : null);
+
   const img = (url: string | null, which: 'before' | 'after') => (url && near ? (
     <img
       src={url}
@@ -333,7 +368,7 @@ export function CompareSlider({ screen, pair, ground, width, height, marks, near
       onContextMenu={(e) => e.preventDefault()}
       data-rf-compare=""
     >
-      <div className="rf-layer" style={layerStyle(satAfter)} aria-hidden="true">{img(after || before, after ? 'after' : 'before')}</div>
+      <div className="rf-layer" style={layerStyle(satAfter)} aria-hidden="true" data-rf-cam="">{img(after || before, after ? 'after' : 'before')}{closeups(after ? 'after' : 'before')}{veilAt}</div>
       {canCompare ? (
         <div className="rf-cap rf-cap-after" style={{ opacity: marks ? 1 : 0 }} aria-hidden="true">
           <span className="rf-cap-line">
@@ -344,7 +379,7 @@ export function CompareSlider({ screen, pair, ground, width, height, marks, near
       ) : null}
       {canCompare ? (
         <div className="rf-layer-clip" style={{ clipPath: `inset(0 ${(W - shown).toFixed(2)}px 0 0)` }} aria-hidden="true">
-          <div className="rf-layer" style={layerStyle(satBefore)}>{img(before, 'before')}</div>
+          <div className="rf-layer" style={layerStyle(satBefore)} data-rf-cam="">{img(before, 'before')}{veilAt}</div>
           <div className="rf-cap rf-cap-before" style={{ opacity: marks ? 1 : 0 }}>
             <span className="rf-cap-line">
               <HistoryIcon width={13} height={13} strokeWidth="2.2" />
@@ -395,6 +430,7 @@ export function CompareSlider({ screen, pair, ground, width, height, marks, near
             }}
           >
             {img(lensSide === 'after' ? after || before : before, lensSide)}
+            {closeups(lensSide)}
           </span>
         </span>
       ) : null}

@@ -403,13 +403,13 @@
     "text": "That's everything for now",
     "description": "Quiet line at the end of the new Needs you feed (an experiment), under a check mark, once every waiting change has been shown."
   },
-  "review.page.back": {
-    "text": "Back to Needs you",
-    "description": "Accessible name of the back button in the header of a change's page in the new Needs you flow (an experiment)."
+  "review.end.skipped_one": {
+    "text": "You skipped 1, and it's still in Needs you",
+    "description": "Second quiet line at the end of the new Needs you run (an experiment), under \"That's everything for now\", when the person skipped one change without voting on it. The change keeps waiting."
   },
-  "review.page.more": {
-    "text": "More options",
-    "description": "Accessible name of the ⋯ button in the header of a change's page in the new Needs you flow (an experiment). Opens Open the change page and Copy link."
+  "review.end.skipped_other": {
+    "text": "You skipped {{count}}, and they're still in Needs you",
+    "description": "Second quiet line at the end of the new Needs you run (an experiment), when the person skipped several changes without voting on them. {{count}} is how many. They keep waiting."
   },
   "review.thumbs.label": {
     "text": "Screens",
@@ -418,6 +418,14 @@
   "review.thumbs.one": {
     "text": "Screen {{n}} of {{total}}",
     "description": "Accessible name of one small screen picture under a change's slider in the new Needs you flow (an experiment). {{n}} is its position, {{total}} how many there are."
+  },
+  "review.strip.all_one": {
+    "text": "All {{count}} screen",
+    "description": "Accessible name of the first tile in the strip under a change's picture (new Needs you flow, an experiment): it shows every screen of the change at once. {{count}} is how many screens."
+  },
+  "review.strip.all_other": {
+    "text": "All {{count}} screens",
+    "description": "Accessible name of the first tile in the strip under a change's picture (new Needs you flow, an experiment): it shows every screen of the change at once. {{count}} is how many screens."
   },
   "review.alt.after": {
     "text": "The screen after this change",
@@ -487,6 +495,10 @@
     "text": "Your vote counts once. If most members say yes, it goes live for everyone.",
     "description": "Short line in the vote sheet's help, under Yes and No, saying how a change is decided."
   },
+  "review.unsure.skip": {
+    "text": "Skip for now",
+    "description": "Button at the foot of the vote sheet's help (new Needs you flow, an experiment): moves on to the next change without voting. The skipped change keeps waiting in Needs you."
+  },
   "review.unsure.label": {
     "text": "Help with this change",
     "description": "Accessible name of the list of help rows in the vote sheet (Ask privately, Discussion, Try it, About)."
@@ -527,6 +539,10 @@
     "text": "What it does, who made it",
     "description": "Second line of the About this change help row in the vote sheet."
   },
+  "review.unsure.page.line": {
+    "text": "Its whole page in the project",
+    "description": "Second line of the \"Open the change page\" row in the vote sheet's help (new Needs you flow, an experiment): the row leaves the run for the change's own page in its project."
+  },
   "review.no.placeholder": {
     "text": "One line for {{name}}",
     "description": "Placeholder in the box for a No vote's line, which is optional. {{name}} is the username of the person who made the change."
@@ -559,9 +575,29 @@
     "text": "Undo",
     "description": "Button in the vote sheet after voting: takes the vote back while voting is still open."
   },
-  "review.said.next": {
-    "text": "Next change",
-    "description": "Button in the vote sheet after voting: moves sideways to the next change waiting on you."
+  "review.desc.show": {
+    "text": "What this change does",
+    "description": "Accessible name of the ⌄ button beside the change's title at the top of the new Needs you flow (an experiment): drops the change's full description over the page."
+  },
+  "review.desc.hide": {
+    "text": "Hide what this change does",
+    "description": "Accessible name of the same button while the change's full description is open (new Needs you flow, an experiment): folds it away."
+  },
+  "review.back.label": {
+    "text": "Back to {{place}}",
+    "description": "Accessible name of the back control at the top of the new Needs you flow (an experiment). {{place}} is the place it goes back to: all of the person's communities, or the project's name."
+  },
+  "review.said.nextShort": {
+    "text": "Next",
+    "description": "Button in the vote sheet after voting (new Needs you flow, an experiment): moves sideways to the next change waiting on you. A small count in a ring follows it. Keep it one short word."
+  },
+  "review.said.nextLeft_one": {
+    "text": "Next change, 1 still waiting",
+    "description": "Accessible name of the Next button in the new Needs you flow (an experiment), when one change still waits besides the one on screen. The button shows that number in a ring that fills as the run is decided."
+  },
+  "review.said.nextLeft_other": {
+    "text": "Next change, {{count}} still waiting",
+    "description": "Accessible name of the Next button in the new Needs you flow (an experiment): {{count}} is how many changes still wait besides the one on screen, the number the button shows in a ring that fills as the run is decided."
   },
   "review.said.done": {
     "text": "Done",
@@ -645,19 +681,7 @@
   },
   "review.more.open": {
     "text": "Open the change page",
-    "description": "Menu entry and link: opens the change's full page with everything about it."
-  },
-  "review.more.copy": {
-    "text": "Copy link",
-    "description": "Menu entry that copies a link to the change's page."
-  },
-  "review.more.copied": {
-    "text": "Link copied",
-    "description": "Menu entry's words just after the link to the change's page was copied."
-  },
-  "review.more.cancel": {
-    "text": "Cancel",
-    "description": "Menu entry that closes the ⋯ menu on a change's page."
+    "description": "Row in the vote sheet’s help, and a link in its About and Try it panels (new Needs you flow, an experiment): leaves the run for the change’s own page in its project."
   },
   "review.benefit.fixed": {
     "text": "Fixed",
