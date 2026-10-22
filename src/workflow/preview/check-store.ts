@@ -35,7 +35,8 @@ export async function storeChecks(db: Queryable, sessionId: number, commitSha: s
     // COALESCE so a later retry that fails to collect logs doesn't blank it.
     // `result.platformFault` (classifyTests: the unit suite's Job refused or
     // lost before any code ran) is written with every error, true or false,
-    // so it always describes the error stored.
+    // so it always describes the error stored. `result.retry` replaces the
+    // streak and the backoff with what another rule decided (lostAgain).
     // The exponent is capped: power(2, n) times 120 overflows a double past
     // about 1,017 failures, and the whole write then failed. On 10 Oct 2026
     // proposal 5638's preview, at 1,018, could no longer store its error, so
@@ -52,17 +53,17 @@ export async function storeChecks(db: Queryable, sessionId: number, commitSha: s
               check_error_platform = $6::boolean,
               unit_suite_fresh_sha = CASE WHEN $8::boolean AND lower(unit_suite_fresh_sha) = lower($3::text)
                                           THEN NULL ELSE unit_suite_fresh_sha END,
-              consecutive_check_failures = consecutive_check_failures + 1,
+              consecutive_check_failures = COALESCE($9::int, consecutive_check_failures + 1),
               first_check_failure_at = COALESCE(first_check_failure_at, NOW()),
               last_check_failure_at = NOW(),
-              check_next_retry_at = NOW() + make_interval(
-                secs => LEAST(120 * power(2, LEAST(consecutive_check_failures, 10)), 1800)::double precision)
+              check_next_retry_at = CASE WHEN $9::int IS NOT NULL THEN $10::timestamptz ELSE NOW() + make_interval(
+                secs => LEAST(120 * power(2, LEAST(consecutive_check_failures, 10)), 1800)::double precision) END
         WHERE id = $4
           AND status IN ('active', 'paused', 'promoted', 'merging')
           AND NOT ($7::boolean AND COALESCE(lower(unit_suite_fresh_sha) = lower($3::text), false))
           AND checks_commit_sha IS NOT DISTINCT FROM $3::text`,
       [result.state, serialized.json, commitSha || null, sessionId, errorDetail, result.platformFault === true,
-        unitReused, unitRan]
+        unitReused, unitRan, result.retry?.failures ?? null, result.retry?.nextRetryAt ?? null]
     );
     return write.rowCount !== 0;
   }

@@ -83,7 +83,8 @@ test('storeChecks writes the flag with every error and clears it with every verd
   const [platform, other, passing] = pool.calls;
   assert.match(platform.sql, /check_error_platform = \$6::boolean/);
   assert.equal(platform.params[5], true);
-  assert.match(platform.sql, /consecutive_check_failures = consecutive_check_failures \+ 1/, 'the streak and its backoff run as for any error');
+  assert.match(platform.sql, /consecutive_check_failures = COALESCE\(\$9::int, consecutive_check_failures \+ 1\)/, 'the streak and its backoff run as for any error');
+  assert.deepEqual(platform.params.slice(8), [null, null], 'no other rule\'s retry: the row\'s own streak and backoff');
   assert.match(platform.sql, /LEAST\(120 \* power\(2, LEAST\(consecutive_check_failures, 10\)\), 1800\)/,
     'the exponent is capped, so a long streak cannot overflow the write');
   assert.equal(other.params[5], false, 'any other error writes false, so the flag never outlives its error');

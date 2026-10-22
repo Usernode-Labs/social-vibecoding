@@ -1,11 +1,12 @@
 'use strict';
 
 // The preview machine's own housekeeping (src/workflow/preview/machine.ts,
-// version 7): the deadline it sets itself whenever an outcome leaves none,
+// version 8): the deadline it sets itself whenever an outcome leaves none,
 // which replaced the leader's idle staging GC and its stuck-checks sweeps
 // (IdleDue, ChecksDue), a fired deadline the state cannot use, a promote
-// that re-arms the error lane, and a stale environment the release reports
-// (EnvStale). The fixture is workflow-preview-postgres.test.js's.
+// that re-arms the error lane, a stale environment the release reports
+// (EnvStale), and a preview lost again soon after each rebuild (PreviewLost).
+// The fixture is workflow-preview-postgres.test.js's.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -373,5 +374,124 @@ test('preview machine housekeeping against the full PostgreSQL schema', { timeou
     // The rest is the state this settlement leaves, not the one before it,
     // whose request was still owed: a ChecksDue then would only run nothing.
     assert.equal((await deadline(s))?.[0], 'IdleDue');
+  });
+
+  await t.test('H11 a preview lost again soon after each rebuild is rebuilt with a backoff, then left for a person', async () => {
+    // The preview-runtimes clock reports a vote-backed preview whose runtime
+    // or database is gone every 2 minutes. On 22 Oct 2026 one was rebuilt on
+    // each report for two days: each rebuild served, its checks settled and
+    // its pods lost their database again.
+    const s = await proposal(await app(), { pin: SHA('b1') });
+    await submit(s, SHA('b1'));
+    await settle();
+    const builds = () => work.calls.filter((c) => c.kind === WORK.prepare && c.input.sessionId === s.id).length;
+    const serving = async () => (await instance(s)).data.serving.n;
+    const lose = async () => { await send(s, 'PreviewLost', { attempt: await serving(), detail: 'runtime gone' }); await settle(); };
+    assert.ok((await instance(s)).data.serving.since, 'an attempt records when it started serving');
+
+    // The first loss is rebuilt at once, as before.
+    await lose();
+    let i = await instance(s);
+    assert.deepEqual([i.state, i.data.losses, builds()], ['settled', 1, 2]);
+    assert.equal((await row(s.id)).check_state, 'passing');
+
+    // Lost again as soon: the head's error, rebuilt after the error lane's backoff.
+    for (let losses = 2; losses <= 6; losses++) {
+      const before = builds();
+      await lose();
+      i = await instance(s);
+      assert.deepEqual([i.state, i.data.losses, builds()], ['failed', losses, before], `loss ${losses}: not rebuilt yet`);
+      const [type, at] = await deadline(s);
+      assert.equal(type, 'RetryDue');
+      assert.ok(near(at, Date.now() + Math.min(120 * 2 ** (losses - 2), 1800) * 1000), `loss ${losses}: its backoff`);
+      // The row says what the machine will do: these failures, this retry.
+      const r = await row(s.id);
+      assert.deepEqual([r.check_state, r.consecutive_check_failures], ['error', losses - 1]);
+      assert.equal(new Date(r.check_next_retry_at).getTime(), at);
+      await fire(s);
+      i = await instance(s);
+      assert.deepEqual([i.state, builds()], ['settled', before + 1], `loss ${losses}: rebuilt once its retry is due`);
+    }
+    const notes = async () => (await pool.query(
+      `SELECT count(*)::int AS n FROM chat_session_messages WHERE session_id = $1 AND metadata->>'checkError' = 'true'`, [s.id])).rows[0].n;
+    assert.equal(await notes(), 0, 'the author is not told while rebuilds are to come');
+
+    // Past the cap (6 here): left for a person, and told.
+    const before = builds();
+    await lose();
+    i = await instance(s);
+    assert.deepEqual([i.state, i.data.losses, builds()], ['failed', 7, before]);
+    assert.notEqual((await deadline(s))?.[0], 'RetryDue');
+    let r = await row(s.id);
+    assert.match(r.check_error_detail, /stopped soon after it started, 7 times in a row/);
+    assert.deepEqual([r.consecutive_check_failures, r.check_next_retry_at], [6, null], 'no retry is coming, and the row says so');
+    assert.equal(await notes(), 1);
+
+    // A person's "Run checks again" builds the lost preview again rather than
+    // checking it, and counts its losses afresh.
+    await send(s, 'RecheckRequested', { reason: 'manual' }, { kind: 'route' });
+    await settle();
+    i = await instance(s);
+    assert.deepEqual([i.state, i.data.losses, i.data.serving.lost ?? false, builds()], ['settled', 0, false, before + 1]);
+    assert.equal((await row(s.id)).check_state, 'passing');
+
+    // So does their Preview, which reports the counted loss again.
+    await lose();
+    await lose();
+    assert.deepEqual([(await instance(s)).state, (await instance(s)).data.losses], ['failed', 2]);
+    await send(s, 'PreviewLost', { attempt: await serving(), detail: 'preview-click' });
+    await settle();
+    i = await instance(s);
+    assert.deepEqual([i.state, i.data.losses, builds()], ['settled', 0, before + 3]);
+
+    // A preview that served for longer counts its losses afresh.
+    const c = await pool.connect();
+    try {
+      await c.query(`BEGIN; SET LOCAL app.wf_writer = 'transition'`);
+      await c.query(`UPDATE wf_instances SET data = jsonb_set(data, '{serving,since}', to_jsonb($3::text))
+                      WHERE machine = $1 AND key = $2`, [MACHINE, sessionKey(s.id), new Date(Date.now() - 60 * 60 * 1000).toISOString()]);
+      await c.query('COMMIT');
+    } finally { c.release(); }
+    await lose();
+    i = await instance(s);
+    assert.deepEqual([i.state, i.data.losses, builds()], ['settled', 1, before + 4]);
+  });
+
+  await t.test('H12 a rebuild that fails after repeated losses retries as the row says it will', async () => {
+    // What the connector, the merge gate and the vote route read
+    // (staging-recovery.errorWithinAutoRetries, check_next_retry_at) and the
+    // machine's own RetryDue are one decision, loss by loss and failed
+    // build by failed build, until both stop at the cap (6 here).
+    const { errorWithinAutoRetries } = require('../src/services/staging-recovery');
+    const s = await proposal(await app(), { pin: SHA('c1') });
+    await submit(s, SHA('c1'));
+    await settle();
+    const lose = async () => {
+      await send(s, 'PreviewLost', { attempt: (await instance(s)).data.serving.n, detail: 'runtime gone' });
+      await settle();
+    };
+    const agree = async (what) => {
+      const r = await row(s.id);
+      const due = await deadline(s);
+      const retrying = due?.[0] === 'RetryDue';
+      assert.equal((await instance(s)).data.streak, r.consecutive_check_failures, `${what}: one count`);
+      assert.equal(errorWithinAutoRetries(r, { maxAutoRetries: 6 }), retrying, `${what}: one answer to "is a retry coming"`);
+      if (retrying) assert.ok(near(new Date(r.check_next_retry_at).getTime(), due[1]), `${what}: one deadline`);
+      return retrying;
+    };
+    for (let k = 0; k < 3; k++) {
+      await lose();
+      if ((await instance(s)).state === 'failed') { assert.equal(await agree(`loss ${k + 1}`), true); await fire(s); }
+    }
+    await lose();
+    assert.equal((await instance(s)).data.losses, 4);
+    assert.equal(await agree('loss 4'), true);
+    // The rebuilds fail now: each counts on from the losses.
+    work.answer.set(WORK.prepare, { ok: false, detail: 'Container exited with code 1', infrastructure: false });
+    let failed = 0;
+    while (await agree(`failed rebuild ${failed}`)) { await fire(s); failed++; }
+    work.answer.set(WORK.prepare, prepareOk);
+    assert.equal(failed, 3, 'losses 2 to 4 counted three failures; three failed rebuilds reach the cap of 6');
+    assert.equal((await row(s.id)).consecutive_check_failures, 6);
   });
 });
