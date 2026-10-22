@@ -784,6 +784,7 @@ async function linkChange(pool, { agentSessionId, userId, change }) {
 // How an archive reason reads to the person whose conversation it was.
 function outcomeForArchiveReason(reason) {
   if (reason === 'auto-rejected') return 'rejected';
+  if (reason === 'admin-no') return 'admin-no';
   if (reason === 'proposal-replaced') return 'replaced';
   if (reason === 'manual') return 'withdrawn';
   return 'closed';

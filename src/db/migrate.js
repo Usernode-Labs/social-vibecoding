@@ -100,6 +100,9 @@ async function migrate(config) {
   // Must run AFTER seedStagingMergedPrs — its tags hang off those fixtures.
   await seedStagingSmallChangeTags(pool, config);
   await seedStagingMyOpenPr(pool, config);
+  // #5803: a change an admin voted No on, nobody voting Yes, so the card's
+  // week-long "Set aside in …" pill is reviewable on a fresh staging copy.
+  await seedStagingAdminNoPr(pool, config);
   await seedStagingImportedPrProposal(pool, config);
   await seedStagingChecksAdvisoryCard(pool, config);
   await seedStagingExternalAgentProposal(pool, config);
@@ -11685,6 +11688,89 @@ async function seedStagingHeadlessFixtures(pool, config) {
 // fill, matching the merged-PR fixture pattern. chat_sessions is
 // staging:private (schema-only in staging), so this is the only way the
 // state is reachable; gated on staging + idempotent by branch name.
+// #5803: an admin's lone No starts a one-week countdown on a change. One
+// fixture on the self-app shows it: a promoted change with two app admins,
+// one of whom voted No two days ago and nobody voted Yes, so its card reads
+// "Set aside in 5d" where it read "0 of 1 approval". The two admins are
+// fake people; the author is the capture account the shots sign in as, so
+// the change is theirs to see under Waiting for approval. Idempotent (the
+// branch name), obviously fake, strictly a no-op outside staging.
+async function seedStagingAdminNoPr(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  const { rows: appRows } = await pool.query(
+    'SELECT id FROM apps WHERE slug = $1',
+    [config.selfAppSlug]
+  );
+  const appId = appRows[0]?.id;
+  if (!appId) {
+    log.warn('db', 'Staging admin-No fixture skipped: self-app row missing', {
+      slug: config.selfAppSlug,
+    });
+    return;
+  }
+
+  // The fake people: the author (the capture account, when it exists) and
+  // two app admins, one of whom votes No.
+  const { rows: captureRows } = await pool.query(
+    "SELECT id FROM users WHERE username = 'usernode-capture' LIMIT 1"
+  );
+  if (!captureRows.length) {
+    log.warn('db', 'Staging admin-No fixture skipped: capture user missing');
+    return;
+  }
+  const authorId = captureRows[0].id;
+  await pool.query(
+    `INSERT INTO users (id, username, password)
+     VALUES
+       (900320, 'staging-demo-admin-no', 'staging-demo-not-a-login'),
+       (900321, 'staging-demo-admin-yes', 'staging-demo-not-a-login')
+     ON CONFLICT DO NOTHING`
+  );
+  await pool.query(
+    `INSERT INTO app_admins (app_id, user_id)
+     VALUES ($1, 900320), ($1, 900321)
+     ON CONFLICT (app_id, user_id) DO NOTHING`,
+    [appId]
+  );
+
+  const branch = 'staging-fixture/admin-no';
+  let sessionId;
+  const { rows: existing } = await pool.query(
+    'SELECT id FROM chat_sessions WHERE app_id = $1 AND branch_name = $2 LIMIT 1',
+    [appId, branch]
+  );
+  if (existing.length) {
+    sessionId = existing[0].id;
+  } else {
+    const { rows } = await pool.query(
+      `INSERT INTO chat_sessions
+         (app_id, user_id, branch_name, pr_number, pr_title, pr_summary_md, status,
+          promoted_at, created_at)
+       VALUES
+         ($1, $2, $3, 9210, '[staging fixture] An admin voted No, and nobody said Yes',
+          $4, 'promoted', NOW() - INTERVAL '3 days', NOW() - INTERVAL '4 days')
+       RETURNING id`,
+      [appId, authorId, branch,
+       'In plain terms: this proposed change shows what a change looks like after one of the project\'s admins voted No and nobody has voted Yes yet.']
+    );
+    sessionId = rows[0].id;
+  }
+
+  // The admin's No, two days old: the week has five days left to run. No Yes
+  // beside it, so the countdown is armed.
+  await pool.query(
+    `INSERT INTO pr_votes (session_id, user_id, vote, approval_epoch, created_at)
+     SELECT $1, 900320, 'no', cs.approval_epoch, NOW() - INTERVAL '2 days'
+       FROM chat_sessions cs WHERE cs.id = $1
+     ON CONFLICT (session_id, user_id) DO UPDATE
+       SET vote = 'no', approval_epoch = EXCLUDED.approval_epoch, created_at = EXCLUDED.created_at`,
+    [sessionId]
+  );
+
+  log.info('db', 'Staging admin-No fixture seeded', { appId, sessionId });
+}
+
 async function seedStagingMyOpenPr(pool, config) {
   if (process.env.USERNODE_ENV !== 'staging') return;
 

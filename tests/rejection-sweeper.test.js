@@ -107,4 +107,20 @@ test('the proposal machine\'s review check closes a voted-down proposal with the
   const kept = run(mergeGate(20, 7, 12, opened, openedMs + 60 * DAY));
   assert.equal(kept.next.name, 'in_review');
   assert.ok(!(kept.writes || []).some((w) => w.type === 'line'));
+
+  // #5803: a gate armed by an admin's lone No (applyAdminNo) closes as
+  // 'admin-no', with its own line: set aside, never "voted down".
+  const adminNo = run({
+    ...mergeGate(20, 0, 1, opened, openedMs),
+    rejectionArmed: true,
+    rejectionEndsAt: new Date(openedMs + 7 * DAY).toISOString(),
+    rejectable: true,
+    adminNo: true,
+  });
+  assert.equal(adminNo.next.name, 'closed');
+  assert.equal(adminNo.next.data.reason, 'admin-no');
+  const adminLines = adminNo.writes.filter((w) => w.type === 'line');
+  assert.equal(adminLines.length, 1);
+  assert.match(adminLines[0].content, /was set aside: an admin voted No and nobody voted Yes within a week/);
+  assert.doesNotMatch(adminLines[0].content, /more No than Yes/);
 });

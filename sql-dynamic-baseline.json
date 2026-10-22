@@ -1174,9 +1174,23 @@
     {
       "source": "src/services/governance.js",
       "kind": "structural-template",
+      "fingerprint": "00a0deb9c40c8b970d1a",
+      "count": 1,
+      "preview": "`SELECT cs.id, ${adminNoAtSql('cs')} AS admin_no_at FROM chat_sessions cs WHERE cs.id = ANY($1::int[])`"
+    },
+    {
+      "source": "src/services/governance.js",
+      "kind": "structural-template",
       "fingerprint": "4dec172022c4fb9d2f64",
       "count": 1,
       "preview": "`SELECT COUNT(*) as cnt FROM ${table} WHERE ${keyCol} = $1 AND vote = '${yesVal}'${epochClause}`"
+    },
+    {
+      "source": "src/services/governance.js",
+      "kind": "structural-template",
+      "fingerprint": "5759406a7be9e9e00ea9",
+      "count": 1,
+      "preview": "`SELECT ${adminNoAtSql('cs')} AS admin_no_at FROM chat_sessions cs WHERE cs.id = $1`"
     },
     {
       "source": "src/services/governance.js",

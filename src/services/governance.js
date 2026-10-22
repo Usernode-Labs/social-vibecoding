@@ -62,6 +62,10 @@ const governanceRules = require('./governance-rules');
 // goes live without a vote (the gate's own rule is governance-gate.ts
 // applyFirstVersion).
 const { firstVersionSql, isFirstVersion } = require('./first-version-rule');
+// #5803: an admin's lone No starts the week-long takedown. The SQL lives with
+// the proposal gate so the deciding read and the display reads arm the same
+// clock.
+const { adminNoAtSql } = require('../workflow/rules/pr-gate.ts');
 
 // Lazy accessor rather than a top-level destructure: tests stub
 // services/active-users via require.cache, and this module may be
@@ -563,6 +567,35 @@ async function storedExplicitReason(pool, kind, id) {
   return rows[0]?.explicit_approval_reason || null;
 }
 
+// When one of the project's admins last voted No on this proposal, in its
+// current approval epoch, or null (#5803). One query; only PRs have votes.
+async function readAdminNoAt(pool, id) {
+  const { rows } = await pool.query(
+    `SELECT ${adminNoAtSql('cs')} AS admin_no_at FROM chat_sessions cs WHERE cs.id = $1`, [id]
+  );
+  return rows.length ? (rows[0].admin_no_at ?? null) : null;
+}
+
+/**
+ * The same read for a whole list: Map<sessionId, adminNoAt> with an entry only
+ * where an admin has a counted No. One query per list, for the card reads in
+ * routes/votes.js (#5803).
+ */
+async function adminNoTimes(pool, sessionIds) {
+  const ids = [...new Set((sessionIds || []).map((id) => parseInt(id, 10)).filter(Number.isFinite))];
+  const out = new Map();
+  if (!ids.length) return out;
+  const { rows } = await pool.query(
+    `SELECT cs.id, ${adminNoAtSql('cs')} AS admin_no_at
+       FROM chat_sessions cs WHERE cs.id = ANY($1::int[])`,
+    [ids],
+  );
+  for (const r of rows) {
+    if (r.admin_no_at != null) out.set(parseInt(r.id, 10), r.admin_no_at);
+  }
+  return out;
+}
+
 // One-call convenience: the governed merge gate for a single proposal.
 // `kind` = 'pr' (chat_sessions + pr_votes) | 'issue' (issues +
 // issue_votes); `id` is the session/issue id; `openedAt` the clock
@@ -590,6 +623,8 @@ async function governedGate(pool, appId, {
   const first = firstVersion !== undefined
     ? !!firstVersion
     : (kind === 'pr' ? await isFirstVersion(pool, id) : false);
+  // #5803: an admin's lone No sets the change aside after a week.
+  const adminNo = kind === 'pr' ? await readAdminNoAt(pool, id) : null;
   if (gov.rules) {
     // #4666: a rules project reads who voted and what its groups are; the
     // author always, because proposing counts as their yes, and whether they
@@ -606,7 +641,7 @@ async function governedGate(pool, appId, {
       explicitApproval, explicitReason: reason, authorId: author, voters,
       authorIsBot: author != null ? await authorIsBot(pool, author) : false,
       rulesFacts: facts, memberCount: facts.memberCount,
-      firstVersion: first,
+      firstVersion: first, adminNoAt: adminNo,
     });
   }
   const electorate = await getElectorate(pool, appId, gov);
@@ -627,7 +662,7 @@ async function governedGate(pool, appId, {
   // #788: the no-timer modifier rides on top of whatever regime the app
   // configured — see applyNoTimerMerge — and with it the member floor.
   const gate = computeGate(gov, electorate.active, yes, no, openedAt, now, {
-    explicitApproval, otherYes, memberCount, firstVersion: first,
+    explicitApproval, otherYes, memberCount, firstVersion: first, adminNoAt: adminNo,
   });
   if (electorate.adminFallback && gov.approverPolicy === 'invited') {
     log.debug('governance', 'Approver roster empty; full admins acting as approvers', { appId });
@@ -761,4 +796,5 @@ module.exports = {
   getElectorate,
   viewerDecides,
   governedGate,
+  adminNoTimes,
 };
