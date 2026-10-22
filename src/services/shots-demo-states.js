@@ -1064,9 +1064,10 @@ const STATES = [
     // the drill-down finds a player by their Discord handle alone
     // (event-standings.js fetchEventLeaderboardRows: a whole season has no
     // one event to find an onchain account on), and the staging seeds'
-    // players have only an email, so every row's drill-down said "No
-    // identifier available for this row." Three players entered
-    // for the season get a handle, as a real player has one, and two
+    // players have only an email. #5807 gave every row a server-issued
+    // `row_ref`, so a player with no handle opens the same drill-down like
+    // anyone else; three players entered for the season still get a handle,
+    // as a real player has one, and two
     // activities each on the event, written as a partner records them
     // (routes/topochain/partner.js POST /user-activities: on one of the
     // event's challenges, typed by its category, from `api`). Activities
@@ -1127,7 +1128,7 @@ const STATES = [
       const handles = STANDINGS_PLAYERS.map(([, handle]) => handle);
       return {
         shows: [{
-          state: `The Leaderboard's season standings: the rows of ${handles.join(', ')} each open a drill-down listing that player's recorded point activities and when each happened. The other rows, yours among them, have no identifier, and their drill-down says so.`,
+          state: `The Leaderboard's season standings: the rows of ${handles.join(', ')} each open a drill-down listing that player's recorded point activities and when each happened. The other rows, yours among them, open the same drill-down and list whatever they have recorded.`,
           path: '/#leaderboard/topochain',
         }],
         alsoFor: ['read_only_admin', 'full_admin'],

@@ -90,7 +90,10 @@ async function serveStandings(t, pool) {
     for (const file of ['../src/routes/topochain/public', '../src/middleware/topochain-auth']) {
       delete require.cache[require.resolve(file)];
     }
-    router = require('../src/routes/topochain/public').topochainPublicRoutes({});
+    // #5807: with a secret, as a deployment has, so rows carry `row_ref`.
+    router = require('../src/routes/topochain/public').topochainPublicRoutes({
+      sessionSecret: 'shots-demo-row-ref-secret',
+    });
   } finally {
     poolModule.getPool = original;
   }
@@ -658,6 +661,16 @@ test('each demo state reads back the way its screen needs it', { timeout: 180000
   assert.deepEqual(named.map((row) => row.display_name).sort(),
     ['shots_fixture_ada', 'shots_fixture_bo', 'shots_fixture_cy']);
   assert.ok(board.data.leaderboard.some((row) => !row.discord && row.display_name), 'participant 3 is left alone');
+  // #5807: a player the state gave no handle still carries a row_ref, and
+  // the drill-down the pane asks for with it opens (nothing recorded for
+  // them, so the list is empty — not the "No identifier" line).
+  for (const row of board.data.leaderboard.filter((r) => !r.discord)) {
+    assert.match(row.row_ref, /^[A-Za-z0-9_-]{22}$/, row.display_name);
+    const drill = await (await fetch(`${origin}/api/v4/leaderboard/user-activities?season_event_id=900501`
+      + `&participant_ref=${encodeURIComponent(row.row_ref)}`)).json();
+    assert.equal(drill.success, true, row.display_name);
+    assert.deepEqual(drill.data, []);
+  }
   for (const row of named) {
     const drill = await (await fetch(`${origin}/api/v4/leaderboard/user-activities?season_event_id=900501`
       + `&participant_identifier=${encodeURIComponent(row.bech32m || row.discord)}`)).json();

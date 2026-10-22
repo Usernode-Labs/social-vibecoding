@@ -661,6 +661,10 @@ function withInjectedPool(mockPool, fn) {
 
 let server;
 let base;
+// #5807: the same router mounted with a session secret, so row refs exist.
+let secretServer;
+let secretBase;
+const SECRET = 'test-session-secret-5807';
 
 test.before(async () => {
   // NOTE: withMockPool's callback is synchronous (it only sets up the
@@ -685,11 +689,32 @@ test.before(async () => {
     app.use(topochainPublicRoutes({ databaseUrl: 'postgres://fake/fake' }));
     server = app.listen(0);
   });
-  await new Promise((r) => server.once('listening', r));
+  // #5807: a SECOND copy of the same router, this one with the session
+  // secret a real deployment has, so its rows carry `row_ref`. The first
+  // copy stays secret-less to pin the null case.
+  withMockPool(({ topochainPublicRoutes }) => {
+    const app = express();
+    app.use((req, _res, next) => {
+      if (req.headers['x-test-user']) req.user = { id: Number(req.headers['x-test-user']), username: 'member', isAdmin: false };
+      next();
+    });
+    app.use(topochainPublicRoutes({ databaseUrl: 'postgres://fake/fake', sessionSecret: SECRET }));
+    secretServer = app.listen(0);
+  });
+  // Both listeners are attached BEFORE either is awaited: a server whose
+  // `listening` event fires in the gap between the two awaits would
+  // otherwise be waited on forever.
+  await Promise.all([server, secretServer].map((s) => (s.listening
+    ? Promise.resolve()
+    : new Promise((r) => s.once('listening', r)))));
   base = `http://127.0.0.1:${server.address().port}`;
+  secretBase = `http://127.0.0.1:${secretServer.address().port}`;
 });
 
-test.after(() => server && server.close());
+test.after(() => {
+  if (server) server.close();
+  if (secretServer) secretServer.close();
+});
 
 async function get(path, opts) { return fetch(`${base}${path}`, opts); }
 async function postJson(path, body) {
@@ -1055,6 +1080,118 @@ test('GET /leaderboard/user-activities: missing params -> 422', async () => {
   const body = await res.json();
   assert.ok(body.details.season_event_id);
   assert.ok(body.details.participant_identifier);
+});
+
+// ─── #5807: the opaque row reference ──────────────────────────────────
+//
+// The season board builds its rows with `wallet_address: null, bech32m:
+// null`, so a player with no Discord handle had no identifier the
+// activities route accepted and their row said "No identifier available
+// for this row." Every row now carries a server-issued `row_ref` instead.
+
+const { rowRef, ROW_REF_RE } = require('../src/services/topochain/row-ref');
+
+test('#5807: every board row and the viewer row carry a stable, opaque 22-character row_ref', async () => {
+  const first = await (await fetch(`${secretBase}/api/v4/leaderboard?season_event_id=100`,
+    { headers: { 'x-test-user': '4' } })).json();
+  const second = await (await fetch(`${secretBase}/api/v4/leaderboard?season_event_id=100`,
+    { headers: { 'x-test-user': '4' } })).json();
+
+  const rows = first.data.leaderboard;
+  assert.ok(rows.length >= 3);
+  const byRef = new Set();
+  for (const row of rows) {
+    assert.match(row.row_ref, ROW_REF_RE, '22 base64url characters');
+    assert.ok(!/^\d+$/.test(row.row_ref), 'never the numeric id');
+    assert.notEqual(row.row_ref, row.discord);
+    assert.notEqual(row.row_ref, row.identifier);
+    byRef.add(row.row_ref);
+  }
+  assert.equal(byRef.size, rows.length, 'one per person, not a shared code');
+  assert.deepEqual(second.data.leaderboard.map((r) => r.row_ref), rows.map((r) => r.row_ref),
+    'the same on a second call');
+
+  assert.ok(first.data.viewer_row, 'dave is on the board');
+  assert.match(first.data.viewer_row.row_ref, ROW_REF_RE);
+  assert.equal(first.data.viewer_row.row_ref,
+    rows.find((r) => r.is_viewer).row_ref, 'the You row carries its own person\'s code');
+
+  // The code is a person's, not a board's: the season board issues the same
+  // one for the same person.
+  const season = await (await fetch(`${secretBase}/api/v4/leaderboard?season_event_id=103`)).json();
+  const dave = season.data.leaderboard.find((r) => r.row_ref === rowRef(4, SECRET));
+  assert.equal(dave.row_ref, first.data.viewer_row.row_ref, 'stable across events');
+});
+
+test('#5807: a server without a session secret issues no ref (and keeps the old row shape)', async () => {
+  const body = await (await get('/api/v4/leaderboard?season_event_id=100')).json();
+  for (const row of body.data.leaderboard) assert.equal(row.row_ref, null);
+});
+
+test('#5807: participant_ref lists the same activities as the identifier path', async () => {
+  const board = await (await fetch(`${secretBase}/api/v4/leaderboard?season_event_id=100`)).json();
+  const dave = board.data.leaderboard.find((r) => r.row_ref === rowRef(4, SECRET));
+  assert.ok(dave, 'dave is on the board');
+  const byRef = await (await fetch(`${secretBase}/api/v4/leaderboard/user-activities`
+    + `?season_event_id=100&participant_ref=${encodeURIComponent(dave.row_ref)}`)).json();
+  const byIdentifier = await (await fetch(`${secretBase}/api/v4/leaderboard/user-activities`
+    + '?season_event_id=100&participant_identifier=dave@example.com')).json();
+  assert.equal(byIdentifier.data.length, 1);
+  assert.deepEqual(byRef.data, byIdentifier.data);
+  assert.equal(byRef.data[0].points, 150);
+});
+
+test('#5807: a season-board row with no wallet and no Discord handle resolves its activities', async () => {
+  // carol (user 3): telegram only, no discord — the exact row shape the
+  // issue reported. The season board gives her no wallet and no handle,
+  // which is why the client had nothing to ask with before this.
+  const board = await (await fetch(`${secretBase}/api/v4/leaderboard?season_event_id=103`)).json();
+  const carol = board.data.leaderboard.find((r) => r.display_name === 'Carol Display');
+  assert.ok(carol, 'carol is on the season board');
+  assert.equal(carol.bech32m, null);
+  assert.equal(carol.discord, null);
+  assert.match(carol.row_ref, ROW_REF_RE);
+
+  // She has nothing recorded for the season event: the existing empty list.
+  const empty = await fetch(`${secretBase}/api/v4/leaderboard/user-activities`
+    + `?season_event_id=103&participant_ref=${encodeURIComponent(carol.row_ref)}`);
+  assert.equal(empty.status, 200);
+  assert.deepEqual((await empty.json()).data, []);
+
+  // And the same person's code on a regular event lists what she has there.
+  const regular = await (await fetch(`${secretBase}/api/v4/leaderboard?season_event_id=100`)).json();
+  const carol100 = regular.data.leaderboard.find((r) => r.display_name === 'Carol Display');
+  const listed = await (await fetch(`${secretBase}/api/v4/leaderboard/user-activities`
+    + `?season_event_id=100&participant_ref=${encodeURIComponent(carol100.row_ref)}`)).json();
+  assert.equal(listed.success, true);
+  assert.deepEqual(listed.data, []);
+});
+
+test('#5807: every way a ref can fail gives the same literal 404, and a missing param still 422s', async () => {
+  const notFound = { success: false, error: 'Participant not found', data: [] };
+  const ask = (query) => fetch(`${secretBase}/api/v4/leaderboard/user-activities?season_event_id=${query}`);
+
+  const cases = [
+    ['100&participant_ref=not-a-real-ref', 'malformed'],
+    ['100&participant_ref=AAAAAAAAAAAAAAAAAAAAAA', 'well-formed but unknown'],
+    // grace (user 7) is a platform account on no board at all.
+    [`100&participant_ref=${rowRef(7, SECRET)}`, 'a user not on this board'],
+    [`102&participant_ref=${rowRef(4, SECRET)}`, 'an internal event'],
+    [`101&participant_ref=${rowRef(4, SECRET)}`, 'a hidden leaderboard'],
+  ];
+  for (const [query, why] of cases) {
+    const res = await ask(query);
+    assert.equal(res.status, 404, why);
+    assert.deepEqual(await res.json(), notFound, why);
+  }
+
+  // The season board's ref is resolvable on the season board only for
+  // someone listed there; a ref of a person on it works, which the test
+  // above proves. Missing both params keeps the existing 422 detail key.
+  const missing = await ask('100');
+  assert.equal(missing.status, 422);
+  assert.deepEqual((await missing.json()).details,
+    { participant_identifier: ['The participant_identifier field is required.'] });
 });
 
 // ─── GET /season-events ─────────────────────────────────────────────

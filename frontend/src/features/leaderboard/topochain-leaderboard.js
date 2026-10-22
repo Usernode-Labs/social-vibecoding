@@ -40,9 +40,11 @@
 // That is by design (a public standings page should not leak which
 // database row a rank belongs to) and this screen must not route around
 // it. So the three calls are wired against what a row ACTUALLY carries:
-//   - activities: participant_identifier = the row's bech32m address
-//     (falls back to discord) — /leaderboard/user-activities resolves
-//     that to a user server-side without ever handing the id back.
+//   - activities: participant_ref = the row's server-issued `row_ref`
+//     (#5807), which /leaderboard/user-activities resolves against that
+//     event's own board. The wallet address (bech32m) and then discord
+//     stay as fallbacks; the server resolves either without ever handing
+//     a numeric id back.
 //   - epoch breakdown: wallet_address = the row's public_key wallet form.
 //   - profile: /users/:id/profile needs a real numeric id, which no public
 //     endpoint derives from an identifier. The one legitimate numeric id
@@ -580,12 +582,19 @@ const TopochainLeaderboard = {
     TopochainLeaderboard._renderDrill();
 
     const eventId = TopochainLeaderboard._eventId();
+    // #5807: `row_ref` is the server-issued code every row carries, so a
+    // season row with no wallet and no Discord handle (most of them) opens
+    // its activities like any other. The wallet and handle stay as
+    // fallbacks for a board served before the code existed.
+    const ref = row.row_ref || null;
     const identifier = row.bech32m || row.discord || null;
+    const query = ref
+      ? `&participant_ref=${encodeURIComponent(ref)}`
+      : `&participant_identifier=${encodeURIComponent(identifier)}`;
 
-    if (identifier && eventId != null) {
+    if ((ref || identifier) && eventId != null) {
       TopochainLeaderboard.fetchJson(
-        `/api/v4/leaderboard/user-activities?season_event_id=${encodeURIComponent(eventId)}`
-        + `&participant_identifier=${encodeURIComponent(identifier)}`
+        `/api/v4/leaderboard/user-activities?season_event_id=${encodeURIComponent(eventId)}${query}`
       ).then(({ ok, data }) => {
         if (TopochainLeaderboard._drillRow !== row) return; // navigated away
         if (ok && data?.success) {
