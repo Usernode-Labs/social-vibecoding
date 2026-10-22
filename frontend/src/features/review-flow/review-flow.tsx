@@ -6,21 +6,20 @@
  * ── The run ─────────────────────────────────────────────────────────────
  * Needs you opens straight on the first change waiting on you, across your
  * communities, in the feed's own order (GET /api/workshop/needs-feed). There
- * is no list to pick from. The page sits between the shell's own header and
- * its tab bar, and the header says where you are the way it does on a
- * project: "Needs you" and, as its place tag, the community of the change on
- * screen (../header/review-run-store.js); its back arrow leaves the run. Next
+ * is no list to pick from. On a phone the page covers the shell's header
+ * with a light bar of its own: Back, the change's title on one line, and ⌄.
+ * Back always leaves the run, for Communities or the project's hub. Next
  * PUSHES the next change in from the side; it goes only to a change you have
- * not voted on or skipped, and carries how many are left after this one, in
- * a ring that fills with how much of the run you have decided (the same
- * number the Communities tab's badge shows). With none left the button says
- * Done, and Done takes the page down onto the end: that nothing else is
+ * not voted on or skipped, and carries how many are left after this one (the
+ * same number the Communities tab's badge shows). With none left the button
+ * says Done, and Done takes the page down onto the end: that nothing else is
  * waiting, and how many you skipped.
  *
  * ── A change's page ─────────────────────────────────────────────────────
- * It leads with what the change does, in one or two lines (what the open
- * screen shows, once one is open). Its title is not on the page: it is the
- * page's accessible name and the first thing About this change says.
+ * Under the bar, what the change does, in one or two lines of body text
+ * (what the open screen shows, once one is open). ⌄, the title or that line
+ * opens the change in full: the bar grows to the whole title, and a card
+ * under it holds the description and the way on to the change's page.
  *
  * Its picture is its sheet (model.ts composeSheet): every screen it shows,
  * one plate each, on the ground that says how much it changes. A tap on a
@@ -684,11 +683,9 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
   // The next change's stills are read ahead, so it lands at once.
   useEffect(() => { if (nextItem) readInks(nextItem.screens); }, [nextItem]);
   // How far the run is: the changes still waiting after this one (Next's
-  // number, and the Communities badge's), and the share already decided
-  // (its ring).
+  // number, and the Communities badge's).
   const changes = run.filter((it) => it.kind !== 'governance');
   const after = item ? changes.filter((it) => it.key !== item.key && !passed[it.key]).length : 0;
-  const decided = changes.length ? changes.filter((it) => votes[it.key]).length / changes.length : 0;
 
   // The bar: Back, the change's title and ⌄. ⌄, the title or the line under
   // the bar opens the change in full: the bar grows to the whole title, and
@@ -794,7 +791,6 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
           hasNext={next >= 0}
           maxHeight={Math.max(240, (typeof window !== 'undefined' ? window.innerHeight : 800) * 0.82)}
           left={after}
-          decided={decided}
           onSkip={skip}
         />
       </div>

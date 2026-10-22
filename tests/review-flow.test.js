@@ -14,12 +14,13 @@
 //      never moves what it compares; the seam resists past an edge and
 //      settles softly on the edges of what changed.
 //   3. THE RUN AND THE VOTE. No feed: the page opens on the first change,
-//      under the shell's own header, which names "Needs you" and the
-//      change's community. Votes go through the platform's castVote with the
-//      epoch; a No counts in one tap and may carry a line after; your own
-//      answer again goes through retractVote; Next moves to the next change
-//      without a vote and carries how many still wait, in a ring that fills
-//      as the run is decided; Done on the last one shows the run's end.
+//      under its own light bar (Back, the title, ⌄), whose ⌄, title or line
+//      opens the change in full; Back always leaves the run. Votes go
+//      through the platform's castVote with the epoch; a No counts in one
+//      tap and may carry a line after; your own answer again goes through
+//      retractVote; Next moves to the next change without a vote and
+//      carries how many still wait; Done on the last one shows the run's
+//      end.
 //   4. THE COPY. Every message the flow asks for exists in English.
 
 const test = require('node:test');
@@ -405,29 +406,28 @@ test('⋯ opens the four help rows in a sheet', () => {
   for (const to of ['askq', 'talk', 'try', 'about']) assert.match(html, new RegExp(`data-rf-help="${to}"`));
 });
 
-test('after a vote the row stays: the pair shows the choice, ⋯ becomes Next with its count in a ring', () => {
-  const html = sheetHtml({ vote: 'yes', state: 'voted', left: 2, decided: 1 / 3 });
+test('after a vote the row stays: the pair shows the choice, ⋯ becomes Next with how many still wait', () => {
+  const html = sheetHtml({ vote: 'yes', state: 'voted', left: 2 });
   assert.match(html, /data-rf-voted="yes"/);
   assert.match(html, /aria-checked="true"[^>]*data-rf-vote="yes"/);
   assert.match(html, /data-rf-morph="next"[^>]*data-rf-next=""/);
   assert.ok(html.includes(`>${message('communities:review.said.nextShort')}</span>`), 'the word, with no glyph and no chevron');
   assert.ok(html.includes(`aria-label="${message('communities:review.said.nextLeft_other').replace('{{count}}', '2')}"`));
-  assert.match(html, /<span class="rf-ring" data-digits="1" data-rf-ring="" aria-hidden="true">/);
-  assert.match(html, /<span class="rf-ring-n">2<\/span>/);
-  assert.ok(html.includes(`stroke-dasharray="${(33 / 100) * 94.25} 94.25"`), 'a third of the ring for a third decided');
-  assert.match(read('frontend/src/features/review-flow/vote-sheet.tsx'), /<ProgressRing\s+pct=\{Math\.round\(/,
-    'the ring is the ProgressRing primitive, drawn at 22pt');
+  assert.match(html, /<span class="rf-count" data-rf-count="" aria-hidden="true">2<\/span>/, 'the number alone, no ring');
   assert.ok(html.includes(message('communities:review.said.yes')), 'said for a screen reader');
   assert.doesNotMatch(html, /data-rf-undo/, 'your own answer again takes it back');
-  // Two digits shrink to fit the circle; past 99 it says 99+.
-  assert.match(sheetHtml({ vote: 'yes', state: 'voted', left: 29, decided: 0.03 }), /data-digits="2"[^]*?<span class="rf-ring-n">29<\/span>/);
-  assert.match(sheetHtml({ vote: 'yes', state: 'voted', left: 140, decided: 0.01 }), /<span class="rf-ring-n">99\+<\/span>/);
+  assert.match(sheetHtml({ vote: 'yes', state: 'voted', left: 29 }), /data-rf-count="" aria-hidden="true">29<\/span>/);
+  assert.match(sheetHtml({ vote: 'yes', state: 'voted', left: 140 }), /data-rf-count="" aria-hidden="true">99\+<\/span>/, 'past 99 it says 99+');
   const css = read('public/css/app.css');
   assert.match(css, /\.rf-morph\[data-rf-morph="next"\] \{ width: 128px;/);
-  assert.match(css, /\.rf-ring\[data-digits="2"\] \.rf-ring-n \{ font-size: 11px;/);
+  // The word's size and baseline, a lighter weight, full white (contrast),
+  // figures of one width so the pair holds still as it counts down.
+  assert.match(css, /\.rf-count \{ font-weight: 400; font-variant-numeric: tabular-nums;/);
+  assert.doesNotMatch(css, /\.rf-count \{[^}]*opacity/, 'never dimmed on the blue');
+  assert.doesNotMatch(css, /\.rf-ring\b/);
   const last = sheetHtml({ vote: 'yes', state: 'voted', hasNext: false });
   assert.ok(last.includes(message('communities:review.said.done')));
-  assert.doesNotMatch(last, /rf-ring/, 'Done is the word alone');
+  assert.doesNotMatch(last, /rf-count/, 'Done is the word alone');
   const src = read('frontend/src/features/review-flow/vote-sheet.tsx');
   assert.match(src, /if \(vote === v\) \{ void undo\(\); return; \}/);
 });
