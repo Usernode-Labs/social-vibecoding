@@ -1,7 +1,9 @@
 // This app's API: a shared tier list. Anyone in the project adds things to
 // rank, each person puts each one in a tier (or in Want to, below F, for one
 // they have not got to yet), the group's tier list is where the average
-// lands, and anyone can see who put each one where. server.js
+// lands, and anyone can see who put each one where. GET /api/presence says
+// who has the list open right now: names kept in memory, never stored, and
+// forgotten after a minute and a half without a look. server.js
 // mounts it after the sign-in check: a write always has req.user ({ id,
 // username }); a read may come from a guest with no account (req.guest, no
 // req.user). Live updates (live-updates.js) are mounted before it, so every
@@ -13,6 +15,14 @@ const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 
 const NAME_MAX = 60;
 const ITEMS_SHOWN = 300;
+
+// Who has the list open: user id -> { username, seen }, in this process only.
+// A screen checks in on the timer it already keeps (public/live-updates.js,
+// a look a minute), so somebody gone from the window drops off within a look
+// or two. At most this many names come back; `more` counts the rest.
+const present = new Map();
+const PRESENCE_WINDOW_MS = 90000;
+const PRESENCE_NAMES = 50;
 
 // The tiers, best first. Each is worth a score (S 5 down to F 0, in the
 // query below), and an item's place on the group's list is the tier its
@@ -139,6 +149,34 @@ function routes(app, pool) {
   // What the group would share with a Homeroom-wide tier list if it ever
   // votes to (usernode-rankings.js, off as it comes): counts, never who.
   require('./usernode-rankings').mount(app, pool);
+
+  // Who else has the list open right now: the names of the other people seen
+  // in the last ninety seconds, sorted, the viewer left out. A signed-in
+  // screen is recorded and only reads; a guest only reads (req.guest, no
+  // req.user) and is never listed. A GET, so it never makes the live-updates
+  // hook refetch every open board; the one thing it tells screens about is a
+  // new arrival, through notify(), and only then, so check-ins do not loop.
+  // Real time, not req.now: a preview opened at a chosen moment still moves
+  // through today.
+  app.get('/api/presence', (req, res) => {
+    const now = Date.now();
+    let arrived = false;
+    if (req.user) {
+      const was = present.get(req.user.id);
+      arrived = !was || now - was.seen > PRESENCE_WINDOW_MS;
+      present.set(req.user.id, { username: req.user.username, seen: now });
+    }
+    for (const [id, p] of present) {
+      if (now - p.seen > PRESENCE_WINDOW_MS) present.delete(id);
+    }
+    const me = req.user ? req.user.id : null;
+    const here = [...present]
+      .filter(([id]) => id !== me)
+      .map(([, p]) => p.username)
+      .sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
+    res.json({ here: here.slice(0, PRESENCE_NAMES), more: Math.max(0, here.length - PRESENCE_NAMES) });
+    if (arrived) require('./live-updates').notify();
+  });
 
   // Every item, with the group's tier, how many people ranked it and how
   // many want to, and the viewer's own place. Oldest first, so the list

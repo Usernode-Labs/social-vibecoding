@@ -374,6 +374,40 @@ test('a tier list has Want to below F, which counts toward no tier', () => {
   assert.match(api, /FROM tier_votes WHERE tier <> 'W'/, 'nor in "From N people\'s rankings"');
 });
 
+// "Add to the tier list template an indicator of who else is live on the app
+// at the same time" (Homeroom request #5842). A quiet line under the opening
+// sentence names the other signed-in people with the list open. It rides the
+// look the screen already keeps, so app.js adds no timer of its own;
+// tests/app-templates-postgres.test.js runs GET /api/presence.
+test('a tier list says who else is here', () => {
+  for (const id of READY.slice(0, 4)) {
+    const t = appTemplates.get(id);
+    const html = file(generate(id), 'public/index.html');
+    // Under the opening line, in the hint's own small muted text, announced
+    // politely; it starts hidden, and stays so with nobody else here.
+    assert.match(html, /<p class="text-body text-muted">Our favorite [^<]+, ranked together\.<\/p>\s*<!--[^>]*?-->\s*<p id="presence" class="text-small text-muted" aria-live="polite" hidden><\/p>/);
+    assert.ok(html.indexOf('id="presence"') < html.indexOf('</header>'), `${id}: inside the header`);
+    assert.ok(t.features.some((f) => f.startsWith('**Who else is here**: a line under the title')), id);
+    assert.ok(t.tests.some((c) => c.expectSelector === 'header #presence[aria-live="polite"]'), id);
+  }
+  const script = fs.readFileSync(path.join(appTemplates.STARTERS_DIR, 'tier-list/public/app.js'), 'utf8');
+  assert.match(script, /presence: document\.getElementById\('presence'\)/);
+  // It rides the look the screen already keeps, holding a change back under
+  // a drag as the board does, and the opening cover never waits on it.
+  assert.match(script, /function refresh\(\) \{\s*return Promise\.all\(\[load\(\), detail \? loadDetail\(\) : null, loadPresence\(\)\]\);/);
+  assert.match(script, /api\('GET', '\/api\/presence'\)/);
+  assert.match(script, /if \(drag\) \{ if \(live\) live\.changed\(\); return; \}/);
+  assert.match(script, /el\.presence\.textContent = 'Also here: ' \+ text;/);
+  assert.doesNotMatch(script, /el\.presence\.innerHTML/);
+  assert.match(script, /loadPresence\(\);\s+if \(window\.usernode && window\.usernode\.ready\)/, 'not what the opening cover waits on');
+  const api = fs.readFileSync(path.join(appTemplates.STARTERS_DIR, 'tier-list/api.js'), 'utf8');
+  assert.match(api, /const present = new Map\(\);/);
+  assert.match(api, /const PRESENCE_WINDOW_MS = 90000;/);
+  assert.match(api, /app\.get\('\/api\/presence'/);
+  // Nothing new is stored: still the two tables the entry names.
+  assert.deepEqual([...api.matchAll(/CREATE TABLE IF NOT EXISTS (\w+)/g)].map((m) => m[1]), ['tier_items', 'tier_votes']);
+});
+
 // "Add SSE to all of the templated apps. Tier list for example, changes are
 // only showing up with a long delay." (Evan, 20 Oct 2026.) Every ready-made
 // app's server tells the open screens when a write succeeds (GET
