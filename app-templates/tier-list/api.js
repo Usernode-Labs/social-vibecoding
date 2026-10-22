@@ -160,16 +160,19 @@ function routes(app, pool) {
   // through today.
   app.get('/api/presence', (req, res) => {
     const now = Date.now();
+    // Read the person out of req.user ONE guarded way, null for a guest, so
+    // this read route never assumes somebody is signed in.
+    const me = req.user ? req.user.id : null;
+    const myName = req.user ? req.user.username : null;
     let arrived = false;
-    if (req.user) {
-      const was = present.get(req.user.id);
+    if (me !== null) {
+      const was = present.get(me);
       arrived = !was || now - was.seen > PRESENCE_WINDOW_MS;
-      present.set(req.user.id, { username: req.user.username, seen: now });
+      present.set(me, { username: myName, seen: now });
     }
     for (const [id, p] of present) {
       if (now - p.seen > PRESENCE_WINDOW_MS) present.delete(id);
     }
-    const me = req.user ? req.user.id : null;
     const here = [...present]
       .filter(([id]) => id !== me)
       .map(([, p]) => p.username)
