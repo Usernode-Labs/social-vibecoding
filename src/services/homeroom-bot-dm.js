@@ -5399,6 +5399,35 @@ async function firstVersionApproval(pool, sessionId, viewerId = null) {
  */
 async function firstVersionState(pool, appId, deps = {}) {
   if (!appId) return null;
+  const rows = await firstVersionRows(pool, [appId]);
+  return firstVersionStateOf(pool, rows.get(Number(appId)), deps);
+}
+
+/**
+ * firstVersionState for every one of `appIds`, for a list of them (GET
+ * /api/apps's tiles): Map(appId -> state), with no entry where it is null.
+ * One query reads every app's record. Only the few still building go on to
+ * read their progress, and they do it one after another, never one query
+ * per app at once: the list ran them in parallel, and one load checked out
+ * a connection per app, which held the web's whole pool (22 Oct 2026). Most
+ * records it reads are long merged and end at the first gate.
+ */
+async function firstVersionStates(pool, appIds, deps = {}) {
+  const states = new Map();
+  const rows = await firstVersionRows(pool, appIds);
+  for (const [appId, row] of rows) {
+    const state = await firstVersionStateOf(pool, row, deps);
+    if (state) states.set(appId, state);
+  }
+  return states;
+}
+
+// The first-version record of each of `appIds` the bot builds, with what
+// firstVersionStateOf needs from its app, maker and proposals: Map(appId ->
+// row), one query for them all.
+async function firstVersionRows(pool, appIds) {
+  const ids = [...new Set(appIds.map(Number).filter((id) => Number.isInteger(id) && id > 0))];
+  if (!ids.length) return new Map();
   const { rows } = await pool.query(
     `SELECT f.app_id, f.user_id, f.status, f.issue_number, f.created_at,
             f.early_plan, f.early_plan_status, f.answers, f.answered_at,
@@ -5421,11 +5450,14 @@ async function firstVersionState(pool, appId, deps = {}) {
        FROM homeroom_bot_first_versions f
        JOIN apps a ON a.id = f.app_id
        LEFT JOIN users u ON u.id = f.user_id
-      WHERE f.app_id = $1 AND f.bot_builds = TRUE`,
-    [appId, BOT_USERNAME],
+      WHERE f.app_id = ANY($1::int[]) AND f.bot_builds = TRUE`,
+    [ids, BOT_USERNAME],
   );
-  const row = rows[0];
-  if (!row || !['waiting', 'filing', 'filed'].includes(row.status) || row.merged) return null;
+  return new Map(rows.map((row) => [Number(row.app_id), row]));
+}
+
+async function firstVersionStateOf(pool, row, deps = {}) {
+  if (!row ||!['waiting', 'filing', 'filed'].includes(row.status) || row.merged) return null;
   const progress = deps.progress || require('./homeroom-bot-progress');
   const fvPlan = require('./first-version-plan');
   const forCreator = deps.viewerId != null && Number(deps.viewerId) === Number(row.user_id);
@@ -5842,6 +5874,7 @@ module.exports = {
   recordFirstVersion,
   firstVersionApproval,
   firstVersionState,
+  firstVersionStates,
   suggestShortDescription,
   firstSentence,
 };

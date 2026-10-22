@@ -270,12 +270,15 @@ test('the first version being built, from the records the bot leaves', { timeout
       // A read that fails is no state, never a failed page.
       viewer = ada;
       const real = dm.firstVersionState;
+      const realList = dm.firstVersionStates;
       dm.firstVersionState = async () => { throw new Error('boom'); };
+      dm.firstVersionStates = async () => { throw new Error('boom'); };
       try {
         assert.equal(await get(), null);
         assert.equal((await listed()).first_version_line, null, 'the tile says what it said before');
       } finally {
         dm.firstVersionState = real;
+        dm.firstVersionStates = realList;
       }
     } finally {
       if (typeof listening.closeAllConnections === 'function') listening.closeAllConnections();
@@ -376,5 +379,68 @@ test('the first version being built, from the records the bot leaves', { timeout
     assert.equal((await state()).step, 2, 'with nothing recorded it waits to be read again');
     await pool.query(`UPDATE homeroom_bot_first_versions SET status = 'failed' WHERE app_id = $1`, [app.id]);
     assert.equal(await state(), null, 'filing gave up');
+  });
+
+  // 22 Oct 2026: GET /api/apps read each tile's first version and secrets
+  // with a query per app, all at once, so one load of the list checked out
+  // a connection per app and held the web's whole pool. However many apps
+  // it lists, it reads each of them in one query, and no more than a query
+  // at a time goes out for them.
+  await t.test('the list reads every tile in one query, not one per app at once', async () => {
+    const apps = [];
+    for (let i = 1; i <= 5; i += 1) {
+      const { rows: [made] } = await pool.query(
+        `INSERT INTO apps (name, slug, status, created_by, repo_url, manifest_snapshot)
+         VALUES ($1, $2, 'creating', $3, $4, $5) RETURNING *`,
+        [`Filler ${i}`, `filler-${i}`, ada.id, `https://github.com/usernode-bot/filler-${i}`,
+          JSON.stringify({ secrets: [{ key: 'API_KEY', required: true }, { key: 'OPTIONAL', required: false }] })],
+      );
+      await pool.query(
+        `INSERT INTO homeroom_bot_first_versions (app_id, user_id, brief, bot_builds) VALUES ($1, $2, 'Something small', TRUE)`,
+        [made.id, ada.id],
+      );
+      apps.push(made);
+    }
+    await pool.query(`INSERT INTO app_secrets (app_id, key, value_enc) VALUES ($1, 'API_KEY', 'x')`, [apps[0].id]);
+
+    const real = pool;
+    const sent = [];
+    let inFlight = 0;
+    let most = 0;
+    const counting = {
+      async query(...args) {
+        const text = typeof args[0] === 'string' ? args[0] : args[0].text;
+        sent.push(text);
+        inFlight += 1;
+        most = Math.max(most, inFlight);
+        try { return await real.query(...args); } finally { inFlight -= 1; }
+      },
+      connect: (...args) => real.connect(...args),
+    };
+    const server = express();
+    server.use((req, _res, next) => { req.user = { id: ada.id, username: ada.username }; next(); });
+    server.use(appRoutes({}, { pool: counting }));
+    const listening = server.listen(0);
+    await new Promise((resolve) => listening.once('listening', resolve));
+    pool = counting;
+    try {
+      const res = await fetch(`http://127.0.0.1:${listening.address().port}/api/apps`);
+      assert.equal(res.status, 200);
+      const listed = new Map((await res.json()).apps.map((a) => [a.slug, a]));
+      for (const made of apps) {
+        assert.ok(listed.get(made.slug).first_version_line, `${made.slug} says its first version`);
+      }
+      assert.equal(listed.get('filler-1').missingSecrets, null, 'its required secret is set');
+      for (const made of apps.slice(1)) {
+        assert.deepEqual(listed.get(made.slug).missingSecrets, ['API_KEY'], made.slug);
+      }
+    } finally {
+      pool = real;
+      if (typeof listening.closeAllConnections === 'function') listening.closeAllConnections();
+      listening.close();
+    }
+    assert.equal(sent.filter((q) => /FROM app_secrets/.test(q)).length, 1, 'one read of every tile\'s secrets');
+    assert.equal(sent.filter((q) => /FROM homeroom_bot_first_versions f/.test(q)).length, 1, 'one read of every first version');
+    assert.ok(most < apps.length, `the list's reads do not grow with its apps (${most} at once)`);
   });
 });

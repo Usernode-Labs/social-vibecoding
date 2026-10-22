@@ -178,7 +178,7 @@ test('GET /api/apps/:slug: stopped, the thread for its maker, and no "While you 
   assert.match(src, /\.\.\.\(!mine && !state\.ready && !state\.stopped \? await waitingMemberFields\(/);
   assert.match(src, /\.\.\.\(state\.stopped \? \{ stopped: true, \.\.\.\(mine \? \{ thread: stoppedThread\(state\) \} : \{\}\) \} : \{\}\),/);
   // The Home tile reads the same line from the list (firstVersionLinesFor).
-  assert.match(src, /const line = state && \(state\.line \|\| \(state\.ready \? 'ready' : 'planning'\)\);/);
+  assert.match(src, /const line = state\.line \|\| \(state\.ready \? 'ready' : 'planning'\);/);
 });
 
 test('the first look stays on its card when its build stopped, never the starter', () => {
