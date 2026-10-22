@@ -74,8 +74,13 @@ export interface Served extends Attempt {
   imageRef: string | null;
   buildRef: string | null;
   since?: string;                // when it started serving (absent: before version 8)
+  lost?: boolean;                // lost again soon after it started (lostAgain): it serves nothing to check
 }
 export interface Run { key: string; n: number; head: string }
+// What serves `head` and can be checked: not one that was lost (lostAgain),
+// which stays the serving record only so the rebuild retires it.
+const servesHead = (d: Data, head: string | null) => !!d.serving && !d.serving.lost && d.serving.head === head;
+
 // An attempt waiting for its preview.retireAttempt: the item's key, and
 // whether it came from a prepare that was cancelled (one that may still be
 // creating things until its handler stops).
@@ -735,7 +740,7 @@ function rawTransitions(deps: Deps): Record<string, Record<string, Entry>> {
         return reject('not_deployable');
       }
       if (e.payload.reason !== 'deploy' && !restarts(s)
-          && s.data.serving?.head === e.payload.head && s.data.head === e.payload.head) return reject('already_serving');
+          && servesHead(s.data, e.payload.head) && s.data.head === e.payload.head) return reject('already_serving');
       return ok();
     },
     to: (s, e, f, ctx) => {
@@ -808,7 +813,7 @@ function rawTransitions(deps: Deps): Record<string, Record<string, Entry>> {
       // the one held.
       const head = trigger === 'manual-recheck' ? requestedHead(s, f) ?? d.head! : d.head!;
       // Nothing serves the head: build it.
-      if (head !== d.head || !d.serving || d.serving.head !== d.head) return begin(s, head, trigger, ctx, deps);
+      if (head !== d.head || !servesHead(d, d.head)) return begin(s, head, trigger, ctx, deps);
       return startRun(s, trigger, ctx);
     },
   };
@@ -911,6 +916,10 @@ function rawTransitions(deps: Deps): Record<string, Record<string, Entry>> {
   const lost: Entry = {
     guard: (s, e) => (s.data.serving?.n === e.payload.attempt ? ok() : reject('not_serving')),
     to: (s, e, f, ctx) => {
+      // A loss lostAgain counted already is reported again only by a
+      // person's Preview (the clock leaves a failed preview alone): built
+      // again as theirs.
+      if (s.data.serving.lost) return begin(s, s.data.head || s.data.serving.head, 'manual-recheck', ctx, deps);
       const since = Date.parse(s.data.serving.since ?? '');
       const losses = ctx.now.getTime() - since < LOST_SOON_MS ? (s.data.losses ?? 0) + 1 : 1;
       if (losses > 1) return lostAgain(s, e, losses, f, ctx, deps);
@@ -1050,7 +1059,7 @@ function rawTransitions(deps: Deps): Record<string, Record<string, Entry>> {
       if (!owed) return step({ name: s.name, data: s.data, timer: null });
       if (worked(s, f)) return step({ name: s.name, data: s.data, timer: { at: new Date(ctx.now.getTime() + WORKED_RECHECK_MS), event: { type: 'ChecksDue' } } });
       const trigger = owed.fresh ? 'manual-recheck' : 'stuck-sweep';
-      return owed.head !== s.data.head || !s.data.serving || s.data.serving.head !== owed.head
+      return owed.head !== s.data.head || !servesHead(s.data, owed.head)
         ? begin(s, owed.head, trigger, ctx, deps)
         : startRun(s, trigger, ctx);
     },
@@ -1420,9 +1429,13 @@ function prepared(s: Live, e: Event<any>, outcome: string, f: Facts, ctx: Transi
 }
 
 // A preview lost again soon after it was rebuilt (lost): its head's error,
-// as a failed build's is, with the losses as its count. What serves is left
-// as it is, for the rebuild to retire; the run against it stops. The author
-// hears of it once it is left for a person, not while rebuilds are to come.
+// as a failed build's is, with the losses as its count, which the row
+// records as its failures and its retry (none once capped), so what the
+// connector, the merge gate and the vote route say of a retry is this. What
+// served stays the serving record, marked lost, for the rebuild to retire:
+// a person's recheck or Preview builds again rather than checking it, and
+// counts the losses afresh. The run against it stops. The author hears of
+// it once it is left for a person, not while rebuilds are to come.
 function lostAgain(s: Live, e: Event<any>, losses: number, f: Facts, ctx: TransitionContext, deps: Deps): Outcome<PState> {
   const d0 = s.data;
   const head = d0.head || d0.serving!.head;
@@ -1432,6 +1445,7 @@ function lostAgain(s: Live, e: Event<any>, losses: number, f: Facts, ctx: Transi
   const d: Data = {
     ...d0, run: null, verdict: 'error', failure: detail, platformFault: false, streak: d0.streak + 1,
     firstFailureAt: d0.firstFailureAt ?? ctx.now.toISOString(), losses, retiring: old.retiring,
+    serving: { ...d0.serving!, lost: true },
   };
   const timer = f.session?.retryScope && losses <= deps.maxRetries
     ? { at: new Date(ctx.now.getTime() + retryDelayMs(losses - 2)), event: { type: 'RetryDue' } } : null;
@@ -1442,6 +1456,7 @@ function lostAgain(s: Live, e: Event<any>, losses: number, f: Facts, ctx: Transi
       type: 'prepareFailed', eventId: e.id, sessionId: d.sessionId, appId: d.appId, userId: d.userId, head,
       detail, infrastructure: !!timer, platformFault: false, aboutMain: null, sync: false,
       source: f.session?.source ?? null, prNumber: f.session?.prNumber ?? null,
+      retry: { failures: losses - 1, nextRetryAt: timer ? timer.at.toISOString() : null },
     }],
     work: old.work,
     push: [
@@ -1754,7 +1769,8 @@ const WRITES = {
         [w.sessionId, JSON.stringify({ stagingFailed: true, error: w.detail, changesReady: true, prNumber: w.prNumber ?? null })]);
     }
     const stored = await rowStore.storeChecks(tx, w.sessionId, w.head,
-      { state: 'error', results: [], ...(w.platformFault ? { platformFault: true } : {}) }, w.detail);
+      { state: 'error', results: [], ...(w.platformFault ? { platformFault: true } : {}), ...(w.retry ? { retry: w.retry } : {}) },
+      w.detail);
     if (!stored || w.infrastructure) return;
     const { rows: [first] } = await tx.query(
       `UPDATE chat_sessions SET check_error_notified_at = NOW()

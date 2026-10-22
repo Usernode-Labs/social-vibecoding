@@ -401,10 +401,13 @@ test('preview machine housekeeping against the full PostgreSQL schema', { timeou
       await lose();
       i = await instance(s);
       assert.deepEqual([i.state, i.data.losses, builds()], ['failed', losses, before], `loss ${losses}: not rebuilt yet`);
-      assert.equal((await row(s.id)).check_state, 'error');
       const [type, at] = await deadline(s);
       assert.equal(type, 'RetryDue');
       assert.ok(near(at, Date.now() + Math.min(120 * 2 ** (losses - 2), 1800) * 1000), `loss ${losses}: its backoff`);
+      // The row says what the machine will do: these failures, this retry.
+      const r = await row(s.id);
+      assert.deepEqual([r.check_state, r.consecutive_check_failures], ['error', losses - 1]);
+      assert.equal(new Date(r.check_next_retry_at).getTime(), at);
       await fire(s);
       i = await instance(s);
       assert.deepEqual([i.state, builds()], ['settled', before + 1], `loss ${losses}: rebuilt once its retry is due`);
@@ -419,8 +422,27 @@ test('preview machine housekeeping against the full PostgreSQL schema', { timeou
     i = await instance(s);
     assert.deepEqual([i.state, i.data.losses, builds()], ['failed', 7, before]);
     assert.notEqual((await deadline(s))?.[0], 'RetryDue');
-    assert.match((await row(s.id)).check_error_detail, /stopped soon after it started, 7 times in a row/);
+    let r = await row(s.id);
+    assert.match(r.check_error_detail, /stopped soon after it started, 7 times in a row/);
+    assert.deepEqual([r.consecutive_check_failures, r.check_next_retry_at], [6, null], 'no retry is coming, and the row says so');
     assert.equal(await notes(), 1);
+
+    // A person's "Run checks again" builds the lost preview again rather than
+    // checking it, and counts its losses afresh.
+    await send(s, 'RecheckRequested', { reason: 'manual' }, { kind: 'route' });
+    await settle();
+    i = await instance(s);
+    assert.deepEqual([i.state, i.data.losses, i.data.serving.lost ?? false, builds()], ['settled', 0, false, before + 1]);
+    assert.equal((await row(s.id)).check_state, 'passing');
+
+    // So does their Preview, which reports the counted loss again.
+    await lose();
+    await lose();
+    assert.deepEqual([(await instance(s)).state, (await instance(s)).data.losses], ['failed', 2]);
+    await send(s, 'PreviewLost', { attempt: await serving(), detail: 'preview-click' });
+    await settle();
+    i = await instance(s);
+    assert.deepEqual([i.state, i.data.losses, builds()], ['settled', 0, before + 3]);
 
     // A preview that served for longer counts its losses afresh.
     const c = await pool.connect();
@@ -432,6 +454,6 @@ test('preview machine housekeeping against the full PostgreSQL schema', { timeou
     } finally { c.release(); }
     await lose();
     i = await instance(s);
-    assert.deepEqual([i.state, i.data.losses, builds()], ['settled', 1, before + 1]);
+    assert.deepEqual([i.state, i.data.losses, builds()], ['settled', 1, before + 4]);
   });
 });
