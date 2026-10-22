@@ -19879,6 +19879,10 @@ html[data-nav-drawer] #app-view { touch-action: pan-y; }
 }
 .nav-drawer-outer-list:focus { outline: none; }
 .nav-drawer-outer-none { margin: 20px 20px 0; font-size: 15px; line-height: 20px; color: var(--text-muted); }
+/* THE CHIPS SIT A SMALL GAP UNDER THE NEEDS YOU CARD (#5821), the twelve
+   the Communities screen keeps under the same card (section + .workshop-search).
+   Only when the card heads the list: without it the chips follow the search. */
+.nav-drawer-outer-list section + .audience-chips { margin-top: 12px; }
 /* The community the drawer is on: its tile ringed in "where you are". */
 .nav-drawer-outer [aria-current="true"] .app-icon-tile { outline: 2px solid var(--lit-ink); outline-offset: 2px; }
 
