@@ -743,22 +743,43 @@ async function firstVersionLinesFor(pool, apps, viewerId, phases = null) {
   const ids = apps.map((a) => Number(a.id)).filter((id) => Number.isInteger(id) && id > 0);
   if (!ids.length) return lines;
   try {
-    const { rows } = await pool.query(
-      `SELECT app_id FROM homeroom_bot_first_versions
-        WHERE app_id = ANY($1::int[]) AND bot_builds = TRUE AND status IN ('waiting', 'filing', 'filed')`,
-      [ids]
-    );
-    const botDm = require('../services/homeroom-bot-dm');
-    await Promise.all(rows.map(async ({ app_id: appId }) => {
-      const state = await botDm.firstVersionState(pool, appId, { viewerId });
-      const line = state && (state.line || (state.ready ? 'ready' : 'planning'));
-      if (line) lines.set(Number(appId), line);
-      if (line && phases && state.phase) phases.set(Number(appId), state.phase);
-    }));
+    // One read for every tile, never one per app at once (firstVersionStates).
+    const states = await require('../services/homeroom-bot-dm').firstVersionStates(pool, ids, { viewerId });
+    for (const [appId, state] of states) {
+      const line = state.line || (state.ready ? 'ready' : 'planning');
+      if (line) lines.set(appId, line);
+      if (line && phases && state.phase) phases.set(appId, state.phase);
+    }
   } catch (err) {
     log.warn('apps', 'Could not read the first versions for the list', { message: err.message });
   }
   return lines;
+}
+
+// Whether an app's manifest declares a secret it needs set (the home tile's
+// "fix secrets" warning).
+function declaresRequiredSecret(app) {
+  const secrets = app.manifest_snapshot && typeof app.manifest_snapshot === 'object'
+    ? app.manifest_snapshot.secrets : null;
+  return Array.isArray(secrets) && secrets.some((s) => s && s.required);
+}
+
+/**
+ * The secret keys stored for each of `apps`: Map(appId -> Set(key)), one
+ * query for them all. GET /api/apps read them with a query per app, all at
+ * once, so one load of the list checked out a connection per app (22 Oct
+ * 2026).
+ */
+async function storedSecretKeysFor(pool, apps) {
+  const keys = new Map();
+  const ids = apps.map((a) => Number(a.id)).filter((id) => Number.isInteger(id) && id > 0);
+  if (!ids.length) return keys;
+  const { rows } = await pool.query('SELECT app_id, key FROM app_secrets WHERE app_id = ANY($1::int[])', [ids]);
+  for (const { app_id: appId, key } of rows) {
+    if (!keys.has(Number(appId))) keys.set(Number(appId), new Set());
+    keys.get(Number(appId)).add(key);
+  }
+  return keys;
 }
 
 function appRoutes(config, { pool = getPool(config) } = {}) {
@@ -954,10 +975,12 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         }
       }
 
+      const storedSecrets = await storedSecretKeysFor(pool, rows.filter((a) => !a.self_hosted && declaresRequiredSecret(a)));
+
       let apps = await Promise.all(rows.map(async (a) => {
-        // Per-app missing-required-secrets list. Cheap (one extra query
-        // each) and lets the home tile show a "fix secrets" warning
-        // without each card making its own /secrets fetch on render.
+        // Per-app missing-required-secrets list. One query for every tile
+        // (storedSecretKeysFor) and lets the home tile show a "fix secrets"
+        // warning without each card making its own /secrets fetch on render.
         //
         // The self-hosted app answers from platform_env instead: its
         // `secrets` block documents GitHub-injected credentials nobody can
@@ -969,20 +992,12 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         if (a.self_hosted) {
           const missing = await platformEnv.missingRequired(pool, a.id);
           missingSecrets = missing.length ? missing.map((m) => m.key) : null;
-        } else if (a.manifest_snapshot && typeof a.manifest_snapshot === 'object') {
-          const declared = Array.isArray(a.manifest_snapshot.secrets)
-            ? a.manifest_snapshot.secrets : [];
-          if (declared.some((s) => s && s.required)) {
-            const { rows: storedRows } = await pool.query(
-              'SELECT key FROM app_secrets WHERE app_id = $1',
-              [a.id]
-            );
-            const storedKeys = new Set(storedRows.map((r) => r.key));
-            missingSecrets = declared
-              .filter((s) => s && s.required && !storedKeys.has(s.key))
-              .map((s) => s.key);
-            if (!missingSecrets.length) missingSecrets = null;
-          }
+        } else if (declaresRequiredSecret(a)) {
+          const storedKeys = storedSecrets.get(Number(a.id)) || new Set();
+          missingSecrets = a.manifest_snapshot.secrets
+            .filter((s) => s && s.required && !storedKeys.has(s.key))
+            .map((s) => s.key);
+          if (!missingSecrets.length) missingSecrets = null;
         }
 
         const stagingSample = stagingApps.isSample(a);
@@ -4682,7 +4697,7 @@ module.exports = {
   attachForkLineage,
   appRoutes, accessFlags, canDeleteApp, compactGlobalChatApp,
   deleteBlockReason, isCoreApp, hubFirstVersion, firstVersionLinesFor, sharedPlan, waitingMemberFields, firstVersionShowcaseFields,
-  firstVersionLiveFields, stoppedThread, inviteLinkOut,
+  firstVersionLiveFields, stoppedThread, inviteLinkOut, storedSecretKeysFor,
   // #2524: the activity guard and its two bounds, so the contract is
   // unit-testable without standing up the whole app router.
   activitySeconds, ACTIVITY_MAX_PER_POST, ACTIVITY_MAX_PER_DAY,

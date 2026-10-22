@@ -197,7 +197,7 @@ test('run five, 5: the Home tile, the hub card and the App tab name the same sta
   // Wired: the list answers each tile's stage, the tile says it, the hub card too.
   const route = read('src/routes/apps.js');
   assert.match(route, /first_version_phase: firstVersionPhases\.get\(Number\(a\.id\)\) \|\| null,/);
-  assert.match(route, /if \(line && phases && state\.phase\) phases\.set\(Number\(appId\), state\.phase\);/);
+  assert.match(route, /if \(line && phases && state\.phase\) phases\.set\(appId, state\.phase\);/);
   assert.match(route, /phase: state\.phase \|\| null,/);
   const home = read('frontend/src/features/home/home.js');
   assert.equal((home.match(/buildLineTileWordsOf\(buildLine, buildPhase\)/g) || []).length, 2, 'both tiles');
