@@ -59,6 +59,7 @@ import { useStoreState } from '../../../lib/use-store-state';
 import { clampPopoverHeight, placeUnderAnchor } from '../../../lib/anchor-popover';
 import { anchorRectOf, useAnchoredDismiss } from '../../../lib/popover-dismiss';
 import { cardTintClass } from '../../home/panels/ui';
+import type { NoChoice } from '../../review-flow/vote-sheet';
 import { aiEnabledStore, cardNowStore, voteSendingStore } from './cards-store';
 import type {
   ActionRef,
@@ -567,6 +568,32 @@ export const BADGE_MAX = 4;
  */
 const VOTE_ARITY: Record<string, number> = { castVote: 3, castIssueVote: 2 };
 
+/** The most a reason may hold (the server's VOTE_REASON_MAX). */
+const REASON_MAX = 280;
+
+/** The answers under a No, in their order on the card. */
+const NO_CHOICES: NoChoice[] = ['notWorking', 'approach', 'notNeeded', 'other'];
+
+/** The four answers' words, in the project namespace. */
+function whyTexts(t: (id: string, values?: Record<string, string | number>) => string): Record<NoChoice, string> {
+  return {
+    notWorking: t('project:card.vote.picker.why.notWorking'),
+    approach: t('project:card.vote.picker.why.approach'),
+    notNeeded: t('project:card.vote.picker.why.notNeeded'),
+    other: t('project:card.vote.picker.why.other'),
+  };
+}
+
+/**
+ * The reason a No sends: the picked answer, then the line when one is
+ * written ("It does not work: the button does nothing"). `join` is the
+ * surface's own "{{choice}}: {{detail}}" message.
+ */
+export function composeNoReason(choiceText: string, line: string, join: (choice: string, detail: string) => string): string {
+  const detail = line.replace(/\s+/g, ' ').trim();
+  return (detail ? join(choiceText, detail) : choiceText).slice(0, REASON_MAX);
+}
+
 export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): ReactNode {
   const t = useMessages('project');
   const [open, setOpen] = useState(false);
@@ -575,6 +602,8 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
   // own vote when they have one, so changing a No starts from No.
   const [side, setSide] = useState<'yes' | 'no'>('yes');
   const [line, setLine] = useState('');
+  // A No's reason: the answer it picked. The vote is sent only with one.
+  const [noChoice, setNoChoice] = useState<NoChoice | null>(null);
   // The touch picker: the kit sheet's content element while it is up, and
   // the handle that takes it down. `sheetEl` is what the panel portals into.
   const [sheetEl, setSheetEl] = useState<HTMLElement | null>(null);
@@ -618,6 +647,7 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
   const shut = () => {
     setOpen(false);
     setLine('');
+    setNoChoice(null);
     // The kit tears the sheet down with a spring and then calls onDismiss,
     // which is where the sheet state is cleared — once, whichever side
     // started the dismissal (this, the backdrop, or a drag).
@@ -666,6 +696,7 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
         sheetRef.current = null;
         setSheetEl(null);
         setLine('');
+        setNoChoice(null);
       },
     });
     if (!handle || typeof handle.dismiss !== 'function') return false;
@@ -695,6 +726,7 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
     if (open || sheetRef.current) { shut(); return; }
     setSide(startSide());
     setLine('');
+    setNoChoice(null);
     const pu = (window as any).PlatformUI;
     if (pu && typeof pu.isTouch === 'function' && pu.isTouch()) {
       if (openSheet(pu)) return;
@@ -726,15 +758,12 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
     const sheet = sheetRef.current;
     if (sheet) { sheetRef.current = null; sheet.dismiss(); }
   }, []);
-  // The box takes focus when the popover opens, and in either home the
-  // moment the switch lands on No, so a line explaining it is one tap away.
-  // A layout
-  // effect, so on touch the focus still counts as part of that tap and
-  // raises the keyboard. Not on a sheet opening on Yes: a keyboard rising
-  // over a one-tap "Vote yes" would be in the way.
+  // The box takes focus when the desktop popover opens, so a line is one tap
+  // away. Not when the switch lands on No: the answers come first now, and on
+  // a phone a keyboard rising over them would cover them.
   useIsoLayoutEffect(() => {
-    if (open || (sheetEl && side === 'no')) boxRef.current?.focus();
-  }, [open, sheetEl, side]);
+    if (open) boxRef.current?.focus();
+  }, [open]);
   // Measure the mounted panel and place it again with its real height
   // before the first paint (#3595). The switch's side changes the label's
   // wrap, so a No can sit a few pixels taller than the Yes it replaced.
@@ -790,9 +819,17 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
   const popMaxH = clampPopoverHeight({ height: h }, viewport);
   const spec = side === 'yes' ? yes : no;
   const trimmed = line.replace(/\s+/g, ' ').trim();
-  // The line is optional on either side.
+  // A Yes sends with its optional line. A No sends only once an answer is
+  // picked, and carries that answer (with the line, if one was written).
   const submit = () => {
-    send(spec, isVote ? (trimmed || null) : null);
+    if (!isVote) { send(spec, null); return; }
+    if (side === 'no') {
+      if (!noChoice) return;
+      send(no, composeNoReason(whyTexts(t)[noChoice], line,
+        (choice, detail) => t('project:card.vote.picker.withDetail', { choice, detail })));
+      return;
+    }
+    send(spec, trimmed || null);
   };
   const onBoxKey = (ev: globalThis.KeyboardEvent | { key: string; shiftKey: boolean; preventDefault: () => void }) => {
     if (ev.key === 'Enter' && !ev.shiftKey) {
@@ -811,6 +848,7 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
       advisory={!!yes.advisory}
       side={side}
       line={line}
+      noChoice={noChoice}
       reasonId={reasonId}
       boxRef={boxRef}
       tally={tally}
@@ -819,6 +857,7 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
       approve={approve}
       onSide={setSide}
       onLine={setLine}
+      onNoChoice={setNoChoice}
       onBoxKey={onBoxKey}
       onCancel={shut}
       onSend={submit}
@@ -889,8 +928,9 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
  * touch, so the wording and the rules cannot drift between the two.
  * `withLine` is false on a governance vote, which carries no line. `solo` is
  * a project that is just the viewer's: there is no group to address, so the
- * Yes side's optional line asks for a note instead. The No side is the same
- * either way, its line optional too. `approve` (#3977) is a solo change whose
+ * Yes side's optional line asks for a note instead. The No side shows the
+ * same four answers above the line on every surface, and its button stays
+ * off until one is picked. `approve` (#3977) is a solo change whose
  * Yes is the one it needs: the header is "Your approval", the halves and the
  * button read "Approve" / "Don't approve", and neither half carries a tally.
  * Its Yes line is a note too, whatever `solo` says (#4346): an approval is
@@ -901,7 +941,7 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
  * `VoteButton`.
  */
 export function VotePicker({
-  yes, no, prior, uncounted = false, advisory = false, side, line, reasonId, boxRef, tally, withLine, solo, approve = false, onSide, onLine, onBoxKey, onCancel, onSend,
+  yes, no, prior, uncounted = false, advisory = false, side, line, noChoice = null, reasonId, boxRef, tally, withLine, solo, approve = false, onSide, onLine, onNoChoice, onBoxKey, onCancel, onSend,
 }: {
   yes: ActionSpec;
   no: ActionSpec;
@@ -912,6 +952,8 @@ export function VotePicker({
   advisory?: boolean;
   side: 'yes' | 'no';
   line: string;
+  /** The No's picked answer, if any; a No is sent only with one. */
+  noChoice?: NoChoice | null;
   reasonId: string;
   boxRef?: RefObject<HTMLTextAreaElement | null>;
   tally: (a: ActionSpec) => string;
@@ -921,6 +963,7 @@ export function VotePicker({
   approve?: boolean;
   onSide: (side: 'yes' | 'no') => void;
   onLine: (line: string) => void;
+  onNoChoice: (choice: NoChoice) => void;
   onBoxKey: (ev: globalThis.KeyboardEvent | { key: string; shiftKey: boolean; preventDefault: () => void }) => void;
   onCancel: () => void;
   onSend: () => void;
@@ -930,6 +973,9 @@ export function VotePicker({
   const yesOn = side === 'yes';
   // The header over the switch is also the switch's accessible name.
   const headId = `${reasonId}-head`;
+  // The reason list's own name, and its four answers' words.
+  const whyHeadId = `${reasonId}-why`;
+  const why = whyTexts(t);
   // #3977: an approval's two sides are its own words, with no tally (it is
   // one person's to give) and no "Still yes": nobody is asked to vote.
   const yesWord = approve
@@ -975,19 +1021,38 @@ export function VotePicker({
           {approve ? null : <span className="dev-vote-n">{tally(no)}</span>}
         </button>
       </div>
+      {withLine && !yesOn ? (
+        // A No says why: the answer it picks is the reason it sends, and the
+        // vote button stays off until one is picked. The heading is the
+        // group's name, so the buttons need no visible question.
+        <div className="dev-vote-why" role="radiogroup" aria-labelledby={whyHeadId}>
+          <span className="sr-only" id={whyHeadId}>{t('project:card.vote.picker.noLabel')}</span>
+          {NO_CHOICES.map((key) => (
+            <button
+              key={key}
+              type="button"
+              role="radio"
+              aria-checked={noChoice === key}
+              className="dev-vote-why-opt"
+              data-vote-why={key}
+              onClick={() => onNoChoice(key)}
+            >{why[key]}</button>
+          ))}
+        </div>
+      ) : null}
       {withLine ? (
         <div className="dev-vote-reason" data-vote-reason={side}>
           <label className="dev-vote-reason-label" htmlFor={reasonId}>
             {yesOn
               ? (solo || approve ? t('project:card.vote.picker.noteLabel') : t('project:card.vote.picker.lineLabel'))
-              : t('project:card.vote.picker.noLabel')}
+              : t('project:card.vote.picker.why.detailLabel')}
           </label>
           <textarea
             id={reasonId}
             ref={boxRef}
             className="dev-vote-reason-box"
             rows={2}
-            maxLength={280}
+            maxLength={!yesOn && noChoice ? Math.max(0, REASON_MAX - why[noChoice].length - 2) : REASON_MAX}
             placeholder={yesOn ? t('project:card.vote.picker.yesPlaceholder') : t('project:card.vote.picker.noPlaceholder')}
             value={line}
             onChange={(ev) => onLine(ev.target.value)}
@@ -1000,7 +1065,8 @@ export function VotePicker({
         <button
           type="button"
           className={`dev-vote-reason-send dev-vote-reason-send-${side}`}
-          // The line is optional on either side, so a No sends without one.
+          // The line is optional on a Yes. A No needs its answer first.
+          disabled={withLine && !yesOn && !noChoice}
           onMouseDown={(event) => event.preventDefault()}
           onClick={onSend}
         >

@@ -5896,10 +5896,14 @@ test('the feed answers on the Vote sheet and moves by swipe, arrows or keys', ()
   assert.ok(!/data-ws-answer-btn="skip"/.test(WORKSHOP), 'skip is gone from the answers');
   assert.ok(!/dev-ws-answer-skip/.test(WORKSHOP), 'and so is its button');
   assert.match(WORKSHOP, /data-ws-rail-btn="vote"[\s\S]{0,400}?onClick=\{\(\) => toggleSheet\('vote'\)\}/, 'Vote opens the sheet');
-  assert.match(WORKSHOP, /<NeedsVoteForm[\s\S]{0,400}?onCancel=\{closeSheet\}\s*onSend=\{submitVote\}/, 'the sheet holds the vote form');
+  assert.match(WORKSHOP, /<NeedsVoteForm[\s\S]{0,600}?onCancel=\{closeSheet\}\s*onSend=\{submitVote\}/, 'the sheet holds the vote form');
   assert.match(WORKSHOP, /data-ws-vote-form=""[\s\S]{0,120}?<VotePicker[\s\S]{0,900}?withLine/, 'which is the card\'s picker, with its line box');
   assert.ok(!/data-ws-answer-btn="(yes|no)"/.test(WORKSHOP), 'the bare Yes/No pair is gone');
-  assert.match(WORKSHOP, /answer\(voteSide, undefined, voteTrimmed \|\| null\)/, 'the sheet sends its line, so castVote does not ask again');
+  // #5809: a Yes sends its line; a No sends only once an answer is picked,
+  // and carries it with the line.
+  assert.match(WORKSHOP, /answer\('yes', undefined, voteTrimmed \|\| null\)/, 'the sheet sends its line, so castVote does not ask again');
+  assert.match(WORKSHOP, /if \(voteSide === 'no'\) \{\s*if \(!voteChoice\) return;/, 'a No needs its answer first');
+  assert.match(WORKSHOP, /answer\('no', undefined, composeNoReason\(choice, voteLine,/, 'and sends it with the line');
   const submitVote = WORKSHOP.slice(WORKSHOP.indexOf('const submitVote = () => {'), WORKSHOP.indexOf('const onVoteBoxKey'));
   assert.ok(submitVote.length > 0, 'submitVote is found');
   assert.doesNotMatch(submitVote, /voteBoxRef\.current\?\.focus\(\); return;/, 'a lineless No sends rather than refocusing the box');

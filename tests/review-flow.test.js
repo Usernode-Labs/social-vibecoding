@@ -334,9 +334,9 @@ test('Next change goes to the next change with no vote, wraps to an earlier one,
   assert.equal(model.nextIndex(withDecision, 2, { a: 'yes' }), -1, 'and it does not keep all-done from showing');
 });
 
-test('the sheet covers the page only while its help or menu is open', () => {
-  for (const s of ['ask', 'voted', 'reason']) assert.equal(sheet.sheetOpen(s), false, s);
-  for (const s of ['unsure', 'askq', 'talk', 'try', 'about', 'more']) assert.equal(sheet.sheetOpen(s), true, s);
+test('the sheet covers the page while its help, menu or reason list is open', () => {
+  for (const s of ['ask', 'voted']) assert.equal(sheet.sheetOpen(s), false, s);
+  for (const s of ['reason', 'unsure', 'askq', 'talk', 'try', 'about', 'more']) assert.equal(sheet.sheetOpen(s), true, s);
 });
 
 function sheetHtml(props) {
@@ -392,18 +392,34 @@ test('after a vote the row stays: the pair shows the choice, ⋯ becomes Next ch
   assert.match(src, /if \(vote === v\) \{ void undo\(\); return; \}/);
 });
 
-test('a No counts in one tap; a reason is offered after, held to the server\'s limit', () => {
+test('a No asks why first: four answers and the optional line, and nothing is cast until Send', () => {
   const src = read('frontend/src/features/review-flow/vote-sheet.tsx');
-  assert.match(src, /void cast\(v\);/, 'the tap casts, nothing is asked first');
+  assert.match(src, /if \(v === 'yes'\) \{ setShared\(null\); void cast\(v\); return; \}\s*setChoice\(null\);\s*setLine\(''\);\s*setState\('reason'\);/,
+    'a No opens the reason list instead of casting');
+  const asked = sheetHtml({ state: 'reason' });
+  assert.match(asked, /class="rf-sheet"[^>]*data-rf-sheet="reason"/, 'it covers the page like the help sheet');
+  assert.match(asked, /class="rf-grab"/, 'with the handle that closes it, counting nothing');
+  assert.ok(asked.includes(`<h2 class="rf-why-head">${message('communities:review.why.title')}</h2>`));
+  assert.match(asked, /class="rf-chips" role="radiogroup"/);
+  for (const key of ['notWorking', 'approach', 'notNeeded', 'other']) {
+    assert.match(asked, new RegExp(`role="radio" aria-checked="false" class="rf-chip" data-rf-why-choice="${key}"`));
+    assert.ok(asked.includes(message(`communities:review.why.${key}`)), key);
+  }
+  assert.ok(asked.includes(`<p class="rf-line">${message('communities:review.why.detailLabel')}</p>`), 'the line stays optional');
+  assert.match(asked, /<input aria-label="Add more, if you like\."[^>]*maxLength="280"/);
+  assert.ok(asked.includes(`<button type="submit" class="rf-go" disabled="">${message('communities:review.no.send')}</button>`),
+    'Send is off until an answer is picked');
+  assert.match(src, /onClick=\{\(\) => setChoice\(c\.key\)\}/, 'a chip picks the answer');
+  assert.match(src, /if \(!choice\) return;/, 'nothing is sent without one');
+  // The composed reason is the answer, then the line when one is written,
+  // within the server's limit.
+  assert.match(src, /const text = \(detail\s*\? t\('communities:review\.why\.withDetail', \{ choice: choiceText, detail \}\)\s*: choiceText\)\.slice\(0, NO_LINE_MAX\);/);
+  assert.match(src, /if \(await cast\('no', text\)\) setShared\(text\);/);
+  // A No this page did not cast has no known line: the link opens the sheet.
   const offered = sheetHtml({ vote: 'no', state: 'voted' });
   assert.match(offered, /data-rf-voted="no"/);
   assert.match(offered, /data-rf-why=""/);
   assert.ok(offered.includes(message('communities:review.reason.add')));
-  const writing = sheetHtml({ vote: 'no', state: 'reason' });
-  assert.match(writing, /class="rf-why-form"/);
-  assert.match(writing, /maxLength="280"/);
-  assert.ok(writing.includes(`class="rf-share">${message('communities:review.reason.share')}</button>`), 'Share sits inside the field');
-  assert.match(src, /if \(await cast\('no', text\)\) setShared\(text\);/);
   assert.doesNotMatch(sheetHtml({ vote: 'yes', state: 'voted' }), /data-rf-why=""/, 'a Yes is not asked why');
 });
 

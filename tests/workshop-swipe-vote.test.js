@@ -109,11 +109,12 @@ function body(src, start, end) {
   return src.slice(at, src.indexOf(end, at));
 }
 
-test('the swipe votes through answer(), so a No may cast without a line and a dismissal casts nothing', () => {
+test('a Yes swipe votes at once; a No swipe opens the sheet on No, where its reason is picked', () => {
   const feed = body(WORKSHOP, 'function NeedsFeed(', '\nfunction GroupStrip(');
-  // One vote path. The swipe's commit calls the same `answer` the sheet's
-  // Yes and No buttons call, which calls castVote by name off the row.
-  assert.match(feed, /commit: \(key, which, settled\) => \{\s*if \(!swipeOk\(key\)\) \{ settled\(\); return; \}\s*answer\(which, settled\);/);
+  // One vote path. A Yes swipe calls the same `answer` the sheet's Yes
+  // button calls; a No needs its reason first, so it opens the sheet on No
+  // rather than casting a lineless No.
+  assert.match(feed, /commit: \(key, which, settled\) => \{\s*if \(!swipeOk\(key\)\) \{ settled\(\); return; \}[\s\S]*?if \(which === 'no'\) \{\s*settled\(\);\s*setSheet\('vote'\);\s*setVoteSide\('no'\);\s*setVoteLine\(''\);\s*setVoteChoice\(null\);\s*return;\s*\}\s*answer\(which, settled\);/);
   assert.ok(!/castVote/.test(body(WORKSHOP, 'function useSwipeVote(', '\n/* ── The feed')),
     'the gesture never calls castVote itself');
   assert.ok(!/fetch\(/.test(body(WORKSHOP, 'function useSwipeVote(', '\n/* ── The feed')),
@@ -133,9 +134,10 @@ test('the swipe votes through answer(), so a No may cast without a line and a di
   assert.match(cast, /if \(reason === false\) \{\s*AppView\._voteInFlight\.delete\(key\);\s*return false;/);
   const ask = body(view, '  async _askVoteReason(vote)', '\n  },\n');
   assert.match(ask, /if \(answer === null\) return no \? false : null;/, 'a dismissed No prompt is `false`: no vote');
-  // #5682: a No without a line is cast, with no line, as a Yes already is.
-  assert.ok(!/if \(no && !line\)/.test(ask), 'an empty line is no longer refused');
-  assert.match(ask, /return line \|\| null;/, 'an empty line resolves to none');
+  // #5809: where the prompt card is the only way to ask, a No still says why.
+  assert.match(ask, /if \(no && !line\) \{\s*if \(typeof pu\.toast === 'function'\) pu\.toast\(PlatformI18n\.t\('changes:vote\.reason\.noNeedsLine'\)\);\s*return false;/,
+    'an empty No line is refused, and the voter is told');
+  assert.match(ask, /return line \|\| null;/, 'a Yes resolves an empty line to none');
 });
 
 test('only a card the viewer can vote on, on a phone, takes the gesture', () => {
