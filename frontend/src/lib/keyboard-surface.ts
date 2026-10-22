@@ -189,7 +189,7 @@ export function attachKeyboardSurface(
   scroller: HTMLElement | null | undefined,
   win: WinLike | undefined = typeof window !== 'undefined' ? (window as unknown as WinLike) : undefined,
   doc: DocLike | undefined = typeof document !== 'undefined' ? (document as unknown as DocLike) : undefined,
-  options: { ride?: boolean } = {},
+  options: { ride?: boolean; foot?: string } = {},
 ): () => void {
   const kit = win?.unNative;
   const vv = win?.visualViewport;
@@ -239,11 +239,26 @@ export function attachKeyboardSurface(
     const box = field.getBoundingClientRect();
     const action = actionOf(field, scroller);
     const act = action ? action.getBoundingClientRect() : null;
+    // A sticky row at the scroller's foot (#5802): the form has no submit
+    // button to find, so the row that covers the view's foot names itself.
+    // The last match with a rect is the one showing (a form and an edit
+    // section, one hidden at a time).
+    let viewBottom = view.bottom;
+    if (options.foot) {
+      const rows = scroller.querySelectorAll(options.foot);
+      for (let i = rows.length - 1; i >= 0; i -= 1) {
+        const rect = rows[i].getBoundingClientRect();
+        if (rect.width || rect.height) {
+          viewBottom = Math.min(viewBottom, rect.top);
+          break;
+        }
+      }
+    }
     const top = revealScrollTop({
       scrollTop: scroller.scrollTop,
       scrollMax: scroller.scrollHeight - scroller.clientHeight,
       viewTop: view.top,
-      viewBottom: view.bottom,
+      viewBottom,
       fieldTop: box.top,
       fieldBottom: box.bottom,
       actionTop: act ? act.top : null,
@@ -404,14 +419,15 @@ export function attachKeyboardSurface(
  * attachKeyboardSurface on whatever element `ref` holds, re-attached when
  * React hands it a new node (the sheet renders its panel only while open).
  */
-export function useKeyboardSurface(ref: RefObject<HTMLElement | null>, options: { ride?: boolean } = {}): void {
-  const attached = useRef<{ el: HTMLElement; detach: () => void } | null>(null);
+export function useKeyboardSurface(ref: RefObject<HTMLElement | null>, options: { ride?: boolean; foot?: string } = {}): void {
+  const attached = useRef<{ el: HTMLElement; foot: string | undefined; detach: () => void } | null>(null);
   const ride = !!options.ride;
+  const foot = options.foot;
   useEffect(() => {
     const el = ref.current;
-    if ((attached.current?.el || null) === el) return;
+    if (attached.current && attached.current.el === el && attached.current.foot === foot) return;
     attached.current?.detach();
-    attached.current = el ? { el, detach: attachKeyboardSurface(el, undefined, undefined, { ride }) } : null;
+    attached.current = el ? { el, foot, detach: attachKeyboardSurface(el, undefined, undefined, { ride, foot }) } : null;
   });
   useEffect(() => () => {
     attached.current?.detach();
