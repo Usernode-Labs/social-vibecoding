@@ -1149,6 +1149,20 @@ function usesMockGithubForImports() {
   return process.env.USERNODE_ENV === 'staging';
 }
 
+// #5743: a request filed on a test copy is filed LOCALLY, under an obviously
+// fake number, when that copy has no GitHub credentials — so the thanks sheet
+// and everything after posting can be reached by the before & after shots and
+// by the declared checks. Staging previews and a developer's own machine (the
+// in-loop launch says USERNODE_ENV=staging too) are test copies; production is
+// never one, and a server that does not positively say it is staging or local
+// development is treated as production, so a pod missing the setting can never
+// fake a filing. Read directly from env, like its neighbour.
+function filesTestRequests() {
+  if (process.env.USERNODE_ENV === 'staging') return true;
+  if (process.env.USERNODE_ENV === 'production' || process.env.NODE_ENV === 'production') return false;
+  return process.env.USERNODE_LOCAL_DEV === '1';
+}
+
 // #1771: cluster maintenance is not a staging preview's job.
 //
 // server.becomeLeader() is where the fleet-wide duties still under the
@@ -1185,6 +1199,7 @@ function runsClusterMaintenance() {
 module.exports = {
   load,
   usesMockGithubForImports,
+  filesTestRequests,
   runsClusterMaintenance,
   canonicalCliOrigin,
   canonicalOpenRouterApiBase,
