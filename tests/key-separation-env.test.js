@@ -470,7 +470,7 @@ test('worker.js bare -e args come only from the secretEnv literals', () => {
   assert.match(src, /Object\.keys\(secretEnv\)\.flatMap\(\(k\) => \['-e', k\]\)/,
     'bare -e args are derived from secretEnv, so the key check above is the boundary');
   // Any hand-written bare `-e 'NAME'` outside that derivation is checked
-  // directly. (PAT/BRANCH on the push proxy are the legitimate ones.)
+  // directly. GitHub push credentials stay in the platform process.
   for (const [, name] of src.matchAll(/'-e',\s*'([A-Z][A-Z0-9_]*)'/g)) {
     assert.ok(!FORBIDDEN.includes(name), `worker.js forwards ${name} into a container`);
   }

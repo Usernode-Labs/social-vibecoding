@@ -27,6 +27,7 @@ const { RUNNER_TEST_ENV } = require('./lib/runner-env');
 const ROOT = path.join(__dirname, '..');
 const LIB = path.join(ROOT, 'worker', 'session-branch.sh');
 const worker = require('../src/services/worker');
+const gitPush = require('../src/services/worker-git-push');
 const runner = require('../src/services/bench/runner');
 
 const GIT_ENV = {
@@ -189,7 +190,7 @@ test('the freshness check AGENTS.md asks for answers "current" from a stand-in, 
   assert.equal(git(ws, 'ls-remote', canonical), `${fx.base}\tHEAD\n${fx.base}\trefs/heads/main`);
 });
 
-test('the build still lands: the platform\'s push reaches GitHub\'s copy of the trial branch', (t) => {
+test('the build still lands: the platform\'s push reaches GitHub\'s copy of the trial branch', async (t) => {
   const fx = fixture(t);
   const { ws, code, out } = sealedClone(t, fx);
   assert.equal(code, 0, out);
@@ -199,11 +200,13 @@ test('the build still lands: the platform\'s push reaches GitHub\'s copy of the 
   // GitHub has.
   const globalConfig = path.join(fx.dir, 'gitconfig');
   fs.writeFileSync(globalConfig, '[push]\n\tnegotiate = true\n');
-  const r = spawnSync('bash', ['-c', worker.buildPushScript({ workspace: ws })], {
-    env: { ...GIT_ENV, BRANCH, PAT: 'unused-for-a-local-origin', GIT_CONFIG_GLOBAL: globalConfig }, encoding: 'utf8',
+  const pushed = await gitPush.push({ remoteUrl: fx.origin, branchName: BRANCH, token: 'fake-local-token',
+    exportWorker: async () => ({ stdout: execFileSync('sh', ['-c', gitPush.buildExportScript({ workspace: ws, branchName: BRANCH })], {
+      env: { ...GIT_ENV, GIT_CONFIG_GLOBAL: globalConfig }, encoding: 'utf8',
+    }), stderr: '' }),
   });
-  assert.equal(r.status, 0, r.stderr);
-  assert.equal(r.stdout.trim().split('\n').pop(), built);
+  execFileSync('sh', ['-c', gitPush.buildRecordPushScript({ workspace: ws, branchName: BRANCH, sha: pushed.sha })], { env: GIT_ENV });
+  assert.equal(pushed.sha, built);
   assert.equal(git(fx.origin, 'rev-parse', `refs/heads/${BRANCH}`), built, 'GitHub has the trial\'s commit (branchDiff reads it there)');
   assert.equal(git(ws, 'rev-parse', `refs/remotes/origin/${BRANCH}`), built, 'and the next turn starts from it');
   assert.equal(git(ws, 'rev-list', '--count', 'origin/main..HEAD'), '1', 'the trial\'s own commits, as `ahead`');
