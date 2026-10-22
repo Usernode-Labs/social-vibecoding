@@ -16,7 +16,12 @@ function controller(): any {
   return (typeof window !== 'undefined' ? (window as any).Home : null) || null;
 }
 
-const MORE_BTN = 'rounded-lg px-3 py-1.5 text-xs font-medium text-violet-700 '
+/**
+ * The link treatment of the "Show all N apps" line. Exported because the
+ * Contributing view's empty state offers "Show all apps" in the same
+ * treatment (#5823) — one string, so the two links cannot drift apart.
+ */
+export const MORE_BTN = 'rounded-lg px-3 py-1.5 text-xs font-medium text-violet-700 '
   + 'dark:text-violet-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors';
 
 /**

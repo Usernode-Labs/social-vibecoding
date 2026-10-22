@@ -395,3 +395,31 @@ test('the ranked query scopes every aggregate to the one app id', async () => {
     assert.ok(/ORDER BY merged_count DESC/.test(q.sql));
   } finally { server.close(); }
 });
+
+// ── #5823: the same definition, asked for ONE viewer ──────────────────
+
+test('loadContributedAppIds reuses the shared CTE and binds [appIds, userId]', async () => {
+  const seen = [];
+  const fake = {
+    query: async (sql, params) => {
+      seen.push({ sql: String(sql), params });
+      return { rows: [{ app_id: 7 }, { app_id: '9' }] };
+    },
+  };
+  const set = await contributors.loadContributedAppIds(fake, [7, 9], 42);
+  assert.ok(set instanceof Set);
+  assert.deepEqual([...set].sort((a, b) => a - b), [7, 9], 'numbers, not pg bigint strings');
+  assert.equal(seen.length, 1, 'one round trip for the whole list');
+  assert.ok(seen[0].sql.includes(contributors.CONTRIBUTOR_IDS_CTE),
+    'the definition exists once; this loader embeds it verbatim');
+  assert.match(seen[0].sql, /WHERE c\.user_id = \$2/);
+  assert.deepEqual(seen[0].params, [[7, 9], 42]);
+});
+
+test('loadContributedAppIds answers an empty set with no query', async () => {
+  let calls = 0;
+  const fake = { query: async () => { calls += 1; return { rows: [] }; } };
+  assert.equal((await contributors.loadContributedAppIds(fake, [], 42)).size, 0);
+  assert.equal((await contributors.loadContributedAppIds(fake, [7], null)).size, 0);
+  assert.equal(calls, 0, 'nothing to ask, nothing sent');
+});
