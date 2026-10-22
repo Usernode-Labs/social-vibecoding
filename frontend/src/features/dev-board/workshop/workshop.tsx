@@ -86,7 +86,8 @@ import { callAppView, openHref } from '../card/fold';
 import { FeedThread } from '../card/feed-thread';
 import type { ActionRef, DevCardModel, DevWorkshopView, ListRow, WorkshopTheme } from '../card/model';
 import { CardSkeleton } from '../card/skeleton';
-import { VotePicker } from '../card/dev-card';
+import { composeNoReason, VotePicker } from '../card/dev-card';
+import type { NoChoice } from '../../review-flow/vote-sheet';
 import { useWorkshopGroup } from './group-mode-store';
 import { communityScopeStore, describe as describeCommunity, openSwitcher } from '../../workshop/community-scope';
 import { registerLevel } from '../../workshop/tab-ladder';
@@ -1400,15 +1401,18 @@ function youAnswered(row: QueueRow, voted: string): string {
  * now it is written here and sent with the vote. The state is NeedsFeed's,
  * so a key can turn the switch; exported for the render test.
  */
-export function NeedsVoteForm({ row, slug, side, line, boxRef, onSide, onLine, onBoxKey, onCancel, onSend }: {
+export function NeedsVoteForm({ row, slug, side, line, noChoice, boxRef, onSide, onLine, onNoChoice, onBoxKey, onCancel, onSend }: {
   row: QueueRow;
   /** The open project's, for a row that does not name its own (rowSlug). */
   slug?: string;
   side: 'yes' | 'no';
   line: string;
+  /** The No's picked answer; the vote is sent only with one. */
+  noChoice?: NoChoice | null;
   boxRef?: RefObject<HTMLTextAreaElement | null>;
   onSide: (side: 'yes' | 'no') => void;
   onLine: (line: string) => void;
+  onNoChoice: (choice: NoChoice) => void;
   onBoxKey: (ev: globalThis.KeyboardEvent | { key: string; shiftKey: boolean; preventDefault: () => void }) => void;
   onCancel: () => void;
   onSend: () => void;
@@ -1426,6 +1430,7 @@ export function NeedsVoteForm({ row, slug, side, line, boxRef, onSide, onLine, o
         prior={null}
         side={side}
         line={line}
+        noChoice={noChoice}
         reasonId={`dev-ws-vote-reason-${row.key.replace(/[^\w-]/g, '-')}`}
         boxRef={boxRef}
         tally={labelTally}
@@ -1439,6 +1444,7 @@ export function NeedsVoteForm({ row, slug, side, line, boxRef, onSide, onLine, o
         uncounted={!!(row.yes && row.yes.uncounted)}
         onSide={onSide}
         onLine={onLine}
+        onNoChoice={onNoChoice}
         onBoxKey={onBoxKey}
         onCancel={onCancel}
         onSend={onSend}
@@ -2659,6 +2665,8 @@ export function NeedsFeed({ rows, models, slug, canPost, onDone, onHub, onSugges
   // after the press.
   const [voteSide, setVoteSide] = useState<'yes' | 'no'>('yes');
   const [voteLine, setVoteLine] = useState('');
+  // The No's picked answer: the sheet's picker sends the vote only with one.
+  const [voteChoice, setVoteChoice] = useState<NoChoice | null>(null);
   const voteBoxRef = useRef<HTMLTextAreaElement>(null);
   // The pins, keyed by row, with the index each held when it was answered.
   // A ref with a version counter rather than state, because a pin is set in
@@ -2861,6 +2869,7 @@ export function NeedsFeed({ rows, models, slug, canPost, onDone, onHub, onSugges
     setSheet('vote');
     setVoteSide('yes');
     setVoteLine('');
+    setVoteChoice(null);
   }, [items]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /**
@@ -2965,8 +2974,8 @@ export function NeedsFeed({ rows, models, slug, canPost, onDone, onHub, onSugges
     if (sheet === kind) { closeSheet(); return; }
     setLeaving(null);
     setSheet(kind);
-    // The vote form opens fresh: on Yes, with an empty line.
-    if (kind === 'vote') { setVoteSide('yes'); setVoteLine(''); }
+    // The vote form opens fresh: on Yes, with an empty line and no answer.
+    if (kind === 'vote') { setVoteSide('yes'); setVoteLine(''); setVoteChoice(null); }
   };
   // The leave animation's length, then the sheet is gone. Nothing to wait
   // for where motion is unwelcome — app.css runs no animation there.
@@ -3139,26 +3148,30 @@ export function NeedsFeed({ rows, models, slug, canPost, onDone, onHub, onSugges
   });
   /**
    * The vote sheet's send (#3613): the switch's side with the line written
-   * under it. The line is optional on either side, so a lineless No sends
-   * like a lineless Yes.
+   * under it. A Yes sends with its optional line; a No sends only once an
+   * answer is picked, and carries that answer with the line if one is written.
    */
   const voteTrimmed = voteLine.replace(/\s+/g, ' ').trim();
   const submitVote = () => {
-    answer(voteSide, undefined, voteTrimmed || null);
+    if (voteSide === 'no') {
+      if (!voteChoice) return;
+      const choice = {
+        notWorking: t('project:card.vote.picker.why.notWorking'),
+        approach: t('project:card.vote.picker.why.approach'),
+        notNeeded: t('project:card.vote.picker.why.notNeeded'),
+        other: t('project:card.vote.picker.why.other'),
+      }[voteChoice];
+      answer('no', undefined, composeNoReason(choice, voteLine,
+        (c, detail) => t('project:card.vote.picker.withDetail', { choice: c, detail })));
+      return;
+    }
+    answer('yes', undefined, voteTrimmed || null);
   };
   const onVoteBoxKey = (ev: globalThis.KeyboardEvent | { key: string; shiftKey: boolean; preventDefault: () => void }) => {
     if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); submitVote(); return; }
     // The window's keys stand down inside a field, so the box closes itself.
     if (ev.key === 'Escape') { ev.preventDefault(); closeSheet(); }
   };
-  // The box takes focus the moment the switch lands on No, so writing a line
-  // is still one tap away — as the card's picker does. Not on opening: a keyboard
-  // rising over a one-tap "Vote yes" would be in the way, and the Y and N
-  // keys only work while the box is not focused.
-  useLayoutEffect(() => {
-    if (sheet === 'vote' && voteSide === 'no') voteBoxRef.current?.focus();
-  }, [sheet, voteSide]);
-
   /**
    * The swipe's way in (#3052): the card in view, when it is one the viewer
    * can vote on and has not answered here, with no vote of its own already
@@ -3173,6 +3186,16 @@ export function NeedsFeed({ rows, models, slug, canPost, onDone, onHub, onSugges
       can: swipeOk,
       commit: (key, which, settled) => {
         if (!swipeOk(key)) { settled(); return; }
+        // A Yes is the whole vote. A No still says why, so the swipe opens
+        // the vote sheet on No rather than casting a lineless No.
+        if (which === 'no') {
+          settled();
+          setSheet('vote');
+          setVoteSide('no');
+          setVoteLine('');
+          setVoteChoice(null);
+          return;
+        }
         answer(which, settled);
       },
     };
@@ -3591,9 +3614,11 @@ export function NeedsFeed({ rows, models, slug, canPost, onDone, onHub, onSugges
                     slug={slug}
                     side={voteSide}
                     line={voteLine}
+                    noChoice={voteChoice}
                     boxRef={voteBoxRef}
                     onSide={setVoteSide}
                     onLine={setVoteLine}
+                    onNoChoice={setVoteChoice}
                     onBoxKey={onVoteBoxKey}
                     onCancel={closeSheet}
                     onSend={submitVote}

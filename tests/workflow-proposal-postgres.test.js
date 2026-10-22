@@ -463,6 +463,37 @@ test('proposal machine against the full PostgreSQL schema', { timeout: 180000 },
     assert.equal((await instance(keep)).deadline_event.type, 'ReviewCheck', 'looked at again in an hour');
   });
 
+  await t.test('P11b an admin\'s lone No sets the change aside after a week, and a Yes stops the clock (#5803)', async () => {
+    defaults();
+    const admin = await user();
+    const other = await user();
+    const setAside = await session({ status: 'promoted', promotedAgo: 8 * DAY, approvalsRequired: 3 });
+    const voted = await session({ status: 'promoted', promotedAgo: 8 * DAY, approvalsRequired: 3 });
+    const notAdmin = await session({ status: 'promoted', promotedAgo: 8 * DAY, approvalsRequired: 3 });
+    for (const x of [setAside, voted, notAdmin]) {
+      await pool.query('INSERT INTO app_admins (app_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [x.app_id, admin.id]);
+    }
+    // One No from an admin on each of the first two, a Yes from someone else
+    // on the second, and one No from a non-admin on the third. Every No is a
+    // week old, so a clock armed from it has already run out.
+    for (const x of [setAside, voted]) await vote(x, admin, 'no');
+    await vote(voted, other, 'yes');
+    await vote(notAdmin, other, 'no');
+    for (const x of [setAside, voted, notAdmin]) {
+      await pool.query(`UPDATE pr_votes SET created_at = NOW() - interval '8 days' WHERE session_id = $1`, [x.id]);
+      await send(x, 'Adopted');
+    }
+    await settle();
+    for (const x of [setAside, voted, notAdmin]) await fire(x);
+
+    assert.equal((await row(setAside)).status, 'archived', 'no Yes, an admin No older than a week');
+    assert.equal((await instance(setAside)).data.reason, 'admin-no');
+    assert.match((await pool.query(`SELECT content FROM chat_messages WHERE thread_ref = $1 ORDER BY id DESC LIMIT 1`, [setAside.id])).rows[0].content,
+      /was set aside: an admin voted No and nobody voted Yes within a week/);
+    assert.equal((await row(voted)).status, 'promoted', 'one Yes stops the clock');
+    assert.equal((await row(notAdmin)).status, 'promoted', 'a lone No from someone who is not an admin arms nothing');
+  });
+
   await t.test('P12 gone quiet: warned once, closed three days on, unless somebody voted since the warning (bug 4)', async () => {
     defaults();
     const quiet = await session({ status: 'promoted', promotedAgo: 8 * DAY, approvalsRequired: 3 });

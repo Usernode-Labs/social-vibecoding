@@ -71,6 +71,13 @@ const REJECT_CURVE_EXP = 3;
 const REJECT_MIN_NO = 2;
 const REJECT_KEEPALIVE_YES_FRAC = YES_MID_FRAC;
 
+// An admin's lone No (#5803). One No never arms the opposition curve above,
+// because one person's objection should not end a change while the group may
+// still vote. When that person is one of the project's admins, the group asked
+// for a clock anyway: a week with no Yes from anyone means nobody wants it.
+// Same week as the longest rejection window and the quiet rule.
+export const ADMIN_NO_WINDOW_MS = 7 * DAY_MS;
+
 // Lazy-consensus knobs: a proposal that has SOME support (Yes strictly
 // leading, no contest) but hasn't reached the eased threshold arms a merge
 // clock anyway: silence is consent. The clock is count-based (NOT
@@ -511,6 +518,51 @@ export function memberFloor({ memberCount, otherYes }: { memberCount?: Count; ot
   return { applies, otherYes: other, met: !applies || other >= 1 };
 }
 
+function instantMs(v: Instant): number | null {
+  if (v == null) return null;
+  if (v instanceof Date) return v.getTime();
+  if (typeof v === 'number') return Number.isFinite(v) ? v : null;
+  const ms = new Date(v).getTime();
+  return Number.isFinite(ms) ? ms : null;
+}
+
+// An admin's lone No (#5803): a change that one of the project's admins voted
+// No on, and that nobody has voted Yes on, is set aside after
+// ADMIN_NO_WINDOW_MS from that No. Pure, like its siblings: the clock is
+// recomputed on every read, so nothing has to be cancelled.
+//
+// Cleared (returns the gate untouched) by:
+//   - no admin No, or a protected settings change (`explicitApproval`: #788
+//     keeps every time-based takedown off);
+//   - any counted Yes, or a mergeable gate: a change with support is never
+//     set aside;
+//   - an admin No it cannot date.
+// An opposition window (more No than Yes) that ends SOONER wins: the sooner
+// time is the one the group already agreed to.
+export function applyAdminNo<G extends Gate>(
+  gate: G, adminNoAt: Instant, yesCount: Count, now: Instant,
+  { explicitApproval = false }: { explicitApproval?: boolean } = {},
+): G & { adminNo?: boolean } {
+  if (adminNoAt == null || explicitApproval) return gate;
+  if ((int(yesCount) || 0) > 0 || gate.mergeable) return gate;
+  const noMs = instantMs(adminNoAt);
+  if (noMs == null) return gate;
+  const nowMs = instantMs(now) ?? Date.now();
+  const endsMs = noMs + ADMIN_NO_WINDOW_MS;
+  if (gate.rejectionArmed && gate.rejectionEndsAt) {
+    const earlier = Date.parse(gate.rejectionEndsAt);
+    if (Number.isFinite(earlier) && earlier <= endsMs) return gate;
+  }
+  return {
+    ...gate,
+    rejectionWindowMs: ADMIN_NO_WINDOW_MS,
+    rejectionArmed: true,
+    rejectionEndsAt: new Date(endsMs).toISOString(),
+    rejectable: nowMs >= endsMs,
+    adminNo: true,
+  };
+}
+
 export interface GovernedGate extends Gate {
   policy: Governance['approverPolicy'];
   mode: 'at_least' | 'default' | 'rules';
@@ -533,6 +585,9 @@ export interface GovernedGate extends Gate {
   // Set (true) only when the first-version rule let it through
   // (applyFirstVersion); absent otherwise.
   firstVersion?: boolean;
+  // Set (true) when the rejection clock is an admin's lone No (applyAdminNo),
+  // so the machine closes with 'admin-no' rather than 'auto-rejected'.
+  adminNo?: boolean;
 }
 
 // The two rules computeGate dispatches to. services/governance.js passes
@@ -571,6 +626,10 @@ export interface GateOpts {
   // The change is its project's first version (services/first-version-
   // rule.js): applyFirstVersion below.
   firstVersion?: boolean;
+  // When one of the project's admins last cast a counted No on the current
+  // version of the change (pr-gate.ts adminNoAtSql), or null. applyAdminNo
+  // arms the week from it.
+  adminNoAt?: Instant;
 }
 
 // THE FIRST VERSION (13 Oct 2026, D1). A project made from a description
@@ -714,6 +773,12 @@ export function applyBuilderYes<G extends GovernedGate>(gate: G, opts: GateOpts 
 //
 // `opts.firstVersion` waives the vote for a project's first version, in
 // every regime (applyFirstVersion above).
+//
+// `opts.adminNoAt` arms a week-long takedown from an admin's lone No
+// (applyAdminNo above), before the first-version rule clears every rejection
+// field. A rules project's "Yes" is the counted voters, when it has them: its
+// author's implicit proposing-yes is not a cast Yes and does not stop the
+// clock.
 export function computeGate(
   gov: Governance, active: Count, yesCount: Count, noCount: Count, openedAt: Instant, now: Instant,
   opts: GateOpts = {},
@@ -725,7 +790,14 @@ export function computeGate(
   // §5816: a builder's Yes, before the first version (which waives the vote
   // anyway) and after whichever regime decided.
   const approved = applyBuilderYes(gate, opts);
-  return opts.firstVersion ? applyFirstVersion(approved, { explicitApproval: !!opts.explicitApproval }) : approved;
+  const yesForClock = gov && gov.rules && opts.voters
+    ? (opts.voters.yes instanceof Set
+      ? opts.voters.yes.size : new Set(opts.voters.yes || []).size)
+    : yesCount;
+  const timed = applyAdminNo(approved, opts.adminNoAt ?? null, yesForClock, now, {
+    explicitApproval: !!opts.explicitApproval,
+  });
+  return opts.firstVersion ? applyFirstVersion(timed, { explicitApproval: !!opts.explicitApproval }) : timed;
 }
 
 // The two columns' regimes (default, at least N), with the #788 modifier.

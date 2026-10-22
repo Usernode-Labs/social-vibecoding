@@ -23860,7 +23860,21 @@ const AppView = {
     // The member floor: a flagged row whose votes are in still waits for a
     // Yes from someone other than its author, so it is not "reached" green.
     const waitsOnMember = isOpenRow && AppView._awaitingOtherMember(p);
-    // "At least N approvals" mode is clock-free, so it can't count down.
+    // Rejection (auto-takedown) countdown, before the approvals pill: an
+    // at-least-N project is clock-free for MERGING only. Since #2494 its
+    // rejection clock is armed like every other mode's, and #5803 arms one
+    // from an admin's lone No, so a card that is being voted down must show
+    // the countdown rather than an approvals count that reads as if nothing
+    // is happening. The `gc-reject-countdown` class + data-window-ends drive
+    // the same timer as the default mode's.
+    const rejectEndsMs = p.reject_window_ends_at ? Date.parse(p.reject_window_ends_at) : NaN;
+    if (isOpenRow && p.rejection_armed && Number.isFinite(rejectEndsMs) && rejectEndsMs > Date.now()) {
+      return { ...base, tier: 4, key: 'reject_countdown', tone: 'blocked', fill: 'full-no', countdown: rejectEndsMs, reject: true,
+        label: PlatformI18n.t('changes:badge.pill.setAsideIn', { time: AppView._fmtCountdown(rejectEndsMs - Date.now()) }), reasons,
+        title: PlatformI18n.t('changes:badge.pill.setAsideTitle', { yes, majority: maj }) };
+    }
+    // "At least N approvals" mode merges on the count alone, with no merge
+    // clock.
     if (p.approvals_required != null && isOpenRow) {
       const n = parseInt(p.approvals_required, 10) || 1;
       const reached = yes >= n;
@@ -23890,12 +23904,6 @@ const AppView = {
         title: reachedMaj
           ? PlatformI18n.t('changes:badge.pill.enoughYesTitle', { yes, majority: maj })
           : PlatformI18n.t('changes:badge.pill.hasSupportTitle', { yes, majority: maj }) };
-    }
-    const rejectEndsMs = p.reject_window_ends_at ? Date.parse(p.reject_window_ends_at) : NaN;
-    if (isOpenRow && p.rejection_armed && Number.isFinite(rejectEndsMs) && rejectEndsMs > Date.now()) {
-      return { ...base, tier: 4, key: 'reject_countdown', tone: 'blocked', fill: 'full-no', countdown: rejectEndsMs, reject: true,
-        label: PlatformI18n.t('changes:badge.pill.setAsideIn', { time: AppView._fmtCountdown(rejectEndsMs - Date.now()) }), reasons,
-        title: PlatformI18n.t('changes:badge.pill.setAsideTitle', { yes, majority: maj }) };
     }
     // 5 — needs your vote. Absorbs the standalone pulsing "Vote" badge.
     if (p.status === 'promoted' && !p.my_vote && !AppView.readOnly) {
@@ -23992,9 +24000,30 @@ const AppView = {
       ? `<span class="gc-vote-explicit" title="${escapeAttr(AppView._lockTitle(pr))}">${PlatformI18n.htmlText('changes:badge.votePill.explicit')}</span>`
       : '';
 
-    // #646: "at least N" mode — a clock-free approvals-progress pill
-    // ("x of N approvals"). The server never arms a merge/rejection
-    // window in this mode, so the countdown branches below can't fire.
+    // Rejection (auto-takedown) countdown: the group is voting this down, or
+    // one of the project's admins voted No with no Yes (#5803), and the
+    // takedown clock is armed. Render a red "Set aside in ~X" pill. Drawn
+    // BEFORE the at-least-N approvals pill below: that mode has no MERGE
+    // clock, but since #2494 its rejection clock is armed and running, and a
+    // card being voted down must not read "0 of N approval" over it.
+    // Mutually exclusive with the merge countdown above (can't reach the Yes
+    // threshold while losing). The `gc-reject-countdown` class +
+    // data-window-ends drive the same timer.
+    const rejectEndsMs = pr.reject_window_ends_at ? Date.parse(pr.reject_window_ends_at) : NaN;
+    const inReject = Number.isFinite(rejectEndsMs) && rejectEndsMs > Date.now();
+    const isOpenRow = pr.status !== 'merged' && pr.status !== 'merging';
+    if (isOpenRow && pr.rejection_armed && inReject) {
+      const label = AppView._fmtCountdown(rejectEndsMs - Date.now());
+      return `<span class="gc-vote-count gc-vote-count-no gc-reject-countdown" data-window-ends="${rejectEndsMs}"`
+        + ` title="${PlatformI18n.htmlText('changes:badge.votePill.setAsideTitle', { yes, majority: maj })}">`
+        + `<span class="gc-vote-fill gc-vote-fill-full gc-vote-fill-full-no"></span>`
+        + `<span class="gc-vote-count-label">${PlatformI18n.htmlText('changes:badge.votePill.setAsideIn', { time: label })}</span>`
+        + `</span>` + advisoryChip + explicitChip;
+    }
+
+    // #646: "at least N" mode — an approvals-progress pill ("x of N
+    // approvals"). The server arms no MERGE window in this mode (its
+    // rejection clock is handled above).
     if (pr.approvals_required != null && pr.status !== 'merged' && pr.status !== 'merging') {
       const n = parseInt(pr.approvals_required) || 1;
       const reached = yes >= n;
@@ -24024,7 +24053,8 @@ const AppView = {
     // on track and how long they have left to object. Only for live (not
     // merged/merging) rows — a settled row never counts down. The
     // `gc-merge-countdown` class + data-window-ends drive the client timer.
-    const isOpenRow = pr.status !== 'merged' && pr.status !== 'merging';
+    // `isOpenRow` is declared with the rejection pill above, which reads it
+    // first: a settled row never counts down.
     const windowEndsMs = pr.merge_window_ends_at ? Date.parse(pr.merge_window_ends_at) : NaN;
     const inWindow = Number.isFinite(windowEndsMs) && windowEndsMs > Date.now();
     const lazyLead = state === 'pending' && yes >= 1 && yes > no;
@@ -24054,21 +24084,6 @@ const AppView = {
         + `</span>` + advisoryChip + explicitChip;
     }
 
-    // Rejection (auto-takedown) countdown: the group is voting this down
-    // (No > Yes, under the 1/3 support line) and the takedown clock is armed.
-    // Render a red "Set aside in ~X" pill. Mutually exclusive with the merge
-    // countdown above (can't reach the Yes threshold while losing). The
-    // `gc-reject-countdown` class + data-window-ends drive the same timer.
-    const rejectEndsMs = pr.reject_window_ends_at ? Date.parse(pr.reject_window_ends_at) : NaN;
-    const inReject = Number.isFinite(rejectEndsMs) && rejectEndsMs > Date.now();
-    if (isOpenRow && pr.rejection_armed && inReject) {
-      const label = AppView._fmtCountdown(rejectEndsMs - Date.now());
-      return `<span class="gc-vote-count gc-vote-count-no gc-reject-countdown" data-window-ends="${rejectEndsMs}"`
-        + ` title="${PlatformI18n.htmlText('changes:badge.votePill.setAsideTitle', { yes, majority: maj })}">`
-        + `<span class="gc-vote-fill gc-vote-fill-full gc-vote-fill-full-no"></span>`
-        + `<span class="gc-vote-count-label">${PlatformI18n.htmlText('changes:badge.votePill.setAsideIn', { time: label })}</span>`
-        + `</span>` + advisoryChip + explicitChip;
-    }
     // #58: when both at-merge figures are present, surface the historical
     // context as a hover tooltip on the pill. Only merged rows carry these.
     const activeAtMerge = parseInt(pr.active_users_at_merge);
@@ -26369,9 +26384,11 @@ const AppView = {
   // took a second identical rejection — one head move, two toasts.
   _seenEpoch: new Map(),
   // #1688: the line behind a vote, asked for through the kit's prompt card.
-  // The line is optional on either side. Resolves the line to send (a
-  // string), null for "none", or false when the voter backed out — a
-  // cancelled No casts nothing.
+  // The line is optional on a Yes. A No says why, so this fallback — reached
+  // only where no picker or sheet can offer the answer list — refuses an
+  // empty line and says so. Resolves the line to send (a string), null for
+  // "none", or false when the voter backed out — a cancelled or empty No
+  // casts nothing.
   async _askVoteReason(vote) {
     const no = vote === 'no';
     const pu = window.PlatformUI;
@@ -26387,6 +26404,10 @@ const AppView = {
     });
     if (answer === null) return no ? false : null;
     const line = String(answer).replace(/\s+/g, ' ').trim();
+    if (no && !line) {
+      if (typeof pu.toast === 'function') pu.toast(PlatformI18n.t('changes:vote.reason.noNeedsLine'));
+      return false;
+    }
     return line || null;
   },
   // The options bag's `reason` key: a string is sent as the line, null sends

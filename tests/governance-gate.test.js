@@ -184,6 +184,106 @@ test('computeGate: at-least mode wins regardless of policy', () => {
   }
 });
 
+// ── #5803: an admin's lone No starts a week-long takedown ─────────────
+//
+// A single No never arms the opposition curve (REJECT_MIN_NO), because one
+// person's objection should not end a change on its own. When that person is
+// one of the project's admins, the week runs from their No unless anyone
+// voted Yes.
+
+test('an admin\'s lone No arms a week from the No, not from when the change opened', () => {
+  const gov = { approverPolicy: 'anyone', approvalsRequired: null };
+  const now = Date.parse('2026-10-20T00:00:00Z');
+  const opened = now - 30 * DAY; // much older than the No
+  const noAt = now - 2 * DAY;
+  const at = (t) => governance.computeGate(gov, 20, 0, 1, opened, t, { adminNoAt: noAt });
+
+  const armed = at(now);
+  assert.equal(armed.rejectionArmed, true);
+  assert.equal(armed.adminNo, true, 'the machine must close it as admin-no');
+  assert.equal(armed.rejectionWindowMs, 7 * DAY);
+  assert.equal(armed.rejectionEndsAt, new Date(noAt + 7 * DAY).toISOString());
+  assert.equal(armed.rejectable, false, 'two days into the week');
+
+  assert.equal(at(noAt + 7 * DAY - 1).rejectable, false, 'a millisecond before');
+  assert.equal(at(noAt + 7 * DAY).rejectable, true, 'seven days after the No: set aside');
+});
+
+test('a lone No from someone who is not an admin arms nothing', () => {
+  const gov = { approverPolicy: 'anyone', approvalsRequired: null };
+  const now = Date.now();
+  const g = governance.computeGate(gov, 20, 0, 1, now - 30 * DAY, now, { adminNoAt: null });
+  assert.equal(g.rejectionArmed, false);
+  assert.equal(g.rejectable, false);
+  assert.equal(g.adminNo, undefined);
+});
+
+test('a single Yes stops the admin-No clock, in every regime', () => {
+  const now = Date.now();
+  const noAt = now - 8 * DAY;
+  for (const gov of [
+    { approverPolicy: 'anyone', approvalsRequired: null },
+    { approverPolicy: 'invited', approvalsRequired: null },
+    { approverPolicy: 'anyone', approvalsRequired: 5 },
+  ]) {
+    const g = governance.computeGate(gov, 20, 1, 1, now - 9 * DAY, now, { adminNoAt: noAt });
+    assert.equal(g.adminNo, undefined, `${JSON.stringify(gov)}: a change with support is left alone`);
+    assert.equal(g.rejectionArmed, false);
+    assert.equal(g.rejectable, false);
+  }
+});
+
+test('a mergeable gate is never armed by an admin No', () => {
+  const gateRules = require('../src/workflow/rules/governance-gate.ts');
+  const mergeable = { mergeable: true, rejectionArmed: false, rejectionEndsAt: null };
+  const out = gateRules.applyAdminNo(mergeable, Date.now() - 8 * DAY, 0, Date.now());
+  assert.equal(out.rejectionArmed, false);
+  assert.equal(out.adminNo, undefined);
+});
+
+test('an opposition window that ends sooner than the admin\'s week wins', () => {
+  const now = Date.now();
+  const opened = now - 5 * DAY;
+  // Two counted No and no Yes: the instant opposition window already applies.
+  const g = governance.computeGate({ approverPolicy: 'invited', approvalsRequired: 3 },
+    20, 0, 2, opened, now, { adminNoAt: now - 5 * DAY });
+  assert.equal(g.rejectionArmed, true);
+  assert.equal(g.rejectionEndsAt, new Date(opened).toISOString(), 'the sooner time the group already agreed to');
+  assert.equal(g.adminNo, undefined);
+});
+
+test('a protected settings change and a first version are left as they are', () => {
+  const now = Date.now();
+  const gov = { approverPolicy: 'anyone', approvalsRequired: null };
+  const noAt = now - 8 * DAY;
+  const flagged = governance.computeGate(gov, 20, 0, 1, now - 30 * DAY, now,
+    { adminNoAt: noAt, explicitApproval: true });
+  assert.equal(flagged.rejectionArmed, false, '#788: no clocks on a protected change');
+  assert.equal(flagged.adminNo, undefined);
+  const first = governance.computeGate(gov, 20, 0, 1, now - 30 * DAY, now,
+    { adminNoAt: noAt, firstVersion: true });
+  assert.equal(first.rejectionArmed, false);
+  assert.equal(first.rejectable, false, 'the first version goes live without a vote, so nothing takes it down');
+});
+
+test('a rules project arms the clock with no counted Yes; its author\'s proposing-yes is not one', () => {
+  const now = Date.now();
+  const gov = {
+    approverPolicy: 'anyone',
+    rules: { rules: [{ group: 'members', kind: 'atLeast', n: 2 }], groups: [] },
+  };
+  const facts = { creatorId: 3, memberCount: 4, membersActive: 4, adminIds: [9], groups: new Map(), activeIds: null };
+  // The admin's No is the only vote. The author (3) is the creator, whose
+  // proposing counts as their yes in the rules gate but is not a cast Yes.
+  const g = governance.computeGate(gov, 4, 0, 1, now - 9 * DAY, now, {
+    voters: { yes: new Set(), no: new Set([9]) },
+    rulesFacts: facts, authorId: 3, adminNoAt: now - 8 * DAY,
+  });
+  assert.equal(g.mode, 'rules');
+  assert.equal(g.adminNo, true);
+  assert.equal(g.rejectable, true);
+});
+
 // ── governedGate with a scripted pool ─────────────────────────────────
 //
 // Answers the queries governedGate issues: the governance-columns

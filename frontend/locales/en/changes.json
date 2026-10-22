@@ -7540,8 +7540,12 @@
     "description": "Title of the prompt shown after pressing Yes on a proposal or a request's vote: offers to add an optional one-line comment."
   },
   "vote.reason.noMessage": {
-    "text": "Optional. It goes to the proposer with your vote.",
-    "description": "Text under the title of the prompt shown after pressing No on a vote, saying the line is optional. \"It\" is the line the voter writes; the proposer is the person who made the proposal."
+    "text": "One line is plenty. It goes to the proposer with your vote.",
+    "description": "Text under the title of the prompt shown after pressing No on a vote. \"It\" is the line the voter writes; the proposer is the person who made the proposal."
+  },
+  "vote.reason.noNeedsLine": {
+    "text": "A No comes with a line: what is not working for you?",
+    "description": "Brief notice when a No vote is sent with no line from the prompt card that offers no list of reasons: a No may not be cast empty."
   },
   "vote.reason.yesMessage": {
     "text": "Optional. It shows beside your vote.",
