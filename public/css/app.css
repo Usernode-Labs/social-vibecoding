@@ -21053,6 +21053,21 @@ html[data-browser-scroller] .dev-ws[data-ws-tab^="c:"] {
   .dev-ws-keys-hint { display: block; align-self: center; margin: 4px 0 0; font-size: 11px; color: var(--text-faint); font-family: ui-monospace, Menlo, monospace; }
   .dev-ws-ask-msg { font-size: 14px; }
   .dev-ws-ask-log { max-height: none; }
+  /* #5820: from the wide layout up the All items chips say their words beside
+     their glyphs — the same job the tooltip and the aria-label still do on a
+     phone. Two classes so this beats Tailwind's `.sr-only`, which loads after
+     this file; below 700px the word stays visually hidden but present, so the
+     declared checks that read innerText pass at every width. */
+  .sr-only.dev-chip-word {
+    position: static; width: auto; height: auto; margin: 0; padding: 0;
+    overflow: visible; clip: auto; white-space: nowrap;
+  }
+  /* The count is part of the word up here ("Filters (2)"), so the separate
+     number beside the glyph would say it twice. */
+  .dev-chip-count { display: none; }
+  /* Room between the tab's glyph and its word; an absolutely positioned
+     sr-only span takes no gap on a phone, so only this layout changes. */
+  .dev-ws-group-tab { gap: 6px; }
 }
 
 /* Between the breakpoint and a wide desktop the panel would push the card
@@ -25024,6 +25039,7 @@ html.in-side-panel body {
 .dev-ws-allbar #dev-filter-chips { order: 3; display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
 .dev-ws-allbar #dev-filter-chips button { height: 28px; padding: 0 11px; font-size: 12.5px; }
 
+
 /* ── The pipeline (#4486, card/dev-kanban.tsx StageStrip) ────────────
    The column heads as the steps an idea goes through, joined by arrows,
    each with its icon and its count, and Done's the one green step. On the
@@ -25117,7 +25133,9 @@ html.in-side-panel body {
   /* The head: the way back and the name, then the search on its own line,
      and the switch and the filters sharing the line under it (#5029). */
   .dev-ws-allbar #dev-kanban-search { flex-basis: 100%; max-width: none; min-width: 0; }
-  .dev-ws-allbar #dev-filter-chips { flex: 1 1 0; min-width: 0; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  /* #5820: the grouping stays at the left and the filters at the right edge,
+     so the line reads as two groups. It still scrolls when it overflows. */
+  .dev-ws-allbar #dev-filter-chips { flex: 0 1 auto; margin-left: auto; min-width: 0; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
   .dev-ws-allbar .dev-ws-pagehead-title { font-size: 20px; line-height: 26px; }
 }
 @media (max-width: 640px) {

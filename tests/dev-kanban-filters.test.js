@@ -495,6 +495,11 @@ test('the bar renders search, the Filters chip, and dismissable active chips', (
   assert.match(html, /<span id="dev-filter-chips" class="contents"><button id="dev-kanban-filters-btn"/);
   assert.match(html, /id="dev-kanban-filters-btn"[^>]*aria-haspopup="dialog"/);
   assert.match(html, />Filters \(2\)</, 'the chip counts the dialog-owned filters');
+  // #5820: the word is sr-only on a phone and a visible label from 700px up
+  // (app.css `.sr-only.dev-chip-word`); `title` and `aria-label` stay.
+  assert.match(html, /id="dev-kanban-filters-btn"[^>]*aria-label="Filters \(2\)"[^>]*title="Filters \(2\)"/);
+  assert.match(html, /<span class="dev-chip-count" aria-hidden="true">2<\/span><span class="sr-only dev-chip-word">Filters \(2\)<\/span>/,
+    'the separate number and the labelled word');
   // The chip reads as SET while any dialog filter is on — the filled tonal state.
   assert.match(html, /id="dev-kanban-filters-btn"[^>]*bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900/);
   assert.match(html, /data-filter-chip="priority"/);
@@ -1165,9 +1170,12 @@ test('the strip draws the two quick toggles as pressed chips, only with a viewer
   const on = renderComponent('frontend/src/features/dev-board/kanban-filters.tsx', 'KanbanFiltersView',
     { ...base, quick: { assignedToMe: true, createdByMe: false } });
   assert.match(on, /data-quick-filter="assignedToMe"[^>]*aria-pressed="true"[^>]*bg-zinc-900 text-white/);
-  assert.match(on, />Assigned to you</);
+  // #5820: the word shows beside the glyph from 700px up, so it is a
+  // `dev-chip-word` copy; `title` and `aria-label` still carry it on a phone.
+  assert.match(on, /data-quick-filter="assignedToMe"[^>]*aria-label="Assigned to you"[^>]*title="Assigned to you"/);
+  assert.match(on, /<span class="sr-only dev-chip-word">Assigned to you<\/span>/);
   assert.match(on, /data-quick-filter="createdByMe"[^>]*aria-pressed="false"/);
-  assert.match(on, />Created by you</);
+  assert.match(on, /<span class="sr-only dev-chip-word">Created by you<\/span>/);
   const anon = renderComponent('frontend/src/features/dev-board/kanban-filters.tsx', 'KanbanFiltersView',
     { ...base, quick: null });
   assert.doesNotMatch(anon, /data-quick-filter/);

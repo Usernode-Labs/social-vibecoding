@@ -3905,8 +3905,9 @@ function GroupStrip({ group }: { group: string }): ReactNode {
   const t = useMessages('project');
   // #4916: each tab is its glyph, a tag for category and the board's own
   // columns for stage (BoardIcon, the Workshop's mark in the places list).
-  // Its words ride along as the tooltip, the aria-label and an sr-only copy
-  // (the declared checks read the page's innerText for "By category").
+  // Its words ride along as the tooltip and the aria-label, and as a copy
+  // that is sr-only on a phone and a visible label from 700px up (#5820; the
+  // declared checks read the page's innerText for "By category").
   const category = t('project:allItems.group.category');
   const stage = t('project:allItems.group.stage');
   return (
@@ -3922,7 +3923,7 @@ function GroupStrip({ group }: { group: string }): ReactNode {
         onClick={() => callAppView('_setWorkshopGroup', 'category')}
       >
         <TagIcon className="dev-ws-group-icon" aria-hidden="true" />
-        <span className="sr-only">{category}</span>
+        <span className="sr-only dev-chip-word">{category}</span>
       </button>
       <button
         type="button"
@@ -3935,7 +3936,7 @@ function GroupStrip({ group }: { group: string }): ReactNode {
         onClick={() => callAppView('_setWorkshopGroup', 'stage')}
       >
         <BoardIcon className="dev-ws-group-icon" aria-hidden="true" />
-        <span className="sr-only">{stage}</span>
+        <span className="sr-only dev-chip-word">{stage}</span>
       </button>
     </div>
   );
