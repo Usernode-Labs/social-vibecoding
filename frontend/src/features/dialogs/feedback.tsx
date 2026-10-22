@@ -128,7 +128,7 @@ export function FeedbackDialog() {
       Feedback._reset();
     },
   });
-  useKeyboardSurface(cardRef, { ride: true });
+  useKeyboardSurface(cardRef, { ride: true, foot: '.feedback-actions' });
   // Comment mode instead, taking the form's draft: the words wait for the
   // first click on the page, and the pictures, title, Kudos and destination
   // go into that comment's box.
