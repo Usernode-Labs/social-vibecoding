@@ -186,12 +186,22 @@ test('#3977: the picker\'s sides read Approve and Don\'t approve, with the note,
   assert.match(onYes, /Add a note, if you like\.<\/label>/, 'the optional note');
   assert.match(onYes, /<button type="button" class="dev-vote-reason-send dev-vote-reason-send-yes">Approve<\/button>/, 'and no note needed to approve');
   const onNo = picker({ side: 'no' });
-  assert.match(onNo, /What’s not working for you\? Add a line, if you like\.<\/label>/, 'a No\'s line, worded as any No\'s');
+  // #5809: a Don't approve is a No, so it asks why first, worded as any No's.
+  assert.match(onNo, /class="dev-vote-why" role="radiogroup" aria-labelledby="dev-vote-reason-7-why"/, 'the four answers');
+  for (const key of ['notWorking', 'approach', 'notNeeded', 'other']) {
+    assert.match(onNo, new RegExp(`role="radio" aria-checked="false" class="dev-vote-why-opt" data-vote-why="${key}"`));
+  }
+  assert.match(onNo, /Add more, if you like\.<\/label>/, 'the optional line under them');
   assert.match(onNo, /placeholder="What would you want to change\?"/);
-  assert.match(onNo, /<button type="button" class="dev-vote-reason-send dev-vote-reason-send-no">Don’t approve<\/button>/,
-    'Don\'t approve needs no line, as a No does');
+  assert.match(onNo, /<button type="button" class="dev-vote-reason-send dev-vote-reason-send-no" disabled="">Don’t approve<\/button>/,
+    'Don\'t approve waits for its answer, as any No does');
   const typed = picker({ side: 'no', line: 'Sort the list by date' });
-  assert.match(typed, /<button type="button" class="dev-vote-reason-send dev-vote-reason-send-no">Don’t approve<\/button>/);
+  assert.match(typed, /<button type="button" class="dev-vote-reason-send dev-vote-reason-send-no" disabled="">Don’t approve<\/button>/,
+    'a line alone is not an answer');
+  const picked = picker({ side: 'no', noChoice: 'approach' });
+  assert.match(picked, /role="radio" aria-checked="true" class="dev-vote-why-opt" data-vote-why="approach"/);
+  assert.match(picked, /<button type="button" class="dev-vote-reason-send dev-vote-reason-send-no">Don’t approve<\/button>/,
+    'an answer sends it');
   const group = picker({ approve: false, solo: false });
   assert.match(group, />Your vote<\/div>/);
   assert.match(group, /Yes<span class="dev-vote-n">0\/1<\/span>/, 'a group keeps its words and tallies');
@@ -202,10 +212,14 @@ test('#3977: a solo Don\'t approve sends its note the way a group\'s No sends it
   // The picker hands VoteButton the side and the line; VoteButton sends the
   // side's own spec with the line in the options bag. Nothing in that path
   // asks whether the change is an approval, so a solo No is a group's No.
+  // #5809: a No is sent as the answer it picked, then the line.
   const fn = CARD_SRC.slice(CARD_SRC.indexOf('export function VoteButton('), CARD_SRC.indexOf('export function VotePicker('));
   assert.match(fn, /const spec = side === 'yes' \? yes : no;/);
   assert.match(fn, /const isVote = yes\.act\?\.fn === 'castVote' \|\| yes\.act\?\.fn === 'castIssueVote';/, 'castVote: the line goes with it');
-  assert.match(fn, /send\(spec, isVote \? \(trimmed \|\| null\) : null\);/);
+  assert.match(fn, /if \(!isVote\) \{ send\(spec, null\); return; \}/);
+  assert.match(fn, /if \(side === 'no'\) \{\s*if \(!noChoice\) return;\s*send\(no, composeNoReason\(whyTexts\(t\)\[noChoice\], line,/,
+    'a No sends its answer and its line, approval or not');
+  assert.match(fn, /send\(spec, trimmed \|\| null\);/);
   assert.match(fn, /call\(\{ fn: a\.act\.fn, args: \[\.\.\.args, \{ reason \}\] \}\);/);
   assert.match(fn, /onSend=\{submit\}/);
   // Fallback with no kit sheet: Approve asks for nothing, Don't approve asks
@@ -269,16 +283,19 @@ test('#3977: the Needs you tab\'s vote sheet is the same picker, as an approval'
     yes: { label: 'Yes (0/1)', tally: '0/1', act: { fn: 'castVote', args: [7, 'yes', 3] }, ...(approve ? { approve: true } : {}) },
     no: { label: 'No (0/1)', tally: '0/1', act: { fn: 'castVote', args: [7, 'no', 3] } },
   });
-  const draw = (approve, side = 'yes') => renderToHtml(createElement(NeedsVoteForm, {
-    row: row(approve), slug: 'plant-pal', side, line: '',
-    onSide: noop, onLine: noop, onBoxKey: noop, onCancel: noop, onSend: noop,
+  const draw = (approve, side = 'yes', noChoice = null) => renderToHtml(createElement(NeedsVoteForm, {
+    row: row(approve), slug: 'plant-pal', side, line: '', noChoice,
+    onSide: noop, onLine: noop, onNoChoice: noop, onBoxKey: noop, onCancel: noop, onSend: noop,
   }));
   const solo = draw(true);
   assert.match(solo, />Your approval<\/div>/);
   assert.match(solo, /dev-vote-switch-yes" aria-pressed="true" data-act="castVote">[\s\S]*?Approve<\/button>/);
   assert.match(solo, /dev-vote-switch-no" aria-pressed="false" data-act="castVote">[\s\S]*?Don’t approve<\/button>/);
   assert.match(solo, /dev-vote-reason-send-yes">Approve<\/button>/);
-  assert.match(draw(true, 'no'), /dev-vote-reason-send-no">Don’t approve<\/button>/, 'a Don\'t approve needs no line either');
+  // #5809: a Don't approve is a No, so the sheet asks why before it sends.
+  assert.match(draw(true, 'no'), /class="dev-vote-why" role="radiogroup"/);
+  assert.match(draw(true, 'no'), /dev-vote-reason-send-no" disabled="">Don’t approve<\/button>/, 'a Don\'t approve waits for its answer too');
+  assert.match(draw(true, 'no', 'notWorking'), /dev-vote-reason-send-no">Don’t approve<\/button>/, 'and an answer sends it');
   const group = draw(false);
   assert.match(group, />Your vote<\/div>/);
   assert.match(group, />Vote yes<\/button>/);
@@ -316,13 +333,16 @@ test('#4270: the feed across every project says Approve and Don\'t approve for t
   // The vote sheet's form is the card's picker, as an approval.
   const { NeedsVoteForm } = loadTsx('frontend/src/features/dev-board/workshop/workshop.tsx');
   const noop = () => {};
-  const form = (row, side = 'yes') => renderToHtml(createElement(NeedsVoteForm, {
-    row, slug: '', side, line: '', onSide: noop, onLine: noop, onBoxKey: noop, onCancel: noop, onSend: noop,
+  const form = (row, side = 'yes', noChoice = null) => renderToHtml(createElement(NeedsVoteForm, {
+    row, slug: '', side, line: '', noChoice,
+    onSide: noop, onLine: noop, onNoChoice: noop, onBoxKey: noop, onCancel: noop, onSend: noop,
   }));
   assert.match(form(solo), />Your approval<\/div>/);
   assert.match(form(solo), /dev-vote-switch-yes" aria-pressed="true" data-act="castVote">[\s\S]*?Approve<\/button>/);
   assert.match(form(solo), /dev-vote-switch-no" aria-pressed="false" data-act="castVote">[\s\S]*?Don’t approve<\/button>/);
-  assert.match(form(solo, 'no'), /dev-vote-reason-send-no">Don’t approve<\/button>/, 'no line needed');
+  // #5809: Don't approve is a No, so the sheet asks why before it sends.
+  assert.match(form(solo, 'no'), /dev-vote-reason-send-no" disabled="">Don’t approve<\/button>/, 'no answer, no send');
+  assert.match(form(solo, 'no', 'other'), /dev-vote-reason-send-no">Don’t approve<\/button>/, 'an answer sends it');
 
   // A group's row is a vote, word for word.
   const groupHtml = draw([feedItem({ id: 8, title: 'Sort', author: 'ada', yes: 1, app: { slug: 'garden', name: 'Garden', icon_url: null, icon_emoji: null } })]);
