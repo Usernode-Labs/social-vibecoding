@@ -954,6 +954,13 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       const contributorCounts = await contributors.loadContributorCounts(
         pool, rows.map((a) => a.id)
       );
+      // #5823: which of these apps THIS viewer helps build — the same
+      // three-source set the Contributors list draws from (services/
+      // contributors.js). Home's All / Contributing switch reads it. An
+      // empty Set when nobody is signed in, with no query.
+      const contributed = await contributors.loadContributedAppIds(
+        pool, rows.map((a) => a.id), userId
+      );
       // #4405: the live custom domain of each app, one round trip, so the
       // Share dialog can offer it without a per-app read.
       const liveDomains = await liveDomainsFor(pool, rows.map((a) => a.id));
@@ -1098,6 +1105,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
           last_merged_at: a.last_merged_at || null,
           open_issues: parseInt(a.open_issues, 10) || 0,
           is_member: !!a.is_member,
+          is_contributor: contributed.has(Number(a.id)),
           member_count: parseInt(a.member_count, 10) || 0,
           audience: a.audience || 'open',
           last_active_at: a.last_active_at || null,

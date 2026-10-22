@@ -61,6 +61,8 @@ let appRow = null;
 let memberUserIds = new Set();
 let favQueries = [];
 let listRows = [];
+// #5823: the apps GET /api/apps must mark as ones the viewer helps build.
+let contributedIds = new Set();
 
 const fakeQuery = async (sql, params) => {
   const s = String(sql);
@@ -69,6 +71,11 @@ const fakeQuery = async (sql, params) => {
     return appRow ? { rows: [{ ...appRow }] } : { rows: [] };
   }
   if (/SELECT id, name FROM apps WHERE id = ANY/.test(s)) return { rows: [] };
+  // BEFORE the app_collaborators branch below: the shared contributor CTE
+  // also selects FROM app_collaborators, so its identity is the CTE name.
+  if (/contributor_ids/.test(s)) {
+    return { rows: [...contributedIds].map((id) => ({ app_id: id })) };
+  }
   if (/FROM app_collaborators/.test(s)) {
     return memberUserIds.has(params?.[1]) ? { rows: [{ '?column?': 1 }] } : { rows: [] };
   }
@@ -216,6 +223,7 @@ test('GET /api/apps serves your_apps_hidden as a boolean and hidden rows as not 
   memberUserIds = new Set();
   favQueries = [];
   eventCalls.length = 0;
+  contributedIds = new Set([7]);
   currentUser = { id: 100, username: 'creator' };
   // Shape mirrors what the real query returns for a member app whose
   // favorites row is hidden=TRUE: the SQL derives is_favorited=false
@@ -251,8 +259,40 @@ test('GET /api/apps serves your_apps_hidden as a boolean and hidden rows as not 
     assert.equal(apps.length, 1);
     assert.equal(apps[0].your_apps_hidden, true);
     assert.equal(apps[0].is_favorited, false);
+    // #5823: the flag Home's All / Contributing switch reads, carried per
+    // row from the shared contributor definition.
+    assert.equal(apps[0].is_contributor, true, 'the stub contributor set names this app');
   } finally {
     server.close();
     listRows = [];
+    contributedIds = new Set();
+  }
+});
+
+test('GET /api/apps marks is_contributor false and calls no contributor query for a signed-out viewer', async () => {
+  appRow = null;
+  memberUserIds = new Set();
+  favQueries = [];
+  eventCalls.length = 0;
+  contributedIds = new Set([7]);
+  currentUser = null;
+  listRows = [{
+    id: 7, slug: 'demo-app', name: 'Demo App', status: 'error', self_hosted: false,
+    created_by: 100, collab_visibility: 'public', view_visibility: 'public',
+    manifest_snapshot: null, forked_from: null, last_failure: null, repo_url: null,
+    main_sha: null, is_favorited: false, your_apps_hidden: false, favorite_order: null,
+    is_collaborator: false, open_prs: '0', active_sessions: '0', open_issues: '0',
+    active_users: '0',
+  }];
+  const server = await startServer();
+  try {
+    const res = await fetch(`http://127.0.0.1:${server.address().port}/api/apps`);
+    assert.equal(res.status, 200);
+    const { apps } = await res.json();
+    assert.equal(apps[0].is_contributor, false, 'nobody signed in contributes to nothing');
+  } finally {
+    server.close();
+    listRows = [];
+    contributedIds = new Set();
   }
 });

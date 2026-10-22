@@ -85,6 +85,7 @@
 
 import { useRef } from 'react';
 
+import { Chip } from '@/components/ui/chip';
 import { SearchIcon } from '@/components/ui/icons';
 
 import { AppGrid } from './app-grid';
@@ -291,6 +292,33 @@ export function HomeScreen() {
                 >
                   <span className="whitespace-nowrap">{t('home:edit.done')}</span>
                 </button>
+              </span>
+            ) : grid.filterable ? (
+              /* ALL / CONTRIBUTING (#5823), at the right end of the heading
+                 row where Done and Add apps sit while arranging. The same
+                 filter chip Discover's directory leads with, at the `bar`
+                 size shrunk to fit this row: the selected one filled dark,
+                 the other white. Home.render() decides whether they show at
+                 all (only when My apps mixes the two kinds, or Contributing
+                 is on and there must be a way back); a search and edit mode
+                 hide them. */
+              <span
+                role="group"
+                aria-label={t('home:grid.filter.group')}
+                className="flex shrink-0 items-center gap-1.5"
+              >
+                {(['all', 'contributing'] as const).map((key) => (
+                  <Chip
+                    key={key}
+                    size="bar"
+                    className="home-apps-filter-chip h-7 px-3 text-[13px]"
+                    data-filter={key}
+                    selected={grid.filter === key}
+                    onClick={() => { (window as any).Home?.setAppsFilter?.(key); }}
+                  >
+                    {t(key === 'all' ? 'home:grid.filter.all' : 'home:grid.filter.contributing')}
+                  </Chip>
+                ))}
               </span>
             ) : null}
           >

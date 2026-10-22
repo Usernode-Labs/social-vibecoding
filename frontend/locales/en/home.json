@@ -39,6 +39,26 @@
     "text": "Show all {{count}} apps",
     "description": "Button under the grid of app tiles on Home: reveals the rows of tiles that are folded away. {{count}} is the total number of the viewer's apps."
   },
+  "grid.filter.group": {
+    "text": "Which apps to show",
+    "description": "Accessible name of the pair of chips beside Home's \"My apps\" heading. One chip shows every app on the shelf, the other only the apps this person helps build."
+  },
+  "grid.filter.all": {
+    "text": "All",
+    "description": "Chip beside Home's \"My apps\" heading: shows every app the person keeps on their shelf, where they arranged them. The pair is \"All\" and \"Contributing\"."
+  },
+  "grid.filter.contributing": {
+    "text": "Contributing",
+    "description": "Chip beside Home's \"My apps\" heading: shows only the apps this person helps build (they made the app, were accepted to build it, or had a change voted in). The pair is \"All\" and \"Contributing\"."
+  },
+  "grid.filter.empty": {
+    "text": "You're not contributing to any of your apps yet.",
+    "description": "Shown in place of Home's app tiles when the \"Contributing\" chip is selected and none of the person's apps is one they help build. A \"Show all apps\" link below it goes back to every app."
+  },
+  "grid.filter.showAll": {
+    "text": "Show all apps",
+    "description": "Link under the line that says the person is not contributing to any of their apps (Home, \"Contributing\" chip): goes back to showing every app."
+  },
   "grid.notice.offline": {
     "text": "You're offline. Apps you've opened before will appear here once this device has loaded them.",
     "description": "Shown in place of Home's app tiles when the device has no connection and no apps are stored yet."
