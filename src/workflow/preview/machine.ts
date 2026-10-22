@@ -1429,9 +1429,11 @@ function prepared(s: Live, e: Event<any>, outcome: string, f: Facts, ctx: Transi
 }
 
 // A preview lost again soon after it was rebuilt (lost): its head's error,
-// as a failed build's is, with the losses as its count, which the row
-// records as its failures and its retry (none once capped), so what the
-// connector, the merge gate and the vote route say of a retry is this. What
+// as a failed build's is, its streak at least the losses before this one
+// (a verdict between them cleared it), the row's failures the same count
+// and its retry the same deadline (none once capped). So what the
+// connector, the merge gate and the vote route say of a retry is what the
+// machine does, and a rebuild that then fails counts on from it. What
 // served stays the serving record, marked lost, for the rebuild to retire:
 // a person's recheck or Preview builds again rather than checking it, and
 // counts the losses afresh. The run against it stops. The author hears of
@@ -1442,13 +1444,13 @@ function lostAgain(s: Live, e: Event<any>, losses: number, f: Facts, ctx: Transi
   const old = obsolete(d0, ctx, deps);
   const detail = `The preview stopped soon after it started, ${losses} times in a row`
     + (e.payload.detail ? ` (${e.payload.detail})` : '');
+  const streak = Math.max(d0.streak + 1, losses - 1);
   const d: Data = {
-    ...d0, run: null, verdict: 'error', failure: detail, platformFault: false, streak: d0.streak + 1,
+    ...d0, run: null, verdict: 'error', failure: detail, platformFault: false, streak,
     firstFailureAt: d0.firstFailureAt ?? ctx.now.toISOString(), losses, retiring: old.retiring,
     serving: { ...d0.serving!, lost: true },
   };
-  const timer = f.session?.retryScope && losses <= deps.maxRetries
-    ? { at: new Date(ctx.now.getTime() + retryDelayMs(losses - 2)), event: { type: 'RetryDue' } } : null;
+  const timer = errorTimer(d, f, deps, ctx, streak - 1);
   return step({
     name: 'failed', data: d,
     cancel: old.cancel,
@@ -1456,7 +1458,7 @@ function lostAgain(s: Live, e: Event<any>, losses: number, f: Facts, ctx: Transi
       type: 'prepareFailed', eventId: e.id, sessionId: d.sessionId, appId: d.appId, userId: d.userId, head,
       detail, infrastructure: !!timer, platformFault: false, aboutMain: null, sync: false,
       source: f.session?.source ?? null, prNumber: f.session?.prNumber ?? null,
-      retry: { failures: losses - 1, nextRetryAt: timer ? timer.at.toISOString() : null },
+      retry: { failures: streak, nextRetryAt: timer ? timer.at.toISOString() : null },
     }],
     work: old.work,
     push: [

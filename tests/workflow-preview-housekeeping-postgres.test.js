@@ -456,4 +456,42 @@ test('preview machine housekeeping against the full PostgreSQL schema', { timeou
     i = await instance(s);
     assert.deepEqual([i.state, i.data.losses, builds()], ['settled', 1, before + 4]);
   });
+
+  await t.test('H12 a rebuild that fails after repeated losses retries as the row says it will', async () => {
+    // What the connector, the merge gate and the vote route read
+    // (staging-recovery.errorWithinAutoRetries, check_next_retry_at) and the
+    // machine's own RetryDue are one decision, loss by loss and failed
+    // build by failed build, until both stop at the cap (6 here).
+    const { errorWithinAutoRetries } = require('../src/services/staging-recovery');
+    const s = await proposal(await app(), { pin: SHA('c1') });
+    await submit(s, SHA('c1'));
+    await settle();
+    const lose = async () => {
+      await send(s, 'PreviewLost', { attempt: (await instance(s)).data.serving.n, detail: 'runtime gone' });
+      await settle();
+    };
+    const agree = async (what) => {
+      const r = await row(s.id);
+      const due = await deadline(s);
+      const retrying = due?.[0] === 'RetryDue';
+      assert.equal((await instance(s)).data.streak, r.consecutive_check_failures, `${what}: one count`);
+      assert.equal(errorWithinAutoRetries(r, { maxAutoRetries: 6 }), retrying, `${what}: one answer to "is a retry coming"`);
+      if (retrying) assert.ok(near(new Date(r.check_next_retry_at).getTime(), due[1]), `${what}: one deadline`);
+      return retrying;
+    };
+    for (let k = 0; k < 3; k++) {
+      await lose();
+      if ((await instance(s)).state === 'failed') { assert.equal(await agree(`loss ${k + 1}`), true); await fire(s); }
+    }
+    await lose();
+    assert.equal((await instance(s)).data.losses, 4);
+    assert.equal(await agree('loss 4'), true);
+    // The rebuilds fail now: each counts on from the losses.
+    work.answer.set(WORK.prepare, { ok: false, detail: 'Container exited with code 1', infrastructure: false });
+    let failed = 0;
+    while (await agree(`failed rebuild ${failed}`)) { await fire(s); failed++; }
+    work.answer.set(WORK.prepare, prepareOk);
+    assert.equal(failed, 3, 'losses 2 to 4 counted three failures; three failed rebuilds reach the cap of 6');
+    assert.equal((await row(s.id)).consecutive_check_failures, 6);
+  });
 });
