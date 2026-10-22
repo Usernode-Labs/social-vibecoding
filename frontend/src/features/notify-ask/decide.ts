@@ -59,12 +59,12 @@ export type OsPermission = 'granted' | 'denied' | 'undetermined' | null;
 /**
  * The moments whose push Homeroom emails when no phone can take it, so the
  * web ask may say "or we'll email you": a first version going live and a
- * build ready to try (homeroom-bot-dm.js), invite news (invite-activity.js),
- * the votes owed (vote-digest.js) and a project opening (first-version
- * live, to its members). A reply is not emailed.
+ * build ready to try (homeroom-bot-dm.js), invite news (invite-activity.js)
+ * and a project opening (first-version live, to its members). A reply is not
+ * emailed, and neither are the votes owed (the vote digest, #5794).
  */
 export const EMAILED_MOMENTS: ReadonlySet<NotifyMoment> = new Set<NotifyMoment>([
-  'app_building', 'invite_sent', 'suggestion', 'community', 'project_opens',
+  'app_building', 'invite_sent', 'suggestion', 'project_opens',
 ]);
 
 /** Two "Not now"s on a surface and it stops asking. */

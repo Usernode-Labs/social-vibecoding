@@ -723,25 +723,6 @@ function projectOpened(payload) {
   });
 }
 
-// The vote digest (services/vote-digest.js), for somebody with no phone to
-// ring: how many changes wait on their vote. `count` is the digest's own
-// (at most its MAX_COUNT); one names its project.
-function votesOwed(payload) {
-  const count = Math.max(1, Math.min(Number(payload.count) || 1, 99));
-  const app = payload.appName ? String(payload.appName).slice(0, 80) : '';
-  const lead = count === 1
-    ? (app ? `A change in ${app} needs your vote.` : 'A change needs your vote.')
-    : `${count} changes need your vote.`;
-  return activityFrame({
-    subject: lead.replace(/\.$/, ''),
-    lead,
-    url: payload.url || PRODUCTION_ORIGIN,
-    label: count === 1 ? 'See the change' : 'See what needs you',
-    unsubscribeUrl: payload.unsubscribeUrl || null,
-    eyebrow: count === 1 && app ? app : '',
-  });
-}
-
 /**
  * Every template returns a FRAGMENT; the frame is applied here, once (#1555).
  *
@@ -780,7 +761,6 @@ const TEMPLATES = {
   build_ready: buildReady,
   invite_activity: inviteActivity,
   project_opened: projectOpened,
-  votes_owed: votesOwed,
 };
 
 function buildMessage(kind, payload = {}) {
