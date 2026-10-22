@@ -1462,9 +1462,11 @@ test('#4486: the one-row head and the pipeline pin together under the project’
   assert.match(kanbanTsx, /export function syncStrip\(board: HTMLElement \| null\): void \{/);
   assert.match(appCss, /\.dev-kanban-stages \{[^}]*overflow: hidden;/);
   // On a phone (#5029) the search keeps its own line and the switch and the
-  // filters share the one under it: the chips fill the space beside the
-  // switch instead of taking a line of their own.
-  assert.match(appCss, /@media \(max-width: 639px\) \{[\s\S]*?\.dev-ws-allbar #dev-kanban-search \{ flex-basis: 100%; max-width: none; min-width: 0; \}\s*\.dev-ws-allbar #dev-filter-chips \{ flex: 1 1 0; min-width: 0; /);
+  // filters share the one under it. #5820: the chips no longer fill that
+  // space beside the switch — they size to their icons and `margin-left:
+  // auto` pushes them to the right edge, so the grouping stays left and the
+  // filters read as the other group.
+  assert.match(appCss, /@media \(max-width: 639px\) \{[\s\S]*?\.dev-ws-allbar #dev-kanban-search \{ flex-basis: 100%; max-width: none; min-width: 0; \}[\s\S]*?\.dev-ws-allbar #dev-filter-chips \{ flex: 0 1 auto; margin-left: auto; min-width: 0; /);
 });
 
 // ── 4. #5463: a vote saved elsewhere marks the kept feed and the counts ─

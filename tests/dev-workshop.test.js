@@ -5131,6 +5131,13 @@ test('the grouping strip is one node, the pane head\'s first row at every width 
   // The buttons are real buttons with a real handler.
   assert.match(WORKSHOP, /onClick=\{\(\) => callAppView\('_setWorkshopGroup', 'category'\)\}/);
   assert.match(WORKSHOP, /onClick=\{\(\) => callAppView\('_setWorkshopGroup', 'stage'\)\}/);
+  // #5820: each tab's word shows beside its glyph from the wide layout up.
+  assert.match(WORKSHOP, /<TagIcon className="dev-ws-group-icon" aria-hidden="true" \/>\s*<span className="sr-only dev-chip-word">\{category\}<\/span>/);
+  assert.match(WORKSHOP, /<BoardIcon className="dev-ws-group-icon" aria-hidden="true" \/>\s*<span className="sr-only dev-chip-word">\{stage\}<\/span>/);
+  // #5820: in the wide layout the word is real text again, and the count
+  // moves into it. Two classes on the override, because Tailwind's
+  // `.sr-only` loads after app.css and one class would lose.
+  assert.match(CSS, /@media \(min-width: 700px\) \{[\s\S]*?\.sr-only\.dev-chip-word \{\s*position: static; width: auto; height: auto; margin: 0; padding: 0;\s*overflow: visible; clip: auto; white-space: nowrap;\s*\}[\s\S]*?\.dev-chip-count \{ display: none; \}/);
 });
 
 test('the declared stage check still describes the pane it has to walk', () => {
