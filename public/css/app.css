@@ -25216,20 +25216,23 @@ html.in-side-panel body {
    by 12 as the elements do: picture 32, tile 20. The first tile is the
    sheet's glyph in the page's ink; each screen's tile unfolds from its bar
    in the glyph when a change arrives. */
-.rf-strip { position: relative; flex: none; height: 64px; margin: 12px 12px 0; }
-.rf-strip-all, .rf-tile { position: absolute; padding: 0; border: 0; cursor: pointer; -webkit-tap-highlight-color: transparent; }
-.rf-strip-all { z-index: 1; left: 0; top: 0; width: 64px; height: 64px; border-radius: 20px; background: var(--rf-page); box-shadow: inset 0 0 0 1px var(--rf-line); transition: scale .15s ease-out; }
-.rf-strip-all:active, .rf-tile:active { scale: .95; }
-.rf-strip-all:focus-visible, .rf-tile:focus-visible { outline: 2px solid var(--rf-ink); outline-offset: 3px; }
-.rf-gbox { position: absolute; left: 13px; top: 13px; width: 38px; height: 38px; box-sizing: border-box; border: 1.5px solid var(--rf-ink); border-radius: 12px; pointer-events: none; }
-.rf-gbar { position: absolute; border-radius: 2px; background: var(--rf-ink); transition: opacity .38s cubic-bezier(0.22,1,0.36,1); }
-.rf-tile { z-index: 2; overflow: hidden; transition: left .38s cubic-bezier(0.22,1,0.36,1), top .38s cubic-bezier(0.22,1,0.36,1), width .38s cubic-bezier(0.22,1,0.36,1), height .38s cubic-bezier(0.22,1,0.36,1), border-radius .38s cubic-bezier(0.22,1,0.36,1), background-color .16s cubic-bezier(0.22,1,0.36,1), scale .15s ease-out; }
-.rf-tile::after { content: ''; position: absolute; inset: 0; border-radius: inherit; box-shadow: inset 0 0 0 1px var(--rf-line); pointer-events: none; }
-.rf-tile-in { position: absolute; left: 50%; top: 50%; width: 64px; height: 64px; margin: -32px 0 0 -32px; overflow: hidden; pointer-events: none; transition: opacity .2s cubic-bezier(0.22,1,0.36,1) 40ms; }
-.rf-tile[data-folded] .rf-tile-in { opacity: 0; }
-.rf-tile-in img { position: absolute; left: 0; top: 0; max-width: none; transform-origin: 0 0; }
-/* Where you are, inside the tile so its edge stays on the hairline: a ring of lit ink in a page-coloured mat. */
-.rf-lit { position: absolute; z-index: 3; top: 0; width: 64px; height: 64px; border-radius: 20px; box-shadow: inset 0 0 0 2px var(--lit-ink), inset 0 0 0 4px var(--rf-page); pointer-events: none; transition: left .38s cubic-bezier(0.22,1,0.36,1); }
+.rf-strip { position: relative; flex: none; height: 44px; margin: 12px 12px 0; }
+/* Each tile sits on a grey ground, so it reads as something to press; where
+   you are is the lit tint and ink. */
+.rf-strip-all, .rf-tile { position: absolute; padding: 0; border: 0; background: var(--rf-fill); color: var(--rf-muted); cursor: pointer; -webkit-tap-highlight-color: transparent; }
+.rf-strip-all[aria-current], .rf-tile[aria-current] { background: var(--lit-tint); color: var(--lit-ink); }
+.rf-strip-all { z-index: 1; left: 0; top: 0; width: 44px; height: 44px; border-radius: 14px; transition: scale .15s ease-out, color .2s, background-color .2s; }
+.rf-strip-all:active, .rf-tile:active { scale: .92; }
+.rf-strip-all:focus-visible, .rf-tile:focus-visible { outline: 2px solid var(--rf-ink); outline-offset: 2px; }
+.rf-gbox { position: absolute; left: 9px; top: 9px; width: 26px; height: 26px; box-sizing: border-box; border: 1.5px solid currentColor; border-radius: 8px; pointer-events: none; }
+.rf-gbar { position: absolute; border-radius: 1.5px; background: currentColor; }
+.rf-tile { z-index: 2; transition: left .38s cubic-bezier(0.22,1,0.36,1), top .38s cubic-bezier(0.22,1,0.36,1), width .38s cubic-bezier(0.22,1,0.36,1), height .38s cubic-bezier(0.22,1,0.36,1), border-radius .38s cubic-bezier(0.22,1,0.36,1), background-color .16s cubic-bezier(0.22,1,0.36,1), color .2s, scale .15s ease-out; }
+.rf-tile[data-folded] { background: var(--rf-ink); }
+/* A screen's pictogram: its outline at a phone's proportions, one bar where
+   the change sits (review-flow.tsx PICTO, model.ts pictoMark). */
+.rf-picto { position: absolute; left: 50%; top: 50%; width: 20px; height: 30px; margin: -15px 0 0 -10px; box-sizing: border-box; border: 1.5px solid currentColor; border-radius: 5px; pointer-events: none; transition: opacity .2s cubic-bezier(0.22,1,0.36,1) 40ms; }
+.rf-picto-mark { position: absolute; margin: -1.5px 0 0 -1.5px; border-radius: 1px; background: currentColor; }
+.rf-tile[data-folded] .rf-picto { opacity: 0; }
 /* The page leads with what the change does, or what the open screen shows:
    two lines at most, on the header's 16pt edge. The gap under it is a
    margin, not padding, so the clamp never lets a third line show. */
@@ -25397,7 +25400,7 @@ button.rf-claim-row:active .rf-claim { color: var(--rf-ink); }
 .rf-go-wide { align-self: stretch; height: 48px; }
 .rf-thread { min-height: 200px; }
 @media (prefers-reduced-motion: reduce) {
-  .rf-sheet, .rf-scrim, .rf-seam, .rf-cap, .rf-switch, .rf-knob, .rf-knob-icon, .rf-pair-thumb, .rf-pair-mark, .rf-morph, .rf-morph-in, .rf-why, .rf-tile, .rf-tile-in, .rf-gbar, .rf-lit, .rf-veil-box, .rf-bar-toggle svg, .rf-desc, .rf-desc-dim { transition: none; }
+  .rf-sheet, .rf-scrim, .rf-seam, .rf-cap, .rf-switch, .rf-knob, .rf-knob-icon, .rf-pair-thumb, .rf-pair-mark, .rf-morph, .rf-morph-in, .rf-why, .rf-tile, .rf-picto, .rf-gbar, .rf-veil-box, .rf-bar-toggle svg, .rf-desc, .rf-desc-dim { transition: none; }
   .rf-lens { animation: none; }
   .rf-claim { animation: none; }
 }
