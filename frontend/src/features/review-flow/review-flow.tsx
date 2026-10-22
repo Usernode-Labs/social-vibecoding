@@ -48,11 +48,11 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 
-import { CheckIcon } from '@/components/ui/icons';
+import { CheckIcon, ChevronDownIcon, ChevronLeftIcon } from '@/components/ui/icons';
 
 import { useMessages } from '../../lib/i18n/react';
+import { changeHref } from '../../lib/change-href';
 import { callAppView } from '../dev-board/card/fold';
-import { setReviewRunHeader } from '../header/review-run-store.js';
 import type { NeedsFeedItem } from '../workshop/needs-reel';
 import { CompareSlider } from './compare';
 import { Illustration } from './illustrations';
@@ -238,7 +238,7 @@ function Strip({ item, plates, inks, shot, folded, ready, onAll, onTile }: {
 type View = { shot: number | null; phase: 'sheet' | 'opening' | 'live' | 'closing' };
 const SHEET_VIEW: View = { shot: null, phase: 'sheet' };
 
-function ChangeBody({ item, width, pageH, arrive, still = null, onView }: {
+function ChangeBody({ item, width, pageH, arrive, still = null, onView, onMore }: {
   item: ReviewItem;
   width: number;
   pageH: number;
@@ -250,6 +250,8 @@ function ChangeBody({ item, width, pageH, arrive, still = null, onView }: {
   arrive: 'enter' | 'push' | 'still';
   still?: View | null;
   onView?: (v: View) => void;
+  /** A tap on the line: the change in full, over the page. */
+  onMore?: () => void;
 }): ReactNode {
   const t = useMessages('communities');
   const inner = Math.max(0, width - INSET * 2);
@@ -393,7 +395,16 @@ function ChangeBody({ item, width, pageH, arrive, still = null, onView }: {
   const ready = live && !switching && (view.phase === 'sheet' || view.phase === 'live');
   return (
     <div className="rf-page-body" data-rf-body={item.key} data-rf-view={view.shot == null ? 'sheet' : `screen-${view.shot}`}>
-      <p className="rf-claim" key={line || 'none'}>{line}</p>
+      {/* The line is a way in too: a tap anywhere on it opens the change in
+          full, as the bar's ⌄ does. The copy Next leaves behind is still. */}
+      {onMore ? (
+        <button type="button" className="rf-claim-row" onClick={onMore} aria-controls="rf-desc" data-rf-more="">
+          <span className="rf-claim" key={line || 'none'}>{line}</span>
+          <span className="sr-only">{t('communities:review.desc.show')}</span>
+        </button>
+      ) : (
+        <div className="rf-claim-row"><p className="rf-claim" key={line || 'none'}>{line}</p></div>
+      )}
       <div ref={pictureRef} className="rf-picture" style={{ height, background: item.ground }} data-rf-picture="">
         {item.screens.length ? (
           <>
@@ -486,6 +497,11 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
   const stageRef = useRef<HTMLDivElement>(null);
   const dimRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState<{ w: number; h: number } | null>(null);
+  const barRef = useRef<HTMLDivElement>(null);
+  const foldedBar = useRef(0);
+  // What the change does in full, dropped from under the bar over the page.
+  const [desc, setDesc] = useState(false);
+  const [barTop, setBarTop] = useState(0);
   // The run is fixed once it starts: a vote takes its change out of the
   // controller's feed, and the run must not move under you.
   const [list, setList] = useState<ReviewItem[] | null>(null);
@@ -530,7 +546,11 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
       const pr = page.getBoundingClientRect();
       // From 768px the panel is as tall as what it holds, up to its room.
       const max = parseFloat(getComputedStyle(page).maxHeight);
-      const h = Number.isFinite(max) && max > 0 ? max : pr.height;
+      // Less the bar over it, which on a phone also holds the status bar's inset.
+      // The folded bar's: open, it grows to the whole title over the page.
+      if (barRef.current && !barRef.current.hasAttribute('data-open')) foldedBar.current = barRef.current.getBoundingClientRect().height;
+      const bar = foldedBar.current;
+      const h = (Number.isFinite(max) && max > 0 ? max : pr.height) - bar;
       setSize({ w: Math.min(COLUMN, pr.width), h });
     };
     measure();
@@ -643,12 +663,20 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
     if (!open) return undefined;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
-      if (sheetOpen(sheet)) setSheet(item && votes[item.key] ? 'voted' : 'ask');
+      if (desc) setDesc(false);
+      else if (sheetOpen(sheet)) setSheet(item && votes[item.key] ? 'voted' : 'ask');
       else onDone();
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [open, sheet, item, votes, onDone]);
+  }, [open, desc, sheet, item, votes, onDone]);
+  // Open, the bar holds the whole title, so the card starts where it ends.
+  useLayoutEffect(() => {
+    if (barRef.current) setBarTop(barRef.current.getBoundingClientRect().height);
+  }, [desc, item ? item.key : '', size]); // eslint-disable-line react-hooks/exhaustive-deps
+  // The card folds away when the run moves on.
+  const itemKey = item ? item.key : '';
+  useEffect(() => { setDesc(false); }, [itemKey]);
 
   const nextItem = next >= 0 ? run[next] : null;
   const pw = size ? size.w : Math.min(COLUMN, typeof window !== 'undefined' ? window.innerWidth : 390);
@@ -662,14 +690,16 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
   const after = item ? changes.filter((it) => it.key !== item.key && !passed[it.key]).length : 0;
   const decided = changes.length ? changes.filter((it) => votes[it.key]).length / changes.length : 0;
 
-  // The header says where you are: "Needs you", and the community of the
-  // change on screen as its place tag; its back arrow leaves the run.
-  const place = item && item.app ? item.app.name : '';
-  useEffect(() => {
-    if (!open || header !== 'communities') return undefined;
-    setReviewRunHeader({ title: t('communities:needsYou.title'), place, back: onDone });
-    return () => setReviewRunHeader(null);
-  }, [open, header, place, onDone]); // eslint-disable-line react-hooks/exhaustive-deps
+  // The bar: Back, the change's title and ⌄. ⌄, the title or the line under
+  // the bar opens the change in full: the bar grows to the whole title, and
+  // a card under it holds what the change does and the way on to its whole
+  // page.
+  // Back is the arrow alone, so the title has the row; its name says where
+  // it goes: All communities, or the project a project's own Needs you was
+  // opened from. The shell's header steps aside for it on a phone, as it did
+  // for the run's old head.
+  const toProject = header === 'project' && item && item.app ? item.app.name : '';
+  const backName = t('communities:review.back.label', { place: toProject || t('communities:switcher.all.name') });
 
   /* ── Drawing ── */
   if (error) {
@@ -704,6 +734,36 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
       {/* From 768px, the pane behind the panel, dimmed; a click on it is Back. */}
       <div ref={dimRef} className="rf-page-dim" onClick={onDone} aria-hidden="true" />
       <div ref={pageRef} className="rf-page" role="dialog" aria-modal="false" aria-label={item.title}>
+        <div ref={barRef} className="rf-bar" data-open={desc ? '' : undefined}>
+          <button type="button" className="rf-back" onClick={onDone} aria-label={backName} data-rf-back="">
+            <ChevronLeftIcon aria-hidden="true" width={24} height={24} strokeWidth="2.2" />
+          </button>
+          <h1 className="rf-bar-title" key={item.key}>
+            <button type="button" className="rf-bar-title-btn" onClick={() => setDesc((d) => !d)} aria-expanded={desc} aria-controls="rf-desc">{item.title}</button>
+          </h1>
+          <button
+            type="button"
+            className="rf-bar-toggle"
+            aria-expanded={desc}
+            aria-controls="rf-desc"
+            aria-label={desc ? t('communities:review.desc.hide') : t('communities:review.desc.show')}
+            onClick={() => setDesc((d) => !d)}
+            data-rf-desc-toggle=""
+          >
+            <ChevronDownIcon aria-hidden="true" width={18} height={18} strokeWidth="2.4" />
+          </button>
+        </div>
+        <div className="rf-desc-wrap" data-open={desc ? '' : undefined} style={{ top: barTop }} aria-hidden={!desc} inert={!desc || undefined}>
+          <div className="rf-desc-dim" onClick={() => setDesc(false)} />
+          <div className="rf-desc" id="rf-desc" data-rf-desc="">
+            <p className="rf-desc-text">{item.summary || item.line}</p>
+            <div className="rf-desc-foot">
+              {item.app ? (
+                <a className="rf-desc-go" href={changeHref(item.app.slug, item.id, item.number)}>{t('communities:review.more.open')}</a>
+              ) : null}
+            </div>
+          </div>
+        </div>
         <div ref={stageRef} className="rf-stage">
           {leaving && from ? (
             <div className="rf-stage-layer rf-stage-leaving" data-rf-leaving="" aria-hidden="true" inert>
@@ -718,6 +778,7 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
               pageH={ph}
               arrive={from ? 'push' : 'enter'}
               onView={(v) => { views.current[item.key] = v; }}
+              onMore={() => setDesc(true)}
             />
           </div>
         </div>

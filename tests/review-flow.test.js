@@ -288,15 +288,16 @@ test('the page leads with what the change does, then its picture, then the strip
   assert.match(src, /const INSET = 12;/);
   assert.match(src, /const inner = Math\.max\(0, width - INSET \* 2\);/);
   const body = src.slice(src.indexOf('<div className="rf-page-body"'), src.indexOf('/* ── The run'));
-  const claim = body.indexOf('<p className="rf-claim"');
+  const claim = body.indexOf('className="rf-claim-row"');
   const picture = body.indexOf('className="rf-picture"');
   const strip = body.indexOf('<Strip');
   assert.ok(claim > 0 && claim < picture && picture < strip, 'the line, the picture, the strip');
-  // The change's title is not drawn on the page: it names the page.
+  // The title is the bar's, one line; the line under it is body text.
   assert.match(src, /className="rf-page" role="dialog" aria-modal="false" aria-label=\{item\.title\}/);
-  assert.doesNotMatch(src, /rf-head|rf-preview|rf-thumbs|planTitleFlight|coverGhost/, 'no bar of its own, no feed card, no flight');
+  assert.doesNotMatch(src, /rf-head|rf-preview|rf-thumbs|planTitleFlight|coverGhost/, 'no old head, no feed card, no flight');
   const css = read('public/css/app.css');
-  assert.match(css, /\.rf-claim \{ flex: none; margin: 0 0 14px; padding: 18px 16px 0; min-height: 46px; font-size: 17px; font-weight: 600; line-height: 23px;/, 'on the header\'s 16pt edge, the gap a margin so the clamp never shows a third line');
+  assert.match(css, /\.rf-claim \{ flex: none; margin: 0 0 14px; padding: 6px 16px 0; min-height: 42px; font-size: 15px; font-weight: 400; line-height: 21px; color: var\(--rf-muted\);/, 'body text under the title, not a second title');
+  assert.match(css, /\.rf-bar-title \{ [^}]*font-size: 17px; font-weight: 650;/, 'the title is the one strong line');
   assert.match(css, /\.rf-claim \{ display: -webkit-box; -webkit-line-clamp: 2;/);
   assert.match(css, /\.rf-picture \{ position: relative; margin: 0 12px; border-radius: 32px; overflow: hidden; isolation: isolate; \}/);
   assert.match(css, /\.rf-strip \{ position: relative; flex: none; height: 64px; margin: 12px 12px 0; \}/);
@@ -320,28 +321,34 @@ test('going anywhere else takes the page down at once, and it comes back with th
   assert.match(src, /setShown\(!!anchorRef\.current && anchorRef\.current\.getClientRects\(\)\.length > 0\)/);
 });
 
-test('the shell\'s header says where you are: Needs you, the change\'s community, and a way back', () => {
+test('the run\'s bar: back, the title and ⌄; the title, ⌄ or the line opens the change in full', () => {
   const src = read('frontend/src/features/review-flow/review-flow.tsx');
-  assert.match(src, /setReviewRunHeader\(\{ title: t\('communities:needsYou\.title'\), place, back: onDone \}\);\s*return \(\) => setReviewRunHeader\(null\);/);
-  assert.match(src, /if \(!open \|\| header !== 'communities'\) return undefined;/, 'a project\'s own header already names it');
+  // Back is the arrow alone, named for where it goes, and it leaves the run.
+  assert.match(src, /const toProject = header === 'project' && item && item\.app \? item\.app\.name : '';/);
+  assert.match(src, /t\('communities:review\.back\.label', \{ place: toProject \|\| t\('communities:switcher\.all\.name'\) \}\)/);
+  assert.match(src, /<button type="button" className="rf-back" onClick=\{onDone\} aria-label=\{backName\} data-rf-back="">/);
   assert.match(src, /header="project"/);
-  const store = loadTsx('frontend/src/features/header/review-run-store.js');
-  const back = () => {};
-  store.setReviewRunHeader({ title: 'Needs you', place: 'Game Corner', back });
-  assert.deepEqual(store.reviewRunStore.get(), { on: true, title: 'Needs you', place: 'Game Corner', back });
-  store.setReviewRunHeader(null);
-  assert.equal(store.reviewRunStore.get().on, false, 'taken down, the header is what it was');
-  const title = read('frontend/src/features/header/header-title.tsx');
-  assert.match(title, /\{appSwitch \|\| run\.on \? null : tile\}\s*\{run\.on \? \([\s\S]*?<span id="header-title-name" className="min-w-0 truncate">\{run\.title\}<\/span>\s*\{run\.place \? <span className="header-place-name" data-run-place="" aria-hidden="true">\{run\.place\}<\/span> : null\}/,
-    'no switcher while the run is open: the screen\'s name and the change\'s community');
-  const header = read('frontend/src/features/header/platform-header.tsx');
-  assert.match(header, /const routeUp = run\.on \? '#communities'\n\s+: appRouteUpHref\(/,
-    'the run has a level above it, so the bar draws the arrow, pointing there');
-  assert.match(header, /onClick=\{run\.on && run\.back \? \(e\) => \{ e\.preventDefault\(\); run\.back\?\.\(\); \} : undefined\}/);
+  assert.match(read('frontend/src/features/workshop/index.tsx'), /onDone=\{\(\) => workshopController\.setTab\('status'\)\}/, 'from Communities, back to Communities');
+  assert.match(read('frontend/src/features/dev-board/workshop/workshop.tsx'), /<ProjectReviewFlow slug=\{slug\} onDone=\{\(\) => openTab\('status'\)\} \/>/, 'from a project, back to its hub');
+  // Three ways in, one state.
+  assert.match(src, /<button type="button" className="rf-bar-title-btn" onClick=\{\(\) => setDesc\(\(d\) => !d\)\} aria-expanded=\{desc\} aria-controls="rf-desc">\{item\.title\}<\/button>/);
+  assert.match(src, /className="rf-bar-toggle"\s+aria-expanded=\{desc\}/);
+  assert.match(src, /<button type="button" className="rf-claim-row" onClick=\{onMore\} aria-controls="rf-desc" data-rf-more="">/);
+  assert.match(src, /onMore=\{\(\) => setDesc\(true\)\}/);
+  // The card: what the change does in full, and the way on to its page.
+  assert.match(src, /<p className="rf-desc-text">\{item\.summary \|\| item\.line\}<\/p>/);
+  assert.match(src, /<a className="rf-desc-go" href=\{changeHref\(item\.app\.slug, item\.id, item\.number\)\}>\{t\('communities:review\.more\.open'\)\}<\/a>/);
+  assert.match(src, /if \(desc\) setDesc\(false\);\s*else if \(sheetOpen\(sheet\)\)/, 'Escape folds the card first');
+  assert.match(src, /useEffect\(\(\) => \{ setDesc\(false\); \}, \[itemKey\]\);/, 'folded on every new change');
+  // The shell's header is main's: the run covers it on a phone.
+  assert.ok(!fs.existsSync(path.join(ROOT, 'frontend/src/features/header/review-run-store.js')));
+  assert.doesNotMatch(read('frontend/src/features/header/header-title.tsx'), /reviewRun/);
+  assert.doesNotMatch(read('frontend/src/features/header/platform-header.tsx'), /reviewRun/);
   const css = read('public/css/app.css');
-  assert.match(css, /#platform-header \.header-place-name\[data-run-place\] \{ max-width: none; flex-shrink: 1; \}/, 'a community\'s name may take the row');
-  // The page starts under the header on a phone too, and the tab bar stays under it.
-  assert.match(css, /\n\.rf-page-wrap \{ position: fixed; left: var\(--platform-rail-w, 0px\); right: 0; top: calc\(var\(--browser-banner-h, 0px\) \+ var\(--platform-header-h\) \+ var\(--platform-safe-top, 0px\)\); bottom: var\(--platform-tabs-h, 0px\);/);
+  assert.match(css, /\n\.rf-page-wrap \{ position: fixed; left: var\(--platform-rail-w, 0px\); right: 0; top: 0; bottom: var\(--platform-tabs-h, 0px\);/);
+  assert.match(css, /\.rf-bar\[data-open\] \.rf-bar-title \{ white-space: normal;/, 'open, the whole title');
+  assert.match(css, /\.rf-bar-toggle\[aria-expanded="true"\] svg \{ transform: rotate\(180deg\); \}/);
+  assert.match(css, /\.rf-desc-wrap\[data-open\] \.rf-desc \{ transform: none;/);
 });
 
 test('Next change goes to the next change with no vote, wraps to an earlier one, and skips what you voted on', () => {

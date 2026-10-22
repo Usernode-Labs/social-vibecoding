@@ -19695,7 +19695,6 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header {
     font-size: 12px; font-weight: 600; line-height: 16px;
   }  /* The Needs you run's tag is a community's name, longer than a place's,
      beside a title that never changes: it may take the rest of the row. */
-  #platform-header .header-place-name[data-run-place] { max-width: none; flex-shrink: 1; }
 
 }
 
@@ -25123,7 +25122,7 @@ html.in-side-panel body {
    (features/header/review-run-store.js), and the tab bar, which stays. From
    768px it starts after the sidebar (--platform-rail-w, 0 on a phone and
    while the rail is folded), so it centres over the pane's column. */
-.rf-page-wrap { position: fixed; left: var(--platform-rail-w, 0px); right: 0; top: calc(var(--browser-banner-h, 0px) + var(--platform-header-h) + var(--platform-safe-top, 0px)); bottom: var(--platform-tabs-h, 0px); z-index: 35; pointer-events: none; }
+.rf-page-wrap { position: fixed; left: var(--platform-rail-w, 0px); right: 0; top: 0; bottom: var(--platform-tabs-h, 0px); z-index: 35; pointer-events: none; }
 .rf-page { position: absolute; top: 0; bottom: 0; left: max(0px, calc(50% - 260px)); width: min(100%, 520px); display: flex; flex-direction: column; overflow: hidden; background: var(--rf-page); color: var(--rf-ink); pointer-events: auto; -webkit-font-smoothing: antialiased; }
 .rf-stage { position: relative; flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; }
 .rf-stage-layer { background: var(--rf-page); }
@@ -25168,7 +25167,38 @@ html.in-side-panel body {
 /* The page leads with what the change does, or what the open screen shows:
    two lines at most, on the header's 16pt edge. The gap under it is a
    margin, not padding, so the clamp never lets a third line show. */
-.rf-claim { flex: none; margin: 0 0 14px; padding: 18px 16px 0; min-height: 46px; font-size: 17px; font-weight: 600; line-height: 23px; text-wrap: pretty; animation: rf-claim-in .36s cubic-bezier(0.22,1,0.36,1); }
+/* The bar: Back, the change's title on one line, and ⌄. On a phone it stands
+   in for the shell's header, which the page covers; the pictures under it
+   are the heavy thing on the page, so it has no fill and one line of type.
+   Open (⌄, the title, or the line under the bar), the title wraps in full
+   and a card under the bar holds what the change does (.rf-desc). */
+.rf-bar { position: relative; z-index: 9; flex: none; display: flex; align-items: flex-start; gap: 2px; padding: var(--platform-safe-top, env(safe-area-inset-top, 0px)) 16px 0 4px; min-height: 44px; background: var(--rf-page); }
+.rf-back { flex: none; display: grid; place-items: center; width: 40px; height: 44px; border: 0; background: none; color: inherit; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+.rf-bar-title { flex: 1; min-width: 0; margin: 0; padding: 11px 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 17px; font-weight: 650; line-height: 22px; letter-spacing: -0.015em; }
+.rf-bar-title-btn { display: block; width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: inherit; padding: 0; border: 0; background: none; color: inherit; font: inherit; letter-spacing: inherit; text-align: left; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+.rf-bar[data-open] .rf-bar-title { white-space: normal; text-wrap: pretty; padding-bottom: 4px; }
+.rf-bar-toggle { flex: none; display: grid; place-items: center; width: 32px; height: 32px; margin: 6px 0 0 6px; border: 0; border-radius: 999px; background: var(--rf-fill); color: var(--rf-ink); cursor: pointer; -webkit-tap-highlight-color: transparent; }
+.rf-bar-toggle svg { transition: transform .26s cubic-bezier(0.22,1,0.36,1); }
+.rf-bar-toggle[aria-expanded="true"] svg { transform: rotate(180deg); }
+/* The line under the bar: a tap anywhere on it opens the change in full. */
+.rf-claim-row { position: relative; flex: none; display: flex; align-items: flex-end; gap: 8px; width: 100%; margin: 0 0 14px; padding: 6px 16px 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; -webkit-tap-highlight-color: transparent; }
+button.rf-claim-row { cursor: pointer; }
+button.rf-claim-row:active .rf-claim { color: var(--rf-ink); }
+.rf-claim-row .rf-claim { flex: 1; min-width: 0; margin: 0; padding: 0; }
+/* The card: from under the bar, over the page; the rest dims, and a tap there
+   folds it. It slides out of the bar rather than fading in, so it reads as
+   the bar's own. */
+.rf-desc-wrap { position: absolute; left: 0; right: 0; bottom: 0; z-index: 8; overflow: hidden; pointer-events: none; }
+.rf-desc-wrap[data-open] { pointer-events: auto; }
+.rf-desc-dim { position: absolute; inset: 0; background: rgba(0,0,0,.32); opacity: 0; transition: opacity .26s ease; }
+.rf-desc-wrap[data-open] .rf-desc-dim { opacity: 1; }
+.dark .rf-desc-dim { background: rgba(0,0,0,.56); }
+.rf-desc { position: absolute; left: 0; right: 0; top: 0; max-height: calc(100% - 48px); overflow-y: auto; padding: 6px 16px 16px 46px; background: var(--rf-page); border-radius: 0 0 24px 24px; transform: translateY(-104%); transition: transform .32s cubic-bezier(0.22,1,0.36,1), box-shadow .32s; }
+.rf-desc-wrap[data-open] .rf-desc { transform: none; box-shadow: 0 16px 40px rgba(0,0,0,.18); }
+.rf-desc-text { margin: 0; font-size: 15px; line-height: 21px; color: var(--rf-muted); white-space: pre-line; }
+.rf-desc-foot { display: flex; margin-top: 16px; margin-left: -30px; }
+.rf-desc-go { flex: 1; display: flex; align-items: center; justify-content: center; height: 44px; border-radius: 999px; background: var(--rf-fill); color: var(--rf-ink); font-size: 15px; font-weight: 600; text-decoration: none; }
+.rf-claim { flex: none; margin: 0 0 14px; padding: 6px 16px 0; min-height: 42px; font-size: 15px; font-weight: 400; line-height: 21px; color: var(--rf-muted); text-wrap: pretty; animation: rf-claim-in .36s cubic-bezier(0.22,1,0.36,1); }
 @keyframes rf-claim-in { from { opacity: 0; transform: translateY(4px); } }
 .rf-hero-quiet { width: 100%; }
 .rf-scrim { position: absolute; inset: 0; z-index: 5; background: rgba(0,0,0,.62); opacity: 0; pointer-events: none; transition: opacity .22s cubic-bezier(0.22,1,0.36,1); }
@@ -25313,7 +25343,7 @@ html.in-side-panel body {
 .rf-go-wide { align-self: stretch; height: 48px; }
 .rf-thread { min-height: 200px; }
 @media (prefers-reduced-motion: reduce) {
-  .rf-sheet, .rf-scrim, .rf-seam, .rf-cap, .rf-switch, .rf-knob, .rf-knob-icon, .rf-pair-thumb, .rf-pair-mark, .rf-morph, .rf-morph-in, .rf-why, .rf-tile, .rf-tile-in, .rf-gbar, .rf-lit, .rf-veil-box, .rf-ring circle.rf-ring-arc { transition: none; }
+  .rf-sheet, .rf-scrim, .rf-seam, .rf-cap, .rf-switch, .rf-knob, .rf-knob-icon, .rf-pair-thumb, .rf-pair-mark, .rf-morph, .rf-morph-in, .rf-why, .rf-tile, .rf-tile-in, .rf-gbar, .rf-lit, .rf-veil-box, .rf-ring circle.rf-ring-arc, .rf-bar-toggle svg, .rf-desc, .rf-desc-dim { transition: none; }
   .rf-lens { animation: none; }
   .rf-claim { animation: none; }
 }
@@ -25334,6 +25364,7 @@ html.in-side-panel body {
     --rf-room: calc(100dvh - var(--browser-banner-h, 0px) - var(--platform-header-h) - var(--platform-safe-top, 0px) - var(--platform-tabs-h, 0px) - 32px);
   }
   .rf-page-dim { display: block; position: absolute; inset: 0; background: rgba(0,0,0,.32); pointer-events: auto; }
+  .rf-bar { padding-top: 0; }
   .dark .rf-page-dim { background: rgba(0,0,0,.56); }
   .rf-page { top: 16px; bottom: auto; max-height: var(--rf-room); border-radius: 20px; box-shadow: 0 0 0 1px var(--rf-line), 0 24px 64px rgba(0,0,0,.18); }
   .rf-stage { flex: 0 1 auto; }

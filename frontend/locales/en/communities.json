@@ -575,6 +575,18 @@
     "text": "Undo",
     "description": "Button in the vote sheet after voting: takes the vote back while voting is still open."
   },
+  "review.desc.show": {
+    "text": "What this change does",
+    "description": "Accessible name of the ⌄ button beside the change's title at the top of the new Needs you flow (an experiment): drops the change's full description over the page."
+  },
+  "review.desc.hide": {
+    "text": "Hide what this change does",
+    "description": "Accessible name of the same button while the change's full description is open (new Needs you flow, an experiment): folds it away."
+  },
+  "review.back.label": {
+    "text": "Back to {{place}}",
+    "description": "Accessible name of the back control at the top of the new Needs you flow (an experiment). {{place}} is the place it goes back to: all of the person's communities, or the project's name."
+  },
   "review.said.nextShort": {
     "text": "Next",
     "description": "Button in the vote sheet after voting (new Needs you flow, an experiment): moves sideways to the next change waiting on you. A small count in a ring follows it. Keep it one short word."
