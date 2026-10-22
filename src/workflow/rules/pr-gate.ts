@@ -14,8 +14,9 @@
 
 import type { Queryable } from './db.ts';
 import { electorate, activeUserIds } from './electorate.ts';
-import { appMetaFromRow, computeGate, governanceFromRow } from './governance-gate.ts';
+import { BUILDER_YES_PRESET, appMetaFromRow, computeGate, governanceFromRow } from './governance-gate.ts';
 import type { GovernedGate } from './governance-gate.ts';
+import { matchPreset } from './governance-rules.ts';
 import type { RulesFacts } from './governance-rules.ts';
 import { firstVersionSql } from './first-version.ts';
 
@@ -88,8 +89,9 @@ export async function readPrGate(db: Queryable, g: PrGateInputs): Promise<Govern
   const opened = g.openedAt == null ? null : new Date(g.openedAt).getTime();
   const now = g.now.getTime();
   const firstVersion = r.first_version === true;
-  // The counted votes, by voter, unfiltered by the approver roster: a
-  // builder's Yes (§5816) decides whether or not the roster names them.
+  // The counted votes, by voter, unfiltered by the approver roster: on a
+  // "You or the group" project a builder's Yes (§5816) decides whether or
+  // not the roster names them.
   const voters = {
     yes: new Set(votes.filter((v) => v.vote === 'yes').map((v) => Number(v.userId))),
     no: new Set(votes.filter((v) => v.vote === 'no').map((v) => Number(v.userId))),
@@ -116,7 +118,9 @@ export async function readPrGate(db: Queryable, g: PrGateInputs): Promise<Govern
       explicitApproval: g.explicitApproval, explicitReason: g.explicitApproval ? g.explicitReason : null,
       authorId: g.authorId, voters, authorIsBot: g.authorId != null && r.author_is_bot === true,
       rulesFacts: facts, memberCount: facts.memberCount, firstVersion,
-      builderYes: true,
+      // §5816: on "You or the group" the maker or an admin approves on
+      // their own Yes; every other preset keeps its rule.
+      builderYes: (gov.rules.preset || matchPreset(gov.rules.rules)) === BUILDER_YES_PRESET,
       adminNoAt: r.admin_no_at ?? null,
     });
   }
@@ -131,9 +135,6 @@ export async function readPrGate(db: Queryable, g: PrGateInputs): Promise<Govern
     explicitApproval: g.explicitApproval, otherYes,
     memberCount: g.explicitApproval ? Number(r.member_count) || 0 : undefined,
     firstVersion,
-    // §5816: the project's maker or an admin approves on their own Yes too.
-    voters, rulesFacts: { ...appFacts, membersActive: Math.max(Number(active) || 0, 1) },
-    builderYes: true, approverIds: approverIds || null,
     adminNoAt: r.admin_no_at ?? null,
   });
 }

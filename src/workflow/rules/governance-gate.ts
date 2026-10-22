@@ -675,12 +675,17 @@ export function applyFirstVersion<G extends Gate>(gate: G, { explicitApproval = 
 
 // ── A builder's Yes (§5816) ─────────────────────────────────────────────
 //
-// The people who can already force a change through, plus the person who
-// made the project: its maker (apps.created_by, the rules' `creator` group),
-// its admins (app_admins, the rules' `admins` group) and Homeroom's full
-// admins (read-only admins are not). Their Yes on an ordinary change IS the
-// approval, in every project, whatever preset or columns it picked: it saves
-// them the second step of force-merging what they themselves just approved.
+// A builder's Yes is the approval where the project already chose "You or
+// the group": its maker (apps.created_by, the rules' `creator` group), its
+// admins (app_admins, the rules' `admins` group) and Homeroom's full admins
+// (read-only admins are not). The preset is the setting: on it, the maker's
+// Yes was already enough, and this lets an admin's Yes save them the second
+// step of force-merging what they themselves just approved.
+//
+// Every other preset (Two yeses, Open floor, Group vote, rules of the
+// project's own) and every columns project keeps exactly the rule it chose.
+// A builder who wants their Yes to be enough picks "You or the group"; this
+// rule is no new global approval policy sitting above those.
 //
 // It passes the APPROVALS step and nothing else: the checks, the shots, the
 // integration, main's health and a locked app's admin Yes all still apply.
@@ -688,6 +693,17 @@ export function applyFirstVersion<G extends Gate>(gate: G, { explicitApproval = 
 // decides, the keys and the member floor are exactly what must not be
 // shortcut by one person's Yes where it already is not.
 //
+// The preset whose rule this is. A stored block without the key is read off
+// its rules (computeRulesGate's `preset`), so both spellings answer alike.
+export const BUILDER_YES_PRESET: PresetKey = 'you_or_the_group';
+
+// Whether the gate handed in is a "You or the group" project's, the one
+// configuration a builder's Yes approves on its own. A columns project's
+// gate carries no preset, so it never is.
+export function builderYesAppliesToGate(gate: GovernedGate | null | undefined): boolean {
+  return !!gate && gate.preset === BUILDER_YES_PRESET;
+}
+
 // A builder the app's approver roster does not include is not in
 // `qualifiedYes`, so their Yes is added to it; the required count follows the
 // count, so the card reads "1 of 1 yes" rather than a threshold they passed
@@ -717,11 +733,15 @@ export function isBuilder(facts: RulesFacts | null | undefined, userId: Count): 
     || (facts.platformAdminIds || []).includes(id);
 }
 
-// The builder's-Yes modifier. Runs only for a caller that opted in
-// (`opts.builderYes`, every PR path) and only when the gate was handed the
-// voters and the app facts it takes to answer; anything else is unchanged.
+// The builder's-Yes modifier. Runs only on a "You or the group" project
+// (the gate's `preset`), for a caller that opted in (`opts.builderYes`, the
+// PR paths), and only when the gate was handed the voters and the app facts
+// it takes to answer; anything else is unchanged.
 export function applyBuilderYes<G extends GovernedGate>(gate: G, opts: GateOpts = {}): G {
   if (opts.builderYes !== true) return gate;
+  // The project's existing "You or the group" configuration is the setting;
+  // any other preset or a columns project keeps its own rule.
+  if (!builderYesAppliesToGate(gate)) return gate;
   // A protected change keeps WHO_DECIDES, its keys rule and the member floor.
   if (opts.explicitApproval) return gate;
   const facts = opts.rulesFacts;

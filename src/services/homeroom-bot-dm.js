@@ -2819,11 +2819,14 @@ async function approvalState(pool, { sessionId, userId = null }) {
   );
   const yesIds = new Set(yes.map((r) => Number(r.user_id)));
   const who = Number(userId) || null;
-  const facts = await governance.rulesFacts(pool, session.app_id, gov, { fresh: true });
-  // §5816: a Yes from the project's maker or an admin approves the change
-  // on its own, so it is the last one this person has to give — nobody else
-  // is asked for one. A protected change keeps its own rule.
-  const decides = !!who && !session.explicit_approval && governance.isBuilder(facts, who);
+  // §5816: on a project set to "You or the group", a Yes from its maker or
+  // an admin approves the change on its own, so it is the last one this
+  // person has to give — nobody else is asked for one. A protected change
+  // keeps its own rule, and every other preset keeps the rule it chose.
+  const builderYes = !session.explicit_approval && governance.builderYesApplies(gov);
+  const facts = builderYes
+    ? await governance.rulesFacts(pool, session.app_id, gov, { fresh: true }) : null;
+  const decides = !!who && builderYes && governance.isBuilder(facts, who);
   const counts = decides || (!!who && (electorate.approverIds == null || electorate.approverIds.map(Number).includes(who)));
   const already = !!who && yesIds.has(who);
   const firstVersion = gate.firstVersion === true;

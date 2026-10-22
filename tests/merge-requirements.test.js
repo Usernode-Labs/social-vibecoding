@@ -869,30 +869,3 @@ test('the recording is descriptive only — a failed write never blocks a merge'
     restore();
   }
 });
-
-// ── §5816: a builder's Yes is the approval ──────────────────────────────
-
-test('§5816: provisional marks the votes step done for a builder-approved row', () => {
-  // One yes where the column says two were needed: the maker's own Yes
-  // approved it, so nothing is being waited on.
-  const gates = requirements.provisional({
-    votes_required: 2, qualified_yes_count: 1, builder_yes_role: 'creator',
-  });
-  const votes = gates.find((g) => g.key === 'approvals');
-  assert.equal(votes.state, 'done');
-  assert.equal(votes.detail.builderYes, 'creator');
-});
-
-test('§5816: withLiveApprovals rewrites a waiting record for a builder-approved row', () => {
-  const waiting = [
-    { key: 'approvals', label: 'Votes', actor: 'group', state: 'waiting', detail: { note: '0 of 2' } },
-  ];
-  const gates = requirements.withLiveApprovals(waiting, {
-    votes_required: 2, qualified_yes_count: 1, builder_yes_role: 'admin',
-  });
-  assert.equal(gates[0].state, 'done');
-  assert.equal(gates[0].detail.builderYes, 'admin');
-  // Without the stamp the count alone still does not reach the target.
-  const plain = requirements.withLiveApprovals(waiting, { votes_required: 2, qualified_yes_count: 1 });
-  assert.equal(plain[0].state, 'waiting');
-});

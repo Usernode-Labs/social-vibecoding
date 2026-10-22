@@ -385,9 +385,9 @@ function viewerDecides(gov, { approverIds, facts, explicitApproval, explicitReas
   if (viewerId == null) return true;
   const id = parseInt(viewerId, 10);
   if (!Number.isFinite(id)) return true;
-  // §5816: a builder's Yes approves an ordinary change whatever the rules
-  // say, so their vote is never advisory on one.
-  if (!explicitApproval && isBuilder(facts, id)) return true;
+  // §5816: on "You or the group" a builder's Yes approves an ordinary
+  // change, so their vote is never advisory there.
+  if (!explicitApproval && builderYesApplies(gov) && isBuilder(facts, id)) return true;
   if (gov && gov.rules) {
     const value = explicitApproval && isWhoDecidesReason(explicitReason ?? null)
       ? { rules: governanceRules.WHO_DECIDES }
@@ -413,11 +413,23 @@ function isBuilder(facts, userId) {
   return !!gateRules.isBuilder(facts, userId);
 }
 
+// §5816: whether this project chose the existing "You or the group"
+// configuration, the one place a builder's Yes is the approval on its own.
+// Every other preset, and a project without rules of its own, keeps exactly
+// the rule it chose; a stored block without the key is read off its rules,
+// as the gate reads it.
+function builderYesApplies(gov) {
+  if (!gov || !gov.rules) return false;
+  const preset = gov.rules.preset || governanceRules.matchPreset(gov.rules.rules);
+  return preset === gateRules.BUILDER_YES_PRESET;
+}
+
 // The fields a serialized proposal row carries for §5816, from its gate and
 // its app facts: whose Yes approved it (`builder_yes_role`,
 // `builder_yes_user_id`, both null when no builder's Yes did), and whether
-// this viewer's own Yes would approve it (`my_yes_decides`: the viewer is a
-// builder, the row is not a protected change, and not a first version).
+// this viewer's own Yes would approve it (`my_yes_decides`: the project is
+// on "You or the group", the viewer is a builder, the row is not a protected
+// change, and not a first version).
 function builderRowFields(row, gate, facts, viewerId) {
   const by = gate && gate.builderYes ? gate.builderYes : null;
   const id = viewerId == null ? null : parseInt(viewerId, 10);
@@ -426,6 +438,7 @@ function builderRowFields(row, gate, facts, viewerId) {
     builder_yes_user_id: by ? by.userId : null,
     my_yes_decides: !(row && row.requires_explicit_approval)
       && !(row && row.first_version)
+      && gateRules.builderYesAppliesToGate(gate)
       && Number.isFinite(id) && isBuilder(facts, id),
   };
 }
@@ -566,10 +579,10 @@ async function botAuthoredBatch(pool, kind, ids) {
  * rulesGateOpts(ctx, id, authorId, reason).
  */
 async function rulesContext(pool, appId, gov, kind, ids, { approverIds = null } = {}) {
-  // §5816: a PR's gate asks about a builder's Yes whatever the project's
-  // regime, so every project gets a context for 'pr'. An issue has no such
-  // rule, and a project without rules has no use for one.
-  if (kind === 'issue' && (!gov || !gov.rules)) return null;
+  // A project without rules has no use for a context: its gate is the two
+  // columns. §5816 applies only to a rules project on "You or the group",
+  // which is a rules project too. An issue has no builder's-Yes rule.
+  if (!gov || !gov.rules) return null;
   const [facts, voters, botAuthored] = await Promise.all([
     rulesFacts(pool, appId, gov),
     voterSetsBatch(pool, kind, ids),
@@ -577,6 +590,8 @@ async function rulesContext(pool, appId, gov, kind, ids, { approverIds = null } 
   ]);
   return {
     kind, facts, voters, botAuthored,
+    // §5816: a builder's Yes decides on "You or the group" only.
+    builderYes: kind === 'pr' && builderYesApplies(gov),
     approverIds: kind === 'pr' && Array.isArray(approverIds) ? approverIds.map(Number) : null,
   };
 }
@@ -590,8 +605,9 @@ function rulesGateOpts(ctx, id, authorId, explicitReason) {
     authorId: authorId ?? null,
     authorIsBot: !!(ctx.botAuthored && ctx.botAuthored.has(parseInt(id, 10))),
     memberCount: ctx.facts.memberCount,
-    // §5816: a PR's Yes from the project's maker or an admin approves it.
-    ...(ctx.kind === 'pr' ? { builderYes: true, approverIds: ctx.approverIds || null } : {}),
+    // §5816: a builder's Yes decides where the project chose "You or the
+    // group"; no other project opts in.
+    ...(ctx.builderYes ? { builderYes: true, approverIds: ctx.approverIds || null } : {}),
     ...(explicitReason !== undefined ? { explicitReason } : {}),
   };
 }
@@ -669,8 +685,9 @@ async function governedGate(pool, appId, {
       authorIsBot: author != null ? await authorIsBot(pool, author) : false,
       rulesFacts: facts, memberCount: facts.memberCount,
       firstVersion: first,
-      // §5816: the project's maker or an admin approves on their own Yes.
-      builderYes: true,
+      // §5816: on "You or the group" the maker or an admin approves on
+      // their own Yes; every other preset keeps its rule.
+      builderYes: builderYesApplies(gov),
     });
   }
   const electorate = await getElectorate(pool, appId, gov);
@@ -693,18 +710,12 @@ async function governedGate(pool, appId, {
     pool, kind, id, electorate.approverIds, floorOpts
   );
   const memberCount = explicitApproval ? await communityMemberCount(pool, appId) : undefined;
-  // §5816: a builder's Yes approves an ordinary change in every regime, so
-  // the columns' gate reads the same voters and app facts the rules do.
-  const [facts, voters] = kind === 'pr'
-    ? await Promise.all([rulesFacts(pool, appId, gov, { fresh }), voterSets(pool, kind, id)])
-    : [null, null];
   // #788: the no-timer modifier rides on top of whatever regime the app
   // configured — see applyNoTimerMerge — and with it the member floor.
   const gate = computeGate(gov, electorate.active, yes, no, openedAt, now, {
     explicitApproval, otherYes, memberCount, firstVersion: first,
-    ...(kind === 'pr' ? {
-      voters, rulesFacts: facts, builderYes: true, approverIds: electorate.approverIds || null,
-    } : {}),
+    // (No §5816 here: the builder's-Yes rule belongs to "You or the group",
+    // which is a rules block, so this columns path never opts in.)
   });
   if (electorate.adminFallback && gov.approverPolicy === 'invited') {
     log.debug('governance', 'Approver roster empty; full admins acting as approvers', { appId });
@@ -815,6 +826,7 @@ module.exports = {
   applyFirstVersion: gateRules.applyFirstVersion,
   rulesFromColumn,
   isBuilder,
+  builderYesApplies,
   builderRowFields,
   isWhoDecidesReason,
   electorateAtPromote,

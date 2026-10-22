@@ -7221,15 +7221,17 @@ async function seedStagingVoteCardChat(pool) {
         WHERE viewer.username = 'usernode-capture'
        ON CONFLICT (app_id, user_id) DO NOTHING`
     );
-    // #5816: the same card on a project the capture member MADE, under Two
-    // yeses, up for a vote. Their own Yes approves it on its own now, so the
-    // card reads "Waiting for your approval" and says their yes is enough,
-    // where before it counted the yeses other people had to give.
+    // #5816: the same card on a project the capture member MADE, set to the
+    // existing "You or the group" configuration, up for a vote. Their own
+    // Yes approves it on its own now, so the card reads "Waiting for your
+    // approval" and says their yes is enough, where before it counted the
+    // yeses other people had to give. (The feature belongs to this
+    // configuration: a project on another preset keeps its own rule.)
     await pool.query(
       `INSERT INTO apps (id, name, slug, status, collab_visibility, view_visibility, created_by, governance_rules)
        SELECT 900130, 'Staging demo: my own project', 'staging-demo-my-own-project', 'running',
               'private', 'public', viewer.id,
-              '{"preset": "two_yeses", "groups": [], "rules": [{"group": "members", "kind": "atLeast", "n": 2}]}'::jsonb
+              '{"preset": "you_or_the_group", "groups": [], "rules": [{"group": "creator", "kind": "atLeast", "n": 1}, {"group": "members", "kind": "majority", "n": null}]}'::jsonb
          FROM users viewer
         WHERE viewer.username = 'usernode-capture'
        ON CONFLICT DO NOTHING`
@@ -7244,8 +7246,8 @@ async function seedStagingVoteCardChat(pool) {
         WHERE viewer.username = 'usernode-capture'
        ON CONFLICT DO NOTHING`
     );
-    // A second member, so Two yeses actually asks for a second yes and the
-    // card has something to count. Obviously fake, never a login.
+    // A second member, so the group is more than the maker and the old card
+    // had other yeses to count. Obviously fake, never a login.
     await pool.query(
       `INSERT INTO users (id, username, password)
        VALUES (900132, 'staging-demo-teammate', 'staging-demo-not-a-login')
@@ -7269,8 +7271,8 @@ async function seedStagingVoteCardChat(pool) {
        SELECT 900130, 900132, 'member', 900132, NOW()
        ON CONFLICT (app_id, user_id) DO NOTHING`
     );
-    // Both of them active, so the project is a two-person one and the card
-    // asks the maker for the second yes rather than counting them alone.
+    // Both of them active, so the project is a two-person one and the old
+    // card asked the maker for a second yes rather than counting them alone.
     await pool.query(
       `INSERT INTO app_activity (app_id, user_id, date, seconds_spent)
        SELECT 900130, u.id, CURRENT_DATE, 120

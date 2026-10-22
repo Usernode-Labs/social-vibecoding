@@ -170,15 +170,11 @@ test('Page Turners: two of three must approve, against the full PostgreSQL schem
     [key, value],
   );
   await set('homeroom_bot_mode', 'live');
-  // §5816: `owner` is who made the app, when it is not the first member.
-  // The scenarios below are about WHO ELSE is asked, so their makers are
-  // people who are not viewing the card; the maker's own Yes is the last
-  // one it needs (`decides`, asserted in its own case at the end).
-  const project = async (slug, label, { view = 'private', members = [], owner = null } = {}) => {
+  const project = async (slug, label, { view = 'private', members = [], rules = null } = {}) => {
     const { rows: [inserted] } = await pool.query(
-      `INSERT INTO apps (name, slug, status, created_by, view_visibility, collab_visibility)
-       VALUES ($1, $2, 'running', $3, $4, $4) RETURNING id`,
-      [label, slug, (owner || members[0]).id, view],
+      `INSERT INTO apps (name, slug, status, created_by, view_visibility, collab_visibility, governance_rules)
+       VALUES ($1, $2, 'running', $3, $4, $4, $5) RETURNING id`,
+      [label, slug, members[0].id, view, rules ? JSON.stringify(rules) : null],
     );
     const app = (await pool.query('SELECT id, slug, name, community_id FROM apps WHERE id = $1', [inserted.id])).rows[0];
     for (const m of members) {
@@ -223,7 +219,7 @@ test('Page Turners: two of three must approve, against the full PostgreSQL schem
   const viewOf = (meta) => renderToHtml(createElement(readyCard.ReadyCardView, { meta, state: 'open', actions: meta.actions }));
 
   await t.test('three members, two approvals needed: the cards say two, from any of the three', async () => {
-    const pages = await project('page-turners', 'Page Turners', { members: [alex, priya, mo], owner: ben });
+    const pages = await project('page-turners', 'Page Turners', { members: [alex, priya, mo] });
     const s = await change(pages, alex, 1);
     const state = await dm.approvalState(pool, { sessionId: s.id, userId: alex.id });
     assert.deepEqual([state.audience, state.needed, state.have, state.missing, state.last], ['invited', 2, 0, 2, false]);
@@ -261,7 +257,7 @@ test('Page Turners: two of three must approve, against the full PostgreSQL schem
   });
 
   await t.test('two members, both needed: "Waiting for approval from you and @ada", as before', async () => {
-    const club = await project('supper-club', 'Supper Club', { members: [ben, ada], owner: alex });
+    const club = await project('supper-club', 'Supper Club', { members: [ben, ada] });
     const s = await change(club, ben, 1);
     await tellReadyNow(pool, s.id, { bot: homeroomBot, domain: 'app.example.test' });
     const meta = await card(ben.id, s.id);
@@ -276,12 +272,22 @@ test('Page Turners: two of three must approve, against the full PostgreSQL schem
       'Waiting for approval from @ada.');
   });
 
-  // §5816: the person who made the project is asked for nothing more than
-  // their own Yes — it approves the change on its own, so nobody else is
-  // named or belled.
-  await t.test('the maker’s own yes is the last one it needs', async () => {
-    const pages = await project('reading-room', 'Reading Room', { members: [alex, priya, mo], owner: alex });
-    const s = await change(pages, alex, 1);
+  // §5816: on "You or the group", the person who made the project is asked
+  // for nothing more than their own Yes — it approves the change on its own,
+  // so nobody else is named or belled.
+  await t.test('You or the group: the maker’s own yes is the last one it needs', async () => {
+    const room = await project('reading-room', 'Reading Room', {
+      members: [alex, priya, mo],
+      rules: {
+        preset: 'you_or_the_group',
+        groups: [],
+        rules: [
+          { group: 'creator', kind: 'atLeast', n: 1 },
+          { group: 'members', kind: 'majority', n: null },
+        ],
+      },
+    });
+    const s = await change(room, alex, 1);
     const state = await dm.approvalState(pool, { sessionId: s.id, userId: alex.id });
     assert.equal(state.decides, true);
     assert.equal(state.last, true);
@@ -295,7 +301,7 @@ test('Page Turners: two of three must approve, against the full PostgreSQL schem
   });
 
   await t.test('a public community names nobody, as before', async () => {
-    const town = await project('town-square', 'Town Square', { view: 'public', members: [ben, ada, alex], owner: mo });
+    const town = await project('town-square', 'Town Square', { view: 'public', members: [ben, ada, alex] });
     const s = await change(town, ben, 1);
     const state = await dm.approvalState(pool, { sessionId: s.id, userId: ben.id });
     assert.deepEqual([state.audience, state.missing], ['open', 2]);
