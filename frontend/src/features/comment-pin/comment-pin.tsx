@@ -755,7 +755,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
       let live = true;
       const ahead = takeAhead(sizeRef.current);
       void Promise.all([ahead, overlaysGone()]).then(([got]) => {
-        if (!live) return;
+        if (!live) { if (got) URL.revokeObjectURL(got.url); return; }
         if (!got) { takeViewShot(); return; }
         if (got.size.height !== sizeRef.current.height) { sizeRef.current = got.size; setSize(got.size); }
         viewShotUrl.current = got.url;
@@ -768,6 +768,9 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
   }, [tick, takeViewShot]);
 
   useEffect(() => () => {
+    // A picture still being drawn when the mode goes is dropped by its own
+    // `show`, which sees the key has moved on and revokes it there.
+    viewShotKeys.current += 1;
     if (viewShotUrl.current) URL.revokeObjectURL(viewShotUrl.current);
   }, []);
 
@@ -1449,12 +1452,21 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
     textRef.current?.blur();
     setExpanded(false);
   };
+  /** The phone's ✕ on the request's only comment, with nothing in it: out of the mode. */
+  const leaveIfEmpty = () => !!draft && draft.comments.length === 1
+    && !hasWords(draft) && !draft.images.length && (leave(), true);
   /** The small box's ✕: this comment off the request, or the request when it is the only one (asked first when it has words). */
   const closeSmall = () => {
     const cur = activeComment(draft);
     if (!draft || draft.sending || !cur) return;
+    if (leaveIfEmpty()) return;
     if (draft.comments.length > 1) removeComment(cur.key);
     else requestDiscard();
+  };
+  /** The phone sheet head's ✕: out of the mode when the comment is empty and alone, else the box's own rule. */
+  const closeSheet = () => {
+    if (!draft || draft.sending) return;
+    if (!leaveIfEmpty()) requestDiscard();
   };
   /** A point kept on the picture (or on the screen, over the live page). */
   const onPicture = (p: Point): Point => {
@@ -1516,10 +1528,12 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
   };
 
   const postedCount = posted.length;
-  const hint = draft
-    ? (viewShot?.state === 'drawing' ? t('devchat:commentPin.hint.taking')
-      : draft.active == null ? t('devchat:commentPin.hint.next') : t('devchat:commentPin.hint.writing'))
-    : carry ? t('devchat:commentPin.hint.carry') : postedCount ? t('devchat:commentPin.hint.another') : t('devchat:commentPin.hint.start');
+  const hint = shotIntro
+    ? t('devchat:commentPin.hint.taking')
+    : draft
+      ? (viewShot?.state === 'drawing' ? t('devchat:commentPin.hint.taking')
+        : draft.active == null ? t('devchat:commentPin.hint.next') : t('devchat:commentPin.hint.writing'))
+      : carry ? t('devchat:commentPin.hint.carry') : postedCount ? t('devchat:commentPin.hint.another') : t('devchat:commentPin.hint.start');
 
   const first = draft ? draft.comments[0] : null;
   const target: Target | null = draft ? (app ? (draft.chosen ?? (first?.inApp ? 'app' : 'platform')) : 'platform') : null;
@@ -1623,7 +1637,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
             title={t('devchat:commentPin.box.discardTitle')}
             aria-label={t('devchat:commentPin.box.discardLabel')}
             disabled={draft.sending}
-            onClick={requestDiscard}
+            onClick={closeSheet}
             className={PHONE_TOOL}
           >
             <span className={PHONE_DISC}><XIcon className="h-4 w-4" /></span>
@@ -2328,10 +2342,11 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
             ? 'rounded-2xl shadow-[0_8px_30px_rgba(0,0,0,0.18)]'
             : 'shadow-[0_8px_30px_rgba(0,0,0,0.22)]',
           !barFrame && !barPlace ? 'left-1/2 -translate-x-1/2' : '',
-          // Not over the live page while the first picture draws: drawn there
-          // it covered the page's own header for a few frames, then the
-          // picture shrank in under it. It fades in with the picture.
-          shotIntro ? 'pointer-events-none opacity-0' : 'comment-bar-in',
+          // In the band from the first frame, standing where it will sit over
+          // the picture: while the picture draws it says so and Done works,
+          // so the mode is never a screen that answers nothing (#5834). The
+          // picture itself still fades and shrinks into place.
+          'comment-bar-in',
         ].filter(Boolean).join(' ')}
         style={barFrame
           ? {
@@ -2441,7 +2456,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
             <span className={`${shotLabel ? 'hidden sm:inline-flex' : 'inline-flex'} shrink-0 items-center gap-1.5 text-sm font-bold text-violet-700 dark:text-violet-300`}>
               <ChatIcon className="h-[18px] w-[18px]" />
             </span>
-            <span className="hidden min-w-0 truncate text-sm font-bold text-violet-700 sm:inline dark:text-violet-300">{hint}</span>
+            <span className={`${shotIntro ? 'inline' : 'hidden sm:inline'} min-w-0 truncate text-sm font-bold text-violet-700 dark:text-violet-300`}>{hint}</span>
             {postedCount ? (
               <span className="hidden shrink-0 rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-bold tabular-nums text-zinc-600 md:inline dark:bg-zinc-800 dark:text-zinc-300">
                 {t('devchat:commentPin.bar.posted', { count: postedCount })}
