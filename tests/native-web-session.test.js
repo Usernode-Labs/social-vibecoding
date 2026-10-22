@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { Pool } = require('pg');
+const { Client, Pool } = require('pg');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -57,10 +57,19 @@ test('native web session recovery against PostgreSQL', { skip: !DSN && 'set TEST
     await t.test('PostgreSQL plans every production query containing the shared native-session predicate', async () => {
       // These templates enter the reviewed dynamic inventory. Plan their
       // actual SQL too, so a valid predicate in the wrong table context
-      // cannot hide behind a route test's database mock.
+      // cannot hide behind a route test's database mock. They are planned
+      // on a scratch database built from schema.sql itself, like the other
+      // *-postgres tests: the fixture tables above hold only what recovery
+      // writes, and a hand-kept copy of every column these queries read fell
+      // behind the first new users column.
+      const name = `native_auth_plan_${crypto.randomBytes(6).toString('hex')}`;
+      await admin.query(`CREATE DATABASE ${name}`);
+      const url = new URL(DSN); url.pathname = `/${name}`;
+      const client = new Client({ connectionString: String(url) });
       let count = 0;
-      const client = await pool.connect();
       try {
+        await client.connect();
+        await client.query(fs.readFileSync(path.join(__dirname, '../src/db/schema.sql'), 'utf8'));
         for (const file of [
           'middleware/auth.js', 'middleware/topochain-auth.js',
           'routes/cli-auth.js', 'routes/status.js', 'routes/topochain/mobile.js',
@@ -79,7 +88,10 @@ test('native web session recovery against PostgreSQL', { skip: !DSN && 'set TEST
           }
         }
         assert.equal(count, 8, 'all cookie authentication queries receive planner coverage');
-      } finally { client.release(); }
+      } finally {
+        await client.end();
+        await admin.query(`DROP DATABASE ${name}`);
+      }
     });
 
     await t.test('the native HTTP endpoint authenticates the bearer and returns its lease with private cookie material', async () => {
