@@ -2,13 +2,18 @@
  * The change page's vote, at its foot above the tab bar.
  *
  * At rest it is part of the page, not a sheet over it: one pair, Yes | No,
- * and a round ⋯ beside it. The row never moves. A tap on Yes or No counts at
- * once; the pair shows the choice (a filled thumb under it, with its mark),
- * and the ⋯ grows into Next change, or Done on the last one. A tap on the
- * other answer changes the vote; a tap on your own answer takes it back (the
- * server takes a vote back while voting is open, DELETE /api/sessions/:id/vote
- * through `AppView.retractVote`). On a No, "Add a reason" appears in the room
- * kept for it above the row, and a line written there goes with the No.
+ * and a round ⋯ beside it. The row never moves. A tap on Yes counts at once;
+ * the pair shows the choice (a filled thumb under it, with its mark), and the
+ * ⋯ grows into Next change, or Done on the last one. A tap on the other
+ * answer changes the vote; a tap on your own answer takes it back (the server
+ * takes a vote back while voting is open, DELETE /api/sessions/:id/vote
+ * through `AppView.retractVote`).
+ *
+ * A No asks why before it is cast: tapping No raises a sheet with four short
+ * answers and the optional one-line box, and Send counts the No with the
+ * answer (and the line, when one is written) as its reason. Closing the sheet
+ * counts nothing, and a Yes already cast stays. On a No cast elsewhere,
+ * "Add a reason" opens the same sheet.
  *
  * ⋯ opens the help as a sheet over the page: Ask privately, Discussion, Try
  * it, About this change, Open the change page, and at its foot Skip for now, which moves on
@@ -39,9 +44,12 @@ export type Vote = 'yes' | 'no';
 /** The longest line a No may carry (the server's VOTE_REASON_MAX). */
 export const NO_LINE_MAX = 280;
 
+/** The answers a No picks from; "Something else" takes the same optional line. */
+export type NoChoice = 'notWorking' | 'approach' | 'notNeeded' | 'other';
+
 /** Whether the sheet covers the page (everything but the vote row's own states). */
 export function sheetOpen(state: SheetState): boolean {
-  return state !== 'ask' && state !== 'voted' && state !== 'reason';
+  return state !== 'ask' && state !== 'voted';
 }
 
 const Icon = {
@@ -81,14 +89,27 @@ export function VoteSheet({ item, vote, state, setState, onVote, onUndo, onNext,
   const ref = useRef<HTMLElement>(null);
   const [height, setHeight] = useState<number | null>(null);
   const [line, setLine] = useState('');
+  // The answer a No picks from the reason list; the No is only sent with one.
+  const [choice, setChoice] = useState<NoChoice | null>(null);
   // The reason sent with this change's No, shown where it was written.
   const [shared, setShared] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [asks, setAsks] = useState<AskMsg[]>([]);
   const [question, setQuestion] = useState('');
 
-  // A new change starts with an empty line and no questions.
-  useEffect(() => { setLine(''); setShared(null); setAsks([]); setQuestion(''); }, [item.key]);
+  // A new change starts with an empty line, no answer and no questions.
+  useEffect(() => { setLine(''); setChoice(null); setShared(null); setAsks([]); setQuestion(''); }, [item.key]);
+
+  const whyChoices: { key: NoChoice; text: string }[] = [
+    { key: 'notWorking', text: t('communities:review.why.notWorking') },
+    { key: 'approach', text: t('communities:review.why.approach') },
+    { key: 'notNeeded', text: t('communities:review.why.notNeeded') },
+    { key: 'other', text: t('communities:review.why.other') },
+  ];
+  const choiceText = whyChoices.find((c) => c.key === choice)?.text || '';
+  // The whole reason stays within the server's limit: the line gets what the
+  // answer and its ": " leave.
+  const lineMax = choice ? Math.max(0, NO_LINE_MAX - choiceText.length - 2) : NO_LINE_MAX;
 
   // The sheet grows and shrinks to what it holds, animated (app.css .rf-sheet).
   useLayoutEffect(() => {
@@ -159,18 +180,24 @@ export function VoteSheet({ item, vote, state, setState, onVote, onUndo, onNext,
     if (busy) return;
     setBusy(true);
     try {
-      if (await onUndo()) { setShared(null); setLine(''); }
+      if (await onUndo()) { setShared(null); setLine(''); setChoice(null); }
     } finally { setBusy(false); }
   };
-  // Your own answer again takes the vote back; the other one changes it.
+  // Your own answer again takes the vote back; the other one changes it. A
+  // No asks why first: the vote is cast only when the reason sheet is sent.
   const tap = (v: Vote) => {
     if (vote === v) { void undo(); return; }
-    if (v === 'yes') setShared(null);
-    void cast(v);
+    if (v === 'yes') { setShared(null); void cast(v); return; }
+    setChoice(null);
+    setLine('');
+    setState('reason');
   };
   const shareReason = async () => {
-    const text = line.trim();
-    if (!text) { setState('voted'); return; }
+    if (!choice) return;
+    const detail = line.replace(/\s+/g, ' ').trim();
+    const text = (detail
+      ? t('communities:review.why.withDetail', { choice: choiceText, detail })
+      : choiceText).slice(0, NO_LINE_MAX);
     if (await cast('no', text)) setShared(text);
   };
   const rest = vote ? 'voted' : 'ask';
@@ -325,29 +352,51 @@ export function VoteSheet({ item, vote, state, setState, onVote, onUndo, onNext,
         </div>
       </>
     );
+  } else if (state === 'reason') {
+    // A No asks why before it is cast: four short answers, then the optional
+    // line. Send stays off until an answer is picked; closing counts nothing.
+    body = (
+      <>
+        <h2 className="rf-why-head">{t('communities:review.why.title')}</h2>
+        <div className="rf-chips" role="radiogroup" aria-label={t('communities:review.why.title')}>
+          {whyChoices.map((c) => (
+            <button
+              key={c.key}
+              type="button"
+              role="radio"
+              aria-checked={choice === c.key}
+              className="rf-chip"
+              data-rf-why-choice={c.key}
+              onClick={() => setChoice(c.key)}
+            >{c.text}</button>
+          ))}
+        </div>
+        <p className="rf-line">{t('communities:review.why.detailLabel')}</p>
+        <form className="rf-ask-form" onSubmit={(e: FormEvent) => { e.preventDefault(); void shareReason(); }}>
+          <input
+            aria-label={t('communities:review.why.detailLabel')}
+            placeholder={item.author ? t('communities:review.no.placeholder', { name: item.author }) : t('communities:review.no.placeholderNoName')}
+            maxLength={lineMax}
+            value={line}
+            onChange={(e) => setLine(e.target.value)}
+          />
+          <button type="submit" className="rf-go" disabled={!choice || busy}>{t('communities:review.no.send')}</button>
+        </form>
+      </>
+    );
   } else {
     // At rest: the row on the page. The room above it is kept for a No's
     // reason, so nothing moves when one appears.
     let why: ReactNode = null;
-    if (vote === 'no' && state === 'reason') {
-      why = (
-        <form className="rf-why-form" onSubmit={(e: FormEvent) => { e.preventDefault(); void shareReason(); }}>
-          <input
-            autoFocus
-            aria-label={t('communities:review.reason.label')}
-            placeholder={item.author ? t('communities:review.no.placeholder', { name: item.author }) : t('communities:review.no.placeholderNoName')}
-            maxLength={NO_LINE_MAX}
-            value={line}
-            onChange={(e) => setLine(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setState('voted'); } }}
-          />
-          <button type="submit" className="rf-share" disabled={busy}>{t('communities:review.reason.share')}</button>
-        </form>
-      );
-    } else if (vote === 'no' && shared) {
+    if (vote === 'no' && shared) {
       why = <span className="rf-why-said" data-rf-why-said="">&ldquo;{shared}&rdquo;</span>;
     } else if (vote === 'no') {
-      why = <button type="button" className="rf-why-add" data-rf-why="" onClick={() => setState('reason')}>{t('communities:review.reason.add')}</button>;
+      // A No cast elsewhere has no known line; this opens the same sheet.
+      why = (
+        <button type="button" className="rf-why-add" data-rf-why="" onClick={() => { setChoice(null); setLine(''); setState('reason'); }}>
+          {t('communities:review.reason.add')}
+        </button>
+      );
     }
     body = (
       <div className="rf-vote">

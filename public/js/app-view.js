@@ -26361,9 +26361,11 @@ const AppView = {
   // took a second identical rejection — one head move, two toasts.
   _seenEpoch: new Map(),
   // #1688: the line behind a vote, asked for through the kit's prompt card.
-  // The line is optional on either side. Resolves the line to send (a
-  // string), null for "none", or false when the voter backed out — a
-  // cancelled No casts nothing.
+  // The line is optional on a Yes. A No says why, so this fallback — reached
+  // only where no picker or sheet can offer the answer list — refuses an
+  // empty line and says so. Resolves the line to send (a string), null for
+  // "none", or false when the voter backed out — a cancelled or empty No
+  // casts nothing.
   async _askVoteReason(vote) {
     const no = vote === 'no';
     const pu = window.PlatformUI;
@@ -26379,6 +26381,10 @@ const AppView = {
     });
     if (answer === null) return no ? false : null;
     const line = String(answer).replace(/\s+/g, ' ').trim();
+    if (no && !line) {
+      if (typeof pu.toast === 'function') pu.toast(PlatformI18n.t('changes:vote.reason.noNeedsLine'));
+      return false;
+    }
     return line || null;
   },
   // The options bag's `reason` key: a string is sent as the line, null sends

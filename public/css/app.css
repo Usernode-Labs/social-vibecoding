@@ -15223,6 +15223,28 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
 .dev-vote-reason-send-yes { background: var(--accent); color: var(--accent-ink); }
 .dev-vote-reason-send-no { background: var(--state-blocked-bg); color: var(--state-blocked); }
 .dev-vote-reason-send:disabled { opacity: 0.5; cursor: default; }
+/* A No says why: four short answers in a wrapping row under the switch. The
+   picked one takes the No side's tint, nothing else moves, and the vote
+   button stays off until one is picked. */
+.dev-vote-why {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 2px 0;
+}
+.dev-vote-why-opt {
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.dev-vote-why-opt[aria-checked="true"] { background: var(--state-blocked-bg); color: var(--state-blocked); border-color: transparent; }
+.dev-vote-why-opt:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 /* The same picker as a kit bottom sheet on touch (#1688 follow-up): the two
    rows at tap-target size and the line box INLINE under them, in the one
    sheet — not a native action sheet followed by a second prompt card. The
@@ -15237,6 +15259,7 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
 .dev-vote-sheet .dev-vote-reason-label { padding: 0 2px 2px; font-size: 14px; }
 .dev-vote-sheet .dev-vote-reason-box { padding: 10px 12px; border-radius: 12px; font-size: 16px; }
 .dev-vote-sheet .dev-vote-reason-actions { padding-top: 10px; gap: 8px; }
+.dev-vote-sheet .dev-vote-why-opt, .dev-ws-vote-form .dev-vote-why-opt { height: 44px; padding: 0 14px; border-radius: 12px; font-size: 15px; }
 .dev-vote-sheet .dev-vote-reason-cancel, .dev-vote-sheet .dev-vote-reason-send { height: 44px; padding: 0 18px; border-radius: 12px; font-size: 15px; }
 /* The Needs you feed's vote sheet (#3613) draws the same picker inline, at
    the same tap-target size: the switch, the line box, Cancel and the send. */
@@ -25283,12 +25306,7 @@ button.rf-claim-row:active .rf-claim { color: var(--rf-ink); }
 .rf-why-off { opacity: 0; transform: translateY(6px); pointer-events: none; }
 .rf-why-add { min-height: 44px; padding: 0 6px; border: 0; background: none; color: var(--rf-muted); font-size: 15px; font-weight: 500; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
 .rf-why-said { max-width: 100%; font-size: 15px; line-height: 20px; color: var(--rf-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.rf-why-form { display: flex; align-items: center; gap: 6px; width: 100%; height: 44px; box-sizing: border-box; margin: 0; padding: 0 4px 0 16px; border-radius: 999px; background: var(--rf-fill); }
-.rf-why-form:focus-within { box-shadow: 0 0 0 2px var(--lit-ink); }
-.rf-why-form input { flex: 1; min-width: 0; height: 100%; padding: 0; border: 0; background: transparent; color: var(--rf-ink); font-size: 16px; outline: 0; }
-.rf-why-form input::placeholder { color: var(--rf-muted); }
-.rf-share { flex: none; height: 36px; padding: 0 14px; border: 0; border-radius: 999px; background: #0a6ee0; color: #fff; font-size: 15px; font-weight: 600; cursor: pointer; }
-.rf-share:disabled { opacity: .6; }
+.rf-why-head { margin: 6px 0 10px; font-size: 17px; font-weight: 600; line-height: 22px; color: var(--rf-ink); }
 .rf-vrow { flex: none; display: flex; gap: 12px; }
 .rf-pair { position: relative; flex: 1; min-width: 0; display: flex; padding: 4px; border-radius: 999px; background: var(--rf-fill); }
 .rf-sheet:not(.rf-sheet-rest) .rf-pair { flex: none; }
@@ -25348,6 +25366,7 @@ button.rf-claim-row:active .rf-claim { color: var(--rf-ink); }
 .rf-ai p { margin: 0; padding: 10px 14px; border-radius: 18px 18px 18px 4px; background: var(--rf-fill); font-size: 15px; line-height: 20px; white-space: pre-wrap; }
 .rf-chips { display: flex; flex-wrap: wrap; gap: 8px; }
 .rf-chip { height: 44px; padding: 0 13px; border: 0; border-radius: 999px; background: var(--rf-fill); color: var(--rf-ink); font-size: 15px; font-weight: 500; white-space: nowrap; cursor: pointer; }
+.rf-chip[aria-checked="true"] { background: var(--rf-ink); color: var(--rf-page); }
 .rf-ask-form { flex: none; display: flex; align-items: center; gap: 8px; margin: 0; padding: 4px 0 8px; }
 .rf-ask-form input { flex: 1; min-width: 0; box-sizing: border-box; border: 0; background: var(--rf-fill); box-shadow: inset 0 0 0 1px var(--rf-line); color: var(--rf-ink); font-size: 16px; line-height: 22px; outline: 0; }
 .rf-ask-form input { height: 44px; padding: 0 16px; border-radius: 999px; }

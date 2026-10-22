@@ -34,8 +34,8 @@ const item = {
 };
 const noop = () => {};
 const form = (over) => renderToHtml(createElement(NeedsVoteForm, {
-  row: reelRows([item])[0], side: 'yes', line: '',
-  onSide: noop, onLine: noop, onBoxKey: noop, onCancel: noop, onSend: noop,
+  row: reelRows([item])[0], side: 'yes', line: '', noChoice: null,
+  onSide: noop, onLine: noop, onNoChoice: noop, onBoxKey: noop, onCancel: noop, onSend: noop,
   ...(over || {}),
 }));
 
@@ -59,16 +59,25 @@ test('the form is the card\'s vote picker: the switch, the line for the group, C
   assert.ok(!/role="dialog"/.test(html), 'nothing in the form is a dialog of its own');
 });
 
-test('on No the box asks what is not working, and the send needs no line', () => {
+test('on No the sheet lists the reasons, and the send stays off until one is picked', () => {
   const empty = form({ side: 'no' });
-  assert.match(empty, /What’s not working for you\? Add a line, if you like\./);
-  assert.match(empty, /class="dev-vote-reason-send dev-vote-reason-send-no">Vote no</, 'a No sends without its line');
-  const filled = form({ side: 'no', line: 'Too dark' });
-  assert.match(filled, /class="dev-vote-reason-send dev-vote-reason-send-no">Vote no</);
+  assert.match(empty, /class="dev-vote-why" role="radiogroup"/, 'the four answers');
+  for (const key of ['notWorking', 'approach', 'notNeeded', 'other']) {
+    assert.match(empty, new RegExp(`role="radio" aria-checked="false" class="dev-vote-why-opt" data-vote-why="${key}"`));
+  }
+  assert.match(empty, /Add more, if you like\./, 'the optional line is labelled under them');
+  assert.match(empty, /class="dev-vote-reason-send dev-vote-reason-send-no" disabled="">Vote no</,
+    'a No cannot be sent without an answer');
+  const picked = form({ side: 'no', noChoice: 'notWorking', line: 'Too dark' });
+  assert.match(picked, /role="radio" aria-checked="true" class="dev-vote-why-opt" data-vote-why="notWorking"/);
+  assert.match(picked, /class="dev-vote-reason-send dev-vote-reason-send-no">Vote no</, 'an answer sends it');
+  assert.match(form({ side: 'yes' }), /class="dev-vote-reason-send dev-vote-reason-send-yes">Vote yes</, 'a Yes needs nothing');
 });
 
 test('the sheet sends its line with the vote, so castVote does not ask again', () => {
-  assert.match(WORKSHOP, /answer\(voteSide, undefined, voteTrimmed \|\| null\)/, 'the form sends its side and its line');
+  assert.match(WORKSHOP, /answer\('yes', undefined, voteTrimmed \|\| null\)/, 'a Yes sends its line');
+  assert.match(WORKSHOP, /if \(voteSide === 'no'\) \{\s*if \(!voteChoice\) return;/, 'a No sends only once an answer is picked');
+  assert.match(WORKSHOP, /answer\('no', undefined, composeNoReason\(choice, voteLine,/, 'and carries the answer with its line');
   assert.match(WORKSHOP, /const opts = reason === undefined \? \{ onSend \} : \{ onSend, reason \};/,
     'a line (or null) rides in the options bag; only the swipe leaves it out');
   // castVote asks only when the bag has no `reason` key at all.
@@ -120,7 +129,7 @@ test('an approval row\'s Yes line is a note before any community read; a group r
   const yes = form({ row: approval });
   assert.match(yes, /<label class="dev-vote-reason-label" for="dev-ws-vote-reason-needs-proposal-42">Add a note, if you like\.<\/label>/);
   assert.doesNotMatch(yes, /for the group/);
-  assert.match(form({ row: approval, side: 'no' }), /What’s not working for you\? Add a line, if you like\./, 'No is the same');
+  assert.match(form({ row: approval, side: 'no' }), /class="dev-vote-why" role="radiogroup"/, 'No is the same');
   assert.match(form(), /Add a line for the group, if you like\./, 'a group row keeps its wording');
 });
 
@@ -153,8 +162,8 @@ test('#22: on a solo project the Yes line is a note, asked of the row\'s own pro
   assert.deepEqual(asked.slice(-1), ['demo-app'], 'the row\'s project, not the page\'s');
 
   const no = draw({ side: 'no' });
-  assert.match(no, /What’s not working for you\? Add a line, if you like\./);
-  assert.match(no, /class="dev-vote-reason-send dev-vote-reason-send-no">Vote no</, 'No sends without its line');
+  assert.match(no, /class="dev-vote-why" role="radiogroup"/);
+  assert.match(no, /class="dev-vote-reason-send dev-vote-reason-send-no" disabled="">Vote no</, 'No waits for its answer');
 
   audience = 'invited';
   assert.match(draw(), /Add a line for the group, if you like\./, 'a group keeps its wording');

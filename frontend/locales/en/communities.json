@@ -545,15 +545,19 @@
   },
   "review.no.placeholder": {
     "text": "One line for {{name}}",
-    "description": "Placeholder in the box for a No vote's line, which is optional. {{name}} is the username of the person who made the change."
+    "description": "Placeholder in the optional one-line box under the answers for a No vote's reason. {{name}} is the username of the person who made the change."
   },
   "review.no.placeholderNoName": {
     "text": "One line for whoever made it",
-    "description": "Placeholder in the box for a No vote's line, when the change's maker is not known."
+    "description": "Placeholder in the optional one-line box under the answers for a No vote's reason, when the change's maker is not known."
+  },
+  "review.no.send": {
+    "text": "Send",
+    "description": "Button that sends a No vote, with the picked answer as its reason, in the vote sheet on a change's page (Needs you). It is off until an answer is picked."
   },
   "review.reason.add": {
     "text": "Add a reason",
-    "description": "Quiet link above the vote buttons after someone voted No on a change (new Needs you flow, an experiment). The reason is optional."
+    "description": "Quiet link above the vote buttons after someone voted No on a change (new Needs you flow, an experiment). It opens the sheet that asks why."
   },
   "review.reason.label": {
     "text": "Your reason, optional",
@@ -562,6 +566,34 @@
   "review.reason.share": {
     "text": "Share",
     "description": "Button inside the one-line reason field: sends the reason with the No vote (new Needs you flow, an experiment)."
+  },
+  "review.why.title": {
+    "text": "What’s not working for you?",
+    "description": "Heading of the sheet that asks why someone is voting No on a change (Needs you flow)."
+  },
+  "review.why.notWorking": {
+    "text": "It does not work",
+    "description": "Answer someone can pick as the reason for a No vote: the change does not work."
+  },
+  "review.why.approach": {
+    "text": "I do not agree with the approach",
+    "description": "Answer someone can pick as the reason for a No vote: they disagree with how the change was made."
+  },
+  "review.why.notNeeded": {
+    "text": "It is not needed",
+    "description": "Answer someone can pick as the reason for a No vote: the change is unnecessary."
+  },
+  "review.why.other": {
+    "text": "Something else",
+    "description": "Answer someone can pick as the reason for a No vote when none of the other answers fits; the optional line is where they say more."
+  },
+  "review.why.detailLabel": {
+    "text": "Add more, if you like.",
+    "description": "Label over the optional one-line box under the answers for a No vote's reason."
+  },
+  "review.why.withDetail": {
+    "text": "{{choice}}: {{detail}}",
+    "description": "How a No vote's reason reads when the voter added a line: the picked answer, a colon, then the line. {{choice}} is the answer, for example \"It does not work\"; {{detail}} is the line they wrote."
   },
   "review.said.yes": {
     "text": "You said yes",
