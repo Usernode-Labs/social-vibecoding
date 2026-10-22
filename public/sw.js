@@ -387,6 +387,10 @@ const SHELL_ASSETS = [
   // place; this one because a missing header logo is a hole at the top of
   // every screen, offline and on a cold cache alike.
   '/brand/homeroom-mark.png',
+  // The logotype the held boot ground masks its ink with (frontend/src/
+  // head.html): the first thing a cold load paints, so it must be on hand
+  // offline as well. It already ships for the mail frame's raster.
+  '/brand/homeroom-logotype-black.png',
   // The built-in challenge artwork (frontend/src/lib/challenge-illustrations.ts,
   // one file per slug). It used to stay on the network, as decoration with a
   // fallback, and that cost Home a visible step on every cold load: the

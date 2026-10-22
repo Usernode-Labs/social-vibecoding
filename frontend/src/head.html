@@ -120,16 +120,26 @@
        edge sits 8px above the middle, 12px over the spinner's top, the
        landing's own SigningIn column (its 32px logotype, 12px, the spinner).
        The ink is the landing's wordmark ink: near-black, white in dark
-       mode — never the header's --brand-ink. */
+       mode — never the header's --brand-ink.
+
+       It is the REAL logotype, not the word typed in a system italic font
+       (review of this build: a plain italic "Homeroom" in a system font read
+       as a flash of unstyled text next to the drawn mark a moment later).
+       The drawing is `homeroom-logotype-black.png` used as a MASK over a
+       solid ink colour, which is what lets one black raster take the white
+       ink in dark mode; the file already ships (the mail frame draws it) and
+       is precached like the header mark. 140 × 37 is the size the mail
+       draws it at, the file being 2×. */
     html.first-session-boot::before,
     html.language-pending::before {
-      content: 'Homeroom'; position: fixed; z-index: 2147483647;
-      left: 0; right: 0; bottom: calc(50% + 8px); text-align: center;
-      font: italic 700 20px/24px ui-sans-serif, system-ui, sans-serif;
-      color: #09090b; pointer-events: none;
+      content: ''; position: fixed; z-index: 2147483647;
+      left: calc(50% - 70px); bottom: calc(50% + 8px); width: 140px; height: 37px;
+      background-color: #09090b; pointer-events: none;
+      -webkit-mask: url('/brand/homeroom-logotype-black.png') center / contain no-repeat;
+      mask: url('/brand/homeroom-logotype-black.png') center / contain no-repeat;
     }
     html.dark.first-session-boot::before,
-    html.dark.language-pending::before { color: #ffffff; }
+    html.dark.language-pending::before { background-color: #ffffff; }
   </style>
   <script>
     // Theme module — Light / Dark / System mode selector.
