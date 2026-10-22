@@ -3845,6 +3845,9 @@ function voteRoutes(config) {
       }
 
       const proposals = [];
+      // #5803: an admin's lone No arms the week-long takedown; the card's
+      // countdown must show the clock the proposal machine acts on.
+      const adminNoBySession = await governanceSvc.adminNoTimes(pool, sessions.map((s) => s.id));
       for (const s of sessions) {
         const gov = govByApp[s.app_id];
         const electorate = electorateByApp[s.app_id];
@@ -3865,6 +3868,7 @@ function voteRoutes(config) {
             explicitApproval: !!s.requires_explicit_approval,
             otherYes: q.otherYes,
             memberCount: membersByApp[s.app_id],
+            adminNoAt: adminNoBySession.get(Number(s.id)) || null,
             // These are the viewer's own proposals: they are the author.
             ...(rulesByApp[s.app_id] ? governanceSvc.rulesGateOpts(rulesByApp[s.app_id], s.id, req.user.id, s.explicit_approval_reason || null) : {}),
           }
@@ -4317,6 +4321,10 @@ function voteRoutes(config) {
         ? await governance.rulesContext(pool, appRows[0].id, gov, 'pr',
           rows.filter((r) => r.votes_required == null).map((r) => r.id))
         : null;
+      // #5803: the admin-No clock each row's card shows, one query for the
+      // whole panel.
+      const adminNoByRow = await governance.adminNoTimes(pool,
+        rows.filter((r) => r.votes_required == null).map((r) => r.id));
       for (const row of rows) {
         if (row.votes_required != null) continue;
         const q = qualifiedByRow
@@ -4334,6 +4342,7 @@ function voteRoutes(config) {
             explicitApproval: !!row.requires_explicit_approval,
             otherYes: q.otherYes,
             memberCount,
+            adminNoAt: adminNoByRow.get(Number(row.id)) || null,
             ...(rulesCtx ? governance.rulesGateOpts(rulesCtx, row.id, row.user_id ?? null, row.explicit_approval_reason || null) : {}),
             firstVersion: row.first_version === true,
           }
@@ -4964,6 +4973,8 @@ function voteRoutes(config) {
         // 13 Oct 2026, D1: the project's first version, whose vote the gate
         // waives; the change page says it goes live without one.
         proposal.first_version = await isFirstVersion(pool, proposal.id);
+        // #5803: the week an admin's lone No arms, for the page's pill.
+        const adminNoByProposal = await governance.adminNoTimes(pool, [proposal.id]);
         const gate = governance.computeGate(
           gov, electorate.active, q.yes, q.no,
           proposal.promoted_at || proposal.created_at, null,
@@ -4972,6 +4983,7 @@ function voteRoutes(config) {
             otherYes: q.otherYes,
             memberCount: flagged
               ? await governance.communityMemberCount(pool, gatedApp.id) : undefined,
+            adminNoAt: adminNoByProposal.get(Number(proposal.id)) || null,
             // #4666: who voted, on a project with rules of its own.
             ...(rulesCtx ? governance.rulesGateOpts(
               rulesCtx,
