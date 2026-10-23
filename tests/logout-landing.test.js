@@ -121,8 +121,9 @@ test('the session residue goes with the session, not just the snapshot', () => {
   // the shell snapshot unconditionally at boot, before the session is known.
   assert.match(body, /window\.App\?\._dropCachedSession\?\.\(\)/);
   assert.doesNotMatch(body, /clearSessionSnapshot/);
-  assert.match(APP, /_dropCachedSession\(\) \{\s*\n\s*App\.clearSessionSnapshot\(\);/,
-    'and it still starts by clearing the snapshot itself');
+  const drop = APP.slice(APP.indexOf('  _dropCachedSession('));
+  assert.match(drop.slice(0, drop.indexOf('\n  },')), /App\.clearSessionSnapshot\(\);/,
+    'and it clears the snapshot as part of the identity boundary');
 });
 
 test('a native shutdown that never lands is bounded, not permanent', () => {

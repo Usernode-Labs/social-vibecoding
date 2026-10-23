@@ -124,7 +124,8 @@ test('a valid token for a DIFFERENT user switches the session to the token user'
     assert.equal(req.user.isAdmin, true);
     assert.equal(req.user.adminReadonly, true);
     assert.ok(pool.issued(/INSERT INTO sessions/), 'a fresh session row is minted');
-    assert.equal(cookies.length, 1, 'the cookie is replaced');
+    assert.equal(cookies.length, 2, 'the credential and its non-credential cache hint are replaced together');
+    assert.deepEqual(cookies.map(c => c.name), ['session', 'usernode_api_scope']);
   } finally {
     restore();
   }

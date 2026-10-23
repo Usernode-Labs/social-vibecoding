@@ -43,6 +43,8 @@
  * previous account's app name.
  */
 
+import { readApiCacheScope } from './api-cache-identity';
+
 const KEY = 'usernode.shell.v1';
 
 /** A week. Long enough to cover normal use, short enough that a name people
@@ -59,10 +61,12 @@ export interface ShellSnapshot {
    */
   improveTarget: string;
   savedAt: number;
+  cacheScope: string;
 }
 
 function isBrowser(): boolean {
-  return typeof window !== 'undefined' && typeof window.localStorage !== 'undefined';
+  return typeof window !== 'undefined' && typeof document !== 'undefined'
+    && typeof window.localStorage !== 'undefined';
 }
 
 /**
@@ -87,12 +91,14 @@ export function readShellSnapshot(): ShellSnapshot | null {
     if (!raw) return null;
     const s = JSON.parse(raw);
     if (!s || typeof s !== 'object') return null;
+    if (!s.cacheScope || s.cacheScope !== readApiCacheScope(document)) return null;
     if (typeof s.savedAt !== 'number' || Date.now() - s.savedAt > MAX_AGE_MS) return null;
     return {
       title: typeof s.title === 'string' ? s.title : '',
       subtitle: typeof s.subtitle === 'string' ? s.subtitle : '',
       improveTarget: typeof s.improveTarget === 'string' ? s.improveTarget : '',
       savedAt: s.savedAt,
+      cacheScope: s.cacheScope,
     };
   } catch {
     // Private mode, cleared site data, a corrupt entry: the prerender is a
@@ -115,6 +121,8 @@ export function saveShellSnapshot(patch: Partial<Omit<ShellSnapshot, 'savedAt'>>
   // cold boot of the platform would paint "Messages" or "Workshop" over
   // whatever it opens on. The top window owns this record.
   if (!isBrowser() || inSidePanel()) return;
+  const cacheScope = readApiCacheScope(document);
+  if (!cacheScope) return;
   try {
     const prev = readShellSnapshot();
     const next: ShellSnapshot = {
@@ -122,6 +130,7 @@ export function saveShellSnapshot(patch: Partial<Omit<ShellSnapshot, 'savedAt'>>
       subtitle: patch.subtitle ?? prev?.subtitle ?? '',
       improveTarget: patch.improveTarget ?? prev?.improveTarget ?? '',
       savedAt: Date.now(),
+      cacheScope,
     };
     window.localStorage.setItem(KEY, JSON.stringify(next));
   } catch {

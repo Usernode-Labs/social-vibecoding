@@ -7,6 +7,7 @@ const path = require('node:path');
 const { fixture, harness } = require('./lib/shell-release-fixture');
 const { buildShellRelease } = require('../scripts/build-shell-release');
 const { loadShellRelease } = require('../src/services/shell-release');
+const { API_SCOPE_HEADER, apiCacheKey } = require('../public/sw');
 
 test('every interface asset changes the generated worker without editing its source', t => {
   const release = fixture(t, 'a');
@@ -45,12 +46,17 @@ test('a dev-stamped image cannot deploy with a production revision; rebuilding w
   assert.equal(loadShellRelease(publicDir, runtime).revision, release.revision);
 });
 
-test('warm upgrade reuses unchanged bytes, leaves lazy chunks lazy, and preserves sign-in', async t => {
+test('warm upgrade reuses unchanged bytes, leaves lazy chunks lazy, and preserves certified offline data', async t => {
   const a = fixture(t, 'a');
   const b = fixture(t, 'b');
   const env = harness(a);
   const api = await env.caches.open('usernode-api');
   await api.put('/api/auth/me', new Response('{"id":3}'));
+  const scope = 'a'.repeat(64);
+  const key = apiCacheKey(new Request('https://homeroom.test/api/apps', { headers: { [API_SCOPE_HEADER]: scope } }), scope);
+  await api.put(key, new Response('{"apps":[]}', { headers: {
+    [API_SCOPE_HEADER]: scope, 'sw-cached-at': String(Date.now()), 'Cache-Control': 'private',
+  } }));
   await env.caches.open('another-app');
   const first = env.worker(a);
   await first.install(); await first.activate();
@@ -60,7 +66,9 @@ test('warm upgrade reuses unchanged bytes, leaves lazy chunks lazy, and preserve
   await second.install(); await second.activate();
   assert.deepEqual(env.requests.sort(), ['/index.html', `/b/${b.revision}/js/app.js`].sort());
   assert.deepEqual(second.lifecycle, ['skipWaiting', 'claim']);
-  assert.equal(await (await (await env.caches.open('usernode-api')).match('/api/auth/me')).text(), '{"id":3}');
+  const upgradedApi = await env.caches.open('usernode-api');
+  assert.equal(await upgradedApi.match('/api/auth/me'), undefined, 'unowned identity responses are retired');
+  assert.equal(await (await upgradedApi.match(key)).text(), '{"apps":[]}');
   assert.ok((await env.caches.keys()).includes('another-app'));
   env.requests.length = 0;
   assert.match(await (await second.get(`/b/${b.revision}/js/app.js`)).text(), /textContent = 'b'/);

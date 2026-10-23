@@ -63,16 +63,16 @@ test('SSE streams are bypassed by accept header and by path', () => {
   assert.equal(classify('GET', '/api/apps/foo/whatever', 'text/event-stream'), 'bypass');
 });
 
-test('credential and auth endpoints are bypassed — except /api/auth/me', () => {
+test('credential and auth endpoints, including /api/auth/me, never use offline responses', () => {
   assert.equal(classify('GET', '/api/iframe-token'), 'bypass');
   assert.equal(classify('GET', '/api/auth/logout'), 'bypass');
   assert.equal(classify('GET', '/api/auth/wallet-challenge'), 'bypass');
-  assert.equal(classify('GET', '/api/auth/me'), 'api');
+  assert.equal(classify('GET', '/api/auth/me'), 'bypass');
   // #5678: the boot's optional read answers "nobody" when nobody is signed
   // in, and that must never be replayed from the cache (offline it has to
   // stay a non-answer, as the no-snapshot boot always had).
   assert.equal(classify('GET', '/api/auth/me?optional=1'), 'bypass');
-  assert.equal(classify('GET', '/api/auth/me?x=1'), 'api');
+  assert.equal(classify('GET', '/api/auth/me?x=1'), 'bypass');
   assert.equal(classify('GET', '/api/cli/token/status'), 'bypass');
   assert.equal(classify('GET', '/api/cli/device/approval?user_code=ABCD-EFGH'), 'bypass');
   assert.equal(classify('GET', '/api/me/cli-tokens'), 'bypass');

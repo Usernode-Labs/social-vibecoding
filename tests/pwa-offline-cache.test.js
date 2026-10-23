@@ -32,6 +32,7 @@ const path = require('path');
 const vm = require('node:vm');
 
 const {
+  classifyRequest,
   isImmuneApiRequest,
   isShellDocumentUrl,
   raceNetworkAndCache,
@@ -115,7 +116,7 @@ test('the activate prune still deletes caches this worker does not own', () => {
   assert.ok(!ALL_CACHES.includes('usernode-immutable-v1'));
 });
 
-test('upgrading the review-sort shell retires v36 assets and preserves offline sign-in', async () => {
+test('a shell upgrade preserves certified API partitions and discards unowned identity responses', async () => {
   const stores = new Map();
   const keyOf = request => new URL(typeof request === 'string' ? request : request.url, ORIGIN).href;
   const caches = {
@@ -139,6 +140,11 @@ test('upgrading the review-sort shell retires v36 assets and preserves offline s
   const api = await caches.open(API_CACHE);
   const session = JSON.stringify({ user: { id: 3, username: 'reviewer' } });
   await api.put('/api/auth/me', new Response(session));
+  const scope = 'a'.repeat(64);
+  const scopedKey = `/api/apps?__usernode_cache_scope=${scope}`;
+  await api.put(scopedKey, new Response('{"fake":"permitted"}', { headers: {
+    'X-Usernode-Cache-Scope': scope, 'sw-cached-at': String(Date.now()),
+  } }));
   await caches.open('another-app-cache');
 
   const handlers = {};
@@ -168,7 +174,8 @@ test('upgrading the review-sort shell retires v36 assets and preserves offline s
   assert.equal(await (await shell.match('/shell/assets/shell.js')).text(), 'new compact sorting button');
   assert.equal(await (await shell.match('/index.html')).text(), 'new shell asset');
   const retainedApi = await caches.open(API_CACHE);
-  assert.equal(await (await retainedApi.match('/api/auth/me')).text(), session);
+  assert.equal(await retainedApi.match('/api/auth/me'), undefined, 'an unscoped legacy identity cannot be adopted');
+  assert.equal(await (await retainedApi.match(scopedKey)).text(), '{"fake":"permitted"}');
   assert.ok(names.includes(API_CACHE));
   assert.ok(names.includes('another-app-cache'));
   assert.deepEqual(lifecycle, ['skipWaiting', 'claim']);
@@ -197,11 +204,11 @@ test('migration runs on activate BEFORE the prune deletes the legacy names', () 
   assert.ok(migrateAt < pruneAt, 'migration must run before the prune');
 });
 
-test('the session entry is immune to eviction; ordinary API entries are not', () => {
-  assert.deepEqual(IMMUNE_API_PATHS, ['/api/auth/me']);
-  assert.equal(isImmuneApiRequest(ORIGIN + '/api/auth/me', ORIGIN), true);
+test('no credential/session entry is retained by the API eviction policy', () => {
+  assert.deepEqual(IMMUNE_API_PATHS, []);
+  assert.equal(isImmuneApiRequest(ORIGIN + '/api/auth/me', ORIGIN), false);
   // Query strings and cache-busters must not defeat the immunity.
-  assert.equal(isImmuneApiRequest(ORIGIN + '/api/auth/me?t=1', ORIGIN), true);
+  assert.equal(isImmuneApiRequest(ORIGIN + '/api/auth/me?t=1', ORIGIN), false);
   assert.equal(isImmuneApiRequest(ORIGIN + '/api/apps', ORIGIN), false);
   assert.equal(isImmuneApiRequest(ORIGIN + '/api/auth/me/extra', ORIGIN), false);
   assert.equal(isImmuneApiRequest('not a url', ORIGIN), false);
@@ -217,8 +224,9 @@ test('both eviction passes skip immune entries', () => {
 test('logout clears the legacy API caches too, not just the stable one', () => {
   // A device that logs out before the migration lands would otherwise
   // leave one user's cached responses readable by the next.
-  const clear = SW_SRC.slice(SW_SRC.indexOf('async function clearApiCaches'));
-  assert.match(clear.slice(0, 500), /LEGACY_API_CACHE_RE/);
+  const start = SW_SRC.indexOf('function clearApiCaches');
+  const clear = SW_SRC.slice(start, SW_SRC.indexOf("self.addEventListener('activate'", start));
+  assert.match(clear, /LEGACY_API_CACHE_RE/);
   assert.ok(!/caches\.delete\(API_CACHE\)/.test(SW_SRC),
     'a bare caches.delete(API_CACHE) would miss the legacy names');
 });
@@ -537,27 +545,19 @@ test('an ordinary fresh API load never posts a correction', () => {
   // false when it is not asked — so the notify branch cannot fire on a
   // healthy connection, where every screen already has the live answer.
   const stamp = SW_SRC.slice(SW_SRC.indexOf('async function stampAndPut('));
-  assert.match(stamp.slice(0, 1200), /\{ detectChange = false \} = \{\}/,
+  assert.match(stamp.slice(0, 1200), /\{ detectChange = false(?:, [^}]+)? \} = \{\}/,
     'change detection must be opt-in');
   assert.match(stamp.slice(0, 1200), /if \(detectChange\)/,
     'stampAndPut must skip the extra cache read when not asked');
 });
 
-test('the boot session wait stays just past the API deadline', () => {
-  // App.BOOT_SESSION_TIMEOUT_MS is the last link in the serial chain a cold
-  // load walks (navigation → shell scripts → session), so it has to move
-  // whenever API_TIMEOUT_MS moves or it becomes the sole remaining
-  // multi-second wait on a weak connection.
+test('boot bounds live identity confirmation before using a display-only snapshot', () => {
   const appJs = fs.readFileSync(
     path.join(__dirname, '..', 'public', 'js', 'app.js'), 'utf8'
   );
   const boot = Number(/BOOT_SESSION_TIMEOUT_MS:\s*(\d+)/.exec(appJs)[1]);
-  assert.ok(boot > API_TIMEOUT_MS,
-    'boot must give the worker first refusal at answering from cache');
-  assert.ok(boot <= API_TIMEOUT_MS * 3,
-    `BOOT_SESSION_TIMEOUT_MS (${boot}ms) has drifted away from ` +
-    `API_TIMEOUT_MS (${API_TIMEOUT_MS}ms) — it is the last serial wait ` +
-    'on a cold load');
+  assert.ok(boot >= 1000 && boot <= 3000, 'a weak connection cannot hold the first screen indefinitely');
+  assert.equal(classifyRequest('GET', 'https://example.test/api/auth/me', '', 'cors', 'https://example.test'), 'bypass');
 });
 
 // ── The reads that gate a first paint ────────────────────────────────────
