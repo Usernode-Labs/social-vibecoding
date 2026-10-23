@@ -30,6 +30,13 @@ by `src/config.js`. No secret is ever hardcoded or returned by an API.
 | `BREVO_SMS_SENDER_IDS` | no | `{}` | JSON object keyed by ISO 3166 alpha-2 country. `{"FR":"Homeroom"}` or `{"US":{"sender":"18885550100","registered":true,"optOut":"Reply STOP to opt out"}}`. A sender is 3–11 alphanumerics or up to 15 digits. A malformed entry is logged and dropped. |
 | `BREVO_SMS_WEBHOOK_TOKEN` | yes | | Bearer token Brevo's SMS webhook sends. Unset leaves `POST /api/sms/webhooks/brevo` answering 404. |
 
+On Kubernetes, supply the key as `secrets.brevoApiKey` and the JSON string as
+`secrets.brevoSmsSenderIds` in the infra repository's SOPS-encrypted Helm
+values, then sync Argo CD. The chart imports them through the platform Secret
+and its checksum rolls out both web and conductor Pods. The **Platform
+variables** panel does not apply values to Kubernetes. See the
+[chart configuration](../deploy/helm/social-vibecoding-platform/README.md).
+
 A staging preview (`USERNODE_ENV=staging`) always logs instead of sending,
 like platform mail: the code appears only in the preview's log, and no real
 text ever leaves a branch nobody voted on.

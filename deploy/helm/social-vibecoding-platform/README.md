@@ -70,6 +70,34 @@ rendered manually but are outside Argo's stable version constraint. Cluster
 configuration and SOPS-encrypted secrets remain in the infra repository and
 are applied as external Helm values.
 
+For Brevo SMS with `secrets.create: true`, supply these fields through the
+infra repository's SOPS-encrypted workload values:
+
+```yaml
+secrets:
+  brevoApiKey: "<Brevo API key>"
+  brevoSmsSenderIds: '{"FR":"Homeroom"}'
+```
+
+They map to `BREVO_API_KEY` and `BREVO_SMS_SENDER_IDS` in the platform Secret,
+imported by both the web and conductor Deployments. Keep the API key in SOPS;
+the registry is a JSON string keyed by ISO 3166 alpha-2 country. Use only
+senders configured for those countries in Brevo. US and Canadian entries need
+a numeric sender and `"registered": true`; see `docs/sms-brevo.md`.
+
+The infra values may use a separate `platform.brevo.secrets.sops.yaml`
+overlay, encrypted to the cluster's existing recipients and listed after the
+other secret overlays in Argo's `valueFiles`. Empty defaults leave Brevo
+unavailable. Publish this chart before syncing populated infra values; the
+secrets checksum rolls out changes. With `secrets.create: false`, add the two
+environment-variable keys to `secrets.existingSecret` and roll out both
+Deployments after changing that Secret. The Platform variables panel does not
+populate Kubernetes configuration.
+
+After rollout, use **Admin → Platform → SMS delivery** to check readiness,
+select Brevo and send a test to a number you control. Supplying credentials
+does not itself change the selected provider.
+
 For Gmail delivery with `secrets.create: true`, merge these fields into the
 existing `secrets` block in the infra repository's SOPS-encrypted
 `prototype/bare-metal-platform/clusters/bare-metal-org/workloads/social-vibecoding/values/platform.secrets.sops.yaml`:
