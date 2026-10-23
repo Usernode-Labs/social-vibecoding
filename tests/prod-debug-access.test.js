@@ -101,16 +101,6 @@ test('grant builder: private assistant, workflow and stream content stays unread
   }
 });
 
-test('column ACL reset includes unapproved relations and quotes every catalog identifier', () => {
-  assert.deepEqual(debugAccess.buildColumnRevokeStatements([
-    { table: 'unknown_view', columns: ['payload'] },
-    { table: 'odd"table', columns: ['odd"column'] },
-  ]), [
-    'REVOKE ALL PRIVILEGES ("payload") ON public."unknown_view" FROM usernode_debug_ro',
-    'REVOKE ALL PRIVILEGES ("odd""column") ON public."odd""table" FROM usernode_debug_ro',
-  ]);
-});
-
 test('reviewed debug columns exist in the current schema and contain no JSON or bytes', () => {
   const schema = fs.readFileSync(path.join(__dirname, '../src/db/schema.sql'), 'utf8');
   for (const [table, columns] of Object.entries(debugAccess.READABLE_COLUMNS)) {

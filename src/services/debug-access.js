@@ -322,17 +322,6 @@ function buildGrantStatements(tables) {
   return stmts;
 }
 
-// PostgreSQL's table-level REVOKE does not clear old column ACLs. Sweep all
-// columns, including views/materialized views/foreign tables formerly granted
-// by another policy, before granting this release's approved base columns.
-function buildColumnRevokeStatements(tables) {
-  return (tables || []).flatMap(({ table, columns }) => {
-    // Catalog identifiers may need quoting. They still need their old ACLs
-    // removed even when their names are ineligible for any new grant.
-    return columns.length ? [`REVOKE ALL PRIVILEGES (${columns.map(quoteIdent).join(', ')}) ON public.${quoteIdent(table)} FROM ${ROLE}`] : [];
-  });
-}
-
 // #891: bounded retry around the whole bootstrap. Granting to this role
 // rewrites the same catalog rows (pg_authid for the ALTER ROLEs, every
 // table's pg_class ACL for the REVOKE/GRANT sweep) that the topochain
@@ -498,7 +487,9 @@ async function bootstrapRole(config) {
   await pool.query(`REVOKE CREATE ON SCHEMA public FROM ${ROLE}`);
   await pool.query(`GRANT USAGE ON SCHEMA public TO ${ROLE}`);
 
-  // Reset table AND column grants before applying the current allowlist.
+  // PostgreSQL also clears corresponding column ACLs with this table-level
+  // revoke, including grants on views and foreign tables. Reapply only the
+  // reviewed base-table columns below.
   await pool.query(`REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM ${ROLE}`);
   const { rows: tableRows } = await pool.query(
     `SELECT c.relname AS table, c.relkind AS kind,
@@ -510,7 +501,6 @@ async function bootstrapRole(config) {
         AND a.attnum > 0 AND NOT a.attisdropped
       GROUP BY c.relname, c.relkind`
   );
-  for (const stmt of buildColumnRevokeStatements(tableRows)) await pool.query(stmt);
   const grants = buildGrantStatements(tableRows);
   for (const stmt of grants) {
     await pool.query(stmt);
@@ -716,7 +706,6 @@ module.exports = {
   MAX_LOG_BYTES,
   // exported for unit tests
   buildGrantStatements,
-  buildColumnRevokeStatements,
   READABLE_COLUMNS,
   truncateRows,
   DENIED_TABLES,
