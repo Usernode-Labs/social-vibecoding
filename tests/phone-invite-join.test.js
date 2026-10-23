@@ -168,7 +168,7 @@ test('one tap on a step\'s main button submits with the keyboard up (#4214)', ()
   assert.match(html, /<button type="submit"[^>]*>Text me a code<\/button>/);
   // Google's notice is in the fine print on both steps that run reCAPTCHA
   // (the code step's "Send a new code" asks again), and on no other.
-  assert.match(src, /<TermsNotice className="mt-3" recaptcha=\{step === 'phone' \|\| step === 'phone-code' \? RECAPTCHA_LINE : null\} \/>/);
+  assert.match(src, /<TermsNotice className="mt-3" recaptcha=\{recaptchaInUse \? RECAPTCHA_LINE : null\} \/>/);
   const email = renderToHtml(createElement(SignInSheet, {
     open: true, title: 'Join Best brunch spots', intro: 'x', from: 'invite', onClose() {}, primaryClass: 'pill',
   }));
@@ -182,6 +182,11 @@ test('Google\'s script loads only for a phone code, never with the shell', () =>
   assert.match(src, /const SCRIPT_SRC = 'https:\/\/www\.google\.com\/recaptcha\/api\.js\?render=explicit';/);
   assert.match(src, /fetch\('\/api\/auth\/phone\/recaptcha'/);
   assert.match(src, /size: 'invisible',\s+badge: 'inline',/);
+  // The site key is read first: no key (Brevo sends the texts, #5840) means
+  // no token and no Google script fetched at all.
+  assert.match(src, /const siteKey = await readSiteKey\(\);\s+if \(!siteKey\) return null;\s+const g = await loadScript\(\);/);
+  assert.match(src, /export function phoneRecaptchaInUse\(\): Promise<boolean> \{/);
+  assert.doesNotMatch(src, /Both start at once/);
   assert.doesNotMatch(read('frontend/src/head.html'), /recaptcha/i);
   // Only the phone screens reach for it: the sheet and the waiting room's card.
   const users = [];
