@@ -1270,6 +1270,12 @@ async function deployApplication(config, {
   if (name !== dnsName(name) || name.length > 63) throw new Error('Invalid Kubernetes runtime name');
   const resourceLabels = { ...extraLabels, ...labels({ appId: app.id, sessionId, environment }) };
   const selectorLabels = { 'social.usernode.io/runtime-name': name };
+  // Service endpoints must come from this data-policy generation, including
+  // while RollingUpdate still has the old ReplicaSet alive. The Deployment
+  // selector stays immutable so an existing preview can roll forward.
+  const dataPolicyLabel = require('./platform-preview-data-policy').LABEL;
+  const serviceSelector = extraLabels[dataPolicyLabel]
+    ? { ...selectorLabels, [dataPolicyLabel]: extraLabels[dataPolicyLabel] } : selectorLabels;
   const secretName = attempt ? attemptSecretName(name, attempt) : withSuffix(name, 'env');
   const hostname = environment === 'production'
     ? `${app.slug}.${cfg.appDomain}`
@@ -1295,7 +1301,7 @@ async function deployApplication(config, {
   else await upsert(core, 'readNamespacedSecret', 'createNamespacedSecret', 'replaceNamespacedSecret', namespace, secretBody);
   await upsert(core, 'readNamespacedService', 'createNamespacedService', 'replaceNamespacedService', namespace, {
     apiVersion: 'v1', kind: 'Service', metadata: { name, namespace, labels: resourceLabels },
-    spec: { selector: selectorLabels, ports: [{ name: 'http', port: 3000, targetPort: 3000 }], type: 'ClusterIP' },
+    spec: { selector: serviceSelector, ports: [{ name: 'http', port: 3000, targetPort: 3000 }], type: 'ClusterIP' },
   });
   const deploymentBody = {
     apiVersion: 'apps/v1', kind: 'Deployment',
@@ -1537,11 +1543,18 @@ async function servingTemplate(apps, namespace, name, secret, previous) {
 async function restoreTemplate(apps, namespace, name, attempt, claim, servingSecret, previous) {
   const template = await servingTemplate(apps, namespace, name, servingSecret, previous);
   if (!template) return 'missing';
+  const dataPolicy = require('./platform-preview-data-policy');
+  // A current preview can fall back only to the same accepted export policy.
+  // Restoring an older generation must never reopen its private clone.
+  const currentPolicy = previous?.spec?.template?.metadata?.labels?.[dataPolicy.LABEL];
+  if (currentPolicy && template.metadata?.labels?.[dataPolicy.LABEL] !== currentPolicy) return 'missing';
   for (let i = 0; ; i++) {
     const current = await apps.readNamespacedDeployment({ name, namespace });
     // A newer attempt, or a later claim of this one, owns the Deployment
     // now; its template is not ours to undo.
     if (fenceNewer(fenceOf(current), attempt, claim)) return 'superseded';
+    const requiredPolicy = current.spec?.template?.metadata?.labels?.[dataPolicy.LABEL];
+    if (requiredPolicy && template.metadata?.labels?.[dataPolicy.LABEL] !== requiredPolicy) return 'missing';
     current.spec.template = template;
     try {
       await apps.replaceNamespacedDeployment({ name, namespace, body: current });
@@ -2370,6 +2383,72 @@ const PREVIEW_NAME_RE = /^sv-preview-(\d+)-s(\d+)$/;
 // say about it. This is the Kubernetes counterpart of `docker ps -a` for the
 // stale-preview sweep (services/staging-reap.js): a preview whose row was
 // nulled, or whose row is gone, is visible only from this side.
+// Security retirement is independent of preview availability and the optional
+// ingress gate. Constrain Services first, then remove stale controllers and
+// actual Pods (including old ReplicaSets during a rolling replacement).
+async function retirePlatformPreviewPolicy(config, appId, digest, { timeoutMs = 30000, pollMs = 200 } = {}) {
+  const { LABEL } = require('./platform-preview-data-policy');
+  const namespace = config.kubernetes.appNamespace;
+  const selector = `app.kubernetes.io/managed-by=${MANAGED_BY},social.usernode.io/app-id=${appId},social.usernode.io/environment=staging`;
+  const { apps, core } = getClients();
+  // Use the runtime's existing get/update-Service, list Deployment/RS/Pod,
+  // and foreground-delete-Deployment permissions. It deliberately cannot
+  // list Services or directly delete ReplicaSets/Pods.
+  const ours = object => object.metadata?.labels?.['social.usernode.io/app-id'] === String(appId)
+    && object.metadata.labels['social.usernode.io/environment'] === 'staging'
+    && object.metadata.labels['app.kubernetes.io/managed-by'] === MANAGED_BY;
+  const runtimeName = object => object.metadata.labels['social.usernode.io/runtime-name'] || object.metadata.name;
+  const unsafeController = object => object.spec?.template?.metadata?.labels?.[LABEL] !== digest;
+  const retired = new Set(), examined = new Set();
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const [deployments, sets, pods] = await Promise.all([
+      apps.listNamespacedDeployment({ namespace, labelSelector: selector }),
+      apps.listNamespacedReplicaSet({ namespace, labelSelector: selector }),
+      core.listNamespacedPod({ namespace, labelSelector: selector }),
+    ]);
+    const ds = (deployments.items || []).filter(ours);
+    const rs = (sets.items || []).filter(ours);
+    const ps = (pods.items || []).filter(ours);
+    ds.forEach(d => examined.add(d.metadata.name));
+    const unsafeNames = new Set([
+      ...ds.filter(unsafeController).map(d => d.metadata.name),
+      ...rs.filter(unsafeController).map(runtimeName),
+      ...ps.filter(p => p.metadata.labels[LABEL] !== digest).map(runtimeName),
+    ]);
+    // Constrain every known Service first. Desired labels alone cannot
+    // attest the endpoints during a rolling replacement. Read by trusted
+    // runtime names so an unavailable Service list is never treated as empty.
+    const names = new Set([...ds.map(d => d.metadata.name), ...rs.map(runtimeName), ...ps.map(runtimeName)]);
+    for (const name of names) {
+      let service;
+      try { service = await core.readNamespacedService({ name, namespace }); }
+      catch (err) { if (isNotFound(err)) continue; throw err; }
+      if (!ours(service)) throw new Error('Preview Service identity changed during data-policy retirement');
+      if (service.spec?.selector?.[LABEL] === digest) continue;
+      service.spec.selector = { ...service.spec.selector, [LABEL]: digest };
+      await core.replaceNamespacedService({ name, namespace, body: service });
+    }
+    if (!unsafeNames.size) return { examined: examined.size, retired: retired.size };
+    // Retire the entire runtime even when its desired template is current
+    // but an older ReplicaSet/Pod still serves. Foreground garbage collection
+    // stops all controllers and waits for kubelet-confirmed Pod termination.
+    for (const deployment of ds.filter(d => unsafeNames.has(d.metadata.name))) {
+      if (deployment.metadata.deletionTimestamp) continue;
+      if (!await deleteAttemptDeployment(config, deployment.metadata.name, deployment)) {
+        throw new Error('Preview changed during data-policy retirement; retry inventory');
+      }
+      retired.add(deployment.metadata.name);
+    }
+    // Re-inventory controllers as well as actual Pods. An orphan controller,
+    // disconnected node or failed removal cannot be declared safe. Services
+    // remain restricted; an operator must remove/isolate an orphan if the
+    // normal foreground deletion cannot retire it.
+    if (Date.now() >= deadline) throw new Error('Unsafe platform preview controllers or Pods are still retiring');
+    await new Promise(resolve => setTimeout(resolve, pollMs));
+  }
+}
+
 async function listPreviews(config) {
   const namespace = config.kubernetes.appNamespace;
   const deployments = await getClients().apps.listNamespacedDeployment({
@@ -3741,7 +3820,7 @@ module.exports = {
   execInWorker, _getClients: getClients,
   getWorkerStatus, getWorkerContractVersion, getWorkerRuntimeMetadata, deleteWorker, eraseWorker,
   workerIdentity, deleteWorkerIdentity, workerIdentityGone, listWorkers, cloneWorkerVolume,
-  listWorkerVolumes, listPreviews, listShotsRuntimes, isQuotaExceeded,
+  listWorkerVolumes, retirePlatformPreviewPolicy, listPreviews, listShotsRuntimes, isQuotaExceeded,
   listStatusResources, listNamespaceCapacity, inspectWorkerTermination, getPlatformDeployStatus,
   readPlatformPod, stopCheckJobs,
   _setClientsForTest: setClientsForTest, _envChecksumForTest: envChecksum, _upsertForTest: upsert,

@@ -3077,10 +3077,11 @@ COMMENT ON COLUMN users.wallet_link_expires_at IS 'staging:private';
 -- prod app's credential.
 COMMENT ON COLUMN apps.db_password IS 'staging:private';
 
--- Public by omission (no comment): apps, app_activity, issues, the
--- users table itself, chat_messages, issue_votes, pr_votes. These
--- carry no per-row secrets and the aggregates are already visible
--- to anyone the staging clone would be spun up for.
+-- These comments remain the generic authored-app clone convention.
+-- Platform self-previews use services/platform-preview-data-policy.js instead:
+-- exported columns are explicit, unlisted data is empty, and the schema
+-- comes from deployed code. Absence of a staging:private comment never
+-- approves platform data for export.
 
 -- PR kudos. A platform-wide appreciation signal that's orthogonal to
 -- `pr_votes` (which is a yes/no merge gate). Every user gets a weekly

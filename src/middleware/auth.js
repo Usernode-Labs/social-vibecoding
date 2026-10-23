@@ -531,9 +531,9 @@ async function tryMintSessionFromIframeJwt(pool, config, jwtToken, res) {
     return null;
   }
 
-  // The cloned users table preserves row identity (id, username, is_admin)
-  // and only column-scrubs password / api keys / wallet tokens, so we can
-  // resolve is_admin from the local DB. Username match is defense-in-depth
+  // The clone keeps stable IDs with synthetic handles for iframe sign-in. Its
+  // trusted export policy resets profiles and production roles; synthetic
+  // capture personas receive their fixture roles locally. Username match is defense-in-depth
   // against a token whose id was renumbered between clone and now.
   let userRow;
   try {

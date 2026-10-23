@@ -123,9 +123,9 @@ async function call({ user = VIEWER, query = {}, pool = makePool() } = {}) {
   };
 
   // eslint-disable-next-line no-new-func
-  new Function('app', 'appAccess', 'platformJwt', 'getPool', 'config', 'log', 'usernames', handlerSource())(
-    app, appAccess, platformJwt, () => pool, {}, { error: () => {}, warn: () => {} },
-    require('../src/services/usernames')
+  new Function('app', 'appAccess', 'platformJwt', 'getPool', 'config', 'log', 'usernames', 'platformPreviewPolicy', handlerSource())(
+    app, appAccess, platformJwt, () => pool, {selfAppSlug:'usernode-2d5619'}, { error: () => {}, warn: () => {} },
+    require('../src/services/usernames'), require('../src/services/platform-preview-data-policy')
   );
   assert.equal(routes.length, 1, 'expected exactly one registered route');
 
@@ -385,4 +385,16 @@ test('the apps lookup projects the visibility columns the gate reads', async () 
       `the projection must include ${col} — checkAppAccess reads it and `
       + 'now THROWS when it is missing');
   }
+});
+
+
+test('platform preview identity uses a synthetic handle without copying production profile claims', async () => {
+  const app = {...PUBLIC_APP, slug:'usernode-2d5619',self_hosted:true};
+  const {res}=await call({user:VIEWER,query:{app:app.slug},pool:makePool({apps:[app]})});
+  assert.equal(res.statusCode,200);
+  const claims=platformJwt.verifyAppIdentityToken(res.body.token,{appId:app.id});
+  assert.equal(claims.id,VIEWER.id);
+  assert.equal(claims.username,`preview-user-${VIEWER.id}`);
+  assert.equal(claims.usernode_pubkey,null);
+  assert.equal(claims.locale,null);
 });

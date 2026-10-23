@@ -262,3 +262,19 @@ test('a claim never writes its database into the Secret a later claim of the sam
   assert.equal(c.store.get(SECRET).stringData.DATABASE_URL, 'postgres://claim-3');
 });
 
+
+
+test('preview Service endpoints require the copied-data policy and rollback cannot restore an older generation', async () => {
+  const policy = require('../src/services/platform-preview-data-policy');
+  const c = cluster();
+  const withPolicy = (n,digest,serving) => kubernetes.deployApplication(CONFIG, {
+    app:{id:1,slug:'demo'},environment:'staging',sessionId:2,imageRef:`app@sha256:${n}`,env:{N:String(n)},
+    internalOnly:true,attempt:n,servingAttempt:serving,labels:{[policy.LABEL]:digest},
+  });
+  await withPolicy(1,'obsolete',null);
+  c.fail(true);
+  await assert.rejects(withPolicy(2,policy.DIGEST,1));
+  const service=c.store.get(`service/${NAME}`);
+  assert.equal(service.spec.selector[policy.LABEL],policy.DIGEST);
+  assert.equal(c.store.has(`deployment/${NAME}`),false,'unsafe previous template is never restored');
+});

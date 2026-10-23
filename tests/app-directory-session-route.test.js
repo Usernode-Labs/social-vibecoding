@@ -43,7 +43,7 @@ const SENSITIVE = {
   is_admin: true,
 };
 
-const state = { users: [], lastSearchParams: null, failNext: false };
+const state = { users: [], lastSearchParams: null, failNext: false, queries: 0 };
 
 function user(id, username) {
   return { id, username, ...SENSITIVE };
@@ -56,6 +56,7 @@ function unescapeLike(s) {
 const poolMod = require('../src/db/pool');
 poolMod.getPool = () => ({
   async query(sql, params) {
+    state.queries++;
     if (state.failNext) {
       state.failNext = false;
       throw new Error('boom');
@@ -98,9 +99,9 @@ test.before(async () => {
 });
 test.after(() => server?.close());
 
-async function call(path, qs = '') {
+async function call(path, qs = '', headers = { 'X-Usernode-Directory-Bridge': 'platform-isolated-v1' }) {
   const res = await fetch(
-    `http://127.0.0.1:${server.address().port}/api/app-directory/users/${path}${qs}`
+    `http://127.0.0.1:${server.address().port}/api/app-directory/users/${path}${qs}`, { headers }
   );
   return { status: res.status, headers: res.headers, body: await res.json() };
 }
@@ -109,6 +110,7 @@ test.beforeEach(() => {
   state.users = [];
   state.lastSearchParams = null;
   state.failNext = false;
+  state.queries = 0;
   currentUser = { id: 100, username: 'viewer' };
 });
 
@@ -191,4 +193,50 @@ test('a database failure is a 500 that leaks no detail', async () => {
   const { status, body } = await call('lookup', '?username=alice');
   assert.equal(status, 500);
   assert.deepEqual(body, { error: 'Internal server error' });
+});
+
+test('legacy or unknown parent protocols cannot read either production directory route', async () => {
+  state.users = [user(42, 'private-person@example.invalid')];
+  for (const [route, query] of [['lookup','?username=private-person%40example.invalid'],['search','?q=private']]) {
+    for (const headers of [{}, {'X-Usernode-Directory-Bridge':'old'}, {'X-Usernode-Directory-Bridge':'platform-isolated-v1, old'}]) {
+      const response = await call(route,query,headers);
+      assert.equal(response.status,403);
+      assert.equal(response.body.code,'directory_bridge_upgrade_required');
+      assert.match(response.headers.get('cache-control'),/no-store/);
+      assert.equal(JSON.stringify(response.body).includes('private-person'),false);
+    }
+  }
+  assert.equal(state.queries,0,'old parent requests never hydrate production directory rows');
+});
+
+test('the actual guarded parent relay works against the protocol fence and blocks platform previews', async () => {
+  const fs=require('node:fs'),path=require('node:path'),vm=require('node:vm');
+  const source=fs.readFileSync(path.join(__dirname,'../public/js/app-view.js'),'utf8');
+  const start=source.indexOf('  async handleDirectoryBridgeMessage(e) {');
+  const end=source.indexOf('\n  },',start);
+  assert.ok(start>0 && end>start);
+  const method=source.slice(start,end+4);
+  state.users=[user(42,'private-person@example.invalid')];
+  for(const slug of ['usernode-2d5619','authored-control']) {
+    for(const type of ['lookup','search']) {
+      const replies=[],frame={postMessage:value=>replies.push(value)};
+      const before=state.queries;
+      const sandbox={AppView:{_stagingPreview:{slug}},URL,URLSearchParams,
+        document:{getElementById:id=>id==='staging-iframe'?{contentWindow:frame}:null},
+        fetch:(url,options)=>fetch(`http://127.0.0.1:${server.address().port}${url}`,options)};
+      const handler=vm.runInNewContext(`({${method}}).handleDirectoryBridgeMessage`,sandbox);
+      await handler({source:frame,origin:`https://${slug}--s77.apps.example`,
+        data:{id:'protocol-control',__usernode_directory:type,username:'private-person@example.invalid',q:'private'}});
+      const reply=replies.find(r=>r.__usernode_directory==='response');
+      assert.ok(reply);assert.equal(reply.error,null);
+      if(slug==='usernode-2d5619') {
+        assert.equal(state.queries,before);
+        assert.equal(JSON.stringify(reply).includes('private-person'),false);
+      } else {
+        assert.equal(state.queries,before+1);
+        const users=type==='lookup'?[reply.value.user]:reply.value.users;
+        assert.deepEqual(JSON.parse(JSON.stringify(users)),[{id:42,username:'private-person@example.invalid'}]);
+      }
+    }
+  }
 });

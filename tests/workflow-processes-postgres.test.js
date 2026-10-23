@@ -18,6 +18,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { Client, Pool } = require('pg');
 const procs = require('./lib/workflow-processes');
+const { PLATFORM_SLUG } = require('../src/services/platform-preview-data-policy');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
 const FAKES = path.join(__dirname, 'fixtures', 'workflow-outside-fakes.js');
@@ -105,6 +106,12 @@ test('workflow machines in a process of their own, and through its crash', { tim
     `INSERT INTO users (username, password, has_platform_access) VALUES ($1, 'x', TRUE) RETURNING id, username`,
     [`proc_${++seq}`])).rows[0];
   const author = await user();
+  // The child skips migrations, including seedSelfApp. Mirror that row so
+  // the real startup retirement can resolve the platform before serving.
+  await pool.query(
+    `INSERT INTO apps (name, slug, created_by, repo_url, self_hosted)
+     VALUES ('Homeroom', $1, $2, 'https://github.com/acme/platform', TRUE)`,
+    [PLATFORM_SLUG, author.id]);
   const app = async (o = {}) => (await pool.query(
     `INSERT INTO apps (name, slug, created_by, approvals_required, repo_url, self_hosted)
      VALUES ($1::text, $1::text, $2, 1, 'https://github.com/acme/' || $1::text, $3) RETURNING *`,
@@ -139,6 +146,8 @@ test('workflow machines in a process of their own, and through its crash', { tim
 
   await platform.startWorkflow({ ...flags, databaseUrl, wfSlots: 0 }, { loops: false });
   await startWorkflow();
+  assert.ok((await procs.effects(pool, 'docker.ps')).length > 0,
+    'startup retirement verified the outside runtime inventory before becoming ready');
 
   // ── Governance: a close proposal decided by a vote ──────────────────
   const govKey = (i) => `issue:${i.id}`;

@@ -556,6 +556,10 @@ export const JOBS: readonly Job[] = Object.freeze([
     run: (_ctx: WorkContext, { config }: JobDeps) => legacy('services/staging-reap').tellStaleEnv(config),
   },
   {
+    name: 'preview-data-policy', everyMs: MIN, leaseMs: 10 * MIN, newestOnly: true,
+    run: (_ctx: WorkContext, { config, pool }: JobDeps) => legacy('services/platform-preview-retirement').retire(config, pool),
+  },
+  {
     // Staging databases nothing can reach any more (no session, build or
     // connection). STAGING_ORPHAN_DB_SWEEP_INTERVAL_MS=0 switches it off.
     name: 'preview-orphan-dbs',

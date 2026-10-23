@@ -992,6 +992,11 @@ if node -e "const p=require('./package.json');process.exit(p.scripts?.['lint:sql
   # outlives its job.
   pg_ctl -D /home/node/pgdata -w -o "-c max_locks_per_transaction=1024 -c fsync=off -c synchronous_commit=off -c full_page_writes=off" -l /tmp/unit-suite-postgres.log start >/dev/null
   trap 'pg_ctl -D /home/node/pgdata -m fast stop >/dev/null 2>&1 || true' EXIT
+  # db-manager uses this shared maintenance database. Provision it before
+  # parallel suites: none may own/drop it while another suite is cloning.
+  PGPASSWORD=postgres psql -h 127.0.0.1 -U postgres -d postgres -v ON_ERROR_STOP=1 >/dev/null <<'SQL_MAINTENANCE'
+SELECT 'CREATE DATABASE usernode' WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = 'usernode')\\gexec
+SQL_MAINTENANCE
   export SQL_CHECK_CONNECTION_URL=postgres://postgres:postgres@127.0.0.1:5432/postgres
   # A suite split across Jobs (TEST_SHARD=k/n) validates the SQL once, in
   # its first shard; every shard keeps the server for its own tests. It runs
