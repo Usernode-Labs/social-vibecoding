@@ -19,6 +19,9 @@ const USERS = {
 const reads = [];
 const fakePool = {
   async query(sql, params = []) {
+    if (/FROM jsonb_to_recordset/.test(sql)) return { rows: JSON.parse(params[0]).map(d => ({
+      n: d.n, authenticated: !!USERS[d.token], allowed: true, username: USERS[d.token]?.username, is_admin: false,
+    })) };
     if (/SELECT id FROM users WHERE id = \$1/.test(sql)) return { rows: [{ id: params[0] }] };
     if (/FROM sessions s JOIN users u/.test(sql)) {
       const user = USERS[params[0]];

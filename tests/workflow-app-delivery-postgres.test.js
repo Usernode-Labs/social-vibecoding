@@ -146,7 +146,7 @@ test('app-delivery machine against the full PostgreSQL schema', { timeout: 12000
     assert.equal(r.deploy_state, 'deploying', 'every process, and one after a restart, reads it');
     assert.equal(r.deploy_from_sha, SHA('0'));
     assert.ok(r.deploy_started_at);
-    assert.deepEqual(statusPushes(a).map((p) => [p.kind, p.data.deploying]), [['global', true]]);
+    assert.deepEqual(statusPushes(a).map((p) => [p.kind, p.routing, p.data.deploying]), [['scoped', { appSlug: a.slug }, true]]);
     await settle();
     assert.equal((await inst(a)).state, 'idle');
     assert.equal((await row(a)).deploy_state, null);

@@ -37,6 +37,9 @@ const NEXT = 'b'.repeat(40);
 const queries = [];
 const fakePool = {
   async query(sql, params = []) {
+    if (/FROM jsonb_to_recordset/.test(sql)) return { rows: JSON.parse(params[0]).map(d => ({
+      n: d.n, authenticated: d.token === VALID_SESSION, allowed: true, username: USER.username, is_admin: true,
+    })) };
     if (/SELECT id FROM users WHERE id = \$1/.test(sql)) return { rows: [{ id: params[0] }] };
     queries.push(sql);
     if (/FROM sessions s JOIN users u/.test(sql)) {

@@ -72,14 +72,14 @@ export function creationPhase(d: { appId: number; appSlug: string; phase: string
 }
 
 // The version pill's "deploying", started or ended: services/app-deploy-status.js
-// markStart/markEnd's broadcast, to everyone (ws.broadcastGlobal).
+// markStart/markEnd's broadcast, to the project's current viewers.
 export function redeployStatus(d: {
   appSlug: string; deploying: boolean; startedAt: string; fromSha: string | null;
   toSha?: string | null; failed?: boolean; missingSecrets?: string[] | null;
 }): Push {
   const data: JsonObject = { type: 'app_redeploy_status', appSlug: d.appSlug, deploying: d.deploying, startedAt: d.startedAt, fromSha: d.fromSha };
   if (!d.deploying) Object.assign(data, { toSha: d.toSha ?? null, failed: !!d.failed, missingSecrets: d.missingSecrets ?? null });
-  return { kind: 'global', data };
+  return { kind: 'scoped', routing: { appSlug: d.appSlug }, data };
 }
 
 // Issues just closed on GitHub, to every web process's own copy of the
