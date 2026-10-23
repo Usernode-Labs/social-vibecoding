@@ -330,6 +330,23 @@ test('every ready-made app runs: seeds in staging only, serves its screen, refus
       assert.equal((await app.call('GET', '/api/items/999999', { as: ada })).status, 404);
       assert.equal((await app.call('GET', '/api/items/900001')).status, 401, 'no token, no names');
 
+      // Who else is here: the names of the signed-in people seen lately,
+      // never the viewer's own. Grace listens before Ada's first look, so
+      // Ada's arrival is heard; a screen looking again is not an arrival, so
+      // a check-in never sets every open board off again.
+      const presence = await listen(app, grace);
+      await presence.until((x) => x.text().includes(':ok'));
+      assert.deepEqual((await app.call('GET', '/api/presence', { as: ada })).data, { here: [], more: 0 });
+      await presence.until((x) => x.events() >= 1);
+      const arrivals = presence.events();
+      assert.deepEqual((await app.call('GET', '/api/presence', { as: ada })).data, { here: [], more: 0 });
+      await new Promise((r) => setTimeout(r, 400));
+      assert.equal(presence.events(), arrivals, 'a repeat check-in says nothing');
+      assert.deepEqual((await app.call('GET', '/api/presence', { as: grace })).data, { here: ['ada'], more: 0 });
+      assert.deepEqual((await app.call('GET', '/api/presence', { as: ada })).data, { here: ['grace'], more: 0 });
+      assert.equal((await app.call('GET', '/api/presence')).status, 401, 'no token, no names');
+      await presence.close();
+
       // Grace's screen is open while Ada adds and ranks: each change reaches it.
       const graces = await listen(app, grace);
       await graces.until((x) => x.text().includes(':ok'));

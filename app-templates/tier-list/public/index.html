@@ -111,6 +111,9 @@
     <header class="flex flex-col gap-1">
       <h1 class="sr-only">{{APP_NAME}}</h1>
       <p class="text-body text-muted">Our favorite {{ITEM_PLURAL}}, ranked together.</p>
+      <!-- Who else has the list open just now; app.js fills it in and it
+           stays hidden when nobody else is here. -->
+      <p id="presence" class="text-small text-muted" aria-live="polite" hidden></p>
     </header>
 
     <form id="add-form" class="flex flex-col gap-2" autocomplete="off">

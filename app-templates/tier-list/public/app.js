@@ -11,7 +11,8 @@
 // yet" takes it off your board. Tapping an item, on either board, opens its
 // sheet: the group's tier, who put it in which tier and who wants to,
 // taking it off your board, and, for whoever added it, removing it for
-// everyone.
+// everyone. Under the title, a quiet line names the other signed-in people
+// who have the list open right now.
 //
 // Rendering builds elements and sets textContent, never innerHTML with
 // people's words in it, so an item called "<b>hi</b>" shows exactly that.
@@ -22,6 +23,7 @@
 
   var el = {
     main: document.querySelector('main'),
+    presence: document.getElementById('presence'),
     form: document.getElementById('add-form'),
     status: document.getElementById('status'),
     loading: document.getElementById('loading'),
@@ -165,7 +167,7 @@
 
   // The board, and the open sheet if there is one, fetched again.
   function refresh() {
-    return Promise.all([load(), detail ? loadDetail() : null]);
+    return Promise.all([load(), detail ? loadDetail() : null, loadPresence()]);
   }
 
   function act(promise) {
@@ -650,6 +652,38 @@
     renderDetail();
   }
 
+  // ── Who else is here ────────────────────────────────────────────────────
+
+  // The other people with the list open, read from the app's memory of who
+  // has checked in lately. A failed read keeps what the line last said, and
+  // never shows an error: it is a quiet line, not part of what the board is.
+  function loadPresence() {
+    return api('GET', '/api/presence')
+      .then(function (d) { drawPresence(d.here || [], d.more || 0); })
+      .catch(function () { /* keep what the line says */ });
+  }
+
+  function drawPresence(names, more) {
+    // Not while somebody is mid-drag: the line is drawn the moment it is
+    // over, as the board is.
+    if (drag) { if (live) live.changed(); return; }
+    var total = names.length + more;
+    if (!total) {
+      el.presence.hidden = true;
+      el.presence.textContent = '';
+      return;
+    }
+    // "@ana" / "@ana and @ben" / "@ana, @ben and @cy", then "and N more".
+    var at = names.slice(0, 3).map(function (name) { return '@' + name; });
+    var rest = total - at.length;
+    var text;
+    if (rest > 0) text = at.join(', ') + ' and ' + rest + ' more';
+    else if (at.length === 1) text = at[0];
+    else text = at.slice(0, -1).join(', ') + ' and ' + at[at.length - 1];
+    el.presence.textContent = 'Also here: ' + text;
+    el.presence.hidden = false;
+  }
+
   var loaded = false;
   var loading = null;
   var again = false;
@@ -692,7 +726,7 @@
     if (!input.value.trim()) return;
     act(api('POST', '/api/items', { name: input.value }).then(function () { el.form.reset(); }));
   });
-  document.getElementById('retry').addEventListener('click', function () { show('loading'); load(); });
+  document.getElementById('retry').addEventListener('click', function () { show('loading'); load(); loadPresence(); });
 
   // Other people rank too: whenever anybody changes something, the board
   // (and the sheet, if one is open) is fetched again at once, and looked at
@@ -710,6 +744,9 @@
   // rather than as loading shapes that then change. The cover lifts after a
   // few seconds regardless.
   var first = load();
+  // Who is here is not what the board is: it is read beside it, so the
+  // opening cover never waits on it.
+  loadPresence();
   if (window.usernode && window.usernode.ready) window.usernode.ready(first);
 
   // Pulled down at the top, the board is fetched again and the page bounces
