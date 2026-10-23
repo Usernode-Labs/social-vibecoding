@@ -334,6 +334,7 @@ app.use((req, res, next) => {
   express.json()(req, res, next);
 });
 app.use(cookieParser());
+app.use(require('./src/services/browser-api-cache').browserApiCachePolicy);
 
 app.get('/health', (_req, res) => {
   // `topochain: true` (plan Task 3; SPEC 815-818 "merge into the platform's

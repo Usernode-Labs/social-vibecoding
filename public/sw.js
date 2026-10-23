@@ -2,7 +2,7 @@
 //
 // Design contract (see the offline-mode spec):
 //   - A GOOD CONNECTION STILL GETS THE NEWEST BUILD ON THIS LOAD; a bad
-//     one gets the cached one immediately. Every strategy is network-first
+//     one gets the cached one immediately. Shell strategies are network-first
 //     against a DEADLINE (#1021): a response that has not arrived in time
 //     is answered from cache, and the network response — still in flight —
 //     replaces the cached copy when it lands. This preserves the
@@ -23,9 +23,11 @@
 //     screen instead of waiting for a reload.
 //   - Only GETs are ever intercepted. Writes, SSE streams, auth flows and
 //     credentials are hard-bypassed (see classifyRequest below).
-//   - Cached GET /api/* JSON lets previously-viewed screens (home feed,
-//     per-app dev views, chats) re-render offline. Entries are stamped,
-//     capped, and cleared on logout.
+//   - Permitted GET /api/* JSON lets previously-viewed screens re-render
+//     offline. The page requests fresh reads, so these fall back only on
+//     network failure. Entries honor response policy, require matching
+//     page/server session labels, and are fenced and cleared at identity
+//     boundaries. Identity and credential reads never enter the cache.
 //
 // classifyRequest(), isImmuneApiRequest() and raceNetworkAndCache() are
 // pure functions on purpose: tests/pwa-sw-classify.test.js and
@@ -53,36 +55,62 @@ const IMMUTABLE_CACHE = `usernode-immutable-${SW_VERSION}`;
 // The API cache is DELIBERATELY NOT VERSIONED WITH SW_VERSION (#1021).
 // It used to be `usernode-api-${SW_VERSION}`, and the activate handler
 // below deletes every `usernode-*` cache not listed in ALL_CACHES — so
-// every routine service-worker bump silently wiped the offline session
-// (the cached GET /api/auth/me the SPA's boot check depends on) along
-// with the whole cached feed. That is exactly what shipping v7 did on the
-// evening #1021 was reported. The shell and immutable caches stay
-// versioned because they are network-first / content-addressed and cost
-// nothing to refill; this one holds the only offline state we have.
+// every routine service-worker bump silently wiped the cached feed. Keep
+// certified session partitions across ordinary shell upgrades. Offline
+// boot's display-only session snapshot is separate from this cache.
 //
-// Bump API_CACHE_FORMAT only when the STORED SHAPE changes (e.g. a new
-// stamp header), never as part of a shell bump.
+// Storage-contract changes must migrate or discard incompatible entries
+// during activation; a routine shell bump must never empty this cache.
 const API_CACHE_FORMAT = '';
 const API_CACHE = `usernode-api${API_CACHE_FORMAT}`;
 const ALL_CACHES = [SHELL_CACHE, API_CACHE, IMMUTABLE_CACHE];
 
 // Version-named API caches left behind by workers older than #1021.
-// activate() migrates their entries into API_CACHE *before* the prune
-// deletes them, so an existing install keeps its offline copy across the
-// one-time rename instead of losing it exactly like a version bump would.
+// Their unscoped entries have no trustworthy owner. Activation removes
+// these legacy copies rather than assigning them to the current viewer.
 const LEGACY_API_CACHE_RE = /^usernode-api-v\d+$/;
 
 // API-cache hygiene knobs.
 const API_CACHE_MAX_ENTRIES = 300;
 const API_CACHE_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000; // 14 days
 const CACHED_AT_HEADER = 'sw-cached-at';
+// A non-credential fingerprint of the current browser session. The page
+// reads its companion cookie; the server independently confirms the label.
+const API_SCOPE_HEADER = 'X-Usernode-Cache-Scope';
+const API_SCOPE_PARAM = '__usernode_cache_scope';
 
-// Entries that eviction must never touch. /api/auth/me is what decides
-// whether an offline boot shows the signed-in shell or the sign-in
-// screen, and it otherwise competes for the 300-entry budget with every
-// paginated /api/apps/:slug/messages?... key — one busy chat session
-// could evict the session itself.
-const IMMUNE_API_PATHS = ['/api/auth/me'];
+function apiScopeOf(request) {
+  const scope = request.headers?.get(API_SCOPE_HEADER);
+  return /^[a-f0-9]{64}$/.test(scope || '') ? scope : null;
+}
+
+function disallowsStorage(response) {
+  return /(?:^|,)\s*(?:no-store|no-cache)(?:\s*(?:,|=|$))/i.test(responseHeader(response, 'Cache-Control') || '')
+    || /\bno-cache\b/i.test(responseHeader(response, 'Pragma') || '')
+    || (responseHeader(response, 'Vary') || '').split(',').some(v => v.trim() === '*');
+}
+
+function apiCacheKey(request, scope) {
+  const url = new URL(request.url);
+  url.searchParams.set(API_SCOPE_PARAM, scope);
+  return new Request(url.href, { headers: request.headers });
+}
+
+function apiEntryCanReplay(response, scope, now = Date.now()) {
+  if (!response || response.status !== 200 || disallowsStorage(response)
+      || responseHeader(response, API_SCOPE_HEADER) !== scope) return false;
+  const at = Number(responseHeader(response, CACHED_AT_HEADER));
+  if (!at || at > now) return false;
+  const policy = responseHeader(response, 'Cache-Control') || '';
+  const maxAge = /(?:^|,)\s*max-age\s*=\s*"?(\d+)/i.exec(policy);
+  const ageLimit = maxAge ? Math.min(Number(maxAge[1]) * 1000, API_CACHE_MAX_AGE_MS)
+    : /\bmust-revalidate\b/i.test(policy) ? 0 : API_CACHE_MAX_AGE_MS;
+  return now - at < ageLimit;
+}
+
+// Identity reads never enter this cache. Offline boot's display-only
+// session snapshot lives separately; no API entry is exempt from eviction.
+const IMMUNE_API_PATHS = [];
 
 // Network deadlines. A deadline is how long a request may hold the page
 // before the CACHED copy is shown instead. The request itself is never
@@ -114,6 +142,8 @@ const IMMUNE_API_PATHS = ['/api/auth/me'];
 // What makes serving a stale API answer safe at all is the notify path in
 // networkFirstApi: the page is told when the real answer lands and
 // disagrees. Do not shorten this one without keeping that.
+// The platform's identity fetch wrapper requests fresh reads (`reload`),
+// which skip these compatibility deadlines and fall back on failure only.
 const NAVIGATE_TIMEOUT_MS = 200;
 const SHELL_TIMEOUT_MS = 200;
 const API_TIMEOUT_MS = 1000;
@@ -484,6 +514,9 @@ function classifyRequest(method, url, acceptHeader, mode, selfOrigin) {
   // SSE streams must never be intercepted or cached (they'd buffer forever).
   if (/text\/event-stream/i.test(acceptHeader || '')) return 'bypass';
   if (/^\/api\/sessions\/[^/]+\/events$/.test(p)) return 'bypass';
+  // Identity/credential reads always reach the server. Offline boot's
+  // display-only session snapshot is owned by App, never an API credential.
+  if (p.startsWith('/api/auth/')) return 'bypass';
 
   // Local-dev mock namespace and short-lived credentials.
   if (p.startsWith('/__mock/')) return 'bypass';
@@ -888,6 +921,12 @@ if (typeof module !== 'undefined' && module.exports) {
     NO_FALLBACK_PREFIXES,
     SW_VERSION,
     API_CACHE,
+    API_SCOPE_HEADER,
+    API_SCOPE_PARAM,
+    apiScopeOf,
+    apiCacheKey,
+    apiEntryCanReplay,
+    disallowsStorage,
     ALL_CACHES,
     LEGACY_API_CACHE_RE,
     IMMUNE_API_PATHS,
@@ -960,30 +999,37 @@ if (typeof module !== 'undefined' && module.exports) {
   // cache read and a full-body compare, and the only caller that needs the
   // answer is the stale-serve path, where the entry being replaced is the
   // very copy the page is currently rendering.
-  async function stampAndPut(cache, request, response, { detectChange = false } = {}) {
+  async function stampAndPut(cache, request, response, { detectChange = false, stillCurrent = () => true } = {}) {
     try {
       const headers = new Headers(response.headers);
       headers.set(CACHED_AT_HEADER, String(Date.now()));
+      // Download outside the storage queue: a stalled old body must not
+      // delay logout's wipe or a new session's reads.
       const body = await response.arrayBuffer();
-      let changed = false;
-      if (detectChange) {
-        // Both fallbacks below resolve to "unchanged", i.e. stay quiet:
-        //   - no previous entry (evicted between the serve and now) means
-        //     there is nothing on screen this could be correcting;
-        //   - an unreadable previous body leaves us genuinely unable to
-        //     tell, and a re-render we cannot justify is worse than a
-        //     stale row the next navigation will fix anyway.
-        try {
-          const prev = await cache.match(request);
-          changed = !!prev && !bytesEqual(await prev.arrayBuffer(), body);
-        } catch { changed = false; }
-      }
-      await cache.put(request, new Response(body, {
-        status: response.status,
-        statusText: response.statusText,
-        headers,
-      }));
-      return changed;
+      return await queueApiCacheWork(async () => {
+        if (!stillCurrent()) return false;
+        let changed = false;
+        if (detectChange) {
+          // Both fallbacks below resolve to "unchanged", i.e. stay quiet:
+          //   - no previous entry (evicted between the serve and now) means
+          //     there is nothing on screen this could be correcting;
+          //   - an unreadable previous body leaves us genuinely unable to
+          //     tell, and a re-render we cannot justify is worse than a
+          //     stale row the next navigation will fix anyway.
+          try {
+            const prev = await cache.match(request);
+            changed = !!prev && !bytesEqual(await prev.arrayBuffer(), body);
+          } catch { changed = false; }
+        }
+        if (!stillCurrent()) return false;
+        await cache.put(request, new Response(body, {
+          status: response.status,
+          statusText: response.statusText,
+          headers,
+        }));
+        if (!stillCurrent()) { await cache.delete(request); return false; }
+        return changed;
+      });
     } catch { /* quota or clone failure — offline copy just isn't saved */ }
     return false;
   }
@@ -1308,9 +1354,47 @@ if (typeof module !== 'undefined' && module.exports) {
   // either is a new request, exactly as before.
   const API_SHARE_WINDOW_MS = 100;
   const inflightApi = new Map();
+  const latestApiRead = new Map();
+  let apiReadSerial = 0;
+  let apiEpoch = 0;
+  let activeApiScope = null;
+  const retiredApiScopes = new Set();
+  let apiCacheWork = Promise.resolve();
+
+  // Serialize storage puts and wipes, with identity checks after body reads.
+  // An old response cannot put its contents back after the wipe completes.
+  function queueApiCacheWork(work) {
+    const run = apiCacheWork.then(work, work);
+    apiCacheWork = run.catch(() => {});
+    return run;
+  }
+
+  function apiContext(request) {
+    const scope = apiScopeOf(request);
+    if (!scope || retiredApiScopes.has(scope)) return null;
+    if (activeApiScope && activeApiScope !== scope) {
+      retiredApiScopes.add(activeApiScope);
+      void clearApiCaches().catch(() => {});
+    }
+    activeApiScope = scope;
+    return { scope, epoch: apiEpoch };
+  }
+
+  function currentApiContext(context) {
+    return context && context.epoch === apiEpoch && context.scope === activeApiScope
+      && !retiredApiScopes.has(context.scope);
+  }
+
+  function staleApiResponse() {
+    return new Response('{"error":"Session changed"}', {
+      status: 409, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
+    });
+  }
 
   function sharedApiFetch(request) {
-    const key = request.url;
+    // URL alone can join two users' reads, or a fresh/authorized read to
+    // a different set of headers. A credential-bearing read never shares.
+    const key = JSON.stringify([request.url, request.credentials, request.cache, [...request.headers]]);
     const now = Date.now();
     const open = inflightApi.get(key);
     if (open && now - open.startedAt <= API_SHARE_WINDOW_MS) {
@@ -1324,7 +1408,18 @@ if (typeof module !== 'undefined' && module.exports) {
   }
 
   async function networkFirstApi(event) {
+    const context = apiContext(event.request);
+    if (!context) return fetch(new Request(event.request, { cache: 'no-store' }));
+    await apiCacheWork;
+    if (!currentApiContext(context)) return staleApiResponse();
     const cache = await caches.open(API_CACHE);
+    const key = apiCacheKey(event.request, context.scope);
+    // A slower, earlier success must not undo a newer refusal/no-store
+    // policy (or repopulate the offline copy that refusal just removed).
+    if (latestApiRead.size > API_CACHE_MAX_ENTRIES * 4) latestApiRead.clear();
+    const serial = ++apiReadSerial;
+    latestApiRead.set(key.url, serial);
+    const stillCurrent = () => currentApiContext(context) && latestApiRead.get(key.url) === serial;
     // Did we answer this request from cache while the network was still in
     // flight? Only then is a late, DIFFERENT answer worth telling the page
     // about — on an ordinary fresh load the page already HAS that answer,
@@ -1354,11 +1449,13 @@ if (typeof module !== 'undefined' && module.exports) {
         // Only genuine successes are worth replaying offline; 401/403/500
         // must never mask a later real answer. Clone before returning —
         // once the page starts reading the body the response is locked.
-        if (res && res.status === 200) {
+        if (res && res.status === 200 && !res.redirected && !disallowsStorage(res)
+            && /\bapplication\/json\b/i.test(responseHeader(res, 'Content-Type') || '')
+            && responseHeader(res, API_SCOPE_HEADER) === context.scope) {
           const copy = res.clone();
-          event.waitUntil((async () => {
-            const changed = await stampAndPut(cache, event.request, copy,
-              { detectChange: served.fromCache });
+          event.waitUntil(stampAndPut(cache, key, copy,
+            { detectChange: served.fromCache, stillCurrent }).then(changed => queueApiCacheWork(async () => {
+            if (!stillCurrent()) return;
             await trimApiCache(cache);
             if (served.fromCache && changed) {
               // Only a LANE serve arms the guard. A stale answer on the
@@ -1372,14 +1469,24 @@ if (typeof module !== 'undefined' && module.exports) {
                 if (awaitingNetwork.size >= CORRECTING_MAX) awaitingNetwork.clear();
                 awaitingNetwork.add(event.request.url);
               }
-              await notifyClients({ type: 'api-updated', url: event.request.url });
+              await notifyClients({ type: 'api-updated', url: event.request.url, scope: context.scope });
             }
-          })());
+          })));
+        } else if (stillCurrent()) {
+          // Revocation, changed policy and 304s cannot leave a prior body
+          // available to a later offline fallback.
+          event.waitUntil(queueApiCacheWork(() => stillCurrent() && cache.delete(key)));
         }
         return res;
       }),
       matchCache: async () => {
-        const hit = await cache.match(event.request);
+        if (!stillCurrent()) return undefined;
+        const hit = await cache.match(key);
+        if (!stillCurrent()) return undefined;
+        if (!apiEntryCanReplay(hit, context.scope)) {
+          if (hit) await queueApiCacheWork(() => cache.delete(key));
+          return undefined;
+        }
         if (hit) served.fromCache = true;
         return hit;
       },
@@ -1387,15 +1494,20 @@ if (typeof module !== 'undefined' && module.exports) {
       schedule: swSchedule,
     });
     if (pending) event.waitUntil(pending.catch(() => {}));
-    return response;
+    return currentApiContext(context) ? response : staleApiResponse();
   }
 
   async function cacheFirstImmutable(event) {
     const cache = await caches.open(IMMUTABLE_CACHE);
     const hit = await cache.match(event.request);
-    if (hit) return hit;
+    if (hit && !disallowsStorage(hit)
+        && !/\bprivate\b/i.test(responseHeader(hit, 'Cache-Control') || '')) return hit;
+    if (hit) await cache.delete(event.request);
     const res = await fetch(event.request);
-    if (res && res.ok) cache.put(event.request, res.clone()).catch(() => {});
+    if (res && res.ok && !disallowsStorage(res)
+        && !/\bprivate\b/i.test(responseHeader(res, 'Cache-Control') || '')) {
+      event.waitUntil(cache.put(event.request, res.clone()).catch(() => {}));
+    }
     return res;
   }
 
@@ -1524,34 +1636,34 @@ if (typeof module !== 'undefined' && module.exports) {
     })());
   });
 
-  // One-time rescue of the API entries a pre-#1021 worker parked under a
-  // version-named cache. Runs on activate BEFORE the prune below deletes
-  // those names — otherwise this very upgrade would sign the device out
-  // offline, which is the bug #1021 reported.
+  // Stable cache name, upgraded storage contract. Unscoped legacy bodies
+  // have no trustworthy owner and cannot be relabeled as today's viewer.
+  // Preserve only entries already stamped and partitioned by this policy.
   async function migrateLegacyApiCaches(names) {
-    const legacy = names.filter((n) => LEGACY_API_CACHE_RE.test(n));
-    if (!legacy.length) return;
-    try {
-      const target = await caches.open(API_CACHE);
-      for (const name of legacy) {
-        const src = await caches.open(name);
-        for (const key of await src.keys()) {
-          // Never overwrite a fresher entry the new worker already stored.
-          if (await target.match(key)) continue;
-          const res = await src.match(key);
-          if (res) await target.put(key, res);
-        }
+    await Promise.all(names.filter(n => LEGACY_API_CACHE_RE.test(n)).map(n => caches.delete(n)));
+    const target = await caches.open(API_CACHE);
+    for (const key of await target.keys()) {
+      const scope = new URL(key.url).searchParams.get(API_SCOPE_PARAM);
+      if (!/^[a-f0-9]{64}$/.test(scope || '') || !apiEntryCanReplay(await target.match(key), scope)) {
+        await target.delete(key);
       }
-    } catch { /* best-effort — a failed migration must not block activate */ }
+    }
   }
 
   // Logout must not leave one user's API responses readable by the next.
   // Legacy names are included: they may still hold a pre-migration copy.
-  async function clearApiCaches() {
-    const names = await caches.keys();
-    await Promise.all(names
-      .filter((n) => n === API_CACHE || LEGACY_API_CACHE_RE.test(n))
-      .map((n) => caches.delete(n)));
+  function clearApiCaches() {
+    apiEpoch++;
+    inflightApi.clear();
+    latestApiRead.clear();
+    correcting.clear();
+    awaitingNetwork.clear();
+    return queueApiCacheWork(async () => {
+      const names = await caches.keys();
+      await Promise.all(names
+        .filter((n) => n === API_CACHE || LEGACY_API_CACHE_RE.test(n))
+        .map((n) => caches.delete(n)));
+    });
   }
 
   self.addEventListener('activate', (event) => {
@@ -1692,16 +1804,39 @@ if (typeof module !== 'undefined' && module.exports) {
     // could have been answered before it (sharedApiFetch). A logout is one.
     if (req.method !== 'GET' && req.method !== 'HEAD') inflightApi.clear();
 
-    // Belt-and-braces logout isolation: a logout passing through (never
-    // intercepted — it's a POST) still wipes the per-user API cache.
-    if (req.method === 'POST' && new URL(req.url).pathname === '/api/auth/logout') {
+    // Auth writes also fence in-flight reads, even before their response.
+    // A refused mutation may retain the same session; retire its label only
+    // when an actual different session is observed in apiContext().
+    const url = new URL(req.url);
+    if (url.origin === ORIGIN && req.method !== 'GET' && req.method !== 'HEAD'
+        && url.pathname.startsWith('/api/auth/')) {
       event.waitUntil(clearApiCaches());
       return;
     }
 
     // Explicit session confirmation must reach the server, even if an
     // earlier user has an offline /me response in the API cache.
-    if (req.cache === 'no-store') return;
+    if (req.cache === 'no-store') {
+      // Keep the hard network bypass, but invalidate an earlier offline
+      // representation and any older pending put of this same read.
+      const scope = apiScopeOf(req);
+      if (scope && url.origin === ORIGIN && url.pathname.startsWith('/api/')) {
+        const key = apiCacheKey(req, scope);
+        latestApiRead.delete(key.url);
+        event.waitUntil(queueApiCacheWork(async () => {
+          const cache = await caches.open(API_CACHE);
+          await cache.delete(key);
+        }));
+      }
+      return;
+    }
+    if (url.origin === ORIGIN && req.method === 'GET' && url.pathname === '/api/auth/me') {
+      event.respondWith(fetch(new Request(req, { cache: 'no-store' })));
+      return;
+    }
+    // Bearer/JWT and Range responses are not browser-session snapshots.
+    if (req.headers.get('authorization') || req.headers.get('x-usernode-token')
+        || req.headers.get('range') || url.searchParams.has('token')) return;
 
     const kind = classifyRequest(
       req.method, req.url, req.headers.get('accept'), req.mode, ORIGIN

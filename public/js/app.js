@@ -178,23 +178,18 @@ const App = {
   // once, by enterAnonymous below.
   LOGOUT_NOTICE_KEY: 'sv:logout_notice',
 
-  // How long boot waits for /api/auth/me before falling back to the
-  // snapshot. Deliberately just past the service worker's own API deadline
-  // (API_TIMEOUT_MS, now 1000) so the SW gets first refusal at answering
-  // from cache; this only catches the no-SW / SW-bypassed cases.
-  //
-  // MOVE THIS WHENEVER API_TIMEOUT_MS MOVES. It is the last link in the
-  // serial chain a cold load walks — navigation, then the shell's scripts,
-  // then this — so leaving it at the old 5s would have made it the sole
-  // remaining multi-second wait on a weak connection and undone most of
-  // the retune on its own.
+  // Identity confirmation always reaches the server. Bound the boot wait
+  // before using this session's display-only snapshot; the worker never
+  // supplies a cached /me. A later live answer still reconciles the viewer.
   BOOT_SESSION_TIMEOUT_MS: 2000,
 
   saveSessionSnapshot(user) {
     if (!user || !user.id) return;
+    const cacheScope = App._sessionCacheScope();
+    if (!cacheScope) { App.clearSessionSnapshot(); return; }
     try {
       localStorage.setItem(App.SESSION_SNAPSHOT_KEY, JSON.stringify({
-        user, savedAt: Date.now(),
+        user, savedAt: Date.now(), cacheScope,
       }));
     } catch (err) { /* private mode / quota — offline boot just degrades */ }
   },
@@ -205,6 +200,10 @@ const App = {
       if (!raw) return null;
       const snap = JSON.parse(raw);
       if (!snap || !snap.user || !snap.user.id) return null;
+      if (!snap.cacheScope || snap.cacheScope !== App._sessionCacheScope()) {
+        App._dropCachedSession();
+        return null;
+      }
       const age = Date.now() - Number(snap.savedAt || 0);
       if (!(age >= 0) || age > App.SESSION_SNAPSHOT_MAX_AGE_MS) {
         App.clearSessionSnapshot();
@@ -220,10 +219,21 @@ const App = {
     try { localStorage.removeItem(App.SESSION_SNAPSHOT_KEY); } catch (err) { /* ignore */ }
   },
 
+  // Available before the React bundle/bridge has evaluated too: the cold
+  // screen selector must not restore another session's display-only state.
+  _sessionCacheScope() {
+    try {
+      const value = document.cookie.split(';').map(s => s.trim())
+        .find(s => s.startsWith('usernode_api_scope='))?.slice('usernode_api_scope='.length);
+      return /^[a-f0-9]{64}$/.test(value || '') ? value : null;
+    } catch (err) { return null; }
+  },
+
   // Ask the service worker to drop the cached API responses of a session
   // that is definitively over. Fire-and-forget: the snapshot has already
   // been cleared, so a worker that never answers changes nothing.
-  _dropCachedSession() {
+  _dropCachedSession({ apiCache = true } = {}) {
+    window.UsernodeReact?.apiCache?.reset?.({ broadcast: apiCache });
     App.clearSessionSnapshot();
     // The remembered top-bar state goes with it, for the same reason and on
     // the same event: it is display-only (frontend/src/lib/shell-snapshot.ts),
@@ -251,7 +261,7 @@ const App = {
     // previous account's app and card in the same way.
     App._forgetWorkshopView();
     try {
-      navigator.serviceWorker?.controller?.postMessage({ type: 'clear-api-cache' });
+      if (apiCache) navigator.serviceWorker?.controller?.postMessage({ type: 'clear-api-cache' });
     } catch (err) { /* no SW — nothing cached to drop */ }
     // #487 follow-up: which apps this browser has opened offline-capable is
     // the same kind of session residue as the cached feed, and it goes with
@@ -661,7 +671,7 @@ const App = {
     try { user = (await res.json()).user; } catch (err) { user = null; }
     if (!user) return;
     if (String(user.id) !== String(App.user?.id)) {
-      App.clearSessionSnapshot();
+      App._dropCachedSession();
       location.reload();
       return;
     }
@@ -688,6 +698,7 @@ const App = {
         typeof NativeChrome.prepareIdentityPublication === 'function') {
       NativeChrome.prepareIdentityPublication(user);
     }
+    window.UsernodeReact?.apiCache?.setViewer?.(user.id, true);
     App.user = user;
     App._syncViewer();
     window.UsernodeReact?.appOpenings?.setUser?.(user.id, true);
@@ -765,6 +776,7 @@ const App = {
   },
 
   async enterAnonymous() {
+    window.UsernodeReact?.apiCache?.setViewer?.(null, true);
     let nativeBoundary = null;
     if (window.NativeChrome && NativeChrome.enterAnonymous) {
       // Close native authority before publishing the signed-out web identity.
@@ -983,6 +995,7 @@ const App = {
   },
 
   enterAuthed(user) {
+    window.UsernodeReact?.apiCache?.setViewer?.(user.id, !App._sessionFromSnapshot);
     if (window.NativeChrome &&
         typeof NativeChrome.prepareIdentityPublication === 'function') {
       // The bridge handles this event synchronously and drops the old opaque

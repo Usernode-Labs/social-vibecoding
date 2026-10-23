@@ -1,4 +1,5 @@
 const { nativeWebSessionIsLive } = require('../services/web-session-auth');
+const { setSessionCacheCookie, stampApiIdentity } = require('../services/browser-api-cache');
 const crypto = require('crypto');
 const { getPool } = require('../db/pool');
 const log = require('../services/logger');
@@ -349,6 +350,7 @@ async function renewCookieSession(pool, res, token, row) {
       sameSite: 'lax',
       expires: persistedExpiry,
     });
+    setSessionCacheCookie(res, token, persistedExpiry);
     return persistedExpiry;
   } catch (err) {
     log.warn('auth', 'Session renewal failed', { message: err.message });
@@ -462,7 +464,8 @@ function authMiddleware(config) {
           // Placed after the staging identity-switch block: that path replaces
           // the cookie outright, so renewing the credential it is discarding
           // would both waste a write and set competing cookies on one response.
-          await renewCookieSession(pool, res, cookieToken, rows[0]);
+          const renewedExpiry = await renewCookieSession(pool, res, cookieToken, rows[0]);
+          stampApiIdentity(req, res, cookieToken, renewedExpiry || rows[0].expires_at);
           log.debug('auth', 'Session validated', { userId: req.user.id });
           if (enforcePlatformAccessGate(req, res, req.user)) return;
           return next();
@@ -575,6 +578,8 @@ async function tryMintSessionFromIframeJwt(pool, config, jwtToken, res) {
     sameSite: 'lax',
     expires: expiresAt,
   });
+  setSessionCacheCookie(res, sessionToken, expiresAt);
+  res.setHeader?.('Cache-Control', 'private, no-store');
 
   log.info('auth', 'Staging iframe-JWT minted local session', {
     userId: userRow.id, username: userRow.username,

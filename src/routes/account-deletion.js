@@ -41,6 +41,7 @@ function accountDeletionRoutes(config, { pool = getPool(config) } = {}) {
         confirmation: req.body?.confirmation, password: req.body?.password, sessionToken: req.cookies.session,
       });
       res.clearCookie('session', { path: '/' });
+      res.clearCookie(require('../services/browser-api-cache').SCOPE_COOKIE, { path: '/' });
       res.json(result);
       void cleanup.sweep(pool, config).catch(() => {});
     } catch (err) { sendError(res, err); }

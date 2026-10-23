@@ -13,6 +13,7 @@ import { improveStore } from '../features/improve/improve-store.js';
 import { hydrateCommunityScope } from '../features/workshop/community-scope';
 import { readShellSnapshot } from './shell-snapshot';
 import { isEmbeddedPanel } from './side-panel-mode';
+import { readApiCacheScope } from './api-cache-identity';
 
 /** App.SESSION_SNAPSHOT_KEY and its age limit (public/js/app.js). */
 const SESSION_KEY = 'usernode.session.v1';
@@ -28,6 +29,7 @@ export function snapshotViewer(): string | null {
     const raw = window.localStorage.getItem(SESSION_KEY);
     if (!raw) return null;
     const snap = JSON.parse(raw);
+    if (!snap?.cacheScope || snap.cacheScope !== readApiCacheScope(document)) return null;
     const user = snap && snap.user;
     if (!user || !user.id || typeof user.username !== 'string') return null;
     const age = Date.now() - Number(snap.savedAt || 0);

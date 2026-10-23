@@ -267,6 +267,11 @@ const REVIEWED_ROUTE_EXEMPTIONS = [
 
 const CLIENT_REFERENCE_EXEMPTIONS = [
   {
+    pattern: /^\/api\/auth$/,
+    source: 'frontend/src/lib/api-cache-identity.ts',
+    reason: 'the fetch boundary classifies the auth namespace; it does not call its root',
+  },
+  {
     pattern: /^\/api\/public\//,
     reason: 'signed-out public surface outside authenticated Global Chat',
   },
@@ -729,7 +734,8 @@ function buildInventory({
   const unmatchedClientReferences = [...clientRefs.entries()]
     .filter(([apiPath]) => !matchedReferences.has(apiPath))
     .filter(([apiPath, files]) => {
-      const reviewed = CLIENT_REFERENCE_EXEMPTIONS.find(({ pattern }) => pattern.test(apiPath));
+      const reviewed = CLIENT_REFERENCE_EXEMPTIONS.find(({ pattern, source }) => pattern.test(apiPath)
+        && (!source || [...files].every(file => file === source)));
       const representedRoute = routes.find((route) => (
         route.status === 'exempt' && route.path && samePattern(route.path, apiPath)
       ));

@@ -273,7 +273,7 @@ test('reconciling handles all four answers, and only one of them is a reload loo
   const reloadAt = rec.indexOf('location.reload();');
   assert.ok(dropAt !== -1 && dropAt < reloadAt, 'drop the trace BEFORE reloading');
   // Another user — a shell painted for somebody else cannot be repaired.
-  assert.match(rec, /String\(user\.id\) !== String\(App\.user\?\.id\)[\s\S]{0,200}?clearSessionSnapshot\(\);\s*location\.reload\(\);/);
+  assert.match(rec, /String\(user\.id\) !== String\(App\.user\?\.id\)[\s\S]{0,200}?_dropCachedSession\(\);\s*location\.reload\(\);/);
   // Platform access decides WHICH SHELL is on screen (enterAuthed sends a
   // viewer without it to the waiting room), so a snapshot that disagrees
   // painted the wrong one. Saving the fresh record first is what stops THIS
@@ -405,10 +405,10 @@ test('every boot path settles the published read', () => {
   // otherwise leave a joiner waiting forever.
   assert.match(APP, /bootSession\(\) \{[\s\S]*?App\._bootSession = new Promise/,
     'the promise is created lazily, so a joiner may arrive before init()');
-  const anon = APP.slice(APP.indexOf('async enterAnonymous()'));
-  assert.match(anon.slice(0, 600), /App\._publishBootSession\(\{ signedOut: true \}\)/);
-  const authed = APP.slice(APP.indexOf('enterAuthed(user) {'));
-  assert.match(authed.slice(0, 900),
+  const anon = appMethod('enterAnonymous');
+  assert.match(anon, /App\._publishBootSession\(\{ signedOut: true \}\)/);
+  const authed = appMethod('enterAuthed');
+  assert.match(authed,
     /if \(!App\._sessionFromSnapshot\) App\._publishBootSession\(\{ user \}\);/,
     'a snapshot boot publishes nothing here — the shell has a LAST-KNOWN '
     + 'user, not a confirmed one, and _reconcileSession publishes the answer');
@@ -453,7 +453,7 @@ test('every way out of a session clears the snapshot', () => {
   // shell chrome snapshot and the Improve target, which main.tsx re-applies
   // unconditionally at boot and which would otherwise paint the previous
   // account's header on the landing page they were just sent to.
-  assert.match(APP, /_dropCachedSession\(\) \{\s*\n\s*App\.clearSessionSnapshot\(\);/);
+  assert.match(appMethod('_dropCachedSession'), /apiCache\?\.reset\?\.[\s\S]*App\.clearSessionSnapshot\(\);/);
   assert.match(SETTINGS, /window\.App\?\._dropCachedSession\?\.\(\)/);
   assert.match(AUTH, /clearSessionSnapshot/);
   // Including the waiting-room logout, which does not go through settings.

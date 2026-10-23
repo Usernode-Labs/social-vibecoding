@@ -310,17 +310,22 @@ test('the viewer comes from the session snapshot, under App\'s own rules', () =>
   const named = [];
   const day = 24 * 60 * 60 * 1000;
   const page = (snapshot, classes = []) => {
+    if (snapshot) snapshot.cacheScope ??= 'a'.repeat(64);
     globalThis.window = {
       localStorage: fakeStorage(snapshot === undefined ? {} : { 'usernode.session.v1': JSON.stringify(snapshot) }),
       UsernodeReact: { nav: { setViewer: (v) => named.push(v) } },
     };
-    globalThis.document = { documentElement: { classList: { contains: (c) => classes.includes(c) } } };
+    globalThis.document = { cookie: 'usernode_api_scope=' + 'a'.repeat(64),
+      documentElement: { classList: { contains: (c) => classes.includes(c) } } };
   };
   page({ user: { id: 7, username: ' evan ' }, savedAt: Date.now() - day });
   assert.equal(apply.snapshotViewer(), 'evan');
   apply.applyNavSnapshot();
   assert.deepEqual(named, ['evan'], 'through the same bridge call App._syncViewer makes');
   assert.deepEqual(hydrated, ['evan'], 'and the community list is read back for them');
+
+  page({ user: { id: 7, username: 'evan' }, savedAt: Date.now(), cacheScope: 'b'.repeat(64) });
+  assert.equal(apply.snapshotViewer(), null, 'a different browser session cannot restore their navigation');
 
   page({ user: { id: 7, username: 'evan' }, savedAt: Date.now() - 31 * day });
   assert.equal(apply.snapshotViewer(), null, 'past the 30 days App ages it out at');

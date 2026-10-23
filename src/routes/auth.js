@@ -154,6 +154,7 @@ function createSessionCookie(res, token, expiresAt) {
     sameSite: 'lax',
     expires: expiresAt,
   });
+  require('../services/browser-api-cache').setSessionCacheCookie(res, token, expiresAt);
 }
 
 async function createSession(queryable, userId) {
@@ -718,12 +719,7 @@ function authRoutes(config) {
         [token, userId, expiresAt]
       );
 
-      res.cookie('session', token, {
-        httpOnly: true,
-        secure: SECURE_COOKIE,
-        sameSite: 'lax',
-        expires: expiresAt,
-      });
+      createSessionCookie(res, token, expiresAt);
 
       log.info('auth', 'User registered', { userId, username: username.trim(), codeId });
       events.record(pool, { type: events.EVENT_TYPES.USER_SIGNED_UP, userId, metadata: { via: 'activation_code' } });
@@ -766,6 +762,7 @@ function authRoutes(config) {
       }
     }
     res.clearCookie('session');
+    res.clearCookie(require('../services/browser-api-cache').SCOPE_COOKIE, { path: '/' });
     res.json({ ok: true });
   });
 

@@ -72,6 +72,7 @@ import { installFirstPaintReserve } from './lib/first-paint-reserve';
 import { installJoinRequired } from './lib/join-required';
 import { installAdultGate } from './features/auth/adult-gate';
 import { installSessionRenewalRetry } from './lib/session-renewal-retry';
+import { installApiCacheIdentity } from './lib/api-cache-identity';
 // Publishes window.UsernodeReact.devBoard at module scope. Imported for the
 // side effect, and imported HERE (rather than reached from a Shell island)
 // because the Dev surfaces are runtime-injected into an empty #app-content and
@@ -204,6 +205,8 @@ import './features/auth/communities-first-run.js';
 // why it records rather than console.error-ing.
 bootStep('registerServiceWorker', registerServiceWorker);
 bootStep('initOffline', initOffline);
+// Innermost fetch owner: retries must obtain a new identity/cache context.
+bootStep('installApiCacheIdentity', () => installApiCacheIdentity());
 // Before hydration, so no island's first write can slip past it: a write
 // refused with `join_required` becomes a Join prompt and a retry
 // (./lib/join-required.ts), for every caller in both bundles.

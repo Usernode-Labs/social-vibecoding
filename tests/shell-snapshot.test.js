@@ -34,6 +34,8 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { loadTsx } = require('./lib/render-tsx');
+const { readApiCacheScope } = loadTsx('frontend/src/lib/api-cache-identity.ts');
 
 const root = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
@@ -51,8 +53,9 @@ const APP_JS = read('public/js/app.js');
 // so the plain functions can run in a vm. Deliberately crude and deliberately
 // asserted: if this stops producing runnable JS the tests below fail loudly
 // rather than silently testing nothing.
-function loadStorage(store) {
+function loadStorage(store, scope = 'a'.repeat(64)) {
   const js = SNAPSHOT
+    .replace(/^import .*;\n/gm, '')
     .replace(/export interface [\s\S]*?\n\}\n/g, '')
     .replace(/: Partial<Omit<ShellSnapshot, 'savedAt'>>/g, '')
     .replace(/: ShellSnapshot \| null/g, '')
@@ -64,6 +67,8 @@ function loadStorage(store) {
   const ctx = {
     Date,
     JSON,
+    readApiCacheScope,
+    document: { cookie: `usernode_api_scope=${scope}` },
     window: {
       localStorage: {
         getItem: (k) => (Object.prototype.hasOwnProperty.call(store, k) ? store[k] : null),
@@ -133,6 +138,18 @@ test('clear removes it outright', () => {
   assert.equal(store['usernode.shell.v1'], undefined, 'the key itself is gone');
 });
 
+test('another session cannot restore or merge the previous project labels', () => {
+  const store = {};
+  loadStorage(store, 'a'.repeat(64)).saveShellSnapshot({ title: 'FAKE_PRIVATE_A', subtitle: 'FAKE_SUBTITLE_A' });
+  const b = loadStorage(store, 'b'.repeat(64));
+  assert.equal(b.readShellSnapshot(), null);
+  b.saveShellSnapshot({ improveTarget: 'platform' });
+  assert.equal(b.readShellSnapshot().title, '');
+  assert.equal(b.readShellSnapshot().subtitle, '');
+  store['usernode.shell.v1'] = JSON.stringify({ title: 'FAKE_UNSCOPED', savedAt: Date.now() });
+  assert.equal(b.readShellSnapshot(), null, 'legacy snapshots have no provable session owner');
+});
+
 // ── the wiring ──────────────────────────────────────────────────────────
 
 test('the snapshot is applied AFTER hydration, never before it', () => {
@@ -190,8 +207,8 @@ test('only what is ON SCREEN is restored — not a data model', () => {
 
 test('it goes with the rest of this device’s session residue on sign-out', () => {
   const fn = APP_JS.slice(
-    APP_JS.indexOf('  _dropCachedSession() {'),
-    APP_JS.indexOf('\n  },', APP_JS.indexOf('  _dropCachedSession() {')),
+    APP_JS.indexOf('  _dropCachedSession('),
+    APP_JS.indexOf('\n  },', APP_JS.indexOf('  _dropCachedSession(')),
   );
   assert.ok(fn, '_dropCachedSession is still defined');
   assert.match(fn, /shellSnapshot\?\.clear\?\.\(\)/,
