@@ -3,6 +3,6 @@
 export { HeaderPlace, HeaderPlaceName, PlacesButton, PlaceBar, waitingPhrase, usePhoneHeader } from '../../frontend/src/features/dev-board/workshop/place-bar';
 export {
   placeStore, publishPlace, clearPlace,
-  registerPlaceOpener, registerTrayToggle, toggleTray, trayButton,
+  registerPlaceOpener, registerTrayToggle, toggleTray, trayButton, livePlace, cachedTopics,
 } from '../../frontend/src/features/dev-board/workshop/place-store';
 export { navStore } from '../../frontend/src/features/nav/nav-store';

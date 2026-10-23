@@ -99,61 +99,137 @@
     "text": "Clear search",
     "description": "Tooltip and accessible name of the × button inside Discover's search field: empties the field."
   },
-  "filter.groupLabel": {
-    "text": "Filter apps",
-    "description": "Accessible name of the row of filter chips (All, Featured, Joined, New) under Discover's search field."
+  "view.groupLabel": {
+    "text": "Which apps",
+    "description": "Accessible name of the three-way switch at the top of Discover that chooses which apps the list holds: For you, Browse or Joined."
   },
-  "filter.all": {
-    "text": "All",
-    "description": "Filter chip on the Discover screen: show every app."
+  "view.forYou": {
+    "text": "For you",
+    "description": "First part of Discover's switch: the default list, led by the apps Homeroom recommends for the viewer."
+  },
+  "view.browse": {
+    "text": "Browse",
+    "description": "Middle part of Discover's switch: every app in the directory, as one list in the chosen order."
+  },
+  "filters.button": {
+    "text": "Filters",
+    "description": "Button at the end of Discover's row of app types. It opens the Filters sheet, and shows how many filters are on."
+  },
+  "filters.activeCount_one": {
+    "text": "{{count}} filter on",
+    "description": "Read by a screen reader beside Discover's Filters button: how many filters are currently on. {{count}} is 1."
+  },
+  "filters.activeCount_other": {
+    "text": "{{count}} filters on",
+    "description": "Read by a screen reader beside Discover's Filters button: how many filters are currently on. {{count}} is more than 1."
+  },
+  "filters.title": {
+    "text": "Filters",
+    "description": "Title of the sheet that holds Discover's type, Show only and Sort controls."
+  },
+  "filters.reset": {
+    "text": "Reset",
+    "description": "Text button at the top left of Discover's Filters sheet: clears the choices in the sheet and goes back to the defaults. Nothing is applied until Show is pressed."
+  },
+  "filters.close": {
+    "text": "Close filters",
+    "description": "Accessible name of the close button at the top right of Discover's Filters sheet: closes it without changing anything."
+  },
+  "filters.type": {
+    "text": "Type",
+    "description": "Heading in Discover's Filters sheet over the row of app types (Games, Social, Tools and so on)."
+  },
+  "filters.showOnly": {
+    "text": "Show only",
+    "description": "Heading in Discover's Filters sheet over the switches that narrow the list: Featured, New and Hide apps I've joined."
+  },
+  "filters.sortBy": {
+    "text": "Sort by",
+    "description": "Heading in Discover's Filters sheet over the list of orders the apps can be sorted in."
+  },
+  "filters.hideJoined": {
+    "text": "Hide apps I\u2019ve joined",
+    "description": "Switch in Discover's Filters sheet: shows only the apps whose community the viewer has not joined yet, the ones they could still join."
+  },
+  "filters.adminTag": {
+    "text": "Admin",
+    "description": "Small tag beside a switch in Discover's Filters sheet that only platform admins get, saying it is an admin-only filter."
+  },
+  "filters.show_one": {
+    "text": "Show {{count}} app",
+    "description": "Primary button at the foot of Discover's Filters sheet: applies the choices and closes the sheet. {{count}} is how many apps match, and is 1."
+  },
+  "filters.show_other": {
+    "text": "Show {{count}} apps",
+    "description": "Primary button at the foot of Discover's Filters sheet: applies the choices and closes the sheet. {{count}} is how many apps match."
+  },
+  "filters.none": {
+    "text": "No apps match",
+    "description": "Label of the disabled primary button at the foot of Discover's Filters sheet when the choices match no app at all."
   },
   "filter.featured": {
     "text": "Featured",
-    "description": "Filter chip on the Discover screen: show only the apps Homeroom's staff picked to feature."
-  },
-  "filter.notJoined": {
-    "text": "Not joined",
-    "description": "Filter chip on Discover: shows only the apps the viewer has not joined yet, the ones they could still join."
+    "description": "Switch in Discover's Filters sheet: show only the apps Homeroom's staff picked to feature."
   },
   "filter.joined": {
     "text": "Joined",
-    "description": "Filter chip on the Discover screen: show only the apps whose community the viewer has joined."
+    "description": "Third part of Discover's switch: show only the apps whose community the viewer has joined."
   },
   "filter.new": {
     "text": "New",
-    "description": "Filter chip on the Discover screen: show only recently created apps."
+    "description": "Switch in Discover's Filters sheet: show only recently created apps."
   },
   "filter.unreviewed": {
     "text": "Not yet reviewed",
-    "description": "Filter chip on Discover shown only to platform admins: shows only the apps no admin has reviewed in their current version yet."
+    "description": "Switch in Discover's Filters sheet shown only to platform admins: shows only the apps no admin has reviewed in their current version yet."
   },
-  "sort.label": {
-    "text": "Sort",
-    "description": "Label in front of the sort menu on the Discover screen. A noun: the order of the list."
+  "category.groupLabel": {
+    "text": "Filter by type",
+    "description": "Accessible name of Discover's row of app-type chips, under the For you \u00b7 Browse \u00b7 Joined switch, which narrows the list to one kind of app."
   },
-  "sort.selectLabel": {
-    "text": "Sort apps",
-    "description": "Accessible name of the sort menu on the Discover screen. \"Sort\" is a verb here."
+  "category.games": {
+    "text": "Games",
+    "description": "Chip in Discover's type row: only apps whose project says they are games."
+  },
+  "category.social": {
+    "text": "Social",
+    "description": "Chip in Discover's type row: only apps whose project says they are for talking, meeting or doing things with other people."
+  },
+  "category.tools": {
+    "text": "Tools",
+    "description": "Chip in Discover's type row: only apps whose project says they are tools, such as lists, trackers and planners."
+  },
+  "category.learning": {
+    "text": "Learning",
+    "description": "Chip in Discover's type row: only apps whose project says they are for learning or studying."
+  },
+  "category.creative": {
+    "text": "Creative",
+    "description": "Chip in Discover's type row: only apps whose project says they are for making things, such as drawing, writing or music."
+  },
+  "category.other": {
+    "text": "Other",
+    "description": "Chip in Discover's type row: only apps whose project says they fit none of the other types."
   },
   "sort.recommended": {
     "text": "Recommended",
-    "description": "Option in Discover's sort menu: Homeroom's own order, reviewed working apps first."
+    "description": "Order in Discover's Filters sheet: Homeroom's own order, reviewed working apps first."
   },
   "sort.users": {
     "text": "Most users",
-    "description": "Option in Discover's sort menu: apps with the most active users first."
+    "description": "Order in Discover's Filters sheet: apps with the most active users first."
   },
   "sort.active": {
     "text": "Most active",
-    "description": "Option in Discover's sort menu: apps with the most changes gone live in the last 30 days first."
+    "description": "Order in Discover's Filters sheet: apps with the most changes gone live in the last 30 days first."
   },
   "sort.merged": {
     "text": "Most changes live",
-    "description": "Option in Discover's sort menu: apps with the most changes ever gone live first. \"Changes\" is a noun; \"live\" means released to users."
+    "description": "Order in Discover's Filters sheet: apps with the most changes ever gone live first. \"Changes\" is a noun; \"live\" means released to users."
   },
   "sort.newest": {
     "text": "Newest",
-    "description": "Option in Discover's sort menu: most recently created apps first."
+    "description": "Order in Discover's Filters sheet: most recently created apps first."
   },
   "loadError.directoryTitle": {
     "text": "Couldn't load the app directory",
@@ -196,8 +272,16 @@
     "description": "Shown in place of Discover's list when the Not joined filter is on and there is no app the viewer has not joined."
   },
   "empty.joined": {
-    "text": "You haven’t joined anything yet. Join apps from All.",
-    "description": "Shown in place of Discover's list when the Joined filter is on and the viewer has joined no app. \"All\" is the name of the first filter chip; use the same word as that chip."
+    "text": "You haven’t joined anything yet. Join apps from Browse.",
+    "description": "Shown in place of Discover's list when the Joined view is on and the viewer has joined no app. \"Browse\" is the name of the middle part of Discover's own switch; use the same word as that part."
+  },
+  "empty.filters": {
+    "text": "No apps match these filters.",
+    "description": "Shown in place of Discover's list when several filters are on together (a type and more than one Show only switch) and nothing matches them."
+  },
+  "empty.search.filters": {
+    "text": "No apps match “{{query}}” with these filters.",
+    "description": "Shown in place of Discover's list when several filters are on together and the search finds nothing. {{query}} is what the person typed; keep the quotation marks around it in your language's style."
   },
   "empty.unreviewed": {
     "text": "Every app has been reviewed.",
@@ -206,6 +290,10 @@
   "empty.all": {
     "text": "No apps to show yet.",
     "description": "Shown in place of Discover's list when there are no apps at all (or none are new)."
+  },
+  "empty.category": {
+    "text": "No apps of this type here.",
+    "description": "Shown in place of Discover's list when a type chip is pressed and the filter chip above leaves no app of that type (no search text)."
   },
   "list.heading.recommended": {
     "text": "Recommended for you",

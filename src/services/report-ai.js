@@ -271,23 +271,56 @@ function shapeRow(r) {
 
 async function getCached(pool, appId) {
   const { rows } = await pool.query(
-    'SELECT input_hash, narrative, highlights_json, risks_json, owners_json, model, generated_by, generated_at, period_start FROM app_report_ai WHERE app_id = $1',
+    // A row made only to hold a generation's claim (its first) has no report.
+    `SELECT input_hash, narrative, highlights_json, risks_json, owners_json, model, generated_by, generated_at, period_start
+       FROM app_report_ai WHERE app_id = $1 AND input_hash <> ''`,
     [appId]
   );
   return shapeRow(rows[0]);
 }
 
-// One generation per app at a time. Module-local: a second concurrent
-// click 409s instead of double-billing.
-const inFlight = new Set();
+// One generation per app at a time, on any process: a generation claims
+// the app's row (`generating_until`, a lease a crash lets lapse), and a
+// second concurrent click 409s instead of double-billing. The first
+// generation's claim makes the row, with no report in it yet. It was a Set
+// in each process: two clicks on two Pods billed twice.
+const GENERATION_LEASE_MS = 5 * 60 * 1000;
+
+async function claimGeneration(pool, appId) {
+  const { rows: [r] } = await pool.query(
+    `INSERT INTO app_report_ai (app_id, input_hash, narrative, generating_until)
+     VALUES ($1, '', '', NOW() + make_interval(secs => $2))
+     ON CONFLICT (app_id) DO UPDATE SET generating_until = EXCLUDED.generating_until
+       WHERE app_report_ai.generating_until IS NULL OR app_report_ai.generating_until < NOW()
+     RETURNING generating_until::text AS claim`,
+    [appId, GENERATION_LEASE_MS / 1000]
+  );
+  return r ? r.claim : null;
+}
+
+// Its own claim only (the lease to the microsecond, as text): one that
+// lapsed and another took is the other's.
+// A first generation that wrote no report takes its row away again: an older
+// release (during a rollout, or after a rollback) would show it as an empty
+// report.
+async function releaseGeneration(pool, appId, claim) {
+  await pool.query(
+    `DELETE FROM app_report_ai WHERE app_id = $1 AND generating_until = $2::timestamptz AND input_hash = ''`,
+    [appId, claim]
+  );
+  await pool.query(
+    'UPDATE app_report_ai SET generating_until = NULL WHERE app_id = $1 AND generating_until = $2::timestamptz',
+    [appId, claim]
+  );
+}
 
 async function generateForApp({ pool, config, app, userId, since }) {
-  if (inFlight.has(app.id)) {
+  const claim = await claimGeneration(pool, app.id);
+  if (!claim) {
     const err = new Error('A report is already being generated for this app');
     err.code = 'generation_in_flight';
     throw err;
   }
-  inFlight.add(app.id);
   try {
     const { input, knownUsernames } = await buildReportInput(pool, app, { since });
     const hash = fingerprint(input);
@@ -343,10 +376,10 @@ async function generateForApp({ pool, config, app, userId, since }) {
     }
     return { summary: shapeRow(rows[0]), cached: false };
   } finally {
-    inFlight.delete(app.id);
+    await releaseGeneration(pool, app.id, claim).catch(() => {});
   }
 }
 
 module.exports = {
-  buildReportInput, fingerprint, getCached, generateForApp,
+  buildReportInput, fingerprint, getCached, generateForApp, GENERATION_LEASE_MS,
 };

@@ -11,7 +11,8 @@
 //
 // This file pins the new ask end to end:
 //
-//   1. decidePingAsk, the pure rule: native iOS only, and only while the
+//   1. decidePingAsk, the pure rule: native iOS and (since 21 Oct 2026, when
+//      the Android first-run sheet stopped asking) Android, and only while the
 //      permission is still undetermined. The settings snapshot's
 //      `notificationPermission` wins; an older build's push status is
 //      trusted once per device, because a build without push configured
@@ -78,7 +79,7 @@ function fakeNode(tag) {
 function boot(opts = {}) {
   const calls = {
     confirm: [], requestPermissions: 0, settingsReads: 0, pushReads: 0,
-    sheets: 0, pushKicks: 0, errors: [],
+    sheets: 0, pushKicks: 0, errors: [], requestNotificationPermission: 0,
   };
   const storage = opts.storage || new Map();
   const permissions = opts.permissions === undefined
@@ -162,6 +163,13 @@ function boot(opts = {}) {
         permissions: { ...permissions, notificationPermission: 'authorized' },
       };
     },
+    async requestNotificationPermission() {
+      calls.requestNotificationPermission += 1;
+      return opts.requestResult || {
+        granted: true,
+        permissions: { ...permissions, notificationsGranted: true, notificationPermission: 'authorized' },
+      };
+    },
     async establishNativeSession() {
       return { identity: { participantId: String(sandbox.App.user.id) } };
     },
@@ -196,10 +204,15 @@ test('decidePingAsk: native iOS, undetermined, and nothing else', () => {
   assert.equal(decide({}), 'ask');
   assert.equal(decide({ isNative: false }), 'skip', 'a browser has no OS prompt to offer');
   assert.equal(decide({ hasRequestMethod: false }), 'skip');
-  assert.equal(decide({ platform: 'android' }), 'skip',
-    'Android: requestPermissions() is the alarm permission there, and the '
-    + '"Set up your device" sheet already asks for notifications');
-  assert.equal(decide({ platform: null }), 'skip', 'an unknown platform is not iOS');
+  assert.equal(decide({ platform: 'android' }), 'ask',
+    'Android asks here too: the "Set up your device" sheet no longer asks '
+    + 'for notifications');
+  assert.equal(decide({ platform: 'android', notificationPermission: 'denied' }), 'skip',
+    'Android refused, or asked already: not asked again');
+  assert.equal(decide({ platform: 'android', notificationPermission: 'authorized' }), 'skip');
+  assert.equal(decide({ platform: 'android', notificationPermission: undefined }), 'skip',
+    'an older Android build that cannot report the permission is not asked here');
+  assert.equal(decide({ platform: null }), 'skip', 'an unknown platform is not a phone');
   assert.equal(decide({ supported: false }), 'skip',
     'a build that positively lacks requestPermissions');
   assert.equal(decide({ supported: null }), 'ask',
@@ -297,20 +310,33 @@ test('denied or already allowed: nothing appears, nothing is requested', async (
   }
 });
 
-test('outside the app, and on Android, nothing appears and nothing is read', async () => {
+test('outside the app nothing appears; on Android the notification permission is asked', async () => {
   const browser = boot({ native: false });
   assert.equal((await browser.NativeChrome.askForPing({ reason: 'app-building' })).shown, false);
   assert.equal(browser.calls.confirm.length, 0);
 
   const android = boot({
     kit: { platform: 'android', toast() {} },
-    permissions: { ...ANDROID, notificationPermission: 'notDetermined' },
+    capabilities: ['getSettingsState', 'requestNotificationPermission'],
+    permissions: { ...ANDROID, notificationsGranted: false, notificationPermission: 'notDetermined' },
   });
-  assert.equal((await android.NativeChrome.askForPing({ reason: 'app-building' })).shown, false);
-  assert.equal(android.calls.confirm.length, 0);
+  const asked = await android.NativeChrome.askForPing({ reason: 'app-building' });
+  assert.equal(asked.shown, true, 'the in-app question first');
+  assert.equal(android.calls.confirm.length, 1);
+  assert.equal(asked.granted, true);
+  assert.equal(android.calls.requestNotificationPermission, 1,
+    'Notify me is the notification permission alone');
   assert.equal(android.calls.requestPermissions, 0,
     'requestPermissions() is the exact-alarm page on Android');
-  assert.equal(android.calls.settingsReads, 0, 'the kit already said no');
+
+  const refused = boot({
+    kit: { platform: 'android', toast() {} },
+    capabilities: ['getSettingsState', 'requestNotificationPermission'],
+    permissions: { ...ANDROID, notificationsGranted: false, notificationPermission: 'denied' },
+  });
+  assert.equal((await refused.NativeChrome.askForPing({ reason: 'app-building' })).shown, false,
+    'refused (or asked before): Android may show no dialog, so nothing is offered');
+  assert.equal(refused.calls.confirm.length, 0);
 
   // A kit that cannot tell: the snapshot's own platform decides.
   const unsure = boot({
@@ -492,9 +518,30 @@ test('the door passes a reason native-chrome.js has copy for, and never throws',
   const seen = [];
   console.warn = () => {};
   try {
-    globalThis.window = { NativeChrome: { askForPing(o) { seen.push(o); return Promise.resolve(); } } };
-    askForPingWhileBotBuilds();
-    assert.deepEqual(seen, [{ reason: PING_ASK_REASON }]);
+    // The account's answers are read first (../notify-ask/ask-state.ts):
+    // never asked here, so the phone's own rules decide.
+    const posted = [];
+    const previousFetch = globalThis.fetch;
+    globalThis.fetch = async (url, init) => {
+      if (init && init.method === 'POST') posted.push(JSON.parse(init.body));
+      return { ok: true, async json() { return { asks: [], phone: false, email: false }; } };
+    };
+    try {
+      globalThis.window = {
+        usernode: { isNative: true },
+        NativeChrome: {
+          async notifyAskPermission() { return { isNative: true, platform: 'ios', permission: 'undetermined', canRequest: true }; },
+          askForPing(o) { seen.push(o); return Promise.resolve({ shown: true, outcome: 'notify', granted: true }); },
+        },
+      };
+      askForPingWhileBotBuilds();
+      for (let i = 0; i < 5; i++) await settle();
+      assert.deepEqual(seen, [{ reason: PING_ASK_REASON }]);
+      assert.deepEqual(posted, [{ surface: 'app', moment: 'app_building', answer: 'yes' }],
+        'the answer is the account\'s');
+    } finally {
+      globalThis.fetch = previousFetch;
+    }
 
     globalThis.window = { NativeChrome: { askForPing() { throw new Error('boom'); } } };
     assert.doesNotThrow(() => askForPingWhileBotBuilds());

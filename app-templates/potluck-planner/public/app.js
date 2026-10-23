@@ -1,8 +1,14 @@
-// The potluck planner screen. Talks to api.js; every request carries the
+// The potluck planner's screens. Talks to api.js; every request carries the
 // platform token the frame was opened with, which is how the server knows
 // who you are.
 //
-// Each potluck shows who is bringing what by course. Every dish can get a
+// Three screens, one at a time, each with its own address in the URL's
+// hash so the phone's back and a reload land where you were: the potlucks
+// (#/), one potluck (#/p/<id>) and planning a new one (#/plan). Moving
+// between them slides like a phone's own screens (the native kit's
+// transition, when it is there).
+//
+// A potluck shows who is bringing what by course. Every dish can get a
 // reaction and comments ("is it vegetarian?"), and every potluck has its own
 // chat underneath.
 //
@@ -14,14 +20,22 @@
   var token = new URLSearchParams(window.location.search).get('token') || '';
 
   var el = {
+    listView: document.getElementById('list-view'),
+    potluckView: document.getElementById('potluck-view'),
+    planView: document.getElementById('plan-view'),
     status: document.getElementById('status'),
     loading: document.getElementById('loading'),
     error: document.getElementById('error'),
     empty: document.getElementById('empty'),
+    upcomingSection: document.getElementById('upcoming-section'),
     potlucks: document.getElementById('potlucks'),
-    plan: document.getElementById('plan-form'),
     pastSection: document.getElementById('past-section'),
     past: document.getElementById('past'),
+    potluck: document.getElementById('potluck'),
+    potluckLoading: document.getElementById('potluck-loading'),
+    potluckError: document.getElementById('potluck-error'),
+    potluckGone: document.getElementById('potluck-gone'),
+    plan: document.getElementById('plan-form'),
   };
 
   function api(method, url, body) {
@@ -86,6 +100,22 @@
     });
   }
 
+  /**
+   * Ask before something that cannot be undone. With the native kit, its
+   * action sheet: the phone's own way to confirm, with the destructive
+   * choice in red and a Cancel. Without it, the second tap above.
+   */
+  function confirmFirst(button, question, verb, action) {
+    if (window.unNative && window.unNative.actionSheet) {
+      button.addEventListener('click', function () {
+        window.unNative.actionSheet({ title: question, actions: [{ label: verb, destructive: true }] })
+          .then(function (chosen) { if (chosen) action(); });
+      });
+    } else {
+      tapTwice(button, 'Tap again to ' + verb.toLowerCase(), action);
+    }
+  }
+
   /** A small "x" drawn as an SVG, for remove buttons. */
   function crossIcon() {
     var ns = 'http://www.w3.org/2000/svg';
@@ -135,6 +165,36 @@
     return n + ' ' + (n === 1 ? one : many);
   }
 
+  /** "mains", "mains or drinks", "sides, salads or drinks". */
+  function either(words) {
+    return words.length === 1 ? words[0] : words.slice(0, -1).join(', ') + ' or ' + words[words.length - 1];
+  }
+
+  /** The courses nobody has taken yet, in lower case ("Other" never counts). */
+  function openCourses(p) {
+    return p.courses
+      .filter(function (c) { return c.course !== 'Other' && !c.dishes.length; })
+      .map(function (c) { return c.course.toLowerCase(); });
+  }
+
+  /** A right-pointing chevron, the sign that a row opens something. */
+  function chevron() {
+    var ns = 'http://www.w3.org/2000/svg';
+    var svg = document.createElementNS(ns, 'svg');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('class', 'h-5 w-5 shrink-0 text-muted');
+    svg.setAttribute('aria-hidden', 'true');
+    var path = document.createElementNS(ns, 'path');
+    path.setAttribute('d', 'M9 6l6 6-6 6');
+    path.setAttribute('fill', 'none');
+    path.setAttribute('stroke', 'currentColor');
+    path.setAttribute('stroke-width', '2');
+    path.setAttribute('stroke-linecap', 'round');
+    path.setAttribute('stroke-linejoin', 'round');
+    svg.appendChild(path);
+    return svg;
+  }
+
   // ── A potluck ──────────────────────────────────────────────────────────
 
   // Whose reaction picker is open, and whose comments are showing, by dish id.
@@ -160,6 +220,7 @@
     input.maxLength = 500;
     input.placeholder = placeholder;
     input.setAttribute('aria-label', label);
+    input.setAttribute('enterkeyhint', 'send');
     form.appendChild(input);
     var send = h('button', 'btn-secondary shrink-0', 'Send');
     send.type = 'submit';
@@ -324,6 +385,7 @@
     dish.required = true;
     dish.placeholder = 'e.g. apple pie';
     dish.setAttribute('aria-label', 'Your dish');
+    dish.setAttribute('enterkeyhint', 'done');
     fields.appendChild(dish);
     var add = h('button', 'btn-secondary shrink-0', 'Add');
     add.type = 'submit';
@@ -341,22 +403,33 @@
     return form;
   }
 
-  function potluckBlock(p, data) {
-    var block = h('article', 'flex flex-col gap-3');
+  /** One potluck, the whole of its own screen. `past`: it has happened. */
+  function potluckBlock(p, data, past) {
+    var block = h('article', 'flex flex-col gap-4');
     block.setAttribute('data-potluck', String(p.id));
 
-    var head = h('div', 'flex flex-col gap-0.5 px-1');
-    head.appendChild(h('h2', 'text-heading break-words', p.title));
-    head.appendChild(h('p', 'text-body', when(p.startsAt, data.now) + (p.place ? ' · ' + p.place : '')));
-    var by = h('p', 'flex items-center gap-2 text-small text-muted', (p.mine ? 'Planned by you' : 'Planned by @' + p.host) + ' · ' + count(p.dishes, 'dish', 'dishes'));
-    if (p.mine) {
+    var head = h('div', 'flex flex-col gap-1 px-1');
+    head.appendChild(h('h2', 'text-title break-words', p.title));
+    head.appendChild(h('p', 'text-body break-words', when(p.startsAt, data.now) + (p.place ? ' · ' + p.place : '')));
+    var actionError = h('p', 'text-small text-danger');
+    actionError.setAttribute('role', 'alert');
+    actionError.hidden = true;
+    var by = h('div', 'flex flex-wrap items-center gap-x-2 text-small text-muted');
+    by.appendChild(h('p', 'min-w-0 break-words', (p.mine ? 'Planned by you' : 'Planned by @' + p.host) + ' · ' + count(p.dishes, 'dish', 'dishes')));
+    if (p.mine && !past) {
       var off = h('button', 'btn-secondary -my-2 ml-auto border-0 bg-transparent px-2 text-small text-muted', 'Call it off');
       off.type = 'button';
-      // Everyone's dishes for it go too.
-      tapTwice(off, 'Tap again to call it off', function () { act(api('DELETE', '/api/potlucks/' + p.id)); });
+      // Everyone's dishes for it go too; back to the potlucks once it has.
+      confirmFirst(off, 'Call off ' + p.title + '? Everyone\'s dishes for it go too.', 'Call it off', function () {
+        api('DELETE', '/api/potlucks/' + p.id)
+          .then(function () { showStatus(null); back(); return load(); })
+          .catch(function (err) { showStatus(err, actionError); });
+      });
       by.appendChild(off);
     }
     head.appendChild(by);
+    head.appendChild(actionError);
+    if (past) head.appendChild(h('p', 'text-small text-muted', 'This potluck has passed.'));
     block.appendChild(head);
 
     var list = h('ul', 'list');
@@ -366,26 +439,33 @@
     });
     block.appendChild(list);
 
-    var open = p.courses
-      .filter(function (c) { return c.course !== 'Other' && !c.dishes.length; })
-      .map(function (c) { return c.course.toLowerCase(); });
-    if (open.length) {
-      var words = open.length === 1 ? open[0] : open.slice(0, -1).join(', ') + ' or ' + open[open.length - 1];
-      block.appendChild(h('p', 'px-1 text-small text-muted', 'Nobody is bringing ' + words + ' yet.'));
-    }
+    if (past) return block;
+
+    var open = openCourses(p);
+    if (open.length) block.appendChild(h('p', 'px-1 text-small text-muted', 'Nobody is bringing ' + either(open) + ' yet.'));
 
     if (data.me) block.appendChild(bringForm(p, data.courses));
     block.appendChild(chat(p));
     return block;
   }
 
-  function pastRow(p, data) {
-    var row = h('li', 'list-row');
-    var text = h('div', 'min-w-0 flex-1');
-    text.appendChild(h('p', 'text-body break-words', p.title));
-    text.appendChild(h('p', 'text-small text-muted', when(p.startsAt, data.now) + ' · ' + count(p.dishes, 'dish', 'dishes')));
+  /** A potluck in the list: what and when, and what is still missing. Opens it. */
+  function potluckRow(p, data, past) {
+    var li = h('li');
+    var row = h('button', 'list-row w-full text-left hover:bg-raised focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-focus');
+    row.type = 'button';
+    row.setAttribute('data-potluck', String(p.id));
+    var text = h('div', 'flex min-w-0 flex-1 flex-col gap-0.5');
+    text.appendChild(h('p', 'text-body font-medium break-words', p.title));
+    text.appendChild(h('p', 'text-small text-muted break-words', when(p.startsAt, data.now) + (p.place ? ' · ' + p.place : '')));
+    var open = past ? [] : openCourses(p);
+    text.appendChild(h('p', 'text-small text-muted', count(p.dishes, 'dish', 'dishes')
+      + (open.length ? ' · no ' + either(open) + ' yet' : '')));
     row.appendChild(text);
-    return row;
+    row.appendChild(chevron());
+    row.addEventListener('click', function () { go('#/p/' + p.id); });
+    li.appendChild(row);
+    return li;
   }
 
   // ── Loading, empty, error ──────────────────────────────────────────────
@@ -395,21 +475,24 @@
     el.error.hidden = state !== 'error';
     if (state !== 'ready') {
       el.empty.hidden = true;
-      el.potlucks.hidden = true;
+      el.upcomingSection.hidden = true;
       el.pastSection.hidden = true;
     }
+    paintPotluck();
   }
 
   var current = null; // the last list read
+  var failed = false; // the first read failed, and nothing has come back since
 
   function render(data) {
     current = data;
+    failed = false;
     el.potlucks.textContent = '';
-    data.upcoming.forEach(function (p) { el.potlucks.appendChild(potluckBlock(p, data)); });
-    el.potlucks.hidden = !data.upcoming.length;
+    data.upcoming.forEach(function (p) { el.potlucks.appendChild(potluckRow(p, data, false)); });
+    el.upcomingSection.hidden = !data.upcoming.length;
     el.empty.hidden = !!data.upcoming.length;
     el.past.textContent = '';
-    data.past.forEach(function (p) { el.past.appendChild(pastRow(p, data)); });
+    data.past.forEach(function (p) { el.past.appendChild(potluckRow(p, data, true)); });
     el.pastSection.hidden = !data.past.length;
     // The plan form's day starts no earlier than today.
     var now = new Date(data.now);
@@ -417,19 +500,104 @@
     show('ready');
   }
 
+  /** The potluck screen, for the potluck its address names. */
+  function paintPotluck() {
+    var r = route();
+    if (r.screen !== 'potluck') return;
+    var p = null;
+    var past = false;
+    if (current) {
+      p = current.upcoming.filter(function (x) { return x.id === r.id; })[0] || null;
+      if (!p) {
+        p = current.past.filter(function (x) { return x.id === r.id; })[0] || null;
+        past = !!p;
+      }
+    }
+    el.potluckLoading.hidden = !!current || failed;
+    el.potluckError.hidden = !!current || !failed;
+    el.potluckGone.hidden = !current || !!p;
+    el.potluck.hidden = !p;
+    el.potluck.textContent = '';
+    if (p) el.potluck.appendChild(potluckBlock(p, current, past));
+  }
+
+  // ── Screens ────────────────────────────────────────────────────────────
+
+  /** Where the address says we are: { screen: 'list' | 'plan' | 'potluck', id }. */
+  function route() {
+    var m = /^#\/p\/(\d+)$/.exec(window.location.hash);
+    if (m) return { screen: 'potluck', id: Number(m[1]) };
+    if (window.location.hash === '#/plan') return { screen: 'plan' };
+    return { screen: 'list' };
+  }
+
+  function depth(r) { return r.screen === 'list' ? 0 : 1; }
+
+  var shown = route();
+  var pushed = 0; // screens this visit went forward to that Back can return from
+  var listScroll = 0;
+  var nextMotion = null;
+
+  /** Forward to another screen: a new entry the phone's back returns from. */
+  function go(hash) {
+    if (window.location.hash === hash) return;
+    pushed += 1;
+    window.location.hash = hash;
+  }
+
+  /** Back to the potlucks: the way we came if we came that way, else straight there. */
+  function back() {
+    if (pushed > 0) window.history.back();
+    else window.location.replace('#/');
+  }
+
+  function showScreen(r, motion) {
+    if (shown.screen === 'list' && r.screen !== 'list') listScroll = window.scrollY;
+    var apply = function () {
+      el.listView.hidden = r.screen !== 'list';
+      el.potluckView.hidden = r.screen !== 'potluck';
+      el.planView.hidden = r.screen !== 'plan';
+      paintPotluck();
+      if (r.screen === 'plan') showStatus(null, planError);
+      window.scrollTo(0, r.screen === 'list' ? listScroll : 0);
+    };
+    shown = r;
+    if (motion !== 'none' && window.unNative && window.unNative.transition) window.unNative.transition(apply, { type: motion });
+    else apply();
+  }
+
+  window.addEventListener('hashchange', function () {
+    var r = route();
+    var motion = nextMotion || (depth(r) > depth(shown) ? 'push' : depth(r) < depth(shown) ? 'pop' : 'none');
+    nextMotion = null;
+    if (motion === 'pop' && pushed > 0) pushed -= 1;
+    picking = null;
+    showScreen(r, motion);
+  });
+
+  document.getElementById('plan-start').addEventListener('click', function () { go('#/plan'); });
+  document.getElementById('plan-back').addEventListener('click', back);
+  document.getElementById('potluck-back').addEventListener('click', back);
+
   var loaded = false;
   var loading = null;
+  var again = false;
   function load() {
-    if (loading) return loading;
+    // A read already on its way may have left before the change just made:
+    // read once more when it is back.
+    if (loading) { again = true; return loading; }
     loading = api('GET', '/api/potlucks')
       .then(function (data) { loaded = true; render(data); })
       .catch(function (err) {
         // A refresh that fails keeps what is on screen; only a first load
         // with nothing to show turns into the error state.
         if (loaded) showStatus(err);
-        else show('error');
+        else { failed = true; show('error'); }
       })
-      .then(function () { loading = null; });
+      .then(function () {
+        loading = null;
+        if (again) { again = false; return load(); }
+      });
     return loading;
   }
 
@@ -438,23 +606,52 @@
     e.preventDefault();
     var f = el.plan.elements;
     if (!f.title.value.trim() || !f.date.value || !f.time.value) return;
+    if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
     // The planner's own day and time, sent as one moment.
     var startsAt = new Date(f.date.value + 'T' + f.time.value);
-    act(api('POST', '/api/potlucks', { title: f.title.value, place: f.place.value, startsAt: startsAt.toISOString() })
-      .then(function () { el.plan.reset(); window.scrollTo({ top: 0, behavior: 'smooth' }); }), planError);
+    api('POST', '/api/potlucks', { title: f.title.value, place: f.place.value, startsAt: startsAt.toISOString() })
+      .then(function (made) {
+        showStatus(null, planError);
+        el.plan.reset();
+        return load().then(function () {
+          // Into the potluck just planned, in the planning screen's place:
+          // Back from it goes to the potlucks, not to an empty form.
+          nextMotion = 'push';
+          window.location.replace('#/p/' + made.id);
+        });
+      })
+      .catch(function (err) { showStatus(err, planError); });
   });
   document.getElementById('retry').addEventListener('click', function () { show('loading'); load(); });
+  document.getElementById('potluck-retry').addEventListener('click', function () {
+    failed = false;
+    paintPotluck();
+    load();
+  });
 
-  // Other people sign up, react and chat too: look again every 10 seconds
-  // while the app is on screen, and straight away when it comes back.
-  // Skipped while someone is typing or choosing a reaction, so a refresh
-  // never eats a half-written dish or message.
-  setInterval(function () {
+  // Other people sign up, react and chat too: whenever anybody changes
+  // something, the potlucks are fetched again at once, and looked at every
+  // minute regardless (public/live-updates.js). Not while someone is typing
+  // or choosing a reaction: what changed then is fetched the moment they are
+  // done, so a refresh never eats a half-written dish or message.
+  function quiet() {
     var active = document.activeElement;
     var typing = active && (active.tagName === 'INPUT' || active.tagName === 'SELECT') && (active.value || active.tagName === 'SELECT');
-    if (!document.hidden && !typing && picking === null) load();
-  }, 10000);
-  document.addEventListener('visibilitychange', function () { if (!document.hidden) load(); });
+    return !typing && picking === null;
+  }
+  if (window.LiveUpdates) window.LiveUpdates.watch({ refresh: load, quiet: quiet });
 
-  load();
+  // The first screen, drawn: Homeroom keeps its opening cover up until then
+  // (usernode.ready, the platform bridge), so the app appears in one step
+  // rather than as loading shapes that then change. The cover lifts after a
+  // few seconds regardless.
+  showScreen(shown, 'none');
+  var first = load();
+  if (window.usernode && window.usernode.ready) window.usernode.ready(first);
+  // Pulling the page down past its top reads everything again, with the
+  // spinner a phone's own lists have, and bounces inside the app rather
+  // than dragging Homeroom along with it.
+  first.then(function () {
+    if (window.unNative && window.unNative.attachPullToRefresh) window.unNative.attachPullToRefresh(window, function () { return load(); });
+  });
 })();

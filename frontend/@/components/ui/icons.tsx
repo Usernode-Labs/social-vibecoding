@@ -216,6 +216,9 @@ export const HomeIcon = strokedPath(
 );
 
 export const SearchIcon = stroked('SearchIcon', 'M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z');
+
+// Discover's Filters button: the three shortening rules of a filter control.
+export const FilterIcon = stroked('FilterIcon', 'M4 6h16M7 12h10M10 18h4');
 /** Discover's tab (v3, 18 Oct 2026): a compass, the place you go to find something new, where the magnifier said "search". */
 export const CompassIcon = stroked('CompassIcon', ['M12 3.5a8.5 8.5 0 110 17 8.5 8.5 0 010-17z', 'M15.5 8.5l-2 5-5 2 2-5z']);
 
@@ -470,6 +473,9 @@ export const PlayIcon = stroked(
   'M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.347a1.125 1.125 0 010 1.972l-11.54 6.347a1.125 1.125 0 01-1.667-.986V5.653z',
 );
 export const ChevronUpIcon = stroked('ChevronUpIcon', 'M5 15l7-7 7 7');
+// The before/after slider's Before side (features/review-flow/compare.tsx):
+// a clock turning back. Its After side is SparklesIcon.
+export const HistoryIcon = stroked('HistoryIcon', ['M3 12a9 9 0 1 0 2.64-6.36', 'M3 4.5V9h4.5', 'M12 7.5V12l3 2']);
 
 export const ThumbsUpIcon = stroked(
   'ThumbsUpIcon',

@@ -1663,9 +1663,25 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // section, #admin/bot-configs) and its Calls tab, two routes no other
   // check reaches. 737 leaves 143 slots.
   //
+  // 737 → 738: +1: a change whose checks failed tells its author what went
+  // wrong in plain words, with Fix it beside a quieter re-run (?demo=1
+  // proposal 9000494, the viewer's own), a route no other check reaches.
+  // The unit-suite row's new shape folded into the #3978 check on 9000093.
+  // 738 leaves 142 slots.
+  //
+  // 738 → 739: +1: inside the Homeroom app a signed-out visitor still opens
+  // on the whole story, with a Look around first link under it
+  // (?shot=anon&un-native-webview=1#landing), a route no other check
+  // reaches; the browsers' Discover keeps the landing's own two checks.
+  // 739 leaves 141 slots.
+  //
   // A mismatch says what the count is, what it is pinned at, and what to do
   // (tests/lib/check-cap.js) — it used to print only `812 !== 811`.
-  checkCap.assertPinned(DAPP.tests.length, 737);
+  //
+  // 739 → 740: +1: Admin → SMS delivery shows the provider switch, the
+  // Sender IDs and the recent texts (?demo=1#admin/sms), a route no other
+  // check reaches. 740 leaves 140 slots.
+  checkCap.assertPinned(DAPP.tests.length, 740);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
-const { englishPlatformI18n } = require('./lib/platform-i18n');
+const { englishPlatformI18n, message } = require('./lib/platform-i18n');
 const source = fs.readFileSync(path.join(__dirname, '../frontend/src/features/dialogs/feedback-controller.js'), 'utf8')
   .replace(/^import .*$/gm, '').replace(/^export /gm, '') + '\nglobalThis.Feedback = Feedback;';
 const moment = { userId: 7, appSlug: 'filed-app', issueNumber: 41, canFix: true };
@@ -161,7 +161,7 @@ test('an ordinary posted request stays on its own confirmation, with the way to 
   // before the UI overhaul (#3400) took it out.
   assert.equal(h.el('feedback-sent-title').textContent, 'Thanks! Posted to Homeroom');
   assert.equal(h.el('feedback-sent-line').textContent,
-    'Your idea is on the board now. Find it on your profile, under Your requests.');
+    'Your idea is on the board now.');
   assert.match(h.el('feedback-sent-notice').textContent, /^Pledged 1 kudos.*4 left/);
   assert.equal(h.el('feedback-sent-notice').classList.contains('hidden'), false);
   for (const id of ['feedback-text', 'feedback-title']) assert.equal(h.el(id).readOnly, true);
@@ -188,6 +188,36 @@ test('?shot=feedback-sent poses the sent confirmation without filing anything', 
   const app = fs.readFileSync(path.join(__dirname, '../public/js/app.js'), 'utf8');
   assert.match(app, /shot !== 'feedback-sent' && shot !== 'feedback-bot'\) return;/, 'the shot names are accepted');
   assert.match(app, /App\._simulateFeedbackSent\?\.\(\);/);
+});
+// #5687: the sheet's one job is to confirm the request was posted, so Done
+// is the filled primary button and comes first; Open chat is the one neutral
+// button under it, and See your requests and Edit are quiet links under the
+// buttons.
+test('#5687: Done leads the sent confirmation as its filled primary button', () => {
+  const src = fs.readFileSync(path.join(__dirname, '../frontend/src/features/dialogs/feedback.tsx'), 'utf8');
+  const at = (id) => src.indexOf(`id="${id}"`);
+  const order = ['feedback-sent-done', 'feedback-sent-chat', 'feedback-sent-mine', 'feedback-sent-edit', 'feedback-sent-fix'].map(at);
+  assert.ok(order.every((pos) => pos > 0), 'every action is there');
+  assert.deepEqual([...order].sort((a, b) => a - b), order, 'Done, then Open chat, See your requests, Edit and the small link');
+  assert.match(src, /<Button id="feedback-sent-done" className="min-h-\[44px\]">/, 'the filled, default variant');
+  assert.match(src, /<Button id="feedback-sent-chat" variant="neutral" ink="neutral"/, 'Open chat is a secondary button');
+});
+// Done, then quiet links: See your requests and Edit are one centred row of
+// muted, underlined text links ("See your requests · Edit") with 44px tap
+// targets. Nothing fills them, so Done is the only filled control on the sheet.
+test('See your requests and Edit are one row of quiet links, with a dot only between two shown links', () => {
+  const src = fs.readFileSync(path.join(__dirname, '../frontend/src/features/dialogs/feedback.tsx'), 'utf8');
+  const start = src.indexOf('<section id="feedback-sent"');
+  const sheet = src.slice(start, src.indexOf('</section>', start));
+  const QUIET = 'variant="unstyled" size="inline" ink="none" className="';
+  const LINK = 'min-h-[44px] px-2 text-zinc-500 underline underline-offset-2 dark:text-zinc-400"';
+  assert.ok(sheet.includes(`<Button id="feedback-sent-mine" type="button" ${QUIET}${LINK}>`), 'See your requests is a quiet link, shown by default');
+  assert.ok(sheet.includes(`<Button id="feedback-sent-edit" type="button" ${QUIET}hidden ${LINK}>`), 'Edit is a quiet link, hidden until the controller offers it');
+  const row = sheet.slice(sheet.lastIndexOf('<div', sheet.indexOf('id="feedback-sent-mine"')), sheet.indexOf('</div>', sheet.indexOf('id="feedback-sent-edit"')));
+  assert.match(row, /^<div className="flex items-center justify-center \[&:not\(:has\(>:not\(\.hidden\)\)\)\]:hidden">/, 'centred, and gone when neither link shows');
+  assert.match(row, /<span aria-hidden="true" className="hidden [^"]*\[:not\(\.hidden\)\+&:has\(\+:not\(\.hidden\)\)\]:inline">·<\/span>/, 'the dot shows only between two shown links');
+  assert.ok(row.indexOf('id="feedback-sent-mine"') < row.indexOf('·') && row.indexOf('·') < row.indexOf('id="feedback-sent-edit"'), 'See your requests · Edit');
+  assert.doesNotMatch(sheet, /id="feedback-sent-(mine|edit)"[^>]*variant="neutral"/, 'neither is a filled button any more');
 });
 test('Done closes the sent confirmation and goes nowhere', async () => {
   const h = harness({ response: {} }); await h.submit();
@@ -307,7 +337,7 @@ test('B8: a request Homeroom bot builds is answered with its idea underway, how 
   assert.equal(h.el('feedback-sent-title').textContent, BOT_TITLE);
   assert.equal(h.el('feedback-sent-line').textContent, botLine(6));
   assert.ok(h.el('feedback-sent-first').classList.contains('hidden'), 'not a first request, so no first-request line');
-  assert.equal(h.el('feedback-sent-chat').classList.contains('hidden'), false, 'Open chat leads');
+  assert.equal(h.el('feedback-sent-chat').classList.contains('hidden'), false, 'Open chat shows, under Done');
   assert.ok(h.el('feedback-sent-mine').classList.contains('hidden'), 'the chat is where to find it');
   assert.equal(h.el('feedback-sent-fix').classList.contains('hidden'), false, 'building it yourself is the small link');
   h.el('feedback-sent-chat').click();
@@ -322,8 +352,10 @@ test('#3971: a first request the bot builds is the bot\'s answer, with the first
   assert.equal(h.el('feedback-sent-title').textContent, BOT_TITLE);
   assert.equal(h.el('feedback-sent-line').textContent, botLine(6));
   assert.equal(h.el('feedback-sent-first').classList.contains('hidden'), false, 'the first request says so');
-  assert.equal(h.el('feedback-sent-first-line').textContent, 'You just helped shape Other App.');
-  assert.equal(h.el('feedback-sent-chat').classList.contains('hidden'), false, 'Open chat still leads');
+  // #5757: this submits to Homeroom, so the box names Homeroom rather than
+  // the app that happened to be open.
+  assert.equal(h.el('feedback-sent-first-line').textContent, 'You just helped shape Homeroom.');
+  assert.equal(h.el('feedback-sent-chat').classList.contains('hidden'), false, 'Open chat is still there, under Done');
   // Another account's moment is not this person's first request.
   const other = harness({ response: { firstFeedback: { ...moment, userId: 8 }, homeroomBot: BOT } });
   await other.submit();
@@ -334,6 +366,22 @@ test('#3971: a first request the bot builds is the bot\'s answer, with the first
   h.sandbox.fetch = async () => ({ ok: true, json: async () => ({ homeroomBot: BOT }) });
   await h.submit();
   assert.ok(h.el('feedback-sent-first').classList.contains('hidden'));
+});
+// #5757: the box names the place the request went to. A first request sent to
+// an app still names that app; and the box now says what the bot does next.
+test('#5757: a first request to an app names the app, and the box says the bot will look at it', async () => {
+  const h = harness({ response: { firstFeedback: moment, homeroomBot: BOT } });
+  h.el('feedback-text').value = 'The board jumps.';
+  h.el('feedback-target-app').click();
+  h.el('feedback-submit').click();
+  await settle();
+  assert.equal(h.el('feedback-sent-first-line').textContent, 'You just helped shape Other App.');
+  // The line is static React text, so the controller never writes into it.
+  const tsx = require('node:fs').readFileSync(require('node:path').join(__dirname, '../frontend/src/features/dialogs/feedback.tsx'), 'utf8');
+  const box = tsx.slice(tsx.indexOf('<div id="feedback-sent-first"'), tsx.indexOf('<div id="feedback-sent-first"') + 2000);
+  assert.match(box, /t\('dialogs:feedback\.sent\.firstBot'\)/);
+  assert.equal(message('dialogs:feedback.sent.firstBot'),
+    'Homeroom bot will pick up your request and look at it. It will message you in your chat with it: a question if something is unclear, a note if a person needs to decide, or a change to vote on if it can build it.');
 });
 test('#3971: the minutes fall back to 8 when the post does not say', async () => {
   const h = harness({ response: { homeroomBot: { ...BOT, typicalMinutes: null } } });
@@ -348,7 +396,7 @@ test('#3971: the group path is thanked and still says where it went', async () =
   await settle();
   assert.equal(h.el('feedback-sent-title').textContent, "Thanks! Sent to Other App's group");
   assert.equal(h.el('feedback-sent-line').textContent,
-    'Your idea is on the board now. Find it on your profile, under Your requests.');
+    'Your idea is on the board now.');
   assert.ok(h.el('feedback-sent-first').classList.contains('hidden'));
 });
 test('B8: Build it now opens the request on the board and starts a change from it', async () => {
@@ -365,7 +413,7 @@ test('B8: no link for somebody who could not build it, and the ordinary words wh
   const plain = harness({ response: {} });
   await plain.submit();
   assert.equal(plain.el('feedback-sent-line').textContent,
-    'Your idea is on the board now. Find it on your profile, under Your requests.');
+    'Your idea is on the board now.');
   assert.ok(plain.el('feedback-sent-chat').classList.contains('hidden'));
   assert.equal(plain.el('feedback-sent-mine').classList.contains('hidden'), false);
   // ?shot=feedback-bot poses it without filing anything.

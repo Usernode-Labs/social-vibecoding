@@ -2857,9 +2857,9 @@ test('#4457, #4486, #4718: a change up for a vote keeps its vote on its own line
   assert.match(html, /<span class="dev-ws-tag" data-tone="plain"><svg[^>]*>.*?<\/svg>Preview ready<\/span><\/span><span class="dev-ws-wrow-votes">/, 'a tag without short words draws its label, and the tags line ends before the vote');
   assert.match(CSS, /\.dev-ws-wrow-votes \{ margin-top: 6px; display: flex; align-items: center; \}/);
   assert.match(CSS, /\.dev-ws-wvote \{\s*position: relative; z-index: 1; margin-left: auto;/);
-  const short = { ...brief, tags: [{ label: 'Taking before & after shots', short: 'Taking shots', tone: 'run' }, { label: 'Preview ready', short: 'Preview', tone: 'plain', glyph: 'eye' }] };
+  const short = { ...brief, tags: [{ label: 'Taking before & after screenshots', short: 'Taking screenshots', tone: 'run' }, { label: 'Preview ready', short: 'Preview', tone: 'plain', glyph: 'eye' }] };
   const shortHtml = renderToHtml(createElement(WorkRow, { row: { ...row, brief: short }, slug: 'demo-app' }));
-  assert.match(shortHtml, /<span class="dev-ws-tag" data-tone="run" title="Taking before &amp; after shots"><span class="dc-status-spinner-arc" aria-hidden="true"><\/span><span aria-hidden="true">Taking shots<\/span><span class="sr-only">Taking before &amp; after shots<\/span><\/span>/);
+  assert.match(shortHtml, /<span class="dev-ws-tag" data-tone="run" title="Taking before &amp; after screenshots"><span class="dc-status-spinner-arc" aria-hidden="true"><\/span><span aria-hidden="true">Taking screenshots<\/span><span class="sr-only">Taking before &amp; after screenshots<\/span><\/span>/);
   assert.match(shortHtml, /title="Preview ready">.*<span aria-hidden="true">Preview<\/span><span class="sr-only">Preview ready<\/span><\/span>/);
   const { voteSpecs } = loadTsx('frontend/src/features/dev-board/card/fold.tsx');
   assert.ok(voteSpecs(row.card), 'the fixture can vote');
@@ -2879,7 +2879,7 @@ test('#4716: Your work is This week\'s one-line row: the title, its pill and Vot
   const row = [...v.votes.rows, ...(v.since ? v.since.rows : [])].find((r) => r.t === 'card' && r.card.attrs['data-proposal-row']);
   assert.ok(row, 'a proposal row');
   const brief = { kind: 'change', noun: 'change', n: 34, by: 'bob', mine: false, category: '', replies: 0, linked: [], closed: [], stage: 'vote', at: 0,
-    ago: '4m ago', tags: [{ label: 'Taking before & after shots', short: 'Taking shots', tone: 'run' }], vote: { yes: 0, need: 1, ask: true } };
+    ago: '4m ago', tags: [{ label: 'Taking before & after screenshots', short: 'Taking screenshots', tone: 'run' }], vote: { yes: 0, need: 1, ask: true } };
   const html = renderToHtml(createElement(WorkRow, { row: { ...row, brief }, slug: 'demo-app', variant: 'line' }));
   // The first line: the small glyph (This week's), the title, then the
   // card's own status pill and its Vote at the line's end, the pill first.
@@ -2927,7 +2927,7 @@ test('#4716: Your work\'s tags line names the bot once and you never, drops the 
     { label: 'Conflicts with main · 3 files', tone: 'warn' },
     { label: 'Checks failing · 1', tone: 'bad' },
     { label: 'Preview ready to try', short: 'Preview', tone: 'plain', glyph: 'eye' },
-    { label: 'Taking shots', tone: 'run' },
+    { label: 'Taking screenshots', tone: 'run' },
   ];
   const html = renderToHtml(createElement(WorkRow, { row: { ...row, brief: { ...base, tags } }, slug: 'demo-app', variant: 'line' }));
   const second = html.slice(html.indexOf('<span class="dev-ws-wrow-status">'));
@@ -2937,7 +2937,7 @@ test('#4716: Your work\'s tags line names the bot once and you never, drops the 
   // The tags by how much they matter, by tone: what is wrong, what needs
   // attention, what is running; then who made it.
   assert.deepEqual([...second.matchAll(/<span class="dev-ws-tag" data-tone="(\w+)"/g)].map((m) => m[1]), ['bad', 'warn', 'run', 'plain']);
-  assert.match(second, new RegExp(`Taking shots</span><span class="dev-ws-tag" data-tone="plain"><svg[^>]*>[\\s\\S]*?</svg>${botName}</span>`),
+  assert.match(second, new RegExp(`Taking screenshots</span><span class="dev-ws-tag" data-tone="plain"><svg[^>]*>[\\s\\S]*?</svg>${botName}</span>`),
     'the bot\'s tag after the status tags');
   assert.equal(html.split(botName).length - 1, 1, 'the bot is named once');
   assert.ok(!html.includes('Preview'), 'no preview tag');
@@ -5131,6 +5131,13 @@ test('the grouping strip is one node, the pane head\'s first row at every width 
   // The buttons are real buttons with a real handler.
   assert.match(WORKSHOP, /onClick=\{\(\) => callAppView\('_setWorkshopGroup', 'category'\)\}/);
   assert.match(WORKSHOP, /onClick=\{\(\) => callAppView\('_setWorkshopGroup', 'stage'\)\}/);
+  // #5820: each tab's word shows beside its glyph from the wide layout up.
+  assert.match(WORKSHOP, /<TagIcon className="dev-ws-group-icon" aria-hidden="true" \/>\s*<span className="sr-only dev-chip-word">\{category\}<\/span>/);
+  assert.match(WORKSHOP, /<BoardIcon className="dev-ws-group-icon" aria-hidden="true" \/>\s*<span className="sr-only dev-chip-word">\{stage\}<\/span>/);
+  // #5820: in the wide layout the word is real text again, and the count
+  // moves into it. Two classes on the override, because Tailwind's
+  // `.sr-only` loads after app.css and one class would lose.
+  assert.match(CSS, /@media \(min-width: 700px\) \{[\s\S]*?\.sr-only\.dev-chip-word \{\s*position: static; width: auto; height: auto; margin: 0; padding: 0;\s*overflow: visible; clip: auto; white-space: nowrap;\s*\}[\s\S]*?\.dev-chip-count \{ display: none; \}/);
 });
 
 test('the declared stage check still describes the pane it has to walk', () => {
@@ -5896,10 +5903,17 @@ test('the feed answers on the Vote sheet and moves by swipe, arrows or keys', ()
   assert.ok(!/data-ws-answer-btn="skip"/.test(WORKSHOP), 'skip is gone from the answers');
   assert.ok(!/dev-ws-answer-skip/.test(WORKSHOP), 'and so is its button');
   assert.match(WORKSHOP, /data-ws-rail-btn="vote"[\s\S]{0,400}?onClick=\{\(\) => toggleSheet\('vote'\)\}/, 'Vote opens the sheet');
-  assert.match(WORKSHOP, /<NeedsVoteForm[\s\S]{0,400}?onCancel=\{closeSheet\}\s*onSend=\{submitVote\}/, 'the sheet holds the vote form');
+  assert.match(WORKSHOP, /<NeedsVoteForm[\s\S]{0,600}?onCancel=\{closeSheet\}\s*onSend=\{submitVote\}/, 'the sheet holds the vote form');
   assert.match(WORKSHOP, /data-ws-vote-form=""[\s\S]{0,120}?<VotePicker[\s\S]{0,900}?withLine/, 'which is the card\'s picker, with its line box');
   assert.ok(!/data-ws-answer-btn="(yes|no)"/.test(WORKSHOP), 'the bare Yes/No pair is gone');
-  assert.match(WORKSHOP, /answer\(voteSide, undefined, voteTrimmed \|\| null\)/, 'the sheet sends its line, so castVote does not ask again');
+  // #5809: a Yes sends its line; a No sends only once an answer is picked,
+  // and carries it with the line.
+  assert.match(WORKSHOP, /answer\('yes', undefined, voteTrimmed \|\| null\)/, 'the sheet sends its line, so castVote does not ask again');
+  assert.match(WORKSHOP, /if \(voteSide === 'no'\) \{\s*if \(!voteChoice\) return;/, 'a No needs its answer first');
+  assert.match(WORKSHOP, /answer\('no', undefined, composeNoReason\(choice, voteLine,/, 'and sends it with the line');
+  const submitVote = WORKSHOP.slice(WORKSHOP.indexOf('const submitVote = () => {'), WORKSHOP.indexOf('const onVoteBoxKey'));
+  assert.ok(submitVote.length > 0, 'submitVote is found');
+  assert.doesNotMatch(submitVote, /voteBoxRef\.current\?\.focus\(\); return;/, 'a lineless No sends rather than refocusing the box');
   assert.match(WORKSHOP, /const opts = reason === undefined \? \{ onSend \} : \{ onSend, reason \};/, 'only the swipe leaves the line to castVote');
   // NOTHING ADVANCES ON ITS OWN. The deck used to jump half a second after a
   // vote, which in a feed reads as the card vanishing under the press: the

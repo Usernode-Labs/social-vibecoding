@@ -23,6 +23,10 @@ poolMod.getPool = () => ({
     capturedQueries.push({ sql: String(sql), params });
     return poolQueryHandler(sql, params);
   },
+  connect: async () => ({ query: (sql, params) => {
+    capturedQueries.push({ sql: String(sql), params });
+    return poolQueryHandler(sql, params);
+  }, release() {} }),
 });
 
 // The bail happens before any billing spend, but the payer is resolved
@@ -50,6 +54,12 @@ ws.broadcastGlobal = () => {};
 // so the suite lifts that one gate, the way it stubs billing;
 // tests/classic-session-read-only.test.js pins the refusal itself.
 require('../src/services/classic-sessions').isClassicSession = () => false;
+// The route asks the turn machine for the turn and follows its stream; the
+// turn's real handler (services/turns.js) runs here, as a workflow process
+// would run it.
+require('./lib/turn-platform').installTurnPlatform({
+  run: { config: { jwtSecret: 's' }, pool: poolMod.getPool() },
+});
 const { sessionRoutes } = require('../src/routes/sessions');
 const express = require('express');
 
@@ -82,6 +92,8 @@ function installHandlers() {
   billingCalls = 0;
   poolQueryHandler = async (sql, params) => {
     const s = String(sql);
+    // Who asked for the turn, read when it runs (services/turns.js).
+    if (/^SELECT id, username FROM users WHERE id = \$1$/.test(s.trim())) return { rows: [{ id: 7, username: 'tester' }] };
     if (/FROM chat_sessions cs/.test(s)) return { rows: [{ ...SESSION_ROW }] };
     if (/INSERT INTO chat_session_messages/.test(s) && /'user'/.test(s)) {
       return { rows: [{ id: 1001 }] };

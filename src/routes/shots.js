@@ -97,7 +97,7 @@ function shotsRoutes(config) {
       if (!ctx) return res.status(404).json({ error: 'Proposal not found' });
       return res.json({
         shots: config.shots?.present
-          ? await view.getForSession(pool, ctx.session, ctx.app.slug)
+          ? await view.getForSession(pool, ctx.session, ctx.app.slug, { viewer: req.user })
           : null,
       });
     } catch (err) {
@@ -243,8 +243,14 @@ function shotsRoutes(config) {
     try {
       const ctx = await loadContext(pool, req.params.slug, id, req.user, 'view');
       if (!ctx) return res.status(404).json({ error: 'Shots artifact not found' });
+      // A dense still (services/shots-density.js) at its own address, for an
+      // account in the New Needs you experiment; anyone else asking for it
+      // gets the 1x copy every other address serves.
+      const dense = req.query.density === 'device' && await view.viewerSeesDense(pool, req.user);
       const { rows } = await pool.query(
-        `SELECT a.data, a.content_type, a.bytes, a.sha256
+        `SELECT CASE WHEN $4 THEN COALESCE(a.dense_data, a.data) ELSE a.data END AS data,
+                CASE WHEN $4 THEN COALESCE(a.dense_sha256, a.sha256) ELSE a.sha256 END AS sha256,
+                a.content_type, a.bytes, a.variant
            FROM shot_artifacts a
            JOIN shot_runs r ON r.id = a.run_id
            JOIN chat_sessions s ON s.id = r.session_id
@@ -259,10 +265,12 @@ function shotsRoutes(config) {
                   s.checks_commit_sha,
                   s.handoff_head_sha
                 )`,
-        [req.params.artifactId, id, ctx.app.id]
+        [req.params.artifactId, id, ctx.app.id, dense === true]
       );
       const artifact = rows[0];
-      if (!artifact) return res.status(404).json({ error: 'Shots artifact not found' });
+      // A close-up (services/shots-closeups.js) is only ever shown to an
+      // account in the experiment, at its own address.
+      if (!artifact || (artifact.variant === 'closeup' && !dense)) return res.status(404).json({ error: 'Shots artifact not found' });
       const data = Buffer.isBuffer(artifact.data) ? artifact.data : Buffer.from(artifact.data || '');
       const range = parseRange(req.headers.range, data.length);
       res.set({

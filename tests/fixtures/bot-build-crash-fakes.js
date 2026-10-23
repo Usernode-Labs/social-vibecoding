@@ -553,6 +553,12 @@ module.exports = function install(world) {
     // proceed, as worker.js does, then remove.
     async removeWorker(sessionId, { proceed = async () => true } = {}) {
       if (!(await proceed())) return { skipped: true };
+      // plan.removeWorkerHold: in a process armed to be killed, the removal
+      // is still under way when it dies (its item held by the killed
+      // process); the kill waits for it (killAfter 'removing').
+      world.mark?.('removing');
+      const { removeWorkerHold } = await planOf((await sessionWorld(sessionId)).appId);
+      if (removeWorkerHold && world.killAt) await new Promise(() => {});
       await world.record('worker.remove', { sessionId: Number(sessionId) });
       return { removed: true };
     },

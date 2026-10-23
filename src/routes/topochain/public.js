@@ -59,6 +59,9 @@ const {
   resolveIdentifier, maskIdentifier, resolveDisplayName, publicUsername, fetchEventLeaderboardRows,
   resolveDefaultPublicEvent,
 } = require('../../services/topochain/event-standings');
+// #5807: the opaque per-row code the season board issues, so a row with no
+// wallet and no Discord handle can still open its activities.
+const { rowRef, findRowByRef, ROW_REF_RE } = require('../../services/topochain/row-ref');
 const {
   ok, fail, iso, num, paginate, meta, ValidationError,
 } = require('./helpers');
@@ -218,6 +221,31 @@ function formatLeaderboardRow(r) {
   };
 }
 
+// The activities list both ways into GET /leaderboard/user-activities end
+// at: one person's recorded points for one event, newest first (#5807 split
+// this out of the identifier path unchanged).
+async function activityList(res, pool, userId, seasonEventId) {
+  const { rows } = await pool.query(
+    `SELECT id, activity_type, points, description, activity_at, metadata
+       FROM user_activities
+      WHERE user_id = $1 AND season_event_id = $2
+      ORDER BY activity_at DESC`,
+    [userId, seasonEventId]
+  );
+
+  const data = rows.map((r) => ({
+    id: Number(r.id),
+    activity_type: r.activity_type,
+    points: num(r.points) ?? 0,
+    description: r.description,
+    activity_at: iso(r.activity_at),
+    activity_time_precision: activityTimePrecision(r),
+    metadata: r.metadata,
+  }));
+
+  return ok(res, { data });
+}
+
 // ─── GET /season-events/{event}/challenges: override/effective merge ────
 //
 // Task 12 lifted this mapping (and the challenge_templates JOIN column
@@ -375,15 +403,24 @@ function topochainPublicRoutes(config) {
       const viewerId = req.user && req.user.id != null ? Number(req.user.id) : null;
       const isViewer = (r) => viewerId != null && Number(r.user_id) === viewerId;
       const own = viewerId != null ? visible.find(isViewer) : null;
-      const leaderboard = visible.slice(start, start + perPage)
-        .map((r) => ({ ...formatLeaderboardRow(r), is_viewer: isViewer(r) }));
+      // #5807: `row_ref` is the opaque handle the drill-down asks
+      // /leaderboard/user-activities with. It is added HERE rather than in
+      // formatLeaderboardRow so that builder stays config-free; it is a
+      // scrambled id, never the id, an email or a username, and it is null
+      // when the server has no session secret to sign it with.
+      const withRef = (r, extra) => ({
+        ...formatLeaderboardRow(r),
+        row_ref: rowRef(r.user_id, config && config.sessionSecret),
+        ...extra,
+      });
+      const leaderboard = visible.slice(start, start + perPage).map((r) => withRef(r, { is_viewer: isViewer(r) }));
 
       return ok(res, {
         data: {
           event: eventPayload,
           leaderboard,
           non_podium_count: nonPodiumCount,
-          viewer_row: own ? { ...formatLeaderboardRow(own), is_viewer: true } : null,
+          viewer_row: own ? withRef(own, { is_viewer: true }) : null,
         },
       }, { meta: meta(page, perPage, total) });
     } catch (err) {
@@ -530,10 +567,18 @@ function topochainPublicRoutes(config) {
       const seasonEventId = toIntId(req.query.season_event_id);
       const identifier = typeof req.query.participant_identifier === 'string'
         ? req.query.participant_identifier.trim() : '';
+      // #5807: the code a standings row carries (see row-ref.js). It wins
+      // over `participant_identifier`, and the validation details keep the
+      // existing key and message, since "one of the two" is the same
+      // requirement to a caller.
+      const participantRef = typeof req.query.participant_ref === 'string'
+        ? req.query.participant_ref.trim() : '';
 
       const details = {};
       if (!seasonEventId) details.season_event_id = ['The season_event_id field is required.'];
-      if (!identifier) details.participant_identifier = ['The participant_identifier field is required.'];
+      if (!identifier && !participantRef) {
+        details.participant_identifier = ['The participant_identifier field is required.'];
+      }
       if (Object.keys(details).length) return fail(res, 422, 'The given data was invalid.', { details });
 
       const { rows: evRows } = await pool.query('SELECT id FROM season_events WHERE id = $1', [seasonEventId]);
@@ -541,6 +586,32 @@ function topochainPublicRoutes(config) {
         return fail(res, 422, 'The given data was invalid.', {
           details: { season_event_id: ['The selected season_event_id is invalid.'] },
         });
+      }
+
+      // #5807: a row reference resolves ONLY against the board this request
+      // names — someone already listed on that public event's standings.
+      // Every failure below gives the same literal 404 as an unknown
+      // identifier, so the route is no stronger an oracle than it was.
+      if (participantRef) {
+        const notFound = () => res.status(404).json({ success: false, error: 'Participant not found', data: [] });
+        const key = config && config.sessionSecret;
+        if (!ROW_REF_RE.test(participantRef) || !key) return notFound();
+        // The same SELECT the /leaderboard route uses, so the visibility
+        // rules (internal, display_leaderboard) are the board's own.
+        const { rows: boardRows } = await pool.query(
+          `SELECT id, name, disclaimer, display_leaderboard, starts_at, ends_at,
+                  internal, season_id, type
+             FROM season_events WHERE id = $1`,
+          [seasonEventId]
+        );
+        const boardEvent = boardRows[0];
+        if (!boardEvent || boardEvent.internal || !boardEvent.display_leaderboard) return notFound();
+        // The FULL board, before the non-podium filter: a ref resolves
+        // whether or not the pane's "Show non-podium users" chip is on.
+        const board = await fetchEventLeaderboardRows(pool, boardEvent);
+        const row = findRowByRef(board, participantRef, key);
+        if (!row) return notFound();
+        return activityList(res, pool, row.user_id, seasonEventId);
       }
 
       // SPEC 1108: email/telegram/discord match, OR any onchain account
@@ -578,27 +649,7 @@ function topochainPublicRoutes(config) {
         // extra `data: []` alongside `error`, no trailing period).
         return res.status(404).json({ success: false, error: 'Participant not found', data: [] });
       }
-      const userId = userRows[0].id;
-
-      const { rows } = await pool.query(
-        `SELECT id, activity_type, points, description, activity_at, metadata
-           FROM user_activities
-          WHERE user_id = $1 AND season_event_id = $2
-          ORDER BY activity_at DESC`,
-        [userId, seasonEventId]
-      );
-
-      const data = rows.map((r) => ({
-        id: Number(r.id),
-        activity_type: r.activity_type,
-        points: num(r.points) ?? 0,
-        description: r.description,
-        activity_at: iso(r.activity_at),
-        activity_time_precision: activityTimePrecision(r),
-        metadata: r.metadata,
-      }));
-
-      return ok(res, { data });
+      return activityList(res, pool, userRows[0].id, seasonEventId);
     } catch (err) {
       log.error('topochain-public', 'GET /leaderboard/user-activities failed', { message: err.message });
       return fail(res, 500, 'Internal server error.');

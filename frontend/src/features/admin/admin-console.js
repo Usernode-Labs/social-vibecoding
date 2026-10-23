@@ -280,6 +280,10 @@ const AdminConsole = {
     // The workflow machines (src/workflow/): what needs a person, the
     // instances by state, and each one's timeline. See admin-workflows.tsx.
     { key: 'workflows', label: 'Workflows', group: 'Operations' },
+    // Compliance (#5634): the compliance plan's items, each one's status as
+    // an admin set it, and the weekly scan of what a machine can check. Every
+    // admin reads it. See features/admin/admin-compliance.tsx.
+    { key: 'compliance', label: 'Compliance', group: 'Operations' },
 
     // Programme (#1179): what the programme IS — the seasons, the events
     // inside them, and the template library challenges are stamped out of.
@@ -317,6 +321,10 @@ const AdminConsole = {
     // the connector's *_test_account tools wrap). Full admins only, the list
     // included. See features/admin/admin-test-accounts.tsx.
     { key: 'test-accounts', label: 'Test accounts', group: 'People' },
+    // Access review (#5133): every account with admin rights, what each can
+    // do (exports, SQL console), and the quarterly review that confirms the
+    // list. Full admins only. See features/admin/admin-access-review.tsx.
+    { key: 'access-review', label: 'Access review', group: 'People' },
     { key: 'reports', label: 'Moderation', group: 'People' },
     { key: 'codes', label: 'Activation codes', group: 'People' },
     { key: 'limits', label: 'Limits', group: 'People' },
@@ -363,6 +371,9 @@ const AdminConsole = {
     // #4405: every custom domain a project has claimed, and the levers that
     // check, disable, enable or remove one.
     { key: 'domains', label: 'Domains', group: 'Platform' },
+    // Ready-made apps' images, built ahead of the projects made from them,
+    // and Rebuild (features/admin/admin-templates.tsx, services/starter-images.js).
+    { key: 'templates', label: 'Templates', group: 'Platform' },
     // #2570: the note and the expected cost the model picker states for
     // each model, beside what changes on that model actually cost.
     { key: 'model-costs', label: 'Model costs', group: 'Platform' },
@@ -423,6 +434,10 @@ const AdminConsole = {
     'workflows': '<svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 12h16.5m-16.5 3.75h16.5M3.75 19.5h16.5M5.625 4.5h12.75a1.875 1.875 0 010 3.75H5.625a1.875 1.875 0 010-3.75z"/></svg>',
     // Support: lifebuoy.
     'support': '<svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3.75"/><path stroke-linecap="round" stroke-linejoin="round" d="M5.64 5.64l3.7 3.7m5.32 5.32l3.7 3.7m0-12.72l-3.7 3.7m-5.32 5.32l-3.7 3.7"/></svg>',
+    // Access review (#5133): shield-check, the admin list confirmed.
+    // Compliance (#5634): clipboard-document-check, the plan's checklist.
+    'compliance': '<svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M11.35 3.836c-.065.21-.1.433-.1.664 0 .414.336.75.75.75h4.5a.75.75 0 00.75-.75 2.25 2.25 0 00-.1-.664m-5.8 0A2.251 2.251 0 0113.5 2.25H15c1.012 0 1.867.668 2.15 1.586m-5.8 0c-.376.023-.75.05-1.124.08C9.095 4.01 8.25 4.973 8.25 6.108V8.25m8.9-4.414c.376.023.75.05 1.124.08 1.131.094 1.976 1.057 1.976 2.192V16.5A2.25 2.25 0 0118 18.75h-2.25m-7.5-10.5H4.875c-.621 0-1.125.504-1.125 1.125v11.25c0 .621.504 1.125 1.125 1.125h9.75c.621 0 1.125-.504 1.125-1.125V18.75m-7.5-10.5h6.375c.621 0 1.125.504 1.125 1.125v9.375m-8.25-3l1.5 1.5 3-3.75"/></svg>',
+    'access-review': '<svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z"/></svg>',
     'users': '<svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M15 19.128a9.38 9.38 0 002.625.372 9.337 9.337 0 004.121-.952 4.125 4.125 0 00-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 018.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0111.964-3.07M12 6.375a3.375 3.375 0 11-6.75 0 3.375 3.375 0 016.75 0zm8.25 2.25a2.625 2.625 0 11-5.25 0 2.625 2.625 0 015.25 0z"/></svg>',
     // Test accounts: user-plus, a new account made by hand.
     'test-accounts': '<svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7.5v3m0 0v3m0-3h3m-3 0h-3m-2.25-4.125a3.375 3.375 0 11-6.75 0 3.375 3.375 0 016.75 0zM4 19.235v-.11a6.375 6.375 0 0112.75 0v.109A12.318 12.318 0 0110.374 21c-2.331 0-4.512-.645-6.374-1.766z"/></svg>',
@@ -443,6 +458,7 @@ const AdminConsole = {
     'storage': '<svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M5.25 14.25h13.5m-13.5 0a3 3 0 01-3-3m3 3a3 3 0 100 6h13.5a3 3 0 100-6m-16.5-3a3 3 0 013-3h13.5a3 3 0 013 3m-19.5 0a4.5 4.5 0 01.9-2.7L5.737 5.1a3.375 3.375 0 012.7-1.35h7.126c1.062 0 2.062.5 2.7 1.35l2.587 3.45a4.5 4.5 0 01.9 2.7m0 0a3 3 0 01-3 3m0 3h.008v.008h-.008v-.008zm0-6h.008v.008h-.008v-.008zm-3 6h.008v.008h-.008v-.008zm0-6h.008v.008h-.008v-.008z"/></svg>',
     // Domains (#4405): globe-alt — a project's own web address.
     'domains': '<svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M12 21a9 9 0 100-18 9 9 0 000 18zm0 0c2.485 0 4.5-4.03 4.5-9S14.485 3 12 3m0 18c-2.485 0-4.5-4.03-4.5-9S9.515 3 12 3M3.6 9h16.8M3.6 15h16.8"/></svg>',
+    'templates': '<svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M21 7.5l-9-5.25L3 7.5m18 0l-9 5.25m9-5.25v9l-9 5.25M3 7.5l9 5.25M3 7.5v9l9 5.25m0-9v9"/></svg>',
     // Model costs (#2570): currency-dollar — the screen is about what a
     // change on each model costs.
     'model-costs': '<svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6v12m-3-2.818l.879.659c1.171.879 3.07.879 4.242 0 1.172-.879 1.172-2.303 0-3.182C13.536 12.219 12.768 12 12 12c-.725 0-1.45-.22-2.003-.659-1.106-.879-1.106-2.303 0-3.182s2.9-.879 4.006 0l.415.33M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>',
@@ -1197,6 +1213,7 @@ const AdminConsole = {
     'db-export': 'AdminDbExport',
     storage: 'AdminStorage',
     domains: 'AdminDomains',
+    templates: 'AdminTemplates',
     'model-costs': 'AdminModelCosts',
     'welcome-dm': 'AdminWelcomeDm',
     'homeroom-bot': 'AdminHomeroomBot',
@@ -1205,6 +1222,8 @@ const AdminConsole = {
     limits: 'AdminLimits',
     support: 'AdminSupport',
     users: 'AdminUsers',
+    'access-review': 'AdminAccessReview',
+    compliance: 'AdminCompliance',
     'test-accounts': 'AdminTestAccounts',
     reports: 'AdminReports',
     rollover: 'AdminRollover',

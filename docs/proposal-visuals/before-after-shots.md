@@ -48,8 +48,7 @@ still work, so nothing outside this repository breaks on the rename:
   `visibleChanges` (`visible-changes.declaredChanges`).
 - `/api/apps/:slug/proposals/:sessionId/evidence…` is answered by the
   `/shots…` routes, for a tab still running the previous shell
-  (`routes/shots.js`), and the worker's old
-  `/api/internal/sessions/:id/visual-evidence-intent` by `/visible-changes`.
+  (`routes/shots.js`).
 - Each `SHOTS_*` setting falls back to its `VISUAL_EVIDENCE_*` name
   (`VISUAL_EVIDENCE_V2_ENABLED` for `SHOTS_ENABLED`); the deploy workflow
   reads either repository variable. The Helm value is now
@@ -495,10 +494,13 @@ The platform checks:
 - every file came from this run's short-lived, run-scoped token;
 - it is addressed to a declared change, one of that change's screens, and a
   side;
-- a shot is one complete PNG under 6 MB and at most 8192 px on each edge;
+- a shot is one complete PNG under 6 MB (12 MB in a run taken at device
+  density, where a 3x desktop screen of a photo-heavy page passes 6 MB) and
+  at most 8192 px on each edge;
 - an element shot fits its screen: no wider than the screen (scaled by the
-  same side's screen shot when the browser shot at 2x) and at most two
-  screens tall. A wider one means the page was laid out at another size; a
+  same side's screen shot's density, or, before that is saved and in a run
+  taken at device density, by the density the screen's browser saves at)
+  and at most two screens tall. A wider one means the page was laid out at another size; a
   taller one is a tiled capture nobody can read (`element_shot_too_wide`,
   `element_shot_too_tall`);
 - a clip is a WebM between 1 KB and 20 MB, only for a `motion` change;
@@ -793,8 +795,115 @@ agent.
 - The brief names it: `browsers.<persona>.phoneTool`, and `screenBrowsers`
   gives the browser for every change and screen. The agent resizes it to the
   declared size like any other, and is told never to shoot a phone screen in
-  a desktop browser. Screenshots stay at CSS scale, so a 390 px phone screen
-  is a 390 px image whatever the density.
+  a desktop browser.
+
+### Density (experimental)
+
+Shots can be saved at the screen's own density, so a card can zoom into a
+change without drawing it soft: a phone browser's is its device's (3, so a
+390 x 844 screen is a 1170 x 2532 PNG), and every desktop browser draws at 3
+from a private Playwright config `write-shots-mcp-config.js` writes beside
+the MCP config (`deviceScaleFactor: 3`, 2 until the close-up capture
+design of 2026-10-21 found one desktop piece in eight needed more; Playwright takes it only with a fixed
+viewport, so the desktop browser opens at 1280x720, and the agent resizes to
+each declared screen as before).
+
+- **Off until switched on.** One platform setting
+  (`services/shots-density.js`, `shots_device_density`), read and switched
+  by an admin at `GET`/`PUT /api/admin/shots/device-density`
+  (`{ "enabled": true }`; switching needs a full admin). Off, every run
+  takes every still at 1x exactly as before. A run reads it once as it
+  starts and keeps it in its `agent` (the shots control), so it never
+  changes density halfway, and its saves follow its own choice (the 12 MB
+  cap, the element allowance). A worker image without this change
+  takes 1x shots whatever it says (its build log says `shots at 3x`
+  for every browser once it has it). The worker learns it as
+  `SHOTS_DEVICE_DENSITY=1`, and its browsers as `SHOTS_SCREENSHOT_SCALE`.
+
+- **The screenshot tool.** The pinned Playwright MCP hard-codes
+  `browser_take_screenshot` to CSS scale. The worker image patches that one
+  tool (`worker/patch-playwright-mcp-screenshot.js`): with
+  `SHOTS_SCREENSHOT_SCALE=device`, the file it saves is captured at
+  `scale: "device"`, and the image it answers the agent with is a second
+  capture at CSS scale, the size it always was, so a 3x screen never reaches
+  the model as a multi-megabyte image. Without it (every other browser in
+  the image, and every run while the switch is off) it does exactly what it
+  did. Each edit must match exactly once, so a pin bump that moves the code
+  fails the image build, and `verify-shots-browser-mcp.js` proves both
+  modes: 1x with the switch off, and the saved width as the answered width
+  times the browser's density (3, phone and desktop) with it on. A newer Playwright takes
+  a `scale` argument, but it also renames the element target and stops
+  answering with the image of a named screenshot; moving to it is its own
+  change.
+- **Two copies of each dense still.** The bridge says what each still was
+  saved at (`density`, 3 from a phone or a desktop browser, only in
+  a run taken at device density); a whole screen's must match its width
+  over its declared screen's (`shots-files.densityFor`). The platform keeps
+  such a still twice (`shots-control.saveShot`): `data` is the same still
+  averaged down to 1x (`shots-diff.flatten`), and `dense_*` its original.
+  Everything that reads `data` (the diff, the invite picture, the eval, the
+  connectors, the export) sees exactly what it saw before, and every
+  comparison of two stills compares their 1x copies. An older worker says
+  nothing, so its stills stay single and 1x.
+- **Who is shown them.** Only an account in the New Needs you experiment
+  (`users.review_flow_enabled`, `shots-view.viewerSeesDense`). For it, the
+  shots view gives each dense still its original's `width` and `height`, its
+  `density`, and an address of its own (`?density=device`, which the
+  artifact route serves only to such an account); each screen's `density` is
+  that of the still it shows. Everyone else, guests included, is shown the
+  1x copies at their usual addresses with `density: 1`. Screen geometry
+  (`width`, `heightBefore`, `heightAfter`, `regions`) is CSS pixels either
+  way.
+- **Clients** read sizes in CSS pixels: the change page's "Phone, 390 x 844"
+  line and the Workshop feed's readable element shot divide by the density.
+  A card that zooms into a change caps the zoom at the still's density over
+  the display's (`window.devicePixelRatio`), so it never draws past the
+  pixels it has.
+- **Clips** are recorded at the screen's CSS size, as before.
+
+### Close-ups (experimental)
+
+A change much smaller than its screen (a badge, a count, an icon) is drawn
+large on the New Needs you card, past the density of its screen still. The
+close-up capture design (2026-10-21) measured that on 21 production runs;
+Lukas chose platform-directed close-ups of the after side only, at most 2 a
+screen, 6 a run and 4 MP each (`src/services/shots-closeups.js`).
+
+- **Which.** In a run taken at device density, once a change's before and
+  after screen shots are both saved, the platform compares them as the run's
+  verdict does (`shots-diff.screensFor`), takes the card's pieces of each
+  after screen (the same rules as `model.ts` `piecesOf`, its 16 px of
+  surroundings, the title shot's 0.75 shape, a 358-wide phone card at 3 and a
+  488-wide desktop card at 2; a test holds them to the client's source) and
+  wants a close-up of each piece the still is not dense enough for, at the
+  density the card needs (one decimal), the most wanted first
+  (`GET /api/internal/shots/:runId/closeups`).
+- **How.** Right after `save_shot` uploads a change, the shots bridge has
+  that change's browser (its observer's `closeup` action) take each wanted
+  close-up with the screenshot tool's `closeup` argument: Chrome's own
+  `Page.captureScreenshot` clip at that density, measured to be pixel for
+  pixel what a page drawn at that density gives, in about 55 ms, without the
+  page seeing anything. The region is the screen still's; the tool adds the
+  scroll offset and divides out a zoomed-out phone page's zoom. The agent
+  takes no extra step: the close-ups ride on its save.
+- **Kept only when right.** The platform keeps a close-up
+  (`POST /api/internal/shots/:runId/closeup`) only when it is wanted, the
+  size asked for, and, averaged down to 1x, at most 6% of its pixels differ
+  from the after still there and it is closer to it than to the before
+  still, which a close-up taken after the page moved on is not. Refused, the
+  bridge's answer tells the agent to open the after state again and save its
+  screen shot again, which takes the close-up again.
+- **Stored** as a `closeup` artifact of the after side, its number on the
+  screen (`part` 1 or 2), its region (`focus_rect`, CSS px of that change's
+  after screen) and density (`scale`). It is published with a ready change,
+  never what makes one ready, and left out of evals.
+- **Shown** only to an account in the New Needs you experiment: the shots
+  view gives it as `{ variant: 'closeup', side: 'head', storyId, viewport,
+  theme: 'light', part, rect, width, height, density, url }`, its url in the
+  `?density=device` form, and the artifact route serves it to no one else.
+  The card draws a piece from a close-up whose `rect` holds the piece's
+  framed box on the same screen, with its zoom capped at the close-up's
+  density over the display's.
 - The init script (`worker/shots-page-init.js`) still records the install
   strip's dismissal on every page (#4087), the phone browsers' included, so a
   phone shot shows the screen rather than the strip over it. A top-level page
@@ -919,7 +1028,7 @@ for how wide the change is. Each area is tied to the declared change whose
 element shot sits inside it, and widened to that element. A run from before
 this has no `screens`: its card flips a screen per change and size, with
 nothing outlined. The Workshop feed's picture still leads with the element
-shot when it is big enough to read (at least 120×40 px on both sides).
+shot when it is big enough to read (at least 120×40 CSS px on both sides).
 
 The whole screens are also taken in dark mode (#4459): a run opens each page
 again with the mode parameter (`un-theme=dark` for an app built on Homeroom,

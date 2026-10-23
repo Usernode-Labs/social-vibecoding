@@ -73,6 +73,25 @@ test('its accessible name starts with the word on screen and names the community
   assert.equal(ui.communitiesAriaLabel(null), undefined);
 });
 
+test('#5040: with votes waiting, the spoken name says what the blue number counts', () => {
+  assert.equal(ui.communitiesAriaLabel({ name: 'Garden' }, 5), 'Communities, on Garden, 5 votes waiting on you');
+  assert.equal(ui.communitiesAriaLabel({ name: 'Garden' }, 1), 'Communities, on Garden, 1 vote waiting on you');
+  assert.equal(ui.communitiesAriaLabel(null, 1), 'Communities, 1 vote waiting on you');
+  assert.equal(ui.communitiesAriaLabel(null, 7), 'Communities, 7 votes waiting on you');
+  assert.equal(ui.communitiesAriaLabel(null, 0), undefined, 'at zero, as the prerender ships it');
+  const before = ui.communityScopeStore.get();
+  ui.communityScopeStore.set({ slug: 'recipes', info: { recipes: { ...RECIPES, needs: 3 } } });
+  let tab;
+  try {
+    tab = workshopTab(renderToHtml(createElement(ui.PlatformTabs, {})));
+  } finally {
+    ui.communityScopeStore.set(before);
+  }
+  assert.match(openTag(tab), /aria-label="Communities, on Recipe Box of the Week, 3 votes waiting on you"/);
+  assert.match(openTag(tab), /title="3 votes waiting on you"/, 'pointed at, it says the same');
+  assert.doesNotMatch(openTag(workshopTab(render('recipes'))), /title=/, 'no votes, no tooltip');
+});
+
 // ── 3. All communities ────────────────────────────────────────────────
 
 test('on All communities the tab is unchanged: the glyph, the word, and the shipped markup', () => {

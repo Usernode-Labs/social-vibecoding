@@ -458,8 +458,25 @@ async function invokeAccounted({
   }
 }
 
+// A reservation its turn never settled (its request's process went mid-call):
+// an error, kept at its estimate, since the provider may have charged it.
+// Only once no turn could still be settling it: older than a turn may run
+// (store.js TURN_STALE_MS). The global-chat-usage-settle clock runs it.
+async function settleAbandonedReservations(pool, { olderThanMs = require('./store').TURN_STALE_MS, limit = 500 } = {}) {
+  const { rowCount } = await pool.query(
+    `UPDATE global_chat_usage SET outcome = 'error', error_code = 'interrupted'
+      WHERE id IN (SELECT id FROM global_chat_usage
+                    WHERE outcome = 'unknown' AND created_at < NOW() - make_interval(secs => $1::double precision / 1000.0)
+                    ORDER BY created_at LIMIT $2)
+        AND outcome = 'unknown'`,
+    [olderThanMs, limit],
+  );
+  return { settled: rowCount };
+}
+
 module.exports = {
   GlobalChatBudgetError,
+  settleAbandonedReservations,
   estimateInvocationCost,
   costFromUsage,
   assertOverallAllowance,

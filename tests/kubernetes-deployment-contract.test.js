@@ -181,7 +181,7 @@ test('self-app previews skip production fleet role maintenance', () => {
   assert.ok(start > -1 && end > start, 'per-app role migration function is located');
   const body = migrate.slice(start, end);
   const stagingGuard = body.indexOf("if (process.env.USERNODE_ENV === 'staging')");
-  const fleetQuery = body.indexOf('SELECT id, slug, container_id');
+  const fleetQuery = body.indexOf('SELECT id, slug, name, container_id');
   assert.ok(stagingGuard > -1 && stagingGuard < fleetQuery,
     'the preview returns before reading or administering production child apps');
   assert.match(body, /Per-app role migration skipped in staging preview/);

@@ -25,7 +25,7 @@ const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 
 // ── 1. The notice ──────────────────────────────────────────────────────
 
-test('the database\'s notice is ws-bus.js\'s own envelope, on its channel, and agrees on the stale window', () => {
+test('the database\'s notice is ws-bus.js\'s own envelope, on its channel, and busy for as long as the turn\'s claim', () => {
   const schema = read('src/db/schema.sql');
   const announce = schema.slice(schema.indexOf('CREATE OR REPLACE FUNCTION agent_session_state_announce()'));
   const bus = read('src/services/ws-bus.js');
@@ -35,15 +35,19 @@ test('the database\'s notice is ws-bus.js\'s own envelope, on its channel, and a
   assert.match(announce, new RegExp(`pg_notify\\('${channel}', json_build_object\\(`), 'the channel every instance LISTENs on');
   assert.match(bus, /return \{ i: INSTANCE_ID, k: kind, r: routing \|\| null, d: data \};/, 'the envelope ws-bus reads');
   assert.match(announce, /'i', 'db:agent_sessions',\s*'k', 'user',\s*'r', json_build_object\('userId', NEW\.user_id\),\s*'d', json_build_object\(/);
-  assert.match(read('src/services/ws.js'), /case 'user':\s*if \(r\.userId != null\) deliverToUser\(r\.userId, payload\);/);
-  const seconds = Number(/interval '(\d+) seconds'/.exec(announce)[1]);
-  assert.equal(seconds, require('../src/services/agent-sessions').TURN_LEASE_STALE_SECONDS);
+  assert.match(read('src/services/ws.js'), /case 'user':\s*if \(r\.userId != null\) deliverToUser\(r\.userId, payload, \{ actorUserId: r\.actorUserId \}\);/);
+  // A claim lasts as long as its turn: the turn machine releases it when the
+  // turn's work item ends (src/workflow/turn/), so there is no stale window.
+  assert.match(announce, /'busy', \(NEW\.active_turn IS NOT NULL\)/);
+  assert.doesNotMatch(announce.slice(0, announce.indexOf('$$;')), /interval/);
+  assert.equal(require('../src/services/agent-sessions').TURN_LEASE_STALE_SECONDS, undefined);
 });
 
 // ── 2. The turn route ──────────────────────────────────────────────────
 
 const poolMod = require('../src/db/pool');
 const agentTurn = require('../src/services/mayor/agent-turn');
+const { installTurnPlatform } = require('./lib/turn-platform');
 
 function recordingPool(handlers = {}) {
   const calls = [];
@@ -95,11 +99,12 @@ async function withRoutes(handlers, fn) {
 }
 
 test('the turn route: a resend is recognised and runs nothing; a refusal writes nothing; a busy conversation writes nothing', async () => {
-  const saved = { runAgentTurn: agentTurn.runAgentTurn, resolveAgentMayor: agentTurn.resolveAgentMayor };
-  const runs = [];
+  const saved = { resolveAgentMayor: agentTurn.resolveAgentMayor };
   let mayor = { ok: true };
   agentTurn.resolveAgentMayor = async () => mayor;
-  agentTurn.runAgentTurn = async (args) => { runs.push(args); args.res.end(); };
+  // Each turn is asked of the conversation's turn machine, with the claim.
+  const turns = installTurnPlatform();
+  const runs = turns.asks;
   let leaseFree = true;
   let sent = null;
   try {
@@ -118,7 +123,7 @@ test('the turn route: a resend is recognised and runs nothing; a refusal writes 
       const first = await call('POST', '/api/agent-sessions/5/turns', { message: 'Make it blue', clientMessageId: 'c-12345678' });
       assert.equal(first.status, 200);
       assert.match(first.type, /text\/event-stream/);
-      assert.deepEqual(runs[0].recorded, { id: 41, clientMessageId: 'c-12345678' }, 'written with the lease, before the stream');
+      assert.deepEqual(runs[0].input.recorded, { id: 41, clientMessageId: 'c-12345678' }, 'written with the claim, before the stream');
       assert.equal(writes(), 2);
 
       sent = { id: 41, turn_id: runs[0].turnId };
@@ -144,9 +149,10 @@ test('the turn route: a resend is recognised and runs nothing; a refusal writes 
 
       const retry = await call('POST', '/api/agent-sessions/5/turns', { retry: true });
       assert.equal(retry.status, 200);
-      assert.deepEqual([runs[1].retry, runs[1].messageText, runs[1].recorded], [true, null, null]);
+      assert.deepEqual([runs[1].input.retry, 'messageText' in runs[1].input, 'recorded' in runs[1].input], [true, false, false]);
     });
   } finally {
+    turns.restore();
     Object.assign(agentTurn, saved);
   }
 });
@@ -177,37 +183,24 @@ test('the state route answers "unchanged" to a screen that is current, and the r
   });
 });
 
-test('the state route ends a turn whose process died before answering, so the screen goes from working straight to Retry', async () => {
-  const saved = agentTurn.sweepInterruptedTurns;
-  const sweeps = [];
-  let ended = false;
-  agentTurn.sweepInterruptedTurns = async (args) => { sweeps.push(args.agentSessionId); ended = true; return 1; };
-  const lease = { id: 'turn-dead-1', startedAt: '2026-09-23T12:00:00.000Z', renewedAt: '2026-09-23T12:00:10.000Z', phase: 'mayor' };
-  const note = { id: 41, session_id: null, role: 'system', content: 'The Mayor was interrupted', metadata: { event: 'turn_interrupted', retryable: true }, created_at: null, client_message_id: null, rev: '13' };
-  try {
-    await withRoutes({
-      // Stale until the sweep ends it; then a version later, and no lease.
-      'SELECT state_version, active_turn, active_change_id': () => ({ rows: [ended
-        ? { state_version: 5, active_turn: null, active_change_id: null, turn_live: false }
-        : { state_version: 4, active_turn: lease, active_change_id: null, turn_live: false }] }),
-      'FROM agent_sessions s': () => ({ rows: [{ ...SESSION_ROW, state_version: ended ? 5 : 4, active_turn: ended ? null : lease, turn_live: false }] }),
-      'COALESCE\\(MAX\\(rev\\), 0\\)': () => ({ rows: [{ rev: ended ? '13' : '12' }] }),
-      'SELECT id FROM agent_sessions WHERE id = \\$1 AND user_id = \\$2': () => ({ rows: [{ id: 5 }] }),
-      'WHERE agent_session_id = \\$1 AND rev > \\$2': () => ({ rows: ended ? [note] : [] }),
-    }, async (call) => {
-      const polled = await call('GET', '/api/agent-sessions/5/state?version=4&rev=12');
-      assert.deepEqual(sweeps, [5], 'the one conversation, swept on the read');
-      assert.equal(polled.body.unchanged, false, 'the answer is the conversation after the sweep, not "unchanged"');
-      assert.equal(polled.body.version, 5);
-      assert.equal(polled.body.busy, false);
-      assert.deepEqual(polled.body.messages.map((m) => m.id), [41], 'with the interrupted note');
-      assert.ok(!('stale' in polled.body), 'internal fields stay internal');
-      await call('GET', '/api/agent-sessions/5/state?version=5&rev=13');
-      assert.deepEqual(sweeps, [5], 'a conversation with no stale lease is not swept');
-    });
-  } finally {
-    agentTurn.sweepInterruptedTurns = saved;
-  }
+test('the state route reads the claim as it stands: busy until the turn\'s machine releases it, and a read writes nothing', async () => {
+  // Hours old and never renewed: a claim lasts as long as its turn, whose
+  // work item a process that went leaves to the next one to carry on or end
+  // as interrupted (services/turns.js). No read sweeps it.
+  const claim = { id: 'turn-long-1', startedAt: '2026-09-23T06:00:00.000Z', phase: 'mayor' };
+  await withRoutes({
+    'SELECT state_version, active_turn, active_change_id': () => ({ rows: [{ state_version: 4, active_turn: claim, active_change_id: null, turn_live: true }] }),
+    'FROM agent_sessions s': () => ({ rows: [{ ...SESSION_ROW, state_version: 4, active_turn: claim, turn_live: true }] }),
+    'COALESCE\\(MAX\\(rev\\), 0\\)': () => ({ rows: [{ rev: '12' }] }),
+    'SELECT id FROM agent_sessions WHERE id = \\$1 AND user_id = \\$2': () => ({ rows: [{ id: 5 }] }),
+  }, async (call, pool) => {
+    const polled = await call('GET', '/api/agent-sessions/5/state?version=4&rev=12');
+    assert.equal(polled.body.unchanged, true);
+    assert.equal(polled.body.busy, true);
+    assert.equal(polled.body.turn.id, 'turn-long-1');
+    assert.ok(!pool.calls.some((c) => /^\s*(UPDATE|INSERT|DELETE)/i.test(c.sql)), 'a read writes nothing');
+  });
+  assert.equal(agentTurn.sweepInterruptedTurns, undefined, 'no sweep of claims left behind');
 });
 
 // ── 3. The screen ──────────────────────────────────────────────────────

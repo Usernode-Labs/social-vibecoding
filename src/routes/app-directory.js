@@ -22,7 +22,9 @@
 // Staging containers receive the app-platform base URLs but deliberately no
 // app token. Server-side user lookup can use the caller's forwarded iframe
 // token; this shell relay remains the token-free frontend path and accepts
-// #staging-iframe, so bridge-based lookups work in PR previews too.
+// #staging-iframe for authored apps. Platform previews use their local
+// synthetic directory. Only the current guarded parent protocol is accepted;
+// an older parent must reload before relaying directory requests.
 //
 // Mounted AFTER authMiddleware in server.js: req.user is guaranteed.
 
@@ -40,10 +42,22 @@ function appDirectoryRoutes(config) {
   const router = Router();
   const pool = getPool(config);
 
+  // A pre-deploy parent tab retains its old relay even after every preview
+  // runtime is replaced. Fence that protocol at the server, before reading
+  // directory rows. This public version flag is not authentication: the
+  // session and same-origin boundary still provide authority. Bump it when
+  // the parent relay's scope rules change.
+  router.use('/api/app-directory/users', (req, res, next) => {
+    res.set('Cache-Control', NO_STORE);
+    if (req.get('X-Usernode-Directory-Bridge') !== 'platform-isolated-v1') {
+      return res.status(403).json({ code: 'directory_bridge_upgrade_required', error: 'Reload Homeroom to use the directory.' });
+    }
+    next();
+  });
+
   // Exact-handle existence check. 200 { found:false, user:null } for a
   // miss; 400 only for input that cannot be a username at all.
   router.get('/api/app-directory/users/lookup', userDirectoryLimiter, async (req, res) => {
-    res.set('Cache-Control', NO_STORE);
     const username = userDirectory.normalizeUsername(req.query.username);
     if (username === null) {
       return res.status(400).json({ error: 'username is required (1-255 characters).' });
@@ -63,10 +77,9 @@ function appDirectoryRoutes(config) {
 
   // Prefix typeahead. No membership filter — see the header note.
   router.get('/api/app-directory/users/search', userDirectoryLimiter, async (req, res) => {
-    res.set('Cache-Control', NO_STORE);
     try {
       const { users, hasMore } = await userDirectory.searchPrefix(
-        pool, req.query.q, req.query.limit
+        pool, req.query.q, req.query.limit, { viewerId: req.user?.id ?? null }
       );
       res.json({ users, has_more: hasMore });
     } catch (err) {

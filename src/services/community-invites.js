@@ -47,6 +47,7 @@ const events = require('./events');
 const appAccess = require('./app-access');
 const appAdmins = require('./app-admins');
 const communities = require('./communities');
+const { publicMergedStill } = require('./shots-public');
 
 const DEFAULT_DAYS = 7;
 const DEFAULT_USES = 25;
@@ -516,7 +517,7 @@ async function loadInvite(db, token, { lock = false } = {}) {
   const { rows } = await db.query(
     `SELECT i.id, i.token, i.community_id, i.app_id, i.created_by, i.max_uses, i.uses,
             i.expires_at, i.revoked_at, i.note,
-            a.slug, a.name, a.icon_emoji, a.icon_image_id, a.created_by AS app_created_by,
+            a.slug, a.name, a.icon_emoji, a.icon_image_id, a.icon_color, a.created_by AS app_created_by,
             a.self_hosted, a.collab_visibility, a.view_visibility, a.community_id AS app_community_id,
             a.manifest_snapshot->>'description' AS description,
             u.username AS inviter, u.display_name AS inviter_display_name,
@@ -557,19 +558,12 @@ async function memberCount(db, communityId) {
  * A project with neither shows its icon and description instead.
  */
 async function pictureFor(db, appId) {
-  const { rows } = await db.query(
-    `SELECT a.id
-       FROM chat_sessions s
-       JOIN shot_runs r ON r.id = s.shots_run_id AND r.state = 'verified'
-       JOIN shot_artifacts a ON a.run_id = r.id
-      WHERE s.app_id = $1 AND s.merged_at IS NOT NULL AND s.shots_state = 'verified'
-        AND a.side = 'head' AND a.media = 'png' AND a.variant IN ('context', 'focus')
-        AND a.width IS NOT NULL AND a.height IS NOT NULL AND a.height >= a.width
-      ORDER BY s.merged_at DESC, (a.variant = 'context') DESC, a.width ASC, a.story_id ASC
-      LIMIT 1`,
-    [appId]
-  );
-  if (rows[0]) return { kind: 'shot', artifactId: rows[0].id };
+  // A shot only where anybody may see it (services/shots-public.js): a
+  // public project's member-account phone still the shots agent said shows
+  // nobody's private things. The link's page is read by people who are not
+  // in the project yet, often not signed in.
+  const artifactId = await publicMergedStill(db, appId);
+  if (artifactId) return { kind: 'shot', artifactId };
   const { rows: ill } = await db.query(
     `SELECT f.id, f.dark_id
        FROM apps a JOIN app_illustrations f ON f.app_id = a.id
@@ -671,6 +665,7 @@ async function preview(pool, token) {
       name: invite.name || invite.slug,
       iconEmoji: invite.icon_emoji || null,
       iconUrl: invite.icon_image_id ? `/app-icons/${invite.icon_image_id}` : null,
+      iconColor: invite.icon_color || null,
       description: invite.description || null,
       picture: pictureUrls(token, picture),
       // A public community: its Join asks for a username, not a name (a
@@ -687,6 +682,21 @@ async function preview(pool, token) {
     note: invite.note || null,
     memberCount: count,
     expiresAt: invite.expires_at instanceof Date ? invite.expires_at.toISOString() : invite.expires_at,
+  };
+}
+
+/**
+ * A live link's project icon, for the link preview's picture
+ * (GET /api/public/invites/:token/icon.png): its image's id, or its emoji
+ * and colour. Null for a dead or unknown link, which shows no icon.
+ */
+async function previewIcon(pool, token) {
+  const invite = await loadInvite(pool, token);
+  if (deadReason(invite)) return null;
+  return {
+    imageId: invite.icon_image_id || null,
+    emoji: invite.icon_emoji || null,
+    color: invite.icon_color || null,
   };
 }
 
@@ -1108,6 +1118,7 @@ module.exports = {
   cleanNote,
   pictureBytes,
   pictureFor,
+  previewIcon,
   firstVersionPending,
   joiningRule,
   joiningRuleText,

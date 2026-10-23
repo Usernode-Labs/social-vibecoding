@@ -114,7 +114,7 @@ test('progress goes out on an admin-only broadcast', () => {
   assert.match(reapJs, /broadcastToAdmins/);
   assert.ok(!/broadcastGlobal\b/.test(reapJs),
     'the payload is an inventory of every preview — it must not reach every client');
-  assert.match(reapJs, /type: 'admin_staging_reap_status'/);
+  assert.match(reapJs, /fleetJob\.frame\('admin_staging_reap_status', job\)/);
 });
 
 test('the shell routes the aggregate event into the console', () => {
@@ -163,7 +163,7 @@ test('the console keeps the WS surface app.js calls, forwarding to the module', 
     assert.ok(consoleJs.includes(fwd), `AdminConsole.${fwd} is where app.js looks for it`);
     assert.ok(consoleJs.includes(target), `${fwd} forwards to the module`);
   }
-  assert.match(reapTsx, /handleStatus\(data: \{ job\?: ReapJob \| null \} \| null\) \{/);
+  assert.match(reapTsx, /handleStatus\(data: \{ job\?: ReapJob \| null; changed\?: boolean \} \| null\) \{/);
   assert.match(reapTsx, /\n  reload\(\) \{ live\?\.reload\(\); \},/);
   // A frame that lands while the admin is on another section must be
   // dropped, not applied to an unmounted component — `live` is null exactly
@@ -396,8 +396,13 @@ test('the newest build hands the previews another env built to the preview machi
   assert.ok(start > 0, 'the preview-env clock exists');
   const job = clocks.slice(start, clocks.indexOf('\n  },\n', start));
   assert.match(job, /everyMs: 15 \* MIN/);
-  assert.match(job, /machine = 'release' ORDER BY created_at DESC LIMIT 1/);
-  assert.match(job, /if \(newest && newest\.key !== `release:\$\{own\}`\) return \{ skipped: 'older_build' \};/);
+  // newestOnly: the clock's rule for a job only the newest build runs.
+  assert.match(job, /newestOnly: true/);
+  // The newest build: that of the live workflow process that started
+  // serving last (a rollback, or the same build with another environment,
+  // is the newest once it serves).
+  assert.match(clocks, /FROM platform_processes\s+WHERE state = 'serving' AND role <> 'web' AND heartbeat_at > now\(\) - make_interval\(secs => \$1\)\s+ORDER BY started_at DESC LIMIT 1/);
+  assert.match(clocks, /if \(!await newestBuild\(deps\.pool\)\) return \{ skipped: 'older_build' \};/);
   assert.match(job, /legacy\('services\/staging-reap'\)\.tellStaleEnv\(config\)/);
   const reap = read('src/services/staging-reap.js');
   const fn = reap.slice(reap.indexOf('async function tellStaleEnv('));
@@ -443,17 +448,20 @@ test('the console counts the button\'s real blast radius, not every open preview
 // (selectAbandoned, whatever the env) on the preview-gc clock, and the
 // out-of-date rest from each release, for the machine to decide.
 test('the button takes the selection, and the automatic passes its two halves', () => {
-  const runStart = reapJs.indexOf('async function run(');
+  const runStart = reapJs.indexOf('async function runJob(');
   const runBody = reapJs.slice(runStart, reapJs.indexOf('\n}\n', runStart));
   assert.match(runBody, /selectReapable\(/);
-  assert.match(runBody, /isInFlight/);
+  // What works on a session, on any process: read when the sweep lists its
+  // previews, and again when a preview's turn comes.
+  assert.match(runBody, /busySessionsAnywhere\(/);
+  assert.match(runBody, /isSessionBusyAnywhere\(/);
   const leftStart = reapJs.indexOf('async function leftovers(');
   assert.match(reapJs.slice(leftStart, reapJs.indexOf('\n}\n', leftStart)), /selectAbandoned\(items\)/);
   const envStart = reapJs.indexOf('async function staleEnvTargets(');
   assert.match(reapJs.slice(envStart, reapJs.indexOf('\n}\n', envStart)),
     /i\.fingerprint !== expected && i\.session && namesPreview\(i, i\.session\)/);
-  assert.match(postHandler(), /isInFlight: isSessionBusy/,
-    'the route hands the sweep the in-flight guard');
+  assert.match(postHandler(), /await stagingReap\.start\(pool, req\.user\)/,
+    'the route asks the preview-reap clock for the sweep');
   assert.match(reapTsx, /Previews backing a live vote are left/,
     'the confirmation says what it leaves alone');
 });

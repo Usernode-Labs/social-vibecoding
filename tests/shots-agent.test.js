@@ -413,6 +413,12 @@ test('the worker records clips only when the run needs them', async () => {
   }
   await agent.dispatch(config, { ...options(false), platformAssets: true }, { workerService });
   assert.equal(seen.pop().shotsPlatformAssets, true, 'a child app\'s assets come from the platform');
+  // Stills at the screen's own density only when the run was started with
+  // the experiment on (services/shots-density.js).
+  for (const [deviceDensity, expected] of [[true, true], [undefined, false], [false, false], ['yes', false]]) {
+    await agent.dispatch(config, { ...options(false), ...(deviceDensity === undefined ? {} : { deviceDensity }) }, { workerService });
+    assert.equal(seen.pop().shotsDeviceDensity, expected, String(deviceDensity));
+  }
   await agent.dispatch(config, { ...options(true), clipSize: '390x844' }, { workerService });
   assert.equal(seen.pop().shotsClipSize, '390x844', 'clips are recorded at the motion screen\'s size');
   await agent.dispatch(config, { ...options(false), clipSize: '390x844' }, { workerService });

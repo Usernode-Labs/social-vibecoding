@@ -422,6 +422,54 @@
       "description": "The Firebase project's Identity Toolkit web API key, used by the server for the send-verification-code and verify-phone-number REST calls. Required only while FIREBASE_PHONE_AUTH_ENABLED is true. Not private: a web API key is a public-in-client identifier."
     },
     {
+      "key": "PLATFORM_SMS_PROVIDER",
+      "group": "Phone sign-in",
+      "default": "firebase",
+      "description": "Who sends Homeroom's text messages until an admin saves a choice in Admin → SMS delivery: firebase (default, today's Firebase Phone Auth path), brevo or twilio. An admin's saved choice wins. An unknown value is logged and falls back to firebase. A staging preview never sends a real text whatever this says."
+    },
+    {
+      "key": "BREVO_API_KEY",
+      "group": "Phone sign-in",
+      "private": true,
+      "description": "Brevo API key, sent as the api-key header on POST https://api.brevo.com/v3/transactionalSMS/send. Private: it can send texts and is never returned by any API — the admin status card reports only whether it is present. Not needed on staging, which logs instead of sending."
+    },
+    {
+      "key": "BREVO_SMS_SENDER_IDS",
+      "group": "Phone sign-in",
+      "default": "{}",
+      "description": "Country-to-Sender-ID registry: a JSON object keyed by ISO 3166 alpha-2 country, each value a sender string or {sender, registered, optOut}. Example: {\"FR\":\"Homeroom\",\"US\":{\"sender\":\"18885550100\",\"registered\":true}}. Register Sender IDs in Brevo's dashboard. An unlisted country is refused; US and Canada need registered:true with a numeric sender. Empty or malformed means Brevo is not ready."
+    },
+    {
+      "key": "BREVO_SMS_WEBHOOK_TOKEN",
+      "group": "Phone sign-in",
+      "private": true,
+      "required": false,
+      "description": "Bearer token Brevo's SMS webhook must send to POST /api/sms/webhooks/brevo. Private: it authorizes STOP replies and delivery receipts. Unset leaves the webhook answering 404."
+    },
+    {
+      "key": "TWILIO_ACCOUNT_SID",
+      "group": "Phone sign-in",
+      "description": "Twilio Account SID (AC…), the user half of the Basic credential on POST https://api.twilio.com/2010-04-01/Accounts/{AccountSid}/Messages.json. Not needed on staging, which logs instead of sending."
+    },
+    {
+      "key": "TWILIO_AUTH_TOKEN",
+      "group": "Phone sign-in",
+      "private": true,
+      "description": "Twilio Auth Token, the password half of the Basic credential, and the key Twilio signs its webhooks with. Private: it can send texts and is never returned by any API — the admin status card reports only whether it is present. Not needed on staging, which logs instead of sending."
+    },
+    {
+      "key": "TWILIO_SMS_SENDER_IDS",
+      "group": "Phone sign-in",
+      "default": "{}",
+      "description": "Twilio's own country-to-Sender-ID registry, shaped like BREVO_SMS_SENDER_IDS: JSON keyed by ISO 3166 alpha-2 country, each value a sender string or {sender, registered, optOut}. List only Sender IDs Twilio approved. An unlisted country is refused; US and Canada need registered:true with a numeric sender, sent as an E.164 From. Empty or malformed means Twilio is not ready."
+    },
+    {
+      "key": "TWILIO_STATUS_CALLBACK_URL",
+      "group": "Phone sign-in",
+      "required": false,
+      "description": "This server's public URL for POST /api/sms/webhooks/twilio, e.g. https://app.onhomeroom.com/api/sms/webhooks/twilio. Sent as each message's StatusCallback, and the exact URL Twilio's X-Twilio-Signature is checked against. Unset leaves the webhook answering 404 and sends no StatusCallback."
+    },
+    {
       "key": "PLATFORM_MAIL_PROVIDER",
       "group": "Platform mail",
       "default": "auto",
@@ -848,15 +896,15 @@
       "expectText": "Whole-season standings"
     },
     {
-      "name": "A change row shows its title, and an idle row wears no status dot (#971, #1946)",
-      "path": "/?shot=notifications-messages&demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#notifications-sheet[data-open] a[href$=\"/proposals/990101\"]:not(:has(.h-3.w-3.rounded-full))",
+      "name": "A change row in Messages' agents shows its title, and an idle row wears no status dot (#971, #1946, #5289)",
+      "path": "/?demo=1#messages",
+      "expectSelector": "#messages-screen:not(.hidden) [data-inbox-session=\"s990101\"] a[data-improve-row=\"session\"]:not(:has(.h-3.w-3.rounded-full))",
       "expectText": "[Mock] Your in-progress session"
     },
     {
-      "name": "A busy change row spins the standard arc, and nothing else (#1038, #1597, #1947)",
-      "path": "/?shot=notifications-messages&demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#notifications-sheet[data-open] a[href$=\"/proposals/990102\"]:not(:has(.h-3.w-3.rounded-full)) .dc-status-spinner-arc"
+      "name": "A busy change row in Messages spins the standard arc, and nothing else (#1038, #1597, #1947, #5289)",
+      "path": "/?demo=1#messages",
+      "expectSelector": "#messages-screen:not(.hidden) [data-inbox-session=\"s990102\"] a[data-improve-row=\"session\"]:not(:has(.h-3.w-3.rounded-full)) .dc-status-spinner-arc"
     },
     {
       "name": "Send Feedback: no kudos bounty (#964, #5249), up to three images (#3027), video (#3940) behind one paperclip (#4127)",
@@ -952,9 +1000,9 @@
       "expectSelector": "body:has(#feedback-modal:not(.hidden)):has(#feedback-target-platform[aria-checked=\"true\"]):has(#feedback-target-hint.hidden) #feedback-submit:not(:disabled)"
     },
     {
-      "name": "Challenges: every Home card draws the shared progress rail (Iteration 03 card)",
+      "name": "Challenges: every unfinished Home card draws the shared progress rail beside its arrow (Iteration 03 card, #4563)",
       "path": "/?demo=1",
-      "expectSelector": "#home-body.home-column #home-challenges-section article.home-panel .home-panel-rows .home-challenge-card [role=progressbar][aria-valuetext]"
+      "expectSelector": "#home-body.home-column #home-challenges-section article.home-panel .home-panel-rows .home-challenge-card:not([data-challenge-state=done]) [role=progressbar][aria-valuetext] + span.bg-zinc-100 > svg[aria-hidden=true]"
     },
     {
       "name": "Challenges: Home names the block by what it holds, with no season progress above the cards",
@@ -988,7 +1036,7 @@
     {
       "name": "Challenges: on Home, Next challenges lists only unfinished ones, under no group headers",
       "path": "/?demo=1",
-      "expectSelector": "#home-challenges-section .home-panel-rows:not(:has(h3)):not(:has(.home-challenge-card [role=progressbar][aria-valuetext=\"Done\"])) > .home-challenge-card"
+      "expectSelector": "#home-challenges-section .home-panel-rows:not(:has(h3)):not(:has(.home-challenge-card[data-challenge-state=done])) > .home-challenge-card"
     },
     {
       "name": "Dev board: one composite status pill and a menu trigger per card (card-as-pointer)",
@@ -1396,15 +1444,15 @@
       "expectText": "staging-demo-lead"
     },
     {
-      "name": "Discover leads its list with filter chips, All / Featured / Not joined / Joined / New, with All pressed (the prototype's scrDiscover, #5267)",
+      "name": "Discover leads with the For you / Browse / Joined switch and a Filters button that shows no count by default",
       "path": "/#apps",
-      "expectSelector": "#browse-screen:not(.hidden) #browse-search-bar > #browse-filter-chips[role=\"group\"] > [data-filter=\"all\"][aria-pressed=\"true\"] + [data-filter=\"featured\"] + [data-filter=\"notjoined\"][aria-pressed=\"false\"] + [data-filter=\"yours\"] + [data-filter=\"new\"]",
-      "expectText": "Not joined"
+      "expectSelector": "#browse-screen:not(.hidden):has(#browse-view-switch > [data-view=\"foryou\"][aria-current=\"page\"] + [data-view=\"browse\"] + [data-view=\"joined\"]):has(#browse-type-row #browse-filters-btn:not([data-active-count]))",
+      "expectText": "For you"
     },
     {
-      "name": "The Featured chip narrows Discover to the admin's featured apps (?filter=featured)",
+      "name": "The Featured switch narrows Discover to the admin's featured apps (?filter=featured)",
       "path": "/?demo=1&filter=featured#apps",
-      "expectSelector": "#browse-screen:has(#browse-filter-chips > [data-filter=\"featured\"][aria-pressed=\"true\"]) #browse-list[data-filter=\"featured\"]:not(:has(.browse-row[data-slug=\"staging-demo-popular-1\"])) .browse-row[data-slug=\"staging-demo-featured\"]"
+      "expectSelector": "#browse-screen:has(#browse-filters-btn[data-active-count=\"1\"]) #browse-list[data-filter=\"featured\"]:not(:has(.browse-row[data-slug=\"staging-demo-popular-1\"])) .browse-row[data-slug=\"staging-demo-featured\"]"
     },
     {
       "name": "A stored sample without a live runtime does not offer a nonexistent Share link",
@@ -1811,7 +1859,7 @@
     {
       "name": "Landing tells the story and asks people to get started (first session)",
       "path": "/?shot=anon#landing",
-      "expectSelector": "#auth-landing-screen:not(.hidden) [data-landing-story] a[data-landing-story-start][href=\"#signup\"]",
+      "expectSelector": "#auth-landing-screen:not(.hidden):has(#landing-header [data-landing-sign-in]:not(.hidden)) [data-guest-discover] [data-landing-story] h1",
       "expectText": "On Homeroom, communities make apps together.",
       "allowConsoleErrors": true
     },
@@ -1889,10 +1937,10 @@
       "allowConsoleErrors": true
     },
     {
-      "name": "Waitlist check-my-status names which step you are on (#1876)",
-      "path": "/?shot=waitlist-code-entry",
-      "expectSelector": "#waitlist-step:not(.hidden)",
-      "expectText": "Step 1 of 2 · Your email address",
+      "name": "A status read-back speaks as the waiting room does (#5262)",
+      "path": "/?shot=waitlist-status",
+      "expectSelector": "#waitlist-joined > h1",
+      "expectText": "You're on the waitlist",
       "allowConsoleErrors": true
     },
     {
@@ -1908,10 +1956,10 @@
       "allowConsoleErrors": true
     },
     {
-      "name": "Waitlist step 2 says so (#1876)",
-      "path": "/?shot=waitlist-code-step",
-      "expectSelector": "#waitlist-step:not(.hidden)",
-      "expectText": "Step 2 of 2 · Enter your code",
+      "name": "A released signup's read-back is headed as the room would say it (#5262)",
+      "path": "/?shot=waitlist-admitted",
+      "expectSelector": "#waitlist-joined > h1",
+      "expectText": "Your spot is ready",
       "allowConsoleErrors": true
     },
     {
@@ -1967,10 +2015,10 @@
       "allowConsoleErrors": true
     },
     {
-      "name": "Landing's one Continue button is for new and returning people, with the email line under it and nothing after (first session)",
+      "name": "Landing has Sign in and Sign up in its bar, and one button to make an account under the story (first session)",
       "path": "/?shot=anon#landing",
-      "expectSelector": "#auth-landing-screen:not(.hidden) [data-landing-story] a[data-landing-story-start][href=\"#signup\"] + p[data-landing-story-how]:last-child",
-      "expectText": "Sign in or join with your email.",
+      "expectSelector": "#auth-landing-screen:not(.hidden):has(#landing-header button[data-landing-sign-up]):has([data-landing-story] button[data-landing-story-join]):not(:has([data-landing-story] a)) #landing-header [data-landing-sign-in]:not(.hidden)",
+      "expectText": "Sign in",
       "allowConsoleErrors": true
     },
     {
@@ -2836,8 +2884,8 @@
     {
       "name": "A notification row says what kind it is, then which one, then where it came from",
       "path": "/?shot=notifications&demo=1",
-      "expectSelector": "#notifications-sheet[data-open]:has([data-notif-id=\"990210\"] > span:nth-child(2) > span:nth-child(3)) [data-notif-id=\"990201\"] > span:nth-child(2) > span:nth-child(3)",
-      "expectText": "Session finished"
+      "expectSelector": "#notifications-sheet[data-open]:has([data-notif-id=\"990210\"] > span:nth-child(2) > span:nth-child(3)) [data-notif-id=\"990211\"] > span:nth-child(2) > span:nth-child(3)",
+      "expectText": "[Mock] Session that stopped before finishing"
     },
     {
       "name": "The menu leads with Suggest an improvement, one button where there were two (#2718 review, UI overhaul)",
@@ -2969,10 +3017,10 @@
       "expectSelector": "#home-tour.hidden #home-tour-card #home-tour-body #home-tour-next"
     },
     {
-      "name": "The welcome tour opens on what a community is: projects built together, changes proposed and voted in (#3567)",
+      "name": "The welcome tour opens on what a community is: apps built together, changes proposed and voted on (#3567)",
       "path": "/?shot=welcome-tour",
       "expectSelector": "#home-tour:not(.hidden) #home-tour-card:not(.opacity-0) #home-tour-body:not(.hidden) #home-tour-title",
-      "expectText": "Homeroom is made of communities that build projects together"
+      "expectText": "Communities here build apps together"
     },
     {
       "name": "Settings' About pane keeps the mobile app version and the platform version as separate rows",
@@ -3016,8 +3064,8 @@
       "expectSelector": "#platform-tabs a#platform-tab-me[href=\"#profile\"][aria-label^=\"You, \"]:has(> .platform-tab-label)"
     },
     {
-      "name": "A message notification is listed in the notifications sheet, on its Messages tab (#18: the bell's Unread leaves plain messages to Messages)",
-      "path": "/?shot=notifications-messages&demo=1",
+      "name": "A message notification is listed in the notifications sheet under All (#18: the bell's Unread leaves plain messages to Messages; #5289)",
+      "path": "/?shot=notifications-all&demo=1",
       "expectSelector": "#notifications-sheet[data-open] [data-notif-id=\"990207\"]",
       "expectText": "[Mock] Did the notifications change land yet?"
     },
@@ -3037,9 +3085,9 @@
       "expectSelector": "#messages-screen:not(.hidden) .messages-conversation-row .messages-row-line .messages-row-name + .messages-row-time-unread"
     },
     {
-      "name": "A direct conversation is the same Discord-style named-row transcript as every chat: your own turn has your avatar, name and time, and no bubble (#2783)",
+      "name": "A direct conversation puts your own message on the right in its tinted bubble, with no avatar, and the other person's on the left in a plain bubble with their avatar (#5680)",
       "path": "/?demo=1#messages/910001",
-      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-pane.dc-lift.dc-lift-session.messages-thread-direct:not(:has(.messages-bubble)) .messages-message-self > :is(span[aria-hidden], img[alt=\"\"]) + .min-w-0 > .messages-message-head time"
+      "expectSelector": ".messages-layout .messages-thread-direct:has(.messages-message-bubble:not(.messages-message-self)>span[aria-hidden]+.messages-bubble-wrap>.messages-bubble) .messages-message-self>.messages-bubble-wrap:first-child>.messages-message-head+.messages-bubble"
     },
     {
       "name": "...and the sheet carries the conversation's own title row, and ends in the message box: the \"+\", field, Speak and send disc on one row, its character count marked as not near the limit, which a phone does not lay out, so there it is one compact line (#3735, #4389)",
@@ -3047,9 +3095,9 @@
       "expectSelector": "#messages-screen:not(.hidden) .dc-lift-session:has(.messages-composer-add + textarea + [data-dictation] + .messages-send):has(.messages-composer-count:not([data-near-limit])) .messages-thread-header .messages-thread-name + .messages-thread-sub"
     },
     {
-      "name": "A group conversation is a named-row transcript",
+      "name": "A group conversation draws your own messages on the right and everyone else's on the left, each in a bubble (#5680)",
       "path": "/?demo=1#messages/910002",
-      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-pane.messages-thread-group .messages-message:not(.messages-message-bubble) .messages-message-head time"
+      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-pane.messages-thread-group:has(.messages-message-bubble.messages-message-self .messages-bubble) .messages-message-bubble:not(.messages-message-self) > .messages-bubble-wrap > .messages-message-head time"
     },
     {
       "id": "messages.inbox",
@@ -3127,9 +3175,9 @@
       "expectSelector": "#messages-screen:not(.hidden) .messages-thread-group .messages-attachment a[data-image-open][href*=\"/attachments/\"] img[alt*=\"Screenshot 2026-08-13\"]"
     },
     {
-      "name": "The notifications strip reads Unread, Messages, All — agents live under Messages, and it opens on Unread (#2718 review, #2815)",
+      "name": "The notifications strip reads Unread, All, and it opens on Unread (#2718 review, #5289)",
       "path": "/?shot=notifications&demo=1",
-      "expectSelector": "#notifications-screen-tabs > #notifications-tab-unread:first-child[aria-selected=\"true\"] + #notifications-tab-messages + #notifications-tab-all:last-child"
+      "expectSelector": "#notifications-screen-tabs > #notifications-tab-unread:first-child[aria-selected=\"true\"] + #notifications-tab-all:last-child"
     },
     {
       "name": "The Unread footer shows older notifications in place rather than jumping to All",
@@ -3138,10 +3186,10 @@
       "expectText": "See older notifications"
     },
     {
-      "name": "The Messages tab pages older MESSAGES in place rather than jumping to All",
-      "path": "/?shot=notifications-messages&demo=1",
-      "expectSelector": "#notifications-sheet[data-open] #notifications-see-older-messages",
-      "expectText": "See older message notifications"
+      "name": "On Unread, a project's repeats of one kind fold into one row that says how many (#5289)",
+      "path": "/?shot=notifications&demo=1",
+      "expectSelector": "#notifications-sheet[data-open] [data-notif-app-group=\"a:0\"] ~ .notifications-row-slot > [data-notif-id=\"990201\"][data-notif-group-size=\"2\"]",
+      "expectText": "2 sessions finished"
     },
     {
       "name": "A proposal notification names the proposal, not a sentence about it",
@@ -3150,24 +3198,24 @@
       "expectText": "Testing couldn't run"
     },
     {
-      "name": "The notifications sheet offers a Messages tab",
+      "name": "A folded row's clear names every notification it stands for (#5289)",
       "path": "/?shot=notifications&demo=1",
-      "expectSelector": "#notifications-sheet[data-open] #notifications-screen-tabs #notifications-tab-messages"
+      "expectSelector": "#notifications-sheet[data-open] .notifications-row-slot > [data-notif-id=\"990201\"] + button[data-notification-clear=\"990201\"][aria-label=\"Clear 2 notifications\"]"
     },
     {
-      "name": "The messages deep link lands on the Messages tab",
-      "path": "/?shot=notifications-messages&demo=1",
-      "expectSelector": "#notifications-sheet[data-open] #notifications-tab-messages[aria-selected=\"true\"]"
+      "name": "A notification's subject runs to two lines before it is cut (#5289)",
+      "path": "/?shot=notifications&demo=1",
+      "expectSelector": "#notifications-sheet[data-open] [data-notif-id=\"990211\"] > span:nth-child(2) > span.line-clamp-2:nth-child(2)"
     },
     {
-      "name": "The Messages tab leads to the full Messages screen",
-      "path": "/?shot=notifications-messages&demo=1",
-      "expectSelector": "#notifications-sheet[data-open] #notifications-all-messages",
-      "expectText": "All messages"
+      "name": "Another project's notification is its own group, not folded into the first project's (#5289)",
+      "path": "/?shot=notifications&demo=1",
+      "expectSelector": "#notifications-sheet[data-open] [data-notif-app-group=\"a:990003\"] + .notifications-row-slot > [data-notif-id=\"990209\"]:not([data-notif-group-size])",
+      "expectText": "Staging demo archive"
     },
     {
       "name": "Consecutive messages from one conversation collapse to a counted row",
-      "path": "/?shot=notifications-messages&demo=1",
+      "path": "/?shot=notifications-all&demo=1",
       "expectSelector": "#notifications-sheet[data-open] [data-notif-id=\"990207\"] [aria-label=\"2 notifications\"]"
     },
     {
@@ -3791,9 +3839,15 @@
       "expectText": "Why it failed"
     },
     {
-      "name": "A failing unit-suite row lists each failing test with its error excerpt under Why it failed (#3978)",
+      "name": "A failing unit-suite row says which test failed and what it failed with, then its error excerpt once, under Show the test output (#3978)",
       "path": "/?demo=1&details=1#app/usernode-2d5619/dev/proposals/9000093",
-      "expectSelector": ".dev-step-blocked[data-note=\"checks\"] .dev-step-run .dev-ledger-fails > .dev-ledger-check-why > .dev-ledger-why > .dev-ledger-why-body > .dev-ledger-why-details > li .dev-ledger-why-excerpt"
+      "expectSelector": ".dev-step-blocked[data-note=\"checks\"] .dev-step-run .dev-ledger-fails > [data-check-unit]:has(.dev-ledger-unit-said) > .dev-ledger-why > .dev-ledger-why-body > .dev-ledger-why-details > li .dev-ledger-why-excerpt"
+    },
+    {
+      "name": "A change whose checks failed tells its author what went wrong in plain words, with Fix it beside a quieter Re-run checks",
+      "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000494",
+      "expectSelector": "[data-change-gate=\"testing\"][data-tone=\"bad\"]:has(.dev-change-gate-fix > .gc-vote-btn-accent[data-change-fix-checks] + .gc-vote-btn:not(.gc-vote-btn-accent)[data-act=\"castRecheck\"]) > .dev-change-gate-why[data-change-gate-why=\"explained\"]",
+      "expectText": "needs a Spanish version"
     },
     {
       "name": "Freshness (#1442): a conflicting proposal says so on its merge step, with its votes still open above it",
@@ -4283,7 +4337,7 @@
       "name": "Discover's search and filters sit over the list's card, with the rows inside the card (communities prototype; #1919)",
       "path": "/#apps",
       "expectSelector": "#browse-screen > #browse-search-bar.browse-pane-head:not(.hidden) + #browse-list-level > #browse-list.browse-pane-body .browse-row",
-      "expectText": "Sort"
+      "expectText": "Filters"
     },
     {
       "name": "Shared report link serves the report document without a session",
@@ -4317,9 +4371,10 @@
       "expectSelector": "#dev-workshop:not(:has(#dev-plus-btn)) [data-ws-pane] #dev-actions > #dev-kanban-filterbar:not(:empty):last-child"
     },
     {
-      "name": "The Notifications sheet shows read rows on the All tab (Streamlined Concept)",
+      "name": "On Unread, a project's notifications stack under its newest card, and one request's news is one card (#5580)",
       "path": "/?shot=notifications&demo=1",
-      "expectSelector": "#notifications-sheet[data-open] [data-notif-id]"
+      "expectSelector": "#notifications-sheet[data-open] [data-notif-stack=\"a:0\"][data-stack-closed] > [data-stack-top] > [data-notif-id=\"990214\"][data-notif-group-size=\"2\"][aria-expanded=\"false\"]",
+      "expectText": "#990301 · 2 notifications"
     },
     {
       "name": "The Notifications sheet is a flat list of rows (#1385)",
@@ -4363,25 +4418,25 @@
       "expectSelector": "body.bg-zinc-100"
     },
     {
-      "name": "A connector work order shows on the bell's Messages tab, beside an agent's finished-session notification (#1417, Streamlined Concept, #2815)",
-      "path": "/?shot=notifications-messages&demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#notifications-sheet[data-open]:has(#notifications-all-messages ~ .notifications-row-slot [data-notif-id=\"990209\"]) [data-improve-row=\"task\"]"
+      "name": "A connector work order is listed with the agents on the Messages screen (#1417, #2815, #5289)",
+      "path": "/?demo=1#messages",
+      "expectSelector": "#messages-screen:not(.hidden) [data-inbox-session] [data-improve-row=\"task\"]"
     },
     {
       "name": "The work-order row points at its request, not a session page (#1417)",
-      "path": "/?shot=notifications-messages&demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#notifications-sheet[data-open] [data-improve-row=\"task\"][href$=\"/dev/issues/900002\"]"
+      "path": "/?demo=1#messages",
+      "expectSelector": "#messages-screen:not(.hidden) [data-improve-row=\"task\"][href$=\"/dev/issues/900002\"]"
     },
     {
-      "name": "Real sessions still render beside it on the full change destination (#1417)",
-      "path": "/?shot=notifications-messages&demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#notifications-sheet[data-open] [data-improve-row=\"session\"][href*=\"/dev/proposals/\"]"
+      "name": "Real sessions still render beside it in Messages (#1417, #5289)",
+      "path": "/?demo=1#messages",
+      "expectSelector": "#messages-screen:not(.hidden):has([data-improve-row=\"task\"]) [data-inbox-session] a[data-improve-row=\"session\"][href^=\"#messages/session/\"]"
     },
     {
-      "name": "The all-apps directory offers a Sort control, defaulting to Recommended (#1383)",
+      "name": "The all-apps directory offers its Sort order inside the Filters sheet, defaulting to Recommended (#1383)",
       "path": "/#apps",
-      "expectSelector": "#browse-search-bar #browse-sort-select",
-      "expectText": "Recommended"
+      "expectSelector": "#browse-screen:has(#browse-search-bar #browse-filters-btn) #browse-list[data-sort=\"recommended\"]",
+      "expectText": "Filters"
     },
     {
       "name": "?sort= orders the touch directory, under a bar with no back slot (#1383, #2718)",
@@ -4443,7 +4498,7 @@
     {
       "name": "Unread notification rows read source, bold subject, muted preview",
       "path": "/?shot=notifications&demo=1",
-      "expectSelector": "#notifications-sheet[data-open]:has(.notifications-row-slot > [data-notif-id=\"990201\"] + button[data-notification-clear=\"990201\"][aria-label=\"Clear notification\"]) .notifications-row .text-xs + .text-sm.font-semibold"
+      "expectSelector": "#notifications-sheet[data-open]:has(.notifications-row-slot > [data-notif-id=\"990211\"] + button[data-notification-clear=\"990211\"][aria-label=\"Clear notification\"]) .notifications-row .text-xs + .text-sm.font-semibold"
     },
     {
       "name": "The sign-in screen stands on the wallpaper as a card form with a filled Log in pill",
@@ -4559,8 +4614,8 @@
     },
     {
       "name": "#1808: a change row's age is its own element with the full instant in title",
-      "path": "/?shot=notifications-messages&demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#notifications-sheet[data-open] [data-improve-row] time[title]"
+      "path": "/?demo=1#messages",
+      "expectSelector": "#messages-screen:not(.hidden) [data-inbox-session] [data-improve-row] time[title]"
     },
     {
       "name": "#1808: an admin log line keeps its seconds and gains the day once it is not today's",
@@ -5003,6 +5058,19 @@
       "path": "/?demo=1&ws=bot#app/usernode-2d5619/workshop",
       "expectSelector": "#dev-workshop [data-ws-bot-slots-page]:has([data-ws-bot-waiting] [data-ws-bot-slot-excerpt]):has([data-ws-bot-taken] [data-ws-open]):has([data-ws-bot-up-next] [data-ws-bot-older-badge]):has([data-ws-bot-left]) [data-ws-bot-slots-used=\"5/5\"]",
       "expectText": "5 of 5 in use"
+    },
+    {
+      "name": "Inside the Homeroom app the landing is the whole story, with a Look around first link under it (first session)",
+      "path": "/?shot=anon&un-native-webview=1#landing",
+      "expectSelector": "#auth-landing-screen:not(.hidden):has([data-landing-story]:not([data-landing-story-compact]) [data-landing-story-start]):not(:has([data-guest-discover])) [data-landing-story] a[data-landing-story-look][href=\"#apps\"]",
+      "expectText": "Look around first",
+      "allowConsoleErrors": true
+    },
+    {
+      "name": "SMS delivery section shows the provider switch, Sender IDs and recent texts (22 Oct 2026)",
+      "path": "/?demo=1#admin/sms",
+      "expectSelector": "#admin-sms-provider, #admin-sms-deliveries",
+      "expectText": "Text messages are sent by"
     }
   ],
   "governance": {

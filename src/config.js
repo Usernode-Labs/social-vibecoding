@@ -154,6 +154,18 @@ function shotsPhoneTestCodeFrom(env) {
   return { code: raw, refused: null };
 }
 
+// PLATFORM_SMS_PROVIDER: which provider sends texts until an admin saves a
+// choice from Admin → SMS delivery. firebase (default), brevo or twilio; an
+// unknown value is loud and falls back to firebase, the mail selection's rule.
+function smsProviderFrom(env) {
+  const raw = typeof env.PLATFORM_SMS_PROVIDER === 'string'
+    ? env.PLATFORM_SMS_PROVIDER.trim().toLowerCase()
+    : '';
+  if (!raw || raw === 'firebase' || raw === 'brevo' || raw === 'twilio') return raw || 'firebase';
+  console.error(`  PLATFORM_SMS_PROVIDER=${raw} is not a known provider — using firebase`);
+  return 'firebase';
+}
+
 function canonicalCliOrigin(value, { allowLoopbackHttp = false } = {}) {
   if (typeof value !== 'string' || !value) return null;
   try {
@@ -772,9 +784,11 @@ function load() {
     // DB work. Tunable via env so prod can widen it without a code change.
     //
     // #1771: a STAGING PREVIEW gets its own, much smaller ceiling. Every
-    // preview is a separate clone on the SAME Postgres server as production,
-    // and that server's max_connections is the stock 100 — so the fleet, not
-    // any one process, is what the budget has to fit. A preview serves one
+    // preview is a separate clone on one Postgres server (production's when
+    // this was written, with the stock 100 connections; a server of its own
+    // now), so the fleet, not any one process, is what the budget has to fit.
+    // The platform's own pools are budgeted in the chart per role
+    // (postgresql.platformConnections, item 4). A preview serves one
     // reviewer and one capture run; capture drives 8 concurrent pages
     // (capture/capture.js `concurrency`), so 8 is the number of connections
     // it can actually use at once, and anything above that is a ceiling it
@@ -788,6 +802,15 @@ function load() {
     dbPoolMax: IS_STAGING()
       ? parseInt(process.env.STAGING_DB_POOL_MAX || '8', 10)
       : parseInt(process.env.DB_POOL_MAX || '10', 10),
+    // How long a caller waits for a connection (a full pool, a slow server)
+    // before that one request or attempt fails (src/db/pool.js). Every pool
+    // and dedicated client the platform opens waits at most this long.
+    dbPoolWaitMs: parseInt(process.env.DB_POOL_WAIT_MS || '10000', 10),
+    // What a draining process keeps (server.js drainUntilIdle): it starts no
+    // new work, so its main and workflow pools shrink to these, and two
+    // releases draining are budgeted at them (item 4, the connection budget).
+    drainDbPoolMax: parseInt(process.env.DRAIN_DB_POOL_MAX || '4', 10),
+    drainWfPoolMax: parseInt(process.env.DRAIN_WF_POOL_MAX || '2', 10),
     // Session auto-pause: a DB-driven sweeper (server.js) flips idle
     // 'active' sessions to 'paused' so they stop counting against the
     // session caps. Now that pause is cheap (it no longer tears down
@@ -840,11 +863,8 @@ function load() {
     // app opened in the last week, re-drafting themes at most daily.
     workshopSweepIntervalMs: parseInt(process.env.WORKSHOP_THEMES_SWEEP_INTERVAL_MS || String(60 * 60 * 1000), 10),
     // How many 'error' verdicts in a row the checks' error lane re-runs on
-    // its own (staging-recovery.checkMaxAutoRetries, CHECK_MAX_AUTO_RETRIES).
-    checkMaxAutoRetries: (() => {
-      const n = Number.parseInt(process.env.CHECK_MAX_AUTO_RETRIES || '6', 10);
-      return Number.isFinite(n) ? n : 6;
-    })(),
+    // its own (workflow/rules/check-retries.ts, CHECK_MAX_AUTO_RETRIES).
+    checkMaxAutoRetries: require('./workflow/rules/check-retries.ts').checkMaxAutoRetries(),
     // Its own pool, so pipeline slots and the outcome listener never take
     // request connections, and how many slots each process runs, by role
     // (services/process-role.js runsWorkflow). A process that runs the
@@ -970,6 +990,32 @@ function load() {
     // Test numbers (phoneTestCodeFrom above, or shotsPhoneTestCodeFrom on a
     // before & after shots copy). Never set in production.
     phoneTestCode: phoneTestCodeFrom(process.env).code || shotsPhoneTestCodeFrom(process.env).code,
+    // Which provider sends texts. An admin's saved choice (platform_settings,
+    // services/sms/select.js) wins; this is the deploy's default until one
+    // is saved, and Firebase is the default so today's behaviour holds.
+    // A staging preview never sends a real text whatever this says.
+    smsProviderDefault: smsProviderFrom(process.env),
+    // Brevo SMS. BREVO_API_KEY is private and travels as the api-key header.
+    // BREVO_SMS_SENDER_IDS is the operator-maintained country registry, parsed
+    // once here (an invalid document is dropped and reported, never fatal).
+    // BREVO_SMS_WEBHOOK_TOKEN authenticates Brevo's STOP/unsubscribe webhook.
+    brevoApiKey: process.env.BREVO_API_KEY || '',
+    brevoSmsSenderIds: require('./services/sms/senders').parseRegistry(
+      process.env.BREVO_SMS_SENDER_IDS || '{}'
+    ),
+    brevoSmsWebhookToken: process.env.BREVO_SMS_WEBHOOK_TOKEN || '',
+    // Twilio SMS, the same shape. TWILIO_AUTH_TOKEN is private and, with
+    // TWILIO_ACCOUNT_SID, is the Basic credential on every send; it also
+    // signs Twilio's webhooks. TWILIO_SMS_SENDER_IDS is Twilio's own country
+    // registry (a Sender ID approved at Brevo is not approved at Twilio).
+    // TWILIO_STATUS_CALLBACK_URL is this server's public webhook URL, sent
+    // as each message's StatusCallback and used to check the signature.
+    twilioAccountSid: process.env.TWILIO_ACCOUNT_SID || '',
+    twilioAuthToken: process.env.TWILIO_AUTH_TOKEN || '',
+    twilioSmsSenderIds: require('./services/sms/senders').parseRegistry(
+      process.env.TWILIO_SMS_SENDER_IDS || '{}', 'TWILIO_SMS_SENDER_IDS'
+    ),
+    twilioStatusCallbackUrl: process.env.TWILIO_STATUS_CALLBACK_URL || '',
     // Platform outbound mail (login codes, waitlist confirmations,
     // waitlist release notices). src/services/mail/select.js picks the
     // transport once, here, from platform_env: Gmail API, a generic HTTP
@@ -1107,6 +1153,14 @@ function load() {
   console.log(`  FIREBASE_PROJECT_ID=${config.firebaseProjectId || '(not set)'}`);
   console.log(`  FIREBASE_SERVICE_ACCOUNT=${config.firebaseServiceAccountJsonB64 ? '(set)' : '(not set)'}`);
   console.log(`  FIREBASE_PHONE_AUTH=${config.firebasePhoneAuthEnabled ? 'enabled' : 'disabled'}${config.firebaseWebApiKey ? '' : ' (no web API key — phone endpoints answer 404 not_offered)'}`);
+  console.log(`  PLATFORM_SMS_PROVIDER=${config.smsProviderDefault} (an admin's saved choice wins)`);
+  console.log(`  BREVO_API_KEY=${config.brevoApiKey ? '(set)' : '(not set — Brevo sends nothing)'}`);
+  console.log(`  BREVO_SMS_SENDER_IDS=${Object.keys(config.brevoSmsSenderIds || {}).length} country entries`);
+  console.log(`  BREVO_SMS_WEBHOOK_TOKEN=${config.brevoSmsWebhookToken ? '(set)' : '(not set — Brevo webhook answers 404)'}`);
+  console.log(`  TWILIO_ACCOUNT_SID=${config.twilioAccountSid ? '(set)' : '(not set — Twilio sends nothing)'}`);
+  console.log(`  TWILIO_AUTH_TOKEN=${config.twilioAuthToken ? '(set)' : '(not set — Twilio sends nothing)'}`);
+  console.log(`  TWILIO_SMS_SENDER_IDS=${Object.keys(config.twilioSmsSenderIds || {}).length} country entries`);
+  console.log(`  TWILIO_STATUS_CALLBACK_URL=${config.twilioStatusCallbackUrl || '(not set — Twilio webhook answers 404)'}`);
   const phoneTest = phoneTestCodeFrom(process.env);
   if (phoneTest.code) {
     console.log('  PHONE_TEST_CODE=(set) — +1 … 555 0100–0199 sign in with it as test accounts; no text is sent');
@@ -1141,6 +1195,20 @@ function usesMockGithubForImports() {
   return process.env.USERNODE_ENV === 'staging';
 }
 
+// #5743: a request filed on a test copy is filed LOCALLY, under an obviously
+// fake number, when that copy has no GitHub credentials — so the thanks sheet
+// and everything after posting can be reached by the before & after shots and
+// by the declared checks. Staging previews and a developer's own machine (the
+// in-loop launch says USERNODE_ENV=staging too) are test copies; production is
+// never one, and a server that does not positively say it is staging or local
+// development is treated as production, so a pod missing the setting can never
+// fake a filing. Read directly from env, like its neighbour.
+function filesTestRequests() {
+  if (process.env.USERNODE_ENV === 'staging') return true;
+  if (process.env.USERNODE_ENV === 'production' || process.env.NODE_ENV === 'production') return false;
+  return process.env.USERNODE_LOCAL_DEV === '1';
+}
+
 // #1771: cluster maintenance is not a staging preview's job.
 //
 // server.becomeLeader() is where the fleet-wide duties still under the
@@ -1158,7 +1226,7 @@ function usesMockGithubForImports() {
 // github-mock.js stands in), and no fleet. What it does have is a timer
 // pool that queries every few seconds forever, which is why previews last
 // touched a week ago were measured holding six warm Postgres connections
-// each — twenty of them, on a server whose max_connections is 100. The pool
+// each — twenty of them, on a server whose max_connections was 100. The pool
 // never sheds them because idleTimeoutMillis only fires on a connection
 // nobody reuses, and the sweepers keep reusing them.
 //
@@ -1177,6 +1245,7 @@ function runsClusterMaintenance() {
 module.exports = {
   load,
   usesMockGithubForImports,
+  filesTestRequests,
   runsClusterMaintenance,
   canonicalCliOrigin,
   canonicalOpenRouterApiBase,

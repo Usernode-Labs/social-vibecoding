@@ -122,10 +122,12 @@ async function persistNewTurn(db, sessionId, turn, {
   expectedTurnId = null,
   expectedJournal = null,
 } = {}) {
-  const record = withLifecycle(turn, {
-    turnId: turn?.turnId || turn?.logicalTurnId || turn?.turnUuid || null,
-    phase: turn?.phase || PHASE_DISPATCH_PENDING,
-  });
+  const record = {
+    ...withLifecycle(turn, {
+      turnId: turn?.turnId || turn?.logicalTurnId || turn?.turnUuid || null,
+      phase: turn?.phase || PHASE_DISPATCH_PENDING,
+    }),
+  };
   const params = [sessionId, JSON.stringify(record)];
   let predicate = 'active_turn IS NULL';
   if (allowReplace) {

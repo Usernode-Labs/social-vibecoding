@@ -24,7 +24,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
 
-import { pushDismissible, type Release, type ReleaseOptions } from '../../lib/back-stack';
+import { afterBackSettles, pushDismissible, type Release, type ReleaseOptions } from '../../lib/back-stack';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { isDismissGuarded, useStaticModal } from '../../lib/static-modal';
 
@@ -106,6 +106,18 @@ export interface UseDialogResult<T> {
   open: (payload?: T) => void;
   close: () => void;
   closeForNavigation: () => void;
+  /**
+   * Close this dialog and open the next surface once the close's history
+   * record has been spent. A plain `close()` spends it with a queued
+   * `history.back()`, and opening the next surface in the same task pushes a
+   * record on top of it; the traversal then lands and is read as a Back
+   * press, closing what just opened (#5801, the "Who can see & change it"
+   * sheet from App settings and Members). A close the dialog vetoes
+   * (`canClose`) opens nothing.
+   *
+   * Not on the published `DialogController`: no legacy caller hands off.
+   */
+  closeThen: (next: () => void) => void;
   suspend: () => Promise<void>;
   resume: () => void;
   backdropProps: { onClick: (event: MouseEvent<HTMLElement>) => void };
@@ -176,18 +188,23 @@ export function useDialog<T = void>(
     setIsOpen(true);
   }, [settleExitWaiters]);
 
-  const dismiss = useCallback((options?: ReleaseOptions) => {
-    if (opts.current.canClose && !opts.current.canClose()) return;
+  const dismiss = useCallback((options?: ReleaseOptions): boolean => {
+    if (opts.current.canClose && !opts.current.canClose()) return false;
     // Dismissed by ✕, the backdrop or a caller rather than by back: hand the
     // claim back so the next press reaches whatever is underneath.
     const release = releaseBack.current;
     releaseBack.current = null;
     release?.(options);
     setIsOpen(false);
+    return true;
   }, []);
   const close = useCallback(() => dismiss(), [dismiss]);
   // The caller writes an address next — see DialogController.closeForNavigation.
   const closeForNavigation = useCallback(() => dismiss({ navigating: true }), [dismiss]);
+  // Close, then open the next surface once this close's record is spent.
+  const closeThen = useCallback((next: () => void) => {
+    if (dismiss()) afterBackSettles(next);
+  }, [dismiss]);
 
   // A visibility change that is bookkeeping rather than a lifecycle event —
   // see DialogController.suspend. The flag is consumed by the single effect
@@ -314,5 +331,5 @@ export function useDialog<T = void>(
     };
   }, [name, controller]);
 
-  return { rootRef, isOpen, open, close, closeForNavigation, suspend, resume, backdropProps };
+  return { rootRef, isOpen, open, close, closeForNavigation, closeThen, suspend, resume, backdropProps };
 }

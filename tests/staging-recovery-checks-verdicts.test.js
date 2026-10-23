@@ -508,8 +508,11 @@ test("storeChecks 'error' branch keeps the backoff bookkeeping the error lane re
     await subject.storeChecks(pool, 42, 'cafe1234', { state: 'error', results: [] },
       'could not compare feat/x with main: boom');
     const q = pool.queries[0];
-    assert.match(q.sql, /consecutive_check_failures = consecutive_check_failures \+ 1/);
-    assert.match(q.sql, /check_next_retry_at = NOW\(\) \+ make_interval/);
+    // Unless another rule counts the retries (the preview machine's
+    // lostAgain), the row's own streak and backoff.
+    assert.match(q.sql, /consecutive_check_failures = COALESCE\(\$9::int, consecutive_check_failures \+ 1\)/);
+    assert.match(q.sql, /check_next_retry_at = CASE WHEN \$9::int IS NOT NULL THEN \$10::timestamptz ELSE NOW\(\) \+ make_interval/);
+    assert.deepEqual(q.params.slice(8), [null, null]);
     assert.match(q.sql, /status IN \('active', 'paused', 'promoted', 'merging'\)/,
       'a detached failure cannot mutate a withdrawn session');
     assert.match(q.sql, /checks_commit_sha IS NOT DISTINCT FROM \$3::text/);

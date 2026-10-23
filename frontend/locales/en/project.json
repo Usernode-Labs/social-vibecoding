@@ -1619,25 +1619,21 @@
     "text": "See the plan",
     "description": "Quiet link on the first-version card of a project's Hub, for a member who did not start the project: opens the plan for the first version to read, without being able to answer it."
   },
-  "hub.firstLook.kicker": {
-    "text": "First look",
-    "description": "Small label in capitals at the top of a card on a project's Hub, shown to the person who started the project while its first version is being built, beside a small picture of the app's main screen that the assistant called Homeroom bot drew before building it. \"Look\" is a noun: a first view of the app."
-  },
-  "hub.firstLook.title": {
-    "text": "Here's what you're making",
-    "description": "Title of the first-look card on a project's Hub, shown to the person who started the project while its first version is being built, beside a small picture of the app's main screen that Homeroom bot drew from their answers."
-  },
   "hub.firstLook.text": {
     "text": "Drawn from your answers. We'll tell you when the working app is live.",
-    "description": "Text of the first-look card on a project's Hub, under its title: the picture beside it was drawn from the answers the person gave when they made the project, the real app is still being built, and they will be told once it is published (\"live\")."
+    "description": "Line on a project's Hub card while its first version is being built, shown to the person who started the project, under the project's name and how far the build has got: the small picture beside it was drawn from the answers the person gave when they made the project, the real app is still being built, and they will be told once it is published (\"live\")."
   },
   "hub.firstLook.watch": {
     "text": "Watch Homeroom bot build it",
-    "description": "Button on the first-look card of a project's Hub: opens the project's App tab, where the app can be seen taking shape while the assistant called Homeroom bot builds it. \"It\" is the app; Homeroom bot is a name."
+    "description": "Button on a project's Hub card while its first version is being built, beside the first look at it: opens the project's App tab, where the app can be seen taking shape while the assistant called Homeroom bot builds it. \"It\" is the app; Homeroom bot is a name."
   },
   "hub.firstLook.alt": {
     "text": "The first look at {{app}}'s main screen",
     "description": "Description, for screen readers, of the small picture on the first-look card of a project's Hub: a drawing of the app's main screen, made before the app was built. {{app}} is the project's name."
+  },
+  "hub.firstLook.open": {
+    "text": "Open your chat with Homeroom bot",
+    "description": "Name, for screen readers, of the first-look card on a project's Hub, for the person who started the project: a tap on its picture or its words opens their chat with the assistant called Homeroom bot, where the build is reported. Homeroom bot is a name."
   },
   "hub.needs.title": {
     "text": "Needs you",
@@ -2327,9 +2323,57 @@
     "text": "{{reason}}<0> · on {{path}}</0>",
     "description": "The opened reason of a failed automated check, followed by the page it ran on. {{reason}} is the recorded reason, or the word for \"failed\"; {{path}} is the address of the page inside the app, for example /settings. <0></0> dims the second part; keep the dot and the space before it inside the tag."
   },
-  "topic.check.testInFile": {
-    "text": "<0>{{test}}</0><1> · in {{file}}</1>",
-    "description": "One failing unit test listed under a failed check on a change's page. {{test}} is the test's name and {{file}} the source file it is in. <0></0> and <1></1> style the two parts; keep the dot and the space before it inside the second tag."
+  "topic.check.unit.name": {
+    "text": "The app’s own tests",
+    "description": "Name of one row in a change's list of automated checks: the app's own test suite, which its code comes with. Shown when that suite failed."
+  },
+  "topic.check.unit.failedOf_one": {
+    "text": "{{failed}} of {{total}} failed",
+    "description": "At the end of the \"The app's own tests\" row in a change's list of checks: {{failed}} of the suite's {{total}} tests failed, both already formatted (\"1,284\"). {{count}} is the number that failed, for the plural."
+  },
+  "topic.check.unit.failedOf_other": {
+    "text": "{{failed}} of {{total}} failed",
+    "description": "At the end of the \"The app's own tests\" row in a change's list of checks: {{failed}} of the suite's {{total}} tests failed, both already formatted (\"1,284\"). {{count}} is the number that failed, for the plural."
+  },
+  "topic.check.unit.failed_one": {
+    "text": "{{failed}} failed",
+    "description": "At the end of the \"The app's own tests\" row in a change's list of checks, when the total is not known: {{failed}} of its tests failed, already formatted (\"1,284\"). {{count}} is the same number, for the plural."
+  },
+  "topic.check.unit.failed_other": {
+    "text": "{{failed}} failed",
+    "description": "At the end of the \"The app's own tests\" row in a change's list of checks, when the total is not known: {{failed}} of its tests failed, already formatted (\"1,284\"). {{count}} is the same number, for the plural."
+  },
+  "topic.check.unit.testsThatFailed_one": {
+    "text": "The test that failed",
+    "description": "Small heading over the failing test in the \"The app's own tests\" row of a change's list of checks. {{count}} is how many tests are listed under it; English does not show it."
+  },
+  "topic.check.unit.testsThatFailed_other": {
+    "text": "The tests that failed",
+    "description": "Small heading over the failing tests in the \"The app's own tests\" row of a change's list of checks. {{count}} is how many tests are listed under it; English does not show it."
+  },
+  "topic.check.unit.said": {
+    "text": "Failed with: {{said}}",
+    "description": "Under one failing test's name in a change's list of checks: the message it failed with. {{said}} is that message as the app's code wrote it, usually in English."
+  },
+  "topic.check.unit.fileLine": {
+    "text": "{{file}}, line {{line}}",
+    "description": "Under one failing test's name in a change's list of checks: where the test is. {{file}} is a file path in the app's code and {{line}} a line number in it."
+  },
+  "topic.check.unit.showOutput": {
+    "text": "Show the test output",
+    "description": "Link-like label that unfolds the raw output the app's failing tests printed, in a change's list of checks. It is technical text for whoever fixes the tests."
+  },
+  "topic.checks.explain.title": {
+    "text": "What went wrong",
+    "description": "Small heading over a plain explanation of why a change's automated checks failed, in its list of checks."
+  },
+  "topic.checks.explain.source": {
+    "text": "Homeroom’s reading of the test output.",
+    "description": "Small note under the plain explanation of why a change's checks failed: the explanation was written by Homeroom (with AI) from the tests' technical output, so it may be imperfect. Homeroom is the product's name; do not translate it."
+  },
+  "topic.checks.fixing": {
+    "text": "Fixing…",
+    "description": "Text of the disabled Fix it button in a change's list of checks while the AI agent is fixing the checks that failed."
   },
   "topic.checks.showPassing_one": {
     "text": "Show {{count}} passing checks",
@@ -2494,6 +2538,34 @@
   "topic.change.gate.seeFailed": {
     "text": "See what failed",
     "description": "Link-style button under the Testing card on a change's page when its checks failed and there is nothing else to say: opens the Details sheet at the failed checks."
+  },
+  "topic.change.gate.fix": {
+    "text": "Fix it",
+    "description": "Main button on the Testing card of a change's page when its automated checks failed, shown to the change's author: asks the AI agent that built the change to fix what failed. \"It\" is what failed."
+  },
+  "topic.change.gate.fixAsking": {
+    "text": "Asking…",
+    "description": "Text of the Fix it button on the Testing card of a change's page while the request to the AI agent is being sent."
+  },
+  "topic.change.gate.fixNote": {
+    "text": "Fix it asks the agent that built this change to fix what failed, using your credits. You can stay on this page: the checks run again by themselves when it’s done.",
+    "description": "Line under the Fix it button on the Testing card of a change's page, shown to the change's author. \"The agent\" is the AI coding agent; credits are what an agent's work is paid with. \"It\" in the last sentence is the agent."
+  },
+  "topic.change.gate.fixing": {
+    "text": "Fixing",
+    "description": "Status at the right of the Testing card's name on a change's page while the AI agent is fixing the checks that failed."
+  },
+  "topic.change.gate.fixingLabel": {
+    "text": "The agent is fixing what failed",
+    "description": "Accessible name of the Testing card's progress bar on a change's page while the AI agent is fixing the checks that failed."
+  },
+  "topic.change.gate.fixingNote": {
+    "text": "The agent is fixing what failed. When it’s done, the checks run again by themselves.",
+    "description": "Line under the Testing card of a change's page while the AI agent is fixing the checks that failed. \"It\" is the agent."
+  },
+  "topic.change.gate.noteWatch": {
+    "text": "{{note}} <0>Watch it work</0>",
+    "description": "The line under the Testing card on a change's page while the AI agent fixes the checks that failed. {{note}} is one or more whole sentences, already worded. <0></0> is a link-style button that opens the conversation where the agent is working."
   },
   "topic.change.shots.title": {
     "text": "Before and after",
@@ -2807,6 +2879,14 @@
     "text": "More actions",
     "description": "Accessible name and tooltip of the ⋯ button in the header of a request's page: opens the menu with everything else that can be done with the request."
   },
+  "topic.request.bar.kickerDone": {
+    "text": "Request #{{number}} · done",
+    "description": "Small line above the title in the header of a request's page, once the request has been built and voted in. {{number}} is the request's number. \"Request\" is a noun: something a member asked to have built or fixed."
+  },
+  "topic.request.bar.kickerClosed": {
+    "text": "Request #{{number}} · closed",
+    "description": "Small line above the title in the header of a request's page, once the request was closed without anything being built for it. {{number}} is the request's number. \"Request\" is a noun: something a member asked to have built or fixed."
+  },
   "topic.request.words.showMore": {
     "text": "Show more",
     "description": "Button under a request's own words on its page, and under a change's summary on a change's page, while the text is folded after four lines: unfolds all of it."
@@ -3108,8 +3188,8 @@
     "description": "Sub-heading in the Details sheet of a change, over the full technical description of the change. A noun."
   },
   "topic.details.shots": {
-    "text": "Shot details",
-    "description": "Sub-heading in the Details sheet of a change, over the technical record of its before-and-after screenshots: what was captured and what was left out. \"Shot\" is a noun, short for screenshot."
+    "text": "Screenshot details",
+    "description": "Sub-heading in the Details sheet of a change, over the technical record of its before-and-after screenshots: what was captured and what was left out. \"Screenshot\" names one of the pictures."
   },
   "card.pill.goesLiveIn": {
     "text": "Goes live in {{time}}",
@@ -3356,8 +3436,32 @@
     "description": "Label over the optional text box in the vote picker when Yes is chosen: one line of comment that the community's other members will see with the vote."
   },
   "card.vote.picker.noLabel": {
-    "text": "What’s not working for you? One line is plenty.",
-    "description": "Label over the text box in the vote picker when No (or Don't approve) is chosen. A reason is required for a No; one short line is enough."
+    "text": "What’s not working for you?",
+    "description": "Accessible name of the list of reasons in the vote picker when No (or Don't approve) is chosen. An answer must be picked before the No can be sent."
+  },
+  "card.vote.picker.why.notWorking": {
+    "text": "It does not work",
+    "description": "Answer someone can pick as the reason for a No vote in the vote picker: the change does not work."
+  },
+  "card.vote.picker.why.approach": {
+    "text": "I do not agree with the approach",
+    "description": "Answer someone can pick as the reason for a No vote in the vote picker: they disagree with how the change was made."
+  },
+  "card.vote.picker.why.notNeeded": {
+    "text": "It is not needed",
+    "description": "Answer someone can pick as the reason for a No vote in the vote picker: the change is unnecessary."
+  },
+  "card.vote.picker.why.other": {
+    "text": "Something else",
+    "description": "Answer someone can pick as the reason for a No vote in the vote picker when none of the other answers fits; the optional box is where they say more."
+  },
+  "card.vote.picker.why.detailLabel": {
+    "text": "Add more, if you like.",
+    "description": "Label over the optional text box in the vote picker when No (or Don't approve) is chosen, under the list of reasons."
+  },
+  "card.vote.picker.withDetail": {
+    "text": "{{choice}}: {{detail}}",
+    "description": "How a No vote's reason reads when the voter added a line: the picked answer, a colon, then the line. {{choice}} is the answer, for example \"It does not work\"; {{detail}} is the line they wrote."
   },
   "card.vote.picker.yesPlaceholder": {
     "text": "What do you like about it?",
@@ -4747,6 +4851,38 @@
     "text": "{{about}} · <0>{{requests}}</0>",
     "description": "Line at the top of a topic's chat channel. {{about}} is what the topic is for, as its members wrote it; <0></0> is a link to the requests filed under it, and {{requests}} its words, already worded, for example \"14 requests ›\"."
   },
+  "places.generalHead.about": {
+    "text": "Where everyone in {{project}} talks",
+    "description": "Line at the top of a project's #general chat channel, saying what the channel is for. {{project}} is the project's name."
+  },
+  "places.generalHead.aboutThenMembers": {
+    "text": "{{about}} · {{members}}",
+    "description": "Line at the top of a project's #general chat channel: what the channel is for, then how many members it reaches. {{about}} is the first part, already worded (\"Where everyone in Homeroom talks\"); {{members}} the second, already worded (\"263 members\")."
+  },
+  "places.generalHead.members_one": {
+    "text": "{{count}} member",
+    "description": "Part of the line at the top of a project's #general chat channel: how many people are members of the project, so how many the channel reaches."
+  },
+  "places.generalHead.members_other": {
+    "text": "{{count}} members",
+    "description": "Part of the line at the top of a project's #general chat channel: how many people are members of the project, so how many the channel reaches."
+  },
+  "places.generalHead.mute": {
+    "text": "Mute",
+    "description": "Button at the top of a project's #general chat channel: mutes the channel for you, so its unread messages stop counting and it stops notifying you about every message. Mentions and replies still reach you."
+  },
+  "places.generalHead.muted": {
+    "text": "Muted",
+    "description": "The same button at the top of a project's #general chat channel once you have muted it; pressing it again unmutes the channel."
+  },
+  "places.generalHead.muteHint": {
+    "text": "Stop counting unread messages here and stop notifications for every message. Mentions and replies still reach you.",
+    "description": "Hover text of the Mute button at the top of a project's #general chat channel: says what muting does."
+  },
+  "places.generalHead.unmuteHint": {
+    "text": "Muted: unread messages here are not counted. Press to unmute.",
+    "description": "Hover text of the button at the top of a project's #general chat channel while the channel is muted for you."
+  },
   "places.topicFigures.label": {
     "text": "This topic's figures",
     "description": "Accessible name of the card of numbers at the top of a topic's chat channel, such as how long checks take or how often the bot's answers fail."
@@ -4766,6 +4902,30 @@
   "places.topicFigures.demo": {
     "text": "Staging demo figures, not real numbers.",
     "description": "Small line under the card of numbers at the top of a topic's chat channel, shown only on a test copy of Homeroom: says the numbers are made up for testing."
+  },
+  "places.topicFigures.folded_one": {
+    "text": "{{figures}}. The other measure appears once {{min}} people are counted.",
+    "description": "Quiet line at the top of a topic's chat channel in place of the card of numbers, while most numbers still need more people. {{figures}} is the list of the numbers that do have data, for example \"Errors in a first session 0% (0 of 18 visits)\". {{min}} is how many people a number needs."
+  },
+  "places.topicFigures.folded_other": {
+    "text": "{{figures}}. The other {{count}} measures appear once {{min}} people are counted.",
+    "description": "Quiet line at the top of a topic's chat channel in place of the card of numbers, while most numbers still need more people. {{figures}} is the list of the numbers that do have data, for example \"Errors in a first session 0%\". {{count}} is how many numbers are still waiting. {{min}} is how many people a number needs."
+  },
+  "places.topicFigures.foldedNone_one": {
+    "text": "This measure appears once {{min}} people are counted.",
+    "description": "Quiet line at the top of a topic's chat channel in place of the card of numbers, while no number has data yet and there is one number. {{min}} is how many people a number needs."
+  },
+  "places.topicFigures.foldedNone_other": {
+    "text": "These {{count}} measures appear once {{min}} people are counted.",
+    "description": "Quiet line at the top of a topic's chat channel in place of the card of numbers, while no number has data yet. {{count}} is how many numbers there are. {{min}} is how many people a number needs."
+  },
+  "places.topicFigures.foldedItem": {
+    "text": "{{label}} {{reading}} ({{sub}})",
+    "description": "One number in the quiet line at the top of a topic's chat channel, while most numbers still need more people. {{label}} is the number's name, {{reading}} its value and {{sub}} its detail, for example \"Errors in a first session 0% (0 of 18 visits · target under 1%)\"."
+  },
+  "places.topicFigures.foldedInfo": {
+    "text": "How these figures are counted",
+    "description": "Accessible name of the small information button at the end of the quiet line at the top of a topic's chat channel: explains how the numbers are rounded and what \"not enough data\" means."
   },
   "places.topicSignals.label": {
     "text": "Open problems",

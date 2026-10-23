@@ -29,9 +29,8 @@ const log = require('./logger');
 // non-deploying state than a permanently spinning pill.
 const DEPLOY_STALE_AFTER_MS = 30 * 60 * 1000;
 
-// slug → { deploying, startedAt: ISO, fromSha, toSha? }. Each is this
-// process's hold on the app's deploy (services/processes.js), so another
-// platform process reads it as deploying (and its heal leaves it alone).
+// slug → { deploying, startedAt: ISO, fromSha, toSha? }: the rollovers this
+// process runs, counted for its drain (services/processes.js).
 const _state = require('./processes').heldMap('deploy');
 
 // Lazy-required to dodge a require-cycle: ws.js doesn't import this
@@ -40,8 +39,8 @@ const _state = require('./processes').heldMap('deploy');
 // the import lazy to be safe.
 function broadcast(payload) {
   try {
-    const { broadcastGlobal } = require('./ws');
-    broadcastGlobal(payload);
+    const { broadcastGlobalScoped } = require('./ws');
+    broadcastGlobalScoped(payload, { appSlug: payload.appSlug });
   } catch (err) {
     log.warn('app-deploy-status', 'broadcast failed', { err: err.message });
   }
@@ -94,11 +93,11 @@ function read(slug, row = null) {
   if (!slug) return null;
   const entry = _state.get(slug);
   if (!entry) {
-    const delivered = fromRow(row);
-    if (delivered) return delivered;
-    let elsewhere = false;
-    try { elsewhere = require('./processes').heldElsewhere('deploy', slug); } catch { /* none */ }
-    return elsewhere ? { deploying: true, startedAt: null, fromSha: null } : null;
+    // App delivery's deploy, from the row. A fleet rollover another process
+    // runs is told to every tab as it starts and ends (broadcast below), and
+    // is ordered against any deploy of the app by PRODUCTION_BUILD_LOCK
+    // (services/app-rollover.js), which the heal takes too.
+    return fromRow(row);
   }
   // Stale-deploy gate. Don't auto-delete here — the rollover that marked
   // it owns the lifecycle, and pretending the entry doesn't exist anymore

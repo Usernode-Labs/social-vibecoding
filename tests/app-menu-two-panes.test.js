@@ -41,13 +41,15 @@ test('About never opens empty', () => {
   // it may never have deployed, a home screen the device may not have — and
   // all of them are absent at once often enough that a pane without an
   // unconditional line would regularly open blank. A row that sometimes leads
-  // nowhere is the one thing a menu row must not be. The name and the build
-  // line are always there; the address no longer stands in for a missing
-  // tagline (#4218).
+  // nowhere is the one thing a menu row must not be. The name and Add are
+  // always there; the address no longer stands in for a missing tagline
+  // (#4218), and the build line that was the other constant is gone, from
+  // every pane.
   const bare = render({ target: 'app', name: 'Notes', slug: 'notes-ab12', repoUrl: null, canShare: false, version: null });
   assert.match(bare, /id="app-about-identity"/);
   assert.match(bare, />Notes</, 'the app is named');
-  assert.match(bare, /id="app-about-note"/, 'and how it is built is said');
+  assert.match(bare, /id="app-about-add"/, 'and what you can do with it is there');
+  assert.doesNotMatch(bare, /app-about-note|app-about-how/, 'no line about how it is built');
   assert.doesNotMatch(bare, /\/app\/notes-ab12</, 'without its address under the name');
 });
 
@@ -68,15 +70,14 @@ test('each fact appears only when there is one', () => {
   assert.match(full, /id="improve-row-github"[^>]*>[\s\S]*?>Code<\/span><span class="shrink-0 text-xs text-zinc-500 dark:text-zinc-400">Public on GitHub<\/span><\/a>/,
     'Code, with Public on GitHub muted at the end of the row');
   assert.doesNotMatch(full, /View on GitHub/);
-  assert.match(full, /id="improve-row-share"/);
+  assert.doesNotMatch(full, /improve-row-share/, 'no Share, even with an address: Invite brings people in');
   // The version is a plain row at the foot of More (#4218), not the pill
   // beside the builders' avatars it was: a newcomer reads the top first.
   assert.match(full, /id="app-about-more"[\s\S]*?id="app-about-version"[^>]*>App version: 14</,
     'the version is a plain row under More');
-  // The design's MORE order: Share, Add to home screen, then the source
-  // (the Code row is its "Source code"), then Fork.
-  assert.ok(full.indexOf('improve-row-share') < full.indexOf('improve-row-github'),
-    'sharing leads, the repository follows — the design\'s order');
+  // Code is the last row, under Remix, and only the version follows it.
+  assert.ok(full.indexOf('id="improve-row-github"') < full.indexOf('id="app-about-version"'),
+    'the version stays at the foot');
 });
 
 test('two panes of ONE sheet, not two sheets', () => {
@@ -91,9 +92,16 @@ test('two panes of ONE sheet, not two sheets', () => {
   assert.match(SHEET, /id="app-about-back"[\s\S]{0,200}className=\{BACK_DISC\}/);
   assert.match(SHEET, /const BACK_DISC = '[^']*w-9 h-9 rounded-full'[\s\S]{0,200}un-touch-target';/);
   // The label row's own text is the pane switch's other half: the menu names
-  // the app, a second pane's back arrow (About's, Invite's) names it again
-  // beside a chevron.
+  // the app, and a second pane (About, Invite) has only the back disc, as
+  // each opens on its own title naming the app.
   assert.match(SHEET, /\{view !== 'menu' \? \(/, 'one row, two states');
+  const backAt = SHEET.indexOf("{view !== 'menu' ? (");
+  const backRow = SHEET.slice(backAt, SHEET.indexOf(') : (', backAt));
+  assert.match(backRow, /id="app-about-back"/);
+  assert.doesNotMatch(backRow, /\{appLabel\}/, 'no name beside the back disc');
+  // Back is one step back: to About for an invite pane opened from it.
+  assert.match(SHEET, /onClick=\{\(\) => AppContext\.goBack\(\)\}/);
+  assert.match(CONTROLLER, /goBack\(\) \{\s*const \{ view, back \} = appContextStore\.get\(\);\s*appContextStore\.set\(\{ view: view === 'invite' && back === 'about' \? 'about' : 'menu', back: 'menu' \}\);/);
   // What used to be tested here — that Create New and the app strip belonged
   // to the MENU pane rather than to About — is gone with both of them
   // (#2718 review). About was never the reason: a rail of other apps at the
@@ -109,7 +117,7 @@ test('closing resets the pane, by any route', () => {
   // without passing through the controller at all, and a sheet that reopens
   // on the pane you left is a sheet that ignores what you asked for.
   assert.match(CONTROLLER, /appContextStore\.subscribe\(\(\) => \{/);
-  assert.match(CONTROLLER, /if \(wasOpen && !open\) appContextStore\.set\(\{ view: 'menu' \}\);/);
+  assert.match(CONTROLLER, /if \(wasOpen && !open\) appContextStore\.set\(\{ view: 'menu', back: 'menu' \}\);/);
   assert.doesNotMatch(CONTROLLER, /AppContext\.close = /,
     'close() is not wrapped — that would miss the kit\'s own dismissal');
 });

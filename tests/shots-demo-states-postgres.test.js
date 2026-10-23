@@ -90,7 +90,10 @@ async function serveStandings(t, pool) {
     for (const file of ['../src/routes/topochain/public', '../src/middleware/topochain-auth']) {
       delete require.cache[require.resolve(file)];
     }
-    router = require('../src/routes/topochain/public').topochainPublicRoutes({});
+    // #5807: with a secret, as a deployment has, so rows carry `row_ref`.
+    router = require('../src/routes/topochain/public').topochainPublicRoutes({
+      sessionSecret: 'shots-demo-row-ref-secret',
+    });
   } finally {
     poolModule.getPool = original;
   }
@@ -302,14 +305,8 @@ test('each demo state reads back the way its screen needs it', { timeout: 180000
   assert.deepEqual(busy.map((s) => s.id).sort(), [demoStates.IDS.runningSession, demoStates.IDS.stoppingSession]);
   assert.ok(busy.every((s) => !s.title && !s.activeChange));
   assert.equal(sessions.filter((s) => s.title).length, 6, 'the preview change and five more');
-  // Nothing in a copy renews a lease, and one not renewed for 90 seconds
-  // reads as interrupted: the fixture's is renewed past the pair's life.
-  const { rows: leases } = await pool.query(
-    `SELECT (active_turn->>'renewedAt')::timestamptz > NOW() + INTERVAL '1 hour' AS ahead
-       FROM agent_sessions WHERE active_turn IS NOT NULL`);
-  assert.deepEqual(leases.map((row) => row.ahead), [true, true]);
   const running = await agentSessions.readState(pool, { userId: member, id: demoStates.IDS.runningSession });
-  assert.equal(running.stale, false);
+  assert.equal(running.busy !== false && !!running.lease, true, 'its turn reads as running');
   assert.equal(running.lease.stopping, false);
   const stopping = await agentSessions.readState(pool, { userId: member, id: demoStates.IDS.stoppingSession });
   assert.equal(stopping.lease.stopping, true);
@@ -664,6 +661,16 @@ test('each demo state reads back the way its screen needs it', { timeout: 180000
   assert.deepEqual(named.map((row) => row.display_name).sort(),
     ['shots_fixture_ada', 'shots_fixture_bo', 'shots_fixture_cy']);
   assert.ok(board.data.leaderboard.some((row) => !row.discord && row.display_name), 'participant 3 is left alone');
+  // #5807: a player the state gave no handle still carries a row_ref, and
+  // the drill-down the pane asks for with it opens (nothing recorded for
+  // them, so the list is empty — not the "No identifier" line).
+  for (const row of board.data.leaderboard.filter((r) => !r.discord)) {
+    assert.match(row.row_ref, /^[A-Za-z0-9_-]{22}$/, row.display_name);
+    const drill = await (await fetch(`${origin}/api/v4/leaderboard/user-activities?season_event_id=900501`
+      + `&participant_ref=${encodeURIComponent(row.row_ref)}`)).json();
+    assert.equal(drill.success, true, row.display_name);
+    assert.deepEqual(drill.data, []);
+  }
   for (const row of named) {
     const drill = await (await fetch(`${origin}/api/v4/leaderboard/user-activities?season_event_id=900501`
       + `&participant_identifier=${encodeURIComponent(row.bech32m || row.discord)}`)).json();
@@ -876,7 +883,7 @@ test('both copies hold the same demo-state rows, every time in them from the pai
   const { rows: [running] } = await head.pool.query(
     'SELECT last_activity_at, active_turn FROM agent_sessions WHERE id = $1', [demoStates.IDS.runningSession]);
   assert.equal(running.last_activity_at.toISOString(), new Date(Date.parse(at) - 60000).toISOString());
-  assert.equal(Date.parse(running.active_turn.renewedAt), Date.parse(at) + 6 * 3600000);
+  assert.equal(Date.parse(running.active_turn.startedAt), Date.parse(at) - 40000);
   const { rows: [remix] } = await base.pool.query('SELECT forked_from FROM apps WHERE id = $1', [demoStates.IDS.memberRemix]);
   assert.equal(remix.forked_from.forkedAt, new Date(Date.parse(at) - 2 * 86400000).toISOString());
   // Two moments for one pair are refused.

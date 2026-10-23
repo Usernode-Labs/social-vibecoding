@@ -24,6 +24,7 @@ const agentSessions = require('../services/agent-sessions');
 const classicSessions = require('../services/classic-sessions');
 const { claimIssueForUser } = require('../services/issue-claims');
 const visuals = require('../services/visuals');
+const sessionCost = require('../services/session-cost');
 const docker = require('../services/docker');
 const applicationRuntime = require('../services/application-runtime');
 const caddy = require('../services/caddy');
@@ -230,7 +231,10 @@ const {
   beginSessionOperation,
   getActiveWorkerCount,
   isSessionBusy,
+  isSessionBusyAnywhere,
+  busySessionsAnywhere,
 } = require('../services/active-workers');
+const { workedOnSql } = require('../workflow/session-work.ts');
 const sessionState = require('../services/session-state');
 const turnWatchdog = require('../services/turn-watchdog');
 const recoveryRetry = require('../services/recovery-retry');
@@ -439,18 +443,18 @@ const {
 const {
   getMayorSystemPrompt,
 } = require('../services/mayor/prompt');
-const { runMayorTurn } = require('../services/mayor/turn');
 // #937: pure stop policy — the pre-dispatch gate predicate and the
 // confirm-loop's retry/give-up decision. Kept out of here so both are
 // unit-testable without docker (same pattern as services/turn-watchdog).
 const stopPolicy = require('../services/stop-policy');
 const { stopPendingFor } = stopPolicy;
 
-// A live request can lose its database connection after the detached worker
-// has already produced a result. In that case the durable active_turn is the
-// authority: keep the session reserved and hand it to the same recovery path
-// boot adoption uses. The scheduler itself is injected by server.js to avoid
-// a routes -> server require cycle.
+// A turn can lose its database connection after the detached worker has
+// already produced a result. In that case the durable active_turn is the
+// authority: keep the session reserved and leave the record to whoever
+// carries it on: the turn's work item as it ends (services/turns.js, which
+// passes its own scheduler), else the turn-leftovers clock once no item
+// holds the record (services/turn-leftovers.js). True when it is retained.
 async function scheduleRetainedInteractiveTurn({
   pool,
   sessionId,
@@ -471,12 +475,8 @@ async function scheduleRetainedInteractiveTurn({
     }
   }
   if (!retained) return false;
-  if (typeof scheduleInteractiveRecovery !== 'function') {
-    log.error('sessions', 'Interactive durable turn retained without a recovery scheduler', {
-      sessionId,
-    });
-    return false;
-  }
+  // Nobody to schedule it with: carried on by the turn-leftovers clock.
+  if (typeof scheduleInteractiveRecovery !== 'function') return true;
   try {
     return (await scheduleInteractiveRecovery(sessionId)) !== false;
   } catch (err) {
@@ -1035,11 +1035,13 @@ async function notifySessionDone(pool, sessionId) {
 // chat handler's done hook picks this one when the turn persisted a failure
 // row (turnError) and nobody pressed stop; the restart recovery, the
 // stale-turn watchdog and a system pause call it directly.
-async function notifySessionStalled(pool, sessionId) {
-  return notifySessionTurnEnd(pool, sessionId, 'session_stalled');
+// `strict` (a workflow machine's work): a failure is thrown, so it is tried
+// again.
+async function notifySessionStalled(pool, sessionId, { strict = false } = {}) {
+  return notifySessionTurnEnd(pool, sessionId, 'session_stalled', { strict });
 }
 
-async function notifySessionTurnEnd(pool, sessionId, kind) {
+async function notifySessionTurnEnd(pool, sessionId, kind, { strict = false } = {}) {
   try {
     const { rows } = await pool.query(
       `UPDATE chat_sessions SET notify_on_done = FALSE
@@ -1056,6 +1058,7 @@ async function notifySessionTurnEnd(pool, sessionId, kind) {
     });
     if (created.length) await notifications.hydrateAndPush(pool, created[0]);
   } catch (err) {
+    if (strict) throw err;
     log.warn('sessions', `${kind} notify failed`, { sessionId, err: err.message });
   }
 }
@@ -2064,14 +2067,9 @@ function sendResumeRefusal(res, resumed) {
   return res.status(resumed.status).json({ error: resumed.error });
 }
 
-// What a stop forwarded from another platform process runs with here
-// (receiveSessionStop): this process's pool and recovery scheduler.
-let forwardedStopDeps = null;
-
 function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   const router = Router();
   const pool = getPool(config);
-  forwardedStopDeps = { pool, scheduleInteractiveRecovery };
 
   // #1038: the notifier needs a pool to resolve a touched session's app /
   // owner / share state before it can decide who a `session_state` event
@@ -2443,7 +2441,9 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
                 a.slug AS app_slug, a.name AS app_name,
                 a.icon_emoji AS app_icon_emoji,
                 CASE WHEN a.icon_image_id IS NOT NULL
-                     THEN '/app-icons/' || a.icon_image_id END AS app_icon_url
+                     THEN '/app-icons/' || a.icon_image_id END AS app_icon_url,
+                -- Worked on by any process (session-work.ts workedOnSql).
+                ${workedOnSql()} AS worked_on
          FROM chat_sessions cs
          JOIN apps a ON cs.app_id = a.id
          LEFT JOIN LATERAL (
@@ -2479,12 +2479,12 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         // list refuses to put in a list payload (#894), and the last-turn
         // pair is meaningless without the rule that reads it.
         const {
-          spec_md: specMd, last_turn_role: lastTurnRole, last_turn_asks: lastTurnAsks, ...row
+          spec_md: specMd, last_turn_role: lastTurnRole, last_turn_asks: lastTurnAsks, worked_on: workedOn, ...row
         } = s;
         return {
           ...row,
           ...(s.source === 'imported' ? { viewer_github_login: viewerLogin } : {}),
-          busy: isSessionBusy(s.id),
+          busy: workedOn === true || isSessionBusy(s.id),
           awaiting_input: sessionAwaitsInput({
             lastTurnRole, lastTurnAsks, prNumber: s.pr_number, specMd,
           }),
@@ -2544,7 +2544,11 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           title: '[Mock] Work handed to a coding agent',
           branch_name: 'usernode/mock-issue-900002',
           agent: 'claude-code',
-          created_at: new Date(Date.now() - 12 * 60 * 1000).toISOString(),
+          // #5289: six minutes, between the mock sessions at five and eight,
+          // so the row is inside the five Messages' agents list shows before
+          // "N older chats" (at twelve it tied the fifth session for the
+          // last slot) — the declared checks read it there.
+          created_at: new Date(Date.now() - 6 * 60 * 1000).toISOString(),
           app_slug: config.selfAppSlug,
           app_name: 'Homeroom',
           // The demo row carries an icon too, or the ONE work-order row a
@@ -2666,11 +2670,16 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         }
       }
 
+      // Busy for every process: a turn another process runs is busy here
+      // too (the workflow's records: session-work.ts workedOnSql). The phase
+      // and a pending stop are this process's own to tell.
+      const working = await busySessionsAnywhere([...mine, ...visible].map((r) => r.id), { pool });
       const byId = new Map();
       for (const row of [...mine, ...visible]) {
         if (byId.has(row.id)) continue;
+        const live = sessionState.liveState(row.id);
         const payload = sessionState.buildPayload(
-          row.id, row, sessionState.liveState(row.id)
+          row.id, row, { ...live, busy: live.busy || working.has(Number(row.id)) }
         );
         if (sessionState.isIdleState(payload)) continue;
         byId.set(row.id, {
@@ -2931,7 +2940,9 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
                   WHERE cm.app_id = cs.app_id AND cm.thread_type = 'session' AND cm.thread_ref = cs.id
                     AND cm.msg_type = 'message') AS chat_count,
                 (SELECT MAX(cm.created_at) FROM chat_messages cm
-                  WHERE cm.app_id = cs.app_id AND cm.thread_type = 'session' AND cm.thread_ref = cs.id) AS last_message_at
+                  WHERE cm.app_id = cs.app_id AND cm.thread_type = 'session' AND cm.thread_ref = cs.id) AS last_message_at,
+                -- Worked on by any process (session-work.ts workedOnSql).
+                ${workedOnSql()} AS worked_on
          FROM chat_sessions cs
          LEFT JOIN users u ON u.id = cs.user_id
          LEFT JOIN LATERAL (
@@ -2944,9 +2955,9 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
          ORDER BY cs.shared_at ASC`,
         [app.id]
       );
-      let sessions = rows.map((s) => ({
+      let sessions = rows.map(({ worked_on: workedOn, ...s }) => ({
         ...s,
-        busy: isSessionBusy(s.id),
+        busy: workedOn === true || isSessionBusy(s.id),
       }));
       sessions = await enrichImportedUnderwaySessions(pool, sessions, req.user?.id || null);
 
@@ -3305,7 +3316,6 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           verificationRequired: !!billing.verificationRequired,
         });
       }
-      const userApiKey = billing.apiKey;
 
       // Headless sessions don't count against the clicking user's session
       // cap (they're shared, unattended work — see the cap query in POST
@@ -3322,16 +3332,12 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
 
       const selectedModel = models.resolve(req.body && req.body.model);
 
-      // Full issue text for the seed turn (cache-first; degrades to a
-      // number-only seed when GitHub can't be reached right now). The
-      // issue's comments ride along (#150) so answers to earlier
-      // auto-solve questions are visible to this run; a failed comments
-      // fetch degrades to title + body. The bot username lets the seed
-      // tag the bot's own earlier question comments.
+      // The issue, for the branch's and the run's names and the claim below
+      // (cache-first; degrades to a number-only name when GitHub can't be
+      // reached right now). The run reads the issue and its comments (#150)
+      // itself for its seed turn (services/turns.js), as a resumed planning
+      // step does.
       const { issue } = await github.fetchPublicIssue(repoOwner, repoName, issueNumber);
-      const { comments } = await github.fetchIssueComments(repoOwner, repoName, issueNumber);
-      let botUsername = null;
-      try { botUsername = await github.getBotUsername(); } catch {}
 
       // #1350 carve-out: a headless run mints its branch here, up front,
       // and deliberately does NOT defer. There is no "first message" to
@@ -3358,14 +3364,36 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // path above does the same thing now.
       // plan 9 (Commit 7): carry the final default backend/model in the
       // insert — no insert-then-patch for headless sessions either.
-      const { rows } = await pool.query(
-        `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, is_headless, headless_status, headless_issue_number, linked_issues, issue_link_seeded, session_title,
-            agent_backend, agent_provider, agent_model, agent_reasoning_effort)
-         VALUES ($1, $2, $3, 'active', TRUE, 'generating', $4, $5, TRUE, $6, $7, $8, $9, $10)
-         RETURNING *`,
-        [app.id, req.user.id, branchName, issueNumber, [issueNumber], autoTitle,
-         pref.backend, pref.provider, pref.model, pref.reasoningEffort]
-      );
+      // The run is the turn machine's work item on the change (kind
+      // headless: services/turns.js), asked for in the transaction that
+      // writes the 'generating' row, so a row that says it is being
+      // generated always has a run that will carry it to an end.
+      const db = await pool.connect();
+      let rows;
+      try {
+        await db.query('BEGIN');
+        // At its first step, 'planning', from the start: a release between
+        // this and the run's first checkpoint must find it resumable
+        // (migrate.js failOrphanedHeadlessRuns fails a step-less one).
+        ({ rows } = await db.query(
+          `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, is_headless, headless_status, headless_step, headless_issue_number, linked_issues, issue_link_seeded, session_title,
+              agent_backend, agent_provider, agent_model, agent_reasoning_effort)
+           VALUES ($1, $2, $3, 'active', TRUE, 'generating', 'planning', $4, $5, TRUE, $6, $7, $8, $9, $10)
+           RETURNING *`,
+          [app.id, req.user.id, branchName, issueNumber, [issueNumber], autoTitle,
+           pref.backend, pref.provider, pref.model, pref.reasoningEffort]
+        ));
+        await require('../workflow/platform.ts').askTurn(db, {
+          key: `session:${Number(rows[0].id)}`, turnId: crypto.randomUUID(), kind: 'headless', appId: app.id,
+          input: { sessionId: Number(rows[0].id), userId: req.user.id, selectedModel },
+        });
+        await db.query('COMMIT');
+      } catch (err) {
+        await db.query('ROLLBACK').catch(() => {});
+        throw err;
+      } finally {
+        db.release();
+      }
       const session = rows[0];
       // The runner reuses chat-handler helpers that expect the app fields
       // joined onto the session row.
@@ -3401,17 +3429,8 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // fire-and-forget), so announce the row write itself.
       sessionState.touch(session.id);
 
-      // Fire-and-forget: the run continues after this response. Failures
-      // inside the runner mark the row 'failed' (and a platform restart
-      // mid-run is swept to 'failed' at boot — see migrate.js).
-      runHeadlessSession({
-        pool, config, session,
-        user: { id: req.user.id, username: req.user.username },
-        selectedModel, repoOwner, repoName, userApiKey,
-        issueNumber, issue, comments, botUsername,
-      }).catch((err) => {
-        log.error('sessions', 'Headless session runner crashed', { sessionId: session.id, err: err.message, stack: err.stack });
-      });
+      // The run continues after this response, as its turn's work item,
+      // wherever the workflow runs it (asked for above).
 
       log.info('sessions', 'Headless session started', { sessionId: session.id, issueNumber, model: selectedModel });
       // See POST /sessions: the same named flag/beta policy fallback.
@@ -3763,7 +3782,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         ? (await enrichImportedUnderwaySessions(pool, [session], req.user.id, { all: true }))[0]
         : session;
       if (req.path.endsWith('/details')) {
-        detail.busy = isSessionBusy(Number(session.id));
+        detail.busy = await isSessionBusyAnywhere(Number(session.id), { pool });
         // #2371: the author reviews a change before submitting it, and before
         // then its only description is the spec. Read separately and only for
         // the owner of an underway change, so the shared projection above
@@ -3780,7 +3799,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         }
         detail.shots = config.shots?.present
           ? await require('../services/shots-view')
-            .getForSession(pool, detail, detail.app_slug)
+            .getForSession(pool, detail, detail.app_slug, { viewer: req.user })
           : null;
         // #4452: how long testing usually takes on this app.
         detail.checks_estimate = await require('../services/checks-estimate').forApp(pool, session.app_id);
@@ -3791,6 +3810,43 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     } catch (err) {
       log.error('sessions', 'Failed to read check results', { message: err.message });
       res.status(500).json({ error: 'Could not load check results' });
+    }
+  });
+
+  // A failed run's checks in plain words (services/checks-explanation.js),
+  // for the Testing card on the change's page and the top of its Checks
+  // step. Read by the same rule as the check results it is written from
+  // (the route above): whoever may read those may read this. `lang` is the
+  // language the page is showing. `explanation` is null when there is none
+  // to give, and the page keeps the failure's own words. A staging ?demo=1
+  // mock carries its own, so the page can be reviewed without a model.
+  router.get('/api/sessions/:id/checks-explanation', async (req, res) => {
+    const id = /^[1-9]\d{0,9}$/.test(String(req.params.id)) ? Number(req.params.id) : 0;
+    if (!id || id > 2147483647) return res.status(404).json({ error: 'Session not found' });
+    try {
+      if (process.env.USERNODE_ENV === 'staging' && req.query.demo === '1') {
+        const mock = stagingMockSharedSessions().find((s) => s.id === id)
+          || stagingMockOwnSessions(req.user.id, config.selfAppSlug).find((s) => s.id === id)
+          || require('./votes').stagingMockProposalFor(id, req.user);
+        if (mock) {
+          return res.set('Cache-Control', 'no-store')
+            .json({ explanation: mock.checks_explanation || null, runAt: mock.checks_checked_at || null });
+        }
+      }
+      const { rows } = await pool.query(
+        `SELECT id, user_id, status, shared_at, app_id, check_state, checks_checked_at, test_results
+           FROM chat_sessions
+          WHERE id = $1`,
+        [id]
+      );
+      const session = rows[0];
+      if (!session || !canViewSession(session, req.user)) return res.status(404).json({ error: 'Session not found' });
+      const explanation = await require('../services/checks-explanation')
+        .explain(pool, session, { language: req.query.lang || (req.user && req.user.locale) });
+      return res.set('Cache-Control', 'no-store').json({ explanation, runAt: session.checks_checked_at });
+    } catch (err) {
+      log.error('sessions', 'Failed to explain failing checks', { message: err.message });
+      return res.status(500).json({ error: 'Could not explain the failing checks' });
     }
   });
 
@@ -4031,9 +4087,14 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       try {
         session.shots = config.shots?.present
           ? await require('../services/shots-view')
-            .getForSession(pool, session, session.app_slug)
+            .getForSession(pool, session, session.app_slug, { viewer: req.user })
           : null;
       } catch { session.shots = null; }
+      // #3249: the meter's "this change $X" — what this change has cost so
+      // far. Best-effort like the two above: `null` hides the figure.
+      try {
+        session.cost_total_cents = await sessionCost.sessionCostCents(pool, session.id);
+      } catch { session.cost_total_cents = null; }
 
       // #940: the session's saved drafts ride along so opening a session
       // needs no second round trip on the hot path. Best-effort: `null`
@@ -5295,30 +5356,11 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // key the user pasted in is their own money: neither blocked nor
       // billed, exactly as before. Claude sessions retain the existing
       // limit-first platform/BYOK contract.
-      let billing = { apiKey: null };
-      if (isOpenRouterSession) {
-        if (await managedOpenRouter.usesIncludedKey(pool, req.user.id)) {
-          const budget = await limits.checkBudget(pool, req.user.id);
-          if (budget.error) return res.status(429).json({
-            error: budget.error,
-            code: 'budget_exceeded',
-            reason: budget.reason || null,
-            verificationRequired: !!budget.verificationRequired,
-          });
-        }
-      } else {
-        billing = await limits.resolveBillingPath(pool, config.dataEncryptionKey, req.user.id);
-        if (billing.error) return res.status(429).json({
-          error: billing.error,
-          code: 'budget_exceeded',
-          reason: billing.reason || null,
-          verificationRequired: !!billing.verificationRequired,
-        });
-      }
-      // Mutable since #664: an expensive CC phase can exhaust the
-      // allowance mid-turn, so billing is re-resolved after the tool
-      // completes and the wrap-up phase bills the fresh payer.
-      let userApiKey = billing.apiKey;
+      // Decided here, so a refusal is a plain 429 and writes nothing, and
+      // again when the turn runs (services/turns.js): a key is never part
+      // of what a turn is asked with.
+      const payer = await resolveClassicPayer({ pool, config, userId: req.user.id, isOpenRouterSession });
+      if (!payer.ok) return res.status(payer.status).json(payer.body);
 
       // #450: verify every attachment id is this user's, this session's,
       // and unlinked BEFORE inserting the message row (we're still in
@@ -5392,38 +5434,6 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           }
         : {};
 
-      // #3177: ON CONFLICT covers two retries racing past the lookup above;
-      // the one that loses answers as a duplicate. A row without a
-      // client_message_id never conflicts.
-      const { rows: userMsgRows } = await pool.query(
-        `INSERT INTO chat_session_messages (session_id, role, content, metadata, client_message_id)
-         VALUES ($1, 'user', $2, $3, $4)
-         ON CONFLICT (session_id, client_message_id) WHERE client_message_id IS NOT NULL DO NOTHING
-         RETURNING id`,
-        [session.id, messageText, JSON.stringify(userMeta), clientMessageId]
-      );
-      if (clientMessageId && !userMsgRows.length) {
-        return chatDelivery.answerDuplicate(res, await chatDelivery.lookup(pool, {
-          sessionId: session.id, clientMessageId, viewer: req.user,
-        }));
-      }
-      const userMessageId = userMsgRows[0]?.id ?? null;
-      if (turnAttachments.length) {
-        await pool.query(
-          `UPDATE chat_session_attachments SET message_id = $1 WHERE id = ANY($2)`,
-          [userMsgRows[0].id, attIds]
-        );
-      }
-      // Mark the session as freshly active so the auto-pause sweeper
-      // leaves it alone (see server.js session sweeper + schema
-      // last_activity_at). A chat turn is the strongest activity signal.
-      // Sending a message also proves presence, so any stale
-      // notify-on-done arming from a previous turn is reset (#161).
-      await pool.query(
-        `UPDATE chat_sessions SET last_activity_at = NOW(), notify_on_done = FALSE WHERE id = $1`,
-        [session.id]
-      );
-
       // Validate against the server-side allowlist (src/services/models.js).
       // A bogus or unrecognized `model` falls back to the default — this
       // is the user-facing escape hatch for HIGH #2 (client-controlled
@@ -5432,30 +5442,77 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // offers and what the server accepts.
       const selectedModel = models.resolve(model);
 
+      // The turn (the Mayor loop, the dispatch and its wrap-up:
+      // services/mayor/turn.js) is the turn machine's work item on the
+      // change, run wherever the workflow runs it (services/turns.js). It is
+      // asked for in the transaction that stores the message, and this
+      // request follows its stream from here.
+      const from = await sessionBus.position(session.id);
+      const turnId = crypto.randomUUID();
+      const db = await pool.connect();
+      let userMessageId = null;
+      try {
+        await db.query('BEGIN');
+        // #3177: ON CONFLICT covers two retries racing past the lookup
+        // above; the one that loses answers as a duplicate. A row without a
+        // client_message_id never conflicts.
+        const { rows: userMsgRows } = await db.query(
+          `INSERT INTO chat_session_messages (session_id, role, content, metadata, client_message_id)
+           VALUES ($1, 'user', $2, $3, $4)
+           ON CONFLICT (session_id, client_message_id) WHERE client_message_id IS NOT NULL DO NOTHING
+           RETURNING id`,
+          [session.id, messageText, JSON.stringify(userMeta), clientMessageId]
+        );
+        if (clientMessageId && !userMsgRows.length) {
+          await db.query('ROLLBACK');
+          return chatDelivery.answerDuplicate(res, await chatDelivery.lookup(pool, {
+            sessionId: session.id, clientMessageId, viewer: req.user,
+          }));
+        }
+        userMessageId = userMsgRows[0]?.id ?? null;
+        if (turnAttachments.length) {
+          await db.query(
+            `UPDATE chat_session_attachments SET message_id = $1 WHERE id = ANY($2)`,
+            [userMessageId, attIds]
+          );
+        }
+        // Mark the session as freshly active so the auto-pause sweeper
+        // leaves it alone (see server.js session sweeper + schema
+        // last_activity_at). A chat turn is the strongest activity signal.
+        // Sending a message also proves presence, so any stale
+        // notify-on-done arming from a previous turn is reset (#161).
+        await db.query(
+          `UPDATE chat_sessions SET last_activity_at = NOW(), notify_on_done = FALSE WHERE id = $1`,
+          [session.id]
+        );
+        await require('../workflow/platform.ts').askTurn(db, {
+          key: `session:${Number(session.id)}`, turnId, kind: 'classic', appId: session.app_id,
+          input: {
+            sessionId: Number(session.id),
+            userId: req.user.id,
+            messageText,
+            selectedModel,
+            isOpenRouterSession,
+            turnAttachments,
+            userMessageId,
+            clientMessageId,
+          },
+        });
+        await db.query('COMMIT');
+      } catch (err) {
+        await db.query('ROLLBACK').catch(() => {});
+        throw err;
+      } finally {
+        db.release();
+      }
+
       // SSE response
       res.writeHead(200, {
         'Content-Type': 'text/event-stream',
         'Cache-Control': 'no-cache',
         Connection: 'keep-alive',
       });
-
-      // #2779: the turn itself (the stream, the Mayor loop, the dispatch and
-      // its wrap-up) runs in services/mayor/turn.js.
-      await runMayorTurn({
-        session,
-        isOpenRouterSession,
-        res,
-        pool,
-        config,
-        req,
-        messageText,
-        selectedModel,
-        turnAttachments,
-        scheduleInteractiveRecovery,
-        userApiKey,
-        userMessageId,
-        clientMessageId,
-      }, MAYOR_TURN_DEPS);
+      await sessionBus.relay(req, res, session.id, { afterId: from, turnId });
     } catch (err) {
       log.error('sessions', 'Chat setup error', { message: err.message });
       if (!res.headersSent) {
@@ -5876,7 +5933,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     // actual `docker exec`) — redundant in normal flow, but a useful
     // safety net for adopted workers and the brief period between
     // adding to activeWorkers and registering with the warm registry.
-    let busy = isSessionBusy(sessionId);
+    let busy = await isSessionBusyAnywhere(sessionId, { pool });
     // #906 staging fixtures — see stagingCohortFixtureSessions above.
     let fixtureStoppable = null;
     if (!busy) {
@@ -6054,6 +6111,16 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       attached = demo.localAgent;
     }
 
+    // #3249: the change's running cost total for the meter, idle or busy.
+    // After the visibility check above, so only a viewer of the session
+    // gets it. `null` when the read failed: the client keeps its figure.
+    let costTotalCents = null;
+    try {
+      costTotalCents = await sessionCost.sessionCostCents(pool, sessionId);
+    } catch (err) {
+      log.warn('sessions', 'Session cost read failed', { sessionId, err: err.message });
+    }
+
     let delivery;
     if (deliveryId.value) {
       try {
@@ -6071,7 +6138,8 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     // fallback read this the same way the resolving banner reads
     // `resolving`.
     // Keys: busy, progress, phase, stopping, stopRequestedAt, stoppable,
-    // estimate, turn ({ startedAt, kind } | null, #4533)
+    // estimate, turn ({ startedAt, kind } | null, #4533), costTotalCents
+    // (the change's cost so far in cents | null, #3249)
     // (+ resolving, sync, status, and `delivery` when asked for, #3177).
     // `estimate` is { text, remainingSeconds,
     // estimatedAt } | null — see workerProgress.setEstimate /
@@ -6086,6 +6154,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       sync,
       status: mergeStatus,
       runner, runnerLabel, localAgent: attached,
+      costTotalCents,
       ...(delivery !== undefined ? { delivery } : {}),
     });
   });
@@ -6608,15 +6677,18 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       //
       // Folded into what holds the session, the head is still owed a unit
       // suite that really runs (services/unit-suite-reuse.js): a verdict
-      // stored before this press no longer stands for it, so it reads
-      // pending (and merge-blocked) until one does, and once the session is
-      // idle again the owed run starts if nothing has answered it. The stale
-      // sweep, whose scope covers an owed head, re-drives it after a restart.
-      const busyNow = () => isSessionBusy(sessionId);
-      if (busyNow()) {
-        await require('../services/unit-suite-reuse').owePendingRun({
-          pool, stagingRecovery, config, session, busy: busyNow, head: requestedHead,
-        });
+      // stored before this press no longer stands for it, so the preview
+      // machine stamps it pending (and merge-blocked) until one does
+      // (RecheckFolded), and starts the owed run once nobody works on the
+      // session if nothing has answered it (its ChecksDue).
+      if (await isSessionBusyAnywhere(sessionId, { pool })) {
+        if (requestedHead) {
+          await require('../workflow/platform.ts').recheckFolded({
+            sessionId: Number(session.id), appId: Number(session.app_id), head: String(requestedHead).toLowerCase(),
+          }).catch((err) => {
+            log.warn('sessions', 'Could not stamp a folded recheck pending', { sessionId, err: err.message });
+          });
+        }
         return res.json({ status: 'running' });
       }
       recheckInFlight.add(sessionId);
@@ -6707,8 +6779,8 @@ function buildHeadlessFollowUpQuickReplies(src) {
 }
 
 // The unattended-mode addendum appended to the Mayor system prompt for
-// both headless phases. Factored out so the boot-time resume path
-// (resumeHeadlessRuns) can rebuild the exact same prompt.
+// both headless phases. Factored out so a resumed run
+// (resumeOneHeadlessRun) can rebuild the exact same prompt.
 function buildHeadlessAddendum(issueNumber) {
   return `
 
@@ -6745,7 +6817,7 @@ const SCREENSHOT_FETCH_NOTE = 'If the issue body embeds a screenshot URL like `h
 // into implementation if (and only if) the spec is straightforward. The
 // criteria live here in prompt text so they're tunable without flow
 // changes; the hard limits (one build max, budget re-check, no PR/staging)
-// are enforced in code in runHeadlessSession.
+// are enforced in code in runHeadlessSessionInner.
 function buildHeadlessDecisionAddendum(issueNumber) {
   return `
 
@@ -7004,7 +7076,7 @@ async function checkpointHeadlessWrapUp(pool, sessionId, outcome) {
 // tool-less phase-3 wrap-up. Every other path keeps the original tool-less
 // phase-2 wrap-up.
 //
-// `resume` is set by resumeHeadlessRuns when re-driving a 'planning'-step
+// `resume` is set by resumeOneHeadlessRun when re-driving a 'planning'-step
 // run after a restart: the seed user message already exists in
 // chat_session_messages, so it isn't inserted again.
 
@@ -7118,20 +7190,17 @@ async function settleHeadlessMayorUsage({
   return costCents;
 }
 
-// The whole run holds its session (services/processes.js), planning and
-// wrap-up included, not only its coding turn: a process that replaced this
-// one at a release must not resume a run this one is still carrying
-// (resumeHeadlessRuns), and a draining process finishes it before it exits.
-function runHeadlessSession(args) {
-  const release = require('../services/processes').hold('session', Number(args.session.id));
-  return runHeadlessSessionInner(args).finally(release);
-}
-
 async function runHeadlessSessionInner({
   pool, config, session, user, selectedModel,
   repoOwner, repoName, userApiKey, issueNumber, issue,
   comments = [], botUsername = null,
   resume = false,
+  // The turn machine's work item running it (services/turns.js), named on
+  // its coding runs' records, and what it does with a run whose durable
+  // state is retained (the item carries it on itself; without an item, the
+  // retained-recovery scheduler does).
+  owner = null,
+  onRetained = null,
 }) {
   const { broadcastGlobal } = require('../services/ws');
   const seqPrefix = `h${Date.now().toString(36)}`;
@@ -7271,7 +7340,7 @@ async function runHeadlessSessionInner({
         identity.metadata,
       );
       const toolResult = await runClaudeCodeTool({
-        pool, config, req: fakeReq, res: fakeRes, session, selectedModel,
+        pool, config, req: fakeReq, res: fakeRes, session, selectedModel, owner,
         userMessage: seed,
         toolPromptArg: seed,
         repoOwner, repoName,
@@ -7473,7 +7542,7 @@ async function runHeadlessSessionInner({
         : seed;
 
       const toolArgs = {
-        pool, config, req: fakeReq, res: fakeRes, session, selectedModel,
+        pool, config, req: fakeReq, res: fakeRes, session, selectedModel, owner,
         userMessage: seed,
         toolPromptArg,
         repoOwner, repoName,
@@ -7490,7 +7559,7 @@ async function runHeadlessSessionInner({
         },
       };
       // Checkpoint BEFORE the dispatch: if the platform restarts while
-      // the (detached) CC turn runs, resumeHeadlessRuns finds
+      // the (detached) CC turn runs, the resumed run (resumeOneHeadlessRun) finds
       // headless_step='cc_running' + active_turn and picks the turn back
       // up from its journal instead of failing the run.
       await setHeadlessStep(pool, session.id, 'cc_running');
@@ -7930,7 +7999,9 @@ async function runHeadlessSessionInner({
         headlessTurnId,
         err: err.message,
       });
-      scheduleRetainedHeadlessRecovery({ pool, config, session });
+      // Carried on by the run's own work item (services/turns.js), else, once
+      // no item holds the run, by the turn-leftovers clock.
+      if (onRetained) onRetained(err);
       return;
     }
     log.error('sessions', 'Headless session failed', { sessionId: session.id, err: err.message, stack: err.stack });
@@ -8395,11 +8466,9 @@ async function runRecoveredWrapUp({
   }
 }
 
-// Boot hook: resume headless auto sessions that were 'generating' when
-// the platform went down, instead of blanket-failing them (the old
-// failOrphanedHeadlessRuns behavior — now narrowed in migrate.js to
-// only rows that predate the step machine). Driven by the persisted
-// headless_step checkpoint:
+// The change's row of a headless run that is still to be carried on: still
+// generating, or its record still awaiting its cleanup. A resumed run picks
+// it up from its persisted headless_step (resumeOneHeadlessRun):
 //   planning   → re-issue the whole Mayor turn from the persisted seed
 //                message (cheap, retry-safe — nothing was dispatched yet).
 //   cc_running → pick the detached CC turn back up from its journal
@@ -8408,73 +8477,8 @@ async function runRecoveredWrapUp({
 //   wrapping   → the dispatch finished and its outcome was checkpointed;
 //                re-issue just the phase-2 Mayor call from the persisted
 //                transcript.
-// Anything that can't be carried forward is marked 'failed' — same
-// terminal state as before, just no longer the only possibility.
-//
-// `minIdleMs` (the leader's periodic pass, server.js orphan-headless-sweep):
-// only runs that have not moved for that long, so a run starting in some
-// process is never taken before its hold is seen.
-async function resumeHeadlessRuns(config, { minIdleMs = 0 } = {}) {
-  const pool = getPool(config);
-  let rows;
-  try {
-    ({ rows } = await pool.query(
-      `SELECT cs.*, a.slug AS app_slug, a.name AS app_name, a.repo_url,
-              a.self_hosted AS app_self_hosted, u.username
-       FROM chat_sessions cs
-       JOIN apps a ON cs.app_id = a.id
-       JOIN users u ON cs.user_id = u.id
-       WHERE cs.is_headless = TRUE
-         AND (cs.headless_status = 'generating'
-              OR cs.active_turn->>'phase' = 'cleanup_pending')
-         AND ($1::double precision = 0
-              OR cs.last_activity_at < NOW() - make_interval(secs => $1::double precision / 1000.0))`,
-      [Number(minIdleMs) || 0]
-    ));
-  } catch (err) {
-    log.error('sessions', 'resumeHeadlessRuns query failed', { err: err.message });
-    return;
-  }
-  if (!rows.length) return;
-  // A run a live process still carries (the Pod a release replaced, finishing
-  // its work) is that process's, not a restart's to resume. Read exactly; a
-  // run whose holders cannot be read waits for the next pass.
-  const processes = require('../services/processes');
-  const free = [];
-  for (const row of rows) {
-    try {
-      if (!(await processes.holders('session', row.id, pool)).length) free.push(row);
-    } catch (err) {
-      log.warn('sessions', 'Could not read who holds a headless run; leaving it for the next pass', { sessionId: row.id, err: err.message });
-    }
-  }
-  if (free.length < rows.length && !minIdleMs) {
-    log.info('sessions', 'Leaving headless runs live processes still carry', {
-      sessionIds: rows.filter((r) => !free.includes(r)).map((r) => r.id),
-    });
-  }
-  rows = free;
-  if (!rows.length) return;
-  log.info('sessions', 'Resuming headless runs after restart', {
-    count: rows.length, sessionIds: rows.map((r) => r.id),
-  });
-  for (const session of rows) {
-    resumeOneHeadlessRun({ pool, config, session }).catch(async (err) => {
-      if (err?.retainActiveTurn && recoveryRetry.shouldRetryRecoveryError(err)) {
-        log.warn('sessions', 'Headless resume paused with durable turn state retained', {
-          sessionId: session.id, err: err.message,
-        });
-        scheduleRetainedHeadlessRecovery({ pool, config, session });
-        return;
-      }
-      log.error('sessions', 'Headless resume failed — marking run failed', {
-        sessionId: session.id, err: err.message, stack: err.stack,
-      });
-      await failHeadlessRun(pool, session, `Auto session could not be completed: ${String(err.message || err).substring(0, 200)}`);
-    });
-  }
-}
-
+// Anything that can't be carried forward is marked 'failed'. Its turn's
+// work item resumes it (services/turns.js).
 async function reloadRecoverableHeadlessSession(pool, sessionId) {
   try {
     const { rows } = await pool.query(
@@ -8496,89 +8500,6 @@ async function reloadRecoverableHeadlessSession(pool, sessionId) {
     err.retainActiveTurn = true;
     throw err;
   }
-}
-
-function scheduleRetainedHeadlessRecovery({
-  pool,
-  config,
-  session,
-}) {
-  const sessionId = Number(session.id);
-  let releaseReservation = null;
-  let latestSession = session;
-  return recoveryRetry.scheduleRetainedRecovery({
-    key: `headless:${sessionId}`,
-    hold: () => {
-      if (!releaseReservation) releaseReservation = beginSessionOperation(sessionId);
-    },
-    release: () => {
-      releaseReservation?.();
-      releaseReservation = null;
-    },
-    run: async () => {
-      const fresh = await reloadRecoverableHeadlessSession(pool, sessionId);
-      if (!fresh) return;
-      latestSession = fresh;
-      const action = turnLifecycle.recoveryAction(fresh.active_turn);
-      if (action === 'cleanup') {
-        const cleanupArgs = turnLifecycle.cleanupArgs(fresh.active_turn);
-        recoveryRetry.requireDurableTurnCleanup(
-          await worker.finishTurn(sessionId, cleanupArgs),
-          cleanupArgs,
-        );
-        // cleanup_pending can be the last coding-turn state while the
-        // independently identified headless Mayor wrap-up is still pending.
-        // Clearing that obsolete coding owner must hand back to wrapping,
-        // not strand a generating row forever.
-        fresh.active_turn = null;
-        if (fresh.headless_status !== 'generating') return;
-      }
-      if (action === 'quarantine') {
-        await failHeadlessRun(
-          pool,
-          fresh,
-          'Auto session could not be completed because its durable coding-turn state is inconsistent.',
-        );
-        return;
-      }
-      if (fresh.headless_status !== 'generating') return;
-      await resumeOneHeadlessRun({ pool, config, session: fresh });
-    },
-    onError: async (err, { failures }) => {
-      if (err?.retainActiveTurn && recoveryRetry.shouldRetryRecoveryError(err)) {
-        log.warn('sessions', 'Retrying retained headless recovery', {
-          sessionId, failures, err: err.message,
-        });
-        return true;
-      }
-      log.error('sessions', 'Retried headless resume failed — marking run failed', {
-        sessionId, err: err.message, stack: err.stack,
-      });
-      await failHeadlessRun(
-        pool,
-        latestSession,
-        `Auto session could not be completed: ${String(err.message || err).substring(0, 200)}`
-      );
-      return false;
-    },
-    // Out of attempts (recovery-retry DEFAULT_MAX_FAILURES): the same terminal
-    // outcome as a failure that cannot be retried.
-    onExhausted: async (err, { failures }) => {
-      log.error('sessions', 'Retained headless recovery gave up; marking run failed', {
-        sessionId, failures, err: err.message,
-      });
-      await failHeadlessRun(
-        pool,
-        latestSession,
-        `Auto session could not be completed after ${failures} recovery attempts: `
-          + `${String(err.message || err).substring(0, 200)}`,
-      );
-    },
-    onComplete: () => log.info('sessions', 'Retained headless recovery completed', { sessionId }),
-    onHookError: (err) => log.warn('sessions', 'Headless recovery retry hook failed', {
-      sessionId, err: err.message,
-    }),
-  });
 }
 
 // A missing Codex provider thread can be retried once while the original
@@ -8699,7 +8620,7 @@ async function resumeOneHeadlessRun(args) {
   }
 }
 
-async function resumeOneHeadlessRunInner({ pool, config, session }) {
+async function resumeOneHeadlessRunInner({ pool, config, session, owner = null, onRetained = null }) {
   const { broadcastGlobal } = require('../services/ws');
   const initialRecoveryAction = turnLifecycle.recoveryAction(session.active_turn);
   if (initialRecoveryAction === 'quarantine') {
@@ -8763,11 +8684,12 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
     const { comments } = await github.fetchIssueComments(repoOwner, repoName, issueNumber);
     let botUsername = null;
     try { botUsername = await github.getBotUsername(); } catch {}
-    return runHeadlessSession({
+    return runHeadlessSessionInner({
       pool, config, session, user, selectedModel,
       repoOwner, repoName, userApiKey, issueNumber, issue,
       comments, botUsername,
       resume: true,
+      owner, onRetained,
     });
   }
 
@@ -9392,6 +9314,9 @@ async function runScoutTool({
   // (and its stable receipt id) before this per-dispatch owner is released.
   deferTurnCleanup = false,
   beforeTurnCleanup = null,
+  // The work item that runs the turn (a person's turn is its machine's:
+  // services/turns.js), named on the run's record.
+  owner = null,
 }) {
   await activeWorkers.enter(session.id);
   // #50: wall-clock start for the durationMs persisted on terminal
@@ -9757,6 +9682,7 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
         baseSha: session.checks_commit_sha || null,
         branchName: session.branch_name,
         mode: 'scout',
+        owner,
       });
       // The lease lapsed between the routing decision above and here.
       if (!queued) {
@@ -9825,6 +9751,7 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
         const isClaudeDispatch = !ctx || !ctx.logicalTurnId;
         if (isClaudeDispatch) claudeTelemetryAttemptNumber += 1;
         return worker.execInWorker(session.id, {
+          ...(owner ? { owner } : {}),
           mode: 'scout',
           prompt: scoutPrompt,
           model: turnModel,
@@ -9885,7 +9812,7 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
       // legacy path below. plan.md PR5/PR6.
       const routed = await runCodexAttemptLoop({
         pool, session, userId: req.user.id, config, isCodexSession,
-        turnModel, resumeThreadId, mode: 'scout',
+        turnModel, resumeThreadId, mode: 'scout', owner,
         telemetryComponent: headless ? 'coding_agent_headless' : 'coding_agent_scout',
         resolveRuntime: () => agentTurn.resolveCodexRuntimeContext({
           pool, session, userId: req.user.id, model: turnModel,
@@ -10621,27 +10548,13 @@ async function requestSessionStop({ pool, sessionId, user, force = false, immedi
     // the classic HTTP route does not accept it from a request body.
     const forceRequested = force === true;
 
+    // A turn's handle is in the process running it: a person's turn is its
+    // machine's work item (src/workflow/turn/), which the routing above
+    // reached, and which applies the stop to its own handle here
+    // (services/turns.js, forwarded). What is left is the durable path
+    // below (the stamp, and the kill inside the worker), which reaches a
+    // turn from any process.
     const handle = stopRegistry.get(sessionId);
-    // docs/plans/draining-releases.md: the turn may run in another platform
-    // process (one finishing its work after a release, or the one that
-    // replaced it), which holds the session. The process with the turn's
-    // handle does what this one would with it, told over the bus
-    // (receiveSessionStop); this one still takes its own durable path below
-    // (the stamp, and the kill inside the worker, which reach the turn from
-    // any process), but never answers "nothing to stop" or clears the
-    // bookkeeping of a turn it handed on. A forwarded stop is never forwarded
-    // again.
-    let handedOn = false;
-    if (!handle && !forwarded && require('../services/processes').heldElsewhere('session', Number(sessionId))) {
-      require('../services/ws-bus').publish('session_stop', null, {
-        sessionId: Number(sessionId),
-        user: { id: user.id, username: user.username, canAdminWrite: user.canAdminWrite === true },
-        force: force === true, immediate: immediate === true, expectedTurnId: expectedTurnId || null,
-      });
-      handedOn = true;
-      log.info('sessions', 'Stop forwarded to the process running the turn', { sessionId, by: user.username });
-    }
-    const stoppingThere = { status: 202, body: { ok: true, stopped: true, stopping: true, phase: null } };
     if (expectedTurnId) {
       const current = await turnLifecycle.loadActiveTurn(pool, sessionId);
       if (turnLifecycle.turnIdentity(current) !== expectedTurnId) {
@@ -10654,7 +10567,6 @@ async function requestSessionStop({ pool, sessionId, user, force = false, immedi
       ? (handle?.phase === 'mayor2' ? 'wrap_up_not_stoppable' : handle ? 'force' : 'force_orphan')
       : stopPolicy.classifyStopRequest({ handle, force: forceRequested });
 
-    if (handedOn && (action === 'force_orphan' || action === 'force_without_stop')) return stoppingThere;
     if (immediate && action !== 'wrap_up_not_stoppable') {
       const durable = await turnLifecycle.loadActiveTurn(pool, sessionId);
       if (expectedTurnId && turnLifecycle.turnIdentity(durable) !== expectedTurnId) {
@@ -10699,7 +10611,6 @@ async function requestSessionStop({ pool, sessionId, user, force = false, immedi
       try {
         hasDurableTurn = !!(await turnLifecycle.loadActiveTurn(pool, sessionId));
       } catch {}
-      if (handedOn) return stoppingThere;
       log.warn('sessions', 'Stop request had no active turn', {
         sessionId,
         busy: isSessionBusy(sessionId),
@@ -10875,31 +10786,6 @@ async function requestSessionStop({ pool, sessionId, user, force = false, immedi
     }
 
     return { status: 200, body: { ok: true, stopped: true, phase: handle.phase } };
-}
-
-// The bus's `session_stop` (services/ws.js): another process was asked to
-// stop a turn this one may be running. The sender checked the stop's user;
-// requestSessionStop checks them again here, against the same rows.
-async function receiveSessionStop(payload) {
-  const sessionId = Number(payload?.sessionId);
-  const user = payload?.user;
-  if (!forwardedStopDeps || !Number.isInteger(sessionId) || !user || !Number.isInteger(Number(user.id))) return null;
-  // Only where the turn's handle is: a process that merely holds the session
-  // (a hand-off, a retained recovery) has nothing of the turn to stop, and
-  // the sender's own durable path already reached the worker.
-  if (!stopRegistry.get(sessionId)) return null;
-  const result = await requestSessionStop({
-    pool: forwardedStopDeps.pool,
-    scheduleInteractiveRecovery: forwardedStopDeps.scheduleInteractiveRecovery,
-    sessionId,
-    user: { id: Number(user.id), username: String(user.username || ''), canAdminWrite: user.canAdminWrite === true },
-    force: payload.force === true,
-    immediate: payload.immediate === true,
-    expectedTurnId: payload.expectedTurnId || null,
-    forwarded: true,
-  });
-  log.info('sessions', 'Ran a stop another process forwarded', { sessionId, status: result?.status });
-  return result;
 }
 
 async function confirmStopLanded(sessionId, handle) {
@@ -11664,6 +11550,9 @@ async function runClaudeCodeTool({
   directSessionTurn = false,
   deferTurnCleanup = false,
   beforeTurnCleanup = null,
+  // The work item that runs the turn (services/turns.js), named on the
+  // run's record.
+  owner = null,
 }) {
   await activeWorkers.enter(session.id);
   // #50: wall-clock start for the durationMs persisted on terminal
@@ -12472,6 +12361,8 @@ ${isCodexSession ? `${OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE}\n` : ''}${guidan
         // kind allowed to upload a commit, and saying so at the call site is
         // what makes the scout path's `mode: 'scout'` legible as the contrast.
         mode: 'build',
+        // The turn's work item is its waiter (services/turns.js).
+        owner,
       });
       // The lease lapsed in the moment between the routing decision above
       // and here (the laptop closed mid-sentence). Nothing was dispatched, so
@@ -12515,9 +12406,8 @@ ${isCodexSession ? `${OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE}\n` : ''}${guidan
         },
       });
       if (outcome === 'adopted') {
-        // Restart recovery took this turn over while this process looked
-        // dead (it stopped renewing for longer than WAITER_STALE_SECONDS),
-        // and runs its tail itself. Running it here too would post every
+        // The turn's item was claimed again while this process lost it, and
+        // that claim took the turn over and runs its tail itself. Running it here too would post every
         // card twice.
         const adopted = new Error(`${lease.label}'s turn is being finished by restart recovery`);
         adopted.code = 'local_turn_adopted';
@@ -12562,6 +12452,7 @@ ${isCodexSession ? `${OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE}\n` : ''}${guidan
           ? openRouterBuildFor(ctx)
           : null;
         return worker.execInWorker(session.id, {
+          ...(owner ? { owner } : {}),
           mode: 'build',
           prompt: openRouterBuild ? openRouterBuild.prompt : claudePrompt,
           // Present only for the first hosted-Claude build after an exact
@@ -12603,14 +12494,10 @@ ${isCodexSession ? `${OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE}\n` : ''}${guidan
         });
       };
       if (runLocally) {
-        // Local turns do not enter the platform's Codex attempt ledger and a
-        // retry must stay on the same attached machine.
+        // Local turns do not enter the platform's Codex attempt ledger. There
+        // is no headless retry here: a headless turn never takes a lease, so
+        // it never runs locally.
         result = await dispatchLocalBuild();
-        if (headless && shouldRetryHeadlessTurn(result, stopHandle, result.ahead > 0)) {
-          await sendStatus('The coding step failed unexpectedly, retrying once…', executionAgentMeta);
-          await waitForTurnStopped(session.id, containerName);
-          result = await dispatchLocalBuild();
-        }
       } else {
         // Backend-aware per-attempt dispatch (plan §7): same contract as the
       // scout path — one logical turn, one agent_turns attempt per physical
@@ -12618,7 +12505,7 @@ ${isCodexSession ? `${OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE}\n` : ''}${guidan
       // that never overwrites the first attempt's usage.
       const routed = await runCodexAttemptLoop({
         pool, session, userId: req.user.id, config, isCodexSession,
-        turnModel, resumeThreadId, mode: 'build',
+        turnModel, resumeThreadId, mode: 'build', owner,
         telemetryComponent: headless ? 'coding_agent_headless' : 'coding_agent_build',
         resolveRuntime: () => agentTurn.resolveCodexRuntimeContext({
           pool, session, userId: req.user.id, model: turnModel,
@@ -13448,6 +13335,39 @@ function parseFileChanges(text) {
 // The routes/sessions.js helpers a Mayor turn calls (services/mayor/turn.js,
 // #2779). Handed over rather than required from there, which would be a
 // require cycle.
+// Who pays for a classic turn (#212): the shared allowance first, then the
+// caller's own key (#30) once the budget is spent. Asked by the chat route,
+// to refuse before anything is written, and by the turn when it runs
+// (services/turns.js), which takes the key from here and never from what the
+// turn was asked with. `{ ok: true, userApiKey }` (null: platform-billed), or
+// `{ ok: false, status, body }` for the route's answer.
+//
+// OpenRouter sessions are a single-provider path: their selected model
+// handles the whole turn directly, so they never draw on an Anthropic key.
+// #2571 splits them by WHOSE OpenRouter key it is. The included
+// (company-funded) key is platform money and shares ONE weekly pool with
+// Claude spend, so it is gated by the same checkBudget, without
+// resolveBillingPath, whose BYOK spill-over and "add your own Anthropic key"
+// advice belong to the Claude path alone. A personal key the user pasted in
+// is their own money: neither blocked nor billed.
+async function resolveClassicPayer({ pool, config, userId, isOpenRouterSession }) {
+  const refusal = (r) => ({
+    ok: false,
+    status: 429,
+    body: { error: r.error, code: 'budget_exceeded', reason: r.reason || null, verificationRequired: !!r.verificationRequired },
+  });
+  if (isOpenRouterSession) {
+    if (await managedOpenRouter.usesIncludedKey(pool, userId)) {
+      const budget = await limits.checkBudget(pool, userId);
+      if (budget.error) return refusal(budget);
+    }
+    return { ok: true, userApiKey: null };
+  }
+  const billing = await limits.resolveBillingPath(pool, config.dataEncryptionKey, userId);
+  if (billing.error) return refusal(billing);
+  return { ok: true, userApiKey: billing.apiKey };
+}
+
 const MAYOR_TURN_DEPS = Object.freeze({
   TURN_WRAPUP_EFFECT_KEYS,
   buildOpenProposalsBlock,
@@ -13468,7 +13388,7 @@ const MAYOR_TURN_DEPS = Object.freeze({
   switchSessionAgent,
 });
 
-module.exports = { requestSessionStop, receiveSessionStop, changePlanFor, attachChangePlans, MAYOR_TURN_DEPS, canViewSession, BUILD_VENUES, summarizeFailingChecks, describeStoppedLanding, stopLandingMeta, runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildFailingChecksBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, captureSpecOutput, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, publishStagingOutcome, retireVotesForNewCommit, notifySessionDone, notifySessionStalled, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, shouldRetryApiErrorTurn, codexMaxTokensRetry, codexProviderFailureText, stripFakeCompletionMarker, buildMayorMessages, buildCodingAgentConventionsContext, buildHostedCodingWorkflowGuidance, buildCodingAgentBuildGuidance, OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE, OPENROUTER_PLATFORM_ISSUE_GUIDANCE, DISPATCHED_TURN_INSTRUCTIONS, DEV_CHAT_SUMMARY_RULE, buildCodingAgentSpecContext, canReuseHostedClaudeScoutSpec, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, SUGGEST_REPLIES_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, DATA_TOOL_THINKING_STATUS, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError, switchSessionAgent, resumePausedSession, _recordLocalCodingInvocationForTests: recordLocalCodingInvocation };
+module.exports = { requestSessionStop, forceStopSession, resolveClassicPayer, runHeadlessSessionInner, resumeOneHeadlessRun, reloadRecoverableHeadlessSession, failHeadlessRun, changePlanFor, attachChangePlans, MAYOR_TURN_DEPS, canViewSession, BUILD_VENUES, summarizeFailingChecks, describeStoppedLanding, stopLandingMeta, runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildFailingChecksBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, captureSpecOutput, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, runRecoveredWrapUp, describeStagingFailure, publishStagingOutcome, retireVotesForNewCommit, notifySessionDone, notifySessionStalled, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, shouldRetryApiErrorTurn, codexMaxTokensRetry, codexProviderFailureText, stripFakeCompletionMarker, buildMayorMessages, buildCodingAgentConventionsContext, buildHostedCodingWorkflowGuidance, buildCodingAgentBuildGuidance, OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE, OPENROUTER_PLATFORM_ISSUE_GUIDANCE, DISPATCHED_TURN_INSTRUCTIONS, DEV_CHAT_SUMMARY_RULE, buildCodingAgentSpecContext, canReuseHostedClaudeScoutSpec, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, SUGGEST_REPLIES_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, DATA_TOOL_THINKING_STATUS, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError, switchSessionAgent, resumePausedSession, _recordLocalCodingInvocationForTests: recordLocalCodingInvocation };
 // #4524: the topic page's fast open asks GET /api/apps/:slug/proposals/:id
 // for its item beside the board load, and production serves an active or
 // paused session there when it is the viewer's own or shared. The demo rows

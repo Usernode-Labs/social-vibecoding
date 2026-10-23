@@ -509,11 +509,15 @@ function isIdentityGated(entitlement = {}) {
 //   byokCents      the user's own key, display only — no cap has ever
 //                  counted it (#119).
 async function getWeeklyTotalsCents(pool, userId, { now = new Date() } = {}) {
+  // With what running turns have spent that no turn's end has settled yet
+  // (turn_spend): a turn counts against the week as it spends.
   const { rows } = await pool.query(
-    `SELECT COALESCE(SUM(total_cost_cents), 0) AS total,
-            COALESCE(SUM(byok_cost_cents), 0)  AS byok
-       FROM llm_usage
-      WHERE user_id = $1 AND date >= $2`,
+    `SELECT COALESCE((SELECT SUM(total_cost_cents) FROM llm_usage WHERE user_id = $1 AND date >= $2), 0)
+          + COALESCE((SELECT SUM(cents) FROM turn_spend
+                       WHERE user_id = $1 AND settled_at IS NULL AND NOT byok AND created_at >= $2::date), 0) AS total,
+            COALESCE((SELECT SUM(byok_cost_cents) FROM llm_usage WHERE user_id = $1 AND date >= $2), 0)
+          + COALESCE((SELECT SUM(cents) FROM turn_spend
+                       WHERE user_id = $1 AND settled_at IS NULL AND byok AND created_at >= $2::date), 0) AS byok`,
     [userId, weekStartUtc(now)]
   );
   return {
@@ -571,7 +575,7 @@ async function checkBudget(pool, userId) {
   const caps = resolveCaps(entitlement);
 
   const { rows: userRows } = await pool.query(
-    'SELECT total_cost_cents FROM llm_usage WHERE user_id = $1 AND date = CURRENT_DATE',
+    `SELECT ${TODAY_USER_SPEND_SQL} AS total_cost_cents`,
     [userId]
   );
   const userSpent = parseFloat(userRows[0]?.total_cost_cents || 0);
@@ -612,9 +616,7 @@ async function checkBudget(pool, userId) {
     };
   }
 
-  const { rows: globalRows } = await pool.query(
-    'SELECT SUM(total_cost_cents) as total FROM llm_usage WHERE date = CURRENT_DATE'
-  );
+  const { rows: globalRows } = await pool.query(`SELECT ${TODAY_GLOBAL_SPEND_SQL} AS total`);
   const globalSpent = parseFloat(globalRows[0]?.total || 0);
   if (globalSpent >= globalLimit) {
     // #593: says WHEN, like the per-user message above. "Try again
@@ -662,7 +664,9 @@ async function getBudgetSnapshot(pool, userId) {
   let weeklySpentCents = 0;
   try {
     const { rows } = await pool.query(
-      `SELECT COALESCE(lu.total_cost_cents, 0) AS total_cost_cents,
+      `SELECT COALESCE(lu.total_cost_cents, 0)
+              + COALESCE((SELECT SUM(cents) FROM turn_spend
+                           WHERE user_id = u.id AND settled_at IS NULL AND NOT byok AND created_at >= CURRENT_DATE), 0) AS total_cost_cents,
               COALESCE(lu.byok_cost_cents, 0)  AS byok_cost_cents,
               (u.anthropic_key_enc IS NOT NULL) AS has_byok_key
          FROM users u
@@ -792,6 +796,130 @@ async function resolveBillingPath(pool, dataKey, userId) {
   };
 }
 
+// Today's platform-paid spend, settled (llm_usage) and of running turns not
+// settled yet (turn_spend): every cap reads both, so a turn counts as it
+// spends, whichever process its calls reach. $1 is the user.
+const TODAY_USER_SPEND_SQL = `(COALESCE((SELECT total_cost_cents FROM llm_usage WHERE user_id = $1 AND date = CURRENT_DATE), 0)
+  + COALESCE((SELECT SUM(cents) FROM turn_spend
+               WHERE user_id = $1 AND settled_at IS NULL AND NOT byok AND created_at >= CURRENT_DATE), 0))`;
+const TODAY_GLOBAL_SPEND_SQL = `(COALESCE((SELECT SUM(total_cost_cents) FROM llm_usage WHERE date = CURRENT_DATE), 0)
+  + COALESCE((SELECT SUM(cents) FROM turn_spend WHERE settled_at IS NULL AND NOT byok AND created_at >= CURRENT_DATE), 0))`;
+
+// The coding agent's own settlement (its calls through the proxy), the one
+// that closes a turn's kept calls. A Mayor's spend settled under the same
+// turn id (a wrap-up's, its own key) is its own figure and leaves them.
+const CODING_SPEND_KEY = 'claude_agent_spend';
+
+// One turn's kept calls and their settlement, one at a time (a transaction
+// lock): a late call's write and the settlement never pass each other.
+const TURN_SPEND_LOCK_SQL = `SELECT pg_advisory_xact_lock(hashtextextended('turn_spend:' || $1::text, 0))`;
+
+/**
+ * The turn a model call starting now on session `sessionId` belongs to, read
+ * as it starts (anthropic-proxy.js), so its cost is kept against that turn
+ * however late its write lands: `{ turnId }`, null when no turn is recorded.
+ */
+async function turnSpendTarget(pool, sessionId) {
+  try {
+    const { rows: [r] } = await pool.query(
+      `SELECT active_turn->>'turnId' AS turn_id FROM chat_sessions
+        WHERE id = $1 AND active_turn IS NOT NULL`, [Number(sessionId)]);
+    return { turnId: (r && r.turn_id) || null };
+  } catch (err) {
+    log.warn('limits', 'Could not read which turn a call belongs to', { sessionId, err: err.message });
+    return { turnId: null };
+  }
+}
+
+/**
+ * One model call of a running turn, kept as it is made (turn_spend), against
+ * `turn` (turnSpendTarget, read as the call started; none when no turn was
+ * recorded). Counts against the caps at once; settled by the turn's end
+ * (settleTurnSpend) or, for a turn that will not settle it, by the
+ * turn-spend-settle clock. A call whose write lands after its turn's
+ * settlement closed it (turn_spend_closed) is reconciled with it instead:
+ * kept as settled, and charged now only when that settlement charged the
+ * kept calls rather than Claude Code's reported total (which holds it). Never
+ * throws: billing bookkeeping must not fail the call that incurred it.
+ */
+async function noteTurnSpend(pool, { sessionId = null, userId, cents, byok = false, turn = null }) {
+  const n = Number(cents);
+  if (!userId || !(Number.isFinite(n) && n > 0)) return;
+  const target = turn || await turnSpendTarget(pool, sessionId);
+  const params = [target.turnId, sessionId ? Number(sessionId) : null, Number(userId), n, !!byok];
+  if (!target.turnId) {
+    try {
+      await pool.query(
+        `INSERT INTO turn_spend (turn_id, session_id, user_id, cents, byok) VALUES ($1, $2, $3, $4::numeric, $5)`, params);
+    } catch (err) {
+      log.warn('limits', 'Failed to keep a turn\'s call spend', { sessionId, userId, cents: n, byok, err: err.message });
+    }
+    return;
+  }
+  let client = null;
+  try {
+    client = await pool.connect();
+    await client.query('BEGIN');
+    await client.query(TURN_SPEND_LOCK_SQL, [target.turnId]);
+    const { rows: [closed] } = await client.query('SELECT reported FROM turn_spend_closed WHERE turn_id = $1', [target.turnId]);
+    if (closed && !closed.reported) await recordSpendRequired(client, Number(userId), n, { byok: !!byok });
+    await client.query(
+      `INSERT INTO turn_spend (turn_id, session_id, user_id, cents, byok, settled_at)
+       VALUES ($1, $2, $3, $4::numeric, $5, CASE WHEN $6::boolean THEN NOW() END)`, [...params, !!closed]);
+    await client.query('COMMIT');
+    if (closed && !closed.reported) budgetLive.notifySpend(pool, Number(userId));
+  } catch (err) {
+    if (client) await client.query('ROLLBACK').catch(() => {});
+    log.warn('limits', 'Failed to keep a turn\'s call spend', { sessionId, userId, cents: n, byok, err: err.message });
+  } finally {
+    if (client) client.release();
+  }
+}
+
+/**
+ * Calls no live turn will settle (its record went without settling them:
+ * a turn that never reported its cost, a straggler call after its end, a
+ * call with no turn recorded), older than `olderThanMinutes`: settled into
+ * llm_usage, per user, in one transaction (the turn-spend-settle clock).
+ * Resolves how many rows.
+ */
+async function settleOpenTurnSpend(pool, { olderThanMinutes = 120 } = {}) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows } = await client.query(
+      `WITH s AS (
+         UPDATE turn_spend t SET settled_at = NOW()
+          WHERE t.id IN (
+            SELECT o.id FROM turn_spend o
+             WHERE o.settled_at IS NULL AND o.created_at < NOW() - make_interval(mins => $1)
+               AND (o.turn_id IS NULL OR NOT EXISTS (
+                     SELECT 1 FROM chat_sessions cs WHERE cs.active_turn IS NOT NULL AND cs.active_turn->>'turnId' = o.turn_id))
+             ORDER BY o.id LIMIT 5000 FOR UPDATE SKIP LOCKED)
+         RETURNING t.user_id, t.cents, t.byok)
+       SELECT user_id, COUNT(*)::int AS n,
+              COALESCE(SUM(cents) FILTER (WHERE NOT byok), 0)::float8 AS platform,
+              COALESCE(SUM(cents) FILTER (WHERE byok), 0)::float8 AS byok
+         FROM s GROUP BY user_id`,
+      [olderThanMinutes]);
+    let settled = 0;
+    for (const r of rows) {
+      settled += Number(r.n) || 0;
+      if (r.platform > 0) await recordSpendRequired(client, r.user_id, r.platform, { byok: false });
+      if (r.byok > 0) await recordSpendRequired(client, r.user_id, r.byok, { byok: true });
+    }
+    // A closed turn's late calls land within moments of its settlement.
+    await client.query("DELETE FROM turn_spend_closed WHERE closed_at < NOW() - interval '2 days'");
+    await client.query('COMMIT');
+    return settled;
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 // Daily-ledger upsert shared by every spend site (Mayor turns, Claude
 // Code dispatches, PR-metadata Haiku calls, feedback titles). Routes
 // the cost into the bucket matching who paid Anthropic (#119):
@@ -890,10 +1018,9 @@ function splitTurnSpend(totalCents, { turnByok = false, byokObservedCents = 0 } 
 //     clamped to the turn total — CC's self-reported costUsd is the
 //     authoritative sum). Remainder is platform spend.
 // Returns { platformCents, byokCents } so call sites can emit per-bucket
-// usage events. New durable turns supply turnId: the debit and its receipt
-// then commit in one transaction and recovery can replay the stored split
-// without incrementing llm_usage twice. Legacy callers keep the tolerant
-// best-effort behavior until their old active_turn records have drained.
+// usage events. The turn's id is required: the debit and its receipt then
+// commit in one transaction and recovery can replay the stored split
+// without incrementing llm_usage twice.
 async function settleTurnSpend(pool, userId, totalCents, {
   turnByok = false,
   byokObservedCents = 0,
@@ -904,10 +1031,10 @@ async function settleTurnSpend(pool, userId, totalCents, {
   if (!userId) {
     return { platformCents: 0, byokCents: 0 };
   }
-  const split = splitTurnSpend(totalCents, { turnByok, byokObservedCents });
-  const { platformCents, byokCents } = split;
-  if (!(platformCents > 0) && !(byokCents > 0)) return split;
-
+  // A durable turn's calls were kept as they were made (turn_spend): they
+  // are settled here, with the debit and its receipt. What Claude Code
+  // reported is the figure when it reported one; otherwise (a turn killed,
+  // or followed after a restart without its marker) what its calls cost.
   if (turnId) {
     const receipt = await turnEffects.runDbEffect({
       pool,
@@ -915,26 +1042,50 @@ async function settleTurnSpend(pool, userId, totalCents, {
       effectKey,
       sessionId,
       run: async (client) => {
-        if (platformCents > 0) {
-          await recordSpendRequired(client, userId, platformCents, { byok: false });
+        const reported = Number(totalCents);
+        const hasReport = Number.isFinite(reported) && reported > 0;
+        let kept = { platform: 0, byok: 0 };
+        if (effectKey === CODING_SPEND_KEY) {
+          // The coding agent's settlement closes the turn's kept calls, and
+          // says on what it billed, under the lock a late call's write takes.
+          await client.query(TURN_SPEND_LOCK_SQL, [String(turnId)]);
+          const { rows: [found] } = await client.query(
+            `WITH s AS (UPDATE turn_spend SET settled_at = NOW() WHERE turn_id = $1 AND settled_at IS NULL RETURNING cents, byok)
+             SELECT COALESCE(SUM(cents) FILTER (WHERE NOT byok), 0)::float8 AS platform,
+                    COALESCE(SUM(cents) FILTER (WHERE byok), 0)::float8 AS byok FROM s`, [String(turnId)]);
+          kept = { platform: Number(found?.platform) || 0, byok: Number(found?.byok) || 0 };
+          await client.query(
+            'INSERT INTO turn_spend_closed (turn_id, reported) VALUES ($1, $2) ON CONFLICT (turn_id) DO NOTHING',
+            [String(turnId), hasReport]);
         }
-        if (byokCents > 0) {
-          await recordSpendRequired(client, userId, byokCents, { byok: true });
+        const total = hasReport ? reported : (kept.platform + kept.byok);
+        const split = splitTurnSpend(total, {
+          turnByok, byokObservedCents: Math.max(Number(byokObservedCents) || 0, kept.byok),
+        });
+        if (split.platformCents > 0) {
+          await recordSpendRequired(client, userId, split.platformCents, { byok: false });
+        }
+        if (split.byokCents > 0) {
+          await recordSpendRequired(client, userId, split.byokCents, { byok: true });
         }
         return split;
       },
     });
     // #2598: the debit committed with its receipt — push the new weekly
-    // figure. The non-durable path below goes through recordSpend, which
-    // notifies for itself, so this is the one branch that would otherwise
-    // settle a whole Claude turn in silence.
+    // figure (recordSpendRequired does not notify for itself).
     budgetLive.notifySpend(pool, userId);
-    return receipt.value || split;
+    return receipt.value || { platformCents: 0, byokCents: 0 };
   }
 
-  if (platformCents > 0) await recordSpend(pool, userId, platformCents, { byok: false });
-  if (byokCents > 0) await recordSpend(pool, userId, byokCents, { byok: true });
-  return split;
+  // No turn named: nothing can close its kept calls, so billing the reported
+  // total here would charge them twice once the clock settles them
+  // (settleOpenTurnSpend). They are the clock's, billed at what they cost,
+  // as a killed turn's are; a whole-turn BYOK figure (display only) goes
+  // unrecorded.
+  log.warn('limits', 'Turn spend settled without a turn id; its kept calls are left to the clock', {
+    userId, sessionId, effectKey, totalCents,
+  });
+  return { platformCents: 0, byokCents: 0 };
 }
 
 // #361: gate for "may the platform incur another merge-conflict /
@@ -1009,7 +1160,13 @@ module.exports = {
   loadUserApiKey,
   resolveBillingPath,
   recordSpend,
+  noteTurnSpend,
+  turnSpendTarget,
+  settleOpenTurnSpend,
+  TODAY_USER_SPEND_SQL,
+  TODAY_GLOBAL_SPEND_SQL,
   claimByokSwitchNotice,
+  splitTurnSpend,
   settleTurnSpend,
   invalidate,
   getIdentityTier,

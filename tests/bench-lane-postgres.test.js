@@ -1,18 +1,13 @@
 'use strict';
 
-// #3654: the benchmark lane against the FULL PostgreSQL schema, with the
-// stage itself stubbed (tests/bench-runner.test.js covers the stages): a
-// launch plans every trial up front (repeats for triage, one build per
-// model, a task a model cannot take marked not applicable); the lane runs a
-// run's trials a few at a time, waits while the live bot uses every build
-// slot, stops scheduling at the dollar cap and skips the rest; spend lands on
-// the run; a trial a dead process left running goes back to the queue, and
-// fails after a second interruption; a cancelled run claims nothing more.
-// After a restart: a trial's session is on its row before its turn runs; an
-// interrupted trial is released at once with what it spent charged once; a
-// trial nothing holds is released on the next pass, but never one a durable
-// build owns, whose slot the lane holds until its build ends; a trial goes on
-// with the looks it kept; and a trial is recorded, and charged, once.
+// #3654: the App bench against the FULL PostgreSQL schema, its lane the
+// bench-lane machine (src/workflow/bench-lane/) and each trial a bot-build,
+// both run by a kernel runtime here, the stage itself stubbed
+// (tests/bench-runner.test.js covers the stages): a launch plans every trial
+// up front; the lane grants a run's trials a few at a time, waits while the
+// live bot uses every live slot, stops at the dollar cap and skips the rest;
+// spend lands on the run, once, in the write that records the trial; a
+// cancel lands whenever it is sent; and a trial's own build records it.
 //
 // Skips when no database is reachable, unless TEST_DATABASE_URL insists.
 
@@ -27,6 +22,11 @@ const runner = require('../src/services/bench/runner');
 const suites = require('../src/services/bench/suites');
 const snapshots = require('../src/services/homeroom-bot-snapshots');
 const durableSteps = require('../src/services/durable-steps');
+const { createRuntime } = require('../src/workflow/kernel/index.ts');
+const benchLaneMod = require('../src/workflow/bench-lane/machine.ts');
+const { benchLaneServices } = require('../src/workflow/bench-lane/services.ts');
+const { botBuild } = require('../src/workflow/bot-build/machine.ts');
+const { botBuildServices } = require('../src/workflow/bot-build/services.ts');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL
   || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
@@ -44,9 +44,18 @@ test('the benchmark lane against the full PostgreSQL schema', { timeout: 180000 
   const url = new URL(DSN); url.pathname = `/${name}`;
   const pool = new Pool({ connectionString: String(url), max: 8 });
   const realRunStage = runner.runStage;
+  // What a trial's build reaches beyond the stage: stubbed on the modules
+  // themselves, as the build runs them (no deps reach a durable build).
+  const stubbed = [
+    [runner, 'ensureBenchUser'], [require('../src/services/openrouter-managed-keys'), 'usesIncludedKey'],
+    [require('../src/services/limits'), 'recordSpend'], [require('../src/services/session-lifecycle'), 'closeOwnSession'],
+    [require('../src/services/bench/graders'), 'gradeTrial'], [lane, 'allowanceGate'],
+  ].map(([mod, key]) => [mod, key, mod[key]]);
+  const runtimes = [];
   t.after(async () => {
     runner.runStage = realRunStage;
-    lane._resetForTests();
+    for (const [mod, key, real] of stubbed) mod[key] = real;
+    for (const r of runtimes) await r.stop();
     await pool.end();
     await admin.query(`DROP DATABASE ${name}`);
     await admin.end();
@@ -77,7 +86,6 @@ test('the benchmark lane against the full PostgreSQL schema', { timeout: 180000 
     await suites.addTaskFromRun(pool, { suiteId: suite.id, runId: r.id, stage: 'build' });
   }
 
-  let saturated = false;
   const ran = [];
   runner.runStage = async ({ stage, model, trial }) => {
     ran.push(`${stage}:${model}:${trial.id}`);
@@ -87,7 +95,6 @@ test('the benchmark lane against the full PostgreSQL schema', { timeout: 180000 
     user,
     limits: { async checkBudget() { return { ok: true }; }, async recordSpend() {} },
     managedOpenRouter: { async usesIncludedKey() { return false; } },
-    isLiveLaneSaturated: () => saturated,
     github: { isEnabled: () => true },
     worker: { async stopTurn() {} },
     afterTrial: async () => {},
@@ -95,6 +102,68 @@ test('the benchmark lane against the full PostgreSQL schema', { timeout: 180000 
   const trials = async (runId) => (await pool.query(
     'SELECT id, status, model, attempt, task_id, error, cost_usd::float8 AS cost FROM bench_trials WHERE run_id = $1 ORDER BY id', [runId],
   )).rows;
+
+  // ── The lane and the builds, as the workflow runs them ────────────────
+  const debits = [];
+  let allowed = true;
+  runner.ensureBenchUser = async () => user;
+  require('../src/services/openrouter-managed-keys').usesIncludedKey = async () => true;
+  require('../src/services/limits').recordSpend = async (_p, _u, cents) => { debits.push(cents); };
+  require('../src/services/session-lifecycle').closeOwnSession = async () => {};
+  require('../src/services/bench/graders').gradeTrial = async () => {};
+  lane.allowanceGate = async () => (allowed ? { ok: true, reason: null } : { ok: false, reason: 'weekly_limit' });
+  const make = (machines) => {
+    const r = createRuntime({
+      pool, machines, pollMs: 50,
+      services: { ...benchLaneServices({ config: {}, pool }), ...botBuildServices({ config: {}, pool }) },
+    });
+    runtimes.push(r);
+    return r;
+  };
+  const rt = make([benchLaneMod.benchLane(), botBuild()]);
+  // A process that runs the lane but not the builds: what the lane sends
+  // waits until the test lets `rt` take it.
+  const laneOnly = make([benchLaneMod.benchLane()]);
+  const settle = async (r = rt) => { for (let i = 0; i < 40; i += 1) { await r.drain(); if (!(await r.runServices())) { await r.drain(); return; } } };
+  let rk = 0;
+  const lookNow = async (r = rt, runId = null) => {
+    await r.append(benchLaneMod.MACHINE, benchLaneMod.KEY, { type: 'Look', payload: { runId } }, { requestKey: `look-${++rk}`, source: { kind: 'system', name: 'test' } });
+  };
+  // An admin's cancel, as appendAndWait answers it (these runtimes are
+  // stepped by hand: append, process, read the event's outcome).
+  const cancel = async (r, type, payload) => {
+    const id = await r.append(benchLaneMod.MACHINE, benchLaneMod.KEY, { type, payload },
+      { requestKey: `cancel-${++rk}`, source: { kind: 'admin', name: 'test' } });
+    await r.drain();
+    const { rows: [e] } = await pool.query('SELECT result, reason, reply FROM wf_events WHERE id = $1', [id]);
+    return { status: e.result || 'pending', reason: e.reason, reply: e.reply };
+  };
+  // The live bot's slots: `n` grants on their way (rules/bot-loop.ts
+  // SLOTS_IN_USE_SQL counts them), out of `liveAtOnce`.
+  const liveSlots = async (n, liveAtOnce = 12) => {
+    await pool.query("DELETE FROM wf_events WHERE machine = 'bot-request' AND type = 'Granted' AND status = 'pending'").catch(async () => {
+      await pool.query(`BEGIN; SET LOCAL app.wf_writer = 'transition'; DELETE FROM wf_events WHERE machine = 'bot-request' AND type = 'Granted' AND status = 'pending'; COMMIT`);
+    });
+    await pool.query(`INSERT INTO platform_settings (key, value) VALUES ('homeroom_bot_live_at_once', $1)
+                      ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`, [String(liveAtOnce)]);
+    for (let i = 0; i < n; i += 1) {
+      // eslint-disable-next-line no-await-in-loop
+      await pool.query("INSERT INTO wf_events (machine, key, type, payload, source, request_key) VALUES ('bot-request', $1, 'Granted', '{\"kind\": \"build\"}'::jsonb, '{}'::jsonb, $2)",
+        [`request:1:${i + 1}`, `g-${crypto.randomUUID()}`]);
+    }
+  };
+  const runRow = async (id) => (await pool.query('SELECT status, spent_usd::float8 AS spent FROM bench_runs WHERE id = $1', [id])).rows[0];
+  const laneData = async () => (await pool.query('SELECT data, deadline_at FROM wf_instances WHERE machine = $1 AND key = $2', [benchLaneMod.MACHINE, benchLaneMod.KEY])).rows[0];
+  // Every run of an earlier subtest put away, so each starts with a lane of its own.
+  const okStage = async ({ stage, model, trial }) => {
+    ran.push(`${stage}:${model}:${trial.id}`);
+    return { status: 'ok', cost_usd: 1.25, parsed: { verdict: 'ready' }, duration_ms: 5 };
+  };
+  const closeAll = async () => {
+    runner.runStage = okStage;
+    await pool.query("UPDATE bench_runs SET status = 'cancelled' WHERE status IN ('queued', 'running')");
+    await pool.query("UPDATE bench_trials SET status = 'cancelled' WHERE status IN ('pending', 'running', 'awaiting')");
+  };
 
   await t.test('a launch plans every trial: repeats for triage, one build per model, not-applicable named', async () => {
     const out = await lane.launchRun(pool, {
@@ -149,89 +218,74 @@ test('the benchmark lane against the full PostgreSQL schema', { timeout: 180000 
     assert.equal(refused.status, 400);
   });
 
-  await t.test('the lane waits for the live bot, runs a run\'s trials, debits the run, and finishes it', async () => {
-    lane._resetForTests();
+
+  await t.test('L1: the lane waits for the live bot, runs a run\'s trials as builds, charges the run once each, and finishes it', async () => {
+    await closeAll();
     const { run } = await lane.launchRun(pool, { suiteId: suite.id, models: ['z-ai/glm-5.3-flash'], stages: ['triage'], repeats: 1, concurrency: 2 });
-    saturated = true;
-    const waiting = await lane.tick(pool, {}, deps);
-    assert.equal(waiting.started, 0);
-    assert.equal(waiting.paused, 'live_bot_busy');
-    saturated = false;
-    const first = await lane.tick(pool, {}, deps);
-    assert.equal(first.started, 2, 'two at once: the run\'s concurrency');
-    await lane._awaitTrialsForTests();
-    await lane.tick(pool, {}, deps);
-    await lane._awaitTrialsForTests();
-    const done = await lane.tick(pool, {}, deps);
-    assert.deepEqual(done.finished, [run.id]);
-    const rows = await trials(run.id);
-    assert.deepEqual(rows.map((r) => r.status), ['ok', 'ok', 'ok']);
-    const { rows: [r] } = await pool.query('SELECT status, spent_usd::float8 AS spent FROM bench_runs WHERE id = $1', [run.id]);
-    assert.equal(r.status, 'done');
-    assert.equal(r.spent, 3.75);
+    await liveSlots(1, 1);
+    await lookNow();
+    await settle();
+    assert.deepEqual((await trials(run.id)).map((r) => r.status), ['pending', 'pending', 'pending'], 'the live bot uses its one slot');
+    const held = await laneData();
+    assert.ok(held.deadline_at && Date.parse(held.deadline_at) > Date.now(), 'it looks again later');
+    await liveSlots(0);
+    await lookNow();
+    await rt.drain();
+    await rt.runServices(); // the allowance
+    await rt.drain();
+    const claimed = (await pool.query("SELECT id, build_key FROM bench_trials WHERE run_id = $1 AND status = 'running' ORDER BY id", [run.id])).rows;
+    assert.equal(claimed.length, 2, 'two at once: the run\'s concurrency');
+    assert.ok(claimed.every((c) => /^trial:\d+@c1\.g\d+$/.test(c.build_key)), 'each claim names its build');
+    const { rows: asked } = await pool.query("SELECT key, payload FROM wf_events WHERE machine = 'bot-build' AND type = 'Requested' AND key = ANY($1::text[])", [claimed.map((c) => c.build_key)]);
+    assert.equal(asked.length, 2, 'its build asked for in the same transition');
+    assert.deepEqual(asked[0].payload.replyTo, { machine: 'bench-lane', key: 'lane' });
+    await settle();
+    assert.deepEqual((await trials(run.id)).map((r) => r.status), ['ok', 'ok', 'ok']);
+    assert.deepEqual(await runRow(run.id), { status: 'done', spent: 3.75 });
   });
 
-  await t.test('a provider refusing the bench key for its spending limit: an infra_fail, and nothing new starts for a while', async () => {
-    lane._resetForTests();
+  await t.test('L2: a provider refusing the bench key for its spending limit: an infra_fail, and nothing new starts until the pause ends', async () => {
+    await closeAll();
     const { run } = await lane.launchRun(pool, { suiteId: suite.id, models: ['z-ai/glm-5.3-flash'], stages: ['triage'], repeats: 2, concurrency: 1 });
     const refused = 'the build turn failed (the agent exited with code 1); last activity: Failed to authenticate. API Error: 403 Key limit exceeded (weekly limit).';
     runner.runStage = async () => ({ status: 'model_fail', error: refused, cost_usd: 0.04, duration_ms: 5 });
     try {
-      assert.equal((await lane.tick(pool, {}, deps)).started, 1);
-      await lane._awaitTrialsForTests();
-      const [first] = (await trials(run.id)).filter((x) => x.status !== 'pending');
-      assert.equal(first.status, 'infra_fail', 'the platform\'s fault, out of the arm\'s build rate');
-      assert.match(first.error, /Key limit exceeded/);
+      await lookNow();
+      await settle();
+      const done = (await trials(run.id)).filter((x) => x.status !== 'pending');
+      assert.equal(done.length, 1, 'one ran, and the next waits on the pause');
+      assert.equal(done[0].status, 'infra_fail', 'the platform\'s fault, out of the arm\'s build rate');
       const pause = await lane.providerLimitPause(pool);
-      assert.ok(pause && Date.parse(pause.until) > Date.now(), JSON.stringify(pause));
-      const held = await lane.tick(pool, {}, deps);
-      assert.equal(held.started, 0);
-      assert.equal(held.paused, 'provider_limit');
-      assert.equal(held.until, pause.until);
-      const watched = await require('../src/services/bench/studio').watchRun(pool, run.id);
-      assert.deepEqual(watched.run.waiting, { reason: 'provider_limit', until: pause.until });
-      // Past the pause, the next trial finds out whether the key works again,
-      // and one that ends any other way lifts it.
-      await pool.query("UPDATE bench_trials SET finished_at = NOW() - INTERVAL '31 minutes' WHERE id = $1", [first.id]);
-      assert.equal(await lane.providerLimitPause(pool), null);
+      assert.ok(pause && Date.parse(pause.until) > Date.now());
+      assert.equal(new Date((await laneData()).deadline_at).toISOString(), pause.until, 'its clock is the pause\'s end');
+      // Past it, the next trial finds out whether the key works again.
+      await pool.query("UPDATE bench_trials SET finished_at = NOW() - INTERVAL '31 minutes' WHERE id = $1", [done[0].id]);
       runner.runStage = async () => ({ status: 'ok', cost_usd: 1.25, parsed: { verdict: 'ready' }, duration_ms: 5 });
-      assert.equal((await lane.tick(pool, {}, deps)).started, 1);
-      await lane._awaitTrialsForTests();
-      assert.equal(await lane.providerLimitPause(pool), null);
-      assert.equal((await require('../src/services/bench/studio').watchRun(pool, run.id)).run.waiting, null);
+      await lookNow();
+      await settle();
+      assert.equal((await trials(run.id)).filter((x) => x.status === 'ok').length, 5, 'every one left, the key working again');
     } finally {
       runner.runStage = async ({ stage, model, trial }) => {
         ran.push(`${stage}:${model}:${trial.id}`);
         return { status: 'ok', cost_usd: 1.25, parsed: { verdict: 'ready' }, duration_ms: 5 };
       };
-      await pool.query("UPDATE bench_runs SET status = 'cancelled' WHERE id = $1", [run.id]);
-      await pool.query("UPDATE bench_trials SET status = 'cancelled' WHERE run_id = $1 AND status = 'pending'", [run.id]);
     }
   });
 
-  await t.test('the cap: no trial starts that would cross it, and the rest are skipped', async () => {
-    lane._resetForTests();
-    const { run } = await lane.launchRun(pool, {
-      suiteId: suite.id, models: ['z-ai/glm-5.3-flash'], stages: ['triage'], repeats: 3, capUsd: 3,
-    });
+  await t.test('L3: the cap: no trial starts that would cross it, and the rest are skipped', async () => {
+    await closeAll();
+    const { run } = await lane.launchRun(pool, { suiteId: suite.id, models: ['z-ai/glm-5.3-flash'], stages: ['triage'], repeats: 3, capUsd: 3 });
     // Each trial is estimated at $1 and costs $1.25.
     await pool.query('UPDATE bench_trials SET est_cost_usd = 1 WHERE run_id = $1', [run.id]);
-    for (let i = 0; i < 6; i += 1) {
-      // eslint-disable-next-line no-await-in-loop
-      await lane.tick(pool, {}, deps);
-      // eslint-disable-next-line no-await-in-loop
-      await lane._awaitTrialsForTests();
-    }
+    await lookNow();
+    await settle();
     const rows = await trials(run.id);
-    const ok = rows.filter((x) => x.status === 'ok').length;
-    const skipped = rows.filter((x) => x.status === 'skipped_cap').length;
-    assert.equal(ok, 2, 'two trials fit: $1.25 + $1.25 spent, and a third estimated at $1 would make $3.50');
-    assert.equal(skipped, 7);
-    const { rows: [r] } = await pool.query('SELECT status, spent_usd::float8 AS spent FROM bench_runs WHERE id = $1', [run.id]);
+    assert.equal(rows.filter((x) => x.status === 'ok').length, 2, 'two fit: $1.25 + $1.25 spent, and a third estimated at $1 would make $3.50');
+    assert.equal(rows.filter((x) => x.status === 'skipped_cap').length, 7);
+    const r = await runRow(run.id);
     assert.equal(r.status, 'capped');
     assert.ok(r.spent <= 3, `spent ${r.spent} is inside the $3 cap`);
   });
-
   // The launcher's range, after trials have run: each stage says what it
   // rests on (catalog.costRange), and one with nothing behind it is a guess.
   await t.test('the estimate is a range that says what each stage rests on', async () => {
@@ -245,25 +299,6 @@ test('the benchmark lane against the full PostgreSQL schema', { timeout: 180000 
     assert.ok(est.suggestedCapUsd >= Math.ceil(est.lowUsd), 'the suggested cap covers the low end at least');
     const another = await lane.estimateRun(pool, { suiteId: suite.id, models: ['z-ai/glm-5.3-flash', 'x/fresh'], stages: ['triage'], repeats: 1 });
     assert.equal(another.byStage.triage.basis, 'stage', 'a model with no triage of its own is priced from the other model\'s');
-  });
-
-  await t.test('a trial a dead process left running is retried once, then failed', async () => {
-    lane._resetForTests();
-    const { run } = await lane.launchRun(pool, { suiteId: suite.id, models: ['z-ai/glm-5.3-flash'], stages: ['build'] });
-    const [a, b] = await trials(run.id);
-    await pool.query(
-      "UPDATE bench_trials SET status = 'running', claims = 1, started_at = NOW() - INTERVAL '1 day' WHERE id = $1", [a.id],
-    );
-    await pool.query(
-      "UPDATE bench_trials SET status = 'running', claims = 2, started_at = NOW() - INTERVAL '1 day' WHERE id = $1", [b.id],
-    );
-    assert.equal(await lane.releaseStale(pool, { turnSeconds: 1200 }), 2);
-    const rows = await trials(run.id);
-    assert.equal(rows.find((x) => x.id === a.id).status, 'pending');
-    const failed = rows.find((x) => x.id === b.id);
-    assert.equal(failed.status, 'infra_fail');
-    assert.match(failed.error, /restarted during it twice/);
-    await pool.query("UPDATE bench_runs SET status = 'cancelled' WHERE id = $1", [run.id]);
   });
 
   // ── After a restart ───────────────────────────────────────────────────
@@ -281,20 +316,26 @@ test('the benchmark lane against the full PostgreSQL schema', { timeout: 180000 
      VALUES ($1, $2, $3, 'codex_openrouter', 'completed', $4, 1000, 100, 'z-ai/glm-5.3-flash')`,
     [crypto.randomUUID(), sessionId, user.id, usd],
   );
-  const claimAs = (trialId, sessionId, { claims = 1, ago = '10 minutes', baseSha = null } = {}) => pool.query(
-    `UPDATE bench_trials
-        SET status = 'running', claims = $2, started_at = NOW() - $3::interval, session_id = $4, base_sha = $5,
-            build_branch = 'bench/r' || run_id || '-t' || id
-      WHERE id = $1`,
-    [trialId, claims, ago, sessionId, baseSha],
-  );
+  // A claim as the lane's transition writes it (only it may).
+  const claimAs = async (trialId, sessionId, { claims = 1, ago = '10 minutes', baseSha = null, buildKey = null } = {}) => {
+    const c = await pool.connect();
+    try {
+      await c.query(`BEGIN; SET LOCAL app.wf_writer = 'transition'`);
+      await c.query(
+        `UPDATE bench_trials
+            SET status = 'running', claims = $2, started_at = NOW() - $3::interval, session_id = $4, base_sha = $5,
+                build_branch = 'bench/r' || run_id || '-t' || id, build_key = $6
+          WHERE id = $1`,
+        [trialId, claims, ago, sessionId, baseSha, buildKey]);
+      await c.query('COMMIT');
+    } finally { c.release(); }
+  };
   const trialRow = async (id) => (await pool.query(
     `SELECT id, status, error, claims, session_id, base_sha, cost_usd::float8 AS cost, parsed, recovered_at, finished_at,
             interrupted_cost_usd::float8 AS interrupted, build_commits, diff
        FROM bench_trials WHERE id = $1`, [id],
   )).rows[0];
   const spent = async (runId) => (await pool.query('SELECT spent_usd::float8 AS s FROM bench_runs WHERE id = $1', [runId])).rows[0].s;
-  const debits = [];
   const moneyDeps = {
     limits: { async recordSpend(_p, userId, cents) { debits.push(cents); } },
     managedOpenRouter: { async usesIncludedKey() { return true; } },
@@ -313,80 +354,93 @@ test('the benchmark lane against the full PostgreSQL schema', { timeout: 180000 
     };
   };
 
-  await t.test('a trial\'s session is on its row before its turn runs; an interrupted attempt is charged once and the retry only its own', async () => {
-    lane._resetForTests();
+
+  await t.test('R1: a trial\'s sessions are on its row before its turns run; one lost is charged for all of them', async () => {
+    await closeAll();
     debits.length = 0;
     const { run } = await lane.launchRun(pool, { suiteId: suite.id, models: ['z-ai/glm-5.3-flash'], stages: ['triage'], repeats: 1 });
     const [a] = await trials(run.id);
+    await claimAs(a.id, null, { buildKey: `trial:${a.id}@c1.g1` });
+    // A first version's triage, then its build: two sessions.
     const s1 = await newSession();
+    const s2 = await newSession();
     await spend(s1, 0.3);
-    await claimAs(a.id, s1);
-
-    // Restart recovery abandoned s1's turn: the trial is back at once.
-    assert.equal(await lane.releaseTrialOfSession(pool, s1, { deps: moneyDeps }), 'pending');
-    assert.equal(await lane.releaseTrialOfSession(pool, s1, { deps: moneyDeps }), null,
-      'a second release of the same interruption changes and charges nothing');
-    let row = await trialRow(a.id);
-    assert.equal(row.status, 'pending');
-    assert.equal(row.session_id, null);
-    assert.equal(row.interrupted, 0.3, 'what the interrupted attempt spent is kept on the trial');
-    assert.equal(await spent(run.id), 0.3, 'and charged to the run, once');
-    assert.deepEqual(debits, [30], 'and to the bench allowance, once');
-
-    // The retry: its session is on the row while its turn runs.
+    await spend(s2, 0.5);
     let during = null;
-    let s2 = null;
     runner.runStage = async (ctx) => {
-      s2 = await newSession();
-      await ctx.onSession(s2, { baseSha: BASE, branch: runner.branchFor(ctx.trial) });
+      await ctx.onSession(s1, { baseSha: BASE, branch: runner.branchFor(ctx.trial) });
+      await ctx.onSession(s2, {});
       during = await trialRow(ctx.trial.id);
-      await spend(s2, 0.5);
-      return { status: 'ok', session_id: s2, parsed: { verdict: 'ready' }, duration_ms: 5 };
+      throw Object.assign(new Error('the process stopped'), { code: 'steps_stopped', stopped: true });
     };
-    await lane.tick(pool, {}, deps);
-    await lane._awaitTrialsForTests();
-    assert.equal(during.status, 'running');
+    const steps = durableSteps.durable({ checkpoint: async () => {} });
+    await assert.rejects(lane.executeTrial(pool, {}, { id: a.id, run_id: run.id }, { ...deps, durable: steps, buildKey: `trial:${a.id}@c1.g1` }));
     assert.equal(during.session_id, s2, 'the session is recorded before the turn, not at the trial\'s end');
-    assert.equal(during.base_sha, BASE);
-    row = await trialRow(a.id);
-    assert.equal(row.status, 'ok');
-    assert.equal(row.cost, 0.5, 'the trial\'s cost is the finishing attempt\'s own');
-    assert.equal(row.interrupted, 0.3);
-    assert.equal(await spent(run.id), 0.8, 'the run paid for both attempts, each once');
-    await pool.query("UPDATE bench_runs SET status = 'cancelled' WHERE id = $1", [run.id]);
+    const { rows: [ids] } = await pool.query('SELECT session_ids, build_branch FROM bench_trials WHERE id = $1', [a.id]);
+    assert.deepEqual(ids.session_ids, [s1, s2], 'every session it opened');
+    // Its build failed for good: recorded lost, charged for both sessions.
+    await lane.recordLostTrial({ pool, config: {}, id: a.id, nonce: 'c1.g1', error: { message: 'kept failing' } });
+    const row = await trialRow(a.id);
+    assert.equal(row.status, 'infra_fail');
+    assert.equal(row.cost, 0.8, 'the triage\'s cost too');
+    assert.equal(await spent(run.id), 0.8);
+    assert.deepEqual(debits, [80]);
+    const { rows: [kept] } = await pool.query('SELECT build_branch FROM bench_trials WHERE id = $1', [a.id]);
+    assert.equal(kept.build_branch, ids.build_branch, 'its branch still named, for the sweep');
+    runner.runStage = async ({ stage, model, trial }) => {
+      ran.push(`${stage}:${model}:${trial.id}`);
+      return { status: 'ok', cost_usd: 1.25, parsed: { verdict: 'ready' }, duration_ms: 5 };
+    };
   });
 
-  await t.test('a trial records the looks its turns took beside what its build could see; one that never looked records none', async () => {
-    lane._resetForTests();
-    const { run } = await lane.launchRun(pool, { suiteId: suite.id, models: ['z-ai/glm-5.3-flash'], stages: ['triage'], repeats: 2 });
-    const [looked, never] = await trials(run.id);
-    runner.runStage = async (ctx) => {
-      if (ctx.trial.id === looked.id) {
-        for (const line of ['Using browser_navigate', 'Using browser_take_screenshot', 'Using browser_take_screenshot', 'Using mcp__playwright__browser_snapshot']) ctx.onActivity(line);
-        return { status: 'ok', parsed: { verdict: 'ready', sight: { told: true, passed: true } }, duration_ms: 5 };
-      }
-      ctx.onActivity('Editing public/app.js');
-      return { status: 'ok', parsed: { verdict: 'ready' }, duration_ms: 5 };
-    };
-    const parsedOf = async (id) => (await pool.query('SELECT parsed FROM bench_trials WHERE id = $1', [id])).rows[0].parsed;
+  await t.test('R2: only the build the claim named records the trial', async () => {
+    await closeAll();
+    const { run } = await lane.launchRun(pool, { suiteId: suite.id, models: ['z-ai/glm-5.3-flash'], stages: ['triage'], repeats: 1 });
+    const [a] = await trials(run.id);
+    await claimAs(a.id, null, { buildKey: `trial:${a.id}@c2.g9` });
+    // An earlier claim's build, lost: it records nothing over the new claim.
+    await lane.recordLostTrial({ pool, config: {}, id: a.id, nonce: 'c1.g3', error: { message: 'lost' } });
+    assert.equal((await trialRow(a.id)).status, 'running');
+    // Nor does an earlier claim's build that reached its record (the claim
+    // moved on between its read and its write): the write itself is fenced.
+    const row = await lane.loadTrialContext(pool, a.id);
+    await lane.recordTrial(pool, {
+      trialRow: { id: a.id, run_id: run.id }, row, user, d: { ...deps, ...moneyDeps }, buildKey: `trial:${a.id}@c1.g3`,
+      patch: { status: 'infra_fail', error: 'lost', cost_usd: 2 },
+    });
+    assert.equal((await trialRow(a.id)).status, 'running');
+    assert.equal(await spent(run.id), 0, 'nor charged');
+    // Nor does it run.
+    const before = ran.length;
+    assert.deepEqual(await lane.runTrial({ pool, config: {}, id: a.id, input: { nonce: 'c1.g3' }, steps: durableSteps.durable({ checkpoint: async () => {} }) }),
+      { status: 'not_this_claim' });
+    assert.equal(ran.length, before);
+  });
+
+  await t.test('R3: the trial recorded and its run charged in one write: a failure between them charges on the next try', async () => {
+    await closeAll();
+    debits.length = 0;
+    const { run } = await lane.launchRun(pool, { suiteId: suite.id, models: ['z-ai/glm-5.3-flash'], stages: ['triage'], repeats: 1 });
+    const [a] = await trials(run.id);
+    const key = `trial:${a.id}@c1.g1`;
+    await claimAs(a.id, null, { buildKey: key });
+    // The run's charge fails once, as a dropped connection would.
+    // (A sequence counts outside the transaction the failure rolls back.)
+    await pool.query(`CREATE SEQUENCE r3_fail;
+      CREATE FUNCTION r3_fail_charge() RETURNS trigger AS $$
+      BEGIN IF NEW.spent_usd <> OLD.spent_usd AND nextval('r3_fail') = 1 THEN RAISE EXCEPTION 'the connection dropped'; END IF; RETURN NEW; END $$ LANGUAGE plpgsql;
+      CREATE TRIGGER r3_fail_charge BEFORE UPDATE ON bench_runs FOR EACH ROW EXECUTE FUNCTION r3_fail_charge();`);
     try {
-      // One trial at a time, as the run's concurrency has it.
-      for (let i = 0; i < 6 && (!(await parsedOf(looked.id)) || !(await parsedOf(never.id))); i += 1) {
-        // eslint-disable-next-line no-await-in-loop
-        await lane.tick(pool, {}, deps);
-        // eslint-disable-next-line no-await-in-loop
-        await lane._awaitTrialsForTests();
-      }
-      assert.deepEqual((await parsedOf(looked.id)).sight, { told: true, passed: true, screenshots: 2, snapshots: 1, navigations: 1 });
-      assert.equal((await parsedOf(never.id)).sight, undefined, 'no build and no look: nothing to say');
+      const steps = () => durableSteps.durable({ checkpoint: async () => {} });
+      await assert.rejects(lane.executeTrial(pool, {}, { id: a.id, run_id: run.id }, { ...deps, durable: steps(), buildKey: key }), /connection dropped/);
+      assert.equal((await trialRow(a.id)).status, 'running', 'not recorded without its charge');
+      assert.equal(await lane.executeTrial(pool, {}, { id: a.id, run_id: run.id }, { ...deps, durable: steps(), buildKey: key }), 'ok');
+      assert.equal(await spent(run.id), 1.25, 'charged, once');
     } finally {
-      await pool.query("UPDATE bench_runs SET status = 'cancelled' WHERE id = $1", [run.id]);
-      await pool.query("UPDATE bench_trials SET status = 'cancelled' WHERE run_id = $1 AND status IN ('pending', 'running')", [run.id]);
+      await pool.query('DROP TRIGGER r3_fail_charge ON bench_runs; DROP FUNCTION r3_fail_charge(); DROP SEQUENCE r3_fail');
     }
   });
-
   await t.test('a trial keeps its looks as a step while its turns run; the attempt after a restart starts from them, each counted once', async () => {
-    lane._resetForTests();
     const token = () => crypto.randomBytes(8).toString('hex');
     const { rows: [snap] } = await pool.query('SELECT id FROM homeroom_bot_run_snapshots ORDER BY id LIMIT 1');
     const { rows: [task] } = await pool.query(
@@ -404,7 +458,7 @@ test('the benchmark lane against the full PostgreSQL schema', { timeout: 180000 
        VALUES ($1, $2, 'z-ai/glm-5.3-flash', 1, 'pending', $3) RETURNING id`,
       [run.id, task.id, token()],
     );
-    await claimAs(trial.id, null);
+    await claimAs(trial.id, null, { buildKey: `trial:${trial.id}@c1.g1` });
     // What the attempt before the restart kept: when it started, the skills
     // it reached for, and its looks, a few seconds before the restart.
     const earlier = { screenshots: 4, snapshots: 1, navigations: 3 };
@@ -431,7 +485,7 @@ test('the benchmark lane against the full PostgreSQL schema', { timeout: 180000 
       return { status: 'ok', parsed: { built: true, sight: { told: true, passed: false } }, duration_ms: 5 };
     };
     try {
-      assert.equal(await lane.executeTrial(pool, {}, { id: trial.id, run_id: run.id }, { ...deps, durable: steps }), 'ok');
+      assert.equal(await lane.executeTrial(pool, {}, { id: trial.id, run_id: run.id }, { ...deps, durable: steps, buildKey: `trial:${trial.id}@c1.g1` }), 'ok');
       assert.deepEqual(seen.atStep.looks, earlier, 'a step keeps the counts its turn starts from: the kept ones, not added again');
       assert.deepEqual(seen.afterLook.looks, { ...earlier, screenshots: 5 }, 'a look is kept while the turn runs');
       assert.deepEqual(seen.afterSecond.looks, { ...earlier, screenshots: 5 }, 'the next, within the interval, waits');
@@ -452,99 +506,19 @@ test('the benchmark lane against the full PostgreSQL schema', { timeout: 180000 
     }
   });
 
-  await t.test('a second interruption fails the trial; a cancelled run\'s trial is cancelled; both still charged', async () => {
-    lane._resetForTests();
-    debits.length = 0;
-    const { run } = await lane.launchRun(pool, { suiteId: suite.id, models: ['z-ai/glm-5.3-flash'], stages: ['triage'], repeats: 1 });
-    const [a, b] = await trials(run.id);
-    const sa = await newSession();
-    await spend(sa, 0.2);
-    await claimAs(a.id, sa, { claims: 2 });
-    assert.equal(await lane.releaseTrialOfSession(pool, sa, { deps: moneyDeps }), 'infra_fail');
-    const row = await trialRow(a.id);
-    assert.match(row.error, /restarted during it twice/);
-    assert.ok(row.finished_at);
-    assert.equal(row.interrupted, 0.2);
-    const sb = await newSession();
-    await claimAs(b.id, sb);
-    await pool.query("UPDATE bench_runs SET status = 'cancelled' WHERE id = $1", [run.id]);
-    assert.equal(await lane.releaseTrialOfSession(pool, sb, { deps: moneyDeps }), 'cancelled',
-      'never pending in a run nothing will schedule again');
-    assert.equal(await spent(run.id), 0.2);
-  });
-
-  await t.test('the lane releases a trial nothing holds at once; not one with a turn on record, one a durable build owns, or one just claimed', async () => {
-    lane._resetForTests();
-    const { run } = await lane.launchRun(pool, { suiteId: suite.id, models: ['z-ai/glm-5.3-flash'], stages: ['triage'], repeats: 2 });
-    const [noTurn, withTurn, owned, asked, neverOpened, fresh] = await trials(run.id);
-    await claimAs(noTurn.id, await newSession({ status: 'paused' }));
-    await claimAs(withTurn.id, await newSession({ activeTurn: turnOf('scout') }));
-    // Claimed a day ago with no session on record, as an old orphan would
-    // be: one a durable build under way owns (services/build-runs.js), and
-    // one whose build is asked for and not yet taken up by the kernel.
-    // An instance is the kernel's to write (wf_require_writer): written here
-    // as its transition pipeline writes one.
-    const asKernel = (sql) => pool.query(`BEGIN; SET LOCAL app.wf_writer = 'transition'; ${sql}; COMMIT`);
-    await claimAs(owned.id, null, { ago: '1 day' });
-    await asKernel(`INSERT INTO wf_instances (machine, key, state, machine_version) VALUES ('bot-build', 'trial:${Number(owned.id)}@c1.x', 'building', 1)`);
-    await claimAs(asked.id, null, { ago: '1 day' });
-    await pool.query(
-      "INSERT INTO wf_events (machine, key, type, source, request_key) VALUES ('bot-build', $1, 'Requested', '{}'::jsonb, $2)",
-      [`trial:${asked.id}@c1.y`, `bench-lane-${asked.id}`],
-    );
-    await claimAs(neverOpened.id, null);
-    await claimAs(fresh.id, null, { ago: '0 seconds' });
-
-    assert.equal(await lane.releaseOrphaned(pool, moneyDeps), 2);
-    assert.equal((await trialRow(noTurn.id)).status, 'pending', 'a session with no turn left');
-    assert.equal((await trialRow(neverOpened.id)).status, 'pending', 'no session ever recorded');
-    assert.equal((await trialRow(withTurn.id)).status, 'running', 'a turn record is restart recovery\'s');
-    assert.equal((await trialRow(fresh.id)).status, 'running', 'inside the grace');
-    assert.equal((await trialRow(owned.id)).status, 'running', 'a durable build carries its trial on itself');
-    assert.equal((await trialRow(asked.id)).status, 'running', 'and one asked for owns it already');
-    assert.equal(await lane.releaseStale(pool, { turnSeconds: 1200 }), 0, 'releaseStale leaves a durable build\'s trials alone too');
-    // Once its build has ended, the trial is no longer its build's.
-    await asKernel(`UPDATE wf_instances SET state = 'failed' WHERE machine = 'bot-build' AND key = 'trial:${Number(owned.id)}@c1.x'`);
-    assert.equal(await lane.releaseStale(pool, { turnSeconds: 1200 }), 1);
-    assert.equal((await trialRow(owned.id)).status, 'pending');
-
-    // The slot of a trial whose durable build is under way, wherever it runs,
-    // is held in this process until the build ends, so the caps count it.
-    const buildRuns = require('../src/services/build-runs');
-    const real = { underWay: buildRuns.underWay, whenEnded: buildRuns.whenEnded };
-    let end = null;
-    const waited = [];
-    buildRuns.underWay = async (target) => (target === 'trial' ? [{ key: `trial:${asked.id}@c1.y`, target: 'trial', id: asked.id, nonce: 'c1.y', appId: app.id }] : []);
-    buildRuns.whenEnded = (key) => { waited.push(key); return new Promise((resolve) => { end = () => resolve(null); }); };
-    try {
-      assert.equal(await lane.holdDurableTrials(pool), 1);
-      assert.equal(await lane.holdDurableTrials(pool), 0, 'held once');
-      const held = lane._inFlightForTests().get(asked.id);
-      const { rows: [{ est }] } = await pool.query('SELECT est_cost_usd::float8 AS est FROM bench_trials WHERE id = $1', [asked.id]);
-      assert.deepEqual([held.runId, held.est, held.durable, held.heavy], [run.id, est, true, false], 'in its run\'s slots, at its estimate');
-      assert.deepEqual(waited, [`trial:${asked.id}@c1.y`], 'until its own build ends');
-      end();
-      await held.promise;
-      assert.equal(lane._inFlightForTests().has(asked.id), false, 'let go as its build ends');
-    } finally {
-      Object.assign(buildRuns, real);
-    }
-    await pool.query("UPDATE bench_runs SET status = 'cancelled' WHERE id = $1", [run.id]);
-  });
-
   await t.test('a trial is recorded once: an attempt a restart caught after it recorded the trial, and before that was saved, charges nothing twice', async () => {
-    lane._resetForTests();
+    await closeAll();
     debits.length = 0;
     const { run } = await lane.launchRun(pool, { suiteId: suite.id, models: ['z-ai/glm-5.3-flash'], stages: ['triage'], repeats: 1 });
     const [a] = await trials(run.id);
-    await claimAs(a.id, null);
+    await claimAs(a.id, null, { buildKey: `trial:${a.id}@c1.g1` });
     const sid = await newSession();
     await spend(sid, 0.42);
     runner.runStage = async (ctx) => {
       await ctx.onSession(sid, { baseSha: BASE, branch: runner.branchFor(ctx.trial) });
       return { status: 'ok', session_id: sid, base_sha: BASE, build_branch: runner.branchFor(ctx.trial), parsed: { verdict: 'ready' }, duration_ms: 5 };
     };
-    const tdeps = { ...deps, ...moneyDeps, github: fakeGithub() };
+    const tdeps = { ...deps, ...moneyDeps, github: fakeGithub(), buildKey: `trial:${a.id}@c1.g1` };
     const trialRef = { id: a.id, run_id: run.id };
     // The first attempt records the trial, and its claim is gone before that
     // step can be saved.
@@ -582,82 +556,300 @@ test('the benchmark lane against the full PostgreSQL schema', { timeout: 180000 
     await pool.query("UPDATE bench_runs SET status = 'cancelled' WHERE id = $1", [run.id]);
   });
 
-  // ── Parallelism ───────────────────────────────────────────────────────
 
-  const gated = () => {
-    let open;
-    const gate = new Promise((resolve) => { open = resolve; });
-    const started = [];
-    runner.runStage = async ({ stage, trial }) => {
-      started.push({ stage, id: trial.id });
-      await gate;
-      return { status: 'ok', cost_usd: 0.01, parsed: {}, duration_ms: 1 };
-    };
-    return { started, open };
-  };
-  const finishAll = async (g, runIds) => {
-    g.open();
-    await lane._awaitTrialsForTests();
-    for (const id of runIds) {
-      // eslint-disable-next-line no-await-in-loop
-      await pool.query("UPDATE bench_runs SET status = 'cancelled' WHERE id = $1", [id]);
-    }
-  };
+  // ── Limits, counted from the rows ─────────────────────────────────────
 
-  await t.test('a run takes up to eight trials at once', async () => {
-    lane._resetForTests();
-    const g = gated();
+  // The lane grants; nothing here lets the builds run, so every grant stays
+  // a running trial whose build has not started: the slots it takes are
+  // counted all the same (they are running rows, claimed in the transition
+  // that asked for the build).
+  // The allowance's look kept by an earlier subtest is stale once a minute
+  // has passed: made so.
+  const staleGate = () => pool.query(`BEGIN; SET LOCAL app.wf_writer = 'transition';
+    UPDATE wf_instances SET data = jsonb_set(data, '{gate,at}', to_jsonb((now() - interval '2 minutes')::text)) WHERE machine = 'bench-lane'; COMMIT`);
+  const grantOnly = async () => { await lookNow(laneOnly); await laneOnly.drain(); await laneOnly.runServices(); await laneOnly.drain(); };
+  const runningOf = async (runId) => (await pool.query(
+    `SELECT tr.id, t.stage FROM bench_trials tr JOIN bench_tasks t ON t.id = tr.task_id WHERE tr.run_id = $1 AND tr.status = 'running'`, [runId])).rows;
+
+  await t.test('L4: a run takes up to its concurrency at once, granted builds counted though none has started', async () => {
+    await closeAll();
     const { run } = await lane.launchRun(pool, { suiteId: suite.id, models: ['z-ai/glm-5.3-flash'], stages: ['triage'], repeats: 3, concurrency: 8 });
-    assert.equal(run.concurrency, 8);
-    const first = await lane.tick(pool, {}, deps);
-    assert.equal(first.started, 8);
-    assert.equal(lane._inFlightForTests().size, 8);
-    assert.equal((await lane.tick(pool, {}, deps)).started, 0, 'the ninth waits for a slot');
-    await finishAll(g, [run.id]);
+    await grantOnly();
+    assert.equal((await runningOf(run.id)).length, 8);
+    await grantOnly();
+    assert.equal((await runningOf(run.id)).length, 8, 'the ninth waits: the eight granted hold their slots before their builds start');
   });
 
-  await t.test('at most three heavy trials of a run at once; the lane takes its light ones meanwhile', async () => {
-    lane._resetForTests();
-    const g = gated();
+  await t.test('L5: at most three heavy trials of a run at once; its light ones go meanwhile', async () => {
+    await closeAll();
     const { run } = await lane.launchRun(pool, {
       suiteId: suite.id, models: ['z-ai/glm-5.3-flash', 'moonshotai/kimi-k2.7-code'], stages: ['triage', 'build'], repeats: 1, concurrency: 8,
     });
-    const out = await lane.tick(pool, {}, deps);
-    const flying = [...lane._inFlightForTests().values()];
-    assert.equal(flying.filter((f) => f.heavy).length, 3, 'three builds, not six');
-    assert.equal(flying.filter((f) => !f.heavy).length, 3, 'every triage trial, including the one ordered after the fourth build');
-    assert.equal(out.started, 6);
-    const { rows: waiting } = await pool.query(
-      `SELECT t.stage FROM bench_trials tr JOIN bench_tasks t ON t.id = tr.task_id
-        WHERE tr.run_id = $1 AND tr.status = 'pending'`, [run.id],
-    );
-    assert.deepEqual(waiting.map((r) => r.stage), ['build', 'build', 'build'], 'the other builds wait for a heavy slot');
-    await finishAll(g, [run.id]);
+    await grantOnly();
+    const flying = await runningOf(run.id);
+    assert.equal(flying.filter((f) => f.stage === 'build').length, 3, 'three builds, not six');
+    assert.equal(flying.filter((f) => f.stage === 'triage').length, 3, 'every triage trial, including one ordered after the fourth build');
   });
 
-  await t.test('at most eleven trials in flight across every run', async () => {
-    lane._resetForTests();
-    const g = gated();
-    assert.equal(lane.MAX_IN_FLIGHT, 11, 'a full studio run of nine and two beside it');
+  await t.test('L6: at most eleven trials in flight across every run', async () => {
+    await closeAll();
+    assert.equal(lane.MAX_IN_FLIGHT, 11);
     const a = (await lane.launchRun(pool, { suiteId: suite.id, models: ['z-ai/glm-5.3-flash'], stages: ['triage'], repeats: 3, concurrency: 7 })).run;
     const b = (await lane.launchRun(pool, { suiteId: suite.id, models: ['z-ai/glm-5.3-flash'], stages: ['triage'], repeats: 3, concurrency: 7 })).run;
-    const out = await lane.tick(pool, {}, deps);
-    assert.equal(out.started, 11);
-    assert.equal(out.paused, 'lane_full');
-    const flying = [...lane._inFlightForTests().values()];
-    assert.equal(flying.filter((f) => f.runId === a.id).length, 7);
-    assert.equal(flying.filter((f) => f.runId === b.id).length, 4, 'the second run gets what is left of the eleven');
-    await finishAll(g, [a.id, b.id]);
+    await grantOnly();
+    assert.equal((await runningOf(a.id)).length, 7);
+    assert.equal((await runningOf(b.id)).length, 4, 'the second run gets what is left of the eleven');
   });
 
-  await t.test('a cancelled run claims nothing more and its waiting trials are cancelled', async () => {
-    lane._resetForTests();
-    const { run } = await lane.launchRun(pool, { suiteId: suite.id, models: ['z-ai/glm-5.3-flash'], stages: ['triage'], repeats: 2 });
-    assert.equal((await lane.cancelRun(pool, run.id, deps)).ok, true);
-    assert.equal((await lane.cancelRun(pool, run.id, deps)).status, 409);
+  await t.test('L7: a later change\'s side builds take only the live slots live work leaves free', async () => {
+    await closeAll();
+    const { run } = await lane.launchRun(pool, { suiteId: suite.id, models: ['z-ai/glm-5.3-flash'], stages: ['triage'], repeats: 3, concurrency: 9 });
+    await pool.query("UPDATE bench_runs SET kind = 'bot_config_later' WHERE id = $1", [run.id]);
+    await liveSlots(2, 4);
+    try {
+      await grantOnly();
+      assert.equal((await runningOf(run.id)).length, 2, 'two live, two side builds: four of the four');
+    } finally { await liveSlots(0); }
+  });
+
+  await t.test('L8: the bench user\'s allowance spent: nothing starts, and the lane looks again', async () => {
+    await closeAll();
+    allowed = false;
+    try {
+      const { run } = await lane.launchRun(pool, { suiteId: suite.id, models: ['z-ai/glm-5.3-flash'], stages: ['triage'], repeats: 1 });
+      await staleGate();
+      await grantOnly();
+      assert.equal((await runningOf(run.id)).length, 0);
+      const d = await laneData();
+      assert.equal(d.data.gate.ok, false);
+      assert.ok(d.deadline_at, 'looked at again in a minute');
+    } finally { allowed = true; await staleGate(); }
+  });
+
+  // ── Cancels ───────────────────────────────────────────────────────────
+
+  await t.test('C1: a cancelled run claims nothing more, its waiting trials are cancelled, its running ones stopped by their builds', async () => {
+    await closeAll();
+    const { run } = await lane.launchRun(pool, { suiteId: suite.id, models: ['z-ai/glm-5.3-flash'], stages: ['triage'], repeats: 3, concurrency: 2 });
+    await grantOnly();
+    const flying = await runningOf(run.id);
+    assert.equal(flying.length, 2);
+    assert.equal((await lane.cancelRun(pool, run.id, { platform: { benchCancelRun: (id, o) => cancel(laneOnly, 'RunCancelled', { runId: id, by: o.by }) } })).ok, true);
+    const again = await lane.cancelRun(pool, run.id, { platform: { benchCancelRun: (id) => cancel(laneOnly, 'RunCancelled', { runId: id }) } });
+    assert.equal(again.status, 409);
+    const rows = await trials(run.id);
+    assert.equal(rows.filter((x) => x.status === 'cancelled').length, 7, 'the waiting ones');
+    const { rows: stops } = await pool.query(
+      "SELECT key FROM wf_events WHERE machine = 'bot-build' AND type = 'StopRequested' AND key = ANY(SELECT build_key FROM bench_trials WHERE run_id = $1)", [run.id]);
+    assert.equal(stops.length, 2, 'each running trial\'s build told to stop');
+    // Its builds take their Requested, then the Stop: never run, recorded cancelled.
+    await settle();
+    assert.ok((await trials(run.id)).every((x) => x.status === 'cancelled'), JSON.stringify(await trials(run.id)));
+    assert.equal((await runRow(run.id)).status, 'cancelled');
+  });
+
+  await t.test('C2: a trial cancelled before its build exists is stopped all the same, and never runs', async () => {
+    await closeAll();
+    const { run } = await lane.launchRun(pool, { suiteId: suite.id, models: ['z-ai/glm-5.3-flash'], stages: ['triage'], repeats: 1, concurrency: 1 });
+    await grantOnly();
+    const [t1] = await runningOf(run.id);
     const before = ran.length;
-    await lane.tick(pool, {}, deps);
-    assert.equal(ran.length, before);
-    assert.ok((await trials(run.id)).every((x) => x.status === 'cancelled'));
+    const out = await lane.cancelTrial(pool, t1.id, { platform: { benchCancelTrial: (id, o) => cancel(laneOnly, 'TrialCancelled', { trialId: id, by: o.by }) } });
+    assert.deepEqual(out, { ok: true, status: 'stopping' });
+    await settle();
+    assert.equal(ran.length, before, 'its stage never ran');
+    assert.equal((await trialRow(t1.id)).status, 'cancelled');
+    // A waiting one is cancelled at once; one already ended is refused.
+    const [pending] = (await trials(run.id)).filter((x) => x.status === 'pending');
+    assert.deepEqual(await lane.cancelTrial(pool, pending.id, { platform: { benchCancelTrial: (id) => cancel(rt, 'TrialCancelled', { trialId: id }) } }), { ok: true, status: 'cancelled' });
+    const refused = await lane.cancelTrial(pool, t1.id, { platform: { benchCancelTrial: (id) => cancel(rt, 'TrialCancelled', { trialId: id }) } });
+    assert.equal(refused.status, 409);
+  });
+
+  await t.test('C3: a trial added to a run marked done reopens it and runs', async () => {
+    await closeAll();
+    const { run } = await lane.launchRun(pool, { suiteId: suite.id, models: ['z-ai/glm-5.3-flash'], stages: ['triage'], repeats: 1, concurrency: 3 });
+    await lookNow();
+    await settle();
+    assert.equal((await runRow(run.id)).status, 'done');
+    const [one] = await trials(run.id);
+    await pool.query(
+      `INSERT INTO bench_trials (run_id, task_id, model, attempt, status, item_token, est_cost_usd)
+       SELECT run_id, task_id, model, attempt + 1, 'pending', md5(random()::text), est_cost_usd FROM bench_trials WHERE id = $1`, [one.id]);
+    await lookNow(rt, run.id);
+    await settle();
+    assert.equal((await runRow(run.id)).status, 'done', 'reopened, ran, and done again');
+    assert.equal((await trials(run.id)).filter((x) => x.status === 'ok').length, 4);
+  });
+
+  await t.test('C4: only the lane claims a trial: an older build\'s claim is refused', async () => {
+    await closeAll();
+    const { run } = await lane.launchRun(pool, { suiteId: suite.id, models: ['z-ai/glm-5.3-flash'], stages: ['triage'], repeats: 1 });
+    const [one] = await trials(run.id);
+    await assert.rejects(pool.query("UPDATE bench_trials SET status = 'running' WHERE id = $1 AND status = 'pending'", [one.id]), /WF_OWNERSHIP_VIOLATION/);
+  });
+  // ── What a rollout or a lost record leaves (the step 4 review) ─────────
+
+  const asTx = (sql, params = []) => require('./lib/as-transition').asTransition(pool, sql, params);
+  // A bot-build, its key and the trial it runs (as the lane's own builds,
+  // and an older release's lane's, wrote it).
+  const buildOf = async (trialId, key, state = 'building') => {
+    await asTx(`INSERT INTO wf_instances (machine, key, state, data, machine_version) VALUES ('bot-build', $1, $2, $3::jsonb, 1)`,
+      [key, state, JSON.stringify({ target: 'trial', id: trialId })]);
+    return key;
+  };
+  const dropBuild = async (key) => {
+    await asTx("DELETE FROM wf_events WHERE machine = 'bot-build' AND key = $1", [key]);
+    await asTx("DELETE FROM wf_instances WHERE machine = 'bot-build' AND key = $1", [key]);
+  };
+  const stopsTo = async (key) => (await pool.query(
+    "SELECT COUNT(*)::int AS n FROM wf_events WHERE machine = 'bot-build' AND key = $1 AND type = 'StopRequested'", [key])).rows[0].n;
+
+  await t.test('O1: a cancel stops a running trial by the build its claim names, and only that build', async () => {
+    await closeAll();
+    const { run } = await lane.launchRun(pool, { suiteId: suite.id, models: ['z-ai/glm-5.3-flash'], stages: ['triage'], repeats: 1, concurrency: 1 });
+    const [a, b] = await trials(run.id);
+    const ka = await buildOf(a.id, `trial:${a.id}@c1.g1`);
+    await claimAs(a.id, null, { buildKey: ka, ago: '1 minute' });
+    // A claim that names no build (only an older release's lane wrote one):
+    // a build that runs its trial is not looked up by the trial's id.
+    await claimAs(b.id, null, { ago: '1 minute' });
+    const kb = await buildOf(b.id, `trial:${b.id}@old`);
+    try {
+      const out = await lane.cancelTrial(pool, a.id, { platform: { benchCancelTrial: (id, o) => cancel(laneOnly, 'TrialCancelled', { trialId: id, by: o.by }) } });
+      assert.deepEqual(out, { ok: true, status: 'stopping' });
+      assert.equal(await stopsTo(ka), 1, 'its build told to stop');
+      assert.notEqual((await cancel(laneOnly, 'RunCancelled', { runId: run.id })).status, 'rejected');
+      assert.equal(await stopsTo(kb), 0, 'a build no claim names is not the lane\'s to stop');
+    } finally { await dropBuild(ka); await dropBuild(kb); }
+  });
+
+
+  await t.test('O2: a run holding its heavy trials finds its light ones behind more heavy ones than a queue read holds', async () => {
+    await closeAll();
+    const { run } = await lane.launchRun(pool, {
+      suiteId: suite.id, models: ['z-ai/glm-5.3-flash'], stages: ['triage', 'build'], repeats: 1, concurrency: 8, capUsd: 500,
+    });
+    // Seventy more builds, all taken before every triage trial.
+    await pool.query(
+      `INSERT INTO bench_trials (run_id, task_id, model, attempt, status, item_token, est_cost_usd)
+       SELECT tr.run_id, tr.task_id, tr.model, g, 'pending', md5(random()::text), tr.est_cost_usd
+         FROM bench_trials tr JOIN bench_tasks t ON t.id = tr.task_id, generate_series(2, 25) g
+        WHERE tr.run_id = $1 AND t.stage = 'build'`, [run.id]);
+    await pool.query(
+      `UPDATE bench_trials tr SET attempt = tr.attempt + 100 FROM bench_tasks t
+        WHERE t.id = tr.task_id AND tr.run_id = $1 AND t.stage = 'triage'`, [run.id]);
+    await staleGate();
+    await grantOnly();
+    const flying = await runningOf(run.id);
+    assert.equal(flying.filter((f) => f.stage === 'build').length, 3);
+    assert.equal(flying.filter((f) => f.stage === 'triage').length, 3, 'the triage trials, behind 72 builds');
+  });
+
+  await t.test('O3: a trial its build ended without recording, or never built, is recorded lost by the lane', async () => {
+    await closeAll();
+    const { run } = await lane.launchRun(pool, { suiteId: suite.id, models: ['z-ai/glm-5.3-flash'], stages: ['triage'], repeats: 1, concurrency: 1 });
+    const [a, b, c] = await trials(run.id);
+    // a: its build ended (its record failed for good) a while ago.
+    const ka = `trial:${a.id}@c1.g1`;
+    await claimAs(a.id, null, { buildKey: ka, ago: '30 minutes' });
+    await asTx(`INSERT INTO wf_instances (machine, key, state, data, machine_version, updated_at)
+                VALUES ('bot-build', $1, 'failed', $2::jsonb, 1, NOW() - interval '20 minutes')`, [ka, JSON.stringify({ target: 'trial', id: a.id })]);
+    // b: a claim whose build never started.
+    await claimAs(b.id, null, { buildKey: `trial:${b.id}@c1.g3`, ago: '2 hours' });
+    // c: claimed just now, its build not yet started: left alone.
+    await claimAs(c.id, null, { buildKey: `trial:${c.id}@c1.g2`, ago: '1 minute' });
+    try {
+      await lookNow();
+      await settle();
+      assert.equal((await trialRow(a.id)).status, 'infra_fail');
+      assert.match((await trialRow(a.id)).error, /ended without recording it/);
+      assert.equal((await trialRow(b.id)).status, 'infra_fail');
+      assert.equal((await trialRow(c.id)).status, 'running');
+    } finally { await dropBuild(ka); }
+  });
+
+  await t.test('O4: a lane with nothing open still looks again, so a lost ask to look waits only so long', async () => {
+    await closeAll();
+    await lookNow(laneOnly);
+    await laneOnly.drain();
+    const d = await laneData();
+    assert.ok(d.deadline_at, 'a look is due');
+    const inMs = Date.parse(d.deadline_at) - Date.now();
+    assert.ok(inMs > 5 * 60 * 1000 && inMs <= benchLaneMod.IDLE_LOOK_MS, String(inMs));
+  });
+
+  await t.test('O5: a claim another process changed meanwhile sends no build; the grant is decided again', async () => {
+    await closeAll();
+    const { run } = await lane.launchRun(pool, { suiteId: suite.id, models: ['z-ai/glm-5.3-flash'], stages: ['triage'], repeats: 1, concurrency: 1 });
+    const [a] = await trials(run.id);
+    // The claim finds the trial no longer pending once (an older release
+    // cancelled it at that moment): its UPDATE takes no row.
+    await pool.query(`CREATE SEQUENCE o5_miss;
+      CREATE FUNCTION o5_miss() RETURNS trigger AS $$
+      BEGIN IF OLD.status = 'pending' AND NEW.status = 'running' AND nextval('o5_miss') = 1 THEN RETURN NULL; END IF; RETURN NEW; END $$ LANGUAGE plpgsql;
+      CREATE TRIGGER o5_miss BEFORE UPDATE ON bench_trials FOR EACH ROW EXECUTE FUNCTION o5_miss();`);
+    try {
+      await staleGate();
+      await lookNow(laneOnly);
+      await laneOnly.drain();
+      await laneOnly.runServices();
+      await laneOnly.drain();
+      const requested = async () => (await pool.query(
+        "SELECT COUNT(*)::int AS n FROM wf_events WHERE machine = 'bot-build' AND type = 'Requested' AND key LIKE $1", [`trial:${a.id}@%`])).rows[0].n;
+      const row = await trialRow(a.id);
+      assert.ok(row.status === 'pending' ? (await requested()) === 0 : (await requested()) === 1,
+        'a build goes only with a claim that happened');
+      // Tried again: granted.
+      for (let i = 0; i < 20 && (await trialRow(a.id)).status === 'pending'; i += 1) {
+        await new Promise((r) => setTimeout(r, 200));
+        await laneOnly.drain();
+        await laneOnly.runServices();
+      }
+      assert.equal((await trialRow(a.id)).status, 'running');
+      assert.equal(await requested(), 1, 'one build, for the claim that happened');
+    } finally {
+      await pool.query('DROP TRIGGER o5_miss ON bench_trials; DROP FUNCTION o5_miss(); DROP SEQUENCE o5_miss');
+    }
+  });
+
+  await t.test('O6: a build a restart caught after it recorded its trial, before that was saved, puts its sessions away and grades it', async () => {
+    await closeAll();
+    const { run } = await lane.launchRun(pool, { suiteId: suite.id, models: ['z-ai/glm-5.3-flash'], stages: ['triage'], repeats: 1 });
+    const [a] = await trials(run.id);
+    const key = `trial:${a.id}@c1.g1`;
+    await claimAs(a.id, null, { buildKey: key });
+    await pool.query("UPDATE bench_trials SET status = 'ok', session_ids = ARRAY[901, 902], finished_at = NOW() WHERE id = $1", [a.id]);
+    const closed = [];
+    const graded = [];
+    const lifecycle = require('../src/services/session-lifecycle');
+    const graders = require('../src/services/bench/graders');
+    const was = [lifecycle.closeOwnSession, graders.gradeTrial];
+    lifecycle.closeOwnSession = async ({ sessionId }) => { closed.push(sessionId); };
+    graders.gradeTrial = async (_p, id) => { graded.push(id); };
+    try {
+      const out = await lane.runTrial({ pool, config: {}, id: a.id, input: { nonce: 'c1.g1' }, steps: durableSteps.durable({ checkpoint: async () => {} }) });
+      assert.deepEqual(out, { status: 'ok' });
+      assert.deepEqual(closed.sort(), [901, 902]);
+      assert.deepEqual(graded, [a.id]);
+      // Another build's run of it does nothing.
+      closed.length = 0;
+      await lane.runTrial({ pool, config: {}, id: a.id, input: { nonce: 'c9.g9' }, steps: durableSteps.durable({ checkpoint: async () => {} }) });
+      assert.deepEqual(closed, []);
+    } finally { [lifecycle.closeOwnSession, graders.gradeTrial] = was; }
+  });
+
+  await t.test('O7: a lost trial whose record fails throws, so its work tries again', async () => {
+    await closeAll();
+    const { run } = await lane.launchRun(pool, { suiteId: suite.id, models: ['z-ai/glm-5.3-flash'], stages: ['triage'], repeats: 1 });
+    const [a] = await trials(run.id);
+    await claimAs(a.id, null, { buildKey: `trial:${a.id}@c1.g1` });
+    const was = runner.ensureBenchUser;
+    runner.ensureBenchUser = async () => { throw new Error('the database blinked'); };
+    try {
+      await assert.rejects(lane.recordLostTrial({ pool, config: {}, id: a.id, nonce: 'c1.g1' }), /blinked/);
+    } finally { runner.ensureBenchUser = was; }
+    await lane.recordLostTrial({ pool, config: {}, id: a.id, nonce: 'c1.g1' });
+    assert.equal((await trialRow(a.id)).status, 'infra_fail');
   });
 });

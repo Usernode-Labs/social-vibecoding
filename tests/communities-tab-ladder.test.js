@@ -240,3 +240,41 @@ test('the pages say what is below their tabs: All items on the project page, a r
   assert.doesNotMatch(switcher, /lit sidebar row goes back/);
   assert.match(switcher, /t\.closest\('\[data-community-switch\]'\)/, 'a press on the rail row closes the menu like any other');
 });
+
+// ── #5708: a return to the Communities tab keeps the place you left ───
+//
+// #5040 sent a press from another tab to Needs you while the blue number
+// showed, and openPlace wrote `needs` over the place `freshTab()` reads on
+// the next mount, so an account with votes waiting always came back to Needs
+// you. The number is a count again: every press from another tab resumes the
+// remembered view, which pushes the project page and opens the place stored.
+
+test('#5708: the bar has no votes detour, and a return resumes the remembered view', () => {
+  const src = read('frontend/src/features/nav/tab-bar.tsx');
+  const click = src.slice(src.indexOf('const onTabClick = '), src.indexOf('return (', src.indexOf('const onTabClick = ')));
+  assert.doesNotMatch(click, /votes/, 'no press branch keys off the blue number');
+  assert.doesNotMatch(src, /goToVotes|openPlace/, 'the bar never routes to Needs you itself');
+  assert.doesNotMatch(src, /onVotes|pageOnScreen/);
+  // The number itself is unchanged: the badge, its count and its tooltip.
+  assert.match(src, /const votes = tabVotes\(scope\);/);
+  assert.match(src, /<VotesBadge count=\{votes\} \/>/);
+  assert.match(src, /title=\{key === 'workshop' && titleVotes > 0 \? t\('core:tabs\.votesWaiting', \{ count: titleVotes \}\) : undefined\}/,
+    'pointed at, the tab says what the number counts, and nothing at zero');
+  // The sidebar row is still decided first, and the lit tab is still the ladder.
+  const sidebarAt = src.indexOf("if (key === 'workshop' && sidebarRows)");
+  const ladderAt = src.indexOf("if (key === 'workshop' && lit === 'workshop' && tab === 'workshop')");
+  assert.ok(sidebarAt > 0 && ladderAt > sidebarAt, 'the sidebar row\'s press comes before the lit tab\'s ladder');
+  assert.match(src.slice(ladderAt, ladderAt + 200), /pressLitTab\(screen\)/, 'the lit tab is the ladder');
+  // Every press from another tab is the tab's own navigation, and that tries
+  // the remembered view before the phone's list (#5581).
+  assert.match(src, /if \(key !== lit && press\(event\.currentTarget, key, \(\) => goToTab\(key, href\), fallback\)\)/,
+    'a press from another tab goes through goToTab');
+  const goToTab = src.slice(src.indexOf('function goToTab('), src.indexOf('export function PlatformTabs'));
+  const resumeAt = goToTab.indexOf('app?.resumeWorkshopView?.()');
+  const listAt = goToTab.indexOf('goToCommunity(null)');
+  assert.ok(resumeAt > 0 && listAt > resumeAt, 'goToTab resumes the remembered view before the phone\'s list');
+  // And the ladder carries no detour at all.
+  const { mod } = loadLadder();
+  assert.equal(mod.goToVotes, undefined, 'tab-ladder.ts no longer exports goToVotes');
+  assert.equal(mod.onVotes, undefined, 'nor onVotes');
+});

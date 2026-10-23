@@ -78,8 +78,11 @@ export function InstallStepsSheet({ os, onClose }: { os: MobileOs; onClose: () =
         aria-modal="true"
         aria-labelledby="mobile-install-steps-title"
         // A constant: the kit writes `platform-sheet-adopted` to this node, and
-        // a className that changed on adoption would erase it.
-        className="w-full max-w-md rounded-t-[20px] bg-[color:var(--dc-sheet-solid)] px-4 pt-4 pb-[calc(1rem+env(safe-area-inset-bottom,0px))]"
+        // a className that changed on adoption would erase it. A column: that
+        // class makes the node `display: flex` (public/css/app.css), and in a
+        // row the title, the steps and Got it stood side by side, the steps
+        // cut off in a narrow strip (shots of #5695).
+        className="w-full max-w-md rounded-t-[20px] bg-[color:var(--dc-sheet-solid)] px-4 pt-4 pb-[calc(1rem+env(safe-area-inset-bottom,0px))] flex flex-col"
         onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); onClose(); } }}
       >
         <InstallStepsContent os={os} onClose={onClose} doneRef={done} />

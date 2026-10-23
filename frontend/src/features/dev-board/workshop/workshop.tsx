@@ -86,7 +86,8 @@ import { callAppView, openHref } from '../card/fold';
 import { FeedThread } from '../card/feed-thread';
 import type { ActionRef, DevCardModel, DevWorkshopView, ListRow, WorkshopTheme } from '../card/model';
 import { CardSkeleton } from '../card/skeleton';
-import { VotePicker } from '../card/dev-card';
+import { composeNoReason, VotePicker } from '../card/dev-card';
+import type { NoChoice } from '../../review-flow/vote-sheet';
 import { useWorkshopGroup } from './group-mode-store';
 import { communityScopeStore, describe as describeCommunity, openSwitcher } from '../../workshop/community-scope';
 import { registerLevel } from '../../workshop/tab-ladder';
@@ -95,7 +96,8 @@ import {
   ApprovalLine, CommunityCard, HubCardClose, ShareItCard, canLeave,
   communityPending, leaveCommunity, useCommunity,
 } from './community-card';
-import { FirstLookCard, FirstVersionCard, ForYouCard, HubSkeleton, RecentlyLive, hubAlone, owesVote } from './hub-cards';
+import { FirstVersionCard, ForYouCard, HubSkeleton, RecentlyLive, hubAlone, owesVote } from './hub-cards';
+import { CommunityAsk } from '../../notify-ask/community-ask';
 import { useHubDismissed } from './hub-dismissed';
 import { ProjectDiscussion } from './project-discussion';
 import {
@@ -105,6 +107,8 @@ import { PlaceBar } from './place-bar';
 import { PlacesTray, useEdgeSwipe } from './places-tray';
 import { drawerStore } from '../../nav-drawer/drawer-store';
 import { ProjectPlaces } from './project-places';
+import { ProjectReviewFlow } from '../../review-flow/review-flow';
+import { useReviewFlowEnabled } from '../../review-flow/settings';
 import { clearPlace, publishPlace, registerPlaceOpener, registerTrayToggle, trayButton } from './place-store';
 import { PlanPage } from './plan-page';
 import { PrivateRequests } from './private-requests';
@@ -1397,15 +1401,18 @@ function youAnswered(row: QueueRow, voted: string): string {
  * now it is written here and sent with the vote. The state is NeedsFeed's,
  * so a key can turn the switch; exported for the render test.
  */
-export function NeedsVoteForm({ row, slug, side, line, boxRef, onSide, onLine, onBoxKey, onCancel, onSend }: {
+export function NeedsVoteForm({ row, slug, side, line, noChoice, boxRef, onSide, onLine, onNoChoice, onBoxKey, onCancel, onSend }: {
   row: QueueRow;
   /** The open project's, for a row that does not name its own (rowSlug). */
   slug?: string;
   side: 'yes' | 'no';
   line: string;
+  /** The No's picked answer; the vote is sent only with one. */
+  noChoice?: NoChoice | null;
   boxRef?: RefObject<HTMLTextAreaElement | null>;
   onSide: (side: 'yes' | 'no') => void;
   onLine: (line: string) => void;
+  onNoChoice: (choice: NoChoice) => void;
   onBoxKey: (ev: globalThis.KeyboardEvent | { key: string; shiftKey: boolean; preventDefault: () => void }) => void;
   onCancel: () => void;
   onSend: () => void;
@@ -1423,6 +1430,7 @@ export function NeedsVoteForm({ row, slug, side, line, boxRef, onSide, onLine, o
         prior={null}
         side={side}
         line={line}
+        noChoice={noChoice}
         reasonId={`dev-ws-vote-reason-${row.key.replace(/[^\w-]/g, '-')}`}
         boxRef={boxRef}
         tally={labelTally}
@@ -1436,6 +1444,7 @@ export function NeedsVoteForm({ row, slug, side, line, boxRef, onSide, onLine, o
         uncounted={!!(row.yes && row.yes.uncounted)}
         onSide={onSide}
         onLine={onLine}
+        onNoChoice={onNoChoice}
         onBoxKey={onBoxKey}
         onCancel={onCancel}
         onSend={onSend}
@@ -2656,6 +2665,8 @@ export function NeedsFeed({ rows, models, slug, canPost, onDone, onHub, onSugges
   // after the press.
   const [voteSide, setVoteSide] = useState<'yes' | 'no'>('yes');
   const [voteLine, setVoteLine] = useState('');
+  // The No's picked answer: the sheet's picker sends the vote only with one.
+  const [voteChoice, setVoteChoice] = useState<NoChoice | null>(null);
   const voteBoxRef = useRef<HTMLTextAreaElement>(null);
   // The pins, keyed by row, with the index each held when it was answered.
   // A ref with a version counter rather than state, because a pin is set in
@@ -2858,6 +2869,7 @@ export function NeedsFeed({ rows, models, slug, canPost, onDone, onHub, onSugges
     setSheet('vote');
     setVoteSide('yes');
     setVoteLine('');
+    setVoteChoice(null);
   }, [items]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /**
@@ -2962,8 +2974,8 @@ export function NeedsFeed({ rows, models, slug, canPost, onDone, onHub, onSugges
     if (sheet === kind) { closeSheet(); return; }
     setLeaving(null);
     setSheet(kind);
-    // The vote form opens fresh: on Yes, with an empty line.
-    if (kind === 'vote') { setVoteSide('yes'); setVoteLine(''); }
+    // The vote form opens fresh: on Yes, with an empty line and no answer.
+    if (kind === 'vote') { setVoteSide('yes'); setVoteLine(''); setVoteChoice(null); }
   };
   // The leave animation's length, then the sheet is gone. Nothing to wait
   // for where motion is unwelcome — app.css runs no animation there.
@@ -3136,27 +3148,30 @@ export function NeedsFeed({ rows, models, slug, canPost, onDone, onHub, onSugges
   });
   /**
    * The vote sheet's send (#3613): the switch's side with the line written
-   * under it. A No needs its line, as on a card; a Yes may go without one,
-   * and then sends none rather than asking.
+   * under it. A Yes sends with its optional line; a No sends only once an
+   * answer is picked, and carries that answer with the line if one is written.
    */
   const voteTrimmed = voteLine.replace(/\s+/g, ' ').trim();
   const submitVote = () => {
-    if (voteSide === 'no' && !voteTrimmed) { voteBoxRef.current?.focus(); return; }
-    answer(voteSide, undefined, voteTrimmed || null);
+    if (voteSide === 'no') {
+      if (!voteChoice) return;
+      const choice = {
+        notWorking: t('project:card.vote.picker.why.notWorking'),
+        approach: t('project:card.vote.picker.why.approach'),
+        notNeeded: t('project:card.vote.picker.why.notNeeded'),
+        other: t('project:card.vote.picker.why.other'),
+      }[voteChoice];
+      answer('no', undefined, composeNoReason(choice, voteLine,
+        (c, detail) => t('project:card.vote.picker.withDetail', { choice: c, detail })));
+      return;
+    }
+    answer('yes', undefined, voteTrimmed || null);
   };
   const onVoteBoxKey = (ev: globalThis.KeyboardEvent | { key: string; shiftKey: boolean; preventDefault: () => void }) => {
     if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); submitVote(); return; }
     // The window's keys stand down inside a field, so the box closes itself.
     if (ev.key === 'Escape') { ev.preventDefault(); closeSheet(); }
   };
-  // The box takes focus the moment the switch lands on No, the side that
-  // needs a line — as the card's picker does. Not on opening: a keyboard
-  // rising over a one-tap "Vote yes" would be in the way, and the Y and N
-  // keys only work while the box is not focused.
-  useLayoutEffect(() => {
-    if (sheet === 'vote' && voteSide === 'no') voteBoxRef.current?.focus();
-  }, [sheet, voteSide]);
-
   /**
    * The swipe's way in (#3052): the card in view, when it is one the viewer
    * can vote on and has not answered here, with no vote of its own already
@@ -3171,6 +3186,16 @@ export function NeedsFeed({ rows, models, slug, canPost, onDone, onHub, onSugges
       can: swipeOk,
       commit: (key, which, settled) => {
         if (!swipeOk(key)) { settled(); return; }
+        // A Yes is the whole vote. A No still says why, so the swipe opens
+        // the vote sheet on No rather than casting a lineless No.
+        if (which === 'no') {
+          settled();
+          setSheet('vote');
+          setVoteSide('no');
+          setVoteLine('');
+          setVoteChoice(null);
+          return;
+        }
         answer(which, settled);
       },
     };
@@ -3589,9 +3614,11 @@ export function NeedsFeed({ rows, models, slug, canPost, onDone, onHub, onSugges
                     slug={slug}
                     side={voteSide}
                     line={voteLine}
+                    noChoice={voteChoice}
                     boxRef={voteBoxRef}
                     onSide={setVoteSide}
                     onLine={setVoteLine}
+                    onNoChoice={setVoteChoice}
                     onBoxKey={onVoteBoxKey}
                     onCancel={closeSheet}
                     onSend={submitVote}
@@ -3878,8 +3905,9 @@ function GroupStrip({ group }: { group: string }): ReactNode {
   const t = useMessages('project');
   // #4916: each tab is its glyph, a tag for category and the board's own
   // columns for stage (BoardIcon, the Workshop's mark in the places list).
-  // Its words ride along as the tooltip, the aria-label and an sr-only copy
-  // (the declared checks read the page's innerText for "By category").
+  // Its words ride along as the tooltip and the aria-label, and as a copy
+  // that is sr-only on a phone and a visible label from 700px up (#5820; the
+  // declared checks read the page's innerText for "By category").
   const category = t('project:allItems.group.category');
   const stage = t('project:allItems.group.stage');
   return (
@@ -3895,7 +3923,7 @@ function GroupStrip({ group }: { group: string }): ReactNode {
         onClick={() => callAppView('_setWorkshopGroup', 'category')}
       >
         <TagIcon className="dev-ws-group-icon" aria-hidden="true" />
-        <span className="sr-only">{category}</span>
+        <span className="sr-only dev-chip-word">{category}</span>
       </button>
       <button
         type="button"
@@ -3908,7 +3936,7 @@ function GroupStrip({ group }: { group: string }): ReactNode {
         onClick={() => callAppView('_setWorkshopGroup', 'stage')}
       >
         <BoardIcon className="dev-ws-group-icon" aria-hidden="true" />
-        <span className="sr-only">{stage}</span>
+        <span className="sr-only dev-chip-word">{stage}</span>
       </button>
     </div>
   );
@@ -4287,6 +4315,8 @@ function useWorkshopHostState(
 export function DevWorkshop(): ReactNode {
   const t = useMessages('project');
   const v = useStoreState(devWorkshopStore);
+  // The new Needs you, when this device has it switched on (an experiment).
+  const reviewFlow = useReviewFlowEnabled();
   // THE OPEN APP'S NAME AND ARTWORK, for the hero and the channel below. The
   // same store the header's own tile draws from, so the two cannot disagree
   // about which app this is, and no second fetch: the controller publishes
@@ -5031,7 +5061,9 @@ export function DevWorkshop(): ReactNode {
           Under the hero while the bot builds the project from its
           description, so a new project's hub says what it is becoming and
           how far along it is, and opens the bot's chat when the bot waits on
-          its maker. See ./hub-cards.tsx FirstVersionCard. */}
+          its maker. Its maker's shows the first look once it is drawn, with
+          the way to watch it built on the App tab (21 Oct 2026; a card of its
+          own after For you until then). See ./hub-cards.tsx FirstVersionCard. */}
       {slug ? (
         <FirstVersionCard slug={slug} data={community} emoji={app.iconEmoji || null} onSeePlan={() => openTab('plan')} />
       ) : null}
@@ -5068,6 +5100,9 @@ export function DevWorkshop(): ReactNode {
           who is around is the hero's faces and names. On a project nobody
           else is in, the vote line's zero is left out (`alone`). See
           ./hub-cards.tsx. */}
+      {/* Somebody in this community who did not make it: hear from it?
+          (the notification ask, ../../notify-ask/community-ask.tsx). */}
+      {slug ? <CommunityAsk data={community} name={app.name || slug} /> : null}
       {slug ? (
         <ForYouCard
           slug={slug}
@@ -5082,9 +5117,6 @@ export function DevWorkshop(): ReactNode {
           onDiscussion={() => openTab('discussion')}
         />
       ) : null}
-      {/* Run six: the maker's first look while it is built, with the way to
-          watch it built on the App tab. See ./hub-cards.tsx FirstLookCard. */}
-      {slug ? <FirstLookCard slug={slug} data={community} /> : null}
       {slug ? <RecentlyLive slug={slug} rows={v.recentLive} onAll={() => openTab('workshop')} own={ownLive} ident={recentIdent} /> : null}
       {/* Start a new change was the hub's last line; it is the hero's ⋯
           now (../actions-row.tsx), as well as the Homeroom menu's. */}
@@ -5445,7 +5477,13 @@ export function DevWorkshop(): ReactNode {
       {/* ── The item's page, beside the list (#4457) or the board (#4486) ── ./side-panel.tsx */}
       {sideOpen && sideItem ? <TopicSidePanel item={sideItem} onClose={closeSide} /> : null}
 
-      {tab === 'needs' ? (
+      {tab === 'needs' && reviewFlow && slug ? (
+        // EXPERIMENTAL (Settings, Experimental, "New Needs you"): the
+        // project's Needs you drawn by the new review flow, the same one the
+        // Communities tab draws. ../../review-flow/. Its back, "‹ <community>",
+        // leaves the run for the community's hub, never an earlier change.
+        <ProjectReviewFlow slug={slug} onDone={() => openTab('status')} />
+      ) : tab === 'needs' ? (
         <NeedsFeed
           rows={v.queue}
           models={v.models}

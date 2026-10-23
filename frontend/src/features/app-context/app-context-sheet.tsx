@@ -113,7 +113,7 @@
  */
 
 import { OverlayScrim } from '../../lib/overlay-scrim-view';
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 
@@ -130,15 +130,18 @@ import {
 } from '@/components/ui/icons';
 
 import { AboutPane } from './about-pane';
-import { offeringGoToHomeroom, owedHomeWalk } from './about-data';
+import { offeringGoToHomeroom, owedHomeWalk, useAboutApp } from './about-data';
 import { InvitePane } from './invite-pane';
-import { useHomeScreenOffer } from '../mobile-install/home-screen-offer';
+import { isNativeApp } from '../mobile-install/environment';
 import { InstallStepsSheet } from '../mobile-install/install-steps-sheet';
+import type { MobileOs } from '../mobile-install/detect';
+import { homeroomHomeScreen, openHomeroomInBrowser, takeArrival } from '../mobile-install/homeroom-home-screen';
 import { useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
 import { ImproveQuickActions, UpdateStatus } from '../improve/actions';
 import { prepareComment } from '../improve/suggest-shortcut';
 import { openReport } from '../dialogs/report';
+import { waitlistOptions } from '../auth/waitlist-shared';
 import { improveStore } from '../improve/improve-store.js';
 import { Improve } from '../improve/improve-controller.js';
 import { appContextStore } from './app-context-store.js';
@@ -289,9 +292,12 @@ function MenuRow({
  * the section was that, and it is gone whole. Nothing replaces it here.
  */
 
+/** One of Home.menuItemsFor's items for an app (features/home/home.js). */
+type MenuItem = { key: string; run: () => void };
+
 export function AppsSwitcherSheet(): ReactNode {
   const t = useMessages('agent');
-  const { open, adopted, view } = useStoreState(appContextStore);
+  const { open, adopted, view, back } = useStoreState(appContextStore);
   // Everything this sheet says about the app comes from ONE store, published
   // by the classic writers that already owned those facts. #2718 adds the
   // three the rows need — the name to label them with, the terminal's gate,
@@ -306,6 +312,20 @@ export function AppsSwitcherSheet(): ReactNode {
   // it once (App._privateNoClose), and no Developer terminal: they suggest
   // changes to Homeroom bot instead.
   const { privateMember } = useStoreState(navStore);
+  // Homeroom's privacy notice, for the foot's Privacy link (#5116): the
+  // address GET /api/public/waitlist/options serves (marketing-links.js
+  // privacyNoticeUrl). Asked for when the sheet first opens, not at boot;
+  // the fetch is shared with every other screen that names the notice. The
+  // link is left out until the address is known.
+  const [privacyHref, setPrivacyHref] = useState<string | null>(null);
+  useEffect(() => {
+    if (!open || privacyHref) return undefined;
+    let live = true;
+    void waitlistOptions().then((options) => {
+      if (live && options?.privacy_link) setPrivacyHref(options.privacy_link);
+    });
+    return () => { live = false; };
+  }, [open, privacyHref]);
   const readOnly = writeBarred || privateMember;
   // Votes this viewer owes on the app in context — the badge on the
   // "Go to community hub" row. See the fetch below.
@@ -352,10 +372,20 @@ export function AppsSwitcherSheet(): ReactNode {
   const newcomer = mounted && offeringGoToHomeroom(!!privateMember);
   const walkOwed = mounted && owedHomeWalk();
   // #4399: the home-screen offer that rides in the Go to Homeroom card while
-  // it is offered (the banner is held down meanwhile). Asked only while the
-  // menu is open, so a closed menu costs no request.
-  const homeScreenOs = useHomeScreenOffer(open && newcomer);
-  const [homeScreenSteps, setHomeScreenSteps] = useState(false);
+  // it is offered (the banner is held down meanwhile). It puts THIS app on
+  // the home screen (Evan, 20 Oct 2026), not Homeroom: Home.menuItemsFor's
+  // `install` item for the app, taken by key and run as is, as About's row
+  // does (./about-pane.tsx). That item is a phone's only, and never in the
+  // Homeroom app, where it would leave for the system browser. Read only
+  // while the menu is open, so a closed menu costs nothing.
+  const appRow = useAboutApp(slug || null, open && newcomer && !!slug && !restricted);
+  const installItem = useMemo(() => {
+    const menuItemsFor = typeof window === 'undefined' ? undefined
+      : (window as unknown as { Home?: { menuItemsFor?: (row: unknown) => MenuItem[] } }).Home?.menuItemsFor;
+    if (!appRow || typeof menuItemsFor !== 'function') return null;
+    try { return (menuItemsFor(appRow) || []).find((i) => i && i.key === 'install') || null; } catch { return null; }
+  }, [appRow]);
+  const addToHomeScreen = newcomer && !isNativeApp() ? installItem : null;
   const workshopRowRef = useRef<HTMLAnchorElement | null>(null);
   useIsomorphicLayoutEffect(() => {
     const hide = !!restricted || newcomer || walkOwed;
@@ -373,8 +403,33 @@ export function AppsSwitcherSheet(): ReactNode {
   // is the platform's own self-hosted row and the name may not have landed.
   const appName = name || slug || null;
   const appLabel = appName || t('agent:appContext.thisApp');
+  // The back disc's name says where it goes (AppContext.goBack): About, for
+  // an invite pane opened from there, or the menu.
+  const backLabel = view === 'invite' && back === 'about'
+    ? (appName ? t('agent:appContext.backToAbout', { app: appName }) : t('agent:appContext.backToAboutThisApp'))
+    : (appName ? t('agent:appContext.backToMenu', { app: appName }) : t('agent:appContext.backToThisAppMenu'));
 
   const close = useCallback(() => AppContext.close(), []);
+
+  // ADD HOMEROOM TO YOUR HOME SCREEN (Evan, 20 Oct 2026): a plain row, on a
+  // phone where Homeroom is not on the home screen yet: in the browser it
+  // shows the install banner's steps, and in an app saved to the home screen
+  // (no Share button there) it opens Homeroom in the browser, whose page puts
+  // the same steps up on arrival. ../mobile-install/homeroom-home-screen.ts
+  // says which. Read after mount, for the prerender's sake.
+  const homeroomOffer = useMemo(() => (mounted ? homeroomHomeScreen() : null), [mounted, open]);
+  const [homeroomSteps, setHomeroomSteps] = useState<MobileOs | null>(null);
+  useEffect(() => {
+    if (!takeArrival()) return undefined;
+    let live = true;
+    // After the boot settles, so the steps are not drawn under the first screen.
+    const boot = (window as any).App?.bootSession?.();
+    void Promise.resolve(boot).then(() => {
+      const offer = homeroomHomeScreen();
+      if (live && offer?.via === 'steps') setHomeroomSteps(offer.os);
+    });
+    return () => { live = false; };
+  }, []);
 
   // Every way into an app funnels through improveStore.slug, so recording
   // recency here counts a home tile, an /app/<slug> deep link and a
@@ -448,9 +503,8 @@ export function AppsSwitcherSheet(): ReactNode {
     return () => { live = false; };
   }, [open, slug]);
 
-  // The menu's blue "Suggest an improvement" opens comment mode where the
-  // device's switch is on, and the page under the menu is still while it is
-  // open: the mode's picture of it is drawn now, once the sheet has slid in,
+  // The menu's blue "Suggest an improvement" opens comment mode, and the
+  // page under the menu is still while it is open: the mode's picture of it is drawn now, once the sheet has slid in,
   // so the mode opens on it the moment the menu has gone
   // (../comment-pin/comment-pin.tsx `prepareCommentView`).
   useEffect(() => {
@@ -495,21 +549,26 @@ export function AppsSwitcherSheet(): ReactNode {
               THE PLATFORM'S BACK DISC (#4218), not a chevron in the label's
               small caps: the header's own disc, in its brand ink, at the
               size the Workshop's page heads draw it one level down (36px),
-              with the kit's 44pt hit box (`un-touch-target`). The name
-              beside it says where it goes back to.
+              with the kit's 44pt hit box (`un-touch-target`). It goes one
+              step back: to About for an invite pane opened from there, to
+              the menu otherwise (AppContext.goBack).
+
+              NO NAME BESIDE IT. The app's name in small caps sat here, and
+              each second pane opens on the same name as its own title (About's
+              large name, Invite's "Invite people to …"), so it read twice in
+              a row. The disc's accessible name still says where it goes.
           */}
           {view !== 'menu' ? (
-            <div className="flex-1 min-w-0 flex items-center gap-2.5">
+            <div className="flex-1 min-w-0 flex items-center">
               <button
                 id="app-about-back"
                 type="button"
-                aria-label={appName ? t('agent:appContext.backToMenu', { app: appName }) : t('agent:appContext.backToThisAppMenu')}
+                aria-label={backLabel}
                 className={BACK_DISC}
-                onClick={() => AppContext.showMenu()}
+                onClick={() => AppContext.goBack()}
               >
                 <ChevronLeftIcon className="w-[18px] h-[18px]" aria-hidden="true" />
               </button>
-              <span className={'min-w-0 truncate ' + SECTION_TYPE}>{appLabel}</span>
             </div>
           ) : (
             /*
@@ -624,15 +683,19 @@ export function AppsSwitcherSheet(): ReactNode {
               it, and the row type, 15 over 13. It sits INSIDE #switcher-nav
               so `#improve-quick-actions + #switcher-nav` still holds.
 
-              ADD TO HOME SCREEN, IN THE SAME CARD (#4399): while Go to
-              Homeroom is still offered, the install banner stays down over
-              the app they were invited into, and the offer is a second row
-              here under a hairline instead. It opens the banner's How sheet
-              for their OS, and only when the banner itself would offer the
-              home-screen install (../mobile-install/home-screen-offer.ts).
-              Once they have been Home the row goes and the banner is back.
+              ADD THIS APP TO YOUR HOME SCREEN, IN THE SAME CARD (#4399):
+              while Go to Homeroom is still offered, the install banner stays
+              down over the app they were invited into, and the offer is a
+              second row here under a hairline instead. It opens the app's
+              own install page (`addToHomeScreen`, above), so the icon it
+              leaves opens the app they were invited into.
+
+              ONCE THEY HAVE BEEN HOME the card goes, a private member's too
+              (Evan, 20 Oct 2026, "after the first time, Go to Homeroom
+              would change to Go to community"): "Go to community" is back
+              below, and the ✕ is back on the frame (App._privateNoClose).
           */}
-          {mounted && (privateMember || walkOwed) ? (
+          {mounted && (newcomer || walkOwed) ? (
             <div
               id="app-menu-homeroom-card"
               className="mx-4 mt-1 mb-2 w-[calc(100%_-_2rem)] rounded-[20px] bg-white dark:bg-zinc-900 shadow-[inset_0_0_0_1px_var(--app-sheet-line)]"
@@ -664,26 +727,21 @@ export function AppsSwitcherSheet(): ReactNode {
                 </span>
                 <ChevronRightIcon className="w-4 h-4 shrink-0 text-zinc-300 dark:text-zinc-600" aria-hidden="true" />
               </button>
-              {newcomer && homeScreenOs ? (
+              {addToHomeScreen ? (
                 <>
                   <div aria-hidden="true" className="mx-3.5 h-px bg-[color:var(--app-sheet-line)]" />
                   <button
                     id="app-menu-row-add-home"
                     type="button"
-                    aria-haspopup="dialog"
-                    aria-expanded={homeScreenSteps}
                     className="flex w-full items-center gap-3 rounded-[20px] px-3.5 py-3 text-left hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors"
-                    onClick={() => setHomeScreenSteps(true)}
+                    onClick={() => { void AppContext.dismissForNav().then(() => addToHomeScreen.run()); }}
                   >
                     <span className="shrink-0 inline-flex items-center justify-center w-10 h-10 rounded-[11px] bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-200" aria-hidden="true">
                       <PhonePlusIcon className="w-5 h-5" aria-hidden="true" />
                     </span>
-                    <span className="flex-1 min-w-0 block truncate text-[15px] font-[650] text-zinc-900 dark:text-zinc-100">{t('agent:appContext.addHomeroomToHomeScreen')}</span>
+                    <span className="flex-1 min-w-0 block truncate text-[15px] font-[650] text-zinc-900 dark:text-zinc-100">{t('agent:appContext.addAppToHomeScreen')}</span>
                     <ChevronRightIcon className="w-4 h-4 shrink-0 text-zinc-300 dark:text-zinc-600" aria-hidden="true" />
                   </button>
-                  {open && homeScreenSteps ? (
-                    <InstallStepsSheet os={homeScreenOs} onClose={() => setHomeScreenSteps(false)} />
-                  ) : null}
                 </>
               ) : null}
             </div>
@@ -845,6 +903,24 @@ export function AppsSwitcherSheet(): ReactNode {
           >
             <RowBody icon={<InfoCircleIcon />} label={appName ? t('agent:appContext.row.about', { app: appName }) : t('agent:appContext.row.aboutThisApp')} />
           </button>
+          {homeroomOffer ? (
+            <button
+              id="app-menu-row-add-homeroom"
+              type="button"
+              className={`${ROW} w-full text-left`}
+              onClick={() => {
+                if (homeroomOffer.via === 'browser') {
+                  openHomeroomInBrowser();
+                  void AppContext.dismissForNav();
+                  return;
+                }
+                const { os } = homeroomOffer;
+                void AppContext.close().then(() => setHomeroomSteps(os));
+              }}
+            >
+              <RowBody icon={<PhonePlusIcon />} label={t('agent:appContext.row.addHomeroom')} />
+            </button>
+          ) : null}
           {/* AGENT CHATS left the menu (#4729): see the note above
               AppsSwitcherSheet. */}
           {/*
@@ -853,20 +929,39 @@ export function AppsSwitcherSheet(): ReactNode {
               than for it, and a row of the same weight as Go to community
               read as one more place to go. Same id, same gate, same dialog.
           */}
-          {slug && canReport ? (
-            <div className="px-5 pt-3 pb-1">
-              <button
-                id="improve-row-report"
-                type="button"
-                className="inline-flex items-center gap-1.5 min-h-[32px] text-xs text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 hover:underline"
-                onClick={async () => {
-                  await AppContext.close();
-                  openReport({ targetType: 'app', target: slug, label: appLabel });
-                }}
-              >
-                <FlagIcon className="w-3.5 h-3.5" aria-hidden="true" />
-                {t('agent:appContext.reportApp')}
-              </button>
+          {/*
+              PRIVACY SITS BESIDE IT (#5116): "Privacy · Report app", the
+              same two links the bridge's footer carries on an app opened at
+              its own address. Privacy is Homeroom's notice, in a new tab.
+          */}
+          {(slug && canReport) || privacyHref ? (
+            <div id="app-menu-legal" className="flex flex-wrap items-center justify-center gap-x-2 px-5 pt-3 pb-1 text-xs text-zinc-500 dark:text-zinc-400">
+              {privacyHref ? (
+                <a
+                  id="app-menu-privacy"
+                  href={privacyHref}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center min-h-[32px] hover:text-zinc-700 dark:hover:text-zinc-200 hover:underline"
+                >
+                  {t('agent:appContext.privacy')}
+                </a>
+              ) : null}
+              {privacyHref && slug && canReport ? <span aria-hidden="true">·</span> : null}
+              {slug && canReport ? (
+                <button
+                  id="improve-row-report"
+                  type="button"
+                  className="inline-flex items-center gap-1.5 min-h-[32px] text-xs text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 hover:underline"
+                  onClick={async () => {
+                    await AppContext.close();
+                    openReport({ targetType: 'app', target: slug, label: appLabel });
+                  }}
+                >
+                  <FlagIcon className="w-3.5 h-3.5" aria-hidden="true" />
+                  {t('agent:appContext.reportApp')}
+                </button>
+              ) : null}
             </div>
           ) : null}
           </>
@@ -874,6 +969,7 @@ export function AppsSwitcherSheet(): ReactNode {
         </nav>
       </div>
       <OverlayScrim panelId="apps-switcher-sheet" backdropId="apps-switcher-overlay" />
+      {homeroomSteps ? <InstallStepsSheet os={homeroomSteps} onClose={() => setHomeroomSteps(null)} /> : null}
     </>
   );
 }

@@ -41,7 +41,7 @@ test('the Homeroom button on an app\u2019s own address names the platform', () =
     assert.match(src, /fab\.setAttribute\("aria-label", "Homeroom"\);/, `${p}: accessible name`);
     assert.match(src, /"A Homeroom app, built and voted on by its community\."/, `${p}: about line`);
     assert.match(src, /"Open in Homeroom"/, `${p}: open row`);
-    assert.match(src, /"What is Homeroom\?"/, `${p}: about row`);
+    assert.match(src, /"Built on Homeroom"/, `${p}: the footer's first link (#5116)`);
     assert.doesNotMatch(src, /Open in Usernode|Open this app on Usernode/, `${p}: no stale brand`);
   }
 });

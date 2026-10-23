@@ -267,6 +267,9 @@ function pendingClientAction(result) {
     : null;
 }
 
+// How often a running turn reads whether a person stopped it.
+const CANCEL_POLL = { ms: 1000 };
+
 function globalChatRoutes(config) {
   const router = Router();
   const pool = getPool(config);
@@ -279,9 +282,13 @@ function globalChatRoutes(config) {
   let suggestionExecutor = null;
   const allowanceCache = new Map();
   const turnCatalogCache = new Map();
-  // Each turn is this process's hold (services/processes.js): a draining
-  // process finishes it before it exits.
-  const activeTurnControllers = require('../services/processes').heldMap('global_turn');
+  // The turns this process's requests run, for a Stop or a delete that lands
+  // here to abort at once. A Stop that lands on another process reaches its
+  // turn through the thread's stamp, which the request running it reads
+  // every CANCEL_POLL_MS (store.js requestTurnCancel / turnCancelled). A turn
+  // is request-scoped: a draining process finishes its requests before it
+  // exits.
+  const activeTurnControllers = new Map();
   function getOrchestrator() {
     orchestrator ||= createGlobalChatOrchestrator({
       pool,
@@ -676,6 +683,19 @@ function globalChatRoutes(config) {
       if (!res.writableEnded && !res.destroyed) res.write(': keep-alive\n\n');
     }, 15_000);
     let terminalSent = false;
+    // A Stop or a delete from any process (the thread's stamp, or the thread
+    // gone) aborts this turn between its steps.
+    let watching = false;
+    const cancelWatch = setInterval(async () => {
+      if (watching || controller.signal.aborted) return;
+      watching = true;
+      try {
+        if (await globalChatStore.turnCancelled(pool, { userId: req.user.id, threadId: req.params.id })) controller.abort();
+      } catch { /* read again on the next tick */ } finally {
+        watching = false;
+      }
+    }, CANCEL_POLL.ms);
+    if (typeof cancelWatch.unref === 'function') cancelWatch.unref();
     res.on('close', () => {
       // A proxy or mobile connection can disappear while the server is still
       // completing and persisting the answer. Keep that durable work alive;
@@ -728,6 +748,7 @@ function globalChatRoutes(config) {
       // instead of making the browser interpret a clean EOF as truncation.
       if (!terminalSent) sseWrite(res, turnFailureEvent(error));
     } finally {
+      clearInterval(cancelWatch);
       controllers.delete(controller);
       if (!controllers.size) activeTurnControllers.delete(activeKey);
       clearInterval(heartbeat);
@@ -902,13 +923,23 @@ function globalChatRoutes(config) {
     }
   });
 
-  router.post('/api/global-chat/threads/:id/cancel', sameOriginBrowserOnly, (req, res) => {
+  router.post('/api/global-chat/threads/:id/cancel', sameOriginBrowserOnly, async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
     noStore(res);
     const key = `${req.user.id}:${req.params.id}`;
     const controllers = activeTurnControllers.get(key);
     for (const controller of controllers || []) controller.abort();
-    return res.json({ ok: true, cancelled: !!controllers?.size });
+    // Stamped on the thread, so the turn hears it on whichever process runs it.
+    let stopped = null;
+    try {
+      stopped = await globalChatStore.requestTurnCancel(pool, { userId: req.user.id, threadId: req.params.id });
+    } catch (err) {
+      if (!(err instanceof globalChatStore.GlobalChatStoreError)) {
+        log.warn('global-chat', 'turn cancel failed', { userId: req.user.id, err: err.message });
+        return res.status(500).json({ error: 'Could not stop the Global Chat turn.' });
+      }
+    }
+    return res.json({ ok: true, cancelled: !!controllers?.size || !!stopped });
   });
 
   router.post('/api/global-chat/threads/:id/direct-actions', chatLimiter, async (req, res) => {
@@ -1203,6 +1234,7 @@ function globalChatRoutes(config) {
 }
 
 module.exports = {
+  CANCEL_POLL,
   ALLOWANCE_CACHE_MS,
   TURN_CATALOG_CACHE_MS,
   globalChatRoutes,

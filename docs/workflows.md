@@ -152,8 +152,12 @@ browser. What `ws.js`'s push helpers also kick in the process that calls them ri
 the push or its statement:
 - **the Workshop's board-change reaction**: a push marked `routing.boardChange`
   (`pushes.ts boardMoved`) is handed to the Workshop's listener in every web process
-  that relays it (`ws.js _onBusMessage`): each process debounces it and reads the board
-  once, and the row lease (or an unchanged board) leaves one reconcile to run;
+  that relays it (`ws.js _onBusMessage`): each owes the app a pass on its row
+  (`app_workshop_themes.reconcile_due_at`, due 30 s after the first change, so a second
+  relay changes nothing), and the `workshop-changes` clock runs each pass due as a
+  target: the pass claims the row (its due moved ten minutes on, so a pass its process
+  died in is owed again then), and takes itself off only if no change came meanwhile (a
+  change pulls a claim back to its quiet period);
 - **the phone badge sync**: everyone a push tells `notifications_changed` is owed a
   re-badge, a row of `mobile_push_badge_syncs` written in the same statement as the
   pushes (`publishPushes`, where phone push is on) and drained by the push sender,
@@ -432,7 +436,7 @@ always `unknown_event`.
    machines makes at boot (activity mail, the account-deletion guard on workers, the
    phone push sender, GitHub, the model); `server.js` runs it, and so does the
    two-process tests' child. Nothing only the web server has (its sockets, the
-   Workshop's board-change listener, the leader's sweepers and loops) may be needed:
+   Workshop's board-change listener) may be needed:
    a machine relying on one fails its two-process tests.
 5. **States are phases a person would recognise.** I/O progress belongs in the work
    item's checkpoint, not in more states.
@@ -455,8 +459,8 @@ append and answer with the outcome.
 
 **Where it runs.** On Kubernetes the workflow runs on the conductor
 (`PROCESS_ROLE=conductor`, docs/plans/web-and-conductor.md), in as many replicas as the
-chart runs (two in production), and nothing in it needs the leader lock. The web Pods only
-append and wait. Locally, in docker-compose and on a staging preview, one process (`all`)
+chart runs (two in production). No process leads: every replica runs the same work, under
+the workflow's leases and locks. The web Pods only append and wait. Locally, in docker-compose and on a staging preview, one process (`all`)
 does both.
 
 - **Every process** turns every machine's ownership guard on at boot (`enabled:<machine>`
@@ -493,16 +497,19 @@ does both.
   quarters of a lease pass without a renewal, before another process may claim it, so two
   replicas never run one item side by side.
 - **A process lost with its node** gives its locks up within about 40 seconds: the
-  runtime's sessions carry the server keepalives the leader lock's session has, and an
-  idle-in-transaction timeout of 30 seconds (`deadPeerOptions` in platform.ts).
+  runtime's sessions carry the server keepalives (`services/db-locks.js`
+  `SERVER_KEEPALIVE`), and an idle-in-transaction timeout of 30 seconds (`deadPeerOptions`
+  in platform.ts).
 - **What a release owes what an older one left** (open governance rows, sessions the
-  proposal machine does not hold, claims with no clock, merge queues, deferred DM answers,
-  main checks mid-run, the bot's queue rows, the platform's own faults, the bot lane's clock)
-  is the `release` machine's: `release:<GIT_SHA>`, one `release.adopt` work item per
-  release, run by whichever process of that release claims it (never an older build's),
-  each adoption a step. Booting waits for none of it. A release none of whose processes
-  took it within 10 minutes (it was replaced first) is `abandoned`, and the next release
-  adopts what is left. A route that meets an open row the machine does not hold enrolls it itself,
+  proposal machine does not hold, claims with no clock, merge queues, the platform's own
+  faults, the bot lane's clock) is the `release` machine's: `release:<GIT_SHA>`, one
+  `release.adopt` work item per release, run by whichever process of that release claims it
+  (never an older build's), each adoption a step. So is what the cluster runs for every app as
+  this build says (the shared hosted-asset backend) and the bench suites from this build's
+  definitions, on no staging preview.
+  Booting waits for none of it. A release none of whose processes took it within 10 minutes
+  (it was replaced first) is `abandoned`, and the next release adopts what is left; one whose
+  processes live while its work waits out a retry is waited for. A route that meets an open row the machine does not hold enrolls it itself,
   and a session's insert enrols it in the proposal machine (`wf_enrol_proposal`, a trigger on
   `chat_sessions` that appends `Adopted` in the insert's own statement).
 - **The platform's scheduled jobs** (retention, probes, digests, the push sender, title heal,
@@ -594,9 +601,8 @@ reviewed, `--all` everything).
   evict one at a time.
 - **During a rollout.** Each Deployment rolls `maxSurge: 1, maxUnavailable: 0`: a new
   conductor is Ready, its loops running, before an old one drains, so the workflow never
-  stops. `PLATFORM_LEADER_LOCK` still elects one conductor for the leader's remaining
-  work (docs/plans/web-and-conductor.md); an old replica may win it for a minute during a
-  rollout, which runs that work's election-time recovery twice, harmlessly.
+  stops. Nothing is elected (`PLATFORM_LEADER_LOCK` now only serializes a boot migration
+  where one runs: `services/db-locks.js`).
 - **Schema.** The `wf_*` tables and triggers come from `schema.sql`. The chart's
   migration Job applies it before the Deployment rolls.
 - **Connections.** The runtime's pool adds `WF_POOL_MAX` connections per Pod, beside the
@@ -662,9 +668,9 @@ release (`docs/kubernetes-operations.md`).
 | `tests/workflow-process-state.test.js` | The list of what the machines still depend on only shrinks. |
 | `tests/workflow-boundary.test.js` | The boundary check's rules, on a small source tree of its own. |
 | `tests/workflow-bot-replies-postgres.test.js` | The Homeroom bot's reply machines (`bot-voice`, `bot-dm`), one subtest per rule, with their work faked. |
-| `tests/workflow-main-check-postgres.test.js` | The main-check machine, one subtest per rule (a provisional first red, flakes, a confirmed red, rechecks, Resume, a superseded run, a run carried on after a crash, adopting an older release's row). |
+| `tests/workflow-main-check-postgres.test.js` | The main-check machine, one subtest per rule (a provisional first red, flakes, a confirmed red, rechecks, Resume, a superseded run, a run carried on after a crash, a pause no instance holds lifted by Resume). |
 | `tests/app-teardown-mark-postgres.test.js` | An app's teardown is marked on its row, which a deploy in any process reads. |
-| `tests/workflow-processes-postgres.test.js` | Each machine's flows with every decision and work item in a child process, the test process being the web side (no pipeline slot, as a web Pod); the same flows with the child killed (SIGKILL) mid-item, restarted, and compared with an uninterrupted run; and two children at once. The child is server.js itself, booted as a conductor (`tests/lib/workflow-child.js`; the test holds the leader lock), so its bus, its process row and its listener are production's. Only outside services are faked (`tests/fixtures/workflow-outside-fakes.js`); the harness is `tests/lib/workflow-processes.js`. |
+| `tests/workflow-processes-postgres.test.js` | Each machine's flows with every decision and work item in a child process, the test process being the web side (no pipeline slot, as a web Pod); the same flows with the child killed (SIGKILL) mid-item, restarted, and compared with an uninterrupted run; and two children at once. The child is server.js itself, booted as a conductor (`tests/lib/workflow-child.js`), so its bus, its process row and its listener are production's. Only outside services are faked (`tests/fixtures/workflow-outside-fakes.js`); the harness is `tests/lib/workflow-processes.js`. |
 | `tests/workflow-release-postgres.test.js` | The release machine: a release's adoptions run once between its processes, a failed step is tried again without the done ones, adoptions that keep failing are shown. |
 | `tests/workflow-dead-peer-postgres.test.js` | The runtime's sessions reap a dead peer and an abandoned transaction. |
 | `tests/workflow-metrics.test.js` | The metrics a conductor serves, and that every metric an alert rule names is served. |
@@ -699,7 +705,8 @@ A new machine brings the same two layers:
 |---|---|---|---|
 | `governance-proposal` | `issue:<id>`, for the five governance kinds (rename, secret change, close issue, maintenance campaign, featured illustration) | `open` → `applied` / `refused` / `withdrawn` / `superseded` | On everywhere; its old paths are deleted |
 | `merge-followups` | `session:<id>`, for each merged proposal and each change that went live inside one | `delivering` → `live`, or `deploy_failed` → `live` | On everywhere; its old paths are deleted |
-| `app-delivery` | `app:<id>`, for each app a production deploy was asked for | `idle` ⇄ `deploying` | On everywhere; its old paths are deleted |
+| `app-delivery` | `app:<id>`, for each app a deploy was asked for, main moved for, or that was reported down | `idle` ⇄ `deploying`, `idle` ⇄ `healing` | On everywhere; its old paths are deleted |
+| `app-creation` | `app:<id>`, for each project made since (its row's insert enrols it) | `setting_up` → `deploying` → `running` / `awaiting_secrets`; `failed` (⇄ `setting_up` on a Retry); `waiting` for a row an older build makes | On everywhere; its old paths are deleted |
 | `preview` | `session:<id>`, for each proposal with a preview, a checks run or work recorded on it, and each App bench studio preview | `idle`, `preparing`, `checking`, `deferred`, `settled`, `failed`, `retiring` → `retired` | On everywhere; its old paths are deleted |
 | `shots` | `session:<id>`, for each proposal that declares visible changes or whose UI change owes a declaration | `undeclared`, `not_needed`, `waiting_for_preview`, `building_copies`, `waiting_for_agent`, `taking_shots`, `publishing`, `published`, `failed`, `waived`, `closed` | On everywhere; its old paths are deleted |
 | `proposal` | `session:<id>`, for every session (a proposal from its start), adopted from its row by its first event | `underway` → `proposing` → `in_review` ⇄ `merging` (⇄ `unconfirmed`) → `merged`; `closed` (reopened to `underway`) | On everywhere; its old paths are deleted |
@@ -709,10 +716,67 @@ A new machine brings the same two layers:
 | `bot-voice` | `place:<appId>:<type>:<ref>`, for each place in a project people speak to the Homeroom bot in | `quiet` ⇄ `settling` → `answering` | On everywhere; its old paths are deleted |
 | `bot-dm` | `person:<userId>`, for each person's DM with the Homeroom bot | `idle` ⇄ `answering` ⇄ `trying_later` | On everywhere; its old paths are deleted |
 | `main-check` | `app:<id>`, for each app whose main was checked after a merge or a new commit | `idle` → `running` (→ `confirming`) → `idle`; `idle` ⇄ `rechecking` while paused | On everywhere; its old paths are deleted |
-| `bot-request` | `request:<appId>:<issue>`, for each request the Homeroom bot is owed a look at | `idle` → `queued` → `reading` / `following_up` → `idle`; `building`; `older_turn` | On everywhere; its old paths are deleted |
+| `bot-request` | `request:<appId>:<issue>`, for each request the Homeroom bot is owed a look at | `idle` → `queued` → `reading` / `following_up` → `idle`; `building` | On everywhere; its old paths are deleted |
 | `bot-lane` | `bot`, one for the Homeroom bot | `open` | On everywhere; its old paths are deleted |
+| `bench-lane` | `lane`, one for the App bench | `open` | Grants benchmark trials (each a `bot-build`); the leader's lane loop is deleted |
+| `shots-eval` | `evals`, one for the shots evals | `open` | Grants eval trials and runs each one's phases; the leader's eval runner is deleted |
 | `release` | `release:<GIT_SHA>`, one per release of the platform | `adopting` → `done`, `failed` or `abandoned` | Runs the boot adoptions once per release (`release.adopt`), in that release's own processes |
 | `clock` | `clock:<job>`, one per scheduled platform job | `waiting` ⇄ `running`; `retired` | Runs each job on its schedule (`clock.<job>`), wherever the workflow runs; its old leader timers are deleted |
+| `turn` | `agent:<id>` for a conversation, `session:<id>` for a change | `idle` ⇄ `running` | A person's turn is its `turn.run` work item; the leader's turn recovery, its watchdog, the conversation lease's renewal and the process holds' mirror are deleted |
+
+### turn
+
+A person's turn (`src/workflow/turn/`, the handler `services/turns.js`): one instance per
+stream (`agent:<id>`, a conversation; `session:<id>`, a change), one `turn.run` work item
+per turn, run whole in whichever workflow process claims it.
+- **Asked with the message.** The route writes the person's message, the conversation's
+  claim and the turn's `Asked` in one transaction (`platform.askTurn`), then follows the
+  turn's stream from any process (`services/session-bus.js`, rows in `stream_events`)
+  until that turn's own end: a `done` carrying its `turnId`, published when its item ends
+  (`turns.js`) or, for a turn that failed for good or ran out of time, by the machine's
+  `released` write. An agent turn whose claim no longer names it when its item starts
+  runs nothing. Turns asked while one runs wait, in order; the same turn twice is
+  one. Kinds: `agent` (a conversation's Mayor, the coding run it dispatches, its
+  wrap-up), `classic` (a change's own dev chat: a CLI hand-off, a request's spec),
+  `headless` (an auto session on a request), `recover` (a coding record nothing carries).
+- **The item owns what the turn writes.** Its coding run's record and its local agent's
+  turn name it (`turnOwner`); the claim lasts as long as the turn, released when the item
+  ends; a turn that failed for good ends interrupted, with Retry. Its spend is kept as it
+  happens (`turn_spend`), its worker by `session_workers` and the worker-eviction clock.
+- **Resumed, not recovered.** A process that goes loses only the item's lease. A process
+  that loses a lease while it runs on (the database out of reach for most of a lease)
+  exits rather than follow the turn beside the next claim, unless the item was cancelled
+  or the process is stopping (`turns.js endOnLostLease`). The next claim carries the
+  turn on (`resume`): the coding run its record names it the owner of
+  is followed to its end (the leader's old adoption, `services/turn-recovery.js`), a
+  local agent's turn is taken over by its waiter, a Mayor turn cut before its answer
+  ends interrupted with Retry, a dev chat cut before its reply gets its note once.
+- **Stop.** `StopRequested` on the instance; the turn hears it (an agent turn from its
+  claim, a dev chat turn by polling its instance until its handle takes it) and `turn.stop`
+  kills a coding run by its journal. A headless run between its steps is no Stop's target
+  (its Stop takes the person's own path, as before). Past six hours the turn is ended
+  (`Tick`).
+- **Busy, for every process.** Whether a change is worked on is read from these records
+  (`session-work.ts` `workedOnSql`: a turn's record, a running turn instance, a local
+  turn, shots, a live operation, a build, a sync, the bot's look), never from another
+  process's memory. A process's holds (`services/processes.js`) are its own drain's.
+- **What a turn owes after it** is the machine's work, never a call after its end: a
+  turn that stopped before finishing tells its person once (`turn.stalled`,
+  `turns.tellStalled`), a change's dev chat turn that did not end its own way (failed,
+  out of time or of claims) gets the dev chat's repair once, unless another turn runs on
+  the change (`turn.repair`, `turns.repairCut`), and a conversation opened on a request is named from it beside its
+  run (`turn.name`, `agent-sessions.nameFromRequest`). A change's `session_state` (busy or
+  idle) is pushed from the transition that starts or ends its turn (`pushes.ts
+  sessionState`), from the change's row; `session-state.js` reads busy from the durable
+  records above, never from what one process last published.
+- **Leftovers** (`services/turn-leftovers.js`, the `turn-leftovers` clock, every minute):
+  a coding record whose item settled without releasing it gets a `recover` turn, asked
+  again ten minutes after the last while it is still there, four times at most; the last
+  ends it as a forced Stop would (`RECORD_RETRY`).
+- **No release from before the turn machine runs beside this one.** What #5714 kept for
+  one (its claims, headless runs and local turns taken over, the holds written for it, the
+  claim renewed, the spend mark, the Stop forward) is deleted; a rollback past #5714 is not
+  supported (docs/kubernetes-operations.md, "Rolling back past this release").
 
 ### Turns workflow work runs
 
@@ -730,9 +794,10 @@ the Homeroom bot's builds, reads and fixes, a bench trial) is its work item's:
   /api/sessions/:id/stop`, the agent conversation's Stop) finds the instance whose turn it
   is (`TURN_OWNER_SQL`: the record's owner; else, only while the session has no turn record,
   the sync, shots run, build or bot look spinning one up) and appends `StopRequested` there
-  (`platform.stopWorkflowTurn`). A record that is not a workflow's held turn (a person's
-  own, an orphan) answers nothing there, so that Stop stays on the old path and never ends
-  a platform job that merely waits beside the person's turn. The machine records it as
+  (`platform.stopWorkflowTurn`). A person's turn is the `turn` machine's, found the same
+  way (a running `turn` instance on the session, for a dev chat turn before its record).
+  A record no work item holds (an older release's) answers nothing there, so that Stop
+  takes the durable path and never ends a platform job that merely waits beside it. The machine records it as
   stopped by that person (never a failure or a conflict), ends its work, and queues
   `turn.stop`.
 - **`turn.stop`** (`src/workflow/turn-stop.ts`, one handler for every machine): stamps the
@@ -795,9 +860,6 @@ projection, guarded so only its transitions write a row it holds.
   refresh drops the debt it rode on.
 - **Its request merged** (`RequestMerged`, from bot-change's `bot.stopRequestWork`):
   debts owed before the merge are dropped, a look begun before stops, its build is stopped.
-- **During a rollout** a queue row an older release wrote is adopted (at boot and on the
-  minute's adoption sweep): unclaimed it is owed; claimed it waits (`older_turn`, a minute's
-  clock) until that release's turn is over, then is read again.
 
 ### bot-lane
 
@@ -818,6 +880,79 @@ project's triage session, three builds per project.
   for (a person wrote on an idle request, a merge, a settings change), at once for a first
   version just filed, with the five-minute sweeps beside each full one (`bot.sweep`). Its one deadline is the earliest of those, a
   pause's end and the next waiting request becoming eligible.
+
+### bench-lane
+
+Which of the App bench's trials run, and when (`src/workflow/bench-lane/`,
+`services/bench/lane.js`). One instance (`lane`), so its limits hold however many processes
+run the workflow: a run's `concurrency` (at most 9), at most three heavy trials of a run (a
+build, a checks fix, a spec, a first version, a capture; a studio run, its concurrency),
+eleven in flight across every run, none while the live bot's work fills `liveAtOnce` (its
+slots read as bot-lane reads them), a later change's side builds only in the slots live work
+leaves free, and each run's dollar cap (what it spent, plus every trial of it running at its
+estimate, plus the next one's).
+- **A grant** is the trial's claim (`running`, its `build_key`) written in the transition
+  that sends its build's `Requested` to `bot-build/trial:<id>@<nonce>`, with `replyTo` the
+  lane: a granted trial is counted at once, from its row, whether or not its build has
+  started. Its build hears `BuildEnded`; a lost build's record (`build.lost`) asks for a
+  `Look`; a running lane looks again every five minutes anyway, and an idle one every ten,
+  so an ask to look that was lost (a launch's, an older release's wake) waits no longer. A
+  claim whose trial changed outside the lock (an older release's write) is retried, so no
+  build goes for a claim that did not happen.
+- **Recording** is the trial's own build's (`recordTrial`): the trial's result and its
+  run's charge in one statement, by the build its claim named (`build_key`), the branch it
+  cut kept for the sweep, and every session it opened (`session_ids`) charged when it is
+  lost. A build sent for a claim that did not happen runs nothing. A trial whose build
+  ended without recording it (ten minutes on), or a claim whose build never started (an
+  hour on), is recorded lost by the lane (`bench.lost`); a build a restart caught
+  between its record and saving it redoes what follows the record (sessions put away, the
+  grade, a side build's result).
+- **Cancels** (a run, a trial; a side build given up) are its events: written in the
+  transition, a trial running stopped by `StopRequested` to its build, which always comes
+  after that build's `Requested` from this instance. A run marked done or capped is
+  decided here, its write checking again that nothing of it waits; a trial added to an
+  ended run reopens it (`Look` with `runId`).
+- **The allowance** (the bench user's week) is legacy code: looked at by `bench.gate`, kept a
+  minute in the instance, nothing granted while it is unknown or spent. A provider refusing
+  the bench key for its limit pauses grants half an hour (read from the trials).
+- **Only it claims**: a trigger refuses `pending → running` outside a transition, so an older
+  build's lane, during a rollout, starts nothing. A run's queue is read heavy and light
+  trials apart, so one holding its heavy trials still finds its light ones. Its sweeps (kept branches, side results a
+  trial never filled, the studio's previews) are the `bench-sweep` clock.
+
+### shots-eval
+
+Before & after shots evals' trials (`src/workflow/shots-eval/`, `services/shots-eval.js`):
+an admin's comparison of shots agent recipes on merged proposals. One instance (`evals`):
+at most `SHOTS_EVAL_CONCURRENCY` trials at once (2, at most 4), never two on one proposal,
+never beside the proposal's own shots run, and each eval's cap (what it spent, plus each
+trial running at what it has spent or its estimate, the larger, plus the next one's).
+- **A trial's phases are this instance's work**, the shots machine's steps on the trial's
+  attempt id: `eval.copies` (`buildCopies`, stopped between phases once the trial's row
+  says it ended or is stopping; its recipe kept on the trial from here), `eval.agent` (`dispatchAgent` with the arm's model, prompts and time, the
+  turn owned by the item; busy or gone, tried again 20 seconds later while a minute is
+  left), `eval.compare` (`compareScreens`, its light files kept), and, however it ends,
+  `eval.cleanup` (`cleanupRun`: its turn by its record, copies, workspace, and the
+  proposal's temporary worker unless another run of the proposal uses it), tried until
+  done. Each phase has its own deadline; past it the trial fails and is cleaned up. A
+  trial that ends while its copies are built waits for them to stop (its row's
+  `stopping_at` stops them at their next step) before its cleanup, as the shots machine
+  does. No trial starts on a proposal with a turn under way. A row ended elsewhere ends
+  its trial here too.
+- **Its end** is written once its cleanup is done, and settles its attempt's cost
+  (`shots_eval_attempt_costs`, `workflow/shots-eval/costs.ts`): what the proxy billed and
+  what Claude Code reported, each a running total for the attempt, and the larger charged to
+  the trial and its eval, counted in that transition's own cap check. A call or a report
+  that comes after (a straggler, a dispatch that returns after a cancel) charges only what it
+  adds to the larger total.
+- **Billing**: the proxy reads the session's turn record; a shots turn the eval machine's
+  work owns is that trial's (`shots-eval.billFor`), on whatever attempt. The platform key,
+  the eval's cap from rows, each call added to its attempt's costs. Never this process's
+  memory, and
+  never the session alone (the proposal's own shots rerun is its author's).
+- **Cancel** (`EvalCancelled`): the eval and its trials not ended read cancelled at once;
+  what runs is stopped (its work cancelled, its turn stopped) and cleaned up. A trigger
+  refuses a claim or a re-queue outside a transition.
 
 ### governance-proposal
 
@@ -924,53 +1059,124 @@ What a merged pull request still has to do once GitHub has merged it
   with the requests just closed hidden from it. A merge and its close work publish an
   `issues_closed` push, which every web process applies to its own copy (`ws.js`); no
   browser receives it.
-- **Work from before.** An older release's `preview.teardown` and `main.check` items only
-  report, and their results send the message this release sends at the merge. These two
-  handlers go once no such item can be left. (A follow-up of a kind no handler runs any
-  more, in an old instance's record, is not retried; an old `app.deliver` one is asked
-  again through Retry delivery.)
+- **Follow-ups from before.** A follow-up of a kind no handler runs any more, in an old
+  instance's record (`app.deliver`, `main.check`, `preview.teardown`), is not retried; a
+  merge whose own deploy failed is asked again through Retry delivery.
 
 ### app-delivery
 
-An app's production deploys (`src/workflow/app-delivery/`), one at a time per app, for
-everyone who asks: a merge and a secret change (by message, from merge-followups and
-governance-proposal), the drift poller and **Check for updates**, **Redeploy**, heal's
-rebuild, rollover's rebuild and a demo reset (`platform.requestDeploy`).
+An app's production runtime (`src/workflow/app-delivery/`): its deploys and its heals, one
+thing at a time per app, for everyone who asks: a merge and a secret change (by message,
+from merge-followups and governance-proposal), a project's first deploy (by message, from
+app-creation), **Redeploy**, rollover's rebuild and a demo reset
+(`platform.requestDeploy`); main moving (the `main-drift` clock and **Check for updates**,
+`MainMoved`); and an app reported down (the `app-health` clock, `Unhealthy`, and the error
+page, `Unreachable`).
 
 - **A request** (`DeployRequested`) is recorded on the app's instance. The rule for every
   request is the same: it is satisfied by the first successful deploy that started after
   it was recorded. A deploy takes main's tip as it starts, so that deploy contains every
   merge confirmed and every setting or key stored before the request.
-- **One deploy at a time.** Requests that arrive during a deploy are served by one more
-  deploy after it, however many there are. The deploy is the work item `app.deploy`
-  (`staging.deployProduction`, under the cross-process build lock), at most four at a time
-  in the leading process. A merge's commit already running is not deployed again, and demo mode's
-  preview image is reused, only when every request the deploy serves offers it. A deploy
-  serving a request made by hand (Redeploy, Check for updates, a demo reset) retries even
-  a commit refused for running as root; missing keys and an image that runs as root are
-  answers, not errors to retry. An app deleted while it deploys keeps no runtime
-  (`app-teardown.removeRuntimeIfDeleted`).
+- **One thing at a time.** Requests that arrive during a deploy or a heal are served by one
+  more deploy after it, however many there are. The deploy is the work item `app.deploy`
+  (`staging.deployProduction`, under the cross-process build lock), at most four at a time.
+  A merge's commit already running is not deployed again, and an offered image is reused
+  (demo mode's preview image; a ready-made project's image built ahead, for its first
+  deploy of the starter commit), only when every request the deploy serves offers it. A
+  deploy serving a request made by hand (Redeploy, Check for updates, a demo reset) retries
+  even a commit refused for running as root; missing keys and an image that runs as root
+  are answers, not errors to retry. An app deleted while it deploys keeps no runtime
+  (`app-teardown.removeRuntimeIfDeleted`). Without GitHub an app has no repository: its
+  deploy builds its starter's files.
 - **The answer.** On success the transition writes `main_sha`, `main_pr_number`,
   `last_deploy_at` and `status`, pushes the end and the version, and answers every
-  request it served.
-  A failure (missing keys, a broken build, retries spent) is told once to whoever asked;
-  their request stays open, so the next deploy that succeeds, whoever asks for it, still
-  answers it. A request with nobody to tell goes: the drift poller, heal or an admin asks
-  again. Every merge of the app still waiting to go live hears each deploy that did not
-  answer it (`Deployed`), so one whose own answer was not yet shown to contain it goes
-  live with a later one. A request another machine sent that no deploy here can serve
-  (no repository, no app) is answered `DeliveryFailed`.
-- **A deploy that never answers** (a hung build or lock, a result skipped in Admin →
-  Workflows) is ended by an admin there (`EndDeploy`): read as a failure, its late result
-  stale.
+  request it served (`Delivered`, with where it runs and, for a first deploy, where its
+  time went). A failure (missing keys, a broken build, retries spent) is told once to whoever
+  asked; their request stays open, so the next deploy that succeeds, whoever asks for it,
+  still answers it. Every merge of the app still waiting to go live hears each deploy that
+  did not answer it (`Deployed`). A request another machine sent that no deploy here can
+  serve (no repository, no app) is answered `DeliveryFailed`.
+- **Main moving.** `MainMoved` is keyed by the commit, so the clock's next look adds
+  nothing; one for the commit production runs, or for one a deploy already owes, is
+  refused. A drift whose deploy fails is kept and tried again by the instance's own
+  deadline (`RetryDue`: 30 minutes, doubling to 6 hours), unless no retry can help (its
+  image runs as root, keys are missing): the next commit, or the keys' change, asks again.
+  A commit whose deploy failed in the last 30 minutes (a merge's, or one that failed before
+  it knew its commit) waits the same before a drift deploys it. By hand, it goes now. A
+  retry that nothing here can serve any more (the app lost its repository, or is gone)
+  tells whoever waits and ends.
+- **Health.** An app reported down is healed as the machine's own work (`app.heal`,
+  `services/app-heal.js heal`): a Kubernetes restart (a conflict read again, not a
+  rebuild), a Docker start or restart, a probe first when a person could not reach an app
+  its runtime calls running, its image run again when it has no repository (or GitHub is
+  off); or `needs_deploy`, which the machine answers with a deploy. A report during a deploy
+  or a heal is ignored. Heals back off: the next may start 10 minutes after the last
+  (`APP_HEAL_COOLDOWN_MS`), doubling while they follow one another, to 6 hours; an app that
+  stayed up an hour past its backoff starts a new count, and so does a deploy that succeeds
+  (a new runtime). A Docker container seen restarting is given a minute's grace. A report
+  inside the backoff or the grace is refused and keeps no receipt (a dead app is reported
+  every minute for days), and the error page reports an app at most once a minute. Nothing
+  else restarts an app: the error page only reports.
+- **A deploy or a heal that never answers** (a hung build or lock, a result skipped in
+  Admin → Workflows) is ended by an admin there (`EndDeploy`): read as a failure, its work
+  cancelled, its late result stale. A drift it was deploying is kept for its retry.
 - **"Deploying" is durable.** `apps.deploy_state`, `deploy_started_at` and
   `deploy_from_sha` are its projection, owned by the machine, with its
-  `app_redeploy_status` pushes. The version pill, heal, rollover, the drift poller and the
-  merged list read it (`app-deploy-status.read(slug, row)`), on every Pod and after a
-  restart. Heal's restart and start and rollover's respawn of an existing image stay old
-  flows, and leave an app alone while it reads deploying (the respawn marks itself in its
-  process's memory, `app-deploy-status.markStart`); app creation's first deploy and the
-  boot respawn stay old flows too (no request is made for an app still being created).
+  `app_redeploy_status` pushes. The version pill, rollover and the merged list read it
+  (`app-deploy-status.read(slug, row)`), on every Pod and after a restart. Rollover's respawn
+  of an existing image and the boot respawn stay old flows, and leave an app alone while it
+  reads deploying.
+
+### app-creation
+
+A new project's making (`src/workflow/app-creation/`), whichever door it came through:
+Make it, an import, a ready-made app, a remix, the bench studio's host.
+
+- **Enrolled by its insert.** A row inserted `creating` appends `Started` in the insert's
+  own transaction (`wf_enrol_app_creation`, a trigger on
+  `apps`), so its setup starts once everything the route wrote with it has committed (the
+  create route writes the row, its rule, its description, its starter, the card it owes
+  and the first request it owes in one transaction; the card and the first request are
+  savepoints, so neither failing loses the project).
+- **Its setup** is one resumable work item (`app.setup`, `services/app-creator.js setUp`):
+  the database (and the card, then the repository, side by side with it), each a step a
+  restart carries on from, never done twice. The card (`app-sketch.drawFor`) is made before
+  the first commit, which carries it. A resumed setup finds its first commit at the
+  repository's head and does not push it again. A remix copies its source; an import adds
+  its scaffold and the create answers. Its failure is a record the machine writes to
+  `last_failure`; processes that kept going away under it make it `interrupted` (a free
+  Retry).
+- **Its first deploy** is app-delivery's, asked by message with the starter commit
+  offered (its layer cache, a ready-made app's image built ahead); `Delivered` makes it
+  `running` (and marks its first run), missing keys `awaiting_secrets`, anything else
+  `failed`. Every 2 minutes until it answers, the machine looks whether app-delivery holds
+  the ask (a request of its own open there, or a deploy since it asked), and asks again if
+  not: an older build's app-delivery, during a rollout, refuses an asker it does not
+  know.
+- **Its first request**, when it was made with a description, is filed once beside the
+  first deploy (`app.firstRequest`, `homeroom-bot-dm.fileFirstRequest`): the GitHub issue a
+  step, a resumed try finding its own by the marker in its body, its rows in one write, its
+  announcement a step of its own; three tries, the last failure told to its maker. It is
+  claimed from `waiting`, or from `filing` (a try of its own that stopped before it kept
+  its claim): the work item is its only filer.
+- **A first version's plan** at Make it is claimed with `PlanOwed` (from
+  `first-version-plan.startEarlyPlan`, its row claimed in the same statement): `app.plan`
+  drafts it (`runEarlyPlan`), then `app.earlyLook` draws its first look, each work a
+  restart carries on. They were promises in the memory of the process that made the
+  project.
+- **One deadline: its time limit** (15 minutes from its setup's start). Past it a setup
+  still running is cancelled and the project reads failed; a first deploy still to come
+  makes it run when it answers. One whose ask app-delivery never took up reads
+  `interrupted` (the platform's doing: a free Retry).
+- **Retry** (`POST /api/apps/:slug/retry`, after its permission and count checks) sets a
+  failed project up again (`setup:<n+1>`), only from `failed`, and not while app-delivery
+  still holds its first deploy (`still_deploying`, a 409 that says so): a new setup would
+  make its database again under that deploy.
+- **Every status a person sees while it is made** is the transition's write, with the
+  `app_status` frames the made screen follows; the step it is on is read from the machine
+  (`services/app-creation-phase.js`: its setup's steps, or its first deploy).
+- **Where its time went** is one `app_creation_timed` event from both halves
+  (`app-creation/timing.ts`).
 
 ### preview
 
@@ -990,6 +1196,9 @@ release built is known, and retired by identity once a newer attempt serves).
   verdict, no retry; the studio reads the outcome off the instance). A head that is not the row's pin for its kind (an
   import's head, a promoted proposal's reviewed head, a submitted hand-off) is refused
   `head_superseded`; the head being built or served joins.
+- **A deferred head that measures clean** tells it (`ConflictResolved`) in the
+  measurement's own statement (`integration.js`), so a restart between the two cannot
+  leave it deferred; the boot hook that did it after the commit is gone.
 - **One build at a time, one checks run at a time.** A build is an attempt
   (`preview.prepare`): its own checkout, database and env Secret, then the session's
   runtime updated in place, fenced by attempt and claim (`n.k`), the serving template
@@ -1130,8 +1339,8 @@ copies go) and taken again once while the proposal is open.
   run under way
   holds the proposal's worker: `session-work.ts` `shotsRunningSql` is what the preview
   machine and merge-followups (its `worker.retire`) read.
-- **Shots evals** (an admin's comparison of the agent's prompts) run the same steps one
-  after another in their own runner (`shots-eval-runner.js`), on their own tables.
+- **Shots evals** (an admin's comparison of the agent's prompts) run the same steps as the
+  `shots-eval` machine's work, on their own tables (below).
 
 ### proposal
 
@@ -1258,6 +1467,11 @@ on, `reviewed_head_sha` and `approval_epoch`, and what makes each platform sync 
   `pr-import-sync.applyHeadChange`, `vote-revision`'s authored push and
   `integration.clearApprovals` append `ReviewHeadMoved` / `ApprovalsCleared`, never on a
   closed or merged proposal, and the move tells the shots machine (`HeadMoved`).
+- **A hosted build's diagram** is stored together with this machine's `DiagramStored`
+  (`proposal-diagram.storeDeclared`, one transaction), and its block in the pull request's
+  body is a GitHub move of the proposal (`pr.diagram`): one at a time, the newest waiting.
+  GitHub refusing the write ends it; a limit or an outage is tried again twice, briefly,
+  as the proposal's other GitHub moves wait behind it.
 - **Who works on a session** is `session-work.ts` read under the lock, in every one of these
   decisions; a hand-off's promote names its own operation, and the pipeline checking the very
   commit being proposed does not count.
@@ -1306,9 +1520,6 @@ projections, and its guard refuses them to anyone else.
   change under way is not cancelled: its work reads the stop before the AI's every call,
   before the push and before the pull request, and a change that already opened its
   pull request goes up for a vote like the opened ones, which stay).
-- **The lease columns** (`runner_id`, `lease_until` on `maintenance_campaigns`, `runner_id` on its
-  app rows) are no longer written; they go in a later release (an older Pod read them during
-  this one's rollout).
 
 ### bot-change
 
@@ -1352,6 +1563,13 @@ requires a run of the bot's that proposed the session.
   - **Closed**: the requester's tray reads again (a push the close's own write sends),
     and nothing more is said; a closed change reopened and put up for a vote again is
     followed again. **Live** is the end.
+- **A vote on it** tells it in the vote's own statement (`Voted`, from `routes/votes.js`
+  `recordVote`, and from `retractVote` in its transaction): the requester's tray reads
+  again, and a yes is said to the requester once per voter and approval epoch
+  (`bot.tellApproved`, `homeroom-bot-dm.sayApproved`, only while the yes stands). It was
+  a call after the vote's commit, which a restart in between lost. Like every notice
+  owed as work, one owed more than six hours earlier (work a rollback left queued) is not
+  said (`rules/late-notice.ts`).
 - **Its work only sends, strict:** a failure throws and is retried, instead of reporting
   success with nothing done. Each is keyed so a retry says nothing twice: the DMs by their
   idempotency keys (a duplicate send records what its first attempt never got to), the
@@ -1422,9 +1640,10 @@ bot owes them there. One instance per person (`person:<userId>`).
   per trigger: each project joined owes its own); every hello is claimed in the transaction
   that sends it (`sendDm`'s `hello`), so none is claimed and then not sent, and a person
   has one.
-- **During a rollout** the later tries an older release promised (its turn rows say so)
-  are adopted at the leader's boot, for people with no instance yet (`adoptDeferredDms`). DM keys and wording are
-  unchanged, so an older leader and this machine asking the same message send one answer.
+- **Its email.** A bot DM that rang a person owes them its email when no phone push
+  reached them: `MailOwed`, appended with the message (`sendDm`'s write), and `dm.mail`
+  sends it (`activity-mail.emailIfNoPush`, which waits for the send and throws when it
+  cannot decide, so the work retries). It was a send after the commit, lost to a restart.
 
 ### main-check
 
@@ -1434,7 +1653,7 @@ history in `services/main-watch.js`). One instance per app (`app:<id>`), which o
 board's banner read them.
 
 - **Asked.** Every merge sends `CheckRequested` with its commit (merge-followups), and the
-  drift poller appends one for any new main it sees (`platform.requestMainCheck`). A
+  `main-drift` clock appends one for any new main it sees (`platform.requestMainCheck`). A
   commit the row is already about is not checked twice; one whose last run could not
   happen is.
 - **A run** is durable work (`main.suite`): a checks-queue slot, the repo's unit suite as
@@ -1456,10 +1675,6 @@ board's banner read them.
   lifts the pause for that commit and asks the queue to go on.
 - **A newer commit** while a run is under way starts its own first run; the older run's
   verdict is recorded as superseded and changes nothing.
-- **During a rollout** a row an older release left running, confirming or paused is
-  adopted at the leader's boot (`adoptMainChecks`, reading that release's own run's Jobs
-  when it was admitted), and an older release's `main.check` item hands the merge over
-  (merge-followups).
 - **Rolling back past it.** The guard stays on (its `enabled:main-check` row and the
   instances outlive the release), so an older release's writes to `main_check_*` are
   refused, a pause included: an app paused then stays paused. Delete the
@@ -1496,8 +1711,7 @@ intervals and their I/O are the table in `clock/services.ts` (`JOBS`).
   the push sender claims each row with its run's work item and attempt: a row left sending
   is sent again only when that attempt is no longer live.
 - **Armed by the release** (`release.adopt`'s `clocks` step): every job the build defines
-  gets `Arm` with its interval, a new one first due when the leader timer it replaces would
-  have run (`leader_sweeps`), or at once; a job the build no longer defines is `Retire`d (no
+  gets `Arm` with its interval, a new one first due within the next two minutes; a job the build no longer defines is `Retire`d (no
   deadline, its run cancelled). On a staging preview nothing is armed
   (`config.runsClusterMaintenance`), as no leader duty ran there.
 - **A continuous job** (no interval) runs again as soon as a run ends, unless its result asks
@@ -1505,10 +1719,63 @@ intervals and their I/O are the table in `clock/services.ts` (`JOBS`).
 - **Run now.** Admin → Workflows' "Run now" (`RunNow`), and the storage page's "Measure now",
   which waits for the run it asked for (`platform.runClockNow`; on a staging preview, where
   nothing is armed, it measures on the spot). During a run it runs once more after it.
-- **First runs** are due when the leader timer a job replaces would have run, else spread over
-  the next two minutes.
-- **Previews and proposals.** `preview-runtimes`, `preview-gc`, `preview-env` (acting only in the
-  newest build), `preview-orphan-dbs`, `preview-pressure` and `worker-volumes` read the runtimes
+- **Asked for, not scheduled** (`onDemand`): an admin's fleet job, `container-rollover`
+  (Admin › Rollover) and `preview-reap` (Admin › Staging's "reap now"), has no deadline and
+  runs only when an admin asks (`platform.askClockRun`: `RunNow` with who asked, which the
+  run's input carries as `asked`). One asked while it runs is refused (`running`), so two
+  presses on two processes are one sweep, and none is asked while an older build's
+  workflow process serves (`rollout`: it would take the ask without knowing who asked).
+  Each unit (an app, a preview) is a step of the run's work item (`services/fleet-job.js`):
+  a restart carries the job on after the units it finished (a stopping run waits for the
+  units under way to be kept first), and its progress, the units under way included, is
+  that checkpoint, which the console reads from any process (`platform.clockRunOf`). A run
+  first started more than six hours earlier is not carried on. Progress reaches the admins'
+  sockets through the bus: a job too big for one NOTIFY goes as a nudge, and the console
+  reads it again. An older build, which knows no on-demand job, arms one on a day's
+  interval; a run nobody asked for does nothing (`skipped: not_asked`) and is no job on the
+  console, and the next press marks the job asked-for again.
+- **Refused by an older build** (`reask-refused`, every minute, newest build only): during
+  a rollout an older workflow process refuses an event type its machine gained in the
+  newer build (`unknown_event`), and what it owed would be lost. Once no older build
+  serves, each refusal since this build's rollout began whose type this build's machine
+  knows is appended again as it was, keyed `reask:<id>` and caused by the refusal, so it
+  is asked once (`platform.reaskRefused`, over `wf_events_refused_unknown_idx`). What it
+  sets off checks it still holds: a re-asked yes says nothing once retracted, a re-asked
+  plan asks no model once its window passed.
+- **First runs** are spread over the next two minutes.
+- **The newest build only** (`newestOnly`): a job whose work depends on the build (its
+  keys, its catalogs, its environment) does nothing in an older build still running during a
+  rollout (`skipped: older_build`), and its targets name the release that found them, so only
+  a process of it claims them (`WorkHandler.ownRelease`): `preview-env`, `starter-images` (the
+  ready-made apps' images, each key a target), `language-sync` (the translation of the
+  build's new text: the catalog, or a batch to collect, a target), `app-gate` (every managed
+  Ingress routed through the app-host gate or straight back, per `APP_GATE`, every 10
+  minutes on Kubernetes). The newest build is the build of the live workflow process that
+  started serving last (`platform_processes`), so a rollback, or a rollout of the same build
+  with another configuration, is the newest once it serves. An item an older build's run
+  handed out, once nobody works it (queued, or its lease lapsed), is given up by the next run
+  and its target asked for again; the run reads those items locked, so none is claimed in
+  between. One a live process of that build is working stays its own.
+- **A target's progress is the target's.** A new item for a target carries on from the
+  checkpoint of the target's last item when that one did not finish (given up, failed, out of
+  tries), so an effect it made is not made again: a translation batch it paid for is
+  recorded, not submitted a second time. The translation target is `catalog` whatever the
+  English, so a deploy that changes a string carries the batch on too.
+- **The App bench.** `bench-sweep` (every 10 minutes): kept `bench/` branches past their
+  time, side builds' results a trial never filled, and the studio's previews past their
+  day. Which trials run is the `bench-lane` machine's.
+- **Production apps.** `app-health` (each running app's runtime, every minute) and
+  `main-drift` (each running app's main on GitHub, every 5 minutes) report to app-delivery
+  (`Unhealthy`, `MainMoved`), which decides.
+- **People's round trips and limits.** `wallet-links` reads the explorer for wallet-link
+  memos (continuous, resting 4 s, longer while the explorer fails), its chain, cursor and
+  outage streak carried in its result; `rate-limit-retention` deletes the shared limiters'
+  spent windows (`rate_limit_hits`); `notice-mail` sends the email a notice owes when no
+  phone could take its push (an invite moment, a project opening:
+  `notifications.mailed_at` NULL, written with the notice); `workshop-changes` (every 10 s) runs each
+  Workshop pass a board change owed.
+- **Previews and proposals.** `preview-runtimes`, `preview-gc`, `preview-env`,
+  `preview-orphan-dbs`, `preview-pressure` and `worker-volumes` read the runtimes
   and the database servers;
   `imported-prs`, `merged-by-hand`, `proposal-revisions`, `proposal-measure` and
   `fixed-check-sync` read GitHub and the mirrors. Each hands what it found to the preview or

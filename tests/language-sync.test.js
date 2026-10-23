@@ -423,7 +423,7 @@ test('a build without its catalogs\' source translates nothing', async () => {
   assert.deepEqual(result, { skipped: 'no_source' });
 });
 
-test('the sweep is idle without a key, off with LANGUAGE_SYNC_ENABLED=false, and runs only on the leader', () => {
+test('the pass is idle without a key, off with LANGUAGE_SYNC_ENABLED=false, and a clock only the newest build runs', () => {
   const before = process.env.LANGUAGE_SYNC_ENABLED;
   try {
     process.env.LANGUAGE_SYNC_ENABLED = 'false';
@@ -433,11 +433,11 @@ test('the sweep is idle without a key, off with LANGUAGE_SYNC_ENABLED=false, and
   } finally {
     if (before === undefined) delete process.env.LANGUAGE_SYNC_ENABLED; else process.env.LANGUAGE_SYNC_ENABLED = before;
   }
-  const server = read('server.js');
-  const leader = server.indexOf("require('./src/services/fixed-check-sync').start(config, getPool(config));");
-  assert.ok(server.indexOf("require('./src/services/language-sync-runner').start(config, getPool(config));") > leader);
-  assert.match(server, /const languageSyncStop = require\('\.\/src\/services\/language-sync-runner'\)\.stop\(\);/);
-  assert.match(server, /Promise\.all\(\[[^\]]*languageSyncStop[^\]]*\]\)/);
+  assert.ok(!read('server.js').includes('language-sync-runner'), 'no leader runs it');
+  const clocks = read('src/workflow/clock/services.ts');
+  assert.match(clocks, /name: 'language-sync', everyMs: 10 \* MIN, newestOnly: true,/);
+  assert.match(clocks, /legacy\('services\/language-sync-runner'\)\.look\(\{ pool \}\)/);
+  assert.match(clocks, /legacy\('services\/language-sync-runner'\)\.runOnce\(\{ config, pool, deps: \{ steps: ctx\.steps\(\) \} \}\)/);
 });
 
 test('no key, no pass', async () => {

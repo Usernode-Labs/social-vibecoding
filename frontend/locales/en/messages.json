@@ -1219,6 +1219,30 @@
     "text": "No longer needed.",
     "description": "Line on Homeroom bot's \"ready to try\" card once the card's buttons no longer apply."
   },
+  "bot.ready.line.lookOnly": {
+    "text": "You can try it. Approving it is up to the people building {{project}}.",
+    "description": "Line on Homeroom bot's \"ready to try\" card for someone who asked for a change on a project they do not build on: they can open its preview, but only the project's builders can approve it. {{project}} is the project's name."
+  },
+  "bot.ready.line.lookOnlyUnnamed": {
+    "text": "You can try it. Approving it is up to the people building this project.",
+    "description": "Line on Homeroom bot's \"ready to try\" card for someone who asked for a change on a project they do not build on, when the card does not know the project's name: they can open its preview, but only the project's builders can approve it."
+  },
+  "bot.ready.withdraw": {
+    "text": "Withdraw it",
+    "description": "Button on Homeroom bot's \"ready to try\" card: has the bot withdraw the change (close it without it going live). Shown to the person who asked for it or the project's owner."
+  },
+  "bot.ready.withdrawConfirm.title": {
+    "text": "Withdraw this change?",
+    "description": "Title of the confirm dialog after tapping Withdraw it on Homeroom bot's \"ready to try\" card."
+  },
+  "bot.ready.withdrawConfirm.message": {
+    "text": "It will be closed without going live, and Homeroom bot leaves a note on its request saying so.",
+    "description": "Body of the confirm dialog after tapping Withdraw it on Homeroom bot's \"ready to try\" card: what withdrawing the change does."
+  },
+  "bot.ready.withdrawConfirm.confirm": {
+    "text": "Withdraw it",
+    "description": "Confirm button of the dialog that withdraws a change from Homeroom bot's \"ready to try\" card."
+  },
   "bot.ready.approved.soon": {
     "text": "You approved it. It goes live in a minute or two.",
     "description": "Line on Homeroom bot's card after the reader approved a change and nothing else is needed: the change is put into use shortly."
@@ -1867,6 +1891,10 @@
     "text": "by {{author}}",
     "description": "One fact in the dot-separated detail line of a card for a shared item, complete on its own: who created the item. It is joined to the other facts (the project, the item's status) by a middle dot. {{author}} is a username."
   },
+  "object.fromProject": {
+    "text": "From {{project}}",
+    "description": "On a card for a request, change or other item shared in a project's channel, when the item belongs to a different project than the channel's: says which project it comes from. {{project}} is that project's name. Joined to the item's status with a middle dot, for example \"From KasirKU · open\"."
+  },
   "channel.backCommunities": {
     "text": "Communities",
     "description": "Label of the back control on the #general channel when it leads to the Communities screen."
@@ -1999,6 +2027,10 @@
     "text": "Request failed ({{status}})",
     "description": "Error in Messages when a request to the server failed and the server gave no explanation. \"Request\" is a noun, the network request. {{status}} is the HTTP status number."
   },
+  "api.contactRestricted": {
+    "text": "This person only takes new messages and invitations from people in projects with them. You can send them an invite link instead.",
+    "description": "Error in Messages when you try to start a conversation with someone, or invite them to a group, and their Privacy setting allows that only from people who share a project with them. It must not say anything else about the person."
+  },
   "api.uploadFailed": {
     "text": "Upload failed ({{status}})",
     "description": "Error under the message box when uploading an attachment failed and the server gave no explanation. {{status}} is the HTTP status number."
@@ -2014,6 +2046,18 @@
   "api.approve.failed": {
     "text": "Couldn’t approve it just now.",
     "description": "Error on Homeroom bot's \"ready to try\" card when approving the change failed and the server gave no reason."
+  },
+  "api.approve.notBuilder": {
+    "text": "Only the people building this project can approve it. You can still try it.",
+    "description": "Error on Homeroom bot's \"ready to try\" card when someone who does not build on the project tapped Approve."
+  },
+  "api.withdraw.unreachable": {
+    "text": "Couldn’t reach Homeroom. Try again.",
+    "description": "Error on Homeroom bot's \"ready to try\" card when withdrawing the change failed because the server could not be reached. Homeroom is the product's name."
+  },
+  "api.withdraw.failed": {
+    "text": "Couldn’t withdraw it just now.",
+    "description": "Error on Homeroom bot's \"ready to try\" card when withdrawing the change failed and the server gave no reason."
   },
   "create.error.direct": {
     "text": "Couldn’t start this conversation.",
@@ -3295,6 +3339,10 @@
     "text": "Close thread",
     "description": "Accessible name and tooltip of the X button on the thread side pane: closes the thread and returns to the conversation."
   },
+  "replies.resize": {
+    "text": "Resize the thread",
+    "description": "Accessible name of the divider between a chat and its open thread on a computer, which is dragged left and right to make the thread narrower or wider."
+  },
   "replies.count_one": {
     "text": "{{count}} reply",
     "description": "Divider under the first message in the thread side pane: how many replies the thread has. {{count}} is that number."
@@ -3362,6 +3410,34 @@
   "bot.plan.complicatedNote": {
     "text": "Its before and after screens are on the request below. What you ask to change is posted there, where the group can see it.",
     "description": "Note under Homeroom bot's plan card in a conversation, while a complicated change's plan waits: its before and after screens are on the request card below, and what the reader asks to change is posted there for the community to see."
+  },
+  "bot.plan.complicatedNoteShown": {
+    "text": "What you ask to change is posted on the request below, where the group can see it.",
+    "description": "Note under Homeroom bot's plan card in a conversation, while a complicated change's plan waits and the card itself shows the plan and its before and after screens: what the reader asks to change is posted on the request card below, for the community to see."
+  },
+  "bot.plan.spec.see": {
+    "text": "See the plan",
+    "description": "Row on Homeroom bot's plan card for a complicated change: opens the whole plan (what will change and its before and after screens) inside the card. \"See\" is a verb."
+  },
+  "bot.plan.spec.hide": {
+    "text": "Hide the plan",
+    "description": "The same row on Homeroom bot's plan card once the whole plan is open: folds the plan away again. \"Hide\" is a verb."
+  },
+  "bot.plan.spec.sections": {
+    "text": "Plan sections",
+    "description": "Accessible name of the two tabs over the whole plan opened on Homeroom bot's plan card."
+  },
+  "bot.plan.spec.tab.user": {
+    "text": "User-facing",
+    "description": "Tab over the whole plan opened on Homeroom bot's plan card: the half of the plan that says what people will see and do differently. Shown first."
+  },
+  "bot.plan.spec.tab.tech": {
+    "text": "Technical",
+    "description": "Tab over the whole plan opened on Homeroom bot's plan card: the half of the plan that says how it will be built, for developers."
+  },
+  "bot.plan.spec.tabEmpty": {
+    "text": "Nothing in this section.",
+    "description": "Shown in a tab of the whole plan opened on Homeroom bot's plan card when that half of the plan is empty."
   },
   "bot.track.state.queued": {
     "text": "Queued",

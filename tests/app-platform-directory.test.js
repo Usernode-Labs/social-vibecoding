@@ -531,3 +531,14 @@ test('the projection allowlist is exactly id + username', () => {
 test('escapeLike escapes backslash, percent and underscore', () => {
   assert.equal(userDirectory.escapeLike('100%_a\\b'), '100\\%\\_a\\\\b');
 });
+
+
+test('canonical platform preview tokens cannot fetch production directory data', async () => {
+  const savedSlug=state.apps[0].slug;
+  state.apps[0].slug='usernode-2d5619';
+  try {
+    const response=await search({token:null,qs:'?q=a'});
+    assert.equal(response.status,403);
+    assert.equal(response.body.code,'preview_directory_unavailable');
+  } finally { state.apps[0].slug=savedSlug; }
+});

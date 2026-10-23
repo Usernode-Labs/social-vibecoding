@@ -535,6 +535,8 @@ async function resetPair(config, pair, { onProgress = null } = {}) {
         labels: {
           [SHOTS_LABEL]: pair.runId,
           [SHOTS_SIDE_LABEL]: side,
+          'social.usernode.io/app-id': String(pair.app.id),
+          ...require('./platform-preview-data-policy').runtimeLabels(cloneBySide[side]),
           [stagingEnv.LABEL_ENV_FP]: stagingEnv.envFingerprint({ ...spec.env, ...shotsEnv }),
         },
       });

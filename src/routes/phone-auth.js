@@ -57,6 +57,8 @@ const providers = require('../services/sign-in-providers');
 const communityInvites = require('../services/community-invites');
 const challengeScorer = require('../services/topochain/challenge-scorer');
 const managedOpenRouter = require('../services/openrouter-managed-keys');
+const events = require('../services/events');
+const { signUpMetadata } = require('../services/sign-up-from');
 const {
   otpVerifyLimiter,
   phoneOtpRequestLimiter,
@@ -129,7 +131,14 @@ function phoneAuthRoutes(config) {
     return res.status(500).json({ error: 'Internal server error' });
   }
 
-  function requireOffered(req, res, next) {
+  // The offer gate is fail-closed and depends on the SELECTED provider
+  // (services/sms/select.js). Its read is cached for ten seconds, but the
+  // middleware still awaits it so an admin's saved switch is seen here
+  // rather than only after the next boot.
+  async function requireOffered(req, res, next) {
+    try {
+      await require('../services/sms/select').selection(pool);
+    } catch { /* selection() never throws; belt and braces */ }
     if (!phoneAuth.offered(config)) {
       return res.status(404).json({ error: 'That sign-in is not set up.', code: 'not_offered' });
     }
@@ -172,7 +181,8 @@ function phoneAuthRoutes(config) {
         const sent = await phoneAuth.requestCode(
           config,
           req.body?.phoneNumber,
-          req.body?.recaptchaToken
+          req.body?.recaptchaToken,
+          { pool }
         );
         return res.json({ ok: true, sessionInfo: sent.sessionInfo });
       } catch (error) {
@@ -239,6 +249,11 @@ function phoneAuthRoutes(config) {
         await managedOpenRouter.ensureIncludedKey({
           pool, userId: result.userId, config, reason: 'signup_phone',
         });
+        // The sign-up, as an email code and Apple or Google record it
+        // (routes/auth.js, routes/sign-in-providers.js). A phone-made
+        // account recorded none before, so the landing's phone way in went
+        // uncounted.
+        events.record(pool, { type: events.EVENT_TYPES.USER_SIGNED_UP, userId: result.userId, metadata: signUpMetadata(req, { via: 'phone' }) });
       }
 
       // A new account whose sheet sent its name (an invite's Join): finished
@@ -359,7 +374,7 @@ function phoneAuthRoutes(config) {
     signedIn,
     async (req, res) => {
       try {
-        const sent = await phoneAuth.requestCode(config, req.body?.phoneNumber, req.body?.recaptchaToken);
+        const sent = await phoneAuth.requestCode(config, req.body?.phoneNumber, req.body?.recaptchaToken, { pool });
         return res.json({ ok: true, sessionInfo: sent.sessionInfo });
       } catch (error) {
         return fail(res, error, 'Phone link code request', {

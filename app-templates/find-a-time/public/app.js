@@ -2,9 +2,16 @@
 // platform token the frame was opened with, which is how the server knows
 // who you are.
 //
-// Two views: home (the open plans, each with its grid of who is free when
-// and the best time so far, then the past ones) and "When are you free?",
-// where you mark each of one plan's times Free, If needed or Can't.
+// Two modes, chosen when the project was made (data-mode on <main>):
+//
+// - dates: two views, home (the open plans, each with its grid of who is
+//   free when and the best time so far, then the past ones) and "When are
+//   you free?", where you mark each of one plan's times Free, If needed or
+//   Can't.
+// - weekly: the week ("The week" below), one grid of the days and the
+//   hours. Everyone's shades each hour by how many people can make it; on
+//   Yours you tap the hours that work for you every week, or hold one and
+//   drag across several. The best weekly hours are named above it.
 //
 // Times: a suggested time is sent as an ISO string built from your own day
 // and time inputs, and shown in your own time zone and language. A whole
@@ -690,6 +697,13 @@
     if (!timeRows().length) { addTimeRow(); addTimeRow(); }
     el.planForm.elements.name.focus();
   });
+  // The keyboard's Done key on the name closes the keyboard (the times are
+  // still to fill in), rather than starting the plan half done.
+  el.planForm.elements.name.addEventListener('keydown', function (e) {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    e.target.blur();
+  });
   el.planAddTime.addEventListener('click', function () {
     addTimeRow().querySelector('input').focus();
   });
@@ -749,8 +763,11 @@
 
   var loaded = false;
   var loading = null;
+  var again = false;
   function load() {
-    if (loading) return loading;
+    // A read already on its way may have left before the change just made:
+    // read once more when it is back.
+    if (loading) { again = true; return loading; }
     loading = api('GET', '/api/plans')
       .then(function (data) { loaded = true; showStatus(null); render(data); })
       .catch(function (err) {
@@ -759,23 +776,489 @@
         if (loaded) showStatus(err);
         else show('error');
       })
-      .then(function () { loading = null; });
+      .then(function () {
+        loading = null;
+        if (again) { again = false; return load(); }
+      });
     return loading;
   }
 
-  byId('retry').addEventListener('click', function () { show('loading'); load(); });
 
-  // Other people mark their times too: look again every 20 seconds while
-  // the app is on screen, and straight away when it comes back. Skipped
-  // while you are marking, starting a plan or picking a time to set, so a
-  // refresh never undoes what you are in the middle of.
+  // ── The week (weekly mode) ─────────────────────────────────────────────
+  //
+  // An hour is "day-hour": the day of the week (0 Monday to 6 Sunday) and
+  // the hour it starts, a wall-clock time for the group with no time zone
+  // (api.js, "How an hour is stored"). Your own hours change here at once
+  // and are saved a moment after you stop; the counts and the best hours
+  // come back with the next read.
+
+  var week = (function () {
+    var w = {
+      section: byId('week'),
+      best: byId('week-best'),
+      toggle: byId('week-toggle'),
+      saved: byId('week-saved'),
+      hint: byId('week-hint'),
+      grid: byId('week-grid'),
+      legend: byId('week-legend'),
+      detail: byId('week-detail'),
+      detailText: byId('week-detail-text'),
+      waiting: byId('week-waiting'),
+      status: byId('week-status'),
+    };
+    var HOLD_MS = 280;
+    var SLOP_PX = 8;
+    var SAVE_WAIT_MS = 350;
+    var MONDAY = Date.UTC(2024, 0, 1);
+
+    var data = null; // the last read
+    var mine = {}; // "day-hour" -> true: your week as it is on screen
+    var view = null; // 'group' (everyone's) or 'yours'
+    var tapped = null; // the hour whose people show under the grid, on everyone's
+    var paint = null; // a drag marking several hours: { anchor, to, add }
+    var hold = null; // a finger resting on an hour, before it becomes a drag
+    var swallowClick = false; // the click that ends a drag is not a tap
+    var saveTimer = null;
+    var saving = null;
+    var saveAgain = false;
+
+    var key = function (day, hour) { return day + '-' + hour; };
+    var parts = function (k) { return k.split('-').map(Number); };
+
+    /** "Mon", or "Monday" with style 'long', in the viewer's language. */
+    function dayName(day, style) {
+      return new Date(MONDAY + day * 864e5).toLocaleDateString(undefined, { weekday: style || 'short', timeZone: 'UTC' });
+    }
+
+    /** "7 PM" (or "19:00"). */
+    function hourName(hour) {
+      return new Date(2024, 0, 1, hour).toLocaleTimeString(undefined, HOUR12 ? { hour: 'numeric' } : { hour: '2-digit', minute: '2-digit' });
+    }
+
+    /** "Tuesdays at 7 PM". */
+    function whenWords(k) {
+      var p = parts(k);
+      return dayName(p[0], 'long') + 's at ' + hourName(p[1]);
+    }
+
+    function meId() { return data && data.me ? data.me.id : null; }
+
+    /** Who has answered, with your hours as they are on screen: you first. */
+    function people() {
+      var me = meId();
+      var list = data.people.filter(function (p) { return p.id !== me; });
+      if (me !== null && Object.keys(mine).length) list.unshift({ id: me, username: data.me.username, me: true });
+      return list;
+    }
+
+    /** The ids of everyone who can make an hour, yours as on screen. */
+    function freeAt(k) {
+      var me = meId();
+      var ids = (data.free[k] || []).filter(function (id) { return id !== me; });
+      if (me !== null && mine[k]) ids.unshift(me);
+      return ids;
+    }
+
+    function nameOfId(id) {
+      if (id === meId()) return 'you';
+      var p = data.people.filter(function (x) { return x.id === id; })[0];
+      return '@' + (p ? p.username : '?');
+    }
+
+    /** "5 of 6 can make it", "All 4 can make it", "Nobody can make it yet". */
+    function countWords(n, answered) {
+      if (!n) return 'Nobody can make it yet';
+      if (n === answered && answered > 1) return 'All ' + answered + ' can make it';
+      return n + ' of ' + answered + ' can make it';
+    }
+
+    /** Can and can't for one hour: "Can: you and @ana. Can't: @ben." */
+    function whoWords(k) {
+      var can = freeAt(k);
+      var cant = people().filter(function (p) { return can.indexOf(p.id) < 0; }).map(function (p) { return p.id; });
+      var words = [];
+      if (can.length) words.push('Can: ' + listWords(can.map(nameOfId)) + '.');
+      if (cant.length) words.push('Can\'t: ' + listWords(cant.map(nameOfId)) + '.');
+      return words.join(' ');
+    }
+
+    // The shading of an hour on everyone's, by the share of those who
+    // answered that can make it. Whole class names, for the Tailwind build.
+    function shade(n, answered) {
+      if (!n || !answered) return '';
+      var share = n / answered;
+      if (share >= 1) return 'bg-accent text-on-accent';
+      if (share > 0.75) return 'bg-accent/80 text-on-accent';
+      if (share > 0.5) return 'bg-accent/60 text-fg';
+      if (share > 0.25) return 'bg-accent/35 text-fg';
+      return 'bg-accent/15 text-fg';
+    }
+
+    /** The hours from the drag's first to where the finger is now, as a block. */
+    function inPaint(k) {
+      if (!paint) return false;
+      var a = parts(paint.anchor);
+      var b = parts(paint.to);
+      var p = parts(k);
+      return p[0] >= Math.min(a[0], b[0]) && p[0] <= Math.max(a[0], b[0])
+        && p[1] >= Math.min(a[1], b[1]) && p[1] <= Math.max(a[1], b[1]);
+    }
+
+    /** One hour's cell, drawn for the view: shading and a count, or yours. */
+    function drawCell(cell) {
+      var k = cell.getAttribute('data-cell');
+      var answered = people().length;
+      var ids = freeAt(k);
+      var best = data.best.length && key(data.best[0].day, data.best[0].hour) === k;
+      cell.setAttribute('data-free', String(ids.length));
+      cell.textContent = '';
+      var base = 'relative h-10 min-w-0 border-l border-t border-line text-small font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-focus';
+      if (view === 'yours') {
+        var on = paint && inPaint(k) ? paint.add : !!mine[k];
+        cell.setAttribute('aria-pressed', on ? 'true' : 'false');
+        cell.className = base + (on ? ' bg-accent text-on-accent' : ' bg-surface');
+        if (on) cell.appendChild(icon(CHECK, 'mx-auto h-4 w-4', 3));
+        cell.setAttribute('aria-label', whenWords(k) + (on ? ': works for you' : ': does not work for you'));
+        return;
+      }
+      cell.removeAttribute('aria-pressed');
+      // The hour tapped is outlined; the best one, named above, more lightly.
+      var ring = k === tapped ? ' ring-2 ring-inset ring-fg' : best ? ' ring-2 ring-inset ring-fg/40' : '';
+      cell.className = base + ' ' + (shade(ids.length, answered) || 'bg-surface text-muted') + ring;
+      if (ids.length) cell.appendChild(document.createTextNode(String(ids.length)));
+      cell.setAttribute('aria-label', whenWords(k) + ': ' + countWords(ids.length, answered).toLowerCase());
+    }
+
+    function drawCells() {
+      Array.prototype.forEach.call(w.grid.querySelectorAll('[data-cell]'), drawCell);
+    }
+
+    /** The grid's frame: the days across, the hours down, a cell for each. */
+    function buildGrid() {
+      w.grid.textContent = '';
+      w.grid.appendChild(h('div', 'h-9'));
+      for (var d = 0; d < data.days; d += 1) {
+        var head = h('div', 'flex h-9 items-center justify-center border-l border-line text-small font-medium text-muted', dayName(d));
+        head.setAttribute('aria-hidden', 'true');
+        w.grid.appendChild(head);
+      }
+      for (var hour = data.firstHour; hour < data.lastHour; hour += 1) {
+        var label = h('div', 'flex h-10 items-center justify-end whitespace-nowrap border-t border-line pr-1.5 text-small text-muted', hourName(hour));
+        label.setAttribute('aria-hidden', 'true');
+        w.grid.appendChild(label);
+        for (var day = 0; day < data.days; day += 1) {
+          var cell = h('button');
+          cell.type = 'button';
+          cell.setAttribute('data-cell', key(day, hour));
+          w.grid.appendChild(cell);
+        }
+      }
+    }
+
+    /** The card at the top: the best weekly hour, and the next best. */
+    function drawBest() {
+      w.best.textContent = '';
+      var answered = data.people.length;
+      var best = data.best.map(function (b) { return key(b.day, b.hour); });
+      if (!best.length) {
+        w.best.removeAttribute('data-best');
+        w.best.appendChild(h('p', 'text-heading', 'No answers yet'));
+        w.best.appendChild(h('p', 'text-small text-muted', 'Mark the hours that work for you every week, and the best time shows here.'));
+        return;
+      }
+      var counted = function (k) { return (data.free[k] || []).length; };
+      w.best.setAttribute('data-best', best[0]);
+      w.best.appendChild(h('p', 'text-small text-muted', 'Best weekly time'));
+      w.best.appendChild(h('p', 'text-heading', whenWords(best[0])));
+      var cant = data.people.filter(function (p) { return (data.free[best[0]] || []).indexOf(p.id) < 0; }).map(function (p) { return p.me ? 'you' : '@' + p.username; });
+      w.best.appendChild(h('p', 'text-small text-muted', countWords(counted(best[0]), answered) + '.' + (cant.length ? ' Can\'t: ' + listWords(cant) + '.' : '')));
+      if (best.length > 1) {
+        var also = best.slice(1).map(function (k) { return whenWords(k) + ' (' + counted(k) + ' of ' + answered + ')'; });
+        w.best.appendChild(h('p', 'text-small text-muted', 'Also good: ' + listWords(also) + '.'));
+      }
+    }
+
+    /** Under the grid on everyone's: who can and can't make the hour tapped. */
+    function drawDetail() {
+      w.detailText.textContent = '';
+      w.detail.hidden = view !== 'group' || !tapped;
+      // Room below the grid for the card, so the last hours can scroll above it.
+      w.section.classList.toggle('pb-40', !w.detail.hidden);
+      if (w.detail.hidden) return;
+      w.detailText.appendChild(h('p', 'text-heading', whenWords(tapped)));
+      var answered = people().length;
+      w.detailText.appendChild(h('p', 'text-small text-muted', answered ? countWords(freeAt(tapped).length, answered) + '. ' + whoWords(tapped) : 'Nobody has answered yet.'));
+    }
+
+    function drawLegend() {
+      w.legend.textContent = '';
+      w.legend.hidden = view !== 'group' || !data.people.length;
+      if (w.legend.hidden) return;
+      w.legend.appendChild(document.createTextNode('Fewer'));
+      ['bg-accent/15', 'bg-accent/35', 'bg-accent/60', 'bg-accent/80', 'bg-accent'].forEach(function (c) {
+        w.legend.appendChild(h('span', 'h-3 w-5 rounded-sm ' + c));
+      });
+      w.legend.appendChild(document.createTextNode('More people'));
+    }
+
+    function drawWaiting() {
+      var line = null;
+      if (data.waiting) {
+        var names = data.waiting.filter(function (x) { return !(x.me && Object.keys(mine).length); })
+          .map(function (x) { return x.me ? 'you' : '@' + x.username; });
+        if (names.length) {
+          var shown = names.length > 8 ? names.slice(0, 7).concat([(names.length - 7) + ' more']) : names;
+          line = 'Still to answer: ' + listWords(shown) + '.';
+        } else if (data.people.length) {
+          line = 'Everyone has answered.';
+        }
+      }
+      w.waiting.textContent = line || '';
+      w.waiting.hidden = !line;
+    }
+
+    function drawToggle() {
+      Array.prototype.forEach.call(w.toggle.querySelectorAll('[data-view]'), function (b) {
+        var on = b.getAttribute('data-view') === view;
+        b.setAttribute('aria-checked', on ? 'true' : 'false');
+        b.className = on
+          ? 'min-h-11 rounded-lg bg-accent px-4 text-body font-medium text-on-accent'
+          : 'min-h-11 rounded-lg px-4 text-body font-medium text-muted hover:bg-raised';
+      });
+      w.hint.textContent = view === 'yours'
+        ? 'Tap the hours that work for you every week. Hold one and drag to mark several.'
+        : 'The deeper the colour, the more people can make it. Tap an hour to see who.';
+      w.grid.setAttribute('aria-label', view === 'yours' ? 'Your week' : 'Everyone\'s week');
+    }
+
+    function draw() {
+      drawToggle();
+      drawBest();
+      drawCells();
+      drawLegend();
+      drawDetail();
+      drawWaiting();
+    }
+
+    function setView(next) {
+      view = next;
+      tapped = null;
+      draw();
+    }
+
+    // ── Saving your hours ───────────────────────────────────────────────
+
+    function save() {
+      saveTimer = null;
+      if (saving) { saveAgain = true; return; }
+      var hours = Object.keys(mine).map(parts);
+      w.saved.textContent = 'Saving';
+      saving = api('PUT', '/api/week/mine', { hours: hours })
+        .then(function () { w.saved.textContent = 'Saved'; showStatus(null, w.status); })
+        .catch(function (err) { w.saved.textContent = ''; showStatus(err, w.status); })
+        .then(function () {
+          saving = null;
+          if (saveAgain) { saveAgain = false; save(); } else { load(); }
+        });
+    }
+
+    function changed() {
+      drawCells();
+      drawDetail();
+      drawWaiting();
+      w.saved.textContent = '';
+      clearTimeout(saveTimer);
+      saveTimer = setTimeout(save, SAVE_WAIT_MS);
+    }
+
+    // ── Tapping, and holding to drag across several hours ──────────────
+
+    function cellAt(x, y) {
+      var target = document.elementFromPoint(x, y);
+      var cell = target && target.closest ? target.closest('[data-cell]') : null;
+      return cell && w.grid.contains(cell) ? cell.getAttribute('data-cell') : null;
+    }
+
+    function startPaint(k) {
+      paint = { anchor: k, to: k, add: !mine[k] };
+      swallowClick = true;
+      drawCells();
+    }
+
+    function movePaint(k) {
+      if (!paint || !k || k === paint.to) return;
+      paint.to = k;
+      drawCells();
+    }
+
+    function endPaint(commit) {
+      if (!paint) return;
+      if (commit) {
+        Array.prototype.forEach.call(w.grid.querySelectorAll('[data-cell]'), function (cell) {
+          var k = cell.getAttribute('data-cell');
+          if (!inPaint(k)) return;
+          if (paint.add) mine[k] = true; else delete mine[k];
+        });
+      }
+      paint = null;
+      if (commit) changed(); else drawCells();
+      // The click that may follow the lift is the drag's, not a tap.
+      setTimeout(function () { swallowClick = false; }, 400);
+    }
+
+    w.grid.addEventListener('click', function (e) {
+      var cell = e.target.closest ? e.target.closest('[data-cell]') : null;
+      if (!cell || !data) return;
+      if (swallowClick) { swallowClick = false; return; }
+      var k = cell.getAttribute('data-cell');
+      if (view === 'yours') {
+        if (mine[k]) delete mine[k]; else mine[k] = true;
+        changed();
+      } else {
+        tapped = tapped === k ? null : k;
+        drawCells();
+        drawDetail();
+      }
+    });
+
+    // A finger: resting on an hour for a moment turns it into a drag that
+    // marks (or clears) the block of hours it crosses. Moving first is a
+    // scroll, which is left to the page.
+    w.grid.addEventListener('touchstart', function (e) {
+      if (view !== 'yours' || e.touches.length !== 1) return;
+      var t = e.touches[0];
+      var k = cellAt(t.clientX, t.clientY);
+      if (!k) return;
+      hold = { x: t.clientX, y: t.clientY, timer: setTimeout(function () {
+        hold = null;
+        startPaint(k);
+        if (navigator.vibrate) navigator.vibrate(8);
+      }, HOLD_MS) };
+    }, { passive: true });
+    w.grid.addEventListener('touchmove', function (e) {
+      var t = e.touches[0];
+      if (paint) {
+        e.preventDefault(); // the page stays put while you mark
+        movePaint(cellAt(t.clientX, t.clientY));
+        return;
+      }
+      if (hold && Math.hypot(t.clientX - hold.x, t.clientY - hold.y) > SLOP_PX) {
+        clearTimeout(hold.timer);
+        hold = null;
+      }
+    }, { passive: false });
+    w.grid.addEventListener('touchend', function () {
+      if (hold) { clearTimeout(hold.timer); hold = null; }
+      endPaint(true);
+    });
+    w.grid.addEventListener('touchcancel', function () {
+      if (hold) { clearTimeout(hold.timer); hold = null; }
+      endPaint(false);
+    });
+    w.grid.addEventListener('contextmenu', function (e) { if (view === 'yours') e.preventDefault(); });
+
+    // A mouse drags at once: press on an hour and move across others.
+    w.grid.addEventListener('pointerdown', function (e) {
+      if (view !== 'yours' || e.pointerType === 'touch' || e.button !== 0) return;
+      var k = cellAt(e.clientX, e.clientY);
+      if (!k) return;
+      paint = { anchor: k, to: k, add: !mine[k], mouse: true };
+    });
+    document.addEventListener('pointermove', function (e) {
+      if (!paint || !paint.mouse) return;
+      var k = cellAt(e.clientX, e.clientY);
+      if (k && k !== paint.anchor) swallowClick = true;
+      movePaint(k);
+    });
+    document.addEventListener('pointerup', function () {
+      if (!paint || !paint.mouse) return;
+      // Pressed and let go on one hour: the click toggles it, as a tap does.
+      if (paint.to === paint.anchor && !swallowClick) { paint = null; return; }
+      endPaint(true);
+    });
+
+    Array.prototype.forEach.call(w.toggle.querySelectorAll('[data-view]'), function (b) {
+      b.addEventListener('click', function () { setView(b.getAttribute('data-view')); });
+    });
+    byId('week-detail-close').addEventListener('click', function () {
+      tapped = null;
+      drawCells();
+      drawDetail();
+    });
+
+    // ── Loading ─────────────────────────────────────────────────────────
+
+    function render(next) {
+      var first = !data;
+      data = next;
+      // Your hours from the server, unless you have changed them since.
+      if (!saveTimer && !saving) {
+        mine = {};
+        var me = meId();
+        Object.keys(data.free).forEach(function (k) { if (data.free[k].indexOf(me) >= 0) mine[k] = true; });
+      }
+      if (first) {
+        buildGrid();
+        // Yours first until you have answered, so marking is the first thing.
+        view = Object.keys(mine).length || !data.me ? 'group' : 'yours';
+      }
+      draw();
+      el.loading.hidden = true;
+      el.error.hidden = true;
+      w.section.hidden = false;
+    }
+
+    var loaded = false;
+    var loading = null;
+    var again = false;
+    function load() {
+      if (loading) { again = true; return loading; }
+      loading = api('GET', '/api/week')
+        .then(function (next) { loaded = true; showStatus(null); render(next); })
+        .catch(function (err) {
+          if (loaded) showStatus(err);
+          else show('error');
+        })
+        .then(function () {
+          loading = null;
+          if (again) { again = false; return load(); }
+        });
+      return loading;
+    }
+
+    return {
+      load: load,
+      // Not mid-drag, and not while your own hours are on their way.
+      quiet: function () { return !paint && !hold && !saveTimer && !saving; },
+    };
+  })();
+
+  var weekly = byId('app').getAttribute('data-mode') === 'weekly';
+  var refresh = weekly ? week.load : load;
+
+  byId('retry').addEventListener('click', function () { show('loading'); refresh(); });
+
+  // Other people mark their times too: whenever anybody changes something,
+  // the plans are fetched again at once, and looked at every minute
+  // regardless (public/live-updates.js). Not while you are marking,
+  // starting a plan or picking a time to set: what changed then is fetched
+  // the moment you are done, so a refresh never undoes what you are in the
+  // middle of.
   function busy() {
     return !!marking || !el.planForm.hidden || Object.keys(choosing).length > 0;
   }
-  setInterval(function () {
-    if (!document.hidden && !busy()) load();
-  }, 20000);
-  document.addEventListener('visibilitychange', function () { if (!document.hidden && !busy()) load(); });
+  if (window.LiveUpdates) window.LiveUpdates.watch({ refresh: refresh, quiet: function () { return weekly ? week.quiet() : !busy(); } });
 
-  load();
+  // The first screen, drawn: Homeroom keeps its opening cover up until then
+  // (usernode.ready, the platform bridge), so the app appears in one step
+  // rather than as loading shapes that then change. The cover lifts after a
+  // few seconds regardless.
+  var first = refresh();
+  if (window.usernode && window.usernode.ready) window.usernode.ready(first);
+  // Pulling the page down past its top reads everything again, with the
+  // native kit's spinner: the pull stays in the app instead of dragging
+  // Homeroom's header along.
+  first.then(function () {
+    if (window.unNative) window.unNative.attachPullToRefresh(window, refresh);
+  });
 })();

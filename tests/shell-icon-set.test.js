@@ -144,7 +144,26 @@ test('the glyphs live in the module, not inline beside it', () => {
   // files only became visible here when #1120 started converting console
   // sections to .tsx; the inline-path-data rule above still covers them, which
   // is the half that actually catches a glyph.
-  const shellFiles = featureFiles().filter((f) => !f.startsWith('frontend/src/features/admin/'));
+  //
+  // One shell file may draw an <svg> of its own, and it is not a glyph
+  // either: the review flow's drawn pictures (one outlined object per
+  // benefit or group decision, on a card's ground). They are scenes on a
+  // 200-unit board at card and hero size, with a fill, a sage highlight and a
+  // hard shadow filter, and nothing in icons.tsx draws on that board or could
+  // stand in for one. The allowance is pinned to what makes it safe: exactly
+  // ONE <svg>, hidden from assistive tech (the picture's label is on its
+  // wrapper), no literal path data, and nothing borrowed from the glyph set.
+  // A second file here, or a second <svg> in this one, is a glyph escaping.
+  const PICTURES = 'frontend/src/features/review-flow/illustrations.tsx';
+  {
+    const src = read(PICTURES);
+    const tags = svgTags(src);
+    assert.equal(tags.length, 1, `${PICTURES} draws its pictures in exactly one <svg>`);
+    assert.match(tags[0], /aria-hidden="true"/, 'the drawing is hidden; its label is on the wrapper');
+    assert.ok(!/\sd="/.test(src), `${PICTURES} carries no literal path attribute`);
+    assert.ok(!/from '@\/components\/ui\/icons'/.test(src), `${PICTURES} draws scenes, not glyphs from the set`);
+  }
+  const shellFiles = featureFiles().filter((f) => !f.startsWith('frontend/src/features/admin/') && f !== PICTURES);
   assert.deepEqual(shellFiles.filter((f) => svgTags(read(f)).length > 0), [],
     'a raw <svg> in a feature file is a glyph that escaped the module');
 });
@@ -182,8 +201,9 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
   // as normal instead of as the hydration bug it usually is.
   const shipped = new Set(HTML.match(/\sd="[^"]*"/g).map((s) => s.slice(4, -1)));
   const absent = [...modulePaths()].filter((d) => !shipped.has(d));
-  // The Needs-you feed's rail — ballot (three paths), sparkles, play — and
-  // the chevron-up its arrows use, all client-rendered.
+  // The Needs-you feed's rail — sparkles, play — and the chevron-up its
+  // arrows use, all client-rendered (its ballot is in the cold document now:
+  // the guest landing's hero draws it, see THE LIGHTBULB below).
   //
   // FOUR PATHS LEFT THIS LIST WITH THE WORKSHOP SCREEN (#workshop), and each
   // is now in the static document because something on it renders
@@ -257,7 +277,6 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // comment mode.
     'M12 3v18M3 12h18M9 6l3-3 3 3M9 18l3 3 3-3M6 9l-3 3 3 3M18 9l3 3-3 3',
     'M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z',
-    'M12 3v8.25m0 0l-3-3m3 3l3-3',
     // PhonePlusIcon (#4399): the mark menu's "Add Homeroom to your home
     // screen", drawn only after mount for a private member on a phone.
     'M8 2.5h8a2 2 0 012 2v15a2 2 0 01-2 2H8a2 2 0 01-2-2v-15a2 2 0 012-2z',
@@ -291,7 +310,6 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     'M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0 1 11.186 0Z',
     'M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z',
     'M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6',
-    'M2.25 13.5h3.86a2.25 2.25 0 012.012 1.244l.256.512a2.25 2.25 0 002.013 1.244h3.218a2.25 2.25 0 002.013-1.244l.256-.512a2.25 2.25 0 012.013-1.244h3.859',
     'M21 12a2.25 2.25 0 00-2.25-2.25H15a3 3 0 11-6 0H5.25A2.25 2.25 0 003 12m18 0v6a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 18v-6m18 0V9M3 12V9m18 0a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 003 9m18 0V6a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 003 6v3',
     'M21.4 11.6l-8.5 8.5a6 6 0 01-8.5-8.5l9-9a4 4 0 015.7 5.7l-9 9a2 2 0 01-2.8-2.8l8.4-8.4',
     // PaperclipIcon left this list with #4127: Send feedback's attachment
@@ -339,14 +357,11 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     'M8.25 9L12 5.25 15.75 9',
     'M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z',
     'M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z',
-    'M9 3.75H6.912a2.25 2.25 0 00-2.15 1.588L2.35 13.177a2.25 2.25 0 00-.1.661V18a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18v-4.162c0-.224-.034-.447-.1-.661L19.24 5.338a2.25 2.25 0 00-2.15-1.588H15',
-    // THE LIGHTBULB, added by #2718's review. It was #improve-btn-glyph's
-    // rest state — the Improve row's leading mark, drawn in a cold document
-    // because the row shipped hidden rather than absent. The row and the
-    // glyph retired with the panel they opened, and the icon is still
-    // exported and still drawn: the Workshop toolbar's "+" menu offers
-    // "New change" with it, behind that menu's own state.
-    'M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z',
+    // THE LIGHTBULB and THE BALLOT (three paths) LEFT this list with the
+    // guest landing's hero (Evan, 22 Oct 2026): the "Want to join in?"
+    // card's points moved into the short story over the guest Discover, which
+    // the landing prerenders, so "Vote on what changes" and "Ask for what you
+    // want" draw them in the cold document.
     // SparklesIcon came back to this list with #3358: #platform-mark-btn
     // draws the Homeroom mark again (#3318 had swapped it for a sparkle), and
     // every other sparkle (Messages' agent rows, the Workshop rail, a
@@ -421,6 +436,14 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // sidebar of rows, which the prerender never is.
     'M4 5.5h10.5a1.5 1.5 0 011.5 1.5v5.5a1.5 1.5 0 01-1.5 1.5H9l-3.5 3v-3H4a1.5 1.5 0 01-1.5-1.5V7A1.5 1.5 0 014 5.5z',
     'M19 9h.5a1.5 1.5 0 011.5 1.5v5a1.5 1.5 0 01-1.5 1.5H19v3l-3.5-3h-3',
+    // ── New Needs you (an experiment): the before/after switch ──
+    //
+    // HistoryIcon draws only on a change's page in the new review flow
+    // (features/review-flow/compare.tsx), which is client-rendered behind
+    // its switch.
+    'M3 12a9 9 0 1 0 2.64-6.36',
+    'M3 4.5V9h4.5',
+    'M12 7.5V12l3 2',
   ];
   assert.deepEqual(absent.sort(), expected.sort());
 });

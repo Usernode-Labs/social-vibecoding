@@ -1,11 +1,11 @@
 const appAllowance = require('../services/app-allowance');
 const platformLimits = require('../services/platform-limit-alerts');
 const appLimit = require('../services/app-limit');
+const { NAME_BEING_PURGED, NAME_BEING_PURGED_ERROR } = require('../services/app-data-retention');
 const { Router } = require('express');
 const { getPool } = require('../db/pool');
 const log = require('../services/logger');
-const { createApp } = require('../services/app-creator');
-const { forkApp, findForkSource } = require('../services/app-forker');
+const { findForkSource } = require('../services/app-forker');
 const caddy = require('../services/caddy');
 const docker = require('../services/docker');
 const github = require('../services/github');
@@ -19,11 +19,11 @@ const renamePr = require('../services/rename-pr');
 const topicsPr = require('../services/topics-pr');
 const places = require('../services/places');
 const { drainGuard } = require('../services/lifecycle');
-const appCreationOwner = require('../services/app-creation-owner');
 const { appCreateLimiter, appAllowanceRequestLimiter, issueCreateLimiter, githubLookupLimiter, feedbackTitleLimiter, firstSessionMomentLimiter } = require('../middleware/rate-limits');
 const { rateLimit } = require('express-rate-limit');
 const events = require('../services/events');
 const appOpenings = require('../services/app-openings');
+const usageAnalytics = require('../services/usage-analytics');
 const appAccess = require('../services/app-access');
 const edgeGate = require('../services/edge-gate');
 const appAdmins = require('../services/app-admins');
@@ -683,10 +683,11 @@ function platformSecretsView(rows, manifest, { includeValues, actionsSecrets = n
 }
 
 // A creator's retries of a failed creation. A failure the platform's own
-// restarts caused does not count, and is not refused by it
-// (services/app-creation-owner.js isInterrupted): that attempt was
-// interrupted, not wrong.
+// restarts caused does not count, and is not refused by it (its record says
+// `interrupted`, src/workflow/app-creation/): that attempt was interrupted,
+// not wrong.
 const MAX_RETRY_COUNT = 3;
+const isInterrupted = (failure) => !!failure && typeof failure === 'object' && failure.interrupted === true;
 
 // #2524: how much time ONE activity heartbeat may report, and how much a
 // single (user, app, day) row may ever hold.
@@ -742,22 +743,43 @@ async function firstVersionLinesFor(pool, apps, viewerId, phases = null) {
   const ids = apps.map((a) => Number(a.id)).filter((id) => Number.isInteger(id) && id > 0);
   if (!ids.length) return lines;
   try {
-    const { rows } = await pool.query(
-      `SELECT app_id FROM homeroom_bot_first_versions
-        WHERE app_id = ANY($1::int[]) AND bot_builds = TRUE AND status IN ('waiting', 'filing', 'filed')`,
-      [ids]
-    );
-    const botDm = require('../services/homeroom-bot-dm');
-    await Promise.all(rows.map(async ({ app_id: appId }) => {
-      const state = await botDm.firstVersionState(pool, appId, { viewerId });
-      const line = state && (state.line || (state.ready ? 'ready' : 'planning'));
-      if (line) lines.set(Number(appId), line);
-      if (line && phases && state.phase) phases.set(Number(appId), state.phase);
-    }));
+    // One read for every tile, never one per app at once (firstVersionStates).
+    const states = await require('../services/homeroom-bot-dm').firstVersionStates(pool, ids, { viewerId });
+    for (const [appId, state] of states) {
+      const line = state.line || (state.ready ? 'ready' : 'planning');
+      if (line) lines.set(appId, line);
+      if (line && phases && state.phase) phases.set(appId, state.phase);
+    }
   } catch (err) {
     log.warn('apps', 'Could not read the first versions for the list', { message: err.message });
   }
   return lines;
+}
+
+// Whether an app's manifest declares a secret it needs set (the home tile's
+// "fix secrets" warning).
+function declaresRequiredSecret(app) {
+  const secrets = app.manifest_snapshot && typeof app.manifest_snapshot === 'object'
+    ? app.manifest_snapshot.secrets : null;
+  return Array.isArray(secrets) && secrets.some((s) => s && s.required);
+}
+
+/**
+ * The secret keys stored for each of `apps`: Map(appId -> Set(key)), one
+ * query for them all. GET /api/apps read them with a query per app, all at
+ * once, so one load of the list checked out a connection per app (22 Oct
+ * 2026).
+ */
+async function storedSecretKeysFor(pool, apps) {
+  const keys = new Map();
+  const ids = apps.map((a) => Number(a.id)).filter((id) => Number.isInteger(id) && id > 0);
+  if (!ids.length) return keys;
+  const { rows } = await pool.query('SELECT app_id, key FROM app_secrets WHERE app_id = ANY($1::int[])', [ids]);
+  for (const { app_id: appId, key } of rows) {
+    if (!keys.has(Number(appId))) keys.set(Number(appId), new Set());
+    keys.get(Number(appId)).add(key);
+  }
+  return keys;
 }
 
 function appRoutes(config, { pool = getPool(config) } = {}) {
@@ -932,6 +954,13 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       const contributorCounts = await contributors.loadContributorCounts(
         pool, rows.map((a) => a.id)
       );
+      // #5823: which of these apps THIS viewer helps build — the same
+      // three-source set the Contributors list draws from (services/
+      // contributors.js). Home's All / Contributing switch reads it. An
+      // empty Set when nobody is signed in, with no query.
+      const contributed = await contributors.loadContributedAppIds(
+        pool, rows.map((a) => a.id), userId
+      );
       // #4405: the live custom domain of each app, one round trip, so the
       // Share dialog can offer it without a per-app read.
       const liveDomains = await liveDomainsFor(pool, rows.map((a) => a.id));
@@ -953,10 +982,12 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         }
       }
 
+      const storedSecrets = await storedSecretKeysFor(pool, rows.filter((a) => !a.self_hosted && declaresRequiredSecret(a)));
+
       let apps = await Promise.all(rows.map(async (a) => {
-        // Per-app missing-required-secrets list. Cheap (one extra query
-        // each) and lets the home tile show a "fix secrets" warning
-        // without each card making its own /secrets fetch on render.
+        // Per-app missing-required-secrets list. One query for every tile
+        // (storedSecretKeysFor) and lets the home tile show a "fix secrets"
+        // warning without each card making its own /secrets fetch on render.
         //
         // The self-hosted app answers from platform_env instead: its
         // `secrets` block documents GitHub-injected credentials nobody can
@@ -968,20 +999,12 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         if (a.self_hosted) {
           const missing = await platformEnv.missingRequired(pool, a.id);
           missingSecrets = missing.length ? missing.map((m) => m.key) : null;
-        } else if (a.manifest_snapshot && typeof a.manifest_snapshot === 'object') {
-          const declared = Array.isArray(a.manifest_snapshot.secrets)
-            ? a.manifest_snapshot.secrets : [];
-          if (declared.some((s) => s && s.required)) {
-            const { rows: storedRows } = await pool.query(
-              'SELECT key FROM app_secrets WHERE app_id = $1',
-              [a.id]
-            );
-            const storedKeys = new Set(storedRows.map((r) => r.key));
-            missingSecrets = declared
-              .filter((s) => s && s.required && !storedKeys.has(s.key))
-              .map((s) => s.key);
-            if (!missingSecrets.length) missingSecrets = null;
-          }
+        } else if (declaresRequiredSecret(a)) {
+          const storedKeys = storedSecrets.get(Number(a.id)) || new Set();
+          missingSecrets = a.manifest_snapshot.secrets
+            .filter((s) => s && s.required && !storedKeys.has(s.key))
+            .map((s) => s.key);
+          if (!missingSecrets.length) missingSecrets = null;
         }
 
         const stagingSample = stagingApps.isSample(a);
@@ -1082,6 +1105,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
           last_merged_at: a.last_merged_at || null,
           open_issues: parseInt(a.open_issues, 10) || 0,
           is_member: !!a.is_member,
+          is_contributor: contributed.has(Number(a.id)),
           member_count: parseInt(a.member_count, 10) || 0,
           audience: a.audience || 'open',
           last_active_at: a.last_active_at || null,
@@ -1207,6 +1231,20 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
     } catch (err) {
       log.error('apps', 'App allowance request failed', { message: err.message });
       res.status(500).json({ error: 'Could not send your request. Please try again.' });
+    }
+  });
+
+  // Taking that request back (#5737). Shares the request's limiter, so going
+  // back and forth cannot flood the admins with new requests.
+  router.delete('/api/me/app-allowance/request', appAllowanceRequestLimiter, sameOriginBrowserOnly, async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
+    if (req.user.canAdminWrite) return res.status(400).json({ error: 'Your account already has unlimited app slots.' });
+    try {
+      res.json(await appAllowance.cancelOwn(pool, req.user, { maxApps: await appLimit.effective(pool, config) }));
+    } catch (err) {
+      log.error('apps', 'App allowance request undo failed', { message: err.message });
+      res.status(500).json({ error: 'Could not undo your request. Please try again.' });
     }
   });
 
@@ -1343,91 +1381,156 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         }
       }
 
-      // The CTE makes app row + creator membership atomic — the creator
-      // must always have a member row (it's what makes a collab-private
-      // app reachable by anyone at all).
-      const { rows } = await pool.query(
-        `WITH new_app AS (
-           INSERT INTO apps (name, slug, repo_url, created_by, status,
-                             collab_visibility, view_visibility)
-           VALUES ($1, $2, $3, $4, 'creating', $5, $6)
-           RETURNING *
-         ), membership AS (
-           INSERT INTO app_collaborators (app_id, user_id, status, accepted_at)
-           SELECT id, $4, 'member', NOW() FROM new_app
-           ON CONFLICT (app_id, user_id) DO NOTHING
-         )
-         SELECT * FROM new_app`,
-        [name.trim(), slug, repoUrlNormalized, req.user.id, collabVisibility, viewVisibility]
-      );
-
-      let appRow = rows[0];
-
-      // WHO APPROVES, chosen on the create screen. Written to the row now so
-      // the rule holds from the first proposal, and passed to the template
-      // (appRow → app-creator → template.js) so the new repository's
-      // dapp.json says the same thing: that file is the rule's source of
-      // truth, and the first deploy's reconcile then finds nothing to change.
-      // "People I pick" starts with the creator as its one approver, the
-      // same seed applyGovernanceChange plants when a manifest switches a
-      // live app to invited approvers.
-      // #4666: a preset, or rules of its own, is written to governance_rules
-      // (its groups' people resolved, as the reconcile stores them); every
-      // new project gets one, You or the group unless it asked for another.
-      if (rule && Array.isArray(rule.rules)) {
-        const stored = rule.groups && rule.groups.length
-          ? await appManifest.storedRules(pool, rule)
-          : require('../services/governance-rules').storedForm(rule);
-        const { rows: governed } = await pool.query(
-          `UPDATE apps SET governance_rules = $1::jsonb WHERE id = $2 RETURNING *`,
-          [JSON.stringify(stored), appRow.id]
-        );
-        appRow = governed[0] || appRow;
-      } else if (rule) {
-        const { rows: governed } = await pool.query(
-          `UPDATE apps SET approver_policy = $1, approvals_required = $2
-            WHERE id = $3 RETURNING *`,
-          [rule.approverPolicy, rule.approvalsRequired, appRow.id]
-        );
-        appRow = governed[0] || appRow;
-        if (rule.approverPolicy === 'invited') {
-          await pool.query(
-            `INSERT INTO app_approvers (app_id, user_id, status, accepted_at)
-             VALUES ($1, $2, 'member', NOW())
-             ON CONFLICT (app_id, user_id) DO NOTHING`,
-            [appRow.id, req.user.id]
-          );
+      // Everything the project is made from is written in ONE transaction:
+      // its row's insert starts its making (the app-creation machine,
+      // src/workflow/app-creation/, through the apps_wf_enrol_creation
+      // trigger), and its setup reads the rule, the description, the starter
+      // and the card owed from the row once this commits.
+      const readyMade = appTemplates.isReadyMade(template);
+      const homeroomBotDm = require('../services/homeroom-bot-dm');
+      const owesFirstVersion = !repoUrlNormalized && !readyMade && !!homeroomBotDm.normalizeBrief(req.body.brief);
+      const db = await pool.connect();
+      let appRow;
+      // A part of the create that is never a reason it fails: under a
+      // savepoint, so its failure leaves the rest of the transaction whole.
+      const optional = async (name, said, fn) => {
+        await db.query(`SAVEPOINT ${name}`);
+        try {
+          await fn();
+          await db.query(`RELEASE SAVEPOINT ${name}`);
+        } catch (err) {
+          await db.query(`ROLLBACK TO SAVEPOINT ${name}`);
+          log.warn('apps', said, { appId: appRow?.id, err: err.message });
         }
-      }
-
-      // WHAT IT IS, if the creator said. Seeded as the manifest snapshot the
-      // template's dapp.json is about to match ({ description, secrets: [] }),
-      // so app-creator writes it into the new repository and a Retry still
-      // has it. The first deploy then snapshots the real file over it.
-      if (description) {
-        const { rows: described } = await pool.query(
-          `UPDATE apps SET manifest_snapshot = $1 WHERE id = $2 RETURNING *`,
-          [JSON.stringify({ description, secrets: [] }), appRow.id]
+      };
+      try {
+        await db.query('BEGIN');
+        // The CTE makes app row + creator membership atomic — the creator
+        // must always have a member row (it's what makes a collab-private
+        // app reachable by anyone at all). Its insert starts its making
+        // (src/workflow/app-creation/).
+        const { rows } = await db.query(
+          `WITH new_app AS (
+             INSERT INTO apps (name, slug, repo_url, created_by, status,
+                               collab_visibility, view_visibility)
+             VALUES ($1, $2, $3, $4, 'creating', $5, $6)
+             RETURNING *
+           ), membership AS (
+             INSERT INTO app_collaborators (app_id, user_id, status, accepted_at)
+             SELECT id, $4, 'member', NOW() FROM new_app
+             ON CONFLICT (app_id, user_id) DO NOTHING
+           )
+           SELECT * FROM new_app`,
+          [name.trim(), slug, repoUrlNormalized, req.user.id, collabVisibility, viewVisibility]
         );
-        appRow = described[0] || appRow;
-      }
 
-      // WHAT IT STARTS FROM (#3521; services/app-templates.js), when it is a
-      // starter rather than the empty scaffold. On the row, like the rule
-      // above, because app-creator scaffolds from the row: a Retry after a
-      // failed create writes the same starter.
-      // A ready-made starter's icon is its own (template.js writes it into
-      // the new dapp.json, and nothing is sketched), so it is on the record
-      // from the start: Home's tile shows it while the app is still being
-      // set up, not a letter until the first deploy reads dapp.json back
-      // (Evan, 10 Oct 2026). That reconcile then finds nothing to change.
-      if (template !== appTemplates.DEFAULT_TEMPLATE) {
-        const readyIcon = appTemplates.isReadyMade(template) ? appTemplates.get(template).icon || null : null;
-        const { rows: templated } = await pool.query(
-          `UPDATE apps SET template = $1, icon_emoji = COALESCE($3, icon_emoji) WHERE id = $2 RETURNING *`,
-          [template, appRow.id, readyIcon]
-        );
-        appRow = templated[0] || appRow;
+        appRow = rows[0];
+
+        // WHO APPROVES, chosen on the create screen. Written to the row now so
+        // the rule holds from the first proposal, and passed to the template
+        // (appRow → app-creator → template.js) so the new repository's
+        // dapp.json says the same thing: that file is the rule's source of
+        // truth, and the first deploy's reconcile then finds nothing to change.
+        // "People I pick" starts with the creator as its one approver, the
+        // same seed applyGovernanceChange plants when a manifest switches a
+        // live app to invited approvers.
+        // #4666: a preset, or rules of its own, is written to governance_rules
+        // (its groups' people resolved, as the reconcile stores them); every
+        // new project gets one, You or the group unless it asked for another.
+        if (rule && Array.isArray(rule.rules)) {
+          const stored = rule.groups && rule.groups.length
+            // On the transaction's connection: the pool may have none to spare.
+            ? await appManifest.storedRules(db, rule)
+            : require('../services/governance-rules').storedForm(rule);
+          const { rows: governed } = await db.query(
+            `UPDATE apps SET governance_rules = $1::jsonb WHERE id = $2 RETURNING *`,
+            [JSON.stringify(stored), appRow.id]
+          );
+          appRow = governed[0] || appRow;
+        } else if (rule) {
+          const { rows: governed } = await db.query(
+            `UPDATE apps SET approver_policy = $1, approvals_required = $2
+              WHERE id = $3 RETURNING *`,
+            [rule.approverPolicy, rule.approvalsRequired, appRow.id]
+          );
+          appRow = governed[0] || appRow;
+          if (rule.approverPolicy === 'invited') {
+            await db.query(
+              `INSERT INTO app_approvers (app_id, user_id, status, accepted_at)
+               VALUES ($1, $2, 'member', NOW())
+               ON CONFLICT (app_id, user_id) DO NOTHING`,
+              [appRow.id, req.user.id]
+            );
+          }
+        }
+
+        // WHAT IT IS, if the creator said. Seeded as the manifest snapshot the
+        // template's dapp.json is about to match ({ description, secrets: [] }),
+        // so app-creator writes it into the new repository and a Retry still
+        // has it. The first deploy then snapshots the real file over it.
+        if (description) {
+          const { rows: described } = await db.query(
+            `UPDATE apps SET manifest_snapshot = $1 WHERE id = $2 RETURNING *`,
+            [JSON.stringify({ description, secrets: [] }), appRow.id]
+          );
+          appRow = described[0] || appRow;
+        }
+
+        // WHAT IT STARTS FROM (#3521; services/app-templates.js), when it is a
+        // starter rather than the empty scaffold. On the row, like the rule
+        // above, because app-creator scaffolds from the row: a Retry after a
+        // failed create writes the same starter.
+        // A ready-made starter's icon is its own (template.js writes it into
+        // the new dapp.json, and nothing is sketched), so it is on the record
+        // from the start: Home's tile shows it while the app is still being
+        // set up, not a letter until the first deploy reads dapp.json back
+        // (Evan, 10 Oct 2026). That reconcile then finds nothing to change.
+        if (template !== appTemplates.DEFAULT_TEMPLATE) {
+          const readyIcon = appTemplates.isReadyMade(template) ? appTemplates.get(template).icon || null : null;
+          const { rows: templated } = await db.query(
+            `UPDATE apps SET template = $1, icon_emoji = COALESCE($3, icon_emoji) WHERE id = $2 RETURNING *`,
+            [template, appRow.id, readyIcon]
+          );
+          appRow = templated[0] || appRow;
+        }
+
+        // The card of the idea, and with it the project's icon
+        // (services/app-sketch.js): owed now, made by the setup before the
+        // repository's first commit, which carries it. Only from "What do you
+        // want to make?" or its More options (MAKE_ORIGINS: the first
+        // session's door and the Create button's, both of which land on the
+        // made screen that draws it), only with a description to make it
+        // from, and never a reason the create fails. A connector's create
+        // sends no `from`, so it costs no sketch. `timeZone` is the maker's
+        // device's, so the card's "today" is theirs (an unknown or invalid
+        // zone reads as UTC there). A ready-made app has its own icon and
+        // nothing to sketch.
+        if (MAKE_ORIGINS.has(req.body.from) && !repoUrlNormalized && !readyMade
+            && homeroomBotDm.normalizeBrief(req.body.brief)) {
+          await optional('sketch', 'Sketch not owed', () => require('../services/app-sketch').startSketch(db, {
+            app: appRow, user: req.user, brief: req.body.brief,
+            timeZone: typeof req.body.timeZone === 'string' ? req.body.timeZone.slice(0, 64) : null,
+            // The make screen's line for a game or Your own choice: the card's
+            // tagline, and so the project's description, when the model gives
+            // none. The model's, from their own words, otherwise.
+            fallbackTagline: typeof req.body.taglineFallback === 'string' ? req.body.taglineFallback.slice(0, 200) : null,
+            // Just me, from More options: nobody to share it with.
+            solo: options.audience === 'solo',
+          }));
+        }
+        // What the project should do, owed as its first request: its making
+        // files it once its repository holds the starter. Never a reason the
+        // create fails.
+        if (owesFirstVersion) {
+          await optional('first_version', 'Homeroom bot first version not owed',
+            () => homeroomBotDm.recordFirstVersion(db, pool, config, { app: appRow, user: req.user, brief: req.body.brief }));
+        }
+        await db.query('COMMIT');
+      } catch (err) {
+        await db.query('ROLLBACK').catch(() => {});
+        throw err;
+      } finally {
+        db.release();
       }
 
       // A Group's invites go out now, each the same invite (and the same
@@ -1481,43 +1584,9 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         },
       });
 
-      // The card of the idea, and with it the project's icon
-      // (services/app-sketch.js): started BEFORE creation, which waits a
-      // little for it so the repository's first commit can carry it. Only
-      // from "What do you want to make?" or its More options (MAKE_ORIGINS:
-      // the first session's door and the Create button's, both of which
-      // land on the made screen that draws it), only with a description to
-      // make it from, and never a reason the create fails. A connector's
-      // create sends no `from`, so it costs no sketch. `timeZone` is the
-      // maker's device's, so the card's "today" is theirs (an unknown or
-      // invalid zone reads as UTC there). A ready-made app has its own icon
-      // and nothing to sketch.
-      const readyMade = appTemplates.isReadyMade(template);
-      if (MAKE_ORIGINS.has(req.body.from) && !repoUrlNormalized && !readyMade
-          && require('../services/homeroom-bot-dm').normalizeBrief(req.body.brief)) {
-        await require('../services/app-sketch').startSketch(pool, {
-          app: appRow, user: req.user, brief: req.body.brief,
-          timeZone: typeof req.body.timeZone === 'string' ? req.body.timeZone.slice(0, 64) : null,
-          // Just me, from More options: nobody to share it with.
-          solo: options.audience === 'solo',
-        }).catch((err) => log.warn('apps', 'Sketch not started', { appId: appRow.id, err: err.message }));
-      }
-
-      // Kick off async creation — don't await. It runs on after this
-      // answers, under an owner written on the row with a heartbeat
-      // (services/app-creation-owner.js): if this process dies first, the
-      // leader resumes it rather than failing it, and if createApp throws or
-      // hangs past the watchdog, the row is flipped to error.
-      const creationOwner = await appCreationOwner.takeNew(pool, appRow.id);
-      appCreationOwner.drive(pool, appRow, {
-        owner: creationOwner,
-        provision: () => createApp(config, appRow),
-        label: 'Async app creation',
-      });
-
       // What the project should do, from the create dialog: filed as its
       // first request, under its creator's name, once its repository holds
-      // the starter (homeroom-bot-dm.js FILEABLE_SQL). For
+      // the starter (owed above; app-creation files it). For
       // somebody the Homeroom bot builds for (#3624), the bot builds it and
       // says so in their DM, which the dialog then offers to open; for
       // anybody else it is left to the group. Optional here (a connector
@@ -1527,8 +1596,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       // build first; it is still one the bot acts on, and an import's
       // backlog waits (noteProjectMade).
       let homeroomBot = null;
-      const homeroomBotDm = require('../services/homeroom-bot-dm');
-      if (!repoUrlNormalized && !readyMade && homeroomBotDm.normalizeBrief(req.body.brief)) {
+      if (owesFirstVersion) {
         try {
           homeroomBot = await homeroomBotDm.startFirstVersion(pool, config, {
             app: appRow, user: req.user, brief: req.body.brief,
@@ -1586,6 +1654,11 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       if (err.code === '23505') {
         return res.status(409).json({ error: 'An app with that name already exists' });
       }
+      // A deleted app's purge still holds this database name (#5121,
+      // the apps trigger reserve_purged_app_name in schema.sql).
+      if (err.code === NAME_BEING_PURGED) {
+        return res.status(409).json({ error: NAME_BEING_PURGED_ERROR, reason: 'name_being_purged' });
+      }
       log.error('apps', 'Failed to create app', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
@@ -1594,9 +1667,10 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
   // Fork an existing app into a brand-new, independent app owned by the
   // forker (people see this as "Remix"). Mirrors POST /api/apps: same
   // quota/cap gate, same slug derivation, same insert-CTE (app row +
-  // creator membership) — plus a reference-only `forked_from` and an async
-  // forkApp() worker that copies the source's code into a new repository
-  // and gives the copy an EMPTY database of its own. Nobody's data, keys,
+  // creator membership) — plus a reference-only `forked_from`. Its insert
+  // starts its making (src/workflow/app-creation/), which copies the
+  // source's code into a new repository and gives the copy an EMPTY
+  // database of its own. Nobody's data, keys,
   // chat or members come with it.
   router.post('/api/apps/:slug/fork', drainGuard, appCreateLimiter, async (req, res) => {
     const { name } = req.body;
@@ -1689,19 +1763,19 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         log.warn('apps', 'Homeroom bot project not recorded', { appId: appRow.id, err: err.message });
       }
 
-      // Owned and resumable, as a create is (services/app-creation-owner.js).
-      const creationOwner = await appCreationOwner.takeNew(pool, appRow.id);
-      appCreationOwner.drive(pool, appRow, {
-        owner: creationOwner,
-        provision: () => forkApp(config, appRow, sourceApp),
-        label: 'Async fork',
-      });
+      // Its insert started its making, as a create's does
+      // (src/workflow/app-creation/): its source copied, then deployed.
 
       res.status(201).json({ app: appAccess.stripAppSecrets(appRow) });
       platformLimits.nudge(pool, config, 'apps');
     } catch (err) {
       if (err.code === '23505') {
         return res.status(409).json({ error: 'An app with that name already exists' });
+      }
+      // A deleted app's purge still holds this database name (#5121,
+      // the apps trigger reserve_purged_app_name in schema.sql).
+      if (err.code === NAME_BEING_PURGED) {
+        return res.status(409).json({ error: NAME_BEING_PURGED_ERROR, reason: 'name_being_purged' });
       }
       log.error('apps', 'Failed to fork app', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
@@ -1784,14 +1858,13 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       const canSeeFailure = !!req.user?.isAdmin
         || !!isCollaborator
         || (req.user?.id != null && appRow.created_by === req.user.id);
-      // Which step of createApp is running right now, for a client that
+      // Which step of its making a project is on, for a client that
       // loaded (or reloaded) mid-creation and so missed the WS
-      // broadcasts. Null whenever there is nothing to report — a
-      // finished app, or one whose platform process restarted mid-run —
+      // broadcasts: read from the making itself (services/
+      // app-creation-phase.js). Null whenever there is nothing to report,
       // which the dialog renders as "in progress, step unknown".
-      const appCreationPhase = require('../services/app-creation-phase');
       const phaseEntry = appRow.status === 'creating'
-        ? appCreationPhase.read(appRow.slug) : null;
+        ? await require('../services/app-creation-phase').read(pool, appRow.id) : null;
 
       // Demo mode's partner, by name: the settings dialog says who the
       // synthetic proposals and votes on this app come from
@@ -2147,6 +2220,8 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       const kind = body.kind === 'opened' || body.kind === 'watched' ? body.kind : null;
       const runId = Number(body.runId);
       if (!kind || !Number.isInteger(runId) || runId <= 0) return res.status(400).json({ error: 'kind and runId are required' });
+      // #5097: analytics only, so kept only for somebody who shares them.
+      if (!(await usageAnalytics.sharesUsageAnalytics(pool, req.user.id))) return res.json({ ok: true, discarded: true });
       await require('../services/first-version-live').recordView(pool, {
         userId: req.user.id, appId: app.id, runId, kind, seconds: body.seconds, goodFrame: body.goodFrame === true,
       });
@@ -2882,18 +2957,18 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
     }
   });
 
-  // Admin-only "Check for updates" button. Runs the same per-app drift
-  // check the periodic poller does, but on demand. Returns a structured
-  // result so the UI can show a useful toast (no_drift / redeployed /
-  // rebuild_failed / fetch_failed). Only meaningful for repo-backed
-  // apps; rejects with 400 otherwise. `manual` skips the poller's
-  // backoff on a commit that has failed to rebuild before: an admin
+  // Admin-only "Check for updates" button. Reads the app's main as the
+  // main-drift clock does, but now, and tells app delivery by hand, which
+  // deploys it without the backoff of a commit that failed before: an admin
   // pressing this has usually just fixed the thing that was failing.
+  // Returns a structured result so the UI can show a useful toast
+  // (no_drift / deploy_requested / fetch_failed). Only meaningful for
+  // repo-backed apps; rejects with 400 otherwise.
   router.post('/api/apps/:slug/check-updates', drainGuard, sameOriginBrowserOnly, async (req, res) => {
     if (!req.user?.canAdminWrite) return res.status(403).json({ error: 'Full admin access required' });
     try {
       const { rows } = await pool.query(
-        'SELECT id, slug, repo_url, main_sha, self_hosted FROM apps WHERE slug = $1',
+        'SELECT id, slug, repo_url, main_sha, last_deploy_at, self_hosted FROM apps WHERE slug = $1',
         [req.params.slug]
       );
       if (!rows.length) return res.status(404).json({ error: 'App not found' });
@@ -2902,7 +2977,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       if (!app.repo_url) {
         return res.status(400).json({ error: 'This app is not backed by a GitHub repo' });
       }
-      const result = await driftPoller.checkAndRedeployOne(config, pool, app, { manual: true });
+      const result = await driftPoller.checkByHand(config, pool, app);
       res.json(result);
     } catch (err) {
       log.error('apps', 'Manual drift check failed', { slug: req.params.slug, message: err.message });
@@ -3950,11 +4025,10 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
   // Retry a failed app. Allowed for the app's creator or any admin, capped
   // at MAX_RETRY_COUNT per app to avoid a stuck app burning budget forever.
   // A failure the platform's restarts caused is neither counted nor capped
-  // (services/app-creation-owner.js isInterrupted). The retry takes the row
-  // in the same write that flips it back to 'creating', and only while no
-  // attempt is still running anywhere: one past its watchdog keeps the row
-  // until it settles, so a second Retry can never start a second creation
-  // beside it.
+  // (isInterrupted). The project's making takes it from there
+  // (src/workflow/app-creation/): it flips the row back to 'creating' and
+  // sets it up again, only from failed, so a second Retry never starts a
+  // second creation beside the first.
   router.post('/api/apps/:slug/retry', drainGuard, sameOriginBrowserOnly, async (req, res) => {
     try {
       const { rows } = await pool.query(
@@ -3970,7 +4044,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         return res.status(403).json({ error: 'Only the app creator or an admin can retry' });
       }
 
-      const interrupted = appCreationOwner.isInterrupted(appRow.last_failure);
+      const interrupted = isInterrupted(appRow.last_failure);
       if (appRow.retry_count >= MAX_RETRY_COUNT && !req.user.canAdminWrite && !interrupted) {
         // The caller passed canManageApp, the same audience that may read
         // lastFailure, so the panel can explain the limit from this reply.
@@ -3984,10 +4058,10 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         });
       }
 
-      // A failed fork with no repo must re-enter app-forker so it copies the
-      // source. Sending it through createApp used to seed the starter
-      // template, which made Retry "succeed" as the wrong app. If the fork
-      // repo was already copied, forkApp resumes from that independent repo.
+      // A failed fork with no repo copies its source again (its setup knows
+      // a fork by its row: app-creator.js copyFork), so it must still be
+      // there and readable. If the fork repo was already copied, the setup
+      // resumes from that independent repo.
       let sourceApp = null;
       if (appRow.forked_from) {
         sourceApp = await findForkSource(pool, appRow);
@@ -4007,20 +4081,15 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         }
       }
 
-      const creationOwner = await appCreationOwner.takeForRetry(pool, appRow.id, { counted: !interrupted });
-      if (!creationOwner) {
+      // Pending: its making has not answered within the wait, and will.
+      const out = await require('../workflow/platform.ts').retryCreation(appRow.id, { counted: !interrupted, actor: req.user.username });
+      if (out.status === 'rejected' || out.status === 'faulted') {
         return res.status(409).json({
-          error: 'The last attempt to set this app up is still finishing. Try again in a minute.',
+          error: out.reason === 'still_deploying'
+            ? 'Its first deploy is still on its way. It will be live when it lands; try again if it fails.'
+            : 'The last attempt to set this app up is still finishing. Try again in a minute.',
         });
       }
-
-      appCreationOwner.drive(pool, appRow, {
-        owner: creationOwner,
-        provision: () => (appRow.forked_from
-          ? forkApp(config, appRow, sourceApp)
-          : createApp(config, appRow)),
-        label: appRow.forked_from ? 'Retry fork' : 'Retry app creation',
-      });
 
       res.json({ ok: true });
     } catch (err) {
@@ -4331,6 +4400,11 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       } catch (err) {
         log.warn('apps', 'Could not read the places for the hub', { slug: app.slug, message: err.message });
       }
+      // #5303: a #general the viewer muted counts nowhere, the hub's For you
+      // row included (hub-cards.tsx draws `channel.unread_count`).
+      if (channel && places.generalMuted(placesPayload)) {
+        channel = { ...channel, unread_count: 0, muted: true };
+      }
       res.json({
         slug: app.slug,
         name: app.name,
@@ -4516,6 +4590,12 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         pool, req.params.slug, req.user, 'view', appAccess.ACCESS_COLUMNS
       );
       if (!appRow) return res.status(404).json({ error: 'App not found' });
+      // #5097: usage analytics, kept only for somebody who switched "Share
+      // usage analytics" on. A 2xx all the same, so the browser's retry
+      // queue lets it go.
+      if (!(await usageAnalytics.sharesUsageAnalytics(pool, req.user.id))) {
+        return res.status(200).json({ ok: true, discarded: true });
+      }
 
       const result = await appOpenings.record(pool, {
         userId: req.user.id,
@@ -4633,7 +4713,7 @@ module.exports = {
   attachForkLineage,
   appRoutes, accessFlags, canDeleteApp, compactGlobalChatApp,
   deleteBlockReason, isCoreApp, hubFirstVersion, firstVersionLinesFor, sharedPlan, waitingMemberFields, firstVersionShowcaseFields,
-  firstVersionLiveFields, stoppedThread, inviteLinkOut,
+  firstVersionLiveFields, stoppedThread, inviteLinkOut, storedSecretKeysFor,
   // #2524: the activity guard and its two bounds, so the contract is
   // unit-testable without standing up the whole app router.
   activitySeconds, ACTIVITY_MAX_PER_POST, ACTIVITY_MAX_PER_DAY,

@@ -3,11 +3,10 @@
 //
 // The WS broadcast drives the create dialog live, but a page refresh
 // mid-creation has no history to replay — the dialog has to be able to
-// ASK which step is running. This is that read path. It is served from
-// the in-memory services/app-creation-phase.js store, so it is null
-// whenever there is nothing to report: a finished app, an app being
-// created by a different platform process, or one whose process
-// restarted mid-run.
+// ASK which step is running. This is that read path. It is read from the
+// project's making (services/app-creation-phase.js read: the
+// app-creation machine's instance and its setup's steps), so any process
+// answers the same; it is null whenever there is nothing to report.
 //
 // Same harness shape as tests/apps-last-failure-route.test.js — override
 // getPool before requiring the route module, mount on a real express
@@ -37,12 +36,12 @@ const ids = {
 };
 
 stub(ids.logger, { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} });
-stub(ids.appCreator, { createApp: async () => {} });
-stub(ids.appForker, { forkApp: async () => {} });
+stub(ids.appCreator, {});
+stub(ids.appForker, { findForkSource: async () => null });
 stub(ids.caddy, { productionHostname: (slug) => `${slug}.example.test` });
 stub(ids.docker, { getHostPort: async () => null });
 stub(ids.github, { parseGithubUrl: () => null, isEnabled: () => false });
-stub(ids.driftPoller, { checkAndRedeployOne: async () => ({}) });
+stub(ids.driftPoller, { checkByHand: async () => ({}) });
 stub(ids.appSecrets, {});
 stub(ids.appManifest, { MAX_APP_NAME_LENGTH: 64 });
 stub(ids.renamePr, {});
@@ -64,8 +63,10 @@ poolMod.getPool = () => ({
   },
 });
 
-// The real store — what it records is exactly what the route must serve.
-const creationPhase = require('../src/services/app-creation-phase');
+// What the making says, per app id (services/app-creation-phase.js read).
+const making = new Map();
+const phaseId = require.resolve('../src/services/app-creation-phase');
+stub(phaseId, { read: async (pool, appId) => (making.has(appId) ? { phase: making.get(appId) } : null), PHASES: [] });
 const { appRoutes } = require('../src/routes/apps');
 const express = require('express');
 
@@ -108,13 +109,13 @@ test('an app mid-creation reports the phase it is actually in', async () => {
   appRow = makeAppRow();
   collaboratorIds = new Set();
   currentUser = { id: 100, username: 'creator' };
-  creationPhase.markPhase('fresh-app', 'build');
+  making.set(7, 'build');
   const server = await startServer();
   try {
     const app = await fetchApp(server);
     assert.equal(app.creationPhase, 'build');
   } finally {
-    creationPhase.clear('fresh-app');
+    making.clear();
     server.close();
   }
 });
@@ -123,7 +124,7 @@ test('an app with nothing recorded reports creationPhase null', async () => {
   appRow = makeAppRow();
   collaboratorIds = new Set();
   currentUser = { id: 100, username: 'creator' };
-  creationPhase.clear('fresh-app');
+  making.clear();
   const server = await startServer();
   try {
     const app = await fetchApp(server);
@@ -140,13 +141,13 @@ test('a finished app never reports a phase, even with a stale store entry', asyn
   currentUser = { id: 100, username: 'creator' };
   // Belt-and-braces: endPhases clears on every terminal path, but the
   // route must not hand a live app a spinning step if one ever leaks.
-  creationPhase.markPhase('fresh-app', 'deploy');
+  making.set(7, 'deploy');
   const server = await startServer();
   try {
     const app = await fetchApp(server);
     assert.equal(app.creationPhase, null);
   } finally {
-    creationPhase.clear('fresh-app');
+    making.clear();
     server.close();
   }
 });
@@ -155,13 +156,13 @@ test('creationPhase is not disclosed to someone who cannot see the app', async (
   appRow = makeAppRow({ view_visibility: 'private' });
   collaboratorIds = new Set();
   currentUser = { id: 999, username: 'stranger' };
-  creationPhase.markPhase('fresh-app', 'repository');
+  making.set(7, 'repository');
   const server = await startServer();
   try {
     const res = await fetch(`http://127.0.0.1:${server.address().port}/api/apps/fresh-app`);
     assert.equal(res.status, 404, 'the visibility gate runs before any payload is built');
   } finally {
-    creationPhase.clear('fresh-app');
+    making.clear();
     server.close();
   }
 });

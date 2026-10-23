@@ -436,45 +436,52 @@ const Browse = {
     Browse.render();
   },
 
-  // ── Filter chips (the prototype's scrDiscover) ────────────────────
+  // ── Views and the Filters sheet ───────────────────────────────────
   //
-  // All · Featured · Not joined · Joined · New, in a row above the list,
-  // and Not yet reviewed after them for an admin (ADMIN_FILTERS). A chip
-  // FILTERS where Sort only reorders, and the three controls compose in one
-  // fixed order: the chip picks the set, Sort orders it, the search narrows
-  // it. So "Featured, by Most users" is the featured apps ranked by users,
-  // and switching chips never loses the order the viewer chose.
+  // The old row of filter chips is a three-way switch now — For you · Browse
+  // · Joined — and the rest of the chips moved into the Filters sheet as
+  // "Show only" switches. Everything still composes in one fixed order: the
+  // view picks the set, the switches narrow it, the type narrows it again,
+  // Sort orders it, and the search narrows it.
   //
-  // The order of this array is the order of the chips; the first is the
-  // default and the store's prerender value. Labels are user-facing, and
-  // browse-screen.tsx keeps a COPY of them for the same reason it keeps one
-  // of SORTS (tests/browse-screen.test.js pins the two together).
-  FILTERS: [
-    { key: 'all', label: 'discover:filter.all' },
-    { key: 'featured', label: 'discover:filter.featured' },
-    // What you could still join (#5267): Discover is for finding new
-    // things, and this chip is the list without the ones you are in.
-    { key: 'notjoined', label: 'discover:filter.notJoined' },
-    // The key stays `yours` — ?filter=yours links and the declared checks
-    // select on it — while the label says what the chip now holds: the
-    // communities you are in, not the shortcuts on your Home screen.
-    { key: 'yours', label: 'discover:filter.joined' },
-    { key: 'new', label: 'discover:filter.new' },
+  // For you is the directory as it always was: the Recommended order,
+  // grouped under "Recommended for you". Browse is every app as one flat
+  // list. Joined is the communities you are in.
+  //
+  // The order of this array is the order of the switch; the first is the
+  // default and the store's prerender value. browse-screen.tsx keeps a COPY
+  // of them for the same reason it keeps one of SORTS.
+  VIEWS: [
+    { key: 'foryou', label: 'discover:view.forYou' },
+    { key: 'browse', label: 'discover:view.browse' },
+    // The key stays `yours` — ?filter=yours links land here — while the
+    // label says what the view now holds: the communities you are in.
+    { key: 'joined', label: 'discover:filter.joined' },
   ],
 
-  // The chips only an admin gets, after the rest (#5267). "Not yet
+  // The sheet's "Show only" switches, in the order they are listed. They
+  // combine: Featured and New together shows apps that are both.
+  SHOW_ONLY: [
+    { key: 'featured', label: 'discover:filter.featured' },
+    { key: 'new', label: 'discover:filter.new' },
+    // What you could still join (#5267): Discover is for finding new
+    // things, and this switch is the list without the ones you are in.
+    { key: 'notjoined', label: 'discover:filters.hideJoined' },
+  ],
+
+  // The switches only an admin gets, after the rest (#5267). "Not yet
   // reviewed" is moderation state: it used to be a heading in everybody's
-  // default list, and it is now a filter for the people who review. The
-  // apps under it are NOT hidden from anyone: they still sit in the default
-  // list, after the reviewed ones, as they always have (directoryTier), with
-  // no heading or label naming the review. browse-screen.tsx keeps a copy,
-  // for the reason it keeps one of FILTERS.
-  ADMIN_FILTERS: [
+  // default list, and it is now a filter for the people who review. The apps
+  // under it are NOT hidden from anyone: they still sit in the default list,
+  // after the reviewed ones, as they always have (directoryTier).
+  // browse-filter-sheet.tsx keeps a copy, for the reason it keeps one of
+  // SHOW_ONLY.
+  ADMIN_SHOW_ONLY: [
     { key: 'unreviewed', label: 'discover:filter.unreviewed' },
   ],
 
   // An admin, as the shell sees one: `App.user.isAdmin`, which "View as
-  // non-admin" masks, so that view loses the chip too.
+  // non-admin" masks, so that view loses the switch too.
   isAdminViewer() {
     try { return !!(typeof App !== 'undefined' && App.user && App.user.isAdmin); } catch (err) { return false; }
   },
@@ -487,47 +494,220 @@ const Browse = {
   NEW_WINDOW_DAYS: 14,
   NEW_FALLBACK_COUNT: 6,
 
-  // The chip, remembered for the SESSION only: it lives on this object, so it
-  // survives leaving Discover and coming back, and a reload starts on All. No
-  // storage, unlike Sort — a filter left on by a visit last week is a
+  // The view, remembered for the SESSION only: it lives on this object, so it
+  // survives leaving Discover and coming back, and a reload starts on For
+  // you. No storage, unlike Sort — a filter left on by a visit last week is a
   // directory that silently hides most of itself.
-  _filter: 'all',
+  _view: 'foryou',
+  // The Show only switches that are on, in SHOW_ONLY/ADMIN_SHOW_ONLY order.
+  _only: [],
   // ?filter= seeds the FIRST entry of a page load and is then spent, so a
-  // link someone was handed (and every declared check) lands on its chip
+  // link someone was handed (and every declared check) lands on its filter
   // without overriding a choice made by hand later in the same visit.
   _urlFilterTaken: false,
 
-  // Anything unrecognised falls back to All rather than emptying the screen,
-  // and so does an admin chip asked for by anyone else.
+  // The keys a ?filter= link may name. The old chips' labels left with the
+  // chips; the switch and the sheet carry their own copies of the words.
+  FILTERS: ['all', 'featured', 'notjoined', 'yours', 'new'],
+  ADMIN_FILTERS: ['unreviewed'],
+
+  // Anything unrecognised lands on the defaults rather than emptying the
+  // screen, and so does an admin key asked for by anyone else.
   // Pure but for the admin read; unit-tested.
+  resolveView(raw) {
+    const key = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
+    return Browse.VIEWS.some((v) => v.key === key) ? key : 'foryou';
+  },
+
   resolveFilter(raw) {
     const key = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
-    if (Browse.FILTERS.some((f) => f.key === key)) return key;
-    if (Browse.ADMIN_FILTERS.some((f) => f.key === key) && Browse.isAdminViewer()) return key;
+    if (Browse.FILTERS.includes(key)) return key;
+    if (Browse.ADMIN_FILTERS.includes(key) && Browse.isAdminViewer()) return key;
     return 'all';
   },
 
+  // The switches the sheet is allowed to hold, in their fixed order, from the
+  // two arrays above. Unknown keys are dropped and `unreviewed` survives only
+  // for an admin. Pure — unit-tested.
+  showOnlyKeys(raw) {
+    const list = Array.isArray(raw) ? raw : [];
+    const all = Browse.SHOW_ONLY.map((o) => o.key)
+      .concat(Browse.ADMIN_SHOW_ONLY.map((o) => o.key));
+    const allowed = Browse.SHOW_ONLY.map((o) => o.key)
+      .concat(Browse.isAdminViewer() ? Browse.ADMIN_SHOW_ONLY.map((o) => o.key) : []);
+    return all.filter((key) => allowed.includes(key) && list.includes(key));
+  },
+
+  // The single key the empty line and #browse-list[data-filter] read: the
+  // Joined view is `yours`; otherwise the switches that are on, joined with a
+  // space ('all' when none). With more than one switch the empty line is the
+  // generic sentence — see emptyText.
+  derivedFilter() {
+    if (Browse._view === 'joined') return 'yours';
+    return Browse._only.length ? Browse._only.join(' ') : 'all';
+  },
+
   // Runs on screen ENTRY, never during render — the same reason
-  // _applyInitialSort gives: location.search does not exist in the SSG pass,
-  // and a first client render that disagreed with the prerender (All) would
-  // be a hydration console.error.
+  // _applyInitialSort gives. A ?filter= link maps onto the new controls:
+  // `yours` opens the Joined view, and the rest turn on the matching switch.
   _applyInitialFilter() {
     if (!Browse._urlFilterTaken) {
       Browse._urlFilterTaken = true;
       let raw = null;
       try { raw = new URLSearchParams(location.search).get('filter'); } catch (err) { raw = null; }
-      if (raw) Browse._filter = Browse.resolveFilter(raw);
+      const key = raw ? Browse.resolveFilter(raw) : 'all';
+      if (key === 'yours') Browse._view = 'joined';
+      else if (key !== 'all') Browse._only = [key];
     }
-    if (Browse._store) Browse._store.set({ filter: Browse._filter, adminFilters: Browse.isAdminViewer() });
+    if (Browse._store) {
+      Browse._store.set({
+        view: Browse._view,
+        only: Browse._only,
+        filter: Browse.derivedFilter(),
+        activeCount: Browse.activeFilterCount(),
+        adminFilters: Browse.isAdminViewer(),
+      });
+    }
   },
 
-  // A chip's onClick.
-  setFilter(key) {
-    const next = Browse.resolveFilter(key);
-    Browse._filter = next;
+  // The switch's onChange. Choosing Joined drops "Hide apps I've joined": the
+  // two together would always show nothing.
+  setView(key) {
+    Browse._view = Browse.resolveView(key);
+    if (Browse._view === 'joined') {
+      Browse._only = Browse._only.filter((k) => k !== 'notjoined');
+    }
     Browse._keptJoins.clear();
-    if (Browse._store) Browse._store.set({ filter: next });
     Browse.render();
+  },
+
+  // The sheet's Show button: every change in the sheet lands at once, in one
+  // render, and the order is remembered the way setSort remembers it.
+  applyFilters(draft) {
+    const next = draft || {};
+    Browse._only = Browse.showOnlyKeys(next.only);
+    Browse._category = Browse.resolveCategory(next.category);
+    const sort = Browse.resolveSort(next.sort);
+    Browse._sort = sort;
+    try { window.localStorage.setItem(Browse.SORT_STORAGE_KEY, sort); } catch (err) { /* ignore */ }
+    if (Browse._view === 'joined') {
+      Browse._only = Browse._only.filter((k) => k !== 'notjoined');
+    }
+    Browse._keptJoins.clear();
+    Browse.render();
+  },
+
+  // The number on the Filters button: the choices that differ from the
+  // defaults. The view tab is not counted. Pure — unit-tested.
+  activeFilterCount() {
+    return Browse._only.length
+      + (Browse._category !== 'all' ? 1 : 0)
+      + (Browse._sort !== 'recommended' ? 1 : 0);
+  },
+
+  // The set the view and the switches pick. The Joined view keeps the apps
+  // you are in; each switch then goes through the one predicate that already
+  // exists for it (filterApps), so the switch and the old chip can never
+  // disagree. Pure — unit-tested.
+  narrowApps(apps, model, now) {
+    const view = model && model.view === 'joined' ? 'joined' : 'browse';
+    const only = Array.isArray(model && model.only) ? model.only : [];
+    let list = (apps || []).filter(Boolean);
+    if (view === 'joined') list = list.filter((a) => Home.isJoined(a));
+    for (const key of only) list = Browse.filterApps(list, key, now);
+    return list;
+  },
+
+  // ── Type chips (#3962) ────────────────────────────────────────────
+  //
+  // A second row under the filter chips: All types, then one chip per KIND
+  // of app (dapp.json's top-level `category`, which the deploy reads into
+  // the manifest snapshot GET /api/apps already carries). Nothing guesses a
+  // type: an app is under a type only when its own dapp.json says so, so an
+  // app that says nothing is listed under All types alone.
+  //
+  // A COPY of app-manifest.js APP_CATEGORIES, labelled, in its order; the
+  // server's list is the authority on which words are valid and
+  // tests/browse-screen.test.js pins the two together. The screen draws the
+  // row from the `categories` the list render publishes, never from this
+  // array directly, so the chips are only the types some app has.
+  CATEGORIES: [
+    { key: 'games', label: 'discover:category.games' },
+    { key: 'social', label: 'discover:category.social' },
+    { key: 'tools', label: 'discover:category.tools' },
+    { key: 'learning', label: 'discover:category.learning' },
+    { key: 'creative', label: 'discover:category.creative' },
+    { key: 'other', label: 'discover:category.other' },
+  ],
+
+  // Remembered for the session only, like _view and _only, and for the same
+  // reason.
+  _category: 'all',
+
+  // An app's type, or null: the snapshot's `category` when it is one of
+  // CATEGORIES. Pure — unit-tested.
+  appCategory(app) {
+    const snap = app && app.manifest_snapshot;
+    const raw = snap && typeof snap === 'object' ? snap.category : null;
+    const key = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
+    return Browse.CATEGORIES.some((c) => c.key === key) ? key : null;
+  },
+
+  // Every type at least one app in the directory has, in CATEGORIES order,
+  // 'other' included. The page's row drops 'other' (see presentCategories);
+  // the Filters sheet lists it. Pure — unit-tested.
+  presentCategoryKeys(apps) {
+    const have = new Set();
+    for (const a of apps || []) {
+      const key = Browse.appCategory(a);
+      if (key) have.add(key);
+    }
+    return Browse.CATEGORIES.map((c) => c.key).filter((key) => have.has(key));
+  },
+
+  // The chips the PAGE row shows: every type at least one app in the
+  // directory has, in CATEGORIES order. Empty while no app has a type other
+  // than `other`: a row of Other alone would sort nothing, so it stays
+  // absent until projects tag themselves. The screen adds Other back when it
+  // is the picked type. Pure — unit-tested.
+  presentCategories(apps) {
+    const keys = Browse.presentCategoryKeys(apps);
+    if (!keys.some((key) => key !== 'other')) return [];
+    return Browse.CATEGORIES.filter((c) => keys.includes(c.key));
+  },
+
+  // The Filters sheet's Type list: every type present, with Other always
+  // included once anything is tagged, in CATEGORIES order. Empty when no
+  // project has a type at all, which leaves the section out. Pure.
+  categoryOptions(apps) {
+    const keys = Browse.presentCategoryKeys(apps === undefined ? Browse._apps : apps);
+    if (!keys.length) return [];
+    const all = keys.includes('other') ? keys : keys.concat('other');
+    return Browse.CATEGORIES.filter((c) => all.includes(c.key));
+  },
+
+  // A type the directory has, else All types: a chip that is gone (its last
+  // app retagged) cannot stay pressed over an empty list. 'other' counts as
+  // present here, because the sheet can pick it even when the page row leaves
+  // it out. Pure — unit-tested.
+  resolveCategory(raw, apps) {
+    const key = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
+    const present = Browse.presentCategoryKeys(apps === undefined ? Browse._apps : apps);
+    return present.includes(key) ? key : 'all';
+  },
+
+  // A type chip's onClick.
+  setCategory(key) {
+    Browse._category = Browse.resolveCategory(key);
+    if (Browse._store) Browse._store.set({ category: Browse._category });
+    Browse.render();
+  },
+
+  // The type's set. 'all' is the list unchanged. Pure — unit-tested.
+  categoryApps(apps, key) {
+    const list = (apps || []).filter(Boolean);
+    if (!key || key === 'all') return list;
+    return list.filter((a) => Browse.appCategory(a) === key);
   },
 
   // The New chip's set: see NEW_WINDOW_DAYS. `now` is injectable for the
@@ -569,7 +749,7 @@ const Browse = {
   //              apps the "Not yet reviewed" heading used to hold.
   // Pure — unit-tested.
   filterApps(apps, key, now) {
-    const filter = Browse.resolveFilter(key == null ? Browse._filter : key);
+    const filter = Browse.resolveFilter(key == null ? Browse.derivedFilter() : key);
     const list = (apps || []).filter(Boolean);
     if (filter === 'featured') return list.filter((a) => !!a.featured);
     if (filter === 'notjoined') return list.filter((a) => !Home.isJoined(a) || Browse._keptJoins.has(a.slug));
@@ -579,10 +759,22 @@ const Browse = {
     return list;
   },
 
-  // The nothing-to-show line, per chip. Pure — unit-tested.
-  emptyText(query, key) {
-    const filter = Browse.resolveFilter(key == null ? Browse._filter : key);
+  // The nothing-to-show line. More than one Show only switch on gets the
+  // generic sentence — naming one of several would be a half-truth. With a
+  // type picked and no search, it says the type has nothing here, since the
+  // type row only offers types some app has: it is the filter that emptied
+  // it. Otherwise per switch. Pure — unit-tested.
+  emptyText(query, key, category) {
+    const raw = key == null ? Browse.derivedFilter() : key;
     const q = String(query || '').trim();
+    const many = typeof raw === 'string' && raw.trim().split(/\s+/).filter(Boolean).length > 1;
+    if (many) {
+      return q
+        ? PlatformI18n.t('discover:empty.search.filters', { query: q })
+        : PlatformI18n.t('discover:empty.filters');
+    }
+    const filter = Browse.resolveFilter(raw);
+    if (!q && category && category !== 'all') return PlatformI18n.t('discover:empty.category');
     if (q) {
       if (filter === 'featured') return PlatformI18n.t('discover:empty.search.featured', { query: q });
       if (filter === 'notjoined') return PlatformI18n.t('discover:empty.search.notJoined', { query: q });
@@ -743,17 +935,29 @@ const Browse = {
     return { href: url.href, label };
   },
 
-  // The rows for the current chip and query. The chip picks the set first
-  // (filterApps), then the sort orders it, then the search narrows it. The
-  // search covers every app the chip admits (home's own search is scoped to
-  // "Your apps"), reusing Home's search (Home.filterApps) so both fields
-  // behave identically. The three compose, and searching keeps the sort's
-  // order with one exception (#4793): an app whose name or slug IS the
-  // query moves to the top, the rest staying where the sort put them.
-  visibleApps() {
-    const pool = Browse.filterApps(Browse._apps, Browse._filter);
-    const sorted = Browse.sortApps(pool, Browse._sort);
+  // The rows for the current view, switches, type, order and query. The view
+  // and switches pick the set first (narrowApps), then the type narrows it,
+  // then the sort orders it, then the search narrows it. The search covers
+  // every app the view admits (home's own search is scoped to "Your apps"),
+  // reusing Home's search (Home.filterApps) so both fields behave
+  // identically. `model` lets the Filters sheet count a draft before it is
+  // applied; it defaults to the live fields.
+  visibleApps(model) {
+    const draft = model || {};
+    const view = draft.view || Browse._view;
+    const only = Array.isArray(draft.only) ? draft.only : Browse._only;
+    const category = draft.category === undefined ? Browse._category : draft.category;
+    const sort = draft.sort === undefined ? Browse._sort : draft.sort;
+    const narrowed = Browse.narrowApps(Browse._apps, { view, only });
+    const pool = Browse.categoryApps(narrowed, Browse.resolveCategory(category));
+    const sorted = Browse.sortApps(pool, sort);
     return Home.filterApps(sorted, Browse._query);
+  },
+
+  // How many apps a draft in the sheet would show, with the live search
+  // applied — what the "Show N apps" button reads. Pure — unit-tested.
+  countFor(model) {
+    return Browse.visibleApps(model).length;
   },
 
   // ── Row rendering ─────────────────────────────────────────────────
@@ -854,12 +1058,23 @@ const Browse = {
 
   _renderList() {
     if (!Browse._store) return;
+    // "View as non-admin" masks isAdmin, so a switch remembered from before
+    // cannot survive it — the same rule that used to drop the old admin chip.
+    const isAdmin = Browse.isAdminViewer();
+    if (!isAdmin && Browse._only.includes('unreviewed')) {
+      Browse._only = Browse._only.filter((k) => k !== 'unreviewed');
+    }
     const apps = Browse.visibleApps();
     const query = (Browse._query || '').trim();
-    // The DEFAULT list (#5267): Recommended order, the All chip, no search.
-    // Only it is grouped, and it leads with "Recommended for you"; every
-    // other chip and sort is one list in its own order.
-    const grouped = Browse._sort === 'recommended' && !query && Browse._filter === 'all';
+    // The DEFAULT list (#5267): the For you view, the Recommended order, no
+    // switches, no type and no search. Only it is grouped, and it leads with
+    // "Recommended for you"; the Browse and Joined views and every other
+    // combination are one list in its own order.
+    const categories = Browse.presentCategories(Browse._apps);
+    const category = Browse.resolveCategory(Browse._category);
+    const only = Browse._only;
+    const grouped = Browse._view === 'foryou' && Browse._sort === 'recommended'
+      && !query && !only.length && category === 'all';
     const picked = grouped ? Browse.recommendedApps(apps) : [];
     const pickedSlugs = new Set(picked.map((a) => a.slug));
     const rest = picked.length ? apps.filter((a) => !pickedSlugs.has(a.slug)) : apps;
@@ -872,11 +1087,17 @@ const Browse = {
     Browse._store.set({
       site,
       rows,
-      // Republished on every list render so the <select> and the
-      // #browse-list[data-sort] anchor can never lag the rows they describe.
+      // Republished on every list render so the switch, the Filters count and
+      // the #browse-list[data-*] anchors can never lag the rows they describe.
       sort: Browse._sort,
-      // …and the chips and #browse-list[data-filter], for the same reason.
-      filter: Browse._filter,
+      view: Browse._view,
+      only,
+      activeCount: Browse.activeFilterCount(),
+      filter: Browse.derivedFilter(),
+      // The type row (#3962): the chips it holds (none hides it) and the
+      // pressed one, published together with the rows they picked.
+      categories,
+      category,
       // #1912: EVERY sort tucks the demos and apps needing fixes behind
       // Show more — the disclosure used to exist on Recommended only, so
       // switching to a metric sort suddenly showed everything. Only
@@ -891,7 +1112,7 @@ const Browse = {
       error: false,
       // The site row IS a result, so the "No apps match" line never shows
       // right under it.
-      empty: site ? null : (rows.length ? null : Browse.emptyText(query, Browse._filter)),
+      empty: site ? null : (rows.length ? null : Browse.emptyText(query, Browse.derivedFilter(), category)),
     });
 
     Browse._maybeShotDetail(rows);
@@ -1021,6 +1242,12 @@ const Browse = {
   shareUrlFor(app) {
     if (!app || app.self_hosted) return null;
     if (app.status !== 'running' || !app.url) return null;
+    // A public project's link is its page on Homeroom, which a stranger
+    // opens as the project's page and a link preview names (dialogs/
+    // share.tsx publicPageUrl, routes/project-preview.js).
+    if (app.view_visibility === 'public' && app.slug && typeof location !== 'undefined') {
+      return `${location.origin}/app/${encodeURIComponent(app.slug)}`;
+    }
     const raw = String(app.url);
     try {
       return typeof window !== 'undefined' && typeof window.resolveDevHost === 'function'

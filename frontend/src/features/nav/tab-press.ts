@@ -11,8 +11,11 @@
  * the bar goes back to the router's tab. Every tab's route swaps in the
  * press, except resuming an app's Workshop, which holds the reveal for up to
  * App._TAB_REVEAL_WAIT_MS (250ms) while the app's record lands; this is
- * comfortably past that. Nothing on the phone refuses a tab today, so this
- * is a floor under a future route that might, not a path anything takes.
+ * comfortably past that. Simpler tabs are never refused. A Communities press
+ * can be: from Me or Discover its resume, or the phone's list over it, can
+ * reveal nothing (#5730), which is why that press carries a `fallback` — the
+ * page that always lands — and the fallback gets the same wait again before
+ * the bar gives the press up.
  */
 export const PRESS_SETTLE_MS = 1500;
 
@@ -30,6 +33,13 @@ export interface PendingPress {
  * press by PRESS_SETTLE_MS after that, clears it and calls `settle`. Whoever
  * sees the router answer (useTabMarker's tab-change run) answers it by
  * cancelling and clearing it.
+ *
+ * A PRESS WITH A `fallback` IS NOT GIVEN UP SO SOON (#5730). Communities can
+ * be pressed from Me or Discover and reveal no screen: the press then runs
+ * its fallback once, the destination that always lands, and waits the same
+ * PRESS_SETTLE_MS again for the router to light `key`. It runs `settle` only
+ * after that second wait, so a press that was answered late never slides the
+ * pill back. A press replaced by a newer one, or cancelled, runs no fallback.
  *
  * ONE FRAME, THEN THE SCREEN (polish board #2, 19 Oct 2026). #3259 made the
  * press wait for the pill's slide to be RUNNING (its `Animation.ready`,
@@ -56,12 +66,14 @@ export function schedulePress(
     = typeof cancelAnimationFrame === 'function' ? cancelAnimationFrame : undefined,
   timers: { set: (fn: () => void, ms: number) => unknown; clear: (id: unknown) => void }
     = { set: (fn, ms) => setTimeout(fn, ms), clear: (id) => clearTimeout(id as ReturnType<typeof setTimeout>) },
+  fallback?: () => void,
 ): PendingPress {
   holder.current?.cancel();
   let cancelFrame = () => {};
   let wait: unknown = null;
   let timer: unknown = null;
   let went = false;
+  let fellBack = false;
   const entry: PendingPress = {
     key,
     cancel: () => {
@@ -74,6 +86,23 @@ export function schedulePress(
     },
   };
   holder.current = entry;
+  // The press is still unanswered PRESS_SETTLE_MS later: run its one
+  // fallback and wait again, or give it up.
+  const arm = () => {
+    timer = timers.set(() => {
+      timer = null;
+      if (holder.current !== entry) return;
+      if (fallback && !fellBack) {
+        fellBack = true;
+        fallback();
+        if (holder.current !== entry) return;
+        arm();
+        return;
+      }
+      holder.current = null;
+      settle();
+    }, PRESS_SETTLE_MS);
+  };
   const navigate = () => {
     if (went || holder.current !== entry) return;
     went = true;
@@ -83,12 +112,7 @@ export function schedulePress(
     // The router lit `key` inside go(), or will from its popstate, and the
     // tab-change run answered the press; this only acts if nothing ever does.
     if (holder.current !== entry) return;
-    timer = timers.set(() => {
-      timer = null;
-      if (holder.current !== entry) return;
-      holder.current = null;
-      settle();
-    }, PRESS_SETTLE_MS);
+    arm();
   };
   // The press's frame (the lit tab) is produced in the rAF's rendering
   // update; a task posted from it runs once that frame is out.

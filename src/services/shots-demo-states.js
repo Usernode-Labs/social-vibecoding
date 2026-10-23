@@ -372,13 +372,9 @@ const STATES = [
           agentSessionId: id, minutesAgo: 1,
           content: 'Make the empty state on the dev board friendlier.',
         });
-        // Nothing in a copy renews a running agent's lease, and one not
-        // renewed for 90 seconds reads as interrupted: this one is renewed
-        // ahead, past the life of any shots pair.
         await client.query(
           `UPDATE agent_sessions SET active_turn = jsonb_build_object(
-             'id', $2::text, 'startedAt', NOW() - INTERVAL '40 seconds',
-             'renewedAt', NOW() + INTERVAL '6 hours', 'phase', 'mayor')
+             'id', $2::text, 'startedAt', NOW() - INTERVAL '40 seconds', 'phase', 'mayor')
              || CASE WHEN $3 THEN jsonb_build_object(
                   'stopRequestedAt', NOW() - INTERVAL '10 seconds', 'stopRequestedBy', $4::text)
                 ELSE '{}'::jsonb END
@@ -1068,9 +1064,10 @@ const STATES = [
     // the drill-down finds a player by their Discord handle alone
     // (event-standings.js fetchEventLeaderboardRows: a whole season has no
     // one event to find an onchain account on), and the staging seeds'
-    // players have only an email, so every row's drill-down said "No
-    // identifier available for this row." Three players entered
-    // for the season get a handle, as a real player has one, and two
+    // players have only an email. #5807 gave every row a server-issued
+    // `row_ref`, so a player with no handle opens the same drill-down like
+    // anyone else; three players entered for the season still get a handle,
+    // as a real player has one, and two
     // activities each on the event, written as a partner records them
     // (routes/topochain/partner.js POST /user-activities: on one of the
     // event's challenges, typed by its category, from `api`). Activities
@@ -1131,7 +1128,7 @@ const STATES = [
       const handles = STANDINGS_PLAYERS.map(([, handle]) => handle);
       return {
         shows: [{
-          state: `The Leaderboard's season standings: the rows of ${handles.join(', ')} each open a drill-down listing that player's recorded point activities and when each happened. The other rows, yours among them, have no identifier, and their drill-down says so.`,
+          state: `The Leaderboard's season standings: the rows of ${handles.join(', ')} each open a drill-down listing that player's recorded point activities and when each happened. The other rows, yours among them, open the same drill-down and list whatever they have recorded.`,
           path: '/#leaderboard/topochain',
         }],
         alsoFor: ['read_only_admin', 'full_admin'],
@@ -1281,7 +1278,7 @@ const STATES = [
     // for a new project's first version (#4392): the plan, built, and under
     // it the bot's thanks for answering over the project's card and its
     // build line. The records are the real flow's: the project (Just you),
-    // its first request (homeroom-bot-dm.js fileFirstVersion), the look that
+    // its first request (homeroom-bot-dm.js fileFirstRequest), the look that
     // wrote the plan and, once Build it was tapped, waits its turn to build
     // (homeroom-bot.js awaitGo, goAhead), the plan's card with its button
     // decided (sendPlanCard, decidePlanTap) and the thanks

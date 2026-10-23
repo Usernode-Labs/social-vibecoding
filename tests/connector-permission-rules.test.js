@@ -355,9 +355,9 @@ test('adding the scaffold to an imported repo can never fail the import', () => 
   // is complete and working, just noisier to drive, and a user-owned repo the
   // platform's GitHub App cannot write to is an ordinary import. Failing the
   // creation over a settings file would be a regression in what works.
-  const start = CREATOR_SRC.indexOf('} else if (repoUrl) {');
-  assert.ok(start > 0, 'the import branch is still shaped this way');
-  const end = CREATOR_SRC.indexOf('// 3. Clone (or write)', start);
+  const start = CREATOR_SRC.indexOf('async function scaffoldImport(row) {');
+  assert.ok(start > 0, 'an import is set up by its own step');
+  const end = CREATOR_SRC.indexOf('\n}\n', start);
   const branch = CREATOR_SRC.slice(start, end > 0 ? end : start + 3000);
 
   assert.match(branch, /getConnectorScaffoldFiles\(\)/);
@@ -374,8 +374,8 @@ test('adding the scaffold to an imported repo can never fail the import', () => 
 });
 
 test('an import does not overwrite a .claude/settings.json the repo already has', () => {
-  const start = CREATOR_SRC.indexOf('} else if (repoUrl) {');
-  const end = CREATOR_SRC.indexOf('// 3. Clone (or write)', start);
+  const start = CREATOR_SRC.indexOf('async function scaffoldImport(row) {');
+  const end = CREATOR_SRC.indexOf('\n}\n', start);
   const branch = CREATOR_SRC.slice(start, end);
   // Read first, push only on a definite absence — getFileContent returns null
   // for 404 and throws for anything else, so `=== null` is "not there" rather

@@ -999,6 +999,16 @@ const AppView = {
       Secrets.applyMissingBadge(appData.missingSecrets || null);
     }
 
+    // #5116: `?report=app` is the Report link of the footer the bridge draws
+    // on an app opened at its own address or on a custom domain
+    // (/?report=app#app/<slug>, the __USERNODE_PLATFORM_LINK__ block of
+    // public/usernode-bridge/v1/bridge.js). It opens the same report dialog
+    // the app menu's "Report app" opens, for this app, when the server says
+    // this viewer may report it (`can_report`). The parameter is taken off
+    // the address first, so a reload or Back does not ask again. Deferred
+    // and slug-guarded for the reasons the `?shot=` links below give.
+    AppView._openReportFromLink(slug, appData);
+
     // Screenshot-state deep link (`?shot=secrets`): the secrets panel —
     // "Platform variables" on the platform's own row — is a modal reached
     // from the "+" menu, so plain navigation can't render it and the
@@ -1503,6 +1513,27 @@ const AppView = {
     } catch { /* malformed query string — nothing to open */ }
   },
 
+  // #5116: the `?report=app` link (see the call in open()). Returns true when
+  // a report dialog was scheduled. A viewer who may not report this app (not
+  // signed in, its maker, a demo) gets the app and nothing else.
+  _openReportFromLink(slug, appData) {
+    let params;
+    try { params = new URLSearchParams(location.search); } catch { return false; }
+    if (params.get('report') !== 'app') return false;
+    params.delete('report');
+    try {
+      const query = params.toString();
+      history.replaceState(history.state, '', `${location.pathname}${query ? `?${query}` : ''}${location.hash}`);
+    } catch { /* the address keeps it; the dialog still opens once */ }
+    if (!appData || appData.slug !== slug || appData.can_report !== true) return false;
+    const label = appData.name || slug;
+    setTimeout(() => {
+      if (AppView.appData?.slug !== slug) return;
+      window.UsernodeReact?.dialogs?.report?.open({ targetType: 'app', target: slug, label });
+    }, 300);
+    return true;
+  },
+
   // #816: paint one staging-preview loader state with no preview behind it.
   // Screenshot-state deep link only (see the `?shot=` block above) — never
   // reached by a real Preview click, which goes through ensureStaging.
@@ -1917,6 +1948,14 @@ const AppView = {
   //            never fire, e.g. a download-disposition response); holding
   //            the cover past two seconds hides an app that is very likely
   //            already painting.
+  //
+  //   An app that calls `usernode.ready(firstRender)` (the bridge) says
+  //   "waiting" while it loads and "drawn" once its first real screen is up.
+  //   For it, `load` and the 2s cap do not reveal: "drawn" does, so the app
+  //   appears in one step rather than as a skeleton that then changes shape.
+  //   5000ms  reveal it anyway (LAUNCH_READY_CAP_MS): a first render that
+  //            never settles is never hidden for long. An app that never
+  //            calls ready() keeps the ladder above exactly as it was.
   //   20000ms  swap the cover note to a "taking longer" line. Only reachable
   //            when the cap was skipped because the mint hadn't settled.
   //   45000ms  fail the launch (#4813): the cover becomes the failed card —
@@ -1925,6 +1964,7 @@ const AppView = {
   //            after the 2s cap means a frame whose src never went out.
   LAUNCH_SPINNER_MS: 500,
   LAUNCH_REVEAL_CAP_MS: 2000,
+  LAUNCH_READY_CAP_MS: 5000,
   LAUNCH_SLOW_MS: 20000,
   LAUNCH_FAIL_MS: 45000,
   // Keep in sync with `.app-launch-cover` / `#app-iframe` transition
@@ -1937,6 +1977,11 @@ const AppView = {
   // that replaced it.
   _launchId: 0,
   _launchTimers: [],
+  // Per launched frame, what its app has said through `usernode.ready()`:
+  // { waiting, drawn, revealed, reveal }. Set fresh each time the ladder is
+  // armed (watchSurfaceLoad), read by handleReadyBridgeMessage. Keyed by the
+  // frame element, so a frame that is replaced takes its record with it.
+  _launchHolds: typeof WeakMap === 'function' ? new WeakMap() : null,
   // Set by beginLaunch to the exact (launchId, slug, src) it mounted, read
   // ONCE by renderAppTab to decide adopt-vs-rebuild.
   _launchAdopt: null,
@@ -2644,7 +2689,21 @@ const AppView = {
   // into the caller's own array so it can cancel them on teardown.
   watchSurfaceLoad(iframe, { iframeId, coverId, isCurrent, timers }) {
     const current = () => !!isCurrent() && iframe.isConnected;
-    const reveal = () => AppView._revealLaunch({ iframeId, coverId, timers });
+    const hold = { waiting: false, drawn: false, revealed: false, reveal: null };
+    const reveal = () => {
+      hold.revealed = true;
+      AppView._revealLaunch({ iframeId, coverId, timers });
+    };
+    // The app's own "my first screen is drawn" (handleReadyBridgeMessage).
+    // Never before the frame has a src: that would show a blank frame.
+    hold.reveal = () => {
+      if (hold.revealed || !current() || !iframe.getAttribute('src')) return;
+      reveal();
+    };
+    // Waiting on the app, per its `usernode.ready(promise)`: load and the 2s
+    // cap leave the cover up, "drawn" or the ready cap lifts it.
+    const held = () => hold.waiting && !hold.drawn;
+    if (AppView._launchHolds) AppView._launchHolds.set(iframe, hold);
 
     iframe.onload = () => {
       // A src-less mount navigates to about:blank, which fires `load`.
@@ -2654,7 +2713,7 @@ const AppView = {
       if (iframeId === 'app-iframe') AppView.iframeFocused = true;
       // #970: the app's document is up — hand it this frame's insets.
       AppView.scheduleSafeAreaBroadcast();
-      reveal();
+      if (!held() && !hold.revealed) reveal();
       // The app is in: the dev caches' warm-up may have the connection now.
       if (iframeId === 'app-iframe' && AppView._afterAppFrameLoad) AppView._afterAppFrameLoad();
     };
@@ -2689,7 +2748,14 @@ const AppView = {
       // mint) — that would reveal a blank white iframe, the exact bug this
       // whole change removes.
       if (!iframe.getAttribute('src')) return;
+      if (held()) return;
       reveal();
+    });
+    at(AppView.LAUNCH_READY_CAP_MS, () => {
+      // An app that asked the cover to wait for its first screen and has not
+      // said it is drawn: reveal it anyway.
+      if (!iframe.getAttribute('src') || hold.revealed) return;
+      if (held()) reveal();
     });
     at(AppView.LAUNCH_SLOW_MS, () => {
       const text = PlatformI18n.t('changes:launch.cover.slow');
@@ -3339,9 +3405,12 @@ const AppView = {
   _noteOwnVote(sessionId, vote) {
     const id = Number(sessionId);
     if (!Number.isInteger(id) || id <= 0) return;
+    // A vote taken back (retractVote, null): nothing of theirs fills a row
+    // any more, and the first version's record is as old as after a vote.
+    if (vote == null) AppView._ownVotes.delete(id);
     // The epoch the vote was cast at is stamped in by _publishVoteSaved,
     // which runs beside this call and is the only path that knows it.
-    AppView._ownVotes.set(id, { vote, at: Date.now(), epoch: null });
+    else AppView._ownVotes.set(id, { vote, at: Date.now(), epoch: null });
     const current = AppView.appData;
     const approval = current && current.first_version && current.first_version.approval;
     if (approval && Number(approval.sessionId) === id) AppView._distrustFirstVersion(current);
@@ -3562,19 +3631,28 @@ const AppView = {
     // maker puts the phone down while it builds. They are told when it goes
     // live (Homeroom bot's Live, in the bell: homeroom-bot-dm.js
     // 'build_live'), so their screen promises that, with a small check, in
-    // place of "It opens here when it’s ready." Nobody else is told (#4396),
-    // so everyone else keeps that line. `tourSays` stays on both: it is also
-    // how the tour knows this screen is the one its card is for
-    // (first-session/tour-wait.ts).
-    const told = fv.mine === true;
+    // place of "It opens here when it’s ready." Since 21 Oct 2026 the
+    // project's other members are told too (#4396: 'project_opened',
+    // services/project-opened.js, `member` the server's read), so they get
+    // the promise as well. A member who is not its maker keeps "It opens
+    // here when it’s ready." over it, and gets the notification ask under
+    // it: "Get a ping when it opens?" (`ask`, app-frame/app-status.tsx). The
+    // maker's own ask was the made screen's. Somebody looking in who is not
+    // a member is told nothing, so they keep the line alone. `tourSays` stays
+    // on all of them: it is also how the tour knows this screen is the one
+    // its card is for (first-session/tour-wait.ts).
+    const promise = PlatformI18n.t('changes:firstVersion.notifyWhenLive');
+    const opens = PlatformI18n.t('changes:firstVersion.opensWhenReady');
     return {
       dot: null,
       message: appData.name || appData.slug,
       detail: null,
       ...thumb,
-      ...(told
-        ? { promise: PlatformI18n.t('changes:firstVersion.notifyWhenLive') }
-        : { lines: [PlatformI18n.t('changes:firstVersion.opensWhenReady')] }),
+      ...(fv.mine === true
+        ? { promise }
+        : fv.member === true
+          ? { lines: [opens], promise, ask: 'project_opens' }
+          : { lines: [opens] }),
       tourSays: true,
       action: chat,
       ...(waiting ? { waiting } : {}),
@@ -6483,8 +6561,11 @@ const AppView = {
       if (g.key === 'checks') {
         step.run = AppView._checksRunView(item, g);
         if (g.state === 'blocked') {
+          // The author's Fix it leads, as on the Testing card, and the re-run
+          // beside it is the quieter of the two.
+          step.fix = AppView._fixChecksView(item);
           const recheck = AppView._recheckAction(item);
-          if (recheck) step.actions.push(recheck);
+          if (recheck) step.actions.push(step.fix ? { ...recheck, cls: 'gc-vote-btn' } : recheck);
           if (!AppView.readOnly && !item.staging_url && item.staging_error && item.status !== 'merged') {
             step.actions.push({ key: 'retry-preview', cls: 'gc-vote-btn', label: PlatformI18n.t('changes:page.actions.retryPreview'),
               act: { fn: 'swapToStagingForSession', args: [item.id, ''] } });
@@ -6636,7 +6717,10 @@ const AppView = {
     // the bars and the names are what a reader came for. A run that will go
     // again on its own opens too, so its reason is read without a tap.
     const retrying = g.state === 'active' && item.check_state === 'error';
-    return { live, phase: item.check_phase || null, open: live || retrying || g.state === 'blocked', build, checks, unit, fails, noted, note };
+    // A failed run says what went wrong in plain words over its failures,
+    // once that is read (the Testing card's own sentence, one read for both).
+    const explain = item.check_state === 'failing' ? AppView._checksExplainView(item, v) : null;
+    return { live, phase: item.check_phase || null, open: live || retrying || g.state === 'blocked', build, checks, unit, fails, noted, note, explain };
   },
 
   // One detail model for a change before and after it enters review.
@@ -7250,6 +7334,86 @@ const AppView = {
     return Math.round(ms / 60000);
   },
 
+  // The Testing card's first sentence on a failed run: how many of the app's
+  // tests failed when its own test suite is all that failed, else how many
+  // of its checks. Blocking failures are counted; advisory ones only when
+  // nothing else failed.
+  _failedLead(v) {
+    const all = v ? v.failures : [];
+    const blocking = all.filter((r) => !r.advisory);
+    const rows = blocking.length ? blocking : all;
+    if (!rows.length) return PlatformI18n.t('changes:page.testing.note.checkFailed');
+    if (rows.length === 1 && rows[0].unit) {
+      const r = rows[0];
+      const n = (r.unitTally && r.unitTally.failed) || (r.details && r.details.length) || 1;
+      return PlatformI18n.t('changes:page.testing.lead.tests', { count: n });
+    }
+    return PlatformI18n.t('changes:page.testing.lead.checks', { count: rows.length });
+  },
+
+  // The failure's own words, which the Testing card shows until the
+  // plain-words sentence is read (and when there is none): the first failing
+  // test and the message it failed with, or the first failing check and
+  // what it reported.
+  _failureInWords(v) {
+    const all = v ? v.failures : [];
+    const r = all.find((row) => !row.advisory) || all[0];
+    if (!r) return null;
+    if (r.unit) {
+      const d = r.details && r.details[0];
+      if (!d) return null;
+      return d.said
+        ? PlatformI18n.t('changes:page.testing.why.testSaid', { test: d.test, said: d.said })
+        : PlatformI18n.t('changes:page.testing.why.test', { test: d.test });
+    }
+    const reason = String(r.reason || '').replace(/\s+/g, ' ').trim();
+    const said = reason.length > 160 ? `${reason.slice(0, 159).trimEnd()}…` : reason;
+    return said
+      ? PlatformI18n.t('changes:page.testing.why.checkSaid', { check: r.name, said })
+      : PlatformI18n.t('changes:page.testing.why.check', { check: r.name });
+  },
+
+  // The failed run the plain-words sentence is read for
+  // (frontend/src/features/dev-board/topic/failed-checks.ts), with the
+  // failure's own words to show until then.
+  _checksExplainView(item, v) {
+    if (!item || item.id == null || item.check_state !== 'failing' || !item.checks_checked_at) return null;
+    return { id: Number(item.id), at: String(item.checks_checked_at), fallback: AppView._failureInWords(v) };
+  },
+
+  // Fix it from the change's page (failed-checks.ts askFix): what the dev
+  // chat's own Fix it card would send (agent-session/fix-checks.ts), from the
+  // run's blocking failures as the server shapes them for that card
+  // (services/agent-sessions.js FAILING_CHECKS_SQL), and the build
+  // conversation it goes to. Only for the change's author, on a change built
+  // in an agent session (the Build door's own rule) that is still open to
+  // more work. Anybody else, and a change with no conversation to ask, keeps
+  // the re-run alone.
+  FIX_CHECKS_SHOWN: 5,
+  _fixChecksView(item) {
+    if (!item || AppView.readOnly || item.check_state !== 'failing' || !item.checks_checked_at) return null;
+    if (!['active', 'paused', 'promoted'].includes(item.status)) return null;
+    if (!(typeof App !== 'undefined' && App.user && Number(item.user_id) === Number(App.user.id))) return null;
+    const door = AppView._buildDoorView(item);
+    const agentSessionId = (door && door.agentSessionId) || AppView._agentSessionDoorId(item.id);
+    if (!agentSessionId) return null;
+    const rows = (Array.isArray(item.test_results) ? item.test_results : [])
+      .filter((r) => r && typeof r === 'object' && r.status !== 'pass' && !r.advisory);
+    if (!rows.length) return null;
+    const firstError = (r) => (Array.isArray(r.consoleErrors) && r.consoleErrors[0] && r.consoleErrors[0].message) || '';
+    return {
+      agentSessionId: Number(agentSessionId),
+      changeId: Number(item.id),
+      prNumber: parseInt(item.pr_number, 10) || null,
+      total: rows.length,
+      checks: rows.slice(0, AppView.FIX_CHECKS_SHOWN).map((r) => ({
+        name: String(r.name || r.path || PlatformI18n.t('changes:verdict.row.unnamedCheck')).trim().slice(0, 200),
+        reason: String(r.failureReason || firstError(r)).trim().slice(0, 300),
+      })),
+      at: String(item.checks_checked_at),
+    };
+  },
+
   // #4452 — the Testing card: the preview build and both kinds of checks
   // (the declared checks and the unit suite) as ONE bar, split by how long
   // each part usually takes on this project (`checks_estimate`, the median
@@ -7314,14 +7478,21 @@ const AppView = {
       return { name: PlatformI18n.t('changes:page.testing.name.testing'), figure: PlatformI18n.t('changes:page.testing.figure.skipped'), tone: 'muted', done: false, segments: full('idle'), label: PlatformI18n.t('changes:page.testing.label.skipped'), note: [PlatformI18n.t('changes:page.testing.note.skipped')], actions };
     }
     if (cs === 'failing') {
+      // What went wrong in plain words, and for its author Fix it, with the
+      // re-run beside it as the quieter of the two: running the same code
+      // again does not fix a test that fails every time.
       const v = AppView._checksVerdictView(item);
-      const failed = v ? v.failures.length : 0;
+      const fix = AppView._fixChecksView(item);
       const rerun = recheck();
-      if (rerun) actions.push(rerun);
+      if (rerun) actions.push(fix ? { ...rerun, cls: 'gc-vote-btn' } : rerun);
+      const mine = !!(App.user && Number(item.user_id) === Number(App.user.id));
       return {
         name: PlatformI18n.t('changes:page.testing.name.testing'), figure: PlatformI18n.t('changes:page.testing.figure.failing'), tone: 'bad', done: false, segments: full('bad'),
         label: PlatformI18n.t('changes:page.testing.label.failing'),
-        note: [failed ? PlatformI18n.t('changes:page.testing.note.checksFailed', { count: failed }) : PlatformI18n.t('changes:page.testing.note.checkFailed')], actions, details: true,
+        note: [AppView._failedLead(v)], actions, details: true,
+        explain: AppView._checksExplainView(item, v),
+        fix,
+        authorNote: mine ? null : PlatformI18n.t('changes:page.testing.note.authorFixes'),
       };
     }
     if (cs && cs !== 'pending') {
@@ -8427,6 +8598,14 @@ const AppView = {
     const slot = document.getElementById('dev-topic-thread');
     if (!t || !slot) return;
     if (typeof GroupChat === 'undefined' || !GroupChat.mountThread) return;
+    // The thread is in THIS app, whatever app the Messages screen or a
+    // project's Discussion tab mounted the group chat for last; without it a
+    // reply went to that app, or nowhere (GroupChat.mountThread). Shaped as
+    // renderGroupChatTab's own: the pane's `archived` is not the thread's,
+    // since a request's or a change's thread stays open on Homeroom.
+    const app = AppView.appData
+      ? { slug: AppView.appData.slug, name: AppView.appData.name, readOnly: !!AppView.readOnly }
+      : null;
     // #4455: a change's page is a Messages reply thread too, the change its
     // root post (features/dev-board/topic/change-head.tsx), every notice a
     // line in its stream. A change nobody else can see yet has no
@@ -8452,6 +8631,7 @@ const AppView = {
         language: 'change',
         placeholder: PlatformI18n.t('changes:page.thread.replyPlaceholder'),
         readOnly: AppView.readOnly || !!closed,
+        ...(app ? { app } : {}),
         ...(issue ? { issue } : {}),
         ...(closed ? {
           closed: issue
@@ -8490,6 +8670,7 @@ const AppView = {
       withHeader: true,
       // #621: non-collaborators read the thread but can't post to it.
       readOnly: AppView.readOnly,
+      ...(app ? { app } : {}),
       ...(AppView.readOnly
         ? { notice: PlatformI18n.t('changes:discussion.readOnlyNotice') }
         : {}),
@@ -11245,7 +11426,7 @@ const AppView = {
       // null suppresses the legacy capture instead of substituting a picture
       // that may have nothing to do with the claim.
       if (shots.state !== 'verified') return null;
-      const urlOk = (url) => /^\/api\/apps\/[^/?#]+\/proposals\/\d+\/shots\/[0-9a-f]{32}$/.test(String(url || ''));
+      const urlOk = (url) => /^\/api\/apps\/[^/?#]+\/proposals\/\d+\/shots\/[0-9a-f]{32}(?:\?density=device)?$/.test(String(url || ''));
       const find = (claimValue, viewportName, side, variant) => (Array.isArray(shots.artifacts) ? shots.artifacts : []).find((a) => (
         a && a.storyId === claimValue?.id && a.viewport === viewportName
         && a.side === side && a.variant === variant && a.media === 'png' && urlOk(a.url)
@@ -11296,9 +11477,22 @@ const AppView = {
         })).filter((r) => r.b || r.a);
         const changes = (Array.isArray(screen.stories) && screen.stories.length ? screen.stories : [screen.shot])
           .map(numberOf).filter((n) => n > 0);
+        // Image pixels per CSS pixel; shots saved before density was recorded are 1.
+        const density = Number(screen.density) >= 1 ? Number(screen.density) : 1;
+        // Close-ups of this screen's after side (served only to an account in
+        // the New Needs you experiment): a part of the screen, `rect` in CSS
+        // px, saved denser than the screen so a small change can be shown big.
+        const closeups = (Array.isArray(shots.artifacts) ? shots.artifacts : []).filter((a) => (
+          a && a.variant === 'closeup' && a.side === 'head' && a.media === 'png'
+          && a.storyId === screen.shot && a.viewport === screen.viewport && urlOk(a.url)
+          && Number(a.density) > 1 && box(a.rect && [a.rect.x, a.rect.y, a.rect.w, a.rect.h], 4)
+          && a.rect.w > 0 && a.rect.h > 0
+        )).map((a) => ({ url: a.url, rect: { x: a.rect.x, y: a.rect.y, w: a.rect.w, h: a.rect.h }, density: Number(a.density) }));
         return {
           viewport: screen.viewport,
           width,
+          density,
+          closeups,
           before: { url: base.url, height: heightBefore },
           after: { url: head.url, height: heightAfter },
           regions,
@@ -18938,6 +19132,60 @@ const AppView = {
     return base ? PlatformI18n.t('changes:checks.reason.failedRunsWith', values) : PlatformI18n.t('changes:checks.reason.failedRuns', values);
   },
 
+  // The repo unit suite's row, by the identity the run gives it
+  // (src/services/unit-suite-row.js isUnitSuiteRow).
+  _isUnitSuiteRow(r) {
+    return !!r && typeof r === 'object'
+      && (r.index === -3 || (r.name === 'Repo unit suite (npm test) passes' && r.path === 'package.json'));
+  },
+
+  // How many of the suite's tests ran and failed, from the TAP tally its
+  // reason ends with ("… | # tests 26 | # pass 25 | # fail 1"). Null when
+  // the reason does not carry one.
+  _unitSuiteTally(reason) {
+    const text = String(reason || '');
+    const tests = text.match(/#\s*tests\s+(\d+)/);
+    const failed = text.match(/#\s*fail\s+(\d+)/);
+    if (!failed) return null;
+    return { failed: Number(failed[1]), total: tests ? Number(tests[1]) : null };
+  },
+
+  // A failing test's line and error message, read off its excerpt's YAML
+  // block (unit-suite.js excerptOfTest): `location: '…/tests/x.test.js:133:1'`
+  // and `error: "…"`, or `error: |-` with the message indented under it.
+  // Either is null when the excerpt does not carry it.
+  _excerptFacts(excerpt, file) {
+    const lines = String(excerpt || '').split('\n');
+    let line = null;
+    let said = null;
+    const unquote = (v) => {
+      const s = v.trim().replace(/,$/, '');
+      if (/^".*"$/.test(s)) return s.slice(1, -1).replace(/\\n/g, ' ').replace(/\\(["\\])/g, '$1');
+      if (/^'.*'$/.test(s)) return s.slice(1, -1).replace(/''/g, '\'');
+      return s;
+    };
+    for (let i = 0; i < lines.length; i += 1) {
+      const l = lines[i];
+      const loc = !line && l.match(/^\s*location:\s*['"]?(.*?):(\d+):\d+['"]?\s*$/);
+      if (loc && (!file || loc[1].endsWith(file))) line = Number(loc[2]);
+      const err = !said && l.match(/^(\s*)error:\s*(.*)$/);
+      if (!err) continue;
+      if (/^[|>][-+]?$/.test(err[2].trim())) {
+        const indent = err[1].length;
+        const block = [];
+        for (let j = i + 1; j < lines.length; j += 1) {
+          const next = lines[j];
+          if (next.length - next.trimStart().length <= indent) break;
+          block.push(next.trim());
+        }
+        said = block.join(' ').trim() || null;
+      } else {
+        said = unquote(err[2]) || null;
+      }
+    }
+    return { line, said: said ? said.slice(0, 300) : null };
+  },
+
   _flakePercent(rate) {
     const n = Number(rate);
     if (!Number.isFinite(n) || n < AppView.FLAKE_CHIP_FLOOR) return null;
@@ -18994,15 +19242,6 @@ const AppView = {
       // the verdict view otherwise drops for anything green; so does one
       // with a note.
       keepReason: !!(r && (r.passedOnRetry || (r.cohortFallback && r.authored === true))),
-      // #3978: the repo unit suite row's per-test excerpts, each with the
-      // file, the test name and the captured error text. Only that row
-      // carries failureDetails; the caps here mirror the capture side's, so
-      // a hostile stored row cannot flood the fold.
-      details: (Array.isArray(r && r.failureDetails) ? r.failureDetails : []).slice(0, 10).map((d) => ({
-        file: (d && d.file) ? String(d.file).slice(0, 200) : null,
-        test: String((d && d.test) || PlatformI18n.t('changes:verdict.row.unnamedTestLong')).slice(0, 200),
-        excerpt: String((d && d.excerpt) || '').slice(0, 2048),
-      })),
       errors: (Array.isArray(r && r.consoleErrors) ? r.consoleErrors : []).map((e) => ({
         kind: (e && e.kind) ? String(e.kind) : 'console',
         message: String((e && e.message) || '').slice(0, 500),
@@ -19010,14 +19249,22 @@ const AppView = {
       })),
       // #3978. The repo unit suite's per-test failure excerpts (error,
       // expected/actual, first stack frames), already bounded and redacted
-      // when the run stored them.
+      // when the run stored them. Each also carries the line it failed on
+      // and its error message, read off the excerpt, for the row that says
+      // which test failed before it shows the output.
       details: (Array.isArray(r && r.failureDetails) ? r.failureDetails : []).slice(0, 10)
         .filter((d) => d && d.excerpt)
         .map((d) => ({
           file: d.file ? String(d.file).slice(0, 200) : null,
           test: String(d.test || PlatformI18n.t('changes:verdict.row.unnamedTest')).slice(0, 200),
           excerpt: String(d.excerpt).slice(0, 1500),
+          ...AppView._excerptFacts(d.excerpt, d.file),
         })),
+      // The app's own test suite (`npm test`) is one row among the declared
+      // checks; it is drawn by what it is, with how many of its tests
+      // failed, rather than by the check's name and the TAP tally.
+      unit: AppView._isUnitSuiteRow(r),
+      unitTally: AppView._isUnitSuiteRow(r) ? AppView._unitSuiteTally(r && r.failureReason) : null,
     });
 
     const blockingRows = results.filter((r) => r && r.status !== 'pass' && !r.advisory);
@@ -23590,7 +23837,21 @@ const AppView = {
     // The member floor: a flagged row whose votes are in still waits for a
     // Yes from someone other than its author, so it is not "reached" green.
     const waitsOnMember = isOpenRow && AppView._awaitingOtherMember(p);
-    // "At least N approvals" mode is clock-free, so it can't count down.
+    // Rejection (auto-takedown) countdown, before the approvals pill: an
+    // at-least-N project is clock-free for MERGING only. Since #2494 its
+    // rejection clock is armed like every other mode's, and #5803 arms one
+    // from an admin's lone No, so a card that is being voted down must show
+    // the countdown rather than an approvals count that reads as if nothing
+    // is happening. The `gc-reject-countdown` class + data-window-ends drive
+    // the same timer as the default mode's.
+    const rejectEndsMs = p.reject_window_ends_at ? Date.parse(p.reject_window_ends_at) : NaN;
+    if (isOpenRow && p.rejection_armed && Number.isFinite(rejectEndsMs) && rejectEndsMs > Date.now()) {
+      return { ...base, tier: 4, key: 'reject_countdown', tone: 'blocked', fill: 'full-no', countdown: rejectEndsMs, reject: true,
+        label: PlatformI18n.t('changes:badge.pill.setAsideIn', { time: AppView._fmtCountdown(rejectEndsMs - Date.now()) }), reasons,
+        title: PlatformI18n.t('changes:badge.pill.setAsideTitle', { yes, majority: maj }) };
+    }
+    // "At least N approvals" mode merges on the count alone, with no merge
+    // clock.
     if (p.approvals_required != null && isOpenRow) {
       const n = parseInt(p.approvals_required, 10) || 1;
       const reached = yes >= n;
@@ -23620,12 +23881,6 @@ const AppView = {
         title: reachedMaj
           ? PlatformI18n.t('changes:badge.pill.enoughYesTitle', { yes, majority: maj })
           : PlatformI18n.t('changes:badge.pill.hasSupportTitle', { yes, majority: maj }) };
-    }
-    const rejectEndsMs = p.reject_window_ends_at ? Date.parse(p.reject_window_ends_at) : NaN;
-    if (isOpenRow && p.rejection_armed && Number.isFinite(rejectEndsMs) && rejectEndsMs > Date.now()) {
-      return { ...base, tier: 4, key: 'reject_countdown', tone: 'blocked', fill: 'full-no', countdown: rejectEndsMs, reject: true,
-        label: PlatformI18n.t('changes:badge.pill.setAsideIn', { time: AppView._fmtCountdown(rejectEndsMs - Date.now()) }), reasons,
-        title: PlatformI18n.t('changes:badge.pill.setAsideTitle', { yes, majority: maj }) };
     }
     // 5 — needs your vote. Absorbs the standalone pulsing "Vote" badge.
     if (p.status === 'promoted' && !p.my_vote && !AppView.readOnly) {
@@ -23682,7 +23937,7 @@ const AppView = {
   // here, which is the half that was worth unit-testing anyway.
 
 
-  voteCountPill(pr, majority) {
+  voteCountPill(pr, majority, opts = {}) {
     if (!pr) return '';
     // #58: for merged PRs prefer the threshold snapshotted at merge time
     // (votes_required) so the denominator reflects history rather than the
@@ -23722,9 +23977,30 @@ const AppView = {
       ? `<span class="gc-vote-explicit" title="${escapeAttr(AppView._lockTitle(pr))}">${PlatformI18n.htmlText('changes:badge.votePill.explicit')}</span>`
       : '';
 
-    // #646: "at least N" mode — a clock-free approvals-progress pill
-    // ("x of N approvals"). The server never arms a merge/rejection
-    // window in this mode, so the countdown branches below can't fire.
+    // Rejection (auto-takedown) countdown: the group is voting this down, or
+    // one of the project's admins voted No with no Yes (#5803), and the
+    // takedown clock is armed. Render a red "Set aside in ~X" pill. Drawn
+    // BEFORE the at-least-N approvals pill below: that mode has no MERGE
+    // clock, but since #2494 its rejection clock is armed and running, and a
+    // card being voted down must not read "0 of N approval" over it.
+    // Mutually exclusive with the merge countdown above (can't reach the Yes
+    // threshold while losing). The `gc-reject-countdown` class +
+    // data-window-ends drive the same timer.
+    const rejectEndsMs = pr.reject_window_ends_at ? Date.parse(pr.reject_window_ends_at) : NaN;
+    const inReject = Number.isFinite(rejectEndsMs) && rejectEndsMs > Date.now();
+    const isOpenRow = pr.status !== 'merged' && pr.status !== 'merging';
+    if (isOpenRow && pr.rejection_armed && inReject) {
+      const label = AppView._fmtCountdown(rejectEndsMs - Date.now());
+      return `<span class="gc-vote-count gc-vote-count-no gc-reject-countdown" data-window-ends="${rejectEndsMs}"`
+        + ` title="${PlatformI18n.htmlText('changes:badge.votePill.setAsideTitle', { yes, majority: maj })}">`
+        + `<span class="gc-vote-fill gc-vote-fill-full gc-vote-fill-full-no"></span>`
+        + `<span class="gc-vote-count-label">${PlatformI18n.htmlText('changes:badge.votePill.setAsideIn', { time: label })}</span>`
+        + `</span>` + advisoryChip + explicitChip;
+    }
+
+    // #646: "at least N" mode — an approvals-progress pill ("x of N
+    // approvals"). The server arms no MERGE window in this mode (its
+    // rejection clock is handled above).
     if (pr.approvals_required != null && pr.status !== 'merged' && pr.status !== 'merging') {
       const n = parseInt(pr.approvals_required) || 1;
       const reached = yes >= n;
@@ -23754,7 +24030,8 @@ const AppView = {
     // on track and how long they have left to object. Only for live (not
     // merged/merging) rows — a settled row never counts down. The
     // `gc-merge-countdown` class + data-window-ends drive the client timer.
-    const isOpenRow = pr.status !== 'merged' && pr.status !== 'merging';
+    // `isOpenRow` is declared with the rejection pill above, which reads it
+    // first: a settled row never counts down.
     const windowEndsMs = pr.merge_window_ends_at ? Date.parse(pr.merge_window_ends_at) : NaN;
     const inWindow = Number.isFinite(windowEndsMs) && windowEndsMs > Date.now();
     const lazyLead = state === 'pending' && yes >= 1 && yes > no;
@@ -23784,21 +24061,6 @@ const AppView = {
         + `</span>` + advisoryChip + explicitChip;
     }
 
-    // Rejection (auto-takedown) countdown: the group is voting this down
-    // (No > Yes, under the 1/3 support line) and the takedown clock is armed.
-    // Render a red "Set aside in ~X" pill. Mutually exclusive with the merge
-    // countdown above (can't reach the Yes threshold while losing). The
-    // `gc-reject-countdown` class + data-window-ends drive the same timer.
-    const rejectEndsMs = pr.reject_window_ends_at ? Date.parse(pr.reject_window_ends_at) : NaN;
-    const inReject = Number.isFinite(rejectEndsMs) && rejectEndsMs > Date.now();
-    if (isOpenRow && pr.rejection_armed && inReject) {
-      const label = AppView._fmtCountdown(rejectEndsMs - Date.now());
-      return `<span class="gc-vote-count gc-vote-count-no gc-reject-countdown" data-window-ends="${rejectEndsMs}"`
-        + ` title="${PlatformI18n.htmlText('changes:badge.votePill.setAsideTitle', { yes, majority: maj })}">`
-        + `<span class="gc-vote-fill gc-vote-fill-full gc-vote-fill-full-no"></span>`
-        + `<span class="gc-vote-count-label">${PlatformI18n.htmlText('changes:badge.votePill.setAsideIn', { time: label })}</span>`
-        + `</span>` + advisoryChip + explicitChip;
-    }
     // #58: when both at-merge figures are present, surface the historical
     // context as a hover tooltip on the pill. Only merged rows carry these.
     const activeAtMerge = parseInt(pr.active_users_at_merge);
@@ -23819,7 +24081,12 @@ const AppView = {
     }
     return `<span class="gc-vote-count gc-vote-count-${state}"${titleAttr}>`
       + fills
-      + `<span class="gc-vote-count-label">${yes} / ${maj}</span>`
+      // F18 (#5683): the inline card in a chat can ask for the tally in
+      // words ("4 of 3 yes votes") rather than "4 / 3"; the board and the
+      // vote panel keep the pair, which sits beside a bar.
+      + `<span class="gc-vote-count-label">${opts.words
+        ? PlatformI18n.htmlText('changes:badge.votePill.tallyWords', { yes, count: maj })
+        : `${yes} / ${maj}`}</span>`
       + `</span>` + advisoryChip + explicitChip;
   },
 
@@ -24157,8 +24424,11 @@ const AppView = {
   // pair stays comparable. A shot without recorded dimensions still leads.
   _shotsCropReadable(shot) {
     if (!shot) return true;
-    const width = Number(shot.width);
-    const height = Number(shot.height);
+    // In CSS pixels: a still saved at 3x is three times as many pixels wide
+    // as the element on the screen.
+    const density = Number(shot.density) >= 1 ? Number(shot.density) : 1;
+    const width = Number(shot.width) / density;
+    const height = Number(shot.height) / density;
     if (!(width > 0 && height > 0)) return true;
     return width >= 120 && height >= 40;
   },
@@ -24324,6 +24594,15 @@ const AppView = {
     const sunIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>';
     const closeIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.2-4.2M11 8.5v5M8.5 11h5"/></svg>';
     const wholeIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9V5a1 1 0 0 1 1-1h4M15 4h4a1 1 0 0 1 1 1v4M20 15v4a1 1 0 0 1-1 1h-4M9 20H5a1 1 0 0 1-1-1v-4"/></svg>';
+    // #5691: the button that lifts the viewer to the top layer at window
+    // size (the popover is the viewer itself, so no script is needed).
+    const expandIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 4h6v6M20 4l-7 7M10 20H4v-6M4 20l7-7"/></svg>';
+    const collapseIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 14h6v6M10 14l-7 7M20 10h-6V4M14 10l7-7"/></svg>';
+    const viewerId = `shots-${key}-viewer`;
+    // Both words are in the button and CSS shows the one that matches the
+    // open state, so the spoken name follows it; the `title` cannot change,
+    // so the tooltip stays "Expand".
+    const expand = `<button type="button" class="shots-expand" popovertarget="${viewerId}" popovertargetaction="toggle" title="${PlatformI18n.htmlText('changes:shots.viewer.expand')}"><span class="shots-expand-out">${expandIcon}<span class="shots-expand-word">${PlatformI18n.htmlText('changes:shots.viewer.expand')}</span></span><span class="shots-expand-in">${collapseIcon}<span class="shots-expand-word">${PlatformI18n.htmlText('changes:shots.viewer.collapse')}</span></span></button>`;
     const stepper = (index) => {
       const same = indexesOf(list[index].viewport);
       const at = same.indexOf(index);
@@ -24353,7 +24632,7 @@ const AppView = {
         ? `<label for="${themeId('dark')}" class="shots-theme-flip shots-theme-to-dark" title="${PlatformI18n.htmlText('changes:shots.viewer.showDark')}">${moonIcon}</label><label for="${themeId('light')}" class="shots-theme-flip shots-theme-to-light" title="${PlatformI18n.htmlText('changes:shots.viewer.showLight')}">${sunIcon}</label>`
         : '';
       return `<figure class="shots-view" data-shots-screen="${attr(screen.viewport)}" data-shots-viewport="${attr(screen.viewport)}">
-        <div class="shots-bar">${barLead}<span class="shots-seg shots-seg-side" aria-hidden="true"><label for="${sideId('before')}" class="shots-seg-btn shots-seg-before">${PlatformI18n.htmlText('changes:shots.viewer.before')}</label><label for="${sideId('after')}" class="shots-seg-btn shots-seg-after">${PlatformI18n.htmlText('changes:shots.viewer.after')}</label>${both}</span>${sizeSwitch}${zoomSwitch}${themeFlips}${stepping ? stepper(screenIndex) : ''}</div>
+        <div class="shots-bar">${barLead}<span class="shots-seg shots-seg-side" aria-hidden="true"><label for="${sideId('before')}" class="shots-seg-btn shots-seg-before">${PlatformI18n.htmlText('changes:shots.viewer.before')}</label><label for="${sideId('after')}" class="shots-seg-btn shots-seg-after">${PlatformI18n.htmlText('changes:shots.viewer.after')}</label>${both}</span>${sizeSwitch}${zoomSwitch}${themeFlips}${expand}${stepping ? stepper(screenIndex) : ''}</div>
         <div class="shots-stage"${screen.stacked ? ' data-shots-stack="1"' : ''}>
           ${screen.afterHtml || ''}
           ${screen.beforeHtml || ''}
@@ -24382,7 +24661,7 @@ const AppView = {
     const themePicks = themes
       ? `<span class="shots-picks"><input type="radio" class="shots-theme-pick shots-theme-light" name="shots-${key}-theme" id="${themeId('light')}" aria-label="${PlatformI18n.htmlText('changes:shots.viewer.showLight')}"${themePick === 'light' ? ' checked' : ''} onchange="AppView._shotsThemePick('${key}', this)"><input type="radio" class="shots-theme-pick shots-theme-dark" name="shots-${key}-theme" id="${themeId('dark')}" aria-label="${PlatformI18n.htmlText('changes:shots.viewer.showDark')}"${themePick === 'dark' ? ' checked' : ''} onchange="AppView._shotsThemePick('${key}', this)"></span>`
       : '';
-    return `<div class="shots-viewer${className ? ` ${attr(className)}` : ''}">${sidePicks}${zoomPicks}${screenPicks}${themePicks}<div class="shots-views${list.length === 1 ? ' shots-views-one' : ''}">${views.join('')}</div></div>`;
+    return `<div class="shots-viewer${className ? ` ${attr(className)}` : ''}" id="${viewerId}" popover="auto">${sidePicks}${zoomPicks}${screenPicks}${themePicks}<div class="shots-views${list.length === 1 ? ' shots-views-one' : ''}">${views.join('')}</div></div>`;
   },
 
   // #4455: two more readings for a change's page. `thread` is its Before
@@ -24407,7 +24686,9 @@ const AppView = {
       ? String(sha).slice(0, 8) : PlatformI18n.t('changes:shots.card.unknownCommit');
     const shotsUrl = (url) => {
       const value = String(url || '');
-      const match = /^\/api\/apps\/[^/?#]+\/proposals\/(\d+)\/shots\/[0-9a-f]{32}$/.exec(value);
+      // A sharp still has its own address, `?density=device` (shots-view.js
+      // shotUrl); nothing else may follow the id.
+      const match = /^\/api\/apps\/[^/?#]+\/proposals\/(\d+)\/shots\/[0-9a-f]{32}(?:\?density=device)?$/.exec(value);
       if (!match || (Number.isInteger(sessionId) && sessionId > 0 && Number(match[1]) !== sessionId)) return '';
       return value;
     };
@@ -24692,8 +24973,11 @@ const AppView = {
         shown.includes('shots-box-other') ? `<span class="shots-key"><i class="shots-key-box"></i>${PlatformI18n.htmlText('changes:shots.screen.keyOutline')}</span>` : '',
         shown.includes('shots-mark') ? `<span class="shots-key"><i class="shots-key-line"></i>${PlatformI18n.htmlText('changes:shots.screen.keyLine')}</span>` : '',
       ].join('');
-      const width = Number(after && after.width);
-      const height = Number(after && after.height);
+      // The still's own pixels over its density: the screen's size in CSS
+      // pixels, which is what the screen was declared at.
+      const density = Number(after && after.density) >= 1 ? Number(after.density) : 1;
+      const width = Number(after && after.width) / density;
+      const height = Number(after && after.height) / density;
       const meta = width > 0 && height > 0
         ? PlatformI18n.htmlText('changes:facts.pair', { first: PlatformI18n.t('changes:shots.screen.sized', { size: sizeName(screen.viewport), width: Math.round(width), height: Math.round(height) }), second: who })
         : PlatformI18n.htmlText('changes:facts.pair', { first: sizeName(screen.viewport), second: who });
@@ -24806,7 +25090,7 @@ const AppView = {
   openShotsComparison(triggerEl) {
     if (!triggerEl) return;
     const d = triggerEl.dataset || {};
-    const urlOk = (url) => /^\/api\/apps\/[^/?#]+\/proposals\/\d+\/shots\/[0-9a-f]{32}$/.test(String(url || ''));
+    const urlOk = (url) => /^\/api\/apps\/[^/?#]+\/proposals\/\d+\/shots\/[0-9a-f]{32}(?:\?density=device)?$/.test(String(url || ''));
     const before = urlOk(d.beforeUrl) ? d.beforeUrl : '';
     const head = urlOk(d.headUrl) ? d.headUrl : '';
     if (!before && !head) return;
@@ -26020,17 +26304,20 @@ const AppView = {
   _pendingVotes: new Map(),
   // The optimistic change to one cached row: the viewer's side and the raw
   // counts. `qualified_yes_count` is left to the server — whether this voter
-  // qualifies is the invited-approver roster's call, not the client's.
+  // qualifies is the invited-approver roster's call, not the client's. A
+  // null vote is a vote taken back (retractVote): the side it was on loses
+  // one and nothing gains.
   _applyVoteToRow(row, vote) {
     if (!row || row.my_vote === vote) return;
+    if (vote == null && row.my_vote == null) return;
     const bump = (key, by) => {
       if (row[key] == null) return;
       row[key] = Math.max(0, (parseInt(row[key], 10) || 0) + by);
     };
     if (row.my_vote === 'yes') bump('yes_count', -1);
     if (row.my_vote === 'no') bump('no_count', -1);
-    bump(vote === 'yes' ? 'yes_count' : 'no_count', 1);
-    row.my_vote = vote;
+    if (vote === 'yes' || vote === 'no') bump(vote === 'yes' ? 'yes_count' : 'no_count', 1);
+    row.my_vote = vote == null ? null : vote;
   },
   _overlayPendingVote(row) {
     if (!row || row.status === 'merged') return;
@@ -26074,9 +26361,11 @@ const AppView = {
   // took a second identical rejection — one head move, two toasts.
   _seenEpoch: new Map(),
   // #1688: the line behind a vote, asked for through the kit's prompt card.
-  // A No needs one (the server refuses a No without it); a Yes may skip.
-  // Resolves the line to send (a string), null for "none", or false when
-  // the voter backed out — a cancelled No casts nothing.
+  // The line is optional on a Yes. A No says why, so this fallback — reached
+  // only where no picker or sheet can offer the answer list — refuses an
+  // empty line and says so. Resolves the line to send (a string), null for
+  // "none", or false when the voter backed out — a cancelled or empty No
+  // casts nothing.
   async _askVoteReason(vote) {
     const no = vote === 'no';
     const pu = window.PlatformUI;
@@ -26093,7 +26382,7 @@ const AppView = {
     if (answer === null) return no ? false : null;
     const line = String(answer).replace(/\s+/g, ' ').trim();
     if (no && !line) {
-      pu.toast(PlatformI18n.t('changes:vote.reason.noNeedsLine'));
+      if (typeof pu.toast === 'function') pu.toast(PlatformI18n.t('changes:vote.reason.noNeedsLine'));
       return false;
     }
     return line || null;
@@ -26237,10 +26526,7 @@ const AppView = {
         // verifies, then the same vote again (features/auth/verify-identity.tsx).
         if (data.code === 'identity_required' && AppView._verifyThenVote(
           () => AppView.castVote(sessionId, vote, expectedEpoch, opts))) return false;
-        // #1688: a No the server would not take without its line says so in
-        // the server's own words rather than as an opaque failure.
-        PlatformUI.toast((data.error === 'reason_required' && data.message)
-          || data.error || PlatformI18n.t('changes:vote.toast.failedHttp', { status: res.status }));
+        PlatformUI.toast(data.error || PlatformI18n.t('changes:vote.toast.failedHttp', { status: res.status }));
         return false;
       }
       AppView._seenEpoch.delete(sessionId);
@@ -26291,6 +26577,106 @@ const AppView = {
       return false;
     }
     finally {
+      AppView._voteInFlight.delete(key);
+      AppView._publishVoteSending(`castVote:${sessionId}`, null);
+    }
+  },
+
+  // The review flow's Undo: take the viewer's vote on a change back
+  // (DELETE /api/sessions/:id/vote). castVote's conventions, in reverse:
+  //   - one request per change at a time, shared with castVote (a vote and
+  //     its undo never race), false for a second press while one is out;
+  //   - the cached rows (the board's and the chat's) lose the vote at once
+  //     (my_vote → null, its side's count down one) and get it back if the
+  //     server refuses or the request never arrives, with a toast in the
+  //     server's own words (`vote_locked`: it is being merged or has left
+  //     the vote) or the catalog's;
+  //   - the vote's own memories go with it (_pendingVotes holds the null so
+  //     a read already in flight cannot paint the vote back, _ownVotes and
+  //     the saved-vote publication are cleared), and the screens castVote
+  //     tells are told again.
+  // A 403 join_required is turned into the Join prompt by the fetch wrapper
+  // (frontend/src/lib/join-required.ts), as for castVote. Resolves TRUE only
+  // once the server confirmed the vote is gone, or that there was none to
+  // take back (`unchanged`); false for everything else.
+  async retractVote(sessionId, expectedEpoch = null) {
+    const key = `${sessionId}`;
+    if (AppView._voteInFlight.has(key)) return false;
+    AppView._voteInFlight.add(key);
+    const pr = AppView._findItem('proposal', sessionId);
+    const live = AppView.voteState && AppView.voteState.bySession
+      ? AppView.voteState.bySession[String(sessionId)] : null;
+    const targets = [];
+    if (pr && pr.my_vote) {
+      targets.push({ row: pr, prev: { my_vote: pr.my_vote, yes_count: pr.yes_count, no_count: pr.no_count } });
+    }
+    if (live && live !== pr && live.my_vote) {
+      targets.push({ row: live, prev: { my_vote: live.my_vote, yes_count: live.yes_count, no_count: live.no_count } });
+    }
+    // The side being taken back, for the "Sending…" mark every Vote button
+    // for this change reads (#3984), whichever surface it is on.
+    const side = targets.length ? targets[0].prev.my_vote : null;
+    if (side === 'yes' || side === 'no') AppView._publishVoteSending(`castVote:${sessionId}`, side);
+    const optimistic = targets.length > 0;
+    const token = {};
+    AppView._pendingVotes.set(Number(sessionId), { vote: null, token });
+    if (optimistic) {
+      targets.forEach((t) => AppView._applyVoteToRow(t.row, null));
+      AppView._repaintAfterVote(sessionId);
+    }
+    const settle = () => {
+      const held = AppView._pendingVotes.get(Number(sessionId));
+      if (held && held.token === token) AppView._pendingVotes.delete(Number(sessionId));
+    };
+    const rollback = () => {
+      settle();
+      if (!optimistic) return;
+      let restored = false;
+      targets.forEach((t) => {
+        if (t.row.my_vote == null) {
+          Object.assign(t.row, t.prev);
+          restored = true;
+        }
+      });
+      if (restored) AppView._repaintAfterVote(sessionId);
+    };
+    try {
+      const known = AppView._seenEpoch.get(sessionId);
+      const epoch = known === undefined ? expectedEpoch : known;
+      const res = await fetch(`/api/sessions/${sessionId}/vote`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(epoch == null ? {} : { expectedEpoch: epoch }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        rollback();
+        if (Number.isFinite(parseInt(data.approvalEpoch, 10))) {
+          AppView._seenEpoch.set(sessionId, parseInt(data.approvalEpoch, 10));
+        }
+        await AppView.refreshDevData('vote');
+        PlatformUI.toast(data.error || PlatformI18n.t('changes:vote.toast.undoFailedHttp', { status: res.status }));
+        return false;
+      }
+      AppView._seenEpoch.delete(sessionId);
+      AppView._noteOwnVote(sessionId, null);
+      AppView._publishVoteSaved(sessionId, null, epoch);
+      const refresh = typeof App !== 'undefined' && App._liveRefresh
+        ? App._liveRefresh('vote', sessionId, { appSlug: AppView.appData && AppView.appData.slug })
+        : AppView.refreshDevData('vote');
+      const chatRead = typeof App !== 'undefined' && App.currentTab !== 'dev'
+        && typeof GroupChat !== 'undefined' && GroupChat.appSlug
+        ? AppView.loadVoteState(GroupChat.appSlug) : null;
+      Promise.resolve(chatRead ? Promise.all([refresh, chatRead]) : refresh).then(settle, settle);
+      window.Notifications?.refresh?.();
+      window.UsernodeReact?.profileProposals?.voted?.();
+      window.Leaderboard?.invalidateHistory?.();
+      return true;
+    } catch {
+      rollback();
+      window.PlatformUI?.toast?.(PlatformI18n.t('changes:vote.toast.undoNotSent'));
+      return false;
+    } finally {
       AppView._voteInFlight.delete(key);
       AppView._publishVoteSending(`castVote:${sessionId}`, null);
     }
@@ -26390,10 +26776,8 @@ const AppView = {
           AppView.refreshDevData('vote');
           return;
         }
-        // #2603: a No the server would not take without its line says so in
-        // the server's own words rather than as an opaque failure.
-        PlatformUI.toast((data.error === 'reason_required' && data.message)
-          || data.error || PlatformI18n.t('changes:vote.toast.failedHttp', { status: res.status }));
+        // #2603: the server's own words when it refuses this vote.
+        PlatformUI.toast(data.error || PlatformI18n.t('changes:vote.toast.failedHttp', { status: res.status }));
         AppView.refreshDevData('vote');
         return;
       }
@@ -28823,6 +29207,27 @@ const AppView = {
     else document.getElementById(id).style.backgroundColor = background;
   },
 
+  // `usernode.ready()` (the bridge): "waiting" while the app draws its first
+  // screen, then "drawn". Only a frame this shell owns, and only the launch
+  // currently armed on it (its record in _launchHolds), is believed; a
+  // message after the cover has gone does nothing.
+  handleReadyBridgeMessage(e) {
+    const data = e.data;
+    if (!data) return;
+    const state = data.__usernode_ready;
+    if (state !== 'waiting' && state !== 'drawn') return;
+    const id = AppView.ownedFrameFor(e.source);
+    if (!id || !AppView._launchHolds) return;
+    const hold = AppView._launchHolds.get(document.getElementById(id));
+    if (!hold || hold.revealed) return;
+    if (state === 'waiting') {
+      if (!hold.drawn) hold.waiting = true;
+      return;
+    }
+    hold.drawn = true;
+    hold.reveal();
+  },
+
   // ── App LLM access consent flow (issue #34) ────────────────────────
   //
   // The bridge's usernode.requestLlmAccess()/getLlmAccess()/
@@ -29288,6 +29693,19 @@ const AppView = {
     };
     try { e.source.postMessage({ __usernode_directory: 'ack', id: data.id }, '*'); } catch {}
 
+    // The platform preview uses its local synthetic directory. Relaying the
+    // reviewer's production cookie would reintroduce undiscoverable handles
+    // that its database export deliberately removed. _stagingPreview belongs
+    // to the parent and also covers previews opened from Messages. The
+    // browser-supplied origin covers a stale/navigation-time parent record.
+    let platformPreviewOrigin = false;
+    try { platformPreviewOrigin = /^usernode-2d5619--s[0-9]+\./.test(new URL(e.origin).hostname); } catch {}
+    const preview = AppView._stagingPreview;
+    if (platformPreviewOrigin || (fromStaging && (preview?.slug === 'usernode-2d5619' || preview?.self_hosted))) {
+      reply(type === 'search' ? { users: [], has_more: false } : { found: false, user: null, ambiguous: false });
+      return;
+    }
+
     try {
       let url;
       if (type === 'lookup') {
@@ -29308,7 +29726,8 @@ const AppView = {
         if (Number.isFinite(limit)) params.set('limit', String(limit));
         url = `/api/app-directory/users/search?${params}`;
       }
-      const r = await fetch(url, { credentials: 'same-origin' });
+      const r = await fetch(url, { credentials: 'same-origin',
+        headers: { 'X-Usernode-Directory-Bridge': 'platform-isolated-v1' } });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) {
         reply(null, j.error || PlatformI18n.t('changes:bridge.directoryLookupFailed', { status: r.status }));
@@ -29663,6 +30082,8 @@ if (typeof window !== 'undefined') {
     // #3257: the bridge's startup request for the platform's theme.
     try { AppView.handleThemeBridgeMessage(e); } catch {}
     try { AppView.handleBackgroundBridgeMessage(e); } catch {}
+    // An app's first screen, drawn (`usernode.ready()`): lifts its cover.
+    try { AppView.handleReadyBridgeMessage(e); } catch {}
   });
 
   // #3257: Theme.onChange fires after the new theme is on <html>, for the

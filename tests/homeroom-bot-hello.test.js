@@ -129,11 +129,12 @@ test('sign-up test, 19 Oct 2026: a ready-made app\'s maker hears the maker\'s he
   const dm = require('../src/services/homeroom-bot-dm');
   const appTemplates = require('../src/services/app-templates');
   // The maker's hello, the project's name as its own line (Messages draws
-  // its card), and that it works as it is, with the starter's own example.
+  // its card), and what to ask for, with the starter's own example. No "It
+  // works as it is." (20 Oct 2026).
   assert.equal(dm.readyMadeHello('City Tier List', appTemplates.exampleChangeOf('tier-list-cities')),
-    `${dm.MAKER_HELLO}\n\n**City Tier List**\n\nIt works as it is. Ask me here for changes, like “add a photo of each city”.`);
+    `${dm.MAKER_HELLO}\n\n**City Tier List**\n\nAsk me here for changes, like “add a photo of each city”.`);
   assert.equal(dm.readyMadeHello('Chores', null),
-    `${dm.MAKER_HELLO}\n\n**Chores**\n\nIt works as it is. Ask me here for any change you'd like.`);
+    `${dm.MAKER_HELLO}\n\n**Chores**\n\nAsk me here for any change you'd like.`);
   assert.deepEqual(dm.READY_MADE_PROMPTS, ['What can I ask for?', 'How do I invite friends?', 'How does the group decide?']);
   for (const text of [dm.readyMadeHello('X', 'add a y'), ...dm.READY_MADE_PROMPTS]) {
     assert.doesNotMatch(text, /—|homeroom_bot/);

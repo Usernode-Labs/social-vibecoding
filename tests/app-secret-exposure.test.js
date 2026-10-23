@@ -98,7 +98,10 @@ const poolMod = require('../src/db/pool');
 let appRow = null;
 let collaboratorIds = new Set();
 
-poolMod.getPool = () => ({
+// The create route writes a project in one transaction (pool.connect):
+// the same answers, through a client.
+const fakePool = {
+  connect: async () => ({ query: (sql, params) => fakePool.query(sql, params), release() {} }),
   query: async (sql, params) => {
     const s = String(sql);
 
@@ -125,7 +128,8 @@ poolMod.getPool = () => ({
     }
     return { rows: [], rowCount: 0 };
   },
-});
+};
+poolMod.getPool = () => fakePool;
 
 const { appRoutes } = require('../src/routes/apps');
 const express = require('express');

@@ -110,6 +110,7 @@
  */
 
 import { type ReactNode, useCallback, useEffect, useId, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 
 import { Button } from '@/components/ui/button';
 import { SpinnerRingIcon, XIcon } from '@/components/ui/icons';
@@ -137,6 +138,7 @@ import type { Made, MakeEntry } from './make';
 import type { FirstVersionStage } from './tour-steps';
 import { type Person, PeopleRow } from './people-row';
 import { SketchCard, showsCard, useSketch } from './sketch-card';
+import { NotifyAsk } from '../notify-ask/notify-ask';
 
 /** B6: the plan Homeroom bot waits on before it builds anything. */
 export type WaitingPlan = {
@@ -296,10 +298,11 @@ export function questionsTitle(count: number): string {
 
 /**
  * The made screen's questions, with Submit, in place of the invite line and
- * its buttons until they are answered: the heading, "Homeroom bot builds
- * <project> from your answers.", then each question on the plane's card
- * (the plan card's own choices, ../messages/bot-plan-view.tsx PlanChoices),
- * its suggested answer chosen.
+ * its buttons until they are answered: the "Needs you" label the screen's
+ * other waiting cards carry (PLAN_LABEL, centred here), the heading in the
+ * accent, "Homeroom bot builds <project> from your answers.", then each
+ * question on the plane's card (the plan card's own choices,
+ * ../messages/bot-plan-view.tsx PlanChoices), its suggested answer chosen.
  */
 export function QuickQuestions({ name, questions, busy = false, error = null, onSubmit }: {
   name: string;
@@ -315,7 +318,8 @@ export function QuickQuestions({ name, questions, busy = false, error = null, on
   const pick = (index: number, answer: string) => setPicked((now) => questions.map((_, i) => (i === index ? answer : now[i] ?? null)));
   return (
     <section data-first-session-questions={questions.length} aria-labelledby={`${uid}-title`} className="flex flex-col">
-      <h2 id={`${uid}-title`} className="text-center text-[17px] font-semibold leading-snug">{questionsTitle(questions.length)}</h2>
+      <p data-first-session-questions-label="" className="px-1 pb-1.5 text-center text-[12px] font-bold uppercase tracking-[0.06em] text-zinc-500 dark:text-zinc-400">{t(PLAN_LABEL)}</p>
+      <h2 id={`${uid}-title`} className="text-center text-[17px] font-semibold leading-snug text-violet-600 dark:text-violet-400">{questionsTitle(questions.length)}</h2>
       <p className="mt-1 text-center text-[15px] leading-5 text-zinc-500 dark:text-zinc-400">{t('onboarding:firstSession.made.questions.line', { project: name })}</p>
       <div className="mt-3 rounded-[20px] bg-white px-4 pb-1.5 text-left shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900">
         <PlanChoices questions={questions} picked={picked} onPick={pick} idBase={uid} top="plain" />
@@ -338,7 +342,7 @@ export function QuickQuestions({ name, questions, busy = false, error = null, on
   );
 }
 
-/** Over the plan's card: it is the one thing on the screen that waits on them. A message id, as the labels below are. */
+/** Over the plan's card and the questions: the one thing on the screen that waits on them. A message id, as the labels below are. */
 export const PLAN_LABEL = 'onboarding:firstSession.made.needsYou';
 
 /** The plan's card: that there is one, never what to tap in it (that is the chat's). */
@@ -426,12 +430,17 @@ export function madeLine(fv: FirstVersion, botBuilds: boolean, live = false, sta
  * it only that it messages you. Evan, 5 October 2026: one plain line, the
  * same before and after the plan, that says it asks when it has questions.
  * While the plan waits, a project that is not sketched says so instead.
+ *
+ * A ready-made app has none (Evan, sign-up test, 20 Oct 2026): it said "It
+ * works as it is. You and anyone you invite can change it from there.",
+ * which read as random under a card whose name and description already say
+ * what it is, beside a setup card that says it is ready to use.
  */
-export function buildNote(botBuilds: boolean, planWaits = false, stalled: Stalled = null, imported = false, readyMade = false): string {
+export function buildNote(botBuilds: boolean, planWaits = false, stalled: Stalled = null, imported = false, readyMade = false): string | null {
   if (stalled === 'failed') return translate('onboarding:firstSession.made.note.failed');
   if (stalled === 'needs-secrets') return translate('onboarding:firstSession.made.note.needsSecrets');
   if (imported) return translate('onboarding:firstSession.made.note.imported');
-  if (readyMade) return translate('onboarding:firstSession.made.note.readyMade');
+  if (readyMade) return null;
   if (!botBuilds) return translate('onboarding:firstSession.made.note.noBot');
   if (planWaits) return translate('onboarding:firstSession.made.note.planWaits');
   return translate('onboarding:firstSession.made.note.making');
@@ -541,6 +550,21 @@ const COPIED_MS = 1200;
 const SHARE_ESCAPE_MS = 400;
 
 /**
+ * IT LEAVES THE WAY IT CAME (newcomer run, 20 Oct 2026, iPhone). It slid up
+ * over 200ms and every way out (✕, Done, the dim, Escape) took it off the
+ * page in the same frame, so it vanished. Now a way out slides it down first
+ * and `onClose` runs when the slide has run (its transitionend, or
+ * INVITE_SLIDE_MS and a little after, whichever comes first), as the Who says
+ * yes? sheet leaves (PresetsSheet). With reduced motion it goes
+ * at once.
+ */
+export const INVITE_SLIDE_MS = 200;
+
+function reducedMotion(): boolean {
+  try { return !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches; } catch { return false; }
+}
+
+/**
  * How the link went out. A share says only that it was handed to the share
  * sheet: the page cannot know a message was actually sent (#4196).
  */
@@ -594,6 +618,29 @@ export function InviteSheet({ made, me, onClose, onSent }: {
   // here); until it is, a note on one of their own links replaces it.
   const ownNote = useRef(keptNote(made.slug) !== null);
   useEffect(() => { const r = requestAnimationFrame(() => setShown(true)); return () => cancelAnimationFrame(r); }, []);
+  // Every way out slides it down, then `onClose` takes it off the page
+  // (INVITE_SLIDE_MS).
+  const leaving = useRef(false);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const closedRef = useRef(onClose);
+  closedRef.current = onClose;
+  const close = useCallback(() => {
+    if (leaving.current) return;
+    leaving.current = true;
+    const panel = panelRef.current;
+    if (reducedMotion() || !panel) { closedRef.current(); return; }
+    let done = false;
+    const gone = () => {
+      if (done) return;
+      done = true;
+      panel.removeEventListener('transitionend', onEnd);
+      closedRef.current();
+    };
+    const onEnd = (e: TransitionEvent) => { if (e.target === panel && e.propertyName === 'transform') gone(); };
+    panel.addEventListener('transitionend', onEnd);
+    window.setTimeout(gone, INVITE_SLIDE_MS + 60);
+    setShown(false);
+  }, []);
   // The maker's own newest note, when this device kept none.
   useEffect(() => {
     if (ownNote.current) return undefined;
@@ -613,11 +660,11 @@ export function InviteSheet({ made, me, onClose, onSent }: {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
       if (sharing.current || Date.now() - shareGoneAt.current < SHARE_ESCAPE_MS) return;
-      onClose();
+      close();
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  }, [close]);
   useEffect(() => {
     if (!copied) return undefined;
     const t = window.setTimeout(() => setCopied(0), COPIED_MS);
@@ -727,17 +774,18 @@ export function InviteSheet({ made, me, onClose, onSent }: {
   const tile = made.emoji || made.name.slice(0, 1);
   return (
     <div className="fixed inset-0 z-[9001]" data-first-session-invite="">
-      <div aria-hidden="true" onClick={onClose} className={`absolute inset-0 bg-black/40 transition-opacity duration-200 ${shown ? 'opacity-100' : 'opacity-0'}`} />
+      <div aria-hidden="true" onClick={close} className={`absolute inset-0 touch-none bg-black/40 transition-opacity duration-200 motion-reduce:transition-none ${shown ? 'opacity-100' : 'opacity-0'}`} />
       <div
+        ref={panelRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="first-session-invite-title"
-        className={`absolute inset-x-0 bottom-0 max-h-[92%] overflow-y-auto rounded-t-[20px] bg-zinc-100 px-4 pt-2 pb-[max(2rem,env(safe-area-inset-bottom))] transition-transform duration-200 ease-out dark:bg-zinc-900 md:inset-x-auto md:bottom-auto md:left-1/2 md:top-1/2 md:w-full md:max-w-md md:rounded-[20px] md:pb-6 ${shown ? 'translate-y-0 md:-translate-x-1/2 md:-translate-y-1/2' : 'translate-y-full md:-translate-x-1/2 md:-translate-y-1/2'}`}
+        className={`absolute inset-x-0 bottom-0 max-h-[92%] overflow-y-auto overscroll-contain rounded-t-[20px] bg-zinc-100 px-4 pt-2 pb-[max(2rem,env(safe-area-inset-bottom))] transition-transform duration-200 ease-out motion-reduce:transition-none dark:bg-zinc-900 md:inset-x-auto md:bottom-auto md:left-1/2 md:top-1/2 md:w-full md:max-w-md md:rounded-[20px] md:pb-6 ${shown ? 'translate-y-0 md:-translate-x-1/2 md:-translate-y-1/2' : 'translate-y-full md:-translate-x-1/2 md:-translate-y-1/2'}`}
       >
         <div className="mx-auto h-1.5 w-10 rounded-full bg-zinc-300 dark:bg-zinc-700 md:hidden" aria-hidden="true" />
         <div className="mt-3 flex items-center gap-3">
           <h2 id="first-session-invite-title" className="min-w-0 flex-1 text-[17px] font-semibold">{t('onboarding:firstSession.invite.title', { community: made.name })}</h2>
-          <button type="button" onClick={onClose} aria-label={t('core:common.close')} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-zinc-200 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+          <button type="button" onClick={close} aria-label={t('core:common.close')} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-zinc-200 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
             <XIcon className="h-4 w-4" aria-hidden="true" />
           </button>
         </div>
@@ -791,12 +839,15 @@ export function InviteSheet({ made, me, onClose, onSent }: {
         </div>
         {status ? <p role="status" data-first-session-invite-status="" className="mt-3 text-center text-[14px] text-emerald-700 dark:text-emerald-400">{status}</p> : null}
         {error ? <p id="first-session-invite-error" role="alert" className="mt-3 text-center text-[14px] text-red-600 dark:text-red-400">{error}</p> : null}
+        {/* Once the link has gone out: hear when they join? (the
+            notification ask, ../notify-ask/notify-ask.tsx), then Done. */}
+        {out ? <NotifyAsk moment="invite_sent" tone="white" className="mt-3" /> : null}
         {/* Once the link has gone out the sheet stays, with Done to close it. */}
         {out ? (
           <Button
             type="button"
             data-first-session-invite-done=""
-            onClick={onClose}
+            onClick={close}
             layout="full"
             variant="pillRaised"
             size="pillLg"
@@ -912,8 +963,9 @@ export function continueLabel(entry: MakeEntry, sent: boolean, name: string, bui
  * on a ring, and how long setting up usually takes. That is the estimate the
  * create dialog gave ("usually takes under a minute"), said as about a
  * minute; past SETUP_USUAL_MS the card says it should be ready shortly.
- * The server does not time its steps (#4895 is to), so there is no countdown
- * and no time per step.
+ * The server times each step only once the setup is over (its
+ * `app_creation_timed` event, #4912), so there is no countdown and no time
+ * per step.
  *
  * It is never a wall. A setup that stopped lets them on at once (its card
  * says what happened, with Try again), and READY_WAIT_MS after the screen
@@ -995,11 +1047,21 @@ export const SETUP_NOTE = 'line-clamp-2 text-[13px] leading-[18px] text-zinc-500
  * dropped 33pt, because the block is centred. Once it has shown it stays:
  * `done` is the line the project's own card would have said ("Ready to
  * use."), or "It's set up." over a sketch, which says the build itself; the
- * ring full and quiet (a done state gets no accent), turning on only while
- * the bot still builds.
+ * ring full and quiet, turning on only while the bot still builds.
+ *
+ * AND GREEN ONCE IT IS MADE (newcomer run, 20 Oct 2026: "the ring when it's
+ * done making should be green, not gray"). `finished`: it runs and nothing
+ * more is coming for it (a ready-made app, an import, or a first version
+ * that is ready or live). Then the full ring is --state-ok, as a finished
+ * progress bar is (AGENTS.md, "One accent"): the end is the good news. While
+ * the bot still builds, its plan waits, or its build stopped, the ring stays
+ * the quiet grey, so green never claims a build that is not there.
  */
+export const RING_FINISHED = 'stroke-[color:var(--state-ok)]';
+export const RING_QUIET = 'stroke-zinc-400 dark:stroke-zinc-500';
+
 export function SetupProgress({ step, slow, waitedOut, done = null }: {
-  step: number; slow: boolean; waitedOut: boolean; done?: { line: string; busy: boolean } | null;
+  step: number; slow: boolean; waitedOut: boolean; done?: { line: string; busy: boolean; finished?: boolean } | null;
 }) {
   const t = useMessages('onboarding');
   const total = SETUP_STEPS.length;
@@ -1012,7 +1074,7 @@ export function SetupProgress({ step, slow, waitedOut, done = null }: {
             label={`${total}/${total}`}
             title={done.line}
             spinning={done.busy}
-            arcClassName="stroke-zinc-400 dark:stroke-zinc-500"
+            arcClassName={done.finished && !done.busy ? RING_FINISHED : RING_QUIET}
             trackClassName="dark:stroke-zinc-700"
           />
           <div role="status" className="min-w-0 flex-1">
@@ -1147,7 +1209,7 @@ export function firstLookEstimate(slow: boolean, waitedOut: boolean): string {
  */
 export type FirstLookProgress =
   | { setup: true; step: number; slow: boolean; waitedOut: boolean }
-  | { setup: false; words: string; note: string; busy: boolean; asks: boolean };
+  | { setup: false; words: string; note: string; busy: boolean; asks: boolean; finished?: boolean };
 
 /*
  * One height in every state (run five's rule for what stands over the
@@ -1245,16 +1307,17 @@ function FirstLookStatus({ progress }: { progress: FirstLookProgress }) {
       </div>
     );
   }
-  // Set up: the ring full and quiet (a done state gets no accent), turning
-  // while the bot is still at work, and the stage beside it.
-  const { words, note, busy, asks } = progress;
+  // Set up: the ring full and quiet, turning while the bot is still at work,
+  // and green once the first version is ready or live (SetupProgress, AND
+  // GREEN ONCE IT IS MADE); the stage beside it.
+  const { words, note, busy, asks, finished } = progress;
   return (
     <div role="status" data-made-first-look-status="stage" className={FIRST_LOOK_STATUS}>
       <ProgressRing
         pct={100}
         title={words}
         spinning={busy}
-        arcClassName="stroke-zinc-400 dark:stroke-zinc-500"
+        arcClassName={finished && !busy ? RING_FINISHED : RING_QUIET}
         trackClassName="dark:stroke-zinc-700"
       />
       <div className="min-w-0 flex-1">
@@ -1276,8 +1339,14 @@ function FirstLookStatus({ progress }: { progress: FirstLookProgress }) {
  * the same first look as its App side (INVITE | APP, below), this card
  * leaves its phone out (`phone` false) and keeps its words and its progress
  * at the same height; flipped back to Invite, the phone is here again.
+ *
+ * TAPPING IT (#5618): with `onOpen`, the whole card is one more way into
+ * the maker's chat with Homeroom bot, where the build is reported. An empty
+ * button covers the card (above the phone and its iframe), so tapping the
+ * picture, the words or the progress opens it; the card keeps its look, and
+ * only a hover tint and the focus ring say it can be tapped.
  */
-export function FirstLookCard({ src, name, progress, onBroken = () => {}, phone = true }: {
+export function FirstLookCard({ src, name, progress, onBroken = () => {}, phone = true, onOpen }: {
   /** The first look's URL (./first-look.tsx firstLookSrc), or null while there is none. */
   src: string | null;
   name: string;
@@ -1285,10 +1354,12 @@ export function FirstLookCard({ src, name, progress, onBroken = () => {}, phone 
   onBroken?: (src: string) => void;
   /** Whether the card draws the first look itself: not while the project's card above shows it. */
   phone?: boolean;
+  /** Opens the maker's chat with Homeroom bot: the whole card becomes its door. */
+  onOpen?: () => void;
 }) {
   const t = useMessages('onboarding');
   return (
-    <section data-made-first-look={src ? 'ready' : 'drawing'} data-made-first-look-above={phone ? undefined : ''} aria-labelledby="made-first-look-title">
+    <section data-made-first-look={src ? 'ready' : 'drawing'} data-made-first-look-above={phone ? undefined : ''} aria-labelledby="made-first-look-title" className="relative">
       <div className={FIRST_LOOK_ROW}>
         {phone ? <FirstLookPhone src={src} name={name} onBroken={onBroken} /> : null}
         <div className="flex min-w-0 flex-1 flex-col">
@@ -1297,6 +1368,15 @@ export function FirstLookCard({ src, name, progress, onBroken = () => {}, phone 
           <FirstLookStatus progress={progress} />
         </div>
       </div>
+      {onOpen ? (
+        <button
+          type="button"
+          data-made-first-look-open=""
+          aria-label={t('onboarding:firstSession.made.firstLook.open')}
+          onClick={onOpen}
+          className="absolute inset-0 z-[1] rounded-[20px] hover:bg-black/[0.03] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 dark:hover:bg-white/[0.04]"
+        />
+      ) : null}
     </section>
   );
 }
@@ -1798,6 +1878,9 @@ export function MadeScreen({ made, me, onContinue, onOpenChat, entry = 'first-se
   // (not while its plan waits on them, nor on a setup or a build that
   // stopped: then nothing is).
   const busy = appStatus === 'creating' || (botBuilds && !(fv && fv.ready) && !plan && !stalled && !buildLineStopped(line));
+  // Made: it runs and nothing more is coming for it (a ready-made app, an
+  // import, or a first version that is ready or live). Its rings go green.
+  const finished = !busy && !stalled && appStatus === 'running' && (!botBuilds || (!!line && buildLineDone(line)));
   // Its setup's card, once it has run: in place, saying what the plain card would.
   const ranInPlace = setupShown && !settingUp && !stalled;
   const tile = sketch.card?.emoji || made.emoji || made.name.slice(0, 1);
@@ -1833,6 +1916,7 @@ export function MadeScreen({ made, me, onContinue, onOpenChat, entry = 'first-se
       note: named.note || t(SETUP_SET_UP),
       busy: !!line && !buildLineAsks(line) && !buildLineDone(line) && !buildLineStopped(line),
       asks: !!line && buildLineAsks(line),
+      finished,
     };
 
   // Newcomer run five (13 Oct 2026): when this screen first showed each
@@ -1907,19 +1991,24 @@ export function MadeScreen({ made, me, onContinue, onOpenChat, entry = 'first-se
                   <span data-first-session-build="" className="min-w-0 truncate">{plainLine}</span>
                 </div>
               )}
-              <p className={rowHidden ? 'mt-3 text-[13px] text-zinc-500 dark:text-zinc-400' : 'mt-1 text-[13px] text-zinc-500 dark:text-zinc-400'}>{note}</p>
+              {note ? <p className={rowHidden ? 'mt-3 text-[13px] text-zinc-500 dark:text-zinc-400' : 'mt-1 text-[13px] text-zinc-500 dark:text-zinc-400'}>{note}</p> : null}
             </PlainCard>
           )}
           {/* Under the project, never above it: the thumbnail stays where it is. */}
           {settingUp && setupCard ? <SetupProgress step={setupStep} slow={slow} waitedOut={waitedOut} /> : null}
-          {ranInPlace && setupCard ? <SetupProgress step={setupStep} slow={slow} waitedOut={waitedOut} done={{ line: card ? t(SETUP_SET_UP) : plainLine, busy }} /> : null}
-          {firstLook ? <FirstLookCard src={lookShown} name={made.name} progress={lookProgress} onBroken={setBrokenLook} phone={!lookInCard} /> : null}
+          {ranInPlace && setupCard ? <SetupProgress step={setupStep} slow={slow} waitedOut={waitedOut} done={{ line: card ? t(SETUP_SET_UP) : plainLine, busy, finished }} /> : null}
+          {firstLook ? <FirstLookCard src={lookShown} name={made.name} progress={lookProgress} onBroken={setBrokenLook} phone={!lookInCard} onOpen={() => onOpenChat(made.conversationId)} /> : null}
           {stalled ? (
             <SetupStoppedCard stalled={stalled} busy={retrying} onRetry={() => { void retry(); }} onSetSecrets={() => onSetSecrets?.()} />
           ) : null}
           {/* The first session asks for no answer here. From Create, its
               card is the way to the chat where the plan is answered. */}
           {plan && !stalled && fromCreate && !asked ? <PlanWaitsCard name={made.name} onOpenChat={() => onOpenChat(plan.conversationId ?? made.conversationId)} /> : null}
+          {/* In a browser, while Homeroom bot builds it: get the app to hear
+              when it is ready (the notification ask). In the Homeroom app
+              the same moment is askForPingWhileBotBuilds's modal, and this
+              draws nothing. */}
+          {botBuilds && busy && !stalled && !asked && !checking ? <NotifyAsk moment="app_building" className="mt-4 w-full text-left" /> : null}
         </div>
         {/* QUICK QUESTIONS: in place of the invite line and its buttons
             until they are answered, right under the project while the body
@@ -1962,13 +2051,19 @@ export function MadeScreen({ made, me, onContinue, onOpenChat, entry = 'first-se
         </>
         )}
       </div>
-      {inviting ? (
+      {/* On <body>, out of this screen's scroller (as Who says yes? and the
+          make screen's More sheet are): inside it, on an iPhone, the sheet
+          rode the scroller Safari keeps scrollable under its toolbar
+          (app.css), and a drag on it moved the screen behind. A portal put
+          after the screen stays live under its page lock (page-lock.ts). */}
+      {inviting && typeof document !== 'undefined' ? createPortal(
         <InviteSheet
           made={sketch.card ? { ...made, emoji: sketch.card.emoji } : made}
           me={me}
           onClose={() => setInviting(false)}
           onSent={(how) => setSentHow(how)}
-        />
+        />,
+        document.body,
       ) : null}
     </div>
   );

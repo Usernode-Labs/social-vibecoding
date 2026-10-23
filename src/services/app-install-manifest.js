@@ -20,8 +20,12 @@
 //                           counts an icon towards installability when its
 //                           declared `sizes` is at least 144x144, and the
 //                           app_icons table stores bytes with no dimensions.
-//   emojiIconDataUrl(text)  the tile for an app with no image icon: its emoji
-//                           (or first letter) on a rounded violet square.
+//   emojiTileUrl(app)       the PNG of an emoji app's icon, drawn by
+//                           services/emoji-tile.js: what its home-screen
+//                           icon is, on iOS and in Chrome alike.
+//   emojiIconDataUrl(text)  the tile for an app with no image icon and no
+//                           such picture: its emoji (or first letter) on a
+//                           rounded violet square.
 //   buildManifest(app, …)   the manifest document.
 //   renderInstallPage(…)    the install page, and its sign-in / not-found
 //                           variants; every interpolated value goes through
@@ -31,6 +35,8 @@
 // and frontend/** only, so a page rendered from src/ cannot use utilities: the
 // page carries its own inline CSS, in the shell's zinc/violet palette on the
 // shell's own grounds (frontend/src/head.html GROUND: #f4f2e4 / #0b0d1b).
+
+const emojiTile = require('./emoji-tile');
 
 const GROUND = '#f4f2e4';
 const GROUND_DARK = '#0b0d1b';
@@ -116,10 +122,26 @@ function appIconId(app) {
 }
 
 /**
+ * The app's emoji on its colour as a PNG (/app-icons/emoji/…), or null when
+ * it has an image icon or its emoji has no committed picture. A phone takes
+ * only a raster for its home-screen icon, so without this an emoji app was
+ * saved under Homeroom's H on iOS and under the platform's icons in Chrome.
+ */
+function emojiTileUrl(app) {
+  if (appIconId(app)) return null;
+  const emoji = typeof app?.icon_emoji === 'string' ? app.icon_emoji.trim() : '';
+  return emoji ? emojiTile.tilePath(emoji, app.icon_color) : null;
+}
+
+/**
  * The manifest's `icons` list.
  *
  *   image icon, PNG with known dimensions  → the image, with its real sizes
  *   image icon, anything else              → the image, `sizes: "any"`
+ *   an emoji with a picture                → its PNG tile, alone (beside the
+ *                                            platform's PNGs Chrome would
+ *                                            pick the 192px H), and again as
+ *                                            maskable: it is full-bleed
  *   no image icon                          → the emoji/letter SVG tile, then
  *                                            the platform's PNGs so Chrome
  *                                            has a raster it will accept
@@ -139,6 +161,14 @@ function manifestIcons(app, { iconDims = null, iconType = null } = {}) {
     icon.purpose = 'any';
     return [icon];
   }
+  const tile = emojiTileUrl(app);
+  if (tile) {
+    const sizes = `${emojiTile.SIZE}x${emojiTile.SIZE}`;
+    return [
+      { src: tile, sizes, type: 'image/png', purpose: 'any' },
+      { src: tile, sizes, type: 'image/png', purpose: 'maskable' },
+    ];
+  }
   return [
     { src: emojiIconDataUrl(iconGlyph(app)), sizes: 'any', type: 'image/svg+xml', purpose: 'any' },
     ...PLATFORM_ICONS.map((icon) => ({ ...icon })),
@@ -154,7 +184,8 @@ function manifestIcons(app, { iconDims = null, iconType = null } = {}) {
  * chromeless `/app/<slug>/full` view and stays inside the app's routes.
  *
  * @param {{ slug: string, name?: string, description?: string,
- *           icon_emoji?: string|null, icon_image_id?: string|null }} app
+ *           icon_emoji?: string|null, icon_image_id?: string|null,
+ *           icon_color?: string|null }} app
  * @param {{ iconDims?: {width:number,height:number}|null, iconType?: string|null }} [opts]
  */
 function buildManifest(app, opts = {}) {
@@ -353,18 +384,23 @@ ${body}
  * The install page for an app the viewer can see.
  *
  * @param {{ slug: string, name?: string, icon_emoji?: string|null,
- *           icon_image_id?: string|null }} app
+ *           icon_image_id?: string|null, icon_color?: string|null }} app
  * @param {{ iconUrl?: string|null }} [opts]  the raster icon to offer iOS as
- *        the apple-touch-icon; the app's own /app-icons/<id> when it has one.
+ *        the apple-touch-icon; the app's own /app-icons/<id> when it has one,
+ *        else its emoji tile, else Homeroom's.
  */
 function renderInstallPage(app, { iconUrl = null } = {}) {
   const slug = encodeURIComponent(String(app.slug || ''));
   const rawName = String(app.name || '').trim() || String(app.slug || '');
   const name = escapeHtml(rawName);
   const imageId = appIconId(app);
-  const touchIcon = escapeHtml(iconUrl || (imageId ? `/app-icons/${imageId}` : '/apple-touch-icon.png'));
-  const tile = imageId
-    ? `<img src="/app-icons/${imageId}" alt="" draggable="false">`
+  const tileUrl = emojiTileUrl(app);
+  const touchIcon = escapeHtml(iconUrl
+    || (imageId ? `/app-icons/${imageId}` : tileUrl || '/apple-touch-icon.png'));
+  // The page shows the icon the home screen will get.
+  const picture = imageId ? `/app-icons/${imageId}` : tileUrl;
+  const tile = picture
+    ? `<img src="${escapeHtml(picture)}" alt="" draggable="false">`
     : `<span aria-hidden="true">${escapeHtml(iconGlyph(app))}</span>`;
 
   const head = `<meta name="apple-mobile-web-app-capable" content="yes">
@@ -438,6 +474,7 @@ module.exports = {
   escapeHtml,
   pngDimensions,
   iconGlyph,
+  emojiTileUrl,
   emojiIconDataUrl,
   shortName,
   manifestIcons,

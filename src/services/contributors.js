@@ -85,6 +85,27 @@ async function loadContributorCounts(pool, appIds) {
   return new Map(rows.map((r) => [r.app_id, r.cnt]));
 }
 
+// Which of `appIds` this viewer contributes to — the same three-source
+// definition, asked the other way round (#5823). Home's All / Contributing
+// switch narrows the launcher to this set, so it has to agree with the
+// Contributors list exactly: same CTE, same join to `users` (an id whose row
+// is gone is not a contributor). One round trip for the whole apps list.
+//
+// No viewer and no apps are both free answers: an empty Set and no query.
+async function loadContributedAppIds(pool, appIds, userId) {
+  if (!Array.isArray(appIds) || !appIds.length || userId == null) return new Set();
+  const { rows } = await pool.query(
+    `WITH contributor_ids AS (${CONTRIBUTOR_IDS_CTE}
+     )
+     SELECT DISTINCT c.app_id
+       FROM contributor_ids c
+       JOIN users u ON u.id = c.user_id
+      WHERE c.user_id = $2`,
+    [appIds, userId]
+  );
+  return new Set(rows.map((r) => Number(r.app_id)));
+}
+
 // Clamp a caller-supplied `limit` into [1, MAX_RANKED_LIMIT]; anything
 // unparseable falls back to the default rather than erroring — a garbage
 // query string shouldn't 400 a read-only list.
@@ -220,6 +241,7 @@ function demoRankedContributors(req) {
 module.exports = {
   loadContributors,
   loadContributorCounts,
+  loadContributedAppIds,
   loadRankedContributors,
   shapeContributor,
   shapeRankedContributor,

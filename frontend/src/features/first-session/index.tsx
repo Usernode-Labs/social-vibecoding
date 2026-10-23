@@ -74,8 +74,8 @@ import { invalidateAppAllowance } from '../dialogs/app-allowance-store.js';
 import { AppTip } from './app-tip';
 import { cardPosition } from './card-placement';
 import {
-  anyOwed, armWalk, claimWalk, FIRST_VISIT_CHECK_MS, noteTipShown, noteWalkRun, oweTip, owedTip, owedWalk, oweWalk,
-  readScreen, type TipRecord, type TipWho, tipDue, walkArms, walkDue, type WalkRecord,
+  anyOwed, armWalk, claimWalk, clearLook, FIRST_VISIT_CHECK_MS, lookOwed, noteTipShown, noteWalkRun, oweLook, oweTip,
+  owedTip, owedWalk, oweWalk, readScreen, type TipRecord, type TipWho, tipDue, walkArms, walkDue, type WalkRecord,
 } from './first-visit';
 import { type Made, type MakeEntry, MakeScreen } from './make';
 import { MadeScreen, madeAppOf, madeAppUrl } from './made';
@@ -104,8 +104,6 @@ export type FirstSessionInfo = {
    * somebody new to Homeroom, whose first Home gets the walk.
    */
   newAccount?: boolean;
-  /** The walk's reader is a private member: its fourth card is the waitlist (./tour-steps.ts homeWalkSteps). */
-  privateMember?: boolean;
   /**
    * The walk's example of a change to ask Homeroom bot for in this project
    * (walkExample: GET /api/apps/:slug `exampleChange`, from its ready-made
@@ -119,9 +117,15 @@ type Legacy = {
     user?: {
       id?: number; username?: string; displayName?: string | null; needsCommunitiesChoice?: boolean; privateMember?: boolean;
       homeroomBotDm?: boolean;
+      /** false while the account is still on the waitlist: the shell shows the waiting room. */
+      hasPlatformAccess?: boolean;
       waitlistIdea?: string | null;
     } | null;
     _notePrivateHome?: () => void;
+    /** The walk owed, or Homeroom reached, kept by the account too (public/js/app.js). */
+    _noteHomeWalk?: (state: 'owed' | 'reached') => void;
+    /** The page under the app, made Home (public/js/app.js). */
+    _homeUnderApp?: () => void;
     saveSessionSnapshot?: (user: unknown) => void;
     navigateHome?: (opts?: unknown) => void;
     navigateToApp?: (slug: string, tab: string) => unknown;
@@ -130,6 +134,7 @@ type Legacy = {
     _WORKSHOP_VIEW_KEY?: string;
     _workshopViewPath?: (url: string) => string | null;
     _publishCommunityScope?: (slug: string | null) => void;
+    resumeWorkshopView?: () => boolean;
   };
   AppView?: {
     _landOnHub?: (slug: string) => void;
@@ -214,6 +219,20 @@ export function rememberCommunity(slug: string): void {
   App?._publishCommunityScope?.(slug);
   // And on its Hub tab, whatever tab the page was last left on.
   AppView?._landOnHub?.(slug);
+}
+
+/**
+ * #5528 FOR THE MAKER'S WALK TOO (newcomer run, 20 Oct 2026): the Home tour
+ * ends on Communities, and the walk ended where it started, on Home. Done on
+ * its last card, the Communities tab's ("{{app}}'s hub is here"), now opens
+ * that tab on the project's hub, as a press on the tab it rings does once
+ * the tab remembers the project (rememberCommunity, App.resumeWorkshopView);
+ * straight to the hub when the tab cannot resume it. Skip stays on Home.
+ */
+export function walkDoneLanding(slug: string): void {
+  rememberCommunity(slug);
+  if (legacy().App?.resumeWorkshopView?.()) return;
+  enterScreen('hub', slug);
 }
 
 type Box = { left: number; top: number; width: number; height: number };
@@ -548,7 +567,7 @@ export function StepDots({ at, total }: { at: number; total: number }) {
  * Done on the last.
  */
 export function Tour({ info, steps, onEnd: endTour, start = 0, moments = false, numbered = false }: {
-  info: FirstSessionInfo; steps: TourStep[]; onEnd: () => void; start?: number; moments?: boolean; numbered?: boolean;
+  info: FirstSessionInfo; steps: TourStep[]; onEnd: (how: 'done' | 'skipped') => void; start?: number; moments?: boolean; numbered?: boolean;
 }) {
   const t = useMessages('onboarding');
   // A screenshot state may open it part-way (tourShot, below), on its own
@@ -595,7 +614,7 @@ export function Tour({ info, steps, onEnd: endTour, start = 0, moments = false, 
       ended.current = true;
       noteMoment(info.slug, 'tour_ended', { step: indexRef.current + 1, steps: steps.length, how });
     }
-    endTour();
+    endTour(how);
   }, [info.slug, steps.length, endTour]);
   const onEnd = useCallback(() => finish('done'), [finish]);
 
@@ -911,8 +930,12 @@ export function Tour({ info, steps, onEnd: endTour, start = 0, moments = false, 
                     {step.tap}
                   </button>
                 ) : (
+                  // The walk's last card says where it goes: it ends on the
+                  // project's hub under the Communities tab (`end`,
+                  // walkDoneLanding), an invited private member's as well
+                  // as a maker's (Evan, 20 Oct 2026).
                   <Button type="button" onClick={() => go(index + 1)} variant="pillAccent" size="sm" ink="solid" className="text-[15px] font-semibold">
-                    {step.last ? (numbered ? t('core:common.done') : t('onboarding:firstSession.tour.gotIt')) : t('onboarding:firstSession.tour.next')}
+                    {step.last ? (numbered ? t('onboarding:firstSession.walk.goToCommunity') : t('onboarding:firstSession.tour.gotIt')) : t('onboarding:firstSession.tour.next')}
                   </Button>
                 )}
               </div>
@@ -988,7 +1011,7 @@ const LOOK_AROUND_INFO: FirstSessionInfo = { slug: '', name: '' };
  * first session reaches them, so the before/after shots open one on demand
  * (the owner's ruling for first-run screens, 6 October 2026, as app-view.js
  * draws `?shot=first-version`): `?shot=tour-home` (the walk's three cards),
- * `?shot=tour-home-private` (with the waitlist card), `?shot=tour-look`, and
+ * `?shot=tour-look`, and
  * `&step=N` to open one at its Nth card; `?shot=app-tip` and
  * `?shot=app-tip-invited`, the tip over the app. The walk and the tip are
  * shown over the first project on the viewer's Home, the walk with its name
@@ -996,13 +1019,12 @@ const LOOK_AROUND_INFO: FirstSessionInfo = { slug: '', name: '' };
  * opens, so a shot from its second card shows it at once). Nothing is
  * written: no answer to the question, no "seen" or "done" mark.
  */
-const TOUR_SHOTS: Readonly<Record<string, { path: TourPath; privateMember?: boolean }>> = Object.freeze({
+const TOUR_SHOTS: Readonly<Record<string, { path: TourPath }>> = Object.freeze({
   'tour-home': { path: 'walk' },
-  'tour-home-private': { path: 'walk', privateMember: true },
   'tour-look': { path: 'look' },
 });
 
-export type TourShot = { path: TourPath; start: number; privateMember?: boolean };
+export type TourShot = { path: TourPath; start: number };
 
 export function tourShot(search: string): TourShot | null {
   let params: URLSearchParams;
@@ -1012,7 +1034,7 @@ export function tourShot(search: string): TourShot | null {
   if (!found) return null;
   const n = Number(params.get('step'));
   const start = Number.isInteger(n) && n > 1 ? n - 1 : 0;
-  return found.privateMember ? { path: found.path, start, privateMember: true } : { path: found.path, start };
+  return { path: found.path, start };
 }
 
 /** The tip's screenshot states: whose tip it draws, or null. */
@@ -1073,7 +1095,7 @@ async function openTourShot(shot: TourShot, setMode: Dispatch<SetStateAction<Mod
   const project = await firstHomeProject();
   if (!project) return;
   const example = await walkExample(project.slug);
-  open({ ...project, example, privateMember: !!shot.privateMember });
+  open({ ...project, example });
 }
 
 /** The tip's screenshot state: the first project on Home, opened, and its tip, written nowhere. */
@@ -1232,6 +1254,9 @@ export function FirstSession() {
   // The tour's steps are built in the language on screen, and again when it changes.
   const t = useMessages('onboarding');
   const [mode, setMode] = useState<Mode>({ kind: 'none' });
+  // The mode as it stands, for the listeners that outlive a render.
+  const modeRef = useRef(mode);
+  modeRef.current = mode;
   // The tip over the app, while it is up (./app-tip.tsx).
   const [tip, setTip] = useState<TipRecord | null>(null);
   // Bumped when a tip or a walk is owed, so the watcher below looks again.
@@ -1262,10 +1287,38 @@ export function FirstSession() {
       try { sessionStorage.removeItem(MAKE_FLAG); } catch { /* shown once anyway */ }
       openMake(setMode, now);
     };
+    // A `?shot=` address opens on its own, before the session read lands and
+    // even if it never does: it is the before/after capture's own link and it
+    // writes nothing, so it must not fall back to the signed-out landing
+    // (#5266 review, 20 Oct 2026).
+    if (makeShot(window.location.search)) check(false);
     if (legacy().App?.user) check(false);
     const onAuthed = () => check(true);
     document.addEventListener('sv:authed', onAuthed);
     return () => document.removeEventListener('sv:authed', onAuthed);
+  }, []);
+
+  // "Look around first" pressed on the waitlist (#5678): the four cards open
+  // on the first Home after the account is let in, never on the waiting
+  // room. `sv:authed` fires only past the access gate, so the waiting room's
+  // in-place release reaches it, and so does every later boot here.
+  useEffect(() => {
+    const check = () => {
+      const app = legacy().App;
+      const user = app?.user;
+      const uid = user?.id;
+      if (uid == null || user?.hasPlatformAccess === false) return;
+      if (!lookOwed(uid)) return;
+      // Another screen of the first session is up: the record waits for a
+      // later `sv:authed` rather than opening under it.
+      if (modeRef.current.kind !== 'none') return;
+      clearLook(uid);
+      app?.navigateHome?.();
+      setMode({ kind: 'tour', info: LOOK_AROUND_INFO, path: 'look' });
+    };
+    if (legacy().App?.user) check();
+    document.addEventListener('sv:authed', check);
+    return () => document.removeEventListener('sv:authed', check);
   }, []);
 
   // The bridge App._followInvite calls. welcome() answers whether it will
@@ -1287,12 +1340,18 @@ export function FirstSession() {
         const name = info.name || slug;
         const privateMember = !!app?.user?.privateMember;
         const uid = app?.user?.id;
+        let walkOwed = false;
         if (uid != null) {
           oweTip(uid, { slug, name, who: 'invited', inviter: info.inviterName || null });
-          if (privateMember || info.newAccount) oweWalk(uid, { slug, name, privateMember });
+          walkOwed = (privateMember || !!info.newAccount) && oweWalk(uid, { slug, name, privateMember });
+          if (walkOwed) app?._noteHomeWalk?.('owed');
           setOwing((n) => n + 1);
         }
         rememberCommunity(slug);
+        // Home under the app, where the walk runs: Back and the ✕ go there.
+        // A public community's link is joined on its hub, and leaving the
+        // app went back to the hub, with the walk not started.
+        if (walkOwed) app?._homeUnderApp?.();
         // A frame held for the welcome goes once the app is on screen, not
         // before (appDrawn): never Home in between. The follow's own ending
         // (endHold) leaves a frame handed on.
@@ -1397,11 +1456,8 @@ export function FirstSession() {
   // after it runs the walk, once. Nothing owed on this device (read as the
   // island mounts, and again whenever something is owed): no looking at all.
   const startWalk = useCallback((walk: WalkRecord) => {
-    // The waitlist card only while they are still a private member: one let
-    // in since the invite has no card to point at.
-    const privateMember = !!walk.privateMember && !!legacy().App?.user?.privateMember;
     setMode((prev) => (prev.kind === 'none'
-      ? { kind: 'tour', info: { slug: walk.slug, name: walk.name, privateMember }, path: 'walk', moments: !!walk.maker }
+      ? { kind: 'tour', info: { slug: walk.slug, name: walk.name }, path: 'walk', moments: !!walk.maker }
       : prev));
   }, []);
   useEffect(() => {
@@ -1419,6 +1475,8 @@ export function FirstSession() {
       if (owed.walk && walkArms(owed.walk, screen)) armWalk(uid);
       else if (owed.walk && walkDue(owed.walk, screen)) {
         noteWalkRun(uid);
+        // On Home: they have reached Homeroom, on every device.
+        legacy().App?._noteHomeWalk?.('reached');
         startWalk(owed.walk);
         return;
       }
@@ -1433,7 +1491,14 @@ export function FirstSession() {
   }, [mode.kind, tip, owing, startWalk]);
   const closeTip = useCallback(() => setTip(null), []);
 
-  const end = useCallback(() => setMode({ kind: 'none' }), []);
+  // A tour's end. The walk, done (not skipped), goes on to its project's
+  // hub (walkDoneLanding), a maker's and an invited person's alike; every
+  // other tour stays where it ended.
+  const end = useCallback((how: 'done' | 'skipped') => {
+    const hub = how === 'done' && mode.kind === 'tour' && mode.path === 'walk' ? mode.info.slug : null;
+    setMode({ kind: 'none' });
+    if (hub) walkDoneLanding(hub);
+  }, [mode]);
 
   // The Create door's screens own the device's back press, as the New
   // project dialog they replaced did (lib/back-stack.ts): back closes them,
@@ -1493,8 +1558,8 @@ export function FirstSession() {
   const steps = useMemo(() => {
     if (mode.kind !== 'tour') return [];
     if (mode.path === 'look') return lookAroundSteps();
-    const { slug, name, example, privateMember } = mode.info;
-    return homeWalkSteps({ slug, name, example, privateMember: !!privateMember });
+    const { slug, name, example } = mode.info;
+    return homeWalkSteps({ slug, name, example });
   }, [mode, t]);
   // The walk's Homeroom bot card names a change this project could ask for
   // (walkExample), asked once as the walk opens. Its first card needs none,
@@ -1550,6 +1615,15 @@ export function FirstSession() {
           if (shot) { setMode({ kind: 'none' }); return; }
           noteAnswered();
           void recordLookAround();
+          // Still waiting: the waiting room is what the shell shows, and
+          // none of the tour's four places is there. The answer still
+          // counts; the cards open on the first Home after they are let in.
+          if (legacy().App?.user?.hasPlatformAccess === false) {
+            const uid = legacy().App?.user?.id;
+            if (uid != null) oweLook(uid);
+            setMode({ kind: 'none' });
+            return;
+          }
           legacy().App?.navigateHome?.();
           setMode({ kind: 'tour', info: LOOK_AROUND_INFO, path: 'look' });
         }}
@@ -1589,6 +1663,7 @@ export function FirstSession() {
             setOwing((n) => n + 1);
             enterScreen('home', slug);
             if (uid != null && !claimWalk(uid)) { setMode({ kind: 'none' }); return; }
+            legacy().App?._noteHomeWalk?.('reached');
             setMode({ kind: 'tour', info: { slug, name }, path: 'walk', moments: true });
             return;
           }
@@ -1596,7 +1671,7 @@ export function FirstSession() {
           // on the first Home after it.
           if (uid != null) {
             oweTip(uid, { slug, name, who: 'maker' });
-            oweWalk(uid, { slug, name, maker: true });
+            if (oweWalk(uid, { slug, name, maker: true })) legacy().App?._noteHomeWalk?.('owed');
           }
           setOwing((n) => n + 1);
           setMode({ kind: 'none' });

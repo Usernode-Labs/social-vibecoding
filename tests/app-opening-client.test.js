@@ -18,7 +18,7 @@ function harness(fetchImpl = async () => ({ ok: true, status: 201 })) {
   const timers = [];
   let uuid = 0;
   const host = {
-    App: { user: { id: 7 } },
+    App: { user: { id: 7, uiTelemetryEligible: true } },
     AbortController,
     crypto: {
       randomUUID() {
@@ -67,6 +67,18 @@ test('the client retries one opening with the same id and timestamp', async () =
   assert.deepEqual(h.recorder.pending(), []);
 });
 
+test('nothing is queued or sent unless the account shares usage analytics (#5097)', async () => {
+  for (const user of [{ id: 7, uiTelemetryEligible: false }, { id: 7 }]) {
+    const h = harness();
+    h.host.App.user = user;
+    h.recorder.setUser(7, true);
+    h.recorder.commit('coffee', h.recorder.begin(7));
+    await tick();
+    assert.equal(h.requests.length, 0, JSON.stringify(user));
+    assert.deepEqual(h.recorder.pending(), []);
+  }
+});
+
 test('pending openings are bounded and another account cancels them', async () => {
   let aborted = false;
   const h = harness((_url, options) => new Promise((_resolve, reject) => {
@@ -84,7 +96,7 @@ test('pending openings are bounded and another account cancels them', async () =
 
   h.recorder.setUser(7, true);
   await tick();
-  h.host.App.user = { id: 8 };
+  h.host.App.user = { id: 8, uiTelemetryEligible: true };
   h.recorder.setUser(8, true);
   await tick();
   assert.equal(aborted, true);

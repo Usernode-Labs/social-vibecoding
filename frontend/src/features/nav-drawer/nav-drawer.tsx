@@ -50,7 +50,7 @@ import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
 import { audienceLine, useCachedCommunity } from '../dev-board/workshop/community-card';
 import { isPlaceKey, type PlaceKey } from '../dev-board/workshop/places';
-import { cachedTopics, openPlace, placeStore } from '../dev-board/workshop/place-store';
+import { cachedTopics, livePlace, openPlace, placeStore } from '../dev-board/workshop/place-store';
 import { pageTakesEdge } from '../dev-board/workshop/places-tray';
 import { ProjectPlaces } from '../dev-board/workshop/project-places';
 import { useDevViewMode } from '../dev-board/view-mode-store';
@@ -144,7 +144,15 @@ export function NavDrawer(): ReactNode {
   // up, else the page's own.
   const slug = pending ? pending.slug : improve.slug;
   const pageUp = !!slug && placed.slug === slug;
-  const place = pending ? pending.place : (pageUp ? placed.place : rememberedPlace());
+  const place = pending
+    ? pending.place
+    // #5683: the page's own place is checked against the community it is in,
+    // so a channel left over from another one gives way to its Hub; the page
+    // not up yet opens on the place remembered only where this community
+    // has it.
+    : (pageUp && slug
+      ? livePlace(slug, placed.place)
+      : keepPlace(rememberedPlace(), slug ? cachedTopics(slug) : null));
   const name = pending ? pending.name : (improve.name || slug || '');
   const selfHosted = pending ? pending.selfHosted : !!improve.selfHosted;
   useIsomorphicLayoutEffect(() => {
@@ -205,6 +213,17 @@ function DrawerSurface({ slug, name, place, owed, selfHosted = false }: { slug: 
   // Level 0's list is drawn the first time it is wanted, then kept.
   const [warm, setWarm] = useState(false);
   useEffect(() => { if (level < 2 || moving) setWarm(true); }, [level, moving]);
+  // The arrow has no level 0 to show on: focus that pressed it moves onto
+  // the community you are on in the list (never the search, which would
+  // raise a keyboard).
+  useEffect(() => {
+    if (level !== 0) return;
+    const active = document.activeElement as HTMLElement | null;
+    if (!active || !active.matches?.('[data-nav-drawer-back]')) return;
+    const here = rootRef.current?.querySelector<HTMLElement>('.nav-drawer-outer [aria-current="true"]')
+      || outerListRef.current;
+    here?.focus({ preventScroll: true });
+  }, [level, warm]);
 
   // ── Putting the strip and the page somewhere ──
   const put = (offset: number, transition: string, pageToo = true) => {

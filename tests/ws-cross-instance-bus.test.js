@@ -113,7 +113,9 @@ test('every fan-out point delivers locally AND publishes', () => {
     assert.ok(at > 0, `${wrapper} exists`);
     const body = WS_SRC.slice(at, WS_SRC.indexOf('\n}', at));
     assert.ok(body.includes(`${deliver}(`), `${wrapper} delivers locally via ${deliver}`);
-    assert.match(body, new RegExp(`wsBus\\.publish\\('${kind}'`), `${wrapper} publishes as '${kind}'`);
+    // Directly, or batched under a key (pushToUser: one ordered stream).
+    assert.match(body, new RegExp(`wsBus\\.publish(\\('${kind}'|Batched\\('[^']+', '${kind}')`),
+      `${wrapper} publishes as '${kind}'`);
   }
 });
 

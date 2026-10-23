@@ -112,16 +112,15 @@ test('a live build always records its outcome, against the full PostgreSQL schem
       { requestKey: `t:${++rk}`, source });
     await rt.drain();
   };
-  // Queue rows written as an older release did, adopted by their machines.
+  // Queue rows with their requests' instances, as the machine leaves them
+  // (a started row: a read under way).
   const put = async (rows) => {
     for (const [n, priority, reason, started = false] of rows) {
-      const { rows: [q] } = await pool.query(
+      await pool.query(
         `INSERT INTO homeroom_bot_queue (app_id, issue_number, priority, reason, started_at)
-         VALUES ($1, $2, $3, $4, CASE WHEN $5 THEN NOW() END) RETURNING *`, [recipebot.id, n, priority, reason, started]);
-      await tell(recipebot.id, n, 'Adopted', {
-        reason, priority, enqueuedAt: q.enqueued_at.toISOString(), startedAt: q.started_at ? q.started_at.toISOString() : null,
-      });
+         VALUES ($1, $2, $3, $4, CASE WHEN $5 THEN NOW() END)`, [recipebot.id, n, priority, reason, started]);
     }
+    await require('./lib/bot-request-fixture').seedRequests(pool, { appId: recipebot.id });
   };
   // Every request forgotten (no wf_settings guard here, so by hand).
   const resetQueue = async () => {
@@ -515,10 +514,10 @@ test('a live build always records its outcome, against the full PostgreSQL schem
     const oldDuplicate = await proposalOn(96, 'promoted');
     await pool.query(`UPDATE chat_sessions SET created_at = ${old} WHERE id = $1`, [oldDuplicate]);
     const newDuplicate = await proposalOn(96, 'promoted');
-    const { rows: [oldRow] } = await pool.query(
+    await pool.query(
       `INSERT INTO homeroom_bot_queue (app_id, issue_number, priority, reason, enqueued_at)
-       VALUES ($1, 96, 2, 'changed', ${old}) RETURNING *`, [recipebot.id]);
-    await tell(recipebot.id, 96, 'Adopted', { reason: 'changed', priority: 2, enqueuedAt: oldRow.enqueued_at.toISOString() });
+       VALUES ($1, 96, 2, 'changed', ${old})`, [recipebot.id]);
+    await require('./lib/bot-request-fixture').seedRequests(pool, { appId: recipebot.id });
 
     const archived = [];
     const deps = {

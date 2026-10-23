@@ -108,10 +108,10 @@ test('an early first look: kept, shown until the spec saves its own, handed to t
 
   await t.test('drawn, pictured in the bot session\'s worker once the repository exists, kept and on the timeline', async () => {
     const app = await project('club-votes', null);
-    assert.equal(await early.startEarlyLook(pool, { app, user: maker, brief: 'Polls for the club', plan: PLAN, config: {}, bot: BOT }, deps()), true);
+    const drawing = early.runEarlyLook(pool, { appId: app.id, config: {} }, { ...deps(), botUser: BOT });
     // The project's first commit is pushed a moment later.
     setTimeout(() => { pool.query('UPDATE apps SET repo_url = $2 WHERE id = $1', [app.id, 'https://github.com/o/club-votes']).catch(() => {}); }, 30);
-    assert.deepEqual(await early._pendingForTests.get(app.id), { ok: true, error: null });
+    assert.deepEqual(await drawing, { ok: true, error: null });
     const { rows: [row] } = await pool.query('SELECT * FROM first_version_early_looks WHERE app_id = $1', [app.id]);
     assert.equal(row.status, 'ready');
     assert.equal(row.screen, SCREEN);
@@ -134,7 +134,7 @@ test('an early first look: kept, shown until the spec saves its own, handed to t
     assert.equal(stages[0].metadata.from, 'early');
     assert.equal(typeof stages[0].metadata.drawMs, 'number');
     // Once.
-    assert.equal(await early.startEarlyLook(pool, { app, user: maker, brief: 'x', plan: PLAN, config: {}, bot: BOT }, deps()), false);
+    assert.deepEqual(await early.runEarlyLook(pool, { appId: app.id, config: {} }, { ...deps(), botUser: BOT }), { skipped: 'claimed' });
 
     // The App tab: the first look before there is a run.
     let showcase = await fvs.showcaseOf(pool, app.id);
@@ -200,7 +200,7 @@ test('an early first look: kept, shown until the spec saves its own, handed to t
         async runBenchCapture() { return `${fvs.MARKER} ${JSON.stringify({ ok: true, png: PNG.toString('base64') })}\n`; },
       },
     });
-    assert.equal(await early.startEarlyLook(pool, { app, user: maker, brief: 'x', plan: PLAN, config: {}, bot: BOT }, slow), true);
+    const drawing = early.runEarlyLook(pool, { appId: app.id, config: {} }, { ...slow, botUser: BOT });
     let row = null;
     for (let i = 0; i < 200 && row?.status !== 'drawn'; i += 1) {
       // eslint-disable-next-line no-await-in-loop
@@ -218,7 +218,7 @@ test('an early first look: kept, shown until the spec saves its own, handed to t
     assert.ok(doc.includes('Pizza night?'));
     // The worker starts; the picture is saved and takes its place.
     hold.release();
-    assert.deepEqual(await early._pendingForTests.get(app.id), { ok: true, error: null });
+    assert.deepEqual(await drawing, { ok: true, error: null });
     showcase = await fvs.showcaseOf(pool, app.id);
     assert.equal('drawn' in showcase.screens.first_look, false);
     assert.ok((await fvs.readScreen(pool, app.id, 'first_look', 0)).data.equals(PNG));
@@ -236,8 +236,8 @@ test('an early first look: kept, shown until the spec saves its own, handed to t
   await t.test('a failure is recorded and harmless: nothing shown, nothing handed to the spec', async () => {
     const app = await project('club-votes-2', 'https://github.com/o/club-votes-2');
     const failing = deps({ llm: { isEnabled: () => true, estimateCostCents: () => 0, async generateFirstLook() { throw new Error('529'); } } });
-    assert.equal(await early.startEarlyLook(pool, { app, user: maker, brief: 'x', plan: PLAN, config: {}, bot: BOT }, failing), true);
-    assert.deepEqual(await early._pendingForTests.get(app.id), { ok: false, error: 'failed' });
+    const drawing = early.runEarlyLook(pool, { appId: app.id, config: {} }, { ...failing, botUser: BOT });
+    assert.deepEqual(await drawing, { ok: false, error: 'failed' });
     const { rows: [row] } = await pool.query('SELECT status, error, png FROM first_version_early_looks WHERE app_id = $1', [app.id]);
     assert.deepEqual([row.status, row.error, row.png], ['failed', 'failed', null]);
     assert.equal(await fvs.showcaseOf(pool, app.id), null);

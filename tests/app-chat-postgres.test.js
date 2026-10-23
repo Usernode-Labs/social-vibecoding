@@ -66,6 +66,8 @@ test('app channels against the full schema', { timeout: 120000 }, async (t) => {
   const frames = [];
   const wsBus = require('../src/services/ws-bus');
   wsBus.publish = (kind, routing, data) => frames.push({ kind, routing, data });
+  // A person's pushes ride one batched stream (ws.js pushToUser).
+  wsBus.publishBatched = (_key, kind, routing, data) => frames.push({ kind, routing, data });
   const ws = require('../src/services/ws');
   const appChat = require('../src/services/app-chat');
   const { chatRoutes } = require('../src/routes/chat');
@@ -175,6 +177,48 @@ test('app channels against the full schema', { timeout: 120000 }, async (t) => {
     assert.notEqual(typing && typing.code, 'join_required', 'a typing indicator is not posting');
     assert.equal((await call('POST', `/api/apps/${chan.slug}/messages`, outsider, { content: 'over HTTP' })).status, 403,
       'nor over the bearer-compatible HTTP route');
+  });
+
+  // ── A refused message is answered, never dropped in silence ─────────
+  //
+  // The composer empties as a message leaves, so a refusal nobody answered
+  // was a message that vanished (feedback, 21 Oct 2026: a reply on a
+  // change's page, sent on the socket of the app Messages had open).
+
+  const messageCount = async (app) => Number((await pool.query(
+    'SELECT COUNT(*) AS n FROM chat_messages WHERE app_id = $1', [app.id])).rows[0].n);
+  const socketFor = (who, app, sent) => ({ ...client(who, app), ws: { readyState: 1, send: (raw) => sent.push(JSON.parse(raw)) } });
+
+  await t.test('a reply to a change of another app is answered invalid_thread, and stores nothing', async () => {
+    await joinCommunity(chan, alice);
+    const { rows: [change] } = await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, status) VALUES ($1, $2, 'promoted') RETURNING id`,
+      [other.id, alice.id]
+    );
+    const reply = { type: 'chat', content: 'Can you fix what is failing in the checks?', thread: { type: 'session', ref: change.id } };
+    const sent = [];
+    const before = await messageCount(chan);
+    const result = await ws.handleMessage(pool, socketFor(alice, chan, sent), reply);
+    assert.deepEqual(result, { ok: false, code: 'invalid_thread' });
+    assert.deepEqual(sent, [{ type: 'error', code: 'invalid_thread' }], 'the sender hears it was not posted');
+    assert.equal(await messageCount(chan), before);
+    // On the socket of the change's own app, the same reply is posted.
+    const posted = await post(alice, other, reply.content, { thread: reply.thread });
+    assert.equal(posted.ok, true);
+    assert.deepEqual(posted.message.thread, { type: 'session', ref: change.id });
+  });
+
+  await t.test('a message from someone who may not build the app is answered with why; their typing is not', async () => {
+    const closed = await makeApp('ta-closed', { owner: alice, view: 'private', collab: 'private', name: 'Closed' });
+    const sent = [];
+    const result = await ws.handleMessage(pool, socketFor(dave, closed, sent), { type: 'chat', content: 'hi' });
+    assert.deepEqual(result, { ok: false, code: 'not_collaborator' });
+    assert.deepEqual(sent, [{ type: 'error', code: 'not_collaborator', message: 'Only collaborators can post here.' }]);
+    sent.length = 0;
+    assert.deepEqual(await ws.handleMessage(pool, socketFor(dave, closed, sent), { type: 'typing' }),
+      { ok: false, code: 'not_collaborator' });
+    assert.deepEqual(sent, [], 'a keystroke is not asked about');
+    assert.equal(await messageCount(closed), 0);
   });
 
   // ── Reply threads ────────────────────────────────────────────────────
@@ -313,9 +357,15 @@ test('app channels against the full schema', { timeout: 120000 }, async (t) => {
     );
     const topicRoot = (await post(alice, chan, 'Which knives do we keep?', { thread: { type: 'category', ref: topic.id } })).message.id;
     const href = `#messages/app/ta-chan/c/${topic.id}/thread/${topicRoot}`;
-    const pushedFor = (messageId) => frames
-      .filter((f) => f.kind === 'user' && f.data?.type === 'notification_new' && f.data.notification.chatMessageId === messageId)
-      .map((f) => [f.data.notification.kind, f.data.notification.href]);
+    const pushedFor = async (messageId) => {
+      const refs = frames.filter((f) => f.kind === 'user' && f.data?.type === 'notification_new');
+      for (const f of refs) assert.deepEqual(Object.keys(f.data).sort(), ['notificationId', 'type'], 'the bus carries only a reference');
+      // The receiving process reads the reference at delivery, so the
+      // notification's topic/thread address must survive that fresh read.
+      const hydrated = await notifications.hydrateNotifications(pool, refs.map(f => f.data.notificationId));
+      return refs.map(f => hydrated.get(f.data.notificationId)?.notification)
+        .filter(n => n?.chatMessageId === messageId).map(n => [n.kind, n.href]);
+    };
     frames.length = 0;
     const reply = (await post(carol, chan, 'The small one.', { thread: { type: 'message', ref: topicRoot } })).message.id;
     // The root's author hears of it, as for a #general root…
@@ -326,20 +376,20 @@ test('app channels against the full schema', { timeout: 120000 }, async (t) => {
     // id (a native push's read), and pushed live.
     assert.equal(notifications.serialize(row).href, href);
     assert.equal(notifications.serialize(await notifications.getForUser(pool, alice.id, row.id)).href, href);
-    assert.deepEqual(pushedFor(reply), [['thread_reply', href]]);
+    assert.deepEqual(await pushedFor(reply), [['thread_reply', href]]);
     // A quote reply in the thread (carol's 'reply', hydrated by the socket's
     // own read) and the thread's own row for alice: the same address.
     frames.length = 0;
     const quoted = (await post(bob, chan, 'Agreed, the small one.', {
       thread: { type: 'message', ref: topicRoot }, quote: { source: 'message', refMsgId: reply },
     })).message.id;
-    assert.deepEqual(pushedFor(quoted).sort(), [['reply', href], ['thread_reply', href]]);
+    assert.deepEqual((await pushedFor(quoted)).sort(), [['reply', href], ['thread_reply', href]]);
     // A message in the topic itself opens the channel on it (#4417).
     frames.length = 0;
     const inTopic = (await post(bob, chan, 'And the bread knife?', {
       thread: { type: 'category', ref: topic.id }, quote: { source: 'message', refMsgId: topicRoot },
     })).message.id;
-    assert.deepEqual(pushedFor(inTopic), [['reply', `#messages/app/ta-chan/c/${topic.id}/m/${inTopic}`]]);
+    assert.deepEqual(await pushedFor(inTopic), [['reply', `#messages/app/ta-chan/c/${topic.id}/m/${inTopic}`]]);
     // A #general root's thread keeps its own address (the subtest above).
     const general = (await notifications.listForUser(pool, alice.id, { kinds: ['thread_reply'] }))
       .find((n) => Number(n.thread_ref) === rootId);

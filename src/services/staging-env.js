@@ -47,7 +47,8 @@
 //       hashing the value would only make the digest per-app — which would
 //       force the sweeper to load an app row per preview for nothing. Should
 //       the key ever disappear from the env, its NAME leaving the input still
-//       moves the fingerprint.
+//       moves the fingerprint. USERNODE_APP_SLUG and USERNODE_APP_NAME are
+//       per-app the same way: a rename reaches a preview on its next build.
 //
 // SECURITY. A docker label is readable by anything that can run `docker
 // inspect`, so the label carries a truncated SHA-256 of each value and never
@@ -71,7 +72,7 @@ const LABEL_ENV_FP = 'usernode.env.fp';
 
 // Keys whose NAME is part of the fingerprint but whose VALUE is not. See the
 // header: this is what keeps one digest valid for every app.
-const VALUE_EXEMPT = new Set(['USERNODE_APP_ID']);
+const VALUE_EXEMPT = new Set(['USERNODE_APP_ID', 'USERNODE_APP_SLUG', 'USERNODE_APP_NAME']);
 
 // Explicit public locators and network metadata only, never the platform's
 // general environment store. A self-preview's staking adapter needs both
@@ -98,10 +99,11 @@ function platformStagingEnv(app, config = null) {
     PORT: '3000',
     USERNODE_ENV: 'staging',
     // #1213/#1908: both the stable v1 and legacy app-facing platform API
-    // base URLs — URLs ONLY, never a token. A preview's server can reach
-    // the user-directory endpoints
+    // base URLs — URLs ONLY, never a token. An authored app's preview
+    // can reach the user-directory endpoints
     // with just the caller's forwarded iframe token (the middleware's
-    // allowUserTokenOnly path); everything token-gated (governance feed,
+    // allowUserTokenOnly path). Canonical platform previews are refused
+    // there and use their own synthetic directory. Everything token-gated (governance feed,
     // LLM proxy, storage) stays production-only because the credential
     // env vars are still absent here. Adding this key moves the env
     // fingerprint below, so pre-existing previews are swept as stale and
@@ -137,12 +139,14 @@ function envFingerprint(env) {
 // value-exempt) and the platform's own env cannot change without a restart,
 // so the sweeper's per-preview comparison costs nothing after the first call.
 // `app.id` of 1 is a placeholder — appIdentityEnv only requires a positive
-// integer, and the value is not hashed.
+// integer, and the value is not hashed; so are the slug and name, which are
+// value-exempt too, and given so their names are in the digest as they are
+// in every preview's.
 let _expected = null;
 
 function expectedStagingFingerprint(config = null) {
   if (_expected) return _expected;
-  _expected = envFingerprint(platformStagingEnv({ id: 1 }, config));
+  _expected = envFingerprint(platformStagingEnv({ id: 1, slug: 'app', name: 'App' }, config));
   return _expected;
 }
 

@@ -35,9 +35,9 @@
 // that starts with "placeholder:" is never run: its trials are not
 // applicable until it is replaced (notRunnableReason).
 //
-// The suite is made from its definition a little after boot on production
-// and staging, as Core's is (startOnBoot): rows in the database and no
-// GitHub, model or worker. Nothing is ever run without an admin launching
+// The suite is made from its definition by each release's work, as Core's
+// is (src/workflow/platform.ts materializeBenchSuites): rows in the
+// database and no GitHub, model or worker. Nothing is ever run without an admin launching
 // a run.
 
 const fs = require('fs');
@@ -57,7 +57,6 @@ const PLACEHOLDER_RE = /^\s*placeholder\s*:/i;
 const SHA_RE = /^[0-9a-f]{40}$/i;
 const NAME_MAX = 80;
 const DESCRIPTION_MAX = 200;
-const BOOT_DELAY_MS = 120 * 1000;
 
 function httpError(status, error) {
   return { ok: false, status, error };
@@ -152,11 +151,12 @@ function seedFor(input, botLogin = null, card = null) {
  * agent to its later history.
  */
 function scaffoldFiles(input) {
-  const { getTemplateFiles } = require('../template');
-  return getTemplateFiles(input.appName, slugOf(input.appName), '', null, {
+  const { getTemplateFiles, fillAppName } = require('../template');
+  // Its name in the page, as bench/scaffold.js writes it (template.js fillAppName).
+  return fillAppName(getTemplateFiles(input.appName, slugOf(input.appName), '', null, {
     template: input.template || null,
     description: input.description || null,
-  });
+  }), input.appName);
 }
 
 /** Record a task's inputs as its snapshot. Resolves the snapshot's id. */
@@ -328,6 +328,10 @@ async function claim(pool, definition) {
        SET status = 'running', attempts = bench_materializations.attempts + 1, started_at = NOW(),
            heartbeat_at = NOW(), finished_at = NULL
      WHERE bench_materializations.status = 'failed'
+        -- A pass whose process died left it running: taken again once it
+        -- has been quiet as long as Core's (core.js STALE_RUNNING_MINUTES).
+        OR (bench_materializations.status = 'running'
+            AND bench_materializations.heartbeat_at < NOW() - INTERVAL '10 minutes')
      RETURNING *`,
     [definition.key, definition.version],
   );
@@ -402,20 +406,6 @@ async function materialize(pool, config = {}, { definition = loadDefinition(), a
   }
 }
 
-/** On the leader: make the taste suite a little after boot, on production and staging, as Core is. */
-function startOnBoot(config, { env = process.env, delayMs = BOOT_DELAY_MS } = {}) {
-  if (!require('./core').bootEnabled(env)) return false;
-  const timer = setTimeout(() => {
-    try {
-      const { getPool } = require('../../db/pool');
-      materialize(getPool(config), config).catch((err) => log.warn('bench', 'Taste suite boot pass failed', { err: err.message }));
-    } catch (err) {
-      log.warn('bench', 'Taste suite boot pass failed to start', { err: err.message });
-    }
-  }, delayMs);
-  if (typeof timer.unref === 'function') timer.unref();
-  return true;
-}
 
 module.exports = {
   TASTE_STAGES,
@@ -438,5 +428,4 @@ module.exports = {
   loadDefinition,
   validateDefinition,
   materialize,
-  startOnBoot,
 };

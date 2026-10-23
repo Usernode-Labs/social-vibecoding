@@ -18,6 +18,7 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const { Pool } = require('pg');
 const { createRuntime } = require('../src/workflow/kernel/index.ts');
+const platform = require('../src/workflow/platform.ts');
 const { proposal, sessionKey, MACHINE, WORK } = require('../src/workflow/proposal/machine.ts');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
@@ -345,11 +346,15 @@ test('proposal machine against the full PostgreSQL schema', { timeout: 180000 },
     await pool.query(
       `INSERT INTO pending_secret_declarations (app_id, session_id, scope, key, declaration, status)
        VALUES ($1, $2, 'app', 'API_KEY', '{}'::jsonb, 'pending')`, [secret.app_id, secret.id]);
+    // An unpromote still waits for the shots agent's turn: it would destroy
+    // the worker the turn runs in (only a merge does not wait for it).
+    const shooting = await session({ status: 'promoted', promotedAgo: 0 });
+    await pool.query(`UPDATE chat_sessions SET active_turn = '{"turnId":"t","mode":"shots"}'::jsonb WHERE id = $1`, [shooting.id]);
     const ids = [];
-    for (const x of [s, busy, secret]) ids.push(await send(x, 'Unpromote', { from: 'promoted', userId: x.owner.id, username: x.owner.username }, route));
+    for (const x of [s, busy, secret, shooting]) ids.push(await send(x, 'Unpromote', { from: 'promoted', userId: x.owner.id, username: x.owner.username }, route));
     await settle();
     const results = await Promise.all(ids.map(outcome));
-    assert.deepEqual(results.map((r) => r.reason), [null, 'busy', 'pending_secret']);
+    assert.deepEqual(results.map((r) => r.reason), [null, 'busy', 'pending_secret', 'busy']);
     const r = await row(s);
     assert.equal(r.status, 'paused');
     assert.equal(r.approval_epoch, 1);
@@ -456,6 +461,37 @@ test('proposal machine against the full PostgreSQL schema', { timeout: 180000 },
       /was set aside for now/);
     assert.equal((await row(keep)).status, 'promoted');
     assert.equal((await instance(keep)).deadline_event.type, 'ReviewCheck', 'looked at again in an hour');
+  });
+
+  await t.test('P11b an admin\'s lone No sets the change aside after a week, and a Yes stops the clock (#5803)', async () => {
+    defaults();
+    const admin = await user();
+    const other = await user();
+    const setAside = await session({ status: 'promoted', promotedAgo: 8 * DAY, approvalsRequired: 3 });
+    const voted = await session({ status: 'promoted', promotedAgo: 8 * DAY, approvalsRequired: 3 });
+    const notAdmin = await session({ status: 'promoted', promotedAgo: 8 * DAY, approvalsRequired: 3 });
+    for (const x of [setAside, voted, notAdmin]) {
+      await pool.query('INSERT INTO app_admins (app_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [x.app_id, admin.id]);
+    }
+    // One No from an admin on each of the first two, a Yes from someone else
+    // on the second, and one No from a non-admin on the third. Every No is a
+    // week old, so a clock armed from it has already run out.
+    for (const x of [setAside, voted]) await vote(x, admin, 'no');
+    await vote(voted, other, 'yes');
+    await vote(notAdmin, other, 'no');
+    for (const x of [setAside, voted, notAdmin]) {
+      await pool.query(`UPDATE pr_votes SET created_at = NOW() - interval '8 days' WHERE session_id = $1`, [x.id]);
+      await send(x, 'Adopted');
+    }
+    await settle();
+    for (const x of [setAside, voted, notAdmin]) await fire(x);
+
+    assert.equal((await row(setAside)).status, 'archived', 'no Yes, an admin No older than a week');
+    assert.equal((await instance(setAside)).data.reason, 'admin-no');
+    assert.match((await pool.query(`SELECT content FROM chat_messages WHERE thread_ref = $1 ORDER BY id DESC LIMIT 1`, [setAside.id])).rows[0].content,
+      /was set aside: an admin voted No and nobody voted Yes within a week/);
+    assert.equal((await row(voted)).status, 'promoted', 'one Yes stops the clock');
+    assert.equal((await row(notAdmin)).status, 'promoted', 'a lone No from someone who is not an admin arms nothing');
   });
 
   await t.test('P12 gone quiet: warned once, closed three days on, unless somebody voted since the warning (bug 4)', async () => {
@@ -978,5 +1014,108 @@ test('proposal machine against the full PostgreSQL schema', { timeout: 180000 },
     await settle();
     assert.equal((await outcome(reopen)).result, 'accepted');
     assert.equal((await row(c)).cc_purged, true, 'a reopened session says its memory went');
+  });
+
+  // A hosted build's diagram reaches the pull request as a GitHub move of the
+  // proposal's (pr.diagram), owed by the write that stored it: it was a call
+  // nobody waited for after the response, lost to a restart.
+  await t.test('P35 GitHub\'s word on its pull request, as a look read it: a merge while up for its vote is recorded, merged before it or closed once the close stood closes it, one being merged is left to its attempt', async () => {
+    defaults();
+    const instance = async (x) => (await pool.query('SELECT state, data FROM wf_instances WHERE machine = $1 AND key = $2', [MACHINE, sessionKey(x.id)])).rows[0];
+    // Up for its vote, merged on GitHub: a merge, merge-followups told with
+    // the tally the look read.
+    const s = await session({ status: 'promoted', promotedAgo: 0 });
+    const tally = { yes: 2, required: 3, active: 4 };
+    const merged = await send(s, 'PrLooked', { from: 'promoted', merged: true, closed: true, mergeSha: 'c'.repeat(40),
+      mergedAt: '2026-10-21T10:00:00Z', closedAt: '2026-10-21T10:00:00Z', tally });
+    await settle();
+    assert.equal((await outcome(merged)).result, 'accepted');
+    assert.equal((await instance(s)).state, 'merging');
+    const { rows: [told] } = await pool.query(
+      `SELECT payload FROM wf_events WHERE machine = 'merge-followups' AND key = $1 AND type = 'Merged'`, [sessionKey(s.id)]);
+    assert.deepEqual([told.payload.tally, told.payload.observedBy, told.payload.mergeSha], [tally, 'recovery', 'c'.repeat(40)]);
+
+    // Closed on GitHub: not while the close may still be undone (an author
+    // re-running CI), then closed.
+    const a = await session({ status: 'active' });
+    const now = () => new Date().toISOString();
+    const early = await send(a, 'PrLooked', { from: 'active', merged: false, closed: true, closedAt: new Date(Date.now() - 60000).toISOString(), readAt: now() });
+    await settle();
+    assert.equal((await outcome(early)).reason, 'settling');
+    assert.equal((await row(a)).status, 'active');
+    // A close read long ago (refused during a rollout, asked again since)
+    // may predate a reopen: refused, the next look reads GitHub anew.
+    const old = await send(a, 'PrLooked', { from: 'active', merged: false, closed: true,
+      closedAt: new Date(Date.now() - 3600000).toISOString(), readAt: new Date(Date.now() - 40 * 60000).toISOString() });
+    await settle();
+    assert.equal((await outcome(old)).reason, 'stale');
+    assert.equal((await row(a)).status, 'active');
+    await send(a, 'PrLooked', { from: 'active', merged: false, closed: true, closedAt: new Date(Date.now() - 600000).toISOString(), readAt: now() });
+    await settle();
+    assert.equal((await row(a)).status, 'archived');
+    assert.equal((await instance(a)).data.reason, 'pr-closed');
+    // Merged before it went up for a vote: closed, as merged on GitHub.
+    const b = await session({ status: 'active' });
+    await send(b, 'PrLooked', { from: 'active', merged: true, closed: true });
+    await settle();
+    assert.equal((await instance(b)).data.reason, 'pr-merged');
+
+    // Being merged: its attempt's to settle. Still open, a stale reading,
+    // or anyone but the system: nothing.
+    const m = await session({ status: 'merging' });
+    const left = await send(m, 'PrLooked', { from: 'merging', merged: true, closed: true });
+    const o = await session({ status: 'promoted', promotedAgo: 0 });
+    const open = await send(o, 'PrLooked', { from: 'promoted', merged: false, closed: false });
+    const stale = await send(o, 'PrLooked', { from: 'active', merged: true, closed: true });
+    const byRoute = await send(o, 'PrLooked', { from: 'promoted', merged: true, closed: true }, route);
+    await settle();
+    assert.deepEqual([(await outcome(left)).reason, (await outcome(open)).reason, (await outcome(stale)).reason, (await outcome(byRoute)).reason],
+      ['merging', 'open', 'overtaken', 'internal_only']);
+    assert.equal((await row(o)).status, 'promoted');
+  });
+
+  await t.test('P34 a stored diagram owes its pull request the block, one GitHub move at a time, the newest waiting', async () => {
+    defaults();
+    const store = (s) => pool.connect().then(async (c) => {
+      try {
+        await c.query('BEGIN');
+        await c.query(`UPDATE chat_sessions SET pr_diagram = '{"kind":"rename"}'::jsonb WHERE id = $1`, [s.id]);
+        await platform.diagramStored(c, { sessionId: s.id, appId: s.app_id });
+        await c.query('COMMIT');
+      } finally { c.release(); }
+    });
+    const s = await session({ status: 'promoted' });
+    await store(s);
+    await settle();
+    assert.deepEqual(calls(WORK.diagram).map((c) => c.input.sessionId), [s.id]);
+    // While a GitHub move runs, diagrams wait behind it, and a newer one
+    // replaces one still waiting.
+    let release;
+    work.gate.set(WORK.diagram, new Promise((r) => { release = r; }));
+    await store(s);
+    await rt.drain();
+    const running = rt.runServices();
+    await untilCalled(WORK.diagram, 2);
+    try {
+      await store(s);
+      await store(s);
+      await rt.drain();
+      assert.equal((await instance(s)).data.pr.next.filter((w) => w.kind === WORK.diagram).length, 1, 'the newest waits, once');
+    } finally {
+      release();
+      await running;
+    }
+    work.gate.clear();
+    await settle();
+    assert.equal(calls(WORK.diagram).length, 3);
+    assert.equal((await instance(s)).data.pr.running, null);
+    // None for an imported proposal (its body is its author's), or one with
+    // no pull request yet (its open writes the block).
+    const imported = await session({ status: 'promoted', source: 'imported' });
+    const bare = await session({ pr: false });
+    await store(imported);
+    await store(bare);
+    await settle();
+    assert.equal(calls(WORK.diagram).length, 3);
   });
 });

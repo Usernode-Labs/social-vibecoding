@@ -65,11 +65,11 @@ test('verified cards flip a screen and list the declared change, escaped, authen
   assert.match(html, /before <code>aaaaaaaa<\/code>/);
   assert.match(html, /after <code>bbbbbbbb<\/code>/);
   assert.match(html, /shots <code>cccccccccccc<\/code>/);
-  assert.match(html, /Shots ready/);
-  assert.match(html, /Shot details/);
-  assert.match(html, /taken by the shots agent/);
+  assert.match(html, /Screenshots ready/);
+  assert.match(html, /Screenshot details/);
+  assert.match(html, /taken by the screenshot agent/);
   assert.doesNotMatch(html, /Open full screen|data-shots-open|openShotsScreen/, 'the screen is not covered by a full-screen button');
-  assert.match(html, /Look at the shots and clips to decide whether they show the change\./);
+  assert.match(html, /Look at the screenshots and clips to decide whether they show the change\./);
   // The retired replay vocabulary is gone.
   assert.doesNotMatch(html, /Visual change preview|clean replays|bounded repair|relative-pointer|Captured/);
 });
@@ -111,7 +111,7 @@ test('a motion change with a clip per side shows a before and an after player', 
   assert.match(change, /After clip/);
   // Side-by-side clips replace the legacy paired player.
   assert.doesNotMatch(html, /Play animation|Play interaction/);
-  assert.match(html, /Look at the shots and clips/);
+  assert.match(html, /Look at the screenshots and clips/);
 
   // A clip missing on one side says so rather than hiding the other.
   const oneSided = shots();
@@ -175,6 +175,14 @@ test('every screen sits in the same fixed stage, fitted at its own shape', () =>
   assert.match(css, /\.shots-stage \{[^}]*container-type: size;[^}]*aspect-ratio: 16 \/ 10;/);
   assert.match(css, /\.shots-stage > \.shots-flip-side \{[^}]*width: min\(100cqw, calc\(100cqh \* \(var\(--shots-shape, 16 \/ 10\)\)\)\); aspect-ratio: var\(--shots-shape, 16 \/ 10\);/);
   assert.match(css, /\.shots-view \{ grid-area: 1 \/ 1;[^}]*visibility: hidden; \}/, 'the screens share one cell, so the tallest sets the height');
+  // Stills saved at device scale say the screen's own size, not their pixels.
+  const dense = AppView.shotsHtml({ ...value, artifacts: value.artifacts.map((artifact) => (artifact.variant === 'context'
+    ? { ...artifact, width: artifact.width * (artifact.viewport === 'phone' ? 3 : 2), height: artifact.height * (artifact.viewport === 'phone' ? 3 : 2),
+      density: artifact.viewport === 'phone' ? 3 : 2 }
+    : artifact)) }, { sessionId: 42 });
+  assert.match(dense, /Desktop, 1280 × 800 · seen as a member/);
+  assert.match(dense, /Phone, 390 × 844 · seen as a member/);
+  assert.match(dense, /--shots-shape:1170 \/ 2532/, 'the shape is only a ratio');
   // Without recorded sizes a phone screen still reads as a phone.
   const unsized = AppView.shotsHtml({ ...value, artifacts: value.artifacts.map(({ width, height, ...rest }) => rest) }, { sessionId: 42 });
   assert.match(unsized, /data-shots-viewport="phone"[\s\S]*?--shots-shape:390 \/ 844/);
@@ -237,7 +245,7 @@ test('ready shots can be taken again from the card', () => {
   // After better steps or hints, or to outline a run from before outlines
   // were worked out. Only failed and never-started runs offered it before.
   const html = AppView.shotsHtml(shots(), { sessionId: 42 });
-  assert.match(html, /<button type="button" data-shots-retake="1"[^>]*onclick="AppView\.rerunShots\(42, this\)">Take the shots again<\/button>/);
+  assert.match(html, /<button type="button" data-shots-retake="1"[^>]*onclick="AppView\.rerunShots\(42, this\)">Take the screenshots again<\/button>/);
   assert.doesNotMatch(AppView.shotsHtml(shots(), {}), /data-shots-retake/, 'no proposal id, nothing to take again');
 });
 
@@ -308,6 +316,10 @@ test('the Workshop picture\'s element shot must be readable on both sides', () =
   assert.deepEqual(AppView._workshopVisuals(null, sized(() => ({ width: 46, height: 28 }))),
     { ...AppView._workshopVisuals(null, sized(() => ({ width: 352, height: 61 }))), before: url('3'), after: url('4') });
   assert.equal(AppView._workshopVisuals(null, sized(() => ({ width: 352, height: 61 }))).after, url('2'));
+  // Readable in CSS pixels: the same badge saved at 3x is still a badge.
+  assert.deepEqual(AppView._workshopVisuals(null, sized(() => ({ width: 138, height: 84, density: 3 }))),
+    AppView._workshopVisuals(null, sized(() => ({ width: 46, height: 28 }))));
+  assert.equal(AppView._workshopVisuals(null, sized(() => ({ width: 1056, height: 183, density: 3 }))).after, url('2'));
 });
 
 test('a privileged declared change is explicitly labelled as full admin', () => {
@@ -328,7 +340,7 @@ test('a still change shows before and after PNGs without suggesting a video', ()
   const value = shots();
   value.claims[0].animation = 'none';
   const html = AppView.shotsHtml(value, { sessionId: 42 });
-  assert.match(html, /Look at the shots to decide whether they show the change\./);
+  assert.match(html, /Look at the screenshots to decide whether they show the change\./);
   assert.match(html, /<img src=/);
   assert.doesNotMatch(html, /<video|Play interaction|Play animation|shots and clips|data-shots-clips/);
 });
@@ -336,7 +348,7 @@ test('a still change shows before and after PNGs without suggesting a video', ()
 test('absence is labelled only when the author explicitly declared a new before state', () => {
   const withoutBase = shots({ artifacts: shots().artifacts.filter((a) => a.side !== 'base') });
   const ordinary = AppView.shotsHtml(withoutBase, { sessionId: 42 });
-  assert.match(ordinary, /No shot/);
+  assert.match(ordinary, /No screenshot/);
   assert.doesNotMatch(ordinary, /not there yet/i);
 
   withoutBase.claims = [{ ...withoutBase.claims[0], baseState: 'not_present' }];
@@ -356,10 +368,10 @@ test('a first version\'s card says New app: nothing before, and shows its after 
   });
   const html = AppView.shotsHtml(afterOnly(), { sessionId: 42 });
   assert.match(html, /data-shots-state="verified" aria-label="Before &amp; after" class="space-y-3" data-shots-after-only="1"/);
-  assert.match(html, /<p class="text-xs text-zinc-600 dark:text-zinc-400">New app: nothing before\. This proposal builds the app’s first real screens, so these are its after shots only\./);
+  assert.match(html, /<p class="text-xs text-zinc-600 dark:text-zinc-400">New app: nothing before\. This proposal builds the app’s first real screens, so these are its after screenshots only\./);
   assert.match(html, /<span class="shots-flip-side shots-flip-before shots-flip-missing">New app: nothing before<\/span>/);
   assert.match(html, new RegExp(`<img src="${url('4')}"`), 'the after screen is shown');
-  assert.doesNotMatch(html, /No shot|not there yet|Taken on the exact before and after builds/);
+  assert.doesNotMatch(html, /No screenshot|not there yet|Taken on the exact before and after builds/);
   // Even when the author declared the feature absent before, the card names the app as new.
   const declaredAbsent = afterOnly();
   declaredAbsent.claims = [{ ...declaredAbsent.claims[0], baseState: 'not_present' }];
@@ -376,7 +388,7 @@ test('a first version\'s card says New app: nothing before, and shows its after 
   });
   motion.claims = [{ ...motion.claims[0], animation: 'motion' }];
   const clips = AppView.shotsHtml(motion, { sessionId: 42 });
-  assert.match(clips, /these are its after shots and clips only/);
+  assert.match(clips, /these are its after screenshots and clips only/);
   assert.match(clips, new RegExp(`<video src="${url('8')}"`));
   assert.doesNotMatch(clips, /No clip|Before clip/);
 
@@ -405,7 +417,7 @@ test('a skipped change shows its reason and no media, beside a ready one', () =>
   assert.match(skipped[0], /An empty &lt;search&gt; says no users match\./);
   assert.match(skipped[0], />Skipped</);
   assert.match(skipped[0], /The member fixture has no &lt;list&gt; to search\./);
-  assert.doesNotMatch(skipped[0], /<img|<video|Open full screen|Shots ready/);
+  assert.doesNotMatch(skipped[0], /<img|<video|Open full screen|Screenshots ready/);
   assert.match(html, new RegExp(`<img src="${url('3')}"`), 'the ready change still shows its shots');
   assert.match(html, new RegExp(`<img src="${url('4')}"`));
   assert.match(html, /<li class="shots-change" data-shots-n="1" data-shots-change="dialog">/, 'the ready change is described under its screen');
@@ -414,7 +426,7 @@ test('a skipped change shows its reason and no media, beside a ready one', () =>
   const unexplained = AppView.shotsHtml({
     ...value, shotResults: [value.shotResults[0], { id: 'empty', status: 'skipped', reason: null }],
   }, { sessionId: 42 });
-  assert.match(unexplained, /The shots agent could not get to this change\./);
+  assert.match(unexplained, /The screenshot agent could not get to this change\./);
 
   const summary = AppView._workshopVisuals(null, {
     ...value,
@@ -430,7 +442,7 @@ test('a ready change shows the shots agent\'s note on what its shots leave out, 
     shotResults: [{ id: 'dialog', status: 'ready', reason: null, note: 'The <b>Show more</b> fold needs a hidden app.' }],
   }), { sessionId: 42 });
   const change = /<li class="shots-change" data-shots-n="1" data-shots-change="dialog">[\s\S]*?<\/li>/.exec(noted)[0];
-  assert.match(change, /<p data-shots-shot-note="1"[^>]*>.*Not in these shots:<\/span> The &lt;b&gt;Show more&lt;\/b&gt; fold needs a hidden app\.<\/p>/);
+  assert.match(change, /<p data-shots-shot-note="1"[^>]*>.*Not in these screenshots:<\/span> The &lt;b&gt;Show more&lt;\/b&gt; fold needs a hidden app\.<\/p>/);
   assert.match(noted, /<img /, 'the shots are still shown above the note');
   // No note, a skipped change's note, or a non-string note renders nothing.
   for (const shotResults of [
@@ -455,8 +467,8 @@ test('an unchanged change shows its shots and the note that they came out the sa
     shotResults: [{ id: 'dialog', status: 'ready', reason: null, note, conditions }],
   }), { sessionId: 42 });
   assert.equal(unchanged, ready, 'the card reads it exactly as a ready change with that note');
-  assert.match(unchanged, /<p data-shots-shot-note="1"[^>]*>.*Not in these shots:<\/span> any visible difference\. The before and after screens came out the same/);
-  assert.match(unchanged, /<p data-shots-condition="request_failed"[^>]*>.*Controlled test:<\/span> the shots agent made GET \/api\/items fail on both builds/);
+  assert.match(unchanged, /<p data-shots-shot-note="1"[^>]*>.*Not in these screenshots:<\/span> any visible difference\. The before and after screens came out the same/);
+  assert.match(unchanged, /<p data-shots-condition="request_failed"[^>]*>.*Controlled test:<\/span> the screenshot agent made GET \/api\/items fail on both builds/);
   assert.match(unchanged, new RegExp(`<img src="${url('3')}"`));
   assert.doesNotMatch(unchanged, /data-shots-shot-status="skipped"|>Skipped</);
 });
@@ -477,9 +489,9 @@ test('a ready change says what the shots agent did to both builds to reach it, a
   const change = /<li class="shots-change" data-shots-n="1" data-shots-change="dialog">[\s\S]*?<\/li>/.exec(html)[0];
   assert.deepEqual([...change.matchAll(/data-shots-condition="([a-z_]+)"/g)].map((match) => match[1]),
     ['request_held', 'request_failed', 'sample_file']);
-  assert.match(change, /Controlled test:<\/span> the shots agent kept GET \/api\/items\?q=&lt;b&gt; waiting on both builds, to show it loading\./);
-  assert.match(change, /Controlled test:<\/span> the shots agent made GET \/api\/items fail on both builds, to show what happens when it does\./);
-  assert.match(change, /Sample file:<\/span> the shots agent uploaded landscape\.png(?:, | and )table\.csv on both builds, from Homeroom&#39;s own sample files\./);
+  assert.match(change, /Controlled test:<\/span> the screenshot agent kept GET \/api\/items\?q=&lt;b&gt; waiting on both builds, to show it loading\./);
+  assert.match(change, /Controlled test:<\/span> the screenshot agent made GET \/api\/items fail on both builds, to show what happens when it does\./);
+  assert.match(change, /Sample file:<\/span> the screenshot agent uploaded landscape\.png(?:, | and )table\.csv on both builds, from Homeroom&#39;s own sample files\./);
   assert.ok(change.indexOf('data-shots-shot-note') < change.indexOf('data-shots-condition'), 'after what the shots leave out');
   // None recorded, or a change that is not ready: nothing is said.
   assert.doesNotMatch(AppView.shotsHtml(shots(), { sessionId: 42 }), /data-shots-condition/);
@@ -513,10 +525,10 @@ test('problems the shots agent noticed are listed under Also noticed, quietly an
   assert.match(items[2], /data-also-before="unknown"[\s\S]*<div class="shots-noticed-meta">Desktop<\/div>/,
     'a notice nobody checked on the before build says nothing about it');
   assert.ok(card.indexOf('shots-noticed') > card.indexOf('class="shots-viewer'), 'it follows the shots');
-  assert.ok(card.indexOf('shots-noticed') < card.indexOf('Shot details'));
+  assert.ok(card.indexOf('shots-noticed') < card.indexOf('Screenshot details'));
   // Quiet: no badge, fill or colour of its own; the card still reads ready.
   assert.doesNotMatch(noticed, /dev-badge|bg-|text-red|text-violet|Didn/);
-  assert.match(card, /Shots ready/);
+  assert.match(card, /Screenshots ready/);
 
   // The change page's Before and after card lists them too, after the changes.
   const thread = AppView.shotsHtml(shots({ shotNotices }), { sessionId: 42, thread: true });
@@ -574,12 +586,12 @@ test('the workshop summary uses protected element shots only after verification'
 
 test('running shots offer Stop, and a stopped or failed set offers to take them again', () => {
   const running = AppView.shotsHtml(shots({ state: 'exploring', artifacts: [] }), { sessionId: 42 });
-  assert.match(running, /Taking the shots/);
+  assert.match(running, /Taking the screenshots/);
   assert.match(running, /data-shots-stop="1"[^>]*onclick="AppView\.stopShots\(42, this\)">Stop</);
   assert.match(AppView.shotsHtml(shots({ state: 'provisioning', artifacts: [] }), { sessionId: 42 }),
     /Building before and after/);
   assert.match(AppView.shotsHtml(shots({ state: 'reviewing', artifacts: [] }), { sessionId: 42 }),
-    /Saving the shots/);
+    /Saving the screenshots/);
   const notStarted = AppView.shotsHtml(shots({ state: 'planned', artifacts: [] }), { sessionId: 42 });
   assert.doesNotMatch(notStarted, /data-shots-stop/, 'nothing is running to stop');
 
@@ -587,25 +599,25 @@ test('running shots offer Stop, and a stopped or failed set offers to take them 
     state: 'failed', artifacts: [], failureCode: 'shots_stopped', repairAvailable: false,
     failureReason: 'Stopped before it finished.',
   }), { sessionId: 42 });
-  assert.match(stopped, /Shots stopped/);
+  assert.match(stopped, /Screenshots stopped/);
   assert.doesNotMatch(stopped, /bg-red-500\/10/, 'a stop is not a failure');
-  assert.match(stopped, /onclick="AppView\.rerunShots\(42, this\)">Take the shots again</);
+  assert.match(stopped, /onclick="AppView\.rerunShots\(42, this\)">Take the screenshots again</);
   assert.doesNotMatch(stopped, /data-shots-stop/);
 
   const failed = AppView.shotsHtml(shots({
     state: 'failed', artifacts: [], failureCode: 'shots_capture_incomplete', repairAvailable: true,
     failureReason: 'The shots agent could not reach the dialog.',
   }), { sessionId: 42 });
-  assert.match(failed, /Couldn’t take the shots/);
+  assert.match(failed, /Couldn’t take the screenshots/);
   assert.match(failed, /The shots agent could not reach the dialog\./);
   assert.match(failed, /bg-red-500\/10/);
-  assert.match(failed, />Take the shots again</);
+  assert.match(failed, />Take the screenshots again</);
 
   const conflict = AppView.shotsHtml(shots({
     state: 'failed', artifacts: [], failureCode: 'visible_changes_conflict', repairAvailable: false,
     failureReason: 'The declaration says nothing visible changed.',
   }), { sessionId: 42 });
-  assert.doesNotMatch(conflict, /Take the shots again/, 'a retry that would repeat the failure is not offered');
+  assert.doesNotMatch(conflict, /Take the screenshots again/, 'a retry that would repeat the failure is not offered');
 });
 
 test('an interrupted run the platform is starting again reads as under way, not as a failure', () => {
@@ -614,17 +626,17 @@ test('an interrupted run the platform is starting again reads as under way, not 
     automaticRetryPending: true,
     failureReason: 'Homeroom restarted while these before & after shots were being taken. You can take them again.',
   }), { sessionId: 42 });
-  assert.match(retrying, /Trying the shots again/);
+  assert.match(retrying, /Trying the screenshots again/);
   assert.match(retrying, /starts them again on its own in a moment/);
-  assert.doesNotMatch(retrying, /Couldn’t take the shots|You can take them again/);
+  assert.doesNotMatch(retrying, /Couldn’t take the screenshots|You can take them again/);
   assert.doesNotMatch(retrying, /bg-red-500\/10/, 'nothing has failed that needs anyone');
-  assert.doesNotMatch(retrying, /Take the shots again/, 'the retry is already coming');
+  assert.doesNotMatch(retrying, /Take the screenshots again/, 'the retry is already coming');
 
   const view = AppView._shotsView(shots({
     state: 'failed', artifacts: [], failureCode: 'shots_run_interrupted', automaticRetryPending: true,
   }));
   assert.equal(view.retrying, true);
-  assert.equal(view.label, 'Trying the shots again');
+  assert.equal(view.label, 'Trying the screenshots again');
 
   // Once the retries are used up, the stored reason and the manual retry are back.
   const spent = AppView.shotsHtml(shots({
@@ -632,8 +644,8 @@ test('an interrupted run the platform is starting again reads as under way, not 
     automaticRetryPending: false,
     failureReason: 'Homeroom restarted while these before & after shots were being taken. You can take them again.',
   }), { sessionId: 42 });
-  assert.match(spent, /Couldn’t take the shots/);
-  assert.match(spent, />Take the shots again</);
+  assert.match(spent, /Couldn’t take the screenshots/);
+  assert.match(spent, />Take the screenshots again</);
 });
 
 test('a change not yet up for a vote shows its shots on its page and in the feed', () => {
@@ -856,6 +868,44 @@ test('the theme switch is CSS: the pick swaps the images and keeps the arrows be
     'a dark pick swaps the image on the sides that have one');
 });
 
+// #5691: the viewer is its own popover, so a narrow pane can hand the shots
+// to the whole window. The button is a plain popovertarget: no script, so it
+// survives the innerHTML both the card and a spec's frames are drawn with.
+test('the viewer is a popover and every bar ends with the button that opens it over the window', () => {
+  const html = AppView._shotsViewerHtml({
+    key: 42,
+    screens: [{ viewport: 'desktop', afterHtml: '<span></span>', beforeHtml: '<span></span>', notesHtml: '' }],
+  });
+  assert.match(html, /^<div class="shots-viewer" id="shots-42-viewer" popover="auto">/);
+  const buttons = html.match(/<button type="button" class="shots-expand"[^>]*>/g) || [];
+  assert.equal(buttons.length, 1);
+  assert.match(buttons[0], /popovertarget="shots-42-viewer" popovertargetaction="toggle" title="Expand">$/);
+  // Both words are in the button, and CSS shows the one that matches:
+  // the arrows out with "Expand", the arrows in with "Close" once open.
+  assert.match(html, /<span class="shots-expand-out"><svg[\s\S]*?<\/svg><span class="shots-expand-word">Expand<\/span><\/span><span class="shots-expand-in"><svg[\s\S]*?<\/svg><span class="shots-expand-word">Close<\/span><\/span><\/button>/);
+  assert.doesNotMatch(html, /<script|onclick|onchange/, 'still no script');
+  // The catalogs' words are what it says.
+  assert.equal(PlatformI18n.t('changes:shots.viewer.expand'), 'Expand');
+  assert.equal(PlatformI18n.t('changes:shots.viewer.collapse'), 'Close');
+});
+
+test('the expand CSS: closed it is the same block, open a window-sized card over a dim, and hidden where popovers do not exist', () => {
+  const css = require('node:fs').readFileSync(require('node:path').join(__dirname, '../public/css/app.css'), 'utf8');
+  assert.match(css, /\.shots-viewer\[popover\] \{ display: block; position: relative; inset: auto; margin: 0; padding: 0; border: 0; width: auto; height: auto;\n  overflow: hidden;/,
+    'closed, the UA popover box is neutralised and the viewer is the block it always was');
+  assert.match(css, /\.shots-viewer:popover-open \{ position: fixed; inset: 0; margin: auto; height: fit-content;[^}]*width: min\(calc\(100vw - 48px\), calc\(\(100vh - 200px\) \* 1\.6\)\); max-height: calc\(100vh - 48px\);/,
+    'open, it is nearly the window, in the top layer so a backdrop-filter ancestor cannot trap it');
+  assert.match(css, /\.shots-viewer::backdrop \{ background: rgba\(0, 0, 0, 0\.55\); \}/);
+  assert.match(css, /@supports \(height: 100dvh\) \{\n  \.shots-viewer:popover-open \{ width: min\(calc\(100vw - 48px\), calc\(\(100dvh - 200px\) \* 1\.6\)\); max-height: calc\(100dvh - 48px\); \}/);
+  assert.match(css, /\.shots-expand-in \{ display: none; \}/);
+  assert.match(css, /\.shots-viewer:popover-open \.shots-expand-out \{ display: none; \}/);
+  assert.match(css, /\.shots-viewer:popover-open \.shots-expand-in \{ display: inline-flex; \}/);
+  assert.match(css, /\.shots-theme-flip ~ \.shots-expand \{ margin-left: 0; \}/);
+  assert.match(css, /\.shots-expand ~ \.shots-screen-nav \{ margin-left: 0; \}/);
+  assert.match(css, /@supports not selector\(:popover-open\) \{ \.shots-expand \{ display: none; \} \}/,
+    'a browser without the popover API gets no button that does nothing');
+});
+
 test('the crop is CSS: it applies while both sides show, stacked or beside each other', () => {
   const css = require('node:fs').readFileSync(require('node:path').join(__dirname, '../public/css/app.css'), 'utf8');
   assert.match(css, /\.shots-crop \{ position: absolute; inset: 0; display: block; \}/,
@@ -871,4 +921,29 @@ test('the crop is CSS: it applies while both sides show, stacked or beside each 
     assert.match(css, new RegExp(`\\.shots-viewer:has\\(\\.shots-side-auto:checked\\) \\.shots-view\\[data-shots-viewport="${viewport}"\\] \\.shots-stage\\[data-shots-stack\\] \\{ grid-template-columns`),
       `${viewport}: the automatic side by side stacks a wide crop`);
   }
+});
+
+test('a sharp still at its own address shows like any other, and nothing else may follow the id', () => {
+  // shots-view.js serves an account in the New Needs you experiment each
+  // dense still at `…/shots/<id>?density=device` (#5651).
+  const dense = (char) => `${url(char)}?density=device`;
+  const value = shots();
+  value.artifacts = value.artifacts.map((a) => (a.url.startsWith('/api/') ? { ...a, url: dense(a.id[0]), density: 2 } : a));
+  const html = AppView.shotsHtml(value, { sessionId: 42 });
+  assert.doesNotMatch(html, /missing their details/);
+  const figure = /<figure class="shots-view"[\s\S]*?<\/figcaption>\s*<\/figure>/.exec(html)[0];
+  assert.deepEqual([...figure.matchAll(/<img src="([^"]+)"/g)].map((match) => match[1].replace(/&amp;/g, '&')), [dense('4'), dense('3')]);
+  for (const bad of [`${url('4')}?density=other`, `${url('4')}?density=device&x=1`, `${url('4')}#x`, `${url('4')}?`]) {
+    const tampered = shots();
+    tampered.artifacts = tampered.artifacts.map((a) => (a.url === url('4') ? { ...a, url: bad } : a));
+    assert.ok(!AppView.shotsHtml(tampered, { sessionId: 42 }).includes(bad), `${bad} is refused`);
+  }
+  // Needs you and New Needs you read the same stills through _workshopVisuals.
+  const pictures = AppView._workshopVisuals(null, {
+    ...value,
+    claims: [{ ...value.claims[0], viewports: ['desktop'] }],
+    screens: [{ viewport: 'desktop', shot: 'dialog', width: 1280, heightBefore: 800, heightAfter: 800, density: 2, regions: [] }],
+  });
+  assert.equal(pictures.screens.length, 1);
+  assert.equal(pictures.screens[0].after.url, dense('4'));
 });

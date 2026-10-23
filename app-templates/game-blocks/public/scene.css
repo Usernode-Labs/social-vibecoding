@@ -25,6 +25,20 @@
 .sky {
   background: linear-gradient(var(--sky-top) 0%, var(--sky) 45%, var(--horizon) 62%, var(--horizon) 100%);
 }
+/* Playing never selects text, opens the copy menu or flashes a tap: a long
+   press on the world, the hotbar or a button is only a press (app.js also
+   keeps the browser's menu and drags out). */
+.blocks {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+}
+/* No double-tap zoom on a button; the touch buttons and the stick keep
+   their own `none` (a lower specificity than theirs). */
+:where(.blocks) button {
+  touch-action: manipulation;
+}
 
 /* ── The title screen, over the world ─────────────────────────────────── */
 
@@ -196,7 +210,7 @@
 /* The hotbar: one slot per block, the one in your hand raised and lit. */
 .hotbar {
   display: flex;
-  max-width: calc(100vw - 1.5rem);
+  max-width: calc(100% - 1.5rem);
   gap: 0.25rem;
   overflow-x: auto;
   border-radius: 0.875rem;
@@ -300,4 +314,25 @@
   justify-content: center;
   padding: 1rem;
   background: rgba(18, 24, 33, 0.35);
+}
+
+/* ── Sideways (app.js "Sideways") ─────────────────────────────────────── */
+
+/* The play area under the header, a quarter turn clockwise: the world and
+   everything over it take the space below the header, as wide as the
+   window is tall. The header does not move; the strip behind it is the
+   sky's top. */
+html.sideways body {
+  background-color: #6db7f2;
+}
+html.sideways #world,
+html.sideways #play {
+  position: fixed;
+  inset: auto;
+  left: 0;
+  top: var(--side-top);
+  width: var(--side-w);
+  height: var(--side-h);
+  transform-origin: 0 0;
+  transform: translateX(var(--side-h)) rotate(90deg);
 }

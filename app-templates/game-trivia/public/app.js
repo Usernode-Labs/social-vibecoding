@@ -416,4 +416,13 @@
   $('retry').addEventListener('click', function () { window.location.reload(); });
   loadBank();
   requestAnimationFrame(tickClock);
+
+  // A long press opens no browser menu and a drag lifts no picture, so
+  // playing never turns into copying (scene.css keeps text from being
+  // selected). The fields people type in keep their own.
+  function inField(target) {
+    return !!(target && target.closest && target.closest('input, textarea, [contenteditable]'));
+  }
+  document.addEventListener('contextmenu', function (e) { if (!inField(e.target)) e.preventDefault(); });
+  document.addEventListener('dragstart', function (e) { if (!inField(e.target)) e.preventDefault(); });
 })();

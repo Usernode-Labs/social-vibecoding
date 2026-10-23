@@ -341,7 +341,6 @@ const FIRST_PASS_DELAY_MS = 60 * 1000;
 const BUSY_PASS_DELAY_MS = 2 * 1000;
 const IDLE_PASS_DELAY_MS = 30 * 1000;
 const REFRESH_INTERVAL_MS = 5 * 60 * 1000;
-const BUS_KIND = 'homeroom_bot';
 // One turn for a burst. People write a thought in two or three messages, or
 // a message and then a bare "@Homeroom bot" (PR #4584, 9 Oct 2026: a message
 // and its ping 2 seconds apart were answered twice, 23 seconds apart). A
@@ -1510,8 +1509,8 @@ function parseRepo(url) {
 
 // The projects the refresh reads: every one that runs on a repository, and
 // (newcomer run nine, 15 Oct 2026) one still being set up whose first
-// version the bot builds is filed (homeroom-bot-dm.js FILEABLE_SQL files it
-// once its repository holds the starter), so its request is read while the
+// version the bot builds is filed (its making files it once its repository
+// holds the starter: src/workflow/app-creation/), so its request is read while the
 // starter is built and deployed, not once it runs.
 async function listApps(pool) {
   const { rows } = await pool.query(
@@ -4393,20 +4392,13 @@ async function recordBuildSnapshot(pool, {
 // A read, a reply or a fix is its look's work item's (bot-request's
 // bot.look): the item follows its turn through a restart, and recovery
 // leaves a turn whose record names a work item still under way alone. What
-// is left here is a bot turn no work item owns: one an older release ran
-// (before its looks were workflow work), stopped, its record released, and
-// its request read again (the request's instance adopted it, older_turn).
-
-// The mark an older release put on its follow-up's turn record (on a change
-// up for a vote: `promoted`, never active or paused).
-const OLDER_FOLLOW_UP_MARK = 'homeroomBotFollowUp';
+// is left here is a bot turn no work item owns (one a release from before
+// its looks were workflow work ran): stopped, and its record released.
 
 /**
  * True when restart recovery should hand this session to the bot rather than
  * to a person's dev-chat tail: the bot's own session, while `active`, or
- * `paused` with a turn record on it, or one whose record an older release's
- * follow-up marked (a person's tail would publish its answer as the
- * change's spec, with no clock, #4533). A session a durable build owns
+ * `paused` with a turn record on it. A session a durable build owns
  * (`workflow_owner`) is that build's, and server.js leaves it alone before
  * it asks this.
  */
@@ -4414,9 +4406,7 @@ function isRecoveredBotSession(session) {
   return !!session
     && session.username === live.BOT_USERNAME
     && session.user_is_synthetic === true
-    && (session.status === 'active' || (session.status === 'paused' && !!session.active_turn)
-      || !!(session.active_turn && typeof session.active_turn === 'object'
-        && session.active_turn[OLDER_FOLLOW_UP_MARK] && !session.active_turn.owner));
+    && (session.status === 'active' || (session.status === 'paused' && !!session.active_turn));
 }
 
 // What a restart may cost a turn that runs on through it (durable-turn.js).
@@ -4461,16 +4451,6 @@ async function abandonRecoveredTurn({ pool, session, why }) {
   await putAwayRecoveredSession(pool, session, { archive: false });
   log.info('homeroom-bot', 'Recovered a bot turn no build owns; left for the queue', { sessionId: session.id, why });
   return 'released';
-}
-
-/**
- * A bot turn the stale-turn watchdog reaped (server.js). A durable build's
- * turn is its build's: the step following it reads the turn's end. Any
- * other is a read the queue takes again.
- */
-async function settleReapedTurn({ pool, session }) {
-  if (session?.workflow_owner) return 'durable';
-  return abandonRecoveredTurn({ pool, session, why: 'the stale-turn watchdog reaped its turn' });
 }
 
 // ── Live and shadow builds on the kernel ─────────────────────────────────
@@ -4617,38 +4597,6 @@ async function sayBuildLost(pool, settings, run, deps = {}) {
  * Only the lane's own builds: every one was queued, and a live build, whose
  * outcome is recorded in the same columns (#3509), never is.
  */
-/**
- * #3654: whether the bot's live work (the requests on apps it is live on,
- * which a person is waiting for: reads and builds) fills every live slot it
- * has right now, in this process: `liveAtOnce`, which dispatch fills, each
- * slot a worker from the pool people's own sessions use. The benchmark's
- * lane (services/bench/lane.js) starts nothing while it does, so a benchmark
- * never takes a worker a person is waiting on. Shadow builds in the lane do
- * not count: like a benchmark trial they are an experiment nobody waits for,
- * and counting them let a busy shadow lane hold the benchmark back
- * indefinitely. `counts.besides` adds work that shares the live slots: a
- * later change's side builds use only the slots live work leaves free
- * (lane.js), so live work and side builds together stay inside
- * `liveAtOnce`; live work never waits for them, since dispatch does not
- * count them. `counts.live` is for tests.
- *
- * The limit was `buildConcurrency` (2), from when live builds had that many
- * slots. They have had `liveAtOnce` (12) since, and any two of them held
- * every side build and benchmark trial back: on 9 Oct 2026 none started for
- * hours with twenty queued.
- */
-async function isLiveLaneSaturated(settings = null, counts = null, pool = null) {
-  const limit = clampInt(settings?.liveAtOnce, DEFAULTS.liveAtOnce, 1, MAX_LIVE_AT_ONCE);
-  // What the bot's lane has in use, read from its requests (rules/bot-loop.ts
-  // SLOTS_IN_USE_SQL): the same count in every process and after a restart.
-  let live = counts && Number.isFinite(counts.live) ? counts.live : 0;
-  if (!(counts && Number.isFinite(counts.live)) && pool) {
-    const { rows } = await pool.query(`SELECT COUNT(*)::int AS n FROM (${loopRules.SLOTS_IN_USE_SQL}) s`).catch(() => ({ rows: [] }));
-    live = Number(rows[0]?.n) || 0;
-  }
-  return live + (Number(counts?.besides) || 0) >= limit;
-}
-
 async function buildLaneSummary(pool, memory = null) {
   const mem = memory || {};
   const { rows } = await pool.query(
@@ -6692,7 +6640,7 @@ async function awaitGo(pool, { runId, app, issueNumber, parsed, bot, deps = {} }
     return 'failed';
   }
   // The triage wrote it just now; a plan from Make it was recorded when it
-  // was written (first-version-plan.js startEarlyPlan).
+  // was written (first-version-plan.js runEarlyPlan).
   if (!parsed?.fromMakeIt) {
     void timeline.record(pool, { runId, stage: 'plan_written', detail: { source: 'triage', questions: plan.questions.length } });
   }
@@ -6928,10 +6876,17 @@ function planChoicesNote(questions) {
   return `\n\n${lines.join('\n')}`;
 }
 
-/** Pure (#4488): the bullets a complicated change's plan card shows: the read's, else one plain line. */
-function complicatedPlanBullets(plan) {
+/**
+ * Pure (#4488): the bullets a complicated change's plan card shows: the
+ * read's; else (20 Oct 2026: request #5580's card said only the last
+ * line) the spec it drafted, in its own words (live.specCardLines); else
+ * one plain line.
+ */
+function complicatedPlanBullets(plan, specMd = null) {
   const bullets = planBullets(plan?.bullets || []);
-  return bullets.length ? bullets : ['The change this request asks for, as the plan and its screens below show it'];
+  if (bullets.length) return bullets;
+  const drafted = planBullets(live.specCardLines(specMd));
+  return drafted.length ? drafted : ['The change this request asks for, as the plan and its screens below show it'];
 }
 
 /**
@@ -6992,7 +6947,7 @@ async function planBeforeBuilding({
     return acted;
   }
   const shown = {
-    bullets: complicatedPlanBullets(plan), questions, complicated: true,
+    bullets: complicatedPlanBullets(plan, drafted.specMd), questions, complicated: true,
     ...(drafted.specVersion ? { spec: { sessionId: Number(drafted.sessionId), version: Number(drafted.specVersion) } } : {}),
   };
   // Once: a plan another drafting of this run already put to its requester
@@ -7804,7 +7759,7 @@ function heldForFirstVersion(holds, { appId, issueNumber, firstVersion = false, 
 // ── A first version filed while its project is set up ───────────────────
 //
 // Newcomer run nine (15 Oct 2026): a first version is filed once its
-// repository holds the starter (homeroom-bot-dm.js FILEABLE_SQL), while the
+// repository holds the starter (src/workflow/app-creation/), while the
 // starter is still built and deployed, so its plan, spec and build start
 // without waiting for the project to run. They need only the repository and
 // the build's own worker (its review's captures run the app in that worker
@@ -7825,8 +7780,8 @@ const SETUP_FAILED_DURING = 'its project could not be set up, so the build was s
 const SETUP_NOT_PROPOSED = 'the change was built but could not be proposed: its project was still being set up';
 // How long a built first version waits for its project to run before it is
 // proposed, and how often it looks. A project is 'creating' for a minute or
-// so, and the creation watchdog fails one that takes ten
-// (app-creation-owner.js), long before a build ends.
+// so, and its making fails one that takes fifteen
+// (src/workflow/app-creation/), long before a build ends.
 const SETUP_WAIT_MS = 15 * 60 * 1000;
 const SETUP_POLL_MS = 5 * 1000;
 
@@ -9523,16 +9478,6 @@ async function refresh(config, pool, { n = 0, apps = null, deps = {} } = {}) {
   if (held) return { github: held };
   const bot = await ensureBotUser(pool, config);
   const refreshDeps = { ...deps, bot, refreshN: n };
-  // A project waiting for its first version whose creation hook missed it
-  // is filed first, on the full refresh, before the refresh that queues it.
-  if (!apps) {
-    try {
-      const filed = await (deps.dm || require('./homeroom-bot-dm')).sweepFirstVersions(pool, config, deps);
-      if (filed) log.info('homeroom-bot', 'First versions filed', { filed });
-    } catch (err) {
-      log.warn('homeroom-bot', 'First-version sweep failed', { err: err.message });
-    }
-  }
   const summary = apps ? await refreshApps(pool, settings, apps, refreshDeps) : await refreshQueue(pool, settings, refreshDeps);
   if (summary.queued || summary.removed) log.info('homeroom-bot', apps ? 'Queue refreshed on activity' : 'Queue refreshed', summary);
   return summary;
@@ -9669,7 +9614,6 @@ module.exports = {
   projectMembers,
   headShaOf,
   INFRA_ERRORS,
-  isLiveLaneSaturated,
   mentionOptOutList,
   removeMentionOptOut,
   clearStaleTurn,
@@ -9705,6 +9649,7 @@ module.exports = {
   buildItOnRequest,
   complicatedReview,
   planChoicesNote,
+  complicatedPlanBullets,
   retryUnsentPlans,
   PLAN_SEND_RETRY_MINUTES,
   PLAN_SEND_ATTEMPTS,
@@ -9762,7 +9707,6 @@ module.exports = {
   liveBuildInput,
   liveBuildNonce,
   runPosted,
-  settleReapedTurn,
   // #4662: put a live run back in line with its kept plan, markdown and HTML.
   liveSayer,
   announceBuilt,
@@ -9799,7 +9743,6 @@ module.exports = {
   KEY_BUILD_CONCURRENCY,
   KEY_SHADOW_BUILD_PLATFORM,
   refreshApps,
-  BUS_KIND,
   MAX_BATCH_SIZE,
   // Pure, exported for tests.
   classifyIssue,

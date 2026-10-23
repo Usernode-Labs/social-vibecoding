@@ -27,6 +27,10 @@ const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const { Pool } = require('pg');
+// The route's own view of work on a session (checkRuntime): this process's
+// operations, and what the durable record says any process is doing.
+const activeWorkers = require('../src/services/active-workers');
+const sessionWork = require('../src/workflow/session-work.ts');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
 const SHA = (c) => c.repeat(40).slice(0, 40);
@@ -54,6 +58,11 @@ function routeHandler(router, routePath, method) {
 }
 
 test('a promoted CLI upload reaches its checks', { timeout: 120000 }, async (t) => {
+  // Every wait shares this budget: a step's deadline is the test's own
+  // timeout less a margin for t.after's cleanup, so a loaded container fails
+  // on the state it reached, never on the clock behind it.
+  const TIMEOUT_MS = 120000;
+  const startedAt = Date.now();
   const admin = new Pool({ connectionString: DSN, connectionTimeoutMillis: 2000 });
   try { await admin.query('SELECT 1'); } catch (err) {
     await admin.end();
@@ -66,6 +75,9 @@ test('a promoted CLI upload reaches its checks', { timeout: 120000 }, async (t) 
   const pool = new Pool({ connectionString: String(url), max: 8 });
   await pool.query(fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8'));
 
+  // Each call is recorded with the session that made it: the sub-tests reuse
+  // the heads (H1 and H2), so a call still in flight from an earlier
+  // sub-test's session must not be counted in a later one.
   const calls = [];
   const gh = { remote: H1, nextUpload: null, onRead: null };
   const stub = (path, exports) => {
@@ -80,7 +92,7 @@ test('a promoted CLI upload reaches its checks', { timeout: 120000 }, async (t) 
   stub('../src/services/staging', {
     ...realStaging,
     async prepareAttempt(config, row, app, head, attempt) {
-      calls.push(['prepare', head]);
+      calls.push({ kind: 'prepare', head, session: row.id });
       await attempt.checkpoint({ step: 'deploy', db: attempt.dbName });
       return { stagingUrl: `https://shop--s${row.id}.apps`, hostname: `shop--s${row.id}.apps`, runtimeKind: 'kubernetes',
         runtimeName: `sv-preview-${app.id}-s${row.id}`, containerId: null, imageRef: `img@sha256:${attempt.n}`, buildRef: null };
@@ -91,7 +103,7 @@ test('a promoted CLI upload reaches its checks', { timeout: 120000 }, async (t) 
   stub('../src/services/visuals', {
     ...realVisuals,
     async captureForSession(config, row, app, head) {
-      calls.push(['checks', head]);
+      calls.push({ kind: 'checks', head, session: row.id });
       // A head with no repo unit suite, so a person's recheck is answered
       // whether or not the machine asks for a fresh suite on it.
       return { outcome: 'verdict', state: 'passing', results: [], console: { state: 'clean', errors: [] }, history: [],
@@ -106,8 +118,17 @@ test('a promoted CLI upload reaches its checks', { timeout: 120000 }, async (t) 
   stub('../src/services/github', {
     ...realGithub,
     isEnabled: () => true,
-    async getBranchSha() {
-      if (gh.onRead) { const hook = gh.onRead; gh.onRead = null; await hook(); }
+    // A hook is armed for one branch and runs on the FIRST read of it, as the
+    // submit's own branch_moved check is; other readers (preview-workflow's
+    // exactHead, cli-handoff-sync) and other branches pass through untouched.
+    // Every read of the armed branch is counted while it is armed, so a
+    // submit that reads it more than once fails here instead of passing by.
+    async getBranchSha(owner, repo, branch) {
+      const hook = gh.onRead;
+      if (hook && hook.branch === branch) {
+        hook.reads += 1;
+        if (hook.reads === 1) await hook.fn();
+      }
       return gh.remote;
     },
     async createProposalCommit(owner, repo, args) {
@@ -169,10 +190,33 @@ test('a promoted CLI upload reaches its checks', { timeout: 120000 }, async (t) 
   const user = { id: author.id, username: 'author' };
   const row = async (s) => (await pool.query('SELECT * FROM chat_sessions WHERE id = $1', [s.id])).rows[0];
   const machine = async (s) => platform.previewInstance(s.id);
-  const until = async (check, what) => {
-    const deadline = Date.now() + 15000;
+  const callsOf = (s) => calls.filter((c) => c.session === s.id);
+  const count = (s, kind, head) => callsOf(s)
+    .filter((c) => c.kind === kind && (head === undefined || c.head === head)).length;
+  const short = (sha) => String(sha || '').slice(0, 8);
+  // What a failed wait saw, so a red run on main can be read from its log.
+  const describe = async (s) => {
+    try {
+      const parts = [];
+      const m = await machine(s);
+      parts.push(`machine ${m ? `${m.state} on ${short(m.data?.head)}` : 'none'}`);
+      const r = await row(s);
+      parts.push(`row check_state ${r.check_state} checks ${short(r.checks_commit_sha)}`
+        + ` reviewed ${short(r.reviewed_head_sha)} handoff ${short(r.handoff_head_sha)}`);
+      const { rows } = await pool.query(
+        `SELECT kind, work_key, status, last_error FROM wf_work WHERE machine = 'preview' AND status <> 'settled'`);
+      parts.push(`unsettled ${JSON.stringify(rows)}`);
+      parts.push(`work running ${platform.workflowWorkRunning()}`);
+      parts.push(`calls ${JSON.stringify(callsOf(s))}`);
+      return `; ${parts.join('; ')}`;
+    } catch (err) {
+      return `; (could not read the state: ${err.message})`;
+    }
+  };
+  const until = async (check, what, s) => {
+    const deadline = startedAt + TIMEOUT_MS - 10000;
     while (!(await check())) {
-      if (Date.now() >= deadline) assert.fail(what);
+      if (Date.now() >= deadline) assert.fail(`${what}${s ? await describe(s) : ''}`);
       await new Promise((res) => setTimeout(res, 50));
     }
   };
@@ -180,10 +224,49 @@ test('a promoted CLI upload reaches its checks', { timeout: 120000 }, async (t) 
     const m = await machine(s);
     const r = await row(s);
     return m?.state === 'settled' && m.data.head === head && r.check_state === 'passing' && r.checks_commit_sha === head;
-  }, `settled and passing on ${head.slice(0, 8)}`);
-  const quiet = () => until(async () => !(await pool.query(
-    `SELECT 1 FROM wf_work WHERE machine = 'preview' AND status IN ('queued', 'running', 'reported')
-     UNION ALL SELECT 1 FROM wf_events WHERE machine = 'preview' AND status = 'pending'`)).rows.length, 'quiet');
+  }, `settled and passing on ${head.slice(0, 8)}`, s);
+  // The route says a revision is ready (revisionBuildState) from the verdict
+  // AND from nothing still working on the session. A check run keeps a
+  // session operation open across its detached rerun and releases it just
+  // after the verdict is written, so a submit taken at the verdict itself
+  // can still answer 202 "checking" or 409 session_busy. Wait for the state
+  // the route reads, never for a delay.
+  const readyOn = (s, head) => until(async () => {
+    const m = await machine(s);
+    const r = await row(s);
+    if (!(m?.state === 'settled' && m.data.head === head
+          && r.check_state === 'passing' && r.checks_commit_sha === head)) return false;
+    if (activeWorkers.isSessionBusy(s.id)) return false;
+    const { rows: [work] } = await pool.query(
+      `SELECT ${sessionWork.workedOnSql()} AS worked_on,
+              ${sessionWork.operationOfKindLiveSql('cs.id', 'handoff-pipeline')} AS pipeline
+         FROM chat_sessions cs WHERE cs.id = $1`, [s.id]);
+    return !work.worked_on && !work.pipeline;
+  }, `ready on ${head.slice(0, 8)}`, s);
+  // The rows are written a moment after the work starts: the machine moves
+  // through preparing and checking and the kernel runs its work in memory, so
+  // a single poll for quiet rows can land in that gap. At rest is all of these
+  // at once, and the drain needs it twice in a row, a moment apart.
+  const atRest = async (s) => {
+    const { rows } = await pool.query(
+      `SELECT 1 FROM wf_work WHERE machine = 'preview' AND status IN ('queued', 'running', 'reported')
+       UNION ALL SELECT 1 FROM wf_events WHERE machine = 'preview' AND status = 'pending'`);
+    if (rows.length) return false;
+    if (platform.workflowWorkRunning() !== 0) return false;
+    const m = await machine(s);
+    return !!m && (m.state === 'settled' || m.state === 'idle');
+  };
+  const drain = async (s) => {
+    const deadline = startedAt + TIMEOUT_MS - 10000;
+    let last = false;
+    for (;;) {
+      const rest = await atRest(s);
+      if (rest && last) return;
+      last = rest;
+      if (Date.now() >= deadline) assert.fail(`drained${await describe(s)}`);
+      await new Promise((res) => setTimeout(res, 100));
+    }
+  };
 
   // A promoted CLI proposal whose checks ran and passed on H1.
   let branch = 0;
@@ -197,7 +280,7 @@ test('a promoted CLI upload reaches its checks', { timeout: 120000 }, async (t) 
       [app.id, author.id, `dev/upload-${branch}`, BASE, H1]);
     await platform.submitRevision({ sessionId: s.id, appId: app.id, head: H1, source: 'cli', trigger: 'commit-push' });
     await settledOn(s, H1);
-    await quiet();
+    await drain(s);
     return s;
   };
   const uploadHead = async (s, head, parent) => {
@@ -221,9 +304,27 @@ test('a promoted CLI upload reaches its checks', { timeout: 120000 }, async (t) 
     } }, res);
     return res;
   };
-  const prepared = (head) => calls.filter((c) => c[0] === 'prepare' && c[1] === head).length;
+  // The build route reads the branch once on a promoted submit (its own
+  // branch_moved check), so the hook must run on that read and the submit
+  // must not read the branch again.
+  const BRANCH_READS_PER_SUBMIT = 1;
+  const hookedSubmit = async (s, fn) => {
+    const hook = { branch: s.branch_name, fn, reads: 0 };
+    gh.onRead = hook;
+    let res;
+    try { res = await submit(s, H2); } finally { gh.onRead = null; }
+    assert.equal(hook.reads, BRANCH_READS_PER_SUBMIT, 'the submit read the branch once');
+    return res;
+  };
+  const prepared = (s, head) => count(s, 'prepare', head);
 
-  await t.test('checks on H1, upload H2, submit H2: the submit is taken and the machine checks H2', async () => {
+  // The sub-tests share one database, one preview machine and the workflow
+  // kernel, so they run one at a time. Each is awaited below; the option
+  // keeps that explicit, so a later edit cannot turn them into parallel
+  // copies competing for the database server's shared memory.
+  const serial = { concurrency: false };
+
+  await t.test('checks on H1, upload H2, submit H2: the submit is taken and the machine checks H2', serial, async () => {
     const s = await promotedOnH1();
     await uploadHead(s, H2, H1);
     let r = await row(s);
@@ -231,7 +332,11 @@ test('a promoted CLI upload reaches its checks', { timeout: 120000 }, async (t) 
     assert.equal(r.checks_commit_sha, H1, 'and started no checks: the pin is still the old run\'s');
     assert.equal(r.handoff_upload_checked_sha, H1);
     assert.equal(r.check_state, null, 'the verdict is cleared');
-    assert.equal((await machine(s)).data.head, H1, 'the machine still holds the old head');
+    // No assertion on the machine's head here: clearing the verdict leaves a
+    // promoted row owing checks on the head people vote on, and the machine
+    // sweeps that head on its own at the upload's operation end. That it
+    // built H2 once, and that the row's pin never moved to H2 by the upload,
+    // is asserted below.
 
     const res = await submit(s, H2);
     assert.equal(res.statusCode, 202, JSON.stringify(res.body));
@@ -240,47 +345,64 @@ test('a promoted CLI upload reaches its checks', { timeout: 120000 }, async (t) 
     r = await row(s);
     assert.equal(r.handoff_head_sha, H2);
     assert.equal(r.handoff_upload_checked_sha, null);
-    assert.equal(prepared(H2), 1, 'the machine built H2 once');
+    assert.equal(prepared(s, H2), 1, 'the machine built H2 once');
 
-    // A retry after a lost response is the idempotent early return.
-    const before = calls.length;
+    // A retry after a lost response is the idempotent early return. Wait for
+    // the check run's operation to be released, or the retry can still read
+    // the revision as checking and answer 202 instead of 200.
+    await readyOn(s, H2);
+    const before = callsOf(s).length;
     const retry = await submit(s, H2);
     assert.equal(retry.statusCode, 200, JSON.stringify(retry.body));
-    await quiet();
-    assert.equal(calls.length, before, 'a retry starts nothing');
+    await drain(s);
+    assert.equal(callsOf(s).length, before, 'a retry starts nothing');
   });
 
-  await t.test('"Run checks again" with the machine on H1 and the reviewed head on H2 checks H2, and a submit after it builds nothing twice', async () => {
+  await t.test('"Run checks again" with the machine on H1 and the reviewed head on H2 checks H2, and a submit after it builds nothing twice', serial, async () => {
     const s = await promotedOnH1();
     await uploadHead(s, H2, H1);
-    const h1Builds = prepared(H1);
-    const h1Checks = calls.filter((c) => c[0] === 'checks' && c[1] === H1).length;
+    const h1Builds = prepared(s, H1);
+    const h1Checks = count(s, 'checks', H1);
     const fresh = { ...(await row(s)), app_slug: app.slug, repo_url: app.repo_url };
     await recovery.recheckSessionChecks({ config, pool, session: fresh, reason: 'manual-recheck' });
     await settledOn(s, H2);
-    await quiet();
-    assert.equal(prepared(H1), h1Builds, 'the old head is not built again');
-    assert.equal(calls.filter((c) => c[0] === 'checks' && c[1] === H1).length, h1Checks, 'nor checked again');
-    const h2Builds = prepared(H2);
+    await drain(s);
+    assert.equal(prepared(s, H1), h1Builds, 'the old head is not built again');
+    assert.equal(count(s, 'checks', H1), h1Checks, 'nor checked again');
+    const h2Builds = prepared(s, H2);
 
-    // Rechecking again with the machine on the reviewed head checks it in place.
+    // Rechecking again with the machine on the reviewed head checks it in
+    // place: this session's checks on H2 go past what the first run left.
+    const h2Checks = count(s, 'checks', H2);
     await recovery.recheckSessionChecks({ config, pool, session: await row(s), reason: 'manual-recheck' });
-    await until(async () => calls.filter((c) => c[0] === 'checks' && c[1] === H2).length >= 3, 'rechecked H2 in place');
-    await quiet();
-    assert.equal(prepared(H2), h2Builds, 'a recheck of the head the machine holds builds nothing');
+    await until(async () => count(s, 'checks', H2) > h2Checks, 'rechecked H2 in place', s);
+    await drain(s);
+    assert.equal(prepared(s, H2), h2Builds, 'a recheck of the head the machine holds builds nothing');
 
     // The submit adopts the upload (its checks are already on it) and the
-    // revision joins what the machine holds: no second build.
+    // revision joins what the machine holds: no second build. Wait for the
+    // recheck's operation to be released, or the submit answers 409 busy.
+    await readyOn(s, H2);
     const res = await submit(s, H2);
     assert.equal(res.statusCode, 202, JSON.stringify(res.body));
     assert.equal((await row(s)).handoff_head_sha, H2);
-    await quiet();
-    assert.equal(prepared(H2), h2Builds, 'the submit\'s revision of the same head is joined');
+    await drain(s);
+    assert.equal(prepared(s, H2), h2Builds, 'the submit\'s revision of the same head is joined');
   });
 
-  await t.test('the submit still refuses a moved branch, a newer upload, and checks pinned to a third commit', async () => {
+  await t.test('the submit still refuses a moved branch, a newer upload, and checks pinned to a third commit', serial, async () => {
     const s = await promotedOnH1();
     await uploadHead(s, H2, H1);
+    // The upload cleared the verdict, so the machine sweeps the head people
+    // vote on by itself. Let that run finish first: what this sub-test pins
+    // is that the three REFUSED submits adopt nothing and build nothing, not
+    // whether the machine's own sweep ran.
+    await settledOn(s, H2);
+    await drain(s);
+    // A refused submit must reach its own refusal, not a 409 for work that
+    // is still finishing: the route tests busy before it reads the branch.
+    await readyOn(s, H2);
+    const builds = prepared(s, H2);
 
     gh.remote = H3;
     let res = await submit(s, H2);
@@ -289,22 +411,20 @@ test('a promoted CLI upload reaches its checks', { timeout: 120000 }, async (t) 
     gh.remote = H2;
 
     // A newer upload lands while this submit reads the branch.
-    gh.onRead = () => pool.query(`UPDATE chat_sessions SET handoff_uploaded_sha = $2 WHERE id = $1`, [s.id, H3]);
-    res = await submit(s, H2);
+    res = await hookedSubmit(s, () => pool.query(`UPDATE chat_sessions SET handoff_uploaded_sha = $2 WHERE id = $1`, [s.id, H3]));
     assert.equal(res.statusCode, 409);
     assert.equal(res.body.error, 'session_state_changed');
     await pool.query(`UPDATE chat_sessions SET handoff_uploaded_sha = $2 WHERE id = $1`, [s.id, H2]);
 
     // The upload's recorded pin changes under the submit.
-    gh.onRead = () => pool.query(`UPDATE chat_sessions SET handoff_upload_checked_sha = $2 WHERE id = $1`, [s.id, THIRD]);
-    res = await submit(s, H2);
+    res = await hookedSubmit(s, () => pool.query(`UPDATE chat_sessions SET handoff_upload_checked_sha = $2 WHERE id = $1`, [s.id, THIRD]));
     assert.equal(res.statusCode, 409);
     assert.equal(res.body.error, 'session_state_changed');
     await pool.query(`UPDATE chat_sessions SET handoff_upload_checked_sha = $2 WHERE id = $1`, [s.id, H1]);
 
     // Checks pinned to a commit that is neither the upload's recorded pin nor
     // the upload (written as the machine would write it).
-    gh.onRead = async () => {
+    res = await hookedSubmit(s, async () => {
       const c = await pool.connect();
       try {
         await c.query('BEGIN');
@@ -312,13 +432,12 @@ test('a promoted CLI upload reaches its checks', { timeout: 120000 }, async (t) 
         await c.query(`UPDATE chat_sessions SET checks_commit_sha = $2 WHERE id = $1`, [s.id, THIRD]);
         await c.query('COMMIT');
       } finally { c.release(); }
-    };
-    res = await submit(s, H2);
+    });
     assert.equal(res.statusCode, 409);
     assert.equal(res.body.error, 'session_state_changed');
     const r = await row(s);
     assert.equal(r.handoff_head_sha, H1, 'nothing was adopted');
-    assert.equal((await machine(s)).data.head, H1, 'nothing was handed to the machine');
-    await quiet();
+    await drain(s);
+    assert.equal(prepared(s, H2), builds, 'the refused submits built nothing');
   });
 });

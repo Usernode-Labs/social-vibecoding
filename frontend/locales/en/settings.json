@@ -1439,13 +1439,21 @@
     "text": "Adds <0>Your computer · Homeroom session</0> to the list of places a session can be built. You keep the platform chat exactly as it is, with the same transcript, branch and proposal, but its turns run through the Homeroom CLI on your own machine, on your own Claude plan. It needs the CLI installed and attached, so it stays off until you ask for it.",
     "description": "Explanation under the Session bridge switch in Settings > Experimental. The tagged part is the name of an option in another list, shown in a monospace font; translate it as that option is translated. CLI is the command-line tool; Claude is a product name; a \"turn\" is one request and answer of the coding agent."
   },
-  "experimental.suggestShortcut.label": {
-    "text": "Comment on the page",
-    "description": "Label of a switch in Settings > Experimental: with it on, \"Suggest an improvement\" opens a screenshot of the page to tap or click and comment on, instead of a form. \"The page\" is whatever screen the person is on."
+  "experimental.reviewFlow.label": {
+    "text": "New Needs you",
+    "description": "Label of a switch in Settings, Experimental. When on, the Needs you list on the Communities tab becomes a calm list of changes, each opening into its own page with a before and after slider and a vote sheet."
   },
-  "experimental.suggestShortcut.description": {
-    "text": "Suggest an improvement opens on a screenshot of the page. Tap or click what should change and say what; it's posted as a suggestion with the screenshot and your pin. Add more comments to the same suggestion, or post each on its own. The form is one switch away. On a computer, pressing C opens it too. Saved on this device only.",
-    "description": "Explanation under the \"Comment on the page\" switch in Settings > Experimental. \"Suggest an improvement\" is the name of a button elsewhere; translate it as that button is translated. \"The form\" is the other, written way to suggest an improvement. C is a key on the keyboard; keep it."
+  "experimental.reviewFlow.description": {
+    "text": "Try a calmer way through what's waiting on you: one change at a time, with its before and after side by side. On for your account on every device.",
+    "description": "Explanation under the New Needs you switch in Settings, Experimental."
+  },
+  "experimental.newLook.label": {
+    "text": "New look",
+    "description": "Label of a switch in Settings, Experimental. When on, Homeroom is drawn in its new visual style: a warmer background, a new typeface and calmer colours."
+  },
+  "experimental.newLook.description": {
+    "text": "Try Homeroom's new look: a warmer background, the Geist typeface and calmer colours, closer to the Homeroom website. Light mode only. On for this browser.",
+    "description": "Explanation under the New look switch in Settings, Experimental. Geist is the name of a typeface; keep it as is. Homeroom is the product name."
   },
   "experimental.localAgents.title": {
     "text": "Local coding agent",
@@ -1518,6 +1526,122 @@
   "accessibility.contrast.description": {
     "text": "Darker text and clearer lines, in light and dark.",
     "description": "Explanation under the High contrast switch in Settings > Accessibility."
+  },
+  "privacy.whoCanMessage.title": {
+    "text": "Who can message or invite me",
+    "description": "Heading of the first setting on the Settings > Privacy page, and the accessible name of its two choices. It decides who may start a direct message with you or invite you to a group chat or a project."
+  },
+  "privacy.whoCanMessage.intro": {
+    "text": "Who can start a new conversation with you, invite you to a group chat or a project, or send you a friend request. Conversations you already have keep working.",
+    "description": "Explanation under the \"Who can message or invite me\" heading in Settings > Privacy."
+  },
+  "privacy.whoCanMessage.shared": {
+    "text": "People in projects I'm in",
+    "description": "First choice under \"Who can message or invite me\" in Settings > Privacy, and the default: only people who are in one of your projects with you, or your friends, can start a conversation or invite you."
+  },
+  "privacy.whoCanMessage.sharedDescription": {
+    "text": "Your friends, and people who made or were invited into a project you're in. Joining a public community doesn't count. Anyone else can still send you an invite link.",
+    "description": "Small explanation under the \"People in projects I'm in\" choice in Settings > Privacy."
+  },
+  "privacy.whoCanMessage.anyone": {
+    "text": "Anyone",
+    "description": "Second choice under \"Who can message or invite me\" in Settings > Privacy: anybody on Homeroom can start a conversation with you or invite you."
+  },
+  "privacy.whoCanMessage.anyoneDescription": {
+    "text": "Anybody on Homeroom can message you, invite you or send you a friend request.",
+    "description": "Small explanation under the \"Anyone\" choice in Settings > Privacy."
+  },
+  "privacy.discoverable.label": {
+    "text": "Let people find my profile",
+    "description": "Label of a switch in Settings > Privacy, off by default. When on, people who are not in a project with you can find your username when they search for people."
+  },
+  "privacy.discoverable.description": {
+    "text": "When this is off, only your friends and people who made or were invited into a project you're in find your username when they search for someone to message, mention or invite. A link to your profile still works.",
+    "description": "Explanation under the \"Let people find my profile\" switch in Settings > Privacy."
+  },
+  "privacy.loadFailed": {
+    "text": "Couldn't load your privacy settings. Try again in a moment.",
+    "description": "Error on the Settings > Privacy page when reading the current settings from the server failed."
+  },
+  "privacy.saveFailed": {
+    "text": "Couldn't save that change. Try again in a moment.",
+    "description": "Error on the Settings > Privacy page when saving a change failed; the control goes back to what it was."
+  },
+  "privacy.usageAnalytics.title": {
+    "text": "Usage analytics",
+    "description": "Heading of the last block of Settings > Privacy, above the Share usage analytics switch."
+  },
+  "privacy.usageAnalytics.intro": {
+    "text": "Whether Homeroom may record how you use it.",
+    "description": "One line under the Usage analytics heading in Settings > Privacy."
+  },
+  "privacy.usageAnalytics.label": {
+    "text": "Share usage analytics",
+    "description": "Label of the switch in Settings > Privacy that lets Homeroom record how the person uses it. Off unless they turn it on."
+  },
+  "privacy.usageAnalytics.description": {
+    "text": "Off unless you turn it on. When it is on, Homeroom keeps a record linked to your account of the screens you open and in what order, which apps you open, how long pages take to load and whether a few actions worked, to see where people get stuck or lost. It never records what you type or what is on screen. Turning it off stops this from then on.",
+    "description": "Explanation under the Share usage analytics switch in Settings > Privacy: what is recorded when it is on. \"Lost\" means unable to find their way around."
+  },
+  "privacy.usageAnalytics.saveFailed": {
+    "text": "Could not save that. Try again.",
+    "description": "Error under the Share usage analytics switch in Settings > Privacy when saving the choice failed; the switch goes back to how it was."
+  },
+  "phones.title": {
+    "text": "Linked phones",
+    "description": "Heading of the Settings > Linked phones page, which lists the phones signed in to the account through the Homeroom mobile app."
+  },
+  "phones.intro": {
+    "text": "Phones signed in to your account with the Homeroom app. Unlink one you no longer use, or don't recognise: it is signed out and stops getting your notifications.",
+    "description": "Explanation under the Linked phones heading in Settings > Linked phones."
+  },
+  "phones.empty": {
+    "text": "No phones are linked. Sign in with the Homeroom app on your phone and it shows up here.",
+    "description": "Shown in Settings > Linked phones when no phone is signed in to the account through the Homeroom mobile app."
+  },
+  "phones.platform.android": {
+    "text": "Android phone",
+    "description": "Name of a row in Settings > Linked phones: a phone running Android that is signed in to the account."
+  },
+  "phones.platform.ios": {
+    "text": "iPhone",
+    "description": "Name of a row in Settings > Linked phones: an iPhone that is signed in to the account."
+  },
+  "phones.platform.unknown": {
+    "text": "Phone",
+    "description": "Name of a row in Settings > Linked phones when Homeroom does not know whether the phone is an Android phone or an iPhone (it never turned on notifications)."
+  },
+  "phones.thisPhone": {
+    "text": "This phone",
+    "description": "Small label beside the name of a row in Settings > Linked phones: the row is the phone this page is open on."
+  },
+  "phones.detail": {
+    "text": "Last used {{lastUsed}} · Linked {{linked}}",
+    "description": "Line under a phone in Settings > Linked phones. {{lastUsed}} is the date the Homeroom app last used the account on that phone; {{linked}} is the date it was first signed in there. Both are already-formatted dates."
+  },
+  "phones.unlink": {
+    "text": "Unlink",
+    "description": "Red button on a row of Settings > Linked phones: signs that phone out of the account (verb). Pressed once it asks to confirm; pressed again it unlinks."
+  },
+  "phones.cancel": {
+    "text": "Cancel",
+    "description": "Button beside Unlink on a row of Settings > Linked phones while it asks to confirm: keeps the phone linked."
+  },
+  "phones.confirm": {
+    "text": "Press Unlink again to sign this phone out.",
+    "description": "Replaces the dates under a phone in Settings > Linked phones after Unlink was pressed once, asking to confirm."
+  },
+  "phones.confirmThisPhone": {
+    "text": "This is the phone you are using. Press Unlink again to sign out here.",
+    "description": "Replaces the dates under the phone this page is open on in Settings > Linked phones after Unlink was pressed once: unlinking it signs the person out on this phone."
+  },
+  "phones.loadFailed": {
+    "text": "Couldn't load your linked phones. Try again in a moment.",
+    "description": "Error on the Settings > Linked phones page when reading the list from the server failed."
+  },
+  "phones.unlinkFailed": {
+    "text": "Couldn't unlink that phone. Try again in a moment.",
+    "description": "Error on the Settings > Linked phones page when unlinking a phone failed; the phone stays in the list."
   },
   "devConsole.title": {
     "text": "Developer console",
@@ -1644,7 +1768,7 @@
     "description": "Name of a phone notification category in Settings > Mobile push categories. \"Change\" is a noun: a proposed change to a project."
   },
   "alerts.push.proposalAlerts.description": {
-    "text": "Changes that need your attention or your vote, votes on yours, and changes you made or voted on going live.",
+    "text": "Changes that need your attention or your vote, votes on yours, changes you made or voted on going live, and projects you joined opening.",
     "description": "What the Change alerts category covers, under its name in Settings > Mobile push categories. \"Changes\" are proposed changes to a project; \"yours\" means the person's own proposed changes."
   },
   "alerts.push.appAlerts.label": {
@@ -2031,6 +2155,14 @@
     "text": "Linked accounts",
     "description": "Name of a part of Settings: the Linked accounts page (connecting GitHub and X). Shown as a row in the Settings menu or under a matching row when filtering, and as the phone header title when the part is a page of its own."
   },
+  "nav.part.contactPrivacy": {
+    "text": "Privacy",
+    "description": "Name of a part of Settings: the Privacy page (who can message or invite you, and whether people can find your profile). Shown as a row in the Settings menu or under a matching row when filtering, and as the phone header title when the part is a page of its own."
+  },
+  "nav.part.phones": {
+    "text": "Linked phones",
+    "description": "Name of a part of Settings: the Linked phones page (the phones signed in to the account with the Homeroom app, and unlinking one). Shown as a row in the Settings menu or under a matching row when filtering, and as the phone header title when the part is a page of its own."
+  },
   "nav.part.wallet": {
     "text": "Homeroom Wallet",
     "description": "Name of a part of Settings: the Homeroom Wallet page (linking a crypto wallet). Homeroom is the product name. Shown as a row in the Settings menu or under a matching row when filtering, and as the phone header title when the part is a page of its own."
@@ -2183,6 +2315,14 @@
     "text": "github x twitter social verified weekly credits connect",
     "description": "Not shown on screen. Extra search words for \"Linked accounts\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words."
   },
+  "nav.keywords.contactPrivacy": {
+    "text": "privacy messages message dm invite invitations contact strangers safety find search discoverable profile friend requests analytics usage tracking telemetry",
+    "description": "Not shown on screen. Extra search words for \"Privacy\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words."
+  },
+  "nav.keywords.phones": {
+    "text": "phone phones mobile app device devices signed in sessions sign out log out unlink disconnect android iphone",
+    "description": "Not shown on screen. Extra search words for \"Linked phones\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words."
+  },
   "nav.keywords.wallet": {
     "text": "crypto link qr",
     "description": "Not shown on screen. Extra search words for \"Homeroom Wallet\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words."
@@ -2216,7 +2356,7 @@
     "description": "Not shown on screen. Extra search words for \"Global Chat (experimental)\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words."
   },
   "nav.keywords.experimental": {
-    "text": "beta labs progress estimate session bridge local agent keyboard shortcut suggest improvement",
+    "text": "beta labs progress estimate session bridge local agent new look design",
     "description": "Not shown on screen. Extra search words for \"Experimental\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words."
   },
   "nav.keywords.theme": {

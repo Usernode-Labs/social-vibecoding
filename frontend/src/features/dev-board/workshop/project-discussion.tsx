@@ -78,6 +78,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { XIcon } from '@/components/ui/icons';
 import { type CommunityPayload, type PlaceChannel } from './community-card';
 import { AppReplyThreadPane, ChannelLoading, EmbeddedConversation } from '../../messages';
+import { CardHomeContext } from '../../messages/format';
 import { closeThread, embeddedThreadOpen } from '../../messages/store';
 import { navStore } from '../../nav/nav-store.js';
 import { registerLevel } from '../../workshop/tab-ladder';
@@ -85,6 +86,7 @@ import { useMessages } from '../../../lib/i18n/react';
 import { useStoreState } from '../../../lib/use-store-state';
 import { devWorkshopStore } from '../card/cards-store';
 import type { TranscriptMarker } from '../../group-chat/transcript-store';
+import { ChannelHead } from './channel-head';
 import { channelPlace, channelsOf, findChannel, mergedInto, type PlaceKey } from './places';
 import { TopicHead } from './topic-head';
 import { TopicFigures } from './topic-figures';
@@ -156,7 +158,10 @@ export function ProjectDiscussion({ slug, name, data, channel = null, onPlace }:
   return <GeneralChannel slug={slug} name={name} data={data} />;
 }
 
-/** #general: the project's own channel, as it always was. */
+/**
+ * #general: the project's own channel, under its line (#5303,
+ * ./channel-head.tsx: what it is for, its members, and Mute).
+ */
 function GeneralChannel({ slug, name, data }: {
   slug: string;
   name: string;
@@ -276,12 +281,16 @@ function GeneralChannel({ slug, name, data }: {
   if (room) {
     return (
       <section
-        className="dev-ws-discussion"
+        className="dev-ws-discussion dev-ws-general-channel"
         data-ws-discussion=""
         data-ws-discussion-room={channel?.handle || ''}
         aria-label={t('project:discussion.label', { project: name })}
       >
-        <EmbeddedConversation conversationId={room} active={onShow} at={roomAt} />
+        <ChannelHead slug={slug} name={name} data={data} />
+        {/* #5303: a card from another project says which one it is from. */}
+        <CardHomeContext.Provider value={slug}>
+          <EmbeddedConversation conversationId={room} active={onShow} at={roomAt} />
+        </CardHomeContext.Provider>
       </section>
     );
   }
@@ -295,11 +304,12 @@ function GeneralChannel({ slug, name, data }: {
   // up (GroupChat.revealMessage).
   return (
     <section
-      className={`dev-ws-discussion${thread ? ' dev-ws-discussion-threaded' : ''}`}
+      className={`dev-ws-discussion dev-ws-general-channel${thread ? ' dev-ws-discussion-threaded' : ''}`}
       data-ws-discussion=""
       data-discussion-app={slug}
       aria-label={t('project:discussion.label', { project: name })}
     >
+      <ChannelHead slug={slug} name={name} data={data} />
       <div ref={host} className="dev-ws-discussion-host" />
       {thread ? (
         <AppReplyThreadPane
@@ -418,7 +428,7 @@ function TopicChannel({ slug, name, data, topic, readOnly, onPlace }: {
         name,
         readOnly: readOnly || closed,
         archived: false,
-        channel: { type: 'category', ref, markers: markersRef.current },
+        channel: { type: 'category', ref, markers: markersRef.current, handle: topic.handle, about: String(topic.about || '').trim() },
         placeholder: t('project:discussion.topic.placeholder', { handle: topic.handle }),
         notice,
       });

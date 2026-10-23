@@ -137,15 +137,14 @@ reload`, then drains and stops the old color — see
 `scripts/platform-rollout.sh`.
 
 HTTP handling is stateless against the shared Postgres, so both colors
-can serve during the brief cutover overlap. The singleton background
-work (worker adoption, headless resume, recovery, sweepers, the
-main-drift poller) is gated behind a Postgres advisory lock
-(`src/services/leadership.js`): the old color stays leader until it
-stops and releases the lock, then the new color promotes itself. That
-ordering is why traffic flips *before* the old color stops.
-`PLATFORM_LEADER_LOCK` toggles the gate — set in compose for prod;
-unset in local dev/tests, so a single instance is leader immediately
-and behaves exactly as before.
+can serve during the brief cutover overlap. The platform's own background
+work (people's turns, recovery, sweeps, the main-drift poller) is workflow
+work (`docs/workflows.md`): durable items under leases and clocks that run
+one at a time wherever the workflow runs, so both colors may run it and
+nothing is elected. `PLATFORM_LEADER_LOCK` (set in compose for prod) now
+only serializes the boot migration between two colors starting at once
+(`src/services/db-locks.js`); unset in local dev/tests, a single instance
+migrates without it.
 
 The very first blue-green deploy (cutting over from the old single
 `usernode` container) has a brief apex blip while the first color

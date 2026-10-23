@@ -41,7 +41,7 @@ const { spawn, execFileSync } = require('child_process');
 
 const ROOT = path.join(__dirname, '..');
 const appTemplates = require('../src/services/app-templates');
-const { getTemplateFiles } = require('../src/services/template');
+const { getTemplateFiles, fillAppName } = require('../src/services/template');
 
 const PHONE = { width: 390, height: 844, scale: 2 };
 // A Saturday morning, so the week's chores, a potluck that evening and
@@ -53,7 +53,11 @@ const ME = { id: 1, username: 'alex' };
 const PEOPLE = [ME, { id: 2, username: 'sam' }, { id: 3, username: 'priya' }, { id: 4, username: 'jordan' }];
 const at = (iso) => new Date(iso).toISOString();
 
-/** A tier list's answer: each sample in the tier given, on your board and the group's. */
+/**
+ * A tier list's answer: each sample in the tier given, on your board and the
+ * group's. W is Want to, below F: one nobody has ranked yet, which you and
+ * two others want to get to.
+ */
 function tierAnswer(placed) {
   let id = 0;
   return {
@@ -62,8 +66,11 @@ function tierAnswer(placed) {
     rankers: 4,
     items: placed.map(([name, tier]) => {
       id += 1;
+      const by = PEOPLE[id % PEOPLE.length].username;
+      const mine = id % PEOPLE.length === 1;
+      if (tier === 'W') return { id, name, by, mine, votes: 0, wants: 3, average: null, tier: null, yours: 'W' };
       const average = { S: 5, A: 4, B: 3, C: 2, D: 1, F: 0 }[tier];
-      return { id, name, by: PEOPLE[id % PEOPLE.length].username, mine: id % PEOPLE.length === 1, votes: 4, average, tier, yours: tier };
+      return { id, name, by, mine, votes: 4, wants: 0, average, tier, yours: tier };
     }),
   };
 }
@@ -163,6 +170,35 @@ function timePlan(id, { name, by, times }) {
 }
 
 const plansAnswer = (plans, past = []) => ({ me: ME, now: at(SAMPLE_NOW), maxTimes: 8, members: 'ok', plans, past });
+
+/**
+ * A weekly find-a-time's week as its api.js answers it. `weeks` are, per
+ * GROUP member in order, [day (0 Monday), first hour, hour after the last]
+ * blocks of the hours that work for them every week; null for somebody who
+ * has not answered. The best hours as api.js picks them.
+ */
+function weekAnswer(weeks) {
+  const free = {};
+  const people = [];
+  GROUP.forEach((m, i) => {
+    if (!weeks[i]) return;
+    people.push({ id: m.id, username: m.username, me: m.id === ME.id });
+    for (const [day, from, to] of weeks[i]) {
+      for (let hour = from; hour < to; hour += 1) (free[`${day}-${hour}`] = free[`${day}-${hour}`] || []).push(m.id);
+    }
+  });
+  const n = (day, hour) => (free[`${day}-${hour}`] || []).length;
+  const ranked = Object.keys(free).map((k) => k.split('-').map(Number))
+    .sort((a, b) => (n(...b) - n(...a)) || (n(b[0], b[1] + 1) - n(a[0], a[1] + 1)) || (a[0] - b[0]) || (a[1] - b[1]));
+  const best = [];
+  for (const [day, hour] of ranked) {
+    if (best.length < 3 && !best.some((x) => x.day === day && Math.abs(x.hour - hour) <= 1)) best.push({ day, hour });
+  }
+  return {
+    me: ME, days: 7, firstHour: 8, lastHour: 22, members: 'ok', people, free, best,
+    waiting: GROUP.filter((m, i) => !weeks[i]).map((m) => ({ id: m.id, username: m.username, me: m.id === ME.id })),
+  };
+}
 
 /** A sign-up sheet's event with slots, as its api.js draws one coming up: `slots` are [name, size, who took it]. */
 function slotsEvent(id, { name, startsAt, place, by, slots }) {
@@ -269,22 +305,22 @@ const SAMPLES = {
   'tier-list-restaurants': {
     name: 'Restaurant Tier List',
     ready: '#board .tier-s',
-    api: { '/api/items': tierAnswer([['Joe\'s Pizza', 'S'], ['Pho 88', 'A'], ['Taqueria Sol', 'A'], ['Burger Barn', 'B'], ['Noodle Bar', 'C']]) },
+    api: { '/api/items': tierAnswer([['Joe\'s Pizza', 'S'], ['Pho 88', 'A'], ['Taqueria Sol', 'A'], ['Burger Barn', 'B'], ['Noodle Bar', 'C'], ['Thai Basil', 'W']]) },
   },
   'tier-list-hikes': {
     name: 'Hiking Tier List',
     ready: '#board .tier-s',
-    api: { '/api/items': tierAnswer([['Lake Loop', 'S'], ['Ridge Trail', 'A'], ['Cedar Falls', 'A'], ['Pine Hollow', 'B'], ['Quarry Path', 'C']]) },
+    api: { '/api/items': tierAnswer([['Lake Loop', 'S'], ['Ridge Trail', 'A'], ['Cedar Falls', 'A'], ['Pine Hollow', 'B'], ['Quarry Path', 'C'], ['Summit Route', 'W']]) },
   },
   'tier-list-cities': {
     name: 'City Tier List',
     ready: '#board .tier-s',
-    api: { '/api/items': tierAnswer([['Lisbon', 'S'], ['Kyoto', 'A'], ['Montreal', 'A'], ['Chicago', 'B'], ['Rotterdam', 'C']]) },
+    api: { '/api/items': tierAnswer([['Lisbon', 'S'], ['Kyoto', 'A'], ['Montreal', 'A'], ['Chicago', 'B'], ['Rotterdam', 'C'], ['Seoul', 'W']]) },
   },
   'tier-list-games': {
     name: 'Game Tier List',
     ready: '#board .tier-s',
-    api: { '/api/items': tierAnswer([['Codenames', 'S'], ['Catan', 'A'], ['Chess', 'A'], ['Uno', 'B'], ['Monopoly', 'C']]) },
+    api: { '/api/items': tierAnswer([['Codenames', 'S'], ['Catan', 'A'], ['Chess', 'A'], ['Uno', 'B'], ['Monopoly', 'C'], ['Wingspan', 'W']]) },
   },
   'grocery-list': {
     name: 'Grocery List',
@@ -350,7 +386,10 @@ const SAMPLES = {
   },
   'potluck-planner': {
     name: 'Potluck Planner',
-    ready: '#potlucks [data-potluck] [data-dish]',
+    // A potluck of its own, the screen that shows what the app is for (its
+    // first screen lists the potlucks, each opening one like this).
+    hash: '#/p/1',
+    ready: '#potluck [data-potluck] [data-dish]',
     api: {
       '/api/potlucks': {
         me: ME,
@@ -432,19 +471,18 @@ const SAMPLES = {
       ),
     },
   },
+  // Weekly: the hours of every week that work for each of five people.
   'find-a-time-book-club': {
     name: 'Book Club Times',
-    ready: '#plans [data-plan] [data-slot]',
+    ready: '#week-grid [data-cell][data-free]',
     api: {
-      '/api/plans': plansAnswer([timePlan(1, {
-        name: 'November book club', by: 'priya',
-        times: [
-          ['2026-10-27T19:00:00-07:00', false, 'priya', 'ffnmf'],
-          ['2026-10-29T19:00:00-07:00', false, 'priya', 'ffffm'],
-          ['2026-10-31T14:00:00-07:00', false, 'sam', 'nfmn-'],
-          ['2026-11-01T00:00:00.000Z', true, 'jordan', 'mnff-'],
-        ],
-      })]),
+      '/api/week': weekAnswer([
+        [[1, 18, 21], [3, 19, 21], [5, 10, 13]],
+        [[1, 19, 22], [5, 9, 12], [6, 14, 17]],
+        [[1, 17, 21], [3, 18, 20], [6, 13, 16]],
+        [[1, 19, 21], [2, 18, 20], [5, 10, 12]],
+        null,
+      ]),
     },
   },
   'find-a-time-game-night': {
@@ -592,7 +630,9 @@ function chromePath() {
 
 /** A starter's files, as a new project made from it gets them, written under `dir`, with its stylesheet compiled. */
 function buildStarter(id, name, dir) {
-  const files = getTemplateFiles(name, 'example', 'postgres://unused', null, { template: id });
+  // This serves public/ as it is, so the name its server.js would fill in
+  // at runtime is written into the page (template.js fillAppName).
+  const files = fillAppName(getTemplateFiles(name, 'example', 'postgres://unused', null, { template: id }), name);
   for (const f of files) {
     const to = path.join(dir, f.path);
     fs.mkdirSync(path.dirname(to), { recursive: true });
@@ -823,7 +863,7 @@ async function main() {
       buildStarter(id, sample.name, dir);
       const server = await serve(dir, sample.api);
       try {
-        const png = compact(await shoot(cdp, `http://127.0.0.1:${server.address().port}/?token=example`, sample.ready));
+        const png = compact(await shoot(cdp, `http://127.0.0.1:${server.address().port}/?token=example${sample.hash || ''}`, sample.ready));
         const out = path.join(ROOT, 'public', appTemplates.get(id).exampleScreen);
         fs.mkdirSync(path.dirname(out), { recursive: true });
         fs.writeFileSync(out, png);

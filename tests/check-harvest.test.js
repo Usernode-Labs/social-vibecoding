@@ -830,9 +830,9 @@ test('a process shutting down hands its rows over, and a run stops what it super
   const cleanup = server.slice(server.indexOf('async function cleanup() {'));
   const release = cleanup.indexOf("require('./src/services/check-runs').release(shutdownPool)");
   const poolEnd = cleanup.indexOf('shutdownPool.end()');
-  const leader = cleanup.indexOf('await leadership.stop()');
-  assert.ok(release > 0 && poolEnd > release && leader > poolEnd,
-    'the rows are handed over through the pool, before it closes and before the next leader can boot');
+  const rosterGone = cleanup.indexOf('processes.stop()');
+  assert.ok(release > 0 && rosterGone > release && poolEnd > rosterGone,
+    'the rows are handed over through the pool, before this process leaves the roster and before the pool closes');
 
   const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'visuals.js'), 'utf8');
   const full = src.indexOf('launched: true');

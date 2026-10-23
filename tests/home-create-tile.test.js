@@ -12,8 +12,9 @@
 //   1. It is the grid's LAST child and sits in the cell straight after the
 //      last tile — collapsed, and after "Show all N apps". A collapsed grid it
 //      would add a row to holds it behind "Show all N apps" instead (#3047),
-//      where a compact New project entry on that line stands in for it
-//      (#4757): same label, same tooltip, same dialog, never two at once.
+//      where a compact New project entry on the My apps heading stands in for
+//      it (#4757, moved there by #5825): same label, same tooltip, same
+//      dialog, never two at once.
 //   2. It is not a layout item: nothing stores, drags or displaces it.
 //   3. Hydration: it is absent from the initial store state and so from the
 //      prerender, exactly like every other data-placed child of #app-list.
@@ -289,7 +290,8 @@ test('#3047: the expander appears for the tile alone, naming every app', () => {
   assert.match(HOME, /const collapsed = hiddenRows \|\| createHidden;/);
   assert.match(HOME, /moreCount = collapsed \? \(canvas\.length \+ HomeLayout\.overflowItems\(layout\)\.length\) : 0;/);
   // #4757: a held-back tile is no longer dropped — the view is pushed with
-  // heldBack and no placement, and apps-more.tsx draws the compact entry.
+  // heldBack and no placement, and index.tsx's My apps heading draws the
+  // compact entry (#5825; apps-more.tsx drew it before).
   assert.match(HOME, /create = \{/);
   assert.match(HOME, /heldBack: createHidden,/);
   assert.match(HOME, /placement: createHidden \|\| flows/);
@@ -298,9 +300,10 @@ test('#3047: the expander appears for the tile alone, naming every app', () => {
   assert.match(HOME, /shot === 'home-apps' \|\| shot === 'create-enabled' \|\| shot === 'create-disabled'/);
 });
 
-// ── #4757: the compact entry on the "Show all N apps" line ────────────
+// ── #4757/#5825: the compact entry rides the My apps heading ──────────
 
 const MORE = 'frontend/src/features/home/apps-more.tsx';
+const HOME_INDEX = 'frontend/src/features/home/index.tsx';
 
 test('a held-back view draws no tile in the grid', () => {
   const items = ['a', 'b', 'c', 'd'].map((slug, col) => ({
@@ -310,7 +313,7 @@ test('a held-back view draws no tile in the grid', () => {
     ready: true, items, create: { ...CREATE, heldBack: true },
   });
   assert.doesNotMatch(held, /home-create-tile/,
-    'the compact entry on the Show-all line is the only New project control');
+    'the compact entry on the My apps heading is the only New project control');
   const shown = renderGrid({
     ready: true, items,
     create: { ...CREATE, heldBack: false, placement: { col: 0, row: 1, w: 1, h: 1 } },
@@ -318,11 +321,12 @@ test('a held-back view draws no tile in the grid', () => {
   assert.match(shown, /id="home-create-tile"/, 'the tile still ends the grid when it fits');
 });
 
-// AppsMoreBody is a function component with hooks, so calling it for its tree
-// needs a render — the same probe home-chrome-hosts.test.js uses. The walk
-// descends THROUGH function components by calling them, and must run inside
-// that render because CreateCompact reads the i18n context.
-function compactButton(AppsMoreBody, moreCount, create) {
+// CreateCompact is a function component with hooks, so calling it for its
+// tree needs a render — the same probe home-chrome-hosts.test.js uses. The
+// walk descends THROUGH function components by calling them, and must run
+// inside that render because the entry reads the i18n context.
+function compactButton(view) {
+  const { CreateCompact } = loadTsx(TILE);
   let hit = null;
   const walk = (node) => {
     if (hit || !node || typeof node !== 'object') return;
@@ -331,34 +335,33 @@ function compactButton(AppsMoreBody, moreCount, create) {
     walk(node.props && node.props.children);
     if (!hit && typeof node.type === 'function') walk(node.type(node.props));
   };
-  const Probe = () => { walk(AppsMoreBody({ moreCount, create })); return null; };
+  const Probe = () => { walk(createElement(CreateCompact, { view })); return null; };
   renderToHtml(createElement(Probe));
   return hit;
 }
 
-test('the Show-all line carries the compact entry exactly when the tile is held back', () => {
-  const { AppsMoreBody } = loadTsx(MORE);
-  const html = renderToHtml(createElement(AppsMoreBody, {
-    moreCount: 93, create: { ...CREATE, heldBack: true },
-  }));
-  assert.match(html, /Show all 93 apps/, 'the expander keeps its place on the line');
-  assert.match(html, /class="flex items-center gap-2"/, 'both controls share one line');
-  // Tile first? No: Show all, then the entry, the order the spec drew.
-  assert.ok(html.indexOf('home-apps-more-btn') < html.indexOf('home-create-tile'),
-    'the entry comes after the Show all button');
+function compactHtml(view) {
+  const { CreateCompact } = loadTsx(TILE);
+  return renderToHtml(createElement(CreateCompact, { view }));
+}
+
+test('the compact entry keeps its light-button treatment, label and ids', () => {
+  const html = compactHtml({ ...CREATE, heldBack: true });
   const entry = html.match(/<button type="button" id="home-create-tile" class="([^"]*)"/);
   assert.ok(entry, 'the compact entry is a button carrying the Create id');
   assert.match(entry[1], /\bhome-create-btn\b/, 'the focus-ring hook app.css keys');
   assert.doesNotMatch(entry[1], /\bhome-create-tile\b/,
     'not a tile of the grid canvas: the drag-time #app-list rules do not apply');
-  // Not a filled button: dim ink at rest that turns violet on hover, and the
-  // tile's dashed face in front of the label.
+  // #5654: a light button — white surface inside a hairline border, dark zinc
+  // ink at rest, the blue accent on hover — with no dashed face.
   assert.doesNotMatch(entry[1], /\bbg-violet-600\b/, 'not a filled blue button');
-  assert.doesNotMatch(entry[1], /\btext-white\b/, 'no white ink: dim zinc text, not filled');
-  assert.match(entry[1], /\btext-zinc-600\b/, 'dim zinc ink at rest');
-  assert.match(entry[1], /\bgroup-hover:text-violet-700\b/, 'the violet hover accent');
-  assert.match(html, /<span class="[^"]*border-dashed[^"]*group-hover:border-violet-500[^"]*"/,
-    'the entry renders its dashed face, which turns violet on hover');
+  assert.doesNotMatch(entry[1], /\btext-white\b/, 'no white ink: dark zinc text on white');
+  assert.match(entry[1], /\bbg-white\b/, 'the app\'s white surface');
+  assert.match(entry[1], /\brounded-full\b/, 'fully rounded ends, as the screenshot draws it');
+  assert.match(entry[1], /\bborder-zinc-200\b/, 'the hairline border');
+  assert.match(entry[1], /\btext-zinc-800\b/, 'dark zinc ink at rest');
+  assert.match(entry[1], /\bhover:text-violet-700\b/, 'the violet hover accent');
+  assert.doesNotMatch(html, /border-dashed/, 'the compact entry drops the dashed face');
   assert.match(html, /data-panel-slot="create"/);
   assert.match(html, /data-create-enabled="true"/);
   assert.match(html, /title="Start a project: an app for you or for a community"/);
@@ -367,10 +370,7 @@ test('the Show-all line carries the compact entry exactly when the tile is held 
 });
 
 test('the compact entry draws the locked treatment, and opens the same dialog', () => {
-  const { AppsMoreBody } = loadTsx(MORE);
-  const off = renderToHtml(createElement(AppsMoreBody, {
-    moreCount: 8, create: { ...CREATE, enabled: false, heldBack: true },
-  }));
+  const off = compactHtml({ ...CREATE, enabled: false, heldBack: true });
   const entry = off.match(/<button type="button" id="home-create-tile" class="([^"]*)"/);
   assert.ok(entry, 'the locked entry is still there');
   assert.doesNotMatch(entry[1], /violet/, 'locked ink, no accent — as the locked tile');
@@ -385,7 +385,7 @@ test('the compact entry draws the locked treatment, and opens the same dialog', 
   const prev = global.window;
   global.window = { App: { showCreateModal: () => { calls.push(1); } } };
   try {
-    const btn = compactButton(AppsMoreBody, 8, { ...CREATE, heldBack: true });
+    const btn = compactButton({ ...CREATE, heldBack: true });
     btn.props.onClick();
     assert.equal(calls.length, 1, 'the compact entry opens the same create dialog');
   } finally {
@@ -393,12 +393,39 @@ test('the compact entry draws the locked treatment, and opens the same dialog', 
   }
 });
 
-test('without a held-back tile the Show-all line is what it always was', () => {
+test('#5825: the My apps heading carries the compact entry exactly when the tile is held back', () => {
+  const source = read(HOME_INDEX);
+  // The non-editing branch of the heading's action: `heldBack` decides it,
+  // and the button is the same component the grid draws as a tile.
+  assert.match(source,
+    /\) : grid\.create\?\.heldBack \? \(\s*<CreateCompact view=\{grid\.create\} \/>\s*\) : null\}/,
+    'the heading draws the compact entry when the grid holds its tile back');
+  assert.match(source, /import \{ CreateCompact \} from '\.\/create-tile';/);
+  // Edit mode keeps its own action, checked first — Add apps and Done, never
+  // New project beside them.
+  assert.match(source, /action=\{grid\.editing \? \(/);
+});
+
+test('#5825: the Show-all line is the expander alone, at the right end', () => {
   const { AppsMoreBody } = loadTsx(MORE);
-  const html = renderToHtml(createElement(AppsMoreBody, {
-    moreCount: 9, create: { ...CREATE, heldBack: false },
-  }));
-  assert.match(html, /id="home-apps-more-btn"[^>]*class="w-full /, 'the button keeps its full width');
+  const html = renderToHtml(createElement(AppsMoreBody, { moreCount: 93 }));
+  assert.match(html, /Show all 93 apps/, 'the expander keeps its words');
+  assert.match(html, /class="flex items-center justify-end"/,
+    'the line ends at the grid\'s right edge, where New project was');
+  assert.doesNotMatch(html, /home-create-tile/, 'and carries no compact entry any more');
+  const showAll = html.match(/<button type="button" id="home-apps-more-btn" class="([^"]*)"/);
+  assert.ok(showAll, 'Show all is still a button');
+  assert.match(showAll[1], /\btext-right\b/, 'right aligned in its line');
+  assert.doesNotMatch(showAll[1], /\btext-left\b/);
+  assert.doesNotMatch(showAll[1], /\bflex-1\b/, 'no longer centred in the space left over');
+});
+
+test('without a held-back tile, or with a count, the line is the expander alone', () => {
+  const { AppsMoreBody } = loadTsx(MORE);
+  const html = renderToHtml(createElement(AppsMoreBody, { moreCount: 9 }));
+  assert.match(html, /id="home-apps-more-btn"[^>]*class="text-right /,
+    'alone on its line, Show all reads to the right');
+  assert.doesNotMatch(html, /w-full/, 'no longer stretched across the line');
   assert.doesNotMatch(html, /home-create-tile/, 'and no compact entry beside it');
   assert.doesNotMatch(html, /flex-1/);
   // The zero count is still the hidden, empty host.

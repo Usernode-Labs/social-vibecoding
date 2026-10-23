@@ -34,7 +34,9 @@
  *      a web caller's request carries an app-verification token, the
  *      answer to a reCAPTCHA whose site key GET recaptchaParams names
  *      (recaptchaSiteKey, served at GET /api/auth/phone/recaptcha; the
- *      shell earns it in frontend/src/features/auth/recaptcha.ts). A
+ *      shell earns it in frontend/src/features/auth/recaptcha.ts). An
+ *      empty key is served while Brevo or Twilio sends the texts: requestCode()
+ *      ignores the token on that path, so the browser runs no check. A
  *      missing or refused one is recaptcha_required. The page's host must
  *      be one of the Firebase project's authorized domains for the answer
  *      to count. The server never sends the SMS itself — Firebase does, at
@@ -195,6 +197,70 @@ const TEST_TOKEN_TTL_MS = 5 * 60 * 1000;
 // client cannot forge one to skip the code on the idToken path.
 const TEST_TOKEN_KEY = crypto.randomBytes(32);
 
+// ── Gateway-issued sign-in codes (Brevo, Twilio) ────────────────────────
+//
+// When Brevo or Twilio is the selected provider (services/sms/select.js),
+// it only carries the message: services/sms/otp.js makes, hashes and checks the code
+// and hands this file a `hr-sms-session.` session, which exchangeCode
+// redeems for a token signed here. The token is the same shape as a test
+// token — per process, never stored, five minutes — and verifyIdToken turns
+// it into the account by phone number, so a number that first signed in
+// through Firebase keeps its account.
+const SMS_SESSION_PREFIX = 'hr-sms-session.';
+const SMS_TOKEN_PREFIX = 'hr-sms-token.';
+const SMS_TOKEN_TTL_MS = 5 * 60 * 1000;
+const SMS_TOKEN_KEY = crypto.randomBytes(32);
+
+function signSms(body) {
+  return crypto.createHmac('sha256', SMS_TOKEN_KEY).update(body).digest('base64url');
+}
+
+function mintSmsToken(phoneNumber, now = Date.now()) {
+  const body = Buffer.from(JSON.stringify({
+    p: phoneNumber,
+    n: crypto.randomBytes(12).toString('base64url'),
+    e: now + SMS_TOKEN_TTL_MS,
+  })).toString('base64url');
+  return `${SMS_TOKEN_PREFIX}${body}.${signSms(body)}`;
+}
+
+function readSmsToken(token, now = Date.now()) {
+  const rest = token.slice(SMS_TOKEN_PREFIX.length);
+  const dot = rest.indexOf('.');
+  if (dot <= 0) return null;
+  const body = rest.slice(0, dot);
+  if (!sameCode(rest.slice(dot + 1), signSms(body))) return null;
+  let data;
+  try {
+    data = JSON.parse(Buffer.from(body, 'base64url').toString('utf8'));
+  } catch {
+    return null;
+  }
+  if (!data || !PHONE_RE.test(String(data.p)) || !(Number(data.e) > now)) return null;
+  return { phoneNumber: String(data.p), expiresAt: new Date(Number(data.e)) };
+}
+
+// The country refusals are the sign-in sheet's one sentence; everything else
+// the provider or the registry decides is "could not send".
+const SMS_COUNTRY_CODES = new Set(['no_sender_id', 'unsupported_country', 'country_not_registered']);
+
+function smsErrorToPhoneAuth(error) {
+  if (!(error instanceof require('./sms').SmsError)) return null;
+  if (SMS_COUNTRY_CODES.has(error.code)) {
+    const refusal = new PhoneAuthError(
+      'sms_country_unavailable',
+      'Text messages cannot be sent to numbers in this country yet. Try another way to sign in.',
+      422
+    );
+    refusal.providerCode = error.code;
+    return refusal;
+  }
+  if (error.code === 'invalid_phone') return new PhoneAuthError('invalid_phone', 'Enter a valid phone number.');
+  const refusal = new PhoneAuthError('sms_unreachable', 'Could not send the text. Try again.', 502);
+  refusal.providerCode = error.providerCode || error.code;
+  return refusal;
+}
+
 // The same rules config.js applies when it reads PHONE_TEST_CODE and
 // SHOTS_PHONE_TEST_CODE, read again from the environment itself, so a config
 // object built anywhere else still cannot turn test numbers on in production.
@@ -224,9 +290,45 @@ function usesTestNumber(config, rawPhone) {
   return testNumbersOn(config) && isTestNumber(normalizePhone(rawPhone));
 }
 
-// The offer gate: Firebase set up, or test numbers on.
+// A gateway's gate (Brevo, Twilio): its credentials (except on staging,
+// which only logs) and at least one valid Sender ID entry of its own.
+function gatewayOffered(config, name) {
+  try {
+    return require('./sms/select').optionReady(config, name);
+  } catch {
+    return false;
+  }
+}
+
+function brevoOffered(config) {
+  return gatewayOffered(config, 'brevo');
+}
+
+// The selected provider when it is a gateway (Brevo, Twilio), else null.
+function selectedGateway(config) {
+  try {
+    const select = require('./sms/select');
+    const selected = select.selectedSync(config);
+    return select.isGateway(selected) ? selected : null;
+  } catch {
+    return null;
+  }
+}
+
+// The offer gate: the SELECTED provider is set up, or test numbers are on.
+// Only the selected provider counts — a provider an operator named but did
+// not finish configuring closes the gate rather than silently falling back.
 function offered(config) {
-  return firebaseOffered(config) || testNumbersOn(config);
+  let selected = 'firebase';
+  try {
+    selected = require('./sms/select').selectedSync(config);
+  } catch {
+    selected = 'firebase';
+  }
+  const providerReady = require('./sms/select').isGateway(selected)
+    ? gatewayOffered(config, selected)
+    : firebaseOffered(config);
+  return providerReady || testNumbersOn(config);
 }
 
 function testNumbersOnlyError() {
@@ -402,6 +504,23 @@ async function requestCode(config, rawPhone, recaptchaToken, deps = {}) {
       sessionInfo: `${TEST_SESSION_PREFIX}${tag}.${crypto.randomBytes(12).toString('base64url')}`,
     };
   }
+  // Brevo or Twilio carries the text: the code, its hashes, its expiry and
+  // its single use all belong to services/sms/otp.js, because neither checks
+  // codes. reCAPTCHA is Firebase's, so a gateway request ignores it.
+  if (selectedGateway(config)) {
+    const sms = require('./sms');
+    const otp = require('./sms/otp');
+    let issued;
+    try {
+      issued = await otp.issue(deps.pool, phoneNumber);
+      await sms.sendOtpSms(deps.pool, config, { phoneNumber, code: issued.code }, deps);
+    } catch (error) {
+      const mapped = smsErrorToPhoneAuth(error);
+      if (mapped) throw mapped;
+      throw error;
+    }
+    return { phoneNumber, sessionInfo: issued.sessionInfo };
+  }
   if (!firebaseOffered(config)) throw testNumbersOnlyError();
   const body = { phoneNumber };
   if (typeof recaptchaToken === 'string' && recaptchaToken
@@ -446,9 +565,40 @@ async function sendTestCode(config, rawPhone, recaptchaToken, deps = {}) {
   if (!phoneNumber) {
     throw new PhoneAuthError('invalid_phone', 'Enter a valid phone number, starting with + and the country code.', 400);
   }
-  const base = { phoneNumber, providerCode: null, httpStatus: null, durationMs: 0 };
+  const base = { phoneNumber, provider: 'firebase', providerCode: null, httpStatus: null, durationMs: 0 };
+  // A Brevo or Twilio test is a plain transactional message, not a real code: nobody
+  // has to type anything. Staging logs it, as every other send does.
+  const gateway = selectedGateway(config);
+  if (gateway) {
+    if (!gatewayOffered(config, gateway)) return { ...base, status: 'not_offered', provider: gateway };
+    const sms = require('./sms');
+    const now = deps.now || Date.now;
+    const started = now();
+    try {
+      const sent = await sms.sendTestSms(deps.pool, config, { phoneNumber }, deps);
+      return {
+        ...base,
+        status: sent.status === 'logged' ? 'logged' : 'sent',
+        provider: gateway,
+        country: sent.country,
+        senderId: sent.senderId,
+        messageId: sent.messageId,
+        durationMs: now() - started,
+      };
+    } catch (error) {
+      if (!(error instanceof sms.SmsError)) throw error;
+      return {
+        ...base,
+        status: 'refused',
+        provider: gateway,
+        providerCode: error.providerCode || error.code,
+        httpStatus: error.status,
+        durationMs: now() - started,
+      };
+    }
+  }
   // The test is a real text, so it needs Firebase; test numbers send none.
-  if (!firebaseOffered(config)) return { ...base, status: 'not_offered' };
+  if (!firebaseOffered(config)) return { ...base, status: 'not_offered', provider: 'firebase' };
   const body = { phoneNumber };
   if (typeof recaptchaToken === 'string' && recaptchaToken
       && recaptchaToken.length <= RECAPTCHA_TOKEN_MAX) {
@@ -476,12 +626,23 @@ async function sendTestCode(config, rawPhone, recaptchaToken, deps = {}) {
 // The site key for the reCAPTCHA a web caller answers before a code is
 // sent: the Firebase project's own (GET recaptchaParams, what Firebase's web
 // SDK asks for), never configured here. Kept for an hour, per API key; a
-// failed read is not kept.
+// failed read is not kept. '' when there is no check to answer: test numbers
+// only, or Brevo or Twilio sending the texts.
 const SITE_KEY_TTL_MS = 60 * 60 * 1000;
 const siteKeyCache = new Map();
 
 async function recaptchaSiteKey(config, deps = {}) {
   assertOffered(config);
+  // A gateway carries the text, and requestCode() ignores the reCAPTCHA token on
+  // that path: there is no check to answer, so no site key is served and the
+  // browser loads no widget. A switch back to Firebase serves one again.
+  let selected = 'firebase';
+  try {
+    selected = require('./sms/select').selectedSync(config);
+  } catch {
+    selected = 'firebase';
+  }
+  if (require('./sms/select').isGateway(selected)) return '';
   // Test numbers only: nothing is texted, so there is no check to answer.
   // The sheet reads the empty key as "send the request without a token".
   if (!firebaseOffered(config)) return '';
@@ -514,13 +675,22 @@ async function recaptchaSiteKey(config, deps = {}) {
  * verifies. Returns { idToken }.
  */
 async function exchangeCode(config, rawSessionInfo, rawCode, deps = {}) {
-  assertOffered(config);
   const sessionInfo = typeof rawSessionInfo === 'string' ? rawSessionInfo : '';
   const code = typeof rawCode === 'string' ? rawCode.trim() : '';
   if (!sessionInfo || sessionInfo.length > SESSION_INFO_MAX
       || !code || code.length > CODE_MAX) {
     throw new PhoneAuthError('invalid_or_expired_code', 'Invalid or expired code.');
   }
+  // A code Brevo or Twilio carried is redeemed here whatever the CURRENT selection is,
+  // so a text sent just before a provider switch can still be entered.
+  if (sessionInfo.startsWith(SMS_SESSION_PREFIX)) {
+    const phoneNumber = deps.pool
+      ? await require('./sms/otp').redeem(deps.pool, sessionInfo, code)
+      : null;
+    if (!phoneNumber) throw new PhoneAuthError('invalid_or_expired_code', 'Invalid or expired code.');
+    return { idToken: mintSmsToken(phoneNumber) };
+  }
+  assertOffered(config);
   if (sessionInfo.startsWith(TEST_SESSION_PREFIX)) {
     const tag = sessionInfo.slice(TEST_SESSION_PREFIX.length).split('.')[0];
     const phoneNumber = Buffer.from(tag, 'base64url').toString('utf8');
@@ -600,10 +770,12 @@ function badToken() {
  * the token spelled it.
  */
 async function verifyIdToken(pool, config, rawToken, deps = {}) {
-  assertOffered(config);
   if (typeof rawToken !== 'string' || !rawToken || rawToken.length > ID_TOKEN_MAX) {
     throw badToken();
   }
+  // A Brevo or Twilio token is minted here and checked here; it does not need a
+  // provider to be configured, so a switch mid-flight cannot strand it.
+  if (!rawToken.startsWith(SMS_TOKEN_PREFIX)) assertOffered(config);
   let uid;
   let phoneNumber;
   let expiresAt;
@@ -617,6 +789,19 @@ async function verifyIdToken(pool, config, rawToken, deps = {}) {
     ({ phoneNumber, expiresAt } = claims);
     uid = `${TEST_UID_PREFIX}${phoneNumber}`;
     test = { mintId: claims.mintId, createdBy: claims.createdBy };
+  } else if (rawToken.startsWith(SMS_TOKEN_PREFIX)) {
+    // Minted by exchangeCode after a Brevo-carried code was redeemed. The
+    // account is found by the number: an identity linked through Firebase
+    // keeps its own uid, so both providers land on the same account.
+    const claims = readSmsToken(rawToken);
+    if (!claims) throw badToken();
+    ({ phoneNumber, expiresAt } = claims);
+    const { rows } = await pool.query(
+      'SELECT firebase_uid FROM user_phone_identities WHERE phone_e164 = $1',
+      [phoneNumber]
+    );
+    uid = rows[0]?.firebase_uid || `sms:${phoneNumber}`;
+    if (!uid || uid.length > UID_MAX) throw badToken();
   } else {
     if (!firebaseOffered(config)) throw badToken();
     let payload;
@@ -686,6 +871,18 @@ async function cleanupExpired(pool) {
   } catch (err) {
     log.warn('phone-auth', 'Failure log cleanup failed', { err: err.message });
   }
+  // The Brevo code store and delivery log, each in its own try for the same
+  // reason: a schema without those tables must not skip the cleanup above.
+  try {
+    await pool.query("DELETE FROM sms_otp_codes WHERE expires_at < NOW() - INTERVAL '1 hour'");
+  } catch (err) {
+    log.warn('phone-auth', 'SMS code cleanup failed', { err: err.message });
+  }
+  try {
+    await pool.query("DELETE FROM sms_deliveries WHERE created_at < NOW() - INTERVAL '30 days'");
+  } catch (err) {
+    log.warn('phone-auth', 'SMS delivery log cleanup failed', { err: err.message });
+  }
 }
 
 /**
@@ -750,14 +947,49 @@ async function signIn(pool, claims, { createSession } = {}) {
       let user = linked[0] || null;
       let created = false;
 
+      // A number linked under the OTHER provider: an account made through
+      // Brevo or Twilio stores `sms:<number>` as its uid, and a later Firebase
+      // sign-in for that number arrives with a Firebase uid. The number is
+      // unique, so it finds the same account; the row is re-keyed to the
+      // uid that just proved the number, and the next sign-in matches
+      // directly. Same in the other direction, where verifyIdToken resolves
+      // a Brevo token to an existing Firebase uid.
+      if (!user) {
+        const { rows: byPhone } = await client.query(
+          `SELECT u.id, u.username, u.is_admin, u.admin_readonly, u.needs_username_choice,
+                  i.firebase_uid
+             FROM user_phone_identities i
+             JOIN users u ON u.id = i.user_id
+            WHERE i.phone_e164 = $1
+            FOR UPDATE OF i, u`,
+          [claims.phoneNumber]
+        );
+        // Only an identity THIS platform made for Brevo (`sms:<number>`) is
+        // re-keyed. A different Firebase uid against a Firebase-made
+        // identity is still phone_in_use: a recycled number must never
+        // re-point the previous holder's account.
+        if (byPhone[0] && String(byPhone[0].firebase_uid).startsWith('sms:')) {
+          user = byPhone[0];
+          if (user.is_admin) return { refuse: 'admin_password_required' };
+          await client.query(
+            `UPDATE user_phone_identities
+                SET firebase_uid = $2, last_used_at = NOW()
+              WHERE phone_e164 = $1`,
+            [claims.phoneNumber, claims.uid]
+          );
+        }
+      }
+
       if (user) {
         // The email code's refusal, for the same reason (email-signup.js):
         // an admin account signs in with its password, never a phone.
         if (user.is_admin) return { refuse: 'admin_password_required' };
-        await client.query(
-          'UPDATE user_phone_identities SET last_used_at = NOW() WHERE firebase_uid = $1',
-          [claims.uid]
-        );
+        if (linked[0]) {
+          await client.query(
+            'UPDATE user_phone_identities SET last_used_at = NOW() WHERE firebase_uid = $1',
+            [claims.uid]
+          );
+        }
       } else {
         const unusablePasswordHash = await bcrypt.hash(crypto.randomBytes(32).toString('hex'), 12);
         user = await emailSignup.insertEmailUser(client, null, unusablePasswordHash);
@@ -944,6 +1176,9 @@ module.exports = {
   PhoneAuthError,
   offered,
   firebaseOffered,
+  brevoOffered,
+  gatewayOffered,
+  mintSmsToken,
   testNumbersAllowed,
   testNumbersOn,
   isTestNumber,

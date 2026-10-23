@@ -113,16 +113,57 @@ function cleanScreens(screens, claims) {
     }));
 }
 
-function artifactUrl(slug, sessionId, artifactId) {
+// A dense still's own address (`?density=device`) is a different address,
+// so a browser that cached one copy never answers for the other.
+function artifactUrl(slug, sessionId, artifactId, { dense = false } = {}) {
   if (!ARTIFACT_ID_RE.test(String(artifactId || ''))) return null;
-  return `/api/apps/${encodeURIComponent(slug)}/proposals/${Number(sessionId)}/shots/${artifactId}`;
+  return `/api/apps/${encodeURIComponent(slug)}/proposals/${Number(sessionId)}/shots/${artifactId}${dense ? '?density=device' : ''}`;
 }
 
-function cleanArtifacts(items, { slug, sessionId, verified }) {
+// A still kept at device density as well (services/shots-density.js): its
+// density and its original's size, or null for every other artifact.
+function denseOf(artifact) {
+  const density = Number(artifact?.density);
+  return artifact?.media === 'png' && [2, 3, 4].includes(density)
+    && Number.isInteger(artifact.denseWidth) && Number.isInteger(artifact.denseHeight)
+    ? { density, width: artifact.denseWidth, height: artifact.denseHeight } : null;
+}
+
+// `dense`: the viewer is in the New Needs you experiment, the only accounts
+// shown stills at device density. Everyone else is shown each still's 1x
+// copy, its size and `density: 1`, exactly what they were shown before.
+// A close-up (services/shots-closeups.js): the after side of a change on
+// one screen, `rect` the region of that change's after screen shot it shows
+// (CSS px), `density` its device px per CSS px (one decimal), `width` and
+// `height` its own pixels. Null for anything malformed.
+const wholePx = (value) => Number.isSafeInteger(value) && value >= 0 && value <= 20000;
+function cleanCloseup(artifact, { slug, sessionId }) {
+  const rect = artifact?.focusRect;
+  const density = Math.round(Number(artifact?.scale) * 10) / 10;
+  if (!ARTIFACT_ID_RE.test(String(artifact?.id || '')) || !STORY_ID_RE.test(String(artifact.storyId || ''))
+      || !VIEWPORT_RE.test(String(artifact.viewport || '')) || artifact.side !== 'head' || artifact.media !== 'png'
+      || artifact.contentType !== MEDIA_TYPE.png || ![1, 2].includes(artifact.part)
+      || !(density > 1 && density <= 16) || !rect || !['x', 'y', 'w', 'h'].every((key) => wholePx(rect[key]))
+      || rect.w < 1 || rect.h < 1 || !wholePx(artifact.width) || !wholePx(artifact.height)) return null;
+  return {
+    id: artifact.id, storyId: artifact.storyId, viewport: artifact.viewport,
+    side: 'head', variant: 'closeup', media: 'png', theme: 'light', contentType: MEDIA_TYPE.png,
+    part: artifact.part, rect: { x: rect.x, y: rect.y, w: rect.w, h: rect.h },
+    width: artifact.width, height: artifact.height, density,
+    bytes: Number.isInteger(artifact.bytes) ? artifact.bytes : null,
+    url: artifactUrl(slug, sessionId, artifact.id, { dense: true }),
+  };
+}
+
+function cleanArtifacts(items, { slug, sessionId, verified, dense = false }) {
   if (!verified || !Array.isArray(items)) return [];
+  // Close-ups are shown only to an account in the New Needs you
+  // experiment, beside the stills, never in their place.
+  const closeups = dense ? items.filter((artifact) => artifact?.variant === 'closeup')
+    .map((artifact) => cleanCloseup(artifact, { slug, sessionId })).filter(Boolean).slice(0, 6) : [];
   // Up to 48: three changes more than the old 36, the room a run's dark
   // shots (#4459) take beside their light ones.
-  return items.slice(0, 48).filter((artifact) => {
+  return items.filter((artifact) => artifact?.variant !== 'closeup').slice(0, 48).filter((artifact) => {
     if (!artifact || !ARTIFACT_ID_RE.test(String(artifact.id || ''))
         || !STORY_ID_RE.test(String(artifact.storyId || ''))
         || !VIEWPORT_RE.test(String(artifact.viewport || ''))
@@ -136,27 +177,32 @@ function cleanArtifacts(items, { slug, sessionId, verified }) {
       return artifact.side === 'paired' ? artifact.media !== 'png' : artifact.media === 'webm';
     }
     return artifact.side !== 'paired' && artifact.media === 'png';
-  }).map((artifact) => ({
-    id: String(artifact.id || ''),
-    storyId: String(artifact.storyId || '').slice(0, 96),
-    viewport: String(artifact.viewport || '').slice(0, 32),
-    side: ['base', 'head', 'paired'].includes(artifact.side) ? artifact.side : null,
-    variant: ['focus', 'context', 'animation'].includes(artifact.variant) ? artifact.variant : null,
-    media: ['png', 'webm', 'gif'].includes(artifact.media) ? artifact.media : null,
-    // A dark artifact exists only as a whole-screen PNG; anything else reads
-    // as light, which is what every row before the column held.
-    theme: artifact.theme === 'dark' && artifact.variant === 'context' && artifact.media === 'png'
-      ? 'dark' : 'light',
-    contentType: String(artifact.contentType || '').slice(0, 32),
-    width: Number.isInteger(artifact.width) ? artifact.width : null,
-    height: Number.isInteger(artifact.height) ? artifact.height : null,
-    bytes: Number.isInteger(artifact.bytes) ? artifact.bytes : null,
-    focusRect: artifact.focusRect && typeof artifact.focusRect === 'object' ? artifact.focusRect : null,
-    stageLabels: Array.isArray(artifact.stageLabels)
-      ? artifact.stageLabels.slice(0, 40).map((label) => String(label).slice(0, 100))
-      : null,
-    url: artifactUrl(slug, sessionId, artifact.id),
-  }));
+  }).map((artifact) => {
+    const sharp = dense ? denseOf(artifact) : null;
+    return {
+      id: String(artifact.id || ''),
+      storyId: String(artifact.storyId || '').slice(0, 96),
+      viewport: String(artifact.viewport || '').slice(0, 32),
+      side: ['base', 'head', 'paired'].includes(artifact.side) ? artifact.side : null,
+      variant: ['focus', 'context', 'animation'].includes(artifact.variant) ? artifact.variant : null,
+      media: ['png', 'webm', 'gif'].includes(artifact.media) ? artifact.media : null,
+      // A dark artifact exists only as a whole-screen PNG; anything else reads
+      // as light, which is what every row before the column held.
+      theme: artifact.theme === 'dark' && artifact.variant === 'context' && artifact.media === 'png'
+        ? 'dark' : 'light',
+      contentType: String(artifact.contentType || '').slice(0, 32),
+      // The file's own pixels; divided by `density` they are CSS pixels.
+      width: sharp ? sharp.width : Number.isInteger(artifact.width) ? artifact.width : null,
+      height: sharp ? sharp.height : Number.isInteger(artifact.height) ? artifact.height : null,
+      density: sharp ? sharp.density : 1,
+      bytes: Number.isInteger(artifact.bytes) ? artifact.bytes : null,
+      focusRect: artifact.focusRect && typeof artifact.focusRect === 'object' ? artifact.focusRect : null,
+      stageLabels: Array.isArray(artifact.stageLabels)
+        ? artifact.stageLabels.slice(0, 40).map((label) => String(label).slice(0, 100))
+        : null,
+      url: artifactUrl(slug, sessionId, artifact.id, { dense: !!sharp }),
+    };
+  }).concat(closeups);
 }
 
 // #2601/#2558: why a run that is still 'planned' never got under way, as
@@ -208,8 +254,27 @@ function fromSnapshot(session, currentHead) {
   };
 }
 
-function serialize(run, session, slug, currentHead) {
+function matchesCurrentRun(run, currentHead) {
+  return !currentHead || run.headSha === currentHead;
+}
+
+// A screen's geometry stays its CSS pixels; its `density` is that of the
+// still it shows (its first change's after screen shot), so a viewer shown
+// 1x copies reads 1 and one shown dense stills reads theirs.
+function withDensity(screens, artifacts) {
+  return screens.map((screen) => {
+    const still = artifacts.find((artifact) => artifact.storyId === screen.shot && artifact.viewport === screen.viewport
+      && artifact.side === 'head' && artifact.variant === 'context' && artifact.theme === 'light');
+    return { ...screen, density: still ? still.density : 1 };
+  });
+}
+
+// `dense`: whether this viewer is shown stills at device density
+// (viewerSeesDense). Off, the view is exactly what it was before them.
+function serialize(run, session, slug, currentHead, { dense = false } = {}) {
   if (!run) return fromSnapshot(session, currentHead);
+  const verified = matchesCurrentRun(run, currentHead) && run.state === 'verified';
+  const artifacts = cleanArtifacts(run.artifactSummary, { slug, sessionId: session.id, verified, dense });
   const matchesCurrent = !currentHead || run.headSha === currentHead;
   const publicState = matchesCurrent ? run.state : 'stale';
   return {
@@ -248,28 +313,40 @@ function serialize(run, session, slug, currentHead) {
     // the starter template's placeholder, so the run took the after side
     // only, and the card says "New app: nothing before".
     afterOnly: matchesCurrent && run.state === 'verified' && run.afterOnly === true,
-    screens: matchesCurrent && run.state === 'verified' ? cleanScreens(run.screens, cleanClaims(run.claims)) : [],
+    screens: verified ? withDensity(cleanScreens(run.screens, cleanClaims(run.claims)), artifacts) : [],
     progress: matchesCurrent && PUBLIC_STATES.has(run.state) ? (run.progress || null) : null,
     verifiedReason: null,
     overriddenBy: run.overriddenBy || null,
     overriddenAt: run.overriddenAt || null,
     overrideReason: run.overrideReason || null,
-    artifacts: cleanArtifacts(run.artifactSummary, {
-      slug, sessionId: session.id, verified: matchesCurrent && run.state === 'verified',
-    }),
+    artifacts,
     updatedAt: run.updatedAt || session.shots_updated_at || null,
   };
 }
 
-async function getForSession(pool, session, slug = session?.app_slug) {
+// Who is shown stills at device density: an account in the New Needs you
+// experiment (users.review_flow_enabled), read here so this works whichever
+// of the two changes reached the database first. Anyone else, a guest
+// included, is shown the 1x copies.
+async function viewerSeesDense(pool, viewer) {
+  const id = Number(viewer?.id);
+  if (!Number.isSafeInteger(id) || id <= 0) return false;
+  try {
+    const { rows } = await pool.query('SELECT review_flow_enabled FROM users WHERE id = $1', [id]);
+    return rows[0]?.review_flow_enabled === true;
+  } catch { return false; }
+}
+
+async function getForSession(pool, session, slug = session?.app_slug, { viewer = null } = {}) {
   if (!session || !session.id || !slug) return null;
   const currentHead = visualHeadForSession(session);
   let run = null;
   if (currentHead) run = await state.getForSession(pool, Number(session.id), { headSha: currentHead });
-  return serialize(run, session, slug, currentHead);
+  const dense = run ? await viewerSeesDense(pool, viewer) : false;
+  return serialize(run, session, slug, currentHead, { dense });
 }
 
-async function getForSessions(pool, sessions, slug) {
+async function getForSessions(pool, sessions, slug, { viewer = null } = {}) {
   const list = Array.isArray(sessions) ? sessions : [];
   const runIds = list.map((session) => session.shots_run_id).filter(Boolean);
   const bySession = new Map();
@@ -283,8 +360,10 @@ async function getForSessions(pool, sessions, slug) {
                   'theme', a.theme,
                   'contentType', a.content_type, 'width', a.width,
                   'height', a.height, 'bytes', a.bytes,
-                  'focusRect', a.focus_rect, 'stageLabels', a.stage_labels
-                ) ORDER BY a.story_id, a.viewport, a.side, a.variant, a.theme)
+                  'density', a.density, 'denseWidth', a.dense_width, 'denseHeight', a.dense_height,
+                  'focusRect', a.focus_rect, 'stageLabels', a.stage_labels,
+                  'part', a.part, 'scale', a.scale
+                ) ORDER BY a.story_id, a.viewport, a.side, a.variant, a.theme, a.part)
                   FROM shot_artifacts a WHERE a.run_id = r.id
               ), '[]'::jsonb) AS artifact_summary
          FROM shot_runs r WHERE r.id = ANY($1::varchar[])`,
@@ -292,6 +371,7 @@ async function getForSessions(pool, sessions, slug) {
     );
     for (const row of rows) bySession.set(Number(row.session_id), state.runSummary(row, row.artifact_summary || []));
   }
+  const dense = bySession.size ? await viewerSeesDense(pool, viewer) : false;
   const result = new Map();
   for (const session of list) {
     const currentHead = visualHeadForSession(session);
@@ -299,7 +379,8 @@ async function getForSessions(pool, sessions, slug) {
       bySession.get(Number(session.id)) || null,
       session,
       slug || session.app_slug,
-      currentHead
+      currentHead,
+      { dense },
     ));
   }
   return result;
@@ -313,6 +394,7 @@ module.exports = {
   cleanScreens,
   cleanArtifacts,
   artifactUrl,
+  viewerSeesDense,
   notStartedReason,
   fromSnapshot,
   serialize,

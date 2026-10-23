@@ -876,6 +876,22 @@ test('the nav hosts still ship EMPTY, so the prerender is unchanged', () => {
   assert.match(navStoreJs, /mobile: null/);
 });
 
+test('UX audit: the section list is the pane\'s sheet, and scrolls on its own', () => {
+  // It was drawn on the strip while the pane rose beside it, and scrolled
+  // away with the screen (20 Oct 2026).
+  assert.match(html,
+    /id="settings-sidebar-col" class="hidden md:block md:w-56 shrink-0 dc-lift dc-lift-session settings-side-sheet"/,
+    'the column wears the pane\'s own lift, after the width classes the breakpoint test reads');
+  assert.match(navTsx,
+    /className="sticky top-0 z-10 -mt-2\.5 pt-2\.5 pb-3 bg-\[color:var\(--dc-sheet-solid\)\]"/,
+    '"Find a setting" is held at the sheet\'s top, on an opaque plane');
+  const css = read('public/css/app.css');
+  const block = css.slice(css.indexOf('#settings-sidebar-col {'));
+  assert.match(block.slice(0, 400), /position: sticky;/, 'it stays put while the pane scrolls');
+  assert.match(block.slice(0, 400), /top: 1\.25rem;/, 'level with the pane\'s top edge');
+  assert.match(block.slice(0, 400), /overflow-y: auto;/, 'and scrolls on its own when taller than the window');
+});
+
 test('_syncChrome drives the header through App, not the DOM', () => {
   const fn = settingsJs.slice(settingsJs.indexOf('    _syncChrome() {'));
   // The method's own closing brace, not a character count — see the note on

@@ -17,32 +17,9 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const processes = require('../src/services/processes');
 const wsBus = require('../src/services/ws-bus');
-const leaderStatus = require('../src/services/leader-status');
 
 const serverJs = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
-
-// The registry, over a database whose only other live process ('pod-web')
-// holds `held` ([kind, ref] pairs). `holders` is answered exactly too.
-async function elsewhere(held, other = 'pod-web') {
-  processes._reset();
-  const pool = {
-    query: async (sql, params = []) => {
-      if (/FROM process_holds h\s+JOIN platform_processes p ON p\.id = h\.process_id\s+WHERE h\.process_id <> \$1/.test(sql)) {
-        return { rows: held.map(([kind, ref]) => ({ kind, ref: String(ref), process_id: other })) };
-      }
-      if (/SELECT DISTINCT h\.process_id/.test(sql)) {
-        const kinds = [].concat(params[0]);
-        const hit = held.some(([kind, ref]) => kinds.includes(kind) && String(ref) === String(params[1]));
-        return { rows: hit ? [{ process_id: other }] : [] };
-      }
-      return { rows: [], rowCount: 0 };
-    },
-  };
-  await processes.start({ pool, role: 'web' });
-  return pool;
-}
 
 function capturePublishes(t) {
   const sent = [];
@@ -54,58 +31,18 @@ function capturePublishes(t) {
 
 // ── Leader status ─────────────────────────────────────────────────────
 
-test('a status is read from memory where its work runs, and from the leader\'s copy elsewhere', async (t) => {
-  leaderStatus._reset();
-  t.after(() => leaderStatus._reset());
-  const rows = new Map();
-  const pool = {
-    query: async (sql, params) => {
-      if (sql.startsWith('INSERT INTO leader_status')) {
-        rows.set(params[0], { value: JSON.parse(params[1]), at: Date.now() });
-        return { rows: [] };
-      }
-      if (sql.includes('FROM leader_status')) {
-        const row = rows.get(params[0]);
-        const fresh = row && Date.now() - row.at < params[1] * 1000;
-        return { rows: fresh ? [{ value: row.value }] : [] };
-      }
-      return { rows: [] };
-    },
-  };
-  let lastSweepAt = new Date('2026-10-14T12:00:00Z');
-  leaderStatus.provide('app-domains.sweep', () => ({ lastSweepAt, lastError: null, sweepInFlight: false }));
-  await leaderStatus.start({ pool });
-  // Where the work runs: its memory, as it is now.
-  lastSweepAt = new Date('2026-10-14T12:05:00Z');
-  assert.equal((await leaderStatus.read('app-domains.sweep', pool)).lastSweepAt.toISOString(), '2026-10-14T12:05:00.000Z');
-  // Elsewhere (no provider): the copy, as res.json would have sent it.
-  assert.deepEqual(rows.get('app-domains.sweep').value,
-    { lastSweepAt: '2026-10-14T12:00:00.000Z', lastError: null, sweepInFlight: false });
-  leaderStatus.stop();
-  const published = rows.get('app-domains.sweep').value;
-  leaderStatus._reset();
-  rows.set('app-domains.sweep', { value: published, at: Date.now() });
-  assert.deepEqual(await leaderStatus.read('app-domains.sweep', pool), published);
-  // A copy its leader stopped writing is nobody's.
-  rows.set('app-domains.sweep', { value: published, at: Date.now() - leaderStatus.STALE_MS - 1000 });
-  assert.equal(await leaderStatus.read('app-domains.sweep', pool), null);
-  assert.deepEqual(await leaderStatus.readOr('app-domains.sweep', pool, () => ({ own: true })), { own: true });
-  // A database that will not answer is no copy, never a failed route.
-  assert.equal(await leaderStatus.read('app-domains.sweep', { query: async () => { throw new Error('down'); } }), null);
-});
-
-test('the leader publishes the admin statuses it keeps in memory, and stops as it hands over', () => {
+test('no admin status is kept in a leader\'s memory: each is read from Postgres wherever it is served', () => {
   const body = serverJs.slice(serverJs.indexOf('async function becomeLeader()'), serverJs.indexOf('async function start()'));
-  assert.ok(body.includes("leaderStatus.provide('bench-lane'"), 'becomeLeader publishes the bench lane');
-  assert.match(body, /leaderStatus\.start\(\{ pool: getPool\(config\) \}\)/);
+  // The last one the leader published, the bench lane's, is its machine's
+  // instance now (workflow/bench-lane/): leader-status is gone.
+  assert.ok(!serverJs.includes('leader-status') && !serverJs.includes('leaderStatus'));
+  assert.equal(fs.existsSync(path.join(__dirname, '..', 'src/services/leader-status.js')), false);
   // The automatic stale-preview pass is the preview-gc clock now: nothing of
   // it is kept in the leader's memory.
   assert.ok(!body.includes("'staging-reap.automatic'"), 'no leader publishes the automatic reap');
   // The Homeroom bot's loop keeps nothing in memory to publish: its lane is
   // a workflow instance every process reads (homeroom-bot.js loopMemory).
   assert.ok(!body.includes("require('./src/services/homeroom-bot').MEMORY_STATUS_KEY"));
-  const cleanupBody = serverJs.slice(serverJs.indexOf('async function cleanup()'));
-  assert.match(cleanupBody, /require\('\.\/src\/services\/leader-status'\)\.stop\(\)/);
   // And the routes read them wherever they are served.
   const admin = fs.readFileSync(path.join(__dirname, '..', 'src/routes/admin.js'), 'utf8');
   // The custom-domain sweep, the storage cap's and the leftover-preview pass
@@ -117,7 +54,9 @@ test('the leader publishes the admin statuses it keeps in memory, and stops as i
   assert.match(admin, /await clocks\.status\(pool, 'app-storage-cap'\)/);
   assert.ok(!body.includes("'app-domains.sweep'") && !body.includes('LAST_SWEEP_STATUS_KEY'), 'no leader publishes them');
   const bench = fs.readFileSync(path.join(__dirname, '..', 'src/routes/homeroom-bench.js'), 'utf8');
-  assert.equal(bench.match(/lane: await leaderStatus\.readOr\('bench-lane', pool, lane\.laneStatus\)/g).length, 2);
+  assert.equal(bench.match(/lane: await lane\.laneStatus\(\)/g).length, 2);
+  const lane = fs.readFileSync(path.join(__dirname, '..', 'src/services/bench/lane.js'), 'utf8');
+  assert.match(lane, /return \(deps\.platform \|\| platform\(\)\)\.benchLaneStatus\(\);/);
 });
 
 test('the Homeroom bot\'s queue shows why a row waits from its lane, the same in every process', async () => {
@@ -146,21 +85,15 @@ test('the Homeroom bot\'s queue shows why a row waits from its lane, the same in
 
 // ── Wakes over the bus ────────────────────────────────────────────────
 
-test('a launch on a process not running the bench lane or the eval runner wakes the one that does', (t) => {
-  const sent = capturePublishes(t);
+test('neither the bench lane nor the shots evals need a wake: each is a machine a launch tells, in any process', () => {
   const lane = require('../src/services/bench/lane');
-  const runner = require('../src/services/shots-eval-runner');
-  assert.equal(lane.wake(), false, 'the lane does not run here');
-  assert.equal(runner.wake(), false, 'nor the runner');
-  assert.deepEqual(sent.map((m) => m.kind), ['bench_wake', 'shots_eval_wake']);
-  // Where they do not run either, the bus half does nothing and publishes nothing.
-  sent.length = 0;
-  const ws = require('../src/services/ws');
-  ws._onBusMessage({ kind: 'bench_wake', data: {} });
-  ws._onBusMessage({ kind: 'shots_eval_wake', data: {} });
-  assert.deepEqual(sent, [], 'a wake is never passed on again');
-  assert.equal(lane.wakeHere(), false);
-  assert.equal(runner.wakeHere(), false);
+  const evals = require('../src/services/shots-eval');
+  assert.equal(lane.wake, undefined);
+  assert.equal(typeof lane.look, 'function');
+  assert.equal(typeof evals.look, 'function');
+  assert.equal(fs.existsSync(path.join(__dirname, '..', 'src/services/shots-eval-runner.js')), false);
+  const ws = fs.readFileSync(path.join(__dirname, '..', 'src/services/ws.js'), 'utf8');
+  assert.doesNotMatch(ws, /bench_wake|shots_eval_wake/);
 });
 
 // ── The open-issues copy ──────────────────────────────────────────────
@@ -204,67 +137,54 @@ test('a DM answer asked again later is the DM machine\'s, never a process\'s mar
 
 // ── Warm workers ──────────────────────────────────────────────────────
 
-test('a worker warm here is a marker other processes read, never work a drain waits for', (t) => {
-  processes._reset();
-  t.after(() => processes._reset());
-  const worker = require('../src/services/worker');
-  worker._registryUpsertForTests(9201, { lastUsedMs: Date.now(), inFlight: false });
-  assert.equal(processes.heldHere('warm', 9201), true);
-  assert.equal(processes.localCount(), 0, 'warm is had, not done');
-  assert.deepEqual(processes.localSnapshot(), []);
-  worker._registryUpsertForTests(9201, { inFlight: true });
-  assert.equal(processes.localCount(), 1, 'a turn in it is');
-  worker.forgetWorker(9201);
-  assert.equal(processes.heldHere('warm', 9201), false);
-  assert.equal(processes.heldHere('session', 9201), false);
-});
-
-test('the idle sweep leaves a worker another process keeps warm, and adoption leaves it too', () => {
-  const sweeper = serverJs.slice(serverJs.indexOf('function startIdleEvictionSweeper()'));
-  assert.match(sweeper.slice(0, 3000), /if \(processes\.heldElsewhere\('warm', meta\.sessionId\)\) \{\n\s+worker\.forgetWorker\(meta\.sessionId\);/,
-    'the last one keeping it warm evicts it');
-  // A draining process lets go of its idle ones, so the next leader adopts them.
+test('a worker used here is noted for every process, never held by this one', () => {
+  // Which process last used a worker says nothing about who may evict it:
+  // every process writes session_workers as it uses one, and the
+  // worker-eviction clock evicts what nobody used for the window.
+  const worker = fs.readFileSync(path.join(__dirname, '..', 'src/services/worker.js'), 'utf8');
+  assert.doesNotMatch(worker, /hold\('warm'/);
+  assert.match(worker, /INSERT INTO session_workers \(session_id, last_used_at\)/);
+  const processesSrc = fs.readFileSync(path.join(__dirname, '..', 'src/services/processes.js'), 'utf8');
+  assert.doesNotMatch(processesSrc.slice(processesSrc.indexOf('const KINDS'), processesSrc.indexOf('const KNOWN')), /'warm'/);
+  // A draining process forgets nothing: its idle workers are noted already.
   const cleanupBody = serverJs.slice(serverJs.indexOf('async function cleanup()'));
-  assert.match(cleanupBody.slice(0, 4000), /if \(!meta\.inFlight && !meta\.bootstrapping\) worker\.forgetWorker\(meta\.sessionId\);/);
-  const adopt = serverJs.slice(serverJs.indexOf('async function adoptOrphanWorker('));
-  assert.match(adopt, /processes\.holders\('warm', sessionId, pool\)/);
+  assert.doesNotMatch(cleanupBody.slice(0, 4000), /forgetWorker/);
 });
 
-test('a heal under way elsewhere is not started twice', async (t) => {
-  await elsewhere([['app_heal', 'ear-trainer']]);
-  t.after(() => processes._reset());
-  const heal = require('../src/services/app-heal');
-  const out = await heal.checkAndHealOne({}, null, { slug: 'ear-trainer', runtime_kind: 'docker' });
-  assert.deepEqual(out, { status: 'in_flight', slug: 'ear-trainer' });
-});
+// A heal is app delivery's work (src/workflow/app-delivery/): one at a time
+// per app, never beside its deploy, under the workflow's lease rather than a
+// hold another process reads through a mirror (tests/workflow-app-delivery-
+// postgres.test.js H1-H3).
 
 // ── Roles at boot ─────────────────────────────────────────────────────
 
-test('a web process never stands for leader, and only a serving one says its merges are live', () => {
+test('no process stands for leader, and only a serving one says its merges are live', () => {
   const startBody = serverJs.slice(serverJs.indexOf('async function start()'), serverJs.indexOf('// Boot only when run as the entry point'));
   assert.match(startBody, /const ownRole = processRole\.processRole\(\);/);
   assert.match(startBody, /await processes\.start\(\{ pool: getPool\(config\), role: ownRole \}\);/);
-  const web = startBody.indexOf('} else if (!processRole.standsForLeader(ownRole)) {');
-  const elect = startBody.indexOf('leadership.start(becomeLeader)');
-  assert.ok(web !== -1 && elect > web, 'the election is the last branch, after the web one');
+  assert.ok(!/standsForLeader|becomeLeader|createLeadership/.test(serverJs), 'there is no election');
   assert.match(startBody, /if \(processRole\.servesRequests\(ownRole\)\) platformRelease\.recordRunning\(getPool\(config\)\);/);
   // The merge-followups machine hears it from the same place, never from a
   // conductor's boot (src/workflow/platform.ts releaseServing).
   assert.match(startBody, /if \(processRole\.servesRequests\(ownRole\)\) require\('\.\/src\/workflow\/platform\.ts'\)\.releaseServing\(getPool\(config\)\);/);
   // The scans that read busy before acting read it for every process: the
   // imported-PR look, the revision refresh and the measurement, clocks of
-  // the workflow now (services/proposal-scans.js). isSessionBusy is the
-  // turn here (worker.isInFlight) and a hold any other process has.
+  // the workflow now (services/proposal-scans.js). What another process
+  // works on is read from the workflow's own records (session-work.ts
+  // workedOnSql), never from a mirror of its holds.
   const scans = fs.readFileSync(path.join(__dirname, '..', 'src/services/proposal-scans.js'), 'utf8');
-  assert.match(scans, /function busy\(sessionId\) \{\n\s+return require\('\.\/active-workers'\)\.isSessionBusy\(Number\(sessionId\)\);/);
-  for (const fn of ['async function lookImported(', 'async function refreshRevision(', 'async function measurePromoted(']) {
+  assert.match(scans, /function busy\(sessionId, pool\) \{\n\s+return require\('\.\/active-workers'\)\.isSessionBusyAnywhere\(Number\(sessionId\), \{ pool \}\);/);
+  for (const fn of ['async function lookImported(', 'async function refreshRevision(']) {
     const body = scans.slice(scans.indexOf(fn), scans.indexOf('\n}\n', scans.indexOf(fn)));
-    assert.match(body, /busy\(session\.id\)/, `${fn} skips a session busy anywhere`);
+    assert.match(body, /await busy\(session\.id, pool\)/, `${fn} skips a session busy anywhere`);
   }
+  const measure = scans.slice(scans.indexOf('async function measurePromoted('), scans.indexOf('\n}\n', scans.indexOf('async function measurePromoted(')));
+  assert.match(measure, /busySessionsAnywhere\(sessions\.map\(\(s\) => s\.id\), \{ pool \}\)/, 'the measurement skips sessions busy anywhere');
   const busy = fs.readFileSync(path.join(__dirname, '..', 'src/services/active-workers.js'), 'utf8');
-  const isBusy = busy.slice(busy.indexOf('function isSessionBusy('), busy.indexOf('function isSessionBusyElsewhere('));
-  assert.match(isBusy, /worker\.isInFlight\(sessionId\)/);
-  assert.match(isBusy, /return isSessionBusyElsewhere\(sessionId\);/);
+  const anywhere = busy.slice(busy.indexOf('async function isSessionBusyAnywhere('), busy.indexOf('async function busySessionsAnywhere('));
+  assert.match(anywhere, /if \(isSessionBusy\(sessionId\)\) return true;/, 'this process\'s own turn first');
+  assert.match(anywhere, /workedOnSql\(/, 'then the workflow\'s records');
+  assert.doesNotMatch(busy, /isSessionBusyElsewhere|heldElsewhere/, 'no mirror of another process\'s holds');
 });
 
 // ── The chart ─────────────────────────────────────────────────────────

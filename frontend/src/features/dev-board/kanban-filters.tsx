@@ -74,12 +74,14 @@ const chipCls = (active: boolean) => `${CHIP_BASE} px-3 ${active ? CHIP_ON : CHI
  * #4916: Filters and the two quick toggles are ICON chips: a 16px glyph at
  * the shell's 2px stroke, a 32px circle on the board (All items' head sizes
  * every chip in its row as a 28px pill, app.css `.dev-ws-allbar`). Their
- * words stay on each one three ways: `title` for the pointer's tooltip,
- * `aria-label` for a screen reader, and an `sr-only` copy, which keeps the
- * text in the page's innerText where the declared checks' `expectText`
- * reads it (`relative` keeps that copy inside the chip, and so inside the
- * strip's scroller on a phone). Filters with filters on adds its count
- * after the glyph, so it grows to a pill.
+ * words stay on each one two ways: `title` for the pointer's tooltip and
+ * `aria-label` for a screen reader, plus a copy that is `sr-only` on a phone
+ * and a visible label from 700px up (#5820). The copy keeps the text in the
+ * page's innerText at every width, where the declared checks' `expectText`
+ * reads it (`relative` keeps it inside the chip, and so inside the strip's
+ * scroller on a phone). Filters with filters on adds its count after the
+ * glyph, so it grows to a pill; from 700px up the count is part of the word
+ * instead, and `.dev-chip-count` hides the separate number.
  */
 const ICON_CHIP_PAD = 'relative justify-center min-w-8 px-2';
 const iconChipCls = (active: boolean) => `${CHIP_BASE} ${ICON_CHIP_PAD} ${active ? CHIP_ON : CHIP_IDLE}`;
@@ -264,8 +266,8 @@ export function KanbanFiltersView({
           onClick={() => controller()?._openKanbanFiltersDialog?.()}
         >
           <AdjustmentsIcon className={CHIP_ICON} aria-hidden="true" />
-          {count > 0 ? <span aria-hidden="true">{count}</span> : null}
-          <span className="sr-only">{filtersLabel}</span>
+          {count > 0 ? <span className="dev-chip-count" aria-hidden="true">{count}</span> : null}
+          <span className="sr-only dev-chip-word">{filtersLabel}</span>
         </button>
         {quick ? QUICK_FILTERS.map(({ key, label, Icon }) => (
           <button
@@ -279,7 +281,7 @@ export function KanbanFiltersView({
             onClick={() => controller()?._toggleKanbanQuickFilter?.(key)}
           >
             <Icon className={CHIP_ICON} aria-hidden="true" />
-            <span className="sr-only">{t(label)}</span>
+            <span className="sr-only dev-chip-word">{t(label)}</span>
           </button>
         )) : null}
         <span id="dev-kanban-active-chips" className="contents">

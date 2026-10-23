@@ -304,7 +304,7 @@
     "description": "Label of a tile on the screen that asks a member \"What do you want to make?\": picks a tier list as the starting idea for the new project."
   },
   "firstSession.template.tier.note": {
-    "text": "I'm making us a tier list. Join and tell me what it needs.",
+    "text": "I'm making us a tier list. Click the link to join the app.",
     "description": "Suggested text of the personal note a maker sends with the invite link to their group, when their new project started from the tier list idea. Written in the maker's voice, to their friends, while the app is still being made. No exclamation mark."
   },
   "firstSession.template.tier.restaurants.label": {
@@ -320,8 +320,8 @@
     "description": "Name suggested for the new project in the \"What should we call it?\" field when the \"Restaurants\" option of the tier list idea is picked. A title; the maker can change it."
   },
   "firstSession.template.tier.restaurants.description": {
-    "text": "A restaurant tier list",
-    "description": "One-line description saved with a new project made from the \"Restaurants\" option of the tier list idea, shown under the project's name. At most 90 characters."
+    "text": "The best places to eat, ranked by the whole group",
+    "description": "One-line tagline saved as the description of a new project made from the \"Restaurants\" option of the tier list idea, shown under the project's name. It says what the project is for, not its name. At most 90 characters."
   },
   "firstSession.template.tier.hikes.label": {
     "text": "Hikes",
@@ -336,8 +336,8 @@
     "description": "Name suggested for the new project in the \"What should we call it?\" field when the \"Hikes\" option of the tier list idea is picked. A title; the maker can change it."
   },
   "firstSession.template.tier.hikes.description": {
-    "text": "A hiking tier list",
-    "description": "One-line description saved with a new project made from the \"Hikes\" option of the tier list idea, shown under the project's name. At most 90 characters."
+    "text": "Our favorite trails, sorted into tiers together",
+    "description": "One-line tagline saved as the description of a new project made from the \"Hikes\" option of the tier list idea, shown under the project's name. It says what the project is for, not its name. At most 90 characters."
   },
   "firstSession.template.tier.cities.label": {
     "text": "Cities",
@@ -352,8 +352,8 @@
     "description": "Name suggested for the new project in the \"What should we call it?\" field when the \"Cities\" option of the tier list idea is picked. A title; the maker can change it."
   },
   "firstSession.template.tier.cities.description": {
-    "text": "A city tier list",
-    "description": "One-line description saved with a new project made from the \"Cities\" option of the tier list idea, shown under the project's name. At most 90 characters."
+    "text": "Every city we love, ranked by the group",
+    "description": "One-line tagline saved as the description of a new project made from the \"Cities\" option of the tier list idea, shown under the project's name. It says what the project is for, not its name. At most 90 characters."
   },
   "firstSession.template.tier.games.label": {
     "text": "Games",
@@ -368,8 +368,8 @@
     "description": "Name suggested for the new project in the \"What should we call it?\" field when the \"Games\" option of the tier list idea is picked. A title; the maker can change it."
   },
   "firstSession.template.tier.games.description": {
-    "text": "A game tier list",
-    "description": "One-line description saved with a new project made from the \"Games\" option of the tier list idea, shown under the project's name. At most 90 characters."
+    "text": "The games we play, ranked by everyone",
+    "description": "One-line tagline saved as the description of a new project made from the \"Games\" option of the tier list idea, shown under the project's name. It says what the project is for, not its name. At most 90 characters."
   },
   "firstSession.template.tier.own.sentence": {
     "text": "A tier list for our favorite <0>{{words}}</0>. Anyone can add items, everyone sorts them, and we can see where they land.",
@@ -384,8 +384,8 @@
     "description": "Name suggested for a new project made from the tier list idea with the maker's own words. {{words}} is what they typed in the sentence's blank, with each word capitalized, for example \"Taco Spots\"."
   },
   "firstSession.template.tier.own.description": {
-    "text": "A tier list",
-    "description": "One-line description saved with a new project made from the tier list idea with the maker's own words, shown under the project's name. At most 90 characters."
+    "text": "Anyone adds one, everyone ranks it",
+    "description": "One-line tagline saved as the description of a new project made from the tier list idea with the maker's own words, shown under the project's name only when Homeroom cannot write one from the maker's own words. It says what the project is for, not its name. At most 90 characters."
   },
   "firstSession.template.game.title": {
     "text": "A game",
@@ -404,7 +404,7 @@
     "description": "Label of a tile on the screen that asks a member \"What do you want to make?\": picks a game as the starting idea for the new project."
   },
   "firstSession.template.game.note": {
-    "text": "I'm making us a game. Join and tell me what it needs.",
+    "text": "I'm making us a game. Click the link to join the app.",
     "description": "Suggested text of the personal note a maker sends with the invite link to their group, when their new project started from the game idea. Written in the maker's voice, to their friends, while the app is still being made. No exclamation mark."
   },
   "firstSession.template.game.board.label": {
@@ -420,8 +420,8 @@
     "description": "Name suggested for the new project in the \"What should we call it?\" field when the \"Board game\" option of the game idea is picked. A title; the maker can change it."
   },
   "firstSession.template.game.board.description": {
-    "text": "A board game",
-    "description": "One-line description saved with a new project made from the \"Board game\" option of the game idea, shown under the project's name. At most 90 characters."
+    "text": "A dice race: ladders take you up, slides take you back",
+    "description": "One-line tagline saved as the description of a new project made from the \"Board game\" option of the game idea, shown under the project's name only when Homeroom cannot write one from the maker's own words. It says what the project is for, not its name. At most 90 characters."
   },
   "firstSession.template.game.board.example": {
     "text": "For example, we roll dice and race each other around the board",
@@ -440,8 +440,8 @@
     "description": "Name suggested for the new project in the \"What should we call it?\" field when the \"Space shooter\" option of the game idea is picked. A title; the maker can change it."
   },
   "firstSession.template.game.shooter.description": {
-    "text": "An arcade space shooter",
-    "description": "One-line description saved with a new project made from the \"Space shooter\" option of the game idea, shown under the project's name. At most 90 characters."
+    "text": "Weave through storms of sparks",
+    "description": "One-line tagline saved as the description of a new project made from the \"Space shooter\" option of the game idea, shown under the project's name only when Homeroom cannot write one from the maker's own words. It says what the project is for, not its name. At most 90 characters."
   },
   "firstSession.template.game.shooter.example": {
     "text": "For example, we fly together through storms of sparks and collect stardust",
@@ -460,8 +460,8 @@
     "description": "Name suggested for the new project in the \"What should we call it?\" field when the \"3D blocks\" option of the game idea is picked. A title; the maker can change it."
   },
   "firstSession.template.game.blocks.description": {
-    "text": "A 3D block game",
-    "description": "One-line description saved with a new project made from the \"3D blocks\" option of the game idea, shown under the project's name. At most 90 characters."
+    "text": "One block world everyone builds in together",
+    "description": "One-line tagline saved as the description of a new project made from the \"3D blocks\" option of the game idea, shown under the project's name only when Homeroom cannot write one from the maker's own words. It says what the project is for, not its name. At most 90 characters."
   },
   "firstSession.template.game.blocks.example": {
     "text": "For example, we build whatever we want together",
@@ -480,8 +480,8 @@
     "description": "Name suggested for the new project in the \"What should we call it?\" field when the \"Trivia\" option of the game idea is picked. A title; the maker can change it."
   },
   "firstSession.template.game.trivia.description": {
-    "text": "A trivia game",
-    "description": "One-line description saved with a new project made from the \"Trivia\" option of the game idea, shown under the project's name. At most 90 characters."
+    "text": "A game show about each other: who knows the group best?",
+    "description": "One-line tagline saved as the description of a new project made from the \"Trivia\" option of the game idea, shown under the project's name only when Homeroom cannot write one from the maker's own words. It says what the project is for, not its name. At most 90 characters."
   },
   "firstSession.template.game.trivia.example": {
     "text": "For example, every question is about one of us",
@@ -508,8 +508,8 @@
     "description": "Placeholder in the box where the maker describes their own game, finishing the sentence that ends \"For the first version, …\". An example of an ending; no full stop."
   },
   "firstSession.template.game.own.description": {
-    "text": "A game",
-    "description": "One-line description saved with a new project made from the game idea in the maker's own words, shown under the project's name. At most 90 characters."
+    "text": "A game the group builds and plays together",
+    "description": "One-line tagline saved as the description of a new project made from the game idea in the maker's own words, shown under the project's name only when Homeroom cannot write one from the maker's own words. It says what the project is for, not its name. At most 90 characters."
   },
   "firstSession.template.organizer.title": {
     "text": "An organizer",
@@ -528,7 +528,7 @@
     "description": "Label of a tile on the screen that asks a member \"What do you want to make?\": picks an organizer as the starting idea for the new project."
   },
   "firstSession.template.organizer.note": {
-    "text": "I'm making us an organizer. Join and tell me what it needs.",
+    "text": "I'm making us an organizer. Click the link to join the app.",
     "description": "Suggested text of the personal note a maker sends with the invite link to their group, when their new project started from the organizer idea. Written in the maker's voice, to their friends, while the app is still being made. No exclamation mark."
   },
   "firstSession.template.organizer.groceries.label": {
@@ -544,8 +544,8 @@
     "description": "Name suggested for the new project in the \"What should we call it?\" field when the \"Groceries\" option of the organizer idea is picked. A title; the maker can change it."
   },
   "firstSession.template.organizer.groceries.description": {
-    "text": "A grocery list",
-    "description": "One-line description saved with a new project made from the \"Groceries\" option of the organizer idea, shown under the project's name. At most 90 characters."
+    "text": "A shared grocery list",
+    "description": "One-line tagline saved as the description of a new project made from the \"Groceries\" option of the organizer idea, shown under the project's name. It says what the project is for, not its name. At most 90 characters."
   },
   "firstSession.template.organizer.chores.label": {
     "text": "Chores",
@@ -560,8 +560,8 @@
     "description": "Name suggested for the new project in the \"What should we call it?\" field when the \"Chores\" option of the organizer idea is picked. A title; the maker can change it."
   },
   "firstSession.template.organizer.chores.description": {
-    "text": "A chore list",
-    "description": "One-line description saved with a new project made from the \"Chores\" option of the organizer idea, shown under the project's name. At most 90 characters."
+    "text": "Who does what chores and when",
+    "description": "One-line tagline saved as the description of a new project made from the \"Chores\" option of the organizer idea, shown under the project's name. It says what the project is for, not its name. At most 90 characters."
   },
   "firstSession.template.organizer.library.label": {
     "text": "Shared library",
@@ -576,8 +576,8 @@
     "description": "Name suggested for the new project in the \"What should we call it?\" field when the \"Shared library\" option of the organizer idea is picked. A title; the maker can change it."
   },
   "firstSession.template.organizer.library.description": {
-    "text": "A lending library",
-    "description": "One-line description saved with a new project made from the \"Shared library\" option of the organizer idea, shown under the project's name. At most 90 characters."
+    "text": "Things we lend each other, and who has them now",
+    "description": "One-line tagline saved as the description of a new project made from the \"Shared library\" option of the organizer idea, shown under the project's name. It says what the project is for, not its name. At most 90 characters."
   },
   "firstSession.template.organizer.study.label": {
     "text": "Study timer",
@@ -592,8 +592,8 @@
     "description": "Name suggested for the new project in the \"What should we call it?\" field when the \"Study timer\" option of the organizer idea is picked. A title; the maker can change it."
   },
   "firstSession.template.organizer.study.description": {
-    "text": "A study timer",
-    "description": "One-line description saved with a new project made from the \"Study timer\" option of the organizer idea, shown under the project's name. At most 90 characters."
+    "text": "25 minute focus sessions, and how many you did today",
+    "description": "One-line tagline saved as the description of a new project made from the \"Study timer\" option of the organizer idea, shown under the project's name. It says what the project is for, not its name. At most 90 characters."
   },
   "firstSession.template.organizer.own.sentence": {
     "text": "An app to organize our <0>{{words}}</0>, so everyone can see what's where and who's on it.",
@@ -608,8 +608,8 @@
     "description": "Name suggested for a new project made from the organizer idea with the maker's own words. {{words}} is what they typed in the sentence's blank, with each word capitalized, for example \"Camping Gear\"."
   },
   "firstSession.template.organizer.own.description": {
-    "text": "An organizer",
-    "description": "One-line description saved with a new project made from the organizer idea with the maker's own words, shown under the project's name. At most 90 characters."
+    "text": "The group's things, kept in one place",
+    "description": "One-line tagline saved as the description of a new project made from the organizer idea with the maker's own words, shown under the project's name only when Homeroom cannot write one from the maker's own words. It says what the project is for, not its name. At most 90 characters."
   },
   "firstSession.template.poll.title": {
     "text": "A group poll",
@@ -624,7 +624,7 @@
     "description": "Label of a tile, or of a row in the list of more ideas, on the screen that asks a member \"What do you want to make?\": picks a group poll as the starting idea for the new project."
   },
   "firstSession.template.poll.note": {
-    "text": "I'm making us a poll. Join and help decide.",
+    "text": "I'm making us a poll. Click the link to join the app.",
     "description": "Suggested text of the personal note a maker sends with the invite link to their group, when their new project started from the a group poll idea. Written in the maker's voice, to their friends, while the app is still being made. No exclamation mark."
   },
   "firstSession.template.poll.namePlaceholder": {
@@ -644,8 +644,8 @@
     "description": "Name suggested for the new project in the \"What should we call it?\" field when the \"Where to eat\" option of the a group poll idea is picked. A title; the maker can change it."
   },
   "firstSession.template.poll.dinner.description": {
-    "text": "A poll for where we eat",
-    "description": "One-line description saved with a new project made from the \"Where to eat\" option of the a group poll idea, shown under the project's name. At most 90 characters."
+    "text": "Vote on where we eat next",
+    "description": "One-line tagline saved as the description of a new project made from the \"Where to eat\" option of the a group poll idea, shown under the project's name. It says what the project is for, not its name. At most 90 characters."
   },
   "firstSession.template.poll.spending.label": {
     "text": "What to spend on",
@@ -660,8 +660,8 @@
     "description": "Name suggested for the new project in the \"What should we call it?\" field when the \"What to spend on\" option of the a group poll idea is picked. A title; the maker can change it."
   },
   "firstSession.template.poll.spending.description": {
-    "text": "A poll for what we spend on",
-    "description": "One-line description saved with a new project made from the \"What to spend on\" option of the a group poll idea, shown under the project's name. At most 90 characters."
+    "text": "Decide together where we spend together",
+    "description": "One-line tagline saved as the description of a new project made from the \"What to spend on\" option of the a group poll idea, shown under the project's name. It says what the project is for, not its name. At most 90 characters."
   },
   "firstSession.template.poll.movies.label": {
     "text": "Movie night",
@@ -676,8 +676,8 @@
     "description": "Name suggested for the new project in the \"What should we call it?\" field when the \"Movie night\" option of the a group poll idea is picked. A title; the maker can change it."
   },
   "firstSession.template.poll.movies.description": {
-    "text": "A poll for what we watch",
-    "description": "One-line description saved with a new project made from the \"Movie night\" option of the a group poll idea, shown under the project's name. At most 90 characters."
+    "text": "Pick what movie we watch",
+    "description": "One-line tagline saved as the description of a new project made from the \"Movie night\" option of the a group poll idea, shown under the project's name. It says what the project is for, not its name. At most 90 characters."
   },
   "firstSession.template.poll.own.sentence": {
     "text": "An app for us to decide <0>{{words}}</0>: anyone can suggest options, everyone votes, and we see what wins.",
@@ -688,8 +688,8 @@
     "description": "Placeholder in the blank of the a group poll sentence when the maker fills it in themselves: an example. It must read naturally in that blank."
   },
   "firstSession.template.poll.own.description": {
-    "text": "A group poll",
-    "description": "One-line description saved with a new project made from the a group poll idea in the maker's own words, shown under the project's name. At most 90 characters."
+    "text": "Add options, vote, and the group decides",
+    "description": "One-line tagline saved as the description of a new project made from the a group poll idea in the maker's own words, shown under the project's name only when Homeroom cannot write one from the maker's own words. It says what the project is for, not its name. At most 90 characters."
   },
   "firstSession.template.findtime.title": {
     "text": "A time to meet",
@@ -704,7 +704,7 @@
     "description": "Label of a tile, or of a row in the list of more ideas, on the screen that asks a member \"What do you want to make?\": picks finding a time as the starting idea for the new project."
   },
   "firstSession.template.findtime.note": {
-    "text": "I'm making us a way to find a time. Join and mark when you're free.",
+    "text": "I'm making us a way to find a time. Click the link to join the app.",
     "description": "Suggested text of the personal note a maker sends with the invite link to their group, when their new project started from the finding a time idea. Written in the maker's voice, to their friends, while the app is still being made. No exclamation mark."
   },
   "firstSession.template.findtime.namePlaceholder": {
@@ -724,8 +724,8 @@
     "description": "Name suggested for the new project in the \"What should we call it?\" field when the \"Book club\" option of the finding a time idea is picked. A title; the maker can change it."
   },
   "firstSession.template.findtime.bookclub.description": {
-    "text": "Finding a time for book club",
-    "description": "One-line description saved with a new project made from the \"Book club\" option of the finding a time idea, shown under the project's name. At most 90 characters."
+    "text": "Mark when you're free, and we find the best time",
+    "description": "One-line tagline saved as the description of a new project made from the \"Book club\" option of the finding a time idea, shown under the project's name. It says what the project is for, not its name. At most 90 characters."
   },
   "firstSession.template.findtime.gamenight.label": {
     "text": "Game night",
@@ -740,8 +740,8 @@
     "description": "Name suggested for the new project in the \"What should we call it?\" field when the \"Game night\" option of the finding a time idea is picked. A title; the maker can change it."
   },
   "firstSession.template.findtime.gamenight.description": {
-    "text": "Finding a time for game night",
-    "description": "One-line description saved with a new project made from the \"Game night\" option of the finding a time idea, shown under the project's name. At most 90 characters."
+    "text": "Find the game night that works for everyone",
+    "description": "One-line tagline saved as the description of a new project made from the \"Game night\" option of the finding a time idea, shown under the project's name. It says what the project is for, not its name. At most 90 characters."
   },
   "firstSession.template.findtime.trip.label": {
     "text": "Trip",
@@ -756,8 +756,8 @@
     "description": "Name suggested for the new project in the \"What should we call it?\" field when the \"Trip\" option of the finding a time idea is picked. A title; the maker can change it."
   },
   "firstSession.template.findtime.trip.description": {
-    "text": "Finding dates for our trip",
-    "description": "One-line description saved with a new project made from the \"Trip\" option of the finding a time idea, shown under the project's name. At most 90 characters."
+    "text": "Find the dates the whole group is free",
+    "description": "One-line tagline saved as the description of a new project made from the \"Trip\" option of the finding a time idea, shown under the project's name. It says what the project is for, not its name. At most 90 characters."
   },
   "firstSession.template.findtime.own.sentence": {
     "text": "An app to find a time for our <0>{{words}}</0>: everyone marks when they're free, and we see what works.",
@@ -772,8 +772,8 @@
     "description": "Name suggested for a new project made from the finding a time idea with the maker's own words. {{words}} is what they typed in the sentence's blank, with each word capitalized."
   },
   "firstSession.template.findtime.own.description": {
-    "text": "Finding a time that works",
-    "description": "One-line description saved with a new project made from the finding a time idea in the maker's own words, shown under the project's name. At most 90 characters."
+    "text": "Suggest a few times and see which works best",
+    "description": "One-line tagline saved as the description of a new project made from the finding a time idea in the maker's own words, shown under the project's name only when Homeroom cannot write one from the maker's own words. It says what the project is for, not its name. At most 90 characters."
   },
   "firstSession.template.signup.title": {
     "text": "A sign-up sheet",
@@ -788,7 +788,7 @@
     "description": "Label of a tile, or of a row in the list of more ideas, on the screen that asks a member \"What do you want to make?\": picks a sign-up sheet as the starting idea for the new project."
   },
   "firstSession.template.signup.note": {
-    "text": "I'm making us a sign-up sheet. Join and sign up.",
+    "text": "I'm making us a sign-up sheet. Click the link to join the app.",
     "description": "Suggested text of the personal note a maker sends with the invite link to their group, when their new project started from the a sign-up sheet idea. Written in the maker's voice, to their friends, while the app is still being made. No exclamation mark."
   },
   "firstSession.template.signup.namePlaceholder": {
@@ -808,8 +808,8 @@
     "description": "Name suggested for the new project in the \"What should we call it?\" field when the \"Potluck\" option of the a sign-up sheet idea is picked. A title; the maker can change it."
   },
   "firstSession.template.signup.potluck.description": {
-    "text": "A potluck planner",
-    "description": "One-line description saved with a new project made from the \"Potluck\" option of the a sign-up sheet idea, shown under the project's name. At most 90 characters."
+    "text": "Who's bringing what, so the table isn't six salads",
+    "description": "One-line tagline saved as the description of a new project made from the \"Potluck\" option of the a sign-up sheet idea, shown under the project's name. It says what the project is for, not its name. At most 90 characters."
   },
   "firstSession.template.signup.shifts.label": {
     "text": "Volunteer shifts",
@@ -824,8 +824,8 @@
     "description": "Name suggested for the new project in the \"What should we call it?\" field when the \"Volunteer shifts\" option of the a sign-up sheet idea is picked. A title; the maker can change it."
   },
   "firstSession.template.signup.shifts.description": {
-    "text": "A volunteer sign-up sheet",
-    "description": "One-line description saved with a new project made from the \"Volunteer shifts\" option of the a sign-up sheet idea, shown under the project's name. At most 90 characters."
+    "text": "The shifts that need people, and who's on which",
+    "description": "One-line tagline saved as the description of a new project made from the \"Volunteer shifts\" option of the a sign-up sheet idea, shown under the project's name. It says what the project is for, not its name. At most 90 characters."
   },
   "firstSession.template.signup.rsvp.label": {
     "text": "Who's coming",
@@ -840,8 +840,8 @@
     "description": "Name suggested for the new project in the \"What should we call it?\" field when the \"Who's coming\" option of the a sign-up sheet idea is picked. A title; the maker can change it."
   },
   "firstSession.template.signup.rsvp.description": {
-    "text": "Who's coming",
-    "description": "One-line description saved with a new project made from the \"Who's coming\" option of the a sign-up sheet idea, shown under the project's name. At most 90 characters."
+    "text": "Who is going, is a maybe, or can't come",
+    "description": "One-line tagline saved as the description of a new project made from the \"Who's coming\" option of the a sign-up sheet idea, shown under the project's name. It says what the project is for, not its name. At most 90 characters."
   },
   "firstSession.template.signup.own.sentence": {
     "text": "A sign-up sheet for our <0>{{words}}</0>: everyone takes a slot, and we see what's still needed.",
@@ -856,8 +856,8 @@
     "description": "Name suggested for a new project made from the a sign-up sheet idea with the maker's own words. {{words}} is what they typed in the sentence's blank, with each word capitalized."
   },
   "firstSession.template.signup.own.description": {
-    "text": "A sign-up sheet",
-    "description": "One-line description saved with a new project made from the a sign-up sheet idea in the maker's own words, shown under the project's name. At most 90 characters."
+    "text": "Times that need people, and who's taken each slot",
+    "description": "One-line tagline saved as the description of a new project made from the a sign-up sheet idea in the maker's own words, shown under the project's name only when Homeroom cannot write one from the maker's own words. It says what the project is for, not its name. At most 90 characters."
   },
   "firstSession.template.challenge.title": {
     "text": "A group challenge",
@@ -872,7 +872,7 @@
     "description": "Label of a tile, or of a row in the list of more ideas, on the screen that asks a member \"What do you want to make?\": picks a group challenge as the starting idea for the new project."
   },
   "firstSession.template.challenge.note": {
-    "text": "I'm making us a monthly challenge. Join and start logging.",
+    "text": "I'm making us a monthly challenge. Click the link to join the app.",
     "description": "Suggested text of the personal note a maker sends with the invite link to their group, when their new project started from the a group challenge idea. Written in the maker's voice, to their friends, while the app is still being made. No exclamation mark."
   },
   "firstSession.template.challenge.namePlaceholder": {
@@ -892,8 +892,8 @@
     "description": "Name suggested for the new project in the \"What should we call it?\" field when the \"Miles\" option of the a group challenge idea is picked. A title; the maker can change it."
   },
   "firstSession.template.challenge.miles.description": {
-    "text": "A monthly miles challenge",
-    "description": "One-line description saved with a new project made from the \"Miles\" option of the a group challenge idea, shown under the project's name. At most 90 characters."
+    "text": "Log your miles each month and see who goes farthest",
+    "description": "One-line tagline saved as the description of a new project made from the \"Miles\" option of the a group challenge idea, shown under the project's name. It says what the project is for, not its name. At most 90 characters."
   },
   "firstSession.template.challenge.steps.label": {
     "text": "Steps",
@@ -908,8 +908,8 @@
     "description": "Name suggested for the new project in the \"What should we call it?\" field when the \"Steps\" option of the a group challenge idea is picked. A title; the maker can change it."
   },
   "firstSession.template.challenge.steps.description": {
-    "text": "A monthly steps challenge",
-    "description": "One-line description saved with a new project made from the \"Steps\" option of the a group challenge idea, shown under the project's name. At most 90 characters."
+    "text": "Count steps together and chase a group goal each month",
+    "description": "One-line tagline saved as the description of a new project made from the \"Steps\" option of the a group challenge idea, shown under the project's name. It says what the project is for, not its name. At most 90 characters."
   },
   "firstSession.template.challenge.books.label": {
     "text": "Books",
@@ -924,8 +924,8 @@
     "description": "Name suggested for the new project in the \"What should we call it?\" field when the \"Books\" option of the a group challenge idea is picked. A title; the maker can change it."
   },
   "firstSession.template.challenge.books.description": {
-    "text": "A monthly reading challenge",
-    "description": "One-line description saved with a new project made from the \"Books\" option of the a group challenge idea, shown under the project's name. At most 90 characters."
+    "text": "Who reads the most this month, and how much we've read as a group",
+    "description": "One-line tagline saved as the description of a new project made from the \"Books\" option of the a group challenge idea, shown under the project's name. It says what the project is for, not its name. At most 90 characters."
   },
   "firstSession.template.challenge.own.sentence": {
     "text": "A challenge for our group: who logs the most <0>{{words}}</0> this month, with a leaderboard.",
@@ -940,8 +940,8 @@
     "description": "Name suggested for a new project made from the a group challenge idea with the maker's own words. {{words}} is what they typed in the sentence's blank, with each word capitalized."
   },
   "firstSession.template.challenge.own.description": {
-    "text": "A group challenge",
-    "description": "One-line description saved with a new project made from the a group challenge idea in the maker's own words, shown under the project's name. At most 90 characters."
+    "text": "A monthly goal the whole group chases together",
+    "description": "One-line tagline saved as the description of a new project made from the a group challenge idea in the maker's own words, shown under the project's name only when Homeroom cannot write one from the maker's own words. It says what the project is for, not its name. At most 90 characters."
   },
   "firstSession.make.somethingElse": {
     "text": "Something else…",
@@ -963,21 +963,13 @@
     "text": "Describe it, and Homeroom bot builds it",
     "description": "Line under \"Your own idea\" in the \"Something else\" sheet on the \"What do you want to make?\" screen: the member writes a description and Homeroom bot (the platform's AI helper, keep its name) builds the first version."
   },
-  "firstSession.make.eyebrow.create": {
-    "text": "New project",
-    "description": "Small heading above the question on the \"What do you want to make?\" screen, where a member describes a new project, when the screen was opened from the Create button. A noun phrase: this is a new project."
-  },
-  "firstSession.make.eyebrow.hello": {
-    "text": "Hi {{name}}!",
-    "description": "Small greeting above the question on the \"What do you want to make?\" screen, where a member describes a new project, the first time a new member signs in. {{name}} is the member's display name or username."
-  },
-  "firstSession.make.eyebrow.youreIn": {
-    "text": "You're in!",
-    "description": "Small greeting above the question on the \"What do you want to make?\" screen, where a member describes a new project, the first time a new member signs in, when their name is not known: they now have access to Homeroom."
-  },
   "firstSession.make.title": {
     "text": "What do you want to make?",
     "description": "Heading of the screen where a member starts a new project by describing what the app should be."
+  },
+  "firstSession.make.titleHello": {
+    "text": "Hi {{name}}, what do you want to make?",
+    "description": "Heading of the screen where a member starts a new project by describing what the app should be, the first time a new member signs in. {{name}} is the member's display name or username."
   },
   "firstSession.make.startFromIdea": {
     "text": "Start from an idea",
@@ -1078,6 +1070,34 @@
   "firstSession.make.speed.custom": {
     "text": "<0>Custom</0> · Homeroom bot builds it in 20 to 30 min",
     "description": "One line above \"Who can change it\" on the \"What do you want to make?\" screen, after a sparkle icon, while Make it would ask Homeroom bot to build the first version from the member's own description (their own words, a game, or a starting idea finished in their own words). \"it\" is the project; \"min\" is short for minutes. <0>…</0> is bold. Keep it short: it must fit on one line of a phone screen."
+  },
+  "firstSession.make.welcome": {
+    "text": "Welcome to Homeroom. Pick an idea below or describe your own.",
+    "description": "Quiet line under the question \"What do you want to make?\" the first time a new member sees that screen, just after signing in. Homeroom is the product's name. It is not shown when a returning member opens New project from the Create button."
+  },
+  "firstSession.make.next.open": {
+    "text": "What happens next",
+    "description": "Spoken name of the small information (i) button after \"Who can change it\" on the \"What do you want to make?\" screen: opens a tip about what happens after Make it is pressed."
+  },
+  "firstSession.make.next.title": {
+    "text": "What happens next",
+    "description": "Title of the tip opened by the information (i) button beside \"Who can change it\" on the \"What do you want to make?\" screen: what happens after Make it is pressed."
+  },
+  "firstSession.make.next.readyMade": {
+    "text": "<0>A ready-made idea</0> is ready to use in about a minute.",
+    "description": "First line of the tip opened by the information (i) button on the \"What do you want to make?\" screen: nothing has to be built for one of Homeroom's ready-made apps. <0>…</0> is bold."
+  },
+  "firstSession.make.next.custom": {
+    "text": "<0>Anything else:</0> Homeroom bot writes a plan in about a minute, and asks you first if it needs you to choose something. Then it builds it in 20 to 30 min.",
+    "description": "Second line of the tip opened by the information (i) button on the \"What do you want to make?\" screen: what happens when Homeroom bot builds the first version from the member's own description. \"it\" is the project; \"min\" is short for minutes. Homeroom bot is a name. <0>…</0> is bold."
+  },
+  "firstSession.make.next.invite": {
+    "text": "<0>Then invite people</0> to use it and help improve it together.",
+    "description": "Third line of the tip opened by the information (i) button on the \"What do you want to make?\" screen: what the member does once the project is made. \"it\" is the project. <0>…</0> is bold."
+  },
+  "firstSession.make.next.rule": {
+    "text": "<0>Who can change it</0> says how changes go live once others join. You can change it later on the project’s page.",
+    "description": "Last line of the tip opened by the information (i) button on the \"What do you want to make?\" screen: what the \"Who can change it\" line right below the tip means. The first \"it\" is the approval rule; \"it\" in the second sentence is the project. <0>…</0> is bold."
   },
   "firstSession.make.rule.line": {
     "text": "Who can change it: <0>{{preset}}</0>",
@@ -1343,6 +1363,10 @@
     "text": "The first look at {{app}}'s main screen",
     "description": "Description, for screen readers, of the small picture in the card under a new project on the screen shown right after a project is made: a drawing of the app's main screen. {{app}} is the project's name."
   },
+  "firstSession.made.firstLook.open": {
+    "text": "Open your chat with Homeroom bot",
+    "description": "Name, for screen readers, of the card under a new project on the screen shown right after a project is made: a tap anywhere on the card opens the maker's chat with the assistant called Homeroom bot, where the build is reported. Homeroom bot is a name."
+  },
   "firstSession.made.cardView.label": {
     "text": "Show the invite or the app",
     "description": "Name, for screen readers, of the small two-button switch in the top-right corner of the new project's card on the screen shown right after a project is made. It switches the card between the invite (the app's icon, as the people invited see it) and a picture of what the app looks like."
@@ -1479,10 +1503,6 @@
     "text": "Its repo says what it does. You and anyone you invite build on it from here.",
     "description": "Second line under the new project's card on the screen shown right after a project is made, for a project imported from a GitHub repository. \"Its repo\" is the project's repository; \"build on it\" means making changes to the app."
   },
-  "firstSession.made.note.readyMade": {
-    "text": "It works as it is. You and anyone you invite can change it from there.",
-    "description": "Second line under the new project's card on the screen shown right after a project is made, for a project made from one of Homeroom's ready-made apps. \"change\" is a verb: to alter the app."
-  },
   "firstSession.made.note.noBot": {
     "text": "You or anyone you invite can build it from there.",
     "description": "Second line under the new project's card on the screen shown right after a project is made, when Homeroom bot is not building the project: members build it themselves, starting from the first request. \"build\" is a verb."
@@ -1516,7 +1536,7 @@
     "description": "The invite as its receiver sees it, when the sender's name is not known: shown in the preview on the sheet for sending an invite link to a community and used as the title of the shared link. {{community}} is the community's name."
   },
   "firstSession.invite.noteDefault": {
-    "text": "I'm making this for us. Join and tell me what it needs.",
+    "text": "I'm making this for us. Click the link to join the app.",
     "description": "Suggested text of the personal note a maker sends with an invite link, already filled in when the sheet opens. Written in the maker's voice, to their friends, while the app is still being made. No exclamation mark."
   },
   "firstSession.invite.noteLabel": {
@@ -1640,8 +1660,8 @@
     "description": "Second card of the walk on Home, pointing at the Messages tab: Homeroom bot is the assistant that builds changes to apps. A name, keep it as it is."
   },
   "firstSession.walk.bot.text": {
-    "text": "It's in Messages. Ask it for a change.",
-    "description": "Line on the walk's Homeroom bot card, for an app with no example change to offer (one Homeroom bot built, or a game): where to find the bot (the Messages tab) and what to ask it for (a change to the app)."
+    "text": "It's in Messages. Ask it to make any changes to {{app}}.",
+    "description": "Line on the walk's Homeroom bot card, for an app with no example change to offer (one Homeroom bot built, or a game): where to find the bot (the Messages tab) and what to ask it for (any change to the app). {{app}} is the project's name, as its tile on Home shows it."
   },
   "firstSession.walk.bot.textExample": {
     "text": "Ask it for changes, like “{{example}}”.",
@@ -1655,13 +1675,9 @@
     "text": "{{app}}'s hub is here. Invite people and decide what changes.",
     "description": "Line on the walk's Communities card, which points at the Communities tab: the project's hub page is there, where its people are invited and decide together which changes to its app go in. {{app}} is the project's name. \"Invite\" and \"decide\" are verbs."
   },
-  "firstSession.walk.waitlist.title": {
-    "text": "Make your own apps",
-    "description": "Fourth card of the walk on Home, only for someone let in by an invite before the waitlist let them in. It points at the waitlist card on Home."
-  },
-  "firstSession.walk.waitlist.text": {
-    "text": "Join the waitlist to get your spot.",
-    "description": "Line on the walk's waitlist card: joining the waitlist is how they get to make apps of their own."
+  "firstSession.walk.goToCommunity": {
+    "text": "Go to community",
+    "description": "Button on the last card of a new member's walk on Home, which points at the Communities tab: ends the walk and opens their project's hub page under that tab, so they see why the screen changes. \"Go to\" is a verb; \"community\" is the project's community, as the app menu's \"Go to community\" row says it."
   },
   "firstSession.tour.look.make.title": {
     "text": "Make something any time",
@@ -1728,32 +1744,32 @@
     "description": "Title of the first card of the welcome tour on the Home screen, started from Settings: points at the Communities tab. The tab's name."
   },
   "tour.step.communities.body": {
-    "text": "Homeroom is made of communities that build projects together. Anyone in one can propose a change, and the group votes it in. A community is Just you, a Private community or a Public community. Yours are here.",
-    "description": "Text of the first card of the welcome tour on the Home screen, started from Settings, which points at the Communities tab. \"Just you\", \"Private community\" and \"Public community\" are the names the product gives the three kinds of community; write them as it does. \"change\" is a noun: a change to a project. Homeroom is the product's name."
+    "text": "Communities here build apps together. Anyone can propose a change, and the community votes on it. Find yours here.",
+    "description": "Text of the first card of the welcome tour on the Home screen, started from Settings, pointing at the Communities tab. \"change\" is a noun: a change to an app. \"here\" in \"Find yours here\" is the tab."
   },
   "tour.step.apps.title": {
     "text": "My apps",
     "description": "Title of the second card of the welcome tour on the Home screen, started from Settings: points at the section of Home with this heading, the person's own shortcuts to apps."
   },
   "tour.step.apps.body": {
-    "text": "The apps you keep close. A small mark says where each one lives: people for a private community, a lock for one that is just yours. The last tile starts a new project.",
-    "description": "Text of the second card of the welcome tour on the Home screen, started from Settings, about the My apps section. \"people\" and \"a lock\" describe two small icons drawn on an app's tile."
+    "text": "Open apps from your communities here, or select + New project to start your own.",
+    "description": "Text of the second card of the welcome tour on the Home screen, started from Settings, about the My apps section. \"+ New project\" is the label of the last tile in the grid; write New project as that tile is named."
   },
   "tour.step.appMenu.title": {
     "text": "The Homeroom menu",
     "description": "Title of the third card of the welcome tour on the Home screen, started from Settings: points at the Homeroom mark, the logo button that opens an app's menu. Homeroom is the product's name."
   },
   "tour.step.appMenu.body": {
-    "text": "Inside any app, this mark opens its menu. Tap it, or tap Next to open it.",
-    "description": "Text of the third card of the welcome tour on the Home screen, started from Settings, about the Homeroom mark. \"this mark\" is the logo button and \"Next\" is the name of the button on this card."
+    "text": "Select the Homeroom logo in any app to suggest an improvement or visit its community.",
+    "description": "Text of the third card of the welcome tour on the Home screen, started from Settings, about the Homeroom logo button that opens the app's menu. \"suggest an improvement\" echoes the menu's Suggest an improvement button."
   },
   "tour.step.menuActions.title": {
     "text": "Suggest an improvement",
     "description": "Title of the fourth card of the welcome tour on the Home screen, started from Settings: points at the button of this name in an app's menu, where a member says what the app should do differently."
   },
   "tour.step.menuActions.body": {
-    "text": "Say what should change. It doesn't vanish into a feedback box: Homeroom bot starts building it for you, or brings it to the group as a request, and you can follow along.",
-    "description": "Text of the fourth card of the welcome tour on the Home screen, started from Settings, about the Suggest an improvement button. \"change\" is a verb. Each \"it\" is the suggestion, and \"a request\" is an item the group votes on. Homeroom bot is the name of the assistant that builds changes."
+    "text": "Change something in any of your apps or in Homeroom itself. Start building it or share a request for someone in the community to pick up.",
+    "description": "Text of the fourth card of the welcome tour on the Home screen, started from Settings, about Suggest an improvement. \"Homeroom itself\" is the platform's own project; \"start building it\" is building the change now, and \"share a request\" is an item the community votes on. The card names neither Homeroom bot nor the person who builds: that comes on the last card."
   },
   "tour.step.settings.title": {
     "text": "Replay this any time",
@@ -1768,7 +1784,7 @@
     "description": "Title of the Home tour's stop pointing at the Messages tab, where Homeroom bot's conversation is the first row. \"Homeroom bot\" is the name of Homeroom's assistant that builds changes; keep \"Homeroom\" as it is."
   },
   "tour.step.meetBot.body": {
-    "text": "Ask it to build a change, file an idea or fix a bug for you. Find it in Messages.",
-    "description": "Body of the Home tour's stop pointing at the Messages tab: what Homeroom bot does for the reader and where to find it. \"Messages\" is the tab's name."
+    "text": "Your AI assistant to build a change, file an idea or fix a bug for you. Find it in Messages.",
+    "description": "Fifth card of the welcome tour on the Home screen, under the title \"Meet Homeroom bot\", pointing at the Messages tab. The sentence describes Homeroom bot; \"Messages\" is the tab's name."
   }
 }

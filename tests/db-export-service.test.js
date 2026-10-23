@@ -111,53 +111,27 @@ test('exportFilename is timestamped, .sql.gz, and filesystem-safe', () => {
   assert.ok(!/[/\\"']/.test(name), 'no quote or separator can break Content-Disposition');
 });
 
-// ── Single-flight guard ──────────────────────────────────────────────
+// ── Single-flight guard and tickets ──────────────────────────────────
+//
+// Both are kept on the export's db_exports row, against the full schema in
+// tests/db-export-postgres.test.js. What is pinned here needs no database.
 
-test('only one export may run platform-wide', () => {
-  dbExport.endExport();
-  assert.equal(dbExport.isExportInProgress(), false);
-  assert.equal(dbExport.beginExport({ userId: 1 }), true);
-  assert.equal(dbExport.isExportInProgress(), true);
-  assert.equal(dbExport.beginExport({ userId: 2 }), false, 'second export is refused');
-  assert.equal(dbExport.currentExport().userId, 1);
-  dbExport.endExport();
-  assert.equal(dbExport.isExportInProgress(), false);
-  assert.equal(dbExport.beginExport({ userId: 2 }), true, 'reusable after release');
-  dbExport.endExport();
-});
-
-// ── Tickets ──────────────────────────────────────────────────────────
-
-test('a ticket is single-use', () => {
-  dbExport._resetTickets();
-  const { token } = dbExport.issueTicket({ userId: 7, ip: '203.0.113.5', auditId: 42, dbName: 'usernode' });
-  const first = dbExport.consumeTicket(token, 7);
-  assert.equal(first.auditId, 42);
-  assert.equal(dbExport.consumeTicket(token, 7), null, 'replay is refused');
-});
-
-test('a ticket is bound to the admin who was verified for it', () => {
-  dbExport._resetTickets();
-  const { token } = dbExport.issueTicket({ userId: 7, auditId: 1, dbName: 'usernode' });
-  assert.equal(dbExport.consumeTicket(token, 8), null, 'another admin cannot redeem it');
-  // …and the failed attempt must not burn it for the rightful owner.
-  assert.ok(dbExport.consumeTicket(token, 7), 'owner can still redeem');
-});
-
-test('unknown and malformed tokens are refused', () => {
-  dbExport._resetTickets();
-  for (const bad of ['', null, undefined, 'deadbeef', 123]) {
-    assert.equal(dbExport.consumeTicket(bad, 7), null);
+test('a malformed token is refused before any query', async () => {
+  const pool = { query: async () => { throw new Error('no query for a malformed token'); } };
+  for (const bad of ['', null, undefined, 'deadbeef', 123, 'g'.repeat(64)]) {
+    assert.equal(await dbExport.consumeTicket(pool, bad, 7), null);
   }
 });
 
-test('tokens are long random hex, and the TTL is short', () => {
-  dbExport._resetTickets();
-  const { token, expiresInSeconds } = dbExport.issueTicket({ userId: 7 });
+test('tokens are long random hex, only their hash is stored, and the TTL is short', async () => {
+  const seen = [];
+  const pool = { query: async (sql, params) => { seen.push(params); return { rowCount: 1, rows: [] }; } };
+  const { token, expiresInSeconds } = await dbExport.issueTicket(pool, { auditId: 42 });
   assert.match(token, /^[0-9a-f]{64}$/, '32 random bytes, hex-encoded');
   assert.equal(expiresInSeconds, 60);
+  assert.ok(!JSON.stringify(seen).includes(token), 'the token itself never reaches the database');
+  assert.equal(seen[0][1], require('node:crypto').createHash('sha256').update(token).digest('hex'));
   assert.ok(dbExport.TICKET_TTL_MS <= 5 * 60 * 1000, 'a download ticket must be short-lived');
-  dbExport._resetTickets();
 });
 
 // ── The dump ─────────────────────────────────────────────────────────

@@ -193,3 +193,19 @@ test('record() says whose problem a failure looks like (origin)', () => {
   assert.equal(deployFailure.record(new Error('mystery')).origin, null);
   assert.equal(deployFailure.syntheticRecord('other', 'watchdog').origin, null);
 });
+
+// 21 Oct 2026: GitHub's secondary limit refused new repositories, and the
+// made screen showed GitHub's text about scraping and its terms of service.
+test('a new repository GitHub refused for going too fast is said in words; other repository failures keep GitHub\'s', () => {
+  const slowDown = Object.assign(new Error('You have exceeded a secondary rate limit and have been temporarily blocked from content creation. Please retry your request again later. For more on scraping GitHub and how it may affect your rights, please review our Terms of Service'),
+    { status: 403, repoFailed: true });
+  const slow = deployFailure.record(slowDown, { stage: 'repo' });
+  assert.equal(slow.stage, 'repo');
+  assert.equal(slow.reason, deployFailure.REPO_SLOW_DOWN);
+  assert.doesNotMatch(slow.reason, /Terms of Service/);
+  const hourly = deployFailure.record(Object.assign(new Error('API rate limit exceeded for user'), { status: 403, repoFailed: true }), { stage: 'repo' });
+  assert.equal(hourly.reason, 'GitHub repo creation failed: API rate limit exceeded for user');
+  // Only a repository's: the same words from a build are the build's own line.
+  const elsewhere = deployFailure.record(Object.assign(new Error('secondary rate limit'), {}), { stage: 'other' });
+  assert.equal(elsewhere.reason, 'secondary rate limit');
+});

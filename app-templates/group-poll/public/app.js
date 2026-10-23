@@ -315,6 +315,7 @@
     var input = h('input', 'field min-w-0 flex-1');
     input.id = id;
     input.type = 'text';
+    input.enterKeyHint = 'done';
     input.maxLength = 80;
     input.placeholder = OPTION_EXAMPLE;
     input.value = drafts[poll.id] || '';
@@ -579,8 +580,21 @@
     paintForm();
   }
 
+  // Pull down to fetch the polls again, as a native list does. The native
+  // kit (/usernode-native/v1/native.js) draws the spinner and bounces the
+  // list in place, so a drag past the top no longer carries Homeroom's
+  // header with it. Only the list pulls: starting a poll is a form. Not on
+  // a computer, where the kit leaves the page alone.
+  var pull = null;
+  function pullToRefresh(on) {
+    if (!window.unNative) return;
+    if (on && !pull) pull = window.unNative.attachPullToRefresh(window, load, { content: el.main });
+    if (!on && pull) { pull.detach(); pull = null; }
+  }
+
   function openNew() {
     paintForm();
+    pullToRefresh(false);
     el.main.hidden = true;
     el.newView.hidden = false;
     window.scrollTo(0, 0);
@@ -590,6 +604,7 @@
   function closeNew() {
     el.newView.hidden = true;
     el.main.hidden = false;
+    pullToRefresh(true);
     el.start.focus();
   }
 
@@ -654,19 +669,25 @@
 
   document.getElementById('retry').addEventListener('click', function () { show('loading'); load(); });
 
-  // Other people vote and add options too: look again every 20 seconds while
-  // the polls are on screen, and straight away when the app comes back. A
-  // poll whose closing time passes moves to Decided on the next look.
-  // Skipped while someone is typing or starting a poll, so a refresh never
-  // interrupts them.
+  // Other people vote and add options too: whenever anybody changes
+  // something, the polls are fetched again at once, and looked at every
+  // minute regardless (public/live-updates.js), so a poll whose closing time
+  // passes moves to Decided within the minute. Not while someone is typing
+  // or starting a poll: what changed then is fetched the moment they are
+  // done, so a refresh never interrupts them.
   function quiet() {
     var a = document.activeElement;
     var typing = a && a.tagName === 'INPUT' && a.type === 'text' && a.value;
-    return !document.hidden && !typing && el.newView.hidden;
+    return !typing && el.newView.hidden;
   }
-  setInterval(function () { if (quiet()) load(); }, 20000);
-  document.addEventListener('visibilitychange', function () { if (quiet()) load(); });
+  if (window.LiveUpdates) window.LiveUpdates.watch({ refresh: load, quiet: quiet });
 
   paintForm();
-  load();
+  // The first screen, drawn: Homeroom keeps its opening cover up until then
+  // (usernode.ready, the platform bridge), so the app appears in one step
+  // rather than as loading shapes that then change. The cover lifts after a
+  // few seconds regardless.
+  var first = load();
+  if (window.usernode && window.usernode.ready) window.usernode.ready(first);
+  first.then(function () { pullToRefresh(el.newView.hidden); });
 })();

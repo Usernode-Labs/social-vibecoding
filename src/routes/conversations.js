@@ -8,6 +8,7 @@ const { adminMiddleware, requireAdminWrite } = require('../middleware/admin');
 const log = require('../services/logger');
 const conversations = require('../services/conversations');
 const communities = require('../services/communities');
+const contactPrivacy = require('../services/contact-privacy');
 const messageBookmarks = require('../services/message-bookmarks');
 const attachments = require('../services/attachments');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
@@ -51,6 +52,13 @@ const MESSAGE_DELETED = Object.freeze({ error: 'message_deleted' });
 // send is refused until they accept, so it is a conflict, not a 404.
 const AWAITING_ACCEPTANCE = Object.freeze({ error: 'awaiting_acceptance' });
 
+// #5104: a new direct message or invitation to someone who takes them only
+// from people in projects with them (users.contact_policy). 403 with a code
+// the Messages screen words itself; the body says nothing about the person.
+function sendContactRestricted(res) {
+  return res.status(403).json(contactPrivacy.CONTACT_RESTRICTED);
+}
+
 function sendMessageError(res, error) {
   if (error === 'threads_not_supported') return res.status(400).json(THREADS_NOT_SUPPORTED);
   if (error === 'message_deleted') return res.status(409).json(MESSAGE_DELETED);
@@ -66,7 +74,7 @@ function pushAudience(memberIds, payload, options) {
   let sent = 0;
   for (const userId of [...new Set(memberIds || [])]) {
     if (options?.excludeUserId === userId) continue;
-    sent += ws.pushToUser(userId, payload);
+    sent += ws.pushToUser(userId, payload, options);
   }
   return sent;
 }
@@ -216,6 +224,32 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
     }
   });
 
+  // #5506: Withdraw it, from a ready card in the person's DM with the bot
+  // (frontend/src/features/messages/bot-ready.tsx): one of the bot's own
+  // proposals, still up for a vote, that they asked for or whose project
+  // they own (homeroom-bot-mayor.js withdrawFromCard, the gates the DM's
+  // "Withdraw it" offer keeps). Their tap only, as the route above.
+  //
+  //   POST /api/conversations/homeroom-bot/withdraw/:sessionId
+  //   → 200 { ok } | 409 { error, code } (not theirs, or past withdrawing) | 404
+  router.post('/api/conversations/homeroom-bot/withdraw/:sessionId', conversationActionLimiter, sameOriginBrowserOnly, async (req, res) => {
+    try {
+      const sessionId = Number(req.params.sessionId);
+      if (!Number.isInteger(sessionId) || sessionId <= 0 || sessionId > 2147483647) return res.status(404).json({ error: 'No such change' });
+      if (!req.user?.id || req.user.isSynthetic) return res.status(403).json({ error: 'forbidden' });
+      // The staging demo's cards are fixtures: there is nothing to withdraw.
+      if (isDemo(req)) return res.json({ ok: true, demo: true });
+      const out = await require('../services/homeroom-bot-mayor').withdrawFromCard(pool, { user: req.user, sessionId });
+      if (!out.ok) {
+        return res.status(out.code === 'not_found' ? 404 : 409).json({ error: `Couldn't withdraw it: ${out.error}`, code: out.code });
+      }
+      return res.json({ ok: true });
+    } catch (err) {
+      log.error('conversations', 'homeroom bot withdraw failed', { err: err.message, userId: req.user?.id });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   // Run six (14 Oct 2026): "We'll tell you when it's live" under a first
   // version's plan (frontend/src/features/messages/notify-me.tsx): whether
   // its maker is told when it is ready and live, on from Make it
@@ -293,6 +327,7 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
       pushAudience(result.memberIds, { type: 'conversation_membership_changed', conversationId: result.conversationId });
       return res.status(201).json({ conversation: result.conversation });
     } catch (err) {
+      if (err instanceof contactPrivacy.ContactRestrictedError) return sendContactRestricted(res);
       log.error('conversations', 'create failed', { err: err.message, userId: req.user.id });
       return res.status(500).json({ error: 'Internal server error' });
     }
@@ -353,6 +388,7 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
       pushAudience(result.memberIds, { type: 'conversation_membership_changed', conversationId: id });
       return res.json({ conversation: result.conversation });
     } catch (err) {
+      if (err instanceof contactPrivacy.ContactRestrictedError) return sendContactRestricted(res);
       log.error('conversations', 'add members failed', { id, err: err.message });
       return res.status(500).json({ error: 'Internal server error' });
     }
@@ -500,7 +536,7 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
             type: 'conversation_message_created', conversationId: id, messageId: result.message.id,
             // #2387: which thread it joined (null: the main stream).
             threadRootId: result.message.threadRootId,
-          });
+          }, { actorUserId: req.user.id });
         });
       }
       return res.status(result.duplicate ? 200 : 201).json({ message: result.message, duplicate: result.duplicate });
@@ -522,7 +558,7 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
         pushAudience(memberIds, {
           type: 'conversation_message_updated', conversationId: id, messageId: result.message.id,
           threadRootId: result.message.threadRootId,
-        });
+        }, { actorUserId: req.user.id });
       });
       return res.json({ message: result.message });
     } catch (err) {
@@ -546,7 +582,7 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
           pushAudience(memberIds, {
             type: 'conversation_message_updated', conversationId: id, messageId,
             threadRootId: result.threadRootId,
-          });
+          }, { actorUserId: req.user.id });
         });
         // Their bells lost a row (and possibly a queued push): recount.
         const { pushToUser } = require('../services/ws');
@@ -571,7 +607,7 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
       await conversations.withLockedAudience(pool, req.user, id, (memberIds) => {
         pushAudience(memberIds, {
           type: 'conversation_reaction_updated', conversationId: id, messageId,
-        });
+        }, { actorUserId: req.user.id });
       });
       pushNotificationsChanged(result.clearedUserIds);
       return res.json({ reactions: result.reactions });
@@ -665,7 +701,7 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
           // #2387: set when a THREAD was read up to message_id; the
           // main-stream cursor (messageId) did not move.
           threadRootId: result.threadRootId || null,
-        });
+        }, { actorUserId: req.user.id });
       });
       // #2904: reading a conversation clears its message notifications, but
       // announces itself as `conversation_read`, not `notifications_changed`
@@ -691,7 +727,7 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
       pushAudience([req.user.id], {
         type: 'conversation_read', conversationId: id,
         userId: req.user.id, messageId: result.messageId, unread: true,
-      });
+      }, { actorUserId: req.user.id });
       return res.json({ unreadCount: result.unreadCount });
     } catch (err) {
       log.error('conversations', 'mark unread failed', { id, err: err.message });
@@ -707,7 +743,7 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
         pushAudience(audience, {
           type: 'conversation_typing', conversationId: id,
           userId: req.user.id, typing: req.body.typing,
-        }, { excludeUserId: req.user.id });
+        }, { excludeUserId: req.user.id, actorUserId: req.user.id });
       });
       if (!memberIds) return sendNotFound(res);
       return res.status(204).end();

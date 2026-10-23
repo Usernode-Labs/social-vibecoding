@@ -68,6 +68,8 @@ test('the import check returns what the repo’s dapp.json says, and the creator
   assert.match(route, /manifest: await readImportManifest\(parsed\),/);
   assert.match(route, /name: appManifest\.readName\(json\),\s*description: appManifest\.readDescription\(json\),\s*visibility: appManifest\.readVisibility\(json\),/);
   const creator = fs.readFileSync(path.join(__dirname, '../src/services/app-creator.js'), 'utf8');
+  // In the import's setup step, before its first deploy clones the file.
   const commit = creator.indexOf("require('./import-manifest').commitCreateAnswers(");
-  assert.ok(commit > 0 && commit < creator.indexOf('// 3. Clone (or write) the working tree'), 'before the clone reads the file');
+  const step = creator.indexOf('async function scaffoldImport(row) {');
+  assert.ok(step > 0 && commit > step && commit < creator.indexOf('\n}\n', step), 'before the first deploy reads the file');
 });

@@ -197,7 +197,7 @@ test('run five, 5: the Home tile, the hub card and the App tab name the same sta
   // Wired: the list answers each tile's stage, the tile says it, the hub card too.
   const route = read('src/routes/apps.js');
   assert.match(route, /first_version_phase: firstVersionPhases\.get\(Number\(a\.id\)\) \|\| null,/);
-  assert.match(route, /if \(line && phases && state\.phase\) phases\.set\(Number\(appId\), state\.phase\);/);
+  assert.match(route, /if \(line && phases && state\.phase\) phases\.set\(appId, state\.phase\);/);
   assert.match(route, /phase: state\.phase \|\| null,/);
   const home = read('frontend/src/features/home/home.js');
   assert.equal((home.match(/buildLineTileWordsOf\(buildLine, buildPhase\)/g) || []).length, 2, 'both tiles');
@@ -232,7 +232,8 @@ test('the review\'s line says no round; its step in the list does, and says when
       first_version: { step: 4, of: 7, line: 'building', phase, ready: false, mine: true, creator: 'ada', waits_on: null, conversation_id: 12, session_id: null },
     },
   }));
-  assert.match(card, /<span class="truncate">Checking the screens · \d+ min so far<\/span>/);
+  // The time on its own line under the stage, beside the thumbnail (21 Oct 2026).
+  assert.match(card, /<span class="truncate">Checking the screens<\/span><span data-build-line-note=""[^>]*>\d+ min so far<\/span>/);
   assert.doesNotMatch(card, /[Rr]ound \d/);
   // The step list: "Round 1 of 2" under Checking the screens, and once the
   // step has run past its usual end, that it is taking longer.

@@ -26,6 +26,10 @@
 //   * At most MAX_LIVE at once, so app slots, the wallet pool and the bot's 50
 //     DM places cannot be drained by a loop.
 //
+// With everyTemplate the account also starts with one project from each
+// starter (makeEveryTemplate below), so an admin can sign in and look at
+// every ready-made app and game starter in one place.
+//
 // The password is returned ONCE, to the admin who asked, and never logged,
 // stored in plain text or written to an event or audit payload.
 
@@ -36,6 +40,10 @@ const usernames = require('./usernames');
 const waitlist = require('./waitlist');
 const journeyLeftOut = require('./journey-left-out');
 const runReport = require('./run-report');
+const appTemplates = require('./app-templates');
+const appManifest = require('./app-manifest');
+const appLimit = require('./app-limit');
+const createOptions = require('./create-options');
 const { withTransaction } = require('./cli-auth');
 
 const MAX_LIVE = 25;
@@ -91,8 +99,84 @@ function parseCreate(body) {
     username,
     platformAccess: parseFlag(b.platformAccess, true, 'platformAccess'),
     welcomeDm: parseFlag(b.welcomeDm, false, 'welcomeDm'),
+    everyTemplate: parseFlag(b.everyTemplate, false, 'everyTemplate'),
     note: parseNote(b.note),
   };
+}
+
+/**
+ * The starters everyTemplate makes a project from: the first entry of each
+ * starter directory (services/app-templates.js), so each ready-made app and
+ * each game starter is made once and a variant (another tier list, another
+ * poll) is not. Empty is the scaffold, not a starter.
+ */
+function everyTemplatePicks() {
+  const seen = new Set();
+  const picks = [];
+  for (const t of appTemplates.TEMPLATES) {
+    if (t.id === appTemplates.DEFAULT_TEMPLATE) continue;
+    const dir = appTemplates.dirOf(t.id);
+    if (seen.has(dir)) continue;
+    seen.add(dir);
+    picks.push(t);
+  }
+  return picks;
+}
+
+/**
+ * One project from each starter for test account `userId`, in the account's
+ * own transaction, each made as POST /api/apps makes one from "What do you
+ * want to make?" (routes/apps.js): the row and its maker's membership in one
+ * insert, which starts its making (src/workflow/app-creation/) and its
+ * community (create_app_community in schema.sql); private to the account
+ * (Just you); its starter on the row, and a ready-made app's icon. Nothing
+ * is described, so nothing is built: a ready-made app is usable once it
+ * runs, and a game starter deploys as the working game it starts as.
+ *
+ * Within the platform's app limit, all of them or none: the limit is the
+ * admin's guard on containers, and a project per starter at once is a real
+ * share of it.
+ */
+async function makeEveryTemplate(client, userId, { pool, config = {} } = {}) {
+  const picks = everyTemplatePicks();
+  // Read through the pool, whose cache the create route shares.
+  const maxApps = await appLimit.effective(pool, config);
+  if (maxApps > 0) {
+    const { rows: [{ n }] } = await client.query(`SELECT COUNT(*)::int AS n FROM apps WHERE status <> 'error'`);
+    if (n + picks.length > maxApps) {
+      fail(429, 'app_limit', `Making a project from every template needs ${picks.length} app slots, and this server has `
+        + `${Math.max(0, maxApps - n)} of its ${maxApps} free. Raise the app limit or remove apps, then try again.`,
+      { active: n, cap: maxApps, needed: picks.length });
+    }
+  }
+  const { collabVisibility, viewVisibility } = createOptions.visibilityForAudience('solo');
+  const made = [];
+  for (const t of picks) {
+    const slug = appManifest.buildAppSlug(t.title, crypto.randomBytes(3).toString('hex'));
+    // eslint-disable-next-line no-await-in-loop
+    const { rows: [app] } = await client.query(
+      `WITH new_app AS (
+         INSERT INTO apps (name, slug, repo_url, created_by, status,
+                           collab_visibility, view_visibility)
+         VALUES ($1, $2, NULL, $3, 'creating', $4, $5)
+         RETURNING *
+       ), membership AS (
+         INSERT INTO app_collaborators (app_id, user_id, status, accepted_at)
+         SELECT id, $3, 'member', NOW() FROM new_app
+         ON CONFLICT (app_id, user_id) DO NOTHING
+       )
+       SELECT id, slug, name FROM new_app`,
+      [t.title, slug, userId, collabVisibility, viewVisibility]
+    );
+    const readyMade = appTemplates.isReadyMade(t.id);
+    // eslint-disable-next-line no-await-in-loop
+    await client.query(
+      'UPDATE apps SET template = $1, icon_emoji = COALESCE($3, icon_emoji) WHERE id = $2',
+      [t.id, app.id, readyMade ? t.icon || null : null]
+    );
+    made.push({ slug: app.slug, name: app.name, template: t.id, kind: readyMade ? 'ready-made' : 'game' });
+  }
+  return made;
 }
 
 /**
@@ -103,7 +187,7 @@ function parseCreate(body) {
  * is made after the commit, as sign-up makes it, because it calls out.
  *
  * Returns { userId, username, password, needsUsernameChoice, platformAccess,
- * welcomeDm, note }. The password is in nothing else.
+ * welcomeDm, note, projects }. The password is in nothing else.
  */
 async function create(pool, body, { actorId, config = {} } = {}) {
   if (!Number.isSafeInteger(actorId) || actorId <= 0) fail(403, 'forbidden', 'A full administrator is required.');
@@ -151,6 +235,7 @@ async function create(pool, body, { actorId, config = {} } = {}) {
       await journeyLeftOut.addTestInTransaction(client, {
         userId: user.id, note: input.note || 'Test account (create_test_account)',
       }, { actorId });
+      const projects = input.everyTemplate ? await makeEveryTemplate(client, user.id, { pool, config }) : [];
       await client.query(
         `INSERT INTO support_actions (actor_user_id, target_user_id, action, reason, payload)
          VALUES ($1, $2, 'test_account_create', $3, $4::jsonb)`,
@@ -158,9 +243,10 @@ async function create(pool, body, { actorId, config = {} } = {}) {
           usernameChosen: !!input.username,
           platformAccess: input.platformAccess,
           welcomeDm: input.welcomeDm,
+          ...(projects.length ? { everyTemplate: projects.map((p) => p.slug) } : {}),
         })]
       );
-      return user;
+      return { ...user, projects };
     });
   } catch (err) {
     if (err instanceof TestAccountError) throw err;
@@ -174,9 +260,22 @@ async function create(pool, body, { actorId, config = {} } = {}) {
   const managedOpenRouter = require('./openrouter-managed-keys');
   await managedOpenRouter.ensureIncludedKey({ pool, userId: created.id, config, reason: 'test_account' });
 
+  // Its projects answer the first session's question, as making one from
+  // "What do you want to make?" does (routes/apps.js): it opens on Home with
+  // them rather than being asked what to make. Never a reason the create
+  // fails.
+  if (created.projects.length) {
+    try {
+      await require('./first-session').answerJoinScreenByMaking(pool, created.id);
+    } catch (err) {
+      log.warn('test-accounts', 'First session not answered for the template projects', { userId: created.id, err: err.message });
+    }
+  }
+
   log.info('test-accounts', 'Test account created', {
     userId: created.id, by: actorId, usernameChosen: !!input.username,
     platformAccess: input.platformAccess, welcomeDm: input.welcomeDm,
+    projects: created.projects.length,
   });
   return {
     userId: created.id,
@@ -186,6 +285,7 @@ async function create(pool, body, { actorId, config = {} } = {}) {
     platformAccess: input.platformAccess,
     welcomeDm: input.welcomeDm,
     note: input.note || null,
+    projects: created.projects,
   };
 }
 
@@ -827,6 +927,7 @@ module.exports = {
   retire,
   runReportFor,
   generatePassword,
+  everyTemplatePicks,
   onFirstRun,
   mintPhoneSignIn,
   redeemPhoneSignIn,

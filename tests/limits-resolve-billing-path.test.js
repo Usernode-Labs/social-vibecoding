@@ -64,7 +64,7 @@ function makePool({
       // Week-to-date: COALESCE(SUM(...)) over date >= the Monday. Matched
       // BEFORE the global sum below, which is the same aggregate without
       // the user predicate.
-      if (/COALESCE\(SUM\(total_cost_cents\), 0\) AS total/.test(sql)) {
+      if (/llm_usage WHERE user_id = \$1 AND date >= \$2/.test(sql)) {
         return { rows: [{ total: weeklySpent, byok: 0 }] };
       }
       if (/SELECT SUM\(total_cost_cents\)/.test(sql)) {
@@ -192,7 +192,7 @@ test('a weekly cap cannot unlock what identity verification gates', async () => 
         if (/SELECT total_cost_cents FROM llm_usage/.test(sql)) {
           return { rows: [{ total_cost_cents: 0 }] };
         }
-        if (/COALESCE\(SUM\(total_cost_cents\), 0\) AS total/.test(sql)) {
+        if (/llm_usage WHERE user_id = \$1 AND date >= \$2/.test(sql)) {
           return { rows: [{ total: 0, byok: 0 }] };
         }
         return { rows: [] };

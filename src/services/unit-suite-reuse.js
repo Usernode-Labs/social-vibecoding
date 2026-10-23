@@ -378,62 +378,6 @@ async function markFreshOwed(pool, { sessionId, commitSha } = {}) {
 }
 
 /**
- * A person's request was folded into what the session is already doing (an
- * agent turn, a build, a run whose suite is not copied): the route answers
- * "running" without a run of its own. The head is owed a fresh suite
- * (markFreshOwed, already set), so:
- *   * a verdict already stored for it no longer stands: the preview machine
- *     stamps the row pending (RecheckFolded), as the request's own run
- *     would, so the merge gate waits and the stale sweep re-drives the head
- *     if this process goes away. The machine owns the verdict's columns: a
- *     stamp written here was refused on every row it holds;
- *   * once the session is idle, if nothing has answered the request yet
- *     (still owed on that head), the owed run starts.
- * `busy()` is the route's own test of "something is running". `head` is
- * the head the request is for, as the route resolved it from the row
- * (staging-recovery.requestedRecheckHead); without it, the caller's copy of
- * the checks pin. Never throws.
- */
-async function owePendingRun({
-  pool, stagingRecovery, config, session, busy, head = null, pollMs = 5000, maxWaitMs = 15 * 60 * 1000,
-  platform = require('../workflow/platform.ts'),
-}) {
-  const sha = head || (session && session.checks_commit_sha);
-  if (!pool || !isSha(sha)) return false;
-  const same = (a) => !!a && String(a).toLowerCase() === String(sha).toLowerCase();
-  try {
-    await platform.recheckFolded({ sessionId: Number(session.id), appId: Number(session.app_id), head: String(sha).toLowerCase() });
-  } catch (err) {
-    log.warn('unit-suite-reuse', 'Could not stamp a folded request pending', { sessionId: session.id, err: err.message });
-  }
-  const started = Date.now();
-  const later = (fn) => { const t = setTimeout(fn, pollMs); if (typeof t.unref === 'function') t.unref(); };
-  const tick = async () => {
-    try {
-      if (busy()) {
-        if (Date.now() - started < maxWaitMs) later(tick);
-        return;
-      }
-      const { rows: [r] } = await pool.query(
-        'SELECT checks_commit_sha, unit_suite_fresh_sha FROM chat_sessions WHERE id = $1', [Number(session.id)]
-      );
-      // Still owed on that head: nothing has answered it (an answer clears it).
-      if (!r || !same(r.unit_suite_fresh_sha)) return;
-      log.info('unit-suite-reuse', 'The session is idle and its owed unit suite has not run: starting it', {
-        sessionId: session.id, commitSha: sha,
-      });
-      await stagingRecovery.recheckSessionChecks({ config, pool, session, reason: 'manual-recheck' });
-    } catch (err) {
-      log.warn('unit-suite-reuse', 'Owed run after a folded request failed (non-fatal)', {
-        sessionId: session.id, err: err.message,
-      });
-    }
-  };
-  later(tick);
-  return true;
-}
-
-/**
  * Has a unit-suite pass of this commit ever been recorded for the app (any
  * age, observed or not)? Then the commit has a suite. Unreadable reads as
  * yes: the caller then does not take the suite for absent. Never throws.
@@ -535,7 +479,6 @@ module.exports = {
   findPass,
   findTreePass,
   markFreshOwed,
-  owePendingRun,
   hasAnyPass,
   reusedOutcome,
   reusedSnapshot,

@@ -3,8 +3,7 @@
 // a connection it keeps for its whole life (services/process-presence.js),
 // and exits if that connection ends while it holds records that name it.
 // So the lock is held exactly while the process can still act, and a crash
-// or a release ends it at once. Leadership is held the same way
-// (services/leadership.js).
+// or a release ends it at once.
 //
 // What a process records as working on a session (the preview machine's
 // operations, src/workflow/preview/) names it as `holder`; a reader counts a

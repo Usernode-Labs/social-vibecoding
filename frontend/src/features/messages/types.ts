@@ -187,11 +187,18 @@ export interface HomeroomBotAction {
   /**
    * B7: `preview` opens a change's preview, `vote` casts the person's own Yes, `reply` quotes the card.
    * #4231: `invite` opens the invite sheet for the message's project (`appSlug`), in place.
+   * #5506: `withdraw` has the bot withdraw the change (`sessionId`), drawn by
+   * the ready card itself when its reader may (HomeroomBotReadyNow.canWithdraw).
    */
-  type: 'server' | 'open' | 'prompt' | 'preview' | 'vote' | 'reply' | 'invite';
+  type: 'server' | 'open' | 'prompt' | 'preview' | 'vote' | 'reply' | 'invite' | 'withdraw';
   target?: string;
   sessionId?: number;
   epoch?: number;
+  /**
+   * #5506: a `preview` for someone who does not build on the project: it
+   * opens the look-only preview, the one a non-builder may open.
+   */
+  readOnly?: boolean;
   /**
    * #4097 follow-up: a `prompt` sent replying to the message it sits on, so it
    * is about what that message is about ("Try again" under a build that did
@@ -498,6 +505,14 @@ export interface HomeroomBotReadyNow {
   goesLive?: HomeroomBotGoesLive;
   /** `going_live`, on a merge of the platform's own app: when its release comes (as HomeroomBotActivity's). */
   release?: ReleaseOutlook;
+  /**
+   * #5506, `open` only: whether the reader builds on the project. False: a
+   * Yes from them would be refused, so the card offers no Approve and its
+   * Try it opens the look-only preview.
+   */
+  canBuild?: boolean;
+  /** #5506, `open` only: whether the reader may have the bot withdraw the change (they asked for it, or own the project). */
+  canWithdraw?: boolean;
 }
 
 /** One read of the bot DM's cards: its activity cards and its ready cards. */

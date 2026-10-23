@@ -174,6 +174,11 @@ const DISCUSSIONS_SQL = `
          SELECT 1 FROM user_blocks blocked
           WHERE blocked.blocker_id = $1 AND blocked.blocked_user_id = m.user_id
        )
+       -- #5303: a discussion the viewer muted counts no unread.
+       AND NOT EXISTS (
+         SELECT 1 FROM channel_mutes cm
+          WHERE cm.user_id = $1 AND cm.app_id = m.app_id AND cm.channel_ref = 0
+       )
      GROUP BY m.app_id
   )
   SELECT mine.id            AS app_id,

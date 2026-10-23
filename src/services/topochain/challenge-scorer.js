@@ -1158,32 +1158,25 @@ async function loadCadence(pool, eventId, rows, opts = {}) {
 // it guards is a rebuild that produces nothing on a deployment with no
 // event to score.
 async function tick(pool, config, { now = Date.now(), lastAggregateCheckAt = 0 } = {}) {
-  const client = await pool.connect();
-  let locked = false;
-  try {
-    const lock = await client.query(
-      'SELECT pg_try_advisory_lock($1, $2) AS acquired', [CHALLENGE_SCORER_LOCK, 0]
-    );
-    if (lock.rows[0]?.acquired !== true) return { busy: true };
-    locked = true;
+  // On the process's lock connection, never a pooled one: the run queries the
+  // pool (src/db/session-locks.js).
+  const locks = require('../../db/session-locks');
+  const out = await locks.ifSessionLockFree(pool, [CHALLENGE_SCORER_LOCK, 0], () => tickLocked(pool, config, { now, lastAggregateCheckAt }));
+  return out === locks.BUSY ? { busy: true } : out;
+}
 
-    const defaultMinutes = intervalMinutes(config);
-    const defaultMs = defaultMinutes * 60_000;
-    const due = await dueRuleIds(pool, { now, defaultMinutes });
-    if (!due.size) {
-      const { rows } = await pool.query(LAST_SCHEDULED_RUN_SQL);
-      const last = rows[0] && rows[0].at ? new Date(rows[0].at).getTime() : null;
-      if (last != null && now - last < defaultMs - rules.DUE_SLACK_MS) return { idle: true };
-    }
-    const aggregate = now - (Number(lastAggregateCheckAt) || 0) >= defaultMs - rules.DUE_SLACK_MS;
-    const ran = await runOnce(pool, { trigger: 'schedule', config, now, only: due, aggregate });
-    return { ...ran, aggregateCheckedAt: aggregate ? now : (Number(lastAggregateCheckAt) || 0) };
-  } finally {
-    if (locked) {
-      await client.query('SELECT pg_advisory_unlock($1, $2)', [CHALLENGE_SCORER_LOCK, 0]).catch(() => {});
-    }
-    client.release();
+async function tickLocked(pool, config, { now, lastAggregateCheckAt }) {
+  const defaultMinutes = intervalMinutes(config);
+  const defaultMs = defaultMinutes * 60_000;
+  const due = await dueRuleIds(pool, { now, defaultMinutes });
+  if (!due.size) {
+    const { rows } = await pool.query(LAST_SCHEDULED_RUN_SQL);
+    const last = rows[0] && rows[0].at ? new Date(rows[0].at).getTime() : null;
+    if (last != null && now - last < defaultMs - rules.DUE_SLACK_MS) return { idle: true };
   }
+  const aggregate = now - (Number(lastAggregateCheckAt) || 0) >= defaultMs - rules.DUE_SLACK_MS;
+  const ran = await runOnce(pool, { trigger: 'schedule', config, now, only: due, aggregate });
+  return { ...ran, aggregateCheckedAt: aggregate ? now : (Number(lastAggregateCheckAt) || 0) };
 }
 
 // ── On the moment it happens (#3564, #3568, #3569, #3570) ──────────────
@@ -1275,32 +1268,21 @@ async function scoreOn(pool, config, measures, { now = Date.now() } = {}) {
   if (!(intervalMinutes(config) > 0)) return null;
   const wanted = [...new Set(measures || [])].filter((m) => MEASURES[m] && !MEASURES[m].graded);
   if (!wanted.length) return null;
-  let client = null;
-  let locked = false;
   try {
     const { rows } = await pool.query(ON_THE_SPOT_RULES_SQL, [wanted]);
     if (!rows.length) return null;
-    if (rows.some((r) => MEASURES[r.measure] && MEASURES[r.measure].counted)) {
-      client = await pool.connect();
-      const lock = await client.query(
-        'SELECT pg_try_advisory_lock($1, $2) AS acquired', [CHALLENGE_SCORER_LOCK, 0]
-      );
-      if (lock.rows[0]?.acquired !== true) return { busy: true };
-      locked = true;
-    }
-    return await score(pool, { now, only: new Set(rows.map((r) => Number(r.id))) });
+    const scoreThem = () => score(pool, { now, only: new Set(rows.map((r) => Number(r.id))) });
+    if (!rows.some((r) => MEASURES[r.measure] && MEASURES[r.measure].counted)) return await scoreThem();
+    // On the process's lock connection, never a pooled one
+    // (src/db/session-locks.js).
+    const locks = require('../../db/session-locks');
+    const out = await locks.ifSessionLockFree(pool, [CHALLENGE_SCORER_LOCK, 0], scoreThem);
+    return out === locks.BUSY ? { busy: true } : out;
   } catch (err) {
     log.warn('challenge-scorer', 'Scoring on the spot failed; the schedule will count it', {
       measures: wanted, err: err.message,
     });
     return null;
-  } finally {
-    if (client) {
-      if (locked) {
-        await client.query('SELECT pg_advisory_unlock($1, $2)', [CHALLENGE_SCORER_LOCK, 0]).catch(() => {});
-      }
-      client.release();
-    }
   }
 }
 

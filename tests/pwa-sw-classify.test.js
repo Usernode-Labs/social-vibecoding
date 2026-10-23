@@ -63,11 +63,16 @@ test('SSE streams are bypassed by accept header and by path', () => {
   assert.equal(classify('GET', '/api/apps/foo/whatever', 'text/event-stream'), 'bypass');
 });
 
-test('credential and auth endpoints are bypassed — except /api/auth/me', () => {
+test('credential and auth endpoints, including /api/auth/me, never use offline responses', () => {
   assert.equal(classify('GET', '/api/iframe-token'), 'bypass');
   assert.equal(classify('GET', '/api/auth/logout'), 'bypass');
   assert.equal(classify('GET', '/api/auth/wallet-challenge'), 'bypass');
-  assert.equal(classify('GET', '/api/auth/me'), 'api');
+  assert.equal(classify('GET', '/api/auth/me'), 'bypass');
+  // #5678: the boot's optional read answers "nobody" when nobody is signed
+  // in, and that must never be replayed from the cache (offline it has to
+  // stay a non-answer, as the no-snapshot boot always had).
+  assert.equal(classify('GET', '/api/auth/me?optional=1'), 'bypass');
+  assert.equal(classify('GET', '/api/auth/me?x=1'), 'bypass');
   assert.equal(classify('GET', '/api/cli/token/status'), 'bypass');
   assert.equal(classify('GET', '/api/cli/device/approval?user_code=ABCD-EFGH'), 'bypass');
   assert.equal(classify('GET', '/api/me/cli-tokens'), 'bypass');
@@ -273,6 +278,45 @@ test('the installed worker leaves an issue screenshot to the browser (#3585)', (
   assert.equal(intercepted.length, 0, 'the browser receives the image, not a cached document');
 });
 
+// "Add to home screen" opens an app's install page, /app/<slug>/install
+// (routes/app-install.js). That navigation got the cached shell too, whose
+// router read `install` as the App tab and reopened the app, so on a phone
+// the row looked like it did nothing (About, Home's card menu, Discover).
+test('an app\'s install page is the server\'s, never the shell', () => {
+  const { isShellDocumentUrl } = require('../public/sw.js');
+  for (const slug of ['city-tier-list-1e2a43', 'notes']) {
+    assert.equal(classify('GET', `/app/${slug}/install`, 'text/html', 'navigate'), 'bypass', slug);
+    assert.equal(isShellDocumentUrl(`${ORIGIN}/app/${slug}/install`, ORIGIN), false,
+      'never stored as the shell either');
+  }
+  // The app's own routes are still the shell's.
+  for (const path of ['/app/notes', '/app/notes/dev', '/app/notes/install/more', '/app/notes/installs', '/app/install']) {
+    assert.equal(classify('GET', path, 'text/html', 'navigate'), 'navigate', path);
+  }
+  assert.equal(isShellDocumentUrl(`${ORIGIN}/app/notes/dev`, ORIGIN), true);
+});
+
+test('the installed worker leaves an app\'s install page to the browser', () => {
+  const handlers = {};
+  const intercepted = [];
+  vm.runInNewContext(fs.readFileSync(require.resolve('../public/sw.js'), 'utf8'), {
+    self: { location: { origin: ORIGIN }, addEventListener: (name, fn) => { handlers[name] = fn; } },
+    URL, Headers, Response, Map, Set, Promise,
+    caches: { open: async () => ({ match: async () => new Response('<!DOCTYPE html><title>Homeroom</title>') }) },
+    fetch: () => new Promise(() => {}),
+    setTimeout: () => 1, clearTimeout: () => {},
+  });
+  handlers.fetch({
+    request: {
+      method: 'GET', url: `${ORIGIN}/app/city-tier-list-1e2a43/install`,
+      headers: new Headers({ accept: 'text/html' }), mode: 'navigate',
+    },
+    respondWith: (response) => intercepted.push(response),
+    waitUntil: () => {},
+  });
+  assert.equal(intercepted.length, 0, 'the browser receives the install page, not a cached document');
+});
+
 test('shell assets classify as shell', () => {
   assert.equal(classify('GET', '/js/app.js'), 'shell');
   assert.equal(classify('GET', '/css/app.css'), 'shell');
@@ -381,9 +425,12 @@ test('standalone server pages never fall back to the SPA shell', () => {
   //   /connect/authorize — the hosted MCP connector (Claude.ai, ChatGPT)
   // Serving either from the cached SPA shell would show a page that looks
   // signed in but cannot approve anything.
-  assert.deepEqual(NO_FALLBACK_PAGES, ['/cli/authorize', '/connect/authorize']);
+  // And the notification ask's code to scan (routes/public-api.js /get-app):
+  // a redirect to the phone's own store, never a shell route.
+  assert.deepEqual(NO_FALLBACK_PAGES, ['/cli/authorize', '/connect/authorize', '/get-app']);
   assert.equal(classify('GET', '/cli/authorize', 'text/html', 'navigate'), 'bypass');
   assert.equal(classify('GET', '/connect/authorize', 'text/html', 'navigate'), 'bypass');
+  assert.equal(classify('GET', '/get-app', 'text/html', 'navigate'), 'bypass');
 });
 
 // Public report share links (/reports/<token>) are standalone sandboxed

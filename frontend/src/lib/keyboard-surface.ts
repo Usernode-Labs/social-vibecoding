@@ -44,7 +44,8 @@ import { KB_OPEN_CLASS } from './keyboard-open';
  * watched for size while the keys are up. A
  * field that already has its keys keeps its native taps (caret, selection),
  * a drag past the slop is a scroll, not a tap, and a finger the kit's
- * gesture arbiter has given to a recognizer is left alone.
+ * gesture arbiter has given to a recognizer is left alone. A drag in the
+ * scroller is the person's, and nothing reveals over it until the next focus.
  *
  * A bottom sheet also RIDES the keys (`ride`): when the keyboard's arrival
  * or departure moves it by a keyboard's height in one step (Safari's band
@@ -188,13 +189,18 @@ export function attachKeyboardSurface(
   scroller: HTMLElement | null | undefined,
   win: WinLike | undefined = typeof window !== 'undefined' ? (window as unknown as WinLike) : undefined,
   doc: DocLike | undefined = typeof document !== 'undefined' ? (document as unknown as DocLike) : undefined,
-  options: { ride?: boolean } = {},
+  options: { ride?: boolean; foot?: string } = {},
 ): () => void {
   const kit = win?.unNative;
   const vv = win?.visualViewport;
   if (!scroller || !win || !doc || !vv || !kit || kit.platform === 'desktop') return () => {};
 
   let touch: { x: number; y: number; moved: boolean } | null = null;
+  // The person dragged the scroller: their scroll stands over any reveal
+  // until they focus a field again (#5701: the feedback sheet snapped back
+  // to its description box after every drag, as Safari's toolbar resized
+  // the visual viewport and a drag panned it under the keys).
+  let scrolledByHand = false;
   let pending: FieldLike | null = null;
   let settle: unknown = null;
   let fallback: unknown = null;
@@ -233,11 +239,26 @@ export function attachKeyboardSurface(
     const box = field.getBoundingClientRect();
     const action = actionOf(field, scroller);
     const act = action ? action.getBoundingClientRect() : null;
+    // A sticky row at the scroller's foot (#5802): the form has no submit
+    // button to find, so the row that covers the view's foot names itself.
+    // The last match with a rect is the one showing (a form and an edit
+    // section, one hidden at a time).
+    let viewBottom = view.bottom;
+    if (options.foot) {
+      const rows = scroller.querySelectorAll(options.foot);
+      for (let i = rows.length - 1; i >= 0; i -= 1) {
+        const rect = rows[i].getBoundingClientRect();
+        if (rect.width || rect.height) {
+          viewBottom = Math.min(viewBottom, rect.top);
+          break;
+        }
+      }
+    }
     const top = revealScrollTop({
       scrollTop: scroller.scrollTop,
       scrollMax: scroller.scrollHeight - scroller.clientHeight,
       viewTop: view.top,
-      viewBottom: view.bottom,
+      viewBottom,
       fieldTop: box.top,
       fieldBottom: box.bottom,
       actionTop: act ? act.top : null,
@@ -258,15 +279,20 @@ export function attachKeyboardSurface(
     fallback = null;
   };
   const revealPending = () => {
+    const waited = pending;
     clearTimers();
-    const field = pending || (doc.activeElement as FieldLike | null);
     pending = null;
+    // A drag since that focus: the person's scroll is the answer.
+    if (!waited && scrolledByHand) return;
+    const field = waited || (doc.activeElement as FieldLike | null);
     reveal(field && scroller.contains(field) ? field : null);
   };
 
   // A field just focused: at once when the keys are already up (a hop
   // between fields fires no viewport event), else once they have settled.
   const schedule = (field: FieldLike) => {
+    // A new focus is revealed as it always was, whatever was dragged before.
+    scrolledByHand = false;
     pending = field;
     clearTimers();
     if (keysUp()) {
@@ -285,6 +311,8 @@ export function attachKeyboardSurface(
     // has moved the band: the sheet is at its new place now.
     ride();
     const active = doc.activeElement;
+    // A drag the person made is not a keyboard settling: nothing to reveal.
+    if (!pending && scrolledByHand) return;
     if (!pending && !(active && scroller.contains(active))) return;
     if (settle != null) win.clearTimeout(settle);
     settle = win.setTimeout(revealPending, SETTLE_MS);
@@ -307,7 +335,10 @@ export function attachKeyboardSurface(
   const onTouchMove = (e: TouchEvent) => {
     if (!touch || touch.moved) return;
     if (e.touches.length !== 1) { touch.moved = true; return; }
-    if (Math.abs(e.touches[0].clientX - touch.x) > TAP_SLOP || Math.abs(e.touches[0].clientY - touch.y) > TAP_SLOP) touch.moved = true;
+    if (Math.abs(e.touches[0].clientX - touch.x) > TAP_SLOP || Math.abs(e.touches[0].clientY - touch.y) > TAP_SLOP) {
+      touch.moved = true;
+      scrolledByHand = true;
+    }
   };
   const onTouchCancel = () => { touch = null; };
   const onTouchEnd = (e: TouchEvent) => {
@@ -352,6 +383,7 @@ export function attachKeyboardSurface(
   // settled. The settled reveal reads the content as it is by then.
   const Sizes = win.ResizeObserver;
   const sizes = typeof Sizes === 'function' ? new Sizes(() => {
+    if (scrolledByHand) return;
     if (settle != null || fallback != null) return;
     const active = doc.activeElement as FieldLike | null;
     if (keysUp() && active && scroller.contains(active)) schedule(active);
@@ -387,14 +419,15 @@ export function attachKeyboardSurface(
  * attachKeyboardSurface on whatever element `ref` holds, re-attached when
  * React hands it a new node (the sheet renders its panel only while open).
  */
-export function useKeyboardSurface(ref: RefObject<HTMLElement | null>, options: { ride?: boolean } = {}): void {
-  const attached = useRef<{ el: HTMLElement; detach: () => void } | null>(null);
+export function useKeyboardSurface(ref: RefObject<HTMLElement | null>, options: { ride?: boolean; foot?: string } = {}): void {
+  const attached = useRef<{ el: HTMLElement; foot: string | undefined; detach: () => void } | null>(null);
   const ride = !!options.ride;
+  const foot = options.foot;
   useEffect(() => {
     const el = ref.current;
-    if ((attached.current?.el || null) === el) return;
+    if (attached.current && attached.current.el === el && attached.current.foot === foot) return;
     attached.current?.detach();
-    attached.current = el ? { el, detach: attachKeyboardSurface(el, undefined, undefined, { ride }) } : null;
+    attached.current = el ? { el, foot, detach: attachKeyboardSurface(el, undefined, undefined, { ride, foot }) } : null;
   });
   useEffect(() => () => {
     attached.current?.detach();

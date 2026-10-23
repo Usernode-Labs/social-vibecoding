@@ -25,6 +25,7 @@ const topicAttrs = require('../services/topic-attributes');
 // reports as `busy`, so an issue's work-state chip and the session card it
 // points at can never disagree about whether an agent is actually running.
 const { isSessionBusy } = require('../services/active-workers');
+const { workedOnSql } = require('../workflow/session-work.ts');
 const { FEEDBACK_FALLBACK_TITLE } = require('../services/llm');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 const challengeScorer = require('../services/topochain/challenge-scorer');
@@ -865,9 +866,9 @@ function composeInProgress(sessions, claims, viewerId) {
       username: s.username || null,
       mine: s.user_id === viewerId,
       status: s.status || null,
-      // In-process only: a multi-process platform would under-report this,
-      // in which case switch to `active_turn IS NOT NULL` on the query.
-      busy: isSessionBusy(s.id),
+      // Worked on by any process (read with the row: session-work.ts
+      // workedOnSql), or by this one.
+      busy: s.worked_on === true || isSessionBusy(s.id),
       lastActivityAt: s.last_activity_at || null,
     }));
   return {
@@ -1759,20 +1760,6 @@ function issueRoutes(config) {
         return res.json({ ok: true, toggled: true });
       }
 
-      // #2603: a No comes with a line, so the proposer learns what is wrong
-      // rather than only that somebody minded — votes.js's rule, and its
-      // wording. Checked AFTER the toggle branch above: retracting a No is
-      // not casting one, and asking for a sentence to take a vote back would
-      // be a trap. The same-side re-cast votes.js exempts cannot arrive here
-      // at all, because on an issue that click is the retraction.
-      if (vote === 'down' && !reason) {
-        return res.status(400).json({
-          error: 'reason_required',
-          message: votesModule.VOTE_REASON_REQUIRED,
-          maxLength: votesModule.VOTE_REASON_MAX,
-        });
-      }
-
       // A flip REPLACES the line rather than keeping it: the old sentence
       // argued for the side this vote just left. (votes.js keeps an earlier
       // line on a same-side re-cast; here that click is the toggle above.)
@@ -2102,7 +2089,8 @@ function issueRoutes(config) {
       const { rows: inProgressRows } = await pool.query(
         `SELECT UNNEST(cs.linked_issues) AS n,
                 cs.id, cs.user_id, cs.status, cs.shared_at,
-                cs.last_activity_at, cs.created_at, u.username
+                cs.last_activity_at, cs.created_at, u.username,
+                ${workedOnSql()} AS worked_on
            FROM chat_sessions cs LEFT JOIN users u ON u.id = cs.user_id
           WHERE cs.app_id = $1 AND cs.is_headless = FALSE
             AND cardinality(cs.linked_issues) > 0

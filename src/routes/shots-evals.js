@@ -55,9 +55,6 @@ const bad = (error, code) => ({ ok: false, status: 400, error, ...(code ? { code
 function shotsEvalRoutes(config) {
   const router = Router();
   const pool = getPool(config);
-  const wake = () => {
-    try { require('../services/shots-eval-runner').wake(); } catch (_) { /* the leader's next pass starts it */ }
-  };
 
   router.get('/api/shots-evals/configs', requireAdminWrite, handler('Shots configurations', async (req) => (
     evals.listConfigs(pool, config, { prompts: req.query?.prompts === '1' })
@@ -102,7 +99,7 @@ function shotsEvalRoutes(config) {
       log.info('shots-eval', 'Eval launched', {
         by: req.user.username, id: out.eval.id, trials: out.eval.trials, capUsd: out.eval.capUsd,
       });
-      wake();
+      await evals.look();
     }
     return out;
   }));
@@ -131,7 +128,6 @@ function shotsEvalRoutes(config) {
     const out = await evals.cancelRun(pool, id);
     if (out.ok) {
       log.info('shots-eval', 'Eval cancelled', { by: req.user.username, id, trials: out.cancelled });
-      wake();
     }
     return out;
   }));

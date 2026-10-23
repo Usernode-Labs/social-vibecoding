@@ -45,7 +45,9 @@ import { returnKeyHandler } from '../../lib/return-to-next';
 import { formOffersComment, openCommentMode, prepareComment } from '../improve/suggest-shortcut';
 import { ControllerText } from './controller-text';
 import { Feedback, init as initFeedback } from './feedback-controller';
+import { FeedbackPreview, type FeedbackPreviewItem } from './feedback-preview';
 import { useDialog } from './use-dialog';
+import { SuggestionAsk } from '../notify-ask/suggestion-ask';
 
 /** Reserved for callers that still pass `{ fromDev: true }` — see #226/#312. */
 interface OpenOptions {
@@ -98,10 +100,13 @@ export function FeedbackDialog() {
   // Text only React writes follows the language here. A node the controller
   // writes too starts from <ControllerText>, which React never updates.
   const t = useMessages('dialogs');
-  // Experimental (#4289): the form's switch to comment mode, offered where
-  // the device's switch is on (not in the side panel). Read on every open,
+  // #4289: the form's switch to comment mode, offered where the device
+  // has not turned it off (not in the side panel). Read on every open,
   // since the setting lives on the device and can change between opens.
   const [offersComment, setOffersComment] = useState(false);
+  // #5687: the attached picture or clip a thumbnail asked to see full size.
+  // Null until a tap, so the prerendered document never carries it.
+  const [preview, setPreview] = useState<FeedbackPreviewItem | null>(null);
   // The card, as a bottom sheet on a phone (#4554): `useKeyboardSurface`
   // rides the keyboard with it the way the sign-in sheet's does, and the
   // sheet's slide-up is `useStaticModal`'s `phoneSheet` presentation.
@@ -116,9 +121,14 @@ export function FeedbackDialog() {
       // menu does for "Suggest an improvement" (a no-op where the switch is off).
       if (!opts?.edit) prepareComment();
     },
-    onClose: () => Feedback._reset(),
+    // A closed dialog never leaves a preview behind: `_reset` revokes the
+    // object URLs the preview would be reading.
+    onClose: () => {
+      setPreview(null);
+      Feedback._reset();
+    },
   });
-  useKeyboardSurface(cardRef, { ride: true });
+  useKeyboardSurface(cardRef, { ride: true, foot: '.feedback-actions' });
   // Comment mode instead, taking the form's draft: the words wait for the
   // first click on the page, and the pictures, title, Kudos and destination
   // go into that comment's box.
@@ -133,10 +143,15 @@ export function FeedbackDialog() {
   // speech-bubble button and the ?shot=feedback deep link are both live
   // before the first paint that could act on them.
   useIsomorphicLayoutEffect(() => {
+    // The controller builds the thumbnails, so it asks the island to show
+    // one (#5687); the placeholder in the module is where a tap before
+    // wiring lands.
+    Feedback._preview = (item) => setPreview(item);
     initFeedback();
   }, []);
 
   return (
+    <>
     <DialogRoot
       id="feedback-modal"
       ref={dialog.rootRef}
@@ -181,13 +196,12 @@ export function FeedbackDialog() {
         <button id="feedback-form-mine" type="button" className="-mt-3 mb-4 block text-xs text-zinc-500 underline underline-offset-2 dark:text-zinc-400">
           {t('dialogs:feedback.form.mine')}
         </button>
-        {/* Experimental (#4289): this form, or comment mode, where a click on
-            the page is the comment. With the switch on, "Suggest an
-            improvement" opens comment mode, and this form is reached from its
-            Form switch; this is the way back. React's own node, which the
-            controller never writes; hidden in the prerendered shell (the
-            class, as the rest of this card is), since the switch is off until
-            a person turns it on. */}
+        {/* #4289: this form, or comment mode, where a click on the page is
+            the comment. "Suggest an improvement" opens comment mode, and this
+            form is reached from its Form switch; this is the way back.
+            React's own node, which the controller never writes; hidden in the
+            prerendered shell (the class, as the rest of this card is), since
+            `offersComment` starts false until the dialog opens. */}
         <div className={offersComment ? '-mt-1 mb-4 flex items-center gap-2' : 'hidden'}>
           <span className="inline-flex gap-0.5 rounded-full bg-zinc-100 p-[3px] dark:bg-zinc-800" role="radiogroup" aria-label={t('dialogs:feedback.mode.label')}>
             <button
@@ -622,9 +636,10 @@ export function FeedbackDialog() {
           </h2>
           <p id="feedback-sent-notice" className="hidden text-sm text-emerald-700 dark:text-emerald-400 mb-2" role="status"></p>
           {/* B8: where Homeroom bot builds it, this says so ("Homeroom bot is
-              building it now, usually about 8 minutes. ...", #3971), Open
-              chat leads, and building it yourself is the small link at the
-              foot. The controller words the line and shows the two. */}
+              building it now, usually about 8 minutes. ...", #3971); Open
+              chat is a neutral button under Done now (#5687), and building
+              it yourself is the small link at the foot. The controller words
+              the line and shows the two. */}
           <p id="feedback-sent-line" className="text-sm text-zinc-600 dark:text-zinc-400 mb-4">
             <ControllerText id="dialogs:feedback.sent.line" />
           </p>
@@ -641,12 +656,34 @@ export function FeedbackDialog() {
             <p id="feedback-sent-first-line" className="text-sm text-zinc-600 dark:text-zinc-400">
               <ControllerText id="dialogs:feedback.sent.firstLine.unnamed" />
             </p>
+            <p className="mt-1.5 text-sm text-zinc-600 dark:text-zinc-400">
+              {t('dialogs:feedback.sent.firstBot')}
+            </p>
           </div>
+          {/* Where Homeroom bot builds it: get a ping when it is ready? (the
+              notification ask). Its own React child, which the controller
+              never writes into; it only says when it is wanted
+              (../notify-ask/suggestion-ask.tsx). Nothing in the prerender. */}
+          <SuggestionAsk />
+          {/* #5687: Done is what the sheet is for, so it is the filled
+              primary button and comes first. Open chat is the one neutral
+              button under it, where Homeroom bot builds the request:
+              following the build is the useful next step there. See your
+              requests and Edit are one row of quiet links under the buttons
+              ("See your requests · Edit"); Edit stays because it is the only
+              place a request can be edited after posting.
+              The controller toggles `hidden` on each link, so the row reads
+              their state in CSS rather than being told: the dot shows only
+              between two shown links, and the row itself hides when neither
+              shows, so no empty row keeps a gap. */}
           <div className="flex flex-col gap-3">
-            <Button id="feedback-sent-chat" className="hidden min-h-[44px]">{t('dialogs:feedback.sent.chat')}</Button>
-            <Button id="feedback-sent-mine" variant="neutral" ink="neutral" className="min-h-[44px]">{t('dialogs:feedback.sent.mine')}</Button>
-            <Button id="feedback-sent-edit" variant="neutral" ink="neutral" className="hidden min-h-[44px]">{t('dialogs:feedback.edit.button')}</Button>
-            <Button id="feedback-sent-done" variant="unstyled" ink="muted" className="min-h-[44px]">{t('core:common.done')}</Button>
+            <Button id="feedback-sent-done" className="min-h-[44px]">{t('core:common.done')}</Button>
+            <Button id="feedback-sent-chat" variant="neutral" ink="neutral" className="hidden min-h-[44px]">{t('dialogs:feedback.sent.chat')}</Button>
+            <div className="flex items-center justify-center [&:not(:has(>:not(.hidden)))]:hidden">
+              <Button id="feedback-sent-mine" type="button" variant="unstyled" size="inline" ink="none" className="min-h-[44px] px-2 text-zinc-500 underline underline-offset-2 dark:text-zinc-400">{t('dialogs:feedback.sent.mine')}</Button>
+              <span aria-hidden="true" className="hidden text-sm text-zinc-500 dark:text-zinc-400 [:not(.hidden)+&:has(+:not(.hidden))]:inline">·</span>
+              <Button id="feedback-sent-edit" type="button" variant="unstyled" size="inline" ink="none" className="hidden min-h-[44px] px-2 text-zinc-500 underline underline-offset-2 dark:text-zinc-400">{t('dialogs:feedback.edit.button')}</Button>
+            </div>
             <button id="feedback-sent-fix" type="button" className="hidden self-center text-xs text-zinc-500 underline underline-offset-2 dark:text-zinc-400">
               {t('dialogs:feedback.sent.fix')}
             </button>
@@ -654,5 +691,9 @@ export function FeedbackDialog() {
         </section>
       </DialogCard>
     </DialogRoot>
+    {/* #5687: beside the dialog root rather than inside it, so a tap on the
+        dark around the picture is the preview's alone. */}
+    {preview ? <FeedbackPreview item={preview} onClose={() => setPreview(null)} /> : null}
+    </>
   );
 }

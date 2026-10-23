@@ -34,7 +34,7 @@ const { normalizeNotificationQuery, matchesNotificationQuery } = new Function(
   `${SEARCH_SRC.replace(/^export /gm, '')}; return { normalizeNotificationQuery, matchesNotificationQuery };`
 )();
 
-// A notif entry as the sheet builds it (MessagesEntry's `notif` slot): the
+// A notif entry as the sheet builds it (an Entry): the
 // view's `appLine` is the project name, `label` the kind line, `segments`
 // the subject parts. `by` and `time` are deliberately NOT matched.
 function notifEntry(over = {}) {
@@ -165,14 +165,14 @@ test('the query is written to the session key when set and removed when cleared 
 
 test('while searching the headings, pinned sections and pager step aside', () => {
   assert.ok(
-    SHEET_SRC.includes("{searching ? null : tab === 'messages' ? ("),
-    'the All-messages link and pinned sections are skipped while searching'
+    SHEET_SRC.includes('{searching || kindOn ? null : <NotificationsPinnedSections />}'),
+    'the pinned sections are skipped while searching'
   );
   // The merged Unread grouping (#5406) folds the flat list's Today/Earlier
   // headings and the per-app groups under one `!searching &&` gate, so the
   // pin is the gate plus the headings sitting inside it.
   const gate = SHEET_SRC.indexOf(
-    '{!searching && (groupedUnread ? appGroups.map(renderAppGroup) : ('
+    '{!searching && (groupedUnread ? appGroups.map(renderAppGroup) : olderGrouped ? ('
   );
   assert.ok(gate > 0, 'the headings block is skipped while searching');
   const todayHead = SHEET_SRC.indexOf('{today.length ? (');
@@ -182,7 +182,7 @@ test('while searching the headings, pinned sections and pager step aside', () =>
     'the Today/Earlier headings are skipped while searching'
   );
   assert.ok(
-    SHEET_SRC.includes("{searching ? null : (tab === 'messages' && snap.messagesCanLoadMore ? ("),
+    SHEET_SRC.includes("{searching ? null : (tab === 'unread' && !olderShown ? ("),
     'none of the pager footers render while searching'
   );
   assert.ok(

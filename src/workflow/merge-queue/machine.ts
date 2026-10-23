@@ -212,8 +212,11 @@ function wanted(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext): Outco
   const named = sid && !s.data.named.includes(sid) ? [...s.data.named, sid] : s.data.named;
   if (s.name === 'working') {
     // A pass is under way: one more after it, and whatever it has not tried
-    // yet may still be picked now.
-    return pick({ ...s.data, owed: true, named }, f, ctx);
+    // yet may still be picked now, the proposal the ask names among them:
+    // what this pass declined it for (busy, its checks) may be over, and a
+    // pass that is waiting on a resolution can run for minutes.
+    const tried = sid ? s.data.tried.filter((k) => !k.startsWith(`${sid}@`)) : s.data.tried;
+    return pick({ ...s.data, tried, owed: true, named }, f, ctx);
   }
   return pick({ ...s.data, tried: [], owed: false, named }, f, ctx);
 }

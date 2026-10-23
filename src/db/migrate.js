@@ -100,6 +100,9 @@ async function migrate(config) {
   // Must run AFTER seedStagingMergedPrs — its tags hang off those fixtures.
   await seedStagingSmallChangeTags(pool, config);
   await seedStagingMyOpenPr(pool, config);
+  // #5803: a change an admin voted No on, nobody voting Yes, so the card's
+  // week-long "Set aside in …" pill is reviewable on a fresh staging copy.
+  await seedStagingAdminNoPr(pool, config);
   await seedStagingImportedPrProposal(pool, config);
   await seedStagingChecksAdvisoryCard(pool, config);
   await seedStagingExternalAgentProposal(pool, config);
@@ -137,6 +140,8 @@ async function migrate(config) {
   // Must run AFTER seedStagingDemoAppCard — it focuses the demo app row.
   await seedStagingAgentOpenAppSession(pool, config);
   await seedStagingLandingDirectory(pool);
+  // After both: it tags their demo apps with a type.
+  await seedStagingAppCategories(pool);
   await seedStagingFailedApp(pool, config);
   await seedStagingForkLineage(pool, config);
   // After the fork fixtures: it switches one of them into demo mode.
@@ -177,6 +182,8 @@ async function migrate(config) {
   // Must run AFTER seedStagingVisuals: it owns the gallery demo app this
   // fixture's proposal belongs to.
   await seedStagingShotsNoticed(pool);
+  // After seedStagingDemoAppCard, whose demo app it belongs to.
+  await seedStagingShotsScreens(pool);
   await seedStagingLeaderboardProfile(pool);
   await seedStagingQaSession(pool, config);
   await seedStagingCloneQuestionSuggestions(pool, config);
@@ -204,6 +211,7 @@ async function migrate(config) {
   // the demo user so the check viewer exercises the NON-owner spec panel.
   await seedStagingSharedSpecPanelSession(pool, config);
   await seedStagingHtmlSpecSession(pool, config);
+  await seedStagingComplicatedPlanSpec(pool, config);
   await seedStagingDemoProposal(pool, config);
   await seedStagingSpecUserShareFixtures(pool, config);
   await seedStagingHeadlessFixtures(pool, config);
@@ -590,12 +598,11 @@ async function auditDuplicatePrSessions(pool) {
 
 // #155: headless runs interrupted by a restart used to be blanket-failed
 // here because the loop lived entirely in the dead process. They are now
-// resumable: runHeadlessSession checkpoints its position in
+// resumable: runHeadlessSessionInner checkpoints its position in
 // chat_sessions.headless_step ('planning' / 'cc_running' / 'wrapping'),
-// and resumeHeadlessRuns (src/routes/sessions.js, called from server.js
-// boot after worker adoption) carries any 'generating' row forward from
-// that checkpoint — marking 'failed' only the rows it explicitly gives
-// up on. The sweep below is narrowed to rows with NO checkpoint, i.e.
+// and the run's turn work item (services/turns.js) carries a 'generating'
+// row forward from that checkpoint — marking 'failed' only the rows it
+// explicitly gives up on. The sweep below is narrowed to rows with NO checkpoint, i.e.
 // runs started before the step machine existed; those genuinely cannot
 // be resumed. Idempotent; no-ops when nothing is stuck.
 async function failOrphanedHeadlessRuns(pool) {
@@ -1395,9 +1402,11 @@ async function seedCaptureUser(pool) {
 // A VIEW-ONLY admin (is_admin = TRUE, admin_readonly = TRUE): it can SEE
 // admin reads (adminMiddleware lets any admin through GETs) but is blocked
 // from every mutating route (requireAdminWrite → 403), so a leaked token
-// can never change platform state. Unlike usernode-capture this identity
-// signs NO public artifact — test frames are pass/fail + console errors,
-// never a published image — so granting it admin visibility leaks nothing.
+// can never change platform state. Its declared-check frames are pass/fail
+// and console errors. The before & after shots a change declares for this
+// persona are images, which is why they are shown only to signed-in people
+// who can see the project and never to anybody signed out: what a visitor
+// may see is the member account's stills alone (services/shots-public.js).
 // can_create_apps stays FALSE; the discarded-random-bytes bcrypt password
 // blocks interactive login (visuals.js mints a JWT directly). Idempotent:
 // keyed on the unique username, DO NOTHING on conflict. Runs unconditionally
@@ -2694,24 +2703,18 @@ async function seedStagingPlatformEnv(pool, config) {
 
 // Boot sweep for the database-export audit log. A row is written BEFORE
 // the dump is spawned and only reaches a terminal status when the stream
-// resolves — so a process killed mid-export (deploy cutover: the usernode
-// service has stop_grace_period: 10s; OOM; hard crash) leaves the row
-// stuck in `requested` or `streaming` forever. Nothing else can ever
-// resolve those rows: the in-memory single-flight guard and the child
-// process both died with the old process. Flip them to `interrupted` at
-// boot so the admin console's history never shows a phantom in-flight
-// export. NOT staging-gated — this is a production correctness sweep.
+// resolves — so a process killed mid-export (deploy cutover, OOM, hard
+// crash) leaves the row stuck in `requested` or `streaming`. A boot settles
+// the ones nothing will finish: a dump whose process stopped renewing it,
+// and a request whose ticket expired (services/db-export.js
+// settleAbandoned, which a claim runs too). A dump another process still
+// streams is left alone. NOT staging-gated — this is a production
+// correctness sweep.
 async function sweepInterruptedDbExports(pool) {
   try {
-    const { rowCount } = await pool.query(
-      `UPDATE db_exports
-          SET status = 'interrupted',
-              finished_at = COALESCE(finished_at, NOW()),
-              error = COALESCE(error, 'platform restarted while the export was in flight')
-        WHERE status IN ('requested', 'streaming')`
-    );
-    if (rowCount) {
-      log.warn('db', 'Marked stale database exports interrupted', { count: rowCount });
+    const count = await require('../services/db-export').settleAbandoned(pool);
+    if (count) {
+      log.warn('db', 'Marked stale database exports interrupted', { count });
     }
   } catch (err) {
     log.warn('db', 'Database-export sweep failed', { message: err.message });
@@ -6356,6 +6359,32 @@ async function seedStagingLandingDirectory(pool) {
   }
 }
 
+// #3962: Discover's "Filter by type" row appears only once some app's
+// dapp.json says what kind of app it is, and a staging copy of production
+// has none that do yet (nothing backfills real repositories). This writes a
+// `category` into the manifest snapshot of three demo fixture apps the two
+// seeds above make, so the row and its chips can be seen and pressed: the
+// open landing tile is a game, the demo app a tool, the gated tile a social
+// app. Display data on fake apps only; the snapshot is what a deploy of
+// those apps' dapp.json would have written. Idempotent: `||` sets the same
+// key to the same value on every boot. Strictly a no-op outside staging.
+async function seedStagingAppCategories(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    await pool.query(
+      `UPDATE apps AS a
+          SET manifest_snapshot = COALESCE(a.manifest_snapshot, '{"secrets": []}'::jsonb)
+                || jsonb_build_object('category', v.category)
+         FROM (VALUES (900100, 'games'), (900001, 'tools'), (900101, 'social'))
+              AS v(id, category)
+        WHERE a.id = v.id`
+    );
+    log.info('db', 'Staging app categories seeded');
+  } catch (err) {
+    log.warn('db', 'Staging app categories seeding failed', { message: err.message });
+  }
+}
+
 // #562: fixtures for the cross-app "submitted features" admin API
 // (GET /api/admin/submitted-features). A fresh staging DB has no
 // general issues, so the ranked-by-votes list would render empty and be
@@ -6854,6 +6883,22 @@ async function seedStagingUserDirectory(pool) {
     log.warn('db', 'Staging user-directory case-collision seeding failed', { message: err.message });
   } finally {
     client.release();
+  }
+
+  // #5104: a search finds nobody who keeps their profile out of it, and that
+  // is now everybody until they choose otherwise. These fake people exist
+  // to be found by a preview's typeahead, so they opt in, and take
+  // messages and invitations from anyone, the way a real person can choose
+  // to. Only the sentinel-password fixtures: never a real account.
+  try {
+    await pool.query(
+      `UPDATE users SET profile_discoverable = TRUE, contact_policy = 'anyone'
+        WHERE username LIKE 'staging-demo-%'
+          AND password = 'staging-demo-not-a-login'
+          AND (NOT profile_discoverable OR contact_policy <> 'anyone')`
+    );
+  } catch (err) {
+    log.warn('db', 'Staging user-directory privacy seeding failed', { message: err.message });
   }
 }
 
@@ -8315,6 +8360,153 @@ async function seedStagingShotsNoticed(pool) {
     log.info('db', 'Staging shots "Also noticed" fixture seeded', { sessionId: id });
   } catch (err) {
     log.warn('db', 'Staging shots "Also noticed" seeding failed', { message: err.message });
+  }
+}
+
+// A proposal waiting on the shots member's vote whose published before &
+// after shots hold THREE phone screens, so a preview's Needs you can draw a
+// change with several screens (the new review flow's row of screens under
+// its picture, features/review-flow/). The demo PR seedStagingDemoAppCard
+// makes has only the old one-picture capture, and seedStagingShotsNoticed's
+// two screens are on a merged proposal, so nothing in a fresh copy showed
+// more than one screen to vote on. One promoted proposal on the demo app
+// (900001, where usernode-capture is a member), owned by staging-demo-user,
+// its run verified on its reviewed head. Each screen is plain bars
+// (services/bench/demo.js demoPng), light only, with its change at a
+// different height: near the top, in the middle, near the foot. Every word
+// is an obviously fake "Staging demo" line; fixed ids, idempotent, and a
+// strict no-op outside staging.
+const STAGING_SHOTS_SCREENS_SESSION_ID = 900160;
+
+async function seedStagingShotsScreens(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  const crypto = require('crypto');
+  const { demoPng } = require('../services/bench/demo');
+  const planContract = require('../services/visible-changes');
+  const shotsState = require('../services/shots-state');
+  const id = STAGING_SHOTS_SCREENS_SESSION_ID;
+  const runId = `${id}`.padEnd(32, 'e');
+  const baseSha = 'e'.repeat(40);
+  const headSha = 'f'.repeat(40);
+  const phone = { name: 'phone', width: 390, height: 844 };
+  // Where each screen changed: the accent bar its after side adds.
+  const SCREENS = [
+    { story: 'top-filter', y: 96, h: 32, claim: 'Staging demo: the list gains a filter row under its heading.' },
+    { story: 'middle-badge', y: 392, h: 40, claim: 'Staging demo: each row in the middle of the list shows a badge.' },
+    { story: 'foot-action', y: 704, h: 48, claim: 'Staging demo: a Save button sits at the foot of the form.' },
+  ];
+  try {
+    const intent = planContract.parseIntent({
+      version: 1,
+      impact: 'ui',
+      rationale: 'Staging demo: three screens, each changed in a different place.',
+      stories: SCREENS.map((screen) => ({
+        id: screen.story,
+        claim: screen.claim,
+        persona: 'member',
+        viewports: [phone],
+        intent: {
+          startPath: '/',
+          steps: ['Open the screen'],
+          checkpoint: 'The change is on the screen',
+          focus: 'The changed bar',
+          baseState: 'not_present',
+          animation: 'none',
+        },
+      })),
+    });
+    const ground = [250, 250, 249];
+    const ink = [214, 211, 209];
+    const accent = [37, 99, 235];
+    // A header, then rows; the after side adds the screen's accent bar.
+    const draw = (screen, side) => demoPng(phone.width, phone.height, ground, [
+      { y: 32, h: 40, rgb: ink },
+      ...(side === 'head' ? [{ y: screen.y, h: screen.h, rgb: accent }] : []),
+      ...[0, 1, 2, 3, 4, 5].map((i) => ({ y: 152 + i * 96, h: 64, rgb: ink }))
+        .filter((bar) => side !== 'head' || bar.y + bar.h <= screen.y || bar.y >= screen.y + screen.h),
+    ]);
+    const files = [];
+    for (const screen of SCREENS) {
+      for (const side of ['base', 'head']) {
+        const data = draw(screen, side);
+        files.push({
+          id: crypto.createHash('sha256').update(`staging-shots-screens:${screen.story}:${side}`).digest('hex').slice(0, 32),
+          story: screen.story, side, data,
+          sha256: crypto.createHash('sha256').update(data).digest('hex'),
+        });
+      }
+    }
+    const verdict = {
+      passed: true, mode: 'shots', runs: 1,
+      stories: SCREENS.map((screen) => ({ id: screen.story, status: 'ready', files: 2 })),
+      notices: [],
+      screens: SCREENS.map((screen) => ({
+        viewport: 'phone',
+        shot: screen.story,
+        stories: [screen.story],
+        width: phone.width,
+        heightBefore: phone.height,
+        heightAfter: phone.height,
+        regions: [{ story: screen.story, b: null, a: [0, screen.y, phone.width, screen.h], bMark: null, aMark: null }],
+      })),
+    };
+    const planHash = crypto.createHash('sha256')
+      .update(`staging-shots-screens:${files.map((file) => file.sha256).join(':')}`).digest('hex');
+    const detail = {
+      ...shotsState.runSummary({
+        id: runId, state: 'verified', intent, base_sha: baseSha, head_sha: headSha,
+        plan_hash: planHash, hard_verdict: verdict,
+      }),
+      intent,
+    };
+
+    await pool.query(
+      `INSERT INTO chat_sessions
+         (id, app_id, user_id, branch_name, pr_number, pr_title, status,
+          promoted_at, reviewed_head_sha,
+          shots_state, shots_run_id, shots_detail, shots_updated_at)
+       SELECT $1::int, 900001, u.id, 'staging-demo/three-screens', $1::int,
+              '[Mock] Staging demo: three screens to compare', 'promoted',
+              NOW() - interval '1 hour', $2::varchar,
+              'verified', $3::varchar, $4::jsonb, NOW()
+         FROM users u
+        WHERE u.username = 'staging-demo-user'
+          AND EXISTS (SELECT 1 FROM apps WHERE id = 900001)
+       ON CONFLICT (id) DO NOTHING`,
+      [id, headSha, runId, JSON.stringify(detail)]
+    );
+    const cleaned = {
+      cleanupComplete: true,
+      cleanupVersion: require('../services/shots-environment').RESOURCE_CLEANUP_VERSION,
+    };
+    await pool.query(
+      `INSERT INTO shot_runs
+         (id, session_id, base_sha, head_sha, plan_hash, intent, hard_verdict,
+          trace_summary, state, trigger, started_at, completed_at)
+       SELECT $1::varchar, $2::int, $3::varchar, $4::varchar, $5::varchar, $6::jsonb, $7::jsonb, $8::jsonb,
+              'verified', 'staging-fixture', NOW() - interval '2 hours', NOW() - interval '2 hours'
+        WHERE EXISTS (SELECT 1 FROM chat_sessions WHERE id = $2::int AND app_id = 900001)
+          AND NOT wf_holds('shots', 'session:' || $2::int)
+       ON CONFLICT (id) DO NOTHING`,
+      [runId, id, baseSha, headSha, planHash, JSON.stringify(intent), JSON.stringify(verdict),
+        JSON.stringify(cleaned)]
+    );
+    for (const file of files) {
+      await pool.query(
+        `INSERT INTO shot_artifacts
+           (id, run_id, story_id, viewport, side, variant, media, content_type,
+            data, width, height, bytes, sha256, theme)
+         SELECT $1::varchar, $2::varchar, $3::varchar, 'phone', $4::varchar, 'context', 'png', 'image/png',
+                $5::bytea, $6::int, $7::int, $8::int, $9::varchar, 'light'
+          WHERE EXISTS (SELECT 1 FROM shot_runs WHERE id = $2::varchar)
+         ON CONFLICT (id) DO NOTHING`,
+        [file.id, runId, file.story, file.side, file.data, phone.width, phone.height,
+          file.data.length, file.sha256]
+      );
+    }
+    log.info('db', 'Staging three-screen shots fixture seeded', { sessionId: id });
+  } catch (err) {
+    log.warn('db', 'Staging three-screen shots seeding failed', { message: err.message });
   }
 }
 
@@ -10889,6 +11081,89 @@ async function seedStagingHtmlSpecSession(pool, config) {
   log.info('db', 'Staging HTML-spec fixture seeded', { appId, sessionId: specSessionId });
 }
 
+// 20 Oct 2026: the plan behind the staging Homeroom bot chat's
+// complicated-change plan card (services/staging-messages.js
+// BOT_DM_COMPLICATED_PLAN_SPEC), whose card now shows its plan: a
+// leaderboard, as the card's lines say, with one phone screen before and
+// after. Shared to the group, as the bot
+// shares a plan it asks about, so the demo chat's reader may read it. Owned
+// by the demo user; fixed id 900832.
+async function seedStagingComplicatedPlanSpec(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  const { specHtmlToMarkdown } = require('../services/spec-html');
+
+  const { rows: appRows } = await pool.query('SELECT id FROM apps WHERE slug = $1', [config.selfAppSlug]);
+  const appId = appRows[0]?.id;
+  const { rows: demoRows } = await pool.query('SELECT id FROM users WHERE username = $1', ['staging-demo-user']);
+  const demoUserId = demoRows[0]?.id;
+  if (!appId || !demoUserId) {
+    log.warn('db', 'Staging complicated-plan fixture skipped: self-app row or demo user missing');
+    return;
+  }
+
+  const html = `<article data-spec-styles="platform" data-spec>
+  <h1>Staging demo: a Leaderboard tab beside the list</h1>
+  <p>A staging fixture: the plan Homeroom bot's demo chat asks about before it builds request #17.</p>
+  <section data-spec-tab="user">
+    <figure data-screens>
+      <ol data-changes>
+        <li data-change="1" data-steps="Open the list → Leaderboard">A Leaderboard tab beside the list</li>
+        <li data-change="2" data-steps="Open the list → Leaderboard">Points for each item finished this week, your own place at the top</li>
+      </ol>
+      <template data-screen data-size="phone" data-focus="0 0 390 300">
+        <style>
+          .sl-page{font:15px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;background:var(--bg-primary,#fff);color:var(--text-primary,#0a0a0a);height:844px;padding:20px 16px}
+          .sl-title{font-size:22px;font-weight:700;margin:0 0 14px}
+          .sl-tabs{display:flex;gap:8px;margin-bottom:14px}.sl-tabs span{padding:7px 14px;border-radius:999px;font-size:14px;font-weight:600;background:var(--bg-tertiary,#e9e9ec)}
+          .sl-tabs .on{background:#18181b;color:#fff}
+          .sl-row{display:flex;justify-content:space-between;align-items:center;padding:12px 4px;border-bottom:1px solid var(--border,#e3e3e6)}
+          .sl-muted{color:var(--text-muted,#68686c);font-size:13px}.sl-you{font-weight:700}
+        </style>
+        <div class="sl-page">
+          <p class="sl-title">Staging demo app</p>
+          <div class="sl-tabs" data-side="before"><span class="on">List</span></div>
+          <div class="sl-tabs" data-side="after" data-change="1"><span>List</span><span class="on">Leaderboard</span></div>
+          <div data-side="before">
+            <div class="sl-row"><span>Water the plants</span><span class="sl-muted">Today</span></div>
+            <div class="sl-row"><span>Take the bins out</span><span class="sl-muted">Tomorrow</span></div>
+            <div class="sl-row"><span>Clean the kitchen</span><span class="sl-muted">Friday</span></div>
+          </div>
+          <div data-side="after" data-change="2">
+            <div class="sl-row sl-you"><span>You · 2nd</span><span>40 points</span></div>
+            <div class="sl-row"><span>1. ada</span><span class="sl-muted">60 points</span></div>
+            <div class="sl-row"><span>3. mika</span><span class="sl-muted">25 points</span></div>
+          </div>
+        </div>
+      </template>
+    </figure>
+    <h3>What changes</h3>
+    <ul><li><b>A Leaderboard tab.</b> It sits beside the list.</li><li><b>Points for each item you finish.</b> They count up over the week and start again on Monday.</li><li><b>Your own place at the top.</b> Then everyone else, most points first.</li></ul>
+  </section>
+  <section data-spec-tab="tech">
+    <p>A staging fixture: no code stands behind this plan.</p>
+  </section>
+</article>`;
+  const markdown = specHtmlToMarkdown(html).trim();
+
+  const sessionId = 900832;
+  await pool.query(
+    `INSERT INTO chat_sessions
+       (id, app_id, user_id, branch_name, session_title, status, spec_md, spec_html, created_at)
+     VALUES ($1, $2, $3, 'staging-fixture/complicated-plan', '[staging fixture] Staging demo: a leaderboard plan', 'paused',
+       $4, $5, NOW() - INTERVAL '30 minutes')
+     ON CONFLICT (id) DO UPDATE SET spec_md = EXCLUDED.spec_md, spec_html = EXCLUDED.spec_html`,
+    [sessionId, appId, demoUserId, markdown, html]
+  );
+  await pool.query(
+    `INSERT INTO chat_session_specs (session_id, version, content, content_html, shared_to_group_at)
+     VALUES ($1, 1, $2, $3, NOW() - INTERVAL '25 minutes')
+     ON CONFLICT (session_id, version) DO UPDATE SET content = EXCLUDED.content, content_html = EXCLUDED.content_html,
+       shared_to_group_at = COALESCE(chat_session_specs.shared_to_group_at, EXCLUDED.shared_to_group_at)`,
+    [sessionId, markdown, html]
+  );
+  log.info('db', 'Staging complicated-plan fixture seeded', { appId, sessionId });
+}
+
 // Checkbox-flicker fix fixture. The fix is a client-rendering change, but
 // every checkbox surface is data-driven, so seed a scout/proposal session
 // named "Staging demo proposal" carrying GFM task lists across all three
@@ -11157,8 +11432,9 @@ async function seedStagingSpecUserShareFixtures(pool, config) {
 // two auto_solve_done notifications (notifications is staging:private,
 // copied schema-only).
 //
-// user_id is deliberately NULL on every fixture session: boot-time
-// resumeHeadlessRuns INNER JOINs users, so NULL keeps the 'generating'
+// user_id is deliberately NULL on every fixture session: a headless run is
+// only resumed for a user (routes/sessions.js
+// reloadRecoverableHeadlessSession), so NULL keeps the 'generating'
 // fixture from being "resumed" (which would hit GitHub for a mock issue
 // number and fail the run); the issue panel and notification queries both
 // LEFT JOIN and degrade gracefully. headless_step is set on the
@@ -11563,6 +11839,89 @@ async function seedStagingHeadlessFixtures(pool, config) {
 // fill, matching the merged-PR fixture pattern. chat_sessions is
 // staging:private (schema-only in staging), so this is the only way the
 // state is reachable; gated on staging + idempotent by branch name.
+// #5803: an admin's lone No starts a one-week countdown on a change. One
+// fixture on the self-app shows it: a promoted change with two app admins,
+// one of whom voted No two days ago and nobody voted Yes, so its card reads
+// "Set aside in 5d" where it read "0 of 1 approval". The two admins are
+// fake people; the author is the capture account the shots sign in as, so
+// the change is theirs to see under Waiting for approval. Idempotent (the
+// branch name), obviously fake, strictly a no-op outside staging.
+async function seedStagingAdminNoPr(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  const { rows: appRows } = await pool.query(
+    'SELECT id FROM apps WHERE slug = $1',
+    [config.selfAppSlug]
+  );
+  const appId = appRows[0]?.id;
+  if (!appId) {
+    log.warn('db', 'Staging admin-No fixture skipped: self-app row missing', {
+      slug: config.selfAppSlug,
+    });
+    return;
+  }
+
+  // The fake people: the author (the capture account, when it exists) and
+  // two app admins, one of whom votes No.
+  const { rows: captureRows } = await pool.query(
+    "SELECT id FROM users WHERE username = 'usernode-capture' LIMIT 1"
+  );
+  if (!captureRows.length) {
+    log.warn('db', 'Staging admin-No fixture skipped: capture user missing');
+    return;
+  }
+  const authorId = captureRows[0].id;
+  await pool.query(
+    `INSERT INTO users (id, username, password)
+     VALUES
+       (900320, 'staging-demo-admin-no', 'staging-demo-not-a-login'),
+       (900321, 'staging-demo-admin-yes', 'staging-demo-not-a-login')
+     ON CONFLICT DO NOTHING`
+  );
+  await pool.query(
+    `INSERT INTO app_admins (app_id, user_id)
+     VALUES ($1, 900320), ($1, 900321)
+     ON CONFLICT (app_id, user_id) DO NOTHING`,
+    [appId]
+  );
+
+  const branch = 'staging-fixture/admin-no';
+  let sessionId;
+  const { rows: existing } = await pool.query(
+    'SELECT id FROM chat_sessions WHERE app_id = $1 AND branch_name = $2 LIMIT 1',
+    [appId, branch]
+  );
+  if (existing.length) {
+    sessionId = existing[0].id;
+  } else {
+    const { rows } = await pool.query(
+      `INSERT INTO chat_sessions
+         (app_id, user_id, branch_name, pr_number, pr_title, pr_summary_md, status,
+          promoted_at, created_at)
+       VALUES
+         ($1, $2, $3, 9210, '[staging fixture] An admin voted No, and nobody said Yes',
+          $4, 'promoted', NOW() - INTERVAL '3 days', NOW() - INTERVAL '4 days')
+       RETURNING id`,
+      [appId, authorId, branch,
+       'In plain terms: this proposed change shows what a change looks like after one of the project\'s admins voted No and nobody has voted Yes yet.']
+    );
+    sessionId = rows[0].id;
+  }
+
+  // The admin's No, two days old: the week has five days left to run. No Yes
+  // beside it, so the countdown is armed.
+  await pool.query(
+    `INSERT INTO pr_votes (session_id, user_id, vote, approval_epoch, created_at)
+     SELECT $1, 900320, 'no', cs.approval_epoch, NOW() - INTERVAL '2 days'
+       FROM chat_sessions cs WHERE cs.id = $1
+     ON CONFLICT (session_id, user_id) DO UPDATE
+       SET vote = 'no', approval_epoch = EXCLUDED.approval_epoch, created_at = EXCLUDED.created_at`,
+    [sessionId]
+  );
+
+  log.info('db', 'Staging admin-No fixture seeded', { appId, sessionId });
+}
+
 async function seedStagingMyOpenPr(pool, config) {
   if (process.env.USERNODE_ENV !== 'staging') return;
 
@@ -14837,7 +15196,7 @@ async function migrateAppDbsToPerRole(pool, config) {
   log.info('db', 'Running per-app role migration');
 
   const { rows } = await pool.query(
-    `SELECT id, slug, container_id, manifest_snapshot, db_password, status, self_hosted
+    `SELECT id, slug, name, container_id, manifest_snapshot, db_password, status, self_hosted
        FROM apps
        WHERE COALESCE(self_hosted, FALSE) = FALSE
          AND status NOT IN ('deleted', 'creating', 'awaiting_secrets')`
@@ -15336,5 +15695,5 @@ module.exports = {
   backfillSettingsProposalSource,
   seedStagingTopicScrollThreads, seedStagingLlmUsage, seedStagingHomeLayout,
   seedStagingAnalyticsCharts, seedStagingSpendDistribution,
-  seedStagingGeneralChannel, seedStagingShotsNoticed,
+  seedStagingGeneralChannel, seedStagingShotsNoticed, seedStagingShotsScreens,
 };

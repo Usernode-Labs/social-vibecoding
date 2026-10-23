@@ -59,6 +59,8 @@ test('mentions in a request\'s text against the full schema', { timeout: 120000 
   const frames = [];
   const wsBus = require('../src/services/ws-bus');
   wsBus.publish = (kind, routing, data) => frames.push({ kind, routing, data });
+  // A person's pushes ride one batched stream (ws.js pushToUser).
+  wsBus.publishBatched = (_key, kind, routing, data) => frames.push({ kind, routing, data });
   // GitHub, stood in for: the route files the request there first.
   const github = require('../src/services/github');
   const filed = [];
@@ -156,7 +158,9 @@ test('mentions in a request\'s text against the full schema', { timeout: 120000 
     assert.equal(view.detail, '3952');
     const live = frames.find((f) => f.kind === 'user' && Number(f.routing?.userId) === snait.id
       && f.data?.type === 'notification_new');
-    assert.equal(live?.data.notification.kind, 'issue_mention', 'the bell hears it at once');
+    assert.equal(live?.data.notificationId, row.id, 'the bell hears which row to read at delivery');
+    assert.equal(live?.data.notification, undefined, 'no earlier hydrated body travels on the bus');
+    assert.equal((await notifications.hydrateNotification(pool, live.data.notificationId)).notification.kind, 'issue_mention');
 
     assert.deepEqual(await mention(homeroom, evan, 3952, '@snait lmk wyt'), [], 'the same request never rings twice');
     assert.equal((await rowsFor(snait)).length, 1);

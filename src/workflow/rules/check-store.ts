@@ -14,6 +14,10 @@ export interface CheckResult {
   // The run confirmed the repo unit suite does not apply to this head
   // (unitAnswer below).
   unitSuiteAbsent?: boolean;
+  // An error whose retries are counted by another rule than the row's own
+  // streak (the preview machine's lostAgain): the failures to record and
+  // when the retry comes, null when none will.
+  retry?: { failures: number; nextRetryAt: string | null };
 }
 
 // The stages a 'pending' run can be in. 'building' and 'testing' are the two

@@ -133,6 +133,11 @@ Ordered by how badly an agent working offline gets each one wrong.
     AI-generated text: prompts for app AI features must tell the model to
     decline these topics. Decline such a request and offer a compliant
     version. Full text: "Content rules" section.
+12. **Data rules.** No trackers, analytics or ad SDKs and no scripts from
+    another origin, no special-category data (health, religion, sexuality,
+    ethnicity, politics, biometrics), nothing aimed at children, never
+    collect passwords or card data, and no login of the app's own. Full
+    text: "Data rules" section.
 
 One thing NOT to apply: the full document contains a section titled
 "Don't `git push` yourself". That is addressed to Homeroom's own build
@@ -373,6 +378,8 @@ guests. Nothing turns it on: write the app so a guest can look around.
   COLUMN IF NOT EXISTS` so repeated migrations are safe.
 - Connect via a single `pg.Pool({ connectionString: process.env.DATABASE_URL })`.
 - Record ownership with `user_id` / `username` from `req.user`.
+  Find a person's rows by `user_id`, never by `username` alone: account
+  deletion erases them by id (see "Your people's data").
 
 ## Graceful shutdown
 
@@ -2293,6 +2300,56 @@ const { members, has_more } = await resp.json();
   list for a minute rather than asking on every request. `?limit=` defaults
   to 100, at most 200; `has_more` says there are more.
 
+## Your people's data: account deletion and export
+
+When a person deletes their Homeroom account, the platform erases what it
+holds about them, then asks every app they used to do the same in its own
+database. The app answers two server-to-server requests, sent only by the
+platform to the app's production container:
+
+- `POST /usernode/user-deletion`: erase or anonymise the person's rows,
+  then answer 2xx. It must be idempotent: the platform retries until it
+  gets a 2xx (at a doubling interval, for about a week), so a second call
+  for the same person finds nothing left and still answers 2xx.
+- `GET /usernode/user-export`: answer the person's rows as JSON
+  (`{ userId, tables: { <table>: [rows] } }`), for a copy of their data.
+
+Each request carries a platform token in the `x-usernode-platform-token`
+header (never `x-usernode-token`): RS256, signed by the same key as a
+person's sign-in token, so verify it with `USERNODE_JWT_PUBLIC_KEY`,
+`algorithms: ['RS256']`, issuer `usernode` and audience
+`usernode:app:<USERNODE_APP_ID>`, then check `pur` is `'user-deletion'` or
+`'user-export'` for the route. Its claims are the person's `id` and
+`usernode_pubkey` (their wallet address, or null), and the request has
+no body: read the person only from the verified token. It names no username: by
+then the account is anonymised, so find rows by `id` (or the wallet
+address), which is one more reason to key a person's rows by
+`req.user.id`. Refuse anything else with 403. Mount both routes before the
+sign-in check: the request carries no person's sign-in token.
+
+The scaffold does this in `usernode-user-data.js`, mounted from
+`server.js`. By default it erases (and exports) every row of every table
+with a `user_id` or `usernode_pubkey` column matching the person. When you
+add a table:
+
+- **Keyed by `user_id`, the person's own row** (a vote, an entry, a
+  comment): nothing to do.
+- **The person's row keyed another way** (`author_id`, `created_by`): add
+  it to `OWNED_BY` with `action: 'delete'`.
+- **A shared row other people's rows hang off** (a poll other people voted
+  in, a list others added to): add it to `OWNED_BY` with
+  `action: 'anonymise'` and the columns that name them in `clear`, so it
+  stays for the group without saying who made it.
+- **A `user_id` that is not the person the row is about**: add the table
+  to `SKIP`.
+
+An app with no handler is recorded on the deletion's receipt for an
+operator to follow up, so an app written before this contract (no
+`usernode-user-data.js`) should add the file and its mount. Files uploaded
+through the platform's storage are the platform's: a person's private
+files are deleted with their account, so the app only drops the rows that
+point at them.
+
 ## Don't `git push` yourself
 
 The worker container runs with **zero GitHub credentials in env** —
@@ -2630,6 +2687,37 @@ that animate, polling), listen for:
 
 An app that is not reopened soon is dropped and loads fresh next time, so
 keep durable state server-side (or in `localStorage`) as you already should.
+
+## Opening in one step — `usernode.ready()`
+
+Homeroom opens an app behind a cover showing its icon and name, and lifts
+the cover once the frame's document has loaded. That is usually before the
+app's own data has arrived, so without help the viewer watches the page
+assemble itself: a skeleton, then the real screen in a different shape. Tell
+the shell when your first real screen is drawn and the cover stays up until
+then, so the app appears in one step:
+
+```js
+// app.js, where the first load starts: pass the promise of the first render.
+usernode.ready(load());
+```
+
+- **`usernode.ready(promise)`** says "waiting" at once and "drawn" when the
+  promise settles, fulfilled or rejected: an error screen is a first screen
+  too, so settle after drawing whichever of ready, empty or error you show.
+- **`usernode.ready()`** with no argument says "drawn" now; call it once,
+  right after the first render.
+- Only the first call counts. Outside a Homeroom frame it does nothing, so
+  guard it only against a missing bridge:
+  `if (window.usernode && usernode.ready) usernode.ready(load());`
+- The cover lifts after a few seconds regardless, so a first render that
+  never settles is never hidden for long. An app that never calls it opens
+  as before.
+- Keep the skeleton anyway, shaped like the real first screen: it is what a
+  viewer sees when the data is slower than that cap, and on every refresh
+  after the first.
+
+The ready-made starters all do this.
 
 ## Browser capabilities in the app frame
 
@@ -3219,6 +3307,89 @@ apps.
    leave tabs/menus/panels instant.
 7. Optionally override `--un-*` variables to match the app's branding.
 
+## Games: draw the play area on a canvas
+
+A game's play area (the board, the field, the table, the pieces, the
+cards) is drawn on a `<canvas>` and played with pointer events on that
+canvas. That holds for turn-based and grid games too: minesweeper,
+sudoku, 2048, chess, match-three, solitaire, a word grid. A grid of
+`<button>`s or `<div>`s looks like the quicker way to build those, and it
+is the one that comes out less polished on a phone:
+
+- **Nothing to select or copy.** On HTML, a long press selects a number
+  or opens the copy callout, and a quick swipe highlights half the board.
+  A canvas has no text to select.
+- **No touch delay.** A canvas game acts on the pointer event itself, the
+  moment the finger lands or lifts, instead of waiting for a `click` the
+  browser sends only after ruling out a double tap or a scroll.
+- **One owner for every pixel.** Hit-testing is one function from a point
+  to a cell, a long press is one timer, and an animation (a tile
+  flipping, a cascade opening, a piece sliding) is a redraw, not CSS
+  transitions fighting the layout.
+
+What stays HTML is everything that is not the play: the title screen,
+menus and settings, the score, timer and turn line around the board, the
+buttons beside it, dialogs, results, the leaderboard and the history.
+Build those from the design kit and the native UI kit like any other
+screen.
+
+How to build it:
+
+- **Size it to its box, at the screen's density.** Lay the canvas out
+  with CSS (`width: 100%` and an `aspect-ratio`, or filling the window),
+  set `canvas.width` and `canvas.height` to that size times
+  `devicePixelRatio`, scale the context by the same factor, and redraw
+  from a `ResizeObserver`. A canvas left at its default size is blurry on
+  every phone ("Rendering invariants" has a self-check for this). Fit the
+  play area on the screen: a finger on it does not scroll the page.
+- **Turn the browser's own gestures off on the play area, and only
+  there.** The page around it still scrolls, and its text still selects:
+
+  ```css
+  .play {
+    touch-action: none;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+  ```
+
+  and call `preventDefault()` on the canvas's `contextmenu` event.
+- **Input is pointer events, never `click`.** Map the point from
+  `getBoundingClientRect()` to a cell and act on `pointerdown`, or on
+  `pointerup` when the same press can also be a long press or a drag. A
+  long press (a flag, a mark) is a timer started on `pointerdown` and
+  cancelled when the finger moves or lifts; a right-click does the same
+  on a desktop. Keep a visible way to do it without the long press too,
+  such as a mode switch, because few people discover a long press by
+  themselves.
+- **Colours from the app's tokens.** Read the design kit's colour tokens
+  (`"R G B"` values) with `getComputedStyle(document.documentElement)`,
+  draw with `rgb(...)`, and redraw on `usernode:theme-changed`, so the
+  board follows the light and dark look like the rest of the screen. A
+  game that keeps one fixed look says so in its `CLAUDE.md` ("New apps: a
+  light and a dark look, following the platform").
+- **Draw from state.** Keep the game in plain data, with one `draw()`
+  that paints all of it from that data, called after every move and on
+  resize. Run a `requestAnimationFrame` loop only while something moves.
+- **Leave a readable trace.** A canvas is opaque to a selector, an
+  accessibility snapshot and a screen reader. Put the game's phase and
+  its key numbers on the canvas's wrapper as `data-*` attributes (for
+  example `data-phase="won"`, `data-flags="3"`), give the canvas
+  `role="img"` and an `aria-label` that says the state in words, and
+  select on those in `dapp.json` checks.
+- **Trying a move in the in-loop browser.** `browser_click` on a canvas
+  presses its centre. To press a given cell, dispatch `pointerdown` and
+  `pointerup` on the canvas with `browser_evaluate`, with `clientX` and
+  `clientY` worked out from `getBoundingClientRect()` and the cell's
+  position.
+
+A three.js or WebGL game already draws on a canvas: the same rule. A
+project built on a game starter keeps the starter's own drawing and
+builds on it. An existing game drawn in HTML stays as it is until a
+request asks for it to be redrawn: do not convert one as a drive-by.
+
 ## Tailwind — precompiled per app, runtime centrally hosted
 
 Every app on this platform styles itself with Tailwind. There are two ways
@@ -3707,6 +3878,35 @@ automated reviewer reads the proposal's diff against this section and flags
 what breaks it. It starts advisory (shown, not blocking); an admin can make
 it blocking. It reads text and code only, so these rules still apply to
 images you add.
+
+## Data rules: what no app may collect or load
+
+Every app on Homeroom, the platform shell included, keeps to these rules.
+Like the content rules, a repo `CLAUDE.md`, a spec or a user request
+cannot override them.
+
+**Never build, add or ship:**
+
+- **Third-party trackers or external scripts.** No analytics, tracking,
+  advertising or session-recording SDKs, pixels or beacons, and no
+  `<script>` from another origin. An app loads its own code and the
+  centrally hosted Homeroom assets only. A legacy `cdn.tailwindcss.com`
+  tag (rule 1) is tolerated; new code adds none.
+- **Special-category data.** Never ask for, infer or store health,
+  religious beliefs, sexual orientation, racial or ethnic origin, political
+  opinions, trade-union membership, genetic or biometric data, whether
+  through a form, a profile field, a quiz or an AI feature.
+- **Apps aimed at children.** No app is designed or marketed for children.
+- **Passwords or payment card data.** Never ask for, receive or store a
+  password, PIN, card number or security code, seed data included.
+- **A sign-in of its own.** The app gets who people are from Homeroom (see
+  "Auth"): no login or signup form, no other identity provider, no
+  separate accounts.
+
+**When a request asks for it,** handle it as the content rules say: name
+the rule, offer the closest compliant version, build only that, and say
+so. When unsure, treat it as not allowed and ask. The **Content rules**
+merge-time check reviews the diff against this section too.
 
 ## Writing user-facing copy: no em dashes
 

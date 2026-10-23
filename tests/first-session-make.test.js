@@ -143,15 +143,23 @@ test('the landing: the story in place of the pitch unless switched off, for nobo
   // The default, so it is drawn before the options arrive, and when they fail.
   assert.match(landing, /const storyOn = waitlistPayload\?\.story_landing !== false && !onInvitePath && !session;/);
   assert.match(landing, /useState\(\s+\(\) => typeof location !== 'undefined' && onInviteLink\(location\.pathname\),\s+\);/);
-  assert.match(landing, /const pitchHidden = madeForYou \|\| deadInvite \|\| storyOn \|\| invitePending;/);
+  assert.match(landing, /const pitchHidden = madeForYou \|\| deadInvite \|\| storyOn \|\| invitePending \|\| waitingGuest;/);
   // Polish N10: the email line's "Sign in" opens the same sheet titled Sign in.
-  assert.match(landing, /<Story primaryClass=\{PRIMARY_PILL\} welcomeEmail=\{releaseEmail\} onStart=\{\(\) => setSheet\('start'\)\} onSignIn=\{\(\) => setSheet\('signin'\)\} \/>/);
+  // The story heads the guest Discover now, in its short version
+  // (features/guest, tests/guest-discover.test.js), with the same two ways in.
+  // Its button says join the waitlist while new accounts wait (guest-data NEW_ACCOUNTS_WAIT).
+  assert.match(landing, /<Story\s+compact\s+primaryClass=\{PRIMARY_PILL\}\s+welcomeEmail=\{releaseEmail\}\s+waitlist=\{NEW_ACCOUNTS_WAIT\}\s+onStart=\{\(\) => setSheet\('start'\)\}\s+onSignIn=\{\(\) => setSheet\('signin'\)\}\s+\/>/);
   // A new account from its sheet is asked what to make, not which communities to join.
   assert.match(landing, /sessionStorage\.setItem\('usernode:first-session:make', '1'\)/);
   assert.match(landing, /fetch\('\/api\/me\/first-session\/started', \{ method: 'POST', credentials: 'same-origin' \}\)/);
   const story = read('frontend/src/features/auth/story.tsx');
-  // No waitlist ask and no "learn more" link on it.
-  assert.doesNotMatch(story, /Join the waitlist|Learn more about Homeroom/i);
+  // No "learn more" link on it, and the full story asks nobody to join a
+  // waitlist. The short one over the guest Discover does, with its one
+  // button, while new accounts wait (Evan, 21 Oct 2026; pinned in
+  // tests/guest-discover.test.js).
+  assert.doesNotMatch(story, /Learn more about Homeroom/i);
+  const full = renderComponent('frontend/src/features/auth/story.tsx', 'Story', { primaryClass: 'pill', onStart() {}, waitlist: true });
+  assert.doesNotMatch(full, /Join the waitlist/i);
 });
 
 // #4037, decisions A and B on the onboarding canvas, and the owner's review of
@@ -281,6 +289,7 @@ test('"Make it" makes a private community through the dialog\'s own route', () =
   assert.equal(require('../src/services/homeroom-bot-dm').MIN_BRIEF_CHARS, 10, 'the server\'s floor');
   for (const [id, words] of [
     ['onboarding:firstSession.make.title', 'What do you want to make?'],
+    ['onboarding:firstSession.make.titleHello', 'Hi {{name}}, what do you want to make?'],
     ['onboarding:firstSession.make.briefLabel', 'What should it do?'],
     ['onboarding:firstSession.make.nameLabel', 'What should we call it?'],
     ['onboarding:firstSession.make.lookAround', 'Not sure yet? <0>Look around first</0>'],
@@ -476,7 +485,7 @@ test('with the keyboard up nothing scrolls under the status bar: the bar stays, 
   // The scroller's class string is constant.
   assert.match(src, /<div ref=\{scrollerRef\} data-first-session-make-scroll="" className="flex min-h-0 grow flex-col overflow-y-auto">/);
   // #3894's arrival is untouched: the bar and the form still rise in.
-  assert.match(src, /className=\{`mx-auto flex w-full max-w-sm grow flex-col px-4 pb-\[max\(34px,env\(safe-area-inset-bottom\)\)\] \$\{motion\}`\}/);
+  assert.match(src, /className=\{`mx-auto flex w-full max-w-sm grow flex-col px-4 pb-\[max\(34px,env\(safe-area-inset-bottom\)\)\] md:max-w-xl \$\{motion\}`\}/);
 });
 
 // Evan, 5 Oct 2026: a chosen example stayed chosen after he started writing
@@ -491,9 +500,12 @@ test('a template fills in the description and the name; words of their own let g
   // A tile is marked from `picked` alone, so it is unmarked with it.
   assert.match(src, /const on = picked === example;/);
   assert.match(src, /aria-pressed=\{on\}/);
-  // Make it sends the template's description only while it is still picked.
+  // Make it sends the template's description only while it is still picked:
+  // a ready-made app's as its description, a game's or Your own words' as
+  // the card's fallback tagline (the model writes the description from what
+  // they typed; tests/app-sketch.test.js).
   assert.match(src, /const example = template;/);
-  assert.match(src, /\.\.\.\(example \? \{ description: descriptionOf\(example, choice\) \} : \{\}\),/);
+  assert.match(src, /\.\.\.\(example \? \{ \[ready \? 'description' : 'taglineFallback'\]: descriptionOf\(example, choice\) \} : \{\}\),/);
   // The name field is not cleared by letting go of the template.
   const onChange = src.slice(src.indexOf('const next = e.target.value;'), src.indexOf("placeholder={t('onboarding:firstSession.make.briefPlaceholder')}"));
   assert.doesNotMatch(onChange, /setName\(/);
@@ -721,6 +733,36 @@ test('Make it stays reachable: a pick brings it into view, and pressing it holds
   // Room after the form only while it makes, so the keys going down leave
   // the scroller where it was.
   assert.doesNotMatch(html, /data-make-hold/);
+  assert.match(src, /\{busy \? <div aria-hidden="true" data-make-hold="" className="h-\[60vh\] shrink-0" \/> : null\}/);
+});
+
+// #5266 (navigation review, 20 Oct 2026): someone who has just been let in
+// gets a Welcome line under the question, the column is wider from a tablet
+// up, and the spacer that pushed Make it to the foot of the window is gone.
+test('the first session says Welcome, and Make it follows the rule line (#5266)', () => {
+  const src = read(`${DIR}/make.tsx`);
+  const first = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', { who: 'Jordan', onMade() {}, onLookAround() {} });
+  const create = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', { who: 'Jordan', entry: 'create', onMade() {}, onClose() {} });
+  // The line is a sentence under the one title, in the import form's own style.
+  const welcome = `<p data-make-welcome="" class="mt-2.5 text-pretty text-[16px] leading-[22px] text-zinc-500 dark:text-zinc-400">${message('onboarding:firstSession.make.welcome')}</p>`;
+  assert.ok(first.includes(`</h1>${welcome}</div>`), 'under the question, before Start from an idea');
+  assert.ok(first.indexOf('data-make-welcome') < first.indexOf('Start from an idea'));
+  // Not from Create: New project is a returning maker's, not a first arrival.
+  assert.doesNotMatch(create, /data-make-welcome|Welcome to Homeroom/);
+
+  // Wider on a computer, and only there: phones keep the 384px column, and
+  // the import form shares the frame so the two do not change width.
+  assert.match(src, /const formClass = `mx-auto flex w-full max-w-sm grow flex-col px-4 pb-\[max\(34px,env\(safe-area-inset-bottom\)\)\] md:max-w-xl \$\{motion\}`;/);
+  assert.match(src, /className=\{`mx-auto flex w-full max-w-sm grow flex-col px-4 pb-\[max\(34px,env\(safe-area-inset-bottom\)\)\] md:max-w-xl \$\{motion\}`\}/);
+  assert.match(src, /<div className="grid grid-cols-2 gap-2"/, 'the four ideas stay two by two');
+
+  // Make it follows the rule line: no spacer grows between them.
+  const ruleAt = src.indexOf('<MakeRuleLine preset={rule} onPick={setRule} who={who} />');
+  const submitAt = src.indexOf('type="submit"');
+  assert.ok(ruleAt > 0 && ruleAt < submitAt);
+  assert.doesNotMatch(src.slice(ruleAt, submitAt), /className="grow"/);
+  assert.doesNotMatch(src, /<div className="grow" \/>/);
+  // Room after the form is still held while it makes.
   assert.match(src, /\{busy \? <div aria-hidden="true" data-make-hold="" className="h-\[60vh\] shrink-0" \/> : null\}/);
 });
 

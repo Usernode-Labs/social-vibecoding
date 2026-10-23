@@ -126,12 +126,17 @@ test('the console island imports every admin module, console first', () => {
     .map((m) => m[1]);
   assert.equal(order[0], 'admin-console', 'admin-console.js is imported first');
   assert.deepEqual(order.slice(1).sort(), [
+    // #5133: Access review, who holds admin rights and the quarterly review.
+    'admin-access-review',
     'admin-analytics',
     // Apps & usage: every app's members, contributors and activity.
     'admin-apps-usage',
     // Bot configurations is the Homeroom bot's Configurations tab now,
     // imported by admin-homeroom-bot.tsx rather than by the island.
-    'admin-campaigns', 'admin-codes', 'admin-db-export',
+    'admin-campaigns', 'admin-codes',
+    // #5634: Compliance, the compliance plan's items and the weekly scan.
+    'admin-compliance',
+    'admin-db-export',
     // #4405: every custom domain a project has claimed.
     'admin-domains',
     'admin-e2e', 'admin-estimator', 'admin-featured-apps', 'admin-features',
@@ -159,6 +164,8 @@ test('the console island imports every admin module, console first', () => {
     'admin-status', 'admin-storage',
     // Support: one user's account, points, events, kudos and history.
     'admin-support',
+    // Templates: ready-made apps' prebuilt images, and Rebuild.
+    'admin-templates',
     // Test accounts: make, list and retire first-time-user test accounts.
     'admin-test-accounts',
     'admin-topochain', 'admin-users',

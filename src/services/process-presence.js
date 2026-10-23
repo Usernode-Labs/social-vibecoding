@@ -11,9 +11,8 @@
 //
 // While the process holds records, losing that connection means a reader
 // elsewhere already counts them as ended while the work goes on here: the
-// process exits, as a leader whose lock connection ends does
-// (services/leadership.js). Without records, the lock is taken again when
-// the next one is made.
+// process exits. Without records, the lock is taken again when the next one
+// is made.
 
 const crypto = require('crypto');
 const os = require('os');
@@ -32,7 +31,7 @@ function holder() {
 function createPresence({ makeClient = (config) => new Client({
   connectionString: config.databaseUrl,
   connectionTimeoutMillis: 5000,
-  application_name: 'homeroom-presence',
+  application_name: require('../db/connection-options').connectionName('presence'),
 }), onLost = () => process.exit(1) } = {}) {
   async function ensure(config) {
     if (state && !state.lost) return state.ready;

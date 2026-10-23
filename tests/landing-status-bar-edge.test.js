@@ -54,3 +54,12 @@ test('no other #landing-header rule sets a background image outside that media q
   assert.doesNotMatch(outside, /#landing-header[^{}]*\{[^}]*background-image/,
     'browser tabs and the native WebView keep their own treatment of the bar');
 });
+
+test('the bar over a running app gets the same band once installed', () => {
+  // An app opened from its own home-screen icon keeps the header
+  // (restoreFromHash), and over an app the bar is clear (#1945), so its top
+  // edge was the wallpaper's washes and blurred the same way.
+  const block = standaloneLandingBlock();
+  assert.match(block.replace(/\s+/g, ' '),
+    /#landing-header, body:has\(#app-view:not\(\.hidden\)\[data-app-surface="app"\]\) #platform-header \{ background-image: linear-gradient\( var\(--home-ground\)/);
+});

@@ -61,6 +61,22 @@ test('a local turn is never routed for a headless run', () => {
   assert.match(sessions, /const runLocally = !!lease;/);
 });
 
+test('an abandoned local turn is reported, not re-run on a worker', () => {
+  // Since headless turns never run locally, the local build has no headless
+  // retry to make: a branch for one could never run.
+  const call = 'result = await dispatchLocalBuild();';
+  const at = sessions.indexOf(call);
+  assert.ok(at > 0, 'found the local build dispatch');
+  const branch = sessions.slice(at + call.length, sessions.indexOf('} else {', at));
+  assert.equal(branch.includes('shouldRetryHeadlessTurn'), false, 'no headless retry on the local path');
+  assert.equal(branch.includes('dispatchLocalBuild'), false, 'the local build is dispatched once');
+  // Nothing re-routes an abandoned turn to a worker container; its result is
+  // the "disconnected before finishing" card, so no comment may promise one.
+  const service = fs.readFileSync(path.join(root, 'src/services/local-agent.js'), 'utf8');
+  assert.doesNotMatch(service, /re-routes an\s+(?:\/\/\s*)?abandoned turn/);
+  assert.doesNotMatch(service, /platform-worker fallback/);
+});
+
 test('a lease lookup failure downgrades to a worker rather than failing the turn', () => {
   // Anchored FROM the build gate's own comment: runScoutTool now has its own
   // `const runLocally =` earlier in the file, so a bare indexOf would slice
@@ -188,6 +204,20 @@ test('the local scout dispatch returns every field the scout tail reads', () => 
   assert.match(scoutDispatch, /mode: 'scout'/, 'the turn is enqueued as a scout turn');
 });
 
+test('both dispatches name the turn work item that waits for them, so its next claim carries them on', () => {
+  // services/turns.js: a conversation's turn is one work item, and the local
+  // turn it dispatched is taken over by that item's next claim when its
+  // process goes (localAgent.takeOverOwnedTurn), never by the leader's pass.
+  for (const [name, block] of [['build', dispatch], ['scout', scoutDispatch]]) {
+    const enqueue = block.slice(block.indexOf('localAgent.enqueueTurn(pool, {'));
+    assert.match(enqueue.slice(0, enqueue.indexOf('});')), /\n\s+owner,\n/, `the ${name} dispatch passes its owner`);
+  }
+  for (const fn of ['async function runClaudeCodeTool(', 'async function runScoutTool(']) {
+    const head = sessions.slice(sessions.indexOf(fn), sessions.indexOf(') {', sessions.indexOf(fn)));
+    assert.match(head, /\n\s+owner = null,\n/, `${fn} takes the owner its caller hands it`);
+  }
+});
+
 test('a local scout invokes NONE of the commit or staging machinery', () => {
   // This is the read-only completion path stated as an absence. A scout turn
   // that reached any of these would be putting unreviewed code on the managed
@@ -305,7 +335,6 @@ test('the handoff pipeline is shared, not forked', () => {
   // machine through it. If either caller grows its own copy, the two flows
   // drift.
   for (const fn of [
-    'serializeHandoffSubmission',
     'hasInFlightHandoffPipeline',
     'beginHandoffPipeline',
     'startHandoffPipeline',

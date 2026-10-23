@@ -289,8 +289,11 @@ export function SettingsNavDesktop() {
   const filtering = query.trim() !== '';
   return (
     <nav id="settings-nav-desktop" aria-label={t('settings:nav.sectionsName')} className="space-y-1">
+      {/* Held at the sheet's top while the rows scroll under it: opaque plane
+          colour, so they do not show through. `-mt-2.5 pt-2.5` spends the
+          sheet's own top padding, so the field sits flush. */}
       {desktop ? (
-        <div className="pb-3">
+        <div className="sticky top-0 z-10 -mt-2.5 pt-2.5 pb-3 bg-[color:var(--dc-sheet-solid)]">
           <FilterField id="settings-filter-desktop" query={query} setQuery={setQuery} hits={hits} signOutHit={signOutHit} />
         </div>
       ) : null}

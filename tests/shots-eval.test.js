@@ -1,7 +1,7 @@
 'use strict';
 
-// Before & after shots evals (services/shots-eval.js, its runner in
-// services/shots-eval-runner.js): the pure parts. A recipe is what it
+// Before & after shots evals (services/shots-eval.js, their trials the
+// shots-eval machine's, src/workflow/shots-eval/): the pure parts. A recipe is what it
 // changes from the live shots agent, the live agent is every eval's control,
 // a pair is left out when the platform failed a side, and an eval trial's
 // shots turn is billed to the platform, never to the proposal's author.
@@ -13,7 +13,6 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const evals = require('../src/services/shots-eval');
-const runner = require('../src/services/shots-eval-runner');
 const shotsAgent = require('../src/services/shots-agent');
 
 const CONFIG = { shots: { agentModel: 'claude-sonnet-5-5', maxAgentMs: 480_000 } };
@@ -123,34 +122,15 @@ test('an arm\'s numbers count its own trials, and the platform\'s failures apart
   assert.equal(arm.marks.showsRate.rate, 1);
 });
 
-test('an eval trial\'s shots turn bills the platform, within its eval\'s cap, and only while it runs', () => {
-  runner._resetForTests();
-  assert.equal(runner.billsSession(42), false);
-  assert.equal(runner.overCap(42, 1e9), false, 'a session no trial runs on has no eval cap');
-  runner.start({ query: async () => ({ rows: [] }) }, CONFIG, {
-    id: 1, attempt_id: 'a'.repeat(32), session_id: 42, eval_run_id: 3,
-  }, { executeTrial: () => new Promise(() => {}) }, { capCents: 500, spentCents: 400 });
-  assert.equal(runner.billsSession(42), true);
-  assert.equal(runner.billsSession('42'), true);
-  assert.equal(runner.billsSession(43), false);
-  runner.noteSpend(42, 12.5);
-  runner.noteSpend(42, -3);
-  runner.noteSpend(43, 99);
-  assert.equal(runner._inFlight.get(1).proxyCents, 12.5);
-  assert.equal(runner.overCap(42, 87.5), false, 'exactly at the cap is within it');
-  assert.equal(runner.overCap(42, 88), true, 'the call that would pass it is refused or cut off');
-  runner._resetForTests();
-  assert.equal(runner.billsSession(42), false);
-});
-
 test('the proxy sends an eval trial\'s calls on the platform key, gated by the eval, and adds them to the trial', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'anthropic-proxy.js'), 'utf8');
   const branch = src.slice(src.indexOf('let shotsEval = null;'), src.indexOf('const isSyncTurn = '));
-  assert.match(branch, /turnMode = workerMod \? await workerMod\.turnModeFor\(sessionId\)/, 'the turn\'s mode, whichever process runs it');
-  assert.match(branch, /if \(turnMode === 'shots'\)/, 'an eval turn is a shots turn');
-  assert.match(branch, /evalRunner\.billsSession\(sessionId\)/, 'the runner here bills the trial');
-  assert.match(branch, /evalRunner\.remoteTrialFor\(pool, sessionId\)[\s\S]*evalRunner\.remoteOverCap\(remote, extra\)[\s\S]*evalRunner\.noteRemoteSpend\(pool, remote\.trialId, cents\)/,
-    'a trial another process runs is billed on its row (docs/plans/draining-releases.md)');
+  // Which turn is a trial's is read from its durable record, whichever
+  // process runs it and whether or not the one that dispatched it is alive
+  // (an unknown mode is read too: that is a turn whose process is gone).
+  assert.match(branch, /if \(turnMode === 'shots' \|\| turnMode == null\) \{/);
+  assert.match(branch, /require\('\.\.\/services\/shots-eval'\)\.billFor\(pool, sessionId\)/);
+  assert.doesNotMatch(branch, /evalRunner|billsSession|remoteTrialFor/, 'never this process\'s memory');
   assert.match(branch, /shotsEval\.overCap\(0\)[\s\S]*budget_exceeded/, 'an eval at its cap is refused before the call');
   assert.match(branch, /apiKey: config\.anthropicApiKey/, 'the platform key pays');
   assert.match(branch, /shouldKill: \(currentCallCents\) => \(shotsEval\.overCap\(currentCallCents\)/, 'a call that would pass the cap is cut off');
@@ -158,21 +138,12 @@ test('the proxy sends an eval trial\'s calls on the platform key, gated by the e
   assert.doesNotMatch(branch, /noteAgentSpend|userBudgetCache|systemBudgetCache|loadUserApiKey/,
     'never the author\'s allowance or key, the system bucket, or the change\'s ledger');
   assert.ok(src.indexOf('let shotsEval = null;') < src.indexOf('limits.resolveCaps('), 'it is decided before any allowance is read');
-});
-
-test('the arm\'s prompts reach the shots agent, and what Claude Code reports is kept', async () => {
-  const seen = [];
-  const agent = {
-    dispatch: async (_cfg, options) => { seen.push(options); return { backend: 'claude_code', result: { costUsd: 0.42 } }; },
-  };
-  const entry = { proxyCents: 0, reportedCents: 0 };
-  const resolved = evals.resolveRecipe(CONFIG, { guidance: 'Close the toast first.', taskPrompt: 'Shoot it.' });
-  const prompted = runner.promptedAgent(resolved, entry, agent);
-  await prompted.dispatch(CONFIG, { runId: 'r', timeoutMs: 1 }, {});
-  assert.equal(seen[0].systemPrompt, resolved.systemPrompt);
-  assert.equal(seen[0].taskPrompt, 'Shoot it.');
-  assert.equal(seen[0].runId, 'r', 'everything else the pipeline passes goes through');
-  assert.equal(Math.round(entry.reportedCents * 100) / 100, 42);
+  // The trial is the turn's owner's (the eval machine's agent work); a turn
+  // nothing owns is no trial's.
+  const evalSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'shots-eval.js'), 'utf8');
+  const bill = evalSrc.slice(evalSrc.indexOf('async function billFor('), evalSrc.indexOf('async function noteReported('));
+  assert.match(bill, /if \(!turn \|\| turn\.mode !== 'shots' \|\| !turn\.owner\) return null;\s*if \(turn\.owner\.machine !== 'shots-eval'\) return null;/);
+  assert.doesNotMatch(bill, /telemetryCorrelationId|proxy_cents = proxy_cents/);
 });
 
 test('the shots agent takes an eval\'s prompts and every proposal\'s own run takes the live ones', async () => {

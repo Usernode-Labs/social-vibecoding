@@ -94,7 +94,6 @@ async function runCleanup(server, { listener, pool, ...drainOptions }) {
     await server.cleanup();
   } finally {
     process.exit = realExit;
-    if (drainOptions.leadership !== undefined) server.__setShutdownTargets({ leadership: null });
   }
   return order;
 }
@@ -109,44 +108,30 @@ async function until(check, ms = 3000) {
 }
 
 // FIRST in the file, deliberately: once any cleanup() below has run the
-// process is shutting down for good, and a leader timer refuses to start.
+// process is shutting down for good.
 //
-// Through the whole drain the leader's timers used to keep firing — the
-// eligible-merge sweep, the drift poller, main-watch, app-heal — because
-// cleanup() cleared only the handles server.js kept, so a merge or a
-// rebuild could start moments before the exit cut it. Every one of them is
-// a leader timer now (src/services/leader-timers.js): cleanup() stops them
-// all as it begins, and the tick already running is drained, not cut.
-test('leader timers stop as shutdown begins, and the tick under way finishes before the pool closes', async () => {
+// Background work registered with services/inflight-work.js (a merge pass,
+// a write after the answer) is drained, not cut: cleanup() waits for what is
+// under way before the pool closes.
+test('background work under way finishes before the pool closes', async () => {
   const { server, logs } = loadServer();
-  const leaderTimers = require('../src/services/leader-timers');
+  const inflightWork = require('../src/services/inflight-work');
   const seq = [];
-  let started = 0;
-  leaderTimers.every('test-eligible-merge-sweep', async () => {
-    started += 1;
-    const n = started;
-    seq.push(`tick ${n} started`);
+  inflightWork.track('test-merge-pass', async () => {
+    seq.push('pass started');
     await new Promise((r) => setTimeout(r, 250));
-    seq.push(`tick ${n} finished`);
-  }, 40);
-  assert.ok(await until(() => started > 0), 'the timer runs while this process leads');
-  const startedBeforeShutdown = started;
-
+    seq.push('pass finished');
+  });
   const startedAt = Date.now();
   const pool = fakePool({ endImpl: async () => { seq.push('poolEnd'); } });
   const order = await runCleanup(server, { listener: fakeListener(), pool });
   const elapsed = Date.now() - startedAt;
 
   assert.deepEqual(order, ['exit:0']);
-  assert.equal(started, startedBeforeShutdown, 'no tick starts once shutdown has begun (the interval is 40ms)');
-  assert.equal(leaderTimers.has('test-eligible-merge-sweep'), false, 'cleared');
-  assert.deepEqual(leaderTimers.snapshot(), []);
-  assert.equal(seq[seq.length - 1], 'poolEnd', 'every tick under way finished before the pool closed');
-  assert.equal(seq.filter((e) => / finished$/.test(e)).length, startedBeforeShutdown);
-  assert.ok(elapsed >= 150, `cleanup waited for the tick (${elapsed}ms)`);
+  assert.deepEqual(seq, ['pass started', 'pass finished', 'poolEnd'], 'the pass finished before the pool closed');
+  assert.ok(elapsed >= 150, `cleanup waited for the pass (${elapsed}ms)`);
   const draining = logs.find((l) => l.msg === 'Draining in-flight requests and background work');
-  assert.ok(draining.data.timersStopped >= 1);
-  assert.ok(draining.data.background.some((e) => e.name === 'timer:test-eligible-merge-sweep'));
+  assert.ok(draining.data.background.some((e) => e.name === 'test-merge-pass'));
   assert.ok(logs.some((l) => l.msg === 'In-flight requests and background work drained'));
 });
 
@@ -265,7 +250,7 @@ test('shutdown marks no shots run: they are the shots machine\'s, carried on by 
   assert.doesNotMatch(src, /inFlightRunSnapshot|SHUTDOWN_INTERRUPTED_REASON|shots-orchestrator'\)\.inFlightSnapshot/);
 });
 
-test('shutdown hands its checks runs to the next leader before closing the pool', async () => {
+test('shutdown hands its checks runs to the next process before closing the pool', async () => {
   // 7 Oct 2026: the new leader's boot harvest ran while the rows the old
   // Pod had been harvesting still carried its heartbeat, so it seated
   // neither, and the stale sweep started both runs over. The runs left to
@@ -286,7 +271,7 @@ test('shutdown hands its checks runs to the next leader before closing the pool'
     const pool = fakePool({ endImpl: async () => { order.push('poolEnd'); } });
     await runCleanup(server, { listener: fakeListener(), pool });
     assert.deepEqual(order, ['released', 'poolEnd']);
-    const line = logs.find((l) => l.msg === 'Handed this process\'s checks runs to the next leader on shutdown');
+    const line = logs.find((l) => l.msg === 'Handed this process\'s checks runs to the next process on shutdown');
     assert.deepEqual(line.data, { runs: 2, timedOut: false });
 
     order.length = 0;
@@ -366,9 +351,50 @@ test('the workflow runtime stops its loops as shutdown begins, its work only aft
     'chosen with the bot\'s loops, before the short drain\'s listener closes');
   assert.ok(drained > shortClose && longClose > drained && stoppedAfter > drained,
     'a process finishing its work closes its listener and stops its workflow work after the drain');
-  assert.match(body, /await Promise\.race\(\[\n\s+Promise\.all\(\[[^\]]*\bworkflowStop\b[^\]]*\]\)\.then\(\(\) => shutdownPool\.end\(\)\),/,
+  assert.match(body, /await Promise\.race\(\[\n\s+workflowStop\.then\(\(\) => shutdownPool\.end\(\)\),/,
     'its stop (each build\'s lease given up) is awaited before the pool ends, inside the pool close\'s bound');
   assert.doesNotMatch(body, /homeroom-bot-drain|waitForSafePoint|botDeadlineMs/, 'and nothing waits for the bot\'s builds');
+});
+
+test('a draining process shrinks its pools as its drain begins: main, workflow, database operations, debug', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+  // Item 4, the connection budget: two releases draining per role are
+  // counted at the drain sizes, so every drain shrinks first.
+  const drain = src.slice(src.indexOf('async function drainUntilIdle('), src.indexOf("process.on('SIGTERM', cleanup);"));
+  const announced = drain.indexOf('await announced;');
+  const shrunk = drain.indexOf('shrinkPoolsForDrain(workflowPlatform)');
+  const waits = drain.indexOf('await drain.untilIdle(');
+  assert.ok(announced > 0 && shrunk > announced && waits > shrunk, 'once the successor is announced, before the wait');
+  const shrink = src.slice(src.indexOf('function shrinkPoolsForDrain('), src.indexOf('async function drainUntilIdle('));
+  // Still above its drain sizes when another process of its role starts:
+  // it hands its work over, first of the reasons to (the budget has room for
+  // one such process per role, in the surge slot).
+  const handover = drain.indexOf("if (retainedAboveDrain(workflowPlatform) > 0 && (await processes.startedSinceDrain()) > 0) { why = 'retained'; return true; }");
+  assert.ok(handover > waits && handover < drain.indexOf('processes.newerDraining()'), 'asked in superseded, before the others');
+  // It says what it still holds above its drain sizes once it shrank, and
+  // as that changes, until its wait ends.
+  const reported = drain.indexOf('  report();');
+  assert.ok(reported > drain.indexOf('shrinkPoolsForDrain(workflowPlatform)') && reported < waits);
+  assert.ok(drain.indexOf('clearInterval(reporting);') > waits);
+  assert.match(drain, /const report = \(\) => processes\.setAboveDrain\(retainedAboveDrain\(workflowPlatform\)\)/);
+  // Starting, a process waits until no older one it replaces holds more,
+  // after it registered (which is what makes them hand over) and before any
+  // of its work or its listener.
+  const boot = src.indexOf('await processes.start({ pool: getPool(config), role: ownRole });');
+  const gate = src.indexOf('const room = await processes.waitForRoom();');
+  assert.ok(boot > 0 && gate > boot, 'after registering');
+  assert.ok(gate < src.indexOf("startWorkflowClients(config)") && gate < src.indexOf("startWorkflow(config, { loops: false })")
+    && gate < src.indexOf('const server = app.listen(config.port'), 'before its work and its listener');
+  const retained = src.slice(src.indexOf('function retainedAboveDrain('), src.indexOf('async function drainUntilIdle('));
+  for (const part of ["require('./src/db/pool').drainExcess()", 'workflowPlatform.drainExcess()', "require('./src/services/db-manager').drainExcess()"]) {
+    assert.ok(retained.includes(part), part);
+  }
+  for (const call of ["require('./src/db/pool').shrinkForDrain(config)", 'workflowPlatform.shrinkForDrain(config)',
+    "require('./src/services/db-manager').shrinkForDrain()", "require('./src/services/debug-access').closePool()"]) {
+    assert.ok(shrink.includes(call), call);
+  }
 });
 
 test('cleanup survives a listener that throws on close', async () => {
@@ -709,13 +735,11 @@ test('preStop, the drain and the rest of cleanup fit inside the platform Pod\'s 
   // included. After the drain, cleanup takes each of its bounded steps in
   // turn: the handler drain and the worker wait (together), the Mayor's
   // turns ended, the build marks, the checks hand-over and
-  // this process's row, the pool close; then the leader lock: a second is
-  // allowed for that.
+  // this process's row, the pool close.
   const afterDrainMs = serverModule.DRAIN_TIMEOUT_MS
     + 3000
     + 3 * serverModule.BUILD_SHUTDOWN_MARK_TIMEOUT_MS
-    + serverModule.POOL_CLOSE_TIMEOUT_MS
-    + 1000;
+    + serverModule.POOL_CLOSE_TIMEOUT_MS;
   assert.ok(preStopMs + afterDrainMs < marginMs,
     `preStop ${preStopMs} + the rest ${afterDrainMs} = ${preStopMs + afterDrainMs}ms must stay below the grace's margin `
     + `over the drain (${marginMs}ms), or the kubelet SIGKILLs mid-cleanup`);
@@ -735,33 +759,25 @@ test('preStop, the drain and the rest of cleanup fit inside the platform Pod\'s 
 // its loops as shutdown begins (the test above), and a build already under
 // way is its work item's, which the next leader carries on. A build asked
 // for in this process with no runtime starts nothing.
-test('the gate: once shutdown has begun no bot build starts here, and the bench lane starts no trial', async () => {
-  const fs = require('node:fs');
-  const path = require('node:path');
+test('the gate: once shutdown has begun no bot build starts here', async () => {
   const buildRuns = require('../src/services/build-runs');
   lifecycleModule.setShuttingDown();
   await assert.rejects(buildRuns.start({ pool: null, config: {}, target: 'live', id: 79 }), (err) => err.notStarted === true,
     'a build asked for while the process stops is left for the next leader');
-  const bench = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'bench', 'lane.js'), 'utf8');
-  assert.match(bench, /function shuttingDown\(\) \{\n\s+try \{ return !!require\('\.\.\/lifecycle'\)\.isShuttingDown\(\); \} catch \{ return false; \}\n\}/);
-  assert.match(bench, /if \(shuttingDown\(\)\) \{ out\.paused = 'stopped'; break; \}/, 'checked before each trial the lane would start');
+  // (A bench trial is granted by the bench lane's machine, its build the
+  // kernel's work, which any process running the workflow takes: nothing
+  // starts here for a stopping process to hold.)
 });
 
 // docs/plans/draining-releases.md: on the platform's own Kubernetes Pods a
-// release no longer cuts the work the Pod started. It stops leading at once,
-// keeps its listener open (a request it still answers) and
-// finishes what it holds; only then does it close, hand over what is left and
-// exit.
-test('a Pod a release replaced resigns at once, keeps listening while it finishes what it holds, then exits', async () => {
+// release no longer cuts the work the Pod started. It keeps its listener open
+// (a request it still answers) and finishes what it holds; only then does it
+// close, hand over what is left and exit.
+test('a Pod a release replaced keeps listening while it finishes what it holds, then exits', async () => {
   const { server, logs } = loadServer();
   const processes = require('../src/services/processes');
   const seq = [];
   const listener = fakeListener();
-  const leadership = {
-    identity: 'test', isLeader: true,
-    resign: async () => { seq.push('resign'); },
-    stop: async () => { seq.push('lock released'); },
-  };
   const release = processes.hold('session', 4242);
   setTimeout(() => {
     seq.push(`turn finished (listener ${listener.events.includes('close') ? 'closed' : 'open'})`);
@@ -769,11 +785,10 @@ test('a Pod a release replaced resigns at once, keeps listening while it finishe
   }, 300);
   const startedAt = Date.now();
   const order = await runCleanup(server, {
-    listener, pool: fakePool(), finishesWork: true, drainMs: 20000, successor: async () => true, leadership,
+    listener, pool: fakePool(), finishesWork: true, drainMs: 20000, successor: async () => true,
   });
   assert.deepEqual(order, ['exit:0']);
-  assert.deepEqual(seq, ['resign', 'turn finished (listener open)', 'lock released'],
-    'leadership goes first, the work finishes with the listener open, and the exit follows');
+  assert.deepEqual(seq, ['turn finished (listener open)'], 'the work finishes with the listener open, and the exit follows');
   assert.ok(Date.now() - startedAt >= 300, 'it waited for the turn');
   assert.ok(listener.events.includes('close'), 'the listener closes once the work is done');
   assert.ok(logs.some((l) => l.msg === "Finished this process's work"), 'and says so');
@@ -782,18 +797,17 @@ test('a Pod a release replaced resigns at once, keeps listening while it finishe
 test('a Pod a release replaced hands over what it still holds at its drain deadline', async () => {
   const { server, logs } = loadServer();
   const processes = require('../src/services/processes');
-  const release = processes.hold('sync', 5151);
+  const release = processes.hold('handoff', 5151);
   try {
     const startedAt = Date.now();
     const order = await runCleanup(server, {
       listener: fakeListener(), pool: fakePool(), finishesWork: true, drainMs: 400, successor: async () => true,
-      leadership: { identity: 'test', resign: async () => {}, stop: async () => {} },
     });
     assert.deepEqual(order, ['exit:0']);
     assert.ok(Date.now() - startedAt < 15000, 'bounded by the deadline, not by the work');
     const handed = logs.find((l) => l.msg === "Drain deadline passed; handing the rest of this process's work over");
     assert.ok(handed, 'it says it is handing the work over');
-    assert.deepEqual(handed.data.holds, [{ kind: 'sync', ref: '5151' }], 'and what it held');
+    assert.deepEqual(handed.data.holds, [{ kind: 'handoff', ref: '5151' }], 'and what it held');
   } finally {
     release();
   }
@@ -802,16 +816,13 @@ test('a Pod a release replaced hands over what it still holds at its drain deadl
 test('with no successor that registers what it holds, a Pod keeps the cutover it always had', async () => {
   const { server, logs } = loadServer();
   const processes = require('../src/services/processes');
-  const seq = [];
   const listener = fakeListener();
   const release = processes.hold('session', 6161);
   try {
     const order = await runCleanup(server, {
       listener, pool: fakePool(), finishesWork: true, drainMs: 20000, successor: async () => false,
-      leadership: { identity: 'test', resign: async () => { seq.push('resign'); }, stop: async () => { seq.push('lock released'); } },
     });
     assert.deepEqual(order, ['exit:0']);
-    assert.deepEqual(seq, ['lock released'], 'it leads until it exits, as before');
     assert.ok(listener.events.includes('close'));
     assert.ok(logs.some((l) => l.msg === 'No process that knows what this one holds is serving; cutting over without finishing the work'));
     assert.ok(!logs.some((l) => l.msg === "Finishing this process's work before exiting"), 'and does not wait for its work');

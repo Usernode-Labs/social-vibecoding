@@ -389,3 +389,62 @@ test('rerun, stop and override keep their access rules', async (t) => {
   assert.equal(missing.status, 409);
   assert.equal(missing.body.error, 'shots_run_missing');
 });
+
+test('a dense still is served only at its own address, and only to an account in the experiment', async (t) => {
+  const session = { id: 42, app_id: 9, user_id: 7, source: 'imported', imported_pr_head_sha: 'b'.repeat(40), shots_state: 'verified' };
+  const FLAT = Buffer.from('flat-png');
+  const DENSE = Buffer.from('dense-png-at-2x');
+  const asked = [];
+  const pool = { query: async (sql, params) => {
+    if (String(sql).includes('FROM chat_sessions cs')) return { rows: [session] };
+    if (String(sql).includes('review_flow_enabled')) return { rows: [{ review_flow_enabled: params[0] === 7 }] };
+    if (String(sql).includes('FROM shot_artifacts a')) {
+      asked.push(params[3]);
+      // The query's CASE: the original only when asked for, the 1x copy otherwise.
+      return { rows: [{ data: params[3] ? DENSE : FLAT, sha256: (params[3] ? 'd' : 'f').repeat(64), content_type: 'image/png', bytes: 8 }] };
+    }
+    throw new Error(`Unexpected query: ${String(sql).slice(0, 80)}`);
+  } };
+  let userId = 7;
+  const url = `${await serve(t, {
+    pool, user: () => userId, config: { shots: { present: true } },
+    stubs: [[appAccess, 'getAppForUser', async () => ({ id: 9, slug: 'demo' })]],
+  })}/${'1'.repeat(32)}`;
+  const body = async (address) => {
+    const res = await fetch(address);
+    assert.equal(res.status, 200);
+    return [Buffer.from(await res.arrayBuffer()).toString(), res.headers.get('etag')];
+  };
+  // In the experiment: its own address serves the original; the plain one the 1x copy.
+  assert.deepEqual(await body(`${url}?density=device`), ['dense-png-at-2x', `"${'d'.repeat(64)}"`]);
+  assert.deepEqual(await body(url), ['flat-png', `"${'f'.repeat(64)}"`]);
+  // Anyone else asking for the dense address gets the 1x copy.
+  userId = 8;
+  assert.deepEqual(await body(`${url}?density=device`), ['flat-png', `"${'f'.repeat(64)}"`]);
+  assert.deepEqual(asked, [true, false, false]);
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src/routes/shots.js'), 'utf8');
+  assert.match(src, /CASE WHEN \$4 THEN COALESCE\(a\.dense_data, a\.data\) ELSE a\.data END AS data/);
+});
+
+test('a close-up is served only to an account in the experiment, at its own address', async (t) => {
+  const session = { id: 42, app_id: 9, user_id: 7, source: 'imported', imported_pr_head_sha: 'b'.repeat(40), shots_state: 'verified' };
+  const pool = { query: async (sql, params) => {
+    if (String(sql).includes('FROM chat_sessions cs')) return { rows: [session] };
+    if (String(sql).includes('review_flow_enabled')) return { rows: [{ review_flow_enabled: params[0] === 7 }] };
+    if (String(sql).includes('FROM shot_artifacts a')) {
+      return { rows: [{ data: Buffer.from('closeup-png'), sha256: 'e'.repeat(64), content_type: 'image/png', bytes: 11, variant: 'closeup' }] };
+    }
+    throw new Error(`Unexpected query: ${String(sql).slice(0, 80)}`);
+  } };
+  let userId = 7;
+  const url = `${await serve(t, {
+    pool, user: () => userId, config: { shots: { present: true } },
+    stubs: [[appAccess, 'getAppForUser', async () => ({ id: 9, slug: 'demo' })]],
+  })}/${'1'.repeat(32)}`;
+  const ok = await fetch(`${url}?density=device`);
+  assert.equal(ok.status, 200);
+  assert.equal(Buffer.from(await ok.arrayBuffer()).toString(), 'closeup-png');
+  assert.equal((await fetch(url)).status, 404, 'not at the plain address');
+  userId = 8;
+  assert.equal((await fetch(`${url}?density=device`)).status, 404, 'not to anyone else');
+});

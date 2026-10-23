@@ -62,7 +62,11 @@ function loadStatus(appRows, { sessions = [], busy = [], runtimeSnapshot } = {})
       },
     }),
   });
-  stub(ids.activeWorkers, { isSessionBusy: (id) => busy.includes(id) });
+  stub(ids.activeWorkers, {
+    isSessionBusy: (id) => busy.includes(id),
+    // Worked on by any process, as the workflow's records say.
+    busySessionsAnywhere: async (ids) => new Set(ids.map(Number).filter((id) => busy.includes(id))),
+  });
   stub(ids.runtimeStatus, {
     snapshot: async () => runtimeSnapshot || ({ resources: [], stats: {}, runtimeKind: 'docker' }),
     listDockerContainers: async () => [],
@@ -186,7 +190,7 @@ test('missing-preview reporting excludes first turns, handoffs, active work and 
     { ...session, id: 1, pr_number: null }, // First coding turn.
     { ...session, id: 2, pr_number: null, source: 'cli_handoff' },
     { ...session, id: 3, has_active_turn: true },
-    { ...session, id: 4 }, // In-memory recovery/operation.
+    { ...session, id: 4 }, // Worked on by some process (a turn's item, an operation).
     { ...session, id: 5, building: true }, // Preview build in progress (the row's phase).
     { ...session, id: 6, last_activity_at: new Date().toISOString() },
     { ...session, id: 7 }, // Submitted, idle and preview absent.

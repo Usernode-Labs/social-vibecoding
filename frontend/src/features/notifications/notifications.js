@@ -127,21 +127,11 @@ const Notifications = {
   nextBefore: null,  // { createdAt, id } | null
   hasMore: false,
   loading: false,
-  // The Messages tab's own cursor, walked by loadOlderMessages() over
-  // `?kind=conversation`. Deliberately separate from the three above: the two
-  // queries skip different rows, so sharing a cursor would let one tab's
-  // paging strand rows the other can then never reach. `msgHasMore` starts
-  // true because the tab has not asked yet — the first press is what
-  // discovers whether there is anything older.
-  msgNextBefore: null,  // { createdAt, id } | null
-  msgHasMore: true,
-  msgLoading: false,
   // #5527: the Unread tab's own cursor, walked by loadMoreUnread() over
   // `?unread=1` — pages of unread rows only, under the exact filters
-  // countUnread counts the badge with. Separate from nextBefore and
-  // msgNextBefore for the same reason those two are separate from each
-  // other: the unread query skips rows the other two keep, so advancing a
-  // shared cursor would strand rows the tab behind it can never reach.
+  // countUnread counts the badge with. Separate from nextBefore because the
+  // unread query skips rows the shared one keeps, so advancing a shared
+  // cursor would strand rows the tab behind it can never reach.
   // unreadHasMore starts false because refresh() seeds it from the first
   // page's own hasMore: every unread row newer than the first page's last
   // row is already loaded, so there is nothing to discover before asking.
@@ -232,8 +222,15 @@ const Notifications = {
       const invalidation = networkOnly
         ? `&native_invalidation=1&native_invalidation_nonce=${encodeURIComponent(invalidationNonce)}`
         : '';
-      // The boot read's: the network's answer rather than the worker's copy.
-      const fresh = !networkOnly && !!(options && options.fresh === true);
+      // EVERY READ OF THE FEED ASKS FOR THE NETWORK'S ANSWER, not only the
+      // boot read's (21 Oct 2026). Past its 1 s deadline the worker answers an
+      // API read from its copy, and this feed can take longer than that. On a
+      // socket reconnect the bell was drawn from a copy from hours before
+      // ("0" over three unread) and stayed so for 36 minutes: the worker's
+      // `api-updated` correction re-runs the visible screen's loader, never
+      // this feed's. A fresh read uses the copy only when the network fails
+      // (public/sw.js wantsFreshAnswer).
+      const fresh = !networkOnly;
       let timeout = null;
       let controller = null;
       if (networkOnly && typeof AbortController === 'function') {
@@ -380,65 +377,6 @@ const Notifications = {
     }
   },
 
-  /**
-   * Page the CONVERSATION kinds specifically, on their own cursor.
-   *
-   * The Messages tab is a client-side filter over the shared feed, so it
-   * cannot page on the shared cursor: a page of 100 older rows is 100 older
-   * rows of everything, and on a busy account it routinely contains no message
-   * at all. That is why the tab's footer link used to be a jump to All rather
-   * than a pager — it was the honest thing to offer while the only page
-   * available was the unfiltered one.
-   *
-   * `?kind=conversation` (src/routes/notifications.js) makes a filtered page
-   * possible, and this walks it on `msgNextBefore` — kept SEPARATE from
-   * `nextBefore` on purpose. Advancing the shared cursor past rows this query
-   * skipped would strand every non-message notification between the two
-   * positions, so the All tab could never reach them. Rows still land in the
-   * one shared `items` array, deduped, because both tabs render from it.
-   */
-  async loadOlderMessages() {
-    if (Notifications.msgLoading || !Notifications.msgHasMore) return;
-    Notifications.msgLoading = true;
-    Notifications._renderList();
-    try {
-      const params = new URLSearchParams({ limit: '100', kind: 'conversation' });
-      // First press has no cursor: it starts from the newest message and pages
-      // back, and the dedup below drops everything already on screen.
-      if (Notifications.msgNextBefore) {
-        params.set('before', String(Notifications.msgNextBefore.createdAt));
-        params.set('before_id', String(Notifications.msgNextBefore.id));
-      }
-      const res = await fetch(`/api/notifications?${params.toString()}`);
-      if (!res.ok) return;
-      const data = await res.json();
-      const incoming = Array.isArray(data.notifications) ? data.notifications.filter(Notifications._shown) : [];
-      const seen = new Set(Notifications.items.map((n) => n.id));
-      for (const n of incoming) {
-        if (!seen.has(n.id)) {
-          Notifications.items.push(n);
-          seen.add(n.id);
-        }
-      }
-      // Re-sort: a filtered page reaches further back than the shared cursor
-      // has, so its rows do not simply append in feed order the way loadMore's
-      // do. The list is created_at DESC with id as the tiebreak, matching the
-      // server's ORDER BY.
-      Notifications.items.sort((a, b) => {
-        const at = new Date(a.createdAt || a.created_at || 0).getTime();
-        const bt = new Date(b.createdAt || b.created_at || 0).getTime();
-        return (bt - at) || (Number(b.id) - Number(a.id));
-      });
-      Notifications.msgHasMore = !!data.hasMore;
-      Notifications.msgNextBefore = data.nextBefore || null;
-    } catch (err) {
-      console.warn('[notifications] loadOlderMessages failed', err);
-    } finally {
-      Notifications.msgLoading = false;
-      Notifications._renderList();
-    }
-  },
-
   // #5527: TRUE while the bell counts more unread notifications than the
   // list holds. `unread` is countUnread's account-wide figure — the number
   // the badge paints — and the loaded unread rows are what has been fetched
@@ -463,8 +401,7 @@ const Notifications = {
    * read as a bell of 46 over a list of 1. `?unread=1`
    * (routes/notifications.js) pages those rows directly, under the exact
    * filters the badge counts with, on a cursor of its own: advancing
-   * `nextBefore` here would strand every row between the two positions,
-   * which is exactly why msgNextBefore is separate too.
+   * `nextBefore` here would strand every row between the two positions.
    *
    * Up to `pages` batches per call. The sheet auto-fills five (500 rows) on
    * opening so a huge backlog cannot hang it; anything further waits for
@@ -506,8 +443,8 @@ const Notifications = {
         }
         // An unread-only page reaches further back than the shared cursor
         // has, so its rows do not simply append in feed order the way
-        // loadMore's do. The comparator loadOlderMessages sorts with — the
-        // server's own ORDER BY.
+        // loadMore's do. Sorted by the server's own ORDER BY: created_at
+        // DESC, id as the tiebreak.
         Notifications.items.sort((a, b) => {
           const at = new Date(a.createdAt || a.created_at || 0).getTime();
           const bt = new Date(b.createdAt || b.created_at || 0).getTime();
@@ -636,21 +573,18 @@ const Notifications = {
   // mock rows to render. Once per page load — reopening after a manual
   // dismiss would fight the user, and refresh() runs again on live events.
   //
-  // `?shot=notifications-messages` opens it ON THE MESSAGES TAB. That is
-  // React state inside the sheet, so without a URL that reaches it neither
-  // the capture pipeline nor a declared check could see the tab, its
-  // collapsed conversation rows, its "All messages" entry, or the agent
-  // session rows it draws (#2815 folded the Agents tab into it) — the
-  // platform's own rule for a screen that is otherwise only reachable by
-  // clicking. The sheet reads the same parameter for the tab; this only has
-  // to open it.
+  // #5289: `?shot=notifications-messages` opened it on the Messages tab.
+  // That tab is gone (the Messages screen, one tab away in the bar, is where
+  // conversations and agents are), so the old link still opens the sheet,
+  // on Unread like any other opening. `?shot=notifications-all` opens it on
+  // All (the sheet reads the parameter for the tab; this only opens it).
   //
   _shotOpened: false,
   _maybeShotOpen() {
     if (Notifications._shotOpened || Notifications.open) return;
     let shot = null;
     try { shot = new URLSearchParams(location.search).get('shot'); } catch { /* ignore */ }
-    if (shot !== 'notifications' && shot !== 'notifications-messages') return;
+    if (shot !== 'notifications' && shot !== 'notifications-messages' && shot !== 'notifications-all') return;
     Notifications._shotOpened = true;
     // The list is the Notifications SHEET now (Streamlined Concept), so the
     // deep link resolves a screen underneath and presents over it rather
@@ -731,6 +665,27 @@ const Notifications = {
     }
   },
 
+  // #5580: what happened on the request or proposal notification `id` is
+  // about (GET /api/notifications/:id/history: { steps }, newest first), for
+  // the history a card in the sheet opens to. Null when there is none or the
+  // read failed; the card says which it was not able to tell apart.
+  async loadHistory(id) {
+    const demo = new URLSearchParams(location.search).get('demo') === '1' ? '?demo=1' : '';
+    try {
+      const res = await fetch(`/api/notifications/${encodeURIComponent(id)}/history${demo}`, { credentials: 'same-origin' });
+      if (!res.ok) return null;
+      const data = await res.json();
+      return data && Array.isArray(data.steps) ? data : null;
+    } catch (_) {
+      return null;
+    }
+  },
+
+  // #5580: who is signed in, so a card's history says "You" for them.
+  viewerUsername() {
+    return (window.App && App.user && typeof App.user.username === 'string') ? App.user.username : null;
+  },
+
   // #5406: mark every unread notification from ONE app read — the per-app
   // "Mark read" button on the sheet's Unread tab. A busy app can be cleared
   // in one tap while every other app's unread rows stay where they are.
@@ -800,7 +755,12 @@ const Notifications = {
     // updates live, instead of waiting for the network round-trip (which
     // is why a clicked item used to stay unread until close/reopen).
     const item = Notifications.items.find((n) => n.id === id);
-    if (item && !item.readAt) {
+    // Already read here: whatever read it (a clear, a conversation read, the
+    // server's own rows) has told the server, and a second request would only
+    // race it for the count (21 Oct 2026: opening a folded row sent the row's
+    // own read beside its group's, and the slower answer won).
+    if (item && item.readAt) return true;
+    if (item) {
       item.readAt = new Date().toISOString();
       if (Notifications.unread > 0) Notifications.unread -= 1;
       Notifications._reconcileCompletionTitle();
@@ -838,23 +798,35 @@ const Notifications = {
   // row standing for `count` of them, unread together
   // (collapseConversationRuns). Clearing only the newest would split the run
   // and put an unread row for the rest straight back where the cleared one
-  // was, so the whole run the row draws is cleared, each through the one-id
-  // path the row click uses.
+  // was, so the whole run the row draws is cleared, in one request with the
+  // rest of the clear.
   //
   // OPTIMISTIC, AND PUT BACK ON FAILURE. A swipe has taken the row off the
   // screen before anything is asked (the kit collapses it, then calls in), so
   // waiting for the server the way markAllRead does is not on offer. What
   // markAllRead's rule protects still holds: a clear the server refused must
   // not leave the screen claiming it worked. Every member is flipped here
-  // first, in one render, so the row leaves in one step; _markOneRead then
-  // finds each one already read and does only its request and its reconcile
-  // of the server's count. Anything refused is unread again, the count goes
-  // back up, and a toast says so.
+  // first, in one render, so the row leaves in one step; one request then
+  // reads them all (_markIdsRead) and the server's count is adopted.
+  // Anything refused is unread again, the count goes back up, and a toast
+  // says so.
   //
   // Resolves true when the row's notifications are read, false when the
   // server refused some of them.
-  async clearNotification(id) {
-    const members = Notifications._rowMembers(id).filter((n) => !n.readAt);
+  //
+  // #5289: a row on the Unread tab can also stand for several notifications
+  // of ONE kind in ONE project ("3 changes you voted on are live"). Those
+  // are not consecutive, so the sheet hands their ids over as `groupIds`,
+  // and each one's own row members are cleared with it.
+  async clearNotification(id, groupIds) {
+    const ids = [id, ...(Array.isArray(groupIds) ? groupIds : [])];
+    const seen = new Set();
+    const members = ids.flatMap((rowId) => Notifications._rowMembers(rowId))
+      .filter((n) => {
+        if (n.readAt || seen.has(n.id)) return false;
+        seen.add(n.id);
+        return true;
+      });
     if (!members.length) {
       // Nothing left to clear: another tab, or a refresh, got there first.
       // Re-render anyway. A full swipe has already taken the row out of the
@@ -873,23 +845,60 @@ const Notifications = {
     // #449's reason, for one row: an open chat may be drawing a dot for a
     // mention that was just cleared.
     window.GroupChat?.reconcileDotsFromNotifications?.();
-    const answers = await Promise.all(members.map((n) => Notifications._markOneRead(n.id)));
-    if (answers.every(Boolean)) return true;
+    // ONE REQUEST FOR THE WHOLE CLEAR (21 Oct 2026). A story card is several
+    // notifications, and one request per member raced: each answer carried
+    // the count after its own row only, so the slower one put "Unread (2)"
+    // back on screen after the clear had said 1. `{ ids }` reads them all in
+    // one statement and answers with the count after all of them.
+    if (await Notifications._markIdsRead(members.map((n) => n.id))) return true;
     // A refresh that landed meanwhile replaced `items` with the server's own
     // rows, which already say what is true. Only a notification still in
-    // hand, still carrying this clear's stamp, is this clear's to put back.
-    const refused = members.filter((n, index) => !answers[index]
-      && n.readAt === stamp && Notifications.items.includes(n));
+    // hand, still carrying this clear's stamp, is this clear's to put back,
+    // and the count goes back up by what was put back.
+    const refused = members.filter((n) => n.readAt === stamp && Notifications.items.includes(n));
     for (const n of refused) n.readAt = null;
-    // The count goes back up by what was put back, unless a request that did
-    // go through has already replaced it with the server's own figure, which
-    // counts the refused ones as the unread they still are.
-    if (answers.every((ok) => !ok)) Notifications.unread += refused.length;
+    Notifications.unread += refused.length;
     Notifications._renderBadge();
     Notifications._renderList();
     window.GroupChat?.reconcileDotsFromNotifications?.();
     window.PlatformUI?.toast?.(t('notifications:toast.clearFailed'));
     return false;
+  },
+
+  // #5289: a grouped row ("3 changes you voted on are live") opens its
+  // NEWEST member, the one it is drawn as, and reading it reads the whole
+  // group: the rest are cleared with it, so the row leaves Unread in one tap
+  // rather than coming back as "2 changes…". Opening every member is not on
+  // offer (they are different pages), and the group says how many there
+  // were before it went; All still lists each one.
+  openGroupRow(id, groupIds) {
+    const rest = (Array.isArray(groupIds) ? groupIds : []).filter((other) => other !== id);
+    // The opened one with the rest, in the clear's one request: the click's
+    // own read finds it already read and asks nothing (_markOneRead).
+    void Notifications.clearNotification(id, rest);
+    return Notifications._onItemClick(id);
+  },
+
+  // The server side of a clear: `{ id }` for one notification (the row
+  // click's request), `{ ids }` for several. Adopts the server's count,
+  // which is the count after every one of them. Resolves whether it took.
+  async _markIdsRead(ids) {
+    try {
+      const res = await fetch('/api/notifications/read', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(ids.length === 1 ? { id: ids[0] } : { ids }),
+      });
+      if (!res.ok) return false;
+      const data = await res.json();
+      Notifications.unread = data.unread || 0;
+      Notifications.messageUnread = Number(data.messageUnread) || 0;
+      Notifications._renderBadge();
+      return true;
+    } catch (err) {
+      console.warn('[notifications] clear failed', err);
+      return false;
+    }
   },
 
   // The notifications one sheet row stands for: its own, plus the rest of
@@ -1296,6 +1305,14 @@ const Notifications = {
       window.location.hash = `#app/${encodeURIComponent(item.appSlug)}`;
       return;
     }
+    // #4396: a project the reader joined while it was made is open: the
+    // row opens the app itself, which is what there now is to see.
+    if (item.kind === 'project_opened' && item.appSlug) {
+      Notifications._dismissSheetForNav();
+      if (typeof App !== 'undefined' && App.openAppTab) return App.openAppTab(item.appSlug, 'app');
+      window.location.hash = `#app/${encodeURIComponent(item.appSlug)}`;
+      return;
+    }
     if (item.kind === 'vote_digest' && !item.appSlug) {
       Notifications._dismissSheetForNav();
       window.UsernodeReact?.workshop?.setTab?.('needs');
@@ -1470,6 +1487,17 @@ const Notifications = {
     return Math.max(0, Notifications.unread - (Notifications.messageUnread || 0)) + Notifications.invites.length;
   },
 
+  // #5289: ONE COUNT, SHOWN ONE WAY. The bell said 99+, the sheet's Unread
+  // tab said (81) and the browser tab said (300): three numbers for one
+  // question. All three now read _badgeTotal(), the server's account-wide
+  // unread (messages included, since the bell owns them) plus the pending
+  // invites pinned at the top of the sheet, and all three print it through
+  // this one cap. The tab used to sum the rows it had paged in, which is a
+  // count of the LIST, not of what is waiting; it is now the bell's number.
+  _badgeText(count) {
+    return count > 99 ? '99+' : String(count);
+  },
+
   // Of the loaded items, the ones that are a finished dev session
   // specifically. Published on the bell badge as `data-session-done`, so a
   // route check can assert the badge is showing BECAUSE a session finished
@@ -1513,7 +1541,7 @@ const Notifications = {
       const el = document.getElementById(id);
       if (!el) return;
       if (count > 0) {
-        el.textContent = count > 99 ? '99+' : String(count);
+        el.textContent = Notifications._badgeText(count);
         el.classList.remove('hidden');
       } else {
         el.classList.add('hidden');
@@ -1546,6 +1574,10 @@ const Notifications = {
     // freshly-built array every time would notify every subscriber (the
     // screen, the pinned sections and every session row) on every badge
     // repaint — and _renderBadge runs on each WS event and each refresh.
+    // #5289: the sheet's Unread tab prints the same number, from the store.
+    if (Notifications._store && Notifications._store.get().badgeTotal !== notifCount) {
+      Notifications._store.set({ badgeTotal: notifCount });
+    }
     if (Notifications._store) {
       const ids = Notifications.items
         .filter((n) => isSessionNotif(n) && !n.readAt && n.sessionId)
@@ -1565,9 +1597,10 @@ const Notifications = {
   // The tab's title keeps counting everything, messages too (#18): it is the
   // one number a tab in the background shows, and it never lit a badge.
   _updateTitle() {
-    const base = document.title.replace(/^\(\d+\)\s*/, '');
-    const total = Notifications.unread + Notifications.invites.length;
-    if (total > 0) document.title = `(${total}) ${base}`;
+    // "(99+)" as well as "(12)": the prefix is the bell's own text (#5289).
+    const base = document.title.replace(/^\(\d+\+?\)\s*/, '');
+    const total = Notifications._badgeTotal();
+    if (total > 0) document.title = `(${Notifications._badgeText(total)}) ${base}`;
     else document.title = base;
   },
 
@@ -2005,8 +2038,6 @@ const Notifications = {
         // pager follows the server cursor even while the drawer's is off.
         screenCanLoadMore: Notifications.hasMore,
         loadingMore: Notifications.loading,
-        messagesCanLoadMore: Notifications.msgHasMore,
-        loadingOlderMessages: Notifications.msgLoading,
         // #5527: the Unread tab's own pager. Offered only while the bell
         // counts more unread than the list has loaded — a viewer who is
         // caught up (or whose whole unread fit on the first page) gets
@@ -2037,9 +2068,6 @@ const Notifications = {
       canLoadMore: Notifications.hasMore,
       screenCanLoadMore: Notifications.hasMore,
       loadingMore: Notifications.loading,
-      // The Messages tab's pager, on its own cursor — see loadOlderMessages().
-      messagesCanLoadMore: Notifications.msgHasMore,
-      loadingOlderMessages: Notifications.msgLoading,
       // #5527: the Unread tab's pager, on its own cursor — see loadMoreUnread().
       unreadCanLoadMore: Notifications.unreadHasMore && Notifications._unreadShort(),
       loadingUnread: Notifications.unreadLoading,
@@ -2448,25 +2476,10 @@ function collapseConversationRuns(items) {
 // collapse, so a lone notification's view is byte-identical to what it was.
 function screenViews(items) {
   return collapseConversationRuns(items).map((run) => {
-    const view = AGENT_NOTIF_KINDS.has(run.item && run.item.kind)
-      ? { ...rowView(run.item), agent: true } : rowView(run.item);
+    const view = rowView(run.item);
     return run.count > 1 ? { ...view, count: run.count } : view;
   });
 }
-
-// #2815: what an AGENT did on your behalf — a session that finished, a
-// proposal run that came back, a question it asked, work it submitted or
-// shared. The sheet's Messages tab lists these beside the conversations and
-// the running sessions themselves, the way the Messages screen already puts
-// agents in its chats, so the bell has no separate Agents tab. Carried as a
-// flag for the same reason `conversation` is: the tab must never re-derive
-// the set from `kind` and drift from it. stale_pr and check_failed stay out:
-// they are about a proposal, not about an agent talking back to you.
-// #3181: a session that stopped before finishing is an agent talking back
-// too, so it lists beside the one that finished.
-const AGENT_NOTIF_KINDS = new Set([
-  'session_done', 'session_stalled', 'auto_solve_done', 'agent_awaiting_input', 'connector_submitted',
-]);
 
 // One notification row, as data. It has ONE renderer — ScreenRow in
 // ./notifications-sheet.tsx — which draws THREE lines:
@@ -2725,6 +2738,33 @@ const CHANNEL_ASKED_IDS = ['notifications:row.channel.askedIn', 'notifications:r
 const CHANNEL_SAID_IDS = ['notifications:row.channel.saidIn', 'notifications:row.channel.saidInUnnamed',
   'notifications:row.channel.someoneIn', 'notifications:row.channel.someoneInUnnamed'];
 
+// #5580: the request (GitHub issue number) a row is about, when one is known:
+// the server's story columns, the bot's rows' own (serialize puts the number
+// in storyIssueNumber), or the request kinds' `detail`.
+const REQUEST_DETAIL_KINDS = new Set(['issue_opened', 'issue_mention', 'issue_thread_reply']);
+function storyIssueOf(n) {
+  const story = Number(n.storyIssueNumber);
+  if (Number.isSafeInteger(story) && story > 0) return story;
+  if (REQUEST_DETAIL_KINDS.has(n.kind) && /^\d+$/.test(String(n.detail || ''))) return Number(n.detail);
+  return null;
+}
+// One story per request in a project, else per proposal; null for a row
+// about neither (it stays a card of its own).
+function storyKeyOf(n) {
+  const app = n.appId != null ? n.appId : 'none';
+  const issue = storyIssueOf(n);
+  if (issue) return `r:${app}:${issue}`;
+  const session = Number(n.storySessionId);
+  if (Number.isSafeInteger(session) && session > 0) return `s:${app}:${session}`;
+  return null;
+}
+function storyRefOf(n) {
+  const bot = BUILD_KIND_MOMENTS[n.kind] || isBotUsername(n.sourceUsername) ? parseBotDetail(n.detail) : null;
+  const number = storyIssueOf(n) || (Number(n.storyPrNumber) > 0 ? Number(n.storyPrNumber) : null);
+  if (!number) return null;
+  return { number, title: n.storyTitle || (bot && bot.requestTitle) || null };
+}
+
 function rowView(n) {
   // #103: keep the violet left line on every row, read or unread, so a
   // notification never "loses its line" when read. Only the background
@@ -2741,11 +2781,16 @@ function rowView(n) {
   const who = n.sourceUsername ? n.sourceUsername : t('notifications:row.unknownPerson');
   const base = {
     id: n.id,
+    // #5289: what the sheet's Unread groups fold repeats on: the kind, with
+    // the label it printed (a kind can print more than one label).
+    kind: n.kind,
     unread: !n.readAt,
     // #18 (19 Oct 2026 polish board): a plain message in a conversation or a
     // channel, which the bell leaves to the Messages tab: the sheet's Unread
     // tab neither lists nor counts it, so it says what the badge says.
-    plainMessage: n.kind === 'conversation_message' || n.kind === 'channel_message',
+    // #5580: the Homeroom bot's reply about a project is the exception: it
+    // carries that project, files under it on Unread, and the bell counts it.
+    plainMessage: (n.kind === 'conversation_message' && n.appId == null) || n.kind === 'channel_message',
     // #4769: whether the user has bookmarked this row — the feed row's
     // bookmark button and the pinned section both read it. A save is not a
     // read state; the two flags never derive from each other.
@@ -2758,9 +2803,19 @@ function rowView(n) {
     createdAtMs: Date.parse(n.createdAt) || 0,
     who,
     appLine,
-    // Which app the row came from, for the Unread tab's per-app groups
-    // (#5406). Conversation kinds carry no app, so they group under "Other".
+    // Which app the row came from, for the Unread tab's per-project stacks
+    // (#5406, #5580). Conversation kinds carry no app, except the Homeroom
+    // bot's news about a project, which carries that project.
     appId: n.appId ?? null,
+    // #5580: the project's own name, for the heading of the stack a row
+    // files under (`appLine` is what its meta line says, and a bot row's
+    // says more than the name).
+    appName: n.appName || null,
+    // #5580: the request or proposal this row is about. A project's stack
+    // folds one story's news into one card by `storyKey`; `storyRef` is what
+    // a card about it says it is on ("on #5588") and what its history is.
+    storyKey: storyKeyOf(n),
+    storyRef: storyRefOf(n),
     // Meta-line attribution. Null unless the source user actually DID this.
     by: null,
     // The kind line. Every branch below overwrites it; '' would render a
@@ -2862,9 +2917,10 @@ function rowView(n) {
       // account sent, a moment without its detail included.
       ...(BUILD_KIND_MOMENTS[n.kind] || isBotUsername(n.sourceUsername) ? { bot: true } : {}),
       by: n.sourceUsername || null,
-      // What the sheet's Messages tab filters on. Carried as a flag rather
-      // than re-deriving it there from `kind`: CONVERSATION_NOTIF_KINDS lives
-      // in this module and the tab must never drift from the set the rest of
+      // A PERSON speaking: the sheet draws the swatch avatar for it and never
+      // folds it into a kind group (#5289). Carried as a flag rather than
+      // re-deriving it there from `kind`: CONVERSATION_NOTIF_KINDS lives in
+      // this module and the sheet must never drift from the set the rest of
       // the routing, grouping and copy already agree on.
       conversation: true,
       conversationId: n.conversationId != null ? Number(n.conversationId) : null,
@@ -3496,6 +3552,19 @@ function rowView(n) {
             : (username ? `@${username}` : t('notifications:row.channel.someone')),
         )
         : headline(asked ? t(CHANNEL_ASKED_IDS[which], names) : t(CHANNEL_SAID_IDS[which], names), snippet || null)),
+    };
+  }
+
+  // #4396: a project the reader joined while it was made is open
+  // (src/services/project-opened.js). The meta line names the project, so
+  // the label is the whole headline.
+  if (n.kind === 'project_opened') {
+    return {
+      ...base,
+      wrap: true,
+      icon: '\u{1F389}',
+      by: null,
+      ...headline(t('notifications:row.projectOpened.label'), null),
     };
   }
 

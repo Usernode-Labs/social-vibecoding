@@ -1,6 +1,6 @@
 // What the main-check machine reads inside its transaction, after the
 // instance lock: the app's row (its repository and the main_check_* columns
-// it owns, read when it adopts a row an older release wrote), and the tests
+// it owns, read when an instance starts from it), and the tests
 // known to flake on the app, read only when a run reports.
 
 import type { Tx } from '../kernel/index.ts';

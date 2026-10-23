@@ -2016,7 +2016,7 @@ async function spawnSideBuilds(pool, config, {
     }
     out.trials = fits.length;
     out.runId = Number(run.id);
-    (deps.lane || require('./bench/lane')).wake();
+    await (deps.lane || require('./bench/lane')).look();
     log.info('bot-configs', 'Side builds queued on the App bench lane', {
       botRunId, scope, benchRunId: out.runId, trials: out.trials, derived: out.derived, skipped: out.skipped, capUsd,
     });
@@ -2030,8 +2030,9 @@ async function spawnSideBuilds(pool, config, {
 /**
  * A live first version given up before it could be compared (sent back to
  * be built again after a restart, its request gone, or lost): its side
- * trials still waiting are cancelled, one running in this process is
- * stopped (bench/lane.js cancelTrial), and every result still pending is
+ * trials still waiting are cancelled, a running one is stopped by the bench
+ * lane's machine through its build, wherever it runs (bench/lane.js
+ * cancelTrial), and every result still pending is
  * recorded skipped with why. Without it each restart's new run spawned its
  * own side builds beside the old run's, which went on building for nothing.
  * Never throws; resolves how many trials it cancelled or stopped.
@@ -2046,6 +2047,9 @@ async function abandonSideBuilds(pool, botRunId, why, deps = {}) {
       [Number(botRunId)],
     );
     const reason = clip(`${run?.scope === 'later' ? 'the build they are compared with' : 'the live first version'} was ${why || 'given up'}`, 300);
+    // A waiting one is cancelled here (the lane's claim checks the row, and a
+    // build sent for a claim that missed runs nothing); a running one is
+    // stopped by the lane's machine, through its build, wherever it runs.
     const { rows: waiting } = await pool.query(
       `UPDATE bench_trials SET status = 'cancelled', finished_at = NOW(), error = $2
         WHERE bot_run_id = $1 AND status IN ('pending', 'awaiting')
@@ -2059,7 +2063,7 @@ async function abandonSideBuilds(pool, botRunId, why, deps = {}) {
     const lane = deps.lane || require('./bench/lane');
     for (const t of running) {
       // eslint-disable-next-line no-await-in-loop
-      await Promise.resolve(lane.cancelTrial(pool, t.id, deps)).catch(() => null);
+      await Promise.resolve(lane.cancelTrial(pool, t.id, { ...deps, by: 'Homeroom', why: reason })).catch(() => null);
     }
     await pool.query(
       `UPDATE bot_config_results SET status = 'skipped', error = $2, finished_at = NOW()

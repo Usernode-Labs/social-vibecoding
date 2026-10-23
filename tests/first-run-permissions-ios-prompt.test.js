@@ -224,8 +224,8 @@ test('decideFirstRunSheet skips iOS before anything else', () => {
   assert.equal(decide({}), 'skip', 'an unknown platform is not Android');
 });
 
-test('anonymous: native session stays closed; iOS presents nothing and ' +
-     'Android device permissions remain available', async () => {
+test('anonymous: native session stays closed; iOS presents nothing, and ' +
+     'Android is not asked for notifications on entry', async () => {
   const ios = boot({
     user: null,
     permissions: IOS_PERMS,
@@ -254,8 +254,11 @@ test('anonymous: native session stays closed; iOS presents nothing and ' +
     await android.sandbox.NativeChrome._firstRunPromise;
   }
   await new Promise((resolve) => setImmediate(resolve));
-  assert.equal(android.sheets.length, 1,
-    'anonymous Android entry still offers the device-level notification ask');
+  // The notification ask moved to the moments it means something
+  // (NativeChrome.askForPing, frontend/src/features/notify-ask/), so the
+  // first-run sheet has nothing to ask a phone that produces no blocks.
+  assert.equal(android.sheets.length, 0,
+    'anonymous Android entry asks for no notifications');
 });
 
 // ── Android: the trigger's own rules ───────────────────────────────────

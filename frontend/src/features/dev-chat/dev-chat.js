@@ -2538,29 +2538,88 @@ const DevChat = {
   // the limit-first billing rule — and the component only draws them.
   _budgetPillView() {
     const view = DevChat._settledBudgetPillView();
+    const sep = { text: ' · ', className: 'text-zinc-500 dark:text-zinc-400' };
+    const parts = [...view.parts];
+    const add = (part) => { if (parts.length) parts.push(sep); parts.push(part); };
     const spend = DevChat._liveSpend || DevChat._shotTurnSpend();
-    if (!spend || Number(spend.sessionId) !== Number(DevChat.currentSession?.id)) return view;
+    if (spend && Number(spend.sessionId) === Number(DevChat.currentSession?.id)) {
+      add(DevChat._turnSpendPart(spend));
+    }
+    // #3249: the change's running total, after "this turn". It is the
+    // session's whole recorded cost (the running turn's agent spend
+    // included), never "this turn" added to an earlier total.
+    const change = DevChat._sessionCostPart();
+    if (change) add(change);
+    return { ...view, parts };
+  },
+
+  _turnSpendPart(spend) {
     // #2118: an OpenRouter turn's figure is the ledger's list-price estimate
     // (agent_turns.estimated_cost_usd), so its tooltip says what it is
     // rather than borrowing Claude Code's wording.
     const openRouter = DevChat._isOpenRouterSession();
+    const amount = (spend.costCents / 100).toFixed(2);
     return {
-      title: view.title,
-      parts: [...view.parts,
-        ...(view.parts.length ? [{ text: ' · ', className: 'text-zinc-500 dark:text-zinc-400' }] : []),
-        {
-          text: spend.estimated
-            ? PlatformI18n.t('devchat:budget.pill.thisTurnEstimated', { amount: (spend.costCents / 100).toFixed(2) })
-            : PlatformI18n.t('devchat:budget.pill.thisTurn', { amount: (spend.costCents / 100).toFixed(2) }),
-          className: 'text-zinc-500 dark:text-zinc-400',
-          title: openRouter
-            ? PlatformI18n.t('devchat:budget.pill.thisTurnTitle.openRouter')
-            : spend.estimated
-              ? PlatformI18n.t('devchat:budget.pill.thisTurnTitle.estimated')
-              : PlatformI18n.t('devchat:budget.pill.thisTurnTitle.reported'),
-        },
-      ],
+      text: spend.estimated
+        ? PlatformI18n.t('devchat:budget.pill.thisTurnEstimated', { amount })
+        : PlatformI18n.t('devchat:budget.pill.thisTurn', { amount }),
+      className: 'text-zinc-500 dark:text-zinc-400',
+      title: openRouter
+        ? PlatformI18n.t('devchat:budget.pill.thisTurnTitle.openRouter')
+        : spend.estimated
+          ? PlatformI18n.t('devchat:budget.pill.thisTurnTitle.estimated')
+          : PlatformI18n.t('devchat:budget.pill.thisTurnTitle.reported'),
     };
+  },
+
+  // #3249: "this change $X", what the open change has cost so far. Hidden
+  // while it is zero or rounds to $0.00, like the meter's other figures.
+  _sessionCostPart() {
+    const shot = DevChat._shotSessionCost();
+    const cents = Number(shot ?? DevChat.currentSession?.cost_total_cents);
+    if (!Number.isFinite(cents)) return null;
+    const amount = (cents / 100).toFixed(2);
+    if (amount === '0.00' || cents < 0) return null;
+    return {
+      text: PlatformI18n.t('devchat:budget.pill.thisChange', { amount }),
+      className: 'text-zinc-500 dark:text-zinc-400',
+      title: PlatformI18n.t('devchat:budget.pill.thisChangeTitle'),
+    };
+  },
+
+  // #3249: `?shot=session-cost` paints a sample total on the change on
+  // screen, as ?shot=openrouter-spend does for "this turn": it reads and
+  // writes nothing, so it is ungated by environment.
+  _shotSessionCost() {
+    let shot = null;
+    try { shot = new URLSearchParams(location.search).get('shot'); } catch { return null; }
+    if (shot !== 'session-cost' || !DevChat.currentSession) return null;
+    return 124;
+  },
+
+  // #3249: one read of the change's total once a turn ends, so the final
+  // figure (the wrap-up reply's cost included) lands without a reload.
+  async _refreshSessionCost() {
+    const sessionId = DevChat.currentSession?.id;
+    if (!sessionId) return;
+    try {
+      const res = await fetch(`/api/sessions/${sessionId}/status`);
+      if (!res.ok) return;
+      const payload = await res.json();
+      DevChat._applySessionCost(payload, sessionId);
+    } catch { /* keep the last figure */ }
+  },
+
+  // Returns whether the figure changed; `render: false` leaves the repaint
+  // to a caller that is about to repaint anyway.
+  _applySessionCost(payload, sessionId, { render = true } = {}) {
+    if (Number(DevChat.currentSession?.id) !== Number(sessionId)) return false;
+    const cents = Number(payload?.costTotalCents);
+    if (payload?.costTotalCents == null || !Number.isFinite(cents)) return false;
+    if (Number(DevChat.currentSession.cost_total_cents) === cents) return false;
+    DevChat.currentSession.cost_total_cents = cents;
+    if (render) DevChat.renderBudget();
+    return true;
   },
 
   // #2118: the figure `?shot=openrouter-spend` paints as the turn that just
@@ -4819,13 +4878,14 @@ const DevChat = {
     // uploaded — each carries a server id + objectUrl for image thumbs).
     const sentAttachments = (attachments || []).filter((a) => a && a.id);
     if (!message && !sentAttachments.length) return;
-    // #138: a send is a user gesture — unlock the AudioContext and lazily
-    // request OS-notification permission now, so the completion chime /
-    // notification can fire when this turn finishes (browsers only allow
-    // audio + permission prompts from inside a gesture).
+    // #138: a send is a user gesture — unlock the AudioContext now, so the
+    // completion chime can play when this turn finishes (browsers only allow
+    // audio from inside a gesture). The OS-notification permission is
+    // offered, explained first, once per device (offerNotifyPermission):
+    // never the browser's bare prompt.
     if (window.DevAlerts) {
       DevAlerts._unlockAudio();
-      DevAlerts.requestNotifyPermission();
+      if (typeof DevAlerts.offerNotifyPermission === 'function') void DevAlerts.offerNotifyPermission();
     }
     // #2812: the backstop for a mid-turn pick the turn's end could not
     // apply (the server still held the turn). If it still cannot, the
@@ -5397,6 +5457,7 @@ const DevChat = {
   },
 
   _finishStreaming() {
+    const turnEnded = DevChat.isStreaming;
     // Flush any throttled streaming render to the bubble's exact final
     // content before the full renderMessages() below rebuilds the list.
     DevChat._flushStreamingFinal();
@@ -5416,6 +5477,9 @@ const DevChat = {
     DevChat._setStreamingUI(false);
     DevChat.renderMessages();
     DevChat.refreshBudget();
+    // #3249: a turn that really ran has a new total; an idle teardown has
+    // nothing to read (and must not cost a round trip).
+    if (turnEnded) DevChat._refreshSessionCost();
     // #138: the chime/notification is no longer fired from here. Every
     // interactive turn completion now creates a session_done notification
     // server-side (see notifySessionDone), so the WS `notification_new`
@@ -6092,7 +6156,8 @@ const DevChat = {
   // navigation re-set of the title.
   applyTitleStatus() {
     const full = document.title;
-    const countMatch = full.match(/^\(\d+\)\s*/);
+    // "(99+) " too: the count prints the bell's own capped text (#5289).
+    const countMatch = full.match(/^\(\d+\+?\)\s*/);
     const count = countMatch ? countMatch[0] : '';
     let base = full.slice(count.length);
     const applied = DevChat._titleApplied;
@@ -6625,12 +6690,17 @@ const DevChat = {
 
   _applyLiveSpend(payload, sessionId) {
     if (Number(DevChat.currentSession?.id) !== Number(sessionId)) return;
+    // #3249: every /status answer carries the change's running total.
+    const costChanged = DevChat._applySessionCost(payload, sessionId, { render: false });
     // #2118: an OpenRouter turn's cost is known only once Codex reports its
     // usage, at the end of the coding run, after which the session reads
     // idle while the reply is still being written. A "not busy" snapshot
     // therefore has nothing newer to say and keeps the figure; the next
     // turn's start (_startSpendPolling) or leaving the session drops it.
-    if (!payload?.busy && DevChat._isOpenRouterSession()) return;
+    if (!payload?.busy && DevChat._isOpenRouterSession()) {
+      if (costChanged) DevChat.renderBudget();
+      return;
+    }
     const spend = payload?.busy ? payload.spend : null;
     DevChat._liveSpend = spend && Number.isFinite(spend.costCents) && spend.costCents > 0
       ? { sessionId, costCents: spend.costCents, estimated: spend.estimated !== false } : null;
@@ -8010,6 +8080,9 @@ const DevChat = {
             : DevChat.renderMarkdown(content))
           : `<span style="color:var(--text-muted);font-style:italic">${PlatformI18n.htmlText('devchat:transcript.noVisibleReply')}</span>`,
         ...(msgIdx === liveIdx ? { live: true } : null),
+        // #5728: the project the reply is about, so its `#N` / `PR#N` chips
+        // open that board. Only the AI's written reply carries one.
+        ...(isUser ? null : { appSlug: DevChat._appSlug() || null }),
         ...(isUser ? { attachments: DevChat._attachmentRows(msg) } : null),
         // For any assistant message that carried a [CHAT_ONLY] tag, surface
         // the raw output so nothing is ever invisibly swallowed.

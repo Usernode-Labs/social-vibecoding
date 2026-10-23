@@ -32,7 +32,7 @@ test('the walk on Home: three cards, each ringing one place, with Next, and Done
   // bot built, a game, an import) gets the bot card's words without one.
   assert.deepEqual(steps.map((s) => [s.screen, s.target, s.title, s.text]), [
     ['home', '#app-list .app-card[data-slug="sunday-run-club"]', 'Welcome to Homeroom', 'Sunday Run Club lives here, on Home.'],
-    ['home', '#platform-tab-messages', 'Homeroom bot', 'It\'s in Messages. Ask it for a change.'],
+    ['home', '#platform-tab-messages', 'Homeroom bot', 'It\'s in Messages. Ask it to make any changes to Sunday Run Club.'],
     ['home', '#platform-tab-workshop', 'Communities', 'Sunday Run Club\'s hub is here. Invite people and decide what changes.'],
   ]);
   assert.deepEqual(homeWalkSteps({ slug: 'sunday-run-club', name: 'Sunday Run Club', example: null }), steps, 'null is no example');
@@ -62,22 +62,19 @@ test('the walk on Home: three cards, each ringing one place, with Next, and Done
   }
 });
 
-test('a private member\'s walk has a fourth card, the waitlist; no card of any tour says group, shouts or dashes', () => {
+// No waitlist card for a private member (Evan, 20 Oct 2026, "they can just
+// discover that"): the invited person's walk is the same three cards, and
+// the Communities card is its last.
+test('a private member\'s walk is the same three cards; no card of any tour says group, shouts or dashes', () => {
   const { homeWalkSteps, lookAroundSteps } = loadTsx(`${DIR}/tour-steps.ts`);
   const three = homeWalkSteps({ slug: 'best-brunch', name: 'Best Brunch' });
-  const four = homeWalkSteps({ slug: 'best-brunch', name: 'Best Brunch', privateMember: true });
-  const withExample = homeWalkSteps({ slug: 'best-brunch', name: 'Best Brunch', example: 'add a price range to each place', privateMember: true });
-  assert.equal(four.length, 4);
-  assert.deepEqual(withExample[3], four[3], 'the waitlist card is the same with an example');
-  assert.deepEqual(four.slice(0, 2), three.slice(0, 2));
-  const { last: lastOfThree, ...third } = three[2];
-  assert.equal(lastOfThree, true);
-  assert.deepEqual(four[2], third, 'the same Communities card, no longer the last');
-  assert.deepEqual(four[3], {
-    screen: 'home', target: '#home-waitlist-card', ringed: true, title: 'Make your own apps', text: 'Join the waitlist to get your spot.', last: true,
-  });
-  assert.match(read('frontend/src/features/home/waitlist-card.tsx'), /<section id="home-waitlist-card"/);
-  const all = JSON.stringify([...three, ...four, ...withExample, ...lookAroundSteps()]);
+  const withExample = homeWalkSteps({ slug: 'best-brunch', name: 'Best Brunch', example: 'add a price range to each place' });
+  assert.equal(three.length, 3);
+  assert.equal(three[2].target, '#platform-tab-workshop');
+  assert.equal(three[2].last, true);
+  const src = read(`${DIR}/tour-steps.ts`);
+  assert.doesNotMatch(src, /home-waitlist-card|walk\.waitlist|privateMember/);
+  const all = JSON.stringify([...three, ...withExample, ...lookAroundSteps()]);
   assert.doesNotMatch(all, /\bgroup\b/i);
   assert.doesNotMatch(all, /!|—/, 'no exclamation marks, no em dashes');
 });
@@ -99,12 +96,12 @@ test('the walk asks for its project\'s example change once as it opens, and a sc
   // never a throw: a read that fails is the card without an example.
   assert.match(src, /const res = await fetch\(madeAppUrl\(slug\), \{ credentials: 'same-origin', cache: 'no-store' \}\);\s+return res\.ok \? walkExampleOf\(await res\.json\(\)\) : null;\s+\} catch \{\s+return null;/);
   // The steps carry the project's name and example.
-  assert.match(src, /const \{ slug, name, example, privateMember \} = mode\.info;\s+return homeWalkSteps\(\{ slug, name, example, privateMember: !!privateMember \}\);/);
+  assert.match(src, /const \{ slug, name, example \} = mode\.info;\s+return homeWalkSteps\(\{ slug, name, example \}\);/);
   // Asked once, for a walk that has not asked yet, and kept only for that walk.
   assert.match(src, /const walkSlug = mode\.kind === 'tour' && mode\.path === 'walk' && mode\.info\.example === undefined \? mode\.info\.slug : null;/);
   assert.match(src, /setMode\(\(prev\) => \(prev\.kind === 'tour' && prev\.path === 'walk' && prev\.info\.slug === walkSlug && prev\.info\.example === undefined\s+\? \{ \.\.\.prev, info: \{ \.\.\.prev\.info, example \} \}\s+: prev\)\);/);
   // `?shot=tour-home`: the first project on Home, its name and its example.
-  assert.match(src, /const project = await firstHomeProject\(\);\s+if \(!project\) return;\s+const example = await walkExample\(project\.slug\);\s+open\(\{ \.\.\.project, example, privateMember: !!shot\.privateMember \}\);/);
+  assert.match(src, /const project = await firstHomeProject\(\);\s+if \(!project\) return;\s+const example = await walkExample\(project\.slug\);\s+open\(\{ \.\.\.project, example \}\);/);
 });
 
 // #4225: both paths show where Suggest an improvement lives, inside the app,
@@ -144,7 +141,6 @@ const idsNamed = (steps) => [...new Set(steps
 test('every id the tour points at is one the shell ships', () => {
   const { homeWalkSteps, lookAroundSteps } = loadTsx(`${DIR}/tour-steps.ts`);
   assert.deepEqual(idsNamed(homeWalkSteps({ slug: 'x' })), ['app-list', 'platform-tab-messages', 'platform-tab-workshop']);
-  assert.deepEqual(idsNamed(homeWalkSteps({ slug: 'x', privateMember: true })), ['app-list', 'home-waitlist-card', 'platform-tab-messages', 'platform-tab-workshop']);
   assert.deepEqual(idsNamed(lookAroundSteps()), ['home-create-tile', 'platform-tab-discover', 'platform-tab-messages', 'platform-tab-workshop']);
   // Home's New project tile is React's, one element, and dapp.json's checks
   // select it by this id.
@@ -246,7 +242,7 @@ function drawTour(props) {
   }
 }
 
-test('the walk\'s cards: numbered circles for the counter, Skip and Next, no Back, and Done on the last', () => {
+test('the walk\'s cards: numbered circles for the counter, Skip and Next, no Back, and where it goes on the last', () => {
   const { homeWalkSteps } = loadTsx(`${DIR}/tour-steps.ts`);
   const steps = homeWalkSteps({ slug: 'film', name: 'Friday Film Crew' });
   const first = drawTour({ steps, numbered: true });
@@ -262,26 +258,30 @@ test('the walk\'s cards: numbered circles for the counter, Skip and Next, no Bac
   assert.match(first, />Friday Film Crew lives here, on Home\.</);
   assert.match(first, />Skip</);
   assert.match(first, />Next</);
-  assert.doesNotMatch(first, />Back<|>Done<|data-first-session-tap/);
+  assert.doesNotMatch(first, />Back<|>Done<|>Go to community<|data-first-session-tap/);
   // The second card: still no Back.
   assert.doesNotMatch(drawTour({ steps, numbered: true, start: 1 }), />Back</);
-  // The last: Done, and nothing else.
+  // The last says where it goes, and nothing else: the walk ends on the
+  // project's hub under the Communities tab (walkDoneLanding), so the button
+  // says so rather than "Done" and a page that changes without a reason.
   const last = drawTour({ steps, numbered: true, start: 2 });
   assert.match(last, /aria-label="Step 3 of 3"/);
   assert.match(last, /<li aria-current="step" [^>]*>3<\/li>/);
-  assert.match(last, />Done</);
-  assert.doesNotMatch(last, />Skip<|>Back<|>Next<|>Got it<|data-first-session-tap/);
-  // A private member's: four circles, the waitlist card last.
-  const four = drawTour({ steps: homeWalkSteps({ slug: 'film', privateMember: true }), numbered: true, start: 3 });
-  assert.equal((four.match(/<li /g) || []).length, 4);
-  assert.match(four, /aria-label="Step 4 of 4"/);
-  assert.match(four, />Make your own apps</);
-  assert.match(four, />Done</);
+  assert.match(last, />Go to community</);
+  assert.doesNotMatch(last, />Done<|>Skip<|>Back<|>Next<|>Got it<|data-first-session-tap/);
+  // An invited private member's is the same (Evan, 20 Oct 2026): three
+  // circles, and Go to community on the last.
+  const invited = drawTour({ info: { slug: 'film', privateMember: true }, steps: homeWalkSteps({ slug: 'film' }), numbered: true, start: 2 });
+  assert.equal((invited.match(/<li /g) || []).length, 3);
+  assert.match(invited, />Go to community</);
+  assert.doesNotMatch(invited, />Done</);
   // Only the walk is numbered this way; "Look around first" keeps its counter.
   const src = read(`${DIR}/index.tsx`);
   assert.match(src, /numbered=\{mode\.path === 'walk'\}/);
   assert.match(src, /\{index > 0 && !numbered \? \(/);
-  assert.match(src, /\{step\.last \? \(numbered \? t\('core:common\.done'\) : t\('onboarding:firstSession\.tour\.gotIt'\)\) : t\('onboarding:firstSession\.tour\.next'\)\}/);
+  assert.match(src, /\{step\.last \? \(numbered \? t\('onboarding:firstSession\.walk\.goToCommunity'\) : t\('onboarding:firstSession\.tour\.gotIt'\)\) : t\('onboarding:firstSession\.tour\.next'\)\}/);
+  // `end` lands every walk done on its hub, a private member's too.
+  assert.match(src, /const hub = how === 'done' && mode\.kind === 'tour' && mode\.path === 'walk' \? mode\.info\.slug : null;/);
 });
 
 /** A document of fixed boxes, by selector, for as long as `fn` runs. */
@@ -528,8 +528,15 @@ test('"You\'re in" is gone: an invite opens the app itself, owes the tip, and th
   const welcome = src.slice(src.indexOf('welcome(info: FirstSessionInfo): boolean {'), src.indexOf('goHome('));
   assert.match(welcome, /if \(!info \|\| !info\.slug \|\| seen\(info\.slug\)\) return false;\s+markSeen\(info\.slug\);/);
   assert.match(welcome, /oweTip\(uid, \{ slug, name, who: 'invited', inviter: info\.inviterName \|\| null \}\);/);
-  assert.match(welcome, /if \(privateMember \|\| info\.newAccount\) oweWalk\(uid, \{ slug, name, privateMember \}\);/);
+  assert.match(welcome, /walkOwed = \(privateMember \|\| !!info\.newAccount\) && oweWalk\(uid, \{ slug, name, privateMember \}\);\s+if \(walkOwed\) app\?\._noteHomeWalk\?\.\('owed'\);/);
   assert.match(welcome, /const going = app\?\.navigateToApp\?\.\(slug, 'app'\);/);
+  // Home is under the app for somebody owed the walk, so Back and the ✕ lead
+  // to it: a public community's link is joined on its hub, which was under
+  // the app before (the owner's run-through, 20 Oct 2026).
+  assert.match(welcome, /rememberCommunity\(slug\);[\s\S]{0,240}if \(walkOwed\) app\?\._homeUnderApp\?\.\(\);[\s\S]*const going = app\?\.navigateToApp/);
+  const under = read('public/js/app.js').slice(read('public/js/app.js').indexOf('_homeUnderApp() {'));
+  assert.match(under.slice(0, 300), /const home = App\._rootUrl\(''\);\s+try \{\s+if \(`\$\{location\.pathname\}\$\{location\.search\}\$\{location\.hash\}` !== home\) history\.replaceState\(null, '', home\);/,
+    'the page under it is replaced with Home, not pushed: Back is one step');
   // Both ways in hand over who sent it, by the name they go by.
   assert.match(read('public/js/app.js'), /inviter: standing\.inviter \|\| null,\s+inviterName: standing\.inviterName \|\| standing\.inviter \|\| null,/);
   assert.match(read('public/js/app.js'), /newAccount: !!standing\.newAccount,/);
@@ -970,11 +977,10 @@ test('each tour has a screenshot state, opened at any card, over a real project,
   const { tourShot } = loadTsx(`${DIR}/index.tsx`);
   assert.deepEqual(tourShot('?shot=tour-home'), { path: 'walk', start: 0 });
   assert.deepEqual(tourShot('?shot=tour-home&step=3'), { path: 'walk', start: 2 });
-  assert.deepEqual(tourShot('?shot=tour-home-private&step=4'), { path: 'walk', start: 3, privateMember: true });
   assert.deepEqual(tourShot('?shot=tour-look&step=3'), { path: 'look', start: 2 });
   assert.deepEqual(tourShot('?shot=tour-look&step=x'), { path: 'look', start: 0 });
   // The old tours' states are gone with them.
-  for (const old of ['tour-make', 'tour-join', 'tour-private', 'first-version', 'toString', '']) assert.equal(tourShot(`?shot=${old}`), null, old);
+  for (const old of ['tour-make', 'tour-join', 'tour-private', 'tour-home-private', 'first-version', 'toString', '']) assert.equal(tourShot(`?shot=${old}`), null, old);
   const src = read(`${DIR}/index.tsx`);
   // Over the first project on the viewer's Home.
   assert.match(src, /document\.querySelector\('#app-list \.app-card\[data-slug\]'\)/);
@@ -983,7 +989,7 @@ test('each tour has a screenshot state, opened at any card, over a real project,
   assert.match(src, /prev\.kind === 'none' \? \{ kind: 'tour', info, path: shot\.path, start: shot\.start \} : prev/);
   // With that project's name and, if its starter has one, its example
   // change, asked before it opens (a read: nothing is written).
-  assert.match(src, /const example = await walkExample\(project\.slug\);\s+open\(\{ \.\.\.project, example, privateMember: !!shot\.privateMember \}\);/);
+  assert.match(src, /const example = await walkExample\(project\.slug\);\s+open\(\{ \.\.\.project, example \}\);/);
   // Opened part-way, the tour opens that card's own screen; the count is
   // clamped to the tour.
   assert.match(src, /useState\(\(\) => Math\.max\(0, Math\.min\(start, steps\.length - 1\)\)\)/);
@@ -1076,7 +1082,7 @@ test('each step brings its target into view before ringing it, finding a held-ba
 // card on the App tab, "<project> opens here", is the only one that says it.
 test('no tour card says where the app opens now; the engine still carries the attribute for one that would', () => {
   const { homeWalkSteps, lookAroundSteps } = loadTsx(`${DIR}/tour-steps.ts`);
-  for (const steps of [homeWalkSteps({ slug: 'film' }), homeWalkSteps({ slug: 'film', privateMember: true }), lookAroundSteps()]) {
+  for (const steps of [homeWalkSteps({ slug: 'film' }), lookAroundSteps()]) {
     assert.ok(steps.every((s) => !s.saysWhereItOpens));
   }
   const src = read(`${DIR}/index.tsx`);
@@ -1089,7 +1095,7 @@ test('no tour card says where the app opens now; the engine still carries the at
 // "Opening…" cover. The two steps that point at the app wait for it.
 test('#4900: no card of the walk waits for the app: it points at the tile and opens nothing', () => {
   const { homeWalkSteps, lookAroundSteps } = loadTsx(`${DIR}/tour-steps.ts`);
-  for (const steps of [homeWalkSteps({ slug: 'film' }), homeWalkSteps({ slug: 'film', privateMember: true }), lookAroundSteps()]) {
+  for (const steps of [homeWalkSteps({ slug: 'film' }), lookAroundSteps()]) {
     assert.ok(steps.every((s) => !s.waitsFor));
   }
   // The engine's waiting card keeps its words, for a step that waits.
@@ -1256,4 +1262,52 @@ test('#4900: the tour waits for the app before the step is painted, with Skip an
   const html = drawTour({ steps: [{ screen: 'home', target: '#app-list .app-card[data-slug="film"]', waitsFor: 'running', title: 'Friday Film Crew is on your Home', text: 'Open it from here.', tap: 'Tap it' }] });
   assert.doesNotMatch(html, /data-first-session-tour-wait/);
   assert.match(html, />Tap it<\/button>/);
+});
+
+// #5528 for the maker's walk (newcomer run, 20 Oct 2026): the Home tour ended
+// on Communities, and the walk ended where it started, on Home. Done on its
+// last card, the Communities tab's, opens that tab on the project's hub; an
+// invited private member's walk as well (Evan, 20 Oct 2026).
+test('the walk, done, opens the Communities tab on its project\'s hub; skipped, it stays on Home', () => {
+  const src = read(`${DIR}/index.tsx`);
+  // The tour says how it ended; the walk's end reads it.
+  assert.match(src, /noteMoment\(info\.slug, 'tour_ended', \{ step: indexRef\.current \+ 1, steps: steps\.length, how \}\);\s+\}\s+endTour\(how\);/);
+  assert.match(src, /const hub = how === 'done' && mode\.kind === 'tour' && mode\.path === 'walk' \? mode\.info\.slug : null;\s+setMode\(\{ kind: 'none' \}\);\s+if \(hub\) walkDoneLanding\(hub\);/);
+
+  const { walkDoneLanding } = loadTsx(`${DIR}/index.tsx`);
+  const before = { window: globalThis.window, localStorage: globalThis.localStorage };
+  const calls = [];
+  const stored = new Map();
+  globalThis.localStorage = { setItem: (k, v) => stored.set(k, v), getItem: (k) => stored.get(k) ?? null, removeItem: (k) => stored.delete(k) };
+  const harness = (resumes) => {
+    calls.length = 0;
+    stored.clear();
+    globalThis.window = {
+      App: {
+        _WORKSHOP_VIEW_KEY: 'usernode:workshop-view',
+        _workshopViewPath: (url) => url,
+        _publishCommunityScope: (slug) => calls.push(['scope', slug]),
+        resumeWorkshopView: () => { calls.push(['resume', stored.get('usernode:workshop-view')]); return resumes; },
+        navigateToApp: (slug, tab) => calls.push(['navigate', slug, tab]),
+      },
+      AppView: { _landOnHub: (slug) => calls.push(['hub', slug]) },
+    };
+  };
+  try {
+    // As a press on the tab would, once the tab remembers the project.
+    harness(true);
+    walkDoneLanding('city-tier-list');
+    assert.deepEqual(calls, [
+      ['scope', 'city-tier-list'],
+      ['hub', 'city-tier-list'],
+      ['resume', JSON.stringify({ slug: 'city-tier-list', path: '/app/city-tier-list/workshop' })],
+    ]);
+    // A tab that cannot resume it: straight to the hub.
+    harness(false);
+    walkDoneLanding('city-tier-list');
+    assert.deepEqual(calls.slice(-2), [['hub', 'city-tier-list'], ['navigate', 'city-tier-list', 'dev']]);
+  } finally {
+    globalThis.window = before.window;
+    globalThis.localStorage = before.localStorage;
+  }
 });

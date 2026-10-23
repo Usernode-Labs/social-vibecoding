@@ -107,6 +107,47 @@ function liveOf(app, tok) {
 }
 const isView = (test = () => true) => (m) => m.t === 'view' && test(m.view);
 
+/**
+ * A ready-made app's live updates, as its page listens (GET /api/changes,
+ * live-updates.js): the stream's status and type, how many `change` events
+ * it has had, `until(check)` to wait for more, and `close()`. A stream the
+ * server ends, or a server that goes away, just ends it.
+ */
+async function listen(app, tok) {
+  const controller = new AbortController();
+  const res = await fetch(`${app.base}/api/changes${tok ? `?token=${encodeURIComponent(tok)}` : ''}`, { signal: controller.signal });
+  let text = '';
+  let ended = false;
+  const reading = (async () => {
+    try {
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        text += decoder.decode(value, { stream: true });
+      }
+    } catch { /* closed here, or the server went away */ }
+    ended = true;
+  })();
+  const s = {
+    status: res.status,
+    type: res.headers.get('content-type'),
+    text: () => text,
+    ended: () => ended,
+    events: () => (text.match(/^event: change$/gm) || []).length,
+    async until(check, ms = 5000) {
+      const end = Date.now() + ms;
+      while (!check(s)) {
+        if (Date.now() > end) throw new Error(`not in time; the stream had: ${JSON.stringify(text)}`);
+        await new Promise((r) => setTimeout(r, 20));
+      }
+    },
+    close: () => { controller.abort(); return reading; },
+  };
+  return s;
+}
+
 function freePort() {
   return new Promise((resolve, reject) => {
     const srv = net.createServer();
@@ -219,7 +260,7 @@ test('every ready-made app runs: seeds in staging only, serves its screen, refus
 
   // What every app shares: the screen for a signed-in visitor, nothing for
   // anyone else, and a clean exit on SIGTERM.
-  async function common(app, apiPath) {
+  async function common(app, apiPath, ready) {
     const page = await app.call('GET', `/?token=${encodeURIComponent(ada)}`, { raw: true });
     assert.equal(page.status, 200);
     assert.match(page.headers.get('content-type'), /text\/html/);
@@ -230,6 +271,18 @@ test('every ready-made app runs: seeds in staging only, serves its screen, refus
     assert.equal((await app.call('GET', apiPath, { as: token(101, 'ada', 'usernode:app:999') })).status, 401,
       'a token minted for another app is refused');
     assert.equal((await app.call('GET', '/health')).status, 200);
+    // A ready-made app's live updates (a game has its own live connection):
+    // the page's half is served, and the stream is behind the sign-in check.
+    if (!ready) return;
+    assert.equal((await app.call('GET', '/live-updates.js', { raw: true })).status, 200);
+    const stranger = await listen(app, null);
+    assert.equal(stranger.status, 401, 'no token, no stream');
+    await stranger.close();
+    const stream = await listen(app, ada);
+    assert.equal(stream.status, 200);
+    assert.equal(stream.type, 'text/event-stream');
+    await stream.until((x) => x.text().includes(':ok'));
+    await stream.close();
   }
 
   async function run(template, apiPath, seeded, flows) {
@@ -250,7 +303,7 @@ test('every ready-made app runs: seeds in staging only, serves its screen, refus
     assert.equal(await app.stop(), 0);
     app = await boot(dir, stagingDb, 'staging', env);
     assert.equal(seeded((await app.call('GET', apiPath, { as: ada })).data), first, 'a second boot does not seed again');
-    await common(app, apiPath);
+    await common(app, apiPath, require('../src/services/app-templates').isReadyMade(template));
     await flows(app);
     assert.equal(await app.stop(), 0, app.output());
   }
@@ -266,6 +319,38 @@ test('every ready-made app runs: seeds in staging only, serves its screen, refus
       // nothing, so every item waits in the tray as a chip to drag.
       assert.ok(seeded.items.length > 0 && seeded.items.every((i) => i.yours === null), 'the check\'s tray has items');
 
+      // Who ranked a seeded item what: best tier first, then by name.
+      const demoItem = (await app.call('GET', '/api/items/900001', { as: ada })).data;
+      assert.deepEqual([demoItem.item.name, demoItem.item.tier, demoItem.item.votes], ['Staging demo one', 'S', 3]);
+      assert.deepEqual(demoItem.raters, [
+        { name: 'staging-demo-ana', you: false, tier: 'S' },
+        { name: 'staging-demo-ben', you: false, tier: 'S' },
+        { name: 'staging-demo-cy', you: false, tier: 'A' },
+      ]);
+      assert.equal((await app.call('GET', '/api/items/999999', { as: ada })).status, 404);
+      assert.equal((await app.call('GET', '/api/items/900001')).status, 401, 'no token, no names');
+
+      // Who else is here: the names of the signed-in people seen lately,
+      // never the viewer's own. Grace listens before Ada's first look, so
+      // Ada's arrival is heard; a screen looking again is not an arrival, so
+      // a check-in never sets every open board off again.
+      const presence = await listen(app, grace);
+      await presence.until((x) => x.text().includes(':ok'));
+      assert.deepEqual((await app.call('GET', '/api/presence', { as: ada })).data, { here: [], more: 0 });
+      await presence.until((x) => x.events() >= 1);
+      const arrivals = presence.events();
+      assert.deepEqual((await app.call('GET', '/api/presence', { as: ada })).data, { here: [], more: 0 });
+      await new Promise((r) => setTimeout(r, 400));
+      assert.equal(presence.events(), arrivals, 'a repeat check-in says nothing');
+      assert.deepEqual((await app.call('GET', '/api/presence', { as: grace })).data, { here: ['ada'], more: 0 });
+      assert.deepEqual((await app.call('GET', '/api/presence', { as: ada })).data, { here: ['grace'], more: 0 });
+      assert.equal((await app.call('GET', '/api/presence')).status, 401, 'no token, no names');
+      await presence.close();
+
+      // Grace's screen is open while Ada adds and ranks: each change reaches it.
+      const graces = await listen(app, grace);
+      await graces.until((x) => x.text().includes(':ok'));
+
       assert.equal((await app.call('POST', '/api/items', { as: ada, body: { name: '   ' } })).status, 400);
       const added = await app.call('POST', '/api/items', { as: ada, body: { name: '  Noodle   Bar ' } });
       assert.equal(added.status, 201);
@@ -276,11 +361,19 @@ test('every ready-made app runs: seeds in staging only, serves its screen, refus
 
       assert.equal((await app.call('PUT', `/api/items/${id}/tier`, { as: ada, body: { tier: 'Z' } })).status, 400);
       assert.equal((await app.call('PUT', '/api/items/999999/tier', { as: ada, body: { tier: 'S' } })).status, 404);
+      await graces.until((x) => x.events() >= 1);
+      const heard = graces.events();
       await app.call('PUT', `/api/items/${id}/tier`, { as: ada, body: { tier: 'S' } });
+      await graces.until((x) => x.events() > heard);
+      assert.doesNotMatch(graces.text(), /Noodle|ada/, 'the stream says only that something changed');
       await app.call('PUT', `/api/items/${id}/tier`, { as: grace, body: { tier: 'B' } });
       let item = (await app.call('GET', '/api/items', { as: grace })).data.items.find((i) => i.id === id);
       assert.deepEqual([item.name, item.by, item.mine, item.votes, item.average, item.tier, item.yours],
         ['Noodle Bar', 'ada', false, 2, 4, 'A', 'B']);
+      // Tapping it: who ranked it what, by name, with the viewer marked.
+      const sheet = (await app.call('GET', `/api/items/${id}`, { as: grace })).data;
+      assert.deepEqual(sheet.item, item, 'the same item as on the board');
+      assert.deepEqual(sheet.raters, [{ name: 'ada', you: false, tier: 'S' }, { name: 'grace', you: true, tier: 'B' }]);
       // A tie goes up: 4.5 is S.
       await app.call('PUT', `/api/items/${id}/tier`, { as: grace, body: { tier: 'A' } });
       item = (await app.call('GET', '/api/items', { as: ada })).data.items.find((i) => i.id === id);
@@ -290,9 +383,30 @@ test('every ready-made app runs: seeds in staging only, serves its screen, refus
       item = (await app.call('GET', '/api/items', { as: ada })).data.items.find((i) => i.id === id);
       assert.deepEqual([item.votes, item.tier, item.yours], [1, 'A', null]);
 
+      // Want to: a place, not a tier. Grace moves hers there: it counts
+      // toward no average, no "ranked it" and no "From N people's
+      // rankings", and her name moves from the sheet's tiers to who wants to.
+      assert.equal((await app.call('GET', '/api/items', { as: ada })).data.rankers, 4);
+      assert.deepEqual((await app.call('PUT', `/api/items/${id}/tier`, { as: grace, body: { tier: 'W' } })).data, { tier: 'W' });
+      item = (await app.call('GET', '/api/items', { as: grace })).data.items.find((i) => i.id === id);
+      assert.deepEqual([item.votes, item.wants, item.average, item.tier, item.yours], [0, 1, null, null, 'W']);
+      assert.equal((await app.call('GET', '/api/items', { as: ada })).data.rankers, 3, 'the three staging fakes');
+      const wanted = (await app.call('GET', `/api/items/${id}`, { as: grace })).data;
+      assert.deepEqual([wanted.raters, wanted.wanters], [[], [{ name: 'grace', you: true }]]);
+      await app.call('PUT', `/api/items/${id}/tier`, { as: ada, body: { tier: 'S' } });
+      item = (await app.call('GET', '/api/items', { as: ada })).data.items.find((i) => i.id === id);
+      assert.deepEqual([item.votes, item.wants, item.average, item.tier, item.yours], [1, 1, 5, 'S', 'S']);
+      // The staging fakes: two want to get to one nobody has ranked.
+      const seededWants = (await app.call('GET', '/api/items', { as: ada })).data.items.find((i) => i.id === 900005);
+      assert.deepEqual([seededWants.votes, seededWants.wants, seededWants.tier], [0, 2, null]);
+
       assert.equal((await app.call('DELETE', `/api/items/${id}`, { as: grace })).status, 403, 'only whoever added it removes it');
+      const before = graces.events();
       assert.equal((await app.call('DELETE', `/api/items/${id}`, { as: ada })).status, 200);
       assert.ok(!(await app.call('GET', '/api/items', { as: ada })).data.items.some((i) => i.id === id));
+      await graces.until((x) => x.events() > before);
+      assert.equal((await app.call('GET', `/api/items/${id}`, { as: grace })).status, 404, 'its sheet is gone with it');
+      // Grace's stream stays open: SIGTERM still drains and exits (run() checks).
     });
   });
 
@@ -621,7 +735,7 @@ test('every ready-made app runs: seeds in staging only, serves its screen, refus
     // Staging: no seed, and the app still works for whoever opens it.
     const stagingDb = await database();
     app = await boot(dir, stagingDb, 'staging', env);
-    await common(app, '/api/today');
+    await common(app, '/api/today', true);
     assert.equal((await app.call('GET', '/api/today', { as: ada })).data.count, 0, 'a preview starts empty');
 
     // A session that runs out is counted once, however many times the same
@@ -774,7 +888,9 @@ test('every ready-made app runs: seeds in staging only, serves its screen, refus
   });
 
   await t.test('find a time: suggested times, everyone\'s marks, the best rising, the starter setting it, and past by "now"', async () => {
-    await run('find-a-time-book-club', '/api/plans', (d) => demo(d.plans), async (app) => {
+    // The dates mode: game night and the trip. The book club finds a weekly
+    // time instead (below).
+    await run('find-a-time-game-night', '/api/plans', (d) => demo(d.plans), async (app) => {
       const get = async (as = ada, now) => (await app.call('GET', '/api/plans', { as, now })).data;
       const plan = async (id, as = ada, now) => (await get(as, now)).plans.find((p) => p.id === id);
       const slotAt = (p, iso) => p.slots.find((s) => s.startsAt === iso);
@@ -908,6 +1024,81 @@ test('every ready-made app runs: seeds in staging only, serves its screen, refus
       assert.equal((await app.call('DELETE', `/api/plans/${trip.data.id}`, { as: grace })).status, 200);
       d = await get();
       assert.deepEqual(d.plans.map((x) => x.id), [900001], 'the seed is still there');
+    });
+  });
+
+  // Evan, 21 Oct 2026: "Book club times: shouldn't this be a weekly time?
+  // Not just a few times to choose between?"
+  await t.test('find a weekly time: everyone marks the hours of every week, and the hour most can make is named', async () => {
+    const fakes = (d) => d.people.filter((p) => p.username.startsWith('staging-demo-')).length;
+    await run('find-a-time-book-club', '/api/week', fakes, async (app) => {
+      const get = async (as = ada) => (await app.call('GET', '/api/week', { as })).data;
+      const mine = (as, hours) => app.call('PUT', '/api/week/mine', { as, body: { hours } });
+      const key = (b) => `${b.day}-${b.hour}`;
+
+      // The seed: five made-up people's weeks, Tuesday at 7 PM the best.
+      let d = await get();
+      assert.deepEqual([d.days, d.firstHour, d.lastHour], [7, 8, 22]);
+      assert.equal(fakes(d), 5);
+      assert.deepEqual(key(d.best[0]), '1-19');
+      assert.equal(d.free['1-19'].length, 4, 'four of the five');
+      // No plans in a weekly app: only its own mode's routes are there.
+      const plans = await app.call('GET', '/api/plans', { as: ada });
+      assert.ok(!(plans.data && plans.data.plans), 'no plans in a weekly app');
+      // Who still has to answer is the platform's member list.
+      assert.equal(d.members, 'ok');
+      assert.deepEqual(d.waiting.map((w) => [w.username, w.me]), [['ada', true], ['grace', false]]);
+
+      // Your week: hours of the grid only, replaced whole, an empty list
+      // taking your answer back.
+      for (const [hours, why] of [
+        [null, 'a list'],
+        [[[7, 19]], 'a day of the week'],
+        [[[1, 7]], 'from 8 AM'],
+        [[[1, 22]], 'until 10 PM'],
+        [[[1, 19.5]], 'whole hours'],
+        [[['1', 19]], 'numbers'],
+      ]) assert.equal((await mine(ada, hours)).status, 400, why);
+      assert.equal((await app.call('PUT', '/api/week/mine', { body: { hours: [[1, 19]] } })).status, 401, 'signed in to answer');
+      const graces = await listen(app, grace);
+      await graces.until((x) => x.text().includes(':ok'));
+      assert.deepEqual((await mine(ada, [[1, 19], [1, 20], [1, 19], [4, 18]])).data, { ok: true, hours: 3 }, 'each hour once');
+      await graces.until((x) => x.events() >= 1);
+      assert.doesNotMatch(graces.text(), /ada|19/, 'the stream says only that something changed');
+      await graces.close();
+      d = await get(grace);
+      assert.deepEqual(d.people[d.people.length - 1], { id: 101, username: 'ada', me: false }, 'the latest to answer is last');
+      assert.equal(d.free['1-19'].length, 5);
+      assert.ok(d.free['1-19'].includes(101) && d.free['4-18'].includes(101));
+      assert.deepEqual(key(d.best[0]), '1-19', 'now all five');
+      assert.deepEqual(d.waiting.map((w) => w.username), ['grace']);
+
+      // Grace answers first in a fresh week of her own; changing your week
+      // keeps your place.
+      await mine(grace, [[2, 18], [2, 19]]);
+      await mine(ada, [[1, 19], [2, 18], [2, 19]]);
+      d = await get(ada);
+      assert.deepEqual(d.people[0], { id: 101, username: 'ada', me: true }, 'you first');
+      assert.ok(!d.free['4-18'], 'an hour you took off is not yours any more');
+      assert.ok(d.people.findIndex((p) => p.username === 'grace') > 0);
+      assert.deepEqual(d.waiting, [], 'every member has answered');
+
+      // The best hours: the most free, then the hour after, then the
+      // earliest; an hour beside one already named is the same evening.
+      d = await get();
+      assert.ok(d.best.length <= 3);
+      for (let i = 1; i < d.best.length; i += 1) {
+        for (let j = 0; j < i; j += 1) {
+          assert.ok(!(d.best[i].day === d.best[j].day && Math.abs(d.best[i].hour - d.best[j].hour) <= 1), 'not the same evening twice');
+        }
+        assert.ok(d.free[key(d.best[i])].length <= d.free[key(d.best[i - 1])].length, 'most first');
+      }
+
+      // Taking your answer back.
+      assert.deepEqual((await mine(ada, [])).data, { ok: true, hours: 0 });
+      d = await get(ada);
+      assert.ok(!d.people.some((p) => p.id === 101));
+      assert.deepEqual(d.waiting.map((w) => w.username), ['ada']);
     });
   });
 

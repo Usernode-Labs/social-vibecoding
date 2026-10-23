@@ -2,17 +2,24 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   {{DEV_CONSOLE_FORWARDER}}
   <title>{{APP_NAME}}</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='45' fill='%237c3aed'/><circle cx='50' cy='50' r='18' fill='white'/></svg>">
+  <!-- The platform's native UI kit (usernode-native): the blurred nav bar,
+       swipe actions, drag to reorder, pull to refresh, sheets, toasts, press
+       states, and a tap outside a field closing the keyboard. Centrally
+       hosted and loaded by RELATIVE path, like the bridge: never vendor it.
+       Before this app's own stylesheet, so the app's rules win a tie. -->
+  <link rel="stylesheet" href="/usernode-native/v1/native.css">
   <!-- This app's precompiled Tailwind (npm run build writes it on every
        image build; tailwind.config.js says which files it scans). -->
   <link rel="stylesheet" href="/tailwind.css">
   <!-- The platform bridge, centrally hosted and loaded by RELATIVE path.
        Never vendor it and never write a hostname in front of it. It is also
        how the app answers the shell, so keep it even if no bridge API is
-       called. -->
+       called; it is also how the shell learns this app opens offline (the
+       service worker in public/sw.js serves it). -->
   <script src="/usernode-bridge/v1/bridge.js"></script>
   <!-- Follow the viewer's Homeroom theme (the bridge reports it), with the
        OS preference as the fallback outside Homeroom. -->
@@ -29,80 +36,145 @@
       media.addEventListener('change', applyTheme);
     })();
   </script>
+  <!-- The native UI kit's half that acts (see the stylesheet above). -->
+  <script src="/usernode-native/v1/native.js"></script>
+  <!-- What takes the loading shapes' place fades in, briefly, rather than
+       cutting over: an animation replays whenever [hidden] comes off, so
+       nothing has to start it. None under reduced motion. -->
+  <style>
+    @keyframes appear { from { opacity: 0; } to { opacity: 1; } }
+    @media (prefers-reduced-motion: no-preference) { .appear { animation: appear 200ms ease-out; } }
+
+    /* The kit in this app's colours: its accent, cards, sheets, nav bar and
+       hairlines are the design kit's tokens, so both looks follow. */
+    :root, .dark {
+      --un-accent: rgb(var(--accent));
+      --un-accent-contrast: rgb(var(--on-accent));
+      --un-action-danger: rgb(var(--danger));
+      --un-action-neutral: rgb(var(--muted));
+      --un-surface: rgb(var(--surface));
+      --un-hairline: rgb(var(--line));
+      --un-muted: rgb(var(--muted));
+      --un-group-bg: rgb(var(--surface));
+      --un-sheet-bg: rgb(var(--surface));
+      --un-popover-bg: rgb(var(--surface));
+      --un-navbar-bg: rgb(var(--ground) / 0.82);
+    }
+
+    /* A page that feels like a screen, not a web page: dragging it moves
+       this app (and bounces) instead of Homeroom around it, it never drifts
+       sideways, and a field never zooms the page. */
+    html { overscroll-behavior-y: contain; overscroll-behavior-x: none; touch-action: pan-y pinch-zoom; }
+    body { overflow-x: clip; }
+    input, textarea, button { touch-action: manipulation; }
+    @media (hover: none) and (pointer: coarse) {
+      input, textarea, select { font-size: 16px !important; }
+    }
+
+    /* The nav bar's compact title, and the large title below it that folds
+       into it as the list scrolls (unNative.attachNavBar). */
+    #bar .un-navbar-title { flex: none; }
+    #large-title { transform-origin: left center; }
+
+    /* The connection strip: under the nav bar, in the page, only when there
+       is something to say (offline, saving, waiting to sync). */
+    #offline-chip.tappable { cursor: pointer; }
+
+    /* Reminders' round tick, in the app's accent. */
+    .check {
+      appearance: none; -webkit-appearance: none;
+      width: 22px; height: 22px; border-radius: 9999px; flex-shrink: 0;
+      border: 1.5px solid rgb(var(--muted) / 0.55); background: transparent;
+      position: relative; cursor: pointer;
+      transition: background-color 150ms, border-color 150ms, scale 150ms;
+    }
+    .check:active { scale: 0.88; }
+    .check:checked { background: rgb(var(--accent)); border-color: rgb(var(--accent)); }
+    .check:checked::after {
+      content: ''; position: absolute; left: 6.5px; top: 3px; width: 6px; height: 11px;
+      border: solid rgb(var(--on-accent)); border-width: 0 2px 2px 0; transform: rotate(45deg);
+    }
+    /* The tick's tap area is the full 44px, beyond the drawn circle. */
+    .check-hit { display: flex; width: 44px; height: 44px; margin: -11px -6px -11px -12px; align-items: center; justify-content: center; cursor: pointer; flex-shrink: 0; }
+
+    /* A long press is a drag (or a swipe), never a text selection. */
+    .item-row, .cat-head { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+    /* Touch screens: items lift with a long press, so no item handles, and
+       swiping a row shows Rename and Delete, so no hover buttons. */
+    @media (hover: none) and (pointer: coarse) {
+      .item-drag, .hover-action { display: none !important; }
+    }
+    @media (hover: hover) {
+      .hover-action { opacity: 0; }
+      .item-row:hover .hover-action, .cat-head:hover .hover-action, .hover-action:focus-visible { opacity: 1; }
+    }
+    /* What needs a connection is dimmed while offline. */
+    body.is-offline .needs-net { opacity: 0.4; }
+  </style>
 </head>
 <body class="min-h-screen bg-ground text-fg">
-  <main class="mx-auto flex max-w-xl flex-col gap-4 px-4 py-8">
-    <header class="flex flex-col gap-1">
-      <div class="flex items-center gap-1">
-        <div class="min-w-0 flex-1">
-          <h1 class="text-title">{{APP_NAME}}</h1>
-        </div>
-        <button id="undo" type="button" class="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-fg hover:bg-raised disabled:cursor-default disabled:opacity-30 disabled:hover:bg-transparent" aria-label="Undo" title="Undo" disabled></button>
-        <button id="redo" type="button" class="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-fg hover:bg-raised disabled:cursor-default disabled:opacity-30 disabled:hover:bg-transparent" aria-label="Redo" title="Redo" disabled></button>
-        <button id="menu-button" type="button" class="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-fg hover:bg-raised" aria-label="List options" aria-expanded="false" aria-controls="menu"></button>
+  <!-- The nav bar: fixed, blurred, the list's name once the large title
+       has scrolled under it, and its actions on the right. -->
+  <header id="bar" class="un-navbar un-safe-top">
+    <div class="relative mx-auto flex h-12 w-full max-w-xl items-center justify-end gap-1 px-1">
+      <span class="un-navbar-title pointer-events-none absolute left-1/2 max-w-[45%] -translate-x-1/2 truncate text-center">{{APP_NAME}}</span>
+      <button id="undo" type="button" class="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-accent disabled:cursor-default disabled:opacity-30" aria-label="Undo" title="Undo" disabled></button>
+      <button id="redo" type="button" class="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-accent disabled:cursor-default disabled:opacity-30" aria-label="Redo" title="Redo" disabled></button>
+      <div class="relative">
+        <button id="menu-button" type="button" class="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-accent" aria-label="List options" aria-haspopup="menu" aria-expanded="false"></button>
+        <!-- Only when the kit has not loaded: the same options, over the
+             page under the button. With the kit they are its menu (a sheet
+             on a phone, a dropdown on a computer). -->
+        <div id="menu" class="list absolute right-0 top-full z-50 mt-1 w-64 shadow-lg" role="menu" hidden></div>
+      </div>
+    </div>
+  </header>
+
+  <main id="page" class="mx-auto flex max-w-xl flex-col gap-4 px-4 pb-24" style="padding-top: calc(3rem + var(--un-safe-inset-top, env(safe-area-inset-top, 0px)))">
+    <p id="offline-chip" class="-mx-4 border-b border-line bg-surface px-4 py-1.5 text-center text-small font-medium text-fg" role="status" aria-live="polite" hidden></p>
+
+    <header class="flex flex-col gap-1 pt-2">
+      <div id="large-title">
+        <h1 class="text-title">{{APP_NAME}}</h1>
       </div>
       <!-- The latest thing somebody else did this week. -->
       <p id="activity" class="min-w-0 truncate text-small text-muted" hidden></p>
     </header>
 
-    <!-- The list's options. -->
-    <div id="menu" class="list" hidden>
-      <button id="show-completed" type="button" class="list-row w-full text-left hover:bg-raised">Show all completed</button>
-      <button id="hide-completed" type="button" class="list-row w-full text-left hover:bg-raised">Hide all completed</button>
-      <label class="list-row cursor-pointer justify-between hover:bg-raised">
-        <span>Include due dates</span>
-        <input id="due-switch" type="checkbox" role="switch" class="h-5 w-5 accent-accent">
-      </label>
-      <button id="open-export" type="button" class="list-row w-full text-left hover:bg-raised">Export markdown</button>
-      <button id="open-import" type="button" class="list-row w-full text-left hover:bg-raised">Import markdown</button>
-    </div>
-
-    <section id="export" class="card flex flex-col gap-3" hidden>
-      <h2 class="text-heading">Export markdown</h2>
-      <p class="text-small text-muted">Copy this markdown, or select it and copy it yourself.</p>
-      <textarea id="export-text" rows="12" readonly spellcheck="false" class="field resize-y font-mono text-small" aria-label="The list as markdown"></textarea>
-      <div class="flex flex-wrap justify-end gap-2">
-        <button id="export-close" type="button" class="btn-secondary">Close</button>
-        <button id="export-copy" type="button" class="btn-primary">Copy</button>
-      </div>
-    </section>
-
-    <section id="import" class="card flex flex-col gap-3" hidden>
-      <h2 class="text-heading">Import markdown</h2>
-      <p class="text-small text-muted">Paste markdown to import into this list. Add merges into matching categories; Replace clears the list first. ~~Strikethrough~~ items import as completed.</p>
-      <textarea id="import-text" rows="12" spellcheck="false" class="field resize-y font-mono text-small" aria-label="Markdown to import"
-        placeholder="# **My List**&#10;&#10;* Category&#10;  * item&#10;  * ~~done item~~"></textarea>
-      <div class="flex flex-wrap justify-end gap-2">
-        <button id="import-cancel" type="button" class="btn-secondary">Cancel</button>
-        <button id="import-replace" type="button" class="btn-secondary text-danger">Import (replace)</button>
-        <button id="import-add" type="button" class="btn-primary">Import (add)</button>
-      </div>
-    </section>
-
-    <div class="flex flex-col gap-2">
+    <div class="flex flex-col gap-3">
       <div class="relative">
-        <input id="search" type="search" autocomplete="off" class="field pr-11" placeholder="Search items…" aria-label="Search items">
+        <input id="search" type="search" autocomplete="off" enterkeyhint="search" class="field rounded-xl border-0 bg-raised pl-10 pr-11" placeholder="Search items…" aria-label="Search items">
+        <span id="search-icon" class="pointer-events-none absolute left-3 top-0 flex h-11 items-center text-muted"></span>
         <button id="search-clear" type="button" class="absolute right-0 top-0 flex h-11 w-11 items-center justify-center text-muted" aria-label="Clear search" hidden></button>
       </div>
       <!-- Quick-add: into the list's General items, at the top. -->
-      <form id="quick-add" class="flex gap-2" autocomplete="off">
-        <input name="text" type="text" maxlength="500" class="field min-w-0 flex-1" placeholder="Add an item…" aria-label="Add an item">
-        <button type="submit" class="btn-primary shrink-0">Add</button>
+      <form id="quick-add" class="flex items-center gap-3 rounded-xl border border-line bg-surface px-4" autocomplete="off">
+        <span class="select-none text-heading font-normal leading-none text-accent" aria-hidden="true">+</span>
+        <input name="text" type="text" maxlength="500" enterkeyhint="done" class="min-h-11 min-w-0 flex-1 bg-transparent py-2 text-body text-fg placeholder:text-muted/60 focus:outline-none" placeholder="Add an item…" aria-label="Add an item">
       </form>
     </div>
 
-    <!-- Loading: shapes where the list will be. -->
-    <div id="loading" class="flex flex-col gap-2" aria-label="Loading">
-      <div class="skeleton h-12 w-full"></div>
-      <div class="skeleton h-5 w-32"></div>
-      <div class="skeleton h-12 w-full"></div>
-      <div class="skeleton h-12 w-full"></div>
+    <!-- Loading: the list's own shape, the General items and then a
+         category under its heading, so nothing moves when it arrives. -->
+    <div id="loading" class="flex flex-col gap-5" aria-label="Loading">
+      <ul class="list" aria-hidden="true">
+        <li class="list-row gap-3"><div class="skeleton h-5 w-5 shrink-0 rounded-full"></div><div class="skeleton h-4 w-2/5"></div></li>
+        <li class="list-row gap-3"><div class="skeleton h-5 w-5 shrink-0 rounded-full"></div><div class="skeleton h-4 w-1/3"></div></li>
+      </ul>
+      <div class="flex flex-col gap-1" aria-hidden="true">
+        <div class="skeleton mx-1 my-3 h-5 w-28"></div>
+        <ul class="list">
+          <li class="list-row gap-3"><div class="skeleton h-5 w-5 shrink-0 rounded-full"></div><div class="skeleton h-4 w-1/2"></div></li>
+          <li class="list-row gap-3"><div class="skeleton h-5 w-5 shrink-0 rounded-full"></div><div class="skeleton h-4 w-1/4"></div></li>
+          <li class="list-row gap-3"><div class="skeleton h-5 w-5 shrink-0 rounded-full"></div><div class="skeleton h-4 w-2/5"></div></li>
+        </ul>
+      </div>
     </div>
 
-    <!-- Error: only when the load failed. -->
+    <!-- Error: only when the load failed and nothing is saved on this device. -->
     <div id="error" class="state-error card" hidden>
       <p class="text-heading">The list did not load</p>
-      <p class="text-body text-muted">Nothing on it is lost. Check your connection and try again.</p>
+      <p id="error-text" class="text-body text-muted">Nothing on it is lost. Check your connection and try again.</p>
       <button id="retry" type="button" class="btn-secondary">Retry</button>
     </div>
 
@@ -112,21 +184,18 @@
       <p class="text-body text-muted">Add what you need above. Give it categories, such as aisles or shops, below.</p>
     </div>
 
-    <p id="no-results" class="px-1 text-body text-muted" hidden></p>
+    <p id="no-results" class="px-1 py-6 text-center text-body text-muted" hidden></p>
 
     <!-- The General items first, with no heading, then each category. -->
-    <div id="categories" class="flex flex-col gap-5" hidden></div>
+    <div id="categories" class="flex flex-col gap-6 appear" hidden></div>
 
-    <form id="new-category" class="flex gap-2" autocomplete="off" hidden>
-      <input name="name" type="text" maxlength="100" class="field min-w-0 flex-1" placeholder="New category…" aria-label="New category">
-      <button type="submit" class="btn-secondary shrink-0">Add</button>
+    <form id="new-category" class="needs-net flex items-center gap-3 px-4" autocomplete="off" hidden>
+      <span class="select-none text-heading font-normal leading-none text-accent" aria-hidden="true">+</span>
+      <input name="name" type="text" maxlength="100" enterkeyhint="done" class="min-h-11 min-w-0 flex-1 bg-transparent py-2 text-body text-fg placeholder:text-muted/60 focus:outline-none" placeholder="New category…" aria-label="New category">
     </form>
   </main>
 
-  <div id="toast" class="pointer-events-none fixed inset-x-0 bottom-6 z-50 flex justify-center px-4" role="status" aria-live="polite" hidden>
-    <p id="toast-text" class="rounded-lg bg-fg px-4 py-2 text-small text-ground shadow-lg"></p>
-  </div>
-
+  <script src="/live-updates.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>

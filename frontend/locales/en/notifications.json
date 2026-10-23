@@ -19,9 +19,173 @@
     "text": "Other",
     "description": "Heading on the Unread filter over the notifications that belong to no project (messages, friends, account)."
   },
+  "stack.more_one": {
+    "text": "{{count}} more notification",
+    "description": "Last line of the top card of a closed stack of notifications on the Unread filter, one stack per project: how many more notifications are under it. Tapping the card opens the stack. {{count}} is how many."
+  },
+  "stack.more_other": {
+    "text": "{{count}} more notifications",
+    "description": "Last line of the top card of a closed stack of notifications on the Unread filter, one stack per project: how many more notifications are under it. Tapping the card opens the stack. {{count}} is how many."
+  },
+  "stack.showLess": {
+    "text": "Show less",
+    "description": "Small button beside a project's name on the Unread filter while its stack of notifications is open: folds the stack back under its newest notification."
+  },
+  "stack.showLessLabel": {
+    "text": "Show less from {{app}}",
+    "description": "Accessible name of that button. {{app}} is the project's name."
+  },
+  "story.meta_one": {
+    "text": "#{{number}} · {{count}} notification",
+    "description": "Small last line of a card on the Unread filter that stands for several notifications about one request or proposal: which one, by its number, and how many notifications the card is. {{number}} is the request's or proposal's number, like 5580; {{count}} is how many notifications."
+  },
+  "story.meta_other": {
+    "text": "#{{number}} · {{count}} notifications",
+    "description": "Small last line of a card on the Unread filter that stands for several notifications about one request or proposal: which one, by its number, and how many notifications the card is. {{number}} is the request's or proposal's number, like 5580; {{count}} is how many notifications."
+  },
+  "story.metaUnnumbered_one": {
+    "text": "{{count}} notification",
+    "description": "Small last line of a card on the Unread filter that stands for several notifications about one request or proposal whose number is not known: how many notifications the card is. {{count}} is that number."
+  },
+  "story.metaUnnumbered_other": {
+    "text": "{{count}} notifications",
+    "description": "Small last line of a card on the Unread filter that stands for several notifications about one request or proposal whose number is not known: how many notifications the card is. {{count}} is that number."
+  },
+  "story.projectMeta": {
+    "text": "<0>{{project}}</0> · {{meta}}",
+    "description": "Small last line of a notification card that sits under no project heading (the older notifications on the Unread filter, one card per request or proposal): the card's project, emphasized, then the rest of the line. Keep the <0></0> tags around the project's name. {{project}} is the project's name, like Book club; {{meta}} is the rest of the line, like \"#5580 · 3 notifications\" or \"by @ana\"."
+  },
+  "history.show": {
+    "text": "Show what happened",
+    "description": "Accessible name of the small arrow at the foot of a notification about a request or proposal: opens, inside the card, everything that happened on it (votes, comments, updates, going live)."
+  },
+  "history.hide": {
+    "text": "Hide what happened",
+    "description": "Accessible name of that arrow while the card's history is open: closes it."
+  },
+  "history.loading": {
+    "text": "Loading…",
+    "description": "Shown inside a notification card while what happened on its request or proposal is being fetched."
+  },
+  "history.failed": {
+    "text": "Couldn’t load what happened here.",
+    "description": "Shown inside a notification card when what happened on its request or proposal could not be fetched."
+  },
+  "history.empty": {
+    "text": "Nothing else has happened here yet.",
+    "description": "Shown inside a notification card when its request or proposal has no other activity to show."
+  },
+  "history.on": {
+    "text": "On #{{number}}",
+    "description": "First line of a notification card's history: the request or proposal the notification was posted on. {{number}} is its number, like 5588; its title is shown under it."
+  },
+  "history.step.live": {
+    "text": "Went live",
+    "description": "One line of a notification card's history: the change was merged and is live in the project."
+  },
+  "history.step.updated": {
+    "text": "Updated",
+    "description": "One line of a notification card's history: the proposal's change was updated with new work."
+  },
+  "history.step.closed": {
+    "text": "Closed by a group vote",
+    "description": "One line of a notification card's history: the request was closed because the group voted to close it."
+  },
+  "history.step.withdrawn": {
+    "text": "Withdrawn",
+    "description": "One line of a notification card's history: the proposal was withdrawn by the person who made it."
+  },
+  "history.step.voteYes": {
+    "text": "{{who}} voted yes",
+    "description": "One line of a notification card's history: someone voted for the proposal. {{who}} is who did it: their @handle, like @ana, or Homeroom bot."
+  },
+  "history.step.voteYesYou": {
+    "text": "You voted yes",
+    "description": "One line of a notification card's history: the viewer voted for the proposal."
+  },
+  "history.step.voteNo": {
+    "text": "{{who}} voted no",
+    "description": "One line of a notification card's history: someone voted against the proposal. {{who}} is who did it: their @handle, like @ana, or Homeroom bot."
+  },
+  "history.step.voteNoYou": {
+    "text": "You voted no",
+    "description": "One line of a notification card's history: the viewer voted against the proposal."
+  },
+  "history.step.votesYes_one": {
+    "text": "{{count}} yes vote",
+    "description": "One line of a notification card's history: several people voted for the proposal, one after another; their names are on the line under it. {{count}} is how many."
+  },
+  "history.step.votesYes_other": {
+    "text": "{{count}} yes votes",
+    "description": "One line of a notification card's history: several people voted for the proposal, one after another; their names are on the line under it. {{count}} is how many."
+  },
+  "history.step.votesNo_one": {
+    "text": "{{count}} no vote",
+    "description": "One line of a notification card's history: several people voted against the proposal, one after another; their names are on the line under it. {{count}} is how many."
+  },
+  "history.step.votesNo_other": {
+    "text": "{{count}} no votes",
+    "description": "One line of a notification card's history: several people voted against the proposal, one after another; their names are on the line under it. {{count}} is how many."
+  },
+  "history.step.voteTakenBack": {
+    "text": "{{who}} took back their vote",
+    "description": "One line of a notification card's history: someone withdrew the vote they had cast. {{who}} is who did it: their @handle, like @ana, or Homeroom bot."
+  },
+  "history.step.voteTakenBackYou": {
+    "text": "You took back your vote",
+    "description": "One line of a notification card's history: the viewer withdrew the vote they had cast."
+  },
+  "history.step.voteTakenBackUnnamed": {
+    "text": "A vote was taken back",
+    "description": "One line of a notification card's history: someone withdrew the vote they had cast, and who is not known."
+  },
+  "history.step.proposed": {
+    "text": "{{who}} put it up for a vote",
+    "description": "One line of a notification card's history: someone proposed the change, so the group can vote on it. {{who}} is who did it: their @handle, like @ana, or Homeroom bot."
+  },
+  "history.step.proposedYou": {
+    "text": "You put it up for a vote",
+    "description": "One line of a notification card's history: the viewer proposed the change, so the group can vote on it."
+  },
+  "history.step.plan": {
+    "text": "{{who}} shared a plan",
+    "description": "One line of a notification card's history: someone shared a written plan for the change; its title is on the line under it. {{who}} is who did it: their @handle, like @ana, or Homeroom bot."
+  },
+  "history.step.planYou": {
+    "text": "You shared a plan",
+    "description": "One line of a notification card's history: the viewer shared a written plan for the change; its title is on the line under it."
+  },
+  "history.step.planUnnamed": {
+    "text": "A plan was shared",
+    "description": "One line of a notification card's history: a written plan for the change was shared; its title is on the line under it."
+  },
+  "history.step.asked": {
+    "text": "{{who}} asked for it",
+    "description": "One line of a notification card's history: someone filed the request. {{who}} is who did it: their @handle, like @ana, or Homeroom bot."
+  },
+  "history.step.askedYou": {
+    "text": "You asked for it",
+    "description": "One line of a notification card's history: the viewer filed the request."
+  },
+  "history.step.closeProposed": {
+    "text": "{{who}} proposed closing it",
+    "description": "One line of a notification card's history: someone asked the group to vote on closing the request. {{who}} is who did it: their @handle, like @ana, or Homeroom bot."
+  },
+  "history.step.closeProposedYou": {
+    "text": "You proposed closing it",
+    "description": "One line of a notification card's history: the viewer asked the group to vote on closing the request."
+  },
+  "history.step.comment": {
+    "text": "{{who}} commented",
+    "description": "One line of a notification card's history: someone wrote in the request's or proposal's discussion; their words are on the line under it. {{who}} is who did it: their @handle, like @ana, or Homeroom bot."
+  },
+  "history.step.commentYou": {
+    "text": "You commented",
+    "description": "One line of a notification card's history: the viewer wrote in the request's or proposal's discussion; their words are on the line under it."
+  },
   "sheet.filters": {
     "text": "Notification filters",
-    "description": "Accessible name of the row of three filter buttons (Unread, Messages, All) at the top of the notifications sheet."
+    "description": "Accessible name of the row of two filter buttons (Unread, All) at the top of the notifications sheet."
   },
   "sheet.tab.unread": {
     "text": "Unread",
@@ -35,17 +199,13 @@
     "text": "Unread ({{count}})",
     "description": "Filter button at the top of the notifications sheet: shows only notifications not yet read. {{count}} is how many there are."
   },
-  "sheet.tab.messages": {
-    "text": "Messages",
-    "description": "Filter button at the top of the notifications sheet: shows only notifications about conversations and about what coding agents did."
+  "sheet.tab.unreadCountCapped": {
+    "text": "Unread (99+)",
+    "description": "Filter button at the top of the notifications sheet when more than 99 notifications are unread: the same capped number the bell's badge shows."
   },
   "sheet.tab.all": {
     "text": "All",
     "description": "Filter button at the top of the notifications sheet: shows every notification, read ones included."
-  },
-  "sheet.allMessages": {
-    "text": "All messages",
-    "description": "Link row at the top of the notifications sheet's Messages filter: leaves the sheet and goes to the Messages screen."
   },
   "sheet.today": {
     "text": "Today",
@@ -55,21 +215,29 @@
     "text": "Earlier",
     "description": "Heading over the notifications that arrived before today, in the notifications sheet."
   },
+  "sheet.yesterday": {
+    "text": "Yesterday",
+    "description": "Heading over the older notifications that arrived yesterday, on the notifications sheet's Unread filter once its older notifications are showing."
+  },
+  "sheet.lastWeek": {
+    "text": "Last 7 days",
+    "description": "Heading over the older notifications that arrived in the rest of the past week (from two to six days ago), on the notifications sheet's Unread filter once its older notifications are showing. It follows the Today and Yesterday headings."
+  },
+  "sheet.longAgo": {
+    "text": "Older",
+    "description": "Heading over the older notifications that arrived more than a week ago, on the notifications sheet's Unread filter once its older notifications are showing. It follows the Last 7 days heading."
+  },
   "sheet.empty.unread": {
     "text": "You’re all caught up.",
     "description": "Shown in the notifications sheet when the Unread filter has nothing in it."
   },
   "sheet.empty.other": {
     "text": "Nothing here yet. You’ll get pinged here.",
-    "description": "Shown in the notifications sheet when the Messages or All filter has nothing in it. \"Pinged\" means notified."
+    "description": "Shown in the notifications sheet when the All filter has nothing in it. \"Pinged\" means notified."
   },
   "sheet.older.loading": {
     "text": "Loading…",
     "description": "Shown on the button at the foot of the notifications sheet while older notifications are being fetched."
-  },
-  "sheet.older.messages": {
-    "text": "See older message notifications",
-    "description": "Button at the foot of the notifications sheet's Messages filter: fetches older notifications about conversations."
   },
   "sheet.older.unread": {
     "text": "See more unread notifications",
@@ -83,17 +251,33 @@
     "text": "Hide older notifications",
     "description": "Button at the foot of the notifications sheet's Unread filter once the older notifications are showing: collapses the list back to just the unread ones."
   },
-  "sheet.older.showAll": {
-    "text": "See older notifications",
-    "description": "Button at the foot of the notifications sheet's Messages filter: switches to the All filter, where read notifications are listed too."
-  },
   "sheet.older.load": {
     "text": "See older notifications",
-    "description": "Button at the foot of the notifications sheet's All filter: fetches the next page of older notifications."
+    "description": "Button at the foot of the notifications sheet's All filter: fetches the next page of older notifications (with a kind filter on, the older ones of that kind join the list)."
+  },
+  "sheet.kinds": {
+    "text": "Show one kind",
+    "description": "Accessible name of the row of kind filters (Votes, Mentions & replies, Invites) under the Unread and All filters, on the All filter of the notifications sheet."
+  },
+  "sheet.kind.votes": {
+    "text": "Votes",
+    "description": "Filter chip on the notifications sheet's All filter: shows only notifications about votes (a change up for your vote, going stale, ready to try, a vote on your change, a change you voted on going live)."
+  },
+  "sheet.kind.mentions": {
+    "text": "Mentions & replies",
+    "description": "Filter chip on the notifications sheet's All filter: shows only notifications where someone named you with @ or replied to you, in a project's chat, a request or a conversation."
+  },
+  "sheet.kind.invites": {
+    "text": "Invites",
+    "description": "Filter chip on the notifications sheet's All filter: shows only invitations (to build or approve on a project, to join a conversation) and friend requests."
+  },
+  "sheet.empty.kind": {
+    "text": "Nothing of this kind yet.",
+    "description": "Shown in the notifications sheet when a kind filter (Votes, Mentions & replies or Invites) on the All filter has nothing in it among the notifications loaded so far."
   },
   "sheet.search.placeholder": {
     "text": "Search notifications…",
-    "description": "Placeholder and accessible name of the search field between the title and the Unread, Messages and All filters in the notifications sheet. It narrows the notifications already loaded to those whose project, kind or subject matches."
+    "description": "Placeholder and accessible name of the search field between the title and the Unread and All filters in the notifications sheet. It narrows the notifications already loaded to those whose project, kind or subject matches."
   },
   "sheet.search.noMatches": {
     "text": "No notifications match “{{query}}”.",
@@ -107,13 +291,29 @@
     "text": "Clear notification",
     "description": "Accessible name of the small × button on an unread notification: marks that notification as read without opening it."
   },
+  "row.clearGroupLabel_one": {
+    "text": "Clear {{count}} notification",
+    "description": "Accessible name of the small × button on a notification row that stands for several notifications of one kind in one project: marks all of them as read without opening them. {{count}} is how many."
+  },
+  "row.clearGroupLabel_other": {
+    "text": "Clear {{count}} notifications",
+    "description": "Accessible name of the small × button on a notification row that stands for several notifications of one kind in one project: marks all of them as read without opening them. {{count}} is how many."
+  },
   "row.save": {
     "text": "Save notification",
-    "description": "Accessible name of the bookmark button at the right end of a notification row that is not saved: pins that notification in the Saved section at the top."
+    "description": "Accessible name of the bookmark button at the right end of a notification row that is not saved: pins that notification in the Saved section at the top. It also names the bookmark beside a notification listed in a card's history."
   },
   "row.unsave": {
     "text": "Unsave notification",
-    "description": "Accessible name of the bookmark button at the right end of a notification row the viewer has saved: removes it from the Saved section at the top. The button is the same one, pressed."
+    "description": "Accessible name of the bookmark button at the right end of a notification row the viewer has saved: removes it from the Saved section at the top. The button is the same one, pressed, and it also names the bookmark beside a saved notification listed in a card's history."
+  },
+  "row.swipeSave": {
+    "text": "Save",
+    "description": "Action revealed by swiping a notification on a phone: saves it for later, in the Saved section at the top of the sheet. A verb."
+  },
+  "row.swipeUnsave": {
+    "text": "Unsave",
+    "description": "Action revealed by swiping a saved notification on a phone: takes it out of the Saved section. A verb."
   },
   "row.unreadDot": {
     "text": "Unread",
@@ -126,6 +326,70 @@
   "row.runCount_other": {
     "text": "{{count}} notifications",
     "description": "Accessible name of the number at the right of a row that stands for several notifications from one conversation. {{count}} is how many."
+  },
+  "row.group.votedMerged_one": {
+    "text": "{{count}} change you voted on is live",
+    "description": "Heading of a notification row on the Unread filter that stands for several notifications of the same kind from one project, folded into one row. {{count}} is how many. Changes the viewer voted for were merged and are now live."
+  },
+  "row.group.votedMerged_other": {
+    "text": "{{count}} changes you voted on are live",
+    "description": "Heading of a notification row on the Unread filter that stands for several notifications of the same kind from one project, folded into one row. {{count}} is how many. Changes the viewer voted for were merged and are now live."
+  },
+  "row.group.proposed_one": {
+    "text": "{{count}} new change",
+    "description": "Heading of a notification row on the Unread filter that stands for several notifications of the same kind from one project, folded into one row. {{count}} is how many. New changes were put up for a vote."
+  },
+  "row.group.proposed_other": {
+    "text": "{{count}} new changes",
+    "description": "Heading of a notification row on the Unread filter that stands for several notifications of the same kind from one project, folded into one row. {{count}} is how many. New changes were put up for a vote."
+  },
+  "row.group.stale_one": {
+    "text": "{{count}} change needs votes",
+    "description": "Heading of a notification row on the Unread filter that stands for several notifications of the same kind from one project, folded into one row. {{count}} is how many. Proposed changes are waiting for more votes."
+  },
+  "row.group.stale_other": {
+    "text": "{{count}} changes need votes",
+    "description": "Heading of a notification row on the Unread filter that stands for several notifications of the same kind from one project, folded into one row. {{count}} is how many. Proposed changes are waiting for more votes."
+  },
+  "row.group.checkFailed_one": {
+    "text": "Testing couldn't run on {{count}} change",
+    "description": "Heading of a notification row on the Unread filter that stands for several notifications of the same kind from one project, folded into one row. {{count}} is how many. The automatic tests could not run on these proposed changes."
+  },
+  "row.group.checkFailed_other": {
+    "text": "Testing couldn't run on {{count}} changes",
+    "description": "Heading of a notification row on the Unread filter that stands for several notifications of the same kind from one project, folded into one row. {{count}} is how many. The automatic tests could not run on these proposed changes."
+  },
+  "row.group.issueOpened_one": {
+    "text": "{{count}} new request",
+    "description": "Heading of a notification row on the Unread filter that stands for several notifications of the same kind from one project, folded into one row. {{count}} is how many. New requests were filed in the project."
+  },
+  "row.group.issueOpened_other": {
+    "text": "{{count}} new requests",
+    "description": "Heading of a notification row on the Unread filter that stands for several notifications of the same kind from one project, folded into one row. {{count}} is how many. New requests were filed in the project."
+  },
+  "row.group.issueMention_one": {
+    "text": "Mentioned you {{count}} time",
+    "description": "Heading of a notification row on the Unread filter that stands for several notifications of the same kind from one project, folded into one row. {{count}} is how many. Someone mentioned the viewer in requests."
+  },
+  "row.group.issueMention_other": {
+    "text": "Mentioned you {{count}} times",
+    "description": "Heading of a notification row on the Unread filter that stands for several notifications of the same kind from one project, folded into one row. {{count}} is how many. Someone mentioned the viewer in requests."
+  },
+  "row.group.reaction_one": {
+    "text": "{{count}} reaction",
+    "description": "Heading of a notification row on the Unread filter that stands for several notifications of the same kind from one project, folded into one row. {{count}} is how many. People reacted to the viewer's messages."
+  },
+  "row.group.reaction_other": {
+    "text": "{{count}} reactions",
+    "description": "Heading of a notification row on the Unread filter that stands for several notifications of the same kind from one project, folded into one row. {{count}} is how many. People reacted to the viewer's messages."
+  },
+  "row.group.sessionDone_one": {
+    "text": "{{count}} session finished",
+    "description": "Heading of a notification row on the Unread filter that stands for several notifications of the same kind from one project, folded into one row. {{count}} is how many. The viewer's coding sessions finished their work."
+  },
+  "row.group.sessionDone_other": {
+    "text": "{{count}} sessions finished",
+    "description": "Heading of a notification row on the Unread filter that stands for several notifications of the same kind from one project, folded into one row. {{count}} is how many. The viewer's coding sessions finished their work."
   },
   "row.sending": {
     "text": "Sending…",
@@ -1282,5 +1546,125 @@
   "row.chat.requestReplyUnnumbered": {
     "text": "Replied on a request",
     "description": "First line of a notification: somebody posted in the discussion of a request the viewer filed or posted in, when the request's number is not known. \"Request\" is a noun: something people asked a project for. The message is on the line below."
+  },
+  "row.projectOpened.label": {
+    "text": "It’s open: ready to use",
+    "description": "A notification row in the notifications sheet: a project the reader joined while it was still being made has just gone live. The project's name is shown on the line beside it. \"It\" is the project."
+  },
+  "ask.invite_sent.title": {
+    "text": "Hear when they join?",
+    "description": "Part of the notification ask: a small card that appears at a moment when the person has just started waiting on something, asking whether Homeroom may notify them about it. Shown inside the Homeroom phone app; its button then shows the phone's own permission prompt. This one appears right after the person sent an invite link to their project."
+  },
+  "ask.invite_sent.body": {
+    "text": "We’ll tell you when someone opens your invite, and when they join.",
+    "description": "Part of the notification ask: a small card that appears at a moment when the person has just started waiting on something, asking whether Homeroom may notify them about it. Shown inside the Homeroom phone app; its button then shows the phone's own permission prompt. The line under the title, after an invite link was sent."
+  },
+  "ask.suggestion.title": {
+    "text": "Get a ping when it’s ready?",
+    "description": "Part of the notification ask: a small card that appears at a moment when the person has just started waiting on something, asking whether Homeroom may notify them about it. Shown inside the Homeroom phone app; its button then shows the phone's own permission prompt. This one appears after the person suggested a change that Homeroom bot (the platform's assistant) is now building."
+  },
+  "ask.suggestion.body": {
+    "text": "Homeroom bot will message you when your idea is ready to try.",
+    "description": "Part of the notification ask: a small card that appears at a moment when the person has just started waiting on something, asking whether Homeroom may notify them about it. Shown inside the Homeroom phone app; its button then shows the phone's own permission prompt. The line under the title, after a suggestion Homeroom bot is building."
+  },
+  "ask.reply.title": {
+    "text": "Hear when they answer?",
+    "description": "Part of the notification ask: a small card that appears at a moment when the person has just started waiting on something, asking whether Homeroom may notify them about it. Shown inside the Homeroom phone app; its button then shows the phone's own permission prompt. This one appears after the person sent a message to someone, or in a project's chat."
+  },
+  "ask.reply.body": {
+    "text": "Get a notification when somebody replies to you.",
+    "description": "Part of the notification ask: a small card that appears at a moment when the person has just started waiting on something, asking whether Homeroom may notify them about it. Shown inside the Homeroom phone app; its button then shows the phone's own permission prompt. The line under the title, after a message was sent."
+  },
+  "ask.community.title": {
+    "text": "Hear from {{project}}?",
+    "description": "Part of the notification ask: a small card that appears at a moment when the person has just started waiting on something, asking whether Homeroom may notify them about it. Shown inside the Homeroom phone app; its button then shows the phone's own permission prompt. This one appears on the page of a project (a community) the person joined. {{project}} is the project's name."
+  },
+  "ask.community.small.body": {
+    "text": "Get a notification when the group writes here, and when a change needs your vote.",
+    "description": "Part of the notification ask: a small card that appears at a moment when the person has just started waiting on something, asking whether Homeroom may notify them about it. Shown inside the Homeroom phone app; its button then shows the phone's own permission prompt. The line under the title, on a small private project where every message notifies the group."
+  },
+  "ask.community.large.body": {
+    "text": "Get a notification when a change needs your vote, and when somebody replies to you.",
+    "description": "Part of the notification ask: a small card that appears at a moment when the person has just started waiting on something, asking whether Homeroom may notify them about it. Shown inside the Homeroom phone app; its button then shows the phone's own permission prompt. The line under the title, on a larger or public project where ordinary messages do not notify everyone."
+  },
+  "ask.project_opens.title": {
+    "text": "Get a ping when {{project}} opens?",
+    "description": "Part of the notification ask: a small card that appears at a moment when the person has just started waiting on something, asking whether Homeroom may notify them about it. Shown inside the Homeroom phone app; its button then shows the phone's own permission prompt. This one appears to somebody who joined a project that is still being made. {{project}} is the project's name."
+  },
+  "ask.project_opens.body": {
+    "text": "We’ll tell you as soon as it’s ready to use.",
+    "description": "Part of the notification ask: a small card that appears at a moment when the person has just started waiting on something, asking whether Homeroom may notify them about it. Shown inside the Homeroom phone app; its button then shows the phone's own permission prompt. The line under the title, on a project still being made."
+  },
+  "ask.notifyMe": {
+    "text": "Notify me",
+    "description": "Part of the notification ask: a small card that appears at a moment when the person has just started waiting on something, asking whether Homeroom may notify them about it. The card's main button: yes, notify me."
+  },
+  "ask.notNow": {
+    "text": "Not now",
+    "description": "Part of the notification ask: a small card that appears at a moment when the person has just started waiting on something, asking whether Homeroom may notify them about it. The card's second button: closes the card without turning anything on."
+  },
+  "ask.on": {
+    "text": "We’ll let you know",
+    "description": "Part of the notification ask: a small card that appears at a moment when the person has just started waiting on something, asking whether Homeroom may notify them about it. What the card says, with a check mark, once notifications are on."
+  },
+  "ask.off": {
+    "text": "Notifications are off for Homeroom",
+    "description": "Part of the notification ask: a small card that appears at a moment when the person has just started waiting on something, asking whether Homeroom may notify them about it. What the card says when the phone's settings refused notifications."
+  },
+  "ask.turnOn": {
+    "text": "Turn on notifications",
+    "description": "Part of the notification ask: a small card that appears at a moment when the person has just started waiting on something, asking whether Homeroom may notify them about it. A button beside that line that opens the phone's notification settings for Homeroom."
+  },
+  "ask.web.title.app_building": {
+    "text": "Get the app to hear when it’s ready",
+    "description": "Part of the notification ask: a small card that appears at a moment when the person has just started waiting on something, asking whether Homeroom may notify them about it. Shown in a web browser, where Homeroom cannot send notifications: it offers the Homeroom phone app instead. Shown while Homeroom bot builds the person's new project."
+  },
+  "ask.web.title.invite_sent": {
+    "text": "Get the app to hear when they join",
+    "description": "Part of the notification ask: a small card that appears at a moment when the person has just started waiting on something, asking whether Homeroom may notify them about it. Shown in a web browser, where Homeroom cannot send notifications: it offers the Homeroom phone app instead. Shown right after the person sent an invite link."
+  },
+  "ask.web.title.suggestion": {
+    "text": "Get the app to hear when it’s ready",
+    "description": "Part of the notification ask: a small card that appears at a moment when the person has just started waiting on something, asking whether Homeroom may notify them about it. Shown in a web browser, where Homeroom cannot send notifications: it offers the Homeroom phone app instead. Shown after a suggestion Homeroom bot is now building."
+  },
+  "ask.web.title.reply": {
+    "text": "Get the app to hear when they answer",
+    "description": "Part of the notification ask: a small card that appears at a moment when the person has just started waiting on something, asking whether Homeroom may notify them about it. Shown in a web browser, where Homeroom cannot send notifications: it offers the Homeroom phone app instead. Shown after the person sent a message."
+  },
+  "ask.web.title.community": {
+    "text": "Get the app to hear from {{project}}",
+    "description": "Part of the notification ask: a small card that appears at a moment when the person has just started waiting on something, asking whether Homeroom may notify them about it. Shown in a web browser, where Homeroom cannot send notifications: it offers the Homeroom phone app instead. Shown on a project the person joined. {{project}} is the project's name."
+  },
+  "ask.web.title.project_opens": {
+    "text": "Get the app to hear when {{project}} opens",
+    "description": "Part of the notification ask: a small card that appears at a moment when the person has just started waiting on something, asking whether Homeroom may notify them about it. Shown in a web browser, where Homeroom cannot send notifications: it offers the Homeroom phone app instead. Shown on a project still being made. {{project}} is the project's name."
+  },
+  "ask.web.body": {
+    "text": "Homeroom’s notifications come through its phone app.",
+    "description": "Part of the notification ask: a small card that appears at a moment when the person has just started waiting on something, asking whether Homeroom may notify them about it. Shown in a web browser, where Homeroom cannot send notifications: it offers the Homeroom phone app instead. The line under the title."
+  },
+  "ask.web.bodyEmail": {
+    "text": "Homeroom’s notifications come through its phone app. Until then, we’ll email you.",
+    "description": "Part of the notification ask: a small card that appears at a moment when the person has just started waiting on something, asking whether Homeroom may notify them about it. Shown in a web browser, where Homeroom cannot send notifications: it offers the Homeroom phone app instead. The line under the title, in place of the one above, when Homeroom emails the person about this moment while they have no app."
+  },
+  "ask.web.getApp": {
+    "text": "Get the app",
+    "description": "Part of the notification ask: a small card that appears at a moment when the person has just started waiting on something, asking whether Homeroom may notify them about it. Shown in a web browser, where Homeroom cannot send notifications: it offers the Homeroom phone app instead. The card's main button: opens the app's store page, or on a computer a code to scan with a phone."
+  },
+  "ask.sheet.title": {
+    "text": "Get Homeroom on your phone",
+    "description": "Title of a small sheet opened from the notification ask's Get the app button on a computer. It shows a code to scan with a phone."
+  },
+  "ask.sheet.scan": {
+    "text": "Scan this with your phone’s camera. It opens the app’s page in your phone’s store.",
+    "description": "Under that title, beside the code to scan."
+  },
+  "ask.sheet.or": {
+    "text": "Or open the store on your phone",
+    "description": "Small heading over links to the app's store pages, under the code to scan."
+  },
+  "ask.sheet.codeLabel": {
+    "text": "Code to scan for the Homeroom app",
+    "description": "Accessible name of the code image on that sheet."
   }
 }

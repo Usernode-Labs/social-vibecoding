@@ -1,98 +1,45 @@
 'use strict';
 
 /**
- * Per-app creation-phase tracker.
+ * The step a project being made is on, for a client that loaded (or
+ * reloaded) mid-creation and so missed the `app_status` frames that say it
+ * live (GET /api/apps/:slug, the bot's progress).
  *
  * `apps.status` has no intermediate value between `'creating'` and its
- * terminal ones (`'running'` / `'awaiting_secrets'` / `'error'`), so the
- * row cannot say WHICH part of `createApp` is currently running. This
- * map carries that one extra bit — `slug → { phase, startedAt }` — so
- * the create dialog can tick its four steps off as they actually
- * happen instead of guessing on a timer.
- *
- * Why a sibling of `app-deploy-status.js` and not a field on it?
- * Two reasons, and the first is the load-bearing one:
- *
- *   1. `app-deploy-status` broadcasts through the UNSCOPED
- *      `broadcastGlobal`. A brand-new app may be view-private, and its
- *      name and slug are not public until it is. Creation phases
- *      therefore go out through `ws.pushAppCreationPhase`, which uses
- *      `broadcastGlobalScoped` exactly as `pushAppStatusUpdate` does.
- *   2. The semantics differ: that module tracks a PRODUCTION REDEPLOY
- *      of an app that already exists and is a boolean (`deploying`);
- *      this one tracks the one-shot creation of an app that does not
- *      exist yet and is an ordered position within it.
- *
- * Why in-memory and not a DB column? Same answer `app-deploy-status`
- * gives: `apps.status` is load-bearing elsewhere (URL computation in
- * routes/apps.js gates on `status='running'`), and adding values to it
- * would ripple through every consumer of the status vocabulary for
- * what is a transient display detail.
- *
- * Why no persistence across restarts? If the platform restarts
- * mid-creation the `createApp` job dies with it — there is nothing left
- * to report a phase for. The leader resumes the stranded row from the
- * start in its own process (services/app-creation-owner.js), which
- * reports its phases afresh, and until it does, a missing phase reads as
- * "in progress, step unknown", which is exactly true.
+ * terminal ones, so the step is read from the making itself
+ * (src/workflow/app-creation/): while it is set up, the parts of its setup
+ * done (its work's steps: the database, then the repository); once set up,
+ * its first deploy, app delivery's. Durable, so any process answers the
+ * same, and a restart loses nothing.
  */
 
-// Creation is watchdogged at CREATION_TIMEOUT_MS (5 minutes) in
-// services/app-creation-owner.js. Anything still claiming a phase well
-// past that is an orphan from a process that died mid-run rather than a
-// genuinely slow build, and we would rather report nothing than spin a
-// step forever.
-const PHASE_STALE_AFTER_MS = 10 * 60 * 1000;
-
-/**
- * The ordered vocabulary, one entry per numbered block in `createApp`:
- *
- *   database   → per-app Postgres database + dedicated role
- *   repository → GitHub repo create + template push (or import)
- *   build      → clone the working tree and build the image
- *   deploy     → start the container and wire up routing
- *
- * The dialog renders these in order and treats every phase before the
- * current one as done, so the order here IS the step list.
- */
+// The made screen's four steps, in order: a step reported marks every one
+// before it done.
 const PHASES = ['database', 'repository', 'build', 'deploy'];
 
-// slug → { phase, startedAt: ISO }
-const _state = new Map();
-
-/**
- * Record that `slug` has reached `phase`.
- *
- * `startedAt` marks the start of CREATION, not of the phase — it is the
- * age used for the stale gate below, so it must not be pushed forward
- * every time a step advances.
- */
-function markPhase(slug, phase) {
-  if (!slug || !PHASES.includes(phase)) return;
-  const prev = _state.get(slug);
-  _state.set(slug, {
-    phase,
-    startedAt: prev ? prev.startedAt : new Date().toISOString(),
-  });
+/** The step `appId` is on, as { phase }, or null when there is none to report. */
+async function read(pool, appId) {
+  try {
+    const { rows: [r] } = await pool.query(
+      `SELECT i.state, w.checkpoint, a.deploy_state
+         FROM wf_instances i
+         JOIN apps a ON a.id = $1
+         LEFT JOIN LATERAL (
+           SELECT checkpoint FROM wf_work
+            WHERE machine = i.machine AND key = i.key AND kind = 'app.setup' AND status IN ('queued', 'running')
+            ORDER BY id DESC LIMIT 1) w ON TRUE
+        WHERE i.machine = 'app-creation' AND i.key = 'app:' || $1::text`,
+      [appId]);
+    if (!r) return null;
+    if (r.state === 'setting_up') {
+      const done = r.checkpoint && typeof r.checkpoint === 'object' ? r.checkpoint : {};
+      return { phase: Object.prototype.hasOwnProperty.call(done, 'database') ? 'repository' : 'database' };
+    }
+    if (r.state === 'deploying') return { phase: 'build' };
+    return null;
+  } catch {
+    return null;
+  }
 }
 
-/** Forget `slug` — creation reached a terminal status. */
-function clear(slug) {
-  if (!slug) return;
-  _state.delete(slug);
-}
-
-/** The current phase for `slug`, or null when there is none to report. */
-function read(slug) {
-  if (!slug) return null;
-  const entry = _state.get(slug);
-  if (!entry) return null;
-  // Don't auto-delete on the stale path: `createApp`'s try/finally owns
-  // the lifecycle, and pretending the entry is gone is enough to unstick
-  // the UI.
-  const age = Date.now() - new Date(entry.startedAt).getTime();
-  if (age > PHASE_STALE_AFTER_MS) return null;
-  return { ...entry };
-}
-
-module.exports = { markPhase, clear, read, PHASES, PHASE_STALE_AFTER_MS };
+module.exports = { read, PHASES };

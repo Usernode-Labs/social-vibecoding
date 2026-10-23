@@ -25,30 +25,17 @@ const log = require('./logger');
 // may the platform stage over" rule has exactly one definition.
 const OWNED_SOURCE_SQL = "source IS DISTINCT FROM 'imported'";
 
-// A user can submit a newer local commit while an earlier HTTP request is
-// still proving ancestry/updating GitHub. Serialize that adoption per session
-// so an older request can never persist its SHA after the newer request and
-// regress the durable reviewed head. This matches staging.js's process model;
-// different sessions still move independently. A pipeline is also this
-// process's hold (services/processes.js), so another platform process sees it.
-const handoffSubmissionTails = new Map();
+// A pipeline is counted for this process's drain (services/processes.js);
+// another process sees its recorded operation (beginHandoffPipeline). A
+// submission's adoption is ordered per session by the proposal lock
+// (proposal-update.withProposalLock), on any process.
 const handoffPipelines = require('./processes').heldSet('handoff');
 
-function serializeHandoffSubmission(sessionId, fn) {
-  const key = String(sessionId);
-  const previous = handoffSubmissionTails.get(key) || Promise.resolve();
-  const run = previous.then(fn, fn);
-  const tail = run.then(() => {}, () => {});
-  handoffSubmissionTails.set(key, tail);
-  tail.then(() => {
-    if (handoffSubmissionTails.get(key) === tail) handoffSubmissionTails.delete(key);
-  });
-  return run;
-}
-
+// A hand-off pipeline this process runs on the session. One another process
+// runs is the session's recorded operation (kind 'handoff-pipeline'), read
+// from the database: session-work.ts operationOfKindLiveSql.
 function hasInFlightHandoffPipeline(sessionId) {
-  if (handoffPipelines.has(String(sessionId))) return true;
-  try { return require('./processes').heldElsewhere('handoff', String(sessionId)); } catch { return false; }
+  return handoffPipelines.has(String(sessionId));
 }
 
 function beginHandoffPipeline(sessionId) {
@@ -84,7 +71,6 @@ function startHandoffPipeline(
 
 module.exports = {
   OWNED_SOURCE_SQL,
-  serializeHandoffSubmission,
   hasInFlightHandoffPipeline,
   beginHandoffPipeline,
   startHandoffPipeline,

@@ -5,9 +5,9 @@
 // waiter returns. A restart killed both while the laptop kept working: the
 // commits it uploaded stayed on the branch with no PR, preview, card or
 // wrap-up, the conversation said "interrupted, Retry", and Retry could build
-// it all again. services/local-agent-recovery.js takes over each turn whose
-// waiter went quiet and finishes it through the post-turn path restart
-// recovery uses for a worker's turn.
+// it all again. The turn's work item's next claim takes it over
+// (services/turns.js) and services/local-agent-recovery.js finishes it
+// through the post-turn path restart recovery uses for a worker's turn.
 //
 // The orchestration is driven here against a stateful fake of the turn row
 // and recording fakes for the tail; the SQL that makes it exactly-once runs
@@ -24,7 +24,6 @@ const localAgent = require('../src/services/local-agent');
 const recovery = require('../src/services/local-agent-recovery');
 const activeWorkers = require('../src/services/active-workers');
 const stopRegistry = require('../src/services/stop-registry');
-const agentTurn = require('../src/services/mayor/agent-turn');
 
 const SESSION = {
   id: 42, status: 'active', user_id: 5, app_id: 3, is_headless: false,
@@ -60,7 +59,7 @@ function rowPool(turn, { session = SESSION } = {}) {
       turn.claims = (turn.claims || 0) + 1;
       return { rows: [{ ...turn.row }] };
     }
-    if (/SET waiter_seen_at = NOW\(\)\s+WHERE id = \$1 AND waiter_id = \$2 AND tail_claimed_at IS NULL/.test(text)) {
+    if (/SELECT id FROM local_agent_turns\s+WHERE id = \$1 AND waiter_id = \$2 AND tail_claimed_at IS NULL/.test(text)) {
       return { rows: params[1] === turn.row.waiter_id && !turn.row.tail_claimed_at ? [{ id: turn.row.id }] : [] };
     }
     if (/SET tail_finished_at = NOW\(\)/.test(text)) { turn.row.tail_finished_at = 'now'; return { rows: [] }; }
@@ -137,8 +136,8 @@ test('a build the laptop finished while the platform was down gets its whole tai
   assert.equal(seen.wrapUps[0].outcome, 'code');
   assert.match(seen.wrapUps[0].dispatchSummary, /Opened PR #3/);
   assert.deepEqual(seen.notifications.map(([kind]) => kind), ['done']);
-  assert.deepEqual(seen.handBacks, [{ pool, changeId: 42, finished: true }],
-    'the conversation that dispatched it is handed back, as finished');
+  assert.deepEqual(seen.handBacks, [{ pool, changeId: 42 }],
+    'the conversation that dispatched it hears the build is over');
   assert.equal(turn.row.tail_finished_at, 'now');
   assert.ok(pool.calls.some((c) => /SET last_turn_runner = \$2/.test(c.sql) && c.params[1] === 'local'));
   // The progress card is rebuilt from the turn's own lines and closed.
@@ -233,57 +232,14 @@ test('a change closed while the platform was down only stops the laptop', async 
   assert.equal(seen.finalize.length, 0);
 });
 
-test('a pass takes over each quiet turn and finishes it in the background', async () => {
-  const turn = { row: turnRow() };
-  const pool = rowPool(turn);
-  const { deps, seen } = tailFakes();
-  const adopted = [];
-  const { adopted: count, settled } = await recovery.recoverOrphanedLocalTurns({
-    config: {}, pool,
-    deps: { ...deps, localAgent: { ...localAgent, adoptOrphanedTurns: async () => { adopted.push(1); return [{ ...turn.row }]; } } },
-  });
-  assert.equal(count, 1);
-  await settled;
-  assert.equal(seen.finalize.length, 1);
-});
-
-// ── The conversation waits for it rather than offering Retry ───────────
-
-test('a dead turn whose local build recovery will finish is not ended as interrupted', async () => {
-  const ended = [];
-  const run = (pending) => agentTurn.sweepInterruptedTurns({
-    pool: {},
-    deps: {
-      agentSessions: {
-        staleTurnLeases: async () => [{ agentSessionId: 9, userId: 5, turnId: 'dead', activeChangeId: 42, changeTurn: false }],
-        endInterruptedTurn: async (_pool, args) => { ended.push(args); return true; },
-      },
-      isChangeBusy: () => false,
-      localTurnPending: async (_pool, changeId) => pending && changeId === 42,
-      notifyUser: () => {},
-      sessionBus: { publish() {} },
-    },
-  });
-  assert.equal(await run(true), 0, 'left to the recovery, which hands the conversation back itself');
-  assert.equal(ended.length, 0);
-  assert.equal(await run(false), 1, 'with nothing of the platform\'s left, it ends as before');
-});
-
 // ── Wiring ─────────────────────────────────────────────────────────────
 
-test('the leader runs the pass at boot, on its own tick, and after every lease sweep', () => {
-  const server = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
-  const block = server.slice(server.indexOf('function startLocalAgentLeaseSweeper'),
-    server.indexOf('async function recoverLocalAgentTurns'));
-  assert.match(block, /localAgent\.sweepExpiredLeases\(getPool\(config\)\)[\s\S]{0,400}\.then\(\(\) => recoverLocalAgentTurns\(config\)\)/);
-  assert.match(block, /\n  recoverLocalAgentTurns\(config\);\n/);
-  // A leader timer (services/leader-timers.js): it stops when leadership goes.
-  assert.match(block, /leaderTimers\.every\('local-agent-recovery', \(\) => recoverLocalAgentTurns\(config\), LOCAL_AGENT_RECOVERY_MS\)/);
-  const tick = Number((server.match(/const LOCAL_AGENT_RECOVERY_MS = (\d+) \* 1000;/) || [])[1]) * 1000;
-  assert.ok(tick > 0 && tick < localAgent.WAITER_STALE_SECONDS * 1000,
-    'a quiet waiter is taken over within its stale window plus one tick');
-  assert.ok(localAgent.WAITER_STALE_SECONDS * 1000 + tick < require('../src/services/agent-sessions').TURN_LEASE_STALE_SECONDS * 1000,
-    'before the dispatching conversation\'s own lease goes stale');
-  assert.ok(localAgent.WAITER_RENEW_MS * 3 < localAgent.WAITER_STALE_SECONDS * 1000,
-    'a live waiter can miss renewals before it is taken for dead');
+test('no pass takes a quiet local turn over: its turn\'s work item does, on its next claim', () => {
+  assert.equal(recovery.recoverOrphanedLocalTurns, undefined);
+  assert.equal(localAgent.adoptOrphanedTurns, undefined);
+  const leftovers = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'turn-leftovers.js'), 'utf8');
+  assert.doesNotMatch(leftovers, /local-agent-recovery/);
+  const turns = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'turns.js'), 'utf8');
+  assert.match(turns, /require\('\.\/local-agent'\)\.takeOverOwnedTurn\(pool, ctx\.workId\)/);
+  assert.doesNotMatch(fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8'), /recoverLocalAgentTurns|recoverOrphanedLocalTurns/);
 });

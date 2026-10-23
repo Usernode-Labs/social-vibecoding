@@ -18,6 +18,8 @@ const assert = require('node:assert/strict');
 
 const kubernetes = require('../src/services/kubernetes');
 const worker = require('../src/services/worker');
+const workerGitPush = require('../src/services/worker-git-push');
+const db = require('../src/db/pool');
 
 const JOURNAL = '/home/node/.claude/turn-test.log';
 
@@ -88,17 +90,38 @@ test('a replayed build whose push failed is pushed before eviction deletes it', 
   worker.adoptWarmWorker(sessionId, 'sv-worker-s72002');
   const journal = 'x\n__USERNODE_RESULT__ cc_exit=0 ahead=1 sha=abcdef1 push_ok=0\n__USERNODE_EXIT__ 0\n';
   const fake = journalWorker(t, [journal]);
+  t.mock.method(db, 'getPool', () => ({ query: async (_sql, params) => {
+    assert.deepEqual(params, [sessionId]);
+    return { rows: [{ branch_name: 'dev/evan-2', repo_url: 'https://github.com/Trusted-Owner/stored-repo.git' }] };
+  } }));
+  t.mock.method(workerGitPush, 'push', async options => {
+    assert.equal(options.remoteUrl, 'https://github.com/Trusted-Owner/stored-repo.git');
+    assert.equal(options.branchName, 'dev/evan-2');
+    assert.equal(options.token, 'fake-test-token');
+    fake.commands.push({ trustedPush: true });
+    await options.exportWorker('export Git objects only');
+    return { sha: 'a'.repeat(40), stderr: '' };
+  });
 
   const state = await replay(t, sessionId, [journal], { mode: 'build', branchName: 'dev/evan-2' });
   assert.equal(state.pushOk, false);
   assert.equal(state.sha, 'abcdef1');
 
   await worker.evictWorker(sessionId);
-  const pushAt = fake.commands.findIndex((c) => c.command && c.command[0] === 'bash');
+  const pushAt = fake.commands.findIndex((c) => c.command && c.command[0] === 'sh');
   const deleteAt = fake.commands.findIndex((c) => c.deleted === sessionId);
   assert.ok(pushAt >= 0, 'the commit only the worker held is pushed');
-  assert.match(fake.commands[pushAt].input, /export BRANCH='dev\/evan-2'/);
-  assert.ok(pushAt < deleteAt, 'before the worker and its checkout are deleted');
+  const trustedAt = fake.commands.findIndex(c => c.trustedPush);
+  const execs = fake.commands.filter(c => c.command && c.command[0] === 'sh');
+  assert.equal(execs.length, 2, 'export followed by credential-free tracking acknowledgement');
+  assert.equal(execs[0].command[2], 'export Git objects only');
+  assert.match(execs[1].command[2], /refs\/remotes\/origin\/dev\/evan-2/);
+  for (const exec of execs) {
+    assert.equal(exec.input, null);
+    assert.equal(JSON.stringify(exec).includes('fake-test-token'), false);
+  }
+  assert.ok(trustedAt < pushAt && pushAt < deleteAt, 'trusted publication precedes worker deletion');
+  assert.ok(fake.commands.indexOf(execs[1]) < deleteAt, 'tracking acknowledgement precedes deletion');
 });
 
 test('a replayed build that pushed, or a scout, leaves nothing to rescue', async (t) => {

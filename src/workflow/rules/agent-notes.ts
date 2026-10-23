@@ -29,6 +29,7 @@ export function closedSentence({ prNumber, outcome }: { prNumber: number | null;
   switch (outcome) {
     case 'merged': return `${ref} merged. It is part of the app now.`;
     case 'rejected': return `${ref} was set aside by the group's vote.`;
+    case 'admin-no': return `${ref} was set aside: an admin voted No and nobody voted Yes within a week.`;
     case 'withdrawn': return `${ref} was withdrawn.`;
     case 'replaced': return `${ref} was replaced by a newer proposal.`;
     default: return `${ref} was closed.`;

@@ -94,6 +94,33 @@ test('Firebase refusing the reCAPTCHA is recaptcha_required, a 422 a client can 
   }
 });
 
+test('with Brevo sending the texts, no reCAPTCHA site key is served and none is fetched', async () => {
+  // requestCode() ignores the token on the Brevo path, so the browser is
+  // told there is no check to answer: no site key, no widget, no challenge
+  // (#5840). Firebase stays configured, so the gate still lets the request
+  // through and the Firebase key is what would be served without this.
+  const select = require('../src/services/sms/select');
+  select.invalidate();
+  try {
+    const config = {
+      ...FULL_CONFIG,
+      smsProviderDefault: 'brevo',
+      brevoApiKey: 'brevo-key',
+      brevoSmsSenderIds: { GB: 'Homeroom' },
+    };
+    const asked = [];
+    const fetchKey = async (url) => {
+      asked.push(url);
+      return { ok: true, status: 200, json: async () => ({ recaptchaSiteKey: '6Lc-site' }) };
+    };
+    assert.equal(await phoneAuth.recaptchaSiteKey(config, { fetch: fetchKey }), '');
+    assert.deepEqual(asked, [], 'the Firebase key is not read for a provider that ignores the token');
+    assert.equal(phoneAuth.offered(config), true, 'the endpoint still answers: Brevo is what sends it');
+  } finally {
+    select.invalidate();
+  }
+});
+
 test('the reCAPTCHA site key is the Firebase project\'s own, read once an hour', async () => {
   await assert.rejects(() => phoneAuth.recaptchaSiteKey({ firebasePhoneAuthEnabled: false }), (err) => err.code === 'not_offered');
   const config = { ...FULL_CONFIG, firebaseWebApiKey: 'site-key-test' };

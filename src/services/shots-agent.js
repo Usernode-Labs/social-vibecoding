@@ -95,7 +95,12 @@ For each declared change and each of its screen sizes (viewports):
    screen name, side "after", and kind "screen" or "element". When the same
    screen also shows another declared change at this size, list the
    screenshot again for that change in the same call instead of shooting it
-   twice.
+   twice. For each file also give showsPrivate: true if it shows a real
+   person's name, words they wrote or an email address, or another project;
+   false if it shows none of these. The shots' own accounts (such as
+   usernode-capture) and obviously made-up demo content do not count. A still
+   with false may be shown to people who are not signed in, so when unsure,
+   say true.
 7. Do the same on the before address with side "before". Frame it like
    the after shot: the same element scrolled into view at the same place, so
    the two shots differ only by the change. When
@@ -115,7 +120,11 @@ start path again, and shoot a smaller element. When it warns that a before
 and an after are the same image, the two sides were not shot in the states
 the claim compares: check the steps, the data and the scroll position on
 each side and shoot again, or, if these copies cannot show the change, call
-note_change or skip_change as described below.
+note_change or skip_change as described below. When it answers a
+closeupHint, a small change's close-up could not be taken because the page
+had moved on: open that after state again, take its screen shot again and
+save it, which takes the close-up with it. Save each change's before side
+before its after side, so the after screen is still showing when it saves.
 
 Every tool call costs time, so make calls that do not depend on each other
 in the same turn (for example the screen and element screenshots of one
@@ -343,7 +352,7 @@ async function dispatchClaude(config, options, deps) {
   let result;
   try { result = await withDispatchTimeout(deps.workerService.execInWorker(session.id, {
     mode: 'shots',
-    // A shots eval's trial (shots-eval-runner.js) tries other prompts; every
+    // A shots eval's trial (the shots-eval machine) tries other prompts; every
     // proposal's own run takes these.
     prompt: options.taskPrompt || TASK_PROMPT,
     systemPrompt: options.systemPrompt || SYSTEM_PROMPT,
@@ -369,6 +378,8 @@ async function dispatchClaude(config, options, deps) {
     ...(Array.isArray(options.browserPersonas) && options.browserPersonas.length
       ? { shotsBrowserPersonas: JSON.stringify(options.browserPersonas) } : {}),
     shotsPlatformAssets: options.platformAssets === true,
+    // Stills at the screen's own density, only while the experiment is on.
+    shotsDeviceDensity: options.deviceDensity === true,
     telemetryComponent: 'shots_agent',
     telemetryCorrelationId: runId,
     telemetryAttemptNumber: 1,

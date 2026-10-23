@@ -40,7 +40,7 @@ function methodSource(name) {
   return APP.slice(start + 1, end + 4);
 }
 
-const REAL = ['init', '_adoptLateSession', '_fetchSession', '_fetchWebSession', '_answeredSignedOut'];
+const REAL = ['init', '_adoptLateSession', '_fetchSession', '_settleOptionalSession', '_fetchWebSession', '_answeredSignedOut'];
 
 function response(status, body) {
   return { status, ok: status >= 200 && status < 300, json: async () => body };
@@ -49,10 +49,11 @@ function response(status, body) {
 // Builds a sandboxed App whose boot runs the real methods above and records
 // what the shell would have done. `firstRead` answers the boot's read:
 // a Response-like object, or 'hang' for a read that never answers.
-function boot({ firstRead, native = false, signInBegun = false } = {}) {
-  const calls = { enterAnonymous: 0, enterAuthed: [], finishLogin: 0, dropCached: 0, reads: 0 };
+function boot({ firstRead, native = false, signInBegun = false, nativeChrome = null } = {}) {
+  const calls = { enterAnonymous: 0, enterAuthed: [], finishLogin: 0, dropCached: 0, reads: 0, urls: [] };
   const fetch = (url, opts) => {
     calls.reads += 1;
+    calls.urls.push(String(url));
     if (firstRead === 'hang') {
       return new Promise((resolve, reject) => {
         const signal = opts && opts.signal;
@@ -68,9 +69,12 @@ function boot({ firstRead, native = false, signInBegun = false } = {}) {
     Offline: { nudge() {} },
     AuthScreens,
     ...(native ? { usernode: { isNative: true } } : {}),
+    ...(nativeChrome ? { NativeChrome: nativeChrome } : {}),
   };
   const sandbox = {
-    window, AuthScreens, fetch, AbortController, setTimeout, clearTimeout, console,
+    window, AuthScreens, fetch, AbortController, setTimeout, clearTimeout, console, Response,
+    // NativeChrome is a page global as well as window.NativeChrome.
+    ...(nativeChrome ? { NativeChrome: nativeChrome } : {}),
   };
   vm.createContext(sandbox);
   const methods = REAL.map(methodSource).join(',\n');
@@ -82,6 +86,7 @@ function boot({ firstRead, native = false, signInBegun = false } = {}) {
       _authedBooted: false,
       _signInBegun: ${signInBegun ? 'true' : 'false'},
       _applySafeAreaShot() {},
+      _noteLaunch() {},
       bindEvents() {},
       _anonShot() { return false; },
       _waitingShot() { return false; },
@@ -135,6 +140,54 @@ test('an answered session enters the shell directly and never asks again', async
   assert.equal(calls.enterAuthed.length, 1);
   assert.equal(calls.enterAnonymous, 0);
   assert.equal(calls.finishLogin, 0);
+});
+
+// ── The optional read (#5678) ────────────────────────────────────────
+//
+// A device with no snapshot asks /api/auth/me?optional=1, which is
+// answered "nobody" with a 200 instead of a 401: a signed-out load logged a
+// failed request in the console for every visitor. The answer is settled
+// back into the 401 every reader here already knows, so a native shell may
+// still restore the session it keeps, and the boot takes the same branch.
+
+test('the no-snapshot boot asks the optional read, and only that one', async () => {
+  const { App, calls } = boot({ firstRead: response(401, {}) });
+  await App.init();
+  await settle();
+  assert.deepEqual(calls.urls, ['/api/auth/me?optional=1']);
+});
+
+test('an answered "nobody" is a real no: the cached trace goes, no late ask', async () => {
+  const { App, calls } = boot({
+    firstRead: new Response(JSON.stringify({ user: null }), { status: 200, headers: { 'Content-Type': 'application/json' } }),
+  });
+  await App.init();
+  await settle();
+  assert.equal(calls.enterAnonymous, 1);
+  assert.equal(calls.dropCached, 1, 'the signed-out branch of init, exactly as the 401');
+  assert.equal(calls.finishLogin, 0, 'and nothing asks again');
+});
+
+test('a native shell still restores the session it keeps, on an answered "nobody"', async () => {
+  const restores = [];
+  const { App, calls } = boot({
+    firstRead: new Response(JSON.stringify({ user: null }), { status: 200, headers: { 'Content-Type': 'application/json' } }),
+    native: true,
+    nativeChrome: { async restoreWebSession(options) { restores.push(options); return false; } },
+  });
+  await App.init();
+  await settle();
+  assert.equal(restores.length, 1, 'fresh page load, fresh session: the keychain is asked');
+  assert.equal(restores[0].force, true, 'and asked as an expired session, as the 401 would');
+  assert.equal(calls.enterAnonymous, 1);
+  assert.equal(calls.dropCached, 1);
+});
+
+test('a device with a snapshot keeps the plain read: no optional answer over a live session', async () => {
+  const app = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app.js'), 'utf8');
+  const reconcile = app.slice(app.indexOf('async _reconcileSession('), app.indexOf('async enterAnonymous('));
+  assert.match(reconcile, /res = await App\._fetchSession\(\);/);
+  assert.doesNotMatch(reconcile, /optional/);
 });
 
 test('the native app and a sign-in already under way are left to their own paths', async () => {

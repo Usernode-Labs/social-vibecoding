@@ -4,6 +4,7 @@ const crypto = require('node:crypto');
 const events = require('./events');
 const usernames = require('./usernames');
 const leftOut = require('./journey-left-out');
+const usageAnalytics = require('./usage-analytics');
 const { scrubText } = require('./platform-signal-evidence');
 
 const MAX_BATCH_EVENTS = 25;
@@ -24,6 +25,11 @@ const JOURNEY_SCREENS = Object.freeze(new Set([
   // The first-session plan: "Get a ping when it's ready?" in the Homeroom
   // app (NativeChrome.askForPing), the ask its push_permission answers.
   'ping_ask',
+  // The notification ask at its other moments (frontend/src/features/
+  // notify-ask/): an invite sent, a suggestion, a reply, a community, a
+  // project opening. Which moment is the account's record
+  // (services/notification-asks.js), not this event's.
+  'notify_ask',
 ]));
 // Navigation (#3369): one code per screen root the shell reveals, so a
 // person's path can be read in the order they took it. `app` is the running
@@ -247,11 +253,14 @@ function isEligibleUser(user) {
   return !!user?.id && !usernames.isServiceIdentity(user.username);
 }
 
-// Eligible, and has not objected to being recorded (#3369: an admin adds
-// them to the Journey page's left-out list as "objected"). This is the answer
-// /api/auth/me sends as uiTelemetryEligible and the collector enforces.
+// Eligible, switched "Share usage analytics" on in Settings (#5097: off
+// unless they did, services/usage-analytics.js), and has not objected to
+// being recorded (#3369: an admin adds them to the Journey page's left-out
+// list as "objected"). This is the answer /api/auth/me sends as
+// uiTelemetryEligible and the collector enforces.
 async function isRecordable(pool, user) {
   if (!isEligibleUser(user)) return false;
+  if (!(await usageAnalytics.sharesUsageAnalytics(pool, user.id))) return false;
   return !(await leftOut.hasObjected(pool, user.id));
 }
 

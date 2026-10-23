@@ -543,8 +543,9 @@ test('the bot proposes its own build on an app it is not a collaborator or membe
 test('the exception is the bot\'s own session only, and only its in-process promote', async () => {
   // Somebody else's change: the walls stand, even for the bot.
   const other = guardedRouter({ app: PRIVATE_COLLAB, sessionUserId: 5 });
-  assert.deepEqual(await live.promoteAsBot({ config: {}, bot: BOT, sessionId: 5120, router: other.router }),
-    { status: 404, body: { error: 'Session not found' } });
+  // (#5506: the project is anyone's to see, so the refusal says the rule.)
+  const REFUSED = { status: 403, body: { error: 'You can view this project, but only its collaborators can take part in it.', code: 'collab_required' } };
+  assert.deepEqual(await live.promoteAsBot({ config: {}, bot: BOT, sessionId: 5120, router: other.router }), REFUSED);
   assert.deepEqual(other.reached, []);
 
   // The same user without the marker, as an HTTP request would be.
@@ -567,7 +568,7 @@ test('the exception is the bot\'s own session only, and only its in-process prom
       set() { return this; }, setHeader() {}, getHeader() {} };
     router.handle(req, res, () => resolve({ status: 404, body: null }));
   });
-  assert.deepEqual(refused, { status: 404, body: { error: 'Session not found' } });
+  assert.deepEqual(refused, REFUSED);
 
   // An unmarked request never pays for the exception: the guards' own
   // queries are unchanged (a golden transcript pins them) and the owner is

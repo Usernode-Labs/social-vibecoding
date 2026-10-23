@@ -126,6 +126,53 @@ test('B7: the card, drawn in every state', () => {
   assert.equal(isReadyMessage(msg({ ...meta, ready: undefined })), false, 'an older "it is built" keeps its words');
 });
 
+// #5506: flushthefashion asked for a change on Community Tier Lists, where
+// building is by invitation and they are not invited. Its card offered Try it
+// and Approve, both POSTs the session guard refuses a non-builder, and the
+// card said "Session not found" with no way to clear the change away.
+test('#5506: the card offers a non-builder only what works, and Withdraw it to whoever may', () => {
+  const { ReadyCardView, openReadyActions, lookOnlyLine } = loadTsx('frontend/src/features/messages/bot-ready.tsx');
+  const sent = dm.readyActions({ sessionId: 9, epoch: 2, approve: true });
+  const meta = {
+    kind: 'proposal', appName: 'Community Tier Lists', appSlug: 'tier-lists', issueNumber: 29,
+    ready: { group: true, last: false, waitingOn: [], more: 0 }, actions: sent, status: 'open', sessionId: 9, epoch: 2,
+  };
+  // Where they build: as sent, and no Withdraw it unless they may.
+  const builder = { messageId: 1, state: 'open', actions: [], canBuild: true };
+  assert.deepEqual(openReadyActions(sent, meta, builder, 'Withdraw it'), sent);
+  assert.deepEqual(openReadyActions(sent, meta, null, 'Withdraw it'), sent, 'nothing read yet: as sent');
+  assert.equal(lookOnlyLine(meta, builder), null);
+  // Where they do not: no Approve, Try it the filled one and look-only, and
+  // Withdraw it after the rest.
+  const outsider = { messageId: 1, state: 'open', actions: [], canBuild: false, canWithdraw: true };
+  const shown = openReadyActions(sent, meta, outsider, 'Withdraw it');
+  assert.deepEqual(shown.map((a) => [a.id, a.style, !!a.readOnly]), [
+    ['try', 'primary', true], ['change', 'secondary', false], ['withdraw', 'secondary', false],
+  ]);
+  assert.deepEqual(shown[2], { id: 'withdraw', label: 'Withdraw it', style: 'secondary', type: 'withdraw', sessionId: 9 });
+  assert.equal(lookOnlyLine(meta, outsider), 'You can try it. Approving it is up to the people building Community Tier Lists.');
+  assert.equal(lookOnlyLine({ appName: '', appSlug: '' }, outsider), 'You can try it. Approving it is up to the people building this project.');
+  assert.ok(!openReadyActions(sent, { ...meta, firstVersion: true }, outsider, 'Withdraw it').some((a) => a.id === 'withdraw'),
+    'a first version is not withdrawn from its card');
+  const html = renderToHtml(createElement(ReadyCardView, { meta, state: 'open', actions: shown, fresh: outsider }));
+  assert.match(html, /class="messages-bot-primary" data-bot-ready-action="try"><span>Try it<\/span>/);
+  assert.match(html, /data-bot-ready-action="withdraw"><span>Withdraw it<\/span>/);
+  assert.doesNotMatch(html, /Approve</);
+  assert.match(html, /role="status">You can try it\. Approving it is up to the people building Community Tier Lists\.</);
+  // The server marks the preview look-only on a card it sends a non-builder.
+  assert.deepEqual(dm.readyActions({ sessionId: 9, epoch: 2, approve: false, readOnly: true })[0],
+    { id: 'try', label: 'Try it', style: 'primary', type: 'preview', sessionId: 9, readOnly: true });
+  // The client keeps it, and the read's canBuild / canWithdraw, and says a
+  // refused Yes in the card's own words.
+  const api = read('frontend/src/features/messages/api.ts');
+  assert.match(api, /\.\.\.\(type === 'preview' && pick\(row, 'readOnly'\) === true \? \{ readOnly: true \} : \{\}\)/);
+  assert.match(api, /response\.status === 403 && pick\(data, 'code'\) === 'collab_required'/);
+  assert.match(api, /fetch\(`\/api\/conversations\/homeroom-bot\/withdraw\/\$\{sessionId\}`/);
+  const strip = read('frontend/src/features/messages/bot-strip.tsx');
+  assert.match(strip, /const canApprove = !!ready\?\.approve && !!sessionId && !approved && !lookOnly;/);
+  assert.match(strip, /tryChange\(\{ appSlug: row\.job\.appSlug \}, sessionId, \{ readOnly: lookOnly \}\)/);
+});
+
 test('B7: the client knows the new buttons, and Approve is the person\'s own vote, on the version they were sent', () => {
   const api = read('frontend/src/features/messages/api.ts');
   // #4231: and Invite people, which the client answers itself.
@@ -134,7 +181,9 @@ test('B7: the client knows the new buttons, and Approve is the person\'s own vot
   assert.match(api, /body: JSON\.stringify\(epoch === null \? \{ vote: 'yes' \} : \{ vote: 'yes', expectedEpoch: epoch \}\),/);
   assert.match(api, /const stale = response\.status === 409 && pick\(data, 'headChanged'\) === true;/);
   const card = read('frontend/src/features/messages/bot-ready.tsx');
-  assert.match(card, /view\.ensureStaging\(sessionId, null, null, \{ readOnly: false, app: \{ slug: meta\.appSlug \} \}\)/);
+  // #5506: look-only for someone who does not build on the project.
+  assert.match(card, /view\.ensureStaging\(sessionId, null, null, \{ readOnly, app: \{ slug: meta\.appSlug \} \}\)/);
+  assert.match(card, /tryChange\(meta, action\.sessionId, \{ readOnly: !!action\.readOnly \|\| fresh\?\.canBuild === false \}\)/);
   // The bot never votes: no server path casts a Yes for the card.
   const dmSrc = read('src/services/homeroom-bot-dm.js');
   assert.ok(!/pr_votes \(|recordVote|\/vote'/.test(dmSrc), 'the bot service writes no vote');
@@ -445,6 +494,52 @@ test('B7: who approves, who is told, and the card, against the full PostgreSQL s
     await tellReadyNow(pool, later, { bot: homeroomBot, domain: 'app.example.test' });
     assert.deepEqual((await card(ben.id, later)).meta.actions.map((a) => a.id), ['try', 'approve', 'change']);
     assert.deepEqual((await told(later)).map((r) => r.username), ['ada', 'maya']);
+  });
+
+  await t.test('#5506: a requester who does not build there gets Try it, look-only, and can withdraw it', async () => {
+    const lee = await user('lee_t5506');
+    const tiers = await project('tier-lists', 'Community Tier Lists', { members: [maya, ada] });
+    // Anyone may see it; building is by invitation, and Lee is not invited.
+    await pool.query(`UPDATE apps SET view_visibility = 'public', collab_visibility = 'private' WHERE id = $1`, [tiers.id]);
+    governance.invalidateGovernance(tiers.id);
+    const id = await change(tiers, lee, 29);
+    await pool.query(`UPDATE chat_sessions SET linked_issues = '{29}' WHERE id = $1`, [id]);
+    await tellReadyNow(pool, id, { bot: homeroomBot, domain: 'app.example.test' });
+    const sent = await card(lee.id, id);
+    assert.deepEqual(sent.meta.actions.map((a) => [a.id, !!a.readOnly]), [['try', true], ['change', false]], 'no Approve; Try it look-only');
+    assert.match(sent.content, /It goes live once it's approved\.$/);
+    const [now] = await dm.readyStates(pool, { user: { id: lee.id } });
+    assert.deepEqual([now.messageId, now.state, now.canBuild, now.canWithdraw], [Number(sent.id), 'open', false, true]);
+    // A builder's card on the same project still offers Approve.
+    const id2 = await change(tiers, ada, 30);
+    await pool.query(`UPDATE chat_sessions SET linked_issues = '{30}' WHERE id = $1`, [id2]);
+    await tellReadyNow(pool, id2, { bot: homeroomBot, domain: 'app.example.test' });
+    assert.deepEqual((await card(ada.id, id2)).meta.actions.map((a) => a.id), ['try', 'approve', 'change']);
+    const [adas] = await dm.readyStates(pool, { user: { id: ada.id } });
+    assert.deepEqual([adas.canBuild, adas.canWithdraw], [true, true], 'she asked for it');
+    // Withdraw it, from the card: only theirs to withdraw.
+    const mayor = require('../src/services/homeroom-bot-mayor');
+    const archived = [];
+    const deps = {
+      bot: homeroomBot,
+      ws: { sendSystemMessage: async () => {} },
+      sessionLifecycle: {
+        archiveSession: async ({ sessionId }) => {
+          archived.push(sessionId);
+          await pool.query(`UPDATE chat_sessions SET status = 'archived' WHERE id = $1`, [sessionId]);
+          return { archived: true };
+        },
+      },
+    };
+    const notTheirs = await mayor.withdrawFromCard(pool, { user: { id: ben.id, username: 'ben' }, sessionId: id, deps });
+    assert.equal(notTheirs.ok, false);
+    assert.equal(notTheirs.code, 'not_allowed', 'Ben may see the project, but neither asked for it nor owns it');
+    assert.deepEqual(archived, []);
+    assert.deepEqual(await mayor.withdrawFromCard(pool, { user: { id: lee.id, username: lee.username }, sessionId: id, deps }), { ok: true });
+    assert.deepEqual(archived, [id]);
+    assert.equal((await dm.readyStates(pool, { user: { id: lee.id } }))[0].state, 'closed', 'the card reads it closed');
+    const again = await mayor.withdrawFromCard(pool, { user: { id: lee.id, username: lee.username }, sessionId: id, deps });
+    assert.deepEqual([again.ok, again.code], [false, 'closed']);
   });
 
   await t.test('a public community tells nobody this way, unless it names its approvers', async () => {

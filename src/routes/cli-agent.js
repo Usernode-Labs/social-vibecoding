@@ -443,7 +443,7 @@ function cliAgentRoutes(config, { pool = getPool(config), auth } = {}) {
     const { status } = req.body;
     // Only outcomes the agent can legitimately report about itself. The
     // platform owns 'abandoned' and 'stopped'; letting a client claim either
-    // would let a laptop mark its own failed run as a benign re-route.
+    // would let a laptop pass off its own failed run as a benign disconnect.
     if (!['completed', 'failed'].includes(status)) {
       return res.status(400).json({ error: 'invalid_request' });
     }

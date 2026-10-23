@@ -103,8 +103,38 @@ const PREVIEW_DOCKER_DEPLOY_LOCK = 991017;
 // (src/workflow/rules/presence.ts, where the id is defined: the workflow's
 // readers test it in SQL).
 const { PROCESS_PRESENCE_LOCK } = require('../workflow/rules/presence.ts');
+// #5121: an app database NAME, between a deleted app's purge and a new app
+// taking the same name. The CLASSIFIER half of
+// `pg_advisory_xact_lock(classifier, hashtext(db_name))`, transaction-scoped:
+// taken by the apps trigger reserve_purged_app_name() (src/db/schema.sql,
+// which spells the number; tests pin the two together) around a new or
+// renamed slug's check and insert, and by services/app-data-retention.js
+// around its re-check and drop.
+const APP_NAME_PURGE_LOCK = 991019;
+// A session's branch made on first use (services/session-lifecycle.js
+// ensureSessionBranch): the CLASSIFIER half of
+// `pg_advisory_lock(classifier, sessionId)`, session-scoped, on the
+// process's lock connection (src/db/session-locks.js), held while GitHub
+// creates the branch, so two first uses make one branch.
+const SESSION_BRANCH_LOCK = 991020;
+// A draining process's capacity claim (services/processes.js, the connection
+// budget): `pg_advisory_lock(classifier, <the process's id, hashed>)`,
+// session-scoped, on the process's lock connection, from the moment it is
+// marked draining until it holds nothing above its drain sizes. The
+// connection closes only after the pools' own end (src/db/session-locks.js),
+// or at exit, so a claim still held goes no earlier than the connections it
+// stands for. One classifier per role, so a process starting waits only on
+// the claims of the roles it replaces.
+const CAPACITY_CLAIM_LOCKS = new Map([['all', 991021], ['web', 991022], ['conductor', 991023]]);
+// A change's worker evicted or about to be used (services/worker-eviction.js):
+// `pg_advisory_lock(classifier, sessionId)`, session-scoped, on the
+// process's lock connection, held by the eviction clock over its claim and
+// the eviction, and by a turn's ensureWorker over its note of use. A turn
+// starting while its worker is evicted waits, then finds it gone; an
+// eviction about to claim a worker a turn just used sees it used.
+const WORKER_EVICTION_LOCK = 991024;
 
 module.exports = { ADMIN_MUTATION_LOCK, EXTERNAL_TASK_SUBMIT_LOCK, PROPOSAL_UPDATE_LOCK, BUILD_RETENTION_LOCK,
   STAGING_BUILD_LOCK, PRODUCTION_BUILD_LOCK, STAGING_TEMPLATE_LOCK,
   VOTE_DIGEST_LOCK, CHALLENGE_SCORER_LOCK, HOMEROOM_BOT_LOCK, HOMEROOM_BOT_CARDS_LOCK,
-  CHECKS_QUEUE_LOCK, PREVIEW_DOCKER_DEPLOY_LOCK, PROCESS_PRESENCE_LOCK };
+  CHECKS_QUEUE_LOCK, PREVIEW_DOCKER_DEPLOY_LOCK, PROCESS_PRESENCE_LOCK, APP_NAME_PURGE_LOCK, SESSION_BRANCH_LOCK, CAPACITY_CLAIM_LOCKS, WORKER_EVICTION_LOCK };

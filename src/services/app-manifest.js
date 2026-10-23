@@ -832,6 +832,31 @@ function readDescription(parsed) {
   return text.length > MAX_DESCRIPTION_LENGTH ? text.slice(0, MAX_DESCRIPTION_LENGTH).trimEnd() : text;
 }
 
+// The optional top-level `category` (#3962): what kind of app this is, the
+// one word Discover's "Filter by type" chips sort the directory by. A fixed
+// set, and THIS is the only list of it: the template writes one of these,
+// and Discover keeps a labelled copy (frontend/src/features/apps/browse.js
+// CATEGORIES) that tests/browse-screen.test.js pins to this one. Order is
+// the chips' order. `other` is for an app that is none of the five; it is
+// what a new project's dapp.json starts with, a line its group can change
+// by proposal like any other.
+const APP_CATEGORIES = Object.freeze(['games', 'social', 'tools', 'learning', 'creative', 'other']);
+const APP_CATEGORY_SET = new Set(APP_CATEGORIES);
+
+// Normalize `"category": "games"`. Lenient like `visibility` and
+// `screenshot`: case and surrounding space are forgiven, and anything else
+// (an unknown word, a list, a number) is ignored with a warn and reads as
+// null, which is the same as saying nothing: the app is listed under All
+// types only. Never throws, so a typo never fails a deploy.
+function readCategory(parsed) {
+  const raw = parsed?.category;
+  if (raw == null) return null;
+  const key = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
+  if (APP_CATEGORY_SET.has(key)) return key;
+  log.warn('app-manifest', 'Ignoring unknown category', { value: raw });
+  return null;
+}
+
 // Allowed values for the optional top-level `visibility` block (issue
 // #124). `build` maps to apps.collab_visibility, `view` to
 // apps.view_visibility — same value set as the DB columns.
@@ -1445,9 +1470,9 @@ function read(cloneDir) {
   try {
     raw = fs.readFileSync(filePath, 'utf-8');
   } catch (err) {
-    if (err.code === 'ENOENT') return { name: null, description: null, secrets: [], llm: null, permissions: [], visibility: null, governance: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null, admins: null, platform_env: [], topics: null };
+    if (err.code === 'ENOENT') return { name: null, description: null, secrets: [], llm: null, permissions: [], visibility: null, governance: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null, admins: null, platform_env: [], topics: null, category: null };
     log.warn('app-manifest', 'Read failed (treating as empty)', { filePath, err: err.message });
-    return { name: null, description: null, secrets: [], llm: null, permissions: [], visibility: null, governance: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null, admins: null, platform_env: [], topics: null };
+    return { name: null, description: null, secrets: [], llm: null, permissions: [], visibility: null, governance: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null, admins: null, platform_env: [], topics: null, category: null };
   }
 
   let parsed;
@@ -1455,7 +1480,7 @@ function read(cloneDir) {
     parsed = JSON.parse(raw);
   } catch (err) {
     log.warn('app-manifest', 'Parse failed (treating as empty)', { filePath, err: err.message });
-    return { name: null, description: null, secrets: [], llm: null, permissions: [], visibility: null, governance: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null, admins: null, platform_env: [], topics: null };
+    return { name: null, description: null, secrets: [], llm: null, permissions: [], visibility: null, governance: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null, admins: null, platform_env: [], topics: null, category: null };
   }
 
   const platformEnv = readPlatformEnv(parsed);
@@ -1475,6 +1500,7 @@ function read(cloneDir) {
     admins: readAdmins(parsed),
     platform_env: platformEnv,
     topics: readTopics(parsed),
+    category: readCategory(parsed),
   };
 }
 
@@ -2145,7 +2171,12 @@ async function applyAdminsChange(pool, app, { usernames, userIds }, { actorLabel
            SELECT $1, uid, 'member', NOW() FROM UNNEST($2::int[]) AS uid
          ON CONFLICT (app_id, user_id) DO UPDATE
            SET status = 'member',
-               accepted_at = COALESCE(app_collaborators.accepted_at, NOW())`,
+               -- #5104: a pending invite made a member this way was never
+               -- accepted, so it records no acceptance (and no accepted_via,
+               -- which users_connected reads as consent).
+               accepted_at = CASE WHEN app_collaborators.status = 'member'
+                                  THEN COALESCE(app_collaborators.accepted_at, NOW())
+                                  ELSE app_collaborators.accepted_at END`,
         [app.id, ids]
       );
     } catch (err) {
@@ -2518,6 +2549,8 @@ module.exports = {
   readName,
   readDescription,
   MAX_DESCRIPTION_LENGTH,
+  readCategory,
+  APP_CATEGORIES,
   readLlm,
   readVisibility,
   readGovernance,

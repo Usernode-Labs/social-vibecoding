@@ -1,312 +1,236 @@
-// #416: finalizeDeploy must persist apps.last_failure when the docker
-// build (or boot) fails, broadcast the concise errorReason on the
-// app_status WS event, and clear last_failure again on a successful
-// deploy. Same require.cache stubbing pattern as
-// votes-merge-deploy-failed.test.js — nothing real (docker, GitHub, WS)
-// spins up; deploy-failure.js runs for real since classifying the error
-// is exactly what's under test.
+// A new project's setup failing (src/services/app-creator.js setUp, the
+// app-creation machine's `app.setup` work): what it resolves is the record
+// the machine writes to apps.last_failure, with where it failed (#416). Its
+// first deploy's failures are deployProduction's (tests/first-deploy.test.js,
+// tests/rebuild-deploy-failed-notify-once.test.js).
+//
+// Same require.cache stubbing as tests/app-creation-timing.test.js: nothing
+// real (GitHub, the database, WS) spins up.
 //
 // Run with: node --test tests/app-creator-failure.test.js
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { steps: makeSteps } = require('../src/workflow/kernel/steps.ts');
 
 function stub(id, exports) {
   require.cache[id] = { id, filename: id, loaded: true, exports, paths: [] };
 }
 
-function makeRecordingPool() {
-  const queries = [];
-  return {
-    queries,
-    async query(sql, params) {
-      queries.push({ sql: String(sql), params });
-      return { rows: [], rowCount: 1 };
-    },
-  };
+function workContext() {
+  const kept = { value: null };
+  return { signal: new AbortController().signal, steps: (o = {}) => makeSteps({ resumeFrom: kept.value, checkpoint: async (v) => { kept.value = v; }, ...o }) };
 }
 
-// Loads a FRESH app-creator with its collaborators stubbed. `dockerStubs`
-// lets each test choose whether buildImage throws; `githubStubs` lets the
-// repo-provisioning tests enable GitHub and make createRepo fail.
-function loadAppCreator({ dockerStubs = {}, ws = {}, githubStubs = {} } = {}) {
+function loadAppCreator({ githubStubs = {}, forkerStubs = {}, app }) {
   const ids = {
     logger: require.resolve('../src/services/logger'),
     github: require.resolve('../src/services/github'),
-    docker: require.resolve('../src/services/docker'),
-    applicationRuntime: require.resolve('../src/services/application-runtime'),
-    caddy: require.resolve('../src/services/caddy'),
     dbManager: require.resolve('../src/services/db-manager'),
-    appManifest: require.resolve('../src/services/app-manifest'),
-    appSecrets: require.resolve('../src/services/app-secrets'),
-    appLlmEnv: require.resolve('../src/services/app-llm-env'),
     template: require.resolve('../src/services/template'),
-    pool: require.resolve('../src/db/pool'),
+    sketch: require.resolve('../src/services/app-sketch'),
+    forker: require.resolve('../src/services/app-forker'),
     ws: require.resolve('../src/services/ws'),
     appCreator: require.resolve('../src/services/app-creator'),
   };
   for (const id of Object.values(ids)) delete require.cache[id];
-
-  const pool = makeRecordingPool();
-  const statusPushes = [];
-
+  const queries = [];
+  const pool = {
+    async query(sql, params) {
+      queries.push({ sql: String(sql), params });
+      if (/SELECT \* FROM apps WHERE id = \$1/.test(sql)) return { rows: [app] };
+      return { rows: [], rowCount: 1 };
+    },
+  };
+  // The repository's turn in line: its advisory lock, on the process's lock
+  // connection (src/db/session-locks.js), recorded.
+  stub(require.resolve('../src/db/session-locks'), {
+    withSessionLock: async (_pool, key, fn) => { queries.push({ lock: key }); return fn(); },
+  });
   stub(ids.logger, { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} });
   stub(ids.github, {
-    isEnabled: () => false,
-    parseGithubUrl: () => null,
+    isEnabled: () => true,
     getBotUsername: async () => 'usernode-bot',
-    createRepo: async () => ({ html_url: 'https://github.com/usernode-bot/test-app' }),
-    pushFiles: async () => {},
-    getCloneUrl: async () => 'https://github.com/usernode-bot/test-app.git',
+    createRepo: async (owner, slug) => ({ html_url: `https://github.com/${owner}/${slug}` }),
+    pushFiles: async () => ({ sha: 'a'.repeat(40) }),
+    headCommit: async () => null,
     ...githubStubs,
   });
-  stub(ids.docker, {
-    execFileAsync: async () => ({ stdout: '', stderr: '' }),
-    buildImage: async () => {},
-    stopAndRemove: async () => {},
-    runContainer: async () => 'container-id-123',
-    waitForHealthy: async () => {},
-    getHostPort: async () => null,
-    ...dockerStubs,
+  stub(ids.dbManager, { appDbName: (slug) => `app_${slug}`, createDatabase: async () => ({ password: 'pw' }), connectionUrl: () => 'postgres://x' });
+  stub(ids.template, { getTemplateFiles: () => [], getConnectorScaffoldFiles: () => [], getCanonicalRepoFile: () => null });
+  stub(ids.sketch, { drawFor: async () => null, markCommitted: async () => {}, taglineOf: () => null });
+  stub(ids.forker, {
+    findForkSource: async () => null,
+    copyRepoTree: async () => assert.fail('copied'),
+    forkLineageShas: () => ({}),
+    ...forkerStubs,
   });
-  stub(ids.caddy, { productionHostname: (slug) => `${slug}.example.test` });
-  stub(ids.dbManager, {
-    appDbName: (slug) => `app_${slug}`,
-    createDatabase: async () => ({ password: 'pw' }),
-    connectionUrl: () => 'postgres://x',
-  });
-  stub(ids.appManifest, {
-    read: () => ({ secrets: [] }),
-    reconcileAppName: async () => {},
-    reconcileAppVisibility: async () => {},
-    reconcileAppGovernance: async () => {},
-    reconcileAppScreenshot: async () => {},
-    reconcileAppIcon: async () => {},
-    reconcileAppAdmins: async () => {},
-    reconcileAppTopics: async () => null,
-  });
-  stub(ids.appSecrets, {
-    getRawValues: async () => ({}),
-    mergeForDeploy: () => ({ missingRequired: [], env: {} }),
-    platformDefaultsFromEnv: () => ({}),
-  });
-  stub(ids.appLlmEnv, { productionLlmEnv: async () => ({}) });
-  stub(ids.template, { getTemplateFiles: () => [] });
-  stub(ids.pool, { getPool: () => pool });
-  stub(ids.ws, {
-    pushAppStatusUpdate: (payload) => statusPushes.push(payload),
-    // Creation-phase broadcasts are not what this file asserts on, but
-    // app-creator calls them, so the stub has to carry the whole seam.
-    // tests/app-creation-progress.test.js is where they are checked.
-    pushAppCreationPhase: () => {},
-    ...ws,
-  });
-
-  const appCreator = require(ids.appCreator);
-  return { appCreator, pool, statusPushes };
+  stub(ids.ws, { pushAppCreationPhase: () => {} });
+  return { appCreator: require(ids.appCreator), pool, queries };
 }
 
-const DEPLOY_ARGS = {
-  appId: 42,
-  name: 'Test App',
-  slug: 'test-app',
-  tempDir: '/tmp/x',
-  dbUrl: 'postgres://x',
-  repoUrl: 'https://github.com/x/y',
-  mainSha: 'abc1234def5678',
-};
-
-test('failed docker build persists last_failure (stage build) and broadcasts errorReason', async () => {
-  const buildErr = new Error('Command failed: docker build');
-  buildErr.buildFailed = true;
-  buildErr.buildLog = 'ERROR: failed to read dockerfile: open Dockerfile: no such file or directory';
-
-  const { appCreator, pool, statusPushes } = loadAppCreator({
-    dockerStubs: { buildImage: async () => { throw buildErr; } },
-  });
-
-  await appCreator.finalizeDeploy({}, DEPLOY_ARGS);
-
-  const failureWrite = pool.queries.find((q) => /SET last_failure = \$1/.test(q.sql));
-  assert.ok(failureWrite, 'expected an UPDATE apps SET last_failure write');
-  const record = JSON.parse(failureWrite.params[0]);
-  assert.equal(record.stage, 'build');
-  assert.ok(record.reason.startsWith('Build failed:'));
-  assert.ok(record.reason.includes('failed to read dockerfile'));
-  assert.ok(record.log.includes('open Dockerfile'));
-  assert.equal(record.sha, 'abc1234def5678');
-  assert.equal(failureWrite.params[1], 42);
-
-  const statusWrite = pool.queries.find((q) => /SET status = \$1 WHERE/.test(q.sql) && q.params[0] === 'error');
-  assert.ok(statusWrite, 'expected the status=error flip');
-
-  const push = statusPushes.find((p) => p.status === 'error');
-  assert.ok(push, 'expected an error app_status broadcast');
-  assert.ok(push.errorReason.includes('failed to read dockerfile'));
-});
-
-test('failed healthcheck persists stage healthcheck with the container-log reason', async () => {
-  const hcErr = new Error('Healthcheck failed after 30 attempts: usernode-app-test-app');
-  hcErr.healthcheckFailed = true;
-  hcErr.containerStatus = 'exited (exit=1)';
-  hcErr.containerLogs = "Error: Cannot find module './lib/dapp-server'";
-
-  const { appCreator, pool, statusPushes } = loadAppCreator({
-    dockerStubs: { waitForHealthy: async () => { throw hcErr; } },
-  });
-
-  await appCreator.finalizeDeploy({}, DEPLOY_ARGS);
-
-  const failureWrite = pool.queries.find((q) => /SET last_failure = \$1/.test(q.sql));
-  assert.ok(failureWrite);
-  const record = JSON.parse(failureWrite.params[0]);
-  assert.equal(record.stage, 'healthcheck');
-  assert.equal(record.reason, "[exited (exit=1)] Error: Cannot find module './lib/dapp-server'");
-
-  const push = statusPushes.find((p) => p.status === 'error');
-  assert.ok(push && push.errorReason.includes('Cannot find module'));
-});
-
-test('successful deploy clears last_failure and broadcasts running with no errorReason', async () => {
-  const { appCreator, pool, statusPushes } = loadAppCreator();
-
-  await appCreator.finalizeDeploy({}, DEPLOY_ARGS);
-
-  const successWrite = pool.queries.find((q) => /last_failure = NULL/.test(q.sql));
-  assert.ok(successWrite, 'expected the success UPDATE to clear last_failure');
-  assert.equal(successWrite.params[0], 'running');
-
-  assert.ok(!pool.queries.some((q) => /SET last_failure = \$1/.test(q.sql)),
-    'no failure record should be written on success');
-
-  const push = statusPushes.find((p) => p.status === 'running');
-  assert.ok(push, 'expected a running broadcast');
-  assert.ok(!statusPushes.some((p) => p.status === 'error'));
-});
-
-test('a repo-less fork is refused at the starter-template boundary', async () => {
-  const { appCreator, pool, statusPushes } = loadAppCreator();
-
-  await appCreator.createApp({ jwtSecret: 's' }, {
-    id: 42,
-    name: 'Forked App',
-    slug: 'forked-app',
-    self_hosted: false,
-    repo_url: null,
-    forked_from: { appId: 7, slug: 'source-app' },
-  });
-
-  assert.ok(!pool.queries.some((q) => /SET db_password/.test(q.sql)),
-    'the guard fires before a fresh DB/template create can begin');
-  const failureWrite = pool.queries.find((q) => /SET last_failure = \$1/.test(q.sql));
-  assert.ok(failureWrite);
-  const failure = JSON.parse(failureWrite.params[0]);
-  assert.match(failure.reason, /copied.*source repository|source repository.*copy/i);
-  assert.ok(statusPushes.some((p) => p.status === 'error' && p.errorReason === failure.reason));
-});
+const row = (extra = {}) => ({ id: 42, name: 'Test App', slug: 'test-app', self_hosted: false, status: 'creating', ...extra });
 
 // Session-2585 fix: with GitHub enabled, a repo-creation failure is FATAL
 // (status='error', last_failure stage 'repo') instead of silently falling
 // back to a local build that leaves repo_url NULL on a 'running' app.
-test('GitHub enabled + createRepo failure ends status=error with stage repo', async () => {
-  const { appCreator, pool, statusPushes } = loadAppCreator({
-    githubStubs: {
-      isEnabled: () => true,
-      createRepo: async () => { throw new Error('API rate limit exceeded'); },
-    },
+test('GitHub enabled + createRepo failure fails the setup with stage repo, and no repo_url', async () => {
+  const { appCreator, pool, queries } = loadAppCreator({
+    app: row(),
+    githubStubs: { createRepo: async () => { throw new Error('API rate limit exceeded'); } },
   });
-
-  await appCreator.createApp({ jwtSecret: 's' }, {
-    id: 42, name: 'Test App', slug: 'test-app', self_hosted: false,
-  });
-
-  const failureWrite = pool.queries.find((q) => /SET last_failure = \$1/.test(q.sql));
-  assert.ok(failureWrite, 'expected an UPDATE apps SET last_failure write');
-  const record = JSON.parse(failureWrite.params[0]);
-  assert.equal(record.stage, 'repo');
-  assert.ok(record.reason.includes('GitHub repo creation failed'));
-  assert.ok(record.reason.includes('API rate limit exceeded'));
-
-  const statusWrite = pool.queries.find((q) => /SET status = \$1 WHERE/.test(q.sql) && q.params[0] === 'error');
-  assert.ok(statusWrite, 'expected the status=error flip');
-  assert.ok(!pool.queries.some((q) => /SET repo_url/.test(q.sql)),
-    'repo_url must not be written when provisioning failed');
-
-  const push = statusPushes.find((p) => p.status === 'error');
-  assert.ok(push && push.errorReason.includes('GitHub repo creation failed'));
+  const out = await appCreator.setUp({}, pool, 42, workContext());
+  assert.equal(out.failed.stage, 'repo');
+  assert.ok(out.failed.reason.includes('GitHub repo creation failed'));
+  assert.ok(out.failed.reason.includes('API rate limit exceeded'));
+  assert.ok(!queries.some((q) => /SET repo_url/.test(q.sql)), 'repo_url must not be written when provisioning failed');
 });
 
-// Adopt-existing (mypage-777ed2 incident): a Retry after a create that
-// died between the GitHub create call and the repo_url persist re-runs
-// with the SAME slug — the repo already exists on the bot account. The
-// real createRepo resolves that 422 to the existing repo when the caller
-// passes adoptExisting; this test pins that createApp opts in, so the
-// retry proceeds to a running deploy instead of flipping to error.
-test('GitHub enabled + repo already exists on retry adopts it and deploys to running', async () => {
+// Adopt-existing (mypage-777ed2 incident): a Retry after a create that died
+// between the GitHub create call and the repo_url write has the SAME slug.
+test('a repository that already exists is adopted, and the starter is pushed onto it', async () => {
   let sawAdoptOption = false;
-  const { appCreator, pool, statusPushes } = loadAppCreator({
+  const pushed = [];
+  const { appCreator, pool, queries } = loadAppCreator({
+    app: row(),
     githubStubs: {
-      isEnabled: () => true,
       createRepo: async (owner, slug, opts = {}) => {
         sawAdoptOption = !!opts.adoptExisting;
-        if (!opts.adoptExisting) {
-          const err = new Error('Repository creation failed.: name already exists on this account');
-          err.status = 422;
-          throw err;
-        }
-        // Real createRepo adopts: fetches and returns the existing repo.
+        return { html_url: `https://github.com/${owner}/${slug}`, adopted: true };
+      },
+      headCommit: async () => ({ sha: 'b'.repeat(40), message: 'Initial commit' }),
+      pushFiles: async (owner, repo, files, opts) => { pushed.push(opts.message); return { sha: 'c'.repeat(40) }; },
+    },
+  });
+  const out = await appCreator.setUp({}, pool, 42, workContext());
+  assert.equal(sawAdoptOption, true, 'setUp must opt into adopt-existing');
+  assert.deepEqual(pushed, ['Initialize Test App from Homeroom template'], 'GitHub\'s own first commit is not ours');
+  assert.equal(out.sha, 'c'.repeat(40));
+  assert.equal(queries.find((q) => /SET repo_url = \$1/.test(q.sql)).params[0], 'https://github.com/usernode-bot/test-app');
+});
+
+// Its head unread, the starter could be pushed a second time on top of the
+// one a try before already pushed: the setup fails instead (Retry reads it
+// again).
+test('an adopted repository whose head cannot be read fails the setup, and pushes nothing', async () => {
+  const pushed = [];
+  const { appCreator, pool, queries } = loadAppCreator({
+    app: row(),
+    githubStubs: {
+      createRepo: async (owner, slug) => ({ html_url: `https://github.com/${owner}/${slug}`, adopted: true }),
+      headCommit: async () => { throw Object.assign(new Error('Server Error'), { status: 502 }); },
+      pushFiles: async (...args) => { pushed.push(args); return { sha: 'c'.repeat(40) }; },
+    },
+  });
+  const out = await appCreator.setUp({}, pool, 42, workContext());
+  assert.equal(out.failed.stage, 'repo');
+  assert.match(out.failed.reason, /Server Error/);
+  assert.deepEqual(pushed, []);
+  assert.ok(!queries.some((q) => /SET repo_url/.test(q.sql)));
+});
+
+// 21 Oct 2026: GitHub refused four of fourteen projects made together
+// with its secondary limit, and their setups failed with GitHub's text
+// (services/repo-create-queue.js).
+const queue = require('../src/services/repo-create-queue');
+const { REPO_SLOW_DOWN } = require('../src/services/deploy-failure');
+const slowDown = () => Object.assign(new Error('You have exceeded a secondary rate limit and have been temporarily blocked from content creation. Please retry your request again later.'),
+  { status: 403, response: { status: 403, headers: {} } });
+const lockTurns = (queries) => queries.filter((q) => q.lock && q.lock.extended).length;
+
+test('GitHub\'s secondary limit is waited out: the repository is made on a later turn in line', async () => {
+  queue._forTest.setTiming({ gapMs: 0, firstWaitMs: 5, maxWaitMs: 20, budgetMs: 1000 });
+  let creates = 0;
+  const { appCreator, pool, queries } = loadAppCreator({
+    app: row(),
+    githubStubs: {
+      createRepo: async (owner, slug) => {
+        creates += 1;
+        if (creates <= 2) throw slowDown();
         return { html_url: `https://github.com/${owner}/${slug}` };
       },
     },
   });
-
-  await appCreator.createApp({ jwtSecret: 's' }, {
-    id: 42, name: 'Test App', slug: 'test-app', self_hosted: false,
-  });
-
-  assert.equal(sawAdoptOption, true, 'createApp must opt into adopt-existing');
-
-  const repoWrite = pool.queries.find((q) => /SET repo_url = \$1/.test(q.sql));
-  assert.ok(repoWrite, 'expected repo_url persisted from the adopted repo');
-  assert.equal(repoWrite.params[0], 'https://github.com/usernode-bot/test-app');
-
-  assert.ok(!pool.queries.some((q) => /SET status = \$1 WHERE/.test(q.sql) && q.params[0] === 'error'),
-    'no error flip when the existing repo is adopted');
-  const successWrite = pool.queries.find((q) => /last_failure = NULL/.test(q.sql));
-  assert.ok(successWrite, 'expected the success UPDATE');
-  assert.equal(successWrite.params[0], 'running');
-  assert.ok(statusPushes.some((p) => p.status === 'running'));
+  const out = await appCreator.setUp({}, pool, 42, workContext());
+  assert.equal(out.failed, undefined);
+  assert.equal(out.sha, 'a'.repeat(40));
+  assert.equal(creates, 3);
+  assert.equal(lockTurns(queries), 3, 'every try takes its turn under the platform-wide lock');
+  assert.equal(queries.find((q) => /SET repo_url = \$1/.test(q.sql)).params[0], 'https://github.com/usernode-bot/test-app');
 });
 
-test('GitHub disabled keeps the local-template fallback deploying to running', async () => {
-  const { appCreator, pool, statusPushes } = loadAppCreator(); // isEnabled: () => false
-
-  await appCreator.createApp({ jwtSecret: 's' }, {
-    id: 42, name: 'Test App', slug: 'test-app', self_hosted: false,
+test('a push the limit refused is tried again on the repository the refused try made, adopted', async () => {
+  queue._forTest.setTiming({ gapMs: 0, firstWaitMs: 5, maxWaitMs: 20, budgetMs: 1000 });
+  let creates = 0;
+  const pushed = [];
+  const { appCreator, pool } = loadAppCreator({
+    app: row(),
+    githubStubs: {
+      createRepo: async (owner, slug, opts = {}) => {
+        creates += 1;
+        assert.equal(opts.adoptExisting, true);
+        return { html_url: `https://github.com/${owner}/${slug}`, ...(creates > 1 ? { adopted: true } : {}) };
+      },
+      headCommit: async () => ({ sha: 'b'.repeat(40), message: 'Initial commit' }),
+      pushFiles: async (owner, repo, files, opts) => {
+        pushed.push(opts.message);
+        if (pushed.length === 1) throw slowDown();
+        return { sha: 'c'.repeat(40) };
+      },
+    },
   });
-
-  assert.ok(!pool.queries.some((q) => /SET status = \$1 WHERE/.test(q.sql) && q.params[0] === 'error'),
-    'no error flip in the no-GitHub mode');
-  const successWrite = pool.queries.find((q) => /last_failure = NULL/.test(q.sql));
-  assert.ok(successWrite, 'expected the success UPDATE clearing last_failure');
-  assert.equal(successWrite.params[0], 'running');
-  assert.ok(statusPushes.some((p) => p.status === 'running'));
+  const out = await appCreator.setUp({}, pool, 42, workContext());
+  assert.equal(out.sha, 'c'.repeat(40));
+  assert.equal(creates, 2);
+  assert.deepEqual(pushed, ['Initialize Test App from Homeroom template', 'Initialize Test App from Homeroom template']);
 });
 
-// #3368: the first production container carries the same source-revision
-// evidence rebuildProduction stamps, so a new app's merges can be verified.
-test('the first deploy labels the container with the cloned commit, and only a real one', async () => {
-  const LABEL = 'social.usernode.io/source-revision';
-  const SHA = 'ABCDEF0123456789ABCDEF0123456789ABCDEF01';
-  const runLabels = async (mainSha) => {
-    let labels;
-    const { appCreator } = loadAppCreator({
-      dockerStubs: { runContainer: async (_name, opts) => { labels = opts.labels; return 'container-id-123'; } },
-    });
-    await appCreator.finalizeDeploy({}, { ...DEPLOY_ARGS, mainSha });
-    return labels;
-  };
-  assert.deepEqual(await runLabels(SHA), { [LABEL]: SHA.toLowerCase() });
-  assert.deepEqual(await runLabels('abc1234def5678'), {}, 'a short sha is not revision evidence');
-  assert.deepEqual(await runLabels(null), {});
+test('still refused once the waits are spent: the setup fails at the repository, in words, not GitHub\'s', async () => {
+  queue._forTest.setTiming({ gapMs: 0, firstWaitMs: 5, maxWaitMs: 10, budgetMs: 30 });
+  let creates = 0;
+  const { appCreator, pool, queries } = loadAppCreator({
+    app: row(),
+    githubStubs: { createRepo: async () => { creates += 1; throw slowDown(); } },
+  });
+  const out = await appCreator.setUp({}, pool, 42, workContext());
+  assert.equal(out.failed.stage, 'repo');
+  assert.equal(out.failed.reason, REPO_SLOW_DOWN);
+  assert.ok(creates > 1, 'it waited and tried again first');
+  assert.ok(!queries.some((q) => /SET repo_url/.test(q.sql)));
+});
+
+test('a remix whose source is gone, or not ready to copy, fails without touching the starter', async () => {
+  let made = loadAppCreator({ app: row({ forked_from: { appId: 7, slug: 'source-app' } }) });
+  let out = await made.appCreator.setUp({}, made.pool, 42, workContext());
+  assert.match(out.failed.reason, /no longer exists/);
+  made = loadAppCreator({
+    app: row({ forked_from: { appId: 7, slug: 'source-app' } }),
+    forkerStubs: { findForkSource: async () => ({ id: 7, slug: 'source-app', repo_url: null }) },
+  });
+  out = await made.appCreator.setUp({}, made.pool, 42, workContext());
+  assert.match(out.failed.reason, /not ready to copy/);
+  assert.ok(!made.queries.some((q) => /SET repo_url/.test(q.sql)));
+});
+
+test('a remix copies its source into its own repository, and records the lineage with it in one write', async () => {
+  const { appCreator, pool, queries } = loadAppCreator({
+    app: row({ forked_from: { appId: 7, slug: 'source-app' } }),
+    forkerStubs: {
+      findForkSource: async () => ({ id: 7, slug: 'source-app', repo_url: 'https://github.com/acme/source-app' }),
+      copyRepoTree: async (args) => ({ repoUrl: `https://github.com/${args.botUsername}/${args.forkSlug}`, mainSha: 'D'.repeat(40), sourceSha: 'e'.repeat(40) }),
+      forkLineageShas: (c) => ({ sourceSha: c.sourceSha, forkBaseSha: c.mainSha }),
+    },
+  });
+  const out = await appCreator.setUp({}, pool, 42, workContext());
+  assert.equal(out.sha, 'd'.repeat(40));
+  assert.equal(out.offer, null, 'somebody\'s app, not a starter');
+  const write = queries.find((q) => /SET repo_url = \$1/.test(q.sql));
+  assert.match(write.sql, /forked_from = CASE/);
+  assert.deepEqual(JSON.parse(write.params[1]), { sourceSha: 'e'.repeat(40), forkBaseSha: 'D'.repeat(40) });
+});
+
+test('a project that is no longer being made is not set up', async () => {
+  const { appCreator, pool } = loadAppCreator({ app: row({ status: 'running' }) });
+  const out = await appCreator.setUp({}, pool, 42, workContext());
+  assert.match(out.failed.reason, /no longer being set up/);
 });

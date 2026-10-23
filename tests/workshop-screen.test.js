@@ -497,6 +497,33 @@ test('#5296: every community is out at once, and an empty audience\'s chip is hi
   mod.workshopStore.set({ open: false, rows: null });
 });
 
+test('UX audit: the chip rail fades while more chips are past its edge', () => {
+  const mod = loadTsx('frontend/src/features/workshop/index.tsx');
+  const out = renderToHtml(createElement(mod.AudienceChips, {
+    tallies: { all: 3, open: 2, invited: 1, solo: 1 },
+    pressed: 'all',
+    onPress: () => {},
+    scope: 'workshop',
+  }));
+  assert.match(out, /class="[^"]*\baudience-chips\b/, 'the rail says which row it is');
+  assert.doesNotMatch(out, /data-more/, 'no fade until a measurement says there is more');
+  const src = read('frontend/src/features/workshop/index.tsx');
+  const fn = src.slice(src.indexOf('export function AudienceChips'));
+  assert.match(fn, /el\.scrollLeft \+ el\.clientWidth < el\.scrollWidth - 1/,
+    'more means a chip lies past the right edge');
+  assert.match(fn, /'data-more': ''/, 'and that is what turns the fade on');
+  const css = read('public/css/app.css');
+  assert.match(css, /\.audience-chips\[data-more\] \{[\s\S]{0,300}mask-image: linear-gradient\(to right, #000 calc\(100% - 2rem\), transparent\)/,
+    'the same 2rem fade Home\'s Discover lane uses');
+});
+
+test('UX audit: the search clears the Needs you card it follows', () => {
+  // The card's section had no bottom margin, so the field touched it. The gap
+  // only applies when something heads the list (the card or its skeleton).
+  const css = read('public/css/app.css');
+  assert.match(css, /section \+ \.workshop-search \{\s*margin-top: 12px;/);
+});
+
 test('the screen is built from the grouped-list primitives, not a copy of them', () => {
   // AGENTS.md: "a primitive nobody knows exists gets hand-written instead."
   // GroupedList / SectionHeader / ListRow ARE the widget language's primary
@@ -1109,8 +1136,10 @@ test('the app\'s own Workshop switches communities through Your communities, the
   assert.match(ws, /name=\{app\.name \|\| undefined\}/);
 
   // ALL COMMUNITIES IS THE WAY BACK UP: a hash assignment, so the tab and
-  // this are one route, and the page the tab reopened is forgotten.
-  assert.match(scope, /if \(!slug\) \{\s*setScope\(null\);\s*try \{ app\?\._forgetWorkshopView\?\.\(\); \}[\s\S]{0,160}window\.location\.hash = '#communities';/);
+  // this are one route, and the page the tab reopened is forgotten. On a
+  // phone it is the drawer's list instead (#5581), and the page stays for a
+  // new account with no community to show it over.
+  assert.match(scope, /if \(!slug\) \{\s*if \(phone\(\) && openDrawerList\(\)\) return;\s*setScope\(null\);\s*try \{ app\?\._forgetWorkshopView\?\.\(\); \}[\s\S]{0,160}window\.location\.hash = '#communities';/);
   // The community you are already on goes nowhere: re-navigating to the
   // current route would throw the page's scroll away, and it stays on the
   // place it shows. Another one opens on the place you were on, when it has
@@ -1433,9 +1462,11 @@ test('#4486: the one-row head and the pipeline pin together under the project’
   assert.match(kanbanTsx, /export function syncStrip\(board: HTMLElement \| null\): void \{/);
   assert.match(appCss, /\.dev-kanban-stages \{[^}]*overflow: hidden;/);
   // On a phone (#5029) the search keeps its own line and the switch and the
-  // filters share the one under it: the chips fill the space beside the
-  // switch instead of taking a line of their own.
-  assert.match(appCss, /@media \(max-width: 639px\) \{[\s\S]*?\.dev-ws-allbar #dev-kanban-search \{ flex-basis: 100%; max-width: none; min-width: 0; \}\s*\.dev-ws-allbar #dev-filter-chips \{ flex: 1 1 0; min-width: 0; /);
+  // filters share the one under it. #5820: the chips no longer fill that
+  // space beside the switch — they size to their icons and `margin-left:
+  // auto` pushes them to the right edge, so the grouping stays left and the
+  // filters read as the other group.
+  assert.match(appCss, /@media \(max-width: 639px\) \{[\s\S]*?\.dev-ws-allbar #dev-kanban-search \{ flex-basis: 100%; max-width: none; min-width: 0; \}[\s\S]*?\.dev-ws-allbar #dev-filter-chips \{ flex: 0 1 auto; margin-left: auto; min-width: 0; /);
 });
 
 // ── 4. #5463: a vote saved elsewhere marks the kept feed and the counts ─

@@ -119,6 +119,33 @@ test('app.css bottoms the card, slides it, and clears the keyboard', () => {
     'the grabber shows on a phone only');
   assert.match(block, /\[data-dialog-sheet\] \.feedback-actions \{[\s\S]*?position: sticky;/,
     'the actions row stays at the foot while the form scrolls');
+  // #5802: the row reaches the scroller's edge instead of being held 24px
+  // above it, so the Private request note shows in full under it.
+  assert.match(block, /\[data-dialog-sheet\] \.feedback-actions \{[\s\S]*?bottom: -24px;[\s\S]*?padding: 12px 0 48px;/,
+    'the row leaves the note room and keeps the buttons 48px above the card\'s foot');
+});
+
+test('the card resolves the keyboard arithmetic and clears the sticky row (#5802)', () => {
+  const at = APP_CSS.indexOf('[data-dialog-sheet] { overflow: hidden; }');
+  const block = APP_CSS.slice(at, APP_CSS.indexOf('/* THE COMMENT SHEET', at));
+  // The wrapper's height was indefinite, so a percentage max-height on the
+  // card computed to `none` and Safari left it under the keys.
+  assert.match(block, /#feedback-modal\[data-dialog-sheet\] \[data-modal-backdrop\] \{ height: 100%; \}/,
+    'the card\'s percentage cap resolves against the fixed root');
+  assert.match(block, /#feedback-modal\[data-dialog-sheet\] \[data-modal-backdrop\] > div \{[\s\S]*?position: relative;[\s\S]*?scroll-padding-bottom: 104px;/,
+    'the card takes the keyboard rule\'s `bottom`, and a focused field clears the buttons');
+});
+
+test('the sheet card is the one scroller, and a drag in it is never handed to the page (#5701)', () => {
+  const at = APP_CSS.indexOf('[data-dialog-sheet] { overflow: hidden; }');
+  const block = APP_CSS.slice(at, APP_CSS.indexOf('/* THE COMMENT SHEET', at));
+  const card = /\[data-dialog-sheet\] \[data-modal-backdrop\] > div \{([\s\S]*?)\n  \}/.exec(block);
+  assert.ok(card, 'the card\'s rule');
+  assert.match(card[1], /overflow-y: auto;/, 'the card scrolls its fields');
+  assert.match(card[1], /overscroll-behavior: contain;/, 'and its end is its end, not the page behind it');
+  assert.match(card[1], /transform: translateY\(100%\)/, 'still sliding up as a sheet');
+  assert.match(block, /\[data-dialog-sheet\] \.feedback-actions \{\s*position: sticky;\s*bottom: -24px;/,
+    'Cancel and Post request stay at its foot');
 });
 
 test('the form takes the keyboard without panning the page', () => {
@@ -132,7 +159,7 @@ test('the form takes the keyboard without panning the page', () => {
 test('the feedback dialog opts in and rides the keyboard on its card', () => {
   assert.match(FEEDBACK, /phoneSheet: true,/);
   assert.match(FEEDBACK, /<div aria-hidden="true" className="feedback-sheet-grabber" \/>/);
-  assert.match(FEEDBACK, /useKeyboardSurface\(cardRef, \{ ride: true \}\);/);
+  assert.match(FEEDBACK, /useKeyboardSurface\(cardRef, \{ ride: true, foot: '\.feedback-actions' \}\);/);
   // The option travels through useDialog to useStaticModal.
   assert.match(USE_DIALOG, /phoneSheet\?: boolean;/);
   assert.match(USE_DIALOG, /phoneSheet: opts\.current\.phoneSheet,/);

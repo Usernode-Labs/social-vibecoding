@@ -145,8 +145,12 @@ module.exports = function install(fakes) {
         await fakes.pause('github.createPR.done');
         return { number, html_url: `https://github.com/${owner}/${repo}/pull/${number}`, title };
       },
-      // A production deploy starts by cloning; `github.clone` stops there.
+      // A production deploy starts by cloning; `github.clone` stops there,
+      // and `github.clone:<owner>/<repo>` only that repository's. Every
+      // deploy and build that failed here earlier retries through this
+      // point, so a test that waits on one app's arms its own.
       async getCloneUrl(owner, repo) {
+        await fakes.pause(`github.clone:${owner}/${repo}`);
         await fakes.pause('github.clone');
         throw Object.assign(new Error(`clone of ${owner}/${repo} is not faked`), { code: 'ECONNREFUSED' });
       },
@@ -161,6 +165,12 @@ module.exports = function install(fakes) {
       // no container of that name, and the volume's removal recorded as
       // removeVolume's is.
       async execFileAsync(cmd, args) {
+        // The real startup retirement inventories outside runtimes. This
+        // fixture has none; keep the policy and its database lookup real.
+        if (cmd === 'docker' && args[0] === 'ps' && args[1] === '-a') {
+          await fakes.record('docker.ps');
+          return { stdout: '', stderr: '' };
+        }
         if (cmd === 'docker' && args[0] === 'inspect') {
           throw Object.assign(new Error('No such object'), { stderr: `Error: No such object: ${args.at(-1)}` });
         }

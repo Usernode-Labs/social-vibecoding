@@ -7,9 +7,8 @@
 //   - a side build its run's cap stops is finished, its result skipped with
 //     why ("capped: ..."), and counted; before, capRun left it pending for
 //     good, never paired and never counted (9 of the last 50);
-//   - one already left that way, or cancelled by an admin, is settled on the
-//     lane's next pass; one this process still holds is left to its own
-//     finisher;
+//   - one already left that way, or cancelled by an admin, is settled by
+//     the bench-sweep clock; one still running is left to its own finisher;
 //   - a side build's branch is kept while its pair waits for a pick (up to
 //     BRANCH_KEEP_WAITING_DAYS), and goes at seven days once it does not;
 //   - the pairs waiting per scope, which the Homeroom bot console's Overview
@@ -22,9 +21,13 @@ const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const { Pool } = require('pg');
+const { asTransition } = require('./lib/as-transition');
 
 const lane = require('../src/services/bench/lane');
 const runner = require('../src/services/bench/runner');
+const { createRuntime } = require('../src/workflow/kernel/index.ts');
+const benchLaneMod = require('../src/workflow/bench-lane/machine.ts');
+const { benchLaneServices } = require('../src/workflow/bench-lane/services.ts');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL
   || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
@@ -46,9 +49,12 @@ test('side builds on the App bench lane against the full PostgreSQL schema', { t
   const url = new URL(DSN); url.pathname = `/${name}`;
   const pool = new Pool({ connectionString: String(url), max: 8 });
   const realRunStage = runner.runStage;
+  const realGate = lane.allowanceGate;
+  let rt = null;
   t.after(async () => {
     runner.runStage = realRunStage;
-    lane._resetForTests();
+    lane.allowanceGate = realGate;
+    if (rt) await rt.stop();
     await pool.end();
     await admin.query(`DROP DATABASE ${name}`);
     await admin.end();
@@ -80,10 +86,27 @@ test('side builds on the App bench lane against the full PostgreSQL schema', { t
     user,
     limits: { async checkBudget() { return { ok: true }; }, async recordSpend() {} },
     managedOpenRouter: { async usesIncludedKey() { return false; } },
-    isLiveLaneSaturated: () => false,
     github: { isEnabled: () => true, async deleteBenchBranch(_o, _r, branch) { deleted.push(branch); } },
     worker: { async stopTurn() {} },
     afterTrial: async () => {},
+  };
+
+  // The lane's machine, run here (its grants' builds are not: nothing in
+  // this suite runs a trial).
+  lane.allowanceGate = async () => ({ ok: true, reason: null });
+  rt = createRuntime({ pool, machines: [benchLaneMod.benchLane()], services: benchLaneServices({ config: {}, pool }), pollMs: 50 });
+  let rk = 0;
+  const laneLook = async () => {
+    await rt.append(benchLaneMod.MACHINE, benchLaneMod.KEY, { type: 'Look', payload: {} }, { requestKey: `look-${++rk}`, source: { kind: 'system', name: 'test' } });
+    for (let i = 0; i < 6; i += 1) { await rt.drain(); if (!(await rt.runServices())) break; }
+    await rt.drain();
+  };
+  const laneCancel = async (trialId) => {
+    const id = await rt.append(benchLaneMod.MACHINE, benchLaneMod.KEY, { type: 'TrialCancelled', payload: { trialId } },
+      { requestKey: `cancel-${++rk}`, source: { kind: 'admin', name: 'test' } });
+    await rt.drain();
+    const { rows: [e] } = await pool.query('SELECT result, reason, reply FROM wf_events WHERE id = $1', [id]);
+    return { status: e.result, reason: e.reason, reply: e.reply };
   };
 
   // A later change, built live by the current configuration, with its side
@@ -102,7 +125,7 @@ test('side builds on the App bench lane against the full PostgreSQL schema', { t
       extra: { firstVersion: false, model: GLM, specModel: OPUS },
     });
     const out = await configs.spawnSideBuilds(pool, {}, {
-      botRunId: run.id, app, snapshotId, current: laterCurrent, scope: 'later', deps: { lane: { wake() {} } },
+      botRunId: run.id, app, snapshotId, current: laterCurrent, scope: 'later', deps: { lane: { look() {} } },
     });
     assert.equal(out.trials, 1);
     const { rows: [trial] } = await pool.query('SELECT id, run_id FROM bench_trials WHERE bot_run_id = $1', [run.id]);
@@ -121,13 +144,10 @@ test('side builds on the App bench lane against the full PostgreSQL schema', { t
   ).then(() => pool.query('UPDATE bench_runs SET spent_usd = 1.0 WHERE id = $1', [s.benchRunId]));
 
   await t.test('a side build its run\'s cap stops is finished skipped, with why, and counted', async () => {
-    lane._resetForTests();
     const s = await sideBuild();
-    // A restart threw its work away after it had spent $1.00 of its $1.20:
-    // the $0.40 it needs again does not fit.
+    // Its run had spent $1.00 of its $1.20: the $0.40 it needs does not fit.
     await putBack(s);
-    const out = await lane.tick(pool, {}, deps);
-    assert.equal(out.paused, 'cap');
+    await laneLook();
     assert.equal((await trialOf(s.trialId)).status, 'skipped_cap');
     const r = await resultOf(s.botRunId);
     assert.equal(r.status, 'skipped', 'not left pending for good');
@@ -138,37 +158,34 @@ test('side builds on the App bench lane against the full PostgreSQL schema', { t
     assert.equal(pairs.length, 0, 'never offered');
   });
 
-  await t.test('one left pending before, or cancelled by an admin, is settled on the next pass; one in flight is left alone', async () => {
-    lane._resetForTests();
+  await t.test('one left pending before, or cancelled by an admin, is settled by the sweep; one running is left alone', async () => {
     // As capRun left them before: the trial skipped, its result pending.
     const before = await sideBuild();
     await pool.query("UPDATE bench_trials SET status = 'skipped_cap', finished_at = NOW() WHERE id = $1", [before.trialId]);
     await pool.query("UPDATE bench_runs SET status = 'capped', spent_usd = 1.15 WHERE id = $1", [before.benchRunId]);
     const cancelled = await sideBuild();
-    assert.deepEqual(await lane.cancelTrial(pool, cancelled.trialId, deps), { ok: true, status: 'cancelled' });
+    const out = await lane.cancelTrial(pool, cancelled.trialId, { platform: { benchCancelTrial: (id) => laneCancel(id) } });
+    assert.deepEqual(out, { ok: true, status: 'cancelled' });
     const held = await sideBuild();
-    await pool.query("UPDATE bench_trials SET status = 'ok', finished_at = NOW() WHERE id = $1", [held.trialId]);
-    lane._inFlightForTests().set(held.trialId, { runId: held.benchRunId, est: 0.4 });
+    await asTransition(pool, "UPDATE bench_trials SET status = 'running', started_at = NOW() WHERE id = $1", [held.trialId]);
     assert.equal((await resultOf(before.botRunId)).status, 'pending');
 
     assert.equal(await lane.settleSideResults(pool), 2);
     assert.deepEqual(Object.values(await resultOf(before.botRunId)).slice(0, 2), ['skipped', 'capped: its run had spent $1.15 of its $1.20 cap']);
     assert.deepEqual(Object.values(await resultOf(cancelled.botRunId)).slice(0, 2), ['skipped', 'cancelled by an admin']);
     assert.equal((await resultOf(held.botRunId)).status, 'pending', 'its own finisher records it');
-    lane._inFlightForTests().delete(held.trialId);
-    await pool.query("UPDATE bench_runs SET status = 'cancelled' WHERE id = $1", [held.benchRunId]);
-    assert.equal(await lane.settleSideResults(pool), 1, 'once nothing holds it');
+    await pool.query("UPDATE bench_trials SET status = 'cancelled', finished_at = NOW() WHERE id = $1", [held.trialId]);
+    assert.equal(await lane.settleSideResults(pool), 1, 'once it has ended');
     assert.equal(await lane.settleSideResults(pool), 0, 'once');
-    // The lane's own pass runs it.
+    // The bench-sweep clock's run settles them.
     const later = await sideBuild();
     await pool.query("UPDATE bench_trials SET status = 'skipped_cap', finished_at = NOW() WHERE id = $1", [later.trialId]);
     await pool.query("UPDATE bench_runs SET status = 'capped' WHERE id = $1", [later.benchRunId]);
-    await lane.tick(pool, {}, deps);
+    await lane.sweep(pool, deps);
     assert.equal((await resultOf(later.botRunId)).status, 'skipped');
   });
 
   await t.test('a side build\'s branch is kept while its pair waits for a pick, and not for good', async () => {
-    lane._resetForTests();
     deleted.length = 0;
     const branchOf = (s) => `bench/r${s.benchRunId}-t${s.trialId}`;
     // Built, finished `days` ago, with its pair `pair` (or none).
@@ -200,7 +217,7 @@ test('side builds on the App bench lane against the full PostgreSQL schema', { t
     const alone = await finished(8, null);
     const young = await finished(2, null);
     const stale = await finished(lane.BRANCH_KEEP_WAITING_DAYS + 1, 'waiting');
-    await lane.sweepBranches(pool, { ...deps, force: true });
+    await lane.sweepBranches(pool, deps);
     assert.deepEqual(deleted.sort(), [branchOf(picked), branchOf(alone), branchOf(stale)].sort());
     const gone = async (s) => !!(await pool.query('SELECT branch_deleted_at FROM bench_trials WHERE id = $1', [s.trialId])).rows[0].branch_deleted_at;
     assert.equal(await gone(waiting), false, 'its pair waits: the compare link still opens');
@@ -208,7 +225,7 @@ test('side builds on the App bench lane against the full PostgreSQL schema', { t
     assert.equal(await gone(stale), true, 'not kept for good');
     // Picked, it goes on the next sweep.
     await pool.query("UPDATE bot_config_pairs SET status = 'picked', pick = 'tie' WHERE side_result_id = (SELECT id FROM bot_config_results WHERE trial_id = $1)", [waiting.trialId]);
-    await lane.sweepBranches(pool, { ...deps, force: true });
+    await lane.sweepBranches(pool, deps);
     assert.equal(await gone(waiting), true);
   });
 

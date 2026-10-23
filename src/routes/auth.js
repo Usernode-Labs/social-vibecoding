@@ -32,9 +32,13 @@ const communityInvites = require('../services/community-invites');
 const phoneAuth = require('../services/firebase-phone-auth');
 const challengeScorer = require('../services/topochain/challenge-scorer');
 const events = require('../services/events');
+const { signUpMetadata } = require('../services/sign-up-from');
 const { validatePassword } = require('../services/password-policy');
 const usernames = require('../services/usernames');
+const contactPrivacy = require('../services/contact-privacy');
+const linkedPhones = require('../services/linked-phones');
 const uiTelemetry = require('../services/ui-telemetry');
+const usageAnalytics = require('../services/usage-analytics');
 const { verificationKeyFor } = require('../services/wallet-signing-key');
 // One shape for the profile block, shared with PATCH /api/me/profile so
 // /api/auth/me and the write echo identical objects (#982).
@@ -150,6 +154,7 @@ function createSessionCookie(res, token, expiresAt) {
     sameSite: 'lax',
     expires: expiresAt,
   });
+  require('../services/browser-api-cache').setSessionCacheCookie(res, token, expiresAt);
 }
 
 async function createSession(queryable, userId) {
@@ -432,7 +437,8 @@ function authRoutes(config) {
       });
       // The sign-up, as an activation code and a wallet record theirs
       // (#4039): an email code made no user_signed_up before.
-      events.record(pool, { type: events.EVENT_TYPES.USER_SIGNED_UP, userId: verified.userId, metadata: { via: 'email' } });
+      // `from`: the button that opened its sheet (services/sign-up-from.js).
+      events.record(pool, { type: events.EVENT_TYPES.USER_SIGNED_UP, userId: verified.userId, metadata: signUpMetadata(req, { via: 'email' }) });
     }
     createSignupCookie(res, verified.signupToken, verified.expiresAt);
     log.info('email-signup', via === 'link' ? 'Release link spent, account step pending' : 'Email code verified, password setup pending', {
@@ -713,12 +719,7 @@ function authRoutes(config) {
         [token, userId, expiresAt]
       );
 
-      res.cookie('session', token, {
-        httpOnly: true,
-        secure: SECURE_COOKIE,
-        sameSite: 'lax',
-        expires: expiresAt,
-      });
+      createSessionCookie(res, token, expiresAt);
 
       log.info('auth', 'User registered', { userId, username: username.trim(), codeId });
       events.record(pool, { type: events.EVENT_TYPES.USER_SIGNED_UP, userId, metadata: { via: 'activation_code' } });
@@ -761,6 +762,7 @@ function authRoutes(config) {
       }
     }
     res.clearCookie('session');
+    res.clearCookie(require('../services/browser-api-cache').SCOPE_COOKIE, { path: '/' });
     res.json({ ok: true });
   });
 
@@ -820,6 +822,15 @@ function authRoutes(config) {
 
   router.get('/api/auth/me', async (req, res) => {
     if (!req.user) {
+      // A boot that knows there may be nobody (a device with no saved
+      // session, #5678) asks with ?optional=1, and is told plainly that
+      // nobody is signed in: a 401 would be logged by the browser as a
+      // failed request on every signed-out load. Never cached either way,
+      // and the plain read keeps its 401 for every other caller.
+      if (req.query.optional === '1') {
+        res.set('Cache-Control', 'no-store');
+        return res.json({ user: null });
+      }
       return res.status(401).json({ error: 'Not authenticated' });
     }
     // Include BYOK state (#30) so the settings modal can render
@@ -877,6 +888,13 @@ function authRoutes(config) {
     // direction here is the one it had before the server kept it: the
     // browser's answer alone.
     let tourDone = false;
+    // The first session's walk on Home, kept by the account (POST
+    // /api/me/home-walk, services/onboarding.js markHomeWalk): still owed
+    // to this newcomer, and whether they have reached Homeroom yet. The
+    // shell ORs each with its own device's record, so unreadable here
+    // leaves the device's answer, as before the account kept it.
+    let homeWalkOwed = false;
+    let homeroomReached = false;
     // The first session's question in place of the join screen: an account
     // still due the join screen is asked "What do you want to make?"
     // instead whenever the story landing is on, however it signed in (the
@@ -912,6 +930,9 @@ function authRoutes(config) {
                 u.password_set,
                 (u.username_provisional_since IS NOT NULL) AS username_provisional,
                 (u.tour_done_at IS NOT NULL) AS tour_done,
+                (u.getting_started_seen->>'home_walk_owed' IS NOT NULL
+                  AND u.getting_started_seen->>'homeroom_reached' IS NULL) AS home_walk_owed,
+                (u.getting_started_seen->>'homeroom_reached' IS NOT NULL) AS homeroom_reached,
                 identity_needed(u.id) AS identity_needed,
                 (u.adult_attested_at IS NOT NULL) AS adult_attested,
                 EXISTS (
@@ -941,6 +962,8 @@ function authRoutes(config) {
       usernameProvisional = rows[0]?.username_provisional === true;
       needsCommunitiesChoice = rows[0]?.needs_communities_choice === true;
       tourDone = rows[0]?.tour_done === true;
+      homeWalkOwed = rows[0]?.home_walk_owed === true;
+      homeroomReached = rows[0]?.homeroom_reached === true;
       adultAttested = rows[0]?.adult_attested === true;
       // A member let in (not a private member, who waits for that).
       identityNeeded = rows[0]?.identity_needed === true && !!req.user.hasPlatformAccess;
@@ -1007,6 +1030,9 @@ function authRoutes(config) {
         // spec's routing tree. build-venues.js requires this AND the
         // deployment's cliAuthEnabled before offering the `local` venue.
         sessionBridgeEnabled: !!req.user.sessionBridgeEnabled,
+        // New Needs you, the experimental review flow (Settings ->
+        // Experimental). Default OFF; features/review-flow/settings.ts.
+        reviewFlowEnabled: !!req.user.reviewFlowEnabled,
         // #2779: new work starts in an agent session for everyone; the
         // per-user flag and its Settings switch are retired. Still reported
         // as true for a shell cached before that, whose entry points read it
@@ -1065,6 +1091,13 @@ function authRoutes(config) {
         // tour counts it done when this OR the browser's own flag says so
         // (frontend/src/features/home/tour/tour-done.ts).
         tourDone,
+        // The first session's walk on Home: owed to this newcomer and not
+        // run, and whether they have reached Homeroom, on any device (see
+        // above). The app's ✕, the mark menu's "Go to Homeroom" and the
+        // app tip read them with the device's own record
+        // (public/js/app.js _privateNoClose, features/app-context/about-data.ts).
+        homeWalkOwed,
+        homeroomReached,
         hasApiKey,
         keyLast4,
         // In-chat venue availability: feature flag + beta eligibility + a
@@ -1365,6 +1398,103 @@ function authRoutes(config) {
     }
   });
 
+  // New Needs you, the experimental review flow (Settings -> Experimental).
+  // Same shape as the session-bridge toggle above; see
+  // users.review_flow_enabled in schema.sql for why it is on the account.
+  router.post('/api/me/review-flow', async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+    const { enabled } = req.body || {};
+    if (typeof enabled !== 'boolean') {
+      return res.status(400).json({ error: 'enabled must be a boolean' });
+    }
+    try {
+      await pool.query(
+        'UPDATE users SET review_flow_enabled = $1 WHERE id = $2',
+        [enabled, req.user.id]
+      );
+      log.info('settings', 'Review flow toggled', { userId: req.user.id, enabled });
+      res.json({ ok: true, enabled });
+    } catch (err) {
+      log.error('settings', 'Failed to toggle review flow', { userId: req.user.id, err: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // #5104: Settings › Privacy. Who can start a conversation or send an
+  // invitation (`whoCanContact`: 'shared', the default, or 'anyone') and
+  // whether people outside your projects find you in a search
+  // (`discoverable`, default false). services/contact-privacy.js has the
+  // rules; both are the owner's to loosen and nobody else's.
+  router.get('/api/me/contact-privacy', async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+    res.set('Cache-Control', 'private, no-store');
+    try {
+      const settings = await contactPrivacy.readSettings(pool, req.user.id);
+      if (!settings) return res.status(404).json({ error: 'Not found' });
+      res.json(settings);
+    } catch (err) {
+      log.error('settings', 'Failed to read contact privacy', { userId: req.user.id, err: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.post('/api/me/contact-privacy', sameOriginBrowserOnly, async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+    const parsed = contactPrivacy.parseUpdate(req.body);
+    if (!parsed.ok) return res.status(400).json({ error: parsed.error });
+    try {
+      const settings = await contactPrivacy.saveSettings(pool, req.user.id, parsed.value);
+      if (!settings) return res.status(404).json({ error: 'Not found' });
+      log.info('settings', 'Contact privacy changed', { userId: req.user.id, ...settings });
+      res.json(settings);
+    } catch (err) {
+      log.error('settings', 'Failed to save contact privacy', { userId: req.user.id, err: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // #4938: Settings › Linked phones. The phones signed in to this account
+  // through the Homeroom app (services/linked-phones.js), and unlinking one,
+  // which signs that phone out and stops its notifications. Only the
+  // signed-in account's own phones: any other id is a 404.
+  async function currentNativeCredential(req) {
+    const token = req.cookies?.session;
+    if (!token) return null;
+    const { rows } = await pool.query(
+      'SELECT native_session_credential_reference FROM sessions WHERE token = $1 AND user_id = $2',
+      [token, req.user.id]
+    );
+    return rows[0]?.native_session_credential_reference || null;
+  }
+
+  router.get('/api/me/phones', async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+    res.set('Cache-Control', 'private, no-store');
+    try {
+      const currentCredential = await currentNativeCredential(req);
+      const phones = await linkedPhones.listLinkedPhones(pool, req.user.id, { currentCredential });
+      res.json({ phones });
+    } catch (err) {
+      log.error('settings', 'Failed to list linked phones', { userId: req.user.id, err: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.delete('/api/me/phones/:id', sameOriginBrowserOnly, async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+    const phoneId = req.params.id;
+    if (!linkedPhones.isPhoneId(phoneId)) return res.status(404).json({ error: 'Not found' });
+    try {
+      const unlinked = await withTransaction(pool, (client) => linkedPhones.unlinkPhone(client, req.user.id, phoneId));
+      if (!unlinked) return res.status(404).json({ error: 'Not found' });
+      log.info('settings', 'Linked phone unlinked', { userId: req.user.id });
+      res.json({ ok: true });
+    } catch (err) {
+      log.error('settings', 'Failed to unlink phone', { userId: req.user.id, err: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   // Platform-level user language preference (issue #757). Wired to the
   // Settings modal's Language dropdown (fires on change). Body
   // { locale: string | null } — null (or "") clears the preference back
@@ -1407,6 +1537,37 @@ function authRoutes(config) {
       res.json({ ok: true, locale: normalized });
     } catch (err) {
       log.error('settings', 'Failed to save locale preference', { userId: req.user.id, err: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // "Share usage analytics" (#5097), Settings > Privacy. Off unless the
+  // person switches it on (services/usage-analytics.js names what it
+  // covers). The answer carries uiTelemetryEligible, /api/auth/me's
+  // decision recomputed, so the shell can start or stop sending at once.
+  router.get('/api/me/usage-analytics', async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+    try {
+      const enabled = await usageAnalytics.sharesUsageAnalytics(pool, req.user.id);
+      res.set('Cache-Control', 'no-store');
+      res.json({ enabled, uiTelemetryEligible: enabled && await uiTelemetry.isRecordable(pool, req.user) });
+    } catch (err) {
+      log.error('settings', 'Failed to read the usage analytics choice', { userId: req.user.id, err: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.put('/api/me/usage-analytics', sameOriginBrowserOnly, async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+    const { enabled } = req.body || {};
+    if (typeof enabled !== 'boolean') return res.status(400).json({ error: 'enabled must be true or false' });
+    try {
+      const stored = await usageAnalytics.setUsageAnalytics(pool, req.user.id, enabled);
+      if (stored === null) return res.status(404).json({ error: 'Account not found' });
+      log.info('settings', 'Usage analytics choice saved', { userId: req.user.id, enabled: stored });
+      res.json({ ok: true, enabled: stored, uiTelemetryEligible: stored && await uiTelemetry.isRecordable(pool, req.user) });
+    } catch (err) {
+      log.error('settings', 'Failed to save the usage analytics choice', { userId: req.user.id, err: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });
@@ -1484,19 +1645,42 @@ function authRoutes(config) {
   });
 
   // ── Wallet-based authentication ───────────────────────────────────
-  const CHALLENGE_TTL_MS = 2 * 60 * 1000;
-  const walletChallenges = new Map();
+  // Registering or linking a wallet is for genesis addresses only, and this
+  // process cannot tell one apart until it has loaded the genesis set: say
+  // so, retryably, rather than refuse a genesis participant.
+  function genesisNotLoaded(res) {
+    res.set('Retry-After', '30');
+    return res.status(503).json({ error: 'The genesis ledger is still loading. Try again in a minute.', code: 'genesis_loading' });
+  }
 
-  const walletChallengeSweep = setInterval(() => {
-    const now = Date.now();
-    for (const [key, entry] of walletChallenges) {
-      if (now > entry.expiresAt) walletChallenges.delete(key);
-    }
-  }, 30_000);
-  // Route construction happens in focused tests and development utilities
-  // as well as the long-lived server. The cleanup timer must not keep a
-  // process alive after its HTTP server has closed.
-  if (typeof walletChallengeSweep.unref === 'function') walletChallengeSweep.unref();
+  // A wallet sign-in's challenge: bound to one address, single use, two
+  // minutes, kept in Postgres (wallet_challenges) as its hash, so whichever
+  // process answers the signed reply redeems it. Kept in this process's
+  // memory before, a reply another web Pod (or the new release) answered
+  // failed. Minting one clears the expired ones.
+  const CHALLENGE_TTL_MS = 2 * 60 * 1000;
+  const challengeHash = (challenge) => crypto.createHash('sha256').update(String(challenge)).digest('hex');
+
+  async function mintChallenge(pubkey) {
+    const challenge = crypto.randomBytes(32).toString('hex');
+    await pool.query(
+      `WITH expired AS (DELETE FROM wallet_challenges WHERE expires_at <= NOW())
+       INSERT INTO wallet_challenges (challenge_hash, pubkey, expires_at)
+       VALUES ($1, $2, NOW() + make_interval(secs => $3::int))`,
+      [challengeHash(challenge), pubkey, CHALLENGE_TTL_MS / 1000]
+    );
+    return challenge;
+  }
+
+  // Taken once, and only for the address it was minted for: a reply naming
+  // another address leaves it in place. True when it was this one's.
+  async function consumeChallenge(challenge, pubkey) {
+    const { rows } = await pool.query(
+      `DELETE FROM wallet_challenges WHERE challenge_hash = $1 AND pubkey = $2 AND expires_at > NOW() RETURNING 1`,
+      [challengeHash(challenge), pubkey]
+    );
+    return rows.length > 0;
+  }
 
   function httpJson(method, urlStr, body) {
     return new Promise((resolve, reject) => {
@@ -1540,14 +1724,13 @@ function authRoutes(config) {
         [pubkey.trim()]
       );
 
-      const isGenesis = genesisAccounts.isGenesisAddress(pubkey.trim());
+      // null while this process has not loaded the genesis set: the client
+      // treats only `false` as "not genesis", so a linked wallet keeps its
+      // sign-in path meanwhile (sign-in needs no genesis gate).
+      const isGenesis = genesisAccounts.isLoaded() ? genesisAccounts.isGenesisAddress(pubkey.trim()) : null;
 
       if (rows.length > 0) {
-        const challenge = crypto.randomBytes(32).toString('hex');
-        walletChallenges.set(challenge, {
-          pubkey: pubkey.trim(),
-          expiresAt: Date.now() + CHALLENGE_TTL_MS,
-        });
+        const challenge = await mintChallenge(pubkey.trim());
         return res.json({ status: 'linked', challenge, isGenesis });
       }
 
@@ -1576,13 +1759,11 @@ function authRoutes(config) {
       return res.status(400).json({ error: 'pubkey, challenge, and signature required' });
     }
 
-    const entry = walletChallenges.get(challenge);
-    if (!entry || entry.pubkey !== pubkey.trim() || Date.now() > entry.expiresAt) {
-      return res.status(401).json({ error: 'Invalid or expired challenge' });
-    }
     // Single-use, and consumed before any outbound call so neither a slow
     // verification nor a failed one leaves a replayable challenge behind.
-    walletChallenges.delete(challenge);
+    if (!(await consumeChallenge(challenge, pubkey.trim()).catch(() => false))) {
+      return res.status(401).json({ error: 'Invalid or expired challenge' });
+    }
 
     let user;
     try {
@@ -1663,11 +1844,9 @@ function authRoutes(config) {
     const policy = validatePassword(newPassword);
     if (!policy.ok) return res.status(400).json({ error: policy.error });
 
-    const entry = walletChallenges.get(challenge);
-    if (!entry || entry.pubkey !== pubkey.trim() || Date.now() > entry.expiresAt) {
+    if (!(await consumeChallenge(challenge, pubkey.trim()).catch(() => false))) {
       return res.status(401).json({ error: 'Invalid or expired challenge' });
     }
-    walletChallenges.delete(challenge);
 
     // Resolve the account and its signing key BEFORE the verifier is asked
     // anything, exactly as wallet-verify does above (issue #2502) — this
@@ -1909,11 +2088,9 @@ function authRoutes(config) {
       return res.status(400).json({ error: 'No wallet is linked to your account' });
     }
 
-    const entry = walletChallenges.get(challenge);
-    if (!entry || entry.pubkey !== linkedPubkey || Date.now() > entry.expiresAt) {
+    if (!(await consumeChallenge(challenge, linkedPubkey).catch(() => false))) {
       return res.status(401).json({ error: 'Invalid or expired challenge' });
     }
-    walletChallenges.delete(challenge);
 
     // Same binding rule as wallet-verify (issue #2502): the key the verifier
     // checks against comes from this account's stored usernode_pubkey, and a
@@ -1954,6 +2131,7 @@ function authRoutes(config) {
       return res.status(400).json({ error: 'username, password, and pubkey required' });
     }
 
+    if (!genesisAccounts.isLoaded()) return genesisNotLoaded(res);
     if (!genesisAccounts.isGenesisAddress(pubkey.trim())) {
       return res.status(403).json({ error: 'Only genesis ledger participants can register via wallet' });
     }
@@ -2020,6 +2198,7 @@ function authRoutes(config) {
       return res.status(400).json({ error: 'username, password, and pubkey required' });
     }
 
+    if (!genesisAccounts.isLoaded()) return genesisNotLoaded(res);
     if (!genesisAccounts.isGenesisAddress(pubkey.trim())) {
       return res.status(403).json({ error: 'Only genesis ledger participants can link a wallet' });
     }

@@ -72,6 +72,8 @@ const RULES = {
   // The first of each kind of invite news a day per project already folds the
   // rest (services/invite-activity.js); this bounds it across projects.
   invite_activity: { minGapMs: 60 * 1000, perWindow: 4, windowMs: DAY_MS },
+  // #4396: a project opens once; a few a day across projects is plenty.
+  project_opened: { minGapMs: 60 * 1000, perWindow: 4, windowMs: DAY_MS },
 };
 
 const DEFAULT_MAX_PER_HOUR = 300;
@@ -79,7 +81,7 @@ const DEFAULT_MAX_PER_HOUR = 300;
 // WP-E: activity mail spends its OWN hourly budget, counted apart from every
 // other kind. The global cap above is shared with sign-in codes, and a busy
 // hour of "it's ready" mail must never be what stops somebody signing in.
-const ACTIVITY_KINDS = new Set(['build_ready', 'invite_activity']);
+const ACTIVITY_KINDS = new Set(['build_ready', 'invite_activity', 'project_opened']);
 const ACTIVITY_MAX_PER_HOUR = 100;
 
 // Only these statuses count toward a window. A `failed`,

@@ -278,6 +278,9 @@ const ACTING_TOOLS = Object.freeze([
   'create_test_phone_sign_in',
   'send_test_release_email',
   'retire_test_account',
+  // Writes a notification of every kind into a test account's bell, and
+  // rings its phone.
+  'send_test_notifications',
 ]);
 
 // One conventions section, at most. The largest current section (the native
@@ -4916,7 +4919,7 @@ function registerTools(server, ctx) {
   // credential in it, nothing the receiving agent has to look up.
   server.registerTool('prepare_work', {
     title: 'Prepare a change for a coding agent',
-    description: "Prepare a change to a Homeroom app for a coding agent. If you have repository, filesystem, shell or code-editing tools, YOU are that agent: execute `workOrder` in this conversation, implement and test the change, then call `submit_work` with your patch (or branch: your call, never the user's) — do not relay `guidance` or send the user elsewhere. Only if you lack those tools, show `guidance` — the human's next steps, already written for the user — in order, as written, instead of your own summary, and call submit_work yourself once the user says the branch is pushed. Reproduce `workOrder` inside a fenced code block character for character, EXACTLY as returned: do not shorten, tidy or correct it, or retype the branch name or commit id — a single wrong character sends the coding agent to a starting point that does not exist. The work order names the app's repository, the fork, the branch to create and the exact commit to start from; it makes the fork and branch itself, as Homeroom asks for NO write access to the user's GitHub account. Pass `proposalId` to REVISE a proposal that is already up for a vote instead of opening a new one — the work order is then based at that proposal's own head and its submission updates it in place. `openProposals` in the result names any proposals the group is ALREADY voting on for the same request: tell the user before they paste anything, because that work may be built already, and if one of them is theirs, calling prepare_work again with its `proposalId` continues it instead of opening a duplicate. Requires a linked GitHub account (identity only, for attribution). This spends the user's own coding-agent subscription, not their Homeroom credits. Naming a request also marks it as being worked on, so the group can see the work is under way.",
+    description: "Prepare a change to a Homeroom app for a coding agent. If you have repository, filesystem, shell or code-editing tools, YOU are that agent: execute `workOrder` in this conversation, implement and test the change, then call `submit_work` with your branch (or a patch: your call, never the user's) — do not relay `guidance` or send the user elsewhere. Only if you lack those tools, show `guidance` — the human's next steps, already written for the user — in order, as written, instead of your own summary, and call submit_work yourself once the user says the branch is pushed. Reproduce `workOrder` inside a fenced code block character for character, EXACTLY as returned: do not shorten, tidy or correct it, or retype the branch name or commit id — a single wrong character sends the coding agent to a starting point that does not exist. The work order names the app's repository, the fork, the branch to create and the exact commit to start from; it makes the fork and branch itself, as Homeroom asks for NO write access to the user's GitHub account. Pass `proposalId` to REVISE a proposal that is already up for a vote instead of opening a new one — the work order is then based at that proposal's own head and its submission updates it in place. `openProposals` in the result names any proposals the group is ALREADY voting on for the same request: tell the user before they paste anything, because that work may be built already, and if one of them is theirs, calling prepare_work again with its `proposalId` continues it instead of opening a duplicate. Requires a linked GitHub account (identity only, for attribution). This spends the user's own coding-agent subscription, not their Homeroom credits. Naming a request also marks it as being worked on, so the group can see the work is under way.",
     inputSchema: {
       slug: z.string().describe('The app slug, as returned by list_apps.'),
       requestNumber: z.number().int().positive().optional()
@@ -5262,7 +5265,7 @@ function registerTools(server, ctx) {
         ? `This work order REVISES ${proposalRef(result.proposalId, revisedPr)}, and it starts at that proposal's own current `
           + 'commit rather than at the app\'s main branch. Its coding agent submits it with submit_work using '
           + (updateByPatch
-            ? `taskId ${result.taskId} and its patch (or proposalId ${result.proposalId} and a branch it pushed), which `
+            ? `proposalId ${result.proposalId} and a branch it pushed (or taskId ${result.taskId} and its patch), which `
               + 'updates that proposal — not as a new proposal. Tell the user that '
             : `proposalId ${result.proposalId} and the branch it pushed — not as a new proposal. Tell the user that `)
           + 'submitting it clears the votes that proposal has already collected and asks its reviewers to look '
@@ -5279,8 +5282,11 @@ function registerTools(server, ctx) {
         + 'the user elsewhere. Execute workOrder yourself, implement and test the change here, then call '
         + (result.proposalId && !updateByPatch
           ? `submit_work with proposalId ${result.proposalId} and the branch you pushed. `
-          : `submit_work with taskId ${result.taskId} and the patch you produced, or the branch if the work order's `
-            + (updateByPatch ? `rule sent you to one (with proposalId ${result.proposalId}). ` : 'rule sent you to one. ')
+          : (updateByPatch
+            ? `submit_work with proposalId ${result.proposalId} and the branch you pushed, or, if the push was refused, `
+              + `taskId ${result.taskId} and the patch you produced, as the work order says. `
+            : `submit_work with taskId ${result.taskId} and the branch you pushed, or the patch you produced if the `
+              + 'push was refused, as the work order says. ')
             + 'That choice is yours: never ask the user to choose between a patch and a branch. ')
         + 'Only if this conversation lacks code-editing tools, render every string in guidance as a '
         + 'numbered list, in order, then reproduce workOrder below it in a fenced code block exactly as '
@@ -5294,7 +5300,7 @@ function registerTools(server, ctx) {
   // ── submit_work ──────────────────────────────────────────────────────
   server.registerTool('submit_work', {
     title: 'Submit finished work — a pushed branch, a patch, or an open PR',
-    description: "Turn finished work into a Homeroom proposal: opens the pull request, builds a staging preview, runs the app's checks and puts it to the group's vote. FOUR SHAPES, each complete as written — (1) `taskId` plus `patch`, the default for new work: Homeroom applies the patch at the recorded base commit in the app's own repository and opens the pull request itself, so NO GitHub write access is needed; (2) `taskId` plus the `branch` you actually pushed, any name, if the patch is over about 250 KB or you already push to your fork (your call between (1) and (2), never the user's); (3) `slug` plus `prNumber` for an already-open pull request; (4) `proposalId` plus `branch` to UPDATE a proposal of the user's that is already up for a vote, which advances that same proposal onto your new commit instead of opening a second one, and clears the votes it has collected. A task prepare_work made WITH `proposalId` updates that proposal through (1) or (2): its patch is applied on the proposal's current commit, no push needed. Shape (4) needs no `slug`. When shape (4)'s target is a dev SESSION not yet up for a vote, it also takes `propose: true` (see `propose`): Homeroom promotes the session once the update lands, or as it stands with NO `branch` and nothing pushed; pass it only when the user has asked for the vote. TWO DESTINATIONS: by default work goes up for a VOTE; `share: true` on shape (2) lands it in the app's IN-PROGRESS area instead \u2014 a shared session with a preview, no PR, no vote; the charter has the rule. A task belongs to the USER'S USERNODE ACCOUNT, not to one chat — any session connected as that account, including a coding agent's own connector, can submit it, and doing so is the expected path. Only work from the user's own GitHub account is submitted under their name.",
+    description: "Turn finished work into a Homeroom proposal: opens the pull request, builds a staging preview, runs the app's checks and puts it to the group's vote. FOUR SHAPES, each complete as written — (1) `taskId` plus the `branch` you pushed to your fork, any name, the default whenever you can push; (2) `taskId` plus `patch` when you cannot: Homeroom applies it at the recorded base commit in the app's own repository and opens the pull request itself, so NO GitHub write access is needed (your call between (1) and (2), never the user's); (3) `slug` plus `prNumber` for an already-open pull request; (4) `proposalId` plus `branch` to UPDATE a proposal of the user's that is already up for a vote, which advances that same proposal onto your new commit instead of opening a second one, and clears the votes it has collected. A task prepare_work made WITH `proposalId` updates that proposal through (1) or (2): its patch is applied on the proposal's current commit, no push needed. Shape (4) needs no `slug`. When shape (4)'s target is a dev SESSION not yet up for a vote, it also takes `propose: true` (see `propose`): Homeroom promotes the session once the update lands, or as it stands with NO `branch` and nothing pushed; pass it only when the user has asked for the vote. TWO DESTINATIONS: by default work goes up for a VOTE; `share: true` on shape (1) lands it in the app's IN-PROGRESS area instead \u2014 a shared session with a preview, no PR, no vote; the charter has the rule. A task belongs to the USER'S USERNODE ACCOUNT, not to one chat — any session connected as that account, including a coding agent's own connector, can submit it, and doing so is the expected path. Only work from the user's own GitHub account is submitted under their name.",
     inputSchema: {
       taskId: z.number().int().positive().optional()
         .describe('The task id from prepare_work — or printed in the work order text you were handed, which is the usual source when you are the coding agent. It belongs to the user’s Homeroom account, not to the chat that gave it to you, so you can submit it yourself. A task prepare_work made with `proposalId` is an UPDATE task: whatever you submit with it (a patch or a branch) advances that proposal, never a new one.'),
@@ -5308,7 +5314,7 @@ function registerTools(server, ctx) {
       forkRepo: z.string().optional()
         .describe('The name of the fork you pushed to, if you forked under a name other than the app repository’s. The owner is always the user’s linked GitHub account and is never taken from here.'),
       patch: z.string().optional()
-        .describe('The change as a patch, the default way to submit new work — the output of `git format-patch <baseSha>..HEAD --stdout`, or a plain `git diff`. Homeroom applies it at the task’s recorded base commit, commits it in the app’s own repository and opens the pull request, so you need no GitHub write access at all. Requires taskId. With an UPDATE task’s taskId (prepare_work with proposalId) the base is that proposal’s current commit instead, and the patch advances THAT proposal exactly as a branch update does; it is refused with `branch_moved` when the proposal is no longer at the task’s base commit (or at `expectedHeadSha`, when you pass the commit you rebased onto). After an update lands, the task’s base is its new head, so the next patch is made from there. Roughly 250 KB max; push a branch for anything larger, or when you already push to your fork. Patch or branch is your decision: never ask the user to choose.'),
+        .describe('The change as a patch, for when you cannot push a branch to your fork (the push was refused, or there is no fork); when you can, send `branch` instead. The output of `git format-patch <baseSha>..HEAD --stdout`, or a plain `git diff`. Homeroom applies it at the task’s recorded base commit, commits it in the app’s own repository and opens the pull request, so you need no GitHub write access at all. Requires taskId. With an UPDATE task’s taskId (prepare_work with proposalId) the base is that proposal’s current commit instead, and the patch advances THAT proposal exactly as a branch update does; it is refused with `branch_moved` when the proposal is no longer at the task’s base commit (or at `expectedHeadSha`, when you pass the commit you rebased onto). After an update lands, the task’s base is its new head, so the next patch is made from there. Roughly 250 KB max; for new work a larger one goes up as `patchUploadId`. Patch or branch is your decision: never ask the user to choose.'),
       // #4345: added after many clients cached the tool list, so it takes its
       // digits as a string too.
       patchUploadId: positiveIntId().optional()
@@ -7044,10 +7050,10 @@ function registerTools(server, ctx) {
 
     server.registerTool('launch_bench_run', {
       title: 'Benchmark: launch a run',
-      description: `Admin only. Launch a Homeroom bot benchmark run, as the console's launcher does: every task of suiteId at the chosen stages, on each model, \`repeats\` times for the stages in repeatStages (builds and specs run once). It spends the platform's money, up to capUsd, which is required: ask the person before launching, and say the cap, the models and the stages. A cap over $${BENCH_CONFIRM_CAP_USD} is refused unless confirmLargeCap is true, which you pass only after the person confirmed that amount. Take suiteId and the launcher's defaults from list_bench_runs. Returns the run's id, its trial count and its cost estimate. It changes nothing in any app.`,
+      description: `Admin only. Launch a Homeroom bot benchmark run, as the console's launcher does: every task of suiteId at the chosen stages, on each model (an arm: a model id, or one at a reasoning effort of its own, \`vendor/model@max\`, to compare efforts of one model), \`repeats\` times for the stages in repeatStages (builds and specs run once). It spends the platform's money, up to capUsd, which is required: ask the person before launching, and say the cap, the models and the stages. A cap over $${BENCH_CONFIRM_CAP_USD} is refused unless confirmLargeCap is true, which you pass only after the person confirmed that amount. Take suiteId and the launcher's defaults from list_bench_runs. Returns the run's id, its trial count and its cost estimate. It changes nothing in any app.`,
       inputSchema: {
         suiteId: z.number().int().positive().describe('A suite id from list_bench_runs.'),
-        models: z.array(z.string()).min(1).max(10).describe('OpenRouter model ids, at most 10.'),
+        models: z.array(z.string()).min(1).max(10).describe('OpenRouter model ids, at most 10. An id may name a reasoning effort after an @ (minimal, low, medium, high, xhigh or max: `deepseek/deepseek-v4.1-flash-1017@max`), an arm of its own whose every turn runs at that effort, beside the same id with no effort, which runs at the bot\'s own; max reaches Claude Code turns only, and a Codex turn runs it at xhigh.'),
         stages: z.array(z.enum(BENCH_STAGES)).min(1).describe('Which stages\' tasks to run.'),
         repeats: z.number().int().min(1).max(5).optional().describe('Attempts per task at a repeated stage, 1 to 5 (default 3).'),
         repeatStages: z.array(z.enum(BENCH_STAGES)).optional().describe('Which stages take `repeats`; the rest run once.'),
@@ -8677,13 +8683,14 @@ function registerTools(server, ctx) {
 
   // ── Test accounts (full platform admins only) ──────────────────────────
   //
-  // Six tools over routes/test-accounts.js: make a genuinely new account for
+  // Seven tools over routes/test-accounts.js: make a genuinely new account for
   // first-time-user testing, mint a one-time phone sign-in for a test number
   // (the invite's Join sheet signs up with a phone), send the waitlist's
   // "you're in" mail to a test address (the sign-up from that mail makes a
-  // test account), list the live ones, retire one with the apps it made, and
+  // test account), list the live ones, retire one with the apps it made,
   // read a test project's run report (services/run-report.js), which retiring
-  // keeps. services/test-accounts.js has the whole design, and the charter's
+  // keeps, and send one a notification of every kind
+  // (services/test-notifications.js). services/test-accounts.js has the whole design, and the charter's
   // "test-accounts" section the rules for the session using them.
   //
   // Admin-only three times over, like the benchmark's: registered only for a
@@ -8718,11 +8725,12 @@ function registerTools(server, ctx) {
 
     server.registerTool('create_test_account', {
       title: 'Test accounts: make one',
-      description: `Admin only. Make a genuinely new Homeroom account for first-time-user testing and get back its username and a one-time password. Signing in with them through the ordinary sign-in form (web, or the iOS app, which signs in through the same form) gives a real first run: terms, the community picker, the tour and the First challenges, with no history. It is let in at once unless platformAccess is false (to test the waiting room). With no username it gets a placeholder and the tester picks a handle in the real first-run step. It is a test account for good: left out of leaderboards, Journey and vote thresholds, its votes on apps real people made are recorded but not counted, and it gets no welcome DM unless welcomeDm is true; Homeroom bot's hello reaches it as it reaches any newcomer, in Messages as it answers the first session (making a project, or Look around first), joins by an invite or asks for its first change. Relay the password ONCE, tell the person to sign out on the device first, and retire the account with retire_test_account when testing is done. At most 25 are live at once. Read get_connector_guidance's "test-accounts" section first.`,
+      description: `Admin only. Make a genuinely new Homeroom account for first-time-user testing and get back its username and a one-time password. Signing in with them through the ordinary sign-in form (web, or the iOS app, which signs in through the same form) gives a real first run: terms, the community picker, the tour and the First challenges, with no history. It is let in at once unless platformAccess is false (to test the waiting room). With no username it gets a placeholder and the tester picks a handle in the real first-run step. It is a test account for good: left out of leaderboards, Journey and vote thresholds, its votes on apps real people made are recorded but not counted, and it gets no welcome DM unless welcomeDm is true; Homeroom bot's hello reaches it as it reaches any newcomer, in Messages as it answers the first session (making a project, or Look around first), joins by an invite or asks for its first change. With everyTemplate true it also starts with one private project from each different template, the ready-made apps and the game starters (one of each, not every variant: one tier list, one poll), as if it had made them itself, so its first run opens on Home with them; they take a few minutes to be set up, and retiring the account takes them down with it. Relay the password ONCE, tell the person to sign out on the device first, and retire the account with retire_test_account when testing is done. At most 25 are live at once. Read get_connector_guidance's "test-accounts" section first.`,
       inputSchema: {
         username: z.string().optional().describe('A handle to use, checked like any username. Omit it for a placeholder and the real "choose your username" step.'),
         platformAccess: z.boolean().optional().describe('Let the account in at once (default true). false leaves it in the waiting room.'),
         welcomeDm: z.boolean().optional().describe('Let the welcome DM reach it (default false). The welcome DM puts staff into a group with the account. Homeroom bot\'s hello reaches it either way, once it makes a project, looks around or joins by an invite.'),
+        everyTemplate: z.boolean().optional().describe('Also make it one private project from each different template (default false): every ready-made app and game starter once, not every variant. They count against the server\'s app limit, all of them or none.'),
         note: z.string().optional().describe(`What the account is for, at most ${TEST_ACCOUNT_NOTE_MAX} characters. Shown by list_test_accounts.`),
       },
       outputSchema: {
@@ -8732,12 +8740,13 @@ function registerTools(server, ctx) {
         needsUsernameChoice: z.boolean(),
         platformAccess: z.boolean(),
         welcomeDm: z.boolean(),
+        projects: z.array(z.object({ slug: z.string(), name: z.string(), template: z.string(), kind: z.string() })),
         signIn: z.object({ url: z.string(), steps: z.array(z.string()) }),
         retireWith: z.string(),
         nextStep: z.string(),
       },
       annotations: writeAnnotations,
-    }, async ({ username, platformAccess, welcomeDm, note }) => {
+    }, async ({ username, platformAccess, welcomeDm, everyTemplate, note }) => {
       const guard = scopeGuard(WRITE_SCOPE) || testAccountAdminOnly();
       if (guard) return guard;
       let noteText;
@@ -8747,11 +8756,17 @@ function registerTools(server, ctx) {
         noteText = check.value;
       }
       const r = await callPlatform(baseUrl, accessToken, 'POST', '/api/test-accounts', {
-        username, platformAccess, welcomeDm, note: noteText,
+        username, platformAccess, welcomeDm, everyTemplate, note: noteText,
       });
       if (!r.ok) return testAccountRefusal(r);
       const a = (r.body && r.body.account) || {};
       const userId = num(a.userId);
+      const projects = (Array.isArray(a.projects) ? a.projects : []).map((p) => ({
+        slug: String(p && p.slug || ''),
+        name: String(p && p.name || ''),
+        template: String(p && p.template || ''),
+        kind: String(p && p.kind || ''),
+      }));
       return toolResult({
         userId,
         username: String(a.username || ''),
@@ -8759,6 +8774,7 @@ function registerTools(server, ctx) {
         needsUsernameChoice: !!a.needsUsernameChoice,
         platformAccess: a.platformAccess !== false,
         welcomeDm: !!a.welcomeDm,
+        projects,
         signIn: {
           url: `${origin || ''}/#login`,
           steps: [
@@ -8768,7 +8784,11 @@ function registerTools(server, ctx) {
           ],
         },
         retireWith: `retire_test_account({ userId: ${userId}, confirm: "RETIRE" })`,
-        nextStep: 'Give the person the username and password once, with the sign-in steps. Do not repeat the password later in the conversation. Retire the account when they have finished testing.',
+        nextStep: 'Give the person the username and password once, with the sign-in steps. Do not repeat the password later in the conversation. '
+          + (projects.length
+            ? `Say that its ${projects.length} projects are being set up and open from Home within a few minutes, and that retiring the account takes them down with it. `
+            : '')
+          + 'Retire the account when they have finished testing.',
       });
     });
 
@@ -8990,6 +9010,64 @@ function registerTools(server, ctx) {
         reportsKept,
         nextStep: `Retired${appsDeleted.length ? `, with ${appsDeleted.length} app${appsDeleted.length === 1 ? '' : 's'}` : ''}. Its username and password no longer sign in.`
           + (reportsKept.length ? ` Run reports kept for ${reportsKept.join(', ')}: get_run_report with the slug.` : ''),
+      });
+    });
+
+    // One notification of every kind (or the kinds named) to a test account,
+    // through the real pipeline from the row on: its bell, its live frame and
+    // its phone's push (services/test-notifications.js has what each row
+    // points at). For seeing how each one looks on a phone or a simulator.
+    server.registerTool('send_test_notifications', {
+      title: 'Test accounts: send every kind of notification',
+      description: 'Admin only. Send a test account one notification of every kind (or only the kinds named): each shows in its bell at once and, where the kind pushes and the account has a phone signed in, arrives as a push within seconds, worded as a real one. For seeing how every notification looks on a phone or a simulator signed in as the account. A row about a project points at the account\'s own newest project (kinds that need one are skipped without it: create_test_account with everyTemplate gives it some) and the newest message in its discussion, which it never writes to (post one as the account first to see a message\'s words), the Messages kinds at a "Notification test" conversation of its own, and you, the admin asking, are who did each thing. By default it turns on every push category for the account first, so the reaction pushes too. Only a test account can be sent to. The result lists each row, whether it is in the bell, and how many pushes it queued; registrations 0 means no phone is signed in as the account.',
+      inputSchema: {
+        userId: z.number().int().positive().describe('The test account\'s id, from create_test_account or list_test_accounts.'),
+        kinds: z.array(z.string()).optional().describe('Only these notification kinds, for example ["mention", "conversation_message"]. Omit for every kind; an unknown kind is refused with the list.'),
+        allPushCategories: z.boolean().optional().describe('Turn on every push category for the account first (default true), so every kind that pushes does. false leaves its settings as they are.'),
+      },
+      outputSchema: {
+        userId: z.number(),
+        username: z.string(),
+        sent: z.array(z.object({ kind: z.string(), notificationId: z.number(), listed: z.boolean(), pushes: z.number() })),
+        skipped: z.array(z.object({ kind: z.string(), reason: z.string() })),
+        project: z.string().nullable(),
+        projectMessage: z.boolean(),
+        conversationId: z.number().nullable(),
+        registrations: z.number(),
+        nextStep: z.string(),
+      },
+      annotations: writeAnnotations,
+    }, async ({ userId, kinds, allPushCategories }) => {
+      const guard = scopeGuard(WRITE_SCOPE) || testAccountAdminOnly();
+      if (guard) return guard;
+      if (!Number.isInteger(userId) || userId <= 0) return toolError('invalid_request', 'userId must be a test account\'s id from list_test_accounts.');
+      const r = await callPlatform(baseUrl, accessToken, 'POST', `/api/test-accounts/${userId}/notifications`, { kinds, allPushCategories });
+      if (!r.ok) return testAccountRefusal(r);
+      const n = (r.body && r.body.notifications) || {};
+      const sent = (Array.isArray(n.sent) ? n.sent : []).map((s) => ({
+        kind: String(s && s.kind || ''), notificationId: num(s && s.notificationId), listed: !!(s && s.listed), pushes: num(s && s.pushes),
+      }));
+      const skipped = (Array.isArray(n.skipped) ? n.skipped : []).map((s) => ({ kind: String(s && s.kind || ''), reason: String(s && s.reason || '') }));
+      const registrations = num(n.registrations);
+      const pushed = sent.filter((s) => s.pushes > 0).length;
+      return toolResult({
+        userId: num(n.userId) || userId,
+        username: String(n.username || ''),
+        sent,
+        skipped,
+        project: typeof n.project === 'string' ? n.project : null,
+        projectMessage: !!n.projectMessage,
+        conversationId: n.conversationId == null ? null : num(n.conversationId),
+        registrations,
+        nextStep: `${sent.length} sent, in the account's bell now. `
+          + (registrations
+            ? `${pushed} queued a push, which arrives within seconds; a kind that does not push is in the bell only. `
+            : 'No phone is signed in as the account, so nothing pushed: sign in on the phone or simulator, allow notifications, and send again. ')
+          + (skipped.some((s) => s.reason === 'needs_project') ? 'Kinds about a project were skipped: the account has no project yet. ' : '')
+          + (typeof n.project === 'string' && !n.projectMessage
+            ? 'Its project\'s discussion has no message yet, so the kinds about one show no words: post one there as the account and send again to see them. '
+            : '')
+          + 'Opening Messages or a project marks its rows read, which stops pushes still on their way.',
       });
     });
 

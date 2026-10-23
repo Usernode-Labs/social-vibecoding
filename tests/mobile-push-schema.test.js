@@ -124,7 +124,9 @@ test('closed database kind registry matches the reviewed service mapping and def
   // thread_reply).
   // 47 → 48: #4787's voted_change_merged, a change the person voted on
   // going live (proposal_alerts).
-  assert.equal(new Set(rows.map((row) => row.kind)).size, 48);
+  // 48 → 49: #4396's project_opened, a project the person joined while it
+  // was made going live (proposal_alerts, services/project-opened.js).
+  assert.equal(new Set(rows.map((row) => row.kind)).size, 49);
   assert.match(schema, /DELETE FROM mobile_push_kind_categories[\s\S]*kind NOT IN/,
     'stale policy rows cannot silently keep a removed kind push-enabled');
 });

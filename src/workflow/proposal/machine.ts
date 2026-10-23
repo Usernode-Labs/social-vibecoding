@@ -68,11 +68,12 @@ export const WORK = Object.freeze({
   attempt: 'merge.attempt',
   observe: 'merge.observe',
   sync: 'branch.sync',
+  diagram: 'pr.diagram',
 });
 export const QUEUE = 'merge-queue';
 export const appKey = (appId: number) => `app:${appId}`;
 // The proposal's GitHub moves, run one at a time.
-const PR_MOVES: ReadonlySet<string> = new Set([WORK.open, WORK.close, WORK.reopen]);
+const PR_MOVES: ReadonlySet<string> = new Set([WORK.open, WORK.close, WORK.reopen, WORK.diagram]);
 
 // ── State ───────────────────────────────────────────────────────────────
 
@@ -228,6 +229,15 @@ export const OBSERVE_MAX_MS = 10 * 60 * 1000;
 // A sync whose machinery broke is not asked again for two minutes, doubling
 // to half an hour.
 export const SYNC_BACKOFF_MS = 2 * 60 * 1000;
+// A pull request closed on GitHub closes its proposal once the close has
+// stood this long: an author closes and reopens one to run its CI again, and
+// the webhook's `closed` comes first. The next look settles it.
+export const PR_CLOSE_SETTLES_MS = 5 * 60 * 1000;
+// A close reading is acted on only while it is this fresh: one asked again
+// long after it was read (refused during a rollout, re-asked once the older
+// release is gone) may predate a reopen. The next look reads GitHub anew. A
+// merge is final, whenever it was read.
+export const PR_LOOK_STALE_MS = 10 * 60 * 1000;
 // A merge merge-followups has not recorded yet is told again after this,
 // doubling to the max (MERGED_RESEND_MAX_MS).
 export const MERGED_RESEND_MS = 5 * 60 * 1000;
@@ -339,6 +349,17 @@ const EVENTS = {
   // merge-followups moved it into 'merged' (a merge, or a change carried by
   // another's).
   Merged: (p: any) => ({ ...session(p) }),
+  // GitHub's word on its pull request, as a look read it (an import's,
+  // services/pr-import-sync.js, or a native one's merged by hand,
+  // proposal-scans.js): merged, or closed and when. `tally`: the votes it
+  // stood at, for a merge's record.
+  PrLooked: (p: any) => ({ ...session(p), from: from(p), merged: !!p?.merged, closed: !!p?.closed,
+    mergeSha: text(p?.mergeSha, 64), mergedAt: text(p?.mergedAt, 40), closedAt: text(p?.closedAt, 40), readAt: text(p?.readAt, 40),
+    tally: p?.tally == null ? null : {
+      yes: Math.max(0, Number(p.tally.yes) | 0),
+      required: p.tally.required == null ? null : Math.max(0, Number(p.tally.required) | 0),
+      active: p.tally.active == null ? null : Math.max(0, Number(p.tally.active) | 0),
+    } }),
   // The revision the group votes on moved (Q3): the reviewed head (native)
   // or the pull request's head (imported), from `from` (what the caller read
   // there; null: bound for the first time) to `to`. `keepVotes`: a mechanical
@@ -378,6 +399,10 @@ const EVENTS = {
   // The boot's look at an instance waiting with no deadline (one an older
   // release wrote): its clock is armed again.
   Rearm: (p: any) => ({ ...session(p) }),
+  // A hosted build declared its change's diagram (#4490), stored with this
+  // event (services/proposal-diagram.js storeDeclared): the pull request's
+  // body is owed its block.
+  DiagramStored: (p: any) => ({ ...session(p) }),
 };
 
 // ── Helpers ─────────────────────────────────────────────────────────────
@@ -436,7 +461,10 @@ function adopt(sessionId: number, row: Row): Live {
 function prMove(d: Data, w: WorkRequest): { data: Data; work: WorkRequest[] } {
   if (!d.pr.running) return { data: { ...d, pr: { running: w.key, next: [] } }, work: [w] };
   const settles = w.kind === WORK.close || w.kind === WORK.reopen;
-  const kept = settles ? d.pr.next.filter((x) => x.kind === WORK.open) : d.pr.next;
+  // A diagram's block written from what is stored when it runs: one still
+  // waiting writes what a newer one would.
+  const kept = (settles ? d.pr.next.filter((x) => x.kind === WORK.open) : d.pr.next)
+    .filter((x) => !(w.kind === WORK.diagram && x.kind === WORK.diagram));
   return { data: { ...d, pr: { running: d.pr.running, next: [...kept, w] } }, work: [] };
 }
 // The move under way reported: the next one starts.
@@ -511,6 +539,7 @@ function closedLine(r: Row, reason: string, byOwner: boolean): string {
   const l = label(r);
   switch (reason) {
     case 'auto-rejected': return `${l} was set aside for now (more No than Yes, and not enough support to carry it).`;
+    case 'admin-no': return `${l} was set aside: an admin voted No and nobody voted Yes within a week. It can always come back as a new change.`;
     case 'proposal-replaced':
       return byOwner && r.ownerName ? `${r.ownerName} replaced ${r.prTitle ? l : 'this change'} with a new one.` : `${l} was replaced by a new one.`;
     case 'superseded': return `${l} was withdrawn: another change for the same request covers it.`;
@@ -532,7 +561,7 @@ const GITHUB_SETTLED: ReadonlySet<string> = new Set(['pr-closed', 'pr-merged']);
 // How a conversation that started the change words its close
 // (rules/agent-notes.ts closedSentence).
 const OUTCOMES: ReadonlyMap<string, string> = new Map([
-  ['auto-rejected', 'rejected'], ['proposal-replaced', 'replaced'], ['manual', 'withdrawn'],
+  ['auto-rejected', 'rejected'], ['admin-no', 'admin-no'], ['proposal-replaced', 'replaced'], ['manual', 'withdrawn'],
 ]);
 
 // ── Moves ───────────────────────────────────────────────────────────────
@@ -695,6 +724,13 @@ function close(s: Live, e: Event<any>, f: Facts, reason: string, more: { byOwner
 const closeEvent: Handler = (s, e, f) =>
   close(s, e, f, e.payload.reason, { byOwner: e.payload.userId != null && e.payload.userId === f.row!.userId, purgeCc: e.payload.purgeCc });
 
+// GitHub merged or closed its pull request (the guard left the rest): merged
+// while up for its vote is a merge, which merge-followups records; merged
+// before it, or closed, closes the proposal.
+const prLooked: Handler = (s, e, f, ctx) => (e.payload.merged && s.name === 'in_review'
+  ? mergedOnGithub(s, f, ctx, { sha: e.payload.mergeSha, mergedAt: e.payload.mergedAt, tally: e.payload.tally }, 'recovery')
+  : close(s, e, f, e.payload.merged ? 'pr-merged' : 'pr-closed'));
+
 const reopen: Handler = (s, e, f, ctx, deps) => {
   const n = s.data.n + 1;
   // Its worker's destroy and its CC volume's purge, if still owed, go: the
@@ -818,7 +854,8 @@ function askRefusal(s: Live, f: Facts): string | null {
   if (s.name !== 'in_review') return 'not_in_review';
   if (s.data.attempt) return 'in_progress';
   if (s.data.sync) return 'syncing';
-  if (moving(f.row!)) return 'busy';
+  // A merge does not wait for the shots agent's turn (facts.ts mergeMoving).
+  if (f.row!.mergeMoving) return 'busy';
   return null;
 }
 
@@ -871,7 +908,7 @@ function mergedOnGithub(s: Live, f: Facts, ctx: TransitionContext, r: any, obser
   const a = s.data.attempt;
   const report: Record<string, Json> = {
     mergeSha: r?.sha ?? null, mergedAt: r?.mergedAt || ctx.now.toISOString(), force: !!a?.force,
-    forcedBy: a?.forcedBy ?? null, observedBy, tally: (a?.tally ?? null) as Json,
+    forcedBy: a?.forcedBy ?? null, observedBy, tally: (a?.tally ?? r?.tally ?? null) as Json,
   };
   const merging: Attempt = a ? { ...a, stage: 'merged', report, resends: 0 }
     : { n: s.data.n, queueN: 0, force: false, forcedBy: null, stage: 'merged', head: f.row?.head ?? null, epoch: f.row?.epoch ?? 0,
@@ -1148,7 +1185,7 @@ const reviewCheck: Handler = (s, e, f, ctx, deps) => {
   const at = windowEnds && windowEnds > ctx.now.getTime() && (hourly == null || windowEnds < hourly) ? windowEnds : hourly;
   const again: TimerRequest | null = at != null ? { at: new Date(at), event: { type: 'ReviewCheck' } } : null;
   if (busy(row)) return step(s, { timer: again });
-  if (f.gate?.rejectable) return close(s, e, f, 'auto-rejected');
+  if (f.gate?.rejectable) return close(s, e, f, f.gate.adminNo ? 'admin-no' : 'auto-rejected');
   // Its gate is met (a window elapsed, the electorate shrank, a vote whose
   // own ask was lost): the app's merge queue is asked.
   const met = !!f.gate?.mergeable;
@@ -1184,6 +1221,14 @@ const reviewCheck: Handler = (s, e, f, ctx, deps) => {
 
 // A work result: the GitHub move under way reports (and the next starts);
 // the open review decides the promote; the rest are bookkeeping.
+// The diagram's block, written into the pull request body Homeroom wrote (an
+// imported one's body is its author's); none yet, the open writes it.
+function diagramStored(s: Live, _e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<PState> {
+  if (s.data.imported || !f.row?.prNumber) return step(s);
+  const moved = prMove(s.data, { kind: WORK.diagram, key: `diagram:v${ctx.version}`, input: { sessionId: s.data.sessionId } });
+  return step({ name: s.name, data: moved.data } as Live, { work: moved.work });
+}
+
 function workDone(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext, deps: Deps): Outcome<PState> {
   const p = e.payload as WorkResultPayload;
   if (p.kind === WORK.open && s.name === 'proposing' && s.data.promoting && p.workKey === `open:${s.data.promoting.n}`) {
@@ -1287,6 +1332,15 @@ const GUARDS = new Map<string, (s: Live, e: Event<any>, f: Facts, ctx: Transitio
     () => (sameReading(statusOf(s), e.payload.from) ? ok() : reject('overtaken')),
     () => owner(e, f),
   )],
+  ['PrLooked', (s, e, f, ctx) => all(
+    // One being merged is its merge attempt's to settle.
+    () => (['underway', 'proposing', 'in_review'].includes(s.name) ? ok()
+      : reject(s.name === 'closed' ? 'already_closed' : s.name === 'merging' || s.name === 'unconfirmed' ? 'merging' : 'merged')),
+    () => (sameReading(statusOf(s), e.payload.from) ? ok() : reject('overtaken')),
+    () => (e.payload.merged ? ok() : !e.payload.closed ? reject('open')
+      : !(ctx.now.getTime() - Date.parse(e.payload.readAt || '') <= PR_LOOK_STALE_MS) ? reject('stale')
+        : ctx.now.getTime() - Date.parse(e.payload.closedAt || '') < PR_CLOSE_SETTLES_MS ? reject('settling') : ok()),
+  )],
   ['Reopen', (s, e, f) => all(
     () => (s.name === 'closed' ? ok() : reject('not_closed')),
     () => read(s, e),
@@ -1303,6 +1357,7 @@ const GUARDS = new Map<string, (s: Live, e: Event<any>, f: Facts, ctx: Transitio
     },
   )],
   ['ApprovalsCleared', (s) => (s.name === 'closed' || s.name === 'merged' ? reject('closed') : ok())],
+  ['DiagramStored', (s) => (s.name === 'closed' ? reject('closed') : ok())],
   ['ForceMerge', (s, e) => all(
     () => (s.name === 'in_review' ? ok() : reject(s.name === 'merging' || s.name === 'unconfirmed' ? 'in_progress' : 'not_in_review')),
     () => read(s, e),
@@ -1325,18 +1380,19 @@ const GUARDS = new Map<string, (s: Live, e: Event<any>, f: Facts, ctx: Transitio
 
 const HANDLERS = new Map<string, Handler>([
   ['Promote', promote], ['Unpromote', unpromote], ['Pause', pause], ['Resume', resume],
-  ['IdleCheck', idleCheck], ['ReviewCheck', reviewCheck], ['Close', closeEvent], ['Reopen', reopen],
+  ['IdleCheck', idleCheck], ['ReviewCheck', reviewCheck], ['Close', closeEvent], ['PrLooked', prLooked], ['Reopen', reopen],
   ['Merged', merged],
   ['ReviewHeadMoved', headMoved], ['ApprovalsCleared', approvalsCleared],
   ['MergeRequested', mergeRequested], ['ForceMerge', forceMerge], ['SyncRequested', syncRequested], ['ObserveDue', observeDue],
   ['StopRequested', stopRequested],
+  ['DiagramStored', diagramStored],
   ['Rearm', (s, e, f, ctx, deps) => step(s, { timer: timerFor(s, f, ctx, deps) })],
   ['WorkSucceeded', workDone], ['WorkFailed', workDone], ['WorkExhausted', workDone],
 ]);
 // The events that may create the instance (every one but the clock's): the
 // first adopts the proposal from its row, then is handled as for one held.
-const CREATE = ['Adopted', 'Promote', 'Unpromote', 'Pause', 'Resume', 'Close', 'Reopen',
-  'Merged', 'ReviewHeadMoved', 'ApprovalsCleared', 'MergeRequested', 'ForceMerge', 'SyncRequested'];
+const CREATE = ['Adopted', 'Promote', 'Unpromote', 'Pause', 'Resume', 'Close', 'PrLooked', 'Reopen',
+  'Merged', 'ReviewHeadMoved', 'ApprovalsCleared', 'MergeRequested', 'ForceMerge', 'SyncRequested', 'DiagramStored'];
 // The queue's asks are answered whatever the proposal's state: a rejection
 // would leave the queue waiting for an answer that never comes.
 const ANSWERED: ReadonlySet<string> = new Set(['MergeRequested', 'SyncRequested']);
@@ -1452,8 +1508,10 @@ export function proposal(deps: Deps): Machine<PState, Facts> {
     // maintenance campaign's promote (the campaign hears its outcome) and its
     // proposals, which hold no worker slot (`platform`). 4: a closed
     // proposal's CC volume purged once its retention window passes (the
-    // leader's archived GC is gone, so an older Pod must not decide one).
-    version: 4,
+    // leader's archived GC is gone, so an older Pod must not decide one). 5:
+    // the pull request's diagram block, a GitHub move of its own (an older
+    // Pod would not move the queue on past it).
+    version: 5,
     events: EVENTS,
     create: CREATE,
     terminal: ['merged'],
@@ -1478,6 +1536,7 @@ export function proposal(deps: Deps): Machine<PState, Facts> {
       IdleCheck: timer,
       ReviewCheck: timer,
       Close: (e: Event<any>): Check => (closer(e) === true || fromCampaign(e) ? ok() : reject('not_a_producer')),
+      PrLooked: system,
       Reopen: person,
       Merged: fromMerge,
       ReviewHeadMoved: routeOrSystem,
@@ -1489,6 +1548,7 @@ export function proposal(deps: Deps): Machine<PState, Facts> {
       ObserveDue: timer,
       Rearm: system,
       StopRequested: routeOrSystem,
+      DiagramStored: system,
     },
     transitions: transitions(deps) as any,
     writes: WRITES,

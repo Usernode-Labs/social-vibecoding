@@ -11,6 +11,7 @@ const inLoopBrowser = require('./in-loop-browser');
 const registry = require('../agents/registry');
 const turnLifecycle = require('./turn-lifecycle');
 const branchNames = require('./branch-names');
+const workerGitPush = require('./worker-git-push');
 const llmTelemetry = require('./llm-telemetry');
 const liveAgentSpend = require('./live-agent-spend');
 const workerProgress = require('./worker-progress');
@@ -74,14 +75,15 @@ function shellQuote(value) {
   return `'${String(value).replace(/'/g, `'"'"'`)}'`;
 }
 
-// `maxBuffer` lifts the docker path's 1 MB stdout ceiling for a command
-// whose output is large by design (the benchmark's screenshots); the
-// Kubernetes path has no such ceiling.
+// Large exports (screenshots and Git bundles) need an explicit bound on
+// both transports; an untrusted worker must not stream unlimited output.
 async function execWorkerCommand(runtimeName, command, stdinText = null, {
   timeoutMs = stdinText === null ? 30000 : 20000, maxBuffer = null,
 } = {}) {
   if (usesKubernetesWorkers()) {
-    return kubernetes.execInWorker(kubernetesWorkerConfig(), runtimeName, command, stdinText, { timeoutMs });
+    return kubernetes.execInWorker(kubernetesWorkerConfig(), runtimeName, command, stdinText, {
+      timeoutMs, ...(maxBuffer ? { maxBuffer } : {}),
+    });
   }
   if (stdinText !== null) {
     return docker.execShellStdin(runtimeName, stdinText, { timeoutMs, label: 'worker exec' });
@@ -2736,13 +2738,12 @@ async function finishTurn(sessionId, { journal = null, turnId = null } = {}) {
 //   - adoptWarmWorker() → server restart picked up an existing warm
 //                         container; register it so the next exec
 //                         doesn't try to re-bootstrap on top.
-// docs/plans/draining-releases.md: a turn this process is executing holds
-// its session (services/processes.js) for as long as `inFlight` is set,
-// whatever started it (a person's turn, a sync, the shots agent, an eval
-// trial, a bot build): the cross-process twin of isInFlight, so another
-// process's leader never adopts or tears it down, and another process's
-// proxy reads its mode (remoteTurn). Taken on the flag's rise, given back on
-// its fall or when the entry goes.
+// docs/plans/draining-releases.md: a turn this process is executing is
+// counted for its drain (services/processes.js) for as long as `inFlight` is
+// set, whatever started it (a person's turn, a sync, the shots agent, an eval
+// trial, a bot build). Another process reads the turn's durable record, never
+// this count (remoteTurn, session-work.ts workedOnSql). Taken on the flag's
+// rise, given back on its fall or when the entry goes.
 const _inFlightHolds = new Map(); // sessionId -> release
 function _inFlightHold(sessionId, inFlight) {
   if (inFlight && !_inFlightHolds.has(sessionId)) {
@@ -2753,26 +2754,29 @@ function _inFlightHold(sessionId, inFlight) {
     release();
   }
 }
-// And while it is registered at all, its worker is warm here: a marker
-// (services/processes.js 'warm', which no drain waits for) so another
-// process neither reports the worker as an orphan, nor adopts it, nor
-// evicts it from under this one (docs/plans/web-and-conductor.md).
-const _warmHolds = new Map(); // sessionId -> release
-function _warmHold(sessionId, warm) {
-  if (warm && !_warmHolds.has(sessionId)) {
-    try { _warmHolds.set(sessionId, require('./processes').hold('warm', Number(sessionId))); } catch { /* no ref */ }
-  } else if (!warm && _warmHolds.has(sessionId)) {
-    const release = _warmHolds.get(sessionId);
-    _warmHolds.delete(sessionId);
-    release();
-  }
+// When anything last used a session's worker, for every process
+// (session_workers, read by the worker-eviction clock: services/
+// worker-eviction.js): a worker is evicted by how long nobody used it,
+// never by which process's registry has it. Written as it is used; a write
+// that fails is logged (the clock counts an unknown running worker as used
+// when it first sees it).
+function noteWorkerUsed(sessionId) {
+  const pool = _getPoolSafe();
+  if (!pool) return;
+  pool.query(
+    `INSERT INTO session_workers (session_id, last_used_at) SELECT id, NOW() FROM chat_sessions WHERE id = $1
+     ON CONFLICT (session_id) DO UPDATE SET last_used_at = NOW()`, [Number(sessionId)],
+  ).catch((err) => log.warn('worker', 'Could not note a worker as used', { sessionId, err: err.message }));
+}
+function noteWorkerGone(sessionId) {
+  const pool = _getPoolSafe();
+  if (!pool) return;
+  pool.query('DELETE FROM session_workers WHERE session_id = $1', [Number(sessionId)]).catch(() => {});
 }
 class WarmRegistry extends Map {
-  set(sessionId, value) { _warmHold(sessionId, true); return super.set(sessionId, value); }
-  delete(sessionId) { _inFlightHold(sessionId, false); _warmHold(sessionId, false); return super.delete(sessionId); }
+  delete(sessionId) { _inFlightHold(sessionId, false); return super.delete(sessionId); }
   clear() {
     for (const id of [..._inFlightHolds.keys()]) _inFlightHold(id, false);
-    for (const id of [..._warmHolds.keys()]) _warmHold(id, false);
     super.clear();
   }
 }
@@ -2794,6 +2798,7 @@ function _registryUpsert(sessionId, patch) {
   const next = { ...prev, ...patch };
   _warmRegistry.set(sessionId, next);
   _inFlightHold(sessionId, !!next.inFlight);
+  if (patch.lastUsedMs != null || !!prev.inFlight !== !!next.inFlight || !existing) noteWorkerUsed(sessionId);
   // #1038: the inner docker-exec window is one of the two signals
   // isSessionBusy() ORs together, so a change here can flip a session's
   // working state for every client. Only the actual transition notifies —
@@ -2845,12 +2850,6 @@ function warmRegistrySnapshot() {
 
 // Register a warm container that already exists (either spawned by us
 // earlier in this process, or adopted from a previous server run).
-// Drop this process's record of a session's worker and leave the worker
-// as it is: another process keeps it warm too (server.js idle eviction).
-function forgetWorker(sessionId) {
-  return _warmRegistry.delete(sessionId);
-}
-
 function adoptWarmWorker(sessionId, containerName = null) {
   _registryUpsert(sessionId, {
     containerName: containerName || workerContainerName(sessionId),
@@ -3308,6 +3307,14 @@ async function ensureWorker(sessionId, {
   }
   await accountDeletionGuard(sessionId);
   const containerName = workerRuntimeName(sessionId);
+  // Used from now (services/worker-eviction.js noteUsed): an eviction under
+  // way is waited for, so the status read below finds its worker gone, and
+  // an eviction about to claim it finds it used.
+  const usedPool = _getPoolSafe();
+  if (usedPool) {
+    await require('./worker-eviction').noteUsed(usedPool, sessionId)
+      .catch((err) => log.warn('worker', 'Could not note a worker as used', { sessionId, err: err.message }));
+  }
 
   // Coalesce concurrent ensures — if one's already racing, await it.
   const existing = _registryGet(sessionId);
@@ -3550,6 +3557,9 @@ async function execInWorker(sessionId, {
   // The phone browsers record at the phone motion screens' size.
   shotsClipSize = null,
   shotsPhoneClipSize = null,
+  // Experimental (services/shots-density.js): save stills at the screen's
+  // own density, 3x on a phone and 2x on a desktop, instead of 1x.
+  shotsDeviceDensity = false,
   // The personas that get a phone browser beside their desktop one: those
   // with a phone screen (visible-changes.phonePersonas).
   shotsPhonePersonas = [],
@@ -3883,6 +3893,7 @@ async function execInWorker(sessionId, {
       // cannot read src/services, so the key rides the environment.
       SHOTS_LISTED_HOME_KEY: `usernode:private-home:${fixtures.INVITED_MEMBER_LISTED_USER_ID}`,
       SHOTS_PLATFORM_ASSETS: shotsPlatformAssets ? '1' : '0',
+      SHOTS_DEVICE_DENSITY: shotsDeviceDensity === true ? '1' : '0',
     } : {}),
     ...(isClaude ? {
       MODEL: claudeModel,
@@ -4369,7 +4380,7 @@ function getActiveTurnMode(sessionId) {
 // calls back through whichever process the Service picks. What the proxy
 // must know about it (its mode, its id) comes from its durable record, cached
 // for REMOTE_TURN_TTL_MS: the proxy asks on every model call. Null for a turn
-// this process runs, and for a session no live process holds.
+// this process runs, and for a session with no turn record.
 const REMOTE_TURN_TTL_MS = 5000;
 const _remoteTurns = new Map(); // sessionId -> { at, turn: { mode, turnId } | null }
 
@@ -4377,8 +4388,6 @@ async function remoteTurn(sessionId) {
   const sid = Number(sessionId);
   const meta = _warmRegistry.get(sid);
   if (meta && meta.inFlight) return null;
-  const processes = require('./processes');
-  if (!processes.heldElsewhere('session', sid)) return null;
   const cached = _remoteTurns.get(sid);
   if (cached && Date.now() - cached.at < REMOTE_TURN_TTL_MS) return cached.turn;
   const pool = _getPoolSafe();
@@ -4419,9 +4428,10 @@ function noteTurnByokSpend(sessionId, cents) {
   const sid = Number(sessionId);
   if (!(cents > 0)) return;
   const meta = _warmRegistry.get(sid);
-  // A turn another process runs: the durable mirror here, and that process's
-  // tally for its settlement told over the bus (receiveTurnByok).
-  if (!(meta && meta.inFlight) && require('./processes').heldElsewhere('session', sid)) {
+  // A turn this process does not run (another process's, as its durable
+  // record says): the durable mirror here, and that process's tally for its
+  // settlement told over the bus (receiveTurnByok).
+  if (!(meta && meta.inFlight)) {
     void remoteTurn(sid).then(async (turn) => {
       if (!turn?.turnId) return;
       const pool = _getPoolSafe();
@@ -4459,9 +4469,9 @@ function getTurnByokCents(sessionId) {
 function markTurnByokSwitched(sessionId) {
   const sid = Number(sessionId);
   const meta = _warmRegistry.get(sid);
-  // A turn another process runs: no registry entry is made for it here; once
-  // per session per REMOTE_SWITCH_MS stands in for once per turn.
-  if (!(meta && meta.inFlight) && require('./processes').heldElsewhere('session', sid)) {
+  // A turn this process does not run: no registry entry is made for it here;
+  // once per session per REMOTE_SWITCH_MS stands in for once per turn.
+  if (!(meta && meta.inFlight)) {
     const at = _remoteByokSwitched.get(sid);
     if (at && Date.now() - at < REMOTE_SWITCH_MS) return false;
     if (_remoteByokSwitched.size > 500) _remoteByokSwitched.clear();
@@ -5483,14 +5493,14 @@ async function clearDetachedCapture(containerName, id) {
 }
 
 /**
- * Keep a warm worker from the idle sweeper while a detached step runs in it:
- * no turn is in flight, so nothing else marks it used. A worker this process
- * has not registered is left alone.
+ * Keep a warm worker from the worker-eviction clock while a detached step
+ * runs in it: no turn is in flight, so nothing else marks it used.
  */
 function touchWorker(sessionId) {
   for (const key of [sessionId, Number(sessionId)]) {
     if (_warmRegistry.has(key)) { _registryUpsert(key, { lastUsedMs: Date.now() }); return; }
   }
+  noteWorkerUsed(sessionId);
 }
 
 // Tear down a warm worker container (eviction). Volume is preserved so
@@ -5523,11 +5533,16 @@ async function evictWorker(sessionId) {
   const containerName = meta?.containerName || workerContainerName(sessionId);
   await rescueUnpushedCommit(sessionId);
   if (usesKubernetesWorkers()) {
-    await kubernetes.deleteWorker(kubernetesWorkerConfig(), sessionId, { deleteVolume: false }).catch(() => {});
+    // Gone before it returns: the eviction holds its session's lock until
+    // then, and a turn starting on the session waits for it
+    // (services/worker-eviction.js).
+    await kubernetes.deleteWorker(kubernetesWorkerConfig(), sessionId, { deleteVolume: false, waitGone: true })
+      .catch((err) => log.warn('worker', 'Evicted worker not confirmed gone', { containerName, err: err.message }));
   } else {
     await docker.stopAndRemove(containerName).catch(() => {});
   }
   _warmRegistry.delete(sessionId);
+  noteWorkerGone(sessionId);
   log.info('worker', 'Worker evicted (volume preserved)', { containerName });
 }
 
@@ -5803,7 +5818,10 @@ async function destroyWorker(containerName) {
   } else {
     await docker.stopAndRemove(containerName).catch(() => {});
   }
-  if (m) _warmRegistry.delete(parseInt(m[1], 10));
+  if (m) {
+    _warmRegistry.delete(parseInt(m[1], 10));
+    noteWorkerGone(parseInt(m[1], 10));
+  }
   log.info('worker', 'Worker destroyed', { containerName });
 }
 
@@ -5859,6 +5877,7 @@ async function removeSessionRuntime(sessionId, {
     }
   }
   _warmRegistry.delete(sessionId);
+  noteWorkerGone(sessionId);
   log.info('worker', volume ? 'Worker and its Claude Code volume removed' : 'Worker destroyed', { sessionId });
   return { removed: true };
 }
@@ -5961,49 +5980,16 @@ async function cloneCcVolume(srcSessionId, destSessionId) {
 // POST /api/internal/sessions/:id/push (see src/routes/internal.js),
 // which calls this helper.
 //
-// We use the worker's existing clone (origin already points at GitHub)
-// and inject `GITHUB_BOT_TOKEN` into a single one-shot `docker exec` via
-// an inline credential helper. The bot token never enters the worker's
-// persistent env or git config; it lives in the exec's environ for the
-// duration of the push and disappears when the exec exits.
-//
-// Branch is supplied by the caller (the route handler) AFTER looking up
-// the session's canonical `branch_name` from the DB. The worker doesn't
-// get to pick. Branch is checked against a strict charset before being
-// passed to bash so it can't break out of the shell expansion below.
+// The worker exports a bounded Git bundle without credentials. The trusted
+// platform imports only its objects into a fresh bare repository, then
+// pushes the exact commit with the bot credential. Worker hooks, remotes,
+// config and executables never run with that credential. Destination and
+// branch are re-read from the DB here, including for recovery callers.
 //
 // #1376: that charset lives in services/branch-names.js now, shared with
 // the routes that MINT the name. It used to be defined only here and
 // excluded `@`, which every email-address username produces — so those
 // sessions committed fine and then failed every push, heal included.
-
-// The push, as the one-shot script that runs in the worker. Two things it
-// does beyond `git push`, both from Sheep countrr's session 5030
-// (usernode-bot/sheep-countrr-a08857#48), where an agent committed its
-// feature on a local branch of its own (`wolf-mechanic`):
-//
-//   - If HEAD is on another branch that grew from the session branch, the
-//     session branch is moved up to it first. That is the turn's work; the
-//     runner does the same before its own push (worker/session-branch.sh),
-//     and this covers a heal against a worker whose runner predates that.
-//   - It prints the commit it pushed (the session branch), not HEAD. It used
-//     to print HEAD, so the heal reported the stray commit as pushed while
-//     GitHub had nothing new, and every retry of the PR 422'd with "No
-//     commits between main and <branch>".
-//
-// $PAT and $BRANCH come from the exec's environment, never argv. `workspace`
-// is overridable for tests only.
-function buildPushScript({ workspace = '/home/node/workspace' } = {}) {
-  return `set -e; cd ${shellQuote(workspace)}; `
-    + 'cur=$(git symbolic-ref --quiet --short HEAD || true); '
-    + 'if [ "$cur" != "$BRANCH" ] '
-    + '&& git rev-parse --quiet --verify "refs/heads/$BRANCH" >/dev/null '
-    + '&& git merge-base --is-ancestor "refs/heads/$BRANCH" HEAD; then '
-    + 'git branch --force "$BRANCH" HEAD >&2; fi; '
-    + 'git -c credential.helper="!f() { echo username=x-access-token; echo password=$PAT; }; f" '
-    + 'push -u origin "$BRANCH" >&2 && '
-    + 'git rev-parse "refs/heads/$BRANCH"';
-}
 
 async function execPushFromWorker(sessionId, branchName) {
   const botToken = process.env.GITHUB_BOT_TOKEN || '';
@@ -6046,50 +6032,44 @@ async function execPushFromWorker(sessionId, branchName) {
 
   const containerName = _registryGet(sessionId)?.containerName || workerRuntimeName(sessionId);
 
-  // Inline credential helper: prints `username=x-access-token` and
-  // `password=$PAT` to stdout when git asks for credentials. `-c
-  // credential.helper=…` is scoped to this single git invocation —
-  // doesn't touch the worker's .git/config. The `bash -c` script
-  // reads $PAT and $BRANCH from the exec env (passed via bare `-e`
-  // so the values aren't in argv).
-  //
-  // The script (buildPushScript below) settles the session branch first and
-  // prints the SHA it pushed, which the caller surfaces back to the worker
-  // for logging and the __USERNODE_RESULT__ accounting.
-  const inlineScript = buildPushScript();
-
-  const args = [
-    'exec',
-    '-e', 'PAT',              // bare -e: value taken from docker's own env
-    '-e', 'BRANCH',
-    containerName,
-    'bash', '-c', inlineScript,
-  ];
-
   try {
-    let stdout;
-    let stderr;
-    if (usesKubernetesWorkers()) {
-      const script = `export PAT=${shellQuote(botToken)}\nexport BRANCH=${shellQuote(branchName)}\n${inlineScript}\n`;
-      ({ stdout, stderr } = await execWorkerCommand(containerName, ['bash', '-s'], script, { timeoutMs: 60000 }));
-    } else {
-      ({ stdout, stderr } = await docker.execFileAsync('docker', args, {
-        timeout: 60000,
-        env: { ...process.env, PAT: botToken, BRANCH: branchName },
-      }));
+    const pool = _getPoolSafe();
+    if (!pool) throw new Error('Cannot resolve the session push destination');
+    const { rows: [target] } = await pool.query(
+      `SELECT cs.branch_name, a.repo_url FROM chat_sessions cs
+       JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1`, [sessionId],
+    );
+    if (!target || target.branch_name !== branchName) throw new Error('Session push branch has changed or no longer exists');
+    // Build the URL ourselves. Reject credentials, ports, alternate hosts,
+    // local paths and URL suffixes, even if they are stored in app metadata.
+    const match = /^https:\/\/github\.com\/([A-Za-z0-9][A-Za-z0-9-]{0,38})\/([A-Za-z0-9_.-]{1,100})\/?$/i.exec(target.repo_url || '');
+    const repo = match?.[2].replace(/\.git$/i, '');
+    if (!repo || repo === '.' || repo === '..') throw new Error('Invalid canonical GitHub push destination');
+    const remoteUrl = `https://github.com/${match[1]}/${repo}.git`;
+    const pushed = await workerGitPush.push({
+      remoteUrl, branchName, token: botToken,
+      exportWorker: script => execWorkerCommand(containerName, ['sh', '-c', script], null, {
+        timeoutMs: 60000, maxBuffer: workerGitPush.MAX_EXPORT_BYTES,
+      }),
+    });
+    // Updating the worker's tracking ref is credential-free and best effort.
+    // A worker acknowledgement failure does not turn a published commit into
+    // an unpushed one or cause the recovery path to repeat a successful push.
+    try {
+      await execWorkerCommand(containerName, ['sh', '-c', workerGitPush.buildRecordPushScript({ branchName, sha: pushed.sha })], null, {
+        timeoutMs: 10000, maxBuffer: 16 * 1024,
+      });
+    } catch (_) {
+      log.warn('worker', 'Could not update worker tracking ref after push', { sessionId, branch: branchName });
     }
-    const sha = (stdout || '').trim().split('\n').pop();
-    log.info('worker', 'Push proxied to GitHub', {
-      sessionId, branch: branchName, sha: (sha || '').slice(0, 8),
+    log.info('worker', 'Worker commit pushed from the platform', {
+      sessionId, branch: branchName, sha: pushed.sha.slice(0, 8),
     });
     if (_registryGet(sessionId)?.unpushed) _registryUpsert(sessionId, { unpushed: null });
-    return { sha, stderr: (stderr || '').trim() };
+    return pushed;
   } catch (err) {
-    // Don't leak the PAT into log lines if `docker exec` printed any
-    // (it shouldn't — credential helpers don't echo creds — but defense
-    // in depth). err.message + err.stderr come from execFileAsync.
-    const cleanMsg = String(err.message || '').replace(botToken, '***');
-    const cleanStderr = String(err.stderr || '').replace(botToken, '***');
+    const cleanMsg = String(err.message || '').split(botToken).join('***').slice(0, 2000);
+    const cleanStderr = String(err.stderr || '').split(botToken).join('***').slice(0, 8000);
     const wrapped = new Error(`push proxy failed: ${cleanMsg}`);
     wrapped.code = 'push_failed';
     wrapped.stderr = cleanStderr;
@@ -6186,7 +6166,6 @@ module.exports = {
   BENCH_CAPTURE_SCRIPT_PATH,
   warmRegistrySnapshot,
   adoptWarmWorker,
-  forgetWorker,
   isInFlight,
   isWorkerExecuting,
   getActiveTurnMode,
@@ -6214,6 +6193,9 @@ module.exports = {
   newWatchState,
   _recordClaudeCodingRunForTests: recordClaudeCodingRun,
   _registryUpsertForTests: _registryUpsert,
+  // A process with no record of a session's worker (a restart, or another
+  // process), for tests.
+  _registryForgetForTests: (sessionId) => _warmRegistry.delete(sessionId),
   _mintHomeroomReadGrantForTests: mintHomeroomReadGrant,
   parseLine,
   newWatchdogCounters,
@@ -6226,7 +6208,6 @@ module.exports = {
   workerRuntimeName,
   // platform-side git push proxy (called from src/routes/internal.js)
   execPushFromWorker,
-  buildPushScript,
   unpushedCommit,
   rescueUnpushedCommit,
   keepPartialWork,

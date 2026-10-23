@@ -386,6 +386,37 @@ test('the config writer gives each persona its own shots directory and records c
       }
     }
 
+    // Shots at the screen's own density are experimental: off unless the
+    // run says so, every browser saves at 1x, as it always did.
+    for (const value of [undefined, '0', 'true', '']) {
+      const off = writeConfig(dir, { SHOTS_DEVICE_DENSITY: value, SHOTS_PHONE_PERSONAS: '["member"]' });
+      for (const [server, entry] of Object.entries(off.config.mcpServers).filter(([name]) => name !== 'shots')) {
+        assert.equal(entry.args.includes('--config'), false, `${server} ${value}`);
+        assert.equal(Object.hasOwn(entry.env, 'SHOTS_SCREENSHOT_SCALE'), false, `${server} ${value}`);
+      }
+      assert.equal(fs.existsSync(path.join(path.dirname(off.output), 'shots-desktop-browser.json')), false);
+    }
+    // On, every desktop browser draws at 3 device pixels per CSS pixel, from
+    // a private config beside the MCP config (Playwright takes a density only
+    // with a fixed viewport, the size the browser opened at before), and every
+    // browser, the phone's included, saves at device scale.
+    const dense = writeConfig(dir, { SHOTS_DEVICE_DENSITY: '1', SHOTS_PHONE_PERSONAS: '["member"]' });
+    for (const server of ['browser_member', 'browser_admin', 'browser_full_admin', 'browser_guest']) {
+      const args = dense.config.mcpServers[server].args;
+      assert.equal(args.filter((arg) => arg === '--config').length, 1, server);
+      const file = args[args.indexOf('--config') + 1];
+      assert.equal(path.dirname(file), path.dirname(dense.output));
+      assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')),
+        { browser: { contextOptions: { viewport: { width: 1280, height: 720 }, deviceScaleFactor: 3 } } });
+      assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+      assert.equal(args.includes('--device'), false, 'a desktop browser presents as no device');
+    }
+    for (const server of ['browser_member', 'browser_member_phone']) {
+      assert.equal(dense.config.mcpServers[server].env.SHOTS_SCREENSHOT_SCALE, 'device', server);
+    }
+    assert.equal(dense.config.mcpServers.browser_member_phone.args.includes('--config'), false,
+      'the phone\'s density is its device\'s');
+
     // Without a shots directory there is nowhere safe to save, so no config.
     for (const missing of [undefined, '']) {
       assert.throws(() => writeConfig(dir, { SHOTS_DIR: missing }), /inputs are incomplete/);
@@ -435,7 +466,8 @@ test('a persona with a phone screen gets a phone browser: its sign-in, its proxy
       // same proxy listener (the same identity on a hosted app), the same
       // init script and limits.
       const strip = (list) => list.filter((arg, index) => index > 1
-        && !['--device', 'iPhone 15', '--output-dir'].includes(arg) && !arg.startsWith(shotsDir));
+        && !['--device', 'iPhone 15', '--output-dir', '--config'].includes(arg) && !arg.startsWith(shotsDir)
+        && !arg.endsWith('shots-desktop-browser.json'));
       assert.deepEqual(strip(args), strip(desktopArgs), desktop);
       assert.equal(args[args.indexOf('--proxy-server') + 1], desktopArgs[desktopArgs.indexOf('--proxy-server') + 1]);
       assert.equal(args[args.indexOf('--storage-state') + 1], desktopArgs[desktopArgs.indexOf('--storage-state') + 1]);
@@ -1158,4 +1190,90 @@ test('a shots turn samples the worker\'s memory through the proxy, which the ima
   const asked = runner.indexOf('export SHOTS_MEMORY_SAMPLE_MS=5000');
   assert.ok(asked > 0, 'the runner sets the interval');
   assert.ok(asked < runner.indexOf('node /usr/local/bin/shots-origin-proxy.js &'), 'before the proxy starts');
+});
+
+test('in a run taken at device density each saved still says its density: 3 from a phone browser and from a desktop one', async (t) => {
+  for (const [density, expected] of [['1', { desktop: '3', phone: '3' }], [undefined, { desktop: undefined, phone: undefined }]]) {
+    const bridge = bridgeFixture(t);
+    const env = { ...bridge.env, ...(density ? { SHOTS_DEVICE_DENSITY: density } : {}) };
+    const { tools } = loadBridge(env, bridge.platformFetch);
+    const phoneDir = path.join(bridge.shotsDir, 'member_phone');
+    fs.mkdirSync(phoneDir);
+    fs.writeFileSync(path.join(bridge.shotsDir, 'member', 'wide.png'), 'desktop still');
+    stamp(bridge, 'member', 'wide.png', `${HEAD}/`);
+    fs.writeFileSync(path.join(phoneDir, 'narrow.png'), 'phone still');
+    stamp(bridge, 'member_phone', 'narrow.png', `${HEAD}/`);
+    const result = await tools.get('save_shot')({ shots: [
+      { change: 'invite-suggestions', screen: 'desktop', side: 'after', file: 'wide.png' },
+      { change: 'invite-suggestions', screen: 'phone', side: 'after', file: 'narrow.png' },
+    ] });
+    assert.equal(result.isError === true, false);
+    const [wide, narrow] = uploads(bridge).slice(-2);
+    assert.equal(wide.query.density, expected.desktop, `desktop, ${density}`);
+    assert.equal(narrow.query.density, expected.phone, `phone, ${density}`);
+  }
+});
+
+test('in a dense run, save_shot has the screen\'s browser take the close-ups wanted of the changes it saved', async (t) => {
+  const bridge = bridgeFixture(t);
+  const ctl = fs.mkdtempSync(path.join(os.tmpdir(), 'shots-ctl-'));
+  const member = path.join(bridge.shotsDir, 'member');
+  let stampAt = `${HEAD}/`;
+  const asked = [];
+  const observer = require('node:net').createServer((socket) => {
+    let data = '';
+    socket.on('data', (chunk) => {
+      data += chunk;
+      if (!data.includes('\n')) return;
+      const message = JSON.parse(data);
+      asked.push(message);
+      const file = `closeup-${String(asked.length).padStart(16, '0')}.png`;
+      fs.writeFileSync(path.join(member, file), `close-up ${asked.length}`);
+      stamp(bridge, 'member', file, stampAt);
+      socket.end(`${JSON.stringify({ ok: true, file })}\n`);
+    });
+  });
+  await new Promise((resolve) => observer.listen(path.join(ctl, 'member.sock'), resolve));
+  t.after(() => { observer.close(); fs.rmSync(ctl, { recursive: true, force: true }); });
+  const wanted = [
+    { change: 'invite-suggestions', screen: 'desktop', part: 1, rect: { x: 4, y: 4, w: 10, h: 10 }, scale: 6, saved: false },
+    { change: 'invite-suggestions', screen: 'desktop', part: 2, rect: { x: 40, y: 4, w: 10, h: 10 }, scale: 5, saved: true },
+    { change: 'admin-banner', screen: 'desktop', part: 1, rect: { x: 4, y: 4, w: 10, h: 10 }, scale: 6, saved: false },
+  ];
+  const platformFetch = async (url, init) => (new URL(url).pathname.endsWith('/closeups')
+    ? (bridge.calls.push({ path: new URL(url).pathname }), new Response(JSON.stringify({ ok: true, result: { closeups: wanted } }), { status: 200 }))
+    : bridge.platformFetch(url, init));
+  const save = async (env) => {
+    const { tools } = loadBridge({ ...bridge.env, SHOTS_BROWSER_CONTROL_DIR: ctl, SHOTS_BROWSER_CONTROL_TOKEN: 'd'.repeat(64), ...env },
+      platformFetch);
+    fs.writeFileSync(path.join(member, 'invite-desktop-after.png'), 'after still');
+    stamp(bridge, 'member', 'invite-desktop-after.png', `${HEAD}/`);
+    const result = await tools.get('save_shot')({ shots: [
+      { change: 'invite-suggestions', screen: 'desktop', side: 'after', file: 'invite-desktop-after.png' },
+    ] });
+    return JSON.parse(result.content[0].text);
+  };
+
+  // A run not taken at device density asks for nothing.
+  const plain = await save({});
+  assert.equal(Object.hasOwn(plain, 'closeups'), false);
+  assert.equal(bridge.calls.some((sent) => sent.path.endsWith('/closeups')), false);
+
+  const dense = await save({ SHOTS_DEVICE_DENSITY: '1' });
+  // Only the unsaved one of the change it saved, in that change's browser.
+  assert.deepEqual(dense.closeups, [{ change: 'invite-suggestions', screen: 'desktop', part: 1, scale: 6, saved: true }]);
+  assert.equal(Object.hasOwn(dense, 'closeupHint'), false);
+  assert.deepEqual(asked.map(({ action, rect, scale }) => ({ action, rect, scale })),
+    [{ action: 'closeup', rect: wanted[0].rect, scale: 6 }]);
+  const upload = bridge.calls.at(-1);
+  assert.equal(upload.path, `/api/internal/shots/${bridge.runId}/closeup`);
+  assert.deepEqual(upload.query, { change: 'invite-suggestions', screen: 'desktop', part: '1' });
+  assert.equal(Buffer.from(upload.body).toString(), 'close-up 1');
+
+  // A close-up of the before address (the page moved on) is never sent, and the agent is told how to retake it.
+  stampAt = `${BASE}/`;
+  const moved = await save({ SHOTS_DEVICE_DENSITY: '1' });
+  assert.deepEqual(moved.closeups, [{ change: 'invite-suggestions', screen: 'desktop', part: 1, scale: 6, saved: false, code: 'shot_not_on_app' }]);
+  assert.match(moved.closeupHint, /Open its after state again, take the after screen shot again and save it/);
+  assert.equal(bridge.calls.filter((sent) => sent.path.endsWith('/closeup')).length, 1, 'still only the first');
 });

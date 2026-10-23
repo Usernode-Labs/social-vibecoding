@@ -1,15 +1,17 @@
 /**
- * Periodic main-branch drift detector.
+ * main's drift: the I/O of the main-drift clock (src/workflow/clock/).
  *
- * For every app with a `repo_url` and status='running', polls GitHub for
- * the current `main` SHA and, if it differs from `apps.main_sha`, asks
- * app delivery for a deploy (the app-delivery workflow machine, which
- * every production deploy goes through). Closes the gap for repos the
- * platform doesn't own (the import-existing flow) and for any out-of-band
- * pushes by the bot to its own repos.
+ * For every app with a `repo_url` and status='running', reads GitHub's
+ * `main` and, when it differs from `apps.main_sha`, tells app delivery
+ * (MainMoved, keyed by the commit, so a second look adds nothing). App
+ * delivery decides whether to deploy it: not while a deploy of the app
+ * runs (it serves it after), not a commit whose image runs as root, and a
+ * commit whose deploy failed again only after its own backoff. Closes the
+ * gap for repos the platform doesn't own (the import-existing flow) and for
+ * any out-of-band pushes by the bot to its own repos.
  *
- * The platform's own row (apps.self_hosted) is polled too, but never
- * rebuilt from here: its main_sha is the build that is serving, and its
+ * The platform's own row (apps.self_hosted) is read too, but never
+ * deployed from here: its main_sha is the build that is serving, and its
  * releases come from the repository's Actions workflow through Argo CD.
  * Drift on that row means "merged, not released", and goes to
  * services/release-watch.js, which says so once the release is late.
@@ -20,37 +22,29 @@
  *   cadence is "good enough" and keeps the server zero-config behind
  *   any networking topology.
  *
- * Concurrency:
- *   Nothing is asked twice while a deploy of the app runs, and a commit
- *   whose deploy failed is asked again only after a wait. Both are read
- *   from the app's row (deploy_state, last_failure), so another Pod, or
- *   this one after a restart, decides the same. We deliberately do NOT flip
- *   `apps.status` while a deploy runs: dropping `running` mid-deploy would
- *   also drop the URL from the home-page tile (see routes/apps.js — URL is
- *   only computed when status='running').
+ * We deliberately do NOT flip `apps.status` while a deploy runs: dropping
+ * `running` mid-deploy would also drop the URL from the home-page tile
+ * (see routes/apps.js: URL is only computed when status='running').
  */
 const log = require('./logger');
 const { getPool } = require('../db/pool');
 const github = require('./github');
 const releaseWatch = require('./release-watch');
-const deployFailure = require('./deploy-failure');
 const githubBudget = require('./github-budget');
-const lifecycle = require('./lifecycle');
-const leaderTimers = require('./leader-timers');
 
-// 5 minutes default. GitHub's rest API has a 5000 req/hr limit per token.
-// A plain read of every running app's main every five minutes is 12 requests
-// an app an hour, which alone spends the whole budget at about 400 apps. Two
-// things keep it from doing that now: the read is conditional (fetchRemoteHead
-// below; an unchanged main answers 304, which GitHub does not count), and a
-// pass is held while the budget is nearly gone (poll below).
+// MAIN_DRIFT_POLL_MS: how often the clock looks (5 minutes). GitHub's rest
+// API has a 5000 req/hr limit per token. A plain read of every running
+// app's main every five minutes is 12 requests an app an hour, which alone
+// spends the whole budget at about 400 apps. Two things keep it from doing
+// that now: the read is conditional (fetchRemoteHead below; an unchanged
+// main answers 304, which GitHub does not count), and a pass is held while
+// the budget is nearly gone (scan below).
 const POLL_INTERVAL_MS = parseInt(process.env.MAIN_DRIFT_POLL_MS, 10) || 5 * 60 * 1000;
-// Run the first poll soon after boot so newly-imported apps with stale
-// SHAs converge quickly, but not instantly (lets the rest of startup
-// settle first).
-const FIRST_POLL_DELAY_MS = 30_000;
 
-let now = () => Date.now();
+// Whether the clock runs: GitHub, with the bot's token.
+function enabled() {
+  return !!(github.isEnabled() && process.env.GITHUB_BOT_TOKEN);
+}
 
 // The last answer per repo, for conditional reads: "owner/repo" (lowercased)
 // -> { etag, sha, committedAt, subject }. In memory on purpose: a restart
@@ -116,30 +110,33 @@ async function fetchRemoteHead(owner, repo) {
   return { ...head, octokit };
 }
 
-// Returns a structured result so callers (the periodic poll loop, and
-// the admin "Check for updates" route) can act on or report the
-// outcome. The poll loop ignores the return value; the route returns
-// it to the client.
+// One app's main, looked at. Resolves a structured result, which the
+// admin's "Check for updates" returns to its client.
 //
 // `status` is one of:
 //   no_drift         — remote HEAD matches `apps.main_sha`, nothing to do
-//   deploy_requested — drift detected; a deploy was asked of app delivery
-//   in_flight        — a deploy of this app is already running
+//   deploy_requested — drift: app delivery was told, and deploys it
+//   already_asked, waits_for_new_commit, … — drift: app delivery was told,
+//                      and said why it does not deploy it now
 //   invalid_repo     — `apps.repo_url` couldn't be parsed (shouldn't happen for healthy rows)
 //   fetch_failed     — GitHub API call rejected (bot lost access, rate limit, …)
-//   waits_for_new_commit — main's commit was refused for running as root;
-//                      not asked again until main moves
-//   backing_off      — drift detected, but the same commit failed to deploy
-//                      recently; not asked again until `retryInMs` has passed
-//   first_seen       — main_sha was NULL; backfilled, no redeploy
+//   first_seen       — main_sha was NULL; backfilled, no deploy
 //   release_pending  — the self-hosted row: main is ahead of the running
 //                      build, within a release's normal time
 //   release_stalled  — the self-hosted row: main is ahead and the release
 //                      has not come (services/release-watch.js)
 //
-// `manual: true` (the admin's "Check for updates") skips both waits, and
-// its deploy retries even a commit refused for running as root.
-async function checkAndRedeployOne(config, pool, app, { manual = false } = {}) {
+// `byHand` (the admin's "Check for updates"): app delivery deploys even a
+// commit that failed or was refused for running as root, without waiting.
+// One movement of main: from what production runs (its commit, and when it
+// was deployed) to `sha`. The clock's looks at one movement are one ask; a
+// return to a commit production ran before, after a deploy of another, is a
+// new one (A, then B, then A again deploys A again).
+const movementOf = (app, sha) =>
+  `${app.main_sha}@${app.last_deploy_at ? new Date(app.last_deploy_at).getTime() : 'never'}:${sha}`;
+
+async function checkOne(config, pool, app, { byHand = false } = {}) {
+  const platform = require('../workflow/platform.ts');
   const parsed = github.parseGithubUrl(app.repo_url);
   if (!parsed) {
     log.warn('drift-poller', 'Skipping app with unparseable repo_url', { slug: app.slug, repoUrl: app.repo_url });
@@ -155,22 +152,22 @@ async function checkAndRedeployOne(config, pool, app, { manual = false } = {}) {
     });
     return { status: 'fetch_failed', slug: app.slug, error: err.message };
   }
-  const remoteSha = head.sha;
+  const remoteSha = head.sha ? String(head.sha).toLowerCase() : null;
   if (!remoteSha) return { status: 'fetch_failed', slug: app.slug, error: 'GitHub returned no SHA' };
 
   // main's unit suite runs on every new main, merge or direct push (the
   // app's main-check machine, src/workflow/main-check/). Its claim is per
   // commit, so a merge commit the merge already asked about is not run twice.
   if (remoteSha !== app.main_check_sha || !app.main_check_state || app.main_check_state === 'error') {
-    await require('../workflow/platform.ts').requestMainCheck({ appId: app.id, sha: remoteSha }).catch((err) => {
+    await platform.requestMainCheck({ appId: app.id, sha: remoteSha }).catch((err) => {
       log.warn('drift-poller', 'Main check on a new main could not be asked', { slug: app.slug, err: err.message });
     });
   }
 
   // First-time backfill: no prior SHA recorded → just save it. This
-  // shouldn't happen often (createApp and every deploy record the SHA),
-  // but if it did we don't want to needlessly redeploy on the very next
-  // poll just because main_sha was NULL.
+  // shouldn't happen often (creation and every deploy record the SHA), but
+  // if it did we don't want to needlessly redeploy on the very next look
+  // just because main_sha was NULL.
   if (!app.main_sha) {
     await pool.query(
       'UPDATE apps SET main_sha = $1 WHERE id = $2 AND main_sha IS NULL',
@@ -198,117 +195,71 @@ async function checkAndRedeployOne(config, pool, app, { manual = false } = {}) {
     return releaseWatch.observe(config, pool, app, head, { octokit: head.octokit });
   }
 
-  // This commit's image was refused for running as root, and no retry can
-  // change that (deploy-failure.js waitsForNewCommit): wait for a commit that
-  // changes the Dockerfile. "Check for updates" still tries it.
-  if (!manual && deployFailure.waitsForNewCommit(app.last_failure, remoteSha)) {
-    return { status: 'waits_for_new_commit', slug: app.slug, from: app.main_sha, attempted: remoteSha };
+  const movement = movementOf(app, remoteSha);
+  const outcome = await platform.reportMainMoved(app.id, remoteSha, { byHand, movement });
+  // Unless app delivery refused it (no drift, a commit that waits for a new
+  // one): accepted, answered before (a replay), or not yet answered within
+  // the wait (it will be).
+  if (outcome.status !== 'rejected' && outcome.status !== 'faulted') {
+    log.info('drift-poller', 'main moved; app delivery told', {
+      appId: app.id, slug: app.slug, from: app.main_sha.slice(0, 7), to: remoteSha.slice(0, 7), byHand,
+    });
+    // main moved out-of-band: the app's merge queue looks again (a proposal
+    // may conflict now, or merge). Once per movement.
+    await platform.wantMerge({ appId: app.id, reason: 'drift', requestKey: `want:drift:${app.id}:${movement}` }).catch((err) => {
+      log.error('drift-poller', 'Post-drift merge ask failed', { slug: app.slug, err: err.message });
+    });
   }
-
-  return requestDriftDeploy(config, pool, app, remoteSha, { manual });
+  // What app delivery decided: deploy_requested, or why not (already_asked:
+  // a deploy for it is owed; waits_for_new_commit: its image runs as root).
+  return { status: outcome.status === 'accepted' || outcome.status === 'pending' ? 'deploy_requested'
+    : outcome.status === 'replayed' ? 'already_asked' : (outcome.reason || outcome.status),
+    slug: app.slug, from: app.main_sha, to: remoteSha };
 }
 
-// How long a commit whose deploy failed waits before the poller asks for it
-// again (an admin's "Check for updates" does not wait).
-const DRIFT_RETRY_AFTER_FAILURE_MS = 30 * 60 * 1000;
-
-// The drift, asked of the app-delivery machine, which runs one deploy of an
-// app at a time and writes main_sha when it succeeds. What decides whether
-// to ask is durable (the app's deploy_state and last_failure), so another
-// Pod or a restarted one reads the same: nothing asked twice while a deploy
-// runs, and a commit whose deploy failed asked again after a wait.
-async function requestDriftDeploy(config, pool, app, remoteSha, { manual }) {
-  const { rows: [row] } = await pool.query('SELECT deploy_state, last_failure FROM apps WHERE id = $1', [app.id]);
-  if (row?.deploy_state === 'deploying') return { status: 'in_flight', slug: app.slug };
-  const failure = row?.last_failure && typeof row.last_failure === 'object' ? row.last_failure : null;
-  const failedAt = failure?.at ? Date.parse(failure.at) : NaN;
-  // A failure that names no commit (a clone that failed, a rollover's
-  // respawn) counts as this commit's: what failed is what main is now.
-  if (!manual && failure && (failure.sha == null || failure.sha === remoteSha) && Number.isFinite(failedAt)
-      && now() - failedAt < DRIFT_RETRY_AFTER_FAILURE_MS) {
-    return { status: 'backing_off', slug: app.slug, from: app.main_sha, attempted: remoteSha,
-      retryInMs: DRIFT_RETRY_AFTER_FAILURE_MS - (now() - failedAt) };
-  }
-  log.info('drift-poller', 'Detected main-branch drift; asking for a deploy', {
-    appId: app.id, slug: app.slug, from: app.main_sha.slice(0, 7), to: remoteSha.slice(0, 7),
-  });
-  await require('../workflow/platform.ts').requestDeploy(app.id, manual ? 'check_updates' : 'drift');
-  // main moved out-of-band: the app's merge queue looks again (a proposal
-  // may conflict now, or merge).
-  await require('../workflow/platform.ts').wantMerge({ appId: app.id, reason: 'drift' }).catch((err) => {
-    log.error('drift-poller', 'Post-drift merge ask failed', { slug: app.slug, err: err.message });
-  });
-  return { status: 'deploy_requested', slug: app.slug, from: app.main_sha, to: remoteSha };
-}
-
-async function poll(config) {
-  const pool = getPool(config);
-  // Snapshot the candidate set once. Apps whose status changes during
-  // the loop are filtered by the per-row claim above, not here.
+// The main-drift clock's run: every running app with a repository looked
+// at, one after another. Background work: while GitHub's hourly budget is
+// nearly used up, the rest of the pass waits for the next run, so what
+// people start keeps the reserve. Asked before every app, because a first
+// pass after a restart has no ETags yet and costs one read each.
+// services/github-budget.js logs the hold once per window, not per app.
+// The admin's "Check for updates" is never held.
+async function scan(config, pool, { shouldStop = () => false } = {}) {
+  if (!enabled()) return { off: true };
   const { rows } = await pool.query(
-    `SELECT id, slug, repo_url, main_sha, self_hosted, release_stall, release_run, main_check_sha, main_check_state, last_failure
+    `SELECT id, slug, repo_url, main_sha, last_deploy_at, self_hosted, release_stall, release_run, release_head_seen, main_check_sha, main_check_state
        FROM apps
-      WHERE repo_url IS NOT NULL AND status = 'running'`
+      WHERE repo_url IS NOT NULL AND status = 'running'
+      ORDER BY id`
   );
-  if (rows.length === 0) return { apps: 0, checked: 0, held: false };
-
-  log.debug('drift-poller', 'Polling apps for main drift', { count: rows.length });
-  // Sequential, not parallel: rebuild kicks docker build / run / health
-  // wait, which can saturate the host. Even if we wanted parallelism,
-  // we'd want a small concurrency cap, not "fire all of them". For
-  // typical fleets of < 50 apps this finishes in well under the next
-  // poll interval.
-  //
-  // Background work: while GitHub's hourly budget is nearly used up, the
-  // rest of the pass waits for the next tick after the reset, so what
-  // people start keeps the reserve. Asked before every app, because a
-  // first pass after a restart has no ETags yet and costs one read each.
-  // services/github-budget.js logs the hold once per window, not per app.
-  // The admin's "Check for updates" calls checkAndRedeployOne directly and
-  // is never held.
   let checked = 0;
+  const reported = [];
   for (const app of rows) {
-    // A redeploy started now would die with the process; the next leader's
-    // first poll picks the rest up.
-    if (lifecycle.isShuttingDown()) {
-      return { apps: rows.length, checked, held: false, stopped: true };
-    }
+    if (shouldStop()) return { apps: rows.length, checked, reported, stopped: true };
     if (!githubBudget.budgetAllows('background')) {
       log.debug('drift-poller', 'Pass held for the GitHub budget', { checked, left: rows.length - checked });
-      return { apps: rows.length, checked, held: true };
+      return { apps: rows.length, checked, reported, held: true };
     }
     checked += 1;
     try {
-      await checkAndRedeployOne(config, pool, app);
+      const r = await checkOne(config, pool, app);
+      if (r.to && r.from) reported.push({ slug: app.slug, status: r.status });
     } catch (err) {
       log.warn('drift-poller', 'Per-app check threw (continuing)', { slug: app.slug, err: err.message });
     }
   }
-  return { apps: rows.length, checked, held: false };
-}
-
-function start(config) {
-  if (!github.isEnabled() || !process.env.GITHUB_BOT_TOKEN) {
-    log.info('drift-poller', 'Disabled (no GitHub bot token)');
-    return;
-  }
-  log.info('drift-poller', 'Starting', { intervalMs: POLL_INTERVAL_MS });
-  // A leader timer (services/leader-timers.js): no poll starts once shutdown
-  // has begun, and one under way is given the drain to finish.
-  leaderTimers.every('main-drift-poller', () => poll(config)
-    .catch((err) => log.error('drift-poller', 'Poll failed', { err: err.message })),
-  POLL_INTERVAL_MS, { firstDelayMs: FIRST_POLL_DELAY_MS });
+  return { apps: rows.length, checked, reported };
 }
 
 module.exports = {
-  start,
-  poll,
-  // Exposed so the admin "Check for updates" button can run the same
-  // single-app code path on demand without waiting for the next tick.
-  checkAndRedeployOne,
+  enabled,
+  intervalMs: () => POLL_INTERVAL_MS,
+  scan,
+  checkOne,
+  // The admin "Check for updates" button: one app, now, by hand.
+  checkByHand: (config, pool, app) => checkOne(config, pool, app, { byHand: true }),
   _forTest: {
     resetHeadCache: () => headCache.clear(),
-    setClock: (fn) => { now = fn || (() => Date.now()); },
     POLL_INTERVAL_MS,
   },
 };

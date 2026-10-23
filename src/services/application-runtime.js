@@ -81,9 +81,25 @@ async function deploy(config, {
   port = 3000, memory, cpus, labels, runtimeName = null, internalOnly = false,
   command = [], runAsUser = null, onRollout = null, attempt = null, servingAttempt = null, claim = 0,
 }) {
+  const previewPolicy = require('./platform-preview-data-policy');
+  if (environment === 'staging' && app.slug === previewPolicy.PLATFORM_SLUG
+      && labels?.[previewPolicy.LABEL] !== previewPolicy.DIGEST) {
+    throw previewPolicy.refuse('platform deploy requires a verified sanitized clone');
+  }
   if (mode(config) === 'docker') {
     const name = runtimeName || dockerName;
     if (!name) throw new Error('Docker deployment requires a runtime name');
+    // Image-provided labels are untrusted. Opaque shots need authenticated
+    // app scope even for authored apps, otherwise a platform image could
+    // masquerade as another app to evade security retirement.
+    const policyTag = app.slug === previewPolicy.PLATFORM_SLUG ? previewPolicy.DIGEST : 'authored';
+    const runtimeLabels = environment === 'staging'
+      && (app.slug === previewPolicy.PLATFORM_SLUG || previewPolicy.isOpaqueDockerPreview(name))
+      ? { ...labels, [previewPolicy.APP_ID_LABEL]: String(app.id), [previewPolicy.LABEL]: policyTag,
+        [previewPolicy.RECEIPT_LABEL]: previewPolicy.runtimeReceipt(config, {
+          appId: app.id, runtimeName: name, policyTag, databaseUrl: env?.DATABASE_URL,
+        }) }
+      : labels;
     const alias = internalOnly ? null : dnsAlias({ environment, sessionId, dockerName: name });
     let containerId = null;
     let replaced = false;
@@ -106,7 +122,7 @@ async function deploy(config, {
       replaced = true;
       containerId = await docker.runContainer(name, {
         image: imageRef, env, port, memory, cpus,
-        labels: attempt ? { ...labels, [kubernetes.PREVIEW_ATTEMPT_ANNOTATION]: kubernetes.fenceValue(attempt, claim) } : labels,
+        labels: attempt ? { ...runtimeLabels, [kubernetes.PREVIEW_ATTEMPT_ANNOTATION]: kubernetes.fenceValue(attempt, claim) } : runtimeLabels,
         aliases: alias ? [alias] : [],
         command,
       });

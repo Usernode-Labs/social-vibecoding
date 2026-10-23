@@ -52,6 +52,7 @@
 // change too (FILED_MESSAGE_JOIN_SQL).
 
 const log = require('./logger');
+const notifyCopy = require('./homeroom-bot-notify-copy');
 const usernames = require('./usernames');
 const { listActiveUserIds } = require('./active-users');
 const notificationPreferences = require('./notification-preferences');
@@ -75,6 +76,9 @@ const MENTION_RE = /(^|[^\w])@([A-Za-z0-9_]{1,32})/g;
 // Platform conversations deliberately use their own kinds rather than the
 // app-chat mention/reply/reaction kinds. That keeps routing, access checks,
 // grouping, and mobile-push preferences from inheriting app-centric state.
+// The Homeroom bot's account (conversations.js HOMEROOM_BOT_USERNAME).
+const HOMEROOM_BOT_USERNAME = 'homeroom_bot';
+
 const CONVERSATION_NOTIFICATION_KINDS = new Set([
   'conversation_invite',
   'conversation_message',
@@ -244,6 +248,37 @@ const THREAD_ROOT_COLUMNS_SQL = `(SELECT thread_root.thread_type FROM chat_messa
               WHERE cm.thread_type = 'message' AND thread_root.id = cm.thread_ref) AS root_thread_type,
             (SELECT thread_root.thread_ref FROM chat_messages thread_root
               WHERE cm.thread_type = 'message' AND thread_root.id = cm.thread_ref) AS root_thread_ref`;
+
+// #5580: what a notification is ABOUT, so the bell can fold one request's
+// news into one story. The proposal: the row's own session, or the one whose
+// discussion (or a reply thread under it) the message is in. The request: the
+// one whose discussion the message is in, else the proposal's (the issue it
+// was made from, or the first it links). Both NULL on rows about neither.
+const STORY_SESSION_SQL = `COALESCE(n.session_id,
+              CASE WHEN cm.thread_type = 'session' THEN cm.thread_ref END,
+              (SELECT story_root.thread_ref FROM chat_messages story_root
+                WHERE cm.thread_type = 'message' AND story_root.id = cm.thread_ref
+                  AND story_root.thread_type = 'session'))`;
+const STORY_COLUMNS_SQL = `${STORY_SESSION_SQL} AS story_session_id,
+            COALESCE(
+              CASE WHEN cm.thread_type = 'issue' THEN cm.thread_ref END,
+              (SELECT story_root.thread_ref FROM chat_messages story_root
+                WHERE cm.thread_type = 'message' AND story_root.id = cm.thread_ref
+                  AND story_root.thread_type = 'issue'),
+              (SELECT COALESCE(story_session.created_from_issue_number, story_session.linked_issues[1])
+                 FROM chat_sessions story_session WHERE story_session.id = ${STORY_SESSION_SQL})
+            ) AS story_issue_number,
+            (SELECT bot_card.issue_number FROM homeroom_bot_dm_messages bot_card
+              WHERE bot_card.message_id = conversation_message.thread_root_id) AS bot_thread_issue_number,
+            (SELECT story_session.pr_number FROM chat_sessions story_session
+              WHERE story_session.id = ${STORY_SESSION_SQL}) AS story_pr_number,
+            (SELECT COALESCE(story_session.pr_title, story_session.session_title) FROM chat_sessions story_session
+              WHERE story_session.id = ${STORY_SESSION_SQL}) AS story_title`;
+
+// #5580: a plain message the bell leaves to the Messages screen (#18). The
+// Homeroom bot's reply about a project is the exception: it carries that
+// project (homeroom-bot-dm.js storyAppId), files under it, and counts.
+const PLAIN_MESSAGE_SQL = `(n.kind = 'channel_message' OR (n.kind = 'conversation_message' AND n.app_id IS NULL))`;
 
 const FILED_MESSAGE_JOIN_SQL = `LEFT JOIN chat_bot_requests bot_request
        ON n.kind IN ('first_message', 'channel_message') AND bot_request.chat_message_id = n.chat_message_id
@@ -823,6 +858,23 @@ async function createProposalVoteNotification(pool, { userId, appId, sessionId, 
   return rows;
 }
 
+// The voter took their vote back (DELETE /api/sessions/:id/vote): the
+// author's "X voted yes" row no longer says something true, read or unread,
+// so it goes, as a retracted kudos' row does (routes/kudos.js). Resolves the
+// ids of the people whose bell lost a row, for the caller to re-sync. A vote
+// cast again after this notifies afresh: it is a new vote, and the shared
+// vote limiter (rate-limits.js governanceVoteLimiter) bounds how often.
+async function withdrawProposalVoteNotification(pool, { sessionId, voterId }) {
+  if (!sessionId || !voterId) return [];
+  const { rows } = await pool.query(
+    `DELETE FROM notifications
+      WHERE kind = 'proposal_vote' AND session_id = $1 AND source_user_id = $2
+      RETURNING user_id`,
+    [sessionId, voterId]
+  );
+  return [...new Set(rows.map((r) => r.user_id))];
+}
+
 // The app is unwell: a deploy failed, or it stopped running.
 //
 // Addressed to the people who can actually do something about it, which is
@@ -1022,7 +1074,7 @@ async function createAgentAwaitingInputNotification(pool, { userId, appId }) {
 }
 
 // #161: headless auto-solve completion (kind='auto_solve_done').
-// Always created at runHeadlessSession's terminal writes (no arming —
+// Always created at runHeadlessSessionInner's terminal writes (no arming —
 // starting an auto-solve opts you into its completion notification).
 // `detail` carries the outcome: 'spec' | 'code' | 'spec_code' (#170) |
 // 'question' | 'failed'.
@@ -1166,28 +1218,9 @@ async function notifyManagedOpenRouterReviewAdmins(pool, args) {
   return rows;
 }
 
-// Hydrate one freshly-inserted notification row with the same joins
-// listForUser performs and push it to its recipient over WS as a
-// notification_new. Best-effort: completion notifications ride inside
-// SSE/turn pipelines that must never fail because of a push.
-async function hydrateAndPush(pool, row) {
-  if (!row || !row.id) return;
-  try {
-    const hydrated = await hydrateNotification(pool, row.id);
-    if (!hydrated) return;
-    const { pushNotificationToUser } = require('./ws');
-    pushNotificationToUser(hydrated.userId, { type: 'notification_new', notification: hydrated.notification });
-  } catch (err) {
-    log.warn('notifications', 'hydrateAndPush failed', { id: row.id, err: err.message });
-  }
-}
-
-// One notification as the bell reads it, and whose it is, or null when the
-// viewer may no longer see it. One read: a workflow transition calls it in
-// its transaction and publishes the push itself.
-async function hydrateNotification(q, id) {
-  const { rows } = await q.query(
-    `SELECT n.id, n.kind, n.user_id,
+// The bell's read of notifications (listForUser's joins), for
+// hydrateNotification (one) and hydrateNotifications (a batch).
+const HYDRATE_SELECT_SQL = `SELECT n.id, n.kind, n.user_id,
             CASE WHEN n.read_at IS NULL AND ${DECIDED_ASK_SETTLED_SQL}
                  THEN COALESCE(cs.merged_at, cs.archived_at, n.created_at)
                  ELSE n.read_at END AS read_at,
@@ -1197,6 +1230,7 @@ async function hydrateNotification(q, id) {
             cm.content AS message_content,
             cm.thread_type, cm.thread_ref,
             ${THREAD_ROOT_COLUMNS_SQL},
+            ${STORY_COLUMNS_SQL},
             n.session_id,
             cs.session_title, cs.pr_title, cs.pr_number, cs.headless_issue_number, cs.branch_name,
             cs.agent_session_id,
@@ -1226,12 +1260,90 @@ async function hydrateNotification(q, id) {
        ON conversation_message.id = n.conversation_message_id
      LEFT JOIN users su ON su.id = n.source_user_id
      LEFT JOIN pr_votes pv ON pv.session_id = n.session_id AND pv.user_id = n.source_user_id
-     ${FILED_MESSAGE_JOIN_SQL}
-     WHERE n.id = $1 AND ${CONVERSATION_ACCESS_SQL} AND ${CHAT_SENDER_ACCESS_SQL}`,
-    [id]
+     ${FILED_MESSAGE_JOIN_SQL}`;
+
+// Only what the bell lists (listForUser's own rules: a parked kind, and news
+// about a change that has merged, #4795/#5487), with MERGED_HIDDEN_KINDS as
+// $2. A row it will never list was pushed anyway, drawn, and dropped by the
+// next read of the feed: on 21 Oct 2026 a notification showed in the opened
+// sheet for a moment and then disappeared. The phone push is the
+// mobile_push_deliveries trigger's, at the insert, and is unchanged.
+const HYDRATE_LISTED_SQL = `${CONVERSATION_ACCESS_SQL} AND ${CHAT_SENDER_ACCESS_SQL}
+       AND ${PARKED_KINDS_SQL}
+       AND NOT (n.kind = ANY($2::text[]) AND cs.status IS NOT DISTINCT FROM 'merged')`;
+
+// Hydrate freshly-inserted notification rows with the same joins listForUser
+// performs and push each to its recipient over WS as a notification_new.
+// Best-effort: completion notifications ride inside SSE/turn pipelines that
+// must never fail because of a push.
+//
+// Calls on the same pool in the same turn share one read: a notification to
+// many people is written `Promise.all(rows.map((row) => hydrateAndPush(pool,
+// row)))` (17 places), and each row was its own query, all at once. Up to 93
+// in the same second (a weekly digest), each holding a connection of the
+// caller's pool (22 Oct 2026). Each call still resolves once its row has been
+// pushed, or skipped.
+const pendingPushes = new Map(); // pool -> { ids: Set, done: Promise }
+
+function hydrateAndPush(pool, row) {
+  if (!row || !row.id) return Promise.resolve();
+  let batch = pendingPushes.get(pool);
+  if (!batch) {
+    batch = { ids: new Set() };
+    // Read once the caller's synchronous loop has queued every row.
+    batch.done = Promise.resolve().then(() => pushBatch(pool, batch));
+    pendingPushes.set(pool, batch);
+  }
+  batch.ids.add(Number(row.id));
+  return batch.done;
+}
+
+async function pushBatch(pool, batch) {
+  pendingPushes.delete(pool);
+  const ids = [...batch.ids];
+  try {
+    // A batch of one, the usual push, is the single read it always was.
+    const hydrated = ids.length === 1
+      ? new Map([[ids[0], await hydrateNotification(pool, ids[0])]])
+      : await hydrateNotifications(pool, ids);
+    const { pushNotificationToUser } = require('./ws');
+    for (const id of ids) {
+      const one = hydrated.get(id);
+      if (one) pushNotificationToUser(one.userId, { type: 'notification_new', notification: one.notification });
+    }
+  } catch (err) {
+    log.warn('notifications', 'hydrateAndPush failed', { ids, err: err.message });
+  }
+}
+
+// One notification as the bell reads it, and whose it is, or null when the
+// viewer may no longer see it. One read: a workflow transition calls it in
+// its transaction and publishes the push itself.
+async function hydrateNotification(q, id) {
+  const { rows } = await q.query(
+    `${HYDRATE_SELECT_SQL}
+     WHERE n.id = $1 AND ${HYDRATE_LISTED_SQL}`,
+    [id, MERGED_HIDDEN_KINDS]
   );
   if (!rows.length) return null;
   return { userId: rows[0].user_id, notification: serialize(rows[0]) };
+}
+
+// hydrateNotification for several at once: Map(id -> { userId, notification })
+// of those the bell lists, one read for them all.
+async function hydrateNotifications(q, ids) {
+  const hydrated = new Map();
+  if (!ids.length) return hydrated;
+  const { rows } = await q.query(
+    `${HYDRATE_SELECT_SQL}
+     WHERE n.id = ANY($1::int[]) AND ${HYDRATE_LISTED_SQL}`,
+    [ids, MERGED_HIDDEN_KINDS]
+  );
+  for (const row of rows) {
+    const id = Number(row.id);
+    if (!hydrated.has(id)) hydrated.set(id, { userId: row.user_id, notification: serialize(row) });
+  }
+  return hydrated;
 }
 
 // PR-proposed (vote-request) notification. Fired when a session is
@@ -1560,7 +1672,7 @@ async function listForUser(pool, userId, { limit = 100, before = null, kinds = n
   let unreadClause = '';
   if (unreadOnly) {
     unreadClause = `AND n.read_at IS NULL AND NOT ${DECIDED_ASK_SETTLED_SQL}
-      AND n.kind NOT IN ('conversation_message', 'channel_message')`;
+      AND NOT ${PLAIN_MESSAGE_SQL}`;
   }
   // #4795: a merged change is decided, so the rows that asked you to vote on
   // it or try it leave the list instead of staying as read entries somebody
@@ -1604,6 +1716,7 @@ async function listForUser(pool, userId, { limit = 100, before = null, kinds = n
             cm.content AS message_content,
             cm.thread_type, cm.thread_ref,
             ${THREAD_ROOT_COLUMNS_SQL},
+            ${STORY_COLUMNS_SQL},
             n.session_id,
             cs.session_title, cs.pr_title, cs.pr_number, cs.headless_issue_number, cs.branch_name,
             cs.agent_session_id,
@@ -1664,6 +1777,7 @@ async function getForUser(pool, userId, id) {
             cm.content AS message_content,
             cm.thread_type, cm.thread_ref,
             ${THREAD_ROOT_COLUMNS_SQL},
+            ${STORY_COLUMNS_SQL},
             n.session_id,
             cs.session_title, cs.pr_title, cs.pr_number, cs.headless_issue_number, cs.branch_name,
             cs.agent_session_id,
@@ -1756,7 +1870,7 @@ const MESSAGE_KINDS = ['conversation_message', 'channel_message'];
 
 async function countUnreadSplit(pool, userId) {
   const { rows } = await pool.query(
-    `SELECT (COUNT(*) FILTER (WHERE n.kind = ANY($3::text[])))::int AS m,
+    `SELECT (COUNT(*) FILTER (WHERE ${PLAIN_MESSAGE_SQL}))::int AS m,
             COUNT(*)::int AS c FROM notifications AS n
       WHERE n.user_id = $1 AND n.read_at IS NULL
         AND NOT ${DECIDED_ASK_SETTLED_SQL}
@@ -1765,7 +1879,7 @@ async function countUnreadSplit(pool, userId) {
         AND NOT (n.kind = ANY($2::text[]) AND EXISTS (
               SELECT 1 FROM chat_sessions s
                WHERE s.id = n.session_id AND s.status = 'merged'))`,
-    [userId, MERGED_HIDDEN_KINDS, MESSAGE_KINDS]
+    [userId, MERGED_HIDDEN_KINDS]
   );
   return { unread: rows[0]?.c || 0, messageUnread: rows[0]?.m || 0 };
 }
@@ -2027,7 +2141,20 @@ async function markReadForConversation(pool, userId, conversationId) {
 // Single-id and mark-all clears. Returns rows actually cleared (like the
 // scoped helpers above) so the route can decide whether to fan out a
 // cross-tab `notifications_changed` refresh.
-async function markRead(pool, userId, { id, all = false, kinds = null, excludeKinds = null } = {}) {
+async function markRead(pool, userId, { id, ids = null, all = false, kinds = null, excludeKinds = null } = {}) {
+  // One clear that is several notifications (a story card, a folded row, a
+  // conversation run): one statement, so the count the route reads back
+  // after it is the count after all of them. One request per member raced:
+  // each answer counted before the others had committed, and the last to
+  // land put a higher count back on the bell after the clear (21 Oct 2026).
+  if (Array.isArray(ids) && ids.length) {
+    const { rowCount } = await pool.query(
+      `UPDATE notifications SET read_at = NOW()
+        WHERE user_id = $1 AND id = ANY($2::int[]) AND read_at IS NULL`,
+      [userId, ids]
+    );
+    return rowCount || 0;
+  }
   if (all) {
     // Optional kind scoping for the split drawers: the header cog's
     // "Mark all read" sends kinds=[the session-related set] so it only
@@ -2109,6 +2236,11 @@ function notificationHref(row) {
 // messageContent, mention rows ignore sessionId / prTitle.
 function serialize(row) {
   const isConversation = CONVERSATION_NOTIFICATION_KINDS.has(row.kind);
+  // #5580: the Homeroom bot's news about a project carries that project
+  // (conversations.sendMessage's notificationAppId), so the bell files it
+  // there. Only the project's name and id come through: it still routes,
+  // reads and pushes as the conversation row it is.
+  const botProject = isConversation && row.app_id != null && row.source_username === HOMEROOM_BOT_USERNAME;
   return {
     id: row.id,
     kind: row.kind,
@@ -2116,10 +2248,22 @@ function serialize(row) {
     createdAt: row.created_at,
     // Fail closed if a malformed conversation row also carries legacy app
     // references: private messaging must never route through or render as an
-    // app chat notification.
-    appId: isConversation ? null : row.app_id,
-    appSlug: isConversation ? null : row.app_slug,
-    appName: isConversation ? null : row.app_name,
+    // app chat notification. The bot's own rows are the one exception above.
+    appId: isConversation ? (botProject ? row.app_id : null) : row.app_id,
+    appSlug: isConversation ? (botProject ? row.app_slug : null) : row.app_slug,
+    appName: isConversation ? (botProject ? row.app_name : null) : row.app_name,
+    // #5580: the request and proposal this row is about (STORY_COLUMNS_SQL),
+    // which the sheet folds one story's news by. The bot's own rows name
+    // their request in `detail`, or, for a reply in a request's thread, by
+    // that thread's card; any other conversation row is about neither.
+    storyIssueNumber: botProject
+      ? (notifyCopy.parseBotDetail(row.detail)?.issueNumber || (row.bot_thread_issue_number != null ? Number(row.bot_thread_issue_number) : null))
+      : (!isConversation && row.story_issue_number != null ? Number(row.story_issue_number) : null),
+    storySessionId: !isConversation && row.story_session_id != null ? Number(row.story_session_id) : null,
+    // The proposal's number and name, so a message in its discussion can say
+    // what it is on ("on #5588").
+    storyPrNumber: !isConversation && row.story_pr_number != null ? Number(row.story_pr_number) : null,
+    storyTitle: !isConversation ? (row.story_title || null) : null,
     chatMessageId: isConversation ? null : row.chat_message_id,
     conversationId: isConversation ? row.conversation_id : null,
     conversationKind: isConversation ? (row.conversation_kind || null) : null,
@@ -2208,6 +2352,7 @@ module.exports = {
   notifyIssueMentions,
   notifyIssueFiled,
   createProposalVoteNotification,
+  withdrawProposalVoteNotification,
   createRevisionRecheckNotifications,
   createAppHealthNotification,
   createPlatformLimitNotifications,
@@ -2223,6 +2368,11 @@ module.exports = {
   notifyManagedOpenRouterReviewAdmins,
   hydrateAndPush,
   hydrateNotification,
+  hydrateNotifications,
+  // Shared by the WebSocket delivery query so hydration and its access
+  // predicates run in the same snapshot as the recipient's live session.
+  HYDRATE_SELECT_SQL,
+  HYDRATE_LISTED_SQL,
   createPrProposedNotifications,
   createChangeReadyNotifications,
   createAppDeleteAttemptNotifications,

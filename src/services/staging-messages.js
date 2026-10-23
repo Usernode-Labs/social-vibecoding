@@ -480,6 +480,9 @@ const BOT_DM_TWO_QUESTIONS_KEY = 'staging-hrbot-two-questions';
 // fixture too: Build it names an action no row stands behind.
 const BOT_DM_COMPLICATED_PLAN_KEY = 'staging-hrbot-complicated-plan';
 const BOT_DM_COMPLICATED_PLAN_ACTION_ID = 990003;
+// 20 Oct 2026: and the plan it asks about, which its card shows: the shared
+// spec version src/db/migrate.js seedStagingComplicatedPlanSpec writes.
+const BOT_DM_COMPLICATED_PLAN_SPEC = Object.freeze({ sessionId: 900832, version: 1 });
 // #4046: and a first version's plan its maker already built, which the
 // card that follows its build sits under.
 const BOT_DM_BUILT_PLAN_KEY = 'staging-hrbot-plan-built';
@@ -663,6 +666,7 @@ async function ensureBotDmFixture(pool, user) {
       ],
       questions: [{ question: 'Who shows on the leaderboard?', answers: ['Everyone in the project', 'Only people who opt in'] }],
       complicated: true,
+      spec: { ...BOT_DM_COMPLICATED_PLAN_SPEC },
     };
     await conversations.sendMessage(pool, { id: bot.id }, opened.conversationId, {
       content: require('./homeroom-bot-dm').planCardText({ appName: 'Staging demo app', plan, issueNumber: 17 }),

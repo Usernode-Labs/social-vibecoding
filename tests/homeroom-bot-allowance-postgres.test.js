@@ -73,15 +73,9 @@ test('weekly building time against the full PostgreSQL schema', { timeout: 18000
   // What the lane would grant on the project (no app paused).
   const candidates = async () => (await pool.query(rules.READ_CANDIDATES_SQL, [null, []])).rows
     .filter((r) => Number(r.app_id) === Number(app.id)).map((r) => Number(r.issue_number));
-  // A queue row an older release wrote, adopted by its request's machine.
-  const adopt = async (q) => {
-    await rt.append(requestMachine.MACHINE, rules.requestKey(app.id, q.issue_number), {
-      type: 'Adopted', payload: {
-        appId: app.id, issueNumber: q.issue_number, reason: q.reason, priority: q.priority,
-        enqueuedAt: q.enqueued_at.toISOString(), heldUntil: q.held_until ? q.held_until.toISOString() : null,
-      },
-    }, { requestKey: `adopt:${q.id}`, source: { kind: 'system', name: 'adopt' } });
-    await rt.drain();
+  // A queue row with its request's instance, as the machine leaves one.
+  const adopt = async () => {
+    await require('./lib/bot-request-fixture').seedRequests(pool, { appId: app.id });
   };
 
   await t.test('a held request keeps its place through every refresh, and the live queue waits for Monday', async () => {

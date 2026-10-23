@@ -41,7 +41,8 @@ test('reads asked for in the same moment share one network request; a late read 
   assert.match(src, /startFetch: \(\) => sharedApiFetch\(event\.request\)\.then/);
   // Any write, a logout included, clears the map before anything else runs.
   const handler = src.slice(src.indexOf("self.addEventListener('fetch'"));
-  assert.match(handler, /const req = event\.request;\s*\/\/[^\n]*\n\s*\/\/[^\n]*\n\s*if \(req\.method !== 'GET' && req\.method !== 'HEAD'\) inflightApi\.clear\(\);\s*\/\/ Belt-and-braces logout isolation/);
+  assert.match(handler, /if \(req\.method !== 'GET' && req\.method !== 'HEAD'\) inflightApi\.clear\(\);/);
+  assert.ok(handler.indexOf('inflightApi.clear();') < handler.indexOf('clearApiCaches()'));
 
   // The same logic, run against a clock and a network the test controls.
   const inflightApi = new Map();
@@ -51,7 +52,7 @@ test('reads asked for in the same moment share one network request; a late read 
   const fetch = () => new Promise((resolve) => { answers.push(resolve); });
   // eslint-disable-next-line no-new-func
   const sharedApiFetch = new Function('inflightApi', 'fetch', 'API_SHARE_WINDOW_MS', 'Date', `${fn}; return sharedApiFetch;`)(inflightApi, fetch, 100, clock);
-  const req = { url: 'https://x.example/api/notifications?limit=100' };
+  const req = new Request('https://x.example/api/notifications?limit=100');
 
   const a = sharedApiFetch(req);
   now += 40;

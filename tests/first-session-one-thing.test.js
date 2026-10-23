@@ -129,7 +129,7 @@ test('questions: the project, then the questions and Submit, with no planning li
   assert.match(CODE, /const rowHidden = settingUp \|\| ranInPlace \|\| !ownLine;/);
   assert.match(CODE, /\{rowHidden \? null : \(\s+<div data-first-session-build-row=""/);
   // The first look card is the invite ask's, never over the questions.
-  assert.match(CODE, /\{firstLook \? <FirstLookCard src=\{lookShown\} name=\{made\.name\} progress=\{lookProgress\} onBroken=\{setBrokenLook\} phone=\{!lookInCard\} \/> : null\}/);
+  assert.match(CODE, /\{firstLook \? <FirstLookCard src=\{lookShown\} name=\{made\.name\} progress=\{lookProgress\} onBroken=\{setBrokenLook\} phone=\{!lookInCard\} onOpen=\{\(\) => onOpenChat\(made\.conversationId\)\} \/> : null\}/);
 });
 
 test('after Submit: one card carries the first look and the setup, under the project card, which stays as it is', () => {
@@ -146,7 +146,7 @@ test('after Submit: one card carries the first look and the setup, under the pro
   // No picture yet: a calm phone outline with a band of light, then the
   // small caps kicker, the title, and the setup's ring, step and estimate.
   const drawing = card({ progress: SETUP(3) });
-  assert.match(drawing, /^<section data-made-first-look="drawing" aria-labelledby="made-first-look-title">/);
+  assert.match(drawing, /^<section data-made-first-look="drawing" aria-labelledby="made-first-look-title" class="relative">/);
   assert.match(drawing, /data-made-first-look-phone="drawing"/);
   assert.match(drawing, /motion-safe:animate-card-sweep/);
   assert.doesNotMatch(drawing, /<img/);
@@ -178,6 +178,12 @@ test('after Submit: one card carries the first look and the setup, under the pro
   const asks = card({ progress: { setup: false, words: 'Your plan is ready to review', note: 'It’s set up.', busy: false, asks: true } });
   assert.match(asks, /text-\[color:var\(--accent\)\]">Your plan is ready to review<\/p>/);
   assert.doesNotMatch(asks, /data-progress-ring-spinning/);
+  assert.doesNotMatch(asks, /--state-ok/, 'a plan that waits is not made yet');
+  // Ready or live, the full ring is green (20 Oct 2026: "the ring when it's
+  // done making should be green"), as a finished progress bar is.
+  const live = card({ progress: { setup: false, words: 'Live', note: 'It’s set up.', busy: false, asks: false, finished: true } });
+  assert.match(live, /stroke-\[color:var\(--state-ok\)\]/);
+  assert.doesNotMatch(live, /stroke-zinc-400|data-progress-ring-spinning/);
 
   // One height whatever it shows, so nothing under it moves: the same row,
   // the same phone, the same status row.

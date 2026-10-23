@@ -12,6 +12,7 @@ const attachmentsSvc = require('./attachments');
 const appChat = require('./app-chat');
 const groupChannelNotify = require('./group-channel-notify');
 const wsBus = require('./ws-bus');
+const { createDelivery } = require('./ws-delivery');
 
 // #328: server-side cap on a single chat message body. Must match the
 // composer `maxlength` (GC_MAX_MESSAGE_LEN in public/js/group-chat.js) — both
@@ -29,6 +30,32 @@ let wss;
 let _pool = null;
 const rooms = new Map(); // appId -> Set<{ ws, user }>
 const globalClients = new Set(); // Set<{ ws, user }> for /ws/events
+const delivery = createDelivery({
+  getPool: () => _pool,
+  send: (client, json) => {
+    if (globalClients.has(client)) writeToEventsClient(client, json);
+    else if (rooms.get(client.appId)?.has(client)) client.ws.send(json);
+  },
+  refuse: (client, reason) => {
+    globalClients.delete(client);
+    unwatchAllSessions(client);
+    laggingClients.delete(client);
+    if (client.appId != null) leaveRoom(client.appId, client);
+    try {
+      if (reason === 'identity') client.ws.close(4001, 'Sign in required');
+      else if (reason === 'app') client.ws.close(4004, 'App not found');
+      else client.ws.close(1013, 'Reconnect to resume');
+    } catch { client.ws.terminate(); }
+  },
+  onError: () => log.warn('ws', 'Delivery authority unavailable'),
+});
+
+function revalidateClients() {
+  for (const client of globalClients) delivery.enqueue(client, null);
+  for (const [appId, room] of rooms) {
+    for (const client of room) delivery.enqueue(client, null, { appRequired: true, appId });
+  }
+}
 
 // A message from ANOTHER instance. Route it through the same local delivery
 // the emitting pod already ran, so one code path decides who may see what.
@@ -41,14 +68,6 @@ function _onBusMessage({ kind, routing, data, oversize, fromWorkflow }) {
   const r = routing || {};
   const payload = oversize ? { type: 'resync_hint' } : data;
   if (payload == null) return;
-  // A workflow machine names a notification instead of carrying it: the
-  // relay reads it for the recipient's open tabs, outside the transition
-  // that created it (src/workflow/merge-followups/machine.ts).
-  if (fromWorkflow && kind === 'user' && !oversize && payload.type === 'notification_new'
-      && payload.notificationId != null && !payload.notification) {
-    relayNotification(r.userId, payload.notificationId);
-    return;
-  }
   switch (kind) {
     case 'global':
       deliverGlobal(payload);
@@ -70,7 +89,7 @@ function _onBusMessage({ kind, routing, data, oversize, fromWorkflow }) {
       deliverToAdmins(payload);
       return;
     case 'user':
-      if (r.userId != null) deliverToUser(r.userId, payload);
+      if (r.userId != null) deliverToUser(r.userId, payload, { actorUserId: r.actorUserId });
       return;
     case 'session':
       // #4318: the same routing the emitting pod ran, against THIS pod's
@@ -80,10 +99,6 @@ function _onBusMessage({ kind, routing, data, oversize, fromWorkflow }) {
     case 'account_deleted':
       void require('./account-deletion-runtime').receive(_pool, r.userId)
         .catch(() => log.warn('ws', 'Account stream cleanup will retry'));
-      return;
-    case 'agent_stop':
-      if (!oversize) void require('./mayor/agent-turn').receiveStopRequest(_pool, payload)
-        .catch(() => log.warn('ws', 'Agent stop notification will retry from durable state'));
       return;
     case 'issues_closed':
       // From a workflow transition only: issues it closed on GitHub, for
@@ -111,6 +126,7 @@ function _onBusMessage({ kind, routing, data, oversize, fromWorkflow }) {
           require('./app-admins').invalidateAppAdminsHere(null);
         }
       }
+      revalidateClients();
       return;
     case 'issues_cache':
       // What another process learned of a repo's issues (github.js
@@ -118,32 +134,13 @@ function _onBusMessage({ kind, routing, data, oversize, fromWorkflow }) {
       // sockets: the sender's issue_update tells browsers to re-read.
       if (!oversize && r.owner && r.repo) require('./github').applyIssuesChange(r.owner, r.repo, payload);
       return;
-    case 'homeroom_bot':
-      // An older release's wake for the bot's loop, which is the workflow's
-      // now (bot-request, bot-lane): nothing to do.
-      return;
-    // Stops for work another platform process runs (docs/plans/
-    // draining-releases.md): the process that holds it does what a stop in
-    // its own process does; every other one finds nothing and ignores it.
-    // Never a socket event, and the sender has already checked who may stop.
-    case 'session_stop':
-      if (!oversize) void Promise.resolve(require('../routes/sessions').receiveSessionStop?.(payload))
-        .catch((err) => log.warn('ws', 'A stop for a turn here failed', { err: err.message }));
+    // A turn's stream has a new row (services/session-bus.js): this
+    // process's subscribers to it read on. Never a socket event.
+    case 'stream':
+      if (fromWorkflow && r.key != null) require('./session-bus').wake(r.key, Number(r.id) || null);
       return;
     case 'turn_byok':
       if (!oversize) require('./worker').receiveTurnByok(payload);
-      return;
-    case 'bench_cancel':
-      if (!oversize) void Promise.resolve(require('./bench/lane').receiveCancel(payload))
-        .catch((err) => log.warn('ws', 'A bench cancel here failed', { err: err.message }));
-      return;
-    // Wakes for the leader's loops, asked by a process that does not run
-    // them (docs/plans/web-and-conductor.md): the one running each passes.
-    case 'bench_wake':
-      require('./bench/lane').wakeHere();
-      return;
-    case 'shots_eval_wake':
-      require('./shots-eval-runner').wakeHere();
       return;
     default:
       log.warn('ws', 'unknown bus kind', { kind });
@@ -171,6 +168,7 @@ function _onBusListening() {
   const hint = { type: 'resync_hint' };
   deliverGlobal(hint);
   for (const appId of rooms.keys()) deliverToRoom(appId, hint);
+  revalidateClients();
 }
 
 // The Homeroom bot follows issue activity. Best-effort by construction: the
@@ -246,9 +244,11 @@ function connectedUserIds() {
 //     seconds, so only a script reaches it, and over it the frame is
 //     dropped without a word: nobody needs telling that a typing dot was
 //     not shown.
-// In process, which is exact at the one replica the platform ships with; at
-// several, each pod counts its own sockets. The Postgres token bucket is not
-// worth a round trip per typing frame.
+// In process: each web Pod counts its own sockets, and a deploy starts the
+// windows again. These bound a runaway client; only a limiter that gates a
+// send, a bill or a guess shares its count across processes
+// (services/rate-limit-store.js), and a round trip per typing frame is not
+// worth it.
 const SOCKET_RATE_WINDOW_MS = 60 * 1000;
 const SOCKET_RATE_BUDGETS = Object.freeze({
   chat: Object.freeze({ bucket: 'write', max: 60 }),
@@ -344,6 +344,7 @@ function attach(server, config) {
   // Also reconcile after a missed NOTIFY or reconnect. This includes HTTP
   // streams; the timer runs on every pod, independently of leader duties.
   const revocationTimer = setInterval(() => {
+    revalidateClients();
     void require('./account-deletion-runtime').reconcile(pool)
       .catch(() => log.warn('ws', 'Account revocation check unavailable'));
   }, 30_000);
@@ -391,20 +392,19 @@ function attach(server, config) {
       return;
     }
 
-    const user = await authenticateWs(req, pool, config);
-    if (!user) {
+    const identity = await authenticateWs(req, pool, config);
+    if (!identity) {
       socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
       socket.destroy();
       return;
     }
+    const { user, auth } = identity;
 
     if (req.url?.startsWith('/ws/events')) {
       wss.handleUpgrade(req, socket, head, (ws) => {
-        const client = { ws, user };
+        const client = { ws, user, auth };
         globalClients.add(client);
-        void pool.query('SELECT id FROM users WHERE id = $1 AND anonymised_at IS NULL', [user.id])
-          .then(result => { if (!result.rows.length) disconnectUser(user.id); })
-          .catch(() => disconnectUser(user.id));
+        void delivery.check(client);
         log.debug('ws', 'Global events client connected', { userId: user.id });
         // Which build this socket landed on — see sendPlatformVersion. A tab
         // whose socket comes back after a rollout learns the new build from
@@ -433,7 +433,7 @@ function attach(server, config) {
       if (!appSlug) { socket.destroy(); return; }
 
       wss.handleUpgrade(req, socket, head, (ws) => {
-        wss.emit('connection', ws, req, { user, appSlug });
+        wss.emit('connection', ws, req, { user, auth, appSlug });
       });
       return;
     }
@@ -441,7 +441,7 @@ function attach(server, config) {
     socket.destroy();
   });
 
-  wss.on('connection', async (ws, req, { user, appSlug }) => {
+  wss.on('connection', async (ws, req, { user, auth, appSlug }) => {
     const app = await resolveAppForAccess(pool, appSlug);
     if (!app) {
       ws.close(4004, 'App not found');
@@ -460,24 +460,27 @@ function attach(server, config) {
     }
     const appId = app.id;
 
-    const client = { ws, user, appId, appSlug };
+    const client = { ws, user, auth, appId, appSlug };
     joinRoom(appId, client);
-    const live = await pool.query('SELECT id FROM users WHERE id = $1 AND anonymised_at IS NULL', [user.id]).catch(() => ({ rows: [] }));
-    if (!live.rows.length) { disconnectUser(user.id); return; }
+    if (!await delivery.check(client, { appRequired: true, appId })) return;
 
     log.info('ws', 'Client connected', { userId: user.id, appSlug });
 
     ws.on('message', async (raw) => {
+      let msg = null;
       try {
-        const msg = JSON.parse(raw);
+        msg = JSON.parse(raw);
         // The rate check comes first, so a frame over the budget costs no
         // query at all (see admitSocketFrame).
         if (!admitSocketFrame(client, msg)) return;
-        const live = await pool.query('SELECT id FROM users WHERE id = $1 AND anonymised_at IS NULL', [user.id]);
-        if (!live.rows.length) { disconnectUser(user.id); return; }
-        await handleMessage(pool, client, msg);
+        const currentUser = await delivery.check(client, { appRequired: true, appId });
+        if (!currentUser) return;
+        await handleMessage(pool, { ...client, user: currentUser }, msg);
       } catch (err) {
         log.warn('ws', 'Invalid message', { err: err.message });
+        // A chat message that failed before it was written was not posted
+        // either.
+        if (!storedChats.has(msg)) refuseChat(client, msg, 'send_failed');
       }
     });
 
@@ -518,7 +521,7 @@ async function authenticateWsCookie(req, pool) {
     const { rows } = await pool.query(
       `SELECT s.user_id, s.expires_at, u.username, u.is_admin
        FROM sessions s JOIN users u ON s.user_id = u.id
-       WHERE s.token = $1 AND ${nativeWebSessionIsLive('s')}`,
+       WHERE s.token = $1 AND u.anonymised_at IS NULL AND ${nativeWebSessionIsLive('s')}`,
       [token]
     );
 
@@ -526,7 +529,10 @@ async function authenticateWsCookie(req, pool) {
       return null;
     }
 
-    return { id: rows[0].user_id, username: rows[0].username, isAdmin: rows[0].is_admin };
+    return {
+      user: { id: rows[0].user_id, username: rows[0].username, isAdmin: rows[0].is_admin },
+      auth: { kind: 'cookie', token },
+    };
   } catch {
     return null;
   }
@@ -560,7 +566,7 @@ async function authenticateWsStagingJwt(req, pool, config) {
     // user from the local (cloned) users table and refuse on a username
     // mismatch (token minted before a rename).
     const { rows } = await pool.query(
-      'SELECT id, username, is_admin FROM users WHERE id = $1',
+      'SELECT id, username, is_admin FROM users WHERE id = $1 AND anonymised_at IS NULL',
       [payload.id]
     );
     if (rows.length === 0) return null;
@@ -568,7 +574,10 @@ async function authenticateWsStagingJwt(req, pool, config) {
       return null;
     }
 
-    return { id: rows[0].id, username: rows[0].username, isAdmin: rows[0].is_admin };
+    return {
+      user: { id: rows[0].id, username: rows[0].username, isAdmin: rows[0].is_admin },
+      auth: { kind: 'staging', token },
+    };
   } catch {
     return null;
   }
@@ -629,12 +638,12 @@ function deliverToRoom(appId, data, excludeWs = null, audience = {}) {
     if (client.ws !== excludeWs && client.ws.readyState === 1 && !hidden.has(client.user.id)) {
       const reactions = reactionVariants[client.user.id];
       if (Object.prototype.hasOwnProperty.call(threadVariants, client.user.id)) {
-        client.ws.send(JSON.stringify({ ...data, thread: threadVariants[client.user.id] }));
+        delivery.enqueue(client, JSON.stringify({ ...data, thread: threadVariants[client.user.id] }), { appRequired: true, appId });
         continue;
       }
-      client.ws.send(reactions
+      delivery.enqueue(client, reactions
         ? JSON.stringify({ ...data, reactions })
-        : (withoutQuote && quoteHidden.has(client.user.id) ? withoutQuote : payload));
+        : (withoutQuote && quoteHidden.has(client.user.id) ? withoutQuote : payload), { appRequired: true, appId });
     }
   }
 }
@@ -728,15 +737,22 @@ async function broadcastThreadSummary(pool, appId, rootId, senderId) {
   }
 }
 
-// Broadcast to all connected clients (global events like app status changes)
+// Only these projected, platform-wide facts may bypass a private audience.
+// Legacy peers may still publish deployment status as global during a
+// rolling release: route it through the same project gate as new producers.
 function deliverGlobal(data) {
-  const payload = JSON.stringify(data);
+  if (data?.type === 'app_redeploy_status') {
+    deliverGlobalScoped(data, { appSlug: data.appSlug });
+    return 0;
+  }
+  let publicData;
+  if (data?.type === 'resync_hint') publicData = { type: 'resync_hint' };
+  else if (data?.type === 'platform_version') publicData = platformVersionPayload(data.sha, data.reason);
+  else return 0;
+  const payload = JSON.stringify(publicData);
   let sent = 0;
   for (const client of globalClients) {
-    if (sendToEventsClient(client, payload)) sent++;
-  }
-  if (data.event === 'cc_progress' && sent === 0 && globalClients.size === 0) {
-    log.debug('ws', 'broadcastGlobal: no clients connected');
+    if (writeToEventsClient(client, payload)) sent++;
   }
   return sent;
 }
@@ -746,10 +762,15 @@ function broadcastGlobal(data) {
   // every socket on the platform. Every caller that streams a run (agent
   // runs, Mayor turns, checks, previews, sync-main, recovery) reaches it
   // through here, so the routing is decided in one place.
-  if (data && data.type === 'session_event' && positiveSessionId(data.sessionId) != null) {
-    broadcastSessionEvent(data);
+  if (data?.type === 'session_event') {
+    if (positiveSessionId(data.sessionId) != null) broadcastSessionEvent(data);
     return;
   }
+  if (data?.type === 'app_redeploy_status') {
+    broadcastGlobalScoped(data, { appSlug: data.appSlug });
+    return;
+  }
+  if (!['resync_hint', 'platform_version'].includes(data?.type)) return;
   deliverGlobal(data);
   wsBus.publish('global', null, data);
 }
@@ -774,9 +795,9 @@ function broadcastGlobal(data) {
 //     its "is this the open session" gate; every other event it drops
 //     unless DevChat has that session open.
 //
-// The owner and app are read once per session (sessionMetaFor, cached),
-// not per event. The bus carries the resolved routing, and the receiving
-// pod applies it against its own sockets and its own watch list.
+// Cached owner/app metadata and the bus routing select candidates. The
+// receiving pod checks current identity, session ownership and app access
+// against PostgreSQL before disclosing anything to its own sockets.
 const SESSION_FANOUT_EVENTS = new Set(['checks_ready', 'staging_ready', 'staging_failed']);
 const MAX_WATCHED_SESSIONS_PER_SOCKET = 16;
 const sessionWatchers = new Map(); // sessionId -> Set<client>
@@ -850,6 +871,7 @@ function sessionRouting(sessionId, meta, data) {
 function broadcastSessionEvent(data) {
   const sessionId = positiveSessionId(data.sessionId);
   const run = (meta) => {
+    if (!meta) return;
     const routing = sessionRouting(sessionId, meta, data);
     deliverSessionEvent(data, routing);
     // One queue per session, so a run's stream costs a few NOTIFYs a
@@ -876,6 +898,7 @@ function deliverSessionEvent(data, routing) {
   const r = routing || {};
   const sessionId = positiveSessionId(r.sessionId);
   if (sessionId == null) return;
+  if (data.type === 'session_event' && positiveSessionId(data.sessionId) !== sessionId) return;
   const json = JSON.stringify(data);
   const targets = new Set(sessionWatchers.get(sessionId) || []);
   if (r.userId != null) {
@@ -884,32 +907,16 @@ function deliverSessionEvent(data, routing) {
       if (Number(client.user.id) === ownerId) targets.add(client);
     }
   }
-  // The session's own audience first and synchronously, so its stream stays
-  // in order with the session's other events.
-  for (const client of targets) sendToEventsClient(client, json);
-  if (!r.fanout) return;
-  // Lists and boards: everyone who may view the app. With no app resolved
-  // (the lookup failed) this falls back to what every session event did
-  // before #4318 — the event names a session and nothing else.
-  if ((r.appId == null && !r.appSlug) || !_pool) {
-    for (const client of globalClients) {
-      if (!targets.has(client)) sendToEventsClient(client, json);
-    }
-    return;
+  // Routing is a candidate list, never authorization. The delivery query
+  // reads the session's CURRENT owner and app, and checks current project
+  // access even for its owner or a tab that watched before access changed.
+  // A missing/failed lookup cannot turn this into a global event.
+  const fanout = !!r.fanout && (data.type === 'resync_hint' || sessionEventAudience(data) === 'app');
+  if (fanout && r.appId == null && !r.appSlug) return;
+  if (fanout) for (const client of globalClients) targets.add(client);
+  for (const client of targets) {
+    sendToEventsClient(client, json, { sessionId, watching: !!client.watching?.has(sessionId), fanout });
   }
-  appAccess.getWsVisibility(_pool, { appId: r.appId, appSlug: r.appSlug })
-    .then((info) => {
-      if (!info || info.suspended) return;
-      for (const client of globalClients) {
-        if (targets.has(client)) continue;
-        if (info.blockedUserIds?.has(client.user.id)) continue;
-        if (info.viewPrivate && !client.user.isAdmin && !info.memberIds?.has(client.user.id)) continue;
-        sendToEventsClient(client, json);
-      }
-    })
-    .catch((err) => {
-      log.warn('ws', 'session event fan-out dropped', { event: data.event, err: err.message });
-    });
 }
 
 // Who may watch a session's live events: exactly who may open its live
@@ -918,12 +925,6 @@ function deliverSessionEvent(data, routing) {
 function canWatchSessionRow(row, user) {
   if (!row || !user) return false;
   return !!user.isAdmin || (row.user_id != null && Number(row.user_id) === Number(user.id));
-}
-
-async function canWatchSession(pool, user, sessionId) {
-  const { rows } = await pool.query(
-    'SELECT user_id FROM chat_sessions WHERE id = $1', [sessionId]);
-  return canWatchSessionRow(rows[0], user);
 }
 
 function watchSession(client, sessionId) {
@@ -992,7 +993,7 @@ async function handleEventsFrame(pool, client, raw) {
   client.wantWatch.set(sessionId, token);
   let allowed = false;
   try {
-    allowed = await canWatchSession(pool, client.user, sessionId);
+    allowed = await delivery.check(client, { sessionId, watchRequest: true });
   } catch (err) {
     log.warn('ws', 'session watch check failed', { sessionId, err: err.message });
   }
@@ -1021,7 +1022,16 @@ const LAGGING_CHECK_MS = 1000;
 const laggingClients = new Set();
 let laggingTimer = null;
 
-function sendToEventsClient(client, json) {
+function sendToEventsClient(client, json, scope = {}) {
+  if (!client.ws || client.ws.readyState !== 1) return false;
+  if (client.lagging || Number(client.ws.bufferedAmount) > SLOW_CLIENT_MAX_BUFFERED) {
+    markLagging(client);
+    return false;
+  }
+  return delivery.enqueue(client, json, scope);
+}
+
+function writeToEventsClient(client, json) {
   const socket = client && client.ws;
   if (!socket || socket.readyState !== 1) return false;
   if (client.lagging || Number(socket.bufferedAmount) > SLOW_CLIENT_MAX_BUFFERED) {
@@ -1170,10 +1180,32 @@ async function validateThread(pool, appId, thread, viewerId = null) {
 // #621: mutating message types require collab access. Re-checked per
 // message (not cached at connect) so a membership revocation takes
 // effect immediately — chat rates are low and the lookup is a single
-// indexed query. Dropped silently server-side (same pattern as the
-// invalid-thread drop): read-only clients don't render these controls,
-// so anything arriving here is a stale or hostile client.
+// indexed query. Read-only clients don't render these controls, so an
+// edit, a reaction or a typing ping arriving here is dropped silently; a
+// chat message is answered (refuseChat below).
 const WRITE_MSG_TYPES = new Set(['chat', 'edit', 'react', 'typing']);
+
+// A chat message this server will not post. The composer that sent it
+// emptied as it left, so a refusal nobody answered was a message that
+// simply vanished (feedback, 21 Oct 2026: a reply on a change's page, sent
+// to another app's socket, refused as `invalid_thread`). Answered on the
+// sender's socket like `channel_moved`, and public/js/group-chat.js says it
+// was not sent. `message` only where the person can act on it; the client
+// words the rest. The REST write route has no socket and answers in HTTP.
+const NOT_COLLABORATOR_MESSAGE = 'Only collaborators can post here.';
+
+// The chat messages handleMessage has written, so a failure after the row
+// (its broadcast, say) is never answered as a message that was not sent.
+const storedChats = new WeakSet();
+
+function refuseChat(client, msg, code, message = null) {
+  if (!msg || msg.type !== 'chat') return;
+  try {
+    if (client.ws && client.ws.readyState === 1) {
+      client.ws.send(JSON.stringify({ type: 'error', code, ...(message ? { message } : {}) }));
+    }
+  } catch { /* a closed socket has nobody to tell */ }
+}
 
 async function canWriteChat(pool, client) {
   if (await require('./moderation').isRestricted(pool, client.user.id)) return false;
@@ -1194,17 +1226,20 @@ async function handleMessage(pool, client, msg) {
       log.warn('ws', 'write message dropped: access check failed', {
         appId: client.appId, userId: client.user.id, type: msg.type, err: err.message,
       });
+      refuseChat(client, msg, 'write_access_failed');
       return { ok: false, code: 'write_access_failed' };
     }
     if (!allowed) {
       log.warn('ws', 'write message dropped: not a collaborator', {
         appId: client.appId, userId: client.user.id, type: msg.type,
       });
+      refuseChat(client, msg, 'not_collaborator', NOT_COLLABORATOR_MESSAGE);
       return { ok: false, code: 'not_collaborator' };
     }
   }
   // Posting in an app's chat is for the members of its community
-  // (services/communities.js). Unlike the drops above, this one is ANSWERED:
+  // (services/communities.js). Like every refused chat message, this is
+  // ANSWERED, and with a question:
   // the sender is a legitimate client whose composer does not know they have
   // not joined, so the refusal goes back to that one socket as a
   // `join_required` frame carrying the message, and the composer
@@ -1218,6 +1253,7 @@ async function handleMessage(pool, client, msg) {
       log.warn('ws', 'chat message dropped: membership check failed', {
         appId: client.appId, userId: client.user.id, err: err.message,
       });
+      refuseChat(client, msg, 'write_access_failed');
       return { ok: false, code: 'write_access_failed' };
     }
     if (join) {
@@ -1272,6 +1308,7 @@ async function handleMessage(pool, client, msg) {
         log.warn('ws', 'chat message dropped: bad attachment ids', {
           appId: client.appId, userId: client.user.id,
         });
+        refuseChat(client, msg, 'invalid_attachment_ids');
         return { ok: false, code: 'invalid_attachment_ids' };
       }
       // An attachments-only send is allowed (#694): content stays ''
@@ -1281,8 +1318,8 @@ async function handleMessage(pool, client, msg) {
 
       // #194: optional thread scoping. An invalid/spoofed ref drops the
       // whole message (never silently re-route a thread post into the
-      // general stream — the sender's client is buggy or hostile either
-      // way, and general chat is the louder surface).
+      // general stream — general chat is the louder surface). The sender is
+      // told: a stale page sent one here (a thread of another app).
       let thread = null;
       if (msg.thread) {
         thread = await validateThread(pool, client.appId, msg.thread, client.user.id);
@@ -1290,6 +1327,7 @@ async function handleMessage(pool, client, msg) {
           log.warn('ws', 'chat message dropped: invalid thread ref', {
             appId: client.appId, userId: client.user.id,
           });
+          refuseChat(client, msg, 'invalid_thread');
           return { ok: false, code: 'invalid_thread' };
         }
         // #4417: a retired topic's channel is read-only. Answered, like the
@@ -1403,6 +1441,7 @@ async function handleMessage(pool, client, msg) {
             appId: client.appId, userId: client.user.id,
             requested: attIds.length, found: found.length,
           });
+          refuseChat(client, msg, 'attachment_not_owned');
           return { ok: false, code: 'attachment_not_owned' };
         }
         // Preserve the client's send order (the SELECT doesn't).
@@ -1474,6 +1513,7 @@ async function handleMessage(pool, client, msg) {
       } else {
         rows = await insert(pool);
       }
+      storedChats.add(msg);
 
       // #2387 follow-up: a reply in a reply thread is drawn in the general
       // stream as a line naming the message its thread hangs off.
@@ -2244,40 +2284,20 @@ function getOnlineUsers(appId) {
   return users;
 }
 
-// App-scoped global broadcast with visibility filtering. Public-view
-// apps keep the broadcast-to-all fast path; for a view-private app the
-// payload (name, status, PR titles...) only goes to admins + members.
-// Membership comes from appAccess.getWsVisibility's 10s TTL cache, so
-// this is at most one query per app per window. Fail-closed: if the
-// lookup errors we drop the event (a stale UI beats a privacy leak).
-// The visibility lookup runs on EVERY instance rather than being resolved once
-// and shipped: membership decides who may see this, each pod holds its own
-// sockets and its own 10s cache, and a fail-closed rule has to be able to fail
-// closed locally. So the bus carries the routing, not the answer.
+// App-scoped candidates are checked against fresh identity, visibility and
+// membership in the delivery batch on EVERY receiving instance. Missing
+// routing/pool never widens the audience.
 function deliverGlobalScoped(payload, { appId = null, appSlug = null } = {}) {
-  if (!_pool || (appId == null && !appSlug)) {
-    deliverGlobal(payload);
-    return;
-  }
-  appAccess.getWsVisibility(_pool, { appId, appSlug })
-    .then((info) => {
-      if (!info || info.suspended) return; // no ordinary activity from a suspended app
-      if (!info.viewPrivate && !info.blockedUserIds?.size) {
-        deliverGlobal(payload);
-        return;
-      }
-      const json = JSON.stringify(payload);
-      for (const client of globalClients) {
-        if (client.ws.readyState !== 1) continue;
-        if (!info.blockedUserIds?.has(client.user.id)
-            && (!info.viewPrivate || client.user.isAdmin || info.memberIds.has(client.user.id))) {
-          sendToEventsClient(client, json);
-        }
-      }
-    })
-    .catch((err) => {
-      log.warn('ws', 'scoped broadcast dropped', { type: payload.type, err: err.message });
+  if (!_pool || (appId == null && !appSlug)) return;
+  if (payload.type === 'session_state' && positiveSessionId(payload.sessionId) == null) return;
+  if (appId != null && payload.appId != null && Number(appId) !== Number(payload.appId)) return;
+  if (appSlug && payload.appSlug && appSlug !== payload.appSlug) return;
+  const json = JSON.stringify(payload);
+  for (const client of globalClients) {
+    sendToEventsClient(client, json, { appRequired: true, appId: appId ?? payload.appId, appSlug: appSlug || payload.appSlug,
+      ...(payload.type === 'session_state' ? { sessionId: payload.sessionId, fanout: true, sharedOnly: true } : {}),
     });
+  }
 }
 
 function broadcastGlobalScoped(payload, opts = {}) {
@@ -2306,7 +2326,7 @@ function pushAppStatusUpdate(app) {
 // use — clients already receive and dispatch it — with `phase` as the
 // only new field. Scoped identically to pushAppStatusUpdate, which is
 // the whole reason this does not live in app-deploy-status.js: that
-// module broadcasts unscoped, and a brand-new app may be view-private.
+// module carries deployment status, while a creation phase has this shape.
 //
 // `status` is pinned to 'creating' rather than read off the row: the
 // caller is inside createApp, where that is the only status the row can
@@ -2349,18 +2369,6 @@ function pushSessionUpdate(data) {
   broadcastGlobalScoped({ type: 'session_update', ...data },
     { appId: data.appId, appSlug: data.appSlug });
   noteBoardChange(data);
-}
-
-// Read only where the recipient has an events socket (what deliverToUser
-// writes to); the notification's access predicates run now, at relay time.
-function relayNotification(userId, notificationId) {
-  if (userId == null || !_pool) return;
-  let here = false;
-  for (const client of globalClients) if (Number(client.user.id) === Number(userId)) { here = true; break; }
-  if (!here) return;
-  require('./notifications').hydrateNotification(_pool, notificationId)
-    .then((shown) => { if (shown) deliverToUser(shown.userId, { type: 'notification_new', notification: shown.notification }); })
-    .catch((err) => log.warn('ws', 'could not read a notification to relay', { notificationId, err: err.message }));
 }
 
 // #1038: live working-state for one session (services/session-state.js).
@@ -2458,9 +2466,9 @@ function pushBoardOrderUpdate(data) {
     { appId: data.appId, appSlug: data.appSlug });
 }
 
-// Send a payload to every ADMIN /ws/events socket. Same `client.user.isAdmin`
-// filter broadcastGlobalScoped applies for view-private apps, in the loop
-// shape of pushNotificationToUser below. Used by the bulk container
+// Send a payload to current ADMIN /ws/events sockets. The shared delivery
+// gate reads the role again; the handshake's flag grants no authority.
+// Used by the bulk container
 // rollover (services/app-rollover.js): its progress payload is an
 // operational inventory of every app on the box, so it must not go out over
 // broadcastGlobal, which reaches every connected client. View-only admins
@@ -2469,14 +2477,13 @@ function deliverToAdmins(payload) {
   const json = JSON.stringify(payload);
   let sent = 0;
   for (const client of globalClients) {
-    if (client.user && client.user.isAdmin && sendToEventsClient(client, json)) sent++;
+    if (sendToEventsClient(client, json, { admin: true })) sent++;
   }
   return sent;
 }
 
-// The return value counts THIS instance's admins, which is what every caller
-// uses it for (a debug tally). It is not a cluster-wide count and does not
-// claim to be.
+// The return value counts local candidates queued for authorization. The
+// asynchronous check may refuse delivery; this is not a delivery receipt.
 function broadcastToAdmins(payload) {
   const sent = deliverToAdmins(payload);
   wsBus.publish('admins', null, payload);
@@ -2488,7 +2495,32 @@ function broadcastToAdmins(payload) {
 // #1038, for the owner-only fan-out of a private session's working state.
 // `pushNotificationToUser` is kept as an alias so the notification call sites
 // above (and any external caller) read naturally and don't have to churn.
-function deliverToUser(userId, payload) {
+function notificationReference(payload) {
+  const notificationId = positiveSessionId(payload.notificationId ?? payload.notification?.id);
+  return notificationId == null ? null : { type: 'notification_new', notificationId };
+}
+
+function deliverToUser(userId, payload, { actorUserId = null } = {}) {
+  if (payload.type === 'notification_new') {
+    // Accept legacy hydrated envelopes, but keep only the id. The delivery
+    // query reads the current row bound to THIS recipient and session.
+    payload = notificationReference(payload);
+    if (!payload) return 0;
+  }
+  if (payload.type === 'session_state' && positiveSessionId(payload.sessionId) == null) return 0;
+  if (payload.type === 'conversation_membership_changed') {
+    const conversationId = positiveSessionId(payload.conversationId);
+    if (conversationId == null) return 0;
+    payload = { type: payload.type, conversationId };
+  }
+  const appBlockNotice = payload.type === 'app_blocks_changed';
+  if (appBlockNotice) {
+    const appId = positiveSessionId(payload.appId);
+    if (appId == null) return 0;
+    // This person's other tabs must learn to discard a project they just
+    // blocked. Project access cannot gate its own revocation notice.
+    payload = { type: payload.type, appId, slug: payload.slug, blocked: !!payload.blocked };
+  }
   if (payload.type === 'app_blocks_changed') {
     appAccess.invalidateVisibilityHere(payload.appId, payload.slug);
     if (payload.blocked) {
@@ -2498,9 +2530,25 @@ function deliverToUser(userId, payload) {
     }
   }
   const json = JSON.stringify(payload);
+  const scope = appBlockNotice ? {} : {
+    appRequired: payload.appId != null || !!payload.appSlug,
+    appId: payload.appId, appSlug: payload.appSlug,
+    // Membership-change notices contain only an id and must reach the
+    // removed person too. Content events need current membership again.
+    conversationId: payload.type === 'conversation_membership_changed' ? null : payload.conversationId,
+    conversationRequired: payload.type !== 'conversation_membership_changed'
+      && (payload.conversationId != null || CONVERSATION_EVENT_TYPES.has(payload.type)),
+    // Routing metadata stays off the browser wire. Old typing/read frames
+    // already identify their actor. Old message frames can resolve theirs
+    // from the canonical message; an unscoped reaction fails closed.
+    actorUserId: actorUserId ?? (['conversation_typing', 'conversation_read'].includes(payload.type) ? payload.userId : null),
+    actorMessageId: ['conversation_message_created', 'conversation_message_updated'].includes(payload.type) ? payload.messageId : null,
+    notificationRequired: payload.type === 'notification_new', notificationId: payload.notificationId,
+    ...(payload.type === 'session_state' ? { sessionId: payload.sessionId } : {}),
+  };
   let sent = 0;
   for (const client of globalClients) {
-    if (client.user.id === userId && sendToEventsClient(client, json)) sent++;
+    if (client.user.id === userId && sendToEventsClient(client, json, scope)) sent++;
   }
   return sent;
 }
@@ -2508,9 +2556,20 @@ function deliverToUser(userId, payload) {
 // One person's tabs are not guaranteed to land on one instance, so an
 // @mention delivered only locally reaches whichever half of their sessions
 // happens to share a pod with the emitter.
-function pushToUser(userId, payload) {
-  const sent = deliverToUser(userId, payload);
-  wsBus.publish('user', { userId }, payload);
+//
+// To the other instances in one batched stream (ws-bus publishBatched): a
+// push is a pg_notify on the main pool, and a notification to many people,
+// or an event for every member of a conversation, was one each, all at once
+// (28 queries for 28 recipients, the pool filled to its limit; 22 Oct 2026).
+// The first after a quiet spell goes at once and the rest of its window
+// together, in order; this instance's own sockets get theirs immediately.
+function pushToUser(userId, payload, { actorUserId = null } = {}) {
+  if (payload.type === 'notification_new') {
+    payload = notificationReference(payload);
+    if (!payload) return 0;
+  }
+  const sent = deliverToUser(userId, payload, { actorUserId });
+  wsBus.publishBatched('user', 'user', { userId, ...(actorUserId != null ? { actorUserId } : {}) }, payload);
   // #2904: every read path announces itself with this event, so it is also
   // where the iOS icon badge learns the count moved. Only the emitting
   // instance gets here (bus peers call deliverToUser), so one change is one
@@ -2536,7 +2595,7 @@ const CONVERSATION_EVENT_TYPES = new Set([
   'conversation_typing',
 ]);
 
-function pushConversationEvent(memberUserIds, payload, { excludeUserId = null } = {}) {
+function pushConversationEvent(memberUserIds, payload, { excludeUserId = null, actorUserId = null } = {}) {
   if (!Array.isArray(memberUserIds) || !payload || typeof payload !== 'object'
       || Array.isArray(payload) || !CONVERSATION_EVENT_TYPES.has(payload.type)) {
     return 0;
@@ -2556,7 +2615,7 @@ function pushConversationEvent(memberUserIds, payload, { excludeUserId = null } 
       continue;
     }
     seen.add(userId);
-    sent += pushToUser(userId, payload);
+    sent += pushToUser(userId, payload, { actorUserId });
   }
   return sent;
 }

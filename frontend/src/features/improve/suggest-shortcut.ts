@@ -1,14 +1,13 @@
 /**
  * The C key turns comment mode on and off (#4289 and its follow-ups).
- * Experimental: off until a person turns it on in Settings, Experimental,
- * and saved on that device only (a keyboard shortcut is a property of the
- * keyboard in front of you; ./suggest-settings.ts). What it opens is
+ * On by default, and kept per device (a keyboard shortcut is a property of
+ * the keyboard in front of you; ./suggest-settings.ts). What it opens is
  * ../comment-pin/: a layer where every click leaves a comment, each posted
  * as its own request with a screenshot of the page and its pin beside it.
  *
  * ── The other way in ────────────────────────────────────────────────────
  *
- * While the switch is on, "Suggest an improvement" opens comment mode, on a
+ * "Suggest an improvement" opens comment mode, on a
  * phone too (a tap is a comment there), and the form is one switch away
  * (Form, on comment mode's bar or in its box). The form's own Comment switch
  * opens comment mode with the form's draft. Both reach this module through
@@ -319,16 +318,39 @@ export const WARM_DELAY_MS = 3000;
 let warmed = false;
 
 /**
- * Comment mode's code and its drawing library, fetched ahead of time where
- * the switch is on: a few seconds after the page loads, and when the switch
- * is turned on. Without it the first picture of a session waited on both
- * downloads (about 250 KB for the library), and a quick tap on "Suggest an
- * improvement" right after the app opened sat on a still screen for over a
- * second (iPhone 17 simulator, production, 12 Oct 2026). Once per page;
- * nothing is drawn, and nothing at all where the switch is off.
+ * Whether this document is a `?shot=` / `?demo=` capture route. Those render
+ * ONE state deterministically for a declared check or a before/after shot,
+ * and comment mode's chunk, its 250 KB library or a picture being drawn in
+ * the background is exactly the nondeterminism they exist to be free of: the
+ * `?shot=app-context` check, whose menu now prepares comment mode because the
+ * mode is the default, sat in network idle past 29 s while the picture of the
+ * page fetched its images. Same guard, for the same reason, as
+ * `AdminConsole.prefetchSections` and `prefetchSettings`. Nothing is lost: an
+ * open still loads the mode, which is what a real open does anyway.
+ */
+export function onCaptureRoute(
+  win: { location?: { search?: string } } | null = typeof window !== 'undefined' ? window : null,
+): boolean {
+  try {
+    const q = new URLSearchParams(win?.location?.search || '');
+    return !!(q.get('shot') || q.get('demo'));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Comment mode's code and its drawing library, fetched ahead of time unless
+ * this device has turned it off: a few seconds after the page loads, and
+ * when it is turned back on. Without it the first picture of a session
+ * waited on both downloads (about 250 KB for the library), and a quick tap
+ * on "Suggest an improvement" right after the app opened sat on a still
+ * screen for over a second (iPhone 17 simulator, production, 12 Oct 2026).
+ * Once per page; nothing is drawn, nothing at all where the device has
+ * turned it off, and nothing on a capture route.
  */
 export function warmComment(): void {
-  if (warmed || !suggestOpensComment()) return;
+  if (warmed || !suggestOpensComment() || onCaptureRoute()) return;
   warmed = true;
   import('../comment-pin/comment-pin')
     .then((m) => m.warmCommentMode())
@@ -346,10 +368,11 @@ export function scheduleWarmComment(win: Pick<Window, 'setTimeout' | 'addEventLi
  * The Homeroom menu or the form has opened, and comment mode is one tap
  * away: load its code and draw the page now, while it sits still under the
  * sheet, so the mode opens on it at once (comment-pin.tsx
- * `prepareCommentView`). Nothing at all where the switch is off.
+ * `prepareCommentView`). Nothing at all where the device has turned it off,
+ * and nothing on a capture route (`onCaptureRoute`).
  */
 export function prepareComment(): void {
-  if (!suggestOpensComment()) return;
+  if (!suggestOpensComment() || onCaptureRoute()) return;
   import('../comment-pin/comment-pin')
     .then((m) => m.prepareCommentView())
     .catch(() => { /* the mode loads when it opens, as before */ });
@@ -384,7 +407,7 @@ function commentable(win: MediaHost | null): boolean {
   }
 }
 
-/** Whether "Suggest an improvement" opens comment mode: the switch is on, and it can be here. */
+/** Whether "Suggest an improvement" opens comment mode: this device has not turned it off, and it can be here. */
 export function suggestOpensComment(
   win: MediaHost | null = typeof window !== 'undefined' ? window : null,
   storage: StorageLike | null = defaultStorage(),
@@ -420,9 +443,9 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     open: toggleComment,
     signedIn: () => !!(window as unknown as { App?: { user?: unknown } }).App?.user,
   });
-  // Settings, Experimental paints and saves the switch through this, and the
-  // feedback dialog's controller asks where "Suggest an improvement" goes;
-  // both are classic code there and cannot import.
+  // The feedback dialog's controller asks where "Suggest an improvement"
+  // goes, and its C key's `ready()` check reads the setting; that code is
+  // classic there and cannot import.
   const bridge = ((window as unknown as { UsernodeReact?: Record<string, unknown> }).UsernodeReact ||= {});
   scheduleWarmComment(window);
   bridge.suggestShortcut = {

@@ -18,10 +18,11 @@
 //      itself every ~5s and reloads the moment the app answers; after ~2
 //      minutes it switches to the honest "Still not responding — the team
 //      has been notified" escalation and slows down.
-//   2. Kicks the production watchdog's on-demand heal for the slug
-//      (services/app-heal.js requestHeal), so a visitor landing on a dead
-//      app starts its recovery immediately instead of waiting for the
-//      next sweep tick.
+//   2. Tells app delivery the app could not be reached
+//      (services/app-heal.js reportVisit), so a visitor landing on a dead
+//      app starts its recovery now instead of at the next look of the
+//      app-health clock, and one up but not answering is probed. App
+//      delivery decides whether to heal it (src/workflow/app-delivery/).
 //
 // Mounted in server.js BEFORE authMiddleware: the request arrives
 // host-routed from Caddy carrying the original app-subdomain Host and no
@@ -150,11 +151,11 @@ function appErrorRoutes(config) {
       // A Homeroom host or a live custom domain (#4405).
       const parsed = await require('../services/app-domains').resolveAppHost(pool, rawHost);
       if (parsed) {
-        // Only production hosts get the on-demand heal — staging previews
-        // are owned by the staging heal sweep (server.js Pass 3).
+        // Only production hosts: a staging preview's runtime is its
+        // preview machine's (src/workflow/preview/).
         if (parsed.label === parsed.slug) {
           productionSlug = parsed.slug;
-          appHeal.requestHeal(parsed.slug, config);
+          appHeal.reportVisit(pool, parsed.slug);
         }
         // Existence-hiding: name only for view-PUBLIC apps. The generic
         // fallback copy is used for private (or unknown) hosts.

@@ -626,34 +626,13 @@ test('the Homeroom bot\'s loop machines against the full PostgreSQL schema', { t
     await settle();
   });
 
-  await t.test('adopted: an older release\'s unclaimed row is owed; a claimed one waits for that release\'s turn, then is read again', async () => {
-    reset();
-    work.answer.set(request.WORK.look, { outcome: 'done' });
-    await setting('homeroom_bot_mode', 'off');
-    await pool.query(`INSERT INTO homeroom_bot_queue (app_id, issue_number, priority, reason) VALUES ($1, 20, 2, 'changed')`, [app.id]);
-    await pool.query(`INSERT INTO homeroom_bot_queue (app_id, issue_number, priority, reason, started_at) VALUES ($1, 21, 1, 'new', now())`, [app.id]);
-    const { rows: [old] } = await pool.query(`INSERT INTO chat_sessions (app_id, user_id, branch_name, status, active_turn)
-      VALUES ($1, $2, 'main', 'active', '{"turnId":"older","phase":"executing"}'::jsonb) RETURNING id`, [app.id, bot.id]);
-    for (const q of (await pool.query('SELECT * FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number IN (20, 21)', [app.id])).rows) {
-      await send(request.MACHINE, requestKey(q.app_id, q.issue_number), 'Adopted', {
-        appId: q.app_id, issueNumber: q.issue_number, reason: q.reason, priority: q.priority,
-        enqueuedAt: q.enqueued_at.toISOString(), startedAt: q.started_at ? q.started_at.toISOString() : null,
-      });
-    }
-    assert.equal((await inst(request.MACHINE, requestKey(app.id, 20))).state, 'queued');
-    const older = await inst(request.MACHINE, requestKey(app.id, 21));
-    assert.equal(older.state, 'older_turn');
-    await asTransition((cl) => cl.query('UPDATE wf_instances SET deadline_at = now() WHERE machine = $1 AND key = $2', [request.MACHINE, requestKey(app.id, 21)]));
-    await rt.fireTimers(); await settle();
-    assert.equal((await inst(request.MACHINE, requestKey(app.id, 21))).state, 'older_turn', 'its turn still runs');
-    await pool.query('UPDATE chat_sessions SET active_turn = NULL WHERE id = $1', [old.id]);
-    await asTransition((cl) => cl.query('UPDATE wf_instances SET deadline_at = now() WHERE machine = $1 AND key = $2', [request.MACHINE, requestKey(app.id, 21)]));
-    await rt.fireTimers(); await settle();
-    const after = await inst(request.MACHINE, requestKey(app.id, 21));
-    assert.equal(after.state, 'queued');
-    assert.equal(after.data.owed.reason, 'restart', 'read again quietly (L4: the restart reason is written)');
-    await setting('homeroom_bot_mode', 'live');
+  await t.test('no request is adopted: the machine has no Adopted and no state for an older release\'s look', () => {
+    const m = request.botRequest({ staging: false });
+    assert.equal(m.events.has('Adopted'), false);
+    assert.equal(m.states.has('older_turn'), false);
+    assert.equal(m.create.has('Adopted'), false);
   });
+
 
   await t.test('L1: a look is never granted twice, and a newer ask during it is looked at after it, not dropped by its end', async () => {
     reset();

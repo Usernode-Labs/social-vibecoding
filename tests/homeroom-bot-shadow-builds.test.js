@@ -280,7 +280,7 @@ test('the dashboard keeps the two settings that still do something, and the runs
   // How many shadow builds run at once, and whether side builds include the
   // platform's own repository (laterSideSkipReason), say so; and the note
   // says the benchmark and side builds wait for the live requests at once
-  // (isLiveLaneSaturated), not for this number, which held them back behind
+  // (the bench lane's machine), not for this number, which held them back behind
   // any two live builds until 9 Oct 2026.
   assert.match(tsx, /id="admin-homeroom-bot-side-builds"/);
   assert.match(tsx, /<NumberField id="admin-homeroom-bot-build-concurrency" label="Shadow builds at once"/);
@@ -305,27 +305,19 @@ test('the dashboard keeps the two settings that still do something, and the runs
 // the shadow bot was busy. Live work has `liveAtOnce` slots; the benchmark
 // waited behind the shadow lane's `buildConcurrency` (2) until 9 Oct 2026,
 // so any two live builds held every trial and side build back.
-test('the benchmark waits for live work to fill its live slots only, never for shadow builds', async () => {
-  const settings = { buildConcurrency: 2, liveAtOnce: 12 };
-  assert.equal(await bot.isLiveLaneSaturated(settings, { live: 0 }), false, 'nothing live: the bench may run');
-  assert.equal(await bot.isLiveLaneSaturated(settings, { live: 2 }), false, 'two live builds leave ten live slots free');
-  assert.equal(await bot.isLiveLaneSaturated(settings, { live: 11 }), false);
-  assert.equal(await bot.isLiveLaneSaturated(settings, { live: 12 }), true, 'every live slot taken');
-  assert.equal(await bot.isLiveLaneSaturated({ liveAtOnce: 4, buildConcurrency: 4 }, { live: 3 }), false);
-  assert.equal(await bot.isLiveLaneSaturated({ liveAtOnce: 4 }, { live: 4 }), true);
-  assert.equal(await bot.isLiveLaneSaturated({}, { live: 11 }), false, 'the default liveAtOnce (12) when unset');
-  assert.equal(await bot.isLiveLaneSaturated({}, { live: 12 }), true);
-  // Without counts or a database, nothing is in use.
-  assert.equal(await bot.isLiveLaneSaturated(settings), false);
-  assert.doesNotMatch(String(bot.isLiveLaneSaturated), /buildConcurrency/, 'the shadow lane\'s number is not the live lane\'s');
-  // With the database, the slots the bot's lane has granted, reads and
-  // builds alike, read from its requests (rules/bot-loop.ts
-  // SLOTS_IN_USE_SQL): the same count in every process and after a restart.
-  const asked = [];
-  const pool = (n) => ({ async query(sql) { asked.push(String(sql)); return { rows: [{ n }] }; } });
-  assert.equal(await bot.isLiveLaneSaturated(settings, null, pool(11)), false);
-  assert.equal(await bot.isLiveLaneSaturated(settings, null, pool(12)), true);
-  assert.match(asked[0], /FROM wf_instances w\s+WHERE w\.machine = 'bot-request' AND w\.state IN \('reading', 'following_up', 'building'\)\s+AND jsonb_typeof\(w\.data->'slot'\) = 'object' AND w\.flag IS NULL/);
-  // Side builds share the live slots: they count beside the lane's.
-  assert.equal(await bot.isLiveLaneSaturated(settings, { besides: 2 }, pool(10)), true);
+test('the benchmark waits for live work to fill its live slots only, never for shadow builds', () => {
+  // The bench lane's machine (src/workflow/bench-lane/) reads the slots the
+  // bot's lane has granted, reads and builds alike, from its requests
+  // (rules/bot-loop.ts SLOTS_IN_USE_SQL): the same count in every process
+  // and after a restart, against \`liveAtOnce\`, never the shadow lane's
+  // \`buildConcurrency\`. tests/bench-lane-postgres.test.js L1 and L7 run it.
+  const fs = require('node:fs');
+  const facts = fs.readFileSync(require.resolve('../src/workflow/bench-lane/facts.ts'), 'utf8');
+  assert.match(facts, /const \{ liveAtOnce \} = laneSettings\(settingRows\);/);
+  assert.match(facts, /SELECT COUNT\(\*\)::int AS n FROM \(\$\{SLOTS_IN_USE_SQL\}\) s/);
+  const machine = fs.readFileSync(require.resolve('../src/workflow/bench-lane/machine.ts'), 'utf8');
+  assert.match(machine, /if \(f\.liveInUse >= f\.liveAtOnce\) \{ blocked = 'live'; stop = true; break; \}/);
+  assert.doesNotMatch(facts + machine, /buildConcurrency/, 'the shadow lane\'s number is not the live lane\'s');
+  const { SLOTS_IN_USE_SQL } = require('../src/workflow/rules/bot-loop.ts');
+  assert.match(SLOTS_IN_USE_SQL, /FROM wf_instances w\s+WHERE w\.machine = 'bot-request' AND w\.state IN \('reading', 'following_up', 'building'\)\s+AND jsonb_typeof\(w\.data->'slot'\) = 'object' AND w\.flag IS NULL/);
 });

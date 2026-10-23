@@ -91,7 +91,7 @@ A merged platform PR is therefore "merged" on its card before it is running,
 and nothing in that chain reports back to the platform when a link fails. The
 platform watches the gap itself: `services/release-watch.js` compares the
 self-hosted app row's `main_sha` (the running build) with GitHub's `main` on the
-drift poller's cadence, reads the `Build Kubernetes images` run for the merged
+main-drift clock's cadence, reads the `Build Kubernetes images` run for the merged
 commit, and once (per commit and verdict) records the stall on
 `apps.release_stall`, posts to the app's group chat, and notifies the app's
 admins. The Dev board shows an amber banner with the workflow run linked until
@@ -143,24 +143,22 @@ revision when comparing source behavior with a live failure.
 
 A platform Pod a release replaces keeps finishing the work it started rather
 than cutting it (`docs/plans/draining-releases.md`), once another platform
-process that records what it holds is serving (it waits up to a minute for
-one; without one, as after a rollback to a release from before this, it cuts
-over as it always did). On `SIGTERM` it:
+process of its role is serving (it waits up to a minute for one; without one,
+as on a scale to zero, it cuts over as it always did). No process leads. On
+`SIGTERM` it:
 
 1. refuses anything new and marks its row in `platform_processes` `draining`;
-2. stops its leader work (the bot's loops, the bench lane, the eval runner,
-   every sweeper and timer), quiesces the workflow runtime (no slot, timer or
-   claim; its running work goes on) and resigns the leader lock, so the new
-   Pod is promoted within a poll;
+2. quiesces the workflow runtime (no slot, timer or claim; its running work
+   goes on: a person's turn, a build, a merge under way);
 3. announces the new build to its tabs and closes their sockets;
 4. keeps its listener open (a request it still answers, and its own loopback
-   calls) and waits until it holds nothing (`process_holds`), has no
-   registered background work, no running workflow work and no request still
-   answering;
-5. then does what shutdown always did: closes the listener, ends the Mayor's
-   turns still running, stops the workflow runtime (its work items are given
-   up to the next claim), marks what is left interrupted, hands back checks
-   runs, deletes its row and exits.
+   calls) and waits until it holds nothing (its own holds, in its memory),
+   has no registered background work, no running workflow work and no
+   request still answering;
+5. then does what shutdown always did: closes the listener, stops the
+   workflow runtime (its work items are given up to the next claim, which
+   carries each on from what it saved), hands back checks runs, deletes its
+   row and exits.
 
 It waits at most `platform.drainMinutes` (`PLATFORM_DRAIN_TIMEOUT_MS`), and
 ends early when `platform.drainingMax` (`PLATFORM_DRAINING_MAX`) newer releases
@@ -168,18 +166,19 @@ are draining too: counted by release, since one release drains every conductor
 replica (a `rollout restart` of the same build is no newer release). The log says what it is still finishing every minute
 (`Still finishing work before exiting`), and how it ended: `Finished this
 process's work`, or `Drain deadline passed` / `Newer processes are draining
-too`, with what it handed over. What it hands over is adopted by the leader's
-`orphan-turn-sweep` and `orphan-headless-sweep` within a minute or two, and by
-the existing heartbeat sweeps for checks, shots runs, local-agent turns, the
-Mayor's turns, app creation and owed redeploys.
+too`, with what it handed over. What it hands over is claimed again once each
+item's lease lapses (a person's turn follows its coding run's journal to its
+end), and a coding record nothing carries is taken to an end by the
+`turn-leftovers` clock within a few minutes.
 
-The live processes and what each holds:
+The live processes, and the workflow work running now:
 
 ```sql
-SELECT p.id, p.release, p.state, p.drain_deadline_at, h.kind, h.ref
-  FROM platform_processes p LEFT JOIN process_holds h ON h.process_id = p.id
- WHERE p.heartbeat_at > NOW() - interval '45 seconds'
- ORDER BY p.started_at, h.kind, h.ref;
+SELECT id, release, role, state, drain_deadline_at FROM platform_processes
+ WHERE heartbeat_at > NOW() - interval '45 seconds' ORDER BY started_at;
+
+SELECT machine, key, kind, work_key, attempt_count, lease_until FROM wf_work
+ WHERE status = 'running' ORDER BY machine, key;
 ```
 
 A schema change has to stay compatible with the code of the release before it
@@ -213,7 +212,7 @@ issuance-limit recovery and explicit retirement of legacy Certificates.
 A project's manager can serve it at a web address they own (#4405,
 `services/app-domains.js`): they add a CNAME from `app.example.com` to
 `<slug>.USERNODE_APPS_DOMAIN` and a TXT record `_homeroom.app.example.com`
-carrying the claim's token, and the leader's sweep verifies both against
+carrying the claim's token, and the `app-domains` clock verifies both against
 public resolvers every minute. Once verified, `deployCustomDomain`
 (`services/kubernetes.js`) writes a second Ingress, `sv-domain-<id>`, beside
 the app's own: the same asset prefixes and gate routing, the custom host, and
@@ -544,7 +543,8 @@ retirement deletes its Jobs.
 
 The main-watch suite after a direct merge keeps its own hand-over: a platform
 process that shuts down stamps its `check_runs` rows' heartbeat as long past,
-so the next leader adopts them at once instead of a minute later.
+so the next attempt of the main-check machine's `main.suite` work adopts them at once
+instead of a minute later (`main-watch.adoptRun`).
 
 Every capture rechecks the exact deployed revision, image, environment
 fingerprint, completed rollout, application health and public edge before
@@ -562,10 +562,10 @@ background propagation, which takes their Pods and Secrets too; a run
 collected after a lost claim does the same once it settles. The Jobs' `ttlSecondsAfterFinished`
 (3600 s) covers everything else: superseded or failed runs, the main-watch
 suite, and whatever a crash leaves. Keep it at least that long, because it is
-how late a retry can still read a run after a slow leader handover.
+how late a retry can still read a run after a slow hand-over between processes.
 
-`services/check-retention.js` removes what no owner will. On the leader, every
-15 minutes and at most 50 deletions a pass, it deletes:
+`services/check-retention.js` removes what no owner will. As the `check-retention`
+clock, every 15 minutes and at most 50 deletions a pass, it deletes:
 
 - check input Secrets (`sv-capture-…-input`, `sv-unit-suite-…-input`) with no
   owner, older than two hours, that no Pod or Job in the namespace names;
@@ -597,7 +597,7 @@ Pass 0b, the apply functions in `routes/issues.js`) are deleted.
 - **Ownership is enforced.** A write to an enrolled governance proposal's status or audit
   keys from outside the machine is refused (`WF_OWNERSHIP_VIOLATION`). A row is enrolled
   when it is filed, or
-  by the leader's boot backfill if filing failed.
+  by the release machine's adoption if filing failed (`enrollGovernance`).
 - **Rolling back past this release** is no longer possible: every release a rollback
   could reach postdates it, and the infra values no longer carry
   `platform.workflowGovernanceEnabled` (Usernode-Labs/infra 352b03d).
@@ -618,9 +618,9 @@ has no flag: the old merge tail (`finalizeMerge` and its follow-ups), the
 - **A merge is only reported.** The proposal machine's merge attempt (`merge.attempt`)
   tells merge-followups `Merged` in the transition that records GitHub's answer. An
   answer that never came leaves the proposal `merging` (`unconfirmed`), and it asks
-  GitHub again until GitHub says; the leader also looks on GitHub for merges of promoted
-  rows every six hours (`observeMergedOnGithub`, the durable `merged-by-hand-lookup`
-  timer), so a pull request merged by hand is recorded within six hours.
+  GitHub again until GitHub says; the `merged-by-hand` clock also looks on GitHub for
+  merges of promoted rows every six hours (`proposal-scans.js lookMergedByHand`), so a
+  pull request merged by hand is recorded within six hours.
 - **Ownership is enforced.** Only the machine moves a proposal into `merged`, and a write
   to a merged row's `merged_at`, `merge_commit_sha`, `included_in_session_id` or `live_at`
   from outside it is refused (`WF_OWNERSHIP_VIOLATION`).
@@ -636,10 +636,11 @@ has no flag: the old merge tail (`finalizeMerge` and its follow-ups), the
 
 The app-delivery machine in `src/workflow/app-delivery/` runs every production deploy of
 an app, one at a time per app and at most four at a time across the conductors, for everyone who
-asks (a merge, a secret change, the drift poller, Check for updates, Redeploy, heal, a
-rollover whose image is gone, a demo reset). It has no flag: each caller used to deploy
-itself, in its own process, with "deploying" in that process's memory; now it records a
-request and the machine deploys. `docs/workflows.md` explains the machine.
+asks (a merge, a secret change, a project's first deploy, main moving, Check for updates,
+Redeploy, a rollover whose image is gone, a demo reset), and heals an app reported down,
+never beside a deploy. It has no flag: each caller used to deploy itself, in its own
+process, with "deploying" in that process's memory; now it records a request and the
+machine deploys. `docs/workflows.md` explains the machine.
 
 - **Where the deploys run.** `app.deploy` is a work item, run by whichever conductor
   replica claims it. Each deploy clones the app into that Pod's `/tmp` and builds there,
@@ -705,9 +706,9 @@ explains the machine.
 
 The workflow (docs/workflows.md) runs on the conductor's replicas
 (`platform.conductor.replicas`, two in production, set in the infra values): every
-replica runs every machine's pipeline slots, timers and work, with no leader lock. The
-web Pods decide nothing; they append and wait. One conductor still holds the leader lock,
-for the leader's remaining work (docs/plans/web-and-conductor.md).
+replica runs every machine's pipeline slots, timers and work. No process leads: what the
+leader ran is workflow work or a clock (`src/workflow/clock/`), and a person's turn is the
+`turn` machine's work item. The web Pods decide nothing; they append and wait.
 
 - **Limits hold across the replicas.** A work kind's limit (four deploys, four shots
   copy builds, ten preview builds, ...) counts every replica's running items, a draining
@@ -752,12 +753,78 @@ route allowlist names them (`alertname =~ "SocialWorkflow.*"`, namespace
 process, is not "nobody takes it". Admin → Workflows shows the same signs under "Needs a
 person".
 
-**Rolling back past this release.** Older code reads the conductor as the leader's
-process; a second replica is a standby with slots, which is safe. Argo CD does not prune
-here, so the conductor's PodDisruptionBudget, the PodMonitor and the PrometheusRule stay;
-the budget (`maxUnavailable: 1`) blocks no drain, and the metrics rules find nothing to
-scrape: delete `pdb/social-vibecoding-conductor`, `podmonitor/` and
-`prometheusrule/social-vibecoding-conductor-workflow` by hand if the rollback is to last.
+**Rolling back past this release.** A rollback past roadmap item 3.2 (#5793) is not
+supported: the release after it dropped what a release from before 3.2 still reads
+(`process_holds`, `shots_eval_trials.proxy_cents`, the `apps.creating_owner` and
+`starter_images.owner` columns), and 3.2 itself deleted what a release from before #5714
+needed from the releases beside it (the holds it read, its conversations' claims renewed,
+its Stop forward, the turn-spend mark). A rollback to #5793 itself needs one step (the
+first item below): its migration Job recreates what it names, all empty, and sets
+`apps.creating_owner`'s default again. What it does with the newer releases' state:
+
+- The `turn` instances this release wrote are at version 3 (a change's dev chat turn that
+  did not end its own way owes `turn.repair`), which that release leaves alone: a person's
+  turn on them waits. Once no process of this release is live (`platform_processes`), lower
+  them; their data is the same shape, and their `turn.repair` work waits unclaimed (on a
+  roll forward, one owed more than six hours earlier is skipped). Lower them before any
+  older release's rollback step, whose SQL names version 2:
+
+  ```sql
+  BEGIN; SET LOCAL app.wf_writer = 'transition';
+  UPDATE wf_instances SET machine_version = 2 WHERE machine = 'turn' AND machine_version = 3;
+  COMMIT;
+  ```
+- Turns this release recorded carry no turn-spend mark, so it keeps none of their calls: a
+  turn that ends without Claude Code's report is billed nothing for them.
+- A ready-made app's image whose build a process of this release was cut in reads
+  `building` until an admin presses Rebuild (Admin › Templates).
+
+## State that decides, on the workflow (roadmap item 3)
+
+This release moved what a process kept in memory and decided from onto the workflow and
+Postgres: consequences owed by the transaction that decides them (`Voted`, `MailOwed`,
+`PlanOwed`, `DiagramStored`, `ConflictResolved` from the measurement, a turn's stalled
+notice and name), shared rate limits (`rate_limit_hits`), wallet challenges and the
+waitlist's connect states in tables, the wallet-link poller as the `wallet-links` clock,
+the Workshop's debounce on its row, the admin's fleet jobs as on-demand clocks, the
+database export's claim and ticket on its `db_exports` row, report and dictation claims,
+and the hand-off's ordering under the proposal lock. `docs/workflows.md` explains each.
+
+- **During the rollout.** Events an older conductor refuses as unknown are asked again
+  once no older workflow process serves (the `reask-refused` clock). An admin's rollover
+  or "reap previews now" is refused while an older workflow process serves ("a platform
+  release is rolling out"). A wallet challenge, a waitlist connect round trip or an export
+  ticket started on one build and finished on the other fails, and the person tries
+  again. An older web Pod's rollover can run beside the new clock's: the build lock takes
+  each app in turn.
+- **Rolling back past this release.** Roll forward instead when you can. Older code
+  leaves alone the instances this release wrote: `turn`, `bot-change` and `app-creation`
+  at version 2, `proposal` at version 5 (their conversations, changes and projects stop
+  moving). For a rollback that lasts, once no process of this release is live
+  (`platform_processes`), lower them; their data is the same shape. A proposal with a
+  diagram move under way or queued stays at version 5 (older code has no handler for
+  `pr.diagram`, and its GitHub moves would wait behind it) and moves again on the roll
+  forward:
+
+  ```sql
+  BEGIN; SET LOCAL app.wf_writer = 'transition';
+  UPDATE wf_instances SET machine_version = 1
+   WHERE machine IN ('turn', 'bot-change', 'app-creation') AND machine_version = 2;
+  UPDATE wf_instances SET machine_version = 4
+   WHERE machine = 'proposal' AND machine_version = 5
+     AND COALESCE(data->'pr'->>'running', '') NOT LIKE 'diagram:%'
+     AND NOT COALESCE(data->'pr'->'next' @> '[{"kind": "pr.diagram"}]'::jsonb, FALSE);
+  DELETE FROM app_report_ai WHERE input_hash = '';
+  COMMIT;
+  ```
+
+  The last line removes a report generation's claim row, which older code would show as
+  an empty report. Work of this release's kinds (`dm.mail`, `bot.tellApproved`,
+  `turn.stalled`, `turn.name`, `app.plan`, `app.earlyLook`, the new clocks' runs) waits
+  unclaimed; on the roll forward a notice owed more than six hours earlier, and a fleet
+  job asked more than six hours earlier, is skipped rather than said or run late. Older
+  code's boot marks a database export this release was streaming interrupted. Nothing
+  in the infra values needs keeping for it.
 
 ## Read-only inventory and logs
 
@@ -856,6 +923,48 @@ interfaces accept managed runtime names such as `sv-worker-s42` and
 `sv-preview-7-s42`. Their inventory includes readiness but leaves CPU/memory
 usage null when measured usage is unavailable.
 
+## IP address retention
+
+The platform keeps a person's IP address for `IP_RETENTION_DAYS` (default
+180, six months; whole days from 1 to 3650; any other value keeps 180). The
+privacy notice states the same period, so change the two together. The `ip-retention`
+clock clears older addresses once a day (`src/services/ip-retention.js`
+lists each column) and keeps the rows. A pass that cleared anything logs
+`Cleared expired IP addresses` with a count per table.
+
+The database is only one copy. The platform also writes a client address into a
+few stdout lines (rate-limit refusals, internal-route refusals, patch-upload
+refusals, database-export audit lines), and those live wherever container
+output is kept. Nothing in this repository ships logs anywhere, so these steps
+are the cluster's:
+
+1. **Kubelet container logs.** Kubelet rotates by size only, so bound the
+   size. On Talos, add to the machine config of every node and apply it:
+
+   ```yaml
+   machine:
+     kubelet:
+       extraConfig:
+         containerLogMaxSize: 10Mi
+         containerLogMaxFiles: 3
+   ```
+
+   (`talosctl -n NODE patch machineconfig --patch @kubelet-logs.yaml`). On
+   the platform 30Mi is days of output, not months, and a container's logs
+   also go when its Pod is deleted, which every release does. Check with
+   `kubectl get --raw /api/v1/nodes/NODE/proxy/configz` that the two values
+   took.
+2. **Any log collector** (Loki, Vector, Fluent Bit, a hosted service) set up
+   outside this repository must keep platform logs no longer than
+   `IP_RETENTION_DAYS`. For Loki: `limits_config.retention_period: 4320h`
+   with `compactor.retention_enabled: true`.
+3. **Database backups** hold the addresses that were in the database on the
+   day of the backup. Keep backups no longer than the period plus the backup
+   rotation, or say so in the notice.
+
+The in-memory log ring behind `/api/status` holds the last 200 lines and is
+gone when the process restarts.
+
 ## Build and startup failures
 
 Find the kpack lifecycle Pod through the Build's `status.podName`, then inspect
@@ -925,24 +1034,27 @@ Before turning it on:
 2. `PLATFORM_INTERNAL_URL` must be set (the chart sets it from
    `config.internalUrl`).
 
-Turning it on: set `config.appGate: "on"` and sync. The platform leader brings
-the gate up, waits for it to be ready, and only then repoints every managed
-Ingress's catch-all path at it. If the gate does not come up, no Ingress is
+Turning it on: set `config.appGate: "on"` and sync. The app-gate clock (a
+workflow job only the newest build runs, every ten minutes) brings the gate
+up, waits for it to be ready, and only then repoints every managed Ingress's
+catch-all path at it. If the gate does not come up, no Ingress is
 touched. New deploys follow the same rule.
 
 Check: `kubectl -n social-apps get deploy usernode-app-gate`, then open a
 private app's own address signed out (expect the platform's view of the app)
 and signed in (expect the app, signed in).
 
-Turning it off, the fallback: set `config.appGate: "off"` and sync. The
-leader repoints every Ingress straight back to its own Service on boot. In an
-incident, without waiting for a sync:
+Turning it off, the fallback: set `config.appGate: "off"` and sync. Within
+ten minutes of the new build serving, the app-gate clock repoints every
+Ingress straight back to its own Service. An older build still running during
+the rollout never routes them back through the gate, and a rollback is
+applied the same way. In an incident, without waiting for a sync:
 
 ```sh
 kubectl -n social-platform exec deploy/social-vibecoding -- node scripts/app-gate-switch.js off
 ```
 
-This applies at once. Then set `config.appGate: "off"` too, or the next boot
-or app deploy routes through the gate again. `config.appHostSignin: "off"`
+This applies at once. Then set `config.appGate: "off"` too, or the clock's
+next run, or an app deploy, routes through the gate again. `config.appHostSignin: "off"`
 (`APP_HOST_SIGNIN`) separately turns off signing people in at an app's own
 address, on both runtimes; the gate still keeps private apps members-only.

@@ -1,0 +1,57 @@
+{
+  "fingerprint": "122e7de9f22f2028834ef6d414775fd14003e1550b662f883d167781c99e2474",
+  "optionalTables": {
+    "public.game_results": "360911e519c5374ef67abf103c9b9445062aabc967f3b082e8cd308459200b3e",
+    "public.game_room_players": "d9bd3b3167922921201a373ab97d9a625ec8aec78c8fc056aff362cc00816b57",
+    "public.game_rooms": "b4853c86c2c9cb64628b68816437cbd35c543ccf122222c0999e358087601974"
+  },
+  "optionalSequences": {
+    "public.app_category_registry_id_seq": "3755add381200d20a3f6dfe43c57ad58713b5882071c25915df1859a14647f61",
+    "public.app_theme_registry_id_seq": "2f02fc4df15c74003a5a9d0ad21656992c49dc08a7253c42097b08f7a83131a3",
+    "public.game_results_id_seq": "c649ab0c1a006176f24dbf7eb91fa2d56e866f456dd00bcc4004ce3333b29d60",
+    "public.game_room_players_id_seq": "cba56d4741a0a0b5adf65fa3b1ed01e9f190bc8b2600e0fca1b144afd7a9183d",
+    "public.game_rooms_id_seq": "c82eda81d87d236ac80c2761463a5e0a0097957e8de4f7bd4a9fd9e6b08f6ec8"
+  },
+  "columnVariants": {
+    "public.app_category_registry": {
+      "id": {
+        "canonical": [
+          "integer",
+          true,
+          "nextval('public.app_category_registry_id_seq'::regclass)",
+          "",
+          ""
+        ],
+        "alternatives": [
+          [
+            "integer",
+            true,
+            "nextval('public.app_theme_registry_id_seq'::regclass)",
+            "",
+            ""
+          ]
+        ]
+      }
+    },
+    "public.mobile_push_registrations": {
+      "native_session_credential_reference": {
+        "canonical": [
+          "character varying(47)",
+          true,
+          null,
+          "",
+          ""
+        ],
+        "alternatives": [
+          [
+            "character varying(47)",
+            false,
+            null,
+            "",
+            ""
+          ]
+        ]
+      }
+    }
+  }
+}

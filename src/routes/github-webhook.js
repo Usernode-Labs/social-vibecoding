@@ -11,8 +11,9 @@ const log = require('../services/logger');
 // WHY THIS EXISTS. An imported proposal's head is advanced by a poller: a
 // sweep re-reads every live imported PR and applies a head change it finds.
 // That sweep costs one GitHub read per open proposal, so it is deliberately
-// slow — a per-session cooldown of three minutes, at most ten sessions a
-// pass. The cost is latency exactly when it is most visible: a push lands,
+// slow: the imported-prs clock runs every three minutes and reads at most
+// 600 an hour (workflow/clock/services.ts). The cost is latency exactly
+// when it is most visible: a push lands,
 // and the proposal shows the old commit and the old checks until the sweep
 // comes round. One measured case took seven minutes.
 //

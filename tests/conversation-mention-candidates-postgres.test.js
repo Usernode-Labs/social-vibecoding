@@ -81,6 +81,12 @@ async function openDatabase(t) {
   });
   const schema = fs.readFileSync(path.join(__dirname, '../src/db/schema.sql'), 'utf8');
   await pool.query(schema);
+  // #5104: accounts start out reachable only by people they share a project
+  // with, and out of searches. This file's people are strangers who write
+  // to, invite and find each other, which is what it pins, so here they
+  // start out open; tests/contact-privacy-postgres.test.js pins the defaults.
+  await pool.query(`ALTER TABLE users ALTER COLUMN contact_policy SET DEFAULT 'anyone',
+                                      ALTER COLUMN profile_discoverable SET DEFAULT TRUE`);
   return pool;
 }
 

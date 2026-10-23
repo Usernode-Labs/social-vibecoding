@@ -102,6 +102,9 @@ function heldBy(t, state) {
   const asked = [];
   t.mock.method(require('../src/db/pool'), 'getPool', () => ({
     async query(sql, params) {
+      // What a worker's use notes for every process (session_workers) is not
+      // the hold this asks about.
+      if (/session_workers/.test(String(sql))) return { rows: [] };
       asked.push({ sql: String(sql), params });
       return { rows: [{ held: state.building }] };
     },
@@ -127,7 +130,7 @@ test('a durable build\'s worker on an old image is kept until the build ends, th
 
   // A process with no record of the worker (a restart carried the build
   // here) keeps it too, and records it as warm.
-  worker.forgetWorker(sessionId);
+  worker._registryForgetForTests(sessionId);
   assert.equal(await worker.ensureWorker(sessionId, { ...ensureArgs, temporary: true }), runtimeName(sessionId));
   assert.deepEqual(calls.bootstrapped, []);
   assert.ok(worker.warmRegistrySnapshot().some((w) => w.sessionId === sessionId), 'registered as this process\'s warm worker');

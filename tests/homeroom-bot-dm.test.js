@@ -335,8 +335,7 @@ test('a staging copy never files a first version: a GitHub issue is an irreversi
   process.env.USERNODE_ENV = 'staging';
   const pool = { async query() { throw new Error('nothing is read on staging'); } };
   try {
-    assert.equal(await dm.fileFirstVersion(pool, {}, 1), null);
-    assert.equal(await dm.sweepFirstVersions(pool, {}), 0);
+    assert.deepEqual(await dm.fileFirstRequest(pool, {}, 1, { steps: null }), { skipped: 'staging' });
   } finally {
     if (env === undefined) delete process.env.USERNODE_ENV; else process.env.USERNODE_ENV = env;
   }
@@ -507,14 +506,19 @@ test('the short description is suggested for everyone making a project, and ever
   // POST /api/apps hands every description (never an import's) to the
   // first-request record, which decides whether the bot builds it.
   const create = routes.slice(routes.indexOf("router.post('/api/apps', "));
-  assert.match(create, /if \(!repoUrlNormalized && !readyMade && homeroomBotDm\.normalizeBrief\(req\.body\.brief\)\) \{[\s\S]{0,200}startFirstVersion\(pool, config, \{/);
+  // Owed with the project, in the route's transaction (its making files it),
+  // then said (startFirstVersion: the bot's DM, the early plan).
+  assert.match(create, /const owesFirstVersion = !repoUrlNormalized && !readyMade && !!homeroomBotDm\.normalizeBrief\(req\.body\.brief\);/);
+  assert.match(create, /homeroomBotDm\.recordFirstVersion\(db, pool, config, \{ app: appRow, user: req\.user, brief: req\.body\.brief \}\)/);
+  assert.match(create, /if \(owesFirstVersion\) \{[\s\S]{0,200}startFirstVersion\(pool, config, \{/);
   // #3624: an import, a ready-made app or a project with no description is
   // recorded for the bot instead (so an import's backlog waits), and so is a
   // fork.
   assert.match(create, /\} else \{\s*try \{\s*await homeroomBotDm\.noteProjectMade\(pool, \{\s*app: appRow, user: req\.user, origin: repoUrlNormalized \? 'import' : 'blank',/);
   const fork = routes.slice(routes.indexOf("router.post('/api/apps/:slug/fork'"), routes.indexOf("router.get('/api/apps/:slug'"));
-  // Recorded before the copy is started (under its owner, services/app-creation-owner.js).
-  assert.match(fork, /noteProjectMade\(pool, \{ app: appRow, user: req\.user, origin: 'fork' \}\)[\s\S]{0,400}appCreationOwner\.drive\(pool, appRow, \{[\s\S]{0,80}provision: \(\) => forkApp\(config, appRow, sourceApp\)/);
+  // Recorded for the bot; its insert started its copy (src/workflow/app-creation/).
+  assert.match(fork, /noteProjectMade\(pool, \{ app: appRow, user: req\.user, origin: 'fork' \}\)/);
+  assert.match(fork, /forked_from\)\s+VALUES \(\$1, \$2, \$3, 'creating', 'private', 'private', \$4::jsonb\)/);
   // Every project is live, so nothing reads who made which any more; what
   // was made without a description is recorded only for somebody the bot
   // works for, and an import's record is what holds its backlog back.
@@ -525,11 +529,12 @@ test('the short description is suggested for everyone making a project, and ever
   assert.match(made, /SELECT created_at FROM homeroom_bot_dm_projects WHERE app_id = \$1 AND origin = 'import'/);
   // The bot's wake is only for a first version it builds.
   assert.match(src, /if \(botBuilds\) settingsModule\(\)\.noteIssueActivity\(/);
-  assert.match(src, /if \(final && botBuilds\) \{/, 'no DM about a request the bot never took on');
-  // A sweep the bot's mode does not gate, on the leader (a leader timer:
-  // services/leader-timers.js unrefs it and stops it at shutdown).
+  assert.match(src, /if \(!last\) throw err;\n    if \(botBuilds\) \{/, 'no DM about a request the bot never took on');
+  // Filed by the project's making, whatever the bot's mode: no sweep, on
+  // the leader or in the bot's refresh, files it a second way.
   const server = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
-  assert.match(server, /\.sweepFirstVersions\(getPool\(config\), config\)[\s\S]{0,240}leaderTimers\.every\('first-request-sweep', runFirstRequestSweep, 5 \* 60 \* 1000\);/);
+  assert.doesNotMatch(server, /first-request-sweep|sweepFirstVersions/);
+  assert.doesNotMatch(fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'homeroom-bot.js'), 'utf8'), /sweepFirstVersions/);
   const schema = fs.readFileSync(path.join(__dirname, '..', 'src', 'db', 'schema.sql'), 'utf8');
   assert.match(schema, /ALTER TABLE homeroom_bot_first_versions ADD COLUMN IF NOT EXISTS bot_builds BOOLEAN NOT NULL DEFAULT TRUE;/);
 });
@@ -744,7 +749,7 @@ test('the bot types from the start of its answer until the answer is sent, as a 
     'it stops once the answer is out, never before');
   const first = events[0];
   assert.deepEqual(first.payload, { type: 'conversation_typing', conversationId: 41, userId: 2, typing: true });
-  assert.deepEqual(first.options, { excludeUserId: 2 }, 'the same event and audience as the typing route');
+  assert.deepEqual(first.options, { excludeUserId: 2, actorUserId: 2 }, 'delivery retains the bot actor to recheck blocks after enqueueing');
   assert.deepEqual(audiences, [{ actor: 2, conversationId: 41 }, { actor: 2, conversationId: 41 }],
     'as the bot, through the gate that drops a DM the person blocked');
 });

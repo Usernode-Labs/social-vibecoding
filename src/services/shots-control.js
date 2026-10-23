@@ -18,6 +18,8 @@
 
 const planContract = require('./visible-changes');
 const shots = require('./shots-files');
+const shotsDiff = require('./shots-diff');
+const closeups = require('./shots-closeups');
 const homeTile = require('./shots-home-tile');
 
 class ShotsControlError extends Error {
@@ -113,6 +115,62 @@ class RunControl {
     return homeTile.renderPage(tile, { side });
   }
 
+  // A close-up the shots bridge took (shots-closeups.js): kept only in a run
+  // taken at device density, for a change and screen whose close-ups are
+  // wanted (`asked`, shots-closeups.wanted), at the size asked for, within
+  // the limits, and only when it is the after still (`afterStill`, its 1x
+  // copy) at that place. Saving the same one again replaces it.
+  saveCloseup(raw, buffer, { asked = [], afterStill = null, beforeStill = null } = {}) {
+    try {
+      this.assertOpen();
+      if (this.agent?.deviceDensity !== true) {
+        throw new ShotsControlError('closeup_not_needed', 'This run takes no close-ups.', 400);
+      }
+      const ask = asked.find((entry) => entry.change === String(raw?.change || '') && entry.screen === String(raw?.screen || '')
+        && entry.part === Number(raw?.part));
+      if (!ask) throw new ShotsControlError('closeup_not_wanted', 'No close-up of that change and screen is wanted.', 400);
+      const info = shots.inspectImage(buffer, { maxBytes: shots.MAX_DENSE_IMAGE_BYTES });
+      const close = (have, want) => Math.abs(have - want) <= 2;
+      if (!close(info.width, Math.round(ask.rect.w * ask.scale)) || !close(info.height, Math.round(ask.rect.h * ask.scale))
+          || info.width * info.height > closeups.MAX_PIXELS * 1.01) {
+        throw new ShotsControlError('closeup_wrong_size', 'The close-up is not the size asked for.', 400);
+      }
+      if (!afterStill || !closeups.matches(afterStill, buffer, ask.rect, { beforeStill })) {
+        throw new ShotsControlError('closeup_not_the_after_screen',
+          'The close-up does not show the after screen as it was shot: the page has probably moved on. '
+          + 'Open the after state again, take its screen shot again and save it; the close-up is taken again with it.', 409);
+      }
+      const entry = shots.storedCloseup({ storyId: ask.change, viewport: ask.screen, part: ask.part, rect: ask.rect, scale: ask.scale },
+        buffer, info);
+      const slot = shots.slotKey(entry);
+      this.saved.set(slot, entry);
+      this.dirty.add(slot);
+      return { saved: true, change: ask.change, screen: ask.screen, part: ask.part, scale: ask.scale };
+    } catch (error) {
+      this.lastToolFailure = { operation: 'save-closeup', error };
+      throw error;
+    }
+  }
+
+  // The close-ups saved so far, by change, screen and number.
+  savedCloseups() {
+    return [...this.saved.values()].filter((file) => file.variant === 'closeup')
+      .map((file) => ({ change: file.storyId, screen: file.viewport, part: file.part }));
+  }
+
+  // Device pixels per CSS pixel in a still, as the worker reported it: only
+  // in a run taken at device density, only from a worker whose screenshot
+  // tool saves at device scale (the bridge that reports it ships with that
+  // tool, so an older worker reports nothing and its stills stay 1x), and,
+  // for a whole screen, only when its width says the same.
+  stillDensity(target, info, reported, deviceDensity) {
+    const said = Number(reported);
+    if (!deviceDensity || ![2, 3, 4].includes(said)) return 1;
+    if (target.variant !== 'context') return said;
+    const viewport = this.declaredChange(target.storyId).viewports.find((v) => v.name === target.viewport);
+    return viewport && shots.densityFor(info.width, viewport.width) === said ? said : 1;
+  }
+
   // One file the agent saved: a screen or element shot, or a clip. Saving the
   // same slot again replaces it, so the agent can retake a poor shot, and
   // saving for a change it skipped takes that skip back.
@@ -125,13 +183,24 @@ class RunControl {
           'This app is new: the before address shows only the starter template\'s placeholder, so this run '
           + 'takes after shots only. Save the after side of each change and leave the before address alone.', 400);
       }
-      const info = target.media === 'webm' ? shots.inspectClip(buffer) : shots.inspectImage(buffer);
+      // A run taken at the screen's own density (services/shots-density.js)
+      // saves larger stills, and its element shots may be that much larger.
+      const deviceDensity = this.agent?.deviceDensity === true;
+      const info = target.media === 'webm' ? shots.inspectClip(buffer)
+        : shots.inspectImage(buffer, deviceDensity ? { maxBytes: shots.MAX_DENSE_IMAGE_BYTES } : {});
+      // Such a run's still is kept twice: its original, and the same still
+      // averaged down to 1x, which is all anyone outside the experiment is
+      // shown and what every comparison below and later reads.
+      const density = target.media === 'png' ? this.stillDensity(target, info, rawTarget?.density, deviceDensity) : 1;
+      const flatBuffer = density > 1 ? shotsDiff.flatten(buffer, density) : null;
+      const flat = flatBuffer ? shots.inspectImage(flatBuffer) : null;
+      const sha256 = flat ? flat.sha256 : info.sha256;
       // A dark shot identical to its light one is not kept (#4459): there
       // would be nothing to switch to, and the answer tells the agent this
       // app does not change with the mode, so it can stop taking dark shots.
       if (target.theme === 'dark') {
         const light = this.saved.get(shots.slotKey({ ...target, theme: 'light' }));
-        if (light && light.sha256 === info.sha256) {
+        if (light && light.sha256 === sha256) {
           return {
             saved: false,
             change: target.storyId,
@@ -147,9 +216,14 @@ class RunControl {
       shots.checkElementSize(
         this.declaredChange(target.storyId), target, info,
         this.saved.get(shots.slotKey({ ...target, variant: 'context' })),
+        { deviceDensity, density },
       );
       const slot = shots.slotKey(target);
-      this.saved.set(slot, shots.stored(target, buffer, info));
+      const entry = flat
+        ? shots.stored(target, flatBuffer, flat, { density, data: buffer, ...info })
+        : shots.stored(target, buffer, info);
+      entry.publicSafe = publicSafeOf(rawTarget?.showsPrivate);
+      this.saved.set(slot, entry);
       this.dirty.add(slot);
       this.skipped.delete(target.storyId);
       this.failed.delete(target.storyId);
@@ -159,7 +233,7 @@ class RunControl {
       const otherSide = target.media === 'png'
         ? this.saved.get(shots.slotKey({ ...target, side: target.side === 'base' ? 'head' : 'base' }))
         : null;
-      const sameAsOtherSide = !!otherSide && otherSide.sha256 === info.sha256;
+      const sameAsOtherSide = !!otherSide && otherSide.sha256 === sha256;
       return {
         saved: true,
         change: target.storyId,
@@ -326,13 +400,22 @@ const RUN_ID = /^[0-9a-f]{32}$/;
 // slots a run publishes): its change, screen, side and kind. The in-memory
 // key (shots-files.slotKey) separates them with NUL, which neither text nor
 // jsonb holds.
-function dbSlot({ storyId, viewport, side, variant, theme }) {
-  // A dark file's slot extends the light one only when it is dark, so light
-  // slots stay exactly as they are now.
-  return [storyId, viewport, side, variant, ...(theme === 'dark' ? ['dark'] : [])].join('/');
+function dbSlot({ storyId, viewport, side, variant, theme, part }) {
+  // A dark file's slot extends the light one only when it is dark, and a
+  // close-up's by its number, so every other slot stays exactly as it is now.
+  return [storyId, viewport, side, variant, ...(theme === 'dark' ? ['dark'] : []),
+    ...(variant === 'closeup' ? [String(Number(part) || 1)] : [])].join('/');
 }
 const mapOf = (value) => new Map(Object.entries(value && typeof value === 'object' ? value : {}));
 const objectOf = (map) => Object.fromEntries(map);
+
+// Whether a still may be shown to a visitor who is not signed in: only on
+// the agent's clear "shows nothing private" (save_shot's showsPrivate
+// false, "0" on the wire). Anything else, an unanswered save included, is
+// null: never public.
+function publicSafeOf(showsPrivate) {
+  return showsPrivate === '0' || showsPrivate === false ? true : null;
+}
 
 // A saved file as RunControl keeps it: everything but its bytes, which stay
 // in the database (a retake replaces the row; publication copies it).
@@ -342,7 +425,17 @@ function fileEntry(row) {
     // Rows written before the column existed read as light.
     theme: row.theme === 'dark' ? 'dark' : 'light',
     contentType: row.content_type, width: row.width, height: row.height, bytes: row.bytes, sha256: row.sha256,
-    focusRect: null, stageLabels: null,
+    // A still kept at device density as well (services/shots-density.js):
+    // its original's size, whose bytes also stay in the database.
+    density: Number.isInteger(row.density) && row.density > 1 ? row.density : 1,
+    dense: Number.isInteger(row.density) && row.density > 1 ? {
+      width: row.dense_width, height: row.dense_height, bytes: row.dense_bytes, sha256: row.dense_sha256,
+    } : null,
+    // A close-up's number on its screen, region and density (shots-closeups.js).
+    ...(row.variant === 'closeup' ? { part: Number(row.part) || 1, scale: Number(row.scale), focusRect: row.focus_rect || null }
+      : { focusRect: null }),
+    stageLabels: null,
+    publicSafe: row.public_safe === true ? true : null,
   };
 }
 
@@ -395,7 +488,8 @@ async function load(db, runId, { lock = false } = {}) {
     `SELECT * FROM shot_run_control WHERE run_id = $1${lock ? ' FOR UPDATE' : ''}`, [runId]);
   if (!row) return null;
   const { rows: files } = await db.query(
-    `SELECT slot, story_id, viewport, side, variant, media, theme, content_type, width, height, bytes, sha256
+    `SELECT slot, story_id, viewport, side, variant, media, theme, content_type, width, height, bytes, sha256,
+            density, dense_width, dense_height, dense_bytes, dense_sha256, part, scale, focus_rect, public_safe
        FROM shot_run_files WHERE run_id = $1`, [runId]);
   return { row, control: fromRow(row, files) };
 }
@@ -416,14 +510,22 @@ async function persist(db, control) {
     const slot = dbSlot(f);
     await db.query(
       `INSERT INTO shot_run_files
-         (run_id, slot, story_id, viewport, side, variant, media, theme, content_type, data, width, height, bytes, sha256)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+         (run_id, slot, story_id, viewport, side, variant, media, theme, content_type, data, width, height, bytes, sha256,
+          density, dense_data, dense_width, dense_height, dense_bytes, dense_sha256, part, scale, focus_rect, public_safe)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23::jsonb, $24)
        ON CONFLICT (run_id, slot) DO UPDATE
          SET data = EXCLUDED.data, content_type = EXCLUDED.content_type, media = EXCLUDED.media,
              theme = EXCLUDED.theme, width = EXCLUDED.width, height = EXCLUDED.height, bytes = EXCLUDED.bytes,
-             sha256 = EXCLUDED.sha256, saved_at = NOW()`,
+             sha256 = EXCLUDED.sha256, density = EXCLUDED.density, dense_data = EXCLUDED.dense_data,
+             dense_width = EXCLUDED.dense_width, dense_height = EXCLUDED.dense_height,
+             dense_bytes = EXCLUDED.dense_bytes, dense_sha256 = EXCLUDED.dense_sha256,
+             part = EXCLUDED.part, scale = EXCLUDED.scale, focus_rect = EXCLUDED.focus_rect,
+             public_safe = EXCLUDED.public_safe, saved_at = NOW()`,
       [control.runId, slot, f.storyId, f.viewport, f.side, f.variant, f.media, f.theme || 'light', f.contentType, f.data,
-        f.width, f.height, f.bytes, f.sha256]);
+        f.width, f.height, f.bytes, f.sha256, f.density > 1 ? f.density : 1, f.dense?.data || null,
+        f.dense?.width || null, f.dense?.height || null, f.dense?.bytes ?? null, f.dense?.sha256 || null,
+        f.variant === 'closeup' ? f.part : 0, f.variant === 'closeup' ? f.scale : null,
+        f.variant === 'closeup' && f.focusRect ? JSON.stringify(f.focusRect) : null, f.publicSafe === true ? true : null]);
   }
   control.dirty.clear();
 }
@@ -463,7 +565,7 @@ async function withControl(pool, { runId, sessionId }, fn, { readOnly = false } 
     control.assertLive();
     await assertCurrent(db, control);
     try {
-      const answer = await fn(control);
+      const answer = await fn(control, db);
       if (!readOnly) await persist(db, control);
       return { answer };
     } catch (error) {
@@ -527,7 +629,8 @@ async function read(pool, runId) {
 // Every saved file with its bytes, for the slots named (the screen diff).
 async function filesFor(pool, runId, slots = null) {
   const { rows } = await pool.query(
-    `SELECT slot, story_id, viewport, side, variant, media, theme, content_type, data, width, height, bytes, sha256
+    `SELECT slot, story_id, viewport, side, variant, media, theme, content_type, data, width, height, bytes, sha256,
+            density, part, scale, focus_rect
        FROM shot_run_files WHERE run_id = $1 ${slots ? 'AND slot = ANY($2::text[])' : ''}`,
     slots ? [runId, slots] : [runId]);
   return rows.map((row) => ({ ...fileEntry(row), data: row.data }));
@@ -562,6 +665,38 @@ async function summaryFor(pool, runId) {
   };
 }
 
+// The close-ups run `control`'s after screens want now (shots-closeups.js),
+// each with whether it is saved: only in a run taken at device density,
+// for the changes with both a before and an after screen shot saved, on
+// the screens the card shows (shots-diff.screensFor, the same comparison the
+// run's verdict makes). Read inside withControl (`db` its transaction).
+async function wantedCloseups(db, control) {
+  if (control.agent?.deviceDensity !== true || control.afterOnly) return [];
+  const stories = control.intent.stories.filter((story) => story.viewports.some((viewport) => ['base', 'head']
+    .every((side) => control.saved.has(shots.slotKey({ storyId: story.id, viewport: viewport.name, side, variant: 'context' })))));
+  if (!stories.length) return [];
+  const files = await filesFor(db, control.runId);
+  const screens = await shotsDiff.screensFor(stories,
+    files.filter((file) => file.variant !== 'closeup' && file.theme !== 'dark'));
+  const stillDensity = (screen) => control.saved.get(shots.slotKey({
+    storyId: screen.shot, viewport: screen.viewport, side: 'head', variant: 'context',
+  }))?.density || 1;
+  const saved = control.savedCloseups();
+  return closeups.wanted(screens, stillDensity).map((ask) => ({
+    ...ask,
+    saved: saved.some((entry) => entry.change === ask.change && entry.screen === ask.screen && entry.part === ask.part),
+  }));
+}
+
+// The 1x copies of a change's before and after screen shots on one screen,
+// for a close-up's check.
+async function stillsFor(db, control, { change, screen }) {
+  const files = await filesFor(db, control.runId, ['base', 'head']
+    .map((side) => dbSlot({ storyId: change, viewport: screen, side, variant: 'context' })));
+  const of = (side) => files.find((file) => file.side === side)?.data || null;
+  return { afterStill: of('head'), beforeStill: of('base') };
+}
+
 module.exports = {
   ShotsControlError,
   RunControl,
@@ -573,6 +708,8 @@ module.exports = {
   noteProgress,
   read,
   filesFor,
+  wantedCloseups,
+  stillsFor,
   remove,
   summaryFor,
 };

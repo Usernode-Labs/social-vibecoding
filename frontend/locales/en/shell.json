@@ -55,10 +55,6 @@
     "text": "Your phone helps run Homeroom: your node can produce blocks while the app is in the background. For that, Android needs to wake it at exact slot times and leave it free of battery optimization. These settings only schedule wake-ups. They give Homeroom no access to your data.",
     "description": "Opening paragraph of the \"Set up your device\" sheet of the Homeroom phone app on Android, when the phone takes part in block production. The node is the part of the app that helps run Homeroom's network; a slot is its scheduled turn to produce a block. Android and Homeroom are names."
   },
-  "permissions.intro.android": {
-    "text": "Allow notifications so Homeroom can tell you about activity on your apps and your node.",
-    "description": "Opening paragraph of the \"Set up your device\" sheet of the Homeroom phone app on Android, when only notifications are asked for. The node is the part of the app that helps run Homeroom's network."
-  },
   "permissions.intro.ios": {
     "text": "Allow notifications so Homeroom can alert you about node and account activity.",
     "description": "Opening paragraph of the \"Set up your device\" sheet of the Homeroom phone app on an iPhone. The node is the part of the app that helps run Homeroom's network."
@@ -99,10 +95,6 @@
     "text": "Skip for now",
     "description": "Last button of the \"Set up your device\" sheet of the Homeroom phone app while some permission is still missing: closes the sheet without granting it."
   },
-  "permissions.action.openNotificationSettings": {
-    "text": "Open notification settings",
-    "description": "Main button of the \"Set up your device\" sheet of the Homeroom phone app on Android after the system's question was already declined: opens Android's notification settings for Homeroom. \"Open\" is a verb."
-  },
   "permissions.action.allowExactAlarms": {
     "text": "Allow exact alarms",
     "description": "Main button of the \"Set up your device\" sheet of the Homeroom phone app on Android: opens the system page where Homeroom is allowed to set exact alarms."
@@ -114,14 +106,6 @@
   "permissions.action.delegate": {
     "text": "Delegate instead",
     "description": "Button in the \"Set up your device\" sheet of the Homeroom phone app on Android, for a person who does not want to change the device settings: opens the screen where they delegate their stake to Homeroom's server, so their phone need not produce blocks. \"Delegate\" is a verb."
-  },
-  "permissions.hint.notifications": {
-    "text": "Android will ask whether Homeroom may send you notifications. Tap Allow. You can turn them off any time in Settings.",
-    "description": "Note under the \"Allow notifications\" button in the \"Set up your device\" sheet of the Homeroom phone app: says what Android will show next. \"Allow\" is the name of the button in Android's own dialog."
-  },
-  "permissions.hint.notificationsOff": {
-    "text": "Notifications are off for Homeroom. Turn them on in Android settings, then come back here.",
-    "description": "Note under the \"Open notification settings\" button in the \"Set up your device\" sheet of the Homeroom phone app."
   },
   "permissions.hint.exactAlarms": {
     "text": "Android opens the \"Alarms & reminders\" page. Turn on Allow for Homeroom, then come back here. Your node only wakes a few minutes before each of its slots.",
@@ -138,6 +122,22 @@
   "permissions.hint.productionDeferred": {
     "text": "Block production settings (exact alarms and battery) come later, when you ask to produce blocks in Settings, Homeroom app.",
     "description": "Note in the \"Set up your device\" sheet of the Homeroom phone app on Android when only notifications are asked for now. \"Settings, Homeroom app\" is the path to a section of Homeroom's Settings."
+  },
+  "devAlerts.ask.title": {
+    "text": "Get a notification when it finishes?",
+    "description": "An in-app question shown once, the first time somebody sends a message in an agent session (a coding conversation) in a web browser, before the browser's own notification permission prompt. Its title."
+  },
+  "devAlerts.ask.message": {
+    "text": "This browser can tell you when the agent is done, while the tab stays open. Your browser will ask you to allow it.",
+    "description": "An in-app question shown once, the first time somebody sends a message in an agent session (a coding conversation) in a web browser, before the browser's own notification permission prompt. The line under the title."
+  },
+  "devAlerts.ask.confirm": {
+    "text": "Notify me",
+    "description": "An in-app question shown once, the first time somebody sends a message in an agent session (a coding conversation) in a web browser, before the browser's own notification permission prompt. Its button that goes on to the browser's prompt."
+  },
+  "devAlerts.ask.notNow": {
+    "text": "Not now",
+    "description": "An in-app question shown once, the first time somebody sends a message in an agent session (a coding conversation) in a web browser, before the browser's own notification permission prompt. Its button that closes it and asks nothing."
   },
   "pingAsk.appBuilding.title": {
     "text": "Get a ping when your app is ready?",

@@ -42,7 +42,7 @@ const vm = require('node:vm');
 
 const appTemplates = require('../src/services/app-templates');
 const { parseCreateOptions } = require('../src/services/create-options');
-const { getTemplateFiles } = require('../src/services/template');
+const { getTemplateFiles, fillAppName } = require('../src/services/template');
 const appManifest = require('../src/services/app-manifest');
 
 const ROOT = path.join(__dirname, '..');
@@ -105,7 +105,7 @@ test('the allow-list: Empty, the default, the twenty ready-made apps and the fou
 // with, so that reconcile finds nothing to change.
 test('a ready-made app\'s icon is on its record from the start', () => {
   const route = fs.readFileSync(path.join(ROOT, 'src/routes/apps.js'), 'utf8');
-  assert.match(route, /const readyIcon = appTemplates\.isReadyMade\(template\) \? appTemplates\.get\(template\)\.icon \|\| null : null;\s+const \{ rows: templated \} = await pool\.query\(\s+`UPDATE apps SET template = \$1, icon_emoji = COALESCE\(\$3, icon_emoji\) WHERE id = \$2 RETURNING \*`,\s+\[template, appRow\.id, readyIcon\]/);
+  assert.match(route, /const readyIcon = appTemplates\.isReadyMade\(template\) \? appTemplates\.get\(template\)\.icon \|\| null : null;\s+const \{ rows: templated \} = await db\.query\(\s+`UPDATE apps SET template = \$1, icon_emoji = COALESCE\(\$3, icon_emoji\) WHERE id = \$2 RETURNING \*`,\s+\[template, appRow\.id, readyIcon\]/);
   for (const id of READY) {
     const dapp = JSON.parse(file(getTemplateFiles('Notes', 'notes-abc123', 'postgres://x', null, { template: id }), 'dapp.json'));
     assert.deepEqual(dapp.icon, { emoji: appTemplates.get(id).icon }, id);
@@ -158,7 +158,7 @@ test('Empty is the scaffold every project always got, byte for byte', () => {
   assert.doesNotMatch(server, /require\('\.\/api'\)/);
   // The key a first version's checks go under is there from the first
   // commit (App bench run 191: builds wrote theirs under `checks`).
-  assert.deepEqual(JSON.parse(file(plain, 'dapp.json')), { secrets: [], tests: [] });
+  assert.deepEqual(JSON.parse(file(plain, 'dapp.json')), { category: 'other', secrets: [], tests: [] });
   // #4047: the welcome card opens with the app's thumbnail tile (no sketch,
   // no starter here, so the name's letter falls back the way the home tile
   // does).
@@ -171,7 +171,9 @@ test('Empty is the scaffold every project always got, byte for byte', () => {
 test('app-creator scaffolds from the row, and a deleted starter\'s row retries as Empty', () => {
   const creator = fs.readFileSync(path.join(ROOT, 'src/services/app-creator.js'), 'utf8');
   assert.match(creator, /function templateOf\(row\) \{\s*const t = row\?\.template;\s*return typeof t === 'string' && appTemplates\.isTemplate\(t\) \? t : appTemplates\.DEFAULT_TEMPLATE;/);
-  assert.equal((creator.match(/template: templateOf\(appRow\)/g) || []).length, 2, 'both the GitHub and the local path');
+  // The starter's files come from the row (starterFiles), for the setup's
+  // first commit and for a deploy without GitHub alike.
+  assert.match(creator, /function starterFiles\(row, \{ repoUrl = null, sketch = null \} = \{\}\) \{[\s\S]{0,300}template: templateOf\(row\), sketch,/);
   // What templateOf answers for a project made from a starter before they went.
   for (const id of DELETED) assert.equal(appTemplates.isTemplate(id), false, id);
 });
@@ -185,7 +187,10 @@ test('each ready-made app is a directory of its own files; the four tier lists s
   const games = new Set(GAMES.map((id) => appTemplates.dirOf(id)));
   const shared = new Set(GAMES.map((id) => appTemplates.get(id).shared));
   assert.deepEqual([...shared], ['_game-room'], 'every game starter shares one game room');
-  assert.deepEqual(fs.readdirSync(appTemplates.STARTERS_DIR).sort(), [...dirs, ...games, ...shared].sort(), 'no directory that no entry uses');
+  // `_scaffold` holds files services/template.js writes itself: what every
+  // new app gets, starter or not (usernode-user-data.js, #5118), and what
+  // every ready-made app gets (live-updates.js and its page's half).
+  assert.deepEqual(fs.readdirSync(appTemplates.STARTERS_DIR).sort(), [...dirs, ...games, ...shared, '_scaffold'].sort(), 'no directory that no entry uses');
   for (const dir of dirs) {
     for (const rel of appTemplates.REQUIRED_FILES) {
       assert.ok(fs.existsSync(path.join(appTemplates.STARTERS_DIR, dir, rel)), `${dir}/${rel}`);
@@ -203,13 +208,35 @@ test('each ready-made app is a directory of its own files; the four tier lists s
   for (const id of READY.slice(0, 4)) {
     const t = appTemplates.get(id);
     assert.equal(t.dir, 'tier-list');
-    assert.deepEqual(Object.keys(t.fill).sort(), ['ITEM_EXAMPLE', 'ITEM_ONE', 'ITEM_PLURAL']);
+    assert.deepEqual(Object.keys(t.fill).sort(), ['ITEM_EXAMPLE', 'ITEM_ONE', 'ITEM_PLURAL', 'WANT_VERB']);
     assert.match(t.fill.ITEM_EXAMPLE, /^e\.g\. /, 'the add field\'s placeholder is an example that says so');
   }
   // The platform's own build never reads the starters.
   for (const f of ['Dockerfile', 'tailwind.config.js', '.dockerignore']) {
     if (fs.existsSync(path.join(ROOT, f))) assert.doesNotMatch(fs.readFileSync(path.join(ROOT, f), 'utf8'), /app-templates/, f);
   }
+});
+
+// Which revision of its starter a project began from (apps.template_version),
+// for a later change to every copy of one starter: the starter's own files,
+// unfilled, so the four tier lists of one revision share it.
+test('a project records which revision of its starter its first commit carried', () => {
+  assert.equal(appTemplates.versionOf('empty'), null);
+  for (const id of DELETED) assert.equal(appTemplates.versionOf(id), null, id);
+  const versions = new Map();
+  for (const id of [...READY, ...GAMES]) {
+    const v = appTemplates.versionOf(id);
+    assert.match(v, /^[0-9a-f]{12}$/, id);
+    assert.equal(appTemplates.versionOf(id), v, `${id} is the same each time`);
+    const dir = appTemplates.dirOf(id);
+    if (versions.has(dir)) assert.equal(versions.get(dir), v, `${id} shares its directory's revision`);
+    versions.set(dir, v);
+  }
+  assert.equal(new Set(versions.values()).size, versions.size, 'each starter directory has its own revision');
+  // Written with the first commit, beside the repository.
+  const creator = fs.readFileSync(path.join(ROOT, 'src/services/app-creator.js'), 'utf8');
+  assert.match(creator, /'UPDATE apps SET repo_url = \$1, template_version = \$3 WHERE id = \$2',\s*\[repoUrl, row\.id, appTemplates\.versionOf\(template\)\]/);
+  assert.match(fs.readFileSync(path.join(ROOT, 'src/db/schema.sql'), 'utf8'), /^ALTER TABLE apps ADD COLUMN IF NOT EXISTS template_version VARCHAR\(64\);$/m);
 });
 
 test('a tier list ranks what its entry says, escaped where it lands, and its script reads none of it', () => {
@@ -221,13 +248,17 @@ test('a tier list ranks what its entry says, escaped where it lands, and its scr
   assert.match(html, /<p class="text-heading">No hikes yet<\/p>/);
   assert.doesNotMatch(file(generate('tier-list-cities'), 'public/index.html'), /hike/);
   // The fill is the entry's, never the maker's, but it is escaped all the same,
-  // like the name.
+  // like the name. The name is the one placeholder left: the page keeps
+  // {{APP_NAME}} for its server.js to fill in, escaped, at runtime
+  // (tests/starter-images.test.js), and fillAppName writes it in, escaped,
+  // for a page served as it is.
   const odd = getTemplateFiles('A <b>"Best"</b> & co', 'x', 'postgres://x', null, { template: 'tier-list-games' });
-  const oddHtml = file(odd, 'public/index.html');
+  assert.match(file(odd, 'public/index.html'), /<title>\{\{APP_NAME\}\}<\/title>/);
+  const oddHtml = file(fillAppName(odd, 'A <b>"Best"</b> & co'), 'public/index.html');
   assert.match(oddHtml, /<title>A &lt;b&gt;&quot;Best&quot;&lt;\/b&gt; &amp; co<\/title>/);
   assert.doesNotMatch(oddHtml, /<b>"Best"/);
   for (const id of READY) {
-    for (const f of generate(id)) assert.doesNotMatch(f.content, /\{\{[A-Z_]+\}\}/, `${id}: ${f.path} has every placeholder filled`);
+    for (const f of generate(id)) assert.doesNotMatch(f.content, /\{\{(?!APP_NAME\}\})[A-Z_]+\}\}/, `${id}: ${f.path} has every placeholder but the name filled`);
   }
   const script = fs.readFileSync(path.join(appTemplates.STARTERS_DIR, 'tier-list/public/app.js'), 'utf8');
   assert.doesNotMatch(script, /\{\{/, 'the script is the same for every tier list');
@@ -244,6 +275,217 @@ test('a tier list ranks what its entry says, escaped where it lands, and its scr
   assert.match(board.expectSelector, /#board\[data-view="yours"\]/, 'the visual check reads the board it opens on');
 });
 
+// "For tier list, make it so if you tap a place, it shows information about
+// who rated it what. You can drop the tap-a-tier thing, it can just be drag
+// based for that." (Evan, 20 Oct 2026.) Ranking is dragging; a tap, on
+// either board, opens the item's sheet, which is also where removing it
+// went. tests/app-templates-postgres.test.js runs GET /api/items/:id.
+test('a tier list ranks by dragging, and tapping one shows who ranked it what', () => {
+  const html = file(generate('tier-list-restaurants'), 'public/index.html');
+  const script = fs.readFileSync(path.join(appTemplates.STARTERS_DIR, 'tier-list/public/app.js'), 'utf8');
+  // No tap-a-chip-then-tap-a-tier: no picked item, no tier to tap.
+  assert.doesNotMatch(script, /\bpicked\b|function pick\(|tap a tier/);
+  assert.doesNotMatch(html, /picked-actions/);
+  assert.match(script, /var label = h\('div', 'flex w-14 shrink-0 items-center justify-center text-heading ' \+ TIER_CLASS\[tier\], tier\);/,
+    'a tier\'s label is not a button any more');
+  // A press that moves drags at once, with no hold to time, from a 44 px
+  // target that holds the finger; the page scrolls from anywhere else, and
+  // under a drag held at the screen's edge (Evan, 21 Oct 2026: "you need to
+  // hold on it just right to start dragging").
+  assert.match(script, /var CHIP_MOVABLE = 'inline-flex min-h-11 [^']*touch-none select-none /);
+  assert.match(script, /var CHIP = 'inline-flex min-h-11 /);
+  assert.doesNotMatch(script, /setTimeout\(begin/, 'no hold before a drag');
+  assert.match(script, /if \(Math\.abs\(e\.clientX - drag\.x\) \+ Math\.abs\(e\.clientY - drag\.y\) < SLOP_PX\) return;\s+if \(!begin\(\)\) return;/);
+  assert.match(script, /gestures\.claim\('touch', 'tier-drag'\)/, 'a drag owns the gesture, so pulling to refresh never starts under it');
+  assert.match(script, /function edgeScroll\(\)/);
+  // A tap (a press that was not a drag) opens the item's sheet, on either board.
+  assert.match(script, /chip\.addEventListener\('click', function \(\) \{\s*if \(!justDragged\) openDetail\(item\.id, chip\);/);
+  assert.match(script, /chip = h\('button', CHIP, item\.name\);/, 'the group\'s board too');
+  // The sheet: the name, the group's tier, who ranked it what.
+  for (const id of ['detail', 'detail-scrim', 'detail-name', 'detail-by', 'detail-group', 'detail-raters', 'detail-close', 'detail-off', 'detail-remove']) {
+    assert.match(html, new RegExp(`id="${id}"`), id);
+  }
+  assert.match(html, /<section id="detail-sheet" role="dialog" aria-modal="true" aria-labelledby="detail-name"/);
+  // It moves as a phone's sheet does (Evan, 20 Oct 2026: it "animates up
+  // weirdly, really fast" and "doesn't animate out"): up from the bottom
+  // edge over the dim, once its rows are in (or after a moment), focusing
+  // Close without scrolling the page, and back down as the dim fades.
+  assert.match(html, /@keyframes rise \{ from \{ transform: translateY\(100%\); \} to \{ transform: none; \} \}/);
+  assert.match(html, /\.rise \{ animation: rise 340ms cubic-bezier\(0\.32, 0\.72, 0, 1\); \}/);
+  assert.match(html, /\.leaving \.rise \{ animation: sink 240ms [^;]+ forwards; \}/);
+  assert.match(html, /\.leaving \.appear \{ animation: vanish 240ms ease-in forwards; \}/);
+  assert.match(html, /id="detail-scrim" class="scrim appear /);
+  assert.match(html, /id="detail-sheet"[^>]*class="rise /);
+  assert.match(script, /loadDetail\(\)\.then\(present, present\);\s+setTimeout\(present, OPEN_WAIT_MS\);/);
+  assert.match(script, /el\.detailClose\.focus\(\{ preventScroll: true \}\);/);
+  assert.match(script, /if \(el\.detail\.hidden \|\| reducedMotion\(\)\) \{ el\.detail\.hidden = true; return; \}\s+el\.detail\.classList\.add\('leaving'\);\s+leaving = setTimeout\(finishLeaving, LEAVE_MS\);/);
+  assert.match(script, /function openDetail\(id, opener\) \{\s+finishLeaving\(\);/, 'a sheet on its way down goes at once for the next');
+  assert.match(script, /api\('GET', '\/api\/items\/' \+ asked\)/);
+  assert.match(script, /el\.main\.inert = true;/, 'the board behind it cannot be reached');
+  assert.match(script, /if \(e\.key === 'Escape' && detail\) closeDetail\(\);/);
+  // Removing it went into the sheet: two taps, for whoever added it.
+  assert.match(script, /tapTwice\(el\.detailRemove, 'Tap again to remove'/);
+  assert.match(script, /el\.detailRemove\.hidden = !item\.mine;/);
+  assert.match(script, /el\.detailOff\.hidden = !signedIn \|\| !item\.yours;/);
+  // A keyboard or a screen reader cannot drag: the sheet's own tiers, shown once focus reaches them.
+  assert.match(html, /id="detail-yours"[^>]*class="sr-only [^"]*focus-within:not-sr-only/);
+  for (const tier of ['S', 'A', 'B', 'C', 'D', 'F', 'W', '']) assert.match(html, new RegExp(`data-set-tier="${tier}"`));
+  // What the README and the made screen say.
+  for (const id of READY.slice(0, 4)) {
+    const t = appTemplates.get(id);
+    assert.ok(t.features.some((f) => f.startsWith(`**Who ranked it what**: tap any of the ${t.fill.ITEM_PLURAL}`)), id);
+    assert.doesNotMatch(JSON.stringify(t.features), /tap a tier|tap it and then/, id);
+  }
+});
+
+// "Thinking it would live below F, and people could drag things there, and
+// they wouldn't impact the averages, but you could say where you want to go
+// and others could see too." (Evan, 20 Oct 2026.) Want to (W) is a person's
+// one place for an item, like a tier, but worth no score; its name ends in
+// the entry's own verb. tests/app-templates-postgres.test.js runs the API.
+test('a tier list has Want to below F, which counts toward no tier', () => {
+  const verbs = { 'tier-list-restaurants': 'go', 'tier-list-hikes': 'hike', 'tier-list-cities': 'go', 'tier-list-games': 'play' };
+  for (const [id, verb] of Object.entries(verbs)) {
+    const t = appTemplates.get(id);
+    assert.equal(t.fill.WANT_VERB, verb, id);
+    const html = file(generate(id), 'public/index.html');
+    assert.match(html, new RegExp(`<div id="want" [^>]*data-drop="W" data-verb="${verb}">`), id);
+    assert.match(html, new RegExp(`<span>Want</span> <span>to ${verb}</span>`), id);
+    assert.match(html, new RegExp(`data-set-tier="W" class="btn-secondary">Want to ${verb}</button>`), id);
+    assert.ok(t.features.some((f) => f.startsWith(`**Want to ${verb}**: a row below F for ${t.fill.ITEM_PLURAL}`)), id);
+    assert.ok(t.tests.some((c) => c.expectSelector === '#board ~ #want[data-drop="W"]'), id);
+  }
+  // Between the tiers and the tray, so the visual check's tray still follows the board.
+  const html = file(generate('tier-list-cities'), 'public/index.html');
+  assert.ok(html.indexOf('id="board"') < html.indexOf('id="want"') && html.indexOf('id="want"') < html.indexOf('id="tray"'));
+  assert.match(html, /id="detail-raters"><\/div>\s*<div id="detail-wants" [^>]*hidden>/, 'who wants to, below who ranked it');
+  const script = fs.readFileSync(path.join(appTemplates.STARTERS_DIR, 'tier-list/public/app.js'), 'utf8');
+  assert.match(script, /var WANT_VERB = el\.want\.getAttribute\('data-verb'\) \|\| 'try';/);
+  // Yours: dropped on like a tier. The group's: every one somebody wants
+  // to, most people first, with how many, and no longer in its tray.
+  assert.match(script, /el\.want\.setAttribute\('data-drop', 'W'\);/);
+  assert.match(script, /el\.want\.removeAttribute\('data-drop'\);/);
+  assert.match(script, /data\.items\.filter\(function \(i\) \{ return i\.wants; \}\)\.sort\(function \(a, b\) \{ return b\.wants - a\.wants; \}\)/);
+  assert.match(script, /if \(withWants\) chip\.appendChild\(wantBadge\(item\.wants\)\);/);
+  assert.match(script, /return !placeOf\(i\) && \(view === 'yours' \|\| !i\.wants\);/);
+  const api = fs.readFileSync(path.join(appTemplates.STARTERS_DIR, 'tier-list/api.js'), 'utf8');
+  assert.match(api, /CHECK \(tier IN \('S', 'A', 'B', 'C', 'D', 'F', 'W'\)\)/);
+  assert.match(api, /COUNT\(v\.user_id\) FILTER \(WHERE v\.tier <> 'W'\)::int AS votes/);
+  assert.match(api, /FROM tier_votes WHERE tier <> 'W'/, 'nor in "From N people\'s rankings"');
+});
+
+// "Add to the tier list template an indicator of who else is live on the app
+// at the same time" (Homeroom request #5842). A quiet line under the opening
+// sentence names the other signed-in people with the list open. It rides the
+// look the screen already keeps, so app.js adds no timer of its own;
+// tests/app-templates-postgres.test.js runs GET /api/presence.
+test('a tier list says who else is here', () => {
+  for (const id of READY.slice(0, 4)) {
+    const t = appTemplates.get(id);
+    const html = file(generate(id), 'public/index.html');
+    // Under the opening line, in the hint's own small muted text, announced
+    // politely; it starts hidden, and stays so with nobody else here.
+    assert.match(html, /<p class="text-body text-muted">Our favorite [^<]+, ranked together\.<\/p>\s*<!--[^>]*?-->\s*<p id="presence" class="text-small text-muted" aria-live="polite" hidden><\/p>/);
+    assert.ok(html.indexOf('id="presence"') < html.indexOf('</header>'), `${id}: inside the header`);
+    assert.ok(t.features.some((f) => f.startsWith('**Who else is here**: a line under the title')), id);
+    assert.ok(t.tests.some((c) => c.expectSelector === 'header #presence[aria-live="polite"]'), id);
+  }
+  const script = fs.readFileSync(path.join(appTemplates.STARTERS_DIR, 'tier-list/public/app.js'), 'utf8');
+  assert.match(script, /presence: document\.getElementById\('presence'\)/);
+  // It rides the look the screen already keeps, holding a change back under
+  // a drag as the board does, and the opening cover never waits on it.
+  assert.match(script, /function refresh\(\) \{\s*return Promise\.all\(\[load\(\), detail \? loadDetail\(\) : null, loadPresence\(\)\]\);/);
+  assert.match(script, /api\('GET', '\/api\/presence'\)/);
+  assert.match(script, /if \(drag\) \{ if \(live\) live\.changed\(\); return; \}/);
+  assert.match(script, /el\.presence\.textContent = 'Also here: ' \+ text;/);
+  assert.doesNotMatch(script, /el\.presence\.innerHTML/);
+  assert.match(script, /loadPresence\(\);\s+if \(window\.usernode && window\.usernode\.ready\)/, 'not what the opening cover waits on');
+  const api = fs.readFileSync(path.join(appTemplates.STARTERS_DIR, 'tier-list/api.js'), 'utf8');
+  assert.match(api, /const present = new Map\(\);/);
+  assert.match(api, /const PRESENCE_WINDOW_MS = 90000;/);
+  assert.match(api, /app\.get\('\/api\/presence'/);
+  // Nothing new is stored: still the two tables the entry names.
+  assert.deepEqual([...api.matchAll(/CREATE TABLE IF NOT EXISTS (\w+)/g)].map((m) => m[1]), ['tier_items', 'tier_votes']);
+});
+
+// "Add SSE to all of the templated apps. Tier list for example, changes are
+// only showing up with a long delay." (Evan, 20 Oct 2026.) Every ready-made
+// app's server tells the open screens when a write succeeds (GET
+// /api/changes, app-templates/_scaffold/live-updates.js), and every screen
+// that shows what other people do listens and fetches again
+// (public/live-updates.js), which also looks every minute. The study timer
+// keeps only each person's own count, so its screen has nothing to hear.
+// A game keeps its own live connection. The helper itself is
+// tests/scaffold-live-updates.test.js.
+test('every ready-made app hears its own writes, and every screen that shares anything listens', () => {
+  const scaffold = (rel) => fs.readFileSync(path.join(appTemplates.STARTERS_DIR, '_scaffold', rel), 'utf8');
+  for (const id of READY) {
+    const files = generate(id);
+    assert.equal(file(files, 'live-updates.js'), scaffold('live-updates.js'), id);
+    assert.equal(file(files, 'public/live-updates.js'), scaffold('public/live-updates.js'), id);
+    const server = file(files, 'server.js');
+    const mount = server.indexOf("const changes = require('./live-updates').mount(app);");
+    assert.ok(mount > server.indexOf('app.use((req, res, next) => {\n  req.now'), `${id}: behind the sign-in check`);
+    assert.ok(mount < server.indexOf("const api = require('./api');"), `${id}: before api.js, so every write it answers is heard`);
+    assert.match(server, /    changes\.close\(\);\n    server\.close\(\(\) => \{\}\);/, `${id}: its streams end on SIGTERM`);
+    assert.match(file(files, 'CLAUDE.md'), /`live-updates\.js` and `public\/live-updates\.js`: live updates\./, id);
+    const script = file(files, 'public/app.js');
+    const html = file(files, 'public/index.html');
+    if (id === 'study-timer') {
+      assert.doesNotMatch(script + html, /LiveUpdates|live-updates/, 'nothing shared to hear');
+      continue;
+    }
+    assert.match(html, /<script src="\/live-updates\.js"><\/script>\s*<script src="\/app\.js"><\/script>/, `${id}: the page's half first`);
+    assert.match(script, /window\.LiveUpdates\.watch\(\{ refresh: [^,]+, quiet: /, `${id}: listens, and holds a change while it would interrupt`);
+    assert.doesNotMatch(script, /setInterval\(|visibilitychange/, `${id}: the page's half is its one clock, and knows when nobody is looking`);
+  }
+  for (const id of ['empty', ...GAMES]) {
+    const files = generate(id);
+    assert.ok(!files.some((f) => /live-updates\.js$/.test(f.path)), id);
+    assert.doesNotMatch(file(files, 'server.js'), /live-updates|changes\.close/, id);
+  }
+});
+
+// Evan, 21 Oct 2026: "Book club times: shouldn't this be a weekly time? Not
+// just a few times to choose between?" and "If you type in 'what's it for',
+// it's unclear how to close the keyboard." One find-a-time app, two modes:
+// the book club marks the hours of every week; game night and the trip
+// suggest dates. tests/app-templates-postgres.test.js runs both.
+test('find a time: the book club finds a weekly time, the others suggest dates, and the keyboard closes', () => {
+  const modes = { 'find-a-time-book-club': 'weekly', 'find-a-time-game-night': 'dates', 'find-a-time-trip': 'dates' };
+  for (const [id, mode] of Object.entries(modes)) {
+    const files = generate(id);
+    const html = file(files, 'public/index.html');
+    assert.equal(appTemplates.get(id).fill.TIME_MODE, mode, id);
+    assert.match(html, new RegExp(`<main id="app" class="[^"]*" data-mode="${mode}">`), id);
+    assert.match(file(files, 'api.js'), new RegExp(`const MODE = '${mode}' === 'weekly' \\? 'weekly' : 'dates';`), id);
+    // Homeroom's native kit, by relative path: a tap outside a field closes
+    // the keyboard, and the page stays put instead of dragging Homeroom along.
+    assert.match(html, /<link rel="stylesheet" href="\/usernode-native\/v1\/native\.css">[\s\S]*<link rel="stylesheet" href="\/tailwind\.css">/, id);
+    // The kit's script after the theme script, which comes first after the
+    // bridge (tests/new-app-theme.test.js).
+    assert.match(html, /<script src="\/usernode-bridge\/v1\/bridge\.js"><\/script>[\s\S]*applyTheme\(\);[\s\S]*<\/script>\s*(?:<!--[\s\S]*?-->\s*)?<script src="\/usernode-native\/v1\/native\.js"><\/script>/, id);
+    assert.match(html, /viewport-fit=cover/, id);
+    assert.match(html, /html \{ overscroll-behavior-y: contain; overscroll-behavior-x: none; touch-action: pan-y pinch-zoom; \}/, id);
+  }
+  const html = file(generate('find-a-time-book-club'), 'public/index.html');
+  assert.match(html, /Find a weekly time for our book club\./);
+  assert.match(html, /\[data-mode="weekly"\] \[data-dates-only\], \[data-mode="dates"\] \[data-weekly-only\] \{ display: none !important; \}/);
+  assert.match(html, /<section id="week" [^>]*data-weekly-only hidden>/);
+  assert.match(html, /<div id="plans" [^>]*data-dates-only hidden><\/div>/);
+  assert.match(file(generate('find-a-time-trip'), 'public/index.html'), /Find a time for our trip\./);
+  const script = fs.readFileSync(path.join(appTemplates.STARTERS_DIR, 'find-a-time/public/app.js'), 'utf8');
+  assert.match(script, /var refresh = weekly \? week\.load : load;/);
+  assert.match(script, /window\.unNative\.attachPullToRefresh\(window, refresh\)/);
+  // A hold, then a drag, marks a block of hours without scrolling the page;
+  // a quick swipe is left to the page.
+  assert.match(script, /w\.grid\.addEventListener\('touchmove', function \(e\) \{\s+var t = e\.touches\[0\];\s+if \(paint\) \{\s+e\.preventDefault\(\);/);
+  assert.match(script, /\}, \{ passive: false \}\);/);
+  // The name's Done key closes the keyboard rather than starting a plan half done.
+  assert.match(html, /id="plan-name"[^>]*\s+enterkeyhint="done"/);
+  assert.match(script, /if \(e\.key !== 'Enter'\) return;\s+e\.preventDefault\(\);\s+e\.target\.blur\(\);/);
+});
+
 for (const id of READY) {
   test(`the ${id} app is a whole repository on the platform's conventions`, () => {
     const files = generate(id);
@@ -257,8 +499,10 @@ for (const id of READY) {
     assert.match(html, /<script src="\/usernode-bridge\/v1\/bridge\.js"><\/script>/);
     assert.match(html, /window\.usernode && window\.usernode\.theme/);
     assert.match(html, /<script src="\/app\.js"><\/script>\s*<\/body>/);
-    assert.match(html, /<title>Demo App<\/title>/);
-    assert.match(html, /<h1 class="text-title">Demo App<\/h1>/);
+    assert.match(html, /<title>\{\{APP_NAME\}\}<\/title>/);
+    // A tier list leaves its name to Homeroom's header (Evan, 21 Oct 2026),
+    // keeping it for a screen reader.
+    assert.match(html, appTemplates.dirOf(id) === 'tier-list' ? /<h1 class="sr-only">\{\{APP_NAME\}\}<\/h1>/ : /<h1 class="text-title">\{\{APP_NAME\}\}<\/h1>/);
     // No CDN: every script and stylesheet is the app's own or the platform's, by path.
     for (const m of html.matchAll(/<(?:script|link)[^>]+(?:src|href)="([^"]+)"/g)) {
       assert.ok(m[1].startsWith('/') || m[1].startsWith('data:'), `${id}: ${m[1]} is not fetched from another origin`);
@@ -421,7 +665,7 @@ for (const id of GAMES) {
       'the game room\'s page side, then the game');
     // A title screen with the game's name, and the game's own scene,
     // styled after the kit (public/scene.css).
-    assert.match(html, /<h1 class="[^"]*">Demo App<\/h1>/);
+    assert.match(html, /<h1 class="[^"]*">\{\{APP_NAME\}\}<\/h1>/);
     assert.match(html, /<link rel="stylesheet" href="\/tailwind\.css">\s*<link rel="stylesheet" href="\/scene\.css">/);
     assert.match(file(files, 'public/scene.css'), /CLAUDE\.md "## Design"/, 'the scene says where its look is written down');
     assert.match(html, /id="title"[^>]*>/, 'a title screen');

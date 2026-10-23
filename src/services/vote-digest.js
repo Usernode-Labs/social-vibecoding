@@ -175,8 +175,8 @@ async function sweep(pool) {
       const created = await withTransaction(pool, async (db) => {
         await db.query('SELECT pg_advisory_xact_lock($1, $2)', [VOTE_DIGEST_LOCK, userId]);
         const { rows: made } = await db.query(
-          `INSERT INTO notifications (user_id, app_id, session_id, source_user_id, kind, detail)
-           SELECT $1, $3, $4, NULL, 'vote_digest', $2
+          `INSERT INTO notifications (user_id, app_id, session_id, source_user_id, kind, detail, mailed_at)
+           SELECT $1, $3, $4, NULL, 'vote_digest', $2, NOW()
             WHERE NOT EXISTS (
               SELECT 1 FROM notifications n
                WHERE n.user_id = $1 AND n.kind = 'vote_digest'
@@ -190,6 +190,9 @@ async function sweep(pool) {
       if (created) {
         result.sent += 1;
         await notifications.hydrateAndPush(pool, created);
+        // Not emailed (#5794): mailed_at is written as NOW(), so the notice
+        // owes nothing and stays out of the notice-mail clock's list. It
+        // rings the bell and the phone, and that is all.
       }
     } catch (err) {
       // One user's digest failing must not end the sweep for everybody

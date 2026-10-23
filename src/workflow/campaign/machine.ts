@@ -241,24 +241,16 @@ function clocked(out: Outcome<CState>, ctx: TransitionContext, before: CState | 
   return { ...out, timer: waiting ? { at: new Date(ctx.now.getTime() + CHECK_MS), event: { type: 'Check' } } : null };
 }
 
-// The app's record from its row, when one is there before the campaign
-// starts (a row left 'running' is changed again).
-function adopted(r: AppRow): AppRec {
-  const base = { appId: r.appId, slug: r.slug, n: 0, sessionId: r.sessionId, prNumber: r.prNumber, error: r.error, resumable: false };
-  switch (r.state) {
-    case 'pr_open': case 'merged': return { ...base, state: 'proposed' };
-    case 'skipped': return { ...base, state: 'skipped' };
-    case 'failed': return { ...base, state: 'failed' };
-    case 'stopped': return { ...base, state: 'not_reached' };
-    default: return { ...base, state: 'waiting', sessionId: null, prNumber: null, error: null };
-  }
+// An app's record as the campaign starts: waiting for its turn.
+function fresh(r: AppRow): AppRec {
+  return { appId: r.appId, slug: r.slug, n: 0, state: 'waiting', sessionId: null, prNumber: null, error: null, resumable: false };
 }
 
 function start(e: Event<any>, f: Facts, ctx: TransitionContext, deps: CampaignDeps): Outcome<CState> {
   const c = f.campaign!;
   const data: Data = {
     campaignId: c.id, issueId: c.issueId, threadAppId: c.threadAppId, title: c.title, proposerId: null,
-    apps: f.apps.map(adopted), exemplar: null, drained: null, stopped: null, held: null, said: null,
+    apps: f.apps.map(fresh), exemplar: null, drained: null, stopped: null, held: null, said: null,
   };
   const name: Name = c.status === 'done' ? 'done' : c.status === 'cancelled' ? 'stopped' : 'running';
   const s: Live = { name, data };

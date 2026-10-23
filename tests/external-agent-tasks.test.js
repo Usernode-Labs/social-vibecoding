@@ -2076,44 +2076,37 @@ test('a task belonging to somebody else is still refused, and says why plainly',
 });
 
 test('concurrent submits are serialized on the task, so one piece of work is one PR', async () => {
-  // A session-scoped advisory lock keyed on the task id: the second caller
-  // blocks, then re-reads the task and finds it submitted.
-  assert.match(SRC, /pg_advisory_lock\(\$1, \$2\)/);
-  assert.match(SRC, /pg_advisory_unlock\(\$1, \$2\)/);
-  assert.match(SRC, /EXTERNAL_TASK_SUBMIT_LOCK/);
+  // A session-scoped advisory lock keyed on the task id, on the process's
+  // lock connection (src/db/session-locks.js): the second caller waits, then
+  // re-reads the task and finds it submitted.
+  const lockFn = SRC.slice(SRC.indexOf('async function withTaskLock'), SRC.indexOf('// The caller\'s most recent open task'));
+  assert.match(lockFn, /withSessionLock\(pool, \[EXTERNAL_TASK_SUBMIT_LOCK, id\], fn, \{ unlockedOnError: true \}\)/);
   const locks = require('../src/services/advisory-locks');
   assert.equal(typeof locks.EXTERNAL_TASK_SUBMIT_LOCK, 'number');
   assert.notEqual(locks.EXTERNAL_TASK_SUBMIT_LOCK, locks.ADMIN_MUTATION_LOCK,
     'two locks that mean different things must not collide');
 
-  // The lock is released on the failure path too, or one bad submit wedges
-  // every later one for that task.
-  const lockFn = SRC.slice(SRC.indexOf('async function withTaskLock'), SRC.indexOf('// The caller\'s most recent open task'));
-  assert.match(lockFn, /finally \{/);
-  assert.match(lockFn, /client\.release\(\)/);
-
   // Two real concurrent calls: the first opens the PR, the second finds it
   // closed and returns the same proposal rather than opening a second one.
   let status = 'open';
   const created = [];
-  // A fake that BLOCKS the way pg_advisory_lock does — without it the test
-  // proves nothing, because two unblocked callers would both read 'open'
-  // and both create a pull request, which is exactly the bug.
-  let held = Promise.resolve();
+  // A stand-in that WAITS the way the lock does (the real one, and its
+  // release on the failure path, are tests/session-locks-postgres.test.js's)
+  // — without it the test proves nothing, because two unblocked callers
+  // would both read 'open' and both create a pull request, which is exactly
+  // the bug.
+  const sessionLocks = require('../src/db/session-locks');
+  const realLock = sessionLocks.withSessionLock;
+  const tails = new Map();
+  sessionLocks.withSessionLock = async (_pool, key, fn) => {
+    const id = key.join(':');
+    const prior = tails.get(id) || Promise.resolve();
+    const run = prior.then(fn, fn);
+    tails.set(id, run.catch(() => {}));
+    return run;
+  };
   const pool = {
-    connect: async () => {
-      let release;
-      const waitFor = held;
-      held = new Promise((r) => { release = r; });
-      return {
-        async query(sql) {
-          if (/pg_advisory_lock/.test(sql)) await waitFor;
-          if (/pg_advisory_unlock/.test(sql)) release();
-          return { rows: [] };
-        },
-        release: () => release(),
-      };
-    },
+    options: { connectionString: 'postgres://x/y' },
     async query(sql, params) {
       if (/WHERE t\.id = \$1 AND t\.user_id = \$2 AND t\.status = 'open'/.test(sql)) {
         return { rows: status === 'open' ? [TASK_ROW] : [] };
@@ -2136,7 +2129,13 @@ test('concurrent submits are serialized on the task, so one piece of work is one
     { pool, config: {}, gh, githubLink: linkedAs('someuser'), limits: okLimits },
     { user: { id: 3 }, taskId: 31, importProposal: async () => ({ ok: true, body: { sessionId: 81 } }) }
   );
-  const [first, second] = await withFetch(PUSHED_BRANCH, [], () => Promise.all([call(), call()]));
+  let first;
+  let second;
+  try {
+    [first, second] = await withFetch(PUSHED_BRANCH, [], () => Promise.all([call(), call()]));
+  } finally {
+    sessionLocks.withSessionLock = realLock;
+  }
   assert.equal(created.length, 1, 'exactly one pull request for one piece of work');
   assert.ok(first.ok && second.ok);
   assert.ok(first.alreadySubmitted || second.alreadySubmitted,
@@ -2608,27 +2607,31 @@ test('the work order presents every submit shape, in order of preference', async
   assert.match(order, /insufficient_scope/);
   assert.match(order, /github_not_linked/);
   assert.match(order, /IF THE USERNODE TOOLS ARE NOT AVAILABLE/);
-  // #2460: the patch comes first — it needs no fork and no push — and the
-  // branch push is the fallback, both before the submit that names them.
+  // The branch push comes first: nothing is retyped, however large the
+  // change. A refused push falls through to the patch at once, which needs
+  // no fork and no push (#2460) — both before the submit that names them.
   const patchAt = order.indexOf('git format-patch');
   const pushAt = order.indexOf('git push -u origin HEAD');
   assert.ok(patchAt > 0 && pushAt > 0);
-  assert.ok(patchAt < pushAt, 'the patch step precedes the push step');
-  assert.ok(pushAt < order.indexOf('SUBMIT IT YOURSELF'));
-  assert.match(order, /1\. COMMIT, THEN MAKE A PATCH/);
+  assert.ok(pushAt < patchAt, 'the push step precedes the patch step');
+  assert.ok(patchAt < order.indexOf('SUBMIT IT YOURSELF'));
+  assert.match(order, /1\. COMMIT, THEN PUSH A BRANCH to your fork/);
+  assert.match(order, /IF THE PUSH IS REFUSED, or there is no fork you can push to, do not stop\n {3}and do not wait: hand the change in as a PATCH/);
+  assert.match(order, /When it is step 1's push that is refused, carrying on means handing in\nthe patch step 1 describes\./,
+    'a refused push is not a reason to wait on the GitHub remedy');
   assert.match(order, /the patch text from step 1 as `patch`/);
   assert.match(order, /Patches over about 250 KB are refused/);
-  assert.match(order, /4\. IF THE PATCH IS REFUSED as too large, push a branch/);
+  assert.match(order, /4\. IF THE PATCH IS REFUSED as too large, the branch in step 1 is the only\n {3}way in/);
   // #3687: the choice between them belongs to the agent, said both in the
   // rules and at the step where it is made, after the rule it applies.
   assert.match(order, /The choice is yours, never the user's\./);
-  const decideAt = order.indexOf('Patch or branch is YOUR decision, by the rule above');
-  assert.ok(decideAt > pushAt && decideAt < order.indexOf('SUBMIT IT YOURSELF'),
+  const decideAt = order.indexOf('Branch or patch is YOUR decision, by the rule above');
+  assert.ok(decideAt > patchAt && decideAt < order.indexOf('SUBMIT IT YOURSELF'),
     'the decision line closes step 1, after both options are on the page');
   assert.match(order, /never ask the user which to use: most users are not developers/);
-  // The exact identifiers the fallback needs are all still printed.
+  // The exact identifiers both ways in need are all still printed.
   assert.match(order, /Homeroom task id:\s+31/);
-  assert.match(order, /with taskId 31 and the patch text/);
+  assert.match(order, /with taskId 31 and `branch` set to the name you actually pushed/);
   assert.match(order, /Suggested branch name: +usernode\/recipe-box-issue-4-abc123/);
   // The connector reaches Homeroom even though the sandbox cannot.
   assert.match(order, /connector traffic goes out through Claude's own infrastructure/);
@@ -2651,9 +2654,8 @@ test('the work order tells an agent with no Homeroom tools what that means and h
   assert.match(assistant, /a second account does not inherit the\n {3}first one's/);
   assert.match(assistant, /The work is not lost/);
   assert.match(assistant, /retry `submit_work` as in step 2/);
-  // Started by a chat assistant: hand it back, patch included.
-  assert.match(assistant, /Otherwise hand it back: save the patch from step 1 to a `\.patch` file/);
-  assert.match(assistant, /or print the branch name, if you pushed one/);
+  // Started by a chat assistant: hand it back, the branch or else the patch.
+  assert.match(assistant, /Otherwise hand it back: print the branch name you pushed \(or, if the\n {3}push was refused, save the patch from step 1 to a `\.patch` file\)/);
   assert.match(assistant, /If they started from the Homeroom tab instead/);
   assert.doesNotMatch(assistant, /Otherwise finish from Homeroom/);
   // The URL appears in both places.
@@ -2716,11 +2718,12 @@ test('the update work order says the same for a missing connector, in its own te
   });
   assert.match(update, /6\. IF THE USERNODE TOOLS ARE NOT AVAILABLE to you at all, the Homeroom\n {3}connector was never added/);
   assert.match(update, /^ {4}https:\/\/usernode\.example\/#settings\/connectors$/m);
-  // #4263: an update to a proposal whose head Homeroom writes is handed in as
-  // a patch now (it updates THAT proposal), so the hand-back is the patch,
-  // with the proposal id it belongs to.
-  assert.match(update, /Otherwise hand it back: save the patch from step 1 to a `\.patch` file/);
-  assert.match(update, /with the proposal id/);
+  // #4263: an update to a proposal whose head Homeroom writes can be handed
+  // in as a patch when the push is refused (it updates THAT proposal), so
+  // the hand-back is the branch or else the patch, with the proposal id it
+  // belongs to.
+  assert.match(update, /Otherwise hand it back: print the branch name you pushed \(or, if the\n {3}push was refused, save the patch from step 1 to a `\.patch` file\)/);
+  assert.match(update, /with\n {3}the proposal id/);
   // A head in the author's own fork still takes a push, and says so.
   const forkHome = fullOrder({
     targetProposal: { id: 512, targetKind: 'proposal', branchHome: 'user_fork' },
@@ -3789,19 +3792,20 @@ test('a fork-home update work order says USE the existing branch, and to check i
 // coding session is often not allowed to make. The update task's id now
 // belongs to its proposal, so a patch sent with it is applied on the
 // proposal's own head and advances THAT proposal: the update work order
-// offers the patch first, exactly like new work, and the branch as the
-// fallback.
-test('the update work order offers the patch first, with the branch and proposalId as the fallback', async () => {
+// hands it in exactly like new work, a branch when the agent can push and a
+// patch when it cannot.
+test('the update work order offers the branch with the proposalId, and the patch when the push is refused', async () => {
   const { result } = await prepareUpdate(BOT_PROPOSAL);
   const order = result.workOrder;
   assert.match(order, /SUBMIT THE UPDATE, through the Homeroom connector/);
-  // Step 1 is new work's own: a patch from the proposal's head, no push.
-  assert.match(order, /1\. COMMIT, THEN MAKE A PATCH of your commits/);
+  // Step 1 is new work's own: a push, else a patch from the proposal's head.
+  assert.match(order, /1\. COMMIT, THEN PUSH A BRANCH to your fork/);
   assert.match(order, new RegExp(`git format-patch ${BASE_SHA}\\.\\.HEAD --stdout`));
-  assert.match(order, /Patch or branch is YOUR decision/);
-  // Step 2: the patch goes with THIS task's id; the branch with the proposal's.
-  assert.match(order, /with taskId 44 and the patch text from step 1 as `patch`/);
-  assert.match(order, /proposalId 512 and `branch` set to the branch you/);
+  assert.ok(order.indexOf('git push -u origin HEAD') < order.indexOf('git format-patch'));
+  assert.match(order, /Branch or patch is YOUR decision/);
+  // Step 2: the branch goes with the proposal's id; the patch with THIS task's.
+  assert.match(order, /with proposalId 512 and `branch` set to the branch you pushed/);
+  assert.match(order, /taskId 44 and the patch text from step 1\n {3}as `patch`/);
   assert.match(order, /ON THE PROPOSAL'S CURRENT COMMIT/);
   assert.match(order, /it never opens a second proposal/);
   // The refusals an update gets that new work never does, each with the exact
@@ -3831,7 +3835,7 @@ test('a fork-home update work order keeps the push, and says why a patch cannot 
   assert.doesNotMatch(order, /git format-patch/);
   assert.doesNotMatch(order, /DO NOT SEND A PATCH/);
   // #3687: with only a branch on offer there is no choice to hand over.
-  assert.doesNotMatch(order, /Patch or branch is YOUR decision/);
+  assert.doesNotMatch(order, /Branch or patch is YOUR decision/);
 });
 
 test('every update work order says what description and summary do to a proposal that has them', async () => {
@@ -3968,11 +3972,12 @@ test('the session work order keeps every mechanical instruction the update path 
   assert.match(order, /NOT the app's main branch/);
   assert.match(order, /work already done here/);
   // …and the same submission, with the same refusals. Its head is in the
-  // app's repository, so it takes a patch first exactly as a proposal does
-  // (#4263), with the branch and the session's id as the fallback.
+  // app's repository, so it takes a branch with the session's id, or a patch
+  // with this task's when the push is refused, exactly as a proposal does
+  // (#4263).
   assert.match(order, /SUBMIT THE UPDATE, through the Homeroom connector/);
-  assert.match(order, /with taskId 44 and the patch text from step 1 as `patch`/);
-  assert.match(order, /proposalId 601 and `branch`/);
+  assert.match(order, /with proposalId 601 and `branch`/);
+  assert.match(order, /taskId 44 and the patch text from step 1\n {3}as `patch`/);
   assert.match(order, /ON THE SESSION'S CURRENT COMMIT/);
   assert.match(order, /base_mismatch/);
   assert.match(order, /branch_moved/);

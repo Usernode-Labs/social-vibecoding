@@ -1,12 +1,12 @@
 'use strict';
 
-// Blue-green deploy guards: leadership election (src/services/leadership.js),
-// the server.js leader/instance split, the compose color pair, the rollout
-// script's cutover ordering, and rollback.sh's deterministic single-color
-// recovery. The scripts and compose file are config, so — same pattern as
-// tests/host-deployer.test.js — the strongest cheap guard is pinning the
-// load-bearing lines; leadership.js additionally gets functional coverage
-// for the paths that don't need a live Postgres.
+// Blue-green deploy guards: the migration lock (src/services/db-locks.js),
+// that no process leads (the background work is the workflow's), the compose
+// color pair, the rollout script's cutover ordering, and rollback.sh's
+// deterministic single-color recovery. The scripts and compose file are
+// config, so — same pattern as tests/host-deployer.test.js — the strongest
+// cheap guard is pinning the load-bearing lines; db-locks.js additionally
+// gets functional coverage for the paths that don't need a live Postgres.
 
 const test = require('node:test');
 const assert = require('node:assert');
@@ -16,7 +16,7 @@ const path = require('path');
 const root = path.join(__dirname, '..');
 const read = (...p) => fs.readFileSync(path.join(root, ...p), 'utf8');
 
-const leadership = require('../src/services/leadership');
+const dbLocks = require('../src/services/db-locks');
 const serverJs = read('server.js');
 const compose = read('docker-compose.yml');
 const rolloutSh = read('scripts', 'platform-rollout.sh');
@@ -35,28 +35,15 @@ function withLeaderLockEnv(value, fn) {
     });
 }
 
-// ── leadership.js: single-instance (disabled) mode ────────────────────
+// ── db-locks.js: the migration lock ──────────────────────────────────
 
-test('leader lock is off by default — dev/tests/single-instance boot unchanged', async () => {
-  await withLeaderLockEnv(undefined, async () => {
-    assert.strictEqual(leadership.leaderLockEnabled(), false);
-    const lead = leadership.createLeadership({ databaseUrl: 'postgres://unused' });
-    assert.strictEqual(lead.enabled, false);
-    let elected = 0;
-    await lead.start(async () => { elected += 1; });
-    assert.strictEqual(elected, 1, 'onElected must run immediately when the lock is disabled');
-    assert.strictEqual(lead.isLeader, true);
-    await lead.stop(); // must be a safe no-op without a pg client
-  });
+test('PLATFORM_LEADER_LOCK (the infrastructure\'s name) turns the migration lock on with 1 or true; it is off by default', async () => {
+  await withLeaderLockEnv(undefined, () => assert.strictEqual(dbLocks.migrationLockEnabled(), false));
+  await withLeaderLockEnv('1', () => assert.strictEqual(dbLocks.migrationLockEnabled(), true));
+  await withLeaderLockEnv('true', () => assert.strictEqual(dbLocks.migrationLockEnabled(), true));
+  await withLeaderLockEnv('0', () => assert.strictEqual(dbLocks.migrationLockEnabled(), false));
 });
 
-test('PLATFORM_LEADER_LOCK accepts 1 and true', async () => {
-  await withLeaderLockEnv('1', () => assert.strictEqual(leadership.leaderLockEnabled(), true));
-  await withLeaderLockEnv('true', () => assert.strictEqual(leadership.leaderLockEnabled(), true));
-  await withLeaderLockEnv('0', () => assert.strictEqual(leadership.leaderLockEnabled(), false));
-});
-
-// ── leadership.js: withMigrationLock ──────────────────────────────────
 
 function fakePool() {
   const calls = [];
@@ -73,7 +60,7 @@ function fakePool() {
 test('withMigrationLock is a pass-through when the lock is disabled', async () => {
   await withLeaderLockEnv(undefined, async () => {
     const { pool, calls } = fakePool();
-    const out = await leadership.withMigrationLock(pool, async () => 'ran');
+    const out = await dbLocks.withMigrationLock(pool, async () => 'ran');
     assert.strictEqual(out, 'ran');
     assert.strictEqual(calls.length, 0, 'must not touch the pool in single-instance mode');
   });
@@ -82,17 +69,17 @@ test('withMigrationLock is a pass-through when the lock is disabled', async () =
 test('withMigrationLock serializes via the advisory lock and always unlocks', async () => {
   await withLeaderLockEnv('1', async () => {
     const { pool, calls } = fakePool();
-    const out = await leadership.withMigrationLock(pool, async () => 'migrated');
+    const out = await dbLocks.withMigrationLock(pool, async () => 'migrated');
     assert.strictEqual(out, 'migrated');
     assert.match(calls[0].sql, /pg_advisory_lock/);
-    assert.deepStrictEqual(calls[0].params, [leadership.MIGRATE_LOCK_KEY]);
+    assert.deepStrictEqual(calls[0].params, [dbLocks.MIGRATE_LOCK_KEY]);
     assert.match(calls[1].sql, /pg_advisory_unlock/);
     assert.strictEqual(calls[2].sql, '<release>', 'the dedicated connection goes back to the pool');
 
     // The unlock + release must survive a throwing migration.
     const second = fakePool();
     await assert.rejects(
-      () => leadership.withMigrationLock(second.pool, async () => { throw new Error('ddl boom'); }),
+      () => dbLocks.withMigrationLock(second.pool, async () => { throw new Error('ddl boom'); }),
       /ddl boom/
     );
     assert.match(second.calls[1].sql, /pg_advisory_unlock/,
@@ -101,106 +88,68 @@ test('withMigrationLock serializes via the advisory lock and always unlocks', as
   });
 });
 
-test('the two advisory-lock keys are distinct', () => {
-  assert.notStrictEqual(leadership.LEADER_LOCK_KEY, leadership.MIGRATE_LOCK_KEY,
-    'sharing a key would make a booting color block on the leader instead of just migration');
-});
-
-// ── server.js: leader/instance split ──────────────────────────────────
+// ── server.js: no leader ──────────────────────────────────────────────
 
 test('server.js runs migrations under the migration lock, and the read-only roles with them', () => {
   assert.match(serverJs, /await withMigrationLock\(getPool\(config\), async \(\) => \{\n\s*const result = await migrate\(config\);\n\s*await require\('\.\/src\/services\/db-roles'\)\.ensureRoles\(config\);/,
     'two booting colors must never run DDL concurrently, nor set the roles up at once');
 });
 
-test('singleton background work lives in becomeLeader(), not start()', () => {
-  const becomeLeaderBody = serverJs.slice(
-    serverJs.indexOf('async function becomeLeader()'),
-    serverJs.indexOf('async function start()')
-  );
+test('no process leads: what a leader ran is the workflow\'s, which every color runs at once', () => {
   const startBody = serverJs.slice(
     serverJs.indexOf('async function start()'),
     serverJs.indexOf('// Boot only when run as the entry point')
   );
-  assert.ok(becomeLeaderBody.length > 0 && startBody.length > 0, 'both functions must exist');
-
-  // The races blue-green exists to prevent: each of these double-runs if it
-  // starts on both colors during the rollout overlap.
-  for (const singleton of [
-    'recoverActiveWorkers(config)',
-    'resumeHeadlessRuns',
-    'startTurnWatchdog(config)',
-    "require('./src/services/main-drift-poller').start(config)",
-    "require('./src/services/app-heal').start(config)",
-  ]) {
-    assert.ok(becomeLeaderBody.includes(singleton), `becomeLeader() must own: ${singleton}`);
-    assert.ok(!startBody.includes(singleton), `start() must NOT run singleton work: ${singleton}`);
-  }
-
-  // The platform's scheduled jobs are no leader work at all: each is a clock
-  // of the workflow (src/workflow/clock/), one run at a time wherever it runs.
-  // So are the session sweeper's and the stale-PR sweeper's passes, the
-  // merged-by-hand lookup and the stuck-check reconcile: what they looked at
-  // is a clock's or a machine's (src/workflow/proposal/, preview/).
-  for (const gone of ['mobilePush.start()', 'check-retention', 'startTitleHealSweeper', 'auditExistingRepoPrivacy',
+  assert.ok(startBody.length > 0, 'start() exists');
+  // No election, no leader timers: the races blue-green once prevented with
+  // a leader (adoption, resume, the watchdog) are work items and clocks
+  // claimed under leases in Postgres (src/workflow/turn/, clock/).
+  for (const gone of ['becomeLeader', 'createLeadership', 'leaderTimers', 'leader-timers', 'services/leadership',
+    'recoverActiveWorkers(', 'resumeHeadlessRuns', 'startTurnWatchdog(', 'sweepOrphanTurns(',
+    'restoreMissingQuickReplies(', 'startLocalAgentLeaseSweeper(', 'reconcilePendingTurnCleanup(',
+    "require('./src/services/estimate-backfill').start",
+    // The platform's scheduled jobs are clocks of the workflow too.
+    'mobilePush.start()', 'check-retention', 'startTitleHealSweeper', 'auditExistingRepoPrivacy',
     'vote-digest', 'welcome-dm', 'challenge-scorer',
     'observeMergedOnGithub(', 'reconcileStuckChecks(', 'recoverSessions(', 'startSessionAutoPauseSweeper(',
-    'startStalePrSweeper(', 'startStuckChecksSweeper(', "require('./src/services/fixed-check-sync').start"]) {
+    'startStalePrSweeper(', 'startStuckChecksSweeper(', "require('./src/services/fixed-check-sync').start",
+    "require('./src/services/main-drift-poller').start", "require('./src/services/app-heal').start",
+    'app-creation-owner', 'startCommitSweep', 'first-request-sweep', "require('./src/services/starter-images').start",
+    "require('./src/services/language-sync-runner').start", 'startOnBoot', 'ensurePlatformAssetBackend',
+    'reconcileAppGateIngresses']) {
     assert.ok(!serverJs.includes(gone), `no leader runs ${gone}`);
+  }
+  const clock = read('src', 'workflow', 'clock', 'services.ts');
+  // The wallet-link poller too: one run at a time, its cursor durable,
+  // never a timer per serving process.
+  assert.ok(!serverJs.includes('chainPoller.start(config)'), 'no process polls the chain on a timer of its own');
+  for (const job of ['turn-leftovers', 'estimate-backfill', 'local-agent-leases', 'global-chat-usage-settle', 'wallet-links']) {
+    assert.match(clock, new RegExp(`name: '${job}'`), `the ${job} clock`);
   }
 
   // Per-instance services every color needs to serve traffic.
   for (const perInstance of [
     'app.listen(config.port',
     'ws.attach(server, config)',
-    'chainPoller.start(config)',
+    'genesisAccounts.start()',
     'statusService.start(config)',
-    'leadership.start(becomeLeader)',
   ]) {
     assert.ok(startBody.includes(perInstance), `start() must run per-instance: ${perInstance}`);
   }
 });
 
-test('each process sweeps its own warm workers, whether or not it leads', () => {
+test('no process sweeps workers of its own: idle workers are the worker-eviction clock\'s', () => {
   // A web process never leads (docs/plans/web-and-conductor.md), and the
-  // workers of the turns it ran are in its registry alone.
-  const duties = serverJs.slice(
-    serverJs.indexOf('function startProcessDuties()'),
-    serverJs.indexOf('async function becomeLeader()')
-  );
-  assert.ok(duties.includes('startIdleEvictionSweeper()'), 'startProcessDuties() owns the idle eviction');
-  const startBody = serverJs.slice(
-    serverJs.indexOf('async function start()'),
-    serverJs.indexOf('// Boot only when run as the entry point')
-  );
-  assert.match(startBody, /if \(runsClusterMaintenance\(\)\) startProcessDuties\(\);/,
-    'every process that maintains the cluster runs them; a staging preview does not');
-  const becomeLeaderBody = serverJs.slice(
-    serverJs.indexOf('async function becomeLeader()'),
-    serverJs.indexOf('async function start()')
-  );
-  assert.ok(!becomeLeaderBody.includes('startIdleEvictionSweeper()'), 'not only on the leader');
-  // A session busy anywhere is left alone: its worker may be in use there.
-  const sweeper = serverJs.slice(serverJs.indexOf('function startIdleEvictionSweeper()'));
-  assert.match(sweeper.slice(0, 2000), /isSessionBusyElsewhere\(meta\.sessionId\)\) continue;/);
-});
-
-test('cleanup releases leadership after the drain so the standby promotes cleanly', () => {
-  const cleanupBody = serverJs.slice(serverJs.indexOf('async function cleanup()'));
-  const stopAt = cleanupBody.indexOf('leadership.stop()');
-  assert.ok(stopAt !== -1, 'cleanup() must release the leader advisory lock');
-  // lastIndexOf: an earlier comment inside cleanup() also says
-  // "process.exit(0)" — the real call is the final statement.
-  const exitAt = cleanupBody.lastIndexOf('process.exit(0)');
-  assert.ok(stopAt < exitAt, 'the release happens before exit, after draining');
-  const drainAt = cleanupBody.indexOf('lifecycle.waitFor');
-  assert.ok(drainAt !== -1 && drainAt < stopAt,
-    'promotion must see a quiesced old leader — release only after the handler drain');
+  // worker of a turn it ran is any process's to use next: idle eviction is
+  // one clock reading session_workers (services/worker-eviction.js).
+  assert.doesNotMatch(serverJs, /startIdleEvictionSweeper|sweepIdleWarmWorkers|sweepLeftWarmWorkers/);
+  const clock = fs.readFileSync(path.join(__dirname, '..', 'src/workflow/clock/services.ts'), 'utf8');
+  assert.match(clock, /name: 'worker-eviction'[\s\S]*?legacy\('services\/worker-eviction'\)\.sweep\(pool\)/);
 });
 
 // ── docker-compose.yml: the color pair ────────────────────────────────
 
-test('compose defines both colors off one anchor, with the shared alias and leader lock', () => {
+test('compose defines both colors off one anchor, with the shared alias and the migration lock', () => {
   assert.match(compose, /x-usernode-platform: &usernode-platform/);
   assert.match(compose, /usernode-blue:\n    <<: \*usernode-platform\n    container_name: usernode-blue\n    hostname: usernode-blue/);
   assert.match(compose, /usernode-green:\n    <<: \*usernode-platform\n    container_name: usernode-green\n    hostname: usernode-green/);
@@ -209,7 +158,7 @@ test('compose defines both colors off one anchor, with the shared alias and lead
   assert.match(compose, /aliases:\n\s+- usernode/,
     'both colors must carry the `usernode` network alias for PLATFORM_INTERNAL_URL and the Caddy fallbacks');
   assert.match(compose, /PLATFORM_LEADER_LOCK: "1"/,
-    'production must elect a single leader across the colors');
+    'two booting colors must take the migration lock');
   assert.match(compose, /image: usernode-platform:latest/,
     'one shared tag: build either color, both reference the same image');
   assert.match(compose, /\.\/caddy\/active:\/etc\/caddy\/active:ro/,

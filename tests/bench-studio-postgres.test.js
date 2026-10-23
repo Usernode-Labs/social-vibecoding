@@ -20,6 +20,7 @@ const fs = require('node:fs');
 const http = require('node:http');
 const express = require('express');
 const { Pool } = require('pg');
+const { asTransition } = require('./lib/as-transition');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL
   || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
@@ -50,14 +51,25 @@ test('the App bench studio against the full PostgreSQL schema', { timeout: 12000
   const scaffold = require('../src/services/bench/scaffold');
 
   const { rows: [evan] } = await pool.query("INSERT INTO users (username, password, is_admin) VALUES ('evan', 'x', TRUE) RETURNING id");
+  // A project's making (src/workflow/app-creation/), stood in for: its
+  // insert starts it (a Started event), and its repository arrives a moment
+  // later.
   const created = [];
-  const deps = {
-    // App creation's own path, stood in for: the repository arrives a moment later.
-    async createApp(_config, app) {
-      created.push(app.id);
-      await pool.query("UPDATE apps SET repo_url = $2, status = 'running' WHERE id = $1", [app.id, `https://github.com/usernode-bot/${app.slug}`]);
-    },
-  };
+  let seenEvent = 0;
+  const making = setInterval(async () => {
+    try {
+      const { rows } = await pool.query(
+        `SELECT id, app_id FROM wf_events WHERE machine = 'app-creation' AND type = 'Started' AND id > $1 ORDER BY id`, [seenEvent]);
+      for (const r of rows) {
+        seenEvent = Math.max(seenEvent, Number(r.id));
+        created.push(r.app_id);
+        await pool.query("UPDATE apps SET repo_url = 'https://github.com/usernode-bot/' || slug, status = 'running' WHERE id = $1", [r.app_id]);
+      }
+    } catch { /* the pool closing at the end */ }
+  }, 20);
+  t.after(() => clearInterval(making));
+  const deps = {};
+
 
   let pack;
   await t.test('a pack is saved as the next version of its name; a child keeps what it leaves out', async () => {
@@ -140,7 +152,7 @@ test('the App bench studio against the full PostgreSQL schema', { timeout: 12000
     const quiet = await studio.watchRun(pool, run.id, { since: first.cursor });
     assert.equal(quiet.trials.length, 0);
     const moving = first.trials[0];
-    await pool.query(
+    await asTransition(pool,
       "UPDATE bench_trials SET status = 'running', started_at = NOW(), progress = $2::jsonb WHERE id = $1",
       [moving.trialId, JSON.stringify({ step: 'build', lines: ['Using skill warm'], skills: { invoked: ['warm'], read: [] }, updatedAt: new Date(Date.now() + 1000).toISOString() })],
     );

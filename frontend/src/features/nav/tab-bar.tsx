@@ -193,7 +193,13 @@ export function tabLabel(
  * word is the whole of it, and the anchor carries no label of its own, as
  * the prerender ships it.
  */
-export function communitiesAriaLabel(scoped: { name: string } | null): string | undefined {
+export function communitiesAriaLabel(scoped: { name: string } | null, votes = 0): string | undefined {
+  // #5040: the blue number is said in words too, after the tab's own name.
+  if (votes > 0) {
+    return scoped
+      ? translate('core:tabs.communitiesOnVotes', { community: scoped.name, count: votes })
+      : translate('core:tabs.communitiesVotes', { count: votes });
+  }
   return scoped ? translate('core:tabs.communitiesOn', { community: scoped.name }) : undefined;
 }
 
@@ -227,12 +233,29 @@ function onHomeClick(event: React.MouseEvent<HTMLAnchorElement>): void {
  * where the tab pops to the selector as it always did — it answers false and
  * the href does exactly what it did before. A modified click is left alone,
  * as Home's is.
+ *
+ * ON A PHONE THE HREF IS NOT WHAT IT DID BEFORE (#5581). `#communities` is
+ * the full-screen Communities page, with the header's "Communities ⌄" and
+ * the list drawn as a page; the list on a phone is the drawer's own level 0
+ * (../nav-drawer/), as the lit tab already opens it from a community's page.
+ * So the tab takes the switcher's "All communities" door instead
+ * (../workshop/community-scope.ts `goToCommunity`), which opens the drawer's
+ * list over a community. A new account with no community to show it over
+ * still lands on the page, which is where Join and Start are.
  */
 function onWorkshopClick(event: React.MouseEvent<HTMLAnchorElement>): void {
   const nav = (window as unknown as { NavLink?: { isNativeClick?: (e: unknown) => boolean } }).NavLink;
   if (nav?.isNativeClick?.(event)) return;
   const app = (window as unknown as { App?: { resumeWorkshopView?: () => boolean } }).App;
-  if (app?.resumeWorkshopView?.()) event.preventDefault();
+  if (app?.resumeWorkshopView?.()) { event.preventDefault(); return; }
+  if (wideWindow()) return;
+  event.preventDefault();
+  goToCommunity(null);
+}
+
+/** The desktop's sidebar, where the tab's href (the full-screen list) is right. */
+function wideWindow(): boolean {
+  try { return !window.matchMedia || window.matchMedia('(min-width: 768px)').matches; } catch { return true; }
 }
 
 /**
@@ -608,7 +631,7 @@ function useTabMarker(
   box: TabMarkerBox | null;
   lit: string | null;
   markerRef: React.RefObject<HTMLSpanElement | null>;
-  press: (el: HTMLElement, key: string, go: () => void) => boolean;
+  press: (el: HTMLElement, key: string, go: () => void, fallback?: () => void) => boolean;
 } {
   const [box, setBox] = useState<TabMarkerBox | null>(null);
   const markerRef = useRef<HTMLSpanElement | null>(null);
@@ -725,15 +748,17 @@ function useTabMarker(
    * nothing lit yet): the caller navigates as it always did, at once.
    *
    * If the router never lights `key`, the bar goes back to the tab it did
-   * light after PRESS_SETTLE_MS rather than sitting on the wrong one.
+   * light after PRESS_SETTLE_MS rather than sitting on the wrong one — unless
+   * the press was given a `fallback` (tab-press.ts): then that runs once at
+   * settle time, and the press is given the same wait again (#5730).
    */
-  const press = (el: HTMLElement, key: string, go: () => void): boolean => {
+  const press = (el: HTMLElement, key: string, go: () => void, fallback?: () => void): boolean => {
     const bar = barRef.current;
     if (!bar || !canSlide(bar)) return false;
     place(el, true);
     setPressed(key);
     // A second press before the first has navigated replaces it.
-    schedulePress(pending, key, go, () => setPressed(null));
+    schedulePress(pending, key, go, () => setPressed(null), undefined, undefined, undefined, fallback);
     return true;
   };
 
@@ -755,7 +780,38 @@ function goToTab(key: string, href: string): void {
     return;
   }
   if (key === 'workshop' && app?.resumeWorkshopView?.()) return;
+  // #5581: on a phone the list is the drawer's, not the page the href names.
+  if (key === 'workshop' && !wideWindow()) {
+    goToCommunity(null);
+    return;
+  }
   window.location.assign(href);
+}
+
+/**
+ * The Communities destination that always lands (#5730): the All communities
+ * page, at `#communities`.
+ *
+ * A press on Communities from Me or Discover can reveal nothing. Its resume
+ * (`App.resumeWorkshopView`) hands off to `navigateToApp`, which gives up
+ * quietly when its record does not land, and the phone's list over it
+ * (`goToCommunity(null)`) needs a community to open it over. The router then
+ * never lights `workshop`, and the bar slid the pill back to the tab the
+ * press left.
+ *
+ * So the page, which is an ordinary address: the hashchange routes through
+ * `restoreFromHash` to `navigateToWorkshop`, which reveals `#workshop-screen`
+ * and lights the tab. The remembered view is forgotten first, as choosing
+ * All communities does, so the next press does not try the same dead resume;
+ * that also clears `currentApp`, which is what makes a `navigateToApp` still
+ * waiting from the first attempt drop itself. Deliberately not
+ * `goToCommunity(null)`: its phone road is the drawer's list, the one that
+ * just failed to show anything.
+ */
+function openCommunitiesPage(): void {
+  try { (window as unknown as { App?: { _forgetWorkshopView?: () => void } }).App?._forgetWorkshopView?.(); }
+  catch { /* nothing stored to forget */ }
+  if (window.location.hash !== '#communities') window.location.hash = '#communities';
 }
 
 export function PlatformTabs() {
@@ -792,6 +848,8 @@ export function PlatformTabs() {
   const railShown = useRailCommunities();
   const allVotes = Number(scope.badgeNeeds) || 0;
   const allCount = scope.list ? scope.list.length : 0;
+  // #5040: the blue number the tab shows at this width, which its tooltip names.
+  const titleVotes = sidebarRows ? allVotes : votes;
   // TWO WAYS TO HAVE NO RAIL, and they are not the same fact. The ROUTE can
   // say there is none (an app, chromeless, signed out) and the VIEWER can
   // fold the one there is (../header/../nav/sidebar-toggle.tsx). The peek
@@ -862,7 +920,17 @@ export function PlatformTabs() {
       pressLitTab(screen);
       return;
     }
-    if (key !== lit && press(event.currentTarget, key, () => goToTab(key, href))) {
+    // A press from another tab always resumes the view left, whatever the
+    // blue number says (#5708): the Needs you detour overwrote the place.
+    // Communities is the one press that can reveal nothing (#5730 — from Me
+    // or Discover), so it carries the page as its fallback, and only while
+    // the screen it left is still the one on show: a Back or another
+    // navigation during the wait is never overridden.
+    const left = navStore.get().screen;
+    const fallback = key === 'workshop'
+      ? () => { if (navStore.get().screen === left) openCommunitiesPage(); }
+      : undefined;
+    if (key !== lit && press(event.currentTarget, key, () => goToTab(key, href), fallback)) {
       event.preventDefault();
       return;
     }
@@ -970,8 +1038,12 @@ export function PlatformTabs() {
           // Beside the sidebar's list the tab is its All row, and named by
           // the words it shows ("All 13 communities"), not the community.
           aria-label={key === 'workshop'
-            ? (sidebarRows ? undefined : communitiesAriaLabel(scoped))
+            ? (sidebarRows ? undefined : communitiesAriaLabel(scoped, votes))
             : tabLabel(key, t(label), viewer).ariaLabel}
+          // #5040: pointed at, the tab says what its blue number counts (on
+          // the sidebar's All row, every vote waiting on you). None at zero,
+          // as the prerender ships it.
+          title={key === 'workshop' && titleVotes > 0 ? t('core:tabs.votesWaiting', { count: titleVotes }) : undefined}
           onClick={(event) => onTabClick(event, key, href)}
         >
           <span className="platform-tab-mark">

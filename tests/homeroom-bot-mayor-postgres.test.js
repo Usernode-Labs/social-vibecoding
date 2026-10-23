@@ -977,7 +977,14 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
      VALUES ($1, $2, 'Train your ear with intervals and chords.', NOW() - INTERVAL '2 minutes')`,
     [earRow.id, ada.id],
   );
-  const settingUp = { read: (slug) => (slug === 'ear-trainer' ? { phase: 'repository', startedAt: new Date().toISOString() } : null) };
+  // The step its making is on (services/app-creation-phase.js read): its
+  // repository, for Ear trainer.
+  const settingUp = {
+    read: async (db, appId) => {
+      const { rows: [a] } = await db.query('SELECT slug FROM apps WHERE id = $1', [appId]);
+      return a?.slug === 'ear-trainer' ? { phase: 'repository' } : null;
+    },
+  };
 
   await t.test('#3685: "how far along are you?" while her project is set up gets the step it is on', async () => {
     const chat = scripted([

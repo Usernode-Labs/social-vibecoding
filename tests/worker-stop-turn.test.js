@@ -658,6 +658,12 @@ test('a shots turn names the personas that get a phone browser, and refuses anyt
     assert.ok(dispatch.args.includes('SHOTS_PHONE_PERSONAS=["member","guest"]'));
     assert.ok(dispatch.args.includes('SHOTS_CLIP_SIZE=1280x800'));
     assert.ok(dispatch.args.includes('SHOTS_PHONE_CLIP_SIZE=390x844'));
+    // Stills at the screen's own density only when the run asks
+    // (services/shots-density.js): every other shots turn says so too.
+    assert.ok(dispatch.args.includes('SHOTS_DEVICE_DENSITY=0'));
+    calls.length = 0;
+    await worker.execInWorker(8309, shots({ shotsDeviceDensity: true }));
+    assert.ok(calls.find(isDispatch).args.includes('SHOTS_DEVICE_DENSITY=1'));
   } finally { restore(); }
 });
 

@@ -320,13 +320,6 @@ test('the catalog: a model entered for some stages only, a prompt too big for a 
   assert.equal(catalog.estimateTrialCost({}, 'build', []), catalog.FALLBACK_USD.build);
 });
 
-test('the cap holds the next trial when what is spent, under way and next would cross it', () => {
-  assert.equal(lane.fitsCap({ spentUsd: 49, capUsd: 50, inFlightEst: 0, nextEst: 0.5 }), true);
-  assert.equal(lane.fitsCap({ spentUsd: 49, capUsd: 50, inFlightEst: 0.6, nextEst: 0.5 }), false);
-  assert.equal(lane.fitsCap({ spentUsd: 50, capUsd: 50, inFlightEst: 0, nextEst: 0 }), true);
-  assert.equal(lane.fitsCap({ spentUsd: 50.01, capUsd: 50 }), false);
-});
-
 // Run 196's last ten trials, failed on their first request by the bench
 // key's weekly limit at OpenRouter: the platform's fault, not the model's.
 test('a provider refusing the key for its spending limit fails the trial as the platform, never as the model', () => {
@@ -496,4 +489,78 @@ test('budgetsFor: a configuration\'s own clocks for the stages it names, the bot
   assert.equal(own.firstVersion.turnMs, 5 * 60000);
   assert.equal(own.firstVersion.specMs, plain.firstVersion.specMs, 'a stage it does not name keeps the bot\'s');
   assert.equal(runner.budgetsFor(settings, app, {}, 'build', { build: 30 }).turnMs, 30 * 60000);
+});
+
+// ── Effort arms (services/bench/arms.js) ────────────────────────────────
+//
+// A core run's arm may name an effort (`vendor/model@max`): the lane hands
+// the trial its model and that effort (lane.executeTrial), and every turn of
+// the trial runs at it, its sessions opened at it too. A configuration's
+// effort for a stage applies where no arm names one.
+
+function effortsSeen(h) {
+  const seen = [];
+  h.deps.agentTurn.resolveCodexRuntimeContext = async (a) => { seen.push(a.reasoningEffort ?? null); return { agentModel: a.session.agent_model }; };
+  return seen;
+}
+const sessionEffort = (h) => h.calls.queries.find((q) => /INSERT INTO chat_sessions/.test(q.s)).params[5];
+
+test('an effort arm: its triage turn and its session run at the arm\'s effort; with none, at the session\'s, as before', async (t) => {
+  spySideEffects(t);
+  const text = '```json\n{"verdict":"empty","reason":"x"}\n```';
+  const at = harness({ text });
+  const seen = effortsSeen(at);
+  assert.equal((await runner.runStage(ctx(at, 'triage', { effort: 'max' }))).status, 'ok');
+  assert.deepEqual(seen, ['max'], 'the turn asks for the arm\'s effort');
+  assert.equal(sessionEffort(at), 'max', 'and its session is opened at it');
+  assert.deepEqual(at.calls.models, ['qwen/qwen3.8-flash'], 'on the arm\'s model, never the arm as written');
+
+  const plain = harness({ text });
+  const none = effortsSeen(plain);
+  await runner.runStage(ctx(plain, 'triage'));
+  assert.deepEqual(none, [null], 'no effort of its own: the session\'s');
+  assert.equal(sessionEffort(plain), 'low', 'the platform default, as every trial before');
+});
+
+test('an effort arm\'s build runs its plan and its build at that effort; a configuration\'s efforts per stage where no arm names one', async (t) => {
+  spySideEffects(t);
+  const realBuild = live.buildAndPropose;
+  const seen = [];
+  live.buildAndPropose = async (a) => { seen.push(a.efforts); return { ok: false, error: 'stop here' }; };
+  t.after(() => { live.buildAndPropose = realBuild; });
+  await runner.runStage(ctx(harness(), 'build', { effort: 'xhigh' }));
+  await runner.runStage(ctx(harness(), 'build', { efforts: { build: 'max' } }));
+  await runner.runStage(ctx(harness(), 'build'));
+  assert.deepEqual(seen, [{ spec: 'xhigh', build: 'xhigh' }, { spec: null, build: 'max' }, undefined]);
+});
+
+test('a follow-up and a checks fix take the arm\'s effort, else a configuration\'s follow-up effort', async (t) => {
+  spySideEffects(t);
+  const text = '```json\n{"action":"reply","reply":"Done"}\n```';
+  const arm = harness({ text });
+  const armSeen = effortsSeen(arm);
+  await runner.runStage(ctx(arm, 'followup', { effort: 'high' }));
+  assert.deepEqual(armSeen, ['high']);
+  const config = harness({ text });
+  const configSeen = effortsSeen(config);
+  await runner.runStage(ctx(config, 'checks_fix', { efforts: { followup: 'medium' } }));
+  assert.deepEqual(configSeen, ['medium'], 'a checks fix is a follow-up\'s');
+  assert.equal(runner.turnEffort({ effort: 'max', efforts: { triage: 'low' } }, 'triage'), 'max', 'the arm\'s wins');
+  assert.equal(runner.turnEffort({ efforts: { triage: 'low' } }, 'triage'), 'low');
+  assert.equal(runner.turnEffort({}, 'build'), null);
+});
+
+test('launch validation: an arm may name an effort, written once, and anything else after an @ is refused', () => {
+  const ok = lane.validateLaunch({ suiteId: 1, models: ['a/b', 'a/b@MAX', ' a/b@max ', 'a/b@low'], stages: ['build'] });
+  assert.equal(ok.ok, true);
+  assert.deepEqual(ok.models, ['a/b', 'a/b@max', 'a/b@low'], 'normalized, and the same arm once');
+  assert.equal(ok.baseline, 'a/b');
+  assert.equal(lane.validateLaunch({ suiteId: 1, models: ['a/b@max', 'a/b'], stages: ['build'] }).baseline, 'a/b',
+    'an effort is read against its model at the bot\'s own, whichever is listed first');
+  assert.equal(lane.validateLaunch({ suiteId: 1, models: ['a/b@max', 'a/b@low'], stages: ['build'] }).baseline, 'a/b@max');
+  for (const bad of ['a/b@turbo', 'a/b@', '@max', 'not a model@max']) {
+    const out = lane.validateLaunch({ suiteId: 1, models: [bad], stages: ['triage'] });
+    assert.equal(out.status, 400, bad);
+    assert.match(out.error, /vendor\/model@minimal, @low, @medium, @high, @xhigh, @max/);
+  }
 });

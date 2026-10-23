@@ -57,6 +57,9 @@ export async function messagePerson(username: string): Promise<MessagePersonResu
   } catch (err) {
     const status = (err as { status?: number } | null)?.status;
     if (status === 404) return { ok: false, message: t('profile:message.cannotNow', { username: handle }) };
+    // #5104: they take new conversations only from people in projects with
+    // them; messages/api.ts has already put that in the screen's words.
+    if (status === 403 && err instanceof Error && err.message) return { ok: false, message: err.message };
     return { ok: false, message: t('profile:message.startFailed') };
   }
 }

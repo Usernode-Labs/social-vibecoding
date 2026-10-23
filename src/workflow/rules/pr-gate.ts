@@ -35,12 +35,28 @@ export interface PrGateInputs {
 
 interface VoteRow { userId: number; vote: string; counts: boolean }
 
+/**
+ * When one of the project's admins last cast a counted No on the change's
+ * current approval epoch, or NULL (#5803). One definition, so the read that
+ * decides (GATE_SQL, governedGate) and the reads that only show it (the
+ * cards in routes/votes.js) arm the same week. `cs` is the chat_sessions
+ * alias in scope.
+ *
+ * Not filtered by the approver roster: an admin's No starts the clock on an
+ * invited project even where the admin is not an approver.
+ */
+export const adminNoAtSql = (cs: string): string => `(SELECT MAX(pv.created_at) FROM pr_votes pv
+           JOIN app_admins ad ON ad.app_id = ${cs}.app_id AND ad.user_id = pv.user_id
+          WHERE pv.session_id = ${cs}.id AND pv.vote = 'no'
+            AND pv.approval_epoch = ${cs}.approval_epoch
+            AND counts_toward_session_outcome(pv.user_id, pv.session_id))`;
+
 // One statement for everything the gate reads about the app and the
 // proposal: the governance columns and rules, the app meta the electorate
 // needs, what a project's own rules read (creator, community size, admins),
 // the counted votes on the current epoch, whether the change is the
-// project's first version, and whether its author is an account the
-// platform runs.
+// project's first version, whether its author is an account the platform
+// runs, and when an admin last voted No.
 const GATE_SQL = `
   SELECT a.approver_policy, a.approvals_required, a.governance_rules, a.self_hosted, a.collab_visibility, a.created_by,
          (SELECT COUNT(*)::int FROM community_members m WHERE m.community_id = a.community_id) AS member_count,
@@ -52,6 +68,7 @@ const GATE_SQL = `
            WHERE pv.session_id = cs.id AND pv.vote IN ('yes', 'no')
              AND pv.approval_epoch = cs.approval_epoch) AS votes,
          ${firstVersionSql('cs')} AS first_version,
+         ${adminNoAtSql('cs')} AS admin_no_at,
          COALESCE((SELECT u.is_synthetic FROM users u WHERE u.id = $3::int), FALSE) AS author_is_bot
     FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id
    WHERE cs.id = $1 AND a.id = $2`;
@@ -90,6 +107,7 @@ export async function readPrGate(db: Queryable, g: PrGateInputs): Promise<Govern
       explicitApproval: g.explicitApproval, explicitReason: g.explicitApproval ? g.explicitReason : null,
       authorId: g.authorId, voters, authorIsBot: g.authorId != null && r.author_is_bot === true,
       rulesFacts: facts, memberCount: facts.memberCount, firstVersion,
+      adminNoAt: r.admin_no_at ?? null,
     });
   }
   const { active, approverIds } = await electorate(db, g.appId, gov, meta);
@@ -103,5 +121,6 @@ export async function readPrGate(db: Queryable, g: PrGateInputs): Promise<Govern
     explicitApproval: g.explicitApproval, otherYes,
     memberCount: g.explicitApproval ? Number(r.member_count) || 0 : undefined,
     firstVersion,
+    adminNoAt: r.admin_no_at ?? null,
   });
 }

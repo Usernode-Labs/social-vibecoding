@@ -25,6 +25,16 @@ const visibleChangesContract = require('../services/visible-changes');
 // apart on what a refusal means.
 const { STATUS_BY_CODE: UPDATE_STATUS_BY_CODE } = require('./dev-flow');
 const { beginSessionOperation, isSessionBusy } = require('../services/active-workers');
+// What works on a session, on any other process (src/workflow/
+// session-work.ts), read with the row: checkRuntime and the status a client
+// polls answer for every platform process without a query of their own.
+// This process's own part is its memory's (isSessionBusy, the pipeline set):
+// its operations end here before their OperationEnded reaches the preview
+// machine.
+const { workedOnSql, operationOfKindLiveSql } = require('../workflow/session-work.ts');
+const OWN_HOLDER = require('../services/process-presence').holder();
+const SESSION_WORK_COLUMNS = `${workedOnSql({ exceptHolder: OWN_HOLDER })} AS worked_on, `
+  + `${operationOfKindLiveSql('cs.id', 'handoff-pipeline', OWN_HOLDER)} AS handoff_pipeline_running`;
 const { effectiveSessionCaps } = require('../services/session-caps');
 const connectorLimits = require('../services/connector-limits');
 const { drainGuard } = require('../services/lifecycle');
@@ -54,12 +64,14 @@ const MAX_TESTS = 50;
 const COMMIT_UPLOAD_JSON_LIMIT = '12mb';
 const RFC3339_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
 
-// The staging/visuals tail and its per-session serialization moved to
-// services/handoff-pipeline.js in #907, so a local coding agent attached to
-// an ordinary native session finishes through exactly the same code path this
-// route has always used. Re-exported below for existing importers and tests.
+// The staging/visuals tail moved to services/handoff-pipeline.js in #907, so
+// a local coding agent attached to an ordinary native session finishes
+// through exactly the same code path this route has always used.
+// Re-exported below for existing importers and tests. A submission's
+// adoption is ordered per session by the proposal lock, on any process: an
+// older request can never persist its SHA after a newer one and regress the
+// durable reviewed head (it was a promise chain in each process).
 const {
-  serializeHandoffSubmission,
   hasInFlightHandoffPipeline,
   beginHandoffPipeline,
   startHandoffPipeline,
@@ -617,16 +629,17 @@ function managedRevisionKind(session) {
   return null;
 }
 
-// What is running on the session: a turn or an operation (this process's
-// own record, and the other processes' holds), a hand-off being adopted, and
-// the preview machine's build or checks run, read off the phase it writes on
-// the row (every Pod sees it, and it survives a restart).
+// What is running on the session: a turn or an operation, and a hand-off
+// being adopted (this process's own, and what the row's query read of every
+// process: SESSION_WORK_COLUMNS), and the preview machine's build or checks
+// run, read off the phase it writes on the row (every Pod sees it, and it
+// survives a restart).
 function checkRuntime(session) {
   const sessionId = Number(session.id);
   const pending = session.check_state === 'pending';
   const runtime = {
-    session: isSessionBusy(sessionId),
-    pipeline: hasInFlightHandoffPipeline(session.id),
+    session: isSessionBusy(sessionId) || session.worked_on === true,
+    pipeline: hasInFlightHandoffPipeline(session.id) || session.handoff_pipeline_running === true,
     build: pending && session.check_phase === 'building',
     capture: pending && ['testing', 'queued'].includes(session.check_phase),
   };
@@ -861,7 +874,7 @@ async function snapshotSpec(pool, sessionId, content, commitSha = null) {
 async function loadOwnedHandoff(pool, sessionId, userId) {
   const { rows } = await pool.query(
     `SELECT cs.*, a.slug AS app_slug, a.name AS app_name, a.repo_url,
-            a.collab_visibility, a.view_visibility
+            a.collab_visibility, a.view_visibility, ${SESSION_WORK_COLUMNS}
        FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id
       WHERE cs.id = $1 AND cs.user_id = $2 AND cs.source = $3`,
     [sessionId, userId, SOURCE]
@@ -908,7 +921,7 @@ function proposalHandoffRoutes(config) {
       if (!app) return res.status(404).json({ error: 'App not found' });
       const { rows } = await pool.query(
         `SELECT cs.*, a.slug AS app_slug, a.name AS app_name, a.repo_url,
-                a.collab_visibility, a.view_visibility
+                a.collab_visibility, a.view_visibility, ${SESSION_WORK_COLUMNS}
            FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id
           WHERE cs.id = $1 AND cs.app_id = $2`,
         [sessionId, app.id]
@@ -1065,7 +1078,7 @@ function proposalHandoffRoutes(config) {
 
       const { rows } = await pool.query(
         `SELECT cs.*, a.slug AS app_slug, a.name AS app_name, a.repo_url,
-                a.collab_visibility, a.view_visibility
+                a.collab_visibility, a.view_visibility, ${SESSION_WORK_COLUMNS}
            FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id
           WHERE cs.id = $1`,
         [sessionId]
@@ -1148,7 +1161,7 @@ function proposalHandoffRoutes(config) {
       }
 
       const { rows: existingRows } = await pool.query(
-        `SELECT cs.*, a.slug AS app_slug
+        `SELECT cs.*, a.slug AS app_slug, ${SESSION_WORK_COLUMNS}
            FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id
           WHERE cs.user_id = $1 AND cs.handoff_request_id = $2`,
         [req.user.id, input.requestId]
@@ -1173,7 +1186,7 @@ function proposalHandoffRoutes(config) {
       let overlapping = [];
       if (input.linkedIssues.length) {
         ({ rows: overlapping } = await pool.query(
-          `SELECT cs.*, a.slug AS app_slug
+          `SELECT cs.*, a.slug AS app_slug, ${SESSION_WORK_COLUMNS}
              FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id
             WHERE cs.user_id = $1 AND cs.app_id = $2 AND cs.source = $3
               AND cs.status IN ('active', 'paused')
@@ -1186,7 +1199,7 @@ function proposalHandoffRoutes(config) {
       let replacementSession = null;
       if (input.supersedesSessionId != null) {
         const { rows: replacementRows } = await pool.query(
-          `SELECT cs.*, a.slug AS app_slug
+          `SELECT cs.*, a.slug AS app_slug, ${SESSION_WORK_COLUMNS}
              FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id
             WHERE cs.id = $1 AND cs.user_id = $2 AND cs.app_id = $3
               AND cs.source = $4 AND cs.status IN ('active', 'paused')`,
@@ -1432,7 +1445,7 @@ function proposalHandoffRoutes(config) {
         return res.status(500).json({ error: 'Internal server error' });
       }
       try {
-        return await serializeHandoffSubmission(sessionId, async () => {
+        return await proposalUpdate.withProposalLock(pool, sessionId, async () => {
         const session = await loadOwnedHandoff(pool, sessionId, req.user.id);
         if (!session) return res.status(404).json({ error: 'Handoff session not found' });
         const revisionKind = managedRevisionKind(session);
@@ -1447,7 +1460,8 @@ function proposalHandoffRoutes(config) {
         }
         // A build or checks run going needs no refusal: the upload's
         // ChecksCleared, below, cancels it in the preview machine.
-        if (isSessionBusy(Number(session.id)) || hasInFlightHandoffPipeline(session.id)) {
+        const runtime = checkRuntime(session);
+        if (runtime.session || runtime.pipeline) {
           return res.status(409).json({
             error: 'session_busy',
             message: 'The shared proposal is currently changing. Retry when it finishes.',
@@ -1612,7 +1626,7 @@ function proposalHandoffRoutes(config) {
       return res.status(500).json({ error: 'Internal server error' });
     }
     try {
-      return await serializeHandoffSubmission(sessionId, async () => {
+      return await proposalUpdate.withProposalLock(pool, sessionId, async () => {
         const session = await loadOwnedHandoff(pool, sessionId, req.user.id);
         if (!session) return res.status(404).json({ error: 'Handoff session not found' });
         const revisionKind = managedRevisionKind(session);
@@ -1646,7 +1660,7 @@ function proposalHandoffRoutes(config) {
         }
         // A build or checks run going for this head is the preview machine's:
         // the revision below joins it, or a newer head cancels it.
-        const localPipelineBusy = hasInFlightHandoffPipeline(session.id);
+        const { session: sessionBusy, pipeline: localPipelineBusy } = checkRuntime(session);
         if (localPipelineBusy && currentCheckedHead(session) === input.headSha) {
           return res.status(202).json({
             ok: true,
@@ -1656,7 +1670,7 @@ function proposalHandoffRoutes(config) {
             webPath: changeHashPath(session.app_slug, session.id),
           });
         }
-        if (!isSessionBusy(Number(session.id))
+        if (!sessionBusy
             && !localPipelineBusy
             && currentCheckedHead(session) === input.headSha
             && publicSessionStatus(session).revisionState === 'ready'
@@ -1672,7 +1686,7 @@ function proposalHandoffRoutes(config) {
           // the machine joins the head it already serves.
           return res.status(200).json(publicSessionStatus(session));
         }
-        if (isSessionBusy(Number(session.id)) || localPipelineBusy) {
+        if (sessionBusy || localPipelineBusy) {
           return res.status(409).json({
             error: 'session_busy',
             message: 'The shared proposal is currently changing in another local or web turn. Retry when it finishes.',
@@ -2043,7 +2057,6 @@ module.exports = {
   startRequestFingerprint,
   publicSessionStatus,
   currentCheckedHead,
-  serializeHandoffSubmission,
   hasInFlightHandoffPipeline,
   ValidationError,
   SOURCE,

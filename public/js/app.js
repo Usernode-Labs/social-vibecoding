@@ -178,23 +178,18 @@ const App = {
   // once, by enterAnonymous below.
   LOGOUT_NOTICE_KEY: 'sv:logout_notice',
 
-  // How long boot waits for /api/auth/me before falling back to the
-  // snapshot. Deliberately just past the service worker's own API deadline
-  // (API_TIMEOUT_MS, now 1000) so the SW gets first refusal at answering
-  // from cache; this only catches the no-SW / SW-bypassed cases.
-  //
-  // MOVE THIS WHENEVER API_TIMEOUT_MS MOVES. It is the last link in the
-  // serial chain a cold load walks — navigation, then the shell's scripts,
-  // then this — so leaving it at the old 5s would have made it the sole
-  // remaining multi-second wait on a weak connection and undone most of
-  // the retune on its own.
+  // Identity confirmation always reaches the server. Bound the boot wait
+  // before using this session's display-only snapshot; the worker never
+  // supplies a cached /me. A later live answer still reconciles the viewer.
   BOOT_SESSION_TIMEOUT_MS: 2000,
 
   saveSessionSnapshot(user) {
     if (!user || !user.id) return;
+    const cacheScope = App._sessionCacheScope();
+    if (!cacheScope) { App.clearSessionSnapshot(); return; }
     try {
       localStorage.setItem(App.SESSION_SNAPSHOT_KEY, JSON.stringify({
-        user, savedAt: Date.now(),
+        user, savedAt: Date.now(), cacheScope,
       }));
     } catch (err) { /* private mode / quota — offline boot just degrades */ }
   },
@@ -205,6 +200,10 @@ const App = {
       if (!raw) return null;
       const snap = JSON.parse(raw);
       if (!snap || !snap.user || !snap.user.id) return null;
+      if (!snap.cacheScope || snap.cacheScope !== App._sessionCacheScope()) {
+        App._dropCachedSession();
+        return null;
+      }
       const age = Date.now() - Number(snap.savedAt || 0);
       if (!(age >= 0) || age > App.SESSION_SNAPSHOT_MAX_AGE_MS) {
         App.clearSessionSnapshot();
@@ -220,10 +219,21 @@ const App = {
     try { localStorage.removeItem(App.SESSION_SNAPSHOT_KEY); } catch (err) { /* ignore */ }
   },
 
+  // Available before the React bundle/bridge has evaluated too: the cold
+  // screen selector must not restore another session's display-only state.
+  _sessionCacheScope() {
+    try {
+      const value = document.cookie.split(';').map(s => s.trim())
+        .find(s => s.startsWith('usernode_api_scope='))?.slice('usernode_api_scope='.length);
+      return /^[a-f0-9]{64}$/.test(value || '') ? value : null;
+    } catch (err) { return null; }
+  },
+
   // Ask the service worker to drop the cached API responses of a session
   // that is definitively over. Fire-and-forget: the snapshot has already
   // been cleared, so a worker that never answers changes nothing.
-  _dropCachedSession() {
+  _dropCachedSession({ apiCache = true } = {}) {
+    window.UsernodeReact?.apiCache?.reset?.({ broadcast: apiCache });
     App.clearSessionSnapshot();
     // The remembered top-bar state goes with it, for the same reason and on
     // the same event: it is display-only (frontend/src/lib/shell-snapshot.ts),
@@ -251,7 +261,7 @@ const App = {
     // previous account's app and card in the same way.
     App._forgetWorkshopView();
     try {
-      navigator.serviceWorker?.controller?.postMessage({ type: 'clear-api-cache' });
+      if (apiCache) navigator.serviceWorker?.controller?.postMessage({ type: 'clear-api-cache' });
     } catch (err) { /* no SW — nothing cached to drop */ }
     // #487 follow-up: which apps this browser has opened offline-capable is
     // the same kind of session residue as the cached feed, and it goes with
@@ -332,6 +342,8 @@ const App = {
     // / waitlist screens are part of what it reviews) and because a
     // later application would repaint every inset mid-boot.
     App._applySafeAreaShot();
+    // Before anything moves the address: what opened this window.
+    App._noteLaunch();
 
     // Chrome wiring is session-independent and has no re-entry guards
     // (double listeners otherwise), so it runs exactly once per document
@@ -435,7 +447,9 @@ const App = {
     // page, signed out in effect by a dropped packet.
     let res = null;
     try {
-      res = await App._fetchSession();
+      // No snapshot: this device has nothing to paint, so the read asks the
+      // way that is answered instead of refused (#5678).
+      res = await App._fetchSession({ optional: true });
     } catch (err) {
       res = null;
     }
@@ -545,8 +559,20 @@ const App = {
   // /api/auth/me with a deadline. Resolves to the Response, or throws when
   // nothing arrived in time — an open-but-stalled socket must not hold the
   // whole boot, which is what left the reported blank screen.
+  //
+  // `optional` asks for the answer "nobody is signed in" instead of a 401
+  // (#5678): only the boot of a device with no snapshot, which then has no
+  // failed request in the console. A native shell may still hold the session
+  // in its keychain, so it keeps asking, and the answer is turned back into
+  // the 401 every reader here already knows.
+  //
+  // The header stays empty and the option is read from the first argument:
+  // suites that pin this chain slice its source between the exact headers
+  // `_fetchSession()` and `_fetchWebSession()`.
   async _fetchSession() {
-    const response = await App._fetchWebSession();
+    const optional = !!(arguments[0] && arguments[0].optional);
+    let response = await App._fetchWebSession({ optional });
+    if (optional) response = await App._settleOptionalSession(response);
     if (window.NativeChrome && typeof NativeChrome.restoreWebSession === 'function') {
       try {
         const restored = await NativeChrome.restoreWebSession({ force: response.status === 401 });
@@ -560,11 +586,30 @@ const App = {
     return response;
   },
 
+  // The optional read's "nobody" as the 401 it stands for, so _answeredSignedOut,
+  // the 401 branch of init and NativeChrome's `force` behave exactly as before.
+  // A body that cannot be read is left as the real response.
+  async _settleOptionalSession(response) {
+    if (!response || response.status !== 200) return response;
+    let body = null;
+    try { body = await response.clone().json(); } catch (err) { return response; }
+    if (!body || body.user !== null) return response;
+    return new Response('{"error":"Not authenticated"}', {
+      status: 401,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  },
+
+  // The optional read asks with ?optional=1, so the server answers "nobody is
+  // signed in" with a 200 instead of a 401 (#5678). Same empty header, same
+  // first argument, for the same reason.
   async _fetchWebSession() {
+    const optional = !!(arguments[0] && arguments[0].optional);
     let timer = null;
     const ctrl = typeof AbortController === 'function' ? new AbortController() : null;
     if (ctrl) timer = setTimeout(() => ctrl.abort(), App.BOOT_SESSION_TIMEOUT_MS);
     try {
+      if (optional) return await fetch('/api/auth/me?optional=1', ctrl ? { signal: ctrl.signal } : undefined);
       return await fetch('/api/auth/me', ctrl ? { signal: ctrl.signal } : undefined);
     } finally {
       if (timer) clearTimeout(timer);
@@ -626,7 +671,7 @@ const App = {
     try { user = (await res.json()).user; } catch (err) { user = null; }
     if (!user) return;
     if (String(user.id) !== String(App.user?.id)) {
-      App.clearSessionSnapshot();
+      App._dropCachedSession();
       location.reload();
       return;
     }
@@ -653,6 +698,7 @@ const App = {
         typeof NativeChrome.prepareIdentityPublication === 'function') {
       NativeChrome.prepareIdentityPublication(user);
     }
+    window.UsernodeReact?.apiCache?.setViewer?.(user.id, true);
     App.user = user;
     App._syncViewer();
     window.UsernodeReact?.appOpenings?.setUser?.(user.id, true);
@@ -730,6 +776,7 @@ const App = {
   },
 
   async enterAnonymous() {
+    window.UsernodeReact?.apiCache?.setViewer?.(null, true);
     let nativeBoundary = null;
     if (window.NativeChrome && NativeChrome.enterAnonymous) {
       // Close native authority before publishing the signed-out web identity.
@@ -948,6 +995,7 @@ const App = {
   },
 
   enterAuthed(user) {
+    window.UsernodeReact?.apiCache?.setViewer?.(user.id, !App._sessionFromSnapshot);
     if (window.NativeChrome &&
         typeof NativeChrome.prepareIdentityPublication === 'function') {
       // The bridge handles this event synchronously and drops the old opaque
@@ -1013,7 +1061,13 @@ const App = {
     // `=== false` on purpose — an older cached /me without the field
     // must not lock anyone out.
     if (App.user?.hasPlatformAccess === false && window.AuthScreens) {
-      AuthScreens.showWaiting();
+      // A link to Discover or a project's page (a shared /app/<slug>) opens
+      // it, signed in, while the account waits: restoreFromHash's gated
+      // branch says the same for a link followed later.
+      const target = App._deepLinkTarget();
+      const route = target.replace(/^[#/]/, '').split('?')[0];
+      if (/^(?:apps|discover|app\/[^/]+)(?:\/|$)/.test(route)) AuthScreens.showGuestPagesFor(target);
+      else AuthScreens.showWaiting();
       App._liftFirstSessionBoot();
       return;
     }
@@ -1725,6 +1779,13 @@ const App = {
   // Pure UI state, no writes, deliberately NOT env-gated — same reasoning as
   // ?shot=improve above: an IS_STAGING-only link would starve the production
   // "before" shot forever.
+  //
+  // Every one of these states IS the form (its bounty row, its screenshot
+  // row, its destination row, its refusals), so the open asks for the form
+  // by name (`mode: 'form'`, #4289). Without that a plain open follows the
+  // device's setting, and since comment mode became the default it opened
+  // the page layer instead: the modal never appeared and every feedback
+  // check photographed the home feed.
   _applyFeedbackShot() {
     let shot = null;
     try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
@@ -1843,7 +1904,7 @@ const App = {
           Kudos.Budget.state = { given_this_week: limit, remaining: 0, limit };
           Kudos.Budget.refresh = () => Promise.resolve();
         }
-        App.openFeedbackModal();
+        App.openFeedbackModal({ mode: 'form' });
         if (shot === 'feedback-first') {
           let firstTries = App.IMPROVE_SHOT_TRIES;
           const showFirst = () => {
@@ -4713,6 +4774,20 @@ const App = {
   // sign-in that finishes in another document (_followInvite).
   INVITE_LANDING_KEY: 'usernode:invite-landing',
 
+  // The page an invite was followed on, made Home, just before the app it
+  // was for opens over it (features/first-session welcome(), for somebody
+  // owed the walk on Home). Back and the ✕ go to the entry under the app
+  // (_closeAppTarget), and a public community's link is joined on its hub
+  // (_openInvitePage), so leaving the app went to the hub and the walk did
+  // not start until they found Home. Replaced rather than pushed: Back is
+  // one step, and what was drawn there is covered by the app at once.
+  _homeUnderApp() {
+    const home = App._rootUrl('');
+    try {
+      if (`${location.pathname}${location.search}${location.hash}` !== home) history.replaceState(null, '', home);
+    } catch (_) { /* the app opens over the page as before */ }
+  },
+
   // "You're in"'s held frame (above), down; a welcome that took its place stays.
   _endWelcomeHold() {
     const island = window.UsernodeReact && window.UsernodeReact.firstSession;
@@ -4942,6 +5017,14 @@ const App = {
                 AuthScreens.show('more', authSeg);
                 return;
               }
+              // Discover and a public project's page are open to a waiting
+              // account too: it looks around and uses public projects while
+              // it waits, signed in (features/auth/landing.tsx, the guest
+              // pages). The link is still remembered for the day it is let in.
+              if (!authRoute && /^(?:apps|discover|app\/[^/]+)(?:\/|$)/.test(hash)) {
+                AuthScreens.showGuestPagesFor(App._deepLinkTarget());
+                return;
+              }
               if (!authRoute && hash) AuthScreens.rememberDeepLink(App._deepLinkTarget());
               AuthScreens.showWaiting();
               return;
@@ -5138,6 +5221,19 @@ const App = {
         // app's own /app/<slug>/workshop route, not a level of this screen.
         App.setChromeless(false);
         App.navigateToWorkshop();
+        return;
+      }
+      if (parts[0] === 'discover') {
+        // Discover's OLD NAME (UX audit, 20 Oct 2026): its own address is
+        // `#apps`, so this is an ALIAS, as `#workshop` is for `#communities`.
+        // Rewrite the address in place before handing off — replaceState
+        // fires no hashchange, so it neither re-routes nor adds a Back step
+        // — and a shared link settles on the canonical address.
+        try {
+          history.replaceState(null, '', '#apps' + (parts[1] ? '/' + parts[1] : ''));
+        } catch (err) { /* non-fatal: navigation below still works */ }
+        App.setChromeless(false);
+        App.navigateToBrowse(parts[1] ? decodeURIComponent(parts[1]) : null);
         return;
       }
       if (parts[0] === 'apps') {
@@ -5392,20 +5488,24 @@ const App = {
         // Chromeless full-screen App view (/app/<slug>/full). Old cached
         // clients that predate this route fall into the final `else`
         // below and get the regular App tab — a graceful degrade.
-        const chromeless = tab === 'full';
-        if (chromeless) tab = 'app';
+        // An app opened from its home-screen icon starts here too (its
+        // manifest's start_url) and keeps the header; the address stays
+        // /full, inside the installed app's scope.
+        const fullRoute = tab === 'full';
+        const chromeless = fullRoute && !App._installedDisplay();
+        if (fullRoute) tab = 'app';
         // Inner-path pass-through (#743): `path` is defined as the FINAL
         // fragment-query param — its value is everything after the first
         // `path=`, verbatim in wire encoding (an inner query may carry
         // `&` / `=` / `?`, and the Caddy rescue redirect can't
         // percent-encode placeholders, so no URLSearchParams here).
-        // Honored only on the chromeless route; every other route
+        // Honored only on the /full route; every other route
         // ignores the fragment-query entirely.
         let innerPath = null;
-        if (chromeless && fragQuery) {
+        if (fullRoute && fragQuery) {
           const pm = fragQuery.match(/(?:^|&)path=(.*)$/);
           if (pm) innerPath = App._validateInnerPath(pm[1]);
-        } else if (chromeless && pathRoute) {
+        } else if (fullRoute && pathRoute) {
           try {
             innerPath = App._validateInnerPath(
               new URLSearchParams(location.search).get('path') || ''
@@ -5520,7 +5620,7 @@ const App = {
         // permanent outputs. Replace before dispatch so reload/copy exposes
         // the clean canonical path without manufacturing a Back entry.
         const canonicalAppUrl = App._appUrl(slug, tab, ref, subTab, {
-          chromeless, innerPath, boardView,
+          chromeless: fullRoute, innerPath, boardView,
         });
         const currentAppUrl = `${location.pathname}${location.search}${location.hash}`;
         if (currentAppUrl !== canonicalAppUrl) {
@@ -5541,7 +5641,7 @@ const App = {
             || (tab === 'dev' && ref != null)
             // A chromeless hash carrying a DIFFERENT inner path than the
             // one already applied — re-render so the iframe moves (#743).
-            || (chromeless && innerPath !== prevInnerPath)
+            || (fullRoute && innerPath !== prevInnerPath)
             // Board ⇄ Activity: same tab, same sub-tab, different layout.
             || boardViewChanged) {
           App.switchTab(tab, ref, subTab);
@@ -5626,6 +5726,41 @@ const App = {
   // change, and it is a routing fact, not a rendering one. Publishing before
   // the deferred bundle has evaluated is fine — the store is a plain object
   // on window, and the islands read it on mount.
+  // Launched from a home-screen icon rather than a browser tab: the same
+  // two signals frontend/src/features/mobile-install/environment.ts reads
+  // (Safari's `navigator.standalone` predates the media query).
+  _installedDisplay() {
+    try {
+      if (window.matchMedia
+        && window.matchMedia('(display-mode: standalone), (display-mode: fullscreen)').matches) {
+        return true;
+      }
+      return window.navigator.standalone === true;
+    } catch (_) {
+      return false;
+    }
+  },
+
+  // This window was opened from an APP's own home-screen icon (its
+  // manifest's start_url is /app/<slug>/full), not from Homeroom's. Read at
+  // boot, before the address moves, and kept for the window's life
+  // (sessionStorage survives a reload inside it): there the mark menu's "Add
+  // Homeroom to your home screen" opens Homeroom in the browser, because
+  // this window has no Share button
+  // (frontend/src/features/mobile-install/homeroom-home-screen.ts).
+  launchedFromAppIcon: false,
+
+  _noteLaunch() {
+    const KEY = 'homeroom.launchedFromAppIcon';
+    try {
+      if (sessionStorage.getItem(KEY) === '1') { App.launchedFromAppIcon = true; return; }
+    } catch (_) { /* private mode: read the address alone */ }
+    if (!App._installedDisplay()
+      || !/^\/app\/[a-z0-9][a-z0-9-]{0,254}\/full\/?$/.test(location.pathname)) return;
+    App.launchedFromAppIcon = true;
+    try { sessionStorage.setItem(KEY, '1'); } catch (_) { /* this load still knows */ }
+  },
+
   setChromeless(on) {
     const enable = !!on;
     if (App.chromeless === enable) return;
@@ -8688,26 +8823,84 @@ const App = {
     'profile-proposals-screen': ['arrow', '#profile'],
   },
 
-  // ── A private member's way out ───────────────────────────────────────
+  // ── A newcomer's way out ─────────────────────────────────────────────
   //
   // A PRIVATE MEMBER (App.user.privateMember: an invite link let them into
   // its community before they were let in) lands inside that app with no ✕.
-  // The mark menu's "Go to Homeroom" (features/app-context) takes them to
-  // Home and its four-step tour (features/first-session goHome), and from
-  // then on an app has its ✕ like anybody's. Remembered on this device, the
-  // way the tours themselves are.
+  // So does anybody new the first session still owes its walk on Home (a
+  // maker of their first project, somebody new by an invite): their menu
+  // offers the same "Go to Homeroom" (features/app-context), and a ✕ beside
+  // it was a second way out that skipped the walk. "Go to Homeroom" takes
+  // them to Home and its tour (features/first-session goHome), and from
+  // then on an app has its ✕ like anybody's.
+  //
+  // KEPT BY THE ACCOUNT, so every device agrees (Evan, 20 Oct 2026): the
+  // walk owed and Homeroom reached are marks on the account (POST
+  // /api/me/home-walk, read back as App.user.homeWalkOwed and
+  // .homeroomReached). This device's own records stay beside them, read
+  // with an OR: they are the answer at once, before a write lands, and for
+  // an account from before the marks.
   PRIVATE_HOME_PREFIX: 'usernode:private-home:',
   _privateHomeKey() {
     return `${App.PRIVATE_HOME_PREFIX}${App.user?.id ?? 'anon'}`;
   },
+  // Reached Homeroom: on the account, by "Go to Homeroom" on this device, or
+  // by the walk having run here (it runs on Home).
   _privateHomeVisited() {
-    try { return !!localStorage.getItem(App._privateHomeKey()); } catch (_) { return false; }
+    if (App.user?.homeroomReached === true) return true;
+    try {
+      if (localStorage.getItem(App._privateHomeKey())) return true;
+      const uid = App.user?.id;
+      return uid != null && localStorage.getItem(`${App.FIRST_SESSION_WALK_PREFIX}${uid}`) === 'done';
+    } catch (_) { return false; }
   },
   _notePrivateHome() {
     try { localStorage.setItem(App._privateHomeKey(), String(Date.now())); } catch (_) { /* private mode */ }
+    App._noteHomeWalk('reached');
+  },
+  // Tell the account (POST /api/me/home-walk): 'owed' when the first session
+  // owes the walk, 'reached' when they reach Homeroom. This document's user
+  // has it at once, and so does the snapshot the next boot starts from (not
+  // while the shell runs FROM the snapshot, as tour-done.ts keeps it).
+  // Fire-and-forget: a failed write costs the other devices the answer and
+  // nothing here, and never logs a console.error.
+  HOME_WALK_PATH: '/api/me/home-walk',
+  _noteHomeWalk(state) {
+    const user = App.user;
+    if (!user || user.id == null || (state !== 'owed' && state !== 'reached')) return;
+    if (user.homeroomReached === true || (state === 'owed' && user.homeWalkOwed === true)) return;
+    if (state === 'reached') { user.homeroomReached = true; user.homeWalkOwed = false; } else user.homeWalkOwed = true;
+    try { if (App._sessionFromSnapshot !== true) App.saveSessionSnapshot(user); } catch (_) { /* the account has it */ }
+    try {
+      Promise.resolve(fetch(App.HOME_WALK_PATH, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ state }),
+      })).then((res) => {
+        if (res && !res.ok) console.warn('[first-session] walk not kept on the account:', res.status);
+      }, (err) => console.warn('[first-session] walk not kept on the account:', err));
+    } catch (_) { /* no fetch: this device's record is the answer */ }
+  },
+  // The walk the first session owes this person: on the account, or as
+  // features/first-session/first-visit.ts owedWalk reads this device's record
+  // (WALK_PREFIX there; tests/private-member-shell.test.js keeps the two
+  // prefixes equal): a record with a slug, until the walk has run and it
+  // says 'done'.
+  FIRST_SESSION_WALK_PREFIX: 'usernode:first-session:walk:',
+  _homeWalkOwed() {
+    if (App.user?.homeWalkOwed === true) return true;
+    const uid = App.user?.id;
+    if (uid == null) return false;
+    try {
+      const raw = localStorage.getItem(`${App.FIRST_SESSION_WALK_PREFIX}${uid}`);
+      if (!raw || raw === 'done') return false;
+      const record = JSON.parse(raw);
+      return !!(record && typeof record === 'object' && typeof record.slug === 'string' && record.slug);
+    } catch (_) { return false; }
   },
   _privateNoClose() {
-    return !!App.user?.privateMember && !App._privateHomeVisited();
+    return (!!App.user?.privateMember || App._homeWalkOwed()) && !App._privateHomeVisited();
   },
 
   // The slot for a screen, as setBackIcon's own arguments. Anything off the
@@ -9372,6 +9565,7 @@ App._bootScreenFor = function _bootScreenFor(hash, pathname, signedIn) {
   switch (head) {
     case '': return null;                    // home: the prerender is right
     case 'apps': return 'browse-screen';
+    case 'discover': return 'browse-screen'; // its old name (see restoreFromHash)
     case 'profile': return 'profile-screen';
     case 'settings': return 'settings-screen';
     case 'admin': return 'admin-screen';

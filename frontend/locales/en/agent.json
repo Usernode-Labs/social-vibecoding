@@ -1587,26 +1587,6 @@
     "text": "Workshop",
     "description": "Text of the back chip at the top of a request's or proposal's page: it returns to the project's Workshop, the board of its changes and requests. The name of that tab, a noun."
   },
-  "appContext.about.note.thisApp": {
-    "text": "This app’s community builds it together.",
-    "description": "Line in the About pane of the app menu (the sheet opened from the app's name in the header) when the app's name is not known: the app is built by the people who joined it."
-  },
-  "appContext.about.note.app": {
-    "text": "{{app}}’s community builds it together.",
-    "description": "Line in the About pane of the app menu (the sheet opened from the app's name in the header): the app is built by the people who joined it. {{app}} is the app's name."
-  },
-  "appContext.about.note.unnamedApp": {
-    "text": "this app’s community builds it together.",
-    "description": "Line in the About pane of the app menu (the sheet opened from the app's name in the header): the app is built by the people who joined it. Used when the app's name has not loaded; it begins \"this app\" in lower case, as the pane has always shown it."
-  },
-  "appContext.about.note.platform": {
-    "text": "{{name}}’s community builds it together, the same way as the apps on it.",
-    "description": "Line in the About pane for Homeroom itself: the platform is built by its own community, like the apps it hosts. {{name}} is the platform's name, Homeroom."
-  },
-  "appContext.about.note.platformRestricted": {
-    "text": "{{name}}’s community builds it together, the same way as the apps on it. On this server its workshop is open to admins only.",
-    "description": "Line in the About pane for Homeroom itself, on a server where only admins may open the platform's Workshop (the board of its changes and requests). {{name}} is the platform's name, Homeroom."
-  },
   "appContext.about.members_one": {
     "text": "{{formatted}} member",
     "description": "Pill beside the builders' avatars in the About pane of the app menu (the sheet opened from the app's name in the header): how many people are in the app's community. {{formatted}} is that number written with digit grouping, for example 1,284; {{count}} is the same number and only selects the plural form."
@@ -1903,6 +1883,18 @@
     "text": "{{count}} live",
     "description": "Shown at the right of a contributor's row in the About pane of the app menu: how many of that person's changes have been released. {{count}} is that number; \"live\" is an adjective."
   },
+  "appContext.about.contributor.creator": {
+    "text": "Creator",
+    "description": "Shown at the right of a contributor's row in the About pane of the app menu, for the person who made the app, when none of their changes have been released yet."
+  },
+  "appContext.about.contributor.creatorLive_one": {
+    "text": "Creator · {{count}} live",
+    "description": "Shown at the right of a contributor's row in the About pane of the app menu, for the person who made the app: they made it, and {{count}} of their changes have been released. \"live\" is an adjective."
+  },
+  "appContext.about.contributor.creatorLive_other": {
+    "text": "Creator · {{count}} live",
+    "description": "Shown at the right of a contributor's row in the About pane of the app menu, for the person who made the app: they made it, and {{count}} of their changes have been released. \"live\" is an adjective."
+  },
   "appContext.about.contributors.showFewer": {
     "text": "Show fewer",
     "description": "Button under the contributors list in the About pane of the app menu, once the whole list is shown: folds it back to the first five."
@@ -1943,21 +1935,9 @@
     "text": "Add to My apps",
     "description": "Button in the About pane of the app menu: adds this app to the person's own list of apps on Home. \"My apps\" is that list's name."
   },
-  "appContext.about.noteHow.app": {
-    "text": "{{app}}’s community builds it together. <0>How changes work</0>",
-    "description": "Line in the About pane of the app menu: the app is built by the people who joined it. {{app}} is the app's name. The sentence is followed by a link to the app's Workshop, where the voting rules are explained: keep the <0> tags around the link's words. \"changes\" is a noun."
-  },
-  "appContext.about.noteHow.unnamedApp": {
-    "text": "this app’s community builds it together. <0>How changes work</0>",
-    "description": "Line in the About pane of the app menu: the app is built by the people who joined it. Used when the app's name has not loaded; it begins \"this app\" in lower case, as the pane has always shown it. <0></0> is the link to the page that explains how changes are proposed and voted on."
-  },
-  "appContext.about.noteHow.thisApp": {
-    "text": "This app’s community builds it together. <0>How changes work</0>",
-    "description": "Line in the About pane of the app menu when the app's name is not known: the app is built by the people who joined it. The sentence is followed by a link to the app's Workshop, where the voting rules are explained: keep the <0> tags around the link's words. \"changes\" is a noun."
-  },
-  "appContext.about.noteHow.platform": {
-    "text": "{{name}}’s community builds it together, the same way as the apps on it. <0>How changes work</0>",
-    "description": "Line in the About pane for Homeroom itself: the platform is built by its own community, like the apps it hosts. {{name}} is the platform's name, Homeroom. The sentence is followed by a link to the app's Workshop, where the voting rules are explained: keep the <0> tags around the link's words. \"changes\" is a noun."
+  "appContext.about.invite": {
+    "text": "Invite",
+    "description": "Button in the About pane of the app menu, beside Added or Add to My apps, for a member of the app's community. A verb: opens the pane that makes an invite link to the community."
   },
   "appContext.about.contributors.heading": {
     "text": "Contributors",
@@ -1978,18 +1958,6 @@
   "appContext.about.more": {
     "text": "More",
     "description": "Heading and accessible name of the last section in the About pane of the app menu, which holds Share, Add to home screen, Code, Remix and the version."
-  },
-  "appContext.row.share": {
-    "text": "Share",
-    "description": "Row under More in the About pane of the app menu: a verb, shares a link to this app (or to Homeroom itself)."
-  },
-  "appContext.about.share.copied": {
-    "text": "Link copied",
-    "description": "Replaces the word Share on its row in the About pane of the app menu for a moment after the link to Homeroom was copied to the clipboard."
-  },
-  "appContext.about.share.failed": {
-    "text": "Could not copy the link",
-    "description": "Replaces the word Share on its row in the About pane of the app menu for a moment when copying the link to Homeroom failed."
   },
   "appContext.about.addToHomeScreen": {
     "text": "Add to home screen",
@@ -2031,6 +1999,14 @@
     "text": "Back to this app's menu",
     "description": "Accessible name of the back button at the top of the About and Invite panes of the app menu, when the app's name is not known."
   },
+  "appContext.backToAbout": {
+    "text": "Back to About {{app}}",
+    "description": "Accessible name of the back button at the top of the Invite pane of the app menu, when it was opened from the About pane: returns to that pane. {{app}} is the app's name; \"About {{app}}\" is that pane's name in the menu."
+  },
+  "appContext.backToAboutThisApp": {
+    "text": "Back to About this app",
+    "description": "Accessible name of the back button at the top of the Invite pane of the app menu, when it was opened from the About pane and the app's name is not known."
+  },
   "appContext.goToHomeroom.title": {
     "text": "Go to Homeroom",
     "description": "Row in the app menu (the sheet opened from the app's name in the header) shown to someone who arrived through an app's invite link: leaves the app for Homeroom's own Home screen."
@@ -2039,9 +2015,13 @@
     "text": "Your Home, your communities and Homeroom bot",
     "description": "Second line of the \"Go to Homeroom\" row in the app menu (the sheet opened from the app's name in the header): what is there. Home is the Home screen; Homeroom bot is Homeroom's assistant, a name."
   },
-  "appContext.addHomeroomToHomeScreen": {
+  "appContext.addAppToHomeScreen": {
+    "text": "Add this app to your home screen",
+    "description": "Row in the app menu (the sheet opened from the app's name in the header) shown to a newcomer on a phone: opens the page that puts the app they are in (not Homeroom) on the phone's home screen as its own icon."
+  },
+  "appContext.row.addHomeroom": {
     "text": "Add Homeroom to your home screen",
-    "description": "Row in the app menu (the sheet opened from the app's name in the header) shown to a newcomer on a phone: opens the steps for putting Homeroom's icon on the phone's home screen."
+    "description": "Row in the app menu (the sheet opened from the Homeroom mark in the header) on a phone where Homeroom is not on the home screen yet: shows how to put Homeroom itself on the phone's home screen as an icon."
   },
   "appContext.row.community": {
     "text": "Go to community",
@@ -2070,6 +2050,10 @@
   "appContext.reportApp": {
     "text": "Report app",
     "description": "Small link at the foot of the app menu, beside a flag: a verb, reports this app to Homeroom's moderators."
+  },
+  "appContext.privacy": {
+    "text": "Privacy",
+    "description": "Small link at the foot of the app menu (the sheet opened from the app's name in the header), before \"Report app\": opens Homeroom's privacy notice in a new tab."
   },
   "sidePanel.expandLabel": {
     "text": "Open full width, leaving the app",

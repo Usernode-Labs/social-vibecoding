@@ -486,6 +486,48 @@ test('a verified run\'s screens reach the card as integers and its own story ids
   assert.deepEqual(view.fromSnapshot(session(), HEAD).screens, []);
 });
 
+test('only a viewer in the experiment is shown dense stills; everyone else exactly what they were shown before', () => {
+  const id = (n) => String(n).repeat(32).slice(0, 32);
+  const still = (n, viewport, side, variant, extra = {}) => ({
+    id: id(n), storyId: 'dialog', viewport, side, variant, media: 'png', contentType: 'image/png',
+    width: viewport === 'phone' ? 390 : 1280, height: 100, bytes: 120, density: 1, ...extra,
+  });
+  const screens = [{ viewport: 'phone', shot: 'dialog', stories: ['dialog'], width: 390, heightBefore: 844, heightAfter: 844, regions: [] }];
+  const value = run({
+    claims: [{ ...run().claims[0], viewports: ['desktop', 'phone'] }],
+    screens,
+    artifactSummary: [
+      still(1, 'phone', 'head', 'context', { density: 3, denseWidth: 1170, denseHeight: 300 }),
+      still(2, 'phone', 'head', 'focus', { width: 200, density: 3, denseWidth: 600, denseHeight: 300 }),
+      still(3, 'desktop', 'head', 'context', { density: 2, denseWidth: 2560, denseHeight: 200 }),
+      // A run from before, and a clip.
+      still(4, 'desktop', 'base', 'context'),
+      { ...still(5, 'phone', 'head', 'animation', { width: null }), media: 'webm', contentType: 'video/webm' },
+    ],
+  });
+  const plain = view.serialize(value, session(), 'demo', HEAD);
+  assert.deepEqual(plain.artifacts.map((a) => [a.width, a.density]), [[390, 1], [200, 1], [1280, 1], [1280, 1], [null, 1]]);
+  assert.ok(plain.artifacts.every((a) => !a.url.includes('?')), 'the 1x copies keep their addresses');
+  assert.deepEqual(plain.screens.map((s) => [s.width, s.density]), [[390, 1]]);
+  const dense = view.serialize(value, session(), 'demo', HEAD, { dense: true });
+  assert.deepEqual(dense.artifacts.map((a) => [a.width, a.height, a.density]),
+    [[1170, 300, 3], [600, 300, 3], [2560, 200, 2], [1280, 100, 1], [null, 100, 1]]);
+  assert.match(dense.artifacts[0].url, /\/shots\/1{32}\?density=device$/, 'a dense still has an address of its own');
+  assert.equal(dense.artifacts[3].url.includes('?'), false);
+  assert.deepEqual(dense.screens.map((s) => [s.width, s.heightAfter, s.density]), [[390, 844, 3]], 'geometry stays CSS pixels');
+  // A malformed density is no dense still.
+  const odd = run({ artifactSummary: [still(1, 'desktop', 'head', 'context', { density: 9, denseWidth: 1, denseHeight: 1 })] });
+  assert.equal(view.serialize(odd, session(), 'demo', HEAD, { dense: true }).artifacts[0].density, 1);
+});
+
+test('a viewer sees dense stills only with the experiment on their account', async () => {
+  const pool = (value) => ({ query: async () => ({ rows: value === undefined ? [] : [{ review_flow_enabled: value }] }) });
+  assert.equal(await view.viewerSeesDense(pool(true), { id: 4 }), true);
+  for (const value of [false, null, undefined, 'true']) assert.equal(await view.viewerSeesDense(pool(value), { id: 4 }), false);
+  assert.equal(await view.viewerSeesDense(pool(true), null), false, 'a guest');
+  assert.equal(await view.viewerSeesDense({ query: async () => { throw new Error('no column yet'); } }, { id: 4 }), false);
+});
+
 test('a note or reason the agent wrote with escaped quotation marks reads with plain ones', () => {
   const results = view.cleanShotResults([
     { id: 'dialog', status: 'ready', note: 'The old \\"Continue\\" heading could not be shown.' },
@@ -493,4 +535,45 @@ test('a note or reason the agent wrote with escaped quotation marks reads with p
   ]);
   assert.equal(results[0].note, 'The old "Continue" heading could not be shown.');
   assert.equal(results[1].reason, 'No "Invite" button for a member.');
+});
+
+test('close-ups reach only a viewer in the experiment, in their own shape, and never take a still\'s place', () => {
+  const id = (n) => n.toString(16).padStart(32, '0');
+  const still = (n, extra = {}) => ({
+    id: id(n), storyId: 'dialog', viewport: 'desktop', side: n % 2 ? 'head' : 'base', variant: 'context', media: 'png',
+    contentType: 'image/png', width: 1280, height: 800, bytes: 9, density: 1, ...extra,
+  });
+  const closeup = (n, extra = {}) => ({
+    id: id(1000 + n), storyId: 'dialog', viewport: 'desktop', side: 'head', variant: 'closeup', media: 'png',
+    contentType: 'image/png', width: 594, height: 360, bytes: 7, density: 1, part: 1,
+    focusRect: { x: 40, y: 30, w: 66, h: 40 }, scale: 9, ...extra,
+  });
+  // 48 stills ordered after the close-ups, as the query orders them ('closeup' < 'context').
+  const summary = [closeup(1), closeup(2, { part: 2, scale: 8.2 }), ...Array.from({ length: 48 }, (_, i) => still(i + 1))];
+  const plain = view.serialize(run({ artifactSummary: summary }), session(), 'demo', HEAD);
+  assert.equal(plain.artifacts.length, 48);
+  assert.equal(plain.artifacts.some((a) => a.variant === 'closeup'), false, 'nobody outside the experiment sees one');
+  const dense = view.serialize(run({ artifactSummary: summary }), session(), 'demo', HEAD, { dense: true });
+  assert.equal(dense.artifacts.filter((a) => a.variant === 'context').length, 48, 'every still is still there');
+  assert.deepEqual(dense.artifacts.filter((a) => a.variant === 'closeup'), [
+    { id: id(1001), storyId: 'dialog', viewport: 'desktop', side: 'head', variant: 'closeup', media: 'png', theme: 'light',
+      contentType: 'image/png', part: 1, rect: { x: 40, y: 30, w: 66, h: 40 }, width: 594, height: 360, density: 9, bytes: 7,
+      url: `/api/apps/demo/proposals/42/shots/${id(1001)}?density=device` },
+    { id: id(1002), storyId: 'dialog', viewport: 'desktop', side: 'head', variant: 'closeup', media: 'png', theme: 'light',
+      contentType: 'image/png', part: 2, rect: { x: 40, y: 30, w: 66, h: 40 }, width: 594, height: 360, density: 8.2, bytes: 7,
+      url: `/api/apps/demo/proposals/42/shots/${id(1002)}?density=device` },
+  ]);
+  // Each passes the change page's own address checks (app-view.js shotsUrl,
+  // openShotsComparison's and _workshopVisuals's urlOk).
+  const appView = require('node:fs').readFileSync(require('node:path').join(__dirname, '../public/js/app-view.js'), 'utf8');
+  const checks = [...appView.matchAll(/\/\^\\\/api\\\/apps[^\n]*?\(\?:\\\?density=device\)\?\$\//g)].map((m) => new RegExp(m[0].slice(1, -1)));
+  assert.equal(checks.length, 3);
+  for (const artifact of dense.artifacts.filter((a) => a.variant === 'closeup')) {
+    for (const check of checks) assert.match(artifact.url, check);
+  }
+  // A malformed one is left out.
+  for (const odd of [{ scale: 1 }, { scale: 20 }, { part: 3 }, { focusRect: null }, { focusRect: { x: -1, y: 0, w: 1, h: 1 } }, { side: 'base' }]) {
+    const out = view.serialize(run({ artifactSummary: [closeup(1, odd)] }), session(), 'demo', HEAD, { dense: true });
+    assert.equal(out.artifacts.length, 0, JSON.stringify(odd));
+  }
 });

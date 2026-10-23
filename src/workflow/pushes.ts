@@ -37,9 +37,11 @@ export const issueUpdate = (data: JsonObject) => scoped('issue_update', data);  
 
 // A card moved on a board: besides the browsers, the Workshop's placement
 // stage hears it in every web process that relays the push (services/ws.js
-// `routing.boardChange` → workshop-themes.noteBoardChange, debounced and
-// leased per app), the deciding one included. What ws.pushIssueUpdate /
-// pushSessionUpdate kick in the process that calls them.
+// `routing.boardChange` → workshop-themes.noteBoardChange), the deciding one
+// included: each owes the app a pass on its row (due from the first change,
+// so a second relay changes nothing), which the workshop-changes clock runs.
+// What ws.pushIssueUpdate / pushSessionUpdate kick in the process that calls
+// them.
 export const boardMoved = (p: Push): Push => ({ ...p, routing: { ...(p.routing || {}), boardChange: true } });
 export const voteUpdate = (data: JsonObject) => scoped('vote_update', data);     // ws.pushVoteUpdate
 export const appUpdate = (data: JsonObject) => scoped('app_update', data);       // ws.pushAppUpdate
@@ -50,15 +52,34 @@ export function appVersion(d: { appId: number; appSlug: string; sha: string | nu
     data: { type: 'app_version_changed', appSlug: d.appSlug, sha: d.sha || null, prNumber: d.prNumber || null } };
 }
 
+// A project's status changed while it is made (app-creation): services/ws.js
+// pushAppStatusUpdate's frame, scoped as it is (a new project may be
+// view-private).
+export function appStatus(d: {
+  appId: number; appSlug: string; status: string; url?: string | null; errorReason?: string | null; missingSecrets?: string[] | null;
+}): Push {
+  const data: JsonObject = { type: 'app_status', appId: d.appId, slug: d.appSlug, status: d.status, url: d.url ?? null,
+    errorReason: d.errorReason ?? null };
+  if (d.missingSecrets) data.missingSecrets = d.missingSecrets;
+  return { kind: 'scoped', routing: { appId: d.appId, appSlug: d.appSlug }, data };
+}
+
+// The step a project being made is on: services/ws.js
+// pushAppCreationPhase's frame (database, repository, build, deploy).
+export function creationPhase(d: { appId: number; appSlug: string; phase: string }): Push {
+  return { kind: 'scoped', routing: { appId: d.appId, appSlug: d.appSlug },
+    data: { type: 'app_status', appId: d.appId, slug: d.appSlug, status: 'creating', url: null, errorReason: null, phase: d.phase } };
+}
+
 // The version pill's "deploying", started or ended: services/app-deploy-status.js
-// markStart/markEnd's broadcast, to everyone (ws.broadcastGlobal).
+// markStart/markEnd's broadcast, to the project's current viewers.
 export function redeployStatus(d: {
   appSlug: string; deploying: boolean; startedAt: string; fromSha: string | null;
   toSha?: string | null; failed?: boolean; missingSecrets?: string[] | null;
 }): Push {
   const data: JsonObject = { type: 'app_redeploy_status', appSlug: d.appSlug, deploying: d.deploying, startedAt: d.startedAt, fromSha: d.fromSha };
   if (!d.deploying) Object.assign(data, { toSha: d.toSha ?? null, failed: !!d.failed, missingSecrets: d.missingSecrets ?? null });
-  return { kind: 'global', data };
+  return { kind: 'scoped', routing: { appSlug: d.appSlug }, data };
 }
 
 // Issues just closed on GitHub, to every web process's own copy of the
@@ -110,6 +131,26 @@ export function sessionEvent(to: SessionRoute, event: string, seq: string, data:
       fanout: SESSION_FANOUT_EVENTS.has(event) },
     data: { _seq: seq, ...data, type: 'session_event', sessionId: to.sessionId, event },
   };
+}
+
+// A session's working state (ws.pushSessionState: services/session-state.js
+// buildPayload's shape): to everyone who may view the app for a shared
+// session or a headless run, else to its owner. `phase` and `stopping` are a
+// process's own to tell, so a machine says none.
+export interface SessionStateRow {
+  id: number; app_id: number; user_id: number; status: string | null; shared: boolean; is_headless: boolean;
+  headless_status: string | null; headless_outcome: string | null; headless_issue_number: number | null; app_slug: string | null;
+}
+export function sessionState(row: SessionStateRow, busy: boolean, at: Date): Push {
+  const shared = !!(row.shared || row.is_headless);
+  const data: JsonObject = {
+    type: 'session_state', sessionId: Number(row.id), appId: row.app_id, appSlug: row.app_slug, userId: row.user_id,
+    busy, phase: null, stopping: false, status: row.status,
+    headless: row.is_headless ? { status: row.headless_status, outcome: row.headless_outcome,
+      issueNumber: row.headless_issue_number == null ? null : Number(row.headless_issue_number) } : null,
+    shared, at: at.getTime(),
+  };
+  return shared ? scoped('session_state', data) : toUser(row.user_id, data);
 }
 
 // A session's card moved on a board or list (ws.pushSessionUpdate, without

@@ -5,6 +5,7 @@ import type { MouseEvent as ReactMouseEvent, ReactNode } from 'react';
 
 import { AdminUI } from './admin-console.js';
 import { StudioPage } from './admin-bench-studio';
+import { EFFORTS, armsGrid, armsOf, parseArm } from './bench-arms';
 
 // The Homeroom bot console's Benchmark area (#admin/homeroom-bot/benchmark),
 // #3654. Rendered by admin-homeroom-bot.tsx under its Benchmark tab, so it
@@ -1174,6 +1175,8 @@ export function takeBenchRequest(): BenchRequest | null {
   return r;
 }
 const LEGEND = 'text-sm font-semibold text-zinc-900 dark:text-zinc-100';
+// The launcher's efforts: '' is the bot's own, then bench-arms.ts EFFORTS.
+const EFFORT_CHOICES: string[] = ['', ...EFFORTS];
 
 /**
  * The launcher, in four steps beside what the run would do. It opens on every
@@ -1193,12 +1196,21 @@ export function Launcher({ suites, models, defaults, launcher, hiddenChecks, pre
   onLaunched: (runId?: number) => void; say: Say;
 }) {
   const [suiteId, setSuiteId] = useState(preset?.suiteId ? String(preset.suiteId) : launcher?.suiteId ? String(launcher.suiteId) : '');
-  // Every candidate, or what the launcher was opened for (a preset's models:
-  // the listed ones ticked, any other typed in).
+  // Every candidate, or what the launcher was opened for: a preset's arms
+  // as the models and efforts ticked when they are every combination of
+  // them (armsGrid: one model at the bot's own effort and at max), else its
+  // models ticked and any other arm typed in.
+  const [grid] = useState(() => (preset?.models?.length ? armsGrid(preset.models) : null));
+  const presetModels = grid ? grid.models : preset?.models || [];
   const [chosen, setChosen] = useState<Record<string, boolean>>(() => (preset?.models?.length
-    ? Object.fromEntries((launcher?.models || []).map((id) => [id, preset.models!.includes(id)]))
+    ? Object.fromEntries((launcher?.models || []).map((id) => [id, presetModels.includes(id)]))
     : Object.fromEntries((launcher?.models || []).map((id) => [id, true]))));
-  const [extra, setExtra] = useState(() => (preset?.models || []).filter((id) => !(launcher?.models || []).includes(id)).join(', '));
+  const [extra, setExtra] = useState(() => presetModels.filter((id) => !(launcher?.models || []).includes(id)).join(', '));
+  // The efforts every model ticked runs at, each an arm of its own ('' is
+  // the bot's own effort, as every run before these).
+  const [efforts, setEfforts] = useState<Record<string, boolean>>(
+    () => Object.fromEntries((grid ? grid.efforts : ['']).map((e) => [e, true])),
+  );
   // null: every stage the picked suite has tasks at. An object once ticked by hand.
   const [stagesPicked, setStagesPicked] = useState<Record<string, boolean> | null>(
     () => (preset?.stages?.length ? Object.fromEntries(preset.stages.map((st) => [st, true])) : null),
@@ -1217,8 +1229,16 @@ export function Launcher({ suites, models, defaults, launcher, hiddenChecks, pre
   const suite = suites.find((s) => String(s.id) === suiteId);
   const allStages = stagesWithTasks(suite);
   const stages = stagesPicked ? STAGES.filter((st) => stagesPicked[st] && allStages.includes(st)) : allStages;
-  const modelIds = [...Object.keys(chosen).filter((k) => chosen[k]), ...extra.split(/[\s,]+/).map((s) => s.trim()).filter(Boolean)];
-  const everything = !stagesPicked && !extra.trim() && (launcher?.models || []).every((id) => chosen[id]);
+  // The run's arms: every model ticked or typed, at every effort ticked; an
+  // arm typed with its effort (`vendor/model@max`) as it is.
+  const typed = extra.split(/[\s,]+/).map((s) => s.trim()).filter(Boolean);
+  const effortsTicked = EFFORT_CHOICES.filter((e) => efforts[e]);
+  const modelIds = [...new Set([
+    ...armsOf([...Object.keys(chosen).filter((k) => chosen[k]), ...typed.filter((id) => !parseArm(id).effort)], effortsTicked),
+    ...typed.filter((id) => parseArm(id).effort),
+  ])];
+  const atEfforts = modelIds.some((id) => parseArm(id).effort);
+  const everything = !stagesPicked && !extra.trim() && !atEfforts && (launcher?.models || []).every((id) => chosen[id]);
   const body = {
     suiteId: Number(suiteId), models: modelIds, stages,
     repeats: Number(repeats), capUsd: Number(cap), concurrency: Number(concurrency),
@@ -1319,7 +1339,7 @@ export function Launcher({ suites, models, defaults, launcher, hiddenChecks, pre
         <fieldset>
           <legend className={LEGEND}>3. Models</legend>
           <div className="mt-2 space-y-2" id="admin-homeroom-bench-models">
-            {models.map((m) => (
+            {models.filter((m) => !parseArm(m.id).effort).map((m) => (
               <label key={m.id} className="flex items-start gap-2 text-sm" data-bench-model={m.id}>
                 <input type="checkbox" className="mt-1" checked={!!chosen[m.id]} onChange={(e) => setChosen({ ...chosen, [m.id]: e.target.checked })} />
                 <span className="min-w-0">
@@ -1336,6 +1356,21 @@ export function Launcher({ suites, models, defaults, launcher, hiddenChecks, pre
                 </span>
               </label>
             ))}
+          </div>
+          <div className="mt-3" id="admin-homeroom-bench-launch-efforts">
+            <p className={AdminUI.label}>Effort</p>
+            <div className="flex flex-wrap gap-2 mt-1">
+              {EFFORT_CHOICES.map((e) => (
+                <label key={e || 'own'} className="inline-flex items-center gap-2 rounded-lg bg-zinc-50 dark:bg-zinc-800/60 px-3 py-2 text-sm"
+                  data-bench-effort={e || 'own'}>
+                  <input type="checkbox" checked={!!efforts[e]} onChange={(ev) => setEfforts({ ...efforts, [e]: ev.target.checked })} />
+                  <span>{e || "The bot's own"}</span>
+                </label>
+              ))}
+            </div>
+            <p className={`${AdminUI.muted} mt-1`}>
+              Each effort ticked is an arm of every model ticked, every turn of its trials at that effort, graded blind beside the rest: the bot&apos;s own and max side by side say what max buys. Max reaches Claude Code turns only; a Codex turn runs it at xhigh.
+            </p>
           </div>
         </fieldset>
 
@@ -1376,7 +1411,7 @@ export function Launcher({ suites, models, defaults, launcher, hiddenChecks, pre
               </label>
               <div>
                 <label className={`${AdminUI.label} block`} htmlFor="admin-homeroom-bench-launch-extra">Other OpenRouter models</label>
-                <input id="admin-homeroom-bench-launch-extra" className={`${AdminUI.input} mt-1`} value={extra} placeholder="vendor/model, vendor/model"
+                <input id="admin-homeroom-bench-launch-extra" className={`${AdminUI.input} mt-1`} value={extra} placeholder="vendor/model, vendor/model@max"
                   onChange={(e) => setExtra(e.target.value)} />
               </div>
               <p className={AdminUI.muted}>The bench waits while the bot&apos;s live builds use every build slot.</p>
@@ -1390,7 +1425,7 @@ export function Launcher({ suites, models, defaults, launcher, hiddenChecks, pre
         <h3 className="text-sm font-semibold">This run</h3>
         <p className="text-sm" id="admin-homeroom-bench-launch-summary">
           {suite ? `${suite.name} v${suite.version}${suite.frozen_at ? '' : ' (not frozen)'}` : 'No suite yet'}
-          {` · ${modelIds.length} model${modelIds.length === 1 ? '' : 's'} · ${stageWords || 'no stage picked'}`}
+          {` · ${modelIds.length} ${atEfforts ? 'arm' : 'model'}${modelIds.length === 1 ? '' : 's'} · ${stageWords || 'no stage picked'}`}
         </p>
         <div className="grid grid-cols-2 gap-2" id="admin-homeroom-bench-estimate">
           {[
@@ -2406,6 +2441,7 @@ function HowItWorks() {
       <summary className="cursor-pointer py-3 text-sm font-semibold text-zinc-900 dark:text-zinc-100">How the benchmark works</summary>
       <ul className="list-disc space-y-1 pb-4 pl-5 text-sm text-zinc-600 dark:text-zinc-300" id="admin-homeroom-bench-intro">
         <li>Real requests the bot has seen, replayed on other models with the bot&apos;s own prompts, worker and clocks.</li>
+        <li>A model can also run at an effort of its own (Effort, in the launcher): every turn of its trials at that effort, an arm graded blind beside the same model at the bot&apos;s own.</li>
         <li>Nothing is posted, messaged or proposed, and every run stops at its dollar cap.</li>
         <li>Rules grade what a rule can tell; Claude Opus grades the rest on an admin&apos;s own plan through the Homeroom connector, blind to the model.</li>
         <li>The recommended model is the cheapest success among the models within five points of the most accurate. A stage with too few graded tasks is not called.</li>

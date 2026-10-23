@@ -11,64 +11,45 @@
 import { useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
 import { chromeStore } from './chrome-store';
-import { CreateCompact } from './create-tile';
-import type { CreateTileView } from './grid-store';
-import { gridStore } from './grid-store';
 
 function controller(): any {
   return (typeof window !== 'undefined' ? (window as any).Home : null) || null;
 }
 
-const MORE_BTN = 'rounded-lg px-3 py-1.5 text-xs font-medium text-violet-700 '
+/**
+ * The link treatment of the "Show all N apps" line. Exported because the
+ * Contributing view's empty state offers "Show all apps" in the same
+ * treatment (#5823) — one string, so the two links cannot drift apart.
+ */
+export const MORE_BTN = 'rounded-lg px-3 py-1.5 text-xs font-medium text-violet-700 '
   + 'dark:text-violet-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors';
 
 /**
- * The host, as a pure function of what drives it: the count and, since #4757,
- * the held-back Create view. Split from the store-connected wrapper below for
- * the same reason `WidgetStripBody` is: the button's behaviour was executed
- * coverage before the conversion (it was a listener `_renderAppsMore`
- * attached), and a component that reads a store through a hook cannot be
- * called as a function to get at its handler.
+ * The host, as a pure function of what drives it: the count. Split from the
+ * store-connected wrapper below for the same reason `WidgetStripBody` is: the
+ * button's behaviour was executed coverage before the conversion (it was a
+ * listener `_renderAppsMore` attached), and a component that reads a store
+ * through a hook cannot be called as a function to get at its handler.
  *
- * #4757: when the collapsed grid held the Create tile back (#3047) it used to
- * vanish entirely. Now the "Show all N apps" line carries a compact New
- * project entry beside the button, so creating stays one tap away without
- * expanding the grid — and without adding a tile row (#3047's point). With
- * the tile in the grid, or no more apps to show, the markup is exactly what
- * it always was.
+ * #4757/#5654: this line used to carry a compact New project entry beside
+ * Show all while the collapsed grid held the Create tile back (#3047), and
+ * the pair was read left to right with the entry on the right. #5825 moved
+ * that entry up to the My apps heading (index.tsx), which is the screen's
+ * action seat — so the line is the expander alone, and it takes the right end
+ * the entry used to hold, where it sits under the heading's action and flush
+ * with the grid's right edge. The line's own host, id and padding are
+ * unchanged.
  */
-export function AppsMoreBody({ moreCount, create = null }: {
-  moreCount: number; create?: CreateTileView | null;
-}) {
+export function AppsMoreBody({ moreCount }: { moreCount: number }) {
   const t = useMessages('home');
-  // A held-back view arrives only with apps behind the button (a collapsed
-  // grid that hid the tile is collapsed), so the pair is checked together.
-  const compact = Boolean(moreCount) && Boolean(create?.heldBack);
   return (
     <div id="home-apps-more" className={moreCount ? 'px-2 pb-1 sm:px-3' : 'hidden px-2 pb-1 sm:px-3'}>
       {moreCount ? (
-        compact ? (
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              id="home-apps-more-btn"
-              className={`flex-1 ${MORE_BTN}`}
-              onClick={() => {
-                const home = controller();
-                if (!home) return;
-                home._appsExpanded = true;
-                home.render();
-              }}
-            >
-              {t('home:grid.showAll', { count: moreCount })}
-            </button>
-            <CreateCompact view={create} />
-          </div>
-        ) : (
+        <div className="flex items-center justify-end">
           <button
             type="button"
             id="home-apps-more-btn"
-            className={`w-full ${MORE_BTN}`}
+            className={`text-right ${MORE_BTN}`}
             onClick={() => {
               const home = controller();
               if (!home) return;
@@ -78,7 +59,7 @@ export function AppsMoreBody({ moreCount, create = null }: {
           >
             {t('home:grid.showAll', { count: moreCount })}
           </button>
-        )
+        </div>
       ) : null}
     </div>
   );
@@ -86,8 +67,5 @@ export function AppsMoreBody({ moreCount, create = null }: {
 
 export function AppsMore() {
   const { moreCount } = useStoreState(chromeStore);
-  // The Create view rides the grid store — it is the launcher's own model,
-  // and Home.render() pushes both stores on the same pass.
-  const { create } = useStoreState(gridStore);
-  return <AppsMoreBody moreCount={moreCount} create={create} />;
+  return <AppsMoreBody moreCount={moreCount} />;
 }

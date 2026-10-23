@@ -105,9 +105,21 @@ type AppApi = { _hubHref?: (slug: string) => string };
  * Go to `key` on `slug`'s page: in place when the page is up for it (a press
  * on its list), else as a door (the place remembered, then the page's
  * address). True when it moved the page in place.
+ *
+ * `door`: go as a door even when the page's opener is registered. A page
+ * left behind a hidden `#app-view` stays mounted (leaving for Messages or Me
+ * does not tear it down), so moving it in place moves a page nobody can see.
+ * The caller that knows the page is not on screen asks for the door (#5700).
+ *
+ * The page is up for it from the moment it registers its opener, while it
+ * still loads too: it publishes its place only once loaded, and a press
+ * before that taken as a door pushed no entry (the address is the page's
+ * already), so Back left the project instead of coming back (#3620).
  */
-export function openPlace(slug: string, key: PlaceKey, opts: { replace?: boolean } = {}): boolean {
-  if (opener && opener.slug === slug && placeStore.get().slug === slug) {
+export function openPlace(
+  slug: string, key: PlaceKey, opts: { replace?: boolean; door?: boolean } = {},
+): boolean {
+  if (!opts.door && opener && opener.slug === slug) {
     opener.open(key);
     return true;
   }
@@ -213,6 +225,21 @@ if (typeof window !== 'undefined') {
 export function cachedTopics(slug: string): string[] | null {
   const record = cachedCommunity(slug);
   return record ? liveTopics(record.places).map((c) => String(c.handle || '')) : null;
+}
+
+/**
+ * #5683: the place a page shows, checked against the community it is in. A
+ * channel left over from another community (Homeroom's #onboarding under
+ * KasirKU's name) gives way to the Hub. A topic is stale only when this
+ * community's record HAS been read and does not list it: while the record is
+ * unread, a place from elsewhere is trusted, and the drawer's own switch
+ * (keepPlace) is what drops one it cannot see. Pure.
+ */
+export function livePlace(slug: string, place: PlaceKey): PlaceKey {
+  if (typeof place !== 'string' || !place.startsWith('c:')) return place;
+  const topics = cachedTopics(slug);
+  if (!topics) return place;
+  return topics.includes(place.slice(2)) ? place : 'status';
 }
 
 /**

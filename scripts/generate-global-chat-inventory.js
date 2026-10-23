@@ -137,6 +137,14 @@ const REVIEWED_ROUTE_EXEMPTIONS = [
     reason: 'invite-link document: the shell with a link preview, represented by the invite-link capabilities',
   },
   {
+    matches: (route) => route.source === 'src/routes/project-preview.js' && route.path === '/app/:slug',
+    reason: 'a shared public project\'s document: the shell with its link preview, for whoever unfurls the link; never a model-visible capability',
+  },
+  {
+    matches: (route) => route.source === 'src/routes/project-preview.js' && ['/robots.txt', '/sitemap.xml'].includes(route.path),
+    reason: 'the crawl rules and the sitemap of public project pages, for search engines; never a model-visible capability',
+  },
+  {
     matches: (route) => route.source === 'server.js'
       && route.method === 'GET' && route.path === '/usernode-bridge/v1/platform.json',
     reason: 'bridge asset: where the platform is, read by the app-host Homeroom button, never a model-visible capability',
@@ -259,6 +267,11 @@ const REVIEWED_ROUTE_EXEMPTIONS = [
 
 const CLIENT_REFERENCE_EXEMPTIONS = [
   {
+    pattern: /^\/api\/auth$/,
+    source: 'frontend/src/lib/api-cache-identity.ts',
+    reason: 'the fetch boundary classifies the auth namespace; it does not call its root',
+  },
+  {
     pattern: /^\/api\/public\//,
     reason: 'signed-out public surface outside authenticated Global Chat',
   },
@@ -278,7 +291,7 @@ const DOMAIN_RULES = [
   [/^\/api\/v4\/mobile(?:\/|$)/, 'native'],
   [/^\/challenges-api(?:\/|$)/, 'leaderboards'],
   [/^\/api\/(?:me\/)?global-chat/, 'settings'],
-  [/^\/api\/(?:auth|me\/(?:profile|public-profile|avatar|password|email|locale|social-identities|blocks|summary)|profiles|users|friends)/, 'profile'],
+  [/^\/api\/(?:auth|me\/(?:profile|public-profile|avatar|password|email|locale|usage-analytics|social-identities|blocks|summary)|profiles|users|friends)/, 'profile'],
   [/^\/api\/(?:notifications|me\/(?:notification|mobile-push)|apps\/[^/]+\/notification)/, 'notifications'],
   [/^\/api\/(?:conversations|apps\/[^/]+\/messages)/, 'messages'],
   [/^\/api\/(?:sessions|me\/active-sessions|apps\/[^/]+\/(?:sessions|promoted|merged|shared-sessions|dev-flow)|budget)/, 'development'],
@@ -721,7 +734,8 @@ function buildInventory({
   const unmatchedClientReferences = [...clientRefs.entries()]
     .filter(([apiPath]) => !matchedReferences.has(apiPath))
     .filter(([apiPath, files]) => {
-      const reviewed = CLIENT_REFERENCE_EXEMPTIONS.find(({ pattern }) => pattern.test(apiPath));
+      const reviewed = CLIENT_REFERENCE_EXEMPTIONS.find(({ pattern, source }) => pattern.test(apiPath)
+        && (!source || [...files].every(file => file === source)));
       const representedRoute = routes.find((route) => (
         route.status === 'exempt' && route.path && samePattern(route.path, apiPath)
       ));

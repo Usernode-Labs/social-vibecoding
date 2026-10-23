@@ -757,6 +757,26 @@ test('a countdown carries the ticker contract the 30s timer reads', () => {
   assert.match(html, /data-label-suffix=" · 1\/2"/, 'the ticker preserves the tally suffix');
 });
 
+test('an armed set-aside wins over the at-least-N approvals pill, in both pills', () => {
+  // #5803: an at-least-N project has no MERGE clock, but its rejection clock
+  // is armed like every other mode's (since #2494), and an admin's lone No
+  // arms one too. The card must say the change is counting down to being set
+  // aside, not "0 of 1 approval" over a clock that is in fact running.
+  const AppView = makeAppView();
+  const row = PR({
+    approvals_required: 1, yes_count: 0, no_count: 1, check_state: 'passing',
+    rejection_armed: true, reject_window_ends_at: hoursAhead(120),
+  });
+  const legacy = AppView.voteCountPill(row);
+  assert.match(legacy, /gc-reject-countdown/);
+  assert.doesNotMatch(legacy, /dev-status-pill-vote/);
+  assert.doesNotMatch(legacy, />0 of 1 approval</);
+  const state = AppView.statusPillState(row, { majority: 1 });
+  assert.equal(state.key, 'reject_countdown');
+  assert.equal(state.reject, true);
+  assert.equal(state.tone, 'blocked');
+});
+
 test('the pill is FULL WIDTH on a card, and a capsule in the detail head', () => {
   const AppView = makeAppView();
   const pr = PR({ my_vote: 'yes', check_state: 'passing', yes_count: 1, votes_required: 4 });

@@ -9,6 +9,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const controlPlane = require('../src/services/shots-control');
 const fixtures = require('./fixtures/shots');
+const shotsFiles = require('../src/services/shots-files');
 
 const { RunControl } = controlPlane;
 
@@ -545,4 +546,90 @@ test('a dark shot that matches its light copy answers sameAsLight and stores not
   const beforeDark = run.saveShot({ change: 'invite-suggestions', screen: 'desktop', side: 'before', theme: 'dark' },
     fixtures.png());
   assert.equal(beforeDark.saved, true);
+});
+
+test('only a run taken at device density saves stills over 6 MB, and its element shots may be that dense', () => {
+  const over = Buffer.alloc(6 * 1024 * 1024 + 1);
+  const element = { change: 'invite-suggestions', screen: 'desktop', side: 'before', kind: 'element' };
+  // Off (every run unless the experiment is on): today's caps.
+  const plain = control();
+  assert.throws(() => plain.saveShot({ change: 'invite-suggestions', screen: 'desktop', side: 'before' }, over),
+    { code: 'shot_too_large', status: 413 });
+  assert.throws(() => plain.saveShot(element, fixtures.png({ width: 2400, height: 40 })), { code: 'element_shot_too_wide' });
+  // On: the size passes (this buffer then fails as no PNG), and a 2x desktop
+  // element saved before its screen shot is kept.
+  const dense = control();
+  dense.agent = { deviceDensity: true };
+  assert.throws(() => dense.saveShot({ change: 'invite-suggestions', screen: 'desktop', side: 'before' }, over),
+    { code: 'invalid_shot_image' });
+  assert.doesNotThrow(() => dense.saveShot(element, fixtures.png({ width: 2400, height: 40 })));
+});
+
+test('a dense run keeps each still the worker says is dense twice: as its 1x copy, and its original', () => {
+  const dense = control();
+  dense.agent = { deviceDensity: true };
+  const before = { change: 'invite-suggestions', screen: 'desktop', side: 'before' };
+  const after = { change: 'invite-suggestions', screen: 'desktop', side: 'after' };
+  const original = fixtures.png({ width: 2560, height: 1600, shade: 10 });
+  const saved = dense.saveShot({ ...before, density: '2' }, original);
+  assert.equal(saved.saved, true);
+  const file = dense.saved.get(shotsFiles.slotKey(shotsFiles.shotTarget(dense.intent, before)));
+  assert.deepEqual([file.width, file.height, file.density], [1280, 800, 2], 'data is the 1x copy');
+  assert.deepEqual([file.dense.width, file.dense.height, file.dense.data === original], [2560, 1600, true]);
+  // The same original on the other side is still the same image.
+  assert.equal(dense.saveShot({ ...after, density: '2' }, original).sameAsOtherSide, true);
+  // A width that does not match what the worker said, a density the run did
+  // not ask for, or a worker that says nothing: stored as it came, 1x.
+  for (const [run, raw, image] of [
+    [dense, { ...after, density: '3' }, original],
+    [dense, after, original],
+    [control(), { ...after, density: '2' }, original],
+  ]) {
+    run.saveShot(raw, image);
+    const kept = run.saved.get(shotsFiles.slotKey(shotsFiles.shotTarget(run.intent, after)));
+    assert.deepEqual([kept.width, kept.density, kept.dense], [2560, 1, null], JSON.stringify(raw));
+  }
+  // An element the worker says is 2x is judged at 2x, whatever its screen shot's 1x copy says.
+  assert.doesNotThrow(() => dense.saveShot({ ...before, kind: 'element', density: '2' }, fixtures.png({ width: 2400, height: 60 })));
+});
+
+test('a close-up is kept only in a dense run, when wanted, at the size asked for, and of the after screen there', () => {
+  const { PNG } = require('pngjs');
+  const flat = (w, h, fill) => { const p = new PNG({ width: w, height: h }); for (let i = 0; i < p.data.length; i += 4) p.data.set([...fill, 255], i); return PNG.sync.write(p); };
+  const after = flat(1280, 800, [240, 240, 244]);
+  const ask = { change: 'invite-suggestions', screen: 'desktop', part: 1, rect: { x: 100, y: 120, w: 60, h: 40 }, scale: 6.5 };
+  const shot = flat(390, 260, [240, 240, 244]);
+  const raw = { change: ask.change, screen: ask.screen, part: 1 };
+  assert.throws(() => control().saveCloseup(raw, shot, { asked: [ask], afterStill: after }), { code: 'closeup_not_needed' });
+  const dense = control();
+  dense.agent = { deviceDensity: true };
+  assert.throws(() => dense.saveCloseup({ ...raw, part: 2 }, shot, { asked: [ask], afterStill: after }), { code: 'closeup_not_wanted' });
+  assert.throws(() => dense.saveCloseup(raw, flat(300, 200, [240, 240, 244]), { asked: [ask], afterStill: after }), { code: 'closeup_wrong_size' });
+  assert.throws(() => dense.saveCloseup(raw, flat(390, 260, [10, 120, 10]), { asked: [ask], afterStill: after }),
+    { code: 'closeup_not_the_after_screen', status: 409 });
+  assert.equal(dense.saved.size, 0);
+  assert.deepEqual(dense.saveCloseup(raw, shot, { asked: [ask], afterStill: after }),
+    { saved: true, change: ask.change, screen: 'desktop', part: 1, scale: 6.5 });
+  const [file] = [...dense.saved.values()];
+  assert.deepEqual([file.variant, file.side, file.part, file.scale, file.focusRect, file.width],
+    ['closeup', 'head', 1, 6.5, ask.rect, 390]);
+  assert.equal(controlPlane.dbSlot(file), 'invite-suggestions/desktop/head/closeup/1');
+  assert.deepEqual(dense.savedCloseups(), [{ change: ask.change, screen: 'desktop', part: 1 }]);
+});
+
+test('a ready change publishes its close-ups beside its stills; they are never what makes it ready', () => {
+  const dense = control();
+  dense.agent = { deviceDensity: true };
+  const story = dense.intent.stories.find((s) => s.id === 'invite-suggestions');
+  const closeup = shotsFiles.storedCloseup({ storyId: story.id, viewport: 'desktop', part: 1, rect: { x: 0, y: 0, w: 10, h: 10 }, scale: 5 },
+    Buffer.from('x'), { width: 50, height: 50, bytes: 1, sha256: 'c'.repeat(64) });
+  dense.saved.set(shotsFiles.slotKey(closeup), closeup);
+  const notReady = shotsFiles.summarize(dense.intent, dense.saved);
+  assert.equal(notReady.files.some((f) => f.variant === 'closeup'), false, 'a change without its stills publishes nothing');
+  dense.saveShot({ change: story.id, screen: 'desktop', side: 'before' }, fixtures.png({ width: 1280, height: 800, shade: 1 }));
+  dense.saveShot({ change: story.id, screen: 'desktop', side: 'after' }, fixtures.png({ width: 1280, height: 800, shade: 2 }));
+  const ready = shotsFiles.summarize(dense.intent, dense.saved);
+  assert.equal(ready.files.filter((f) => f.variant === 'closeup').length, 1);
+  const without = new Map([...dense.saved].filter(([, f]) => f.variant !== 'closeup'));
+  assert.notEqual(shotsFiles.summarize(dense.intent, without).manifestHash, ready.manifestHash, 'the manifest names it');
 });

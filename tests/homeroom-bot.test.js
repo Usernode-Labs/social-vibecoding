@@ -429,9 +429,7 @@ test('noteIssueActivity: a message or an edit is heard by the request\'s instanc
 
 test('activity reaches the bot from every place an issue changes on the platform', () => {
   const ws = read('src/services/ws.js');
-  const busCase = ws.slice(ws.indexOf("case 'homeroom_bot':"), ws.indexOf("case 'homeroom_bot':") + 300);
-  assert.match(busCase, /case 'homeroom_bot':[\s\S]*?return;/, 'an older release\'s bus wake is heard and dropped');
-  assert.doesNotMatch(busCase, /onBusMessage/);
+  assert.doesNotMatch(ws, /case 'homeroom_bot':|case 'agent_stop':/, 'no bus wake of the bot\'s or a Mayor stop\'s: nothing sends one');
   const push = ws.slice(ws.indexOf('function pushIssueUpdate(data)'));
   assert.match(push.slice(0, 700), /noteIssueActivityForBot\(data\.appId, data\.issueNumber, data\.action\)/,
     'an edit or an unclaim reaches the bot');
@@ -1613,8 +1611,10 @@ test('runTriage: the request comes first; the platform reference follows, small,
   // characters), which every build reads, rides in the reference too. #5224:
   // the plan lines' rule (about 330 more), so the plan card's lines stay
   // short and one point each. 16 Oct 2026: `builder` (about 280 more), so a
-  // request that names who builds it does not ring its requester.
-  assert.ok(prompt.length < 22400, `a triage prompt stays small: ${prompt.length} chars`);
+  // request that names who builds it does not ring its requester. #5117:
+  // the platform's data rules (about 1,600 more) ride beside the content
+  // rules, so a request whose point breaks them goes to a person.
+  assert.ok(prompt.length < 24000, `a triage prompt stays small: ${prompt.length} chars`);
   // The last thing the model reads is the one format parseVerdict accepts.
   assert.match(prompt, /END YOUR REPLY WITH EXACTLY ONE fenced JSON block in this format, and nothing after it:\n\{"verdict": "question" \| "empty" \| "ready" \| "person", "determined": true \| false, "missing_fact": "\.\.\.", "question": "\.\.\.", "default": "\.\.\.", "build_note": "\.\.\.", "reason": "\.\.\."\}$/);
 });

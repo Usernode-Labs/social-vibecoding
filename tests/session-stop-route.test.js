@@ -41,6 +41,8 @@ const stopRegistry = require('../src/services/stop-registry');
 const workerMod = require('../src/services/worker');
 const wsMod = require('../src/services/ws');
 const sessionBus = require('../src/services/session-bus');
+// Its streams kept in this process: no database here (services/session-bus.js).
+sessionBus.init({ memory: true });
 
 const { sessionRoutes, requestSessionStop } = require('../src/routes/sessions');
 
@@ -235,12 +237,14 @@ test('the owner, an admin, a shared session and a proposal up for a vote all rea
     404, 'a shared session stops being public once it is archived');
 });
 
-test('/status and /checks share one visibility predicate', () => {
+test('/status, /checks and the checks explanation share one visibility predicate', () => {
   const fs = require('node:fs');
   const path = require('node:path');
   const src = fs.readFileSync(path.join(__dirname, '../src/routes/sessions.js'), 'utf8');
   const uses = src.match(/canViewSession\(session, req\.user\)|canViewSession\(seen\[0\], req\.user\)/g) || [];
-  assert.equal(uses.length, 2, 'both routes call the shared helper');
+  // The plain-words explanation of a failed run is read from the check
+  // results, so it is read by their rule (services/checks-explanation.js).
+  assert.equal(uses.length, 3, 'all three routes call the shared helper');
 });
 
 // ── POST /stop: who may press it ────────────────────────────────────────
@@ -392,6 +396,7 @@ test('force-stopping a handle-less turn still announces it on both channels', as
   } finally {
     wsMod.broadcastGlobal = realBroadcast;
     workerMod.isWorkerExecuting = realExecuting;
+    await sessionBus.settle();
     if (typeof unsub === 'function') unsub();
     server.close();
   }

@@ -110,17 +110,20 @@ test('the sheet lists the held rows, counts the unread ones, and dims what was r
   const body = SHEET_SRC.slice(SHEET_SRC.indexOf('export function NotificationsSheetView('));
   // #18: plain messages are the Messages tab's, as the bell leaves them out.
   assert.match(body, /const held = useHeldUnread\(open, all\);[\s\S]{0,300}const unread = all\.filter\(\(view\) => held\.listed\(view\) && !view\.plainMessage\);\s*const unreadNow = all\.filter\(\(view\) => view\.unread && !view\.plainMessage\);/);
-  assert.match(body, /const unreadCount = unreadNow\.reduce\(/, 'the tab says what is still unread');
+  // #5289: the tab prints the bell's number, which leaves plain messages out
+  // too (_badgeTotal, less messageUnread), so list and count agree.
+  assert.match(body, /const unreadCount = snap\.badgeTotal \|\| 0;/, 'the tab says what the bell says');
   assert.match(body, /disabled=\{!unreadNow\.length\}/, 'Mark all read has nothing to do once all of it is read');
   assert.match(body, /held=\{tab === 'unread' && !entry\.view\.unread && !olderShown\}/,
     'dim only on collapsed Unread: on All and in the older rows a read row is an ordinary row');
   assert.match(body, /held\.release\(unread\.map\(\(view\) => view\.id\)\);\s*void controller\(\)\?\.markAllRead\(\);/);
   assert.match(SHEET_SRC, /onRead\?\.\(\);\s*Promise\.resolve\(controller\(\)\?\.markAppRead\(appId\)\)/);
-  assert.match(SHEET_SRC, /onRelease\?\.\(\[view\.id\]\);\s*void controller\(\)\?\.clearNotification\(view\.id\);/,
+  // #5289: a folded row lets all of its notifications go, and clears them all.
+  assert.match(SHEET_SRC, /onRelease\?\.\(groupIds \|\| \[view\.id\]\);\s*void controller\(\)\?\.clearNotification\(view\.id, groupIds \|\| undefined\);/,
     'the × lets the row go before clearing it');
 });
 
-test('the boot read asks the service worker for the network\'s answer', async () => {
+test('every read of the feed asks the service worker for the network\'s answer', async () => {
   const src = read('frontend/src/features/notifications/notifications.js');
   assert.match(src, /if \(window\.App && App\.user\) Notifications\.refresh\(\{ fresh: true \}\);/);
   assert.match(src, /\(\) => Notifications\.refresh\(\{ fresh: true \}\), \{ once: true \}\);/);
@@ -152,10 +155,13 @@ test('the boot read asks the service worker for the network\'s answer', async ()
   vm.runInContext(src.replace(/^import \{ agoStamp \}.*$/m, ''), sandbox);
   await sandbox.Notifications.refresh({ fresh: true });
   await sandbox.Notifications.refresh();
+  // 21 Oct 2026: the read on open (and on a reconnect, and after a clear) too.
+  // On the ordinary deadline a reconnect drew the bell from the worker's
+  // copy, and nothing corrected it for 36 minutes.
   assert.deepEqual(calls, [
     ['/api/notifications?limit=100', { cache: 'no-cache' }],
-    ['/api/notifications?limit=100', undefined],
-  ], 'only the boot read; the read on open keeps the ordinary deadline');
+    ['/api/notifications?limit=100', { cache: 'no-cache' }],
+  ], 'every read of the feed waits for the network');
 });
 
 // ── 2. N6: the row ─────────────────────────────────────────────────────
@@ -164,13 +170,18 @@ test('the row ends in its bookmark alone, 16px in, and its unread dot sits in th
   const html = renderSheet({ list: [view(10), view(11, { unread: false })] });
   const row = (id) => html.slice(html.indexOf(`data-notif-id="${id}"`), html.indexOf('</button>', html.indexOf(`data-notif-id="${id}"`)));
   // The dot is the first thing in the row, beside the tile, before the words.
-  assert.match(row(10), /^data-notif-id="10" class="notifications-row w-full text-left pl-4 pr-16 [^"]*"><span class="relative flex shrink-0"><span class="absolute -left-3 top-1\/2 -translate-y-1\/2 w-2 h-2 rounded-full bg-zinc-900 dark:bg-zinc-100" aria-label="Unread"><\/span>/);
+  // #5580: on Unread the row is a card in its project's stack; the dot keeps
+  // its place in the card's left margin.
+  assert.match(row(10), /^data-notif-id="10" class="notifications-row col-start-1 row-start-1 w-full text-left pl-5 pr-4 [^"]*"><span class="relative flex shrink-0 self-start mt-0\.5"><span class="absolute -left-3 top-1\/2 -translate-y-1\/2 w-2 h-2 rounded-full bg-zinc-900 dark:bg-zinc-100" aria-label="Unread"><\/span>/);
   assert.doesNotMatch(row(11), /aria-label="Unread"/, 'a read row has no dot');
   // No chevron left in a notification row (the Messages footer keeps its own).
   const rowBody = SHEET_SRC.slice(SHEET_SRC.indexOf('function ScreenRow('), SHEET_SRC.indexOf('export function NotificationsSheetView('));
   assert.doesNotMatch(rowBody, /ChevronRightIcon/);
-  // The bookmark: 16px from the edge, the close disc's line.
-  assert.match(html, /data-notification-save="10" aria-pressed="false" aria-label="[^"]+" class="absolute right-4 top-1\/2 -translate-y-1\/2 flex h-9 w-9 /);
+  // The bookmark: on a card (#5580) it takes the time's place at the top
+  // right while the pointer is over it; a row of a flat list (All, a search)
+  // keeps it 16px from the edge, the close disc's line.
+  assert.match(html, /data-notification-save="10" aria-pressed="false" aria-label="[^"]+" class="absolute right-2 top-1\.5 flex h-8 w-8 [^"]*group-hover\/notif:opacity-100 /);
+  assert.match(rowBody, /: 'absolute right-4 top-1\/2 -translate-y-1\/2 flex h-9 w-9 items-center justify-center '/);
   assert.match(SHEET_SRC, /id="notifications-sheet-close"[\s\S]{0,40}className=\{'flex h-9 w-9 /,
     'the close disc is the same 36px, in the title row\'s 16px padding');
 });

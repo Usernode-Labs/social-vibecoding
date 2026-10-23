@@ -532,11 +532,12 @@ test('unit-suite reuse through the preview machine, against the full PostgreSQL 
   });
 
   // A person presses while the proposal is busy (a turn holds it) and its
-  // checks still name A while it reviews B: the route records B and leaves
-  // the drain to start the owed run once the session is idle. Meanwhile a
-  // mechanical sync carries A's green verdict to B, or nothing happens
-  // before the drain does. Neither leaves B green without its suite.
-  await t.test('a request folded into a busy session is recorded on the reviewed head; a carry to it is refused, and the drain runs it', async (st) => {
+  // checks still name A while it reviews B: the route records B and the
+  // machine starts the owed run once the session is idle (its ChecksDue,
+  // armed by the folded request). Meanwhile a mechanical sync carries A's
+  // green verdict to B, or nothing happens before the machine does. Neither
+  // leaves B green without its suite.
+  await t.test('a request folded into a busy session is recorded on the reviewed head; a carry to it is refused, and the machine runs it', async (st) => {
     const platformPath = require.resolve('../src/workflow/platform.ts');
     const realPlatform = require.cache[platformPath];
     const platform = {};
@@ -552,22 +553,16 @@ test('unit-suite reuse through the preview machine, against the full PostgreSQL 
       await rt.drain();
       return (await pool.query('SELECT result AS status, reason FROM wf_events WHERE id = $1', [ev])).rows[0];
     };
-    let drained = null;
     platform.requestRecheck = async (o) => {
-      try {
-        const ev = await send({ id: o.sessionId, app_id: o.appId }, 'RecheckRequested', { reason: o.reason, trigger: o.trigger }, { kind: 'route' });
-        await rt.drain();
-        return (await pool.query('SELECT result AS status, reason FROM wf_events WHERE id = $1', [ev])).rows[0];
-      } finally { if (drained) { drained(); drained = null; } }
+      const ev = await send({ id: o.sessionId, app_id: o.appId }, 'RecheckRequested', { reason: o.reason, trigger: o.trigger }, { kind: 'route' });
+      await rt.drain();
+      return (await pool.query('SELECT result AS status, reason FROM wf_events WHERE id = $1', [ev])).rows[0];
     };
     platform.recheckFolded = async (o) => {
       const ev = await send({ id: o.sessionId, app_id: o.appId }, 'RecheckFolded', { head: o.head }, { kind: 'route', name: 'manual-recheck' });
       await rt.drain();
       return (await pool.query('SELECT result AS status, reason FROM wf_events WHERE id = $1', [ev])).rows[0];
     };
-    const reuseMod = require('../src/services/unit-suite-reuse');
-    const realDrain = reuseMod.owePendingRun;
-    st.mock.method(reuseMod, 'owePendingRun', (o) => realDrain({ ...o, pollMs: 10, maxWaitMs: 2000 }));
     st.mock.method(require('../src/db/pool'), 'getPool', () => pool);
     const busySet = require('../src/services/active-workers').activeWorkers;
     const router = require('../src/routes/sessions').sessionRoutes({ databaseUrl: String(url) });
@@ -588,7 +583,6 @@ test('unit-suite reuse through the preview machine, against the full PostgreSQL 
       answers.byTrigger['manual-recheck'] = result(realPass);
       asked.length = 0;
       busySet.add(Number(s.id));
-      const done = new Promise((resolve) => { drained = resolve; });
       const res = { statusCode: 200, status(n) { this.statusCode = n; return this; }, json(b) { this.body = b; return this; } };
       try {
         await handler({ params: { id: String(s.id) }, user: { id: s.user_id } }, res);
@@ -605,7 +599,17 @@ test('unit-suite reuse through the preview machine, against the full PostgreSQL 
         }
       } finally { busySet.delete(Number(s.id)); }
       if (thenWhat === 'drain') {
-        await Promise.race([done, new Promise((_, no) => setTimeout(() => no(new Error('the drain never ran the owed head')), 3000))]);
+        // The folded request armed the machine's ChecksDue; due now, with
+        // nobody working on the session, it runs the owed head.
+        const { rows: [armed] } = await pool.query('SELECT deadline_event FROM wf_instances WHERE machine = $1 AND key = $2', [MACHINE, sessionKey(s.id)]);
+        assert.equal(armed.deadline_event.type, 'ChecksDue', 'armed by the folded request');
+        const c = await pool.connect();
+        try {
+          await c.query(`BEGIN; SET LOCAL app.wf_writer = 'transition'`);
+          await c.query('UPDATE wf_instances SET deadline_at = now() WHERE machine = $1 AND key = $2', [MACHINE, sessionKey(s.id)]);
+          await c.query('COMMIT');
+        } finally { c.release(); }
+        await rt.fireTimers();
         await settle();
       }
       const r = await row(s.id);
@@ -632,19 +636,22 @@ test('unit-suite reuse through the preview machine, against the full PostgreSQL 
     await reuse.markFreshOwed(pool, { sessionId: s.id, commitSha: A });
     const fold = (o) => send({ id: o.sessionId, app_id: o.appId }, 'RecheckFolded', { head: o.head }, { kind: 'route', name: 'manual-recheck' })
       .then(() => rt.drain());
-    await reuse.owePendingRun({ pool, platform: { recheckFolded: fold }, config: {}, session: await row(s.id),
-      busy: () => true, head: A, pollMs: 10, maxWaitMs: 0, stagingRecovery: { recheckSessionChecks: async () => {} } });
+    // What the route's busy branch asks (platform.recheckFolded).
+    await fold({ sessionId: s.id, appId: s.app_id, head: A });
     const r = await row(s.id);
     assert.deepEqual([r.check_state, r.checks_commit_sha, r.check_trigger, r.unit_suite_fresh_sha], ['pending', A, 'manual-recheck', A],
       'the old pass no longer stands for the head they asked about');
     const { rows: [ev] } = await pool.query(
       `SELECT result FROM wf_events WHERE machine = 'preview' AND key = $1 AND type = 'RecheckFolded' ORDER BY id DESC LIMIT 1`, [sessionKey(s.id)]);
     assert.equal(ev.result, 'accepted');
-    // A second press finds it pending already: nothing to stamp.
+    // A second press finds it pending already: nothing to stamp, and its
+    // owed run is armed again (ChecksDue).
     await fold({ sessionId: s.id, appId: s.app_id, head: A });
     const { rows: [again] } = await pool.query(
-      `SELECT result, reason FROM wf_events WHERE machine = 'preview' AND key = $1 AND type = 'RecheckFolded' ORDER BY id DESC LIMIT 1`, [sessionKey(s.id)]);
-    assert.deepEqual({ ...again }, { result: 'rejected', reason: 'nothing_to_stamp' });
+      `SELECT result, emitted FROM wf_events WHERE machine = 'preview' AND key = $1 AND type = 'RecheckFolded' ORDER BY id DESC LIMIT 1`, [sessionKey(s.id)]);
+    assert.equal(again.result, 'accepted');
+    assert.equal((await row(s.id)).check_state, 'pending');
+    assert.equal((await instance(s)).deadline_event.type, 'ChecksDue');
 
     // A row the machine does not hold (its verdict stored before it ran, or
     // its preview retired by a reap) is stamped too, adopted from the row, as

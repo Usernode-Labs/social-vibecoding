@@ -16,6 +16,9 @@
 //
 // The person's taps under the bot's offers (Tapped → dm.act) and their
 // hellos (Greet → dm.hello) are work of the same instance, each said once.
+// So is the email that stands in for a push they cannot get, owed by the
+// message that rang (MailOwed → dm.mail, appended in that message's own
+// transaction: homeroom-bot-dm.js sendDm), one per message.
 // workflow-foundation's design-bot-replies.md is the design.
 
 import { NONE, defineMachine, ok, reject } from '../kernel/index.ts';
@@ -29,6 +32,7 @@ export const WORK = Object.freeze({
   sorry: 'dm.sorry',
   act: 'dm.act',
   hello: 'dm.hello',
+  mail: 'dm.mail',
 });
 
 // ── State ───────────────────────────────────────────────────────────────
@@ -68,8 +72,8 @@ const int = (v: unknown, what: string) => {
 const optInt = (v: unknown) => (Number.isInteger(v) && (v as number) > 0 ? (v as number) : null);
 
 const EVENTS = {
-  // They wrote in their DM with the bot. `attempt`: a later try an older
-  // release owed (its adoption), else 0.
+  // They wrote in their DM with the bot. `attempt`: 0 (a later try is the
+  // instance's own timer).
   Wrote: (p: any) => ({
     userId: int(p?.userId, 'userId'), messageId: int(p?.messageId, 'messageId'),
     conversationId: int(p?.conversationId, 'conversationId'),
@@ -90,8 +94,15 @@ const EVENTS = {
     if (!HELLO_KINDS.has(p?.kind)) throw new Error('kind is not a hello');
     return { userId: int(p?.userId, 'userId'), kind: p.kind as string, appId: optInt(p?.appId) };
   },
+  // A message of the bot's rang them about something ready (or a first
+  // version live): its email, sent when no phone could take the push
+  // (services/activity-mail.js emailIfNoPush, which `mail` is the input of).
+  MailOwed: (p: any) => {
+    if (!p?.mail || typeof p.mail !== 'object' || Array.isArray(p.mail)) throw new Error('mail must be an object');
+    return { userId: int(p?.userId, 'userId'), messageId: int(p?.messageId, 'messageId'), mail: p.mail as Record<string, Json> };
+  },
 };
-const CREATE = ['Wrote', 'Tapped', 'Greet'];
+const CREATE = ['Wrote', 'Tapped', 'Greet', 'MailOwed'];
 
 // ── Moves ───────────────────────────────────────────────────────────────
 
@@ -188,6 +199,15 @@ const greet = (s: DState, e: Event<any>): Outcome<DState> => owe(s, e, {
   input: { userId: e.payload.userId, kind: e.payload.kind, appId: e.payload.appId },
 });
 
+// One email per message that rang; the work's key makes a second ask none.
+// Nothing waits on it, so its result is not kept. `owedAt`: an email run
+// long after (work left over a rollback) is not sent.
+const mailOwed = (s: DState, e: Event<any>, _f?: Facts, ctx?: TransitionContext): Outcome<DState> => step(s.name === NONE ? 'idle' : (s.name as Name), live(s, e), {
+  work: [{ kind: WORK.mail, key: `mail:${e.payload.messageId}`, input: {
+    ...e.payload.mail, userId: e.payload.userId, messageId: e.payload.messageId, owedAt: (ctx?.now ?? new Date()).toISOString(),
+  } }],
+});
+
 // A note's result, kept (so the same work owed again is owed once). An act
 // that failed for good is settled as failed and said (`action:<id>:failed`),
 // never left claimed and undone.
@@ -209,13 +229,16 @@ function result(status: 'done' | 'failed' | 'exhausted') {
   return {
     guard: (s: DState, e: Event<WorkResultPayload>): Check => {
       const d = (s as Live).data;
+      if (e.payload.kind === WORK.mail) return ok();
       if (e.payload.kind === WORK.answer) {
         return s.name === 'answering' && d.current && e.payload.workKey === answerKey(d.current) ? ok() : reject('stale_result');
       }
       return d.notes[e.payload.workKey]?.status === 'pending' ? ok() : reject('stale_result');
     },
-    to: (s: DState, e: Event<WorkResultPayload>, f: Facts, ctx: TransitionContext): Outcome<DState> =>
-      (e.payload.kind === WORK.answer ? ended(s, e, f, ctx) : note(s, e)),
+    to: (s: DState, e: Event<WorkResultPayload>, f: Facts, ctx: TransitionContext): Outcome<DState> => {
+      if (e.payload.kind === WORK.mail) return step(s.name as Name, (s as Live).data);
+      return e.payload.kind === WORK.answer ? ended(s, e, f, ctx) : note(s, e);
+    },
   };
 }
 
@@ -233,12 +256,12 @@ async function readFacts(tx: Tx, event: Event<any>): Promise<Facts> {
 
 export function botDm(): Machine<DState, Facts> {
   const works = { WorkSucceeded: result('done'), WorkFailed: result('failed'), WorkExhausted: result('exhausted') };
-  const keyed = (to: (s: DState, e: Event<any>) => Outcome<DState>) => ({
+  const keyed = (to: (s: DState, e: Event<any>, f?: Facts, ctx?: TransitionContext) => Outcome<DState>) => ({
     guard: (_s: DState, e: Event<any>, _f: Facts, ctx: TransitionContext): Check =>
       (ctx.key === dmKey(e.payload.userId) ? ok() : reject('key_mismatch')),
     to,
   });
-  const always = { Tapped: { guard: tapGuard, to: tapped }, Greet: keyed(greet), ...works };
+  const always = { Tapped: { guard: tapGuard, to: tapped }, Greet: keyed(greet), MailOwed: keyed(mailOwed), ...works };
   return defineMachine<DState, Facts>({
     name: MACHINE,
     version: 1,
@@ -246,10 +269,10 @@ export function botDm(): Machine<DState, Facts> {
     create: CREATE,
     decode: (row) => ({ name: row.state, data: row.data } as DState),
     facts: (tx: Tx, _state: DState, event: Event<any>) => readFacts(tx, event),
-    authorize: { Wrote: route, TryAgain: timer, Tapped: route, Greet: route },
+    authorize: { Wrote: route, TryAgain: timer, Tapped: route, Greet: route, MailOwed: route },
     reply: async (_tx, event) => (event.type === 'Tapped' ? { ok: true, choice: (event.payload as any).choice } as Json : undefined),
     transitions: {
-      [NONE]: { Wrote: keyed(wrote), Tapped: always.Tapped, Greet: always.Greet },
+      [NONE]: { Wrote: keyed(wrote), Tapped: always.Tapped, Greet: always.Greet, MailOwed: always.MailOwed },
       idle: { Wrote: keyed(wrote), TryAgain: { ignore: 'not_waiting' }, ...always },
       answering: { Wrote: keyed(wrote), TryAgain: { ignore: 'answering' }, ...always },
       trying_later: { Wrote: keyed(wrote), TryAgain: { to: tryAgain }, ...always },

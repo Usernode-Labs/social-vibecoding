@@ -155,31 +155,92 @@ test('the plan is asked of the configuration\'s triage model through the helper 
 });
 
 test('started once, only for a first version the bot builds, and never without a model', async () => {
+  // The claim owes its project's app-creation work (app.plan) in its own
+  // statement: claimed and then asked in the background before, a restart in
+  // between left it pending until its readers gave up.
   const sql = [];
-  let claim = [{ app_id: 3 }];
+  let claim = [{ app_id: 3, owed: true }];
   const pool = { async query(text, params) { sql.push({ text, params }); return { rows: /SET early_plan_status = 'pending'/.test(text) ? claim : [] }; } };
-  const deps = {
-    llm: { isEnabled: () => true, estimateCostCents: () => 0, async generateFirstVersionPlan() { return { text: JSON.stringify(REPLY) }; } },
-    limits: { async recordSpend() {} },
-    bot: { projectMembers: async () => null, starterOfApp: async () => null },
-    botConfigs: { async currentVersion() { return null; } },
-  };
+  const deps = { llm: { isEnabled: () => true } };
   assert.equal(await fvPlan.startEarlyPlan(pool, { app: { id: 3, name: 'Club Votes' }, user: { id: 7 }, brief: 'Polls' }, deps), true);
+  assert.equal(sql.length, 1, 'one statement');
   assert.match(sql[0].text, /WHERE app_id = \$1 AND user_id = \$2 AND bot_builds = TRUE AND early_plan_status IS NULL/);
-  await fvPlan._pendingForTests.get(3);
-  const saved = sql.find((q) => /SET early_plan_status = \$2, early_plan = \$3::jsonb/.test(q.text));
-  assert.equal(saved.params[1], 'ready');
-  assert.deepEqual(JSON.parse(saved.params[2]).bullets.length, 3);
+  assert.match(sql[0].text, /INSERT INTO wf_events[\s\S]*SELECT 'app-creation', 'app:' \|\| c\.app_id, c\.app_id, 'PlanOwed'/);
+  const { MACHINE, creationKey } = require('../src/workflow/app-creation/machine.ts');
+  assert.deepEqual([MACHINE, creationKey(3)], ['app-creation', 'app:3']);
   claim = [];
   assert.equal(await fvPlan.startEarlyPlan(pool, { app: { id: 3 }, user: { id: 7 }, brief: 'Polls' }, deps), false, 'claimed already');
-  assert.equal(await fvPlan.startEarlyPlan(pool, { app: { id: 3 }, user: { id: 7 }, brief: 'Polls' }, { ...deps, llm: { isEnabled: () => false } }), false, 'no model');
+  assert.equal(await fvPlan.startEarlyPlan(pool, { app: { id: 3 }, user: { id: 7 }, brief: 'Polls' }, { llm: { isEnabled: () => false } }), false, 'no model');
   // From the made screen's doors only (routes/apps.js MAKE_ORIGINS).
   const route = read('src/routes/apps.js');
   assert.match(route, /homeroomBotDm\.startFirstVersion\(pool, config, \{\s+app: appRow, user: req\.user, brief: req\.body\.brief,[\s\S]*?earlyPlan: MAKE_ORIGINS\.has\(req\.body\.from\),/);
   assert.match(read('src/services/homeroom-bot-dm.js'),
-    // And, since newcomer run six, the server's config and the bot, for the
-    // early first look drawn from the plan (tests/first-version-early-look.test.js).
     /if \(bot && earlyPlan\) await require\('\.\/first-version-plan'\)\.startEarlyPlan\(pool, \{ app, user, brief: text, config, bot \}\);/);
+});
+
+test('the plan a claim owes is asked once, saved while its readers still wait, and says whether a look is owed', async () => {
+  const sql = [];
+  let row = { user_id: 7, brief: 'Polls', early_plan_status: 'pending', id: 3, name: 'Club Votes', slug: 'club-votes', fresh: true };
+  let saved = 1;
+  const pool = {
+    async query(text, params) {
+      sql.push({ text, params });
+      if (/FROM homeroom_bot_first_versions f JOIN apps a/.test(text)) return { rows: row ? [row] : [] };
+      if (/SET early_plan_status = \$2, early_plan = \$3::jsonb/.test(text)) return { rows: [], rowCount: saved };
+      return { rows: [] };
+    },
+  };
+  let asked = 0;
+  const deps = {
+    llm: { isEnabled: () => true, estimateCostCents: () => 0, async generateFirstVersionPlan() { asked += 1; return { text: JSON.stringify(REPLY) }; } },
+    limits: { async recordSpend() {} },
+    bot: { projectMembers: async () => null, starterOfApp: async () => null },
+    botConfigs: { async currentVersion() { return null; } },
+    timeline: { async record() {} },
+  };
+  const kept = new Map();
+  const steps = { has: (k) => kept.has(k), once: async (k, fn) => (kept.has(k) ? kept.get(k) : kept.set(k, await fn()).get(k)) };
+  assert.deepEqual(await fvPlan.runEarlyPlan(pool, { appId: 3, steps }, deps), { planned: true });
+  const write = sql.find((q) => /SET early_plan_status = \$2, early_plan = \$3::jsonb/.test(q.text));
+  assert.equal(write.params[1], 'ready');
+  assert.deepEqual(JSON.parse(write.params[2]).bullets.length, 3);
+  assert.match(write.text, /created_at > NOW\(\) - make_interval\(secs => \$6::int\)/, 'not once its readers went on');
+  // A try again after the reply came asks the model no second time.
+  assert.deepEqual(await fvPlan.runEarlyPlan(pool, { appId: 3, steps }, deps), { planned: true });
+  assert.equal(asked, 1);
+  saved = 0;
+  assert.deepEqual(await fvPlan.runEarlyPlan(pool, { appId: 3, steps }, deps), { planned: false, skipped: 'too_late' });
+  row = { ...row, early_plan_status: 'ready' };
+  assert.deepEqual(await fvPlan.runEarlyPlan(pool, { appId: 3 }, deps), { planned: false, skipped: 'settled' });
+  // Asked past the window it could be saved in (re-sent after a rollout):
+  // the model is not asked.
+  row = { ...row, early_plan_status: 'pending', fresh: false };
+  assert.deepEqual(await fvPlan.runEarlyPlan(pool, { appId: 3, steps: { has: () => false, once: async (_k, fn) => fn() } }, deps), { planned: false, skipped: 'too_late' });
+  assert.equal(asked, 1, 'no second model call');
+  // Its process stopped after the plan was saved, before the work ended: the
+  // try carried on finds the plan its own step made, says it is planned (so
+  // its early look is still owed), and records its timeline stage once.
+  {
+    const recorded = [];
+    const resumedDeps = { ...deps, timeline: { async record(_pool, entry) { recorded.push(entry.stage); } } };
+    const keptHere = new Map();
+    const resumed = { has: (k) => keptHere.has(k), once: async (k, fn) => (keptHere.has(k) ? keptHere.get(k) : keptHere.set(k, await fn()).get(k)) };
+    row = { ...row, early_plan_status: 'pending', fresh: true };
+    saved = 1;
+    assert.deepEqual(await fvPlan.runEarlyPlan(pool, { appId: 3, steps: resumed }, resumedDeps), { planned: true });
+    keptHere.delete('timeline');
+    row = { ...row, early_plan_status: 'ready' };
+    const writes = sql.length;
+    assert.deepEqual(await fvPlan.runEarlyPlan(pool, { appId: 3, steps: resumed }, resumedDeps), { planned: true }, 'resumed after its save');
+    assert.ok(!sql.slice(writes).some((q) => /SET early_plan_status = \$2/.test(q.text)), 'not saved again');
+    assert.deepEqual(recorded, ['plan_written', 'plan_written'], 'the stage recorded by the try that had not');
+    const askedBefore = asked;
+    assert.deepEqual(await fvPlan.runEarlyPlan(pool, { appId: 3, steps: resumed }, resumedDeps), { planned: true });
+    assert.equal(asked, askedBefore, 'no second model call');
+    assert.equal(recorded.length, 2, 'and the stage once per try that reached it');
+    // Another item, which did not make it, finds it settled.
+    assert.deepEqual(await fvPlan.runEarlyPlan(pool, { appId: 3, steps: { has: () => false, once: async (_k, fn) => fn() } }, deps), { planned: false, skipped: 'settled' });
+  }
 });
 
 test('a plan\'s state: pending until written (a stopped process\'s reads failed), decided once answered or when it asks nothing', () => {
@@ -274,6 +335,11 @@ test('the questions: the heading, the line, each question with its suggested ans
   const html = renderToHtml(createElement(QuickQuestions, { name: 'Club Votes', questions: QS, onSubmit() {} }));
   assert.match(html, /data-first-session-questions="2"/);
   assert.match(html, /<h2 [^>]*>Two quick questions<\/h2>/);
+  // #5846: the block the screen waits on wears the screen's "Needs you"
+  // label, and its heading is drawn in the accent.
+  assert.match(html, /data-first-session-questions-label=""[^>]*uppercase[^>]*>Needs you<\/p>/);
+  assert.ok(html.indexOf('data-first-session-questions-label=""') < html.indexOf('>Two quick questions</h2>'), 'the label over the heading');
+  assert.match(html, /<h2 [^>]*text-violet-600 dark:text-violet-400[^>]*>Two quick questions<\/h2>/);
   assert.match(html, />Homeroom bot builds Club Votes from your answers\.<\/p>/);
   // The suggested answers chosen: the first of each, as the plan card does it.
   assert.equal((html.match(/checked=""/g) || []).length, 2);

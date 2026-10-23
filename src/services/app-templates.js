@@ -77,6 +77,7 @@
  * a Retry after a failed create scaffolds the empty starter.
  */
 
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 
@@ -97,9 +98,11 @@ const IMPACT = Object.freeze(['public/**', 'api.js']);
 /**
  * One tier list per category: the same app (app-templates/tier-list), with
  * what it ranks filled in. `example` is the add field's placeholder;
- * `change` its example change (see the header).
+ * `want` finishes the name of the row below F, "Want to …", for one you
+ * have not got to yet (it counts toward no tier); `change` its example
+ * change (see the header).
  */
-function tierList(id, { plural, one, example, title, change }) {
+function tierList(id, { plural, one, example, want, title, change }) {
   return Object.freeze({
     id,
     dir: 'tier-list',
@@ -109,11 +112,14 @@ function tierList(id, { plural, one, example, title, change }) {
     title,
     summary: `A tier list of the group's favorite ${plural}: anyone adds one, everyone drags them into tiers, and the group's ranking shows where each lands.`,
     icon: '📊',
-    fill: Object.freeze({ ITEM_PLURAL: plural, ITEM_ONE: one, ITEM_EXAMPLE: example }),
+    fill: Object.freeze({ ITEM_PLURAL: plural, ITEM_ONE: one, ITEM_EXAMPLE: example, WANT_VERB: want }),
     features: Object.freeze([
       `**Add ${plural}**: anyone in the project adds one; a name already on the list is not added twice.`,
-      '**Your ranking**: drag each one into S, A, B, C, D or F, or tap it and then tap a tier. Change your mind any time.',
+      '**Your ranking**: drag each one into S, A, B, C, D or F. Change your mind any time.',
       '**The group\'s ranking**: the same board, with every item in the tier its average lands in (a tie goes up). One tap switches between the two.',
+      `**Want to ${want}**: a row below F for ${plural} you have not got to yet. It counts toward no tier, and the group's board shows how many people want to ${want}, for each one.`,
+      `**Who ranked it what**: tap any of the ${plural}, on either board, to see the group's tier and the tier each person gave it, live as people rank.`,
+      '**Who else is here**: a line under the title names the people who have the tier list open right now.',
     ]),
     tables: '`tier_items` and `tier_votes`',
     tests: Object.freeze([
@@ -128,7 +134,9 @@ function tierList(id, { plural, one, example, title, change }) {
         impact: IMPACT,
       },
       { name: 'The board switches to the group\'s ranking', path: '/', expectSelector: '#view-toggle button[data-view="group"]' },
+      { name: 'Below F, a Want to row takes the ones not got to yet', path: '/', expectSelector: '#board ~ #want[data-drop="W"]' },
       { name: 'A new item can be added', path: '/', expectSelector: '#add-form input[name="name"]' },
+      { name: 'The page has a line for who else is here', path: '/', expectSelector: 'header #presence[aria-live="polite"]' },
     ]),
   });
 }
@@ -176,18 +184,61 @@ function groupPoll(id, { title, about, question, option, change }) {
  * One find-a-time app per occasion: the same app (app-templates/find-a-time),
  * with what the times are for filled in. `forWhat` finishes "Find a time
  * for …", and `example` is the new plan's name placeholder.
+ *
+ * `weekly` (`TIME_MODE`, chosen when the project is made): a group that
+ * meets every week, a book club, finds its regular weekly time instead of
+ * one date. Everyone marks the hours that work for them on a grid of the
+ * week, and the hour that suits the most people rises to the top (Evan,
+ * 21 Oct 2026: "Shouldn't this be a weekly time? Not just a few times to
+ * choose between?"). The others suggest a few dates and times.
  */
-function findATime(id, { title, forWhat, example, change }) {
-  return Object.freeze({
+function findATime(id, { title, forWhat, example, change, weekly = false }) {
+  const shared = {
     id,
     dir: 'find-a-time',
     ready: true,
     exampleScreen: exampleScreen(id),
     exampleChange: change,
     title,
-    summary: `Find a time for ${forWhat}: suggest a few times, everyone marks when they are free, and the best time rises to the top.`,
     icon: '📅',
-    fill: Object.freeze({ FOR_WHAT: forWhat, PLAN_EXAMPLE: example }),
+  };
+  if (weekly) {
+    return Object.freeze({
+      ...shared,
+      summary: `Find a weekly time for ${forWhat}: everyone marks the hours that work for them every week, and the time that suits the most people rises to the top.`,
+      fill: Object.freeze({
+        TIME_MODE: 'weekly',
+        PLAN_EXAMPLE: example,
+        TIME_INTRO: `Find a weekly time for ${forWhat}. Mark the hours that work for you every week, and the time that suits the most people rises to the top.`,
+      }),
+      features: Object.freeze([
+        '**Your week, once**: a grid of the days and the hours, 8 AM to 10 PM. Tap an hour that works for you every week, or hold and drag across several.',
+        '**Everyone\'s week**: each hour is shaded by how many people can make it, and tapping one shows who can and who can\'t.',
+        '**The best weekly time**: the hour that suits the most people is named at the top ("Tuesdays at 7 PM, 5 of 6 can make it"), with the next best and who still has to answer.',
+      ]),
+      tables: '`week_free`',
+      tests: Object.freeze([
+        {
+          id: 'week.grid',
+          name: 'The week shows how many people can make each hour',
+          path: '/',
+          expectSelector: '#week-grid [data-cell][data-free]',
+          visual: true,
+          impact: IMPACT,
+        },
+        { name: 'The best weekly time is named', path: '/', expectSelector: '#week-best[data-best]' },
+        { name: 'You can mark the hours that work for you', path: '/', expectSelector: '#week-toggle [data-view="yours"]' },
+      ]),
+    });
+  }
+  return Object.freeze({
+    ...shared,
+    summary: `Find a time for ${forWhat}: suggest a few times, everyone marks when they are free, and the best time rises to the top.`,
+    fill: Object.freeze({
+      TIME_MODE: 'dates',
+      PLAN_EXAMPLE: example,
+      TIME_INTRO: `Find a time for ${forWhat}. Suggest some times, everyone marks when they're free, and the best time rises to the top.`,
+    }),
     features: Object.freeze([
       '**Suggest some times**: whoever starts a plan suggests two to eight, each a day and a time or a whole day, and anyone can suggest another while it is open.',
       '**Free, if needed, or can\'t**: everyone marks each time with one tap and can change it any time. The grid shows who is free when, and who in the project has not answered yet.',
@@ -282,10 +333,10 @@ const TEMPLATES = Object.freeze([
     title: 'Empty',
     summary: 'The starter screen with one example to replace.',
   }),
-  tierList('tier-list-restaurants', { plural: 'restaurants', one: 'restaurant', example: 'e.g. the taco place on Main St', title: 'Restaurant tier list', change: 'add a cheap eats tier' }),
-  tierList('tier-list-hikes', { plural: 'hikes', one: 'hike', example: 'e.g. the lake loop', title: 'Hiking tier list', change: 'add each hike\'s distance' }),
-  tierList('tier-list-cities', { plural: 'cities', one: 'city', example: 'e.g. Lisbon', title: 'City tier list', change: 'add a photo of each city' }),
-  tierList('tier-list-games', { plural: 'games', one: 'game', example: 'e.g. chess', title: 'Game tier list', change: 'add each game\'s player count' }),
+  tierList('tier-list-restaurants', { plural: 'restaurants', one: 'restaurant', example: 'e.g. the taco place on Main St', want: 'go', title: 'Restaurant tier list', change: 'add a cheap eats tier' }),
+  tierList('tier-list-hikes', { plural: 'hikes', one: 'hike', example: 'e.g. the lake loop', want: 'hike', title: 'Hiking tier list', change: 'add each hike\'s distance' }),
+  tierList('tier-list-cities', { plural: 'cities', one: 'city', example: 'e.g. Lisbon', want: 'go', title: 'City tier list', change: 'add a photo of each city' }),
+  tierList('tier-list-games', { plural: 'games', one: 'game', example: 'e.g. chess', want: 'play', title: 'Game tier list', change: 'add each game\'s player count' }),
   groupPoll('poll-dinner', { title: 'Dinner poll', about: 'where we eat', question: 'e.g. Where should we eat Friday?', option: 'e.g. the taco place on Main', change: 'add a price range to each place' }),
   groupPoll('poll-spending', { title: 'Spending poll', about: 'what we spend on', question: 'e.g. What should we do with the extra $300?', option: 'e.g. new chairs for the lobby', change: 'add a cost to each option' }),
   groupPoll('poll-movies', { title: 'Movie night poll', about: 'what we watch', question: 'e.g. What are we watching Friday?', option: 'e.g. Arrival', change: 'add each movie\'s runtime' }),
@@ -295,12 +346,13 @@ const TEMPLATES = Object.freeze([
     exampleScreen: exampleScreen('grocery-list'),
     exampleChange: 'add a price to each item',
     title: 'Grocery list',
-    summary: 'One shared grocery list that works like Homeroom\'s Todo List app: categories, ticked items kept in place, undo, search and due dates.',
+    summary: 'One shared grocery list that works like Homeroom\'s Todo List app: categories, ticked items kept in place, swipe actions, undo, search and due dates, and it opens and keeps working offline.',
     icon: '🛒',
     features: Object.freeze([
-      '**Categories**: items go in categories you make (aisles, shops, whatever suits), with a General part at the top for anything else. Drag items within and between categories, and the categories themselves; fold a category away by tapping its name (a finished one starts folded).',
-      '**Ticked in place**: ticking keeps an item\'s place, below the open items in its category with who ticked it. "N done" hides or shows a category\'s ticked items, and the menu does it for the whole list.',
-      '**Undo, search and more**: undo and redo (Cmd/Ctrl+Z) for adding, deleting, editing, ticking and due dates; search as you type; optional due dates that sort the list; markdown export and import in Todo List\'s format; and the latest thing somebody else did, at the top.',
+      '**Categories**: items go in categories you make (aisles, shops, whatever suits), with a General part at the top for anything else. Press and hold an item to drag it within or between categories, and drag a category by its handle; fold a category away by tapping its name (a finished one starts folded).',
+      '**Ticked in place**: ticking keeps an item\'s place, below the open items in its category with who ticked it. Swipe a row for Complete, Rename and Delete. "N done" hides or shows a category\'s ticked items, and the menu, which opens over the list, does it for the whole list.',
+      '**Works offline**: the list opens with no connection from the copy saved on the phone, and adding, ticking, editing and deleting wait there until the connection is back, then sync. A line under the bar says when the list is offline or still syncing.',
+      '**Undo, search and more**: undo and redo (Cmd/Ctrl+Z) for adding, deleting, editing, ticking and due dates; search as you type; pull down to refresh; optional due dates that sort the list; markdown export and import in Todo List\'s format; and the latest thing somebody else did, at the top.',
     ]),
     tables: '`grocery_list`, `grocery_categories`, `grocery_items` and `grocery_events`',
     tests: Object.freeze([
@@ -394,7 +446,7 @@ const TEMPLATES = Object.freeze([
       { name: 'Today’s count of finished sessions loads', path: '/', expectSelector: '#today[data-loaded]' },
     ]),
   }),
-  findATime('find-a-time-book-club', { title: 'Book club times', forWhat: 'our book club', example: 'e.g. November book club', change: 'show the book for each meeting' }),
+  findATime('find-a-time-book-club', { title: 'Book club times', forWhat: 'our book club', example: 'e.g. November book club', change: 'show the book for each meeting', weekly: true }),
   findATime('find-a-time-game-night', { title: 'Game night times', forWhat: 'game night', example: 'e.g. Game night this month', change: 'vote on which game to play' }),
   findATime('find-a-time-trip', { title: 'Trip dates', forWhat: 'our trip', example: 'e.g. Lake weekend', change: 'add a packing list' }),
   Object.freeze({
@@ -411,17 +463,20 @@ const TEMPLATES = Object.freeze([
       '**Talk about it**: react to a dish, comment on it ("is it vegetarian?"), and chat with everyone coming.',
     ]),
     tables: '`potlucks`, `potluck_dishes`, `potluck_reactions`, `potluck_comments` and `potluck_messages`',
+    // The list, a potluck of its own (the staging seed's, 900001, at its
+    // address) and planning one are three screens.
     tests: Object.freeze([
       {
         id: 'potluck.next',
-        name: 'The next potluck shows who is bringing what',
-        path: '/',
-        expectSelector: '#potlucks [data-potluck] [data-course] [data-dish]',
+        name: 'A potluck shows who is bringing what',
+        path: '/#/p/900001',
+        expectSelector: '#potluck [data-potluck] [data-course] [data-dish]',
         visual: true,
         impact: IMPACT,
       },
-      { name: 'A potluck can be planned', path: '/', expectSelector: '#plan-form input[name="title"]' },
-      { name: 'Each potluck has its chat', path: '/', expectSelector: '#potlucks [data-potluck] [data-chat] [data-message]' },
+      { name: 'The potlucks coming up are listed', path: '/', expectSelector: '#potlucks [data-potluck]' },
+      { name: 'A potluck can be planned', path: '/#/plan', expectSelector: '#plan-form input[name="title"]' },
+      { name: 'Each potluck has its chat', path: '/#/p/900001', expectSelector: '#potluck [data-potluck] [data-chat] [data-message]' },
     ]),
   }),
   // One app (app-templates/signup-sheet) with two ways to answer, set when
@@ -554,7 +609,7 @@ const TEMPLATES = Object.freeze([
     summary: 'One 3D block world everyone builds in together, in first person: fly around it, pick a block from the hotbar, build and take blocks away, and see everyone else flying and building as they go.',
     icon: '🧱',
     features: [
-      '**First person, full screen**: drawn with three.js (included in the repository, never from a CDN). The mouse looks around, WASD walks, Space and Shift fly up and down, a click builds where the crosshair points and a right-click takes a block away. On a phone: drag to look, a stick to walk, and buttons to fly and build.',
+      '**First person, full screen**: drawn with three.js (included in the repository, never from a CDN). The mouse looks around, WASD walks, Space and Shift fly up and down, a click builds where the crosshair points and a right-click takes a block away. On a phone: drag to look, a stick to walk, and buttons to fly and build, each under its own thumb so you can walk and build at once, and a button beside who is here to play sideways.',
       '**A hotbar of twelve blocks**: grass, stone, wood, brick, glass and more, chosen with 1 to 9, 0, - and = or the scroll wheel.',
       '**Live for everyone**: every block placed or removed shows on every screen at once, and so does everyone else, as a blocky figure with their name and the block in their hand.',
       '**A title screen over the world**, the camera circling it, with who is building now. No lobby: one world, always on, saved as it is built.',
@@ -706,6 +761,30 @@ function starterFiles(id, fill = {}) {
   });
 }
 
+/**
+ * Which revision of a starter a project was seeded from: the first 12 hex
+ * characters of a SHA-256 over its `shared` directory's files and then its
+ * own, by path, as they are on disk, before the placeholders are filled (so
+ * the four tier lists made from one revision share it). app-creator writes
+ * it to apps.template_version with the first commit, so a later change to
+ * every copy of a starter can tell which copies already carry what the
+ * starter has since gained. Null for `empty`, which has no files of its own.
+ */
+function versionOf(id) {
+  if (!isTemplate(id) || id === DEFAULT_TEMPLATE) return null;
+  const t = get(id);
+  const hash = crypto.createHash('sha256');
+  for (const name of [...(t.shared ? [t.shared] : []), dirOf(id)]) {
+    const dir = path.join(STARTERS_DIR, name);
+    for (const rel of walk(dir)) {
+      hash.update(`${name}/${rel}\0`);
+      hash.update(fs.readFileSync(path.join(dir, rel)));
+      hash.update('\0');
+    }
+  }
+  return hash.digest('hex').slice(0, 12);
+}
+
 module.exports = {
   DEFAULT_TEMPLATE,
   READY_IDS,
@@ -721,4 +800,5 @@ module.exports = {
   isTemplate,
   parseTemplate,
   starterFiles,
+  versionOf,
 };

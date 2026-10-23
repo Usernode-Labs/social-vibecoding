@@ -19,6 +19,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const { loadTsx, renderComponent, renderToHtml, createElement } = require('./lib/render-tsx');
+const { message } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
@@ -187,8 +188,10 @@ test('Create\'s screens own the back press, as the dialog did, and hand it back 
 test('the make screen from Create: New project, a close, a small "Import from a GitHub repo", no More options and no "Look around first"', () => {
   const create = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', { who: 'Jordan', entry: 'create', onMade() {}, onClose() {} });
   assert.match(create, /data-make-entry="create"/);
-  assert.match(create, />New project</);
-  assert.doesNotMatch(create, /Hi Jordan!/);
+  // #5617: one title, the eyebrow above it gone.
+  assert.doesNotMatch(create, /uppercase tracking-\[0\.8px\]/, 'no eyebrow above the question');
+  assert.doesNotMatch(create, /Hi Jordan/);
+  assert.match(create, /<h1 id="first-session-make-title"[^>]*>What do you want to make\?<\/h1>/);
   assert.match(create, /<button type="button" data-make-close="" aria-label="Close"/);
   assert.match(create, /<button type="button" data-make-import-link="" class="text-\[13px\] [^"]*">Import from a GitHub repo<\/button>/, 'small, under Make it');
   assert.ok(create.indexOf('data-make-import-link') > create.indexOf('>Make it</button>'));
@@ -200,21 +203,28 @@ test('the make screen from Create: New project, a close, a small "Import from a 
 
   const first = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', { who: 'Jordan', onMade() {}, onLookAround() {} });
   assert.match(first, /data-make-entry="first-session"/);
-  assert.match(first, />Hi Jordan!</);
+  assert.doesNotMatch(first, /uppercase tracking-\[0\.8px\]/, 'no eyebrow above the question');
+  const hello = `<h1 id="first-session-make-title" class="mt-2.5 text-balance text-[30px] font-extrabold leading-[34px]">${message('onboarding:firstSession.make.titleHello', { name: 'Jordan' })}</h1>`;
+  assert.ok(first.includes(hello), hello);
   assert.match(first, /Look around first/);
   assert.doesNotMatch(first, /data-make-close|data-make-import-link|Import from a GitHub repo/, 'the first session does not offer an import');
 
   const make = loadTsx(`${DIR}/make.tsx`);
-  assert.equal(make.makeEyebrow('create', 'Jordan'), 'New project');
-  assert.equal(make.makeEyebrow('first-session', ''), 'You\'re in!');
+  assert.equal(make.makeTitle('create', 'Jordan'), message('onboarding:firstSession.make.title'));
+  assert.equal(make.makeTitle('first-session', ''), message('onboarding:firstSession.make.title'));
+  assert.equal(make.makeTitle('first-session', 'Jordan'), message('onboarding:firstSession.make.titleHello', { name: 'Jordan' }));
   for (const line of [make.IMPORT_TITLE, make.IMPORT_LINE]) assert.doesNotMatch(line, /—/);
   // Evan, 8 Oct 2026: no line under the question. The starting points come
   // straight after it, from either door.
   assert.equal(make.makeLine, undefined);
-  for (const html of [create, first]) {
-    assert.doesNotMatch(html, /Describe it for your group/);
-    assert.match(html, /What do you want to make\?<\/h1><\/div><p[^>]*>Start from an idea<\/p>/);
-  }
+  assert.doesNotMatch(create, /Describe it for your group/);
+  assert.match(create, /[Ww]hat do you want to make\?<\/h1><\/div><p[^>]*>Start from an idea<\/p>/);
+  // #5266: the first session's Welcome line sits between the question and
+  // "Start from an idea"; New project from Create is a returning maker's,
+  // so it does not show it.
+  assert.doesNotMatch(create, /data-make-welcome/);
+  assert.doesNotMatch(first, /Describe it for your group/);
+  assert.match(first, /[Ww]hat do you want to make\?<\/h1><p data-make-welcome=""[^>]*>[^<]*<\/p><\/div><p[^>]*>Start from an idea<\/p>/);
 
   const src = read(`${DIR}/make.tsx`);
   assert.match(src, /onClick=\{\(\) => setMode\('import'\)\}/);
@@ -230,6 +240,7 @@ test('the make screen from Create: New project, a close, a small "Import from a 
 test('the import form: the repo and Check, then the name, Import it, and a way back', () => {
   const html = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', { who: 'Jordan', entry: 'create', startImport: true, onMade() {}, onClose() {} });
   assert.match(html, /<form data-make-import="" class="mx-auto flex w-full max-w-sm grow flex-col px-4 /, 'in the make form\'s own frame');
+  assert.doesNotMatch(html, /uppercase tracking-\[0\.8px\]/, 'no eyebrow above the import heading');
   assert.match(html, /<h1 id="first-session-make-title"[^>]*>Import a GitHub repo<\/h1>/);
   assert.match(html, /Bring an app that already exists\. Your group builds on it from here\./);
   assert.match(html, /<input[^>]*id="make-import-url"[^>]*>/);
@@ -302,7 +313,7 @@ test('a ready-made app lands on the made screen like an import: set up, then rea
   assert.equal(made.buildLine(null, 'creating', false, false, true), 'Setting it up…');
   assert.equal(made.buildLine(null, 'running', false, false, true), 'Ready to use.');
   assert.equal(made.buildLine(null, 'error', false, false, true), 'Setting it up didn’t finish.', 'a stopped setup says so first');
-  assert.equal(made.buildNote(false, false, null, false, true), 'It works as it is. You and anyone you invite can change it from there.');
+  assert.equal(made.buildNote(false, false, null, false, true), null, 'a ready-made app has no second line (20 Oct 2026)');
   assert.equal(made.madeLine(null, false), null, 'Homeroom bot builds nothing, so there is no build line');
   const html = renderToHtml(createElement(made.MadeScreen, {
     made: { slug: 'groceries-1', name: 'Grocery List', emoji: '🛒', description: 'A grocery list', example: null, conversationId: null, readyMade: true },
@@ -364,7 +375,7 @@ test('a setup that stopped says so on the made screen, with Try again or Set sec
 test('the server sketches the idea for both doors, and only the first session answers the join screen and counts in the Journey', () => {
   const src = read('src/routes/apps.js');
   assert.match(src, /const MAKE_ORIGINS = new Set\(\['first-session', 'create'\]\);/);
-  assert.match(src, /if \(MAKE_ORIGINS\.has\(req\.body\.from\) && !repoUrlNormalized && !readyMade\s+&& require\('\.\.\/services\/homeroom-bot-dm'\)\.normalizeBrief\(req\.body\.brief\)\) \{/);
+  assert.match(src, /if \(MAKE_ORIGINS\.has\(req\.body\.from\) && !repoUrlNormalized && !readyMade\s+&& homeroomBotDm\.normalizeBrief\(req\.body\.brief\)\) \{/);
   assert.match(src, /\.\.\.\(MAKE_ORIGINS\.has\(req\.body\.from\) \? \{ from: req\.body\.from \} : \{\}\),/);
   // Answering the join screen stays the first session's.
   assert.match(src, /if \(req\.body\.from === 'first-session'\) \{\s+await require\('\.\.\/services\/first-session'\)\.answerJoinScreenByMaking/);
@@ -397,9 +408,16 @@ test('a stopped setup is not "Ready to try", and a Just me sketch is shared with
   assert.ok(!sketch.fallbackCard({ name: 'Run Club', brief, solo: true }).points.includes(sketch.SHARED_POINT));
   assert.deepEqual(sketch.fallbackCard({ name: 'Run Club', brief: '', solo: true }).points, [], 'not padded with it either');
   const route = read('src/routes/apps.js');
-  assert.match(route, /solo: options\.audience === 'solo',\s+\}\)\.catch\(\(err\) => log\.warn\('apps', 'Sketch not started'/);
+  // Owed in the route's transaction; a failure to owe it never fails the create.
+  assert.match(route, /await optional\('sketch', 'Sketch not owed', \(\) => require\('\.\.\/services\/app-sketch'\)\.startSketch\(db, \{[\s\S]{0,700}solo: options\.audience === 'solo',\s+\}\)\);/);
+  assert.match(route, /await db\.query\(`SAVEPOINT \$\{name\}`\);\s+try \{\s+await fn\(\);\s+await db\.query\(`RELEASE SAVEPOINT \$\{name\}`\);\s+\} catch \(err\) \{\s+await db\.query\(`ROLLBACK TO SAVEPOINT \$\{name\}`\);/);
   const service = read('src/services/app-sketch.js');
   assert.match(service, /if \(points\.length < 2 && !solo\) points = distinctPoints\(\[\.\.\.points, SHARED_POINT\], tagline\);/);
-  assert.match(service, /card = parseCardReply\(reply\.text, \{ name, brief, today, solo \}\);/);
-  assert.match(service, /const work = generate\(pool, \{ app, user, brief, audience, solo, timeZone, deps \}\)/);
+  assert.match(service, /card = parseCardReply\(reply\.text, \{ name, brief, today, solo, fallbackTagline \}\);/);
+  // What the card is made from, kept for the setup that makes it, the make
+  // screen's own tagline with it.
+  assert.match(service, /JSON\.stringify\(\{ brief, audience, solo: !!solo, timeZone, fallbackTagline: fallbackTagline \|\| null, username: user\.username \|\| null \}\)/);
+  assert.match(service, /solo: !!request\.solo,/);
+  assert.match(service, /fallbackTagline: request\.fallbackTagline \?\? null,/);
+  assert.match(route, /fallbackTagline: typeof req\.body\.taglineFallback === 'string' \? req\.body\.taglineFallback\.slice\(0, 200\) : null,/);
 });

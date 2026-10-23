@@ -78,6 +78,7 @@ test('proposal unit suites run SQL validation against the worker PostgreSQL 17 p
   assert.match(unitSuite, /includes\('scripts\/check-sql\.js'\)/);
   assert.match(unitSuite, /SQL_CHECK_CONNECTION_URL=postgres:\/\/postgres:postgres@127\.0\.0\.1:5432\/postgres/);
   assert.match(unitSuite, /npm run lint:sql[\s\S]*npm test/);
+  assert.match(unitSuite, /CREATE DATABASE usernode[\s\S]*export SQL_CHECK_CONNECTION_URL/, 'parallel clone suites share a preprovisioned maintenance database');
   // The suites that load the whole schema run in parallel against this
   // server: at the default lock table, a dozen at once failed with "out of
   // shared memory" (5 October 2026). 1024 holds them. Each of them also ends
@@ -85,4 +86,20 @@ test('proposal unit suites run SQL validation against the worker PostgreSQL 17 p
   // server was started without crash safety (7 October 2026). It has nothing
   // to keep: the data directory is discarded with the job's container.
   assert.match(unitSuite, /pg_ctl -D \/home\/node\/pgdata -w -o "-c max_locks_per_transaction=1024 -c fsync=off -c synchronous_commit=off -c full_page_writes=off" -l \/tmp\/unit-suite-postgres\.log start/);
+});
+
+test('SQL validation always audits debug permissions on the existing complete shadow schema', () => {
+  const checker = read('scripts/check-sql.js');
+  assert.match(checker, /await applySchema\(shadow\.shadowUrl\);[\s\S]*?const debugPolicy = await validateDebugAccess\(shadow\.shadowUrl\);/);
+  assert.match(checker, /requireAllColumns: true/);
+  assert.match(checker, /await reader\.connect\(\)/, 'probes use the restricted login');
+  assert.match(checker, /DROP OWNED BY/);
+  assert.match(checker, /DROP ROLE/);
+});
+
+
+test('SQL validation audits preview data approval on the same complete shadow database', () => {
+  const checker=read('scripts/check-sql.js');
+  assert.match(checker,/await applySchema\(shadow\.shadowUrl\);\s+const previewPolicy = await validatePlatformPreviewPolicy\(shadow\.shadowUrl\);/);
+  assert.match(checker,/preview\.verifyCatalog\(catalog\)/);
 });

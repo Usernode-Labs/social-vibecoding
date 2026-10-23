@@ -123,10 +123,16 @@ function loadSessions(mockPool, overrides = {}) {
   ];
   delete require.cache[paths.sessions];
   delete require.cache[paths.notifications];
+  // The route asks the turn machine for the run; its real handler
+  // (services/turns.js) runs here, as a workflow process would run it.
+  const turns = require('./lib/turn-platform').installTurnPlatform({
+    run: { config: { jwtSecret: 'test', dataEncryptionKey: 'k' }, pool: mockPool },
+  });
 
   const subject = require('../src/routes/sessions');
 
   const restore = () => {
+    turns.restore();
     for (const [id, original] of originals) {
       if (original) require.cache[id] = original; else delete require.cache[id];
     }
@@ -187,13 +193,19 @@ function makeMockPool() {
       return { rows: [] };
     }
     if (/INSERT INTO chat_sessions/i.test(s)) {
-      return {
-        rows: [{
-          id: state.nextId++, app_id: params[0], user_id: params[1],
-          branch_name: params[2], status: 'active', is_headless: true,
-          headless_status: 'generating', headless_issue_number: params[3],
-        }],
+      state.session = {
+        id: state.nextId++, app_id: params[0], user_id: params[1],
+        branch_name: params[2], status: 'active', is_headless: true,
+        headless_status: 'generating', headless_step: 'planning', headless_issue_number: params[3],
       };
+      return { rows: [{ ...state.session }] };
+    }
+    // The run reads its row back as it starts (services/turns.js).
+    if (/FROM chat_sessions cs/i.test(s) && /JOIN users u/i.test(s) && /cs\.id = \$1/.test(s)) {
+      return { rows: state.session && !state.terminal ? [{
+        ...state.session, app_slug: 'my-app', app_name: 'My App', repo_url: 'https://github.com/owner/repo',
+        app_self_hosted: false, username: 'alice',
+      }] : [] };
     }
     if (/INSERT INTO chat_session_messages/i.test(s)) {
       state.messages.push({
@@ -224,7 +236,7 @@ function makeMockPool() {
     return { rows: [], rowCount: 0 };
   }
 
-  return { query, state, calls };
+  return { query, state, calls, connect: async () => ({ query, release() {} }) };
 }
 
 async function startTestServer(loaded, user = { id: 1, username: 'alice' }) {
@@ -294,6 +306,43 @@ const BUILD_SUCCESS = {
   sessionId: 'cc-1', markerlessCause: null,
   turnId: 'turn-success',
 };
+
+// ── 0. The run is asked of the turn machine with its row ───────────────
+
+test('the start writes the generating row and asks its run in one transaction; a failed ask keeps neither', async () => {
+  const pool = makeMockPool();
+  const loaded = loadSessions(pool);
+  const platform = require('../src/workflow/platform.ts');
+  const srv = await startTestServer(loaded);
+  try {
+    await startHeadlessRun(srv);
+    const sql = pool.calls.map((c) => c.sql.trim());
+    const begin = sql.indexOf('BEGIN');
+    const insert = sql.findIndex((q) => /INSERT INTO chat_sessions/.test(q));
+    assert.ok(begin >= 0 && begin < insert && insert < sql.indexOf('COMMIT'), 'the row inside the transaction');
+    assert.match(sql[insert], /headless_status, headless_step,[\s\S]*'generating', 'planning'/, 'at its first, resumable step');
+    const ask = require.cache[require.resolve('../src/workflow/platform.ts')].exports;
+    assert.equal(typeof ask.askTurn, 'function');
+    await waitFor(() => pool.state.terminal !== null);
+
+    const askTurn = platform.askTurn;
+    platform.askTurn = async () => { throw new Error('workflow down'); };
+    pool.calls.length = 0;
+    try {
+      const res = await fetch(`${srv.baseUrl}/api/apps/my-app/issues/5/headless-session`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}),
+      });
+      assert.equal(res.status, 500);
+      const after = pool.calls.map((c) => c.sql.trim());
+      assert.equal(after[after.length - 1], 'ROLLBACK', 'the row goes with the failed ask');
+    } finally {
+      platform.askTurn = askTurn;
+    }
+  } finally {
+    await srv.close();
+    loaded.restore();
+  }
+});
 
 // ── 1. Headless build retry: first attempt markerless, second succeeds ──
 

@@ -597,6 +597,9 @@ function stagingMockProposals(viewer) {
         '[Mock] #2061: waiting on the author — checks are failing',
         5, 3, 0, 4, { required: 3 }),
       check_state: 'failing',
+      // What the model writes for this run (services/checks-explanation.js),
+      // served by the ?demo=1 branch of GET /api/sessions/:id/checks-explanation.
+      checks_explanation: 'Kudos totals come out one too high after somebody changes their name, and the board stops loading on a narrow screen.',
       // #3978: the failing rows carry their diagnosis, and the unit-suite
       // row carries its per-test excerpts, so the "Why it failed" fold on
       // this route shows what a real failing proposal shows. Kept in the
@@ -1254,10 +1257,42 @@ function stagingMockProposals(viewer) {
         '[Mock] Your change needs a fix: its checks are failing',
         0.6, 0, 0, 0, { required: 3, windowEndsAt: null }),
       check_state: 'failing',
+      // The app's own tests failed on one test, so its page says what went
+      // wrong in plain words and offers its author Fix it, which needs the
+      // build conversation the change was made in (990804 is the staging
+      // fixture's, migrate.js seedStagingAgentFailingChecks). The sentence
+      // is what the model writes for such a run (services/
+      // checks-explanation.js), served by the ?demo=1 branch of
+      // GET /api/sessions/:id/checks-explanation, since a preview has none.
+      agent_session_id: 990804,
+      checks_explanation: 'Every message the app shows needs a Spanish version, and this one doesn’t have one yet: “Pick a date, or choose I don’t remember.”',
       test_results: [
+        { name: 'Home loads', path: '/', status: 'pass', consoleErrors: [] },
         {
-          name: 'Home loads', path: '/', status: 'fail', consoleErrors: [],
-          failureReason: 'Expected element "[data-mock-fix]" was not found',
+          index: -3,
+          name: 'Repo unit suite (npm test) passes', path: 'package.json', status: 'fail',
+          advisory: false, consoleErrors: [],
+          failureReason: 'tests/i18n.test.js (1): every message the server can send has a Spanish wording | # tests 26 | # pass 25 | # fail 1 | # cancelled 0',
+          failureDetails: [
+            {
+              file: 'tests/i18n.test.js',
+              test: 'every message the server can send has a Spanish wording',
+              excerpt: [
+                '  duration_ms: 0.905959',
+                "  type: 'test'",
+                "  location: '/tmp/tmp.p7vv74EHLR/tests/i18n.test.js:133:1'",
+                "  failureType: 'testCodeFailure'",
+                "  error: \"Spanish for: Pick a date, or choose I don't remember.\"",
+                "  code: 'ERR_ASSERTION'",
+                "  name: 'AssertionError'",
+                '  expected: true',
+                "  operator: '=='",
+                '  stack: |-',
+                '    /tmp/tmp.p7vv74EHLR/tests/i18n.test.js:142:12',
+                '    Set.forEach (<anonymous>)',
+              ].join('\n'),
+            },
+          ],
         },
       ],
     },
@@ -1328,6 +1363,12 @@ function ownDemoProposals(rows, user) {
   if (!user || user.id == null || !user.username) return rows;
   return rows.map((row) => (OWN_DEMO_PROPOSALS.has(row.id)
     ? { ...row, user_id: user.id, username: user.username } : row));
+}
+
+// One ?demo=1 proposal, as `user` reads it, or null: for a route outside
+// this file that answers for a mock (sessions.js's checks explanation).
+function stagingMockProposalFor(id, user) {
+  return ownDemoProposals(stagingMockProposals(user && user.username), user).find((m) => m.id === id) || null;
 }
 
 // The ?demo=1 merged change that waits for the platform's next release.
@@ -2234,9 +2275,8 @@ function revisionChangedVoteResponse(res, headSha, message = null, epoch = null)
 // head_sha is still recorded. It no longer decides anything, but it is the
 // only record of which commit a person was looking at when they approved,
 // and that is worth keeping.
-// The longest line a vote may carry, and what a No without one is answered
-// (#1688; src/workflow/rules/vote-reason.ts).
-const { VOTE_REASON_MAX, VOTE_REASON_REQUIRED } = require('../workflow/rules/vote-reason.ts');
+// The longest line a vote may carry (#1688; src/workflow/rules/vote-reason.ts).
+const { VOTE_REASON_MAX } = require('../workflow/rules/vote-reason.ts');
 
 // The one-line reason on a vote, normalised: whitespace collapsed, empty
 // becomes null (no line), anything else trimmed. `{ error }` when the line is
@@ -2275,15 +2315,34 @@ function parseExpectedEpoch(raw) {
   return Number.isFinite(n) ? n : null;
 }
 
+// A vote on one of the Homeroom bot's changes is told to its bot-change
+// machine (src/workflow/bot-change/: its requester's tray reads again, and a
+// yes is said in the request's thread) in the vote's own statement, so a
+// restart after the commit loses nothing. `vote` is 'retracted' for one taken
+// back. Only a change the machine follows has an instance: any other vote
+// tells nobody. The machine and its key are rules/bot-notes.ts BOT_CHANGE and
+// botChangeKey.
+// Each value is SQL: a parameter or a column of `from`, a row source the
+// statement already has.
+const botChangeVotedSql = ({ from = null, sessionId, voterId, voter, vote, epoch }) => `
+  INSERT INTO wf_events (machine, key, app_id, type, payload, source, actor, request_key, caused_by)
+  SELECT wi.machine, wi.key, wi.app_id, 'Voted',
+         jsonb_build_object('sessionId', ${sessionId}, 'voterId', ${voterId}, 'voter', ${voter}, 'vote', ${vote}, 'epoch', ${epoch}),
+         '{"kind":"route","name":"vote"}'::jsonb, NULL, 'voted:' || gen_random_uuid(), NULL
+    FROM ${from ? `${from}, ` : ''}wf_instances wi
+   WHERE wi.machine = 'bot-change' AND wi.key = 'session:' || ${sessionId}
+  RETURNING id`;
+
 async function recordVote({
-  pool, session, userId, vote, headSha, revisionEnforced, reason = null, expectedEpoch = null,
+  pool, session, userId, vote, headSha, revisionEnforced, reason = null, expectedEpoch = null, voter = null,
 }) {
   // One statement for every proposal, an imported one's included (bug 5):
   // the row is locked and must be up for a vote, so a vote racing an
   // unpromote either lands before it (and is voided with the epoch it
   // bumps) or finds the proposal Underway and is refused. The stamp is the
   // epoch read under that lock. An epoch the voter's screen was drawn at
-  // (#2782) is held to when the revision is enforced.
+  // (#2782) is held to when the revision is enforced. The bot's change
+  // machine hears it in the same statement (botChangeVotedSql).
   return pool.query(
     `WITH current_session AS (
        SELECT id, approval_epoch
@@ -2291,7 +2350,8 @@ async function recordVote({
         WHERE id = $1
           AND status IN ('promoted', 'merging')
         FOR UPDATE
-     )
+     ),
+     v AS (
      INSERT INTO pr_votes (session_id, user_id, vote, head_sha, approval_epoch, reason)
      SELECT id, $2, $3, $4, approval_epoch, $5 FROM current_session
       WHERE $6::integer IS NULL OR approval_epoch = $6::integer
@@ -2299,10 +2359,85 @@ async function recordVote({
        SET vote = EXCLUDED.vote, head_sha = EXCLUDED.head_sha,
            approval_epoch = EXCLUDED.approval_epoch, created_at = NOW(),
            ${VOTE_REASON_UPSERT_SQL}
-     RETURNING id, reason`,
-    [session.id, userId, vote, headSha, reason, revisionEnforced ? parseExpectedEpoch(expectedEpoch) : null]
+     RETURNING id, reason, session_id, approval_epoch
+     ),
+     told AS (${botChangeVotedSql({ from: 'v', sessionId: 'v.session_id', voterId: '$2::int', voter: '$7::text', vote: '$3::text', epoch: 'v.approval_epoch' })})
+     SELECT v.id, v.reason, (SELECT pg_notify('wf_events', 'bot-change') FROM told LIMIT 1) IS NOT NULL AS told
+       FROM v`,
+    [session.id, userId, vote, headSha, reason, revisionEnforced ? parseExpectedEpoch(expectedEpoch) : null, voter]
   );
 }
+
+// Take a vote back (DELETE /api/sessions/:id/vote, the review flow's Undo).
+//
+// In one transaction, under the same row lock recordVote takes and the
+// proposal machine reads its facts under (workflow/proposal/facts.ts
+// readRow), so a retraction is ordered against a vote and against a merge
+// claim: a claim that lands first leaves the proposal 'merging' here and the
+// vote stays; one that lands after counts the votes without this one. The
+// DELETE is its own statement after the lock so it reads the votes as they
+// are once the lock is held (a vote committed while this waited is seen).
+//
+// Only while the proposal is still up for a vote ('promoted'); only the vote
+// that counts now (the current epoch's: a vote on an earlier version is
+// already not counted, and its row is what names the voter as asked back,
+// #1688); and, when the client says which epoch it was shown, only at that
+// epoch. Resolves { found, status, epoch, vote, reason }: `vote` is the side
+// taken back, null when nothing was removed.
+async function retractVote({ pool, sessionId, userId, expectedEpoch = null }) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows: [locked] = [] } = await client.query(
+      'SELECT status, approval_epoch FROM chat_sessions WHERE id = $1 FOR UPDATE',
+      [sessionId]
+    );
+    if (!locked) {
+      await client.query('ROLLBACK');
+      return { found: false };
+    }
+    const epoch = locked.approval_epoch == null ? null : parseInt(locked.approval_epoch, 10);
+    const out = { found: true, status: locked.status, epoch, vote: null, reason: null };
+    const expected = parseExpectedEpoch(expectedEpoch);
+    if (locked.status !== 'promoted' || (expected != null && expected !== epoch)) {
+      await client.query('ROLLBACK');
+      return out;
+    }
+    const { rows: [removed] = [] } = await client.query(
+      `DELETE FROM pr_votes pv
+        USING chat_sessions cs
+        WHERE pv.session_id = $1 AND pv.user_id = $2
+          AND cs.id = pv.session_id
+          AND pv.approval_epoch = cs.approval_epoch
+        RETURNING pv.vote, pv.reason`,
+      [sessionId, userId]
+    );
+    // Whoever asked the bot for this change reads their card again, so it
+    // names who it waits on now (no "approved it" line: there is no vote).
+    if (removed) {
+      await client.query(
+        `WITH told AS (${botChangeVotedSql({ sessionId: '$1::int', voterId: '$2::int', voter: 'NULL::text', vote: "'retracted'", epoch: '$3::int' })})
+         SELECT (SELECT pg_notify('wf_events', 'bot-change') FROM told LIMIT 1)`,
+        [sessionId, userId, epoch || 0]
+      );
+    }
+    await client.query('COMMIT');
+    if (removed) {
+      out.vote = removed.vote;
+      out.reason = removed.reason || null;
+    }
+    return out;
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+// What a retraction is answered when the vote can no longer move: the
+// proposal is being merged, has merged, or left review.
+const VOTE_LOCKED_MESSAGE = 'This change is no longer open for voting, so your vote stays as it is.';
 
 // After a vote has been answered (#2782): the fresh GitHub read the route used
 // to await, then the app's merge queue is asked to look at the proposal. The
@@ -3198,17 +3333,6 @@ function voteRoutes(config) {
       const previousVote = prevRows[0]?.vote || null;
       const previousReason = prevRows[0]?.reason || null;
       const voteHeadSha = reviewedHeadForSession(session);
-      // #1688: a No always carries a line, so the proposer learns what to
-      // fix rather than only that somebody minded. The one No that need not
-      // bring a new one is a re-cast of a No that already has its line —
-      // the upsert keeps it (see VOTE_REASON_UPSERT_SQL).
-      if (vote === 'no' && !reason && !(previousVote === 'no' && previousReason)) {
-        return res.status(400).json({
-          error: 'reason_required',
-          message: VOTE_REASON_REQUIRED,
-          maxLength: VOTE_REASON_MAX,
-        });
-      }
       // #2038: "unchanged" means the same person voting the same way on the
       // same PROPOSAL. Keying it on the commit made a re-vote after a
       // mechanical sync look like a change, re-posting to group chat and
@@ -3235,6 +3359,7 @@ function voteRoutes(config) {
         revisionEnforced: !!revision.enforced,
         reason,
         expectedEpoch: req.body?.expectedEpoch,
+        voter: req.user.username || null,
       });
       // The line the row now carries: the one sent, or the earlier one the
       // upsert kept for a same-side re-cast (a Yes carried onto a new
@@ -3333,10 +3458,9 @@ function voteRoutes(config) {
         return res.json({ ok: true, merged: false, unchanged: false, reasonUpdated: true, ...readyCard });
       }
       // 5 Oct: whoever asked Homeroom bot for this change reads their ready
-      // card again, so it says who it still waits on now. One indexed read
-      // when it is not the bot's. Never throws.
-      // One story: a yes is said in the request's thread too (noteVoted).
-      void require('../services/homeroom-bot-dm').noteVoted(pool, session.id, { voter: req.user, vote });
+      // card again, so it says who it still waits on now, and a yes is said
+      // in the request's thread too: the bot's change machine heard the vote
+      // in its own statement (recordVote).
 
       const voteLabel = session.pr_title
         ? `PR #${session.pr_number || session.id}: ${session.pr_title}`
@@ -3445,6 +3569,114 @@ function voteRoutes(config) {
     } catch (err) {
       log.error('votes', 'Vote failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Take your vote back (the review flow's Undo). The same gates as casting
+  // one: the shared vote limiter (a vote and its undo are one act, and a
+  // scripted vote/undo loop is the flip loop the limiter exists for), the
+  // membership gate, and the router's collab guard.
+  //
+  //   body (optional): { expectedEpoch } — the epoch the voter's screen was
+  //   drawn at, as on a cast; also read from ?expectedEpoch=.
+  //
+  //   200 { ok, retracted: true, merged: false, vote, readyReopened? }
+  //   200 { ok, unchanged: true }  — no vote of theirs counts now
+  //   404 — no such change
+  //   409 { code: 'vote_locked' } — no longer up for a vote (being merged,
+  //       merged, closed, archived, or not proposed)
+  //   409 { headChanged, approvalEpoch } — the change moved on since it was
+  //       shown (revisionChangedVoteResponse)
+  //
+  // Not refused for identity or for a private member on a public project
+  // (the cast route's identity/privacy refusals): those decide whose vote
+  // may COUNT, and taking a vote back only ever removes one. Never asks for
+  // a merge: whatever a retraction unblocks (a No taken back), the merge
+  // queue's own sweep finds.
+  router.delete('/api/sessions/:id/vote', governanceVoteLimiter, requireMembership, async (req, res) => {
+    if (!req.user?.id) return res.status(401).json({ error: 'Not authenticated' });
+    const sessionId = parseInt(req.params.id, 10);
+    if (!Number.isInteger(sessionId) || sessionId <= 0) {
+      return res.status(400).json({ error: 'Invalid session id' });
+    }
+    const expectedEpoch = req.body?.expectedEpoch ?? req.query?.expectedEpoch ?? null;
+    try {
+      const { rows: sessionRows } = await pool.query(
+        `SELECT cs.id, cs.app_id, cs.user_id, cs.status, cs.pr_number, cs.pr_title, cs.branch_name,
+                cs.source, cs.reviewed_head_sha, cs.imported_pr_head_sha, a.slug AS app_slug
+           FROM chat_sessions cs JOIN apps a ON cs.app_id = a.id
+          WHERE cs.id = $1`,
+        [sessionId]
+      );
+      if (!sessionRows.length) return res.status(404).json({ error: 'Session not found' });
+      const session = sessionRows[0];
+      // The cast route's rule, kept: the CLI does not act on a proposal that
+      // declares a secret, in either direction.
+      if (isCliCredentialManagementSession(req, session)) {
+        return res.status(403).json({ error: CLI_CREDENTIAL_MANAGEMENT_ERROR });
+      }
+
+      const result = await retractVote({ pool, sessionId, userId: req.user.id, expectedEpoch });
+      if (!result.found) return res.status(404).json({ error: 'Session not found' });
+      if (result.status !== 'promoted') {
+        return res.status(409).json({ error: VOTE_LOCKED_MESSAGE, code: 'vote_locked' });
+      }
+      const expected = parseExpectedEpoch(expectedEpoch);
+      if (expected != null && expected !== result.epoch) {
+        return revisionChangedVoteResponse(res, reviewedHeadForSession(session), null, result.epoch);
+      }
+      if (!result.vote) {
+        log.debug('votes', 'Nothing to retract', { sessionId, userId: req.user.id });
+        return res.json({ ok: true, unchanged: true });
+      }
+
+      // The author's "voted yes" no longer says something true.
+      try {
+        const cleared = await notifications.withdrawProposalVoteNotification?.(pool, {
+          sessionId, voterId: req.user.id,
+        });
+        for (const userId of cleared || []) pushNotificationToUser(userId, { type: 'notifications_changed' });
+      } catch (err) {
+        log.warn('votes', 'Withdrawing the vote notification failed', { sessionId, err: err.message });
+      }
+
+      // B7 in reverse: a Yes taken back reopens the "ready to try" cards it
+      // settled, so they offer Approve again. Never throws.
+      const botDm = require('../services/homeroom-bot-dm');
+      const reopened = result.vote === 'yes'
+        ? await botDm.noteApprovalWithdrawn(pool, sessionId, req.user.id)
+        : 0;
+      const readyCard = reopened ? { readyReopened: true } : {};
+      // Whoever asked the bot for this change reads their card again: the
+      // bot's change machine heard the retraction in its own transaction.
+
+      // The vote's own line stays in the proposal's thread, as a flip's
+      // earlier line does; this line says it no longer stands.
+      const voteLabel = session.pr_title
+        ? `PR #${session.pr_number || session.id}: ${session.pr_title}`
+        : `PR #${session.pr_number || session.id}`;
+      await sendSystemMessage(pool, session.app_id,
+        `${req.user.username} took back their vote on ${voteLabel}`,
+        'system',
+        { voteRetracted: { sessionId, prNumber: session.pr_number || null, vote: result.vote } },
+        { type: 'session', ref: sessionId }
+      );
+
+      const { pushVoteUpdate } = require('../services/ws');
+      pushVoteUpdate({ sessionId, appSlug: session.app_slug, merged: false });
+
+      events.record(pool, {
+        type: events.EVENT_TYPES.PR_VOTE_RETRACTED,
+        userId: req.user.id,
+        appId: session.app_id,
+        sessionId,
+        metadata: { vote: result.vote },
+      });
+      log.info('votes', 'Vote retracted', { sessionId, vote: result.vote, userId: req.user.id });
+      return res.json({ ok: true, retracted: true, merged: false, vote: result.vote, ...readyCard });
+    } catch (err) {
+      log.error('votes', 'Vote retraction failed', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
     }
   });
 
@@ -3613,6 +3845,9 @@ function voteRoutes(config) {
       }
 
       const proposals = [];
+      // #5803: an admin's lone No arms the week-long takedown; the card's
+      // countdown must show the clock the proposal machine acts on.
+      const adminNoBySession = await governanceSvc.adminNoTimes(pool, sessions.map((s) => s.id));
       for (const s of sessions) {
         const gov = govByApp[s.app_id];
         const electorate = electorateByApp[s.app_id];
@@ -3633,6 +3868,7 @@ function voteRoutes(config) {
             explicitApproval: !!s.requires_explicit_approval,
             otherYes: q.otherYes,
             memberCount: membersByApp[s.app_id],
+            adminNoAt: adminNoBySession.get(Number(s.id)) || null,
             // These are the viewer's own proposals: they are the author.
             ...(rulesByApp[s.app_id] ? governanceSvc.rulesGateOpts(rulesByApp[s.app_id], s.id, req.user.id, s.explicit_approval_reason || null) : {}),
           }
@@ -3998,7 +4234,7 @@ function voteRoutes(config) {
           && row.integration_block_reasons.includes('integrating');
       }
       const shotsBySession = config.shots?.present
-        ? await shotsView.getForSessions(pool, rows, req.params.slug)
+        ? await shotsView.getForSessions(pool, rows, req.params.slug, { viewer: req.user })
         : new Map();
       for (const row of rows) row.shots = shotsBySession.get(Number(row.id)) || null;
 
@@ -4085,6 +4321,10 @@ function voteRoutes(config) {
         ? await governance.rulesContext(pool, appRows[0].id, gov, 'pr',
           rows.filter((r) => r.votes_required == null).map((r) => r.id))
         : null;
+      // #5803: the admin-No clock each row's card shows, one query for the
+      // whole panel.
+      const adminNoByRow = await governance.adminNoTimes(pool,
+        rows.filter((r) => r.votes_required == null).map((r) => r.id));
       for (const row of rows) {
         if (row.votes_required != null) continue;
         const q = qualifiedByRow
@@ -4102,6 +4342,7 @@ function voteRoutes(config) {
             explicitApproval: !!row.requires_explicit_approval,
             otherYes: q.otherYes,
             memberCount,
+            adminNoAt: adminNoByRow.get(Number(row.id)) || null,
             ...(rulesCtx ? governance.rulesGateOpts(rulesCtx, row.id, row.user_id ?? null, row.explicit_approval_reason || null) : {}),
             firstVersion: row.first_version === true,
           }
@@ -4331,7 +4572,7 @@ function voteRoutes(config) {
         prParams
       );
       const mergedShots = config.shots?.present
-        ? await shotsView.getForSessions(pool, prRows, req.params.slug)
+        ? await shotsView.getForSessions(pool, prRows, req.params.slug, { viewer: req.user })
         : new Map();
       for (const row of prRows) {
         row.shots = mergedShots.get(Number(row.id)) || null;
@@ -4689,7 +4930,7 @@ function voteRoutes(config) {
         proposal.assignee = s.assignee;
         proposal.category = s.category;
         proposal.shots = config.shots?.present
-          ? await shotsView.getForSession(pool, proposal, req.params.slug)
+          ? await shotsView.getForSession(pool, proposal, req.params.slug, { viewer: req.user })
           : null;
         // #4490: the author's diagram, which leads the change's page.
         const drawn = await pool.query(
@@ -4732,6 +4973,8 @@ function voteRoutes(config) {
         // 13 Oct 2026, D1: the project's first version, whose vote the gate
         // waives; the change page says it goes live without one.
         proposal.first_version = await isFirstVersion(pool, proposal.id);
+        // #5803: the week an admin's lone No arms, for the page's pill.
+        const adminNoByProposal = await governance.adminNoTimes(pool, [proposal.id]);
         const gate = governance.computeGate(
           gov, electorate.active, q.yes, q.no,
           proposal.promoted_at || proposal.created_at, null,
@@ -4740,6 +4983,7 @@ function voteRoutes(config) {
             otherYes: q.otherYes,
             memberCount: flagged
               ? await governance.communityMemberCount(pool, gatedApp.id) : undefined,
+            adminNoAt: adminNoByProposal.get(Number(proposal.id)) || null,
             // #4666: who voted, on a project with rules of its own.
             ...(rulesCtx ? governance.rulesGateOpts(
               rulesCtx,
@@ -5585,10 +5829,12 @@ async function evaluateMergeGate(config, pool, session, options = {}) {
     const freshSuiteOwed = require('../services/unit-suite-row').freshSuiteOwed(checkRows[0]);
     // A verdict deferred while the head conflicted (check_phase 'deferred',
     // services/check-admission.js). The integration gate just measured this
-    // head clean, so the run that judges it can start now — the same kick
-    // integration.onBecameClean makes, made here too so a merge attempt
-    // never waits on a hook that did not fire. The preview machine joins a
-    // second kick for the same head, so a double kick costs nothing.
+    // head clean, so the run that judges it can start now. The measurement
+    // that flipped it told the preview machine in its own statement
+    // (integration.measure); this covers a head deferred after that flip
+    // (its run reported 'deferred' once the head already merged cleanly), so
+    // a merge attempt never waits on it. The machine joins a second kick for
+    // the same head, so a double kick costs nothing.
     const checksDeferred = checkRows[0]?.check_state === 'pending'
       && checkRows[0]?.check_phase === 'deferred';
     // A run waiting for a checks slot (services/checks-queue.js): built, in
@@ -6408,6 +6654,7 @@ async function createRevertPR({ session, mergeSha, repoOwner, repoName, deciderU
 // asserts its PR body never carries a live @mention).
 module.exports = {
   voteRoutes,
+  stagingMockProposalFor,
   evaluateMergeGate,
   attemptMerge,
   refusalKind,
@@ -6430,12 +6677,12 @@ module.exports = {
   MAX_IMPORT_SUMMARY,
   MAX_IMPORT_LINKED_ISSUES,
   recordVote,
+  retractVote,
   parseExpectedEpoch,
   settleVoteInBackground,
   // #1688: the line on a vote and the names at merge, unit-tested directly.
   normalizeVoteReason,
   VOTE_REASON_MAX,
-  VOTE_REASON_REQUIRED,
   // (#1115) The applied-close demo rows live here because they belong to the
   // Completed stream, but GET /api/apps/:slug/governance/:id in issues.js has
   // to resolve them too for a ?demo=1 deep link. Exported for that handler's

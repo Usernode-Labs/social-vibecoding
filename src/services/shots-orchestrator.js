@@ -6,8 +6,8 @@
 // saves what it sees through the run's control plane, services/shots-control),
 // comparing the two sides, and removing the copies. The shots machine
 // (src/workflow/shots/) runs each as a work item and decides everything
-// between them; a shots eval's trial (shots-eval-runner.js) runs them one
-// after the other in its own runner (executeRun).
+// between them; a shots eval's trial runs the same steps as the shots-eval
+// machine's work (src/workflow/shots-eval/), on the trial's attempt id.
 
 const appManifest = require('./app-manifest');
 const fs = require('node:fs/promises');
@@ -16,6 +16,7 @@ const github = require('./github');
 const log = require('./logger');
 const shotsDiff = require('./shots-diff');
 const shotsFiles = require('./shots-files');
+const shotsDensity = require('./shots-density');
 const logRedaction = require('./log-redaction');
 const shotsAgent = require('./shots-agent');
 const shotsControl = require('./shots-control');
@@ -31,7 +32,6 @@ const { isFrontendFile, isUiAffecting: uiFileHeuristic } = require('./visual-fil
 const worker = require('./worker');
 const { SAMPLE_FILES } = require('../../worker/shots-samples');
 
-const ACTIVE_STATES = new Set(['planned', 'provisioning', 'exploring', 'replaying', 'reviewing']);
 
 // How the worker saw the shots agent's process end when the agent never
 // reported it (shots-agent.js EXIT_CAUSES), for the causes that say nothing
@@ -88,10 +88,7 @@ function platformFault(error, { now = Date.now() } = {}) {
 }
 
 const DIFF_CONTEXT_CHARS = 8_000;
-const HEARTBEAT_INTERVAL_MS = 30_000;
 const MAX_AGENT_EVENTS = 128;
-const SESSION_IDLE_WAIT_MS = 120_000;
-const SHOTS_RECOVERY_WAIT_MS = 240_000;
 
 function progressPhase(event) {
   if (!event || typeof event !== 'object') return null;
@@ -105,100 +102,6 @@ function progressPhase(event) {
     return phase ? `build_${phase}` : null;
   }
   return null;
-}
-
-function startRunHeartbeat(pool, runId, stateService, observer = null, intervalMs = HEARTBEAT_INTERVAL_MS) {
-  let phase = 'provisioning';
-  let stopped = false;
-  let writing = false;
-  let pending = false;
-  let agentActivity = null;
-  let agentFinalResponse = null;
-  let lastAgentFlushAt = 0;
-  let lastHeartbeatWriteMs = null;
-  const live = {
-    phase, writeStartedAt: null, lastSucceededAt: null,
-    lastErrorAt: null, lastErrorCode: null,
-  };
-  const flush = () => {
-    if (stopped || typeof stateService.heartbeatRun !== 'function') return;
-    if (writing) { pending = true; return; }
-    writing = true;
-    Promise.resolve().then(async () => {
-      do {
-        pending = false;
-        const patch = {
-          heartbeat: {
-            host: os.hostname().replace(/[^a-zA-Z0-9._-]/g, '').slice(0, 128),
-            buildSha: exactSha(process.env.GIT_SHA),
-            poolTotal: Number.isInteger(pool.totalCount) ? pool.totalCount : null,
-            poolIdle: Number.isInteger(pool.idleCount) ? pool.idleCount : null,
-            poolWaiting: Number.isInteger(pool.waitingCount) ? pool.waitingCount : null,
-            previousWriteMs: lastHeartbeatWriteMs,
-          },
-          ...(agentActivity ? { agentActivity } : {}),
-          ...(agentFinalResponse ? { agentFinalResponse } : {}),
-        };
-        const writeStartedAt = Date.now();
-        live.writeStartedAt = new Date(writeStartedAt).toISOString();
-        await stateService.heartbeatRun(pool, runId, phase,
-          Object.keys(patch).length ? patch : null);
-        lastHeartbeatWriteMs = Date.now() - writeStartedAt;
-        live.lastSucceededAt = new Date().toISOString();
-        live.writeStartedAt = null;
-      } while (pending && !stopped);
-    }).catch((error) => {
-      live.lastErrorAt = new Date().toISOString();
-      live.lastErrorCode = String(error?.code || 'heartbeat_write_failed').slice(0, 64);
-      log.warn('shots', 'Shots heartbeat failed', {
-        runId, phase, error: error.message,
-        poolTotal: pool.totalCount, poolIdle: pool.idleCount, poolWaiting: pool.waitingCount,
-      });
-    }).finally(() => {
-      writing = false;
-      live.writeStartedAt = null;
-      if (pending && !stopped) flush();
-    });
-  };
-  const timer = setInterval(flush, intervalMs);
-  timer.unref?.();
-  flush();
-  return {
-    onAgentDiagnostic(activity, kind) {
-      if (stopped || !activity || typeof activity !== 'object') return;
-      agentActivity = activity;
-      if (['auth_bootstrap', 'hosted_app_catalog', 'hosted_app_allowlist',
-        'tool_start', 'tool_end', 'browser_call_start', 'browser_call_pending',
-        'browser_call_end', 'browser_server_exit', 'document_request', 'document_response',
-        'controlled_failure_set', 'controlled_failure_hit',
-        'provider_request_start', 'provider_request_pending', 'provider_response_headers',
-        'provider_response_first_byte', 'provider_request_end',
-        'context_result', 'provider_result',
-        'runner_exit', 'turn_end', 'agent_deadline'].includes(kind)
-          || Date.now() - lastAgentFlushAt >= 5000) {
-        lastAgentFlushAt = Date.now();
-        flush();
-      }
-    },
-    onAgentFinalResponse(summary) {
-      if (stopped || !summary || typeof summary !== 'object') return;
-      agentFinalResponse = summary;
-      flush();
-    },
-    onProgress(event) {
-      if (typeof observer === 'function') {
-        try { observer(event); } catch (error) {
-          log.warn('shots', 'Shots progress observer failed', { runId, error: error.message });
-        }
-      }
-      const next = progressPhase(event);
-      if (next && next !== phase) { phase = next; live.phase = next; flush(); }
-    },
-    stop() {
-      stopped = true;
-      clearInterval(timer);
-    },
-  };
 }
 
 class ShotsOrchestrationError extends Error {
@@ -263,7 +166,7 @@ async function loadSession(pool, sessionId) {
 }
 
 // `baseSha` pins the before revision instead of resolving it: a shots eval's
-// trial (shots-eval-runner.js) shoots the revisions its proposal's own run
+// trial (the shots-eval machine) shoots the revisions its proposal's own run
 // shot.
 async function resolveRevisionContext(session, explicitHead = null, githubService = github, { baseSha: explicitBase = null } = {}) {
   const headSha = headForSession(session, explicitHead);
@@ -765,94 +668,6 @@ function sameProvenance(actual, expected) {
     && actual.headImageDigest === expected.headImageDigest;
 }
 
-async function waitForSessionIdle(pool, sessionId, {
-  timeoutMs = 120_000,
-  recoveryTimeoutMs = timeoutMs,
-  workerService = worker,
-  intervalMs = 500,
-  now = Date.now,
-  wait = (delayMs) => new Promise((resolve) => setTimeout(resolve, delayMs)),
-  onObservation = null,
-} = {}) {
-  const normalLimitMs = Math.max(1, Number(timeoutMs) || 120_000);
-  const recoveryLimitMs = Math.max(normalLimitMs, Number(recoveryTimeoutMs) || normalLimitMs);
-  const pollIntervalMs = Math.max(1, Number(intervalMs) || 500);
-  const startedAt = now();
-  let polls = 0;
-  let recoveryReason = null;
-  let busyObserved = false;
-  let lastObservation = null;
-  const safeTurnField = (value) => {
-    const text = String(value || '');
-    return /^[a-z][a-z0-9_-]{0,63}$/.test(text) ? text : null;
-  };
-  const observe = (patch) => {
-    lastObservation = {
-      version: 1,
-      outcome: 'waiting',
-      waitClass: recoveryReason ? 'shots_recovery' : busyObserved ? 'session_busy' : 'none',
-      recoveryReason,
-      normalLimitMs,
-      recoveryLimitMs,
-      waitedMs: Math.max(0, now() - startedAt),
-      polls,
-      activeTurnPresent: false,
-      activeTurnMode: null,
-      activeTurnPhase: null,
-      workerInFlight: false,
-      workerMode: null,
-      ...patch,
-    };
-    if (typeof onObservation === 'function') onObservation({ ...lastObservation });
-    return lastObservation;
-  };
-
-  while (true) {
-    const { rows } = await pool.query('SELECT active_turn FROM chat_sessions WHERE id = $1', [sessionId]);
-    if (!rows[0]) throw new ShotsOrchestrationError('session_not_found', 'Proposal session not found.');
-    polls += 1;
-    const activeTurnPresent = !!rows[0].active_turn;
-    const activeTurn = turnLifecycle.parseActiveTurn(rows[0].active_turn);
-    // A turn the previous release started is recorded as mode "evidence".
-    const activeTurnMode = state.currentCode(safeTurnField(activeTurn?.mode));
-    const activeTurnPhase = safeTurnField(turnLifecycle.phaseOf(activeTurn));
-    const workerInFlight = !!(await workerService.isInFlight(sessionId));
-    const workerMode = safeTurnField(await workerService.getActiveTurnMode?.(sessionId));
-    if (activeTurnPresent || workerInFlight) busyObserved = true;
-    if (!recoveryReason) {
-      if (activeTurnMode === 'shots') recoveryReason = 'shots_turn';
-      else if (activeTurnPhase === turnLifecycle.PHASE_CLEANUP_PENDING) {
-        recoveryReason = 'cleanup_pending';
-      } else if (workerMode === 'shots') recoveryReason = 'shots_worker';
-    }
-    const observation = observe({
-      activeTurnPresent,
-      activeTurnMode,
-      activeTurnPhase,
-      workerInFlight,
-      workerMode,
-    });
-    if (!activeTurnPresent && !workerInFlight) {
-      const result = { ...observation, outcome: 'idle' };
-      if (typeof onObservation === 'function') onObservation({ ...result });
-      return result;
-    }
-    const activeLimitMs = recoveryReason ? recoveryLimitMs : normalLimitMs;
-    if (observation.waitedMs >= activeLimitMs) {
-      const result = { ...observation, outcome: 'timeout' };
-      if (typeof onObservation === 'function') onObservation({ ...result });
-      throw new ShotsOrchestrationError(
-        'shots_agent_busy',
-        recoveryReason
-          ? 'The previous shots agent did not finish shutting down in time.'
-          : 'The proposal agent stayed busy past the time the before/after shots had to start.',
-        { idleWait: result }
-      );
-    }
-    await wait(Math.min(pollIntervalMs, activeLimitMs - observation.waitedMs));
-  }
-}
-
 function errorCode(error) {
   const code = String(error?.code || '');
   return /^[A-Za-z0-9_]{1,48}$/.test(code) ? code : 'shots_failed';
@@ -945,7 +760,7 @@ const AGENT_DIAGNOSTIC_KINDS = new Set([
   'browser_call_start', 'browser_call_pending', 'browser_call_end', 'browser_server_exit',
   'auth_bootstrap', 'hosted_app_catalog', 'hosted_app_allowlist', 'demo_data',
   'document_request', 'document_response', 'controlled_failure_set', 'controlled_failure_hit',
-  'sample_upload',
+  'sample_upload', 'closeup',
   'platform_asset', 'home_tile', 'legacy_tailwind_cdn', 'egress_blocked', 'worker_memory',
   'provider_request_start', 'provider_request_pending', 'provider_response_headers',
   'provider_response_first_byte', 'provider_request_end',
@@ -1256,31 +1071,6 @@ function traceSummary(metrics, extra = {}) {
   };
 }
 
-async function failCurrentRun(pool, runId, error, stateService = state, runTrace = null) {
-  try {
-    const current = await stateService.getRun(pool, runId);
-    if (current.current_run_id !== current.id || !ACTIVE_STATES.has(current.state)) return false;
-    await stateService.transitionRun(pool, runId, 'failed', {
-      failureCode: errorCode(error),
-      failureReason: visibleError(error),
-      ...(runTrace ? { traceSummary: runTrace } : {}),
-      // Which declared change failed or was skipped, and why
-      // (shots_change_failed, shots_capture_incomplete).
-      ...(error?.hardVerdict ? { hardVerdict: error.hardVerdict } : {}),
-    });
-    return true;
-  } catch (transitionError) {
-    if (!['stale_shots_operation', 'invalid_shots_transition'].includes(transitionError?.code)) {
-      log.warn('shots', 'Could not terminalize failed shots run', {
-        runId,
-        code: transitionError?.code,
-        error: transitionError?.message,
-      });
-    }
-    return false;
-  }
-}
-
 // ── The run's I/O, one step at a time ───────────────────────────────────
 //
 // Each is a work item of the shots machine (src/workflow/shots/services.ts):
@@ -1338,6 +1128,7 @@ async function buildCopies(config, pool, {
     shotsHomeTile: injected.shotsHomeTile || shotsHomeTile,
     github: injected.github || github,
     removeCopies: injected.removeCopies || removeCopies,
+    shotsDensity: injected.shotsDensity || shotsDensity,
   };
   const row = await loadSession(pool, sessionId);
   const { session, app } = publicSessionAndApp(row);
@@ -1424,6 +1215,10 @@ async function buildCopies(config, pool, {
       // proxy does the same. The platform serves its own.
       platformAssets: !selfApp,
       selfApp,
+      // Experimental and off by default: stills at the screen's own density
+      // (3x phone, 2x desktop) instead of 1x. Read once, so the whole run
+      // takes one density (services/shots-density.js).
+      deviceDensity: await deps.shotsDensity.enabledOrOff(pool),
     };
     if (await ended()) return { stale: true };
     await shotsControl.create(pool, {
@@ -1572,6 +1367,7 @@ async function dispatchAgent(config, pool, {
         phonePersonas: a.phonePersonas || [],
         browserPersonas: Array.isArray(a.browserPersonas) ? a.browserPersonas : [],
         platformAssets: a.platformAssets === true,
+        deviceDensity: a.deviceDensity === true,
         onProgress: onProgress ? (line) => onProgress(`Shots agent: ${line}`) : null,
         onShotsDiagnostic,
         resumeThreadId: null,
@@ -1654,12 +1450,20 @@ async function compareScreens(pool, { runId, verdict }, injected = {}) {
   }
 }
 
-// Another run of the proposal is under way (the shots machine's instance).
+// Another run on the proposal's worker is under way: its own (the shots
+// machine's instance), or a shots eval's trial of it (its row active, or
+// still being cleaned up). Whichever ends first leaves the worker to it.
 async function newerRunUnderWay(pool, sessionId, runId) {
   const { SHOTS_LIVE_STATES } = require('../workflow/session-work.ts');
   const { rows } = await pool.query(
     `SELECT 1 FROM wf_instances WHERE machine = 'shots' AND key = 'session:' || $1::text
-        AND state = ANY($2::text[]) AND data->'run'->>'id' IS DISTINCT FROM $3`,
+        AND state = ANY($2::text[]) AND data->'run'->>'id' IS DISTINCT FROM $3
+     UNION ALL
+     SELECT 1 FROM shots_eval_trials WHERE session_id = $1::int AND attempt_id IS DISTINCT FROM $3
+        AND state IN ('provisioning', 'exploring', 'reviewing')
+     UNION ALL
+     SELECT 1 FROM wf_instances w, jsonb_each(w.data->'trials') t
+      WHERE w.machine = 'shots-eval' AND (t.value->>'sessionId')::int = $1::int AND t.value->>'attempt' IS DISTINCT FROM $3`,
     [sessionId, SHOTS_LIVE_STATES, runId]);
   return rows.length > 0;
 }
@@ -1711,98 +1515,6 @@ async function cleanupRun(config, pool, {
   return { cleaned: true, version: environment.RESOURCE_CLEANUP_VERSION };
 }
 
-// ── A shots eval's trial, in its runner's process ───────────────────────
-
-/**
- * A shots eval's trial (shots-eval-runner.js): the same steps as a
- * proposal's run, one after the other in this process, on the trial's own
- * rows (`injected.state`, its adapter). Nobody waits on a trial, and its
- * runner has its own queue and recovery.
- */
-async function executeRun(config, options, injected = {}) {
-  const deps = {
-    state: injected.state || state,
-    waitForSessionIdle: injected.waitForSessionIdle || waitForSessionIdle,
-    worker: injected.worker || worker,
-  };
-  const { pool, session, app, onProgress = null } = options;
-  const run = options.run;
-  const agentBudgetMs = config.shots?.maxAgentMs || 480_000;
-  const runBudgetMs = config.shots?.maxRunMs || 1_440_000;
-  const progress = (message) => { if (typeof onProgress === 'function') onProgress(message); };
-  let failurePhase = 'wait_for_idle';
-  let copiesBuilt = false;
-  try {
-    const intent = planContract.parseIntent(run.intent);
-    progress({ stage: failurePhase });
-    await deps.waitForSessionIdle(pool, session.id, {
-      timeoutMs: Math.min(runBudgetMs, SESSION_IDLE_WAIT_MS),
-      recoveryTimeoutMs: Math.min(runBudgetMs, SHOTS_RECOVERY_WAIT_MS),
-      workerService: deps.worker,
-    });
-    failurePhase = 'prepare_pair';
-    progress({ stage: failurePhase });
-    if (run.state === 'planned') await deps.state.transitionRun(pool, run.id, 'provisioning', { startedAt: new Date() });
-    copiesBuilt = true;
-    const copies = await buildCopies(config, pool, {
-      runId: run.id, sessionId: session.id, kind: 'trial', intent, baseSha: run.base_sha, headSha: run.head_sha,
-      budgetMs: agentBudgetMs, onProgress,
-    }, injected);
-    await deps.state.transitionRun(pool, run.id, 'exploring', copies);
-    failurePhase = 'agent_exploration';
-    progress({ stage: failurePhase });
-    const agentStartedAt = Date.now();
-    const left = () => agentBudgetMs - (Date.now() - agentStartedAt);
-    let out = await dispatchAgent(config, pool, { runId: run.id, sessionId: session.id, budgetMs: agentBudgetMs }, injected);
-    for (let busy = 0; out.agent.outcome === 'busy' && busy < MAX_AGENT_BUSY_RETRIES && left() >= MIN_AGENT_RETRY_MS; busy += 1) {
-      await deps.waitForSessionIdle(pool, session.id, { timeoutMs: Math.min(left(), SESSION_IDLE_WAIT_MS), workerService: deps.worker });
-      out = await dispatchAgent(config, pool, { runId: run.id, sessionId: session.id, budgetMs: left() }, injected);
-    }
-    if (out.agent.outcome === 'died' && left() >= MIN_AGENT_RETRY_MS) {
-      out = await dispatchAgent(config, pool, { runId: run.id, sessionId: session.id, budgetMs: left() }, injected);
-    }
-    options.onAgentFinalResponse?.(out.trace.agentFinalResponse || null);
-    if (!out.passed) {
-      if (out.agent.outcome !== 'completed' && !out.skippedAny) {
-        throw Object.assign(new ShotsOrchestrationError(out.agent.code || 'shots_agent_failed', out.agent.message || 'The shots agent stopped.'),
-          { shotsPlatformFault: out.agent.platformFault?.kind });
-      }
-      const failure = out.failedCount
-        ? new ShotsOrchestrationError('shots_change_failed', out.failedReason)
-        : new ShotsOrchestrationError('shots_capture_incomplete', out.incompleteReason);
-      failure.hardVerdict = out.verdict;
-      throw failure;
-    }
-    failurePhase = 'persist_shots';
-    const verdict = intent.stories.length ? await compareScreens(pool, { runId: run.id, verdict: out.verdict }, injected) : out.verdict;
-    await deps.state.transitionRun(pool, run.id, 'reviewing', { hardVerdict: verdict, planHash: out.manifestHash, traceSummary: out.trace });
-    const files = await shotsControl.filesFor(pool, run.id, out.slots);
-    await deps.state.storeArtifacts(pool, run.id, files, { headSha: run.head_sha, planHash: out.manifestHash });
-    failurePhase = 'cleanup';
-    await cleanupRun(config, pool, { runId: run.id, sessionId: session.id, appSlug: app.slug }, injected).catch((error) => {
-      log.warn('shots', 'A trial\'s copies could not all be removed', { runId: run.id, error: error.message });
-    });
-    copiesBuilt = false;
-    await deps.state.transitionRun(pool, run.id, 'verified', { hardVerdict: verdict, planHash: out.manifestHash, traceSummary: out.trace });
-    return deps.state.getForSession(pool, session.id, { headSha: run.head_sha });
-  } catch (error) {
-    await failCurrentRun(pool, run.id, error, deps.state, {
-      terminalFailureClass: errorCode(error),
-      failure: { phase: failurePhase, code: errorCode(error), message: visibleError(error) },
-    });
-    throw error;
-  } finally {
-    if (copiesBuilt) {
-      await cleanupRun(config, pool, { runId: run.id, sessionId: session.id, appSlug: app.slug }, injected).catch((error) => {
-        log.warn('shots', 'A trial\'s copies could not all be removed', { runId: run.id, error: error.message });
-      });
-    }
-    if (shotsAgent.temporaryShotsWorker(session)) {
-      await deps.worker.destroyCcVolume(session.id).catch(() => {});
-    }
-  }
-}
-
 module.exports = {
   ShotsOrchestrationError,
   exactSha,
@@ -1819,7 +1531,6 @@ module.exports = {
   shotsBrief,
   BRIEF_BUDGET,
   sameProvenance,
-  waitForSessionIdle,
   agentBusyRetryable,
   agentDiedRetryable,
   MAX_AGENT_BUSY_RETRIES,
@@ -1832,8 +1543,6 @@ module.exports = {
   addAgentUsage,
   traceSummary,
   progressPhase,
-  startRunHeartbeat,
-  failCurrentRun,
   runCurrent,
   resolveRevision,
   buildCopies,
@@ -1841,5 +1550,4 @@ module.exports = {
   dispatchAgent,
   compareScreens,
   cleanupRun,
-  executeRun,
 };

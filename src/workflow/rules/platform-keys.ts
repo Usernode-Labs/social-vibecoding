@@ -43,6 +43,10 @@ export const RESERVED_KEYS = new Set([
   // for the same reason as the rest: a manifest that shadowed it could
   // point an app's "Open in Homeroom" links at a host of its choosing.
   'USERNODE_PLATFORM_ORIGIN',
+  // The app's own slug and name (services/app-identity-env.js), which a
+  // generated app links to its platform page with and shows on its page.
+  'USERNODE_APP_SLUG',
+  'USERNODE_APP_NAME',
   // Turns phone sign-in's test numbers on (config.js
   // shotsPhoneTestCodeFrom). Only the platform puts it on a before & after
   // shots copy (services/shots-environment.js); a manifest that set it would

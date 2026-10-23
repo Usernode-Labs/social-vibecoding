@@ -426,27 +426,22 @@ test('maintenance campaigns against the full PostgreSQL schema', { timeout: 2400
     assert.equal((await stateOf(c, a1)).session_id, null);
   });
 
-  await t.test('C9 Start takes a campaign as its app rows stand: an open PR kept, an app left mid-change changed again', async () => {
+  await t.test('C9 Start reaches the apps as they are now, whatever rows the campaign already has: none is adopted', async () => {
     defaults(); await fresh();
     const a1 = await app();
     const a2 = await app();
-    const a3 = await app();
     const c = await campaignRow();
-    // Its rows as they stand: one PR open, one mid-change, one pending.
-    const { rows: [old] } = await pool.query(
-      `INSERT INTO chat_sessions (app_id, user_id, status, source, pr_number, branch_name) VALUES ($1, $2, 'promoted', 'maintenance', 7, 'maint/old')
-       RETURNING id`, [a1.id, platformUser.id]);
+    // Rows only a driver from before the campaign machine seeded.
     await pool.query(
-      `INSERT INTO maintenance_campaign_apps (campaign_id, app_id, state, session_id) VALUES
-         ($1, $2, 'pr_open', $5), ($1, $3, 'running', NULL), ($1, $4, 'pending', NULL)`,
-      [c.id, a1.id, a2.id, a3.id, old.id]);
+      `INSERT INTO maintenance_campaign_apps (campaign_id, app_id, state) VALUES ($1, $2, 'skipped'), ($1, $3, 'running')`,
+      [c.id, a1.id, a2.id]);
     await start(c);
     await settle();
     const i = await cInst(c);
-    assert.deepEqual(i.data.apps.map((a) => [a.appId, a.state]), [[a1.id, 'proposed'], [a2.id, 'proposed'], [a3.id, 'proposed']]);
-    assert.deepEqual(calls(WORK.change).map((x) => x.input.appId), [a2.id, a3.id], 'the app left mid-change is changed again; the open PR is kept');
-    assert.equal(i.state, 'done');
+    assert.deepEqual(i.data.apps.map((a) => [a.appId, a.state]), [[a1.id, 'proposed'], [a2.id, 'proposed']]);
+    assert.deepEqual(calls(WORK.change).map((x) => x.input.appId), [a1.id, a2.id], 'every app is changed, a skipped row\'s too');
   });
+
 
   await t.test('C10 Start for a campaign with no live app is done at once, and a second Start is ignored', async () => {
     defaults(); await fresh();

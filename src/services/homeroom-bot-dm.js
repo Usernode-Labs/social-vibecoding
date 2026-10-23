@@ -73,9 +73,6 @@ const MIN_BRIEF_CHARS = 10;
 // How often a person the bot does not work for (an account not let in yet)
 // hears why the bot does not answer: once a day is enough.
 const NOT_ENABLED_KEY_HOURS = 24;
-// A first version that could not be filed is tried again on the next
-// sweep, this many times.
-const MAX_FILE_ATTEMPTS = 3;
 // How often somebody writing to the bot with nothing open hears its help.
 const HELP_EVERY_MS = 10 * 60 * 1000;
 
@@ -254,7 +251,7 @@ function firstLiveActions({ slug }) {
 
 // What routes/conversations.js does after a send, done here because the
 // service pushes nothing (the welcome DM does the same).
-async function pushLive(pool, result, conversationId, { opened = false, threadRootId = null } = {}) {
+async function pushLive(pool, result, conversationId, { opened = false, threadRootId = null, actorUserId } = {}) {
   const ws = require('./ws');
   const notificationSvc = require('./notifications');
   for (const row of result.notifications || []) await notificationSvc.hydrateAndPush(pool, row);
@@ -264,7 +261,7 @@ async function pushLive(pool, result, conversationId, { opened = false, threadRo
     conversationId,
     messageId: result.message?.id ?? result.messageId,
     threadRootId: threadRootId || null,
-  });
+  }, { actorUserId });
 }
 
 /**
@@ -548,6 +545,31 @@ const CLAIM_HELLO_SQL = `
   ON CONFLICT (user_id) DO NOTHING
   RETURNING kind`;
 
+// #5580: the project a ringing message is about, for its notification's
+// app_id: the app its metadata names, or, for a reply in a request's thread,
+// the app that request's card was sent about (homeroom_bot_dm_messages).
+// Null when it is about no project (a hello, a reply in the main chat).
+// Never throws: a message rings without a project rather than not at all.
+async function storyAppId(pool, metadata, root) {
+  try {
+    if (metadata?.appSlug) {
+      const { rows: [app] = [] } = await pool.query('SELECT id FROM apps WHERE slug = $1', [String(metadata.appSlug)]);
+      if (app) return Number(app.id);
+    }
+    const rootId = conversations.strictId(root);
+    if (rootId) {
+      const { rows: [card] = [] } = await pool.query(
+        'SELECT app_id FROM homeroom_bot_dm_messages WHERE message_id = $1',
+        [rootId],
+      );
+      if (card) return Number(card.app_id);
+    }
+  } catch (err) {
+    log.warn('homeroom-bot-dm', 'Could not tell which project a notification is about', { err: err.message });
+  }
+  return null;
+}
+
 async function sendDm(pool, {
   bot, userId, content, metadata = null, idempotencyKey = null, objects = null, replyToId = null, withoutCards = null,
   moment = undefined, threadRootId = undefined, hello = null,
@@ -589,6 +611,9 @@ async function sendDm(pool, {
   // The notification's detail: homeroom-bot-notify-copy.js words the push,
   // the bell and the email from the story's fields (contract 2.1).
   const detail = story ? await notificationDetail(pool, story, stored) : null;
+  // #5580: and the project it is about, so the bell files the bot's news
+  // under that project as it files everybody else's.
+  const notificationAppId = story ? await storyAppId(pool, metadata, root) : null;
   // Run six: a first version's ready and live, for a maker who turned
   // "We'll tell you when it's live" off, are said here and ring nothing.
   const firstNews = !!metadata?.firstVersion && (story === 'ready' || story === 'live');
@@ -604,26 +629,53 @@ async function sendDm(pool, {
   let greeted = false;
   const helloStored = hello?.metadata
     ? storyMetadata(hello.metadata, { moment: story, threadRootId: root }) : null;
-  const helloHooks = hello?.kind ? {
-    prepare: async (db) => {
-      const { rows: claimed } = await db.query(CLAIM_HELLO_SQL, [Number(userId), Number(bot.id), String(hello.kind)]);
-      greeted = claimed[0]?.kind === hello.kind;
-      if (!greeted) return hello.content ? null : { refuse: true };
-      return hello.content
-        ? { content: clip(hello.content, conversations.MAX_MESSAGE_LENGTH || 8000), metadata: helloStored ? { [META]: helloStored } : null }
-        : null;
-    },
-    afterInsert: async (db, { messageId: id }) => {
-      if (greeted) await db.query('UPDATE homeroom_bot_hellos SET message_id = $2 WHERE user_id = $1', [Number(userId), id]);
-    },
-  } : {};
+  // WP-E: the email that stands in for the push when no phone can take it,
+  // for "ready to try", or a first version's LIVE, the moment its maker was
+  // promised. A first version goes live without a vote a minute or two after
+  // it is ready to try (D1), and two emails that close together would be one
+  // too many (mail/rate-limit.js holds build mail five minutes apart), so its
+  // ready sends none; its live is worded as its push is, from the detail.
+  // Owed in the message's own transaction (the bot-dm machine's `dm.mail`):
+  // sent after the commit, a restart in between lost it for good.
+  const mailFor = metadata?.firstVersion ? 'live' : 'ready';
+  const mail = !muted && story === mailFor ? {
+    kind: 'build_ready', appName: metadata?.appName || null, appSlug: metadata?.appSlug || null,
+    conversationId: opened.conversationId, threadRootId: root || null,
+    ...(story === 'live' ? { detail } : {}),
+    // Built, but part of it failed when Homeroom tried it: not "ready to try".
+    ...(Array.isArray(metadata?.ready?.broken) && metadata.ready.broken.length ? { notWorking: true } : {}),
+  } : null;
+  // #4396: a first version's live tells the people who joined while it was
+  // made that it is open (services/project-opened.js), whatever its maker
+  // chose for their own: owed in the message's own transaction.
+  const opens = story === 'live' && !!metadata?.firstVersion && !!metadata?.appSlug;
+  let toldOpen = [];
+  const hooks = {
+    ...(hello?.kind ? {
+      prepare: async (db) => {
+        const { rows: claimed } = await db.query(CLAIM_HELLO_SQL, [Number(userId), Number(bot.id), String(hello.kind)]);
+        greeted = claimed[0]?.kind === hello.kind;
+        if (!greeted) return hello.content ? null : { refuse: true };
+        return hello.content
+          ? { content: clip(hello.content, conversations.MAX_MESSAGE_LENGTH || 8000), metadata: helloStored ? { [META]: helloStored } : null }
+          : null;
+      },
+    } : {}),
+    ...(hello?.kind || mail || opens ? {
+      afterInsert: async (db, { messageId: id }) => {
+        if (greeted) await db.query('UPDATE homeroom_bot_hellos SET message_id = $2 WHERE user_id = $1', [Number(userId), id]);
+        if (mail) await require('../workflow/platform.ts').dmMailOwed(db, { userId: Number(userId), messageId: id, mail });
+        if (opens) toldOpen = await require('./project-opened').oweTold(db, { appSlug: metadata.appSlug, makerId: userId });
+      },
+    } : {}),
+  };
   const send = (withCards) => conversations.sendMessage(pool, { id: bot.id }, opened.conversationId,
     withCards.length
       ? { ...input, objects: withCards }
       : { ...input, ...(cards.length && withoutCards ? { content: clip(withoutCards, conversations.MAX_MESSAGE_LENGTH || 8000) } : {}) },
     {
       metadata: stored ? { [META]: stored } : null, notify: !!story && !muted, notificationDetail: detail,
-      notificationKind: (story && BUILD_KINDS[story]) || null, ...helloHooks,
+      notificationKind: (story && BUILD_KINDS[story]) || null, notificationAppId, ...hooks,
     });
   let result = await send(cards);
   if (!result && cards.length) {
@@ -635,36 +687,17 @@ async function sendDm(pool, {
     return null;
   }
   const messageId = result.messageId ?? result.message?.id ?? null;
-  if (!result.duplicate && !muted && story === 'ready' && !metadata?.firstVersion) {
-    // WP-E: "ready to try" by email when no phone can take the push.
-    void require('./activity-mail').emailIfNoPush(pool, {
-      userId, kind: 'build_ready', appName: metadata?.appName || null, appSlug: metadata?.appSlug || null,
-      conversationId: opened.conversationId,
-      // Its button opens the request's thread (contract 2.2).
-      messageId, threadRootId: root,
-      ...(stored?.requestTitle ? { requestTitle: stored.requestTitle } : {}),
-      // Built, but part of it failed when Homeroom tried it: not "ready to try".
-      ...(Array.isArray(metadata?.ready?.broken) && metadata.ready.broken.length ? { notWorking: true } : {}),
-    });
-  }
-  if (!result.duplicate && !muted && story === 'live' && metadata?.firstVersion) {
-    // Run six: a first version's email is its LIVE, the moment its maker
-    // was promised. It goes live without a vote a minute or two after it is
-    // ready to try (D1), and two emails that close together would be one
-    // too many (mail/rate-limit.js holds build mail five minutes apart), so
-    // its ready sends none. Worded as its push is, from the detail.
-    void require('./activity-mail').emailIfNoPush(pool, {
-      userId, kind: 'build_ready', appName: metadata?.appName || null, appSlug: metadata?.appSlug || null,
-      conversationId: opened.conversationId, messageId, threadRootId: root, detail,
-    });
-  }
+  // #4396: after the commit, the bells of the members its "live" told
+  // (their notices, phone pushes and emails are owed in the message's own
+  // transaction: afterInsert).
+  if (toldOpen.length) await require('./project-opened').pushTold(pool, toldOpen);
   if (!result.duplicate) {
     await retireSuggestions(pool, {
       botId: bot.id, conversationId: opened.conversationId, keepMessageId: messageId, userId,
       about: stored, kind: metadata?.kind || null,
     });
     try {
-      await pushLive(pool, result, opened.conversationId, { opened: opened.created, threadRootId: root });
+      await pushLive(pool, result, opened.conversationId, { opened: opened.created, threadRootId: root, actorUserId: bot.id });
     } catch (err) {
       // The message and its bell row are in; a missed live refresh catches
       // up on the next load.
@@ -710,7 +743,7 @@ async function pushTyping(pool, botId, conversationId, typing, ws) {
     await conversations.withLockedAudience(pool, { id: botId }, conversationId, (audience) => {
       ws.pushConversationEvent(audience, {
         type: 'conversation_typing', conversationId, userId: botId, typing,
-      }, { excludeUserId: botId });
+      }, { excludeUserId: botId, actorUserId: botId });
     });
   } catch (err) {
     // Ephemeral: a missed typing event costs nothing the answer needs.
@@ -1536,7 +1569,7 @@ async function setQuestionState(pool, messageId, patch, { ws = null, conversatio
     type: 'conversation_message_updated', conversationId: conversationId || rows[0].conversation_id, messageId,
     // In a request's thread, the open thread reads it again too.
     threadRootId: rows[0].thread_root_id ? Number(rows[0].thread_root_id) : null,
-  });
+  }, { actorUserId: rows[0].sender_id });
 }
 
 // News the request's card and the tray above the DM show, and that the
@@ -1774,7 +1807,7 @@ async function relayIssuePost({
       },
       sessionId: Number(dm.sessionId),
       epoch: Number(dm.epoch) || 0,
-      actions: readyActions({ sessionId: dm.sessionId, epoch: dm.epoch, approve: !!dm.card.approve }),
+      actions: readyActions({ sessionId: dm.sessionId, epoch: dm.epoch, approve: !!dm.card.approve, readOnly: !!dm.card.lookOnly }),
       status: 'open',
       // #3870: what the change is, so the card says more than "is ready".
       ...(typeof dm.title === 'string' && dm.title.trim() ? { changeTitle: clip(dm.title.trim(), 200) } : {}),
@@ -1934,7 +1967,7 @@ async function stepLine(pool, {
  * (homeroom-bot-activity.js, noteApproved). Resolves what sendDm did, or
  * null. Never throws.
  */
-async function noteStep(pool, { bot = null, userId, app, issueNumber, content, step, key = null, actions = null }) {
+async function noteStep(pool, { bot = null, userId, app, issueNumber, content, step, key = null, actions = null, strict = false }) {
   try {
     const sender = bot || await botAccount(pool);
     if (!sender?.id || !userId || !app?.id) return null;
@@ -1950,6 +1983,8 @@ async function noteStep(pool, { bot = null, userId, app, issueNumber, content, s
       },
     });
   } catch (err) {
+    // Strict (a workflow machine's work): thrown, so the item tries again.
+    if (strict) throw err;
     log.warn('homeroom-bot-dm', 'Could not note a step', { app: app?.slug, issueNumber, step, err: err.message });
     return null;
   }
@@ -2664,6 +2699,11 @@ async function tellReady(pool, sessionId, { epoch, broken: brokenClaims = [], de
   // B7: what its asker can do on the card, and who else must approve it.
   const requester = await requesterOf(pool, run.id, Number(run.issue_number));
   const approval = await approvalState(pool, { sessionId: id, userId: requester?.userId || null });
+  // #5506: a Yes from someone who does not build on the project is refused
+  // by the session guard ("Session not found"), whatever its governance
+  // says, so their card offers no Approve. Its Try it opens the look-only
+  // preview (readyActions `readOnly`), the one a non-builder may open.
+  const canBuild = await requesterCanBuild(pool, run.id, requester?.userId);
   // A first version goes live without a vote (D1): nobody is waited on,
   // and the card offers Try it and Change something, never Approve.
   const noVote = !!approval?.firstVersion;
@@ -2677,7 +2717,8 @@ async function tellReady(pool, sessionId, { epoch, broken: brokenClaims = [], de
       link, sessionId: id, epoch: state.epoch,
       ...(state.title ? { title: state.title } : {}),
       card: {
-        approve: !noVote && !!(approval?.counts && !approval.already),
+        approve: canBuild && !noVote && !!(approval?.counts && !approval.already),
+        ...(canBuild ? {} : { lookOnly: true }),
         // D1: a project's first version goes live without a vote.
         ...(noVote ? { noVote: true } : {}),
         last: !!approval?.last,
@@ -2705,6 +2746,28 @@ async function tellReady(pool, sessionId, { epoch, broken: brokenClaims = [], de
     appId: run.id, issueNumber: Number(run.issue_number), status: 'ready', sessionId: id, deps: { strict: true },
   });
   return told;
+}
+
+/**
+ * #5506: whether whoever asked for a change builds on its project: passes
+ * the session guard's collab bar (app-access.js checkAppAccess 'collab'),
+ * which every POST on a change (a Yes, a preview's rebuild) goes through.
+ * True when nobody is named, so a card for nobody changes nothing.
+ */
+async function requesterCanBuild(pool, appId, userId) {
+  if (!userId) return true;
+  try {
+    const appAccess = require('./app-access');
+    const [{ rows: [app] }, { rows: [person] }] = await Promise.all([
+      pool.query(`SELECT ${appAccess.ACCESS_COLUMNS} FROM apps WHERE id = $1`, [appId]),
+      pool.query('SELECT id, is_admin AS "isAdmin" FROM users WHERE id = $1', [userId]),
+    ]);
+    if (!app || !person) return true;
+    return await appAccess.checkAppAccess(pool, app, person, 'collab');
+  } catch (err) {
+    log.warn('homeroom-bot-dm', 'Could not read whether a requester builds on the project', { appId, userId, err: err.message });
+    return true;
+  }
 }
 
 // ── B7: ready to try, and who approves it ───────────────────────────────
@@ -2817,10 +2880,10 @@ async function needsYesFrom(pool, state, { except = [] } = {}) {
  * own Yes, cast from their own browser), and Change something (a reply to
  * the card). One is filled: Approve when there is one, else Try it.
  */
-function readyActions({ sessionId, epoch, approve }) {
+function readyActions({ sessionId, epoch, approve, readOnly = false }) {
   const id = Number(sessionId);
   return [
-    { id: 'try', label: 'Try it', style: approve ? 'secondary' : 'primary', type: 'preview', sessionId: id },
+    { id: 'try', label: 'Try it', style: approve ? 'secondary' : 'primary', type: 'preview', sessionId: id, ...(readOnly ? { readOnly: true } : {}) },
     ...(approve ? [{ id: 'approve', label: 'Approve', style: 'primary', type: 'vote', sessionId: id, epoch: Number(epoch) || 0 }] : []),
     { id: 'change', label: 'Change something', style: 'secondary', type: 'reply' },
   ];
@@ -2894,6 +2957,14 @@ async function goesLiveFor(pool, sessionId, userId) {
   return goesLiveAfterYes(state.gate, waiting);
 }
 
+// The cards about one change sent to one person (noteApproved,
+// noteApprovalWithdrawn).
+const CHANGE_CARDS_SQL = `SELECT d.message_id, d.conversation_id, m.metadata->'homeroomBot' AS meta
+         FROM homeroom_bot_dm_messages d
+         JOIN conversation_messages m ON m.id = d.message_id
+         JOIN homeroom_bot_runs r ON r.id = d.run_id
+        WHERE d.user_id = $1 AND d.kind = 'proposal' AND r.proposal_session_id = $2`;
+
 /**
  * B7: `userId` said Yes to one of the bot's changes (routes/votes.js), from
  * its card, the change page or anywhere else: the "ready to try" cards they
@@ -2906,14 +2977,7 @@ async function goesLiveFor(pool, sessionId, userId) {
  */
 async function noteApproved(pool, sessionId, userId, deps = {}) {
   try {
-    const { rows } = await pool.query(
-      `SELECT d.message_id, d.conversation_id, m.metadata->'homeroomBot' AS meta
-         FROM homeroom_bot_dm_messages d
-         JOIN conversation_messages m ON m.id = d.message_id
-         JOIN homeroom_bot_runs r ON r.id = d.run_id
-        WHERE d.user_id = $1 AND d.kind = 'proposal' AND r.proposal_session_id = $2`,
-      [userId, sessionId],
-    );
+    const { rows } = await pool.query(CHANGE_CARDS_SQL, [userId, sessionId]);
     const open = rows.filter((row) => row.meta?.ready && row.meta.status === 'open');
     if (!open.length) return null;
     // Read once, for every card about it. A card still settles without it.
@@ -2932,6 +2996,32 @@ async function noteApproved(pool, sessionId, userId, deps = {}) {
   } catch (err) {
     log.warn('homeroom-bot-dm', 'Could not settle a change\'s ready card after a Yes', { sessionId, userId, err: err.message });
     return null;
+  }
+}
+
+/**
+ * The review flow's Undo: `userId` took back their Yes on one of the bot's
+ * changes (DELETE /api/sessions/:id/vote) while it was still up for a vote.
+ * The "ready to try" cards noteApproved settled for them about it offer
+ * Approve again, on every device, instead of saying it goes live. Only the
+ * cards their Yes answered: one closed for a newer version stays closed.
+ * Resolves how many were reopened. Never throws.
+ */
+async function noteApprovalWithdrawn(pool, sessionId, userId, deps = {}) {
+  try {
+    const { rows } = await pool.query(CHANGE_CARDS_SQL, [userId, sessionId]);
+    const answered = rows.filter((row) => row.meta?.ready && row.meta.status === 'answered' && row.meta.chosen === 'approve');
+    for (const row of answered) {
+      await setQuestionState(pool, Number(row.message_id), {
+        status: 'open', chosen: null, answer: null, goesLive: null,
+      }, {
+        ws: deps.ws || null, conversationId: row.conversation_id, userId,
+      });
+    }
+    return answered.length;
+  } catch (err) {
+    log.warn('homeroom-bot-dm', 'Could not reopen a change\'s ready card after a Yes was taken back', { sessionId, userId, err: err.message });
+    return 0;
   }
 }
 
@@ -2961,7 +3051,7 @@ async function closeOlderReadyCards(pool, { userId, appId, issueNumber, keepMess
 // DM reads its activity cards (homeroom-bot-activity.js cardsFor), on the
 // same events: the bot's news landing in the DM (its "It's live now." is
 // one), the loop's work changing (a merge or a close announces it,
-// the change machine's tray push), and a vote on the change (noteVoted). What is read
+// the change machine's tray push), and a vote on the change (the same push). What is read
 // is where the change stands now and, while it is up for approval, who it
 // still waits on and what happens next once the reader has said Yes.
 // Nothing is written: the message keeps its words for the inbox and the push.
@@ -3039,8 +3129,27 @@ async function readyApproval(pool, sessionId, userId) {
 }
 
 /**
+ * #5506: whether `user` may have the bot withdraw the change `sessionId`, by
+ * the gate its "Withdraw it" offer keeps (homeroom-bot-mayor.js
+ * withdrawGate): the bot's own, still up for a vote, and theirs to withdraw
+ * (they asked for its request, or own its project). False on any doubt.
+ */
+async function canWithdrawReady(pool, user, sessionId) {
+  try {
+    const bot = await botAccount(pool);
+    if (!bot) return false;
+    const gate = await require('./homeroom-bot-mayor').withdrawGate(pool, { bot, user, sessionId });
+    return !!gate?.ok;
+  } catch (err) {
+    log.warn('homeroom-bot-dm', 'Could not read whether a ready card\'s change can be withdrawn', { sessionId, err: err.message });
+    return false;
+  }
+}
+
+/**
  * The signed-in person's ready cards as they stand now (see the note above):
- * [{ messageId, state, actions, approval?, goesLive? }], newest first. Their
+ * [{ messageId, state, actions, approval?, goesLive?, canBuild?, canWithdraw? }],
+ * newest first. Their
  * own cards only, on projects they can still view. A change whose approval
  * could not be read is left out, and its card says what it was sent with.
  */
@@ -3051,7 +3160,9 @@ async function readyStates(pool, { user }) {
   if (!rows.length) return [];
   const appAccess = require('./app-access');
   const viewable = new Map();
+  const canBuild = new Map();
   const approvals = new Map();
+  const withdrawable = new Map();
   const out = [];
   // Cards going live, by their change: a merge of Homeroom itself says
   // when the platform's next release carries it (below).
@@ -3074,6 +3185,19 @@ async function readyStates(pool, { user }) {
       const read = approvals.get(sessionId);
       if (!read) continue;
       Object.assign(state, read);
+      // #5506: what the reader can do on it. A Yes and the preview's
+      // rebuild are POSTs behind the session guard, which lets only the
+      // project's builders through: on a project where building is by
+      // invitation, anybody else's Approve and Try it were refused with
+      // "Session not found". So the card says whether they build there
+      // (`canBuild`), and drops Approve and opens the look-only preview
+      // when they do not. And whether they may have the bot withdraw the
+      // change (`canWithdraw`, the gate the DM's own "Withdraw it" offer
+      // keeps), so the card can offer that instead of a dead end.
+      if (!canBuild.has(appId)) canBuild.set(appId, await appAccess.checkAppAccess(pool, row, user, 'collab').catch(() => false));
+      state.canBuild = canBuild.get(appId);
+      if (!withdrawable.has(sessionId)) withdrawable.set(sessionId, await canWithdrawReady(pool, user, sessionId));
+      state.canWithdraw = withdrawable.get(sessionId);
     }
     if (state.state === 'going_live' && row.status === 'merged' && row.self_hosted) {
       goingLive.set(state, Number(row.session_id));
@@ -3095,45 +3219,40 @@ async function readyStates(pool, { user }) {
 }
 
 /**
- * Somebody voted on a change (routes/votes.js). When it is one of the
- * bot's, whoever asked for it has their DM read again, so their ready card
- * says who it still waits on as it stands now (readyStates): it used to keep
- * the names it was sent with until the change went live. One indexed read
- * for any other change. Resolves the requester's id, or null. Never throws.
+ * A yes on one of the bot's changes (the bot-change machine's
+ * `bot.tellApproved`, from the vote's own statement): a quiet line in the
+ * request's thread, "ada approved it." (or "You approved it." for its
+ * requester), once per voter and approval epoch. Throws when it could not be
+ * said, so the work tries again. Resolves what was sent, or null.
  */
-async function noteVoted(pool, sessionId, deps = {}) {
+async function sayApproved(pool, sessionId, { voterId, voter = null, epoch = 0 } = {}) {
   const id = Number(sessionId);
-  if (!Number.isInteger(id) || id <= 0) return null;
-  try {
-    const { rows } = await pool.query(
-      `SELECT q.user_id, r.issue_number, a.id AS app_id, a.slug, a.name, cs.approval_epoch
-         FROM homeroom_bot_runs r
-         JOIN homeroom_bot_requesters q ON q.app_id = r.app_id AND q.issue_number = r.issue_number
-         JOIN apps a ON a.id = r.app_id
-         LEFT JOIN chat_sessions cs ON cs.id = r.proposal_session_id
-        WHERE r.proposal_session_id = $1
-        ORDER BY r.id DESC LIMIT 1`,
-      [id],
-    );
-    if (!rows.length) return null;
-    require('./homeroom-bot-tray').noteWorkChanged(rows[0].user_id, deps);
-    // One story: a yes is a quiet line in the request's thread ("ada
-    // approved it."), once per voter and version of the change.
-    const voter = deps.voter;
-    if (deps.vote === 'yes' && voter?.id) {
-      const row = rows[0];
-      const mine = Number(voter.id) === Number(row.user_id);
-      await noteStep(pool, {
-        userId: Number(row.user_id), app: { id: row.app_id, slug: row.slug, name: row.name }, issueNumber: Number(row.issue_number),
-        step: 'approved', content: mine ? 'You approved it.' : `@${voter.username} approved it.`,
-        key: `hrbot-step-approved-${id}-${Number(voter.id)}-${Number(row.approval_epoch) || 0}`,
-      });
-    }
-    return Number(rows[0].user_id);
-  } catch (err) {
-    log.warn('homeroom-bot-dm', 'Could not announce a vote on the bot\'s change', { sessionId: id, err: err.message });
-    return null;
-  }
+  if (!Number.isInteger(id) || id <= 0 || !Number(voterId)) return null;
+  const { rows } = await pool.query(
+    `SELECT q.user_id, r.issue_number, a.id AS app_id, a.slug, a.name
+       FROM homeroom_bot_runs r
+       JOIN homeroom_bot_requesters q ON q.app_id = r.app_id AND q.issue_number = r.issue_number
+       JOIN apps a ON a.id = r.app_id
+      WHERE r.proposal_session_id = $1
+      ORDER BY r.id DESC LIMIT 1`,
+    [id],
+  );
+  const row = rows[0];
+  if (!row) return null;
+  const mine = Number(voterId) === Number(row.user_id);
+  if (!mine && !voter) return null;
+  // Said only while the yes stands: a retraction (or a new epoch) since it
+  // was owed says nothing.
+  const { rows: [stands] } = await pool.query(
+    `SELECT 1 FROM pr_votes WHERE session_id = $1 AND user_id = $2 AND vote = 'yes' AND approval_epoch = $3`,
+    [id, Number(voterId), Number(epoch) || 0],
+  );
+  if (!stands) return null;
+  return noteStep(pool, {
+    userId: Number(row.user_id), app: { id: row.app_id, slug: row.slug, name: row.name }, issueNumber: Number(row.issue_number),
+    step: 'approved', content: mine ? 'You approved it.' : `@${voter} approved it.`,
+    key: `hrbot-step-approved-${id}-${Number(voterId)}-${Number(epoch) || 0}`, strict: true,
+  });
 }
 
 /**
@@ -3836,7 +3955,7 @@ async function postOnProposal(pool, {
 
 // ── A No vote's line, on one of its own changes (#3977) ──────────────────
 //
-// A No comes with a line (#1688), and on a change the bot built that line
+// A No may come with a line (#1688), and on a change the bot built that line
 // is what it should fix. It used to stop at the vote row in the change's
 // discussion, a system row the bot neither wakes on nor reads (its
 // follow-up reads people's messages there, homeroom-bot.js runFollowUp).
@@ -4527,14 +4646,14 @@ const READY_MADE_PROMPTS = Object.freeze(['What can I ask for?', 'How do I invit
 /**
  * Pure: the hello a maker hears with a ready-made app: the maker's hello,
  * the project's name as a line of its own (Messages draws it as the
- * project's card, as with a described project's), and that it works as it
- * is ("It": the card above names it), with `example` as the change to ask
- * for when the starter has one.
+ * project's card, as with a described project's), and what to ask for, with
+ * `example` as the change when the starter has one. It no longer opens "It
+ * works as it is." (Evan, sign-up test, 20 Oct 2026: it read as random).
  */
 function readyMadeHello(appName, example = null) {
   const name = appName || 'Your app';
   const ask = example ? `Ask me here for changes, like “${example}”.` : 'Ask me here for any change you\'d like.';
-  return `${MAKER_HELLO}\n\n**${name}**\n\nIt works as it is. ${ask}`;
+  return `${MAKER_HELLO}\n\n**${name}**\n\n${ask}`;
 }
 
 /**
@@ -4849,7 +4968,7 @@ function firstVersionStartedText({ name, hello = false, earlyPlan = false, off =
 /**
  * A project was just created with a description (routes/apps.js): what the
  * create dialog asks as "What should it do?". Recorded, so it is filed as
- * the project's first request once its repository is made (FILEABLE_SQL),
+ * the project's first request once its repository is made (app-creation),
  * under its creator's name. When the creator is somebody the bot talks to
  * in a DM, the bot builds that first version and the person is told in their
  * DM; for anybody else the request is filed and left to the group, with no
@@ -4860,6 +4979,26 @@ function firstVersionStartedText({ name, hello = false, earlyPlan = false, off =
 // (routes/apps.js MAKE_ORIGINS), so its plan is written now, while the
 // project is set up, for its maker to answer there
 // (services/first-version-plan.js).
+// The first request owed, written in the route's transaction (`db`) with
+// the project, so its making (src/workflow/app-creation/) finds it once its
+// setup ends. startFirstVersion, after the commit, says so.
+async function recordFirstVersion(db, pool, config, { app, user, brief }) {
+  const text = normalizeBrief(brief);
+  if (!text || !app?.id || !user?.id) return false;
+  // Read on the caller's transaction connection, never another from the pool
+  // while it holds one (a full pool would wait on itself).
+  const settings = await settingsModule().readSettings(db);
+  const botBuilds = hasBot(settings, user);
+  const { rows } = await db.query(
+    `INSERT INTO homeroom_bot_first_versions (app_id, user_id, brief, bot_builds)
+     VALUES ($1, $2, $3, $4)
+     ON CONFLICT (app_id) DO NOTHING
+     RETURNING app_id`,
+    [app.id, user.id, text, botBuilds],
+  );
+  return rows.length > 0;
+}
+
 async function startFirstVersion(pool, config, { app, user, brief, earlyPlan = false }) {
   const text = normalizeBrief(brief);
   if (!text || !app?.id || !user?.id) return null;
@@ -4980,47 +5119,46 @@ function firstVersionIssue({ name, username, brief, botBuilds = true, card = nul
 // Newcomer run nine (15 Oct 2026): Submit to the first version's spec took
 // 40 s, 18 of them waiting for the starter app to be built, deployed and
 // answering before its request was filed, though the request needs only the
-// repository. A project is filed for as soon as its repository holds the
-// starter (app-creator.js writes repo_url only after that push) and the card
-// its request names is settled: committed with that first push (or no card,
-// or one that failed), never one still being drawn (a pending row younger
-// than app-sketch.js STALE_PENDING_MS) or not yet committed, which the late
-// commit (app-sketch.js commitWhenReady) is still to push. Once it runs,
-// nothing is waited for, as before. Never a project whose creation failed:
-// its Retry files it once it is being set up again. The bot's build waits
-// for the project to run before it is proposed (homeroom-bot.js
+// repository. A project's first request is filed by its making
+// (src/workflow/app-creation/): once its setup has made the repository with
+// the starter and its card, beside its first deploy. Never a project whose
+// creation failed: its Retry files it once it is set up again. The bot's
+// build waits for the project to run before it is proposed (homeroom-bot.js
 // projectSetUpStop): its preview copies the project's database and its merge
 // deploys over the project's container.
-// `a` is the project's row.
-const FILEABLE_SQL = `a.repo_url IS NOT NULL AND (
-         a.status = 'running'
-         OR (a.status = 'creating' AND NOT EXISTS (
-           SELECT 1 FROM app_sketches s
-            WHERE s.app_id = a.id AND s.committed_at IS NULL
-              AND ((s.status = 'ready' AND s.design->>'kind' = 'card')
-                OR (s.status = 'pending' AND s.created_at > NOW() - INTERVAL '3 minutes')))))`;
+
+// What a first request's GitHub issue carries so a filing cut between
+// GitHub's answer and its record finds it rather than filing a second.
+const firstRequestMarker = (appId) => `<!-- homeroom-first-version:app-${appId} -->`;
+
+// The claim: a waiting row, or one left filing (this work's own try that
+// stopped before it kept its claim). Its making's work item is the only
+// filer of a project, so nothing else can be filing it.
+const CLAIM_SQL = `UPDATE homeroom_bot_first_versions f SET status = 'filing', attempts = f.attempts + 1
+   WHERE f.app_id = $1 AND f.status IN ('waiting', 'filing')`;
 
 /**
- * File one project's first request, once its repository holds the starter
- * (FILEABLE_SQL): a GitHub issue under the creator's name and the platform's
+ * File one project's first request (app-creation's `app.firstRequest`
+ * work, once): a GitHub issue under the creator's name and the platform's
  * issue row. When the bot builds it, the creator is recorded as its
  * requester (so the bot's news reaches their DM) and the bot is woken for
- * it; otherwise nothing of the bot's is touched. Claimed by a status flip,
- * so two Pods (or the creation hooks and the sweep) file it once.
+ * it; otherwise nothing of the bot's is touched. Each part is a step of the
+ * work (`steps`): the issue is asked for once, and a try that resumes after
+ * GitHub answered looks for it (its marker) before asking again. A failure
+ * throws while tries are left; the last one (`last`) is recorded and told
+ * to the maker. Resolves what it did.
  */
-async function fileFirstVersion(pool, config, appId, deps = {}) {
-  if (isStaging() && !deps.allowStaging) return null;
-  const { rows: claimed } = await pool.query(
-    `UPDATE homeroom_bot_first_versions f
-        SET status = 'filing', attempts = f.attempts + 1
-       FROM apps a
-      WHERE f.app_id = $1 AND a.id = f.app_id AND f.status = 'waiting'
-        AND ${FILEABLE_SQL}
-      RETURNING f.app_id, f.user_id, f.brief, f.attempts, f.bot_builds, a.slug, a.name, a.repo_url`,
+async function fileFirstRequest(pool, config, appId, { steps, last = false, deps = {} } = {}) {
+  if (isStaging() && !deps.allowStaging) return { skipped: 'staging' };
+  const { rows: [row] } = await pool.query(
+    `SELECT f.app_id, f.user_id, f.brief, f.bot_builds, f.status, a.slug, a.name, a.repo_url
+       FROM homeroom_bot_first_versions f JOIN apps a ON a.id = f.app_id
+      WHERE f.app_id = $1`,
     [appId],
   );
-  const row = claimed[0];
-  if (!row) return null;
+  // Filed, unless this work filed it and stopped before saying so (its
+  // `record` step kept, its `announce` not): then it says so now.
+  if (!row || row.status === 'failed' || (row.status === 'filed' && !steps.has('record'))) return { skipped: row ? row.status : 'none' };
   const github = deps.github || require('./github');
   const ws = deps.ws || require('./ws');
   const { rows: people } = await pool.query('SELECT username FROM users WHERE id = $1', [row.user_id]);
@@ -5033,56 +5171,99 @@ async function fileFirstVersion(pool, config, appId, deps = {}) {
   const card = cardRow ? { ...cardRow, committed: !!sketchRow.committed_at } : null;
   const { title, body } = firstVersionIssue({ name, username, brief: row.brief, botBuilds, card });
   try {
-    const parsed = (typeof github.parseGithubUrl === 'function' && github.parseGithubUrl(row.repo_url))
+    // Claimed once, from waiting, or from a filing this work's own try left.
+    await steps.once('claim', async () => {
+      const { rowCount } = await pool.query(CLAIM_SQL, [appId]);
+      if (rowCount) return true;
+      const { rows: [now] } = await pool.query('SELECT status FROM homeroom_bot_first_versions WHERE app_id = $1', [appId]);
+      throw Object.assign(new Error(`it is ${now?.status ?? 'gone'}`), { settled: now?.status ?? 'none' });
+    });
+    const parsed = (typeof github.parseGithubUrl === 'function' && row.repo_url && github.parseGithubUrl(row.repo_url))
       || (() => {
-        const m = String(row.repo_url).match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/);
+        const m = String(row.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/);
         return m ? { owner: m[1], repo: m[2] } : null;
       })();
     if (!parsed || !github.isEnabled()) throw new Error('github_unavailable');
-    const created = await github.createIssue(parsed.owner, parsed.repo, {
-      title, body: typeof github.safeMention === 'function' ? github.safeMention(body) : body,
+    const marker = firstRequestMarker(appId);
+    const issueNumber = await steps.once('issue', async () => {
+      // Asked before, by a try that stopped before it kept the answer: the
+      // issue is there if GitHub made it.
+      if (steps.get('asked')) {
+        const found = await github.findIssueByMarker(parsed.owner, parsed.repo, marker);
+        if (found) return found.number;
+      }
+      await steps.set('asked', true);
+      const filedBody = `${typeof github.safeMention === 'function' ? github.safeMention(body) : body}\n\n${marker}`;
+      const created = await github.createIssue(parsed.owner, parsed.repo, { title, body: filedBody });
+      const number = Number(created?.number);
+      if (!Number.isInteger(number) || number <= 0) throw new Error('invalid issue number');
+      try { github.noteIssueCreated?.(parsed.owner, parsed.repo, created); } catch {}
+      return number;
     });
-    const issueNumber = Number(created?.number);
-    if (!Number.isInteger(issueNumber) || issueNumber <= 0) throw new Error('invalid issue number');
-    try { github.noteIssueCreated?.(parsed.owner, parsed.repo, created); } catch {}
-    const { rows: issueRows } = await pool.query(
-      `INSERT INTO issues (app_id, github_issue_number, title, description, kind, payload, created_by)
-       VALUES ($1, $2, $3, $4, 'general', '{}', $5) RETURNING id`,
-      [row.app_id, issueNumber, title, body, row.user_id],
-    );
-    if (botBuilds) {
-      await pool.query(
-        `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title, first_version, asked_text)
-         VALUES ($1, $2, $3, $4, TRUE, $5)
-         ON CONFLICT (app_id, issue_number) DO UPDATE SET user_id = EXCLUDED.user_id, first_version = TRUE,
-           asked_text = COALESCE(homeroom_bot_requesters.asked_text, EXCLUDED.asked_text)`,
-        // B4: the brief they wrote is what they asked for.
-        [row.app_id, issueNumber, row.user_id, title, clip(row.brief, 2000) || null],
-      );
-    }
-    await pool.query(
-      `UPDATE homeroom_bot_first_versions SET status = 'filed', issue_number = $2, filed_at = NOW(), error = NULL
-        WHERE app_id = $1`,
-      [row.app_id, issueNumber],
-    );
-    await ws.sendSystemMessage(pool, row.app_id, `${username} created issue: "${title}" (#${issueNumber})`,
-      'system', null, { type: 'issue', ref: issueNumber }).catch(() => {});
-    ws.pushIssueUpdate({ action: 'created', appSlug: row.slug, appId: row.app_id, issueId: issueRows[0]?.id, kind: 'general' });
-    // #3952: the people the creator's description names with @. Never rejects.
-    (deps.notifications || require('./notifications')).notifyIssueMentions?.(pool, {
-      appId: row.app_id, issueNumber, authorId: row.user_id, text: `${title}\n\n${body}`,
+    const issueId = await steps.once('record', async () => {
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        // A try that committed this and stopped before it kept the step
+        // finds its own row.
+        const { rows: had } = await client.query(
+          'SELECT id FROM issues WHERE app_id = $1 AND github_issue_number = $2 ORDER BY id LIMIT 1', [row.app_id, issueNumber]);
+        const { rows: issueRows } = had.length ? { rows: had } : await client.query(
+          `INSERT INTO issues (app_id, github_issue_number, title, description, kind, payload, created_by)
+           VALUES ($1, $2, $3, $4, 'general', '{}', $5) RETURNING id`,
+          [row.app_id, issueNumber, title, body, row.user_id],
+        );
+        if (botBuilds) {
+          await client.query(
+            `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title, first_version, asked_text)
+             VALUES ($1, $2, $3, $4, TRUE, $5)
+             ON CONFLICT (app_id, issue_number) DO UPDATE SET user_id = EXCLUDED.user_id, first_version = TRUE,
+               asked_text = COALESCE(homeroom_bot_requesters.asked_text, EXCLUDED.asked_text)`,
+            // B4: the brief they wrote is what they asked for.
+            [row.app_id, issueNumber, row.user_id, title, clip(row.brief, 2000) || null],
+          );
+        }
+        await client.query(
+          `UPDATE homeroom_bot_first_versions SET status = 'filed', issue_number = $2, filed_at = NOW(), error = NULL
+            WHERE app_id = $1`,
+          [row.app_id, issueNumber],
+        );
+        await client.query('COMMIT');
+        return issueRows[0]?.id ?? null;
+      } catch (err) {
+        await client.query('ROLLBACK').catch(() => {});
+        throw err;
+      } finally {
+        client.release();
+      }
     });
-    if (botBuilds) settingsModule().noteIssueActivity({ appId: row.app_id, issueNumber, reason: 'first_version' });
+    await steps.once('announce', async () => {
+      await ws.sendSystemMessage(pool, row.app_id, `${username} created issue: "${title}" (#${issueNumber})`,
+        'system', null, { type: 'issue', ref: issueNumber }).catch(() => {});
+      ws.pushIssueUpdate({ action: 'created', appSlug: row.slug, appId: row.app_id, issueId, kind: 'general' });
+      // #3952: the people the creator's description names with @. Never rejects.
+      (deps.notifications || require('./notifications')).notifyIssueMentions?.(pool, {
+        appId: row.app_id, issueNumber, authorId: row.user_id, text: `${title}\n\n${body}`,
+      });
+      if (botBuilds) settingsModule().noteIssueActivity({ appId: row.app_id, issueNumber, reason: 'first_version' });
+      return true;
+    });
     log.info('homeroom-bot-dm', 'Filed a first version', { app: row.slug, issueNumber, userId: row.user_id, botBuilds });
     return { issueNumber };
   } catch (err) {
-    const final = row.attempts >= MAX_FILE_ATTEMPTS;
+    if (steps.stopped) throw err;
+    // Another process filed it, or gave it up, meanwhile: its outcome is
+    // its own to tell.
+    if (err.settled) return { skipped: err.settled };
+    // Held while this work tries again (its claim is kept), given up on its
+    // last try.
     await pool.query(
-      `UPDATE homeroom_bot_first_versions SET status = $2, error = $3 WHERE app_id = $1`,
-      [row.app_id, final ? 'failed' : 'waiting', clip(err.message, 300)],
+      `UPDATE homeroom_bot_first_versions SET status = $2, error = $3 WHERE app_id = $1 AND status <> 'filed'`,
+      [row.app_id, last ? 'failed' : 'filing', clip(err.message, 300)],
     ).catch(() => {});
-    log.warn('homeroom-bot-dm', 'Could not file a first version', { app: row.slug, err: err.message, final });
-    if (final && botBuilds) {
+    log.warn('homeroom-bot-dm', 'Could not file a first version', { app: row.slug, err: err.message, final: last });
+    if (!last) throw err;
+    if (botBuilds) {
       const bot = await botAccount(pool);
       if (bot) {
         await sendDm(pool, {
@@ -5093,36 +5274,8 @@ async function fileFirstVersion(pool, config, appId, deps = {}) {
         }).catch(() => null);
       }
     }
-    return null;
+    return { failed: clip(err.message, 300) };
   }
-}
-
-/**
- * Every project waiting for its first request that can be filed for now
- * (FILEABLE_SQL: its repository holds the starter, while it is set up or
- * once it runs), the bot's or not. The bot's loop runs it before its
- * refresh, and the leader runs it on its own timer (server.js), so a request
- * the creation hooks missed is filed whether or not the bot is on.
- */
-async function sweepFirstVersions(pool, config, deps = {}) {
-  if (isStaging() && !deps.allowStaging) return 0;
-  // A filing a restart interrupted is tried again, within its attempts.
-  await pool.query(
-    `UPDATE homeroom_bot_first_versions SET status = 'waiting'
-      WHERE status = 'filing' AND attempts < $1 AND created_at < NOW() - INTERVAL '30 minutes'`,
-    [MAX_FILE_ATTEMPTS],
-  );
-  const { rows } = await pool.query(
-    `SELECT f.app_id FROM homeroom_bot_first_versions f JOIN apps a ON a.id = f.app_id
-      WHERE f.status = 'waiting' AND ${FILEABLE_SQL}
-      ORDER BY f.created_at
-      LIMIT 20`,
-  );
-  let filed = 0;
-  for (const r of rows) {
-    if (await fileFirstVersion(pool, config, r.app_id, deps).catch(() => null)) filed += 1;
-  }
-  return filed;
 }
 
 /**
@@ -5246,6 +5399,35 @@ async function firstVersionApproval(pool, sessionId, viewerId = null) {
  */
 async function firstVersionState(pool, appId, deps = {}) {
   if (!appId) return null;
+  const rows = await firstVersionRows(pool, [appId]);
+  return firstVersionStateOf(pool, rows.get(Number(appId)), deps);
+}
+
+/**
+ * firstVersionState for every one of `appIds`, for a list of them (GET
+ * /api/apps's tiles): Map(appId -> state), with no entry where it is null.
+ * One query reads every app's record. Only the few still building go on to
+ * read their progress, and they do it one after another, never one query
+ * per app at once: the list ran them in parallel, and one load checked out
+ * a connection per app, which held the web's whole pool (22 Oct 2026). Most
+ * records it reads are long merged and end at the first gate.
+ */
+async function firstVersionStates(pool, appIds, deps = {}) {
+  const states = new Map();
+  const rows = await firstVersionRows(pool, appIds);
+  for (const [appId, row] of rows) {
+    const state = await firstVersionStateOf(pool, row, deps);
+    if (state) states.set(appId, state);
+  }
+  return states;
+}
+
+// The first-version record of each of `appIds` the bot builds, with what
+// firstVersionStateOf needs from its app, maker and proposals: Map(appId ->
+// row), one query for them all.
+async function firstVersionRows(pool, appIds) {
+  const ids = [...new Set(appIds.map(Number).filter((id) => Number.isInteger(id) && id > 0))];
+  if (!ids.length) return new Map();
   const { rows } = await pool.query(
     `SELECT f.app_id, f.user_id, f.status, f.issue_number, f.created_at,
             f.early_plan, f.early_plan_status, f.answers, f.answered_at,
@@ -5268,11 +5450,14 @@ async function firstVersionState(pool, appId, deps = {}) {
        FROM homeroom_bot_first_versions f
        JOIN apps a ON a.id = f.app_id
        LEFT JOIN users u ON u.id = f.user_id
-      WHERE f.app_id = $1 AND f.bot_builds = TRUE`,
-    [appId, BOT_USERNAME],
+      WHERE f.app_id = ANY($1::int[]) AND f.bot_builds = TRUE`,
+    [ids, BOT_USERNAME],
   );
-  const row = rows[0];
-  if (!row || !['waiting', 'filing', 'filed'].includes(row.status) || row.merged) return null;
+  return new Map(rows.map((row) => [Number(row.app_id), row]));
+}
+
+async function firstVersionStateOf(pool, row, deps = {}) {
+  if (!row ||!['waiting', 'filing', 'filed'].includes(row.status) || row.merged) return null;
   const progress = deps.progress || require('./homeroom-bot-progress');
   const fvPlan = require('./first-version-plan');
   const forCreator = deps.viewerId != null && Number(deps.viewerId) === Number(row.user_id);
@@ -5612,6 +5797,7 @@ module.exports = {
   readyActions,
   noteApproversReady,
   noteApproved,
+  noteApprovalWithdrawn,
   goesLiveAfterYes,
   usernamesOf,
   // 5 October: a ready card read as it stands now, and the live news's way in.
@@ -5619,7 +5805,7 @@ module.exports = {
   MAX_READY_APPROVALS,
   readyStateOf,
   readyStates,
-  noteVoted,
+  sayApproved,
   openAppAction,
   firstLiveActions,
   // B6: a first version's plan.
@@ -5684,10 +5870,11 @@ module.exports = {
   startFirstVersion,
   firstVersionNotify,
   setFirstVersionNotify,
-  fileFirstVersion,
-  sweepFirstVersions,
+  fileFirstRequest,
+  recordFirstVersion,
   firstVersionApproval,
   firstVersionState,
+  firstVersionStates,
   suggestShortDescription,
   firstSentence,
 };

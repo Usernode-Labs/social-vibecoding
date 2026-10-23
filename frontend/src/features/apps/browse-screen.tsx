@@ -18,23 +18,22 @@
 //   `showClear` — was a classList.toggle on #browse-search-clear.
 //
 // #1383 added a fourth, `sort`: the directory's Sort control. It is the one
-// field the controller reads back out (#browse-sort-select is CONTROLLED off
+// field the controller reads back out (#browse-sort-select was CONTROLLED off
 // it, unlike the search field), and 'recommended' is its prerender value — the
 // remembered choice and the ?sort= override are resolved on screen entry, not
 // during render, because neither localStorage nor location.search exists in
-// the SSG pass.
+// the SSG pass. Sort lives in the Filters sheet now.
 //
 // The SEARCH FIELD stays uncontrolled: nothing re-renders its value, so the
 // caret cannot jump mid-word — the same property the old wire-once discipline
 // bought. Keystrokes go to Browse.setQuery, which still coalesces them on the
 // 100ms debounce the input listener used to own.
 //
-// The prototype's FILTER CHIPS (scrDiscover: All / Featured / Not joined / Joined / New)
-// ride the same bar, between the search and Sort. `filter` is the second
-// CONTROLLED store field beside `sort` — the pressed chip is drawn off it, so
-// it can never disagree with the rows — rendered from a copy of Browse.FILTERS
-// for the reason SORT_OPTIONS is a copy of Browse.SORTS. 'all' is its prerender
-// value; ?filter= and the session's choice apply on screen entry.
+// The prototype's FILTER CHIPS (scrDiscover) became the view switch and the
+// Filters sheet: `view`, `only` and `activeCount` are CONTROLLED store fields
+// beside `sort`, rendered from a copy of Browse.VIEWS for the reason the old
+// chip row was a copy of Browse.FILTERS. 'foryou', [] and 0 are their
+// prerender values; ?filter= and the session's choice apply on screen entry.
 //
 // INITIAL RENDER is the shipped shell exactly: #browse-list and #browse-empty
 // empty, #browse-empty and #browse-detail hidden, the search bar and
@@ -53,14 +52,22 @@
 import { useRef } from 'react';
 
 import { Chip, ChipRail } from '@/components/ui/chip';
-import { Label } from '@/components/ui/label';
-import { Select } from '@/components/ui/select';
-import { SearchIcon } from '@/components/ui/icons';
+import { FilterIcon, SearchIcon } from '@/components/ui/icons';
+import {
+  SECTION_TAB_ACTIVE,
+  SECTION_TAB_BASE,
+  SECTION_TAB_INACTIVE,
+  SECTION_TABS_LIST_BASE,
+  Tabs,
+  TabsList,
+  TabsTrigger,
+} from '@/components/ui/tabs';
 import { useMessages } from '../../lib/i18n/react';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import { useStoreState } from '../../lib/use-store-state';
 import { BrowseDetail } from './browse-detail';
 import { BrowseRows } from './browse-list';
+import { openBrowseFilterSheet } from './browse-filter-sheet';
 import { AppsLoadError } from './load-error';
 import { browseStore } from './mount';
 
@@ -72,41 +79,14 @@ function browse(): any {
   return (typeof window !== 'undefined' ? (window as any).Browse : null) || null;
 }
 
-// The five orders of the Sort control (#1383), as the <option> list.
-//
-// A COPY of Browse.SORTS rather than a read of it, and deliberately so:
-// ./browse.js publishes itself on `window.Browse`, which does not exist in the
-// SSG prerender pass, so reading the controller here would prerender an empty
-// <select> and hydrate a full one — a mismatch, and therefore a console.error
-// on a route that has a declared check. The controller stays the authority on
-// what a key MEANS (resolveSort, the comparators); this is only the labelling.
-// tests/browse-screen.test.js asserts the two lists never drift apart.
-const SORT_OPTIONS: Array<{ key: string; label: string }> = [
-  { key: 'recommended', label: 'discover:sort.recommended' },
-  { key: 'users', label: 'discover:sort.users' },
-  { key: 'active', label: 'discover:sort.active' },
-  { key: 'merged', label: 'discover:sort.merged' },
-  { key: 'new', label: 'discover:sort.newest' },
-];
-
-// The four filter chips — Browse.FILTERS, labelled. A COPY for the same reason
-// SORT_OPTIONS is one: the controller is not on `window` in the SSG pass, and
-// a chip row that prerendered empty and hydrated full would be a mismatch.
-// tests/browse-screen.test.js pins the two lists together.
-const FILTER_CHIPS: Array<{ key: string; label: string }> = [
-  { key: 'all', label: 'discover:filter.all' },
-  { key: 'featured', label: 'discover:filter.featured' },
-  { key: 'notjoined', label: 'discover:filter.notJoined' },
-  { key: 'yours', label: 'discover:filter.joined' },
-  { key: 'new', label: 'discover:filter.new' },
-];
-
-// The admin-only chips, Browse.ADMIN_FILTERS labelled (#5267), copied for the
-// same reason. They are drawn only once the store says the viewer is an admin
-// (`adminFilters`), which is never true in the prerender, so the shipped
-// markup holds the five chips above and hydration is silent.
-const ADMIN_FILTER_CHIPS: Array<{ key: string; label: string }> = [
-  { key: 'unreviewed', label: 'discover:filter.unreviewed' },
+// The three views of the switch — Browse.VIEWS, labelled. A COPY for the same
+// reason SORT_OPTIONS is one: the controller is not on `window` in the SSG
+// pass, and a switch that prerendered empty and hydrated full would be a
+// mismatch. tests/browse-screen.test.js pins the two lists together.
+const VIEW_TABS: Array<{ key: string; label: string }> = [
+  { key: 'foryou', label: 'discover:view.forYou' },
+  { key: 'browse', label: 'discover:view.browse' },
+  { key: 'joined', label: 'discover:filter.joined' },
 ];
 
 export function BrowseScreen() {
@@ -125,12 +105,23 @@ export function BrowseScreen() {
     showClear?: boolean;
     sort: string;
     filter: string;
+    view: string;
+    only: string[];
+    activeCount: number;
     curated: boolean;
     grouped: boolean;
     moreExpanded: boolean;
     adminFilters?: boolean;
+    categories?: Array<{ key: string; label: string }>;
+    category?: string;
   };
   const onDetail = state.level === 'detail';
+  const category = state.category || 'all';
+  // The page row leaves Other out unless it is the picked type: no chip
+  // pressed already means every type, so Other would be a second All. The
+  // Filters sheet lists it always.
+  const typeChips = (state.categories || [])
+    .filter((c) => c.key !== 'other' || category === 'other');
 
   // Escape clears the field and re-filters immediately — the debounce exists
   // to coalesce typing, and a deliberate clear is not typing.
@@ -224,78 +215,99 @@ export function BrowseScreen() {
           </button>
         </div>
         {/*
-            THE FILTER CHIPS (the prototype's scrDiscover): a chip picks WHICH
-            apps the list holds, Sort below orders them, and the search above
-            narrows them — see Browse.filterApps for what each chip admits.
-            The language's own filter chip (@/components/ui/chip): a toggle
-            with `aria-pressed`, selection drawn as the solid inversion, not
-            the accent. `bar` is its size for a control row; `px-4` (over the
-            primitive's `px-6`, through cn's twMerge) keeps all four on one
-            line at 390px where they fit, and the rail scrolls rather than
-            wrapping when they do not (five chips, six for an admin).
-        */}
-        <ChipRail
-          id="browse-filter-chips"
-          role="group"
-          aria-label={t('discover:filter.groupLabel')}
-          className="mt-2 max-w-xl gap-2 px-0 py-0"
-        >
-          {FILTER_CHIPS.map((f) => (
-            <Chip
-              key={f.key}
-              size="bar"
-              className="browse-filter-chip px-4"
-              selected={state.filter === f.key}
-              data-filter={f.key}
-              onClick={() => browse()?.setFilter(f.key)}
-            >
-              {t(f.label)}
-            </Chip>
-          ))}
-          {state.adminFilters ? ADMIN_FILTER_CHIPS.map((f) => (
-            <Chip
-              key={f.key}
-              size="bar"
-              className="browse-filter-chip px-4"
-              selected={state.filter === f.key}
-              data-filter={f.key}
-              data-admin-filter=""
-              onClick={() => browse()?.setFilter(f.key)}
-            >
-              {t(f.label)}
-            </Chip>
-          )) : null}
-        </ChipRail>
-        {/*
-            Sort (#1383). Rides the search bar rather than sitting in its own
-            strip: both narrow the same list, and one sticky row costs the
-            phone less of the fold than two would.
+            THE VIEW SWITCH. For you is the directory as it always was (the
+            Recommended order, grouped under "Recommended for you"); Browse is
+            every app as one flat list; Joined is the communities you are in.
+            It is the Leaderboard's segmented strip — @/components/ui/tabs'
+            SECTION_TAB_* — because a switch between three views of one list is
+            a tab strip, not a filter: the selected part says `aria-current`,
+            and the active/inactive class tables live in the primitive.
 
-            CONTROLLED, off the store — so a ?sort= deep link, the remembered
-            choice and a hand change all show the same value in the field, and
-            the field can never disagree with the rows below it. `w-auto`
-            overrides the cva's `w-full` through cn's twMerge (the control
-            should be as wide as its longest label, not as wide as the bar).
-
-            DRAWN AS THE CHIPS ARE (polish N12): the `plain` field's white,
-            in the chips' own box (a full radius, no border, 36px, their
-            15px medium type), so it reads as one more control of the row
-            above rather than a grey form field beside it.
+            Rendered from a COPY of Browse.VIEWS (VIEW_TABS) for the same
+            reason the old chip row was a copy: window.Browse does not exist in
+            the SSG prerender pass.
         */}
-        <div id="browse-sort-bar" className="mt-2 flex items-center gap-2 max-w-xl">
-          <Label htmlFor="browse-sort-select" className="shrink-0">{t('discover:sort.label')}</Label>
-          <Select
-            id="browse-sort-select"
-            variant="plain"
-            className="w-auto h-9 rounded-full border-0 bg-white dark:bg-zinc-900 px-4 py-0 text-[0.9375rem] font-medium text-zinc-900 dark:text-zinc-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500"
-            aria-label={t('discover:sort.selectLabel')}
-            value={state.sort}
-            onChange={(e) => browse()?.setSort(e.currentTarget.value)}
+        <Tabs value={state.view} onValueChange={(value) => browse()?.setView(value)}>
+          <TabsList
+            id="browse-view-switch"
+            role="group"
+            aria-label={t('discover:view.groupLabel')}
+            className={`${SECTION_TABS_LIST_BASE} mt-2 flex w-full max-w-xl`}
           >
-            {SORT_OPTIONS.map((o) => (
-              <option key={o.key} value={o.key}>{t(o.label)}</option>
+            {VIEW_TABS.map((v) => (
+              <TabsTrigger
+                key={v.key}
+                value={v.key}
+                data-view={v.key}
+                className={`${SECTION_TAB_BASE} flex-1`}
+                activeClassName={SECTION_TAB_ACTIVE}
+                inactiveClassName={SECTION_TAB_INACTIVE}
+              >
+                {t(v.label)}
+              </TabsTrigger>
             ))}
-          </Select>
+          </TabsList>
+        </Tabs>
+        {/*
+            THE TYPE ROW: the kinds of app the directory holds, read from each
+            project's own dapp.json `category`, then the Filters button. A type
+            chip narrows the list; tapping the pressed one goes back to every
+            type, which is why there is no "All types" chip. The row itself is
+            always drawn — the Filters button lives at its end and has to stay
+            reachable — while the rail appears only once the store lists a
+            type, which the prerender never does.
+
+            The Filters button counts the choices that differ from the
+            defaults (Browse.activeFilterCount) and opens the sheet. `px-4`
+            over the primitive's `px-6`, through cn's twMerge.
+        */}
+        <div id="browse-type-row" className="mt-2 flex items-center gap-2 max-w-xl">
+          {typeChips.length ? (
+            <ChipRail
+              id="browse-category-chips"
+              role="group"
+              aria-label={t('discover:category.groupLabel')}
+              className="min-w-0 flex-1 gap-2 px-0 py-0"
+            >
+              {typeChips.map((c) => (
+                <Chip
+                  key={c.key}
+                  size="bar"
+                  className="browse-category-chip px-4"
+                  selected={category === c.key}
+                  data-category={c.key}
+                  onClick={() => browse()?.setCategory(category === c.key ? 'all' : c.key)}
+                >
+                  {t(c.label)}
+                </Chip>
+              ))}
+            </ChipRail>
+          ) : null}
+          <Chip
+            id="browse-filters-btn"
+            size="bar"
+            className="browse-filters-btn shrink-0 gap-1.5 px-4"
+            aria-pressed={undefined}
+            aria-haspopup="dialog"
+            data-active-count={state.activeCount > 0 ? state.activeCount : undefined}
+            onClick={() => openBrowseFilterSheet()}
+          >
+            <FilterIcon className="h-4 w-4" aria-hidden="true" />
+            <span>{t('discover:filters.button')}</span>
+            {state.activeCount > 0 ? (
+              <>
+                <span
+                  aria-hidden="true"
+                  className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-violet-600 px-1 text-xs font-bold text-white"
+                >
+                  {state.activeCount}
+                </span>
+                <span className="sr-only">
+                  {t('discover:filters.activeCount', { count: state.activeCount })}
+                </span>
+              </>
+            ) : null}
+          </Chip>
         </div>
       </div>
       {/*
@@ -315,10 +327,11 @@ export function BrowseScreen() {
           id="browse-list"
           // The rendering anchor for the declared ?sort= checks: it names the
           // order the rows below were actually built with, which a screenshot
-          // of a <select> cannot be asserted on.
+          // of a control cannot be asserted on.
           data-sort={state.sort}
-          // The chip the rows were filtered with, beside the order: the
-          // declared check for the chips reads it for the same reason.
+          // The view, and the filter key derived from the switches beside it:
+          // the declared checks read them for the same reason.
+          data-view={state.view}
           data-filter={state.filter}
           // Phone: the BODY of the pane whose head is the search bar above
           // (#1919) — one frosted sheet holding the hairline-separated rows,

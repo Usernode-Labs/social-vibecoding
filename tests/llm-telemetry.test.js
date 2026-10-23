@@ -1094,7 +1094,8 @@ test('schema makes invocation event replay idempotent', () => {
 test('coding-agent component context is persisted for retry and restart attribution', () => {
   const workerSource = fs.readFileSync(path.join(__dirname, '../src/services/worker.js'), 'utf8');
   const sessionSource = fs.readFileSync(path.join(__dirname, '../src/routes/sessions.js'), 'utf8');
-  const serverSource = fs.readFileSync(path.join(__dirname, '../server.js'), 'utf8');
+  const serverSource = fs.readFileSync(path.join(__dirname, '../server.js'), 'utf8')
+    + fs.readFileSync(path.join(__dirname, '../src/services/turn-recovery.js'), 'utf8');
   for (const field of [
     'telemetryComponent', 'telemetryCorrelationId', 'telemetryAttemptNumber',
     'telemetryRequestMode', 'telemetryRequestTextCharacters',

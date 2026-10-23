@@ -24,7 +24,7 @@ import { NONE, defineMachine, ok, reject } from '../kernel/index.ts';
 import type { Check, Event, Json, MessageRequest, Outcome, Push, TransitionContext, WorkRequest, WorkResultPayload } from '../kernel/index.ts';
 import { toUser } from '../pushes.ts';
 import {
-  BOT_LANE, BOT_REQUEST, CHECKS_REASON, KEPT_WHILE_QUIET_REASONS, LANE_KEY, READ_AGAIN_REASON, RESTART_REASON,
+  BOT_LANE, BOT_REQUEST, CHECKS_REASON, KEPT_WHILE_QUIET_REASONS, LANE_KEY, READ_AGAIN_REASON,
   THROWN_HOLD_MS, THROWN_TRIES, backoffMs, lookCardKey, parseRequestKey, requestKey,
 } from '../rules/bot-loop.ts';
 import { BOT_CHANGE, botChangeKey } from '../rules/bot-notes.ts';
@@ -40,12 +40,10 @@ export const WORK = Object.freeze({
 });
 // The work kinds that run turns (a Stop's turn.stop ends one of these).
 const TURN_KINDS = [WORK.look];
-// How often a look an older release left is looked at again.
-export const OLDER_LOOK_MS = 60 * 1000;
 
 // ── State ───────────────────────────────────────────────────────────────
 
-type Name = 'idle' | 'queued' | 'reading' | 'following_up' | 'building' | 'older_turn';
+type Name = 'idle' | 'queued' | 'reading' | 'following_up' | 'building';
 // What a look is owed for (the queue row's columns).
 export interface Owed {
   reason: string;
@@ -95,8 +93,6 @@ export interface Data {
   lastRead: Json | null;
   // What a read stopped for a person's message spent, carried to the next.
   carried: Json | null;
-  // A look an older release claimed and may still run.
-  older: { claimedAt: string } | null;
 }
 export type RState = { name: Name; data: Data } | { name: typeof NONE; data: null };
 type Live = Extract<RState, { data: Data }>;
@@ -155,17 +151,10 @@ const EVENTS = {
   LookOn: (p: any) => ({ ...request(p), n: int(p?.n, 'n'), sessionId: int(p?.sessionId, 'sessionId') }),
   // A person's Stop of the bot's turn on a session (the session's routes).
   StopRequested: (p: any) => ({ sessionId: optInt(p?.sessionId), by: optText(p?.by, 100) }),
-  // The leader's boot: a queue row no instance holds (an older release's).
-  Adopted: (p: any) => ({
-    ...request(p), reason: optText(p?.reason, 40) || 'refresh', priority: Number.isInteger(p?.priority) ? p.priority as number : 2,
-    payer: optInt(p?.payer), requestedBy: optInt(p?.requestedBy), changedBy: optText(p?.changedBy, 40),
-    threadSeenAt: optTime(p?.threadSeenAt), enqueuedAt: optTime(p?.enqueuedAt), heldUntil: optTime(p?.heldUntil),
-    startedAt: optTime(p?.startedAt),
-  }),
-  // Its clock: a hold, a backoff or an older release's look to look at again.
+  // Its clock: a hold or a backoff.
   Due: () => ({}),
 };
-const CREATE = ['Owed', 'Activity', 'BuildOwed', 'FixAsked', 'Adopted'];
+const CREATE = ['Owed', 'Activity', 'BuildOwed', 'FixAsked'];
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 
@@ -177,7 +166,7 @@ const keyOf = (d: Data) => requestKey(d.appId, d.issueNumber);
 
 const created = (e: Event<any>): Data => ({
   appId: e.payload.appId, issueNumber: e.payload.issueNumber, owed: null, look: null, build: null, slot: null, n: 0,
-  backoff: null, fix: null, spentRetry: null, lastRead: null, carried: null, older: null,
+  backoff: null, fix: null, spentRetry: null, lastRead: null, carried: null,
 });
 const live = (s: RState, e: Event<any>): Data => (s.name === NONE ? created(e) : (s as Live).data);
 
@@ -260,7 +249,7 @@ function owed(s: RState, e: Event<any>, _f: Facts, ctx: TransitionContext): Outc
   const d = live(s, e);
   const p = e.payload;
   // A fix asked by bot-change is a debt like the rest, at its priority.
-  if (s.name === 'reading' || s.name === 'following_up' || s.name === 'older_turn' || s.name === 'building') {
+  if (s.name === 'reading' || s.name === 'following_up' || s.name === 'building') {
     // While a look runs or a build is owed, only a person's ask, an ask for
     // its change, or a fix waits for after it: the refresh's own finds are
     // read again by the next refresh, from what the look recorded.
@@ -470,7 +459,7 @@ function buildOwed(s: RState, e: Event<any>, _f: Facts, ctx: TransitionContext):
   if (d.build && d.build.runId === runId) return step(s.name === NONE ? 'building' : (s.name as Name), d);
   if (d.build && d.build.phase !== 'waiting') return step(s.name as Name, d);
   const build: Build = { runId, phase: 'waiting', since: iso(ctx), key: null };
-  if (LOOKING.has(s.name as string) || s.name === 'older_turn') return step(s.name as Name, { ...d, build });
+  if (LOOKING.has(s.name as string)) return step(s.name as Name, { ...d, build });
   return step('building', { ...d, build }, { timer: null, messages: [look(d)] });
 }
 
@@ -520,7 +509,7 @@ function fixAsked(s: RState, e: Event<any>, f: Facts, ctx: TransitionContext): O
     const o = merged(d.owed, debt, ctx);
     return queue({ ...d, owed: { ...o, heldUntil: null } }, ctx);
   }
-  if (LOOKING.has(s.name as string) || s.name === 'building' || s.name === 'older_turn') {
+  if (LOOKING.has(s.name as string) || s.name === 'building') {
     return step(s.name as Name, { ...d, owed: merged(d.owed, debt, ctx) });
   }
   return queue({ ...d, owed: merged(null, debt, ctx) }, ctx);
@@ -576,35 +565,12 @@ function stopRequested(s: Live, e: Event<any>, _f: Facts, ctx: TransitionContext
   return step(s.name, d);
 }
 
-function adopted(s: RState, e: Event<any>, _f: Facts, ctx: TransitionContext): Outcome<RState> {
-  if (s.name !== NONE) return step(s.name as Name, (s as Live).data);
-  const p = e.payload;
-  const d: Data = { ...created(e), owed: {
-    reason: p.reason, priority: p.priority, payer: p.payer, requestedBy: p.requestedBy, changedBy: p.changedBy,
-    threadSeenAt: p.threadSeenAt, enqueuedAt: p.enqueuedAt || iso(ctx), heldUntil: p.heldUntil,
-  } };
-  // Claimed by an older release: its look may still run (a draining Pod's),
-  // or have ended without its last word. Looked at until it is over.
-  if (p.startedAt) {
-    return step('older_turn', { ...d, older: { claimedAt: p.startedAt } }, { timer: { at: ctx.now, event: { type: 'Due' } } });
-  }
-  return queue(d, ctx);
-}
-
-function due(s: Live, _e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<RState> {
+function due(s: Live, _e: Event<any>, _f: Facts, ctx: TransitionContext): Outcome<RState> {
   const d = s.data;
   if (s.name === 'queued') return queue(d, ctx);
   // A build's hold ended: the lane looks again.
   if (s.name === 'building') return step('building', d, { timer: null, messages: [look(d)] });
-  if (s.name !== 'older_turn' || !d.older) return step(s.name, d, { timer: null });
-  if (f.olderBusy) return step('older_turn', d, { timer: { at: later(ctx, OLDER_LOOK_MS), event: { type: 'Due' } } });
-  // Over: the request is read again (quietly: a restart's reason says no
-  // "looking" twice). What that older look said, it said; what it did not
-  // say (its last write refused by this machine's guard), this read says.
-  // A person's ask that came meanwhile keeps its own reason (and its
-  // payer); one the refresh dropped meanwhile leaves nothing to read.
-  const owedNow = d.owed && d.owed.priority !== 0 ? { ...d.owed, reason: RESTART_REASON } : d.owed;
-  return rest({ ...d, older: null, owed: owedNow }, ctx);
+  return step(s.name, d, { timer: null });
 }
 
 function workDone(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<RState> {
@@ -641,13 +607,13 @@ export function botRequest(deps: Deps = { staging: false }) {
   const row = {
     Owed: any(owed), NotOwed: live(notOwed), Activity: any(activity), Granted: live(granted), BuildOwed: any(buildOwed),
     BuildEnded: live(buildEnded), FixAsked: any(fixAsked), RequestMerged: live(requestMerged), StopRequested: live(stopRequested),
-    LookOn: live(lookOn), Adopted: any(adopted), Due: live(due),
+    LookOn: live(lookOn), Due: live(due),
     WorkSucceeded: live(workDone), WorkFailed: live(workDone), WorkExhausted: live(workDone),
   };
-  const states: Name[] = ['idle', 'queued', 'reading', 'following_up', 'building', 'older_turn'];
+  const states: Name[] = ['idle', 'queued', 'reading', 'following_up', 'building'];
   const transitions: Record<string, Record<string, any>> = Object.fromEntries(states.map((n) => [n, row]));
   transitions[NONE] = {
-    Owed: any(owed), Activity: any(activity), BuildOwed: any(buildOwed), FixAsked: any(fixAsked), Adopted: any(adopted),
+    Owed: any(owed), Activity: any(activity), BuildOwed: any(buildOwed), FixAsked: any(fixAsked),
     NotOwed: { ignore: 'not_owed' }, Granted: { ignore: 'not_owed' }, BuildEnded: { ignore: 'not_building' },
     RequestMerged: { ignore: 'nothing_owed' }, StopRequested: { ignore: 'not_looking' }, LookOn: { ignore: 'not_looking' }, Due: { ignore: 'gone' },
     '*': { ignore: 'not_owed' },
@@ -661,13 +627,12 @@ export function botRequest(deps: Deps = { staging: false }) {
     facts: async (tx, s, e, ctx) => {
       const key = parseRequestKey(ctx.key);
       if (!key) return NO_FACTS;
-      const data = s.name === NONE ? null : (s as Live).data;
-      if (e.type !== 'FixAsked' && !(e.type === 'Due' && s.name === 'older_turn')) return NO_FACTS;
-      return readFacts(tx, { ...key, staging: deps.staging, older: data?.older ?? null, wantActing: e.type === 'FixAsked' });
+      if (e.type !== 'FixAsked') return NO_FACTS;
+      return readFacts(tx, { ...key, staging: deps.staging });
     },
     authorize: {
       Owed: anyProducer, NotOwed: anyProducer, Activity: anyProducer, Granted: fromLane, BuildOwed: anyProducer,
-      BuildEnded: fromBuild, FixAsked: fromChange, RequestMerged: anyProducer, Adopted: anyProducer, LookOn: anyProducer,
+      BuildEnded: fromBuild, FixAsked: fromChange, RequestMerged: anyProducer, LookOn: anyProducer,
       StopRequested: (e) => (['route', 'system', 'admin'].includes(e.source.kind) ? ok() : reject('not_a_producer')),
       Due: (e) => (e.source.kind === 'timer' ? ok() : reject('not_the_clock')),
     },
@@ -679,19 +644,19 @@ export function botRequest(deps: Deps = { staging: false }) {
       if (e.type !== 'Owed' || after.name === NONE) return undefined;
       const d = (after as Live).data;
       const queued = after.name === 'queued';
-      return { queued, looking: LOOKING.has(after.name) || after.name === 'older_turn',
+      return { queued, looking: LOOKING.has(after.name),
         jobKey: queued ? lookCardKey(d.appId, d.issueNumber, d.n + 1) : null };
     },
     project: async (tx, before, after) => {
       if (after.name === NONE) return;
       const d = (after as Live).data;
-      const looking = LOOKING.has(after.name) || after.name === 'older_turn';
+      const looking = LOOKING.has(after.name);
       const o = looking ? (d.look?.owed ?? d.owed) : d.owed;
       if (!o) {
         await tx.query('DELETE FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = $2', [d.appId, d.issueNumber]);
         return;
       }
-      const started = after.name === 'older_turn' ? d.older?.claimedAt ?? null : looking ? d.look?.startedAt ?? null : null;
+      const started = looking ? d.look?.startedAt ?? null : null;
       await tx.query(
         `INSERT INTO homeroom_bot_queue (app_id, issue_number, priority, reason, thread_seen_at, requested_by, enqueued_at,
                                          started_at, held_until, payer_user_id, changed_by, wait_reason, wait_until)

@@ -47,30 +47,45 @@ test('app-delivery machine against the full PostgreSQL schema', { timeout: 12000
   // ── Fixture ─────────────────────────────────────────────────────────
   let seq = 0;
   const { rows: [owner] } = await pool.query(`INSERT INTO users (username, password) VALUES ('owner', 'x') RETURNING id`);
-  async function app({ selfHosted = false, repo = true, status = 'running', mainSha = SHA('0') } = {}) {
+  async function app({ selfHosted = false, repo = true, status = 'running', mainSha = SHA('0'), runtime = null, lastFailure = null } = {}) {
     const slug = `delivery-app-${++seq}`;
     const { rows: [a] } = await pool.query(
-      `INSERT INTO apps (name, slug, created_by, self_hosted, repo_url, status, main_sha)
-       VALUES ($1, $1, $2, $3, $4, $5, $6) RETURNING *`,
-      [slug, owner.id, selfHosted, repo ? `https://github.com/acme/${slug}` : null, status, mainSha]);
+      `INSERT INTO apps (name, slug, created_by, self_hosted, repo_url, status, main_sha, runtime_kind, last_failure)
+       VALUES ($1, $1, $2, $3, $4, $5, $6, COALESCE($7, 'kubernetes'), $8) RETURNING *`,
+      [slug, owner.id, selfHosted, repo ? `https://github.com/acme/${slug}` : null, status, mainSha, runtime,
+        lastFailure ? JSON.stringify(lastFailure) : null]);
     return a;
   }
 
   // The deploy: each call answers what `next` says, in order.
   const deploys = { calls: [], next: [] };
-  const machine = appDelivery();
+  // The heal: each call answers what `next` says, in order.
+  const heals = { calls: [], next: [] };
+  const COOLDOWN_MS = 10 * 60 * 1000;
+  const machine = appDelivery({ healCooldownMs: COOLDOWN_MS, githubOn: () => true, runtimeMode: 'kubernetes' });
   const pushed = [];
   const rt = createRuntime({
     pool, machines: [machine], pollMs: 50, publish: async (q, list) => { pushed.push(...list); },
-    services: { [WORK.deploy]: {
-      maxAttempts: 2, backoffMs: () => 0,
-      async run({ input, key }) {
-        deploys.calls.push({ key, input });
-        const answer = deploys.next.shift() || { sha: SHA('a') };
-        if (answer.throw) throw Object.assign(new Error(answer.throw), answer.permanent ? { permanent: true } : {});
-        return answer;
+    services: {
+      [WORK.deploy]: {
+        maxAttempts: 2, backoffMs: () => 0,
+        async run({ input, key }) {
+          deploys.calls.push({ key, input });
+          const answer = deploys.next.shift() || { sha: SHA('a') };
+          if (answer.throw) throw Object.assign(new Error(answer.throw), answer.permanent ? { permanent: true } : {});
+          return answer;
+        },
       },
-    } },
+      [WORK.heal]: {
+        maxAttempts: 1,
+        async run({ input, key }) {
+          heals.calls.push({ key, input });
+          const answer = heals.next.shift() || { status: 'restarted' };
+          if (answer.throw) throw new Error(answer.throw);
+          return answer;
+        },
+      },
+    },
   });
   runtimes.push(rt);
 
@@ -82,13 +97,43 @@ test('app-delivery machine against the full PostgreSQL schema', { timeout: 12000
       source: from ? { kind: 'message', from: { ...from, eventId: 1 } } : { kind: 'system', name: reason } });
   const settle = async () => { await rt.drain(); while (await rt.runServices()) await rt.drain(); };
   const inst = async (a) => (await pool.query('SELECT * FROM wf_instances WHERE machine = $1 AND key = $2', [MACHINE, appKey(a.id)])).rows[0];
+  const instDeadline = async (a) => (await inst(a)).deadline_at;
   const row = async (a) => (await pool.query('SELECT * FROM apps WHERE id = $1', [a.id])).rows[0];
   // What app-delivery said to other machines.
   const told = async (machineName, key) => (await pool.query(
     `SELECT type, payload FROM wf_events WHERE machine = $1 AND key = $2 AND source->>'kind' = 'message' ORDER BY id`,
     [machineName, key])).rows;
   const statusPushes = (a) => pushed.filter((p) => p.data.type === 'app_redeploy_status' && p.data.appSlug === a.slug);
-  const reset = () => { deploys.calls.length = 0; deploys.next.length = 0; pushed.length = 0; };
+  const reset = () => {
+    deploys.calls.length = 0; deploys.next.length = 0; heals.calls.length = 0; heals.next.length = 0; pushed.length = 0;
+  };
+  // A report from the app-health clock (keyed by its run) or the error page.
+  const report = (a, type, payload = {}, key = `t-${++rk}`) => rt.append(machine, appKey(a.id),
+    { type, payload: { appId: a.id, ...payload } }, { requestKey: key, appId: a.id, source: { kind: 'system', name: 'test' } });
+  const moved = (a, sha, { byHand = false, key = `drift:${a.id}:${sha}` } = {}) => rt.append(machine, appKey(a.id),
+    { type: 'MainMoved', payload: { appId: a.id, sha, byHand } }, { requestKey: key, appId: a.id, source: { kind: 'system', name: 'drift' } });
+  const outcomeOf = async (id) => (await pool.query('SELECT result, reason FROM wf_events WHERE id = $1', [id])).rows[0];
+  // The instance's data rewritten, as an older transition would have left it.
+  const shiftData = async (a, fn) => {
+    const c = await pool.connect();
+    try {
+      await c.query(`BEGIN; SET LOCAL app.wf_writer = 'transition'`);
+      const { rows: [i] } = await c.query('SELECT data FROM wf_instances WHERE machine = $1 AND key = $2', [MACHINE, appKey(a.id)]);
+      await c.query('UPDATE wf_instances SET data = $3 WHERE machine = $1 AND key = $2', [MACHINE, appKey(a.id), JSON.stringify(fn(i.data))]);
+      await c.query('COMMIT');
+    } finally { c.release(); }
+  };
+  const ago = (ms) => new Date(Date.now() - ms).toISOString();
+  const receipts = async (key) => Number((await pool.query('SELECT count(*) AS n FROM wf_receipts WHERE machine = $1 AND request_key = $2', [MACHINE, key])).rows[0].n);
+  const workStatus = async (a, key) => (await pool.query('SELECT status FROM wf_work WHERE machine = $1 AND key = $2 AND work_key = $3', [MACHINE, appKey(a.id), key])).rows[0]?.status;
+  const dueNow = async (a) => {
+    const c = await pool.connect();
+    try {
+      await c.query(`BEGIN; SET LOCAL app.wf_writer = 'transition'`);
+      await c.query('UPDATE wf_instances SET deadline_at = now() WHERE machine = $1 AND key = $2', [MACHINE, appKey(a.id)]);
+      await c.query('COMMIT');
+    } finally { c.release(); }
+  };
 
   await t.test('a request starts a deploy, and the row says it is deploying, durably', async () => {
     reset();
@@ -101,7 +146,7 @@ test('app-delivery machine against the full PostgreSQL schema', { timeout: 12000
     assert.equal(r.deploy_state, 'deploying', 'every process, and one after a restart, reads it');
     assert.equal(r.deploy_from_sha, SHA('0'));
     assert.ok(r.deploy_started_at);
-    assert.deepEqual(statusPushes(a).map((p) => [p.kind, p.data.deploying]), [['global', true]]);
+    assert.deepEqual(statusPushes(a).map((p) => [p.kind, p.routing, p.data.deploying]), [['scoped', { appSlug: a.slug }, true]]);
     await settle();
     assert.equal((await inst(a)).state, 'idle');
     assert.equal((await row(a)).deploy_state, null);
@@ -337,12 +382,328 @@ test('app-delivery machine against the full PostgreSQL schema', { timeout: 12000
     assert.equal((await inst(a)).state, 'idle');
     assert.equal((await row(a)).deploy_state, null);
     assert.deepEqual((await told('merge-followups', 'session:91')).map((m) => m.type), ['DeliveryFailed']);
-    await settle();   // the deploy it ended still runs, and answers
-    assert.equal((await inst(a)).state, 'idle', 'its result belongs to no deploy now');
+    assert.equal(await workStatus(a, 'deploy:1'), 'settled', 'its work is cancelled');
+    await settle();
+    assert.equal(deploys.calls.length, 0, 'never run');
+    assert.equal((await inst(a)).state, 'idle');
     const forged = await rt.append(machine, appKey(a.id), { type: 'EndDeploy', payload: {} },
       { requestKey: `t-${++rk}`, appId: a.id, source: { kind: 'system' } });
     await rt.drain();
     assert.equal((await pool.query('SELECT reason FROM wf_events WHERE id = $1', [forged])).rows[0].reason, 'admin_only');
+  });
+
+  // ── Health ────────────────────────────────────────────────────────────
+
+  await t.test('H1: an app reported down is healed once, as the machine\'s work, and not again inside its backoff', async () => {
+    reset();
+    const a = await app();
+    await report(a, 'Unhealthy', { state: 'stopped' });
+    await rt.drain();
+    assert.equal((await inst(a)).state, 'healing');
+    await report(a, 'Unhealthy', { state: 'stopped' });
+    await report(a, 'Unreachable');
+    await settle();
+    assert.deepEqual(heals.calls.map((c) => c.key), ['heal:1'], 'one heal, however many reports');
+    assert.equal(heals.calls[0].input.probe, false);
+    assert.equal((await inst(a)).state, 'idle');
+    // Down again at once: its backoff runs, nothing is healed, and the
+    // report is refused, keeping nothing (a dead app is reported every
+    // minute for days).
+    const held = await report(a, 'Unhealthy', { state: 'stopped' }, 'in-backoff');
+    await settle();
+    assert.equal(heals.calls.length, 1, 'a heal right after a heal waits for its backoff');
+    assert.deepEqual(await outcomeOf(held), { result: 'rejected', reason: 'backoff' });
+    assert.equal(await receipts('in-backoff'), 0);
+    // The backoff over (the last heal 11 minutes ago): healed again, the
+    // second in a row, so the next backoff is twice as long.
+    await shiftData(a, (d) => ({ ...d, heal: { ...d.heal, at: ago(11 * 60 * 1000) } }));
+    await report(a, 'Unreachable');
+    await settle();
+    assert.deepEqual(heals.calls.map((c) => c.key), ['heal:1', 'heal:2']);
+    assert.equal(heals.calls[1].input.probe, true, 'a person could not reach it: probed first');
+    assert.equal((await inst(a)).data.heal.streak, 2);
+    await shiftData(a, (d) => ({ ...d, heal: { ...d.heal, at: ago(11 * 60 * 1000) } }));
+    await report(a, 'Unhealthy', { state: 'stopped' });
+    await settle();
+    assert.equal(heals.calls.length, 2, 'the second backoff is twenty minutes');
+  });
+
+  await t.test('H2: a heal that needs a deploy gets one; a report during a deploy is ignored; a failed heal deploy is not retried', async () => {
+    reset();
+    const a = await app();
+    heals.next.push({ status: 'needs_deploy' });
+    deploys.next.push({ throw: 'build broke', permanent: true });
+    await report(a, 'Unhealthy', { state: 'not_found' });
+    await rt.drain();
+    await rt.runServices();   // the heal
+    await rt.drain();
+    assert.equal((await inst(a)).state, 'deploying');
+    assert.deepEqual((await inst(a)).data.requests.map((r) => r.reason), ['heal']);
+    const during = await report(a, 'Unhealthy', { state: 'not_found' });
+    await rt.drain();
+    assert.equal((await outcomeOf(during)).reason, 'deploying', 'the deploy replaces the runtime');
+    await settle();
+    assert.equal((await inst(a)).state, 'idle');
+    assert.deepEqual((await inst(a)).data.requests, [], 'nobody to tell: the heal backoff asks again');
+    assert.equal((await instDeadline(a)), null, 'no retry deadline for a heal');
+  });
+
+  await t.test('H3: a deploy asked for during a heal is deployed right after it', async () => {
+    reset();
+    const a = await app();
+    await report(a, 'Unhealthy', { state: 'stopped' });
+    await rt.drain();
+    await ask(a, { reason: 'redeploy' });
+    await rt.drain();
+    assert.equal((await inst(a)).state, 'healing');
+    assert.equal(deploys.calls.length, 0, 'no deploy beside a heal');
+    await settle();
+    assert.deepEqual(heals.calls.map((c) => c.key), ['heal:1']);
+    assert.deepEqual(deploys.calls.map((c) => c.key), ['deploy:1']);
+    assert.equal((await inst(a)).state, 'idle');
+  });
+
+  await t.test('H4: a Docker container seen restarting is given its grace, then healed if it still is', async () => {
+    reset();
+    const a = await app({ runtime: 'docker' });
+    await report(a, 'Unhealthy', { state: 'restarting' });
+    await settle();
+    assert.equal(heals.calls.length, 0, 'its restart policy is mid-backoff');
+    const inGrace = await report(a, 'Unhealthy', { state: 'restarting' }, 'in-grace');
+    await settle();
+    assert.equal(heals.calls.length, 0, 'inside its grace');
+    assert.deepEqual(await outcomeOf(inGrace), { result: 'rejected', reason: 'grace' });
+    assert.equal(await receipts('in-grace'), 0);
+    await shiftData(a, (d) => ({ ...d, heal: { ...d.heal, seenRestarting: ago(90 * 1000) } }));
+    await report(a, 'Unhealthy', { state: 'restarting' });
+    await settle();
+    assert.equal(heals.calls.length, 1, 'still restarting after its grace');
+    const k = await app();
+    await report(k, 'Unhealthy', { state: 'restarting' });
+    await settle();
+    assert.equal(heals.calls.length, 2, 'Kubernetes: a crash loop is healed at once');
+  });
+
+  await t.test('H5: only the system reports, and never for an app that is not running', async () => {
+    reset();
+    const a = await app({ status: 'creating' });
+    const id = await report(a, 'Unhealthy', { state: 'stopped' });
+    await rt.drain();
+    assert.equal((await outcomeOf(id)).reason, 'not_running');
+    const b = await app();
+    const forged = await rt.append(machine, appKey(b.id), { type: 'Unreachable', payload: { appId: b.id } },
+      { requestKey: `t-${++rk}`, appId: b.id, source: { kind: 'admin' } });
+    await rt.drain();
+    assert.equal((await outcomeOf(forged)).reason, 'system_only');
+  });
+
+  await t.test('H6: a deploy is a new runtime: the heals before it hold back none after it', async () => {
+    reset();
+    const a = await app();
+    await report(a, 'Unhealthy', { state: 'stopped' });
+    await settle();
+    assert.equal((await inst(a)).data.heal.streak, 1);
+    await ask(a);
+    await settle();
+    assert.equal(deploys.calls.length, 1);
+    assert.equal((await inst(a)).data.heal.streak, 0);
+    await report(a, 'Unhealthy', { state: 'stopped' });
+    await settle();
+    assert.deepEqual(heals.calls.map((c) => c.key), ['heal:1', 'heal:2'], 'healed at once, inside the old backoff');
+    assert.equal((await inst(a)).data.heal.streak, 1);
+  });
+
+  await t.test('H7: an admin ends a heal that never answers: its work is cancelled', async () => {
+    reset();
+    const a = await app();
+    await report(a, 'Unhealthy', { state: 'stopped' });
+    await rt.drain();
+    assert.equal((await inst(a)).state, 'healing');
+    await rt.append(machine, appKey(a.id), { type: 'EndDeploy', payload: {} },
+      { requestKey: `t-${++rk}`, appId: a.id, source: { kind: 'admin' } });
+    await rt.drain();
+    assert.equal((await inst(a)).state, 'idle');
+    assert.equal(await workStatus(a, 'heal:1'), 'settled');
+    await settle();
+    assert.equal(heals.calls.length, 0);
+  });
+
+  // ── Drift ─────────────────────────────────────────────────────────────
+
+  await t.test('D1: main moving deploys once per commit; a drift a running deploy already covers adds nothing', async () => {
+    reset();
+    const a = await app({ mainSha: SHA('0') });
+    await moved(a, SHA('1'));
+    await moved(a, SHA('1'));   // the clock's next look, the same key
+    await rt.drain();
+    assert.equal((await inst(a)).state, 'deploying');
+    // The clock looks again while it deploys, under another key (a restart's).
+    const again = await moved(a, SHA('1'), { key: 'another-look' });
+    await rt.drain();
+    assert.equal((await outcomeOf(again)).reason, 'already_asked');
+    // main moved again during the deploy: one more after it.
+    await moved(a, SHA('2'));
+    deploys.next.push({ sha: SHA('1') }, { sha: SHA('2') });
+    await settle();
+    assert.deepEqual(deploys.calls.map((c) => c.key), ['deploy:1', 'deploy:2']);
+    assert.equal((await row(a)).main_sha, SHA('2'));
+    const none = await moved(a, SHA('2'), { key: 'no-drift' });
+    await rt.drain();
+    assert.equal((await outcomeOf(none)).reason, 'no_drift');
+  });
+
+  await t.test('D2: a drift seen during a deploy of that very commit is served by it', async () => {
+    reset();
+    const a = await app({ mainSha: SHA('0') });
+    await ask(a, { reason: 'merge', from: { machine: 'merge-followups', key: 'session:70' } });
+    await rt.drain();
+    await moved(a, SHA('3'));   // the merge's own commit, seen by the clock mid-deploy
+    deploys.next.push({ sha: SHA('3') });
+    await settle();
+    assert.deepEqual(deploys.calls.map((c) => c.key), ['deploy:1'], 'no second deploy of the same commit');
+    assert.deepEqual((await inst(a)).data.requests, []);
+  });
+
+  await t.test('D3: a failed drift deploy is tried again by its own deadline, backing off', async () => {
+    reset();
+    const a = await app({ mainSha: SHA('0') });
+    deploys.next.push({ throw: 'registry down', permanent: true });
+    await moved(a, SHA('4'));
+    await settle();
+    let i = await inst(a);
+    assert.equal(i.state, 'idle');
+    assert.deepEqual(i.data.requests.map((r) => r.reason), ['drift'], 'kept for its retry');
+    assert.equal(i.data.retry.failures, 1);
+    assert.equal(i.deadline_event.type, 'RetryDue');
+    assert.ok(Math.abs(new Date(i.deadline_at).getTime() - (Date.now() + 30 * 60 * 1000)) < 60000, 'thirty minutes');
+    // The clock sees the same commit again meanwhile: nothing new.
+    const again = await moved(a, SHA('4'), { key: 'look-again' });
+    await rt.drain();
+    assert.equal((await outcomeOf(again)).reason, 'already_asked');
+    // Its deadline: deployed again, and failing again doubles the wait.
+    deploys.next.push({ throw: 'registry down', permanent: true });
+    await shiftData(a, (d) => ({ ...d, retry: { ...d.retry, at: ago(1000) } }));
+    await dueNow(a);
+    await rt.fireTimers();
+    await settle();
+    i = await inst(a);
+    assert.deepEqual(deploys.calls.map((c) => c.key), ['deploy:1', 'deploy:2']);
+    assert.equal(i.data.retry.failures, 2);
+    assert.ok(Math.abs(new Date(i.deadline_at).getTime() - (Date.now() + 60 * 60 * 1000)) < 60000, 'an hour');
+    // It succeeds next time: the retry is over.
+    await shiftData(a, (d) => ({ ...d, retry: { ...d.retry, at: ago(1000) } }));
+    await dueNow(a);
+    await rt.fireTimers();
+    await settle();
+    i = await inst(a);
+    assert.equal(i.data.retry, null);
+    assert.deepEqual(i.data.requests, []);
+    assert.equal(i.deadline_at, null);
+  });
+
+  await t.test('D4: a commit whose image runs as root waits for a new one, unless asked by hand', async () => {
+    reset();
+    const a = await app({ mainSha: SHA('0'), lastFailure: { kind: 'root_image', sha: SHA('5'), stage: 'start' } });
+    const auto = await moved(a, SHA('5'));
+    await rt.drain();
+    assert.equal((await outcomeOf(auto)).reason, 'waits_for_new_commit');
+    await moved(a, SHA('5'), { byHand: true, key: 'by-hand' });
+    await settle();
+    assert.equal(deploys.calls.length, 1);
+    assert.equal(deploys.calls[0].input.retrySameCommit, true);
+    // A drift whose deploy is refused for the same reason is not kept.
+    const b = await app({ mainSha: SHA('0') });
+    deploys.next.push({ failed: 'root_image', message: 'runs as root' });
+    await moved(b, SHA('6'));
+    await settle();
+    assert.deepEqual((await inst(b)).data.requests, []);
+    assert.equal((await inst(b)).deadline_at, null);
+  });
+
+  await t.test('D5: a commit whose deploy just failed (any deploy) waits for its retry before drift deploys it; by hand it goes now', async () => {
+    reset();
+    const at = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+    const a = await app({ mainSha: SHA('0'), lastFailure: { stage: 'build', sha: SHA('7'), at } });
+    await moved(a, SHA('7'));
+    await settle();
+    let i = await inst(a);
+    assert.equal(deploys.calls.length, 0, 'not deployed again at once');
+    assert.deepEqual(i.data.requests.map((r) => r.reason), ['drift']);
+    assert.equal(i.deadline_event.type, 'RetryDue');
+    assert.ok(Math.abs(new Date(i.deadline_at).getTime() - (Date.parse(at) + 30 * 60 * 1000)) < 5000, 'thirty minutes after the failure');
+    // A failure that named no commit (its clone failed) waits the same.
+    const b = await app({ mainSha: SHA('0'), lastFailure: { stage: 'clone', sha: null, at } });
+    await moved(b, SHA('8'));
+    await settle();
+    assert.equal(deploys.calls.length, 0);
+    // A new commit is a new attempt, and a person's check goes now.
+    const c = await app({ mainSha: SHA('0'), lastFailure: { stage: 'build', sha: SHA('7'), at } });
+    await moved(c, SHA('9'));
+    await moved(a, SHA('7'), { byHand: true, key: 'by-hand-7' });
+    await settle();
+    assert.equal(deploys.calls.length, 2);
+    i = await inst(a);
+    assert.deepEqual(i.data.requests, [], 'the deploy by hand served the drift it held too');
+  });
+
+  await t.test('D6: an admin ending a drift deploy keeps the drift for its retry', async () => {
+    reset();
+    const a = await app({ mainSha: SHA('0') });
+    await moved(a, SHA('b'));
+    await rt.drain();
+    assert.equal((await inst(a)).state, 'deploying');
+    await rt.append(machine, appKey(a.id), { type: 'EndDeploy', payload: {} },
+      { requestKey: `t-${++rk}`, appId: a.id, source: { kind: 'admin' } });
+    await rt.drain();
+    const i = await inst(a);
+    assert.equal(i.state, 'idle');
+    assert.deepEqual(i.data.requests.map((r) => r.reason), ['drift'], 'nothing else would deploy that commit');
+    assert.equal(i.deadline_event.type, 'RetryDue');
+    assert.equal(await workStatus(a, 'deploy:1'), 'settled');
+  });
+
+  await t.test('D7: a retry that nothing here can serve any more tells whoever waits, and ends', async () => {
+    reset();
+    const a = await app({ mainSha: SHA('0') });
+    deploys.next.push({ throw: 'registry down', permanent: true });
+    await moved(a, SHA('c'));
+    await settle();
+    assert.equal((await inst(a)).data.retry.failures, 1);
+    // One asker's request is open too, never told (an older transition's).
+    await shiftData(a, (d) => ({ ...d, retry: { ...d.retry, at: ago(1000) }, nextId: d.nextId + 1,
+      requests: [...d.requests, { id: d.nextId, reason: 'merge', from: { machine: 'merge-followups', key: 'session:d7-unserved' },
+        at: ago(2000), prNumber: null, revision: null, reuse: null, told: false }] }));
+    await pool.query('UPDATE apps SET repo_url = NULL WHERE id = $1', [a.id]);
+    await dueNow(a);
+    await rt.fireTimers();
+    await settle();
+    const i = await inst(a);
+    assert.equal(deploys.calls.length, 1, 'not deployed again');
+    assert.deepEqual(i.data.requests, []);
+    assert.equal(i.data.retry, null);
+    assert.equal(i.deadline_at, null);
+    const said = await told('merge-followups', 'session:d7-unserved');
+    assert.deepEqual(said.map((m) => [m.type, m.payload.message]), [['DeliveryFailed', 'the app has no repository to deploy from']]);
+  });
+
+  await t.test('D8: main moving back to a commit production ran before deploys it again', async () => {
+    reset();
+    const a = await app({ mainSha: SHA('0') });
+    const A = SHA('d');
+    const B = SHA('e');
+    // Keyed as the main-drift clock keys a movement: from what production
+    // runs, to the commit.
+    deploys.next.push({ sha: A });
+    await moved(a, A, { key: `drift:${a.id}:${SHA('0')}@1:${A}` });
+    await settle();
+    deploys.next.push({ sha: B });
+    await moved(a, B, { key: `drift:${a.id}:${A}@2:${B}` });
+    await settle();
+    deploys.next.push({ sha: A });
+    await moved(a, A, { key: `drift:${a.id}:${B}@3:${A}` });
+    await settle();
+    assert.equal(deploys.calls.length, 3);
+    assert.equal((await row(a)).main_sha, A);
   });
 
   await t.test('only the machine writes the deploying state', async () => {

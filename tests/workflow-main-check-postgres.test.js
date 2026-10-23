@@ -131,7 +131,7 @@ test('the main check against the full PostgreSQL schema', { timeout: 240000 }, a
       [slug, owner.id, repo ? `https://github.com/acme/${slug}` : null]);
     return a;
   }
-  // The row an older release left, written before any instance holds it.
+  // An app's main_check_* columns, written before any instance holds it.
   const seed = (a, { state, sha = S1, detail = {}, paused = null, at = 'now()' }) => pool.query(
     `UPDATE apps SET main_check_state = $2, main_check_sha = $3, main_check_detail = $4::jsonb,
             main_check_paused_sha = $5, main_check_at = ${at} WHERE id = $1`,
@@ -507,21 +507,6 @@ test('the main check against the full PostgreSQL schema', { timeout: 240000 }, a
     await settle();
     assert.equal((await inst(c)).flag, null, 'not faulted');
 
-    // MAIN_WATCH_ENABLED off: nothing is adopted, and no recheck runs.
-    const off = runtimeWith({ enabled: false });
-    const d = await app();
-    await seed(d, { state: 'confirming', paused: S1, detail: { confirming: true, ...redOn([REAL]).detail } });
-    assert.equal((await send(off, d, 'Adopted')).reason, 'off');
-
-    // An older release's run is adopted by its id: the suite is not run again.
-    const e = await app();
-    await seed(e, { state: 'running', detail: { prNumber: 41, sessionId: 3 } });
-    script(e, green);
-    await send(rt, e, 'Adopted', { runId: 'run-of-the-older-release' });
-    assert.deepEqual((await suiteWork(e)).map((w) => w.input.resumeRunId), ['run-of-the-older-release']);
-    await settle();
-    assert.equal(ran(e)[0].resumeRunId, 'run-of-the-older-release');
-
     // An admin's Resume names the commit it resumed, while a newer one runs.
     const f = await app();
     script(f, redOn([REAL]), redOn([REAL]), green);
@@ -562,7 +547,7 @@ test('the main check against the full PostgreSQL schema', { timeout: 240000 }, a
     assert.equal((await inst(b)).deadline_at, null, 'nothing paused, nothing to ask again');
     assert.deepEqual((await pauses(b)).map(([type]) => type), ['main_paused', 'main_resumed']);
 
-    // A pause an older release left, before any instance holds the app.
+    // A pause no instance holds (none in production): Resume lifts it.
     const c = await app();
     await seed(c, { state: 'failing', paused: S1, detail: { confirmed: true } });
     assert.equal((await send(rt, c, 'Resume', {}, route)).status, 'accepted');
@@ -655,75 +640,24 @@ test('the main check against the full PostgreSQL schema', { timeout: 240000 }, a
     assert.deepEqual(filedFor(a).at(-1).reds.map((x) => x.failingTests), [[FLAKY], [PUSH]]);
   });
 
-  await t.test('Adopted: a row an older release left mid-run is carried on; a paused red waits for its recheck', async () => {
-    const firstRed = redOn([FLAKY]);
-    const confirming = { prNumber: 41, sessionId: 3, confirming: true, ...firstRed.detail };
-    // A confirmation resumes at its re-run, with the first red carried over.
+  await t.test('no row is adopted: the machine has no Adopted, and a Resume of a row no instance holds only lifts its pause', async () => {
+    const m = mainCheck();
+    assert.equal(m.events.has('Adopted'), false);
+    assert.equal(m.create.has('Adopted'), false);
     const a = await app();
-    await seed(a, { state: 'confirming', paused: S1, detail: confirming });
+    await seed(a, { state: 'confirming', paused: S1, detail: { prNumber: 41, sessionId: 3, confirming: true, ...redOn([FLAKY]).detail } });
+    assert.equal((await send(rt, a, 'Resume', {}, route)).status, 'accepted');
+    assert.equal((await inst(a)).state, 'idle', 'no run is carried on from the row');
+    assert.deepEqual(await suiteWork(a), []);
+    assert.deepEqual([(await row(a)).state, (await row(a)).paused, (await row(a)).resumed], ['error', null, S1],
+      'its run had nothing behind it');
+    // So the next check of that commit runs it, rather than reading it checked.
     script(a, green);
-    assert.equal((await send(rt, a, 'Adopted', {}, route)).reason, 'internal_only');
-    assert.equal((await send(rt, a, 'Adopted')).status, 'accepted');
-    assert.equal((await inst(a)).state, 'confirming');
-    assert.deepEqual((await suiteWork(a)).map((w) => [w.work_key, w.input.phase]), [['suite:1', 'confirm']]);
+    await ask(rt, a, S1);
     await settle();
-    assert.equal(ran(a).length, 1, 'one run: the confirmation, not the first run again');
-    let r = await row(a);
-    assert.deepEqual([r.state, r.paused, r.detail.prNumber, r.detail.flake], ['passing', null, 41, accountOf(firstRed)],
-      'green on the re-run: a flake, like an uninterrupted one');
-    assert.deepEqual(await kicks(a), ['main-post-flake']);
-    assert.equal((await send(rt, a, 'Adopted')).reason, 'held');
-
-    const b = await app();
-    await seed(b, { state: 'confirming', paused: S1, detail: confirming });
-    script(b, redOn([FLAKY]));
-    await send(rt, b, 'Adopted');
-    await settle();
-    r = await row(b);
-    assert.deepEqual([r.state, r.paused, r.detail.confirmed, r.detail.firstRun], ['failing', S1, true, accountOf(firstRed)]);
-    assert.equal(fixedFor(b).length, 1);
-
-    // A first run runs again for that commit.
-    const c = await app();
-    await seed(c, { state: 'running', detail: { prNumber: 41, sessionId: 3 } });
-    script(c, green);
-    await send(rt, c, 'Adopted');
-    assert.deepEqual((await suiteWork(c)).map((w) => w.input), [{ appId: c.id, sha: S1, phase: 'first', reuse: true }]);
-    await settle();
-    assert.deepEqual([(await row(c)).state, await kicks(c)], ['passing', []]);
-
-    // A paused red is held, and asked again when it is due.
-    const d = await app();
-    await seed(d, { state: 'failing', paused: S1, at: `now() - interval '1 hour'`, detail: { prNumber: 41, confirmed: true, ...redOn([REAL]).detail } });
-    script(d, green);
-    await send(rt, d, 'Adopted');
-    const i = await inst(d);
-    assert.equal(i.state, 'idle');
-    assert.ok(i.deadline_at.getTime() <= Date.now() + 1000, 'a quarter hour after the red: due now');
-    assert.ok((await rt.fireTimers()) >= 1);
-    await settle();
-    assert.deepEqual([(await row(d)).state, (await row(d)).detail.rechecks, await kicks(d)], ['passing', 1, ['main-post-recheck']]);
-
-    const e = await app();
-    await seed(e, { state: 'passing' });
-    assert.equal((await send(rt, e, 'Adopted')).reason, 'nothing_to_adopt');
-
-    // An admin's Resume that reaches such a row before the boot's adoption
-    // lifts the pause and carries the run on: it once made an idle instance
-    // with no run, which Adopted then refused as held, and the row read
-    // confirming with nothing behind it until a new commit (review,
-    // 2026-10-17).
-    const f = await app();
-    await seed(f, { state: 'confirming', paused: S1, detail: confirming });
-    script(f, redOn([FLAKY]));
-    assert.equal((await send(rt, f, 'Resume', {}, route)).status, 'accepted');
-    assert.equal((await inst(f)).state, 'confirming');
-    assert.deepEqual((await suiteWork(f)).map((w) => w.input.phase), ['confirm']);
-    await settle();
-    r = await row(f);
-    assert.deepEqual([r.state, r.paused, r.resumed, r.detail.confirmed], ['failing', null, S1, true],
-      'confirmed, and the admin\'s resume of that commit still stands');
+    assert.equal((await row(a)).state, 'passing');
   });
+
 
   await t.test('the guard: once the instance holds the app, nothing else writes its main_check_* columns', async () => {
     const a = await app();

@@ -1,36 +1,20 @@
 'use strict';
 
 // Stops for work another platform process runs (docs/plans/
-// draining-releases.md): a turn, a bench trial or run, and the
-// BYOK spend a proxy saw for a turn it does not run. The process that holds
-// the work does what a stop in its own process does; the one asked forwards
-// it over the WebSocket bus and answers as if it had. Here the other process
-// is played by the registry's copy of its holds (a fake database answers the
-// mirror's read) and the bus by a stub of its publish.
+// draining-releases.md): a turn, and the BYOK spend a proxy saw for a turn
+// it does not run. A person's turn is its machine's work item
+// (src/workflow/turn/): a Stop reaches it through its machine, and the
+// durable path (the stamp, the kill inside the worker) reaches the rest from
+// any process. Nothing is forwarded over the WebSocket bus any more, and no
+// process reads another's memory or holds. (A bench trial's or run's cancel
+// is the bench lane's machine's; shots are the shots machine's.)
 //
 // Run with: node --test tests/cross-process-stops.test.js
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const processes = require('../src/services/processes');
 const wsBus = require('../src/services/ws-bus');
-
-// The registry, started over a database whose only other process holds `held`.
-async function elsewhere(held) {
-  processes._reset();
-  const pool = {
-    query: async (sql) => {
-      if (/FROM process_holds h\s+JOIN platform_processes p ON p\.id = h\.process_id\s+WHERE h\.process_id <> \$1/.test(sql)) {
-        return { rows: held.map(([kind, ref]) => ({ kind, ref: String(ref), process_id: 'pod-old' })) };
-      }
-      if (/SELECT DISTINCT h\.process_id/.test(sql)) return { rows: held.length ? [{ process_id: 'pod-old' }] : [] };
-      return { rows: [], rowCount: 0 };
-    },
-  };
-  await processes.start({ pool, role: 'all' });
-  return pool;
-}
 
 function capturePublishes() {
   const sent = [];
@@ -39,38 +23,37 @@ function capturePublishes() {
   return { sent, restore: () => { wsBus.publish = real; } };
 }
 
-test('a Stop for a turn another process runs is forwarded to it, and answered as stopping', async (t) => {
-  await elsewhere([['session', 4242]]);
+test('a Stop with no turn here forwards nothing over the bus: its turn\'s machine, or the durable path, reaches it', async (t) => {
   const bus = capturePublishes();
-  t.after(() => { bus.restore(); processes._reset(); });
+  t.after(() => { bus.restore(); });
   const { requestSessionStop } = require('../src/routes/sessions');
-  const queries = [];
-  const pool = { query: async (sql, params) => { queries.push(sql); return { rows: [{ id: 4242, user_id: 7 }] }; } };
-  const result = await requestSessionStop({ pool, sessionId: 4242, user: { id: 7, username: 'alice' } });
-  assert.equal(result.status, 202);
-  assert.equal(result.body.stopping, true);
-  assert.deepEqual(bus.sent, [{
-    kind: 'session_stop', routing: null,
-    data: { sessionId: 4242, user: { id: 7, username: 'alice', canAdminWrite: false }, force: false, immediate: false, expectedTurnId: null },
-  }]);
-  // The stop's user is checked here first: someone else's session is not forwarded.
-  bus.sent.length = 0;
+  const pool = { query: async () => ({ rows: [{ id: 4242, user_id: 7 }] }) };
+  await requestSessionStop({ pool, sessionId: 4242, user: { id: 7, username: 'alice' } });
+  assert.deepEqual(bus.sent.filter((m) => m.kind === 'session_stop'), []);
+  // The stop's user is checked first: someone else's session is refused.
   const denied = await requestSessionStop({
     pool: { query: async () => ({ rows: [] }) }, sessionId: 4242, user: { id: 8, username: 'mallory' },
   });
   assert.equal(denied.status, 404);
-  assert.deepEqual(bus.sent, []);
+  assert.equal(require('../src/routes/sessions').receiveSessionStop, undefined, 'and nothing receives one');
 });
 
-test('a forwarded stop is run where the turn is, and never forwarded again', async (t) => {
-  await elsewhere([['session', 4242]]);
+test('a Stop reads no other process\'s holds and forwards nothing, whatever a release before the turn machine left there', async (t) => {
   const bus = capturePublishes();
-  t.after(() => { bus.restore(); processes._reset(); });
-  const sessions = require('../src/routes/sessions');
-  // Not held here: nothing to do, nothing published.
-  assert.equal(await sessions.receiveSessionStop({ sessionId: 4242, user: { id: 7, username: 'alice' } }), null);
-  assert.deepEqual(bus.sent, []);
-  assert.equal(await sessions.receiveSessionStop({ sessionId: 'x', user: { id: 7 } }), null, 'a malformed one is ignored');
+  t.after(() => { bus.restore(); });
+  const { requestSessionStop } = require('../src/routes/sessions');
+  const sql = [];
+  const pool = {
+    query: async (text) => {
+      sql.push(String(text));
+      if (/FROM process_holds/.test(String(text))) return { rows: [{ process_id: 'pod-old' }] };
+      return { rows: [{ id: 4242, user_id: 7 }] };
+    },
+  };
+  const out = await requestSessionStop({ pool, sessionId: 4242, user: { id: 7, username: 'alice' }, expectedTurnId: null });
+  assert.notDeepEqual(out.body, { ok: true, stopped: true, stopping: true, phase: null }, 'never answered as handed on');
+  assert.deepEqual(sql.filter((q) => /process_holds/.test(q)), []);
+  assert.deepEqual(bus.sent.filter((m) => m.kind === 'session_stop'), []);
 });
 
 test('a Stop for shots is no bus message: the shots machine cancels the agent\'s step wherever it runs', () => {
@@ -83,59 +66,35 @@ test('a Stop for shots is no bus message: the shots machine cancels the agent\'s
   assert.doesNotMatch(ws, /shots_stop/);
 });
 
-test('a cancel for a bench trial another process runs is forwarded; one nobody runs is refused as before', async (t) => {
-  await elsewhere([['bench_trial', 77]]);
-  const bus = capturePublishes();
-  t.after(() => { bus.restore(); processes._reset(); });
-  const lane = require('../src/services/bench/lane');
-  const running = { query: async (sql) => (/UPDATE bench_trials/.test(sql) ? { rows: [] } : { rows: [{ status: 'running' }] }) };
-  assert.deepEqual(await lane.cancelTrial(running, 77), { ok: true, status: 'stopping' });
-  assert.deepEqual(bus.sent.map((m) => [m.kind, m.data]), [['bench_cancel', { trialId: 77 }]]);
-  bus.sent.length = 0;
-  const refused = await lane.cancelTrial(running, 78);
-  assert.equal(refused.status ?? refused.statusCode ?? refused.code, 409);
-  assert.deepEqual(bus.sent, []);
-  assert.equal(lane.receiveCancel({ trialId: 77 }), false, 'the holder side: nothing of it runs in this process');
-  // A slot this process only counts (a durable trial another process
-  // executes, as holdDurableTrials takes after a release): marked, and the
-  // cancel still goes to the process running it.
-  lane._resetForTests();
-  bus.sent.length = 0;
-  const slot = { runId: 1, est: 0, sessionId: null, promise: null, durable: true };
-  lane._inFlightForTests().set(77, slot);
-  assert.deepEqual(await lane.cancelTrial(running, 77), { ok: true, status: 'stopping' });
-  assert.equal(slot.cancelled, true);
-  assert.deepEqual(bus.sent.map((m) => [m.kind, m.data]), [['bench_cancel', { trialId: 77 }]]);
-  lane._resetForTests();
+test('a bench cancel is the bench lane\'s machine\'s, never the bus\'s', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const lane = fs.readFileSync(path.join(__dirname, '..', 'src/services/bench/lane.js'), 'utf8');
+  assert.doesNotMatch(lane, /bench_cancel|bench_wake|heldMap\('bench_trial'\)/);
+  assert.match(lane, /benchCancelTrial\(Number\(trialId\)/);
+  const ws = fs.readFileSync(path.join(__dirname, '..', 'src/services/ws.js'), 'utf8');
+  assert.doesNotMatch(ws, /bench_cancel|bench_wake/);
 });
 
-test('the bus delivers each stop to its receiver, and a turn\'s BYOK spend to the process running it', async (t) => {
+test('the bus delivers a turn\'s BYOK spend to the process running it; a stop forward is no bus kind any more', async (t) => {
   const ws = require('../src/services/ws');
-  const sessions = require('../src/routes/sessions');
-  const lane = require('../src/services/bench/lane');
   const worker = require('../src/services/worker');
   const got = [];
-  const saved = {
-    s: sessions.receiveSessionStop, l: lane.receiveCancel, w: worker.receiveTurnByok,
-  };
-  sessions.receiveSessionStop = async (p) => { got.push(['session', p.sessionId]); };
-  lane.receiveCancel = (p) => { got.push(['bench', p.trialId]); };
+  const saved = worker.receiveTurnByok;
   worker.receiveTurnByok = (p) => { got.push(['byok', p.cents]); };
-  t.after(() => {
-    sessions.receiveSessionStop = saved.s;
-    lane.receiveCancel = saved.l; worker.receiveTurnByok = saved.w;
-  });
+  t.after(() => { worker.receiveTurnByok = saved; });
   ws._onBusMessage({ kind: 'session_stop', data: { sessionId: 1 } });
-  ws._onBusMessage({ kind: 'bench_cancel', data: { trialId: 3 } });
   ws._onBusMessage({ kind: 'turn_byok', data: { cents: 12 } });
-  ws._onBusMessage({ kind: 'session_stop', data: { sessionId: 2 }, oversize: true });
   await new Promise((r) => setImmediate(r));
-  assert.deepEqual(got, [['session', 1], ['bench', 3], ['byok', 12]], 'an oversize one carries nothing to act on');
+  assert.deepEqual(got, [['byok', 12]]);
+  const leftovers = require('../src/services/turn-leftovers');
+  assert.equal(leftovers.receiveOlderStop, undefined, 'and nothing receives one');
+  const fs = require('node:fs');
+  const path = require('node:path');
+  assert.doesNotMatch(fs.readFileSync(path.join(__dirname, '..', 'src/services/ws.js'), 'utf8'), /session_stop/);
 });
 
-test('BYOK spend the proxy here saw for a turn another process runs is not kept here', async (t) => {
-  await elsewhere([['session', 515]]);
-  t.after(() => processes._reset());
+test('BYOK spend the proxy here saw for a turn this process does not run is not kept here', async () => {
   const worker = require('../src/services/worker');
   worker.noteTurnByokSpend(515, 40);
   assert.equal(worker.getTurnByokCents(515), 0, 'this process runs no turn on the session: no tally of its own');

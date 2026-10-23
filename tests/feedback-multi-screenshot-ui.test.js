@@ -78,6 +78,10 @@ function makeEl(tag, id = '') {
       child.parentNode = el;
       return child;
     },
+    replaceChildren(...nodes) {
+      for (const child of [...el.children]) child.remove();
+      for (const node of nodes) el.appendChild(node);
+    },
     remove() {
       const p = el.parentNode;
       if (!p) return;
@@ -106,6 +110,9 @@ function makeHarness({ offline = false, uploadPlan = null, prepareFile = null, f
     KUDOS_PARKED: false,
     console: { ...console, warn: () => {}, debug: () => {} },
     URLSearchParams,
+    // The controller only attaches a handed-over picture it can tell is a
+    // Blob (`handed.blob instanceof Blob`), so the sandbox needs the real one.
+    Blob,
     URL: {
       createObjectURL: (blob) => `blob:${blob.name}`,
       revokeObjectURL: (u) => { revoked.push(u); },
@@ -173,8 +180,23 @@ function makeHarness({ offline = false, uploadPlan = null, prepareFile = null, f
     for (let i = 0; i < 6; i += 1) await new Promise((r) => setImmediate(r));
   };
   const list = () => el('feedback-screenshot-preview').children;
-  const thumbImg = (item) => item.children.find((c) => c.tagName === 'IMG');
-  const thumbRemove = (item) => item.children.find((c) => c.tagName === 'BUTTON');
+  // #5687: the picture now sits inside the thumbnail's preview button (or in
+  // the pin frame inside it), so the image is found at any depth.
+  const thumbImg = (item) => {
+    const stack = [...item.children];
+    while (stack.length) {
+      const child = stack.shift();
+      if (child.tagName === 'IMG') return child;
+      stack.push(...child.children);
+    }
+    return undefined;
+  };
+  const thumbOpen = (item) => item.children.find(
+    (c) => c.tagName === 'BUTTON' && c.getAttribute('data-feedback-screenshot-open') === ''
+  );
+  const thumbRemove = (item) => item.children.find(
+    (c) => c.tagName === 'BUTTON' && c.getAttribute('data-feedback-screenshot-open') === null
+  );
 
   return {
     sandbox,
@@ -184,6 +206,7 @@ function makeHarness({ offline = false, uploadPlan = null, prepareFile = null, f
     flush,
     list,
     thumbImg,
+    thumbOpen,
     thumbRemove,
     open() { sandbox.Feedback._open({}); },
     close() { sandbox.Feedback._reset(); },
@@ -455,4 +478,60 @@ test('#4127: Photo and Video sit behind one paperclip whose popover a choice clo
   await attach.click();
   h.close();
   assert.equal(menu.classList.contains('hidden'), true, 'closing the dialog closes the popover');
+});
+
+// #5687: a 56px thumbnail is enough to see that something was attached, not
+// what it shows. A tap on it opens the picture full size, before posting,
+// with the pins a comment-mode screenshot carries.
+test('#5687: tapping an attached picture opens it full size, pins and all', async () => {
+  const h = makeHarness();
+  h.open();
+  await h.pick('a.png', 'b.png');
+  const seen = [];
+  h.sandbox.Feedback._preview = (item) => seen.push(item);
+  const open = h.thumbOpen(h.list()[0]);
+  assert.ok(open, 'the picture is a button');
+  assert.equal(open.getAttribute('aria-label'), 'View image 1', 'its spoken name counts it');
+  assert.equal(h.thumbOpen(h.list()[1]).getAttribute('aria-label'), 'View image 2');
+  await open.click();
+  // The item crosses the vm's realm boundary, so compare what it carries
+  // rather than its prototype.
+  assert.equal(JSON.stringify(seen), JSON.stringify([{ kind: 'image', src: 'blob:a.png', alt: 'Image 1 preview', pins: null }]));
+  h.close();
+  assert.equal(h.list().length, 0);
+});
+
+test('#5687: a handed-over screenshot keeps its pins in the preview', async () => {
+  const h = makeHarness();
+  const pins = [{ x: 0.4, y: 0.3, note: 'here' }];
+  const blob = new Blob(['png'], { type: 'image/png' });
+  blob.name = 'pin.png';
+  h.sandbox.Feedback._open({ screenshots: [{ blob, pins }] });
+  await h.flush();
+  const seen = [];
+  h.sandbox.Feedback._preview = (item) => seen.push(item);
+  await h.thumbOpen(h.list()[0]).click();
+  assert.equal(seen.length, 1);
+  assert.equal(JSON.stringify(seen[0].pins), JSON.stringify(pins));
+  assert.equal(seen[0].src, 'blob:pin.png');
+});
+
+// #5687: the clip's first frame is a button too, opening it full size with
+// the device's own controls.
+test('#5687: an attached clip opens full size from its first frame', async () => {
+  const h = makeHarness();
+  h.open();
+  const input = h.el('feedback-video-input');
+  input.files = [{ name: 'clip.mp4', size: 10, type: 'video/mp4' }];
+  await input.fire('change');
+  await h.flush();
+  const item = h.el('feedback-video-preview').children[0];
+  assert.ok(item, 'the clip has a thumbnail');
+  const open = item.children.find((c) => c.tagName === 'BUTTON' && c.getAttribute('data-feedback-video-open') === '');
+  assert.ok(open, 'the first frame is a button');
+  assert.equal(open.getAttribute('aria-label'), 'View video');
+  const seen = [];
+  h.sandbox.Feedback._preview = (entry) => seen.push(entry);
+  await open.click();
+  assert.equal(JSON.stringify(seen), JSON.stringify([{ kind: 'video', src: 'blob:clip.mp4' }]));
 });

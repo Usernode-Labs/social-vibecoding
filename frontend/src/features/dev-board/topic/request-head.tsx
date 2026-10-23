@@ -66,12 +66,20 @@ function host(id: string): Element | null {
 }
 
 /** The sheet's header: what this is, the category, and everything else behind ⋯. */
-function RequestBar({ r }: { r: RequestView }): ReactNode {
+export function RequestBar({ r }: { r: RequestView }): ReactNode {
   const t = useMessages('project');
+  // F18 (#5683): the bar names the request itself, under a small-caps line
+  // that says its number and, once it is settled, how it ended.
+  const kicker = r.status.closed
+    ? t('project:topic.request.bar.kickerClosed', { number: r.number })
+    : r.status.stage === 'voted'
+      ? t('project:topic.request.bar.kickerDone', { number: r.number })
+      : t('project:topic.request.bar.title', { number: r.number });
   return (
     <header className="messages-thread-header">
       <div className="min-w-0 flex-1">
-        <div className="messages-thread-name">{t('project:topic.request.bar.title', { number: r.number })}</div>
+        <div className="messages-thread-kicker" data-request-kicker="">{kicker}</div>
+        <div className="messages-thread-name line-clamp-2 dev-request-bar-title">{r.title}</div>
         {r.category ? <div className="messages-thread-sub" data-request-category="">{r.category}</div> : null}
       </div>
       {r.menuKey ? (
@@ -328,8 +336,8 @@ export function SpecCard({ card }: { card: RequestSpecCard }): ReactNode {
             : card.ended === 'stopped' ? 'project:topic.request.spec.kickerStopped'
             : 'project:topic.request.spec.kickerVersion', { version: card.version })
           : t('project:topic.request.spec.kicker')}</div>
-        <div className="text-base font-semibold text-zinc-900 dark:text-zinc-100 line-clamp-2">{card.title}</div>
-        <div className="text-sm text-zinc-500 dark:text-zinc-400 truncate">
+        <div className="text-base font-semibold text-zinc-900 dark:text-zinc-100 break-words">{card.title}</div>
+        <div className="text-sm text-zinc-500 dark:text-zinc-400 break-words">
           {card.time ? (
             <RichMessage
               id={card.bySystem ? 'project:topic.request.spec.bySystemAt' : card.byUnknown ? 'project:topic.request.spec.bySomeoneAt' : 'project:topic.request.spec.byAt'}

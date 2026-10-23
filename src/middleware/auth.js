@@ -1,4 +1,5 @@
 const { nativeWebSessionIsLive } = require('../services/web-session-auth');
+const { setSessionCacheCookie, stampApiIdentity } = require('../services/browser-api-cache');
 const crypto = require('crypto');
 const { getPool } = require('../db/pool');
 const log = require('../services/logger');
@@ -94,6 +95,10 @@ const PUBLIC_PATHS = [
   // NB: keep single quotes out of comments in this array — tests parse
   // every quoted string here as a public prefix (see history.test.js).
   '/vendor/',
+  // Self-hosted typefaces (public/fonts, provenance beside each), the same
+  // static-only tier as /vendor/: the new look (an experiment) draws every
+  // screen in Geist, the signed-out ones included.
+  '/fonts/',
   '/usernode-bridge.js',
   '/usernode-bridge/',
   // Native-feel UI kit (public/usernode-native/v1/) — centrally hosted for
@@ -120,6 +125,12 @@ const PUBLIC_PATHS = [
   // the root. Whole file names, so the prefix match opens nothing else there.
   '/favicon.ico',
   '/apple-touch-icon.png',
+  // What a search engine reads first at the root (routes/project-preview.js):
+  // the crawl rules and the sitemap of public project pages. A crawler has no
+  // session, and the gate answered both with a 302 to the root. Whole file
+  // names again; both list only what the public directory already shows.
+  '/robots.txt',
+  '/sitemap.xml',
   // Challenge artwork (public/illustrations/challenges/). The challenge list
   // it decorates is public (/api/v4/), so the pictures must be too: an image
   // request answered with a redirect body draws a broken picture instead of
@@ -339,6 +350,7 @@ async function renewCookieSession(pool, res, token, row) {
       sameSite: 'lax',
       expires: persistedExpiry,
     });
+    setSessionCacheCookie(res, token, persistedExpiry);
     return persistedExpiry;
   } catch (err) {
     log.warn('auth', 'Session renewal failed', { message: err.message });
@@ -361,7 +373,7 @@ function authMiddleware(config) {
     if (cookieToken) {
       try {
         const { rows } = await pool.query(
-          `SELECT s.user_id, s.expires_at, s.created_at, u.username, u.is_admin, u.admin_readonly, u.app_quota, u.ai_progress_estimate, u.session_bridge_enabled, u.private_member_since, u.locale, u.has_platform_access, u.is_synthetic,
+          `SELECT s.user_id, s.expires_at, s.created_at, u.username, u.is_admin, u.admin_readonly, u.app_quota, u.ai_progress_estimate, u.session_bridge_enabled, u.review_flow_enabled, u.private_member_since, u.locale, u.has_platform_access, u.is_synthetic,
              ${nativeWebSessionIsLive('s')} AS native_session_valid
            FROM sessions s JOIN users u ON s.user_id = u.id
            WHERE s.token = $1`,
@@ -437,6 +449,8 @@ function authMiddleware(config) {
             aiProgressEstimate: !!rows[0].ai_progress_estimate,
             // #1281: opt-in for the session-CLI bridge venue. Default FALSE.
             sessionBridgeEnabled: !!rows[0].session_bridge_enabled,
+            // New Needs you, the experimental review flow. Default FALSE.
+            reviewFlowEnabled: !!rows[0].review_flow_enabled,
             // Platform-level language preference (issue #757): a BCP-47
             // tag or null when unset. Surfaced via /api/auth/me.
             locale: rows[0].locale || null,
@@ -450,7 +464,8 @@ function authMiddleware(config) {
           // Placed after the staging identity-switch block: that path replaces
           // the cookie outright, so renewing the credential it is discarding
           // would both waste a write and set competing cookies on one response.
-          await renewCookieSession(pool, res, cookieToken, rows[0]);
+          const renewedExpiry = await renewCookieSession(pool, res, cookieToken, rows[0]);
+          stampApiIdentity(req, res, cookieToken, renewedExpiry || rows[0].expires_at);
           log.debug('auth', 'Session validated', { userId: req.user.id });
           if (enforcePlatformAccessGate(req, res, req.user)) return;
           return next();
@@ -516,14 +531,14 @@ async function tryMintSessionFromIframeJwt(pool, config, jwtToken, res) {
     return null;
   }
 
-  // The cloned users table preserves row identity (id, username, is_admin)
-  // and only column-scrubs password / api keys / wallet tokens, so we can
-  // resolve is_admin from the local DB. Username match is defense-in-depth
+  // The clone keeps stable IDs with synthetic handles for iframe sign-in. Its
+  // trusted export policy resets profiles and production roles; synthetic
+  // capture personas receive their fixture roles locally. Username match is defense-in-depth
   // against a token whose id was renumbered between clone and now.
   let userRow;
   try {
     const { rows } = await pool.query(
-      'SELECT id, username, is_admin, admin_readonly, app_quota, private_member_since, ai_progress_estimate, session_bridge_enabled, locale, has_platform_access FROM users WHERE id = $1',
+      'SELECT id, username, is_admin, admin_readonly, app_quota, private_member_since, ai_progress_estimate, review_flow_enabled, session_bridge_enabled, locale, has_platform_access FROM users WHERE id = $1',
       [payload.id]
     );
     userRow = rows[0];
@@ -563,6 +578,8 @@ async function tryMintSessionFromIframeJwt(pool, config, jwtToken, res) {
     sameSite: 'lax',
     expires: expiresAt,
   });
+  setSessionCacheCookie(res, sessionToken, expiresAt);
+  res.setHeader?.('Cache-Control', 'private, no-store');
 
   log.info('auth', 'Staging iframe-JWT minted local session', {
     userId: userRow.id, username: userRow.username,
@@ -577,6 +594,7 @@ async function tryMintSessionFromIframeJwt(pool, config, jwtToken, res) {
     appQuota: userRow.app_quota ?? 0,
     aiProgressEstimate: !!userRow.ai_progress_estimate,
     sessionBridgeEnabled: !!userRow.session_bridge_enabled,
+    reviewFlowEnabled: !!userRow.review_flow_enabled,
     locale: userRow.locale || null,
     hasPlatformAccess: !!userRow.has_platform_access,
     privateMember: isPrivateMember(userRow),
@@ -603,6 +621,12 @@ function redirectOrReject(req, res, next) {
     return res.redirect(302, '/?return_to=' + encodeURIComponent(target) + '#login');
   }
   if (req.path.startsWith('/api/')) {
+    // The boot's optional session read (#5678): a device with no saved
+    // session asks this way, so a signed-out load is answered "nobody"
+    // instead of refused with a request the browser logs as failed. The
+    // route (routes/auth.js) is what answers it. Every other
+    // unauthenticated API request is still a 401.
+    if (req.method === 'GET' && req.path === '/api/auth/me' && req.query?.optional === '1') return next();
     return res.status(401).json({ error: 'Not authenticated' });
   }
   // The app-host authorize hop answers a signed-out visitor itself (back to

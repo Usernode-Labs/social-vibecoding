@@ -176,10 +176,12 @@ function rig({ platform = 'ios', keysUp = false, reduced = false } = {}) {
   field.blur = () => { field.blurred += 1; doc.activeElement = null; };
   const scrolls = [];
   const animations = [];
+  const rows = [];
   const scroller = fakeEl({
     scrollTop: 0, scrollHeight: 900, clientHeight: 325, offsetTop: 500,
     getBoundingClientRect: () => ({ top: 52, bottom: 377 }),
     contains: (node) => node === field || node === submit,
+    querySelectorAll: (sel) => (sel === '.feedback-actions' ? rows : []),
     scrollTo({ top }) { scrolls.push(top); scroller.scrollTop = top; },
     animate(keyframes, options) { animations.push({ keyframes, options }); },
   });
@@ -212,7 +214,13 @@ function rig({ platform = 'ios', keysUp = false, reduced = false } = {}) {
     scroller.fire('touchend', event);
     return event;
   };
-  return { scroller, field, submit, win, doc, vv, rootClasses, scrolls, animations, advance, flush, tap };
+  // A finger that travels past the slop and lifts: a scroll of the scroller.
+  const drag = () => {
+    scroller.fire('touchstart', { touches: [{ clientX: 10, clientY: 10 }] });
+    scroller.fire('touchmove', { touches: [{ clientX: 10, clientY: 40 }] });
+    scroller.fire('touchend', { touches: [], cancelable: true });
+  };
+  return { scroller, field, submit, win, doc, vv, rootClasses, scrolls, animations, rows, advance, flush, tap, drag };
 }
 
 test('a tap on a field is taken: focused with preventScroll, so iOS does not pan the page', () => {
@@ -263,6 +271,44 @@ test('once the keys settle the field is revealed in the scroller, with its form\
   quiet.tap();
   quiet.advance(surface.FALLBACK_MS);
   assert.equal(quiet.scrolls.length, 1);
+});
+
+test('a sticky row at the sheet\'s foot is the view\'s bottom (#5802)', () => {
+  // The feedback sheet's form has no submit button, so `actionOf` finds
+  // nothing; the row that covers the scroller's foot names itself.
+  const r = rig({ keysUp: true });
+  r.field.form = null;
+  const row = fakeEl();
+  row.getBoundingClientRect = () => ({ top: 360, bottom: 377, width: 300, height: 17 });
+  const hidden = fakeEl();
+  hidden.getBoundingClientRect = () => ({ top: 0, bottom: 0, width: 0, height: 0 });
+  // A form and an edit section, one hidden at a time: the last shown one wins.
+  r.rows.push(hidden, row);
+  surface.attachKeyboardSurface(r.scroller, r.win, r.doc, { foot: '.feedback-actions' });
+  r.doc.activeElement = r.field;
+  r.scroller.fire('focusin', { target: r.field });
+  r.flush();
+  assert.deepEqual(r.scrolls, [460 - (360 - 12)], 'the field\'s foot 12px above the row\'s top');
+
+  // A zero-height match (a hidden section) is not the foot: today's view.
+  const zero = rig({ keysUp: true });
+  zero.field.form = null;
+  const noRow = fakeEl();
+  noRow.getBoundingClientRect = () => ({ top: 0, bottom: 0, width: 0, height: 0 });
+  zero.rows.push(noRow);
+  surface.attachKeyboardSurface(zero.scroller, zero.win, zero.doc, { foot: '.feedback-actions' });
+  zero.doc.activeElement = zero.field;
+  zero.scroller.fire('focusin', { target: zero.field });
+  zero.flush();
+  assert.deepEqual(zero.scrolls, [460 - (377 - 12)], 'the scroller\'s own foot');
+
+  // Without the option, and with a button to chase, nothing changes.
+  const plain = rig({ keysUp: true });
+  surface.attachKeyboardSurface(plain.scroller, plain.win, plain.doc);
+  plain.doc.activeElement = plain.field;
+  plain.scroller.fire('focusin', { target: plain.field });
+  plain.flush();
+  assert.deepEqual(plain.scrolls, [520 - (377 - 12)], 'the form\'s button as before');
 });
 
 test('a focus moved by code with the keys up is revealed at once; a desktop attaches nothing', () => {
@@ -349,6 +395,66 @@ test('a sheet rides the keys: one transform from where it was, the keys\' quarte
   still.scroller.offsetTop = 163;
   still.vv.fire('resize');
   assert.equal(still.animations.length, 0);
+});
+
+// ── 3b. A drag is the person's (#5701) ─────────────────────────────────
+
+test('a drag by the person is not undone by a viewport event, keys up or down', () => {
+  // The feedback sheet (#5701): its description box has focus from the
+  // moment it opens, so every drag ended in a reveal back to it when
+  // Safari's toolbar resized the visual viewport (or, with the keys up, a
+  // drag panned it). That reveal is the snap.
+  const down = rig();
+  surface.attachKeyboardSurface(down.scroller, down.win, down.doc);
+  down.doc.activeElement = down.field; // focused from code, as the sheet opens
+  down.drag();
+  down.vv.fire('resize');
+  down.advance(surface.SETTLE_MS * 3);
+  assert.deepEqual(down.scrolls, [], 'the toolbar shrinking or growing does not scroll it back');
+
+  const up = rig({ keysUp: true });
+  let observe = null;
+  up.win.ResizeObserver = class { constructor(cb) { observe = cb; } observe() {} disconnect() {} };
+  up.scroller.children = [{ nodeType: 1 }];
+  surface.attachKeyboardSurface(up.scroller, up.win, up.doc);
+  up.doc.activeElement = up.field;
+  up.drag();
+  up.vv.fire('scroll');
+  up.vv.fire('scroll');
+  observe();
+  up.flush();
+  up.advance(surface.SETTLE_MS * 3);
+  assert.deepEqual(up.scrolls, [], 'nor does a pan or a content size change with the keys up');
+});
+
+test('after a drag, a new focus is revealed as before: a tap, or a focus with the keys up', () => {
+  const tapped = rig();
+  surface.attachKeyboardSurface(tapped.scroller, tapped.win, tapped.doc);
+  tapped.doc.activeElement = tapped.field;
+  tapped.drag();
+  tapped.tap(); // the person taps the field again: the drag no longer stands
+  tapped.vv.fire('resize');
+  tapped.advance(surface.SETTLE_MS);
+  assert.deepEqual(tapped.scrolls, [520 - (377 - 12)], 'revealed once the keys settle, as any tap\'s field is');
+
+  const hopped = rig({ keysUp: true });
+  surface.attachKeyboardSurface(hopped.scroller, hopped.win, hopped.doc);
+  hopped.drag();
+  hopped.doc.activeElement = hopped.field;
+  hopped.scroller.fire('focusin', { target: hopped.field });
+  hopped.flush();
+  assert.equal(hopped.scrolls.length, 1, 'a focus moved by code with the keys up still reveals at once');
+});
+
+test('a drag does not stop the ride: a keyboard-sized step is still ridden', () => {
+  const r = rig();
+  surface.attachKeyboardSurface(r.scroller, r.win, r.doc, { ride: true });
+  r.doc.activeElement = r.field;
+  r.drag();
+  r.scroller.offsetTop = 163; // the band moved the sheet onto the keys
+  r.vv.fire('resize');
+  assert.deepEqual(r.animations.map((a) => a.keyframes), [[{ translate: '0 337px' }, { translate: '0 0' }]]);
+  assert.deepEqual(r.scrolls, [], 'and the sheet was not scrolled back');
 });
 
 // ── 4. app.css ──────────────────────────────────────────────────────────

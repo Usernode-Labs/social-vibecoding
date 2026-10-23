@@ -49,9 +49,10 @@ test('every kind is framed, and framed exactly once', () => {
     assert.match(html, /Homeroom<br>You are receiving this because/, `${kind}: carries the footer`);
     // A project invite goes to an address somebody else typed, so it says
     // that instead of claiming the recipient asked for it.
-    // WP-E: activity mail (build_ready, invite_activity) stands in for a
-    // push, so it says that, and how to turn it off.
-    const activity = kind === 'build_ready' || kind === 'invite_activity';
+    // WP-E: activity mail (build_ready, invite_activity, and since the
+    // notification ask project_opened) stands in for a push, so it says that,
+    // and how to turn it off.
+    const activity = ['build_ready', 'invite_activity', 'project_opened'].includes(kind);
     assert.match(html, kind === 'project_invite'
       ? /someone on Homeroom invited this address to a project\. You will not hear from us again unless you join, or somebody invites you again\./
       : activity

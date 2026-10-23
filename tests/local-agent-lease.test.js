@@ -119,7 +119,7 @@ test('release marks a live turn abandoned, never failed', async () => {
     [/UPDATE local_agent_turns/, [{ session_id: 42 }]],
   ]);
   const lease = await localAgent.release(pool, {
-    leaseId: '7', userId: 5, reason: 'settings',
+    leaseId: '7', userId: 5, reason: 'revoked',
   });
   assert.ok(lease);
   const turnUpdate = pool.calls.find((c) => /UPDATE local_agent_turns/.test(c.sql));

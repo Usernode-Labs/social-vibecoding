@@ -233,35 +233,18 @@ function renameHeadFailure(result, branch) {
 // either loses its own commits or lands on a proposal whose votes were
 // cleared for a revision that no longer exists.
 //
-// Keyed on the SESSION id, on a dedicated client, held across the whole
-// update and released in `finally` — the same shape as
-// external-agent-tasks.js's task lock, and for the same reason: a git fetch
-// and push take seconds of network, and holding a transaction open across
-// that is worse than the race it prevents. Degrades to running unlocked when
-// the pool has no `connect()`, which is never a reason to refuse an update.
+// Keyed on the SESSION id, a session advisory lock held across the whole
+// update on the process's lock connection (src/db/session-locks.js), never
+// a pooled one: a git fetch and push take seconds of network, and holding a
+// transaction open across that is worse than the race it prevents. A writer
+// waiting for it holds no connection while it waits (every revision writer of
+// a proposal takes it, a hand-off upload or build included). Degrades to
+// running unlocked when the pool is not a database pool, which is never a
+// reason to refuse an update.
 async function withProposalLock(pool, sessionId, fn) {
   const id = Number(sessionId);
-  if (!Number.isSafeInteger(id) || id <= 0 || !pool || typeof pool.connect !== 'function') {
-    return fn();
-  }
-  let client;
-  try {
-    client = await pool.connect();
-  } catch (err) {
-    log.warn('proposal-update', 'update lock unavailable, proceeding unlocked', {
-      sessionId: id, err: err.message,
-    });
-    return fn();
-  }
-  try {
-    await client.query('SELECT pg_advisory_lock($1, $2)', [PROPOSAL_UPDATE_LOCK, id]);
-    return await fn();
-  } finally {
-    try {
-      await client.query('SELECT pg_advisory_unlock($1, $2)', [PROPOSAL_UPDATE_LOCK, id]);
-    } catch { /* releasing the client drops the session lock anyway */ }
-    client.release();
-  }
+  if (!Number.isSafeInteger(id) || id <= 0) return fn();
+  return require('../db/session-locks').withSessionLock(pool, [PROPOSAL_UPDATE_LOCK, id], fn, { unlockedOnError: true });
 }
 
 // The proposal, re-read under the lock. The caller's copy was loaded before
@@ -344,8 +327,8 @@ async function updateProposalFromForkBranch(deps, params) {
   const votes = deps.votes || require('../routes/votes');
   const prImportSync = deps.prImportSync || require('./pr-import-sync');
   const githubPublic = deps.githubPublic || require('./external-agent-tasks').githubPublic;
-  const serialize = deps.serialize
-    || require('./handoff-pipeline').serializeHandoffSubmission;
+  // Ordered per session with every other revision writer, on any process.
+  const lock = deps.lock || withProposalLock;
 
   const { user, origin } = params;
 
@@ -422,7 +405,7 @@ async function updateProposalFromForkBranch(deps, params) {
   }
 
   const sessionId = Number(params.session.id);
-  return serialize(sessionId, () => withProposalLock(pool, sessionId, async () => {
+  return lock(pool, sessionId, async () => {
     // Everything from here on judges the row as it is NOW, not as it was
     // when the caller queued.
     const session = (await reloadSession(pool, sessionId)) || params.session;
@@ -437,7 +420,7 @@ async function updateProposalFromForkBranch(deps, params) {
     const forkRepo = forkRepoName || repo;
 
     const busy = deps.busy || defaultBusyCheck;
-    if (busy(session)) {
+    if (await busy(session, { pool })) {
       return fail(
         'session_busy',
         'This proposal is in the middle of a build right now. Retry in a minute. Pushing onto it mid-build '
@@ -502,7 +485,7 @@ async function updateProposalFromForkBranch(deps, params) {
     } finally {
       releaseOperation();
     }
-  }));
+  });
 }
 
 // A managed local upload has already advanced the bot-owned PR branch. Apply
@@ -1457,14 +1440,15 @@ function ownershipGate(session, user) {
   return null;
 }
 
-// Is the platform itself mid-write on this proposal? The questions the
-// commit-upload route asks: a turn or an operation, or a hand-off being
-// adopted. A build or checks run of the current head needs no refusal: the
-// new head reaches the preview machine as a revision, which cancels it.
-function defaultBusyCheck(session) {
-  const { isSessionBusy } = require('./active-workers');
+// Is the platform itself mid-write on this proposal, on any process? The
+// questions the commit-upload route asks: a turn or an operation, or a
+// hand-off being adopted (it records an operation too). A build or checks run
+// of the current head needs no refusal: the new head reaches the preview
+// machine as a revision, which cancels it.
+async function defaultBusyCheck(session, { pool = null } = {}) {
+  const { isSessionBusyAnywhere } = require('./active-workers');
   const { hasInFlightHandoffPipeline } = require('./handoff-pipeline');
-  return isSessionBusy(Number(session.id)) || hasInFlightHandoffPipeline(session.id);
+  return hasInFlightHandoffPipeline(session.id) || isSessionBusyAnywhere(Number(session.id), { pool });
 }
 
 // ── The bot-owned branch ───────────────────────────────────────────────

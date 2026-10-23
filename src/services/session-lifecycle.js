@@ -270,7 +270,8 @@ async function teardownStagingForSession({ pool, sessionId, reason = 'idle' }) {
 }
 
 // Close a proposal (status 'archived'), for any reason: withdrawn by its
-// owner ('manual'), voted down ('auto-rejected'), gone quiet ('stale-pr'),
+// owner ('manual'), voted down ('auto-rejected'), set aside after an admin's
+// lone No ('admin-no'), gone quiet ('stale-pr'),
 // replaced, superseded, its request closed, red and untouched, the Homeroom
 // bot's or a bench trial's own ending. One path for every close: the
 // machine closes its pull request, retires its preview for good, destroys
@@ -410,33 +411,27 @@ async function closeOwnSession({ pool, sessionId, reason, waitMs }) {
 // is gone ('no_session') or GitHub refused the ref ('branch_create_failed',
 // carrying a userMessage safe to show in chat).
 async function ensureSessionBranch({ pool, sessionId, username = null, label = null }) {
-  const client = await pool.connect();
-  let open = false;
-  try {
-    await client.query('BEGIN');
-    open = true;
-    const { rows } = await client.query(
+  // One first use at a time per session, on any process: a session lock on
+  // the process's lock connection (src/db/session-locks.js), not a row lock
+  // in a transaction held on a pooled connection across GitHub's call (the
+  // GitHub client reads its credentials through the same pool).
+  const { SESSION_BRANCH_LOCK } = require('./advisory-locks');
+  return require('../db/session-locks').withSessionLock(pool, [SESSION_BRANCH_LOCK, Number(sessionId)], async () => {
+    const { rows } = await pool.query(
       `SELECT cs.id, cs.branch_name, cs.user_id, cs.session_title, u.username, a.repo_url
          FROM chat_sessions cs
          JOIN apps a ON a.id = cs.app_id
          LEFT JOIN users u ON u.id = cs.user_id
-        WHERE cs.id = $1
-        FOR UPDATE OF cs`,
+        WHERE cs.id = $1`,
       [sessionId]
     );
     const row = rows[0];
     if (!row) {
-      await client.query('COMMIT');
-      open = false;
       const err = new Error(`Session ${sessionId} not found`);
       err.code = 'no_session';
       throw err;
     }
-    if (row.branch_name) {
-      await client.query('COMMIT');
-      open = false;
-      return { branchName: row.branch_name, created: false };
-    }
+    if (row.branch_name) return { branchName: row.branch_name, created: false };
 
     const branchName = branchNames.devBranchName(
       username || row.username || `u${row.user_id}`, Date.now(), label || row.session_title || null,
@@ -446,8 +441,6 @@ async function ensureSessionBranch({ pool, sessionId, username = null, label = n
       try {
         await github.createBranch(owner, repo, branchName);
       } catch (err) {
-        await client.query('ROLLBACK');
-        open = false;
         log.warn('session-lifecycle', 'Deferred branch creation failed', {
           sessionId, branch: branchName, err: err.message,
         });
@@ -460,17 +453,22 @@ async function ensureSessionBranch({ pool, sessionId, username = null, label = n
       }
     }
 
-    await client.query(`UPDATE chat_sessions SET branch_name = $2 WHERE id = $1`, [sessionId, branchName]);
-    await client.query('COMMIT');
-    open = false;
+    // Never over a branch recorded meanwhile (an older release, during a
+    // rollout, takes a row lock instead of this one): that one stands.
+    const { rows: [set] } = await pool.query(
+      `UPDATE chat_sessions SET branch_name = $2 WHERE id = $1 AND branch_name IS NULL RETURNING branch_name`,
+      [sessionId, branchName]
+    );
+    if (!set) {
+      const { rows: [now] } = await pool.query('SELECT branch_name FROM chat_sessions WHERE id = $1', [sessionId]);
+      log.warn('session-lifecycle', 'A branch was recorded for the session meanwhile; ours is left unused', {
+        sessionId, branch: branchName, recorded: now?.branch_name || null,
+      });
+      return { branchName: now?.branch_name || branchName, created: false };
+    }
     log.info('session-lifecycle', 'Session branch created on first use', { sessionId, branch: branchName });
     return { branchName, created: true };
-  } catch (err) {
-    if (open) { try { await client.query('ROLLBACK'); } catch { /* already unwound */ } }
-    throw err;
-  } finally {
-    client.release();
-  }
+  });
 }
 
 module.exports = {

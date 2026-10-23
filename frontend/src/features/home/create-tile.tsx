@@ -142,26 +142,29 @@ export function CreateTile({ view, style }: { view: CreateTileView; style?: stri
 // When a collapsed grid's last shown row is full the tile is held back
 // (#3047), and before #4757 that was the end of it: a viewer with many apps
 // saw no way to create at all until they expanded the grid and scrolled its
-// end. AppsMore draws this instead, on the "Show all N apps" line — the same
-// label, tooltip, locked treatment and dialog as the tile, at the button's
-// size rather than a tile's.
+// end. The My apps heading draws this instead, in its action seat (#5825; it
+// sat on the "Show all N apps" line before) — the same label, tooltip, locked
+// treatment and dialog as the tile, at the button's size rather than a tile's.
 //
 // It carries the tile's id and `data-panel-slot="create"` because exactly one
 // of tile and compact entry exists at a time (the grid draws no tile while
-// this is up, and this is up only while moreCount > 0), so the declared
+// this is up, and this is up only while the grid holds the tile back), so the declared
 // checks' and the tour's `#home-create-tile` still land on the one Create
 // control on screen. It deliberately has NO `home-create-tile` class: the
 // drag-time `#app-list > .home-create-tile` rules in app.css are about the
 // grid's canvas, which this does not live in. `.home-create-btn:focus-visible`
 // still applies.
-const COMPACT = 'home-create-btn group inline-flex shrink-0 items-center gap-1.5 rounded-lg '
-  + 'px-3 py-1.5 text-xs font-medium transition-colors hover:bg-zinc-100 dark:hover:bg-zinc-800';
-const COMPACT_INK_ON = 'text-zinc-600 group-hover:text-violet-700 dark:text-zinc-400 '
-  + 'dark:group-hover:text-violet-400';
-const COMPACT_INK_OFF = 'text-zinc-400 dark:text-zinc-500';
-// The tile's dashed face, shrunk to the line: same ring colours (FACE_ON /
-// FACE_OFF), same plus, one size down.
-const COMPACT_FACE = 'flex h-5 w-5 shrink-0 items-center justify-center rounded-md border border-dashed';
+//
+// #5654: it is the row's one button — the app's white surface (dark grey in
+// dark mode) inside the hairline border, fully rounded, with the plus in
+// front — while Show all stays a text link. No new colour: zinc at rest, the
+// blue accent on hover. The dashed box around the plus is the grid tile's,
+// and is not repeated here.
+const COMPACT = 'home-create-btn group inline-flex shrink-0 items-center gap-1 rounded-full border '
+  + 'bg-white px-3 py-1.5 text-xs font-semibold transition-colors dark:bg-zinc-900';
+const COMPACT_INK_ON = 'border-zinc-200 text-zinc-800 hover:border-violet-500 hover:text-violet-700 '
+  + 'dark:border-zinc-700 dark:text-zinc-100 dark:hover:border-violet-400 dark:hover:text-violet-400';
+const COMPACT_INK_OFF = 'border-zinc-200 text-zinc-400 dark:border-zinc-700 dark:text-zinc-500';
 
 export function CreateCompact({ view }: { view: CreateTileView }) {
   const t = useMessages('home');
@@ -183,9 +186,7 @@ export function CreateCompact({ view }: { view: CreateTileView }) {
         win().App?.showCreateModal?.();
       }}
     >
-      <span className={`${COMPACT_FACE} ${on ? FACE_ON : FACE_OFF}`} aria-hidden="true">
-        <PlusWideIcon className="h-3 w-3" strokeWidth="2" />
-      </span>
+      <PlusWideIcon className="h-3 w-3" strokeWidth="2" aria-hidden="true" />
       {t(CREATE_TILE_LABEL)}
     </button>
   );

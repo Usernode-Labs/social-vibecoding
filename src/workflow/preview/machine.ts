@@ -31,8 +31,10 @@ import * as store from '../rules/check-store.ts';
 import * as rowStore from './check-store.ts';
 import { createCheckFailedNotification } from '../rules/change-notifications.ts';
 import { toBotChange, writeBotChange } from '../rules/bot-notes.ts';
+import { withinAutoRetries } from '../rules/check-retries.ts';
 import { OPEN, readFacts } from './facts.ts';
 import type { Facts } from './facts.ts';
+import { NOT_MOVING_KINDS } from '../session-work.ts';
 
 export const MACHINE = 'preview';
 export const sessionKey = (sessionId: number) => `session:${sessionId}`;
@@ -71,8 +73,14 @@ export interface Served extends Attempt {
   containerId: string | null;
   imageRef: string | null;
   buildRef: string | null;
+  since?: string;                // when it started serving (absent: before version 8)
+  lost?: boolean;                // lost again soon after it started (lostAgain): it serves nothing to check
 }
 export interface Run { key: string; n: number; head: string }
+// What serves `head` and can be checked: not one that was lost (lostAgain),
+// which stays the serving record only so the rebuild retires it.
+const servesHead = (d: Data, head: string | null) => !!d.serving && !d.serving.lost && d.serving.head === head;
+
 // An attempt waiting for its preview.retireAttempt: the item's key, and
 // whether it came from a prepare that was cancelled (one that may still be
 // creating things until its handler stops).
@@ -97,6 +105,7 @@ export interface Data {
   platformFault: boolean;        // that error is the platform's (its own retry allowance)
   streak: number;                // consecutive errors on this head
   firstFailureAt: string | null;
+  losses?: number;               // serving attempts of this head lost soon after they started, in a row (lost)
   episode: number;               // deferred episodes, for ConflictResolved's key
   retiring: Retiring[];          // attempts whose preview.retireAttempt is outstanding
   exit: { reason: string; terminal: boolean; key: string; attempts: Attempt[]; failed?: string } | null;
@@ -170,8 +179,8 @@ const EVENTS = {
   }),
   ConflictResolved: (p: any) => ({ head: sha(p?.head, 'head') }),
   // A person's "Run checks again" folded into what the session is already
-  // doing (services/unit-suite-reuse.js owePendingRun): the verdict stored
-  // for `head` no longer stands for it.
+  // doing (routes/sessions.js recheck): the verdict stored for `head` no
+  // longer stands for it.
   RecheckFolded: (p: any) => ({ head: sha(p?.head, 'head'), sessionId: optInt(p?.sessionId, 'sessionId') }),
   // The branch moved on to code nothing checks yet (a CLI upload before it
   // is submitted, an update to a paused proposal): the verdict no longer
@@ -217,10 +226,17 @@ const EVENTS = {
 
 // The attempt's database: [main]'s pattern (app_<slug>_staging_s<sid>_<6
 // hex>), so [main]'s orphan sweep can still collect it after a rollback,
-// with a tag only this instance gives out.
+// with a tag only this instance gives out. Postgres keeps the first 63
+// bytes of a name and drops the rest without an error, so the slug is cut
+// to keep the name at 57 and its `_owner` role at 63 (db-manager's
+// shotsDbName does the same): with the whole name kept, a 43-character slug
+// made every attempt of session 10542 one database, and each retirement of
+// the attempt before dropped the one that had just started serving.
+const ATTEMPT_DB_BYTES = 63 - '_owner'.length;
 export function attemptDb(slug: string, sessionId: number, seed: number, n: number, claim = 1): string {
   const tag = createHash('sha256').update(`preview:${sessionId}:${seed}:${n}${claim > 1 ? `:c${claim}` : ''}`).digest('hex').slice(0, 6);
-  return `app_${slug.replace(/[^a-z0-9_]/g, '_')}_staging_s${sessionId}_${tag}`;
+  const suffix = `_staging_s${sessionId}_${tag}`;
+  return `app_${slug.replace(/[^a-z0-9_]/g, '_').slice(0, ATTEMPT_DB_BYTES - 'app_'.length - suffix.length)}${suffix}`;
 }
 // As many as a build's work item has claims (services.ts PREPARE_ATTEMPTS).
 export const PREPARE_CLAIMS = 3;
@@ -228,7 +244,9 @@ const attemptDbs = (slug: string, sessionId: number, seed: number, n: number) =>
   Array.from({ length: PREPARE_CLAIMS }, (_, i) => attemptDb(slug, sessionId, seed, n, i + 1));
 // Every database an attempt may have made.
 const dbsOf = (a: Attempt) => a.dbs ?? [a.db];
-// db-manager.stagingDbName, for a preview [main] built.
+// db-manager.stagingDbName, for a preview [main] built: the name it was
+// built with, uncut (db-manager refuses one past 63 bytes rather than drop
+// whatever Postgres stored under its first 63).
 const legacyDb = (slug: string, sessionId: number, head: string) =>
   `app_${slug.replace(/[^a-z0-9_]/g, '_')}_staging_s${sessionId}_${head.slice(0, 6)}`;
 
@@ -252,7 +270,7 @@ const recheckTrigger = (reason: string, trigger: string | null) =>
 // ── Outcomes ────────────────────────────────────────────────────────────
 
 export interface Deps {
-  maxRetries: number;        // staging-recovery.checkMaxAutoRetries(), read at boot
+  maxRetries: number;        // rules/check-retries.checkMaxAutoRetries(), read at boot
   retireAfterMs: number;     // a cancelled prepare has stopped by then (its lease)
   // A preview nobody has used for this long is given back (config
   // stagingIdleTeardownMs; 0 or absent: never).
@@ -265,6 +283,9 @@ export interface Deps {
 const CHECKS_DUE_MS = 10 * 60 * 1000;
 const WORKED_RECHECK_MS = 60 * 1000;
 const IDLE_FLOOR_MS = 30 * 1000;
+// A serving attempt lost sooner than this after it started counts as lost
+// again in a row (lost): the preview-runtimes clock looks every 2 minutes.
+const LOST_SOON_MS = 30 * 60 * 1000;
 
 interface Step {
   name: Name;
@@ -290,6 +311,18 @@ const toShots = (d: Data, type: string, payload: Record<string, Json> = {}): Mes
 export const mergeWanted = (d: Data, f: Facts, state: string): MessageRequest[] =>
   ((state === 'passing' || state === 'skipped') && f.session?.status === 'promoted'
     ? [{ to: { machine: 'merge-queue', key: `app:${d.appId}` }, event: { type: 'MergeWanted', payload: { appId: d.appId, sessionId: d.sessionId, reason: 'checks' } }, appId: d.appId }]
+    : []);
+// The same ask when the last operation that kept a proposal in review
+// moving ends (any kind but session-work.ts NOT_MOVING_KINDS). An ask that
+// came while it was live, its own verdict's or a vote's, was declined as
+// busy (proposal/machine.ts askRefusal), and nothing asked again before the
+// queue's sweep four minutes on: 17 of the 22 merges that took over two
+// minutes from 16 to 21 Oct 2026 waited so. A hand-off's check run is such
+// an operation: it ends just after its own verdict (routes/proposal-handoff.js).
+export const stoppedMoving = (d: Data, f: Facts, ended: Operation | undefined, left: readonly Operation[]): MessageRequest[] =>
+  (ended && !NOT_MOVING_KINDS.includes(ended.kind) && f.session?.status === 'promoted'
+    && !left.some((o) => !NOT_MOVING_KINDS.includes(o.kind))
+    ? [{ to: { machine: 'merge-queue', key: `app:${d.appId}` }, event: { type: 'MergeWanted', payload: { appId: d.appId, sessionId: d.sessionId, reason: 'operation-ended' } }, appId: d.appId }]
     : []);
 // To the proposal machine: a promoted proposal's preview will not start
 // because main moved underneath it, and a sync with main is the fix
@@ -325,9 +358,6 @@ function checksReady(d: Data, ctx: TransitionContext, head: string, state: strin
 
 // The backoff of the error lane: 2 min doubling to 30 (storeChecks' own).
 const retryDelayMs = (streakBefore: number) => Math.min(120 * 2 ** Math.min(streakBefore, 10), 1800) * 1000;
-// A platform fault keeps retrying for a day past the cap
-// (staging-recovery.PLATFORM_FAULT_RETRY_MS).
-const PLATFORM_FAULT_RETRY_MS = 24 * 60 * 60 * 1000;
 
 // What a newer step makes obsolete: the attempt being prepared (retired
 // once its handler has stopped) and the checks run.
@@ -386,6 +416,8 @@ function begin(s: Live, head: string, trigger: string | null, ctx: TransitionCon
     ...d0, head, trigger, last: n, preparing: attempt, run: null, verdict: null, ...(previewOnly ? { previewOnly: true } : {}),
     failure: sameHead ? d0.failure : null, platformFault: sameHead ? d0.platformFault : false,
     streak: sameHead ? d0.streak : 0, firstFailureAt: sameHead ? d0.firstFailureAt : null,
+    // A person's retry counts the losses afresh, as a new head does.
+    losses: sameHead && trigger !== 'manual-recheck' ? (d0.losses ?? 0) : 0,
     retiring: old.retiring, exit: null, pending: null,
   };
   // The unit suite starts with the build rather than after it (its own Jobs,
@@ -431,13 +463,10 @@ function startRun(s: Live, trigger: string | null, ctx: TransitionContext,
 
 // The error lane: an 'error' on this head runs again on its own, from a
 // row in its scope, while the streak is under the cap (or, for the
-// platform's own fault, for a day).
+// platform's own fault, for a day: rules/check-retries.ts).
 function errorTimer(d: Data, f: Facts, deps: Deps, ctx: TransitionContext, streakBefore: number): TimerRequest | null {
   if (!f.session?.retryScope) return null;
-  const underCap = d.streak < deps.maxRetries;
-  const platformDay = d.platformFault && d.firstFailureAt
-    && ctx.now.getTime() - Date.parse(d.firstFailureAt) < PLATFORM_FAULT_RETRY_MS;
-  if (!underCap && !platformDay) return null;
+  if (!withinAutoRetries(d, deps.maxRetries, ctx.now.getTime())) return null;
   return { at: new Date(ctx.now.getTime() + retryDelayMs(streakBefore)), event: { type: 'RetryDue' } };
 }
 
@@ -458,8 +487,10 @@ const underReview = (f: Facts) => !!f.session && (f.session.status === 'promoted
 
 // The head the row's checks are owed for, when they are: one a person asked
 // to have checked fresh, or, in the error lane's scope, one whose stored
-// verdict is pending or missing while nothing builds or runs it.
-function owedChecks(s: Live, f: Facts): { head: string; fresh: boolean } | null {
+// verdict is pending or missing while nothing builds or runs it. `answered`:
+// a head whose fresh request the transition's own settlement clears (its
+// `answersFresh`), which the facts, read before it, still show owed.
+function owedChecks(s: Live, f: Facts, answered: string | null = null): { head: string; fresh: boolean } | null {
   const x = f.session;
   if (!x || !OPEN.has(x.status) || s.data.previewOnly) return null;
   if (s.name !== 'settled' && s.name !== 'idle') return null;
@@ -470,7 +501,7 @@ function owedChecks(s: Live, f: Facts): { head: string; fresh: boolean } | null 
   // run that errors before the unit suite starts leaves the request owed,
   // and running it again here would never stop.
   if (holds === 'error') return null;
-  if (x.unitFreshSha && x.unitFreshSha === head) return { head, fresh: true };
+  if (x.unitFreshSha && x.unitFreshSha === head && head !== answered) return { head, fresh: true };
   if (!x.retryScope) return null;
   // A verdict this machine holds for the head stands.
   if (holds !== null) return null;
@@ -478,12 +509,12 @@ function owedChecks(s: Live, f: Facts): { head: string; fresh: boolean } | null 
   return st === 'pending' || st == null ? { head, fresh: false } : null;
 }
 
-function restTimer(next: PState, f: Facts, ctx: TransitionContext, deps: Deps): TimerRequest | null {
+function restTimer(next: PState, f: Facts, ctx: TransitionContext, deps: Deps, answered: string | null = null): TimerRequest | null {
   if (next.name === NONE || next.name === 'retired') return null;
   const s = next as Live;
   const now = ctx.now.getTime();
   const due: TimerRequest[] = [];
-  if (owedChecks(s, f)) due.push({ at: new Date(now + CHECKS_DUE_MS), event: { type: 'ChecksDue' } });
+  if (owedChecks(s, f, answered)) due.push({ at: new Date(now + CHECKS_DUE_MS), event: { type: 'ChecksDue' } });
   const idleMs = deps.idleMs ?? 0;
   if (idleMs > 0 && s.data.serving && SERVES.has(s.name) && f.session) {
     const last = f.session.lastActivityAt ? Date.parse(f.session.lastActivityAt) : now;
@@ -507,9 +538,12 @@ const ownDeadline = (e: Event<any>) => e.source.kind === 'timer' || (e.type !== 
 // leaves none (`timer: null`).
 function withRest(entry: Entry, type: string, deps: Deps): Entry {
   // The outcome, its rest deadline where it left none, and that deadline
-  // recorded as the instance's own (`due`).
+  // recorded as the instance's own (`due`). The rest is the state the
+  // outcome leaves: a settlement that answers a person's fresh request
+  // clears it in the same transaction, so it is not owed any more.
   const rested = (o: Outcome<PState>, f: Facts, ctx: TransitionContext): Outcome<PState> => {
-    const out = o.timer === null ? { ...o, timer: restTimer(o.next, f, ctx, deps) } : o;
+    const answered = (o.writes || []).find((w) => w.type === 'settled' && w.answersFresh === true);
+    const out = o.timer === null ? { ...o, timer: restTimer(o.next, f, ctx, deps, (answered?.head as string) ?? null) } : o;
     if (out.timer === undefined || out.next.name === NONE) return out;
     const due = out.timer ? { type: out.timer.event.type, at: out.timer.at.toISOString(), v: ctx.version + 1 } : null;
     return { ...out, next: { name: out.next.name, data: { ...(out.next as Live).data, due } } as PState };
@@ -706,7 +740,7 @@ function rawTransitions(deps: Deps): Record<string, Record<string, Entry>> {
         return reject('not_deployable');
       }
       if (e.payload.reason !== 'deploy' && !restarts(s)
-          && s.data.serving?.head === e.payload.head && s.data.head === e.payload.head) return reject('already_serving');
+          && servesHead(s.data, e.payload.head) && s.data.head === e.payload.head) return reject('already_serving');
       return ok();
     },
     to: (s, e, f, ctx) => {
@@ -779,7 +813,7 @@ function rawTransitions(deps: Deps): Record<string, Record<string, Entry>> {
       // the one held.
       const head = trigger === 'manual-recheck' ? requestedHead(s, f) ?? d.head! : d.head!;
       // Nothing serves the head: build it.
-      if (head !== d.head || !d.serving || d.serving.head !== d.head) return begin(s, head, trigger, ctx, deps);
+      if (head !== d.head || !servesHead(d, d.head)) return begin(s, head, trigger, ctx, deps);
       return startRun(s, trigger, ctx);
     },
   };
@@ -833,20 +867,27 @@ function rawTransitions(deps: Deps): Record<string, Record<string, Entry>> {
   // way: the stored verdict of the head they asked about no longer stands
   // for it, so the row reads pending (and merge-blocked) until a run that
   // answers them stores one, as their own run would have stamped it. The
-  // run they are owed starts once the session is idle (owePendingRun), or
-  // from the stale sweep, which re-drives a pending head nothing runs. A
-  // verdict of another head, or one already pending, is left alone.
+  // run they are owed starts once nobody works on the session: its
+  // ChecksDue, looked at every WORKED_RECHECK_MS while somebody does, and at
+  // once when a recorded operation ends. (The route's own poll of the
+  // session in its process's memory, lost to a restart, is gone.) A verdict
+  // of another head, or one already pending, is left alone.
+  // A request whose head has no verdict to stamp (another head's stands, or
+  // it reads pending already) still owes its run: resting, its ChecksDue is
+  // armed.
+  const stampable = (e: Event<any>, f: Facts) => !!f.session && f.session.checks.commitSha === e.payload.head
+    && f.session.checks.state !== 'pending';
+  const resting = (s: Live) => s.name === 'settled' || s.name === 'idle';
   const folded: Entry = {
-    guard: (s, e, f) => (f.session && f.session.checks.commitSha === e.payload.head && f.session.checks.state !== 'pending'
-      ? ok() : reject('nothing_to_stamp')),
-    // The request it owes is run once nobody works there: resting, by its
-    // ChecksDue; a deadline it waits on otherwise (a failed build's retry)
-    // stays.
+    guard: (s, e, f) => (stampable(e, f) || (resting(s) && owedChecks(s, f)) ? ok() : reject('nothing_to_stamp')),
+    // A deadline it waits on otherwise (a failed build's retry) stays.
     to: (s, e, f, ctx) => step({
       name: s.name, data: s.data,
-      writes: [{ type: 'pending', sessionId: s.data.sessionId, head: e.payload.head, phase: null, trigger: 'manual-recheck' }],
-      push: [checksPending(s.data, ctx, e.payload.head, '', 'manual-recheck')],
-      ...(s.name === 'settled' || s.name === 'idle' ? { timer: null } : {}),
+      ...(stampable(e, f) ? {
+        writes: [{ type: 'pending', sessionId: s.data.sessionId, head: e.payload.head, phase: null, trigger: 'manual-recheck' }],
+        push: [checksPending(s.data, ctx, e.payload.head, '', 'manual-recheck')],
+      } : {}),
+      ...(resting(s) ? { timer: { at: new Date(ctx.now.getTime() + WORKED_RECHECK_MS), event: { type: 'ChecksDue' } } } : {}),
     }),
   };
 
@@ -855,13 +896,35 @@ function rawTransitions(deps: Deps): Record<string, Record<string, Entry>> {
   // after adopting it from the row, as ChecksCleared does: the stamp a
   // folded request owes is the row's either way.
   const foldedAdopting: Entry = {
-    guard: (s, e, f, ctx) => { const c = adopting(e, f, ctx); return c !== true ? c : (folded.guard as any)(s, e, f, ctx); },
+    // Judged on the state as adopted from the row, as its transition is: a
+    // session with no instance yet rests, and checks owed on it arm a look.
+    guard: (s, e, f, ctx) => {
+      const c = adopting(e, f, ctx);
+      return c !== true ? c : (folded.guard as any)(standing(adopt(e, f, priorOf(s)), f), e, f, ctx);
+    },
     to: (s, e, f, ctx) => (folded.to as any)(standing(adopt(e, f, priorOf(s)), f), e, f, ctx),
   };
 
+  // A lost preview is built again at once. One lost again soon after it was
+  // rebuilt (LOST_SOON_MS) is likely to be lost the same way, so from the
+  // second loss in a row it is an error of its head (lostAgain): rebuilt
+  // after the error lane's backoff, at most deps.maxRetries times in a row,
+  // then left for a person. A verdict does not end the count (the checks of
+  // a preview that goes down fail), a preview that served for longer or a
+  // new head does. On 22 Oct 2026 one had been rebuilt every 2 minutes for
+  // two days, each rebuild dropping its own database on the way.
   const lost: Entry = {
     guard: (s, e) => (s.data.serving?.n === e.payload.attempt ? ok() : reject('not_serving')),
-    to: (s, e, f, ctx) => begin(s, s.data.head || s.data.serving.head, 'stuck-sweep', ctx, deps),
+    to: (s, e, f, ctx) => {
+      // A loss lostAgain counted already is reported again only by a
+      // person's Preview (the clock leaves a failed preview alone): built
+      // again as theirs.
+      if (s.data.serving.lost) return begin(s, s.data.head || s.data.serving.head, 'manual-recheck', ctx, deps);
+      const since = Date.parse(s.data.serving.since ?? '');
+      const losses = ctx.now.getTime() - since < LOST_SOON_MS ? (s.data.losses ?? 0) + 1 : 1;
+      if (losses > 1) return lostAgain(s, e, losses, f, ctx, deps);
+      return begin({ name: s.name, data: { ...s.data, losses } }, s.data.head || s.data.serving.head, 'stuck-sweep', ctx, deps);
+    },
   };
 
   // Exit (archive, merge, included, app deletion) is terminal; idle and
@@ -957,10 +1020,19 @@ function rawTransitions(deps: Deps): Record<string, Record<string, Entry>> {
       return step({ name: live.name, data: { ...live.data, operations } });
     },
   };
+  // An operation's end: checks owed while it ran (a person's recheck folded
+  // into it) are looked at now rather than at their next ChecksDue.
   const opEnded: Entry = {
     guard: (s, e) => (s.data.operations.some((o: Operation) => o.id === e.payload.id) ? ok() : reject('no_such_operation')),
-    to: (s, e, f) => step({ name: s.name, data: { ...s.data,
-      operations: s.data.operations.filter((o: Operation) => o.id !== e.payload.id && f.alive.has(o.holder)) } }),
+    to: (s, e, f, ctx) => {
+      const ended = s.data.operations.find((o: Operation) => o.id === e.payload.id);
+      const operations = s.data.operations.filter((o: Operation) => o.id !== e.payload.id && f.alive.has(o.holder));
+      const next = { name: s.name, data: { ...s.data, operations } } as Live;
+      return step({
+        ...next, messages: stoppedMoving(s.data, f, ended, operations),
+        ...(owedChecks(next, f) ? { timer: { at: ctx.now, event: { type: 'ChecksDue' } } } : {}),
+      });
+    },
   };
   const ops = { OperationStarted: opStarted, OperationEnded: opEnded };
 
@@ -987,7 +1059,7 @@ function rawTransitions(deps: Deps): Record<string, Record<string, Entry>> {
       if (!owed) return step({ name: s.name, data: s.data, timer: null });
       if (worked(s, f)) return step({ name: s.name, data: s.data, timer: { at: new Date(ctx.now.getTime() + WORKED_RECHECK_MS), event: { type: 'ChecksDue' } } });
       const trigger = owed.fresh ? 'manual-recheck' : 'stuck-sweep';
-      return owed.head !== s.data.head || !s.data.serving || s.data.serving.head !== owed.head
+      return owed.head !== s.data.head || !servesHead(s.data, owed.head)
         ? begin(s, owed.head, trigger, ctx, deps)
         : startRun(s, trigger, ctx);
     },
@@ -1271,6 +1343,7 @@ function prepared(s: Live, e: Event<any>, outcome: string, f: Facts, ctx: Transi
     const served: Served = {
       ...attempt, db: servedDb, dbs: [servedDb], url: String(r.url), runtimeKind: String(r.runtimeKind),
       runtimeName: String(r.runtimeName), containerId: r.containerId ?? null, imageRef: r.imageRef ?? null, buildRef: r.buildRef ?? null,
+      since: ctx.now.toISOString(),
     };
     const previous = d0.serving && d0.serving.n !== served.n ? d0.serving : null;
     const gone = previous ? retire(d0, previous, ctx, deps) : null;
@@ -1355,6 +1428,47 @@ function prepared(s: Live, e: Event<any>, outcome: string, f: Facts, ctx: Transi
   });
 }
 
+// A preview lost again soon after it was rebuilt (lost): its head's error,
+// as a failed build's is, its streak at least the losses before this one
+// (a verdict between them cleared it), the row's failures the same count
+// and its retry the same deadline (none once capped). So what the
+// connector, the merge gate and the vote route say of a retry is what the
+// machine does, and a rebuild that then fails counts on from it. What
+// served stays the serving record, marked lost, for the rebuild to retire:
+// a person's recheck or Preview builds again rather than checking it, and
+// counts the losses afresh. The run against it stops. The author hears of
+// it once it is left for a person, not while rebuilds are to come.
+function lostAgain(s: Live, e: Event<any>, losses: number, f: Facts, ctx: TransitionContext, deps: Deps): Outcome<PState> {
+  const d0 = s.data;
+  const head = d0.head || d0.serving!.head;
+  const old = obsolete(d0, ctx, deps);
+  const detail = `The preview stopped soon after it started, ${losses} times in a row`
+    + (e.payload.detail ? ` (${e.payload.detail})` : '');
+  const streak = Math.max(d0.streak + 1, losses - 1);
+  const d: Data = {
+    ...d0, run: null, verdict: 'error', failure: detail, platformFault: false, streak,
+    firstFailureAt: d0.firstFailureAt ?? ctx.now.toISOString(), losses, retiring: old.retiring,
+    serving: { ...d0.serving!, lost: true },
+  };
+  const timer = errorTimer(d, f, deps, ctx, streak - 1);
+  return step({
+    name: 'failed', data: d,
+    cancel: old.cancel,
+    writes: [{
+      type: 'prepareFailed', eventId: e.id, sessionId: d.sessionId, appId: d.appId, userId: d.userId, head,
+      detail, infrastructure: !!timer, platformFault: false, aboutMain: null, sync: false,
+      source: f.session?.source ?? null, prNumber: f.session?.prNumber ?? null,
+      retry: { failures: streak, nextRetryAt: timer ? timer.at.toISOString() : null },
+    }],
+    work: old.work,
+    push: [
+      checksReady(d, ctx, head, 'error'),
+      sessionEvent(route(d), 'staging_failed', seq(ctx, 3), { error: detail, errorName: 'PreviewFailed', missingKeys: [] }),
+    ],
+    timer,
+  });
+}
+
 function ran(s: Live, e: Event<any>, outcome: string, f: Facts, ctx: TransitionContext, deps: Deps): Outcome<PState> {
   const d0 = s.data;
   const run = d0.run!;
@@ -1414,6 +1528,10 @@ function ran(s: Live, e: Event<any>, outcome: string, f: Facts, ctx: TransitionC
   // nothing off.
   const stores = !refused && !!f.session && OPEN.has(f.session.status) && f.session.checks.commitSha === run.head;
   const recorded = state !== 'error' && !blocked;
+  // A verdict stored for a head a person asked to have checked fresh clears
+  // their request with it (check-store's storeChecks: the suite ran), so the
+  // rest this outcome is given does not owe it again (withRest).
+  const answersFresh = owed && stores && state !== 'error';
   const settle = {
     type: 'settled', ...base, state, detail, platformFault,
     results: results as Json, console: blocked ? null : (r!.console ?? null),
@@ -1422,6 +1540,7 @@ function ran(s: Live, e: Event<any>, outcome: string, f: Facts, ctx: TransitionC
     ...(unitSuiteAbsent ? { unitSuiteAbsent: true } : {}),
     ...(recorded && r!.unitEarned ? { unitEarned: r!.unitEarned } : {}),
     ...(recorded && r!.unitObserved ? { unitObserved: r!.unitObserved } : {}),
+    ...(answersFresh ? { answersFresh: true } : {}),
   };
   if (refused && d0.trigger !== 'manual-recheck' && d0.serving && d0.serving.head === run.head) {
     return startRun({ name: 'checking', data: { ...d0, run: null } }, 'manual-recheck', ctx, { writes: [settle] });
@@ -1501,7 +1620,10 @@ export function preview(deps: Deps): Machine<PState, Facts> {
     // ChecksDue), EnvStale from the release, and a promote that re-arms the
     // error lane: the leader's idle GC, heal and stuck-checks sweeps are
     // gone, so an older Pod must not decide an instance relying on them.
-    version: 7,
+    // 8: a preview lost again soon after it was rebuilt is its head's error
+    // (lostAgain), counted by `losses`, which an older Pod would neither keep
+    // nor read: it would rebuild such a preview every time it is lost.
+    version: 8,
     events: EVENTS,
     create: ['RevisionSubmitted', 'PreviewRequested', 'ChecksSkipped', 'OperationStarted', 'RetireRequested', 'ChecksCleared', 'RecheckFolded'],
     terminal: ['retired'],
@@ -1649,7 +1771,8 @@ const WRITES = {
         [w.sessionId, JSON.stringify({ stagingFailed: true, error: w.detail, changesReady: true, prNumber: w.prNumber ?? null })]);
     }
     const stored = await rowStore.storeChecks(tx, w.sessionId, w.head,
-      { state: 'error', results: [], ...(w.platformFault ? { platformFault: true } : {}) }, w.detail);
+      { state: 'error', results: [], ...(w.platformFault ? { platformFault: true } : {}), ...(w.retry ? { retry: w.retry } : {}) },
+      w.detail);
     if (!stored || w.infrastructure) return;
     const { rows: [first] } = await tx.query(
       `UPDATE chat_sessions SET check_error_notified_at = NOW()

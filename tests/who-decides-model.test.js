@@ -227,6 +227,27 @@ test('Make it says who can change the project, once, under the two answers', () 
   assert.match(html, /data-make-rule-change=""[^>]*>Change<\/button>/);
   assert.match(draw('two_yeses'), /Who can change it: <b[^>]*>Two yeses<\/b>/);
 
+  // #5266: the ⓘ sits right after the words and before Change, closed on the
+  // first render, and its tip covers nothing until someone asks for it.
+  assert.match(html, /data-make-rule-info="" aria-expanded="false" aria-controls="make-rule-tip" aria-label="What happens next"/);
+  const info = html.indexOf('data-make-rule-info');
+  assert.ok(html.indexOf('You or the group') < info && info < html.indexOf('data-make-rule-change'), 'after the words, before Change');
+  assert.doesNotMatch(html, /data-make-rule-tip/);
+  const rule = read('frontend/src/features/who-decides/make-rule.tsx');
+  // Hover only where there is a mouse; a tap or click opens it anywhere.
+  assert.match(rule, /function hasHover\(\): boolean \{\s+try \{ return !!window\.matchMedia\?\.\('\(hover: hover\) and \(pointer: fine\)'\)\.matches; \} catch \{ return false; \}/);
+  // #5266 review (20 Oct 2026): the ⓘ's own hover opens it, not the whole
+  // rule line's — the words are not a question, and the tip covers nothing
+  // until someone asks for it. A click-opened tip survives the pointer leaving.
+  assert.match(rule, /<span\s+className="inline-flex shrink-0"\s+onMouseEnter=\{\(\) => \{ if \(hasHover\(\)\) \{ hoverOpened\.current = true; setTipOpen\(true\); \}/);
+  assert.doesNotMatch(rule, /ref=\{wrapperRef\}[\s\S]{0,60}onMouseEnter/, 'the line itself does not open the tip');
+  assert.match(rule, /onMouseLeave=\{\(\) => \{ if \(hasHover\(\) && hoverOpened\.current\)/);
+  assert.match(rule, /onClick=\{\(\) => \{ hoverOpened\.current = false; setTipOpen\(\(was\) => !was\); \}\}/);
+  assert.match(rule, /if \(e\.key === 'Escape'\) setTipOpen\(false\);/);
+  assert.match(rule, /document\.addEventListener\('pointerdown', onDown\);/);
+  // Opening the presets sheet closes it, as a press elsewhere does.
+  assert.match(rule, /setTipOpen\(false\); setOpen\(true\);/);
+
   const make = read('frontend/src/features/first-session/make.tsx');
   const name = make.indexOf("{missing === 'name' ? <p id=\"first-session-name-hint\"");
   const line = make.indexOf('<MakeRuleLine preset={rule} onPick={setRule} who={who} />');
@@ -286,8 +307,10 @@ test('#4960: competing access changes are allowed, with a warning in the summary
 test('every way in opens the one sheet', () => {
   const card = read(CARD);
   assert.match(card, /data-ws-rules-edit=""[\s\S]{0,200}onClick=\{\(\) => window\.UsernodeReact\?\.dialogs\?\.whoDecides\?\.open\(\{ slug \}\)\}/);
-  assert.match(read('frontend/src/features/dialogs/members.tsx'), /data-members-who-decides=""[\s\S]{0,400}whoDecides\?\.open\(\{ slug \}\)/);
-  assert.match(read('frontend/src/features/dialogs/app-settings.tsx'), /id="app-access-open"[\s\S]{0,300}whoDecides\?\.open\(\{ slug: target \}\)/);
+  // Both rows hand off through closeThen: opening in the same task as the
+  // close let the queued traversal close the sheet (#5801).
+  assert.match(read('frontend/src/features/dialogs/members.tsx'), /data-members-who-decides=""[\s\S]{0,600}dialog\.closeThen\(\(\) => window\.UsernodeReact\?\.dialogs\?\.whoDecides\?\.open\(\{ slug \}\)/);
+  assert.match(read('frontend/src/features/dialogs/app-settings.tsx'), /id="app-access-open"[\s\S]{0,600}dialog\.closeThen\(\(\) => window\.UsernodeReact\?\.dialogs\?\.whoDecides\?\.open\(\{ slug: target \}\)/);
   assert.match(read('frontend/src/features/dev-board/workshop/workshop.tsx'), /onWhoDecides=\{community\?\.can_manage/);
   // The platform's own project keeps its approvals in Members; every other
   // project's Members points at the sheet.

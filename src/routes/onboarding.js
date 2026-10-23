@@ -107,6 +107,20 @@ function onboardingRoutes(config) {
     }
   });
 
+  // The first session's walk on Home, kept by the account: { state: 'owed' |
+  // 'reached' }. Read back as `homeWalkOwed` and `homeroomReached` on
+  // /api/auth/me (services/onboarding.js markHomeWalk).
+  router.post('/api/me/home-walk', drainGuard, sameOriginBrowserOnly, async (req, res) => {
+    try {
+      const marked = await onboarding.markHomeWalk(pool, req.user.id, req.body?.state);
+      if (!marked.ok) return res.status(400).json({ error: "state must be 'owed' or 'reached'" });
+      return res.json(marked);
+    } catch (err) {
+      log.error('onboarding', 'home walk mark failed', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   // Read back as `tourDone` on /api/auth/me.
   router.post('/api/me/tour-done', drainGuard, sameOriginBrowserOnly, async (req, res) => {
     try {

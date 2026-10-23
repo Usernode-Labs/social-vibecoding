@@ -320,6 +320,14 @@
       // public page. They shared a pane with the chat connectors, which have
       // nothing to do with identity.
       { key: 'linked-accounts', label: 'settings:nav.part.linkedAccounts', group: 'settings:nav.group.account' },
+      // #5104: who can message or invite you, and who can find you. Both are
+      // about other people reaching your account, so they sit with it. A
+      // stateful pane; settings.js binds nothing inside it.
+      { key: 'contact-privacy', label: 'settings:nav.part.contactPrivacy', group: 'settings:nav.group.account' },
+      // #4938: the phones signed in with the Homeroom app, and Unlink for
+      // each. Also about who can use your account, so it sits with Privacy.
+      // A stateful pane; settings.js binds nothing inside it.
+      { key: 'phones', label: 'settings:nav.part.phones', group: 'settings:nav.group.account' },
       { key: 'wallet', label: 'settings:nav.part.wallet', group: 'settings:nav.group.account', gate: 'wallet-section' },
 
       // ── AI & building ───────────────────────────────────────────────────
@@ -411,6 +419,8 @@
       password: 'settings:nav.keywords.password',
       'delete-account': 'settings:nav.keywords.deleteAccount',
       'linked-accounts': 'settings:nav.keywords.linkedAccounts',
+      'contact-privacy': 'settings:nav.keywords.contactPrivacy',
+      phones: 'settings:nav.keywords.phones',
       wallet: 'settings:nav.keywords.wallet',
       usage: 'settings:nav.keywords.usage',
       'api-key': 'settings:nav.keywords.apiKey',
@@ -667,14 +677,28 @@
         bridgeToggle.addEventListener('change', (e) => this._saveSessionBridge(e.target.checked));
       }
 
-      // #4289: Comment on the page. Kept on this device, not
-      // the account (features/improve/suggest-shortcut.ts), so there is no
-      // request to fail: the change is the save.
-      const shortcutToggle = document.getElementById('suggest-shortcut-enabled');
-      if (shortcutToggle) {
-        shortcutToggle.addEventListener('change', (e) => {
-          const pref = typeof window !== 'undefined' ? window.UsernodeReact?.suggestShortcut : null;
-          pref?.setEnabled(e.target.checked);
+      // New Needs you (an experiment), kept on the account
+      // (features/review-flow/settings.ts): the change is the save, and a
+      // failed save puts the switch back to what the account has.
+      const reviewToggle = document.getElementById('review-flow-enabled');
+      if (reviewToggle) {
+        reviewToggle.addEventListener('change', async (e) => {
+          const pref = typeof window !== 'undefined' ? window.UsernodeReact?.reviewFlow : null;
+          const ok = pref ? await pref.setEnabled(e.target.checked) : false;
+          if (!ok) reviewToggle.checked = !!pref?.enabled();
+        });
+      }
+
+      // New look (an experiment), kept on the device by the head's
+      // window.Skin: the change is the save, and the look applies at once.
+      const lookToggle = document.getElementById('new-look-enabled');
+      if (lookToggle) {
+        lookToggle.addEventListener('change', (e) => {
+          window.Skin?.set?.(e.target.checked ? 'brand' : 'standard');
+        });
+        // Another tab flipping it re-paints the switch here too.
+        window.Skin?.onChange?.(() => {
+          lookToggle.checked = window.Skin?.get?.() === 'brand';
         });
       }
 
@@ -1637,9 +1661,11 @@
       if (bridge) bridge.checked = !!this.state.sessionBridgeEnabled;
       const bridgeStatus = document.getElementById('session-bridge-status');
       if (bridgeStatus) { bridgeStatus.classList.add('hidden'); bridgeStatus.textContent = ''; }
-      const shortcut = document.getElementById('suggest-shortcut-enabled');
-      const shortcutPref = typeof window !== 'undefined' ? window.UsernodeReact?.suggestShortcut : null;
-      if (shortcut) shortcut.checked = !!shortcutPref?.enabled();
+      const review = document.getElementById('review-flow-enabled');
+      const reviewPref = typeof window !== 'undefined' ? window.UsernodeReact?.reviewFlow : null;
+      if (review) review.checked = !!reviewPref?.enabled();
+      const look = document.getElementById('new-look-enabled');
+      if (look) look.checked = window.Skin?.get?.() === 'brand';
       this._renderLocalAgentsSection();
     },
 

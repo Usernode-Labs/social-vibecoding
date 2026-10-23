@@ -148,12 +148,50 @@ test('the shell draws a change page as the request page’s sheet, with Messages
     fill: true, withHeader: true, readOnly: false, notice: '', placeholder: 'Reply…', maxLength: 4000, change: true,
   });
   assert.match(html, /^<div class="dev-request dev-change platform-kb-column"><div id="gc-thread-back" class="dev-request-back"><\/div><section class="dev-request-sheet dc-lift dc-lift-session" aria-label="Change"><div id="gc-thread-bar" class="dev-request-bar"><\/div>/);
-  assert.match(html, /<div id="gc-thread-head"><\/div><div id="gc-thread-messages"><\/div>/);
+  assert.match(html, /<div id="gc-thread-head"><\/div><div id="gc-thread-pin"><\/div><div id="gc-thread-messages"><\/div>/);
   assert.match(html, /class="messages-composer messages-composer-thread platform-safe-bar"/);
   const request = renderComponent(SHELL, 'ThreadShell', {
     fill: true, withHeader: true, readOnly: false, notice: '', placeholder: 'Reply…', maxLength: 4000, request: true,
   });
   assert.match(request, /^<div class="dev-request platform-kb-column">[\s\S]*aria-label="Request"/, 'the request page is unchanged');
+  assert.doesNotMatch(request, /gc-thread-pin/, 'a request page has no pin host');
+});
+
+// #5725: on a long change page the Votes card sat far above the conversation.
+// A second copy is drawn in a host at the top of the scroller, from the first
+// paint, and sticks there while the replies scroll under it. It is hidden
+// while the card at the top is on screen (evan: it should stick as you scroll
+// rather than only sit at the bottom).
+test('the Votes card repeats at the top of a change’s page and sticks while the top one is out of view', () => {
+  const src = read('frontend/src/features/dev-board/topic/change-head.tsx');
+  // The repeat portals into the shell's pin host, in its own class, and is
+  // drawn whether or not the top card is on screen: a reader who scrolled
+  // before it mounted still finds it. While the top card is on screen it is
+  // hidden, so a short page shows one card, not two.
+  assert.match(src, /\{pin \? createPortal\(\s*<div className="dev-change-gate-repeat" hidden=\{topInView\}>/);
+  assert.match(src, /<GateCard which="votes" g=\{v\.votes\} action=\{voteAction\} id=\{id\} repeat \/>/);
+  // The host is the scroller's own child and is what sticks: a wrapper
+  // inside a plain host would only travel the host's own height.
+  const css = read('public/css/app.css');
+  assert.match(css, /#gc-thread-pin \{ position: sticky; top: -4px; z-index: 10; \}/);
+  assert.match(css, /\.dev-change-gate-repeat\[hidden\] \{ display: none; \}/);
+  assert.match(css, /\.dev-change-gate-repeat \{[^}]*padding: 8px 16px 12px;[^}]*background-color: var\(--dc-sheet-solid\);[^}]*\}/);
+  // BOTH ends come from the card: the pin host through the scroller that
+  // holds it, and visibility through an observer with no root, which applies
+  // every clipping ancestor itself. Never a document-wide id: another pane's
+  // `#gc-thread-scroll` or `#gc-thread-pin` can win that lookup (#4640).
+  assert.match(src, /const scroller = card \? card\.closest<HTMLElement>\('#gc-thread-scroll'\) : null;/);
+  assert.match(src, /setPin\(scroller \? scroller\.querySelector\('#gc-thread-pin'\) : null\);/);
+  assert.doesNotMatch(src, /document\.getElementById\('gc-thread-(scroll|pin)'\)/);
+  assert.doesNotMatch(src, /host\('gc-thread-pin'\)/);
+  assert.match(src, /const io = new IntersectionObserver\(\(entries\) => \{[\s\S]*?setTopInView\(entry\.isIntersecting\);[\s\S]*?\}\);/);
+  assert.doesNotMatch(src, /root: document\.getElementById/);
+  // A scroll listener only hears the scroller it was attached to; the
+  // fallback for a browser without the observer hears every one.
+  assert.match(src, /document\.addEventListener\('scroll', schedule, \{ capture: true, passive: true \}\);/);
+  assert.match(src, /const \[topInView, setTopInView\] = useState\(true\);/);
+  // A repeat is the same card in every state, including with no action.
+  assert.match(src, /repeat\?: boolean/);
 });
 
 test('group-chat.js carries the change language from the mount to the shell and the transcript', () => {
@@ -243,6 +281,35 @@ test('a moving bar is the lit ink, a finished one green with its check, and AGEN
   assert.match(read('AGENTS.md'), /A finished progress bar may be green \(`--state-ok`/);
 });
 
+// #5725: declared checks, votes-in-view and the tests find exactly one
+// `[data-change-gate="votes"]`, so the repeat names itself differently.
+test('a repeated gate card carries data-change-gate-repeat, never data-change-gate', () => {
+  const src = read('frontend/src/features/dev-board/topic/change-head.tsx');
+  assert.match(src, /data-change-gate=\{repeat \? undefined : which\}/);
+  assert.match(src, /data-change-gate-repeat=\{repeat \? which : undefined\}/);
+  const dapp = JSON.parse(read('dapp.json'));
+  const selectors = dapp.tests.map((t) => t.expectSelector).filter(Boolean);
+  assert.ok(selectors.some((s) => String(s).includes('[data-change-gate=')), 'declared checks read the attribute');
+  assert.ok(!selectors.some((s) => String(s).includes('data-change-gate-repeat')), 'none selects the repeat');
+});
+
+// Issue #5712: at phone width the Testing card's buttons took the auto
+// column, squeezing "Testing" and "Found a problem" into a sliver where they
+// drew over each other and the bar. The phone rules stack the card.
+test('on a phone the gate card stacks its buttons under its line', () => {
+  const css = read('public/css/app.css');
+  const blocks = [...css.matchAll(/@media \(max-width: 640px\) \{([\s\S]*?)\n\}/g)].map((m) => m[1]);
+  const phone = blocks.find((b) => b.includes('.dev-change-chips'));
+  assert.ok(phone, 'the change page has a phone block');
+  assert.match(phone, /\.dev-change-gate \{ grid-template-columns: minmax\(0, 1fr\); \}/);
+  assert.match(phone, /\.dev-change-gate-act \{[^}]*order: 1;[^}]*flex-wrap: wrap;[^}]*\}/);
+  assert.match(phone, /\.dev-change-gate-head \{ flex-wrap: wrap; row-gap: 2px; \}/);
+  assert.match(phone, /\.dev-change-gate-name \{ min-width: 0; \}/);
+  assert.match(phone, /\.dev-change-gate-figure \{ white-space: nowrap; \}/);
+  // Desktop keeps today's two columns: one for the text, one for the buttons.
+  assert.match(css, /\.dev-change-gate \{[^}]*grid-template-columns: minmax\(0, 1fr\) auto;/);
+});
+
 // Issue #5178: the sheet's header shows the change's status pill beside
 // "Change #N", in the board card's own words and capsule form — so the page
 // answers "is it live?" where the reader first looks. The thread view
@@ -276,6 +343,16 @@ test('the header shows the status pill beside "Change #N", in the card\'s capsul
   const none = renderComponent(head, 'ChangeBar', { v: view(null), menuKey: '' });
   assert.doesNotMatch(none, /data-change-status|gc-vote-count/);
   assert.match(none, /<div class="messages-thread-name min-w-0">Change #81<\/div>/);
+  // #5683: a change being voted on keeps its pill beside the title, as it
+  // always did (snait asked for it back). The Votes card under the title
+  // gives the fuller account; the pill still says where it stands at a glance.
+  for (const key of ['needs_vote', 'approvals', 'contested', 'no_vote', 'merge_countdown', 'reject_countdown']) {
+    const vote = renderComponent(head, 'ChangeBar', {
+      v: view({ tier: 4, key, label: 'Goes live in ~2 h', tone: 'ok' }), menuKey: '',
+    });
+    assert.match(vote, new RegExp(`<span class="shrink-0" data-change-status="${key}"><span class="gc-vote-count gc-vote-count-ok dev-status-pill"`), `${key} keeps its pill`);
+    assert.match(vote, />Goes live in ~2 h</);
+  }
 });
 
 // #5329: where the ⋯ menu has a Details row (the change has a technical

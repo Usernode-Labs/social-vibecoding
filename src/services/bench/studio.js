@@ -67,7 +67,6 @@ const MIN_CAP_USD = 0.5;
 const MAX_CAP_USD = 1000;
 const MAX_LIVE_PREVIEWS = 4;
 const PREVIEW_HOURS = 24;
-const PREVIEW_SWEEP_MS = 10 * 60 * 1000;
 const HOST_WAIT_MS = 90 * 1000;
 const LABEL_RE = /^[a-z0-9][a-z0-9._-]{0,39}$/;
 const SHA_RE = /^[0-9a-f]{40}$/i;
@@ -79,8 +78,6 @@ const GALLERY_TRIALS_PER_BRIEF = 30;
 // version's can draw two full screens (~30-60K characters in all); it was
 // clipped at 12,000, which cut off everything after the opening section.
 const TRIAL_SPEC_CHARS = 120000;
-
-let lastPreviewSweepAt = 0;
 
 function httpError(status, error, extra = {}) {
   return { ok: false, status, error, ...extra };
@@ -124,9 +121,9 @@ async function hostRow(pool) {
 
 /**
  * The studio's host app, made the first time it is needed: a private
- * project of the benchmark user's, created through app creation's own path
- * (services/app-creator.js createApp: its database, its repository, its
- * first deploy). Waits for its repository, which creation makes within
+ * project of the benchmark user's, made by app creation's own path (its
+ * insert starts the app-creation machine: its database, its repository,
+ * its first deploy). Waits for its repository, which creation makes within
  * seconds; never for its deploy. Resolves { ok, app } or a refusal.
  */
 async function ensureHost(pool, config, { deps = {}, waitMs = HOST_WAIT_MS, pollMs = 2000 } = {}) {
@@ -144,6 +141,7 @@ async function ensureHost(pool, config, { deps = {}, waitMs = HOST_WAIT_MS, poll
         const slug = `app-bench-${crypto.randomBytes(3).toString('hex')}`;
         // The create route's own insert (routes/apps.js POST /api/apps):
         // the row and its creator's membership together, private to them.
+        // Its insert starts its making (src/workflow/app-creation/).
         const { rows: [app] } = await client.query(
           `WITH new_app AS (
              INSERT INTO apps (name, slug, created_by, status, collab_visibility, view_visibility)
@@ -171,14 +169,7 @@ async function ensureHost(pool, config, { deps = {}, waitMs = HOST_WAIT_MS, poll
     } finally {
       client.release();
     }
-    if (created) {
-      const createApp = deps.createApp || require('../app-creator').createApp;
-      Promise.resolve().then(() => createApp(config, created)).catch(async (err) => {
-        log.error('bench', 'The studio host app could not be made', { appId: created.id, err: err.message });
-        await pool.query("UPDATE apps SET status = 'error' WHERE id = $1 AND status = 'creating'", [created.id]).catch(() => {});
-      });
-      log.info('bench', 'Studio host app being made', { appId: created.id, slug: created.slug });
-    }
+    if (created) log.info('bench', 'Studio host app being made', { appId: created.id, slug: created.slug });
     host = await hostRow(pool);
   }
   const deadline = Date.now() + waitMs;
@@ -474,7 +465,7 @@ async function launch(pool, config, body = {}, { actorId = null, deps = {} } = {
     client.release();
   }
   await packs.markUsed(pool, v.packIds);
-  require('./lane').wake();
+  await require('./lane').look();
   log.info('bench', 'Studio run launched', { runId: run.id, briefs: tasks.length, models: v.models, packs: v.packIds, trials: plan.task.length });
   return {
     ok: true,
@@ -1349,15 +1340,13 @@ async function deployPreview(pool, config, { trialId, user, deps = {} } = {}) {
 }
 
 /**
- * Previews over time (on the leader, from the lane's pass): a building one
- * takes the preview machine's outcome (live once it serves the build, failed
- * once its build failed); a live one is kept from the platform's idle
+ * Previews over time (the bench-sweep clock, every ten minutes): a building
+ * one takes the preview machine's outcome (live once it serves the build,
+ * failed once its build failed); a live one is kept from the platform's idle
  * collection until it is a day old, then taken down and its session
- * archived. Throttled; never throws.
+ * archived. Never throws.
  */
-async function sweepPreviews(pool, deps = {}, now = Date.now()) {
-  if (now - lastPreviewSweepAt < PREVIEW_SWEEP_MS && !deps.force) return 0;
-  lastPreviewSweepAt = now;
+async function sweepPreviews(pool, deps = {}) {
   let ended = 0;
   try {
     await pool.query(
@@ -1511,5 +1500,4 @@ module.exports = {
   sweepPreviews,
   gallery,
   listStudioRuns,
-  _resetForTests() { lastPreviewSweepAt = 0; },
 };

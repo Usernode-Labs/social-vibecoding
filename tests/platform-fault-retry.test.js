@@ -83,7 +83,8 @@ test('storeChecks writes the flag with every error and clears it with every verd
   const [platform, other, passing] = pool.calls;
   assert.match(platform.sql, /check_error_platform = \$6::boolean/);
   assert.equal(platform.params[5], true);
-  assert.match(platform.sql, /consecutive_check_failures = consecutive_check_failures \+ 1/, 'the streak and its backoff run as for any error');
+  assert.match(platform.sql, /consecutive_check_failures = COALESCE\(\$9::int, consecutive_check_failures \+ 1\)/, 'the streak and its backoff run as for any error');
+  assert.deepEqual(platform.params.slice(8), [null, null], 'no other rule\'s retry: the row\'s own streak and backoff');
   assert.match(platform.sql, /LEAST\(120 \* power\(2, LEAST\(consecutive_check_failures, 10\)\), 1800\)/,
     'the exponent is capped, so a long streak cannot overflow the write');
   assert.equal(other.params[5], false, 'any other error writes false, so the flag never outlives its error');
@@ -95,14 +96,21 @@ test('the error lane keeps a platform fault past the cap for a day from its firs
   // under the cap, or a platform fault inside its day. The leader's
   // stuck-checks sweep that ran the same rule in SQL is gone.
   const machine = fs.readFileSync(path.join(ROOT, 'src/workflow/preview/machine.ts'), 'utf8');
-  assert.match(machine, /const PLATFORM_FAULT_RETRY_MS = 24 \* 60 \* 60 \* 1000;/);
+  assert.match(machine, /import \{ withinAutoRetries \} from '\.\.\/rules\/check-retries\.ts';/);
   const timer = machine.slice(machine.indexOf('function errorTimer('));
   const body = timer.slice(0, timer.indexOf('\n}\n'));
   assert.match(body, /if \(!f\.session\?\.retryScope\) return null;/);
-  assert.match(body, /const underCap = d\.streak < deps\.maxRetries;/);
-  assert.match(body, /const platformDay = d\.platformFault && d\.firstFailureAt\s+&& ctx\.now\.getTime\(\) - Date\.parse\(d\.firstFailureAt\) < PLATFORM_FAULT_RETRY_MS;/);
-  assert.match(body, /if \(!underCap && !platformDay\) return null;/);
-  assert.equal(stagingRecovery.PLATFORM_FAULT_RETRY_MS, 24 * HOUR);
+  assert.match(body, /if \(!withinAutoRetries\(d, deps\.maxRetries, ctx\.now\.getTime\(\)\)\) return null;/);
+  // The rule (rules/check-retries.ts), on the machine's own data: the
+  // streak's first failure kept as an ISO string.
+  const rule = require('../src/workflow/rules/check-retries.ts');
+  assert.equal(rule.PLATFORM_FAULT_RETRY_MS, 24 * HOUR);
+  const held = { streak: 6, platformFault: true, firstFailureAt: new Date(NOW - 3 * HOUR).toISOString() };
+  assert.equal(rule.withinAutoRetries(held, 6, NOW), true, 'a platform fault three hours in');
+  assert.equal(rule.withinAutoRetries({ ...held, firstFailureAt: new Date(NOW - 25 * HOUR).toISOString() }, 6, NOW), false);
+  assert.equal(rule.withinAutoRetries({ ...held, platformFault: false }, 6, NOW), false);
+  assert.equal(rule.withinAutoRetries({ ...held, firstFailureAt: null }, 6, NOW), false);
+  assert.equal(rule.withinAutoRetries({ ...held, platformFault: false, streak: 5 }, 6, NOW), true);
   assert.equal(stagingRecovery.findStuckCheckSessions, undefined);
   // An error from before the session was in the lane's scope (it went up
   // for a vote since) had no timer set: the promote's RevisionSubmitted of

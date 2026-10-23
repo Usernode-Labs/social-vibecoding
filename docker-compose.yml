@@ -89,10 +89,9 @@ x-usernode-platform: &usernode-platform
     # over the internal usernode-storage network. Credentials
     # (MINIO_ROOT_USER / MINIO_ROOT_PASSWORD) arrive via env_file.
     MINIO_ENDPOINT: http://usernode-minio:9000
-    # Elect a single leader across the two colors so singleton background
-    # work (worker adoption, headless resume, recovery, sweepers, drift
-    # poller) never double-runs during the rollout overlap. See
-    # src/services/leadership.js. Unset in dev/tests → leader immediately.
+    # Two colors boot at once during a rollout: the schema migration takes a
+    # lock so it runs in one at a time (src/services/db-locks.js). Unset in
+    # dev/tests: a single process migrates without it.
     PLATFORM_LEADER_LOCK: "1"
   volumes:
     # Required: the platform spawns child-app containers via the
@@ -248,8 +247,8 @@ services:
   # which is driven by scripts/platform-rollout.sh (NOT a plain
   # `compose up`, which would start both at once — deploy.sh brings infra
   # up with an explicit service list for exactly that reason). `hostname`
-  # makes the leader-election logs (os.hostname() in
-  # services/leadership.js) say which color is talking.
+  # makes the process roster's rows and logs (os.hostname() in
+  # services/processes.js) say which color is talking.
   usernode-blue:
     <<: *usernode-platform
     container_name: usernode-blue

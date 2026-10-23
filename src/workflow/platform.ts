@@ -22,6 +22,9 @@ import type { Target as BuildTarget } from './bot-build/machine.ts';
 import { botBuildServices } from './bot-build/services.ts';
 import { MACHINE as DELIVERY, appDelivery, appKey } from './app-delivery/machine.ts';
 import { appDeliveryServices } from './app-delivery/services.ts';
+import { MACHINE as CREATION, appCreation, creationKey } from './app-creation/machine.ts';
+import { appCreationServices } from './app-creation/services.ts';
+import { bootRelease } from './release/boot.ts';
 import { MACHINE as PREVIEW, preview, sessionKey as previewKey } from './preview/machine.ts';
 import { PREPARE_LEASE_MS, previewServices } from './preview/services.ts';
 import { LIVE as SHOTS_LIVE, MACHINE as SHOTS, sessionKey as shotsKey, shots } from './shots/machine.ts';
@@ -43,6 +46,12 @@ import { MACHINE as BOT_REQUEST, botRequest } from './bot-request/machine.ts';
 import { botRequestServices } from './bot-request/services.ts';
 import { MACHINE as BOT_LANE, KEY as LANE_KEY, botLane } from './bot-lane/machine.ts';
 import { botLaneServices } from './bot-lane/services.ts';
+import { MACHINE as BENCH_LANE, KEY as BENCH_LANE_KEY, benchLane } from './bench-lane/machine.ts';
+import { benchLaneServices } from './bench-lane/services.ts';
+import { DEFAULT_CONCURRENCY as EVAL_DEFAULT_CONCURRENCY, KEY as EVAL_KEY, MACHINE as SHOTS_EVAL, MAX_CONCURRENCY as EVAL_MAX_CONCURRENCY, shotsEval } from './shots-eval/machine.ts';
+import { shotsEvalServices } from './shots-eval/services.ts';
+import { MACHINE as TURN, turnMachine } from './turn/machine.ts';
+import { turnServices } from './turn/services.ts';
 import { MACHINE as RELEASE, releaseKey, releaseMachine } from './release/machine.ts';
 import { releaseServices } from './release/services.ts';
 import type { Adoption } from './release/services.ts';
@@ -56,7 +65,6 @@ import { BOT_USERNAME } from './rules/bot-notes.ts';
 import { activeUserStats } from './rules/electorate.ts';
 import { appMetaFromRow } from './rules/governance-gate.ts';
 import { countedVotePredicateSql } from './rules/vote-predicate.ts';
-import { VOTE_REASON_MAX, VOTE_REASON_REQUIRED } from './rules/vote-reason.ts';
 import { BUS_CHANNEL, workflowBody } from './pushes.ts';
 import { TURN_OWNER_SQL } from './session-work.ts';
 
@@ -67,6 +75,8 @@ let kernelPool: Pool & { end(): Promise<void> } | null = null;
 let log: Logger | null = null;
 // The configuration the runtime started with (the release's own steps read it).
 let appConfig: any = null;
+// Each machine's event types in this build (reaskRefused reads them).
+let knownEvents: Map<string, Set<string>> = new Map();
 
 // What the ownership triggers read, synced on every boot: enabled:<machine>
 // for every machine (wf_holds reads it). Every machine is the only path for
@@ -134,19 +144,32 @@ export async function publishPushes(q: Queryable, pushes: Push[], { badges = fal
 // sessions, with the row locks a slot holds and a claim's advisory lock,
 // would live on until the server's OS keepalive gave up on them: two hours
 // and more, while every other process's slots time out on that instance. So
-// the runtime's sessions reap a dead peer as the leader lock's session does
-// (services/leadership.js): the server probes a silent client and drops it
+// the runtime's sessions reap a dead peer (services/db-locks.js): the server
+// probes a silent client and drops it
 // within about 40 s, and a transaction left open by a client that stopped
 // talking ends after 30 s (a transition never waits outside the database
 // inside one: docs/workflows.md).
 export function deadPeerOptions() {
-  const { KEEPALIVE_INITIAL_DELAY_MS, SERVER_KEEPALIVE } = legacy('services/leadership');
+  const { KEEPALIVE_INITIAL_DELAY_MS, SERVER_KEEPALIVE } = legacy('services/db-locks');
   const settings = { ...SERVER_KEEPALIVE, idle_in_transaction_session_timeout: 30000 };
   return {
     keepAlive: true,
     keepAliveInitialDelayMillis: KEEPALIVE_INITIAL_DELAY_MS,
     options: Object.entries(settings).map(([name, value]) => `-c ${name}=${value}`).join(' '),
   };
+}
+
+// A draining process's workflow pool shrinks to DRAIN_WF_POOL_MAX: its
+// outcome listener, and the lease renewals and results of the work it
+// still finishes (src/db/pool.js shrinkForDrain says why).
+export function shrinkForDrain(config: any): number | null {
+  if (!kernelPool) return null;
+  return legacy('db/connection-options').shrinkPool(kernelPool, Math.max(2, Number(config?.drainWfPoolMax) || 2));
+}
+
+// What it still holds above its drain size (server.js drainUntilIdle).
+export function drainExcess(): number {
+  return legacy('db/connection-options').poolExcess(kernelPool);
 }
 
 export async function startWorkflow(config: any, opts: { loops: boolean }): Promise<void> {
@@ -156,7 +179,10 @@ export async function startWorkflow(config: any, opts: { loops: boolean }): Prom
   await syncSettings(appPool);
   if (runtime) return;
   const workflowPool = new pg.Pool({
-    connectionString: config.databaseUrl, max: config.wfPoolMax, idleTimeoutMillis: 30000, application_name: 'homeroom-workflow',
+    connectionString: config.databaseUrl, max: config.wfPoolMax,
+    idleTimeoutMillis: legacy('db/connection-options').POOL_IDLE_MS,
+    application_name: legacy('db/connection-options').connectionName('workflow'),
+    connectionTimeoutMillis: config.dbPoolWaitMs || 10000,
     ...deadPeerOptions(),
   });
   // An idle connection the server drops (a restart, a failover, an admin's
@@ -167,7 +193,13 @@ export async function startWorkflow(config: any, opts: { loops: boolean }): Prom
   const deps = { config, pool: appPool, requestDeploy };
   const machine = governanceProposal({ dataKey: config.dataEncryptionKey });
   const merges = mergeFollowups({ dataKey: config.dataEncryptionKey });
-  const deliveries = appDelivery();
+  // One thing at a time on an app's runtime: deploys, and heals with the
+  // backoff APP_HEAL_COOLDOWN_MS starts.
+  const deliveries = appDelivery({
+    healCooldownMs: Number(config.appHealCooldownMs) > 0 ? Number(config.appHealCooldownMs) : 10 * 60 * 1000,
+    githubOn: () => legacy('services/github').isEnabled(),
+    runtimeMode: legacy('services/application-runtime').mode(config),
+  });
   // A cancelled prepare learns it at its next checkpoint or lease renewal;
   // its attempt is retired, and a retirement runs, a lease and more later
   // (and never while it serves: services.ts). A preview nobody has used for
@@ -195,16 +227,28 @@ export async function startWorkflow(config: any, opts: { loops: boolean }): Prom
   const staging = process.env.USERNODE_ENV === 'staging';
   const requests = botRequest({ staging });
   const lane = botLane({ staging });
+  // A new project's making (app-creation/), its first deploy app delivery's.
+  const creations = appCreation();
   // What a release runs once, whichever process claims it (release/).
   const releases = releaseMachine();
   // The platform's scheduled jobs (clock/), armed by the release's work.
   const clocks = clock();
-  const machines = [machine, merges, builds, deliveries, previews, shotRuns, proposals, queues, campaigns, botChanges, voices, dms, checks, requests, lane, releases, clocks];
+  // The App bench's lane: which trials run, and when (bench-lane/).
+  const bench = benchLane();
+  // The shots evals' trials (shots-eval/), as many at once as the
+  // deployment says (SHOTS_EVAL_CONCURRENCY).
+  const trials = shotsEval(evalDeps(config));
+  // People's turns: a conversation's, a change's (turn/).
+  const turns = turnMachine();
+  const machines = [machine, merges, builds, deliveries, creations, previews, shotRuns, proposals, queues, campaigns, botChanges, voices, dms, checks, requests, lane, bench, trials, turns, releases, clocks];
+  knownEvents = new Map(machines.map((m) => [m.name, new Set(m.events.keys())]));
   const services = {
     ...governanceServices(deps), ...mergeFollowupsServices(deps), ...botBuildServices(deps),
-    ...appDeliveryServices(deps), ...previewServices(deps), ...shotsServices(deps), ...proposalServices(deps),
+    ...appDeliveryServices(deps), ...appCreationServices(deps), ...previewServices(deps), ...shotsServices(deps), ...proposalServices(deps),
     ...campaignServices(deps), ...botChangeServices(deps), ...botVoiceServices(deps), ...botDmServices(deps),
-    ...mainCheckServices(deps), ...botRequestServices(deps), ...botLaneServices(deps),
+    ...mainCheckServices(deps), ...botRequestServices(deps), ...botLaneServices(deps), ...benchLaneServices({ config, pool: appPool }),
+    ...shotsEvalServices({ config, pool: appPool }),
+    ...turnServices({ config, pool: appPool }),
     ...releaseServices({ adoptions: ADOPTIONS }),
     ...clockServices(CLOCK_JOBS, { config, pool: appPool }),
   };
@@ -241,14 +285,9 @@ export async function releaseServing(pool: Pool): Promise<void> {
   if (runtime) await releaseBooted(pool).catch(warn('Could not report the running release'));
 }
 
-// The build this process runs, as the release machine names it: GIT_SHA, or,
-// on a build without one (local work, tests), this boot, so each such boot
-// still runs the adoptions once.
-const BOOT = randomUUID();
-function bootRelease(): string {
-  const sha = String(process.env.GIT_SHA || '').trim().slice(0, 40);
-  return sha && sha !== 'dev' ? sha : `dev:${BOOT}`;
-}
+// The build this process runs (release/boot.ts): GIT_SHA, or, on a build
+// without one (local work, tests), this boot, so each such boot still runs
+// the adoptions once.
 
 // The loops: pipeline slots (already running), the timer loop and the
 // services, in a process that runs the workflow (a conductor, or 'all':
@@ -271,13 +310,16 @@ export async function startWorkflowLoops(): Promise<void> {
 // What a new build owes what an older one left, in order (release/services.ts):
 // the bot lane's clock, the scheduled jobs, open governance rows no instance
 // holds, the sessions the proposal machine does not hold, waits with no
-// clock, the merge queues, deferred DM answers, main checks mid-run, the
-// previews (a deadline for each, the vote-backed rows no instance holds,
-// and the idle ones none does), the platform's own faults, and the closed
-// proposals' volumes.
+// clock, the merge queues, the previews (a deadline for each, the
+// vote-backed rows no instance holds, and the idle ones none does), the
+// platform's own faults, and the closed proposals' volumes.
 const ADOPTIONS: readonly Adoption[] = Object.freeze([
   // First: the bot's whole loop waits on its clock.
   ['botLane', (release: string) => startLaneClock(release)],
+  // The App bench's lane looks at what is waiting.
+  ['benchLane', (release: string) => startBenchLane(release)],
+  // The shots evals' trials: what is waiting.
+  ['shotsEvals', (release: string) => startEvals(release)],
   // The platform's scheduled jobs: each armed with this build's interval,
   // and the ones it no longer defines retired.
   ['clocks', (release: string) => armClocks(release)],
@@ -285,13 +327,131 @@ const ADOPTIONS: readonly Adoption[] = Object.freeze([
   ['proposals', () => adoptProposals()],
   ['waitingProposals', () => rearmWaitingProposals()],
   ['mergeQueues', () => adoptMergeQueues()],
-  ['deferredDms', () => adoptDeferredDms()],
-  ['mainChecks', () => adoptMainChecks()],
   ['previews', (release: string) => restPreviews(release)],
   ['platformFaults', () => retryPlatformFaults()],
-  // Last: up to a few thousand appends on the first release.
   ['closedProposals', (release: string) => retainClosedProposals(release)],
+  // What the cluster runs for every app, as this build says: the shared
+  // hosted-asset backend. (The app-host gate's routing is a clock only the
+  // newest build runs, so a change of APP_GATE alone, or a rollback, is
+  // applied too: clock/services.ts app-gate.)
+  ['assetBackend', () => reconcileAssetBackend()],
+  // Last, and long the first time: the bench suites from this build's
+  // checked-in definitions.
+  ['benchSuites', () => materializeBenchSuites()],
 ] as Adoption[]);
+
+// Cluster work a release owes: only where the platform runs its cluster
+// maintenance (never on a staging preview, whose release work also runs),
+// and only on Kubernetes.
+const clusterRelease = () => legacy('config').runsClusterMaintenance()
+  && legacy('services/application-runtime').mode(appConfig) === 'kubernetes';
+
+// #2045: the shared hosted-asset backend, reconciled once per release.
+// Otherwise only an app's deploy reconciles it, so a fix to how it is built
+// would not reach a backend that exists until some app deployed: an app
+// whose Ingress carries the asset paths then answered 503 on every one of
+// them (#2042). The same call every deploy makes (it converges on what the
+// cluster's platform Deployment runs).
+async function reconcileAssetBackend(): Promise<Json> {
+  if (!clusterRelease()) return null;
+  return { backend: await legacy('services/kubernetes').ensurePlatformAssetBackend(appConfig) };
+}
+
+// #3654, #3737: the benchmark's Core suite (reads GitHub; a no-op once
+// this definition is made) and the taste eval's (rows only), made from this
+// build's checked-in definitions. BENCH_CORE_MATERIALIZE=off switches both
+// off.
+async function materializeBenchSuites(): Promise<Json> {
+  if (!legacy('config').runsClusterMaintenance()) return null;
+  const core = legacy('services/bench/core');
+  if (!core.bootEnabled()) return { off: true };
+  const pool = legacy('db/pool').getPool(appConfig);
+  const out: Record<string, Json> = {};
+  if (legacy('services/github').isEnabled()) {
+    const started = core.materializeInBackground(pool, appConfig);
+    out.core = started.promise ? await started.promise : started;
+  } else {
+    out.core = { skipped: 'no_github' };
+  }
+  out.taste = await legacy('services/bench/taste').materialize(pool, appConfig);
+  return out as Json;
+}
+
+// ── The shots evals (shots-eval) ────────────────────────────────────────
+
+function evalDeps(config: any) {
+  const n = Number.parseInt(process.env.SHOTS_EVAL_CONCURRENCY || '', 10);
+  return {
+    concurrency: Number.isInteger(n) && n >= 1 ? Math.min(n, EVAL_MAX_CONCURRENCY) : EVAL_DEFAULT_CONCURRENCY,
+    defaultAgentMs: Number(config?.shots?.maxAgentMs) || 480_000,
+  };
+}
+
+async function startEvals(release: string): Promise<void> {
+  if (!runtime) return;
+  await runtime.append(SHOTS_EVAL, EVAL_KEY, { type: 'Tick', payload: {} },
+    { requestKey: `boot:${release}`, source: { kind: 'system', name: 'boot' } });
+}
+
+// Look again (services/shots-eval.js look): an eval launched.
+export async function evalLook(): Promise<void> {
+  if (!runtime) throw new Error('The workflow runtime is not running in this process');
+  await runtime.append(SHOTS_EVAL, EVAL_KEY, { type: 'Look', payload: {} },
+    { requestKey: `look:${randomUUID()}`, source: { kind: 'system', name: 'shots-eval' } });
+}
+
+// An admin's cancel of an eval: what the machine decided.
+export async function evalCancel(evalId: number): Promise<EventOutcome> {
+  if (!runtime) throw new Error('The workflow runtime is not running in this process');
+  return runtime.appendAndWait(SHOTS_EVAL, EVAL_KEY, { type: 'EvalCancelled', payload: { evalId } as any },
+    { requestKey: `cancel-eval:${evalId}:${randomUUID()}`, source: { kind: 'admin', name: 'shots-eval' } });
+}
+
+// ── The App bench's lane (bench-lane) ──────────────────────────────────
+
+async function startBenchLane(release: string): Promise<void> {
+  if (!runtime) return;
+  await runtime.append(BENCH_LANE, BENCH_LANE_KEY, { type: 'Tick', payload: {} },
+    { requestKey: `boot:${release}`, source: { kind: 'system', name: 'boot' } });
+}
+
+// Look again (services/bench/lane.js look): a run launched, a trial added
+// (`runId`: reopened if it had ended), a lost build recorded.
+export async function benchLook(p: { runId?: number | null } = {}): Promise<void> {
+  if (!runtime) throw new Error('The workflow runtime is not running in this process');
+  await runtime.append(BENCH_LANE, BENCH_LANE_KEY, { type: 'Look', payload: { runId: p.runId ?? null } as any },
+    { requestKey: `look:${randomUUID()}`, source: { kind: 'system', name: 'bench' } });
+}
+
+// An admin's cancel of a run, or of one trial: what the lane decided.
+export async function benchCancelRun(runId: number, o: { by?: string | null } = {}): Promise<EventOutcome> {
+  if (!runtime) throw new Error('The workflow runtime is not running in this process');
+  return runtime.appendAndWait(BENCH_LANE, BENCH_LANE_KEY, { type: 'RunCancelled', payload: { runId, by: o.by ?? null } as any },
+    { requestKey: `cancel-run:${runId}:${randomUUID()}`, source: { kind: 'admin', name: 'bench' }, actor: o.by ?? undefined });
+}
+export async function benchCancelTrial(trialId: number, o: { by?: string | null; why?: string | null } = {}): Promise<EventOutcome> {
+  if (!runtime) throw new Error('The workflow runtime is not running in this process');
+  return runtime.appendAndWait(BENCH_LANE, BENCH_LANE_KEY, { type: 'TrialCancelled', payload: { trialId, by: o.by ?? null, why: o.why ?? null } as any },
+    { requestKey: `cancel-trial:${trialId}:${randomUUID()}`, source: { kind: 'admin', name: 'bench' }, actor: o.by ?? undefined });
+}
+
+// The lane as the bench console shows it: on, how many trials run, and its
+// last decision.
+export async function benchLaneStatus(): Promise<{ on: boolean; inFlight: number; lastTick: { at: string } | null }> {
+  if (!kernelPool) return { on: false, inFlight: 0, lastTick: null };
+  const { rows: [r] } = await kernelPool.query(
+    `SELECT (SELECT updated_at FROM wf_instances WHERE machine = $1 AND key = $2) AS at,
+            (SELECT COUNT(*)::int FROM bench_trials WHERE status = 'running') AS running`, [BENCH_LANE, BENCH_LANE_KEY]);
+  return { on: !!runtime, inFlight: Number(r?.running) || 0, lastTick: r?.at ? { at: new Date(r.at).toISOString() } : null };
+}
+
+// A person asks again for a project whose making failed (POST
+// /api/apps/:slug/retry): what its making decided.
+export async function retryCreation(appId: number, o: { counted: boolean; actor?: string | null }): Promise<EventOutcome> {
+  if (!runtime) throw new Error('The workflow runtime is not running in this process');
+  return runtime.appendAndWait(CREATION, creationKey(appId), { type: 'Retry', payload: { appId, counted: o.counted } },
+    { requestKey: `retry:${appId}:${randomUUID()}`, source: { kind: 'system', name: 'retry' }, appId });
+}
 
 // Every open governance row the machine does not hold yet is filed with it.
 async function enrollGovernance(): Promise<number> {
@@ -323,28 +483,117 @@ async function armClocks(release: string): Promise<number> {
       { requestKey: `retire:${release}`, source: { kind: 'system', name: 'release' } });
   }
   if (!runs) return 0;
-  const { rows: swept } = await kernelPool!.query(
-    `SELECT name, last_run_at FROM leader_sweeps WHERE name = ANY($1::text[])`,
-    [CLOCK_JOBS.map((j) => j.leaderSweep).filter(Boolean)]).catch(() => ({ rows: [] as any[] }));
-  const lastRun = new Map<string, Date>(swept.map((r: any) => [r.name, new Date(r.last_run_at)]));
   for (const job of CLOCK_JOBS) {
-    // A job first armed is due when the leader timer it replaces would have
-    // run, or within the next two minutes (spread, so they do not all start
-    // in the same second). Only the first Arm reads it.
-    const ran = job.leaderSweep ? lastRun.get(job.leaderSweep) : undefined;
-    const spread = Math.floor(Math.random() * Math.min(job.everyMs, 2 * 60 * 1000));
-    const firstDueAt = new Date(ran ? ran.getTime() + job.everyMs : Date.now() + spread).toISOString();
-    await runtime.append(CLOCK, clockKey(job.name), { type: 'Arm', payload: { job: job.name, everyMs: job.everyMs, firstDueAt } },
+    // A job first armed is due within the next two minutes (spread, so they
+    // do not all start in the same second). Only the first Arm reads it. An
+    // on-demand job runs only when asked; its interval is what an older
+    // build, which knows no on-demand job, would arm it on (a run nobody
+    // asked for does nothing).
+    const everyMs = job.onDemand ? ON_DEMAND_EVERY_MS : job.everyMs;
+    const spread = Math.floor(Math.random() * Math.min(everyMs, 2 * 60 * 1000));
+    const firstDueAt = new Date(Date.now() + spread).toISOString();
+    await runtime.append(CLOCK, clockKey(job.name), { type: 'Arm', payload: { job: job.name, everyMs, firstDueAt, onDemand: !!job.onDemand } },
       { requestKey: `arm:${release}`, source: { kind: 'system', name: 'release' } });
   }
   return CLOCK_JOBS.length;
+}
+
+const ON_DEMAND_EVERY_MS = 24 * 60 * 60 * 1000;
+
+// An admin asks for an on-demand job's run (an admin fleet job): not waited
+// for. Its progress is the run's own (clockRunOf). Answers `asked` (taken,
+// or `pending`: not yet within the wait, and taken when a workflow process
+// gets to it), `running` (a run of it is under way), `rollout` (an older
+// build's workflow process still serves: it would take the ask without
+// knowing who asked, and its run would do nothing) or `not_armed` (a staging
+// preview).
+export async function askClockRun(job: string, admin: { id: number; username?: string | null }): Promise<'asked' | 'pending' | 'running' | 'rollout' | 'not_armed'> {
+  if (!runtime) throw new AdminActionError(409, 'The workflow runtime is not running here');
+  if (await olderBuildServes(kernelPool!)) return 'rollout';
+  const outcome = await runtime.appendAndWait(CLOCK, clockKey(job), { type: 'RunNow', payload: { by: admin.username ?? null, userId: admin.id, onDemand: true } },
+    { requestKey: `admin:${randomUUID()}`, source: { kind: 'admin', name: 'console' }, actor: `user:${admin.id}`, waitMs: 3000 });
+  if (outcome.status === 'rejected') return outcome.reason === 'running' ? 'running' : 'not_armed';
+  return outcome.status === 'pending' ? 'pending' : 'asked';
+}
+
+// Events an older build refused because it did not know their type
+// (`unknown_event`): during a rollout, a newer web process appends an event
+// a machine gained, and an older workflow process, which picks every event
+// of an instance its own version wrote, refuses it, and what the event owed
+// (a mail, a vote's tally, a plan) would be lost. Once no older build serves
+// any more, each one whose type this build's machine knows is asked again,
+// as it was (its source, actor and app), keyed on the refused event so it is
+// asked once. A type this build knows cannot have been refused by it. Only
+// refusals since this build's rollout began (its release instance, less a
+// margin for web processes serving before it) are asked: an older one was
+// another rollout's, and its moment has passed. The reask-refused clock runs
+// it, in the newest build only.
+const LIVE_SECONDS = 45;
+const REASK_LOOKBACK_HOURS = 48;
+const REASK_ROLLOUT_MARGIN_MINUTES = 15;
+const REASK_PAGE = 200;
+// Whether a live workflow process of another build serves (a rollout under
+// way): its machines may know fewer events, or fewer fields of them.
+async function olderBuildServes(db: Queryable): Promise<boolean> {
+  const own = String(process.env.GIT_SHA || '').trim().slice(0, 40) || null;
+  const { rows: [older] } = await db.query(
+    `SELECT count(*)::int AS n FROM platform_processes
+      WHERE state = 'serving' AND role <> 'web' AND heartbeat_at > now() - make_interval(secs => $1)
+        AND release IS DISTINCT FROM $2`, [LIVE_SECONDS, own]);
+  return Number(older?.n) > 0;
+}
+export async function reaskRefused(db: Queryable): Promise<{ waiting?: string; asked: number }> {
+  if (!runtime) return { waiting: 'runtime', asked: 0 };
+  if (await olderBuildServes(db)) return { waiting: 'older_build', asked: 0 };
+  const pairs = [...knownEvents].flatMap(([m, types]) => [...types].map((t) => [m, t] as const));
+  if (!pairs.length) return { asked: 0 };
+  const own = String(process.env.GIT_SHA || '').trim().slice(0, 40) || null;
+  const { rows } = await db.query(
+    `SELECT e.id, e.machine, e.key, e.app_id, e.type, e.payload, e.source, e.actor
+       FROM wf_events e
+       JOIN unnest($1::text[], $2::text[]) AS k(machine, type) ON k.machine = e.machine AND k.type = e.type
+      WHERE e.status = 'processed' AND e.result = 'rejected' AND e.reason = 'unknown_event'
+        AND e.processed_at > GREATEST(now() - make_interval(hours => $3),
+              (SELECT r.created_at - make_interval(mins => $6) FROM wf_instances r WHERE r.machine = $5 AND r.key = $7))
+        AND NOT EXISTS (SELECT 1 FROM wf_events r WHERE r.caused_by = e.id AND r.request_key = 'reask:' || e.id)
+      ORDER BY e.id LIMIT $4`,
+    [pairs.map((p) => p[0]), pairs.map((p) => p[1]), REASK_LOOKBACK_HOURS, REASK_PAGE, RELEASE, REASK_ROLLOUT_MARGIN_MINUTES, releaseKey(own ?? '')]);
+  for (const e of rows) {
+    await runtime.append(e.machine, e.key, { type: e.type, payload: e.payload }, {
+      requestKey: `reask:${e.id}`, source: e.source, actor: e.actor ?? null, appId: e.app_id ?? null, causedBy: Number(e.id),
+    });
+  }
+  if (rows.length) log?.warn('workflow', 'Events an older build refused, asked again', { count: rows.length });
+  return { asked: rows.length };
+}
+
+// A job's run under way, or its last: whether it runs, who asked, what its
+// work item has kept so far (`checkpoint`) and what it returned (`result`).
+// Read from any process.
+export async function clockRunOf(db: Queryable, job: string): Promise<{
+  n: number; running: boolean; startedAt: string | null; endedAt: string | null; input: Json; checkpoint: Json; result: Json; error: string | null;
+} | null> {
+  const { rows: [r] } = await db.query(
+    `SELECT i.state, i.data, w.input, w.checkpoint, w.result, w.created_at, w.settled_at
+       FROM wf_instances i
+       JOIN wf_work w ON w.machine = i.machine AND w.key = i.key AND w.kind = $3
+                     AND w.work_key = 'run:' || COALESCE(i.data->>'running', i.data->'last'->>'n')
+      WHERE i.machine = $1 AND i.key = $2`, [CLOCK, clockKey(job), `clock.${job}`]);
+  if (!r) return null;
+  const running = r.state === 'running';
+  const last = r.data?.last ?? null;
+  return {
+    n: Number(r.data?.running ?? last?.n ?? 0), running, startedAt: r.created_at ? new Date(r.created_at).toISOString() : null,
+    endedAt: running ? null : (last?.at ?? null), input: r.input ?? null, checkpoint: r.checkpoint ?? null,
+    result: (r.result?.value ?? null) as Json, error: running ? null : (last && !last.ok ? last.error : null),
+  };
 }
 
 // A scheduled job's last run, as the admin pages that once read the leader's
 // own status read it: when it last ran, its error, whether a run is under
 // way, what it found, and when the next is due. Read from any process.
 export async function clockStatus(db: Queryable, job: string): Promise<{
-  lastSweepAt: string | null; lastError: string | null; sweepInFlight: boolean; result: Json; nextDueAt: string | null;
+  lastSweepAt: string | null; lastError: string | null; sweepInFlight: boolean; result: Json; kept: Json; nextDueAt: string | null;
 }> {
   const { rows: [r] } = await db.query(
     'SELECT state, data FROM wf_instances WHERE machine = $1 AND key = $2', [CLOCK, clockKey(job)]);
@@ -354,6 +603,8 @@ export async function clockStatus(db: Queryable, job: string): Promise<{
     lastError: last && !last.ok ? last.error : null,
     sweepInFlight: r?.state === 'running',
     result: last?.ok ? (last.result ?? null) : null,
+    // The last good run's result, which a failed run leaves in place.
+    kept: r?.data?.kept ?? null,
     nextDueAt: r?.state === 'waiting' ? r.data.due : null,
   };
 }
@@ -364,7 +615,7 @@ export async function clockStatus(db: Queryable, job: string): Promise<{
 // (it still runs; its result shows on the job's page).
 export async function runClockNow(job: string, admin: { id: number }, { timeoutMs = 60000 } = {}): Promise<Awaited<ReturnType<typeof clockStatus>> | null> {
   if (!runtime) throw new AdminActionError(409, 'The workflow runtime is not running here');
-  const outcome = await runtime.appendAndWait(CLOCK, clockKey(job), { type: 'RunNow', payload: {} },
+  const outcome = await runtime.appendAndWait(CLOCK, clockKey(job), { type: 'RunNow', payload: { userId: admin.id } },
     { requestKey: `admin:${randomUUID()}`, source: { kind: 'admin', name: 'console' }, actor: `user:${admin.id}` });
   if (outcome.status === 'rejected') {
     // A job no release armed here (a staging preview): the caller decides.
@@ -505,34 +756,6 @@ export async function resumeMainCheck(appId: number, user: { id: number; usernam
   return 'not_paused';
 }
 
-// Rows an older release left in the middle of a run, or paused with a
-// recheck to come, that no instance holds yet: taken from the row, once per
-// release. Transitional: deleted once no release older than the main-check
-// machine can run.
-async function adoptMainChecks(): Promise<number> {
-  if (!runtime) return 0;
-  const { rows } = await kernelPool!.query(
-    `SELECT a.id, dead.run_id FROM apps a
-       LEFT JOIN LATERAL (
-         -- The older release's own run of the row's commit, admitted: its
-         -- Jobs are read rather than the suite run again.
-         SELECT cr.run_id FROM check_runs cr
-          WHERE cr.kind = 'main' AND cr.app_id = a.id AND lower(cr.commit_sha) = lower(a.main_check_sha)
-            AND cr.admitted_at IS NOT NULL
-          ORDER BY cr.started_at DESC LIMIT 1) dead ON a.main_check_state IN ('running', 'confirming')
-      WHERE (a.main_check_state IN ('running', 'confirming')
-             OR (a.main_check_state = 'failing' AND lower(coalesce(a.main_check_paused_sha, '')) = lower(coalesce(a.main_check_sha, ''))))
-        AND NOT EXISTS (SELECT 1 FROM wf_instances w WHERE w.machine = $1 AND w.key = 'app:' || a.id)
-      ORDER BY a.id`, [MAIN_CHECK]);
-  for (const r of rows) {
-    await runtime.append(MAIN_CHECK, mainCheckKey(r.id), { type: 'Adopted', payload: { appId: r.id, runId: r.run_id ?? null } },
-      { requestKey: `adopt:${r.id}`, source: { kind: 'system', name: 'adopt' }, appId: r.id })
-      .catch((err: Error) => log!.warn('workflow', 'Could not adopt a main check', { appId: r.id, message: err.message }));
-  }
-  if (rows.length) log!.info('workflow', 'Adopted main checks', { count: rows.length });
-  return rows.length;
-}
-
 // The bot's change machine hears `type` about session `sessionId`: from the
 // bot's loop (FixRoundEnded, homeroom-bot.js). Only for a session of the
 // bot's; the machine's guard refuses one no run of the bot's proposed.
@@ -576,6 +799,28 @@ export async function stopWorkflowTurn(p: { sessionId: number; by: string | null
     return { status: 200, body: { ok: true, stopped: false, reason: 'no active turn', code: outcome.reason || null } };
   }
   return { status: outcome.status === 'pending' ? 202 : 200, body: { ok: true, stopped: true, stopping: true, phase: null, machine: owner.machine } };
+}
+
+// ── People's turns (turn/) ─────────────────────────────────────────────
+
+// A person's turn asked for on `key` (`agent:<id>`, `session:<id>`), in the
+// route's own transaction (`db`), with what makes it owed: the person's
+// message and the conversation's claim. `input` is what the turn's work
+// needs (JSON; never a key or a secret: those are read when it runs).
+export async function askTurn(db: Queryable, p: {
+  key: string; turnId: string; kind: string; input: Record<string, unknown>; appId?: number | null;
+}): Promise<void> {
+  await appendEvent(db, TURN, p.key,
+    { type: 'Asked', payload: { turnId: p.turnId, kind: p.kind, input: p.input } as any },
+    { requestKey: `ask:${p.key}:${p.turnId}`, source: { kind: 'route', name: 'turn' }, appId: p.appId ?? null });
+}
+
+// A person's Stop of the turn running on `key`: the machine stops its coding
+// agent by its journal; the turn hears it from its claim (stamped first).
+export async function stopTurn(p: { key: string; by: string | null }): Promise<void> {
+  if (!runtime) throw new Error('The workflow runtime is not running in this process');
+  await runtime.append(TURN, p.key, { type: 'StopRequested', payload: { by: p.by ?? null } as any },
+    { requestKey: `stop:${p.key}:${randomUUID()}`, source: { kind: 'route', name: 'stop' }, actor: p.by ?? undefined });
 }
 
 // ── The Homeroom bot's replies (bot-voice, bot-dm) ─────────────────────
@@ -628,10 +873,19 @@ export async function insertHeard(db: Queryable, insertSql: string, values: unkn
 
 // A person wrote in their DM with the bot (routes/conversations.js, in
 // conversations.sendMessage's own transaction, `db`).
-export async function dmWritten(db: Queryable, p: { userId: number; conversationId: number; messageId: number; attempt?: number }): Promise<void> {
+export async function dmWritten(db: Queryable, p: { userId: number; conversationId: number; messageId: number }): Promise<void> {
   await appendEvent(db, BOT_DM, dmKey(p.userId),
-    { type: 'Wrote', payload: { userId: p.userId, conversationId: p.conversationId, messageId: p.messageId, attempt: p.attempt || 0 } },
-    { requestKey: `wrote:${p.messageId}${p.attempt ? `:d${p.attempt}` : ''}`, source: { kind: 'route', name: 'dm' } });
+    { type: 'Wrote', payload: { userId: p.userId, conversationId: p.conversationId, messageId: p.messageId, attempt: 0 } },
+    { requestKey: `wrote:${p.messageId}`, source: { kind: 'route', name: 'dm' } });
+}
+
+// A message of the bot's that rang `userId` owes them its email when no
+// phone could take the push (homeroom-bot-dm.js sendDm, in the message's own
+// transaction, `db`): `mail` is activity-mail.js emailIfNoPush's input.
+export async function dmMailOwed(db: Queryable, p: { userId: number; messageId: number; mail: Record<string, Json> }): Promise<void> {
+  await appendEvent(db, BOT_DM, dmKey(Number(p.userId)),
+    { type: 'MailOwed', payload: { userId: Number(p.userId), messageId: Number(p.messageId), mail: p.mail } },
+    { requestKey: `mail:${Number(p.messageId)}`, source: { kind: 'system', name: 'mail' } });
 }
 
 // A hello of `kind` is owed to a person (joining by an invite, the tour's
@@ -702,29 +956,6 @@ export async function tapDmAction(p: { userId: number; actionId: number; choice:
     { type: 'Tapped', payload: { userId: p.userId, actionId: p.actionId, choice: p.choice, answers: (p.answers || []) as any } },
     { requestKey: `tap-action:${p.actionId}:${randomUUID()}`, source: { kind: 'route', name: 'bot-action' }, actor: `user:${p.userId}` });
   return tapAnswer(out, DM_TAP);
-}
-
-// A later try an older release owed (homeroom-bot-mayor.js's in-memory
-// deferred tries, which a restart lost: its turn rows say so), taken by the
-// person's DM machine once, at the leader's boot. Transitional: an answer
-// deferred since this release is the machine's own timer.
-export async function adoptDeferredDms(): Promise<number> {
-  if (!runtime) return 0;
-  const { rows } = await kernelPool!.query(
-    `SELECT t.message_id, t.conversation_id, t.user_id, t.tries FROM (
-       SELECT DISTINCT ON (message_id) message_id, conversation_id, user_id, fallback,
-              COUNT(*) OVER (PARTITION BY message_id)::int AS tries
-         FROM homeroom_bot_dm_turns
-        WHERE message_id IS NOT NULL AND created_at > NOW() - INTERVAL '20 minutes'
-        ORDER BY message_id, id DESC) t
-      WHERE t.fallback IN ('deferred', 'plain_later') AND t.tries <= 3 AND t.conversation_id IS NOT NULL
-        AND NOT EXISTS (SELECT 1 FROM wf_instances w WHERE w.machine = $1 AND w.key = 'person:' || t.user_id)`, [BOT_DM]);
-  for (const r of rows) {
-    await dmWritten(kernelPool!, { userId: Number(r.user_id), conversationId: Number(r.conversation_id), messageId: Number(r.message_id), attempt: Number(r.tries) })
-      .catch((err: Error) => log!.warn('workflow', 'Could not adopt a DM answer to ask again', { messageId: r.message_id, message: err.message }));
-  }
-  if (rows.length) log!.info('workflow', 'Adopted DM answers to ask again', { count: rows.length });
-  return rows.length;
 }
 
 // An admin's moves on a campaign (routes/campaigns.js): retry one app, force
@@ -858,9 +1089,10 @@ export async function previewEnvStale(sessionId: number, appId: number | null, a
 }
 
 // A closed proposal whose CC volume is still there and that has no purge
-// queued (closed before the proposal machine queued one with the close, or
-// never held by it) gets its retention purge: a held one by Rearm, an
-// unheld one by its adoption. Once per release. Resolves how many.
+// queued (one given up after its attempts, or retention switched on after
+// the close) gets its retention purge again, by Rearm. Once per release.
+// Every close is the proposal machine's (Close creates its instance), so no
+// archived proposal is without one. Resolves how many.
 async function retainClosedProposals(release: string): Promise<number> {
   if (!runtime || process.env.USERNODE_ENV === 'staging' || !(Number(appConfig?.archivedRetentionMs) > 0)) return 0;
   const { rows: held } = await kernelPool!.query(
@@ -874,16 +1106,7 @@ async function retainClosedProposals(release: string): Promise<number> {
       { requestKey: `retain:${release}:${r.id}`, source: sys('release'), appId: r.app_id ?? undefined })
       .catch((err: Error) => log!.warn('workflow', 'Could not queue a closed proposal\'s purge', { sessionId: r.id, message: err.message }));
   }
-  const { rows: unheld } = await kernelPool!.query(
-    `SELECT cs.id, cs.app_id FROM chat_sessions cs
-      WHERE cs.status = 'archived' AND cs.cc_purged = FALSE AND cs.archived_at IS NOT NULL
-        AND NOT EXISTS (SELECT 1 FROM wf_instances w WHERE w.machine = $1 AND w.key = 'session:' || cs.id)
-      ORDER BY cs.id LIMIT 2000`, [PROPOSAL]);
-  for (const r of unheld) {
-    await proposalAdopted({ sessionId: r.id, appId: r.app_id })
-      .catch((err: Error) => log!.warn('workflow', 'Could not adopt a closed proposal', { sessionId: r.id, message: err.message }));
-  }
-  return held.length + unheld.length;
+  return held.length;
 }
 
 // A release is when a fix to the platform's own fault (a check Job refused
@@ -1013,9 +1236,6 @@ function failed(outcome: EventOutcome): Reply | null {
   if (outcome.status === 'pending') return { status: 202, body: { ok: true, pending: true, requestKey: outcome.requestKey } };
   if (outcome.status === 'faulted') return { status: 500, body: { error: 'Internal server error' } };
   if (outcome.status === 'rejected') {
-    if (outcome.reason === 'reason_required') {
-      return { status: 400, body: { error: 'reason_required', message: VOTE_REASON_REQUIRED, maxLength: VOTE_REASON_MAX } };
-    }
     return REJECTIONS.get(outcome.reason || '') || { status: 409, body: { error: outcome.reason } };
   }
   return null;
@@ -1075,25 +1295,35 @@ export async function adminApplyProposal(
 
 const count = (n: unknown) => (Number.isInteger(n) && (n as number) >= 0 ? n as number : null);
 
-// A merge found on GitHub that no attempt here reported (somebody merged the
-// pull request by hand while it was up for a vote: the merged-by-hand clock
-// looks every six hours, and the imported-prs clock at each imported one,
-// services/proposal-scans.js).
-// The tally is read again: the counted Yes votes on the version that merged,
-// and the app's active members.
-export async function mergeObserved(m: { sessionId: number; appId: number; mergeSha: string | null; mergedAt: string | null }): Promise<number> {
+// GitHub's word on a proposal's pull request, as a look read it: an
+// imported one's (services/pr-import-sync.js, the imported-prs clock and the
+// webhook) or a native one merged by hand while up for its vote (the
+// merged-by-hand clock, services/proposal-scans.js). The proposal machine
+// decides what follows (PrLooked). A merge carries the tally read here: the
+// counted Yes votes on the version that merged, and the app's active
+// members. Resolves whether the machine took it.
+export async function prLooked(m: { sessionId: number; appId: number; from: string; merged: boolean; closed: boolean;
+  mergeSha: string | null; mergedAt: string | null; closedAt: string | null }): Promise<boolean> {
   const pool = kernelPool!;
-  const { rows: [v] } = await pool.query(
-    `SELECT count(*)::int AS yes, cs.votes_required FROM pr_votes pv JOIN chat_sessions cs ON cs.id = pv.session_id
-      WHERE pv.session_id = $1 AND pv.vote = 'yes' AND ${countedVotePredicateSql('pv', 'cs')}
-      GROUP BY cs.votes_required`, [m.sessionId]);
-  const stats = await pool.query('SELECT self_hosted, collab_visibility FROM apps WHERE id = $1', [m.appId])
-    .then(({ rows: [a] }) => activeUserStats(pool, m.appId, appMetaFromRow(a))).catch(() => null);
-  return runtime!.append(MERGE, sessionKey(m.sessionId), { type: 'Merged', payload: {
-    sessionId: m.sessionId, mergeSha: m.mergeSha, mergedAt: m.mergedAt || new Date().toISOString(), force: false,
-    observedBy: 'recovery',
-    tally: { yes: v?.yes ?? 0, required: count(v?.votes_required), active: count(stats?.active) },
-  } }, { requestKey: `merged:${m.sessionId}:recovery`, source: { kind: 'system', name: 'recovery' }, appId: m.appId });
+  let tally = null;
+  if (m.merged) {
+    const { rows: [v] } = await pool.query(
+      `SELECT count(*)::int AS yes, cs.votes_required FROM pr_votes pv JOIN chat_sessions cs ON cs.id = pv.session_id
+        WHERE pv.session_id = $1 AND pv.vote = 'yes' AND ${countedVotePredicateSql('pv', 'cs')}
+        GROUP BY cs.votes_required`, [m.sessionId]);
+    const stats = await pool.query('SELECT self_hosted, collab_visibility FROM apps WHERE id = $1', [m.appId])
+      .then(({ rows: [a] }) => activeUserStats(pool, m.appId, appMetaFromRow(a))).catch(() => null);
+    tally = { yes: v?.yes ?? 0, required: count(v?.votes_required), active: count(stats?.active) };
+  }
+  const what = m.merged ? 'merged' : 'closed';
+  // The same reading within a minute (the webhook's and the clock's) is one
+  // event; a close still settling is looked at again on the next run.
+  const out = await proposalEvent('PrLooked', { from: m.from, merged: m.merged, closed: m.closed, mergeSha: m.mergeSha,
+    mergedAt: m.mergedAt, closedAt: m.closedAt, readAt: new Date().toISOString(), tally },
+  { sessionId: m.sessionId, appId: m.appId, source: sys('pr-look'), waitMs: 5000,
+    requestKey: `pr-looked:${m.sessionId}:${what}:${m.mergedAt || m.closedAt || '-'}:${Math.floor(Date.now() / 60000)}` });
+  // Taken once decided: one still pending is the next look's to report again.
+  return typeof out === 'object' && out != null && ['accepted', 'replayed'].includes((out as any).status);
 }
 
 // The platform's own app now runs `sha` (its release booting): every merge
@@ -1189,6 +1419,32 @@ export async function buildsUnderWay(target?: BuildTarget): Promise<{ key: strin
 // recorded at once, deployed by the machine one at a time. Resolves the
 // event's id; the "deploying" state and its end reach browsers from the
 // machine. A request key makes asking again a replay.
+// An app whose runtime the app-health clock found not running (keyed by the
+// clock's run), and one a person could not reach (keyed by the minute):
+// app delivery decides whether to heal it.
+export async function reportUnhealthy(appId: number, state: string, requestKey: string): Promise<void> {
+  if (!runtime) throw new Error('The workflow runtime is not running in this process');
+  await runtime.append(DELIVERY, appKey(appId), { type: 'Unhealthy', payload: { appId, state } },
+    { requestKey, source: { kind: 'system', name: 'app-health' }, appId });
+}
+export async function reportUnreachable(appId: number, requestKey: string): Promise<void> {
+  if (!runtime) throw new Error('The workflow runtime is not running in this process');
+  await runtime.append(DELIVERY, appKey(appId), { type: 'Unreachable', payload: { appId } },
+    { requestKey, source: { kind: 'system', name: 'visit' }, appId });
+}
+
+// main at a commit production does not run (the main-drift clock, keyed by
+// the movement: what production ran when it was seen, and the commit; an
+// admin's Check for updates, by hand): what app delivery decided. Main
+// moving back to a commit production ran before is a movement of its own.
+export async function reportMainMoved(appId: number, sha: string, { byHand = false, movement = null }: { byHand?: boolean; movement?: string | null } = {}): Promise<EventOutcome> {
+  if (!runtime) throw new Error('The workflow runtime is not running in this process');
+  const s = String(sha).toLowerCase();
+  return runtime.appendAndWait(DELIVERY, appKey(appId), { type: 'MainMoved', payload: { appId, sha: s, byHand } },
+    { requestKey: byHand || !movement ? `check:${appId}:${s}:${randomUUID()}` : `drift:${appId}:${movement}`,
+      source: { kind: 'system', name: byHand ? 'check_updates' : 'drift' }, appId });
+}
+
 export async function requestDeploy(appId: number, reason: string, o: {
   prNumber?: number | null; revision?: string | null; reuse?: unknown; requestKey?: string;
 } = {}): Promise<number> {
@@ -1256,7 +1512,7 @@ export async function requestRecheck(r: { sessionId: number; appId: number; reas
 }
 
 // A person's "Run checks again" folded into what the session is already
-// doing (services/unit-suite-reuse.js owePendingRun): the machine stamps the
+// doing (routes/sessions.js recheck): the machine stamps the
 // head's stored verdict pending, if it is the head's and not pending already.
 export async function recheckFolded(r: { sessionId: number; appId: number; head: string }): Promise<EventOutcome> {
   return runtime!.appendAndWait(PREVIEW, previewKey(r.sessionId), { type: 'RecheckFolded', payload: { head: r.head, sessionId: r.sessionId } },
@@ -1416,11 +1672,11 @@ export function campaignDeps(config: any, env: Record<string, string | undefined
 // Something may make an app's proposals mergeable (a vote, main green, main
 // moved, an admin resuming merges): the app's merge queue looks. In a
 // caller's transaction (`db`) it is appended there.
-export async function wantMerge(p: { appId: number; sessionId?: number | null; reason: string; db?: Queryable }): Promise<void> {
+export async function wantMerge(p: { appId: number; sessionId?: number | null; reason: string; db?: Queryable; requestKey?: string }): Promise<void> {
   if (!Number.isInteger(Number(p.appId)) || Number(p.appId) <= 0) return;
   const appId = Number(p.appId);
   const event = { type: 'MergeWanted', payload: { appId, sessionId: p.sessionId ?? null, reason: p.reason } };
-  const opts = { requestKey: `want:${appId}:${randomUUID()}`, source: { kind: 'system' as const, name: p.reason }, appId };
+  const opts = { requestKey: p.requestKey ?? `want:${appId}:${randomUUID()}`, source: { kind: 'system' as const, name: p.reason }, appId };
   if (p.db && !runtime) {
     await appendEvent(p.db, mergeQueue(), queueKey(appId), event, opts);
     return;
@@ -1542,6 +1798,13 @@ export async function proposalAdopted(o: { sessionId: number; appId?: number | n
   }
   await runtime!.append(proposalMachine(), proposalKey(o.sessionId), { type: 'Adopted', payload: { sessionId: o.sessionId } },
     { requestKey: `adopt:${o.sessionId}`, source: sys('adopt'), appId: o.appId ?? undefined });
+}
+
+// A hosted build's diagram was stored (services/proposal-diagram.js
+// storeDeclared, in the write's own transaction, `db`): its pull request's
+// body is owed the block.
+export async function diagramStored(db: Queryable, p: { sessionId: number; appId: number | null }): Promise<void> {
+  await proposalEvent('DiagramStored', {}, { sessionId: p.sessionId, appId: p.appId, db, source: sys('diagram') });
 }
 
 // The promote's answers, by the machine's rejection or review.open's code.

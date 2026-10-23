@@ -120,8 +120,9 @@ export interface CreateTileView {
   hint: string;
   /**
    * #4757: a collapsed grid whose last shown row is full holds the tile back
-   * (#3047) — heldBack marks that state, and apps-more.tsx answers it with a
-   * compact New project entry beside "Show all N apps". False whenever the
+   * (#3047) — heldBack marks that state, and the My apps heading answers it
+   * with a compact New project entry (#5825; it rode "Show all N apps"
+   * before). False whenever the
    * tile IS the grid's trailing cell, expanded or not.
    */
   heldBack: boolean;
@@ -152,8 +153,8 @@ export interface HomeGridState {
    * prerender and the first client render agree — the tile is data-placed),
    * in the search view, and with a load notice on screen. A collapsed grid
    * whose last shown row is full keeps the view with `heldBack: true` (#4757):
-   * app-grid.tsx then draws no tile, and the compact New project entry beside
-   * "Show all N apps" stands in for it.
+   * app-grid.tsx then draws no tile, and the compact New project entry on the
+   * My apps heading stands in for it (#5825).
    */
   create: CreateTileView | null;
   /**
@@ -164,6 +165,20 @@ export interface HomeGridState {
    * so the prerendered document is unchanged.
    */
   editing: boolean;
+  /**
+   * ALL / CONTRIBUTING (#5823): which apps the grid shows. `filter` is the
+   * chip selection; `filtered` says this paint IS the Contributing view (a
+   * packed, in-memory subset — never the saved arrangement). `filterable`
+   * shows the chips at all: only when My apps mixes the two kinds, or when
+   * Contributing is already chosen so there is a way back. `filterEmpty` is
+   * the Contributing view with nothing in it — the grid says so and offers
+   * All. All four are false/'all' in INITIAL_GRID, so the prerender is
+   * unchanged.
+   */
+  filter: 'all' | 'contributing';
+  filterable: boolean;
+  filtered: boolean;
+  filterEmpty: boolean;
 }
 
 export const INITIAL_GRID: HomeGridState = {
@@ -176,6 +191,10 @@ export const INITIAL_GRID: HomeGridState = {
   notice: null,
   create: null,
   editing: false,
+  filter: 'all',
+  filterable: false,
+  filtered: false,
+  filterEmpty: false,
 };
 
 export const gridStore = createStore<HomeGridState>(INITIAL_GRID);

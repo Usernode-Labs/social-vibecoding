@@ -29,6 +29,24 @@ test('B8: Suggest an improvement is gated on membership and hands its request to
   assert.match(convs, /router\.post\('\/api\/conversations\/homeroom-bot', conversationMessageLimiter, sameOriginBrowserOnly,/);
 });
 
+// #5757: a request sent to Homeroom itself went to nobody: the platform
+// branch of the route filed it and answered, but never handed it to the bot,
+// so no card arrived in the person's chat. It now takes the same hand-off the
+// app branch does, against the platform's own app row.
+test('#5757: a request to Homeroom itself is handed to Homeroom bot, with its confirmation', () => {
+  const route = read('src/routes/feedback.js');
+  const platform = route.slice(route.indexOf('platformApp = (await findAppByRepo(pool, issueOwner, issueRepo))'));
+  assert.ok(platform.length > 0, 'the platform branch resolves the platform app row by repo');
+  assert.match(platform, /noteRequestFiled\(pool, \{\s*app: \{ id: platformApp\.id, slug: platformApp\.slug, name: 'Homeroom' \},\s*user: req\.user, issueNumber: issue\.number, title, askedText: description\.trim\(\),/);
+  assert.match(platform, /Object\.assign\(homeroomBot, \{ canFix, appSlug: platformApp\.slug, issueNumber: issue\.number \}\);/);
+  // Both confirmations carry the bot's answer: the app branch's and the platform branch's.
+  assert.equal(route.match(/\.\.\.\(homeroomBot \? \{ homeroomBot \} : \{\}\),/g).length, 2);
+  // The lookup is best effort: a repo that is not an app row here (not
+  // self-hosted), or a lookup that throws, leaves the confirmation as it was
+  // rather than failing a request that is already filed.
+  assert.match(platform, /platformApp = \(await findAppByRepo\(pool, issueOwner, issueRepo\)\) \|\| null;\s*\} catch \(err\) \{\s*log\.warn\('feedback', 'Platform request destination unavailable', \{ message: err\.message \}\);\s*\}/);
+});
+
 test('B8: the doors that open the chat with Homeroom bot, and what they are called', () => {
   // The mark menu's Build it now row left with its Agent chats section
   // (#4729); building it yourself is Messages' "+" Agent chat choice.
@@ -44,7 +62,7 @@ test('B8: the doors that open the chat with Homeroom bot, and what they are call
   // run-through, 5 Oct 2026). The hub's ⋯ still offers it, above.
   assert.match(read('frontend/src/features/home/tour/tour-steps.ts'), /body: 'onboarding:tour\.step\.menuActions\.body',/);
   assert.equal(require('./lib/platform-i18n').message('onboarding:tour.step.menuActions.body'),
-    'Say what should change. It doesn\'t vanish into a feedback box: Homeroom bot starts building it for you, or brings it to the group as a request, and you can follow along.');
+    'Change something in any of your apps or in Homeroom itself. Start building it or share a request for someone in the community to pick up.');
   assert.doesNotMatch(read('frontend/src/features/home/tour/tour-steps.ts'), /tap Build it now/);
   assert.doesNotMatch(JSON.stringify(JSON.parse(read('frontend/locales/en/onboarding.json'))), /tap Build it now/);
   // The made screen's plan card is the door after a new project (the

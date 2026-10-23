@@ -462,9 +462,12 @@ test('every non-idempotent tail step stamps a milestone', () => {
 
 // ── 4. finalizeRecoveredTurn skips what already landed ──────────────────
 
-const SERVER_SRC = fs.readFileSync(path.join(__dirname, '../server.js'), 'utf8');
+const SERVER_SRC = fs.readFileSync(path.join(__dirname, '../server.js'), 'utf8')
+  // With what a turn's recovery runs, moved out of server.js unchanged
+  // (services/turn-recovery.js).
+  + fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'turn-recovery.js'), 'utf8');
 
-test('live retained turns are handed to the interactive recovery scheduler', async () => {
+test('live retained turns are handed to whoever carries them on', async () => {
   const { scheduleRetainedInteractiveTurn } = require('../src/routes/sessions');
   const activeTurn = {
     turnId: '11111111-1111-4111-8111-111111111111',
@@ -485,9 +488,12 @@ test('live retained turns are handed to the interactive recovery scheduler', asy
   }), true);
   assert.deepEqual(scheduled, [42]);
 
-  assert.match(SERVER_SRC,
-    /app\.use\(sessionRoutes\(config, \{\s*scheduleInteractiveRecovery: scheduleInteractiveTurnRecovery,/,
-    'the production router receives the boot-recovery adapter');
+  // With nobody to schedule it with (a route), the record is retained for
+  // the turn-leftovers clock, which asks a recover turn for it once no work
+  // item holds it (services/turn-leftovers.js); a turn's own item passes its
+  // own (services/turns.js ITEM_CARRIES_ON).
+  assert.equal(await scheduleRetainedInteractiveTurn({ pool, sessionId: 42 }), true);
+  assert.match(SERVER_SRC, /app\.use\(sessionRoutes\(config\)\);/, 'no in-process scheduler is handed to the routes');
   assert.match(SESSIONS_SRC,
     /catch \(err\) \{[\s\S]{0,500}?scheduleRetainedInteractiveTurn\(\{/,
     'the live request catch schedules any retained durable owner');
@@ -530,14 +536,17 @@ test('restart cleanup retries derive their action from the durable phase', () =>
     /Release the durable record and its journal only after every recovered[\s\S]{0,300}requireDurableTurnCleanup/,
     'the successful headless exit validates cleanup after its full tail');
 
+  // A retry reads the durable phase again: the adoption and a resumed
+  // headless run each derive cleanup from the record as it stands.
   assert.match(SERVER_SRC,
-    /run: async \(\) => \{[\s\S]{0,500}loadActiveTurn[\s\S]{0,300}action === 'cleanup'[\s\S]{0,300}worker\.finishTurn/,
-    'interactive retry timers reload cleanup_pending instead of capturing cleanupOnly');
+    /const recoveryAction = turnLifecycle\.recoveryAction\(session\.active_turn\);[\s\S]{0,1200}if \(recoveryAction === 'cleanup'\) \{[\s\S]{0,200}worker\.finishTurn/,
+    'the adoption reloads cleanup_pending instead of capturing cleanupOnly');
   assert.match(SESSIONS_SRC,
-    /const action = turnLifecycle\.recoveryAction\(fresh\.active_turn\);[\s\S]{0,500}action === 'cleanup'[\s\S]{0,400}worker\.finishTurn/,
-    'headless retry timers derive cleanup without replaying the tail');
-  assert.match(SERVER_SRC, /async function reconcilePendingTurnCleanup[\s\S]{0,500}PHASE_CLEANUP_PENDING/,
-    'boot scans cleanup_pending independently of worker-container state');
+    /const initialRecoveryAction = turnLifecycle\.recoveryAction\(session\.active_turn\);[\s\S]{0,600}if \(initialRecoveryAction === 'cleanup'\) \{[\s\S]{0,200}worker\.finishTurn/,
+    'a resumed headless run derives cleanup without replaying the tail');
+  // A record left in cleanup_pending that no work item holds is a recover
+  // turn's (turn-leftovers.js: no phase filter), not a boot scan's.
+  assert.doesNotMatch(SERVER_SRC, /reconcilePendingTurnCleanup/);
 });
 
 test('finalizeRecoveredTurn takes an alreadyDone map and defaults to empty', () => {
@@ -568,7 +577,7 @@ test('a resumed tail hands its commit to the preview machine, and joins a previe
   // The machine builds and checks the recovered commit: nothing here builds
   // a preview or runs its checks in-process.
   assert.match(body,
-    /require\('\.\/src\/services\/preview-workflow'\)\.revision\(\{\s*pool, session, head: result\.sha, source: 'turn', trigger: 'boot-reconcile',\s*\}\)\.catch\(/,
+    /require\('\.\/(?:src\/services\/)?preview-workflow'\)\.revision\(\{\s*pool, session, head: result\.sha, source: 'turn', trigger: 'boot-reconcile',\s*\}\)\.catch\(/,
     'the exact commit is handed over, and a failed hand-off is not fatal');
   assert.doesNotMatch(body, /buildAndDeployStaging|captureForSession|stagingNeedsRebuild/);
   // The live tail handed this commit over before it died and the machine

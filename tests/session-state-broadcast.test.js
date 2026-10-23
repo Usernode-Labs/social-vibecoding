@@ -6,13 +6,12 @@
 //      warm registry's `inFlight` flip back to back. Two events for one
 //      user-visible transition would repaint every board twice, so the
 //      notifier must collapse them.
-//   2. PUBLISH-ON-CHANGE — a touch that doesn't move the derived state
-//      publishes nothing. Without this, every lastUsedMs bump on the warm
-//      registry would be a broadcast.
-//   3. IDLE COLLAPSE — a session settling back to idle publishes exactly
-//      one final `busy:false` (that's what stops a client's spinner) and
-//      then drops out of the notifier's memory, so the map can't grow with
-//      the session table.
+//   2. EVERY PROCESS'S WORK — busy is this process's memory, then the
+//      workflow's records (another process's turn, a recorded operation),
+//      and whether to tell is never this process's memory of what it told
+//      last: a session one process said busy is said idle by another that
+//      never said busy, once the work ends there. Every touch (they come
+//      only at a turn's or an operation's edges) is told, coalesced.
 //   4. SCOPING — a private session's state goes to its OWNER ONLY; a shared
 //      session (or a headless auto-run, which renders on everyone's board)
 //      fans out app-scoped. This is a privacy boundary, not a nicety: an
@@ -87,7 +86,7 @@ test('a turn start publishes exactly one busy event despite two touches', async 
   activeWorkers.delete(1);
 });
 
-test('settling back to idle publishes one final busy:false and forgets the session', async () => {
+test('settling back to idle publishes busy:false', async () => {
   ROWS.set(2, row(2));
 
   activeWorkers.add(2);
@@ -99,34 +98,28 @@ test('settling back to idle publishes one final busy:false and forgets the sessi
   await settle();
   assert.equal(published.length, 2, 'the idle transition is never swallowed');
   assert.equal(published[1].busy, false);
-
-  // Already idle: a further touch is a no-op, which is what proves the
-  // notifier dropped its entry rather than re-publishing idle forever.
-  sessionState.touch(2);
-  await settle();
-  assert.equal(published.length, 2);
 });
 
-test('a touch that does not change derived state publishes nothing', async () => {
-  ROWS.set(3, row(3));
-  activeWorkers.add(3);
-  await settle();
-  assert.equal(published.length, 1);
-
-  // Still busy — nothing observable moved.
-  sessionState.touch(3);
-  sessionState.touch(3);
-  await settle();
-  assert.equal(published.length, 1);
-
-  activeWorkers.delete(3);
-});
-
-test('a never-seen idle session publishes nothing', async () => {
+test('idle is told by a process that never said busy: another may have', async () => {
+  // Another process ran the turn and said busy; this one sees its end.
   ROWS.set(4, row(4));
   sessionState.touch(4);
+  sessionState.touch(4);
   await settle();
-  assert.equal(published.length, 0);
+  assert.deepEqual(published.map((p) => [p.sessionId, p.busy]), [[4, false]], 'told once, coalesced');
+});
+
+test('a session another process works on is busy here too, from the workflow\'s records', async () => {
+  ROWS.set(3, row(3));
+  const realQuery = fakePool.query;
+  fakePool.query = async (sql, params) => (/AS busy FROM chat_sessions cs/.test(sql) ? { rows: [{ busy: true }] } : realQuery(sql, params));
+  try {
+    sessionState.touch(3);
+    await settle();
+    assert.deepEqual(published.map((p) => [p.sessionId, p.busy]), [[3, true]]);
+  } finally {
+    fakePool.query = realQuery;
+  }
 });
 
 test('nested session operations only publish on the outer edges', async () => {

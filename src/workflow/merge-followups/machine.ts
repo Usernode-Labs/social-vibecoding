@@ -33,18 +33,12 @@ export const sessionKey = (sessionId: number) => `session:${sessionId}`;
 export const WORK = Object.freeze({
   nudge: 'host.nudgeDeployer',
   verify: 'delivery.verify',
-  teardown: 'preview.teardown',
   retire: 'worker.retire',
   find: 'included.find',
   issues: 'issues.closeAfterMerge',
   closePr: 'github.closePullRequest',
-  mainCheck: 'main.check',
   journey: 'journey.changeLive',
 });
-// The deploy a merge recorded before every deploy was app-delivery's: no item
-// of it is left to run, and a follow-up of it in an old instance's record is
-// asked again through Retry delivery.
-const OLD_DELIVER = 'app.deliver';
 // The kinds a follow-up can be retried as: those with a handler.
 const RETRYABLE: ReadonlySet<string> = new Set(Object.values(WORK));
 
@@ -79,8 +73,8 @@ export interface Data {
   selfHosted: boolean;
   includedIn: CarrierRef | null;   // role 'included': the change that carried it
   included: number[];              // role 'merge': the changes it carried, as found
-  deliveries: number;              // app-delivery requests (or app.deliver items, before) so far
-  delivery?: typeof DELIVERY;      // the deploy is asked of app-delivery (absent: self-hosted, or app.deliver work from before)
+  deliveries: number;              // app-delivery requests so far (app.deliver items, in a merge recorded before)
+  delivery?: typeof DELIVERY;      // the deploy is asked of app-delivery (absent: self-hosted, or a merge recorded before every deploy was app-delivery's)
   answered?: boolean;              // app-delivery has answered this merge's own request
   deliveredSha: string | null;
   liveAt: string | null;
@@ -490,20 +484,9 @@ function resultOf(status: Followup['status']) {
     const prev = s.data.followups[p.workKey]!;
     const d: Data = { ...s.data, followups: { ...s.data.followups,
       [p.workKey]: { ...prev, status, ...(p.error ? { error: p.error.message } : {}) } } };
-    const result = (p.result || {}) as { sha?: string; contains?: boolean; ids?: number[]; found?: { id: number; head: string }[] };
+    const result = (p.result || {}) as { sha?: string; contains?: boolean; found?: { id: number; head: string }[] };
     if (p.kind === WORK.verify && status === 'done' && result.contains && s.name !== 'live') {
       return toLive(e, d, result.sha || null, ctx);
-    }
-    // An older release queued the main check as work (one release: its
-    // handler only reports): the main-check machine is asked now.
-    if (p.kind === WORK.mainCheck) return { next: { name: s.name, data: d }, messages: [toMainCheck(d)] };
-    // An older release queued the preview's teardown as work (one release:
-    // its handler only reports): the preview machine is asked now, however
-    // the item ended (an older handler's failure included), since nothing
-    // else will ask it.
-    if (p.kind === WORK.teardown) {
-      return { next: { name: s.name, data: d }, messages: [{ to: { machine: 'preview', key: sessionKey(d.sessionId) },
-        event: { type: 'RetireRequested', payload: { sessionId: d.sessionId, reason: 'merged', terminal: true } }, appId: d.appId }] };
     }
     // A shots run still works in the worker: the same retire, later.
     if (p.kind === WORK.retire && status === 'done' && (result as { waiting?: string }).waiting) {
@@ -511,11 +494,8 @@ function resultOf(status: Followup['status']) {
         notBefore: new Date(ctx.now.getTime() + RETIRE_RECHECK_MS) }] });
     }
     if (p.kind === WORK.find && status === 'done') {
-      // `found` carries each change's matched head; a result from before
-      // it did names ids only.
-      const named = Array.isArray(result.found) ? result.found
-        : (Array.isArray(result.ids) ? result.ids : []).map((id) => ({ id, head: null as string | null }));
-      const found = named.filter((c) => Number.isInteger(c.id) && !d.included.includes(c.id));
+      // `found` carries each change's matched head.
+      const found = (Array.isArray(result.found) ? result.found : []).filter((c) => Number.isInteger(c.id) && !d.included.includes(c.id));
       const next = { ...d, included: [...d.included, ...found.map((c) => c.id)] };
       return { next: { name: s.name, data: next }, messages: found.map((c) => ({
         to: { machine: MACHINE, key: sessionKey(c.id) },
@@ -629,7 +609,6 @@ const deliveryFailed = {
 const retryFollowup = {
   guard: (s: any, e: Event<any>): Check => {
     const f = s.data.followups[e.payload.workKey];
-    if (f?.kind === OLD_DELIVER) return reject('use_retry_delivery');
     return f && RETRYABLE.has(f.kind) && ['failed', 'exhausted'].includes(f.status) ? ok() : reject('not_retryable');
   },
   to: (s: any, e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<MFState> => {

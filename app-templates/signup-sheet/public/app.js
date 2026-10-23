@@ -380,6 +380,7 @@
     var note = h('input', 'field min-w-0 flex-1');
     note.name = 'note';
     note.type = 'text';
+    note.enterKeyHint = 'done';
     note.maxLength = 80;
     note.value = e.answer.note || '';
     note.placeholder = 'Add a note, e.g. +1 or bringing snacks';
@@ -553,8 +554,11 @@
 
   var loaded = false;
   var loading = null;
+  var again = false;
   function load() {
-    if (loading) return loading;
+    // A read already on its way may have left before the change just made:
+    // read once more when it is back.
+    if (loading) { again = true; return loading; }
     loading = api('GET', '/api/events')
       .then(function (data) { loaded = true; showStatus(null); render(data); })
       .catch(function (err) {
@@ -563,7 +567,10 @@
         if (loaded) showStatus(err);
         else show('error');
       })
-      .then(function () { loading = null; });
+      .then(function () {
+        loading = null;
+        if (again) { again = false; return load(); }
+      });
     return loading;
   }
 
@@ -607,19 +614,28 @@
 
   document.getElementById('retry').addEventListener('click', function () { show('loading'); load(); });
 
-  // Other people sign up and answer too: look again every 15 seconds while
-  // the app is on screen, and straight away when it comes back. Skipped
-  // while someone is typing or adding something, so a refresh never eats
-  // what they are writing.
+  // Other people sign up and answer too: whenever anybody changes
+  // something, the sheets are fetched again at once, and looked at every
+  // minute regardless (public/live-updates.js). Not while someone is typing
+  // or adding something: what changed then is fetched the moment they are
+  // done, so a refresh never eats what they are writing.
   function busy() {
     var active = document.activeElement;
     var typing = active && (active.tagName === 'INPUT' || active.tagName === 'SELECT' || active.tagName === 'TEXTAREA');
     return typing || adding !== null || !el.newForm.hidden;
   }
-  setInterval(function () {
-    if (!document.hidden && !busy()) load();
-  }, 15000);
-  document.addEventListener('visibilitychange', function () { if (!document.hidden && !busy()) load(); });
+  if (window.LiveUpdates) window.LiveUpdates.watch({ refresh: load, quiet: function () { return !busy(); } });
 
-  load();
+  // The first screen, drawn: Homeroom keeps its opening cover up until then
+  // (usernode.ready, the platform bridge), so the app appears in one step
+  // rather than as loading shapes that then change. The cover lifts after a
+  // few seconds regardless.
+  var first = load();
+  if (window.usernode && window.usernode.ready) window.usernode.ready(first);
+
+  // Pull down to fetch again, as a native list does. The native kit
+  // (/usernode-native/v1/native.js) draws the spinner and bounces the page
+  // in place, so a drag past the top no longer carries Homeroom's header
+  // with it. Not on a computer, where the kit leaves the page alone.
+  if (window.unNative) first.then(function () { window.unNative.attachPullToRefresh(window, load); });
 })();

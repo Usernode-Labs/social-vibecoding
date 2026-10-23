@@ -91,7 +91,9 @@ test('the bot\'s and the bench\'s own endings close through the machine (bug 15)
   assert.match(read('src/services/homeroom-bot.js'), /archiveSession\(\{ pool, sessionId: session\.id, reason: 'bot-recovered', from: now\.status \}\)/);
   assert.match(read('src/services/bench/lane.js'), /closeOwnSession\(\{ pool, sessionId: id, reason: 'bench' \}\)/);
   assert.match(read('src/services/bench/studio.js'), /closeOwnSession\(\{ pool, sessionId: r\.session_id, reason: 'bench-preview-expired' \}\)/);
-  assert.match(read('server.js'), /closeProposal\(\{ sessionId: Number\(sessionId\), reason: 'bench', from: now\.status \}\)/);
+  // (In what a turn's recovery runs, moved out of server.js unchanged:
+  // services/turn-recovery.js.)
+  assert.match(read('src/services/turn-recovery.js'), /closeProposal\(\{ sessionId: Number\(sessionId\), reason: 'bench', from: now\.status \}\)/);
   // proposal_start's predecessor is closed in the successor's own transaction.
   assert.match(read('src/routes/proposal-handoff.js'), /closeProposal\(\{\s*sessionId: Number\(replacementSession\.id\)[^}]*reason: 'proposal-replaced'[^}]*db: client/);
 });
@@ -114,7 +116,7 @@ test('a close vote\'s withdrawal is the machine\'s close: its durable work finis
 
 test('a resume reads that the session is the caller\'s and paused before it evicts anybody (bug 23)', () => {
   const sessions = read('src/routes/sessions.js');
-  const fn = sessions.slice(sessions.indexOf('async function resumePausedSession('), sessions.indexOf('// What a stop forwarded from another platform process'));
+  const fn = sessions.slice(sessions.indexOf('async function resumePausedSession('), sessions.indexOf('// A resume Homeroom has not decided yet'));
   const refused = fn.indexOf("if (!own || own.status !== 'paused') return { ok: false, status: 404");
   assert.ok(refused > 0, 'a session that is not the caller\'s, or not paused, is refused first');
   for (const evicts of ['freeGlobalSlot(', 'freeUserSlot(', 'resumeProposal(']) {

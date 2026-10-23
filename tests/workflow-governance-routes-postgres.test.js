@@ -149,12 +149,12 @@ test('governance routes through the workflow machine', { timeout: 120000 }, asyn
     assert.deepEqual([again.status, again.body.error], [409, 'Issue is not open']);
   });
 
-  await t.test('a No without a line is refused; a retraction toggles', async () => {
+  await t.test('a No without a line is accepted; a flip and a toggle move it', async () => {
     const i = await issue('close_issue', { issueNumber: 3, issueTitle: 'x' });
     await pool.query('UPDATE apps SET approvals_required = 5 WHERE id = $1', [app.id]);
     const voter = await user();
     const noLine = await call(vote, { params: { id: String(i.id) }, body: { vote: 'down' }, user: voter });
-    assert.deepEqual([noLine.status, noLine.body.error], [400, 'reason_required']);
+    assert.equal(noLine.status, 200, JSON.stringify(noLine.body));
     const up = await call(vote, { params: { id: String(i.id) }, body: { vote: 'up' }, user: voter });
     assert.equal(up.body.issueClosed.applied, false);
     const toggle = await call(vote, { params: { id: String(i.id) }, body: { vote: 'up' }, user: voter });
@@ -309,7 +309,7 @@ test('governance routes through the workflow machine', { timeout: 120000 }, asyn
     await new Promise((res) => setTimeout(res, 100));
     const { rows } = await pool.query(
       `SELECT pg_terminate_backend(pid) AS killed FROM pg_stat_activity
-        WHERE application_name = 'homeroom-workflow' AND datname = current_database() AND state = 'idle'`);
+        WHERE application_name LIKE 'homeroom-%-workflow' AND datname = current_database() AND state = 'idle'`);
     assert.ok(rows.length > 0, 'there were idle workflow connections to drop');
     await new Promise((res) => setTimeout(res, 300));
     const i = await issue('close_issue', { issueNumber: 33, issueTitle: 'm' });

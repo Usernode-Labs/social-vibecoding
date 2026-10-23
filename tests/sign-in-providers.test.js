@@ -430,9 +430,9 @@ test('the routes: public, guarded against a live session, admin-gated, and Apple
   assert.match(routes, /const consented = result\.created \|\| state\.follow_invite === true;/);
   // A new account is a sign-up in the events log, as an email code's,
   // an activation code's and a wallet's are (#4039).
-  assert.match(routes, /events\.record\(pool, \{ type: events\.EVENT_TYPES\.USER_SIGNED_UP, userId: result\.userId, metadata: \{ via: provider \} \}\);/);
+  assert.match(routes, /events\.record\(pool, \{ type: events\.EVENT_TYPES\.USER_SIGNED_UP, userId: result\.userId, metadata: signUpMetadata\(req, \{ via: provider \}\) \}\);/);
   assert.match(read('src/routes/auth.js'),
-    /if \(verified\.created\) \{[\s\S]{0,400}events\.record\(pool, \{ type: events\.EVENT_TYPES\.USER_SIGNED_UP, userId: verified\.userId, metadata: \{ via: 'email' \} \}\);\s+\}/);
+    /if \(verified\.created\) \{[\s\S]{0,400}events\.record\(pool, \{ type: events\.EVENT_TYPES\.USER_SIGNED_UP, userId: verified\.userId, metadata: signUpMetadata\(req, \{ via: 'email' \}\) \}\);\s+\}/);
   // The outcome rides in a cookie, never the URL.
   assert.match(routes, /return res\.redirect\(303, providers\.safeReturnTo\(returnTo\)\);/);
   assert.match(read('server.js'), /app\.use\(authRoutes\(config\)\);\n\/\/ [^\n]+\napp\.use\(require\('\.\/src\/routes\/sign-in-providers'\)\.signInProviderRoutes\(config\)\);/);
@@ -500,7 +500,11 @@ test('the landing offers what the options list, never inside the app, and reopen
   assert.match(landing, /document\.cookie = `\$\{PROVIDER_RESULT_COOKIE\}=; Max-Age=0; path=\/`;/);
   assert.match(landing, /setSheet\(inviteTokenFrom\(location\.pathname\) \? 'join' : 'start'\);/);
   assert.match(landing, /from="invite"\s+returnTo=\{location\.pathname\}/);
-  assert.match(landing, /from=\{sheet === 'signin' \? 'signin' : 'story'\}\s+returnTo="\/"/);
+  // Back to Home, or to the public project's page the sheet was opened over
+  // (features/guest), so a provider's trip lands where the visitor was.
+  assert.match(landing, /from=\{sheet === 'signin' \? 'signin' : 'story'\}\s+returnTo=\{guestProject \? `\/\$\{projectHash\(guestProject\.slug\)\}` : '\/'\}/);
+  assert.match(landing, /from="signin"\s+returnTo=\{`\/\$\{projectHash\(intent\.app\.slug\)\}`\}/,
+    'a project page\'s Join, Vote or Ask comes back to that page');
 });
 
 test('inside the app: the app\'s own sheet, offered where the server lists it and the build can show it', async () => {
@@ -513,7 +517,7 @@ test('inside the app: the app\'s own sheet, offered where the server lists it an
   assert.deepEqual(landing.nativeSignInProvidersFrom(null, ['signInWithApple']), []);
   const src = read('frontend/src/features/auth/landing.tsx');
   assert.match(src, /const providers = nativeSignIn \? nativeProviders : webProviders;/);
-  assert.equal((src.match(/native=\{nativeSignIn\}/g) || []).length, 3, 'all three sheets: the invite\'s, the story\'s and a shared link\'s (#5264)');
+  assert.equal((src.match(/native=\{nativeSignIn\}/g) || []).length, 4, 'all four sheets: the invite\'s, the story\'s, a shared link\'s (#5264) and a public project page\'s (features/guest)');
 
   // The sheet's native path: start, the app's sheet with the nonce, the token back.
   const sheet = loadTsx('frontend/src/features/auth/sign-in-sheet.tsx');

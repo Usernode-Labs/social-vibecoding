@@ -1287,7 +1287,7 @@ async function progressFor(pool, { userId, settings = null, config = null, deps 
   const finished = [];
 
   for (const row of await firstVersionRows(pool, userId)) {
-    const state = setupOf(row, { phase: row.app_status === 'creating' ? phases.read(row.slug) : null });
+    const state = setupOf(row, { phase: row.app_status === 'creating' ? await phases.read(pool, row.app_id) : null });
     if (state.outcome) {
       finished.push({ project: row.slug, projectName: row.name || row.slug, title: 'First version', outcome: state.outcome, links: links(domain, { slug: row.slug }) });
     } else {

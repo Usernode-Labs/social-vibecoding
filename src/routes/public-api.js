@@ -43,6 +43,7 @@ const {
   waitlistResendIpLimiter,
   waitlistStatusLimiter,
   waitlistStatusIpLimiter,
+  publicProjectReadLimiter,
 } = require('../middleware/rate-limits');
 const { waitlistIntegratorAuth } = require('../services/waitlist-integrator');
 const waitlist = require('../services/waitlist');
@@ -52,6 +53,13 @@ const { sendWaitlistJoinMail, sendWaitlistCodeMail } = require('../services/topo
 const { inviteUrl, privacyNoticeUrl, siteUrl, waitlistUrl } = require('../services/marketing-links');
 const { loadContributors, shapeContributor } = require('../services/contributors');
 const { listPublicApps, isPublicDirectoryApp, HIDDEN_APP_STATUSES } = require('../services/public-app-directory');
+const { loadProjectOverview } = require('../services/public-project');
+const { publicStillBytes } = require('../services/shots-public');
+
+// The guest project page's overview, kept for a short while per project: it
+// is the same for everyone who asks, and a shared link can bring a crowd.
+const OVERVIEW_TTL_MS = 30 * 1000;
+const OVERVIEW_CACHE_MAX = 500;
 const { loadMobileAppUrls } = require('../services/mobile-store-links');
 
 // The ONE body POST /api/public/waitlist/resend ever returns. Frozen and
@@ -158,6 +166,56 @@ function publicApiRoutes(config) {
       log.error('public-api', 'contributors failed', {
         slug: req.params.slug, message: err.message,
       });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // GET /api/public/apps/:slug/overview — the read-only project page a
+  // visitor with no account sees (services/public-project.js): the card,
+  // the changes up for a vote with their tallies, the last changes voted in
+  // and the titles of the open requests. 404 for anything the directory
+  // does not list, the same body as an unknown slug.
+  const overviewCache = new Map();
+  router.get('/api/public/apps/:slug/overview', publicProjectReadLimiter, async (req, res) => {
+    const slug = String(req.params.slug || '');
+    if (!/^[a-z0-9][a-z0-9-]{0,99}$/.test(slug)) return res.status(404).json({ error: 'App not found' });
+    try {
+      const hit = overviewCache.get(slug);
+      if (hit && hit.expiresAt > Date.now()) return res.json(hit.body);
+      const body = await loadProjectOverview(pool, slug);
+      if (!body) return res.status(404).json({ error: 'App not found' });
+      if (overviewCache.size >= OVERVIEW_CACHE_MAX) overviewCache.clear();
+      overviewCache.set(slug, { body, expiresAt: Date.now() + OVERVIEW_TTL_MS });
+      res.json(body);
+    } catch (err) {
+      log.error('public-api', 'project overview failed', { slug, message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // GET /api/public/apps/:slug/changes/:id/stills/:artifactId — a before or
+  // after picture of a change up for a vote on a public project, for the
+  // guest project page. Only a still services/shots-public.js lets anybody
+  // see, and only while the change is open at the head it was shot at: 404
+  // otherwise, the same as for one that does not exist.
+  router.get('/api/public/apps/:slug/changes/:id/stills/:artifactId', publicProjectReadLimiter, async (req, res) => {
+    const slug = String(req.params.slug || '');
+    const changeId = Number(req.params.id);
+    const artifactId = String(req.params.artifactId || '');
+    if (!/^[a-z0-9][a-z0-9-]{0,99}$/.test(slug) || !Number.isInteger(changeId) || changeId <= 0
+      || !/^[0-9a-f]{32}$/.test(artifactId)) {
+      return res.status(404).json({ error: 'Not found' });
+    }
+    try {
+      const still = await publicStillBytes(pool, { slug, changeId, artifactId });
+      if (!still) return res.status(404).json({ error: 'Not found' });
+      res.setHeader('Content-Type', still.contentType || 'image/png');
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      res.setHeader('Cache-Control', 'public, max-age=300');
+      if (still.sha256) res.setHeader('ETag', `"${still.sha256}"`);
+      res.send(still.data);
+    } catch (err) {
+      log.error('public-api', 'change still failed', { slug, changeId, message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });
@@ -769,7 +827,47 @@ function publicApiRoutes(config) {
     res.json(urls);
   });
 
+  // GET /get-app — where the notification ask's code to scan goes
+  // (frontend/src/features/notify-ask/get-app-sheet.tsx). A computer shows
+  // the code; the phone that scans it lands here and is sent on to its own
+  // store, from the same listing as above. A phone the user agent does not
+  // name (an iPad asking as a Mac) goes to the only listing when there is
+  // one, else home. Only an http(s) listing is ever a redirect target: the
+  // URL is an admin's free text.
+  router.get('/get-app', async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    let urls = { ios: null, android: null };
+    try {
+      urls = await loadMobileAppUrls(pool);
+    } catch (err) {
+      log.error('public-api', 'get-app urls failed', { message: err.message });
+    }
+    res.redirect(302, getAppTarget(urls, req.get('user-agent') || ''));
+  });
+
   return router;
+}
+
+function safeStoreUrl(raw) {
+  const value = String(raw || '').trim();
+  if (!value) return null;
+  try {
+    const { protocol } = new URL(value);
+    return protocol === 'https:' || protocol === 'http:' ? value : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+/** Where /get-app sends a phone: its own store, the only store, or home. */
+function getAppTarget(urls, userAgent) {
+  const ios = safeStoreUrl(urls && urls.ios);
+  const android = safeStoreUrl(urls && urls.android);
+  if (/Android/i.test(userAgent)) return android || '/';
+  if (/iPhone|iPad|iPod/i.test(userAgent)) return ios || '/';
+  if (ios && !android) return ios;
+  if (android && !ios) return android;
+  return '/';
 }
 
 module.exports = {
@@ -778,4 +876,5 @@ module.exports = {
   loadContributors,
   shapeContributor,
   HIDDEN_APP_STATUSES,
+  getAppTarget,
 };

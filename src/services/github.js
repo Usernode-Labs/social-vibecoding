@@ -958,6 +958,33 @@ async function getFileContent(owner, repo, filePath, ref) {
   }
 }
 
+// A branch's tip: its commit's sha and message, or null when the branch or
+// the repository does not exist. A creation that resumes reads it to tell
+// whether its first commit already landed (app-creator.js).
+async function headCommit(owner, repo, branch = 'main') {
+  const octokit = await getOctokit(owner);
+  try {
+    const { data } = await octokit.rest.repos.getBranch({ owner, repo, branch });
+    const commit = data && data.commit;
+    if (!commit || !commit.sha) return null;
+    return { sha: String(commit.sha).toLowerCase(), message: commit.commit?.message || '' };
+  } catch (err) {
+    if (err.status === 404) return null;
+    throw err;
+  }
+}
+
+// The newest issue of a repository whose body holds `marker` (an HTML
+// comment the filer wrote), among its most recent ones, or null. A filing
+// cut between GitHub's answer and its record finds its own issue this way
+// rather than filing a second (homeroom-bot-dm.js fileFirstRequest).
+async function findIssueByMarker(owner, repo, marker, { recent = 30 } = {}) {
+  const octokit = await getOctokit(owner);
+  const { data } = await octokit.rest.issues.listForRepo({ owner, repo, state: 'all', per_page: recent, sort: 'created', direction: 'desc' });
+  const hit = (Array.isArray(data) ? data : []).find((i) => !i.pull_request && typeof i.body === 'string' && i.body.includes(marker));
+  return hit ? { number: hit.number } : null;
+}
+
 // #4145: every file path in a repo at `ref` (default the repo's default
 // branch), one request through the read client: [{ path, size }], blobs
 // only, and `truncated` when GitHub cut a very large tree short. Null when
@@ -3072,6 +3099,8 @@ module.exports = {
   createRepo,
   _isRepoNameExistsError: isRepoNameExistsError,
   pushFiles,
+  headCommit,
+  findIssueByMarker,
   createRootCommit,
   getFileContent,
   listRepoFiles,

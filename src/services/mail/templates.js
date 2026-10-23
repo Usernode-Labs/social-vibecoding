@@ -709,6 +709,20 @@ function inviteActivity(payload) {
   });
 }
 
+// #4396: a project the reader joined while it was made is open
+// (services/project-opened.js), for somebody with no phone to ring.
+function projectOpened(payload) {
+  const app = String(payload.appName || 'A project you joined').slice(0, 80);
+  return activityFrame({
+    subject: `${app} is open`,
+    lead: `${app} is ready to use. Take a look.`,
+    url: payload.url || PRODUCTION_ORIGIN,
+    label: 'Open it',
+    unsubscribeUrl: payload.unsubscribeUrl || null,
+    eyebrow: payload.appName ? String(payload.appName).slice(0, 80) : '',
+  });
+}
+
 /**
  * Every template returns a FRAGMENT; the frame is applied here, once (#1555).
  *
@@ -746,6 +760,7 @@ const TEMPLATES = {
   project_invite: projectInvite,
   build_ready: buildReady,
   invite_activity: inviteActivity,
+  project_opened: projectOpened,
 };
 
 function buildMessage(kind, payload = {}) {

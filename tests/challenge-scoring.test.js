@@ -30,6 +30,21 @@ poolMod.getPool = () => currentMockPool;
 
 const rules = require('../src/services/topochain/challenge-rules');
 const grader = require('../src/services/topochain/challenge-grader');
+// The scorer's lock lives on the process's lock connection
+// (src/db/session-locks.js; tests/session-locks-postgres.test.js runs it).
+// Its stand-in asks the fake pool, which says whether it is held.
+{
+  const locksPath = require.resolve('../src/db/session-locks');
+  const { BUSY } = require(locksPath);
+  require.cache[locksPath] = { id: locksPath, filename: locksPath, loaded: true, exports: {
+    BUSY,
+    ifSessionLockFree: async (pool, key, fn) => {
+      const { rows: [r] } = await pool.query('SELECT pg_try_advisory_lock($1, $2) AS acquired', key);
+      if (!r || r.acquired !== true) return BUSY;
+      try { return await fn(); } finally { await pool.query('SELECT pg_advisory_unlock($1, $2)', key); }
+    },
+  } };
+}
 const scorer = require('../src/services/topochain/challenge-scorer');
 const { challengeScoringAdminRoutes, parseRuleFields } = require('../src/routes/topochain/admin/challenge-scoring');
 

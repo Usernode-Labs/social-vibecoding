@@ -70,6 +70,49 @@ rendered manually but are outside Argo's stable version constraint. Cluster
 configuration and SOPS-encrypted secrets remain in the infra repository and
 are applied as external Helm values.
 
+For Brevo SMS with `secrets.create: true`, supply these fields through the
+infra repository's SOPS-encrypted workload values:
+
+```yaml
+secrets:
+  brevoApiKey: "<Brevo API key>"
+  brevoSmsSenderIds: '{"FR":"Homeroom"}'
+```
+
+They map to `BREVO_API_KEY` and `BREVO_SMS_SENDER_IDS` in the platform Secret,
+imported by both the web and conductor Deployments. Keep the API key in SOPS;
+the registry is a JSON string keyed by ISO 3166 alpha-2 country. Use only
+senders configured for those countries in Brevo. US and Canadian entries need
+a numeric sender and `"registered": true`; see `docs/sms-brevo.md`.
+
+The infra values may use a separate `platform.brevo.secrets.sops.yaml`
+overlay, encrypted to the cluster's existing recipients and listed after the
+other secret overlays in Argo's `valueFiles`. Empty defaults leave Brevo
+unavailable. Publish this chart before syncing populated infra values; the
+secrets checksum rolls out changes. With `secrets.create: false`, add the two
+environment-variable keys to `secrets.existingSecret` and roll out both
+Deployments after changing that Secret. The Platform variables panel does not
+populate Kubernetes configuration.
+
+Twilio SMS takes the same route, with its own fields:
+
+```yaml
+secrets:
+  twilioAccountSid: "<Twilio Account SID, AC…>"
+  twilioAuthToken: "<Twilio Auth Token>"
+  twilioSmsSenderIds: '{"FR":"Homeroom"}'
+  twilioStatusCallbackUrl: "https://<host>/api/sms/webhooks/twilio"
+```
+
+They map to `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`,
+`TWILIO_SMS_SENDER_IDS` and `TWILIO_STATUS_CALLBACK_URL`. List only Sender IDs
+Twilio has approved; a Brevo registration does not carry over. See
+`docs/sms-twilio.md`.
+
+After rollout, use **Admin → Platform → SMS delivery** to check readiness,
+select Brevo or Twilio and send a test to a number you control. Supplying
+credentials does not itself change the selected provider.
+
 For Gmail delivery with `secrets.create: true`, merge these fields into the
 existing `secrets` block in the infra repository's SOPS-encrypted
 `prototype/bare-metal-platform/clusters/bare-metal-org/workloads/social-vibecoding/values/platform.secrets.sops.yaml`:
@@ -108,6 +151,19 @@ key to `secrets.existingSecret` and roll out the platform after changing it.
 An empty value leaves tracking disabled; rotating it invalidates old signed
 links. No Resend credentials or provider change is needed for Gmail engagement
 tracking; Gmail does not supply delivery, bounce or complaint callbacks.
+
+The media store (screenshots, videos and other files kept out of PostgreSQL)
+is off until `config.mediaStorage.endpoint` is set. The chart passes the
+endpoint and `config.mediaStorage.bucket` as `MEDIA_STORAGE_ENDPOINT` and
+`MEDIA_STORAGE_BUCKET`, and maps `secrets.mediaStorageAccessKey` /
+`secrets.mediaStorageSecretKey` (through SOPS) to `MEDIA_STORAGE_ACCESS_KEY` /
+`MEDIA_STORAGE_SECRET_KEY` in the platform Secret. Rendering refuses an endpoint
+without a bucket, or, when the chart creates the Secret, without both keys.
+Give the platform a key that can reach only its own bucket: a Hetzner Object
+Storage key reaches every bucket in its project, so the media bucket lives in a
+project of its own, apart from the database backups. App file uploads
+(`MINIO_*`, `src/services/app-files.js`) are a separate store this chart does
+not configure, so they stay off.
 
 The infra values can use a separate SOPS-encrypted overlay containing only this
 new field, encrypted to the same cluster recipients and listed after the existing
@@ -406,13 +462,32 @@ Deployment's replica count, so the rollout completes without waiting for it.
 When releases come faster than work finishes, at most `platform.drainingMax`
 replaced Pods finish at once; the oldest hands its work over first.
 
+A replaced Pod starts nothing new, so it keeps small pools while it finishes:
+`platform.drainPools` (its main pool, workflow pool and db-manager operations).
+That is what makes the overlap affordable. `postgresql.platformConnections` is
+the connection budget: the connections the main PostgreSQL server keeps from
+ordinary roles (`reserved_connections`), which the child apps cannot take; the
+platform's user is a superuser, which PostgreSQL never holds to them. The chart
+refuses values whose most connections at once exceed it, and its error names
+each role's share. Per role, that is its serving Pods plus one more for the
+rollout's surge at their full pools (`config.dbPoolMax`, `config.wfPoolMax`,
+`config.databaseOperations` for web; `platform.conductor`'s for the conductor),
+`drainingMax` replaced Pods per replica at `platform.drainPools`, and five
+connections per process outside the pools; a database operation counts twice
+(it can hold two connections, `pg_dump` beside `pg_restore`). A replaced Pod
+keeps the connections it had checked out when it shrank until they are given
+back. Until it holds no more than its drain sizes it keeps a capacity claim,
+an advisory lock that goes no earlier than its connections; a new Pod of its
+role waits on that claim before starting its work, and the old one hands its
+work over as soon as the new one appears, so the two share the surge slot. The migration Job adds
+`migration.dbPoolMax` plus two. `0` checks nothing.
+
 Both Pods may serve independent requests during the brief overlap, and a
 replaced Pod may still run work for as long as it drains. That is safe because
-`PLATFORM_LEADER_LOCK=1` uses the platform's PostgreSQL advisory-lock
-coordinator: only one Pod runs singleton recovery, sweepers and reconcilers.
-Each process also records what it is working on (`platform_processes`,
-`process_holds`), so the new leader's recovery leaves a replaced Pod's live
-work alone, and a Stop clicked on one Pod reaches the Pod that runs the turn.
+no process leads: what a leader ran is workflow work or a clock, a person's
+turn is its machine's work item, and a Stop is an event to that machine,
+which reaches the turn wherever it runs (docs/workflows.md). Each process
+records itself in `platform_processes` for its drain and the roster.
 This is intentionally implemented with the built-in Deployment controller;
 the cluster does not need Caddy, Argo Rollouts, or another rollout CRD.
 

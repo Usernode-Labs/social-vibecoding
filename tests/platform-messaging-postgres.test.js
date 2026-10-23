@@ -133,6 +133,9 @@ const DDL = `
   CREATE TABLE notifications (
     id SERIAL PRIMARY KEY,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    -- #5580: set on the Homeroom bot's news about a project (schema.sql's
+    -- column references apps, which this schema does not create).
+    app_id INTEGER,
     conversation_id INTEGER REFERENCES conversations(id) ON DELETE CASCADE,
     conversation_message_id INTEGER REFERENCES conversation_messages(id) ON DELETE CASCADE,
     chat_message_id INTEGER,
@@ -155,6 +158,14 @@ const DDL = `
     PRIMARY KEY (user_low_id, user_high_id),
     CHECK (user_low_id < user_high_id)
   );
+  -- #5104: who may start something new with whom, and who a channel's @
+  -- list offers. This file pins consent, retries and revocation, so both
+  -- answer yes; the real rules (schema.sql) are pinned against the full
+  -- schema by tests/contact-privacy-postgres.test.js.
+  CREATE FUNCTION user_contactable_by(target_id INTEGER, sender_id INTEGER)
+    RETURNS BOOLEAN LANGUAGE sql AS $$ SELECT TRUE $$;
+  CREATE FUNCTION user_discoverable_by(target_id INTEGER, viewer_id INTEGER)
+    RETURNS BOOLEAN LANGUAGE sql AS $$ SELECT TRUE $$;
   CREATE TABLE chat_session_spec_conversation_shares (
     session_id INTEGER NOT NULL,
     version INTEGER NOT NULL,

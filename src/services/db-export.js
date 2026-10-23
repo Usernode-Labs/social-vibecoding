@@ -36,7 +36,8 @@
 //
 // The HTTP surface (auth, password re-entry, the audit rows) lives in
 // src/routes/admin.js. This module owns process management, the
-// single-flight guard, and the short-lived download tickets.
+// single-flight guard and the short-lived download tickets, both kept on
+// the export's `db_exports` row.
 
 const { spawn } = require('child_process');
 const crypto = require('crypto');
@@ -123,6 +124,7 @@ function postgresEnv(dbName) {
     PGUSER: decodeURIComponent(url.username || DB_USER),
     PGPASSWORD: decodeURIComponent(url.password || ''),
     PGDATABASE: dbName,
+    PGAPPNAME: require('../db/connection-options').connectionName('export'),
     ...(url.searchParams.get('sslmode') ? { PGSSLMODE: url.searchParams.get('sslmode') } : {}),
   };
 }
@@ -178,63 +180,122 @@ function exportFilename(dbName, now) {
 // ── Single-flight guard ───────────────────────────────────────────────
 //
 // `usernode-db` runs on 4 GB / 4 CPUs and already competes with staging
-// `pg_dump | pg_restore` clones. One export at a time, platform-wide.
+// `pg_dump | pg_restore` clones. One export at a time, platform-wide: the
+// export's own audit row is its claim. A dump marks its row `streaming`,
+// and a partial unique index (idx_db_exports_one_streaming) lets one row
+// at a time be that, on any process. The process streaming it renews
+// `heartbeat_at`; a row whose heartbeat lapsed (its process went away) is
+// settled `interrupted` by the next claim, or by a boot. It was a variable
+// in each process: two Pods ran two dumps.
 
-let _current = null;
+const HEARTBEAT_MS = 30 * 1000;
+const STREAM_STALE_MS = 2 * 60 * 1000;
+// A dump an older release streams keeps no heartbeat: it is taken to run
+// until its own timeout could have ended it.
+const UNBEATING_STALE_MS = DB_EXPORT_TIMEOUT_MS + 5 * 60 * 1000;
+// A streaming row that is a live dump: renewed lately, or (an older
+// release's) started within its timeout.
+// (Never NULL: `NOT` of it is what settles a row.)
+const LIVE_STREAM_SQL = `status = 'streaming' AND (COALESCE(heartbeat_at > NOW() - make_interval(secs => $1), FALSE)
+  OR (heartbeat_at IS NULL AND COALESCE(started_at, requested_at) > NOW() - make_interval(secs => $2)))`;
 
-function isExportInProgress() { return !!_current; }
-function currentExport() { return _current ? { ..._current } : null; }
-
-function beginExport(info) {
-  if (_current) return false;
-  _current = { startedAt: Date.now(), ...(info || {}) };
-  return true;
+/**
+ * Rows nothing will ever finish, settled `interrupted`: a dump whose
+ * process stopped renewing it (or that an older release started, which
+ * kept no heartbeat), and a request whose ticket expired unused. A live
+ * dump on another process, and a ticket still redeemable, are left alone.
+ * Resolves how many.
+ */
+async function settleAbandoned(pool) {
+  const { rowCount } = await pool.query(
+    `UPDATE db_exports
+        SET status = 'interrupted',
+            finished_at = COALESCE(finished_at, NOW()),
+            error = COALESCE(error, CASE WHEN status = 'streaming'
+              THEN 'platform restarted while the export was in flight'
+              ELSE 'the download was never started' END),
+            ticket_hash = NULL
+      WHERE (status = 'streaming' AND NOT (${LIVE_STREAM_SQL}))
+         OR (status = 'requested' AND COALESCE(ticket_expires_at, requested_at) < NOW() - make_interval(secs => $3))`,
+    [STREAM_STALE_MS / 1000, UNBEATING_STALE_MS / 1000, TICKET_TTL_MS / 1000]
+  );
+  return rowCount;
 }
 
-function endExport() { _current = null; }
+async function isExportInProgress(pool) {
+  const { rows: [r] } = await pool.query(
+    `SELECT EXISTS (SELECT 1 FROM db_exports WHERE ${LIVE_STREAM_SQL}) AS busy`,
+    [STREAM_STALE_MS / 1000, UNBEATING_STALE_MS / 1000]
+  );
+  return !!(r && r.busy);
+}
+
+/**
+ * Claim the one dump for the export `auditId` records. Resolves
+ * { claimed: true, end } (end() stops renewing it; the row's terminal
+ * status releases it), or { claimed: false, reason: 'in_progress' } while
+ * another dump runs anywhere, or 'gone' when the row is no longer waiting
+ * for its download.
+ */
+async function beginExport(pool, auditId) {
+  await settleAbandoned(pool);
+  // The index holds this release's dumps to one; an older release's (during
+  // a rollout) is outside it, so it is looked for.
+  if (await isExportInProgress(pool)) return { claimed: false, reason: 'in_progress' };
+  let claimed;
+  try {
+    ({ rowCount: claimed } = await pool.query(
+      `UPDATE db_exports SET status = 'streaming', heartbeat_at = NOW()
+        WHERE id = $1 AND status = 'requested'`, [auditId]));
+  } catch (err) {
+    if (err && err.code === '23505') return { claimed: false, reason: 'in_progress' };
+    throw err;
+  }
+  if (!claimed) return { claimed: false, reason: 'gone' };
+  const beat = setInterval(() => {
+    pool.query(`UPDATE db_exports SET heartbeat_at = NOW() WHERE id = $1 AND status = 'streaming'`, [auditId])
+      .catch((err) => log.warn('db-export', 'Heartbeat not written', { auditId, err: err.message }));
+  }, HEARTBEAT_MS);
+  if (beat.unref) beat.unref();
+  return { claimed: true, end: () => clearInterval(beat) };
+}
 
 // ── Download tickets ──────────────────────────────────────────────────
 //
 // The confirm step needs a password in a request BODY (a POST), but the
 // deliverable is a real browser download (a navigated GET carrying
 // Content-Disposition). A single-use, 60-second, user-bound ticket
-// bridges the two. In-memory only: never persisted, never logged in full.
+// bridges the two. Kept on the export's audit row as a hash (never the
+// token, never logged in full), so the GET redeems it on whichever process
+// answers; it was a Map in the process that issued it.
 
-const _tickets = new Map();
+const ticketHash = (token) => crypto.createHash('sha256').update(String(token)).digest('hex');
 
-function _sweepTickets(now) {
-  for (const [token, t] of _tickets) {
-    if (t.expiresAt <= now) _tickets.delete(token);
-  }
-}
-
-function issueTicket({ userId, ip, auditId, dbName }) {
-  const now = Date.now();
-  _sweepTickets(now);
+async function issueTicket(pool, { auditId }) {
   const token = crypto.randomBytes(32).toString('hex');
-  _tickets.set(token, {
-    token, userId, ip: ip || null, auditId: auditId || null,
-    dbName: dbName || null, expiresAt: now + TICKET_TTL_MS,
-  });
+  const { rowCount } = await pool.query(
+    `UPDATE db_exports SET ticket_hash = $2, ticket_expires_at = NOW() + make_interval(secs => $3)
+      WHERE id = $1 AND status = 'requested'`,
+    [auditId, ticketHash(token), TICKET_TTL_MS / 1000]
+  );
+  if (!rowCount) throw new Error('the export request is no longer waiting for its download');
   return { token, expiresInSeconds: Math.round(TICKET_TTL_MS / 1000) };
 }
 
-// Single-use: a valid ticket is deleted on the first successful consume.
-// Returns the ticket, or null when it is unknown / expired / belongs to
-// another user.
-function consumeTicket(token, userId) {
-  const now = Date.now();
-  _sweepTickets(now);
-  if (!token || typeof token !== 'string') return null;
-  const t = _tickets.get(token);
-  if (!t) return null;
-  if (t.expiresAt <= now) { _tickets.delete(token); return null; }
-  if (t.userId !== userId) return null; // do NOT delete — not this user's to burn
-  _tickets.delete(token);
-  return t;
+// Single-use: a valid ticket is taken off its row on the first successful
+// consume. Resolves { auditId, userId, ip, dbName }, or null when it is
+// unknown, expired or belongs to another user (which leaves it in place:
+// not that user's to burn).
+async function consumeTicket(pool, token, userId) {
+  if (!token || typeof token !== 'string' || !/^[0-9a-f]{64}$/.test(token)) return null;
+  const { rows: [t] } = await pool.query(
+    `UPDATE db_exports SET ticket_hash = NULL
+      WHERE ticket_hash = $1 AND user_id = $2 AND status = 'requested' AND ticket_expires_at > NOW()
+      RETURNING id, user_id, ip, db_name`,
+    [ticketHash(token), userId]
+  );
+  return t ? { auditId: Number(t.id), userId: t.user_id, ip: t.ip || null, dbName: t.db_name || null } : null;
 }
-
-function _resetTickets() { _tickets.clear(); }
 
 // ── The dump itself ───────────────────────────────────────────────────
 
@@ -477,12 +538,12 @@ module.exports = {
   parseDbName,
   resolveTargetDb,
   exportFilename,
+  HEARTBEAT_MS,
+  STREAM_STALE_MS,
+  settleAbandoned,
   isExportInProgress,
-  currentExport,
   beginExport,
-  endExport,
   issueTicket,
   consumeTicket,
   runExport,
-  _resetTickets,
 };

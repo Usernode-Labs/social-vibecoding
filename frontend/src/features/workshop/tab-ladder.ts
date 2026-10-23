@@ -48,6 +48,15 @@
  * replaced back over it, so the hold was removed (18 Oct 2026). A held tab
  * is an ordinary press.
  *
+ * ── The blue number is a count (#5708) ────────────────────────────────
+ *
+ * The tab's blue number is the votes waiting on you (./community-scope.ts
+ * `tabVotes`), and that is all it is. #5040 made a press from another tab
+ * open Needs you while the number showed, and that detour also wrote Needs
+ * you over the place remembered for the next return, so an account that
+ * always had votes waiting always came back to Needs you. A press from
+ * another tab now returns to the view left, whatever the number says.
+ *
  * ── Who knows where you are ───────────────────────────────────────────
  *
  * The router knows the screen and the app (`App.currentApp`, and whether the

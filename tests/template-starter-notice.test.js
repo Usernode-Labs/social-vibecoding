@@ -89,7 +89,7 @@ test('the thumbnail tile falls back to the name when no icon is known', () => {
     'no emoji: the tile shows the first letter, muted, like the home tile');
   // No emoji to show, so dapp.json stays without an icon block, exactly as
   // it always was.
-  assert.deepEqual(JSON.parse(file(files(), 'dapp.json')), { secrets: [], tests: [] });
+  assert.deepEqual(JSON.parse(file(files(), 'dapp.json')), { category: 'other', secrets: [], tests: [] });
 
   // The repo heal's emoji (#4047): the tile shows it, and dapp.json's icon
   // block carries the same emoji, so the first deploy's icon reconcile
@@ -99,7 +99,7 @@ test('the thumbnail tile falls back to the name when no icon is known', () => {
   const withEmoji = withEmojiFiles.find((f) => f.path === 'public/index.html').content;
   assert.match(withEmoji, /text-title">🏃<\/div>/, 'an emoji icon fills the tile itself');
   assert.deepEqual(JSON.parse(withEmojiFiles.find((f) => f.path === 'dapp.json').content),
-    { icon: { emoji: '🏃' }, secrets: [], tests: [] },
+    { category: 'other', icon: { emoji: '🏃' }, secrets: [], tests: [] },
     'the caller emoji stands in dapp.json so the deploy keeps it');
 });
 

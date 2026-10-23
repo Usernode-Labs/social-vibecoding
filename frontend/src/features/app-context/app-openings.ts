@@ -8,6 +8,8 @@
  * idempotency boundary.
  */
 
+import { sharesUsageAnalytics } from '../../lib/usage-analytics';
+
 const STORAGE_KEY = 'usernode_app_openings_v1';
 export const MAX_PENDING_OPENINGS = 50;
 export const MAX_PENDING_AGE_MS = 7 * 24 * 60 * 60 * 1000;
@@ -242,6 +244,9 @@ export function createAppOpeningRecorder(host: Host, options: RecorderOptions = 
 
   function commit(slug: string, opening: PendingAppOpening | null): void {
     if (!opening || !slug || currentUserId() !== opening.userId) return;
+    // #5097: an app opened is usage analytics, sent only for somebody who
+    // switched "Share usage analytics" on.
+    if (!sharesUsageAnalytics(host)) return;
     pruneExpired();
     const entry = { ...opening, slug };
     if (!validEntry(entry, now())) return;

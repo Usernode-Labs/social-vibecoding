@@ -6,6 +6,7 @@
 import type { Json, WorkContext, WorkHandler } from '../kernel/index.ts';
 import { legacy } from '../legacy.ts';
 import { itemKind, runKind, MAX_ITEMS } from './machine.ts';
+import { bootRelease } from '../release/boot.ts';
 
 // What a job's I/O reads: the platform's configuration and its pool.
 export interface JobDeps { config: any; pool: any }
@@ -14,10 +15,16 @@ export interface Job {
   name: string;
   // How long after a run ends the next is due; 0 runs it again at once.
   everyMs: number;
-  // The leader timer's name in leader_sweeps, whose last run sets the first
-  // due time once (a six-hourly job is not run at every first boot).
-  leaderSweep?: string;
   leaseMs?: number;
+  // Asked for, not scheduled (an admin's fleet job): run only when an admin
+  // asked (RunNow: the run's `asked`). A run nobody asked for (an older
+  // build arms the job on its interval) does nothing.
+  onDemand?: boolean;
+  // What it does depends on the build (its keys, its catalogs, its
+  // environment): only the newest release's processes run it. An older
+  // build's run during a rollout does nothing (`skipped: older_build`), and
+  // its targets are claimed only by a process of the build that found them.
+  newestOnly?: boolean;
   // One run: what it found is its result (its status, and `items`: the
   // targets owed an effect of their own). `ctx.input.previous` is the last
   // successful run's result.
@@ -28,6 +35,22 @@ export interface Job {
     leaseMs?: number;
     maxAttempts?: number;
   };
+}
+
+// Whether this process runs the newest build: the build of the workflow
+// process that started serving last (`platform_processes`, live). By when it
+// started, not by when its release was first seen, so a rollback to an older
+// build, or a rollout of the same build with another configuration, is the
+// newest once it serves. A platform with no process recorded (a test) has no
+// older build.
+const LIVE_SECONDS = 45;
+async function newestBuild(pool: any): Promise<boolean> {
+  const own = String(process.env.GIT_SHA || '').trim().slice(0, 40) || null;
+  const { rows: [newest] } = await pool.query(
+    `SELECT release FROM platform_processes
+      WHERE state = 'serving' AND role <> 'web' AND heartbeat_at > now() - make_interval(secs => $1)
+      ORDER BY started_at DESC LIMIT 1`, [LIVE_SECONDS]);
+  return !newest || (newest.release ?? null) === own;
 }
 
 // A result is stored as instance data: JSON, and nothing a Date or an
@@ -47,7 +70,14 @@ export function clockServices(jobs: readonly Job[], deps: JobDeps): Record<strin
       maxLostAttempts: 3,
       leaseMs: job.leaseMs ?? 120000,
       concurrency: 1,
-      async run(ctx) { return json(await job.run(ctx, deps)); },
+      async run(ctx) {
+        if (job.onDemand && !ctx.input.asked) return { skipped: 'not_asked' };
+        if (!job.newestOnly) return json(await job.run(ctx, deps));
+        const release = bootRelease();
+        if (!await newestBuild(deps.pool)) return { skipped: 'older_build' };
+        const result = await job.run(ctx, deps);
+        return json(result && typeof result === 'object' && !Array.isArray(result) ? { ...result, release } : result);
+      },
     };
     if (job.item) {
       const item = job.item;
@@ -59,6 +89,7 @@ export function clockServices(jobs: readonly Job[], deps: JobDeps): Record<strin
         backoffMs: (a) => Math.min(10 * 60 * 1000, 60 * 1000 * 2 ** (a - 1)),
         leaseMs: item.leaseMs ?? 120000,
         concurrency: item.concurrency ?? 2,
+        ...(job.newestOnly ? { ownRelease: true } : {}),
         async run(ctx) { return json(await item.run(ctx, deps)); },
       };
     }
@@ -66,8 +97,7 @@ export function clockServices(jobs: readonly Job[], deps: JobDeps): Record<strin
   return out;
 }
 
-// The platform's scheduled jobs, each a clock (machine.ts): its interval,
-// the leader timer it replaces (whose last run sets its first due time), and
+// The platform's scheduled jobs, each a clock (machine.ts): its interval and
 // its run, which is its own module's function. Every run here is safe to run
 // twice: an age DELETE, a delete preconditioned on what it read, or a state
 // change written as a compare-and-set with the notice it causes. An effect
@@ -84,6 +114,14 @@ const HOUR = 60 * MIN;
 // paged: each run takes the next page after the last one it reached, kept
 // as `after` in its result, and starts over once a page comes back short.)
 const page = (ctx: WorkContext) => ({ after: (ctx.input.previous as any)?.after ?? null, limit: MAX_ITEMS });
+// A clock whose every target reads GitHub reads at most GITHUB_READS_PER_HOUR
+// of them an hour, whatever the GitHub budget's headers say (a process that
+// has made no call yet knows none): its page is that hour's share of its
+// interval, and the pages after it cover the rest on the next runs.
+export const GITHUB_READS_PER_HOUR = 600;
+const githubPage = (ctx: WorkContext, everyMs: number) =>
+  ({ ...page(ctx), limit: Math.max(1, Math.min(MAX_ITEMS, Math.ceil(GITHUB_READS_PER_HOUR * everyMs / HOUR))) });
+const importedEveryMs = () => Math.max(parseInt(process.env.IMPORTED_HEAD_SYNC_COOLDOWN_MS || '', 10) || 3 * MIN, 30 * 1000);
 const stopped = (ctx: WorkContext) => () => ctx.signal.aborted;
 
 // WORKSHOP_THEMES_SWEEP_INTERVAL_MS (config.js workshopSweepIntervalMs): 0
@@ -97,30 +135,102 @@ export const JOBS: readonly Job[] = Object.freeze([
   // ── Retention ───────────────────────────────────────────────────────
   {
     // CLI device codes and sessions past their audit window.
-    name: 'cli-auth-cleanup', everyMs: 6 * HOUR, leaderSweep: 'cli-auth-cleanup',
+    name: 'cli-auth-cleanup', everyMs: 6 * HOUR,
     run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/cli-auth').cleanupCliAuth(pool),
   },
   {
+    // A change's worker nothing has used for WORKER_IDLE_EVICTION_MS and
+    // nothing works on, evicted (its volume kept); a running worker with no
+    // row counted as used from now; one whose change is gone, destroyed
+    // (services/worker-eviction.js). Every process writes when it uses one.
+    name: 'worker-eviction', everyMs: 2 * MIN, leaseMs: 5 * MIN,
+    run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/worker-eviction').sweep(pool),
+  },
+  {
+    // Model calls no live turn will settle into llm_usage (its record went
+    // without settling them, or there was none), after two hours
+    // (services/limits.js settleOpenTurnSpend).
+    name: 'turn-spend-settle', everyMs: 15 * MIN,
+    run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/limits').settleOpenTurnSpend(pool),
+  },
+  {
+    // #892: progress estimates whose run never wrote its outcome (its
+    // process went mid-run), resolved once two hours old
+    // (services/estimate-backfill.js).
+    name: 'estimate-backfill', everyMs: 30 * MIN,
+    run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/estimate-backfill').sweep(pool),
+  },
+  {
+    // #907: local agents' leases whose machine stopped heartbeating are
+    // released, and a turn still sitting on one failed, so a change stops
+    // saying it runs on a laptop in a bag (services/local-agent.js). A
+    // lease is a 120 s TTL a 30 s heartbeat refreshes: a minute is well
+    // inside it. The turns it fails are finished by the item that
+    // dispatched them.
+    name: 'local-agent-leases', everyMs: MIN,
+    run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/local-agent').sweepExpiredLeases(pool).then((n: number) => ({ released: n })),
+  },
+  {
+    // Global Chat usage a turn never settled (its request's process went
+    // mid-call): an error at its estimate, once no turn could still settle
+    // it (services/global-chat/accounting.js).
+    name: 'global-chat-usage-settle', everyMs: 15 * MIN,
+    run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/global-chat/accounting').settleAbandonedReservations(pool),
+  },
+  {
+    // A coding record no work item holds (the old orphan sweep's and
+    // watchdog's case): a `recover` turn asked for it
+    // (services/turn-leftovers.js).
+    name: 'turn-leftovers', everyMs: MIN, leaseMs: 5 * MIN,
+    run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/turn-leftovers').sweep(pool),
+  },
+  {
+    // Turns' streams (stream_events) a finished turn did not clear, and the
+    // watchers of a process that went (services/session-bus.js).
+    name: 'turn-stream-retention', everyMs: 15 * MIN,
+    run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/session-bus').prune(pool),
+  },
+  {
+    // #5132: a person's IP address is kept IP_RETENTION_DAYS (180 days, six
+    // months, by default), then cleared from the rows that recorded it; the
+    // rows stay.
+    name: 'ip-retention', everyMs: 24 * HOUR,
+    run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/ip-retention').purgeExpiredIps(pool),
+  },
+  {
+    // Wallet links read off the chain (services/chain-poller.js): a run
+    // every 4 seconds, backing off to a minute while the explorer is down,
+    // its cursor the last run's result.
+    name: 'wallet-links', everyMs: 0,
+    run: (ctx: WorkContext, { pool, config }: JobDeps) => legacy('services/chain-poller').poll(config, pool, ctx.input.previous ?? null),
+  },
+  {
+    // The shared limiters' counts past their window
+    // (services/rate-limit-store.js).
+    name: 'rate-limit-retention', everyMs: HOUR,
+    run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/rate-limit-store').prune(pool),
+  },
+  {
     // An agent session's delegated connector grants, a week after their turn.
-    name: 'delegation-prune', everyMs: HOUR, leaderSweep: 'delegation-prune',
+    name: 'delegation-prune', everyMs: HOUR,
     run: async (_ctx: WorkContext, { pool }: JobDeps) => ({ pruned: await legacy('services/mcp-oauth').pruneDelegations(pool) }),
   },
   {
     // /debug merge traces past their window.
-    name: 'merge-debug-prune', everyMs: 6 * HOUR, leaderSweep: 'merge-debug-prune',
+    name: 'merge-debug-prune', everyMs: 6 * HOUR,
     run: async (_ctx: WorkContext, { pool }: JobDeps) => ({
       pruned: await legacy('services/merge-debug').pruneOldRuns(pool, parseInt(process.env.MERGE_DEBUG_RETENTION_DAYS || '30', 10)),
     }),
   },
   {
     // Uploads nothing took, staging app files, closed moderation records.
-    name: 'upload-gc', everyMs: HOUR, leaderSweep: 'conversation-attachment-gc',
+    name: 'upload-gc', everyMs: HOUR,
     run: (_ctx: WorkContext, { pool, config }: JobDeps) => legacy('services/upload-retention').sweep(pool, config),
   },
   {
     // The per-route request and server-error counts past their 14 days (the
     // Server errors figure and the server_errors signal read them).
-    name: 'server-error-prune', everyMs: 24 * HOUR, leaderSweep: 'server-error-prune',
+    name: 'server-error-prune', everyMs: 24 * HOUR,
     run: async (_ctx: WorkContext, { pool }: JobDeps) => {
       const n = await legacy('services/server-error-counts').prune(pool);
       if (n && (n.requests || n.errors)) legacy('services/logger').info('server-errors', 'Pruned old server error counts', n);
@@ -129,7 +239,7 @@ export const JOBS: readonly Job[] = Object.freeze([
   },
   {
     // Before & after shots: media and audit windows, and runtimes no run owns.
-    name: 'shots-gc', everyMs: 6 * HOUR, leaderSweep: 'shots-gc', leaseMs: 5 * MIN,
+    name: 'shots-gc', everyMs: 6 * HOUR, leaseMs: 5 * MIN,
     run: (_ctx: WorkContext, { pool, config }: JobDeps) => legacy('services/shots-gc').sweep(config, pool),
   },
   {
@@ -206,8 +316,18 @@ export const JOBS: readonly Job[] = Object.freeze([
   {
     // Each imported app's repository still public (a worker clones without
     // credentials), logged for the operator; one GitHub read per app.
-    name: 'repo-privacy-audit', everyMs: 24 * HOUR, leaderSweep: 'repo-privacy-audit', leaseMs: 5 * MIN,
+    name: 'repo-privacy-audit', everyMs: 24 * HOUR, leaseMs: 5 * MIN,
     run: (ctx: WorkContext, { pool }: JobDeps) => legacy('services/repo-privacy-audit').audit(pool, { shouldStop: stopped(ctx) }),
+  },
+  {
+    // #5634: the compliance report's scan, every
+    // COMPLIANCE_SCAN_INTERVAL_DAYS (a week by default), and an admin's
+    // Scan now: each check's result kept as one more scan, one GitHub read
+    // per project for the LICENSE check.
+    name: 'compliance-scan',
+    get everyMs() { return legacy('services/compliance').scanIntervalDays() * 24 * HOUR; },
+    leaseMs: 10 * MIN,
+    run: (ctx: WorkContext, { pool }: JobDeps) => legacy('services/compliance').runScan(pool, { shouldStop: stopped(ctx) }),
   },
   {
     // Custom domains: DNS for a claim, the certificate, the live host's
@@ -260,6 +380,19 @@ export const JOBS: readonly Job[] = Object.freeze([
     run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/welcome-dm').sweep(pool),
   },
   {
+    // The email a notice owes when no phone could take its push (an invite
+    // moment, a project opening): each notice that owes one
+    // (its `mailed_at` NULL, written with it) a target, sent once and marked
+    // (services/activity-mail.js).
+    name: 'notice-mail', everyMs: MIN,
+    run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/activity-mail').noticeMailTargets(pool, { limit: MAX_ITEMS }),
+    item: {
+      concurrency: 2,
+      maxAttempts: 5,
+      run: (ctx: WorkContext, { pool }: JobDeps) => legacy('services/activity-mail').mailNotice(pool, Number(ctx.input.input?.notificationId), ctx.steps()),
+    },
+  },
+  {
     // "Your agent is waiting on you", once its delay has passed.
     name: 'connector-input-waits', everyMs: MIN,
     run: async (_ctx: WorkContext, { pool }: JobDeps) => ({ sent: await legacy('services/connector-input-waits').sweepDue(pool) }),
@@ -281,9 +414,111 @@ export const JOBS: readonly Job[] = Object.freeze([
     },
   },
 
+  // ── Production apps: what their runtimes and repositories say ────────
+  // (What follows from it is app delivery's: app-delivery/.)
+  {
+    // Every running app's runtime: one not running is reported Unhealthy,
+    // keyed by the run; app delivery decides whether to heal it.
+    // APP_HEAL_INTERVAL_MS=0 switches it off.
+    name: 'app-health',
+    get everyMs() { return legacy('services/app-heal').intervalMs(null) || 24 * HOUR; },
+    leaseMs: 5 * MIN,
+    run: (ctx: WorkContext, { pool, config }: JobDeps) => {
+      const heal = legacy('services/app-heal');
+      return heal.intervalMs(config) ? heal.scan(config, pool, { n: ctx.input.n, shouldStop: stopped(ctx) }) : { off: true };
+    },
+  },
+  {
+    // Every running app's main on GitHub: a commit production does not run
+    // is reported MainMoved, keyed by the commit; app delivery decides
+    // whether to deploy it. MAIN_DRIFT_POLL_MS sets how often.
+    name: 'main-drift',
+    get everyMs() { return legacy('services/main-drift-poller').intervalMs(); },
+    leaseMs: 10 * MIN,
+    run: (ctx: WorkContext, { pool, config }: JobDeps) => legacy('services/main-drift-poller').scan(config, pool, { shouldStop: stopped(ctx) }),
+  },
+
+  // ── The App bench ──────────────────────────────────────────────────
+  {
+    // What its trials leave behind (services/bench/lane.js sweep): kept
+    // `bench/` branches past their time (within GitHub's background budget),
+    // side builds' results a trial that never ran left waiting, and the
+    // studio's previews past their day. Which trials run is the bench-lane
+    // machine's (src/workflow/bench-lane/).
+    name: 'bench-sweep', everyMs: 10 * MIN,
+    run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/bench/lane').sweep(pool),
+  },
+
+  // ── The build's own: what only the newest build may do ──────────────
+  {
+    // Ready-made apps' images, built ahead under this build's keys
+    // (services/starter-images.js): each key owed a build a target of its
+    // own, one build of it at a time.
+    name: 'starter-images', everyMs: MIN, newestOnly: true,
+    run: (_ctx: WorkContext, { pool, config }: JobDeps) => legacy('services/starter-images').targets(config, pool),
+    item: {
+      concurrency: 3,
+      maxAttempts: 1,
+      leaseMs: 5 * MIN,
+      run: (ctx: WorkContext, { pool, config }: JobDeps) => legacy('services/starter-images').buildTarget(config, pool, ctx.input.input),
+    },
+  },
+  {
+    // The app-host gate follows APP_GATE, in both directions: on brings it up
+    // and routes every app through it, off routes them all straight back
+    // (services/kubernetes.js reconcileAppGateIngresses). The newest build's
+    // setting (a change of APP_GATE alone, a rollback): an older build still
+    // running during a rollout never routes the fleet back by its own. On
+    // Kubernetes, where the platform runs its cluster's maintenance.
+    name: 'app-gate', everyMs: 10 * MIN, newestOnly: true, leaseMs: 5 * MIN,
+    run: (_ctx: WorkContext, { config }: JobDeps) => (legacy('services/application-runtime').mode(config) === 'kubernetes'
+      ? legacy('services/kubernetes').reconcileAppGateIngresses(config)
+      : { off: true }),
+  },
+  {
+    // The translation of this build's new interface text
+    // (services/language-sync-runner.js): a catalog not yet translated, or a
+    // batch to collect, is a target, one pass at a time. Paid: a batch is
+    // submitted once per catalog. LANGUAGE_SYNC_ENABLED=false switches it
+    // off.
+    name: 'language-sync', everyMs: 10 * MIN, newestOnly: true,
+    run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/language-sync-runner').look({ pool }),
+    item: {
+      concurrency: 1,
+      leaseMs: 10 * MIN,
+      run: async (ctx: WorkContext, { pool, config }: JobDeps) => {
+        const out = await legacy('services/language-sync-runner').runOnce({ config, pool, deps: { steps: ctx.steps() } });
+        if (!out?.skipped) legacy('services/logger').info('language-sync', 'Translation pass', out);
+        return out;
+      },
+    },
+  },
+
   // ── Previews: outside facts about the runtimes and the servers ───────
   // (What the preview machine decides about a preview it holds, its idle
   // give-back and the checks it owes, is its own deadline: preview/.)
+  // ── The workflow's own ──────────────────────────────────────────────
+  {
+    // Events an older build refused as unknown during a rollout, asked
+    // again once no older build serves (platform.ts reaskRefused).
+    name: 'reask-refused', everyMs: MIN, newestOnly: true,
+    run: async (_ctx: WorkContext, { pool }: JobDeps) => (await import('../platform.ts')).reaskRefused(pool),
+  },
+  // ── An admin's fleet jobs ───────────────────────────────────────────
+  // Run when an admin asks (Admin › Rollover, Admin › Staging), one at a
+  // time across every process; each unit (an app, a preview) is a step of
+  // the run, so a restart carries the job on (services/fleet-job.js).
+  {
+    // Every running app's container recreated with a freshly assembled
+    // environment.
+    name: 'container-rollover', everyMs: 0, onDemand: true, leaseMs: 10 * MIN,
+    run: (ctx: WorkContext, { config, pool }: JobDeps) => legacy('services/app-rollover').runJob(ctx, { config, pool }),
+  },
+  {
+    // Every out-of-date or abandoned preview torn down at once.
+    name: 'preview-reap', everyMs: 0, onDemand: true, leaseMs: 10 * MIN,
+    run: (ctx: WorkContext, { config, pool }: JobDeps) => legacy('services/staging-reap').runJob(ctx, { config, pool }),
+  },
   {
     // A vote-backed preview whose runtime or database is gone is reported
     // lost; the preview machine builds it again.
@@ -317,16 +552,12 @@ export const JOBS: readonly Job[] = Object.freeze([
     // build's, handed to the preview machine. Only the newest build acts: an
     // older Pod still running during a rollout would judge the new build's
     // previews by its own environment, so its run looks at nothing.
-    name: 'preview-env', everyMs: 15 * MIN, leaseMs: 10 * MIN,
-    run: async (_ctx: WorkContext, { pool, config }: JobDeps) => {
-      const own = String(process.env.GIT_SHA || '').trim().slice(0, 40);
-      if (own && own !== 'dev') {
-        const { rows: [newest] } = await pool.query(
-          `SELECT key FROM wf_instances WHERE machine = 'release' ORDER BY created_at DESC LIMIT 1`);
-        if (newest && newest.key !== `release:${own}`) return { skipped: 'older_build' };
-      }
-      return legacy('services/staging-reap').tellStaleEnv(config);
-    },
+    name: 'preview-env', everyMs: 15 * MIN, leaseMs: 10 * MIN, newestOnly: true,
+    run: (_ctx: WorkContext, { config }: JobDeps) => legacy('services/staging-reap').tellStaleEnv(config),
+  },
+  {
+    name: 'preview-data-policy', everyMs: MIN, leaseMs: 10 * MIN, newestOnly: true,
+    run: (_ctx: WorkContext, { config, pool }: JobDeps) => legacy('services/platform-preview-retirement').retire(config, pool),
   },
   {
     // Staging databases nothing can reach any more (no session, build or
@@ -338,6 +569,13 @@ export const JOBS: readonly Job[] = Object.freeze([
       const reap = legacy('services/staging-reap');
       return reap.orphanDbSweepIntervalMs() ? reap.sweepOrphanDbs(config) : { off: true };
     },
+  },
+  {
+    // A deleted app's database, staging template or files its teardown could
+    // not remove, retried from the receipt it left (#5121). Never throws; a
+    // no-op in a preview.
+    name: 'app-data-purges', everyMs: 6 * HOUR, leaseMs: 30 * MIN,
+    run: (_ctx: WorkContext, { pool, config }: JobDeps) => legacy('services/app-data-retention').retryPendingPurges(pool, config),
   },
   {
     // The shared Postgres (and the preview database server) near its
@@ -362,7 +600,7 @@ export const JOBS: readonly Job[] = Object.freeze([
   },
   {
     // A merged change's Kubernetes worker volume that outlived its merge.
-    name: 'worker-volumes', everyMs: HOUR, leaderSweep: 'stale-pr-sweep',
+    name: 'worker-volumes', everyMs: HOUR,
     run: async (_ctx: WorkContext, { pool, config }: JobDeps) => (config.archivedRetentionMs > 0
       ? { reclaimed: (await legacy('services/worker-volume-reclaim').reclaimWorkerVolumes({ pool, mode: 'closed', limit: 50 })).length }
       : { off: true }),
@@ -376,8 +614,8 @@ export const JOBS: readonly Job[] = Object.freeze([
     // GitHub merged or closed it. IMPORTED_HEAD_SYNC_COOLDOWN_MS sets how
     // often (at least 30 seconds).
     name: 'imported-prs',
-    get everyMs() { return Math.max(parseInt(process.env.IMPORTED_HEAD_SYNC_COOLDOWN_MS || '', 10) || 3 * MIN, 30 * 1000); },
-    run: (ctx: WorkContext, { pool }: JobDeps) => legacy('services/proposal-scans').importedTargets(pool, page(ctx)),
+    get everyMs() { return importedEveryMs(); },
+    run: (ctx: WorkContext, { pool }: JobDeps) => legacy('services/proposal-scans').importedTargets(pool, githubPage(ctx, importedEveryMs())),
     item: {
       concurrency: 2,
       leaseMs: 10 * MIN,
@@ -387,8 +625,8 @@ export const JOBS: readonly Job[] = Object.freeze([
   {
     // Each native proposal up for a vote: one merged by hand on GitHub is
     // recorded.
-    name: 'merged-by-hand', everyMs: 6 * HOUR, leaderSweep: 'merged-by-hand-lookup',
-    run: (ctx: WorkContext, { pool }: JobDeps) => legacy('services/proposal-scans').mergedByHandTargets(pool, page(ctx)),
+    name: 'merged-by-hand', everyMs: 6 * HOUR,
+    run: (ctx: WorkContext, { pool }: JobDeps) => legacy('services/proposal-scans').mergedByHandTargets(pool, githubPage(ctx, 6 * HOUR)),
     item: {
       concurrency: 4,
       run: (ctx: WorkContext, { pool }: JobDeps) => legacy('services/proposal-scans').lookMergedByHand(pool, Number(ctx.input.input?.sessionId)),
@@ -397,8 +635,8 @@ export const JOBS: readonly Job[] = Object.freeze([
   {
     // Each native proposal in review: its reviewed head read again (a push
     // made outside Homeroom), and its explicit-approval flag.
-    name: 'proposal-revisions', everyMs: HOUR, leaderSweep: 'stale-pr-sweep',
-    run: (ctx: WorkContext, { pool }: JobDeps) => legacy('services/proposal-scans').revisionTargets(pool, page(ctx)),
+    name: 'proposal-revisions', everyMs: HOUR,
+    run: (ctx: WorkContext, { pool }: JobDeps) => legacy('services/proposal-scans').revisionTargets(pool, githubPage(ctx, HOUR)),
     item: {
       concurrency: 2,
       leaseMs: 5 * MIN,
@@ -433,9 +671,23 @@ export const JOBS: readonly Job[] = Object.freeze([
     },
   },
   {
+    // The Workshop passes a board change or a page view owed (each app's
+    // reconcile_due_at, services/workshop-themes.js), once the board has
+    // been quiet since its first change: each app a target of its own.
+    name: 'workshop-changes', everyMs: 10 * 1000,
+    run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/workshop-themes').changeTargets({ pool, limit: MAX_ITEMS }),
+    item: {
+      concurrency: 2,
+      leaseMs: 5 * MIN,
+      run: (ctx: WorkContext, { pool }: JobDeps) => legacy('services/workshop-themes').changeApp({
+        pool, appId: Number(ctx.input.input?.appId), due: String(ctx.input.input?.due),
+      }),
+    },
+  },
+  {
     // The Workshop's themes: every app opened in the last week re-checked,
     // re-drafted once a day when anything changed. Each app a target.
-    name: 'workshop-themes', leaderSweep: 'workshop-theme-sweep',
+    name: 'workshop-themes',
     get everyMs() { return workshopEveryMs() || 24 * HOUR; },
     run: async (_ctx: WorkContext, { pool }: JobDeps) => (workshopEveryMs()
       ? legacy('services/workshop-themes').sweepTargets({ pool })

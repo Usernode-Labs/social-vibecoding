@@ -35,6 +35,13 @@ const EVENT_TYPES = Object.freeze({
   PR_VOTE_CAST: 'pr_vote_cast',
   ISSUE_VOTE_CAST: 'issue_vote_cast',
   PR_VOTE_RECEIVED: 'pr_vote_received',
+  // A vote on a change taken back while the change was still up for a vote
+  // (DELETE /api/sessions/:id/vote, the review flow's Undo), with { vote }:
+  // the side that was taken back. Append-only ledger like KUDOS_RETRACTED:
+  // the pr_vote_cast row stays, and a consumer netting "votes cast" from
+  // raw events subtracts these. No backfill: there were no retractions
+  // before this shipped.
+  PR_VOTE_RETRACTED: 'pr_vote_retracted',
   KUDOS_GIVEN: 'kudos_given',
   // Retraction of a previously given PR kudos (issue #197). Append-only
   // ledger: the original kudos_given row stays; any consumer netting
@@ -118,6 +125,10 @@ const EVENT_TYPES = Object.freeze({
   // outcome Firebase gave, including `refused` and `unreachable`. No
   // backfill — the button didn't exist before this shipped.
   SMS_TEST_SENT: 'sms_test_sent',
+  // An admin switched who sends texts (src/routes/admin.js PUT
+  // /api/admin/sms/provider). Metadata carries { from, to }, provider names,
+  // never a credential.
+  SMS_PROVIDER_CHANGED: 'sms_provider_changed',
   // An admin ran the bulk container rollover (src/services/app-rollover.js
   // via POST /api/admin/rollover): every running child-app container
   // recreated with freshly assembled env. Metadata carries the tally

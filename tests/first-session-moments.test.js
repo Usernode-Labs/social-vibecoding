@@ -73,9 +73,18 @@ test('the browser sends each moment as it happens, and a shown one once', async 
   const real = globalThis.fetch;
   const sent = [];
   globalThis.fetch = (url, opts) => { sent.push({ url, opts }); return Promise.resolve({ ok: true }); };
+  const realApp = globalThis.App;
   try {
     const m = loadTsx(`${DIR}/made-moments.ts`);
     m.resetMomentsForTests();
+    // #5097: nothing goes for somebody who does not share usage analytics,
+    // or before the server has said they do.
+    globalThis.App = { user: { id: 7, uiTelemetryEligible: false } };
+    assert.equal(m.noteMoment('club-votes', 'made_shown'), false);
+    globalThis.App = undefined;
+    assert.equal(m.noteMoment('club-votes', 'made_shown'), false);
+    assert.equal(sent.length, 0, 'not shared: nothing sent');
+    globalThis.App = { user: { id: 7, uiTelemetryEligible: true } };
     assert.equal(m.momentsUrl('club votes'), '/api/apps/club%20votes/first-version/moments');
     assert.equal(m.noteMoment('club-votes', 'questions_shown', { count: 2 }, { once: true }), true);
     assert.equal(m.noteMoment('club-votes', 'questions_shown', { count: 2 }, { once: true }), false, 'drawn again: not sent again');
@@ -107,6 +116,7 @@ test('the browser sends each moment as it happens, and a shown one once', async 
     for (const kind of moments.KINDS) assert.match(src, new RegExp(`'${kind}'`), kind);
   } finally {
     globalThis.fetch = real;
+    globalThis.App = realApp;
   }
 });
 
@@ -131,9 +141,9 @@ test('the made screen tells each moment where it happens, never changing what it
   // built, or on the first Home after the app (the walk owed with `maker`);
   // never a screenshot state's, nor an invited person's.
   assert.match(index, /setMode\(\{ kind: 'tour', info: \{ slug, name \}, path: 'walk', moments: true \}\);/);
-  assert.match(index, /oweWalk\(uid, \{ slug, name, maker: true \}\);/);
+  assert.match(index, /if \(oweWalk\(uid, \{ slug, name, maker: true \}\)\) legacy\(\)\.App\?\._noteHomeWalk\?\.\('owed'\);/);
   assert.match(index, /path: 'walk', moments: !!walk\.maker \}/);
-  assert.match(index, /if \(privateMember \|\| info\.newAccount\) oweWalk\(uid, \{ slug, name, privateMember \}\);/);
+  assert.match(index, /walkOwed = \(privateMember \|\| !!info\.newAccount\) && oweWalk\(uid, \{ slug, name, privateMember \}\);\s+if \(walkOwed\) app\?\._noteHomeWalk\?\.\('owed'\);/);
   assert.match(index, /<Tour info=\{mode\.info\} steps=\{steps\} onEnd=\{end\} start=\{mode\.start\} moments=\{!!mode\.moments\} numbered=\{mode\.path === 'walk'\} \/>/);
   assert.doesNotMatch(index.slice(index.indexOf('async function openTourShot'), index.indexOf('const MAKE_FLAG')), /moments/);
   assert.match(index, /if \(momentsRef\.current\) noteMoment\(info\.slug, 'tour_started', \{ steps: steps\.length \}\);/);

@@ -17,7 +17,7 @@ const rateLimit = require('../src/services/mail/rate-limit');
 
 const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
 
-// A pool that answers the two reads emailIfNoPush makes.
+// A pool that answers the reads emailIfNoPush makes.
 function fakePool({ user = null, phones = 0 } = {}) {
   const queries = [];
   return {
@@ -26,6 +26,7 @@ function fakePool({ user = null, phones = 0 } = {}) {
       queries.push({ sql, params });
       if (/FROM users WHERE id/.test(sql)) return { rows: user ? [user] : [] };
       if (/FROM mobile_push_registrations/.test(sql)) return { rows: phones ? [{ '?column?': 1 }] : [] };
+      if (/FROM notifications n/.test(sql)) return { rows: [] };
       if (/UPDATE users SET activity_email = FALSE/.test(sql)) return { rowCount: 1, rows: [] };
       throw new Error(`unexpected query: ${sql}`);
     },
@@ -59,6 +60,8 @@ test('sent only to a confirmed address with no phone, and never once turned off'
   assert.equal(await activityMail.emailIfNoPush(fakePool({ user: { ...CONFIRMED, activity_email: false } }), args), 'turned_off');
   assert.equal(await activityMail.emailIfNoPush(fakePool({ user: { ...CONFIRMED, is_synthetic: true } }), args), 'no_email');
   assert.equal(await activityMail.emailIfNoPush(fakePool({ user: CONFIRMED }), { ...args, kind: 'otp' }), 'off', 'only its own kinds');
+  assert.equal(await activityMail.emailIfNoPush(fakePool({ user: CONFIRMED }), { ...args, kind: 'votes_owed' }), 'off',
+    'the vote digest is not emailed any more (#5794)');
   assert.equal(await activityMail.emailIfNoPush(fakePool({ user: CONFIRMED }), args), 'sent');
   activityMail.init(null);
   assert.equal(await activityMail.emailIfNoPush(fakePool({ user: CONFIRMED }), args), 'off', 'nothing before boot hands it a config');
@@ -115,13 +118,19 @@ test('both transports send a kind\'s headers', () => {
 });
 
 test('activity mail has its own hourly budget, apart from sign-in codes', () => {
-  assert.deepEqual([...rateLimit.ACTIVITY_KINDS].sort(), ['build_ready', 'invite_activity']);
-  assert.ok(rateLimit.RULES.build_ready && rateLimit.RULES.invite_activity);
+  // #4396 added a project you joined opening; the vote digest is not emailed
+  // any more (#5794).
+  assert.deepEqual([...rateLimit.ACTIVITY_KINDS].sort(),
+    ['build_ready', 'invite_activity', 'project_opened']);
+  for (const kind of rateLimit.ACTIVITY_KINDS) assert.ok(rateLimit.RULES[kind], `${kind} is throttled`);
   // A full activity budget refuses activity mail…
   const full = rateLimit.decide({
     kind: 'build_ready', globalCount: rateLimit.ACTIVITY_MAX_PER_HOUR, maxPerHour: rateLimit.ACTIVITY_MAX_PER_HOUR,
   });
   assert.equal(full.allowed, false);
+  // A vote digest notice is not one the notice-mail clock sends (#5794).
+  assert.equal(activityMail.NOTICE_MAIL_KINDS.has('vote_digest'), false);
+  assert.equal(activityMail.NOTICE_MAIL_KINDS.has('project_opened'), true, 'the one-off emails stay');
   // …and the mailer counts each budget on its own, choosing the cap by kind.
   const index = read('src/services/mail/index.js');
   assert.match(index, /AND \(kind = ANY\(\$1::text\[\]\)\) = \$2/);

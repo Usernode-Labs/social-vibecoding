@@ -62,7 +62,7 @@ stub(ids.github, {
 // The deploys asked of app delivery, by app id.
 const requested = [];
 stub(ids.platform, {
-  requestDeploy: async (appId, reason) => { requested.push([appId, reason]); return 1; },
+  reportMainMoved: async (appId, sha, o) => { requested.push([appId, o?.byHand ? 'check_updates' : 'drift']); return { status: 'accepted' }; },
   wantMerge: async () => {},
   // main's unit suite on a new main (the main-check machine) is its own concern.
   requestMainCheck: async () => {},
@@ -107,7 +107,7 @@ function reset() {
 
 test('the self-hosted row ahead on main goes to the release watch, not to a deploy', async () => {
   reset();
-  const result = await poller.checkAndRedeployOne({}, pool, SELF);
+  const result = await poller.checkOne({}, pool, SELF);
   assert.equal(result.status, 'release_pending');
   assert.equal(result.sha, MERGED);
   assert.equal(result.running, RUNNING);
@@ -125,7 +125,7 @@ test('the self-hosted row at main closes out a recorded stall', async () => {
   reset();
   remoteSha = RUNNING;
   const record = { sha: RUNNING, kind: 'workflow_failed', prNumber: 2589 };
-  const result = await poller.checkAndRedeployOne({}, pool, { ...SELF, release_stall: record });
+  const result = await poller.checkOne({}, pool, { ...SELF, release_stall: record });
   assert.equal(result.status, 'no_drift');
   assert.equal(converged.length, 1);
   assert.equal(converged[0].release_stall, record);
@@ -134,31 +134,34 @@ test('the self-hosted row at main closes out a recorded stall', async () => {
 
 test('a child app at the same drift asks app delivery for a deploy, and never consults the watch', async () => {
   reset();
-  const result = await poller.checkAndRedeployOne({}, pool, CHILD);
+  const result = await poller.checkOne({}, pool, CHILD);
   assert.equal(result.status, 'deploy_requested');
   assert.deepEqual(requested, [[8, 'drift']]);
   assert.equal(observed.length, 0);
   remoteSha = RUNNING;
-  assert.equal((await poller.checkAndRedeployOne({}, pool, CHILD)).status, 'no_drift');
+  assert.equal((await poller.checkOne({}, pool, CHILD)).status, 'no_drift');
   assert.equal(converged.length, 0, 'a child app has no release to watch');
 });
 
 test('a branch response without commit details still yields the sha; the rest is null', async () => {
   reset();
   branchShape = 'bare';
-  const result = await poller.checkAndRedeployOne({}, pool, SELF);
+  const result = await poller.checkOne({}, pool, SELF);
   assert.equal(result.status, 'release_pending');
   assert.equal(observed[0].head.sha, MERGED);
   assert.equal(observed[0].head.committedAt, null);
   assert.equal(observed[0].head.subject, null);
 });
 
-test('the poll reads self_hosted and release_stall so the watch has what it needs', async () => {
+test('the clock\'s look reads self_hosted and release_stall so the watch has what it needs', async (t) => {
   reset();
+  const prior = process.env.GITHUB_BOT_TOKEN;
+  process.env.GITHUB_BOT_TOKEN = 'test-token';
+  t.after(() => { if (prior === undefined) delete process.env.GITHUB_BOT_TOKEN; else process.env.GITHUB_BOT_TOKEN = prior; });
   pollRows = [SELF, CHILD];
-  await poller.poll({});
+  await poller.scan({}, pool);
   const select = queries.find((q) => /FROM apps\s+WHERE repo_url IS NOT NULL/.test(q.sql));
-  assert.match(select.sql, /SELECT id, slug, repo_url, main_sha, self_hosted, release_stall/);
+  assert.match(select.sql, /SELECT id, slug, repo_url, main_sha, last_deploy_at, self_hosted, release_stall/);
   assert.equal(observed.length, 1);
   assert.equal(observed[0].app.slug, 'usernode-2d5619');
   assert.deepEqual(requested, [[8, 'drift']]);

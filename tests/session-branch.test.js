@@ -1,6 +1,6 @@
 // worker/session-branch.sh: the session-branch integrity helpers the worker's
 // bootstrap and both runners share, and the push proxy's script that settles
-// the branch the same way (worker.buildPushScript).
+// the branch the same way (worker-git-push.buildExportScript).
 //
 // Every case is from Sheep countrr (usernode-bot/sheep-countrr-a08857#48):
 //   - #34: an agent found another member's unmerged branch with
@@ -27,6 +27,7 @@ const { RUNNER_TEST_ENV } = require('./lib/runner-env');
 const ROOT = path.join(__dirname, '..');
 const LIB = path.join(ROOT, 'worker', 'session-branch.sh');
 const worker = require('../src/services/worker');
+const gitPush = require('../src/services/worker-git-push');
 
 const GIT_ENV = {
   ...process.env,
@@ -226,31 +227,35 @@ test('an agent that committed nothing has its working tree committed, as the Hom
   assert.equal(git(ws, 'log', '-1', '--format=%s'), 'Homeroom bot: #12');
 });
 
-// ── The push proxy's script (worker.buildPushScript) ──────────────────────
+// ── The worker export and trusted push ───────────────────────────────────
 
-function runPushScript(ws, branch) {
-  const r = spawnSync('bash', ['-c', worker.buildPushScript({ workspace: ws })], {
-    env: { ...GIT_ENV, BRANCH: branch, PAT: 'unused-for-a-local-origin' }, encoding: 'utf8',
+async function runPushScript(ws, branch, origin) {
+  const pushed = await gitPush.push({ remoteUrl: origin, branchName: branch, token: 'fake-local-token',
+    exportWorker: async () => {
+      const stdout = execFileSync('sh', ['-c', gitPush.buildExportScript({ workspace: ws, branchName: branch })], { env: GIT_ENV, encoding: 'utf8' });
+      return { stdout, stderr: '' };
+    },
   });
-  return { code: r.status, stdout: r.stdout.trim(), stderr: r.stderr };
+  execFileSync('sh', ['-c', gitPush.buildRecordPushScript({ workspace: ws, branchName: branch, sha: pushed.sha })], { env: GIT_ENV });
+  return { code: 0, stdout: pushed.sha, stderr: pushed.stderr };
 }
 
-test('the push heal pushes the stray branch\'s work and reports the commit it pushed (session 5030)', (t) => {
+test('the push heal pushes the stray branch\'s work and reports the commit it pushed (session 5030)', async (t) => {
   const { ws, origin } = fixture(t);
   git(ws, 'checkout', '-q', '-b', 'wolf-mechanic');
   const wolf = commitFile(ws, 'wolf.js', 'wolf\n', 'Add the wolf');
-  const r = runPushScript(ws, 'dev/me');
+  const r = await runPushScript(ws, 'dev/me', origin);
   assert.equal(r.code, 0, r.stderr);
   assert.equal(r.stdout.split('\n').pop(), wolf);
   assert.equal(git(origin, 'rev-parse', 'refs/heads/dev/me'), wolf, 'GitHub has the wolf now');
 });
 
-test('the push heal never reports a commit it did not push', (t) => {
+test('the push heal never reports a commit it did not push', async (t) => {
   const { ws, origin, mine, theirs } = fixture(t);
   git(ws, 'fetch', '-q', 'origin', 'dev/other');
   git(ws, 'checkout', '-q', '-b', 'borrowed', theirs);
   const stray = commitFile(ws, 'calm.js', 'calm\n', 'Calm mode');
-  const r = runPushScript(ws, 'dev/me');
+  const r = await runPushScript(ws, 'dev/me', origin);
   assert.equal(r.code, 0, r.stderr);
   assert.equal(r.stdout.split('\n').pop(), mine, 'the session branch, not HEAD');
   assert.notEqual(r.stdout.split('\n').pop(), stray);
@@ -342,7 +347,7 @@ test('run-cc.sh: a build that committed on its own branch reports that commit, o
   assert.equal(res.branch_mismatch, undefined);
   assert.match(out, /Left out of the commit \(new files the agent did not commit\): page-1\.png/);
   // No push helper exists outside the image, so the push fails here; the
-  // host's heal is what pushes it (buildPushScript above).
+  // host's heal is what pushes it (the trusted push above).
   assert.equal(res.push_ok, '0');
 });
 
@@ -431,10 +436,10 @@ test('a branch mismatch reaches chat as its own message, live and after a restar
   const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
   const sessions = read('src/routes/sessions.js');
   assert.match(sessions, /\} else if \(result\.branchMismatch\) \{[\s\S]{0,400}ended up working on a different branch that doesn't build on this change, `\n\s+\+ 'so nothing from this turn was saved\. Send your request again to redo it here\.';/);
-  const server = read('server.js');
+  const server = read('server.js') + read('src/services/turn-recovery.js');
   assert.match(server, /\} else if \(result\.branchMismatch\) \{\n\s+summaryParts\.push\('The coding agent ended up working on a different branch/);
   const host = read('src/services/worker.js');
   assert.match(host, /else if \(k === 'branch_mismatch'\) state\.branchMismatch = v === '1';/);
-  assert.match(host, /const inlineScript = buildPushScript\(\);/);
+  assert.match(host, /workerGitPush\.push\(/);
   assert.doesNotMatch(host, /'git rev-parse HEAD';/, 'the push never reports HEAD as the pushed commit');
 });

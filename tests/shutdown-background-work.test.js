@@ -27,37 +27,28 @@ function holdingPool() {
   return pool;
 }
 
-test('a board-change reconcile under way is held for the drain; none starts once shutdown has begun', async (t) => {
+// The Workshop's board-change reconcile is no longer this process's: a
+// change owes the app a pass on its row, which the workshop-changes clock
+// runs (a work item whose stop is the runtime's). Nothing is left running
+// here for a shutdown to wait on or cut.
+test('a board change starts nothing in this process: it owes a pass on the app\'s row', async (t) => {
   t.mock.method(llm, 'isEnabled', () => true);
-  t.mock.timers.enable({ apis: ['setTimeout'] });
-  let shutting = false;
-  t.mock.method(lifecycle, 'isShuttingDown', () => shutting);
-
-  const running = holdingPool();
-  assert.equal(themes.noteBoardChange(running, { appId: 41 }), true);
-  t.mock.timers.tick(10 * 60 * 1000);
-  await new Promise((r) => setImmediate(r));
-  assert.equal(running.queries, 1, 'the reconcile started');
-  assert.ok(inflightWork.snapshot().some((w) => w.name === 'workshop-themes:change'), 'and the drain can see it');
-
-  const late = holdingPool();
-  assert.equal(themes.noteBoardChange(late, { appId: 42 }), true);
-  shutting = true;
-  t.mock.timers.tick(10 * 60 * 1000);
-  await new Promise((r) => setImmediate(r));
-  assert.equal(late.queries, 0, 'a change due after shutdown began starts nothing');
+  const asked = [];
+  const pool = { async query(sql, params) { asked.push({ sql: String(sql), params }); return { rows: [], rowCount: 1 }; } };
+  assert.equal(await themes.noteBoardChange(pool, { appId: 41 }), true);
+  assert.equal(asked.length, 1);
+  assert.match(asked[0].sql, /reconcile_due_at/);
+  assert.ok(!inflightWork.snapshot().some((w) => w.name === 'workshop-themes:change'), 'nothing for the drain to wait on');
 });
 
 // 14 Oct 2026, 16:39: holding the whole sweeper tick held the drain to its
 // 60s deadline while one pass was minutes into a staging rebuild, which a
-// shutdown leaves to be re-driven anyway. The session sweeper is gone: what
-// is left of it is the turn watchdog, a leader timer (held for the drain
-// while a tick runs, none started once shutdown has begun), and the
-// measurement is a clock of the workflow, whose run stops at its next row
-// when the workflow runtime is stopped.
-test('the turn watchdog starts nothing on shutdown, and the measurement stops at its next row', () => {
-  assert.doesNotMatch(SERVER, /sessionSweeperHandle|singleFlight\('session-sweeper'/, 'the session sweeper is gone');
-  assert.match(SERVER, /leaderTimers\.every\('turn-watchdog', singleFlight\('turn-watchdog', async \(\) => \{\s+if \(lifecycle\.isShuttingDown\(\)\) return;/);
+// shutdown leaves to be re-driven anyway. The session sweeper and the turn
+// watchdog are gone (a turn's own work item, and the turn-leftovers clock,
+// end what they ended), and the measurement is a clock of the workflow,
+// whose run stops at its next row when the workflow runtime is stopped.
+test('no sweeper runs in a process, and the measurement stops at its next row', () => {
+  assert.doesNotMatch(SERVER, /sessionSweeperHandle|singleFlight\('session-sweeper'|turn-watchdog|leaderTimers/, 'the sweepers are gone');
   assert.doesNotMatch(SERVER, /inflightWork\.track\('proposal-measure'/, 'the measurement is not the drain\'s to wait for');
 
   const scans = fs.readFileSync(path.join(__dirname, '..', 'src/services/proposal-scans.js'), 'utf8');

@@ -14,9 +14,9 @@ const FAILED_MEDIA_HOURS = 24;
 const ROLLBACK_MEDIA_DAYS = 7;
 const RUN_RETENTION_DAYS = 30;
 const EVAL_ARTIFACT_DAYS = 30;
-// A shots eval's trial renews its row while its runner is alive
-// (shots-eval-runner.js). Its copies and checkouts are left alone for this
-// long after it last did.
+// A shots eval's trial's row moves as its phases do (the shots-eval
+// machine; its copies take at most half an hour). Its copies and checkouts
+// are left alone for this long after it last did.
 const LEGACY_RUN_GRACE_MS = 45 * 60_000;
 
 // The copies of one run, by the run's own names (shots-environment.js):
@@ -106,8 +106,8 @@ async function pruneEvalArtifacts(pool, { days = EVAL_ARTIFACT_DAYS } = {}) {
 
 async function sweepOrphanCheckouts(pool, { maxAgeMs = 720_000, tmpDir = os.tmpdir() } = {}) {
   const boundedAge = Math.max(60_000, Number(maxAgeMs) || 720_000);
-  // A shots eval's trial (shots-eval-runner.js) checks out its revisions
-  // under its attempt id the same way, and keeps the same kind of lease.
+  // A shots eval's trial (the shots-eval machine) checks out its revisions
+  // under its attempt id the same way, while it builds its copies.
   // A proposal's run under way is the shots machine's, which settles every
   // run it starts; a trial's is alive while its lease is.
   const active = await pool.query(
@@ -168,7 +168,7 @@ async function sweepOrphanRuntimes(config, pool, {
   // No deletion is attempted unless the entire state lookup succeeds. A
   // nonterminal row is left to the shots machine, however old its runtime.
   // A shots eval's trial names its copies by its attempt id; its row is
-  // read the same way (shots-eval-runner.js).
+  // read the same way (the shots-eval machine).
   const { rows } = await pool.query(
     `SELECT id, session_id, state, updated_at FROM shot_runs WHERE id = ANY($1::text[])
      UNION ALL

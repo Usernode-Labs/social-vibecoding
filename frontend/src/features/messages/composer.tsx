@@ -19,6 +19,7 @@ import { wantsKeyboardFocus } from '../message-actions/focus';
 import { completedShortcodeAt, findShortcodeToken, matchShortcodes, replaceShortcodeToken } from '../message-actions/emoji-shortcodes';
 
 import { SpeakButton } from '../dictation/speak-button';
+import { NotifyAsk } from '../notify-ask/notify-ask';
 
 const MAX_ATTACHMENTS = 4;
 // People asked for per `@` prefix in a channel (#3361).
@@ -88,6 +89,10 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
   const [focusWanted, setFocusWanted] = useState(false);
   const stagedCard = useStagedCard(object);
   const [error, setError] = useState('');
+  // A message went out to somebody who may answer (anyone but Homeroom bot,
+  // whose own news rings as it is): the notification ask, "Hear when they
+  // answer?" (../notify-ask/notify-ask.tsx), over the box.
+  const [askReply, setAskReply] = useState(false);
   // #4065: the shared drop zone (features/attachments/file-drag.tsx). Its
   // depth count keeps the outline steady while the pointer crosses the card's
   // own controls, where a leave from any child used to clear it.
@@ -109,7 +114,7 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
   const friendIds = useFriendIds();
 
   useEffect(() => {
-    setValue(draftFor(scope)); setAttachments([]); setObject(null); setPrompt(null); setError('');
+    setValue(draftFor(scope)); setAttachments([]); setObject(null); setPrompt(null); setError(''); setAskReply(false);
   }, [scope]);
 
   // Reply puts the caret here where there is a hardware keyboard, so the
@@ -466,9 +471,12 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
     if (dictating || uploading || (!value.trim() && !attachments.length && !object)) return;
     setError(''); notifyTyping(false); setPrompt(null);
     const input = { content: value.trim(), attachmentIds: attachments.map((item) => item.id), attachments, object: object ? referenceOf(object) : undefined };
+    const answerable = active?.homeroomBot !== true;
     setValue(''); setAttachments([]); setObject(null);
     requestAnimationFrame(() => inputRef.current?.focus({ preventScroll: true }));
-    send({ ...input, threadRootId }).catch((err) => setError(err instanceof Error ? err.message : t('messages:composer.sendFailed')));
+    send({ ...input, threadRootId })
+      .then(() => { if (answerable) setAskReply(true); })
+      .catch((err) => setError(err instanceof Error ? err.message : t('messages:composer.sendFailed')));
   }
 
   if (!active || active.membershipStatus !== 'member') return null;
@@ -484,6 +492,7 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
   if (awaiting && (!active.canSend || snap.messages.length > 0)) {
     return (
       <div className="messages-composer messages-composer-awaiting platform-safe-bar" data-awaiting-acceptance="">
+        {askReply ? <NotifyAsk moment="reply" className="mb-2" /> : null}
         <div className="messages-awaiting" role="status">
           <strong>{t('messages:composer.requestSent.title')}</strong>
           <p>{waitingUnknown ? t('messages:composer.requestSent.waitingUnknown') : waitingOn ? t('messages:composer.requestSent.waitingNamed', { username: waitingOn }) : t('messages:composer.requestSent.waitingUnnamed')}</p>
@@ -515,6 +524,7 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
       {/* QA 2026-09-24 Q2: before the opening message of a request, what it
           will be — so the composer turning into a notice after it is no
           surprise. */}
+      {askReply ? <NotifyAsk moment="reply" className="mb-2" /> : null}
       {awaiting ? <p className="messages-composer-hint" data-awaiting-acceptance="">{waitingUnknown ? t('messages:composer.firstMessageHintUnknown') : waitingOn ? t('messages:composer.firstMessageHintNamed', { username: waitingOn }) : t('messages:composer.firstMessageHintUnnamed')}</p> : null}
       {/* The white card. The bar around it is what carries the home-indicator
           inset (`platform-safe-bar`), so the card keeps its own padding on a

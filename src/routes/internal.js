@@ -179,7 +179,37 @@ function internalRoutes(_config) {
         side: req.query.side,
         kind: req.query.kind,
         theme: req.query.theme,
+        // What the worker says the still was saved at; read only in a run
+        // taken at device density (shots-control.stillDensity).
+        density: req.query.density,
+        // The agent's answer to whether the still shows anybody's private
+        // things (shots-control.publicSafeOf).
+        showsPrivate: req.query.showsPrivate,
       }, Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0)));
+      return res.json({ ok: true, result });
+    } catch (err) { return shotsError(res, err); }
+  });
+
+  // The close-ups this run wants now (services/shots-closeups.js), each
+  // with whether it is saved. Empty unless the run is taken at device density.
+  router.get('/api/internal/shots/:runId/closeups', shotsAuth, shotsLimiter, async (req, res) => {
+    try {
+      const result = await withShotsControl(req, (c, db) => shotsControl.wantedCloseups(db, c), { readOnly: true });
+      return res.json({ ok: true, result: { closeups: result } });
+    } catch (err) { return shotsError(res, err); }
+  });
+
+  // One close-up the shots bridge took, as the raw body, with which one it
+  // is as query fields: kept only when it is wanted, the size asked for, and
+  // the after screen shot at that place.
+  router.post('/api/internal/shots/:runId/closeup', shotsAuth, shotsLimiter, shotBody, async (req, res) => {
+    try {
+      const result = await withShotsControl(req, async (c, db) => {
+        const raw = { change: req.query.change, screen: req.query.screen, part: Number(req.query.part) };
+        const asked = await shotsControl.wantedCloseups(db, c);
+        const stills = await shotsControl.stillsFor(db, c, { change: String(raw.change || ''), screen: String(raw.screen || '') });
+        return c.saveCloseup(raw, Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0), { asked, ...stills });
+      });
       return res.json({ ok: true, result });
     } catch (err) { return shotsError(res, err); }
   });
@@ -281,10 +311,6 @@ function internalRoutes(_config) {
   };
   router.post('/api/internal/sessions/:sessionId/visible-changes',
     visibleChangesAuth, visibleChangesLimiter, declareVisibleChanges);
-  // The path before the rename, for a worker still on the previous release's
-  // image while a deploy rolls out.
-  router.post('/api/internal/sessions/:sessionId/visual-evidence-intent',
-    visibleChangesAuth, visibleChangesLimiter, declareVisibleChanges);
 
   // #4490: a hosted build's diagram of its change (worker/visible-changes-mcp.js
   // declare_diagram), on the same boundary as its visible changes: its own
@@ -311,12 +337,9 @@ function internalRoutes(_config) {
         } catch (err) {
           return res.status(400).json({ ok: false, code: 'invalid_diagram', message: err.message });
         }
-        const proposalDiagram = require('../services/proposal-diagram');
-        const stored = await proposalDiagram.store(pool, sessionId, record, 'author');
+        // The row and the pull request's block it owes commit together.
+        const stored = await require('../services/proposal-diagram').storeDeclared(pool, sessionId, record);
         if (!stored) return res.status(500).json({ ok: false, code: 'diagram_not_stored', message: 'The diagram could not be stored.' });
-        proposalDiagram.syncPrBlock(pool, sessionId).catch((err) => {
-          log.warn('internal-api', 'Could not write the diagram into the pull request', { sessionId, err: err.message });
-        });
         return res.json({ ok: true, diagram: record });
       } catch (err) {
         log.error('internal-api', 'declare_diagram failed', { sessionId, err: err.message });
