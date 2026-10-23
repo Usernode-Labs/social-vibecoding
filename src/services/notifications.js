@@ -2369,6 +2369,10 @@ module.exports = {
   hydrateAndPush,
   hydrateNotification,
   hydrateNotifications,
+  // Shared by the WebSocket delivery query so hydration and its access
+  // predicates run in the same snapshot as the recipient's live session.
+  HYDRATE_SELECT_SQL,
+  HYDRATE_LISTED_SQL,
   createPrProposedNotifications,
   createChangeReadyNotifications,
   createAppDeleteAttemptNotifications,

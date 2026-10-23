@@ -251,7 +251,7 @@ function firstLiveActions({ slug }) {
 
 // What routes/conversations.js does after a send, done here because the
 // service pushes nothing (the welcome DM does the same).
-async function pushLive(pool, result, conversationId, { opened = false, threadRootId = null } = {}) {
+async function pushLive(pool, result, conversationId, { opened = false, threadRootId = null, actorUserId } = {}) {
   const ws = require('./ws');
   const notificationSvc = require('./notifications');
   for (const row of result.notifications || []) await notificationSvc.hydrateAndPush(pool, row);
@@ -261,7 +261,7 @@ async function pushLive(pool, result, conversationId, { opened = false, threadRo
     conversationId,
     messageId: result.message?.id ?? result.messageId,
     threadRootId: threadRootId || null,
-  });
+  }, { actorUserId });
 }
 
 /**
@@ -697,7 +697,7 @@ async function sendDm(pool, {
       about: stored, kind: metadata?.kind || null,
     });
     try {
-      await pushLive(pool, result, opened.conversationId, { opened: opened.created, threadRootId: root });
+      await pushLive(pool, result, opened.conversationId, { opened: opened.created, threadRootId: root, actorUserId: bot.id });
     } catch (err) {
       // The message and its bell row are in; a missed live refresh catches
       // up on the next load.
@@ -743,7 +743,7 @@ async function pushTyping(pool, botId, conversationId, typing, ws) {
     await conversations.withLockedAudience(pool, { id: botId }, conversationId, (audience) => {
       ws.pushConversationEvent(audience, {
         type: 'conversation_typing', conversationId, userId: botId, typing,
-      }, { excludeUserId: botId });
+      }, { excludeUserId: botId, actorUserId: botId });
     });
   } catch (err) {
     // Ephemeral: a missed typing event costs nothing the answer needs.
@@ -1569,7 +1569,7 @@ async function setQuestionState(pool, messageId, patch, { ws = null, conversatio
     type: 'conversation_message_updated', conversationId: conversationId || rows[0].conversation_id, messageId,
     // In a request's thread, the open thread reads it again too.
     threadRootId: rows[0].thread_root_id ? Number(rows[0].thread_root_id) : null,
-  });
+  }, { actorUserId: rows[0].sender_id });
 }
 
 // News the request's card and the tray above the DM show, and that the

@@ -357,9 +357,15 @@ test('app channels against the full schema', { timeout: 120000 }, async (t) => {
     );
     const topicRoot = (await post(alice, chan, 'Which knives do we keep?', { thread: { type: 'category', ref: topic.id } })).message.id;
     const href = `#messages/app/ta-chan/c/${topic.id}/thread/${topicRoot}`;
-    const pushedFor = (messageId) => frames
-      .filter((f) => f.kind === 'user' && f.data?.type === 'notification_new' && f.data.notification.chatMessageId === messageId)
-      .map((f) => [f.data.notification.kind, f.data.notification.href]);
+    const pushedFor = async (messageId) => {
+      const refs = frames.filter((f) => f.kind === 'user' && f.data?.type === 'notification_new');
+      for (const f of refs) assert.deepEqual(Object.keys(f.data).sort(), ['notificationId', 'type'], 'the bus carries only a reference');
+      // The receiving process reads the reference at delivery, so the
+      // notification's topic/thread address must survive that fresh read.
+      const hydrated = await notifications.hydrateNotifications(pool, refs.map(f => f.data.notificationId));
+      return refs.map(f => hydrated.get(f.data.notificationId)?.notification)
+        .filter(n => n?.chatMessageId === messageId).map(n => [n.kind, n.href]);
+    };
     frames.length = 0;
     const reply = (await post(carol, chan, 'The small one.', { thread: { type: 'message', ref: topicRoot } })).message.id;
     // The root's author hears of it, as for a #general root…
@@ -370,20 +376,20 @@ test('app channels against the full schema', { timeout: 120000 }, async (t) => {
     // id (a native push's read), and pushed live.
     assert.equal(notifications.serialize(row).href, href);
     assert.equal(notifications.serialize(await notifications.getForUser(pool, alice.id, row.id)).href, href);
-    assert.deepEqual(pushedFor(reply), [['thread_reply', href]]);
+    assert.deepEqual(await pushedFor(reply), [['thread_reply', href]]);
     // A quote reply in the thread (carol's 'reply', hydrated by the socket's
     // own read) and the thread's own row for alice: the same address.
     frames.length = 0;
     const quoted = (await post(bob, chan, 'Agreed, the small one.', {
       thread: { type: 'message', ref: topicRoot }, quote: { source: 'message', refMsgId: reply },
     })).message.id;
-    assert.deepEqual(pushedFor(quoted).sort(), [['reply', href], ['thread_reply', href]]);
+    assert.deepEqual((await pushedFor(quoted)).sort(), [['reply', href], ['thread_reply', href]]);
     // A message in the topic itself opens the channel on it (#4417).
     frames.length = 0;
     const inTopic = (await post(bob, chan, 'And the bread knife?', {
       thread: { type: 'category', ref: topic.id }, quote: { source: 'message', refMsgId: topicRoot },
     })).message.id;
-    assert.deepEqual(pushedFor(inTopic), [['reply', `#messages/app/ta-chan/c/${topic.id}/m/${inTopic}`]]);
+    assert.deepEqual(await pushedFor(inTopic), [['reply', `#messages/app/ta-chan/c/${topic.id}/m/${inTopic}`]]);
     // A #general root's thread keeps its own address (the subtest above).
     const general = (await notifications.listForUser(pool, alice.id, { kinds: ['thread_reply'] }))
       .find((n) => Number(n.thread_ref) === rootId);

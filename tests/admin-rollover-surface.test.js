@@ -125,14 +125,13 @@ test('the demo job is gated on IS_STAGING && ?demo=1 and never persisted', () =>
 
 test('progress is broadcast to admins only', () => {
   assert.match(wsJs, /function broadcastToAdmins\(payload\)/);
-  // The isAdmin filter lives in the LOCAL half. Cross-instance fan-out split
-  // every broadcast into `deliver*` (this process's sockets) and a wrapper
-  // that also publishes, so the filter moved with the sockets it filters —
-  // and a bus message from another pod re-runs this same function, which is
-  // what keeps the rule true on every instance rather than just the emitter.
+  // The local half requires a current admin decision from the shared
+  // delivery gate, including on the process relaying a bus event. The
+  // real-socket PostgreSQL suite proves an existing socket loses this
+  // audience on demotion without an invalidation message.
   const local = wsJs.slice(wsJs.indexOf('function deliverToAdmins'));
-  assert.match(local.slice(0, 500), /client\.user && client\.user\.isAdmin/,
-    'same isAdmin filter broadcastGlobalScoped applies for private apps');
+  assert.match(local.slice(0, 500), /sendToEventsClient\(client, json, \{ admin: true \}\)/,
+    'the required admin scope reaches the fresh database check');
   const fn = wsJs.slice(wsJs.indexOf('function broadcastToAdmins'));
   assert.match(fn.slice(0, 400), /deliverToAdmins\(payload\)/,
     'the wrapper delegates rather than re-implementing the filter');

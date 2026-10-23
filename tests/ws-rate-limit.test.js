@@ -196,17 +196,17 @@ test('a closed socket is not written to, and a flood logs once per window', () =
   assert.deepEqual(throttled[0][2], { name: 'ws-write', userId: 5, appId: 7, type: 'chat' });
 });
 
-test('attach() checks the frame after parsing it and before the account query and handleMessage', () => {
+test('attach() checks the frame after parsing it and before live authority and handleMessage', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'src/services/ws.js'), 'utf8');
   const handler = src.match(/ws\.on\('message', async \(raw\) => \{([\s\S]*?)\n {4}\}\);/);
   assert.ok(handler, 'found the chat socket message handler');
   const body = handler[1];
   const parse = body.indexOf('JSON.parse(raw)');
   const check = body.indexOf('if (!admitSocketFrame(client, msg)) return;');
-  const live = body.indexOf('anonymised_at IS NULL');
-  const handle = body.indexOf('await handleMessage(pool, client, msg)');
+  const live = body.indexOf('await delivery.check(client, { appRequired: true, appId })');
+  const handle = body.indexOf('await handleMessage(pool, { ...client, user: currentUser }, msg)');
   assert.ok(parse >= 0 && check > parse, 'checked after parsing');
-  assert.ok(live > check, 'before the live-account query');
+  assert.ok(live > check, 'before the live-session and project check');
   assert.ok(handle > live, 'and before handleMessage');
   // handleMessage, which the REST twins and the bot also call, does not
   // count frames itself.

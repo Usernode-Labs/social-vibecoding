@@ -33,7 +33,7 @@ const USERS = {
   member: { user_id: 4, username: 'mo', is_admin: false },
 };
 // session id -> owner and app. App 10 is public; app 20 is view-private with
-// `member` as its only member.
+// its owner and `member` as members.
 const SESSIONS = {
   100: { user_id: 1, app_id: 10, app_slug: 'public-app' },
   200: { user_id: 1, app_id: 20, app_slug: 'private-app' },
@@ -46,6 +46,17 @@ const APPS = {
 const notifies = [];
 const fakePool = {
   async query(sql, params = []) {
+    // Routing fixture only; real authorization SQL and revocation are
+    // exercised against the full schema in ws-current-access-postgres.
+    if (/FROM jsonb_to_recordset/.test(sql)) return { rows: JSON.parse(params[0]).map(d => {
+      const user = USERS[d.token], session = SESSIONS[d.session_id];
+      const appId = session?.app_id ?? d.app_id;
+      const view = appId !== 20 || [1, 2, 4].includes(d.user_id);
+      const own = session?.user_id === d.user_id;
+      return { n: d.n, authenticated: !!user, username: user?.username, is_admin: !!user?.is_admin,
+        session_owner: own, allowed: view && (d.session_id == null || !!session
+          && (own || d.watching && user?.is_admin || d.fanout)) };
+    }) };
     if (/SELECT id FROM users WHERE id = \$1/.test(sql)) return { rows: [{ id: params[0] }] };
     if (/pg_notify/.test(sql)) { notifies.push(params); return { rows: [] }; }
     if (/FROM sessions s JOIN users u/.test(sql)) {
@@ -66,7 +77,7 @@ const fakePool = {
       return { rows: row ? [row] : [] };
     }
     if (/FROM app_collaborators/.test(sql)) {
-      return { rows: Number(params[0]) === 20 ? [{ user_id: 4 }] : [] };
+      return { rows: Number(params[0]) === 20 ? [{ user_id: 1 }, { user_id: 4 }] : [] };
     }
     return { rows: [] };
   },

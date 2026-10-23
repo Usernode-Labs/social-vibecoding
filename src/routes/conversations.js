@@ -74,7 +74,7 @@ function pushAudience(memberIds, payload, options) {
   let sent = 0;
   for (const userId of [...new Set(memberIds || [])]) {
     if (options?.excludeUserId === userId) continue;
-    sent += ws.pushToUser(userId, payload);
+    sent += ws.pushToUser(userId, payload, options);
   }
   return sent;
 }
@@ -536,7 +536,7 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
             type: 'conversation_message_created', conversationId: id, messageId: result.message.id,
             // #2387: which thread it joined (null: the main stream).
             threadRootId: result.message.threadRootId,
-          });
+          }, { actorUserId: req.user.id });
         });
       }
       return res.status(result.duplicate ? 200 : 201).json({ message: result.message, duplicate: result.duplicate });
@@ -558,7 +558,7 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
         pushAudience(memberIds, {
           type: 'conversation_message_updated', conversationId: id, messageId: result.message.id,
           threadRootId: result.message.threadRootId,
-        });
+        }, { actorUserId: req.user.id });
       });
       return res.json({ message: result.message });
     } catch (err) {
@@ -582,7 +582,7 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
           pushAudience(memberIds, {
             type: 'conversation_message_updated', conversationId: id, messageId,
             threadRootId: result.threadRootId,
-          });
+          }, { actorUserId: req.user.id });
         });
         // Their bells lost a row (and possibly a queued push): recount.
         const { pushToUser } = require('../services/ws');
@@ -607,7 +607,7 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
       await conversations.withLockedAudience(pool, req.user, id, (memberIds) => {
         pushAudience(memberIds, {
           type: 'conversation_reaction_updated', conversationId: id, messageId,
-        });
+        }, { actorUserId: req.user.id });
       });
       pushNotificationsChanged(result.clearedUserIds);
       return res.json({ reactions: result.reactions });
@@ -701,7 +701,7 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
           // #2387: set when a THREAD was read up to message_id; the
           // main-stream cursor (messageId) did not move.
           threadRootId: result.threadRootId || null,
-        });
+        }, { actorUserId: req.user.id });
       });
       // #2904: reading a conversation clears its message notifications, but
       // announces itself as `conversation_read`, not `notifications_changed`
@@ -727,7 +727,7 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
       pushAudience([req.user.id], {
         type: 'conversation_read', conversationId: id,
         userId: req.user.id, messageId: result.messageId, unread: true,
-      });
+      }, { actorUserId: req.user.id });
       return res.json({ unreadCount: result.unreadCount });
     } catch (err) {
       log.error('conversations', 'mark unread failed', { id, err: err.message });
@@ -743,7 +743,7 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
         pushAudience(audience, {
           type: 'conversation_typing', conversationId: id,
           userId: req.user.id, typing: req.body.typing,
-        }, { excludeUserId: req.user.id });
+        }, { excludeUserId: req.user.id, actorUserId: req.user.id });
       });
       if (!memberIds) return sendNotFound(res);
       return res.status(204).end();

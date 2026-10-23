@@ -19,15 +19,22 @@ const USERS = {
 const reads = [];
 const fakePool = {
   async query(sql, params = []) {
+    if (/FROM jsonb_to_recordset/.test(sql)) return { rows: JSON.parse(params[0]).map(d => {
+      if (d.notification_required) reads.push(d.notification_id);
+      return {
+        n: d.n, authenticated: !!USERS[d.token], allowed: true, username: USERS[d.token]?.username, is_admin: false,
+        notification_row: d.notification_required ? { id: d.notification_id, kind: 'pr_merged', user_id: d.user_id,
+          read_at: null, created_at: new Date(0), app_id: 5, app_slug: 'five', app_name: 'Five', session_id: 9,
+          pr_title: 'Dark mode', pr_number: 3, detail: {} } : null,
+      };
+    }) };
     if (/SELECT id FROM users WHERE id = \$1/.test(sql)) return { rows: [{ id: params[0] }] };
     if (/FROM sessions s JOIN users u/.test(sql)) {
       const user = USERS[params[0]];
       return { rows: user ? [{ ...user, expires_at: new Date(Date.now() + 3600e3).toISOString() }] : [] };
     }
     if (/FROM notifications n/.test(sql)) {
-      reads.push(params[0]);
-      return { rows: [{ id: params[0], kind: 'pr_merged', user_id: 1, read_at: null, created_at: new Date(0), app_id: 5,
-        app_slug: 'five', app_name: 'Five', session_id: 9, pr_title: 'Dark mode', pr_number: 3, detail: {} }] };
+      throw new Error('notification contents must be read in the delivery authorization query');
     }
     return { rows: [] };
   },
@@ -46,6 +53,19 @@ test.before(async () => {
   ws.attach(server, { jwtSecret: 'test-secret' });
   await new Promise((resolve) => server.listen(0, resolve));
   port = server.address().port;
+});
+
+test('locally hydrated notifications publish only references and missing references are rejected', async () => {
+  const bus = require('../src/services/ws-bus'), saved = bus.publishBatched;
+  const sent = [];
+  bus.publishBatched = (...args) => sent.push(args);
+  try {
+    ws.pushToUser(1, { type: 'notification_new', notification: {
+      id: 91, conversationId: 4, messageContent: 'FAKE_OLD_BODY',
+    } });
+    ws.pushToUser(1, { type: 'notification_new', notification: { messageContent: 'FAKE_WITHOUT_ID' } });
+    assert.deepEqual(sent, [['user', 'user', { userId: 1 }, { type: 'notification_new', notificationId: 91 }]]);
+  } finally { bus.publishBatched = saved; }
 });
 test.after(() => new Promise((resolve) => server.close(resolve)));
 

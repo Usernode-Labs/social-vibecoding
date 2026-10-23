@@ -35,7 +35,7 @@ test('the database\'s notice is ws-bus.js\'s own envelope, on its channel, and b
   assert.match(announce, new RegExp(`pg_notify\\('${channel}', json_build_object\\(`), 'the channel every instance LISTENs on');
   assert.match(bus, /return \{ i: INSTANCE_ID, k: kind, r: routing \|\| null, d: data \};/, 'the envelope ws-bus reads');
   assert.match(announce, /'i', 'db:agent_sessions',\s*'k', 'user',\s*'r', json_build_object\('userId', NEW\.user_id\),\s*'d', json_build_object\(/);
-  assert.match(read('src/services/ws.js'), /case 'user':\s*if \(r\.userId != null\) deliverToUser\(r\.userId, payload\);/);
+  assert.match(read('src/services/ws.js'), /case 'user':\s*if \(r\.userId != null\) deliverToUser\(r\.userId, payload, \{ actorUserId: r\.actorUserId \}\);/);
   // A claim lasts as long as its turn: the turn machine releases it when the
   // turn's work item ends (src/workflow/turn/), so there is no stale window.
   assert.match(announce, /'busy', \(NEW\.active_turn IS NOT NULL\)/);

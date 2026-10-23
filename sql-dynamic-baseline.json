@@ -1935,11 +1935,18 @@
       "preview": "`SELECT cs.id, cs.pr_number, cs.pr_title, cs.pr_summary_md, cs.linked_issues, cs.status, cs.created_at, u.username, (SELECT COUNT(*) FROM pr_votes pv WHERE pv.s"
     },
     {
+      "source": "src/services/ws-delivery.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "d5ae5ffe9033211a5089",
+      "count": 1,
+      "preview": "AUTHORIZE_SQL"
+    },
+    {
       "source": "src/services/ws.js",
       "kind": "structural-template",
-      "fingerprint": "47c0995a68c0e5f4afc4",
+      "fingerprint": "9a9b2cea4075890798c7",
       "count": 1,
-      "preview": "`SELECT s.user_id, s.expires_at, u.username, u.is_admin FROM sessions s JOIN users u ON s.user_id = u.id WHERE s.token = $1 AND ${nativeWebSessionIsLive('s')}`"
+      "preview": "`SELECT s.user_id, s.expires_at, u.username, u.is_admin FROM sessions s JOIN users u ON s.user_id = u.id WHERE s.token = $1 AND u.anonymised_at IS NULL AND ${na"
     },
     {
       "source": "src/workflow/bench-lane/facts.ts",
