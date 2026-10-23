@@ -392,7 +392,7 @@ test('inside the Homeroom app the full story stays the front door, with Look aro
   const html = renderComponent(STORY, 'Story', { primaryClass: 'pill', onStart() {}, onSignIn() {}, lookAround: true });
   assert.match(html, /data-landing-story-start/);
   // A link on its own line in the Sign in line's blue, not a second button.
-  const look = html.match(/<p class="text-\[15px\] leading-5"><a href="#apps" data-landing-story-look="" class="([^"]+)">([^<]+)<\/a><\/p>/);
+  const look = html.match(/<p class="mt-1\.5 text-\[15px\] leading-5"><a href="#apps" data-landing-story-look="" class="([^"]+)">([^<]+)<\/a><\/p>/);
   assert.ok(look, 'Look around first links to Discover');
   assert.equal(look[2], message('auth:story.lookAround'));
   const signIn = html.match(/data-landing-story-signin="" class="([^"]+)"/);
