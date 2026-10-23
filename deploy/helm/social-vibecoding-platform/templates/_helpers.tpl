@@ -177,6 +177,19 @@ administrative connection and a psql).
       {{- end -}}
     {{- end -}}
   {{- end -}}
+  {{- with .Values.config.mediaStorage -}}
+    {{- if .endpoint -}}
+      {{- if not (regexMatch "^https?://[^/]+$" .endpoint) -}}
+        {{- fail "config.mediaStorage.endpoint must be a scheme and host, e.g. https://hel1.your-objectstorage.com" -}}
+      {{- end -}}
+      {{- if empty .bucket -}}
+        {{- fail "config.mediaStorage.bucket is required when config.mediaStorage.endpoint is set" -}}
+      {{- end -}}
+      {{- if and $.Values.secrets.create (or (empty $.Values.secrets.mediaStorageAccessKey) (empty $.Values.secrets.mediaStorageSecretKey)) -}}
+        {{- fail "secrets.mediaStorageAccessKey and secrets.mediaStorageSecretKey are required when config.mediaStorage.endpoint is set" -}}
+      {{- end -}}
+    {{- end -}}
+  {{- end -}}
   {{- if and .Values.postgresql.enabled (not (regexMatch "^sha256:[a-f0-9]{64}$" .Values.postgresql.image.digest)) -}}
     {{- fail "postgresql.image.digest must be an immutable sha256 digest when postgresql is enabled" -}}
   {{- end -}}

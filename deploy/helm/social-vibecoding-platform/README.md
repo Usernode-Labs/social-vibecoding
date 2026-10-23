@@ -109,6 +109,19 @@ An empty value leaves tracking disabled; rotating it invalidates old signed
 links. No Resend credentials or provider change is needed for Gmail engagement
 tracking; Gmail does not supply delivery, bounce or complaint callbacks.
 
+The media store (screenshots, videos and other files kept out of PostgreSQL)
+is off until `config.mediaStorage.endpoint` is set. The chart passes the
+endpoint and `config.mediaStorage.bucket` as `MEDIA_STORAGE_ENDPOINT` and
+`MEDIA_STORAGE_BUCKET`, and maps `secrets.mediaStorageAccessKey` /
+`secrets.mediaStorageSecretKey` (through SOPS) to `MEDIA_STORAGE_ACCESS_KEY` /
+`MEDIA_STORAGE_SECRET_KEY` in the platform Secret. Rendering refuses an endpoint
+without a bucket, or, when the chart creates the Secret, without both keys.
+Give the platform a key that can reach only its own bucket: a Hetzner Object
+Storage key reaches every bucket in its project, so the media bucket lives in a
+project of its own, apart from the database backups. App file uploads
+(`MINIO_*`, `src/services/app-files.js`) are a separate store this chart does
+not configure, so they stay off.
+
 The infra values can use a separate SOPS-encrypted overlay containing only this
 new field, encrypted to the same cluster recipients and listed after the existing
 secret overlays in Argo's `valueFiles`. Release this chart before merging those
