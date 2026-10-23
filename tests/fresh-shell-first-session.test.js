@@ -53,7 +53,6 @@ const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 
 const appJs = read('public/js/app.js');
 const authScreensJs = read('public/js/auth-screens.js');
-const swJs = read('public/sw.js');
 const sharedTs = read('frontend/src/features/auth/shared.ts');
 const landingTsx = read('frontend/src/features/auth/landing.tsx');
 const waitingTsx = read('frontend/src/features/auth/waiting.tsx');
@@ -210,13 +209,17 @@ test('the check asks the server past the worker cache and the HTTP cache', async
   assert.equal(h.requests[0].init.credentials, 'same-origin');
 });
 
-test('sw.js hands a no-store request straight to the network', () => {
-  // The whole check rests on this bypass. If it goes, the move reads the
-  // cached sha again and goes quiet on exactly the launch it exists for.
-  assert.match(swJs, /if \(req\.cache === 'no-store'\) return;/);
-  const at = swJs.indexOf("if (req.cache === 'no-store') return;");
-  assert.ok(at < swJs.indexOf('event.respondWith(networkFirstApi(event))'),
-    'before any strategy can answer it from a cache');
+test('sw.js hands a no-store request straight to the network', async () => {
+  const { worker, json, A } = require('./lib/private-cache-worker');
+  const h = worker({ fetcher: async () => json({ sha: 'FAKE_OLD_BUILD' }) });
+  await h.get(A, '/api/version'); await h.drain();
+  h.setNetwork(async () => json({ sha: 'FAKE_LIVE_BUILD' }));
+  const res = await h.get(A, '/api/version', { cache: 'no-store' });
+  assert.deepEqual(await res.json(), { sha: 'FAKE_LIVE_BUILD' });
+  assert.equal(h.requests.at(-1).cache, 'no-store');
+  h.setNetwork(async () => { throw new TypeError('synthetic offline version check'); });
+  await assert.rejects(h.get(A, '/api/version', { cache: 'no-store' }), /offline version check/,
+    'the live-build decision cannot fall back to a cached sha');
 });
 
 test('a document that cannot be behind asks nothing at all', async () => {

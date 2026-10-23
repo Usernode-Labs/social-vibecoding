@@ -194,3 +194,87 @@ test('upgrade drops unscoped legacy copies, retains certified partitions, and le
   assert.deepEqual(await (await api.match(scoped)).json(), { fake: 'certified' });
   assert.equal(await (await shell.match('/index.html')).text(), 'FAKE_PUBLIC_SHELL');
 });
+
+
+test('concurrent same-session offline readers all use the permitted copy', async () => {
+  const h = worker();
+  await h.get(A); await h.drain();
+  h.setNetwork(offline);
+  const before = h.requests.length;
+  const responses = await Promise.all([h.get(A), h.get(A), h.get(A)]);
+  assert.equal(h.requests.length - before, 1, 'identical concurrent readers still share the network attempt');
+  for (const res of responses) assert.deepEqual(await res.json(), { fake: 'A' });
+});
+
+test('a known refusal evicts the prior copy even if a newer request failed', async t => {
+  for (const status of [200, 304, 401, 403, 404, 410]) await t.test(String(status), async () => {
+    const h = worker();
+    await h.get(A); await h.drain();
+    const denial = deferred();
+    h.setNetwork(req => req.headers.get('x-fixture-read') === 'held-denial' ? denial.promise : offline());
+    const pending = h.get(A, '/api/private-fixture', { headers: { 'x-fixture-read': 'held-denial' } });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(await (await h.get(A)).json(), { fake: 'A' }, 'fallback is allowed before a refusal is known');
+    denial.resolve(status === 304 ? new Response(null, { status, headers: { [SCOPE_HEADER]: A } })
+      : json({ error: 'FAKE_REVOKED' }, A, { status, policy: 'private, no-store' }));
+    assert.equal((await pending).status, status);
+    await h.drain();
+    await assert.rejects(h.get(A), /offline/, 'request ordering cannot suppress authoritative eviction');
+    h.setNetwork(async () => json({ fake: 'new permission' }));
+    await h.get(A); await h.drain();
+    h.setNetwork(offline);
+    assert.deepEqual(await (await h.get(A)).json(), { fake: 'new permission' }, 'a later permitted read can refill the cache');
+  });
+});
+
+test('a known refusal fences a newer success already in flight and ends sharing with it', async () => {
+  const h = worker();
+  await h.get(A); await h.drain();
+  const denial = deferred(), success = deferred();
+  h.setNetwork(req => req.headers.get('x-fixture-read') === 'held-denial' ? denial.promise : success.promise);
+  const refused = h.get(A, '/api/private-fixture', { headers: { 'x-fixture-read': 'held-denial' } });
+  const pending = h.get(A);
+  await new Promise(resolve => setImmediate(resolve));
+  denial.resolve(json({ error: 'FAKE_REVOKED' }, A, { status: 403, policy: 'no-store' }));
+  await refused;
+  success.resolve(json({ private: 'FAKE_SUCCESS_STARTED_BEFORE_REFUSAL' }));
+  await pending; await h.drain();
+  h.setNetwork(offline);
+  await assert.rejects(h.get(A), /offline/, 'even the newest pre-refusal success cannot repopulate the cache');
+
+  // An identical read begun AFTER another refusal must get a new request,
+  // rather than joining a still-held success from the previous permission.
+  const old = deferred();
+  h.setNetwork(() => old.promise);
+  const earlier = h.get(A);
+  await new Promise(resolve => setImmediate(resolve));
+  h.setNetwork(async () => json({ error: 'FAKE_REVOKED' }, A, { status: 403, policy: 'no-store' }));
+  await h.get(A, '/api/private-fixture', { headers: { 'x-fixture-read': 'denial' } });
+  h.setNetwork(async () => json({ fake: 'post-refusal permission' }));
+  const count = h.requests.length;
+  const fresh = h.get(A);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(h.requests.length, count + 1, 'a post-refusal read does not join the older request');
+  assert.deepEqual(await (await fresh).json(), { fake: 'post-refusal permission' });
+  old.resolve(json({ private: 'FAKE_OLD_SUCCESS' }));
+  await earlier; await h.drain();
+  h.setNetwork(offline);
+  assert.deepEqual(await (await h.get(A)).json(), { fake: 'post-refusal permission' });
+});
+
+
+test('a refusal invalidates a body cached for a different Vary request', async () => {
+  const h = worker({ fetcher: async req => json({ fake: req.headers.get('accept') }, A,
+    { headers: { Vary: 'Accept' } }) });
+  await h.get(A, '/api/variants', { headers: { accept: 'application/json; variant=two' } }); await h.drain();
+  assert.equal((await (await h.caches.open(API_CACHE)).keys()).length, 1);
+  h.setNetwork(offline);
+  assert.equal((await (await h.get(A, '/api/variants', { headers: { accept: 'application/json; variant=two' } })).json()).fake,
+    'application/json; variant=two', 'Vary-aware positive control');
+  h.setNetwork(async () => json({ error: 'FAKE_REVOKED' }, A, { status: 403, policy: 'no-store' }));
+  await h.get(A, '/api/variants', { headers: { accept: 'application/json; variant=one' } }); await h.drain();
+  h.setNetwork(offline);
+  for (const accept of ['application/json; variant=one', 'application/json; variant=two']) {
+    await assert.rejects(h.get(A, '/api/variants', { headers: { accept } }), /offline/);
+  }
+});

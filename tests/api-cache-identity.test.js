@@ -154,7 +154,7 @@ test('another tab changing identity clears the former viewer and reloads without
 test('native restoration waits for cookie installation, then /me confirms the new partition', async () => {
   const restored = deferred();
   const expiry = new Date(Date.now() + 86400_000).toISOString();
-  const h = page({ native: true, fetcher: async req => json({ fake: 'same user, renewed session' }, B,
+  const h = page({ native: true, fetcher: async req => json({ user: { id: 101 } }, B,
     { headers: { 'X-Usernode-Cache-Expires': expiry } }) });
   h.renewal.settled = restored.promise;
   const me = h.win.fetch('/api/auth/me');
@@ -170,12 +170,140 @@ test('native restoration waits for cookie installation, then /me confirms the ne
 test('native 401 retry wraps the identity fence and gets a fresh request context', async () => {
   const { installSessionRenewalRetry } = loadTsx('frontend/src/lib/session-renewal-retry.ts');
   let calls = 0;
-  const h = page({ native: true, fetcher: async () => {
+  const h = page({ native: true, fetcher: async req => {
     if (++calls === 1) { h.renewal.epoch = 1; return json({ error: 'expired' }, null, { status: 401 }); }
+    if (new URL(req.url).pathname === '/api/auth/me') return json({ user: { id: 101 } }, A,
+      { headers: { 'X-Usernode-Cache-Expires': new Date(Date.now() + 86400_000).toISOString() } });
     return json({ fake: 'current' }, A);
   } });
   installSessionRenewalRetry(h.win);
   assert.deepEqual(await (await h.win.fetch('/api/private')).json(), { fake: 'current' });
-  assert.equal(calls, 2);
-  assert.equal(h.calls[1].cache, 'no-store', 'an unconfirmed native incarnation cannot consume a previous offline copy');
+  assert.equal(calls, 3);
+  assert.equal(new URL(h.calls[1].url).pathname, '/api/auth/me');
+  assert.equal(h.calls[1].cache, 'no-store', 'the new native incarnation is verified without any offline copy');
+  assert.equal(h.calls[1].headers.get(SCOPE_HEADER), null);
+  assert.equal(h.calls[2].cache, 'reload');
+  assert.equal(h.calls[2].headers.get(SCOPE_HEADER), A);
+});
+
+
+test('normal native renewal coalesces fresh verification before concurrent ordinary reads', async () => {
+  const verified = deferred();
+  const h = page({ native: true, fetcher: async req => {
+    if (new URL(req.url).pathname === '/api/auth/me') {
+      await verified.promise;
+      h.setCookie(B); // Real middleware can renew the hint before fetch resolves.
+      return json({ user: { id: 101 } }, B,
+        { headers: { 'X-Usernode-Cache-Expires': new Date(Date.now() + 86400_000).toISOString() } });
+    }
+    return json({ fake: 'same viewer, rotated session' }, B);
+  } });
+  h.win.UsernodeReact.apiCache.setViewer(101);
+  h.renewal.epoch++;
+  const first = h.win.fetch('/api/private'), second = h.win.fetch('/api/private');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(h.calls.length, 1, 'both callers wait for one identity verification');
+  assert.equal(new URL(h.calls[0].url).pathname, '/api/auth/me');
+  assert.equal(h.calls[0].cache, 'no-store');
+  assert.equal(h.calls[0].headers.get(SCOPE_HEADER), null);
+  verified.resolve();
+  for (const res of await Promise.all([first, second])) {
+    assert.deepEqual(await res.json(), { fake: 'same viewer, rotated session' });
+  }
+  for (const req of h.calls.slice(1)) {
+    assert.equal(req.headers.get(SCOPE_HEADER), B);
+    assert.equal(req.cache, 'reload');
+  }
+  await h.win.fetch('/api/private');
+  assert.equal(h.calls.length, 4, 'later reads reuse the verified epoch without another /me');
+});
+
+test('native verification cannot admit another viewer or overwrite a later identity boundary', async t => {
+  for (const superseded of ['viewer', 'logout', 'renewal', 'cookie']) await t.test(superseded, async () => {
+    const held = deferred();
+    const h = page({ native: true, fetcher: () => held.promise });
+    h.win.UsernodeReact.apiCache.setViewer(101);
+    h.renewal.epoch++;
+    const pending = h.win.fetch('/api/private');
+    await new Promise(resolve => setImmediate(resolve));
+    if (superseded === 'logout') h.win.UsernodeReact.apiCache.reset();
+    if (superseded === 'renewal') h.renewal.epoch++;
+    if (superseded === 'cookie') h.setCookie('c'.repeat(64));
+    held.resolve(json({ user: { id: superseded === 'viewer' ? 202 : 101 } }, B,
+      { headers: { 'X-Usernode-Cache-Expires': new Date(Date.now() + 86400_000).toISOString() } }));
+    await assert.rejects(pending, { name: 'AbortError' });
+    assert.equal(h.calls.length, 1, 'no private request follows failed verification');
+    assert.equal(readApiCacheScope(h.win.document), superseded === 'cookie' ? 'c'.repeat(64) : A);
+  });
+});
+
+test('a failed native verification permits a later retry without reopening the former partition', async () => {
+  let working = false;
+  const h = page({ native: true, fetcher: async req => {
+    if (!working) throw new TypeError('synthetic verification offline');
+    return json(new URL(req.url).pathname === '/api/auth/me' ? { user: { id: 101 } } : { fake: 'current' }, B,
+      { headers: { 'X-Usernode-Cache-Expires': new Date(Date.now() + 86400_000).toISOString() } });
+  } });
+  h.win.UsernodeReact.apiCache.setViewer(101);
+  h.renewal.epoch++;
+  await assert.rejects(h.win.fetch('/api/private'), /verification offline/);
+  assert.equal(h.calls.length, 1);
+  assert.equal(h.calls[0].cache, 'no-store');
+  working = true;
+  assert.deepEqual(await (await h.win.fetch('/api/private')).json(), { fake: 'current' });
+  assert.equal(h.calls.at(-1).headers.get(SCOPE_HEADER), B);
+});
+
+
+test('an explicit native /me tolerates its own middleware cookie renewal without a duplicate check', async () => {
+  const h = page({ native: true, fetcher: async () => {
+    h.setCookie(B);
+    return json({ user: { id: 101 } }, B,
+      { headers: { 'X-Usernode-Cache-Expires': new Date(Date.now() + 86400_000).toISOString() } });
+  } });
+  h.win.UsernodeReact.apiCache.setViewer(101);
+  h.renewal.epoch++;
+  assert.deepEqual(await (await h.win.fetch('/api/auth/me')).json(), { user: { id: 101 } });
+  assert.equal(h.calls.length, 1);
+  assert.equal(readApiCacheScope(h.win.document), B);
+});
+
+
+test('an explicit /me can finish after concurrent automatic verification of the same native session', async () => {
+  const explicit = deferred();
+  let checks = 0;
+  const confirmed = () => json({ user: { id: 101 } }, B,
+    { headers: { 'X-Usernode-Cache-Expires': new Date(Date.now() + 86400_000).toISOString() } });
+  const h = page({ native: true, fetcher: async req => {
+    if (new URL(req.url).pathname !== '/api/auth/me') return json({ fake: 'current' }, B);
+    if (++checks === 1) return explicit.promise;
+    h.setCookie(B);
+    return confirmed();
+  } });
+  h.win.UsernodeReact.apiCache.setViewer(101);
+  h.renewal.epoch++;
+  const me = h.win.fetch('/api/auth/me');
+  assert.deepEqual(await (await h.win.fetch('/api/private')).json(), { fake: 'current' });
+  explicit.resolve(confirmed());
+  assert.deepEqual(await (await me).json(), { user: { id: 101 } });
+});
+
+test('aborting one native verification waiter settles it without cancelling another reader', async () => {
+  const held = deferred();
+  const h = page({ native: true, fetcher: req => new URL(req.url).pathname === '/api/auth/me'
+    ? held.promise : Promise.resolve(json({ fake: 'current' }, B)) });
+  h.win.UsernodeReact.apiCache.setViewer(101);
+  h.renewal.epoch++;
+  const controller = new AbortController();
+  const cancelled = h.win.fetch('/api/private', { signal: controller.signal });
+  const other = h.win.fetch('/api/private');
+  const rejected = assert.rejects(cancelled, { name: 'AbortError' });
+  controller.abort();
+  await rejected; // Verification is still held: cancellation cannot wait on its body.
+  assert.equal(h.calls.length, 1);
+  assert.equal(h.calls[0].signal.aborted, false, 'shared verification remains available');
+  held.resolve(json({ user: { id: 101 } }, B,
+    { headers: { 'X-Usernode-Cache-Expires': new Date(Date.now() + 86400_000).toISOString() } }));
+  assert.deepEqual(await (await other).json(), { fake: 'current' });
+  assert.equal(h.calls.length, 2, 'only the uncancelled private request is sent');
 });

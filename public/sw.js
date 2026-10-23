@@ -1354,7 +1354,7 @@ if (typeof module !== 'undefined' && module.exports) {
   // either is a new request, exactly as before.
   const API_SHARE_WINDOW_MS = 100;
   const inflightApi = new Map();
-  const latestApiRead = new Map();
+  const apiReadStates = new Map();
   let apiReadSerial = 0;
   let apiEpoch = 0;
   let activeApiScope = null;
@@ -1367,6 +1367,29 @@ if (typeof module !== 'undefined' && module.exports) {
     const run = apiCacheWork.then(work, work);
     apiCacheWork = run.catch(() => {});
     return run;
+  }
+
+  function apiReadState(key) {
+    if (!apiReadStates.has(key.url)) {
+      // Dropped state objects fence their outstanding reads and writes.
+      if (apiReadStates.size > API_CACHE_MAX_ENTRIES * 4) apiReadStates.clear();
+      apiReadStates.set(key.url, { latestRead: 0, invalidation: 0 });
+    }
+    return apiReadStates.get(key.url);
+  }
+
+  function invalidateApiEntry(key) {
+    // A refusal is authoritative even when a newer request has started or
+    // failed. Fence every already-started read/put before awaiting storage;
+    // only a request begun after this decision may refill the entry.
+    apiReadState(key).invalidation++;
+    inflightApi.clear();
+    return queueApiCacheWork(async () => {
+      const cache = await caches.open(API_CACHE);
+      // A URL's permission applies to every Vary representation, including
+      // one cached under a different Accept/header combination.
+      await cache.delete(key, { ignoreVary: true });
+    });
   }
 
   function apiContext(request) {
@@ -1414,12 +1437,17 @@ if (typeof module !== 'undefined' && module.exports) {
     if (!currentApiContext(context)) return staleApiResponse();
     const cache = await caches.open(API_CACHE);
     const key = apiCacheKey(event.request, context.scope);
-    // A slower, earlier success must not undo a newer refusal/no-store
-    // policy (or repopulate the offline copy that refusal just removed).
-    if (latestApiRead.size > API_CACHE_MAX_ENTRIES * 4) latestApiRead.clear();
+    const state = apiReadState(key);
+    const invalidation = state.invalidation;
     const serial = ++apiReadSerial;
-    latestApiRead.set(key.url, serial);
-    const stillCurrent = () => currentApiContext(context) && latestApiRead.get(key.url) === serial;
+    state.latestRead = serial;
+    // Starting another read cannot revoke a valid offline fallback. Only
+    // identity changes and actual refusal/storage decisions can do that.
+    const canReplay = () => currentApiContext(context) && apiReadStates.get(key.url) === state
+      && state.invalidation === invalidation;
+    // Keep write ordering separate: an older success must not overwrite a
+    // newer response or undo a known refusal, even while its body downloads.
+    const stillCurrent = () => canReplay() && state.latestRead === serial;
     // Did we answer this request from cache while the network was still in
     // flight? Only then is a late, DIFFERENT answer worth telling the page
     // about — on an ordinary fresh load the page already HAS that answer,
@@ -1444,7 +1472,7 @@ if (typeof module !== 'undefined' && module.exports) {
       : settling ? CORRECTION_WAIT_MS
         : laned ? BOOT_API_TIMEOUT_MS : API_TIMEOUT_MS;
 
-    const { response, pending } = await raceNetworkAndCache({
+    const { response, fromCache, pending } = await raceNetworkAndCache({
       startFetch: () => sharedApiFetch(event.request).then((res) => {
         // Only genuine successes are worth replaying offline; 401/403/500
         // must never mask a later real answer. Clone before returning —
@@ -1472,17 +1500,18 @@ if (typeof module !== 'undefined' && module.exports) {
               await notifyClients({ type: 'api-updated', url: event.request.url, scope: context.scope });
             }
           })));
-        } else if (stillCurrent()) {
-          // Revocation, changed policy and 304s cannot leave a prior body
-          // available to a later offline fallback.
-          event.waitUntil(queueApiCacheWork(() => stillCurrent() && cache.delete(key)));
+        } else if (currentApiContext(context)) {
+          // A known refusal, changed policy or 304 always retires the old
+          // body, regardless of overlapping requests or their start order.
+          event.waitUntil(invalidateApiEntry(key));
         }
         return res;
       }),
       matchCache: async () => {
-        if (!stillCurrent()) return undefined;
+        await apiCacheWork;
+        if (!canReplay()) return undefined;
         const hit = await cache.match(key);
-        if (!stillCurrent()) return undefined;
+        if (!canReplay()) return undefined;
         if (!apiEntryCanReplay(hit, context.scope)) {
           if (hit) await queueApiCacheWork(() => cache.delete(key));
           return undefined;
@@ -1494,7 +1523,7 @@ if (typeof module !== 'undefined' && module.exports) {
       schedule: swSchedule,
     });
     if (pending) event.waitUntil(pending.catch(() => {}));
-    return currentApiContext(context) ? response : staleApiResponse();
+    return currentApiContext(context) && (!fromCache || canReplay()) ? response : staleApiResponse();
   }
 
   async function cacheFirstImmutable(event) {
@@ -1655,7 +1684,7 @@ if (typeof module !== 'undefined' && module.exports) {
   function clearApiCaches() {
     apiEpoch++;
     inflightApi.clear();
-    latestApiRead.clear();
+    apiReadStates.clear();
     correcting.clear();
     awaitingNetwork.clear();
     return queueApiCacheWork(async () => {
@@ -1822,11 +1851,7 @@ if (typeof module !== 'undefined' && module.exports) {
       const scope = apiScopeOf(req);
       if (scope && url.origin === ORIGIN && url.pathname.startsWith('/api/')) {
         const key = apiCacheKey(req, scope);
-        latestApiRead.delete(key.url);
-        event.waitUntil(queueApiCacheWork(async () => {
-          const cache = await caches.open(API_CACHE);
-          await cache.delete(key);
-        }));
+        event.waitUntil(invalidateApiEntry(key));
       }
       return;
     }

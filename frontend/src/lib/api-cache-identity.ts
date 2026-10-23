@@ -24,10 +24,12 @@ export function installApiCacheIdentity(win: any = typeof window !== 'undefined'
     catch { return { epoch: 0, settled: null }; }
   };
   let epoch = 0;
+  let boundary = 0;
   let observedScope = scope();
   let observedNativeEpoch = renewal().epoch;
   let verifiedNativeEpoch = observedNativeEpoch;
   let viewer: string | null | undefined;
+  let nativeVerification: { epoch: number; boundary: number; pending: Promise<void> } | null = null;
 
   const changed = () => new DOMException('Session changed', 'AbortError');
   function observe(): Context {
@@ -49,10 +51,78 @@ export function installApiCacheIdentity(win: any = typeof window !== 'undefined'
     try { win.localStorage.setItem(BOUNDARY_KEY, `${Date.now()}:${Math.random()}`); } catch { /* no storage */ }
   }
   function reset({ broadcast = false } = {}): void {
+    boundary++;
     epoch++;
     observedScope = scope();
     observedNativeEpoch = renewal().epoch;
     if (broadcast) broadcastBoundary();
+  }
+
+  function rememberScope(res: Response, label: string): boolean {
+    const expiry = Date.parse(res.headers.get(EXPIRY_HEADER) || '');
+    if (!Number.isFinite(expiry) || expiry <= Date.now()) return false;
+    try {
+      win.document.cookie = `${API_SCOPE_COOKIE}=${label}; Path=/; SameSite=Lax; Expires=${new Date(expiry).toUTCString()}${win.location.protocol === 'https:' || win.location.href.startsWith('https:') ? '; Secure' : ''}`;
+    } catch { /* unavailable cookies disable the offline partition */ }
+    return true;
+  }
+
+  const currentViewer = () => viewer !== undefined ? viewer
+    : win.App?.user?.id == null ? undefined : String(win.App.user.id);
+
+  async function adoptNativeIdentity(res: Response, context: Context, boundaryAtStart: number,
+    expectedViewer: string | null | undefined): Promise<Context> {
+    const label = res.headers.get(API_SCOPE_HEADER);
+    if (!res.ok || res.redirected || !/^[a-f0-9]{64}$/.test(label || '')) throw changed();
+    const data = await res.clone().json();
+    const active = renewal(), cookie = scope();
+    if (boundaryAtStart !== boundary || active.epoch !== context.nativeEpoch || active.settled
+        || currentViewer() !== expectedViewer || data?.user?.id == null
+        || (expectedViewer !== undefined && String(data.user.id) !== expectedViewer)
+        || (cookie !== context.scope && cookie !== label)) throw changed();
+    // The real auth middleware may already have renewed both cookies.
+    // Permit that exact server-confirmed label, never an intervening login.
+    if (!rememberScope(res, label!)) throw changed();
+    const confirmed = observe();
+    verifiedNativeEpoch = confirmed.nativeEpoch;
+    return confirmed;
+  }
+
+  function confirmNativeIdentity(context: Context): Promise<void> {
+    if (nativeVerification?.epoch === context.nativeEpoch && nativeVerification.boundary === boundary) {
+      return nativeVerification.pending;
+    }
+    const boundaryAtStart = boundary, expectedViewer = currentViewer();
+    const pending = (async () => {
+      // An already-admitted native document skips admission's /me on resume.
+      // Confirm the rotated cookie once, before any ordinary request can
+      // consume an offline copy. Use the original fetch to avoid recursion.
+      const res = await send(new Request(new URL('/api/auth/me', win.location.href), {
+        credentials: 'same-origin', cache: 'no-store',
+      }));
+      await adoptNativeIdentity(res, context, boundaryAtStart, expectedViewer);
+    })();
+    const verification = { epoch: context.nativeEpoch, boundary: boundaryAtStart, pending };
+    nativeVerification = verification;
+    void pending.finally(() => {
+      if (nativeVerification === verification) nativeVerification = null;
+    }).catch(() => {});
+    return pending;
+  }
+
+  function waitForSession<T>(pending: Promise<T>, signal: AbortSignal): Promise<T> {
+    signal.throwIfAborted();
+    return new Promise((resolve, reject) => {
+      const abort = () => { signal.removeEventListener('abort', abort); reject(signal.reason); };
+      signal.addEventListener('abort', abort, { once: true });
+      // Cancelling one caller must not cancel the verification another
+      // reader is awaiting, but that caller still settles immediately.
+      pending.then(value => {
+        signal.removeEventListener('abort', abort); resolve(value);
+      }, error => {
+        signal.removeEventListener('abort', abort); reject(error);
+      });
+    });
   }
 
   // Fence body consumption as well as fetch resolution. JSON parsing or a
@@ -116,20 +186,31 @@ export function installApiCacheIdentity(win: any = typeof window !== 'undefined'
     const identityRead = req.method === 'GET' && url.pathname === '/api/auth/me';
     if (mutation) { reset({ broadcast: true }); }
     // Native restoration installs its HttpOnly cookie outside this document.
-    // Wait for that boundary, and use network-only reads until /me confirms it.
+    // Wait for that boundary, then confirm its new identity before cache use.
     const restoring = !mutation && renewal().settled;
-    if (restoring) { try { await restoring; } catch { /* the server still decides */ } }
-    const before = observe();
+    if (restoring) {
+      try { await waitForSession(restoring, req.signal); }
+      catch { req.signal.throwIfAborted(); /* the server still decides */ }
+    }
+    let before = observe();
     const headers = new Headers(req.headers);
     headers.delete(API_SCOPE_HEADER);
     const tokenRequest = headers.has('authorization') || headers.has('x-usernode-token')
       || url.searchParams.has('token') || new URL(win.location.href).searchParams.has('token');
+    if (!auth && !tokenRequest && req.credentials !== 'omit' && verifiedNativeEpoch !== before.nativeEpoch) {
+      req.signal.throwIfAborted();
+      await waitForSession(confirmNativeIdentity(before), req.signal);
+      before = observe();
+    }
     const permitted = !!before.scope && !auth && !tokenRequest && req.credentials !== 'omit'
       && verifiedNativeEpoch === before.nativeEpoch;
     if (permitted) headers.set(API_SCOPE_HEADER, before.scope!);
     // Revalidate the browser's HTTP copy too. Permitted offline fallbacks
     // still work in the worker; private reads do not race a stale deadline
     // against the server's current permission decision.
+    const boundaryBefore = boundary, expectedViewer = currentViewer();
+    const confirmsNative = identityRead && !tokenRequest && req.credentials !== 'omit'
+      && verifiedNativeEpoch !== before.nativeEpoch;
     const res = await send(new Request(req, { headers,
       cache: permitted && req.cache !== 'no-store' ? 'reload' : 'no-store' }));
     const responseScope = /^[a-f0-9]{64}$/.test(res.headers.get(API_SCOPE_HEADER) || '')
@@ -137,15 +218,12 @@ export function installApiCacheIdentity(win: any = typeof window !== 'undefined'
     let context = before;
     const now = observe();
     const unchanged = now.epoch === before.epoch && now.nativeEpoch === before.nativeEpoch && now.scope === before.scope;
-    if (identityRead && res.ok && responseScope && unchanged) {
+    if (confirmsNative && res.ok && responseScope) {
+      context = await adoptNativeIdentity(res, before, boundaryBefore, expectedViewer);
+    } else if (identityRead && res.ok && responseScope && unchanged) {
       // Existing sessions predate the hint cookie. Only a fresh /me may
       // bootstrap it, and an intervening login always wins over this read.
-      const expiry = Date.parse(res.headers.get(EXPIRY_HEADER) || '');
-      if (Number.isFinite(expiry) && expiry > Date.now()) {
-        try {
-          win.document.cookie = `${API_SCOPE_COOKIE}=${responseScope}; Path=/; SameSite=Lax; Expires=${new Date(expiry).toUTCString()}${url.protocol === 'https:' ? '; Secure' : ''}`;
-        } catch { /* unavailable cookies disable the offline partition */ }
-      }
+      rememberScope(res, responseScope);
       context = observe();
       verifiedNativeEpoch = context.nativeEpoch;
     } else if (mutation) {

@@ -20,16 +20,31 @@ const json = (body, scope = A, { status = 200, policy = 'private', headers = {} 
 function worker({ source = fs.readFileSync(require.resolve('../../public/sw.js'), 'utf8'), fetcher } = {}) {
   const stores = new Map(), handlers = {}, messages = [], requests = [], lifetime = [];
   let network = fetcher || (async () => json({ fake: 'A' }));
-  const keyOf = key => new URL(typeof key === 'string' ? key : key.url, ORIGIN).href;
+  const requestOf = key => typeof key === 'string' ? new Request(new URL(key, ORIGIN)) : key;
+  const keyOf = key => requestOf(key).url;
+  const matches = (entry, request, options = {}) => options.ignoreVary
+    || (entry.response.headers.get('Vary') || '').split(',').filter(Boolean)
+      .every(name => name.trim() !== '*' && entry.request.headers.get(name.trim()) === request.headers.get(name.trim()));
   const caches = {
     async open(name) {
       if (!stores.has(name)) stores.set(name, new Map());
       const data = stores.get(name);
       return {
-        async match(key) { return data.get(keyOf(key))?.clone(); },
-        async put(key, response) { data.set(keyOf(key), response.clone()); },
-        async delete(key) { return data.delete(keyOf(key)); },
-        async keys() { return [...data.keys()].map(key => new Request(key)); },
+        async match(key, options) {
+          return data.get(keyOf(key))?.find(entry => matches(entry, requestOf(key), options))?.response.clone();
+        },
+        async put(key, response) {
+          const request = requestOf(key), variants = data.get(keyOf(key)) || [];
+          data.set(keyOf(key), [...variants.filter(entry => !matches(entry, request)),
+            { request: request.clone(), response: response.clone() }]);
+        },
+        async delete(key, options) {
+          const variants = data.get(keyOf(key)) || [];
+          const keep = variants.filter(entry => !matches(entry, requestOf(key), options));
+          if (keep.length) data.set(keyOf(key), keep); else data.delete(keyOf(key));
+          return keep.length !== variants.length;
+        },
+        async keys() { return [...data.values()].flat().map(entry => entry.request.clone()); },
       };
     },
     async keys() { return [...stores.keys()]; },
