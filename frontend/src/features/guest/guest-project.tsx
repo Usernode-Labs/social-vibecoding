@@ -62,13 +62,29 @@ export function VoteCard({ vote, app, onIntent, signedIn = false }: {
   const pct = total ? Math.round((100 * vote.yes) / total) : 0;
   const title = vote.title || t('auth:guest.project.untitledChange');
   const pictures = vote.pictures || null;
+  // A still wider than its 4:3 frame (a crop around the changed part, not a
+  // whole screen) is shown whole on white: cropped to fill, it was zoomed in,
+  // lost its edges and had its Before/After label over its words (#5851).
+  const [wide, setWide] = useState<Record<string, boolean>>({});
   return (
     <article data-guest-vote={vote.id} className={cn(CARD, 'flex flex-col gap-2.5 overflow-hidden p-3.5')}>
       {pictures ? (
         <div data-guest-vote-pictures="" className={cn('-mx-3.5 -mt-3.5 grid gap-px bg-[color:var(--app-sheet-line)]', pictures.before ? 'grid-cols-2' : 'grid-cols-1')}>
           {([['before', pictures.before], ['after', pictures.after]] as const).map(([side, src]) => (src ? (
-            <figure key={side} className="relative m-0 aspect-[4/3] overflow-hidden bg-zinc-100 dark:bg-zinc-800">
-              <img src={src} alt="" loading="lazy" draggable={false} className="h-full w-full object-cover object-top" />
+            <figure key={side} className={cn('relative m-0 aspect-[4/3] overflow-hidden', wide[side] ? 'bg-white' : 'bg-zinc-100 dark:bg-zinc-800')}>
+              <img
+                src={src}
+                alt=""
+                loading="lazy"
+                draggable={false}
+                data-guest-vote-fit={wide[side] ? 'contain' : 'cover'}
+                className={cn('h-full w-full', wide[side] ? 'object-contain' : 'object-cover object-top')}
+                onLoad={(e) => {
+                  const { naturalWidth: w, naturalHeight: h } = e.currentTarget;
+                  const isWide = !!h && w / h > 4 / 3;
+                  setWide((m) => (m[side] === isWide ? m : { ...m, [side]: isWide }));
+                }}
+              />
               <figcaption className="absolute bottom-1.5 left-1.5 rounded-full bg-zinc-950/70 px-2 py-0.5 text-[11px] font-bold text-white">
                 {side === 'before' ? t('auth:guest.project.before') : t('auth:guest.project.after')}
               </figcaption>

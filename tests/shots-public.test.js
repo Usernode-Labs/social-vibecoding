@@ -69,6 +69,12 @@ test('the guest project page draws a change\'s before and after, labelled, only 
   assert.match(html, /<img src="\/api\/public\/apps\/game-corner\/changes\/7\/stills\/b"[^>]*>.*<figcaption[^>]*>Before<\/figcaption>/);
   assert.match(html, /<img src="\/api\/public\/apps\/game-corner\/changes\/7\/stills\/a"[^>]*>.*<figcaption[^>]*>After<\/figcaption>/);
   assert.equal(message('auth:guest.project.before'), 'Before');
+  // A still starts cropped to fill from its top; one wider than the 4:3
+  // frame is shown whole once it loads (#5851), never zoomed past its edges.
+  assert.match(html, /data-guest-vote-fit="cover"[^>]*class="h-full w-full object-cover object-top"/);
+  const card = read('frontend/src/features/guest/guest-project.tsx');
+  assert.match(card, /const isWide = !!h && w \/ h > 4 \/ 3;/);
+  assert.match(card, /wide\[side\] \? 'object-contain' : 'object-cover object-top'/);
   const afterOnly = renderComponent('frontend/src/features/guest/guest-project.tsx', 'VoteCard', props({ before: null, after: '/x' }));
   assert.doesNotMatch(afterOnly, />Before</);
   assert.match(afterOnly, /grid-cols-1/);
