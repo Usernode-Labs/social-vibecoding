@@ -28,6 +28,7 @@ const { Pool } = require('pg');
 const { getPool } = require('../db/pool');
 const log = require('./logger');
 const secrets = require('./secrets');
+const { verifyDebugRole } = require('./debug-role-policy');
 
 const ROLE = 'usernode_debug_ro';
 const SAFE_IDENT = /^[a-z_][a-z0-9_]*$/;
@@ -213,6 +214,9 @@ const DENIED_COLUMNS = {
 // discovery supplies existence, never permission. In particular, transcripts,
 // drafts, workflow payloads/results/checkpoints/errors, stream bodies, secrets
 // and arbitrary JSON never become readable just because a migration adds them.
+// An expansion also needs reviewed types/CHECK constraints in
+// debug-access-schema.json. lint:sql verifies the migrated schema and the
+// effective role privileges; release setup runs the same verifier below.
 // The older exclusions above remain a second check and are shared with the
 // separate human-admin SQL console, which has its own deliberate read policy.
 const READABLE_COLUMNS = Object.freeze(Object.fromEntries(Object.entries({
@@ -306,7 +310,8 @@ function quoteIdent(name) {
 // Pure: intersect reviewed columns with the actual base-table inventory.
 // Unknown tables/columns and views receive no grants. Input shape:
 // [{ table, kind: 'r' | 'p' | ..., columns: [...] }].
-function buildGrantStatements(tables) {
+function buildGrantStatements(tables, role = ROLE) {
+  if (!SAFE_IDENT.test(role)) throw new Error('unsafe debug role identifier');
   const stmts = [];
   for (const { table, kind, columns } of tables || []) {
     if (!SAFE_IDENT.test(table)) continue;
@@ -317,7 +322,7 @@ function buildGrantStatements(tables) {
     const allowed = (columns || []).filter(c => SAFE_IDENT.test(c)
       && READABLE_COLUMNS[table].includes(c) && !denied.includes(c));
     if (!allowed.length) continue;
-    stmts.push(`GRANT SELECT (${allowed.map(quoteIdent).join(', ')}) ON public.${quoteIdent(table)} TO ${ROLE}`);
+    stmts.push(`GRANT SELECT (${allowed.map(quoteIdent).join(', ')}) ON public.${quoteIdent(table)} TO ${role}`);
   }
   return stmts;
 }
@@ -505,6 +510,9 @@ async function bootstrapRole(config) {
   for (const stmt of grants) {
     await pool.query(stmt);
   }
+  // No shared success record or credential is published until the effective
+  // privileges and reviewed column definitions match the current policy.
+  const verified = await verifyDebugRole(pool, { role: ROLE, readableColumns: READABLE_COLUMNS });
 
   // Rebuild the RO pool so it picks up the fresh password.
   if (_roPool) {
@@ -516,6 +524,8 @@ async function bootstrapRole(config) {
   log.info('prod-debug', 'Read-only debug role ensured', {
     role: ROLE, db: dbName, grantedTables: grants.length,
     deniedTables: DENIED_TABLES.size,
+    policyColumns: verified.columns, policyCheckMs: verified.durationMs,
+    policyHash: verified.policyHash, release: process.env.GIT_SHA || null,
   });
 }
 

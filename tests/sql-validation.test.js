@@ -86,3 +86,12 @@ test('proposal unit suites run SQL validation against the worker PostgreSQL 17 p
   // to keep: the data directory is discarded with the job's container.
   assert.match(unitSuite, /pg_ctl -D \/home\/node\/pgdata -w -o "-c max_locks_per_transaction=1024 -c fsync=off -c synchronous_commit=off -c full_page_writes=off" -l \/tmp\/unit-suite-postgres\.log start/);
 });
+
+test('SQL validation always audits debug permissions on the existing complete shadow schema', () => {
+  const checker = read('scripts/check-sql.js');
+  assert.match(checker, /await applySchema\(shadow\.shadowUrl\);\s+const debugPolicy = await validateDebugAccess\(shadow\.shadowUrl\);/);
+  assert.match(checker, /requireAllColumns: true/);
+  assert.match(checker, /await reader\.connect\(\)/, 'probes use the restricted login');
+  assert.match(checker, /DROP OWNED BY/);
+  assert.match(checker, /DROP ROLE/);
+});

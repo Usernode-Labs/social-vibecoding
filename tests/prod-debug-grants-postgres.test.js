@@ -1,14 +1,18 @@
 'use strict';
 
-// Real ACLs, including grants left by an older release. Each run creates its
-// own database and role; TEST_DATABASE_URL must allow CREATEDB/CREATEROLE.
+// Real ACLs and drift detection against the complete application schema.
+// lint:sql also requires this policy check on its existing shadow schema,
+// even when this optional local suite skips without TEST_DATABASE_URL.
+// Each run owns its database/role; TEST_DATABASE_URL needs CREATEDB/CREATEROLE.
 // Only the role identifier is substituted at the database boundary so the
 // actual bootstrap/runQuery code cannot collide with another test's role.
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
+const fs = require('node:fs');
 const Module = require('node:module');
 const { Client, Pool } = require('pg');
+const { verifyDebugRole } = require('../src/services/debug-role-policy');
 
 const quote = name => `"${name.replaceAll('"', '""')}"`;
 const marker = 'FAKE_PRIVATE_DEBUG_FIXTURE';
@@ -23,6 +27,8 @@ function debugModule(pool, role) {
     if (name === 'pg') return { Pool: class extends Pool {
       constructor(options) { super({ ...options, user: role }); }
     } };
+    if (name === './debug-role-policy') return { verifyDebugRole: (pool, options) =>
+      verifyDebugRole(pool, { ...options, role }) };
     return original.apply(this, arguments);
   };
   delete require.cache[modulePath];
@@ -51,18 +57,17 @@ test('production debug bootstrap removes old grants and exposes only reviewed me
   await admin.query(`CREATE ROLE ${quote(role)} LOGIN PASSWORD 'fake-old-debug-password'`);
   const url = new URL(process.env.TEST_DATABASE_URL);
   url.pathname = `/${database}`;
-  pool = new Pool({ connectionString: url.href, max: 2 });
+  pool = new Pool({ connectionString: url.href, max: 1 });
   const config = { databaseUrl: url.href, dataEncryptionKey: crypto.randomBytes(32).toString('hex') };
-  await pool.query(`
-    CREATE TABLE platform_db_roles (role TEXT PRIMARY KEY, ok BOOLEAN, reason TEXT,
-      secret_enc TEXT, release TEXT, ensured_at TIMESTAMPTZ);
-    CREATE TABLE apps (id INTEGER, slug TEXT, status TEXT, db_password TEXT, future_private TEXT);
-    CREATE TABLE users (id INTEGER, username TEXT, password TEXT);
-    CREATE TABLE chat_sessions (id INTEGER, app_id INTEGER, status TEXT, active_turn JSONB, spec_md TEXT);
-    INSERT INTO apps VALUES (1, 'fake-project', 'running', '${marker}', '${marker}');
-    INSERT INTO users VALUES (1, 'fake-user', '${marker}');
-    INSERT INTO chat_sessions VALUES (1, 1, 'active', '{"input":"${marker}"}', '${marker}');
-  `);
+  await pool.query(fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8'));
+  const { rows: [owner] } = await pool.query(
+    'INSERT INTO users (username, password) VALUES ($1, $2) RETURNING id', ['fake-debug-user', marker]);
+  const { rows: [app] } = await pool.query(
+    `INSERT INTO apps (name, slug, created_by, repo_url, status, db_password)
+     VALUES ('Fake fixture', 'fake-project', $1, 'https://example.invalid/fake', 'running', $2) RETURNING id`, [owner.id, marker]);
+  await pool.query(`CREATE TABLE new_private_store (content TEXT);
+    INSERT INTO new_private_store VALUES ('${marker}');
+    ALTER TABLE apps ADD COLUMN future_private TEXT DEFAULT '${marker}'`);
   const privateFields = {
     agent_sessions: ['summary_md', 'focus_context', 'active_turn'],
     agent_session_drafts: ['content'],
@@ -73,14 +78,13 @@ test('production debug bootstrap removes old grants and exposes only reviewed me
     wf_work: ['input', 'checkpoint', 'last_error', 'result'],
     wf_work_attempts: ['error'],
     stream_events: ['event'],
-    sms_otp_codes: ['session_hash', 'code_hash', 'phone_e164'],
     new_private_store: ['content'],
   };
+  const { rows: inventory } = await pool.query(
+    `SELECT table_name, column_name FROM information_schema.columns WHERE table_schema = 'public'`);
   for (const [table, columns] of Object.entries(privateFields)) {
-    await pool.query(`CREATE TABLE ${quote(table)} (id INTEGER, status TEXT, state TEXT,
-      ${columns.map(column => `${quote(column)} TEXT`).join(', ')})`);
-    await pool.query(`INSERT INTO ${quote(table)} VALUES (1, 'queued', 'running',
-      ${columns.map(() => `'${marker}'`).join(', ')})`);
+    privateFields[table] = columns.filter(column => inventory.some(row => row.table_name === table && row.column_name === column));
+    assert.ok(privateFields[table].length, `${table} retains a private field`);
   }
   await pool.query(`
     CREATE VIEW old_private_view AS SELECT input FROM wf_work;
@@ -99,7 +103,7 @@ test('production debug bootstrap removes old grants and exposes only reviewed me
     database, user: role, password: 'fake-old-debug-password' });
   await before.connect();
   try {
-    assert.equal((await before.query('SELECT input FROM wf_work')).rows[0].input, marker,
+    assert.equal((await before.query('SELECT password FROM users WHERE id = $1', [owner.id])).rows[0].password, marker,
       'positive control: a stale role can read the synthetic private marker');
   } finally { await before.end(); }
 
@@ -107,12 +111,10 @@ test('production debug bootstrap removes old grants and exposes only reviewed me
   await debug.ensureRole(config);
   assert.equal(debug.isAvailable(), true);
   const read = sql => debug.runQuery(sql, { config });
-  assert.deepEqual((await read(`SELECT a.slug, a.status, s.status AS session_status
-    FROM apps a JOIN chat_sessions s ON s.app_id = a.id`)).rows,
-  [{ slug: 'fake-project', status: 'running', session_status: 'active' }]);
-  assert.deepEqual((await read('SELECT status, count(*)::int AS n FROM wf_work GROUP BY status')).rows,
-    [{ status: 'queued', n: 1 }]);
-  assert.deepEqual((await read('SELECT state FROM wf_instances')).rows, [{ state: 'running' }]);
+  assert.deepEqual((await read(`SELECT slug, status FROM apps WHERE id = ${app.id}`)).rows,
+    [{ slug: 'fake-project', status: 'running' }]);
+  assert.deepEqual((await read('SELECT status FROM wf_work LIMIT 0')).rows, []);
+  assert.deepEqual((await read('SELECT state FROM wf_instances LIMIT 0')).rows, []);
   const denied = async sql => assert.rejects(read(sql), { code: '42501' }, sql);
   for (const [table, columns] of Object.entries(privateFields)) {
     for (const column of columns) await denied(`SELECT ${quote(column)} FROM ${quote(table)}`);
@@ -123,7 +125,7 @@ test('production debug bootstrap removes old grants and exposes only reviewed me
     'SELECT future_private FROM apps', 'SELECT active_turn, spec_md FROM chat_sessions',
     'SELECT input FROM old_private_view', 'SELECT input FROM old_private_materialized',
     'SELECT "odd-column" FROM "odd-table"',
-    'SELECT w.input FROM apps a JOIN wf_work w ON a.id = w.id',
+    'SELECT w.input FROM apps a JOIN wf_work w ON TRUE',
     'SELECT input FROM (SELECT input FROM wf_work) t',
   ]) await denied(sql);
 
@@ -132,9 +134,41 @@ test('production debug bootstrap removes old grants and exposes only reviewed me
   await denied('SELECT later_private FROM apps');
   await debug.ensureRole(config);
   await denied('SELECT later_private FROM apps');
-  assert.equal((await read('SELECT id FROM apps')).rows[0].id, 1);
+  assert.equal((await read(`SELECT id FROM apps WHERE id = ${app.id}`)).rows[0].id, app.id);
   await assert.rejects(read("UPDATE apps SET status = 'changed'"), { code: '25006' });
   // Even changing the read-only default cannot manufacture write grants.
   await read('SET default_transaction_read_only = off');
   await denied("UPDATE apps SET status = 'changed'");
+
+  const verify = () => verifyDebugRole(pool, { role, readableColumns: debug.READABLE_COLUMNS, requireAllColumns: true });
+  const checked = await verify();
+  t.diagnostic(`complete-schema catalog audit: ${checked.columns} approved columns, ${checked.durationMs} ms`);
+  // Roll back every fault, including cluster-wide role/default ACL changes.
+  const faults = [
+    ['PUBLIC private grant', 'GRANT SELECT ON new_private_store TO PUBLIC', /unexpected SELECT/],
+    ['membership', `CREATE ROLE ${quote(`alternate_${suffix}`)};
+      GRANT ${quote(`alternate_${suffix}`)} TO ${quote(role)}`, /role membership/],
+    ['ownership', `ALTER TABLE new_private_store OWNER TO ${quote(role)}`, /unexpected SELECT|write privilege/],
+    ['privileged function', `CREATE FUNCTION synthetic_private_reader() RETURNS TEXT LANGUAGE SQL
+      SECURITY DEFINER AS 'SELECT content FROM new_private_store LIMIT 1'`, /privileged function authority/],
+    ['other schema', `CREATE SCHEMA synthetic_private; GRANT USAGE ON SCHEMA synthetic_private TO ${quote(role)}`, /schema authority/],
+    ['default grants', `ALTER DEFAULT PRIVILEGES GRANT SELECT ON TABLES TO ${quote(role)}`, /future object grant/],
+    ['PUBLIC default grants', 'ALTER DEFAULT PRIVILEGES GRANT SELECT ON TABLES TO PUBLIC', /future object grant/],
+    ['sequence grant', `GRANT USAGE ON SEQUENCE users_id_seq TO ${quote(role)}`, /sequence authority/],
+    ['table-wide grant on reviewed metadata', `GRANT SELECT ON platform_processes TO ${quote(role)}`, /table-wide privilege/],
+    ['zero-column view', `CREATE VIEW synthetic_count AS SELECT FROM new_private_store;
+      GRANT SELECT ON synthetic_count TO PUBLIC`, /table-wide privilege/],
+    ['changed type', 'ALTER TABLE llm_usage ALTER COLUMN total_cost_cents TYPE BIGINT', /review column type\/constraints/],
+    ['lost constraint', 'ALTER TABLE wf_events DROP CONSTRAINT wf_events_result_check', /review column type\/constraints/],
+  ];
+  for (const [name, sql, message] of faults) {
+    await t.test(name, async () => {
+      await pool.query('BEGIN');
+      try {
+        await pool.query(sql);
+        await assert.rejects(verify(), { code: 'DEBUG_POLICY_MISMATCH', message });
+      } finally { await pool.query('ROLLBACK'); }
+    });
+  }
+  await verify();
 });

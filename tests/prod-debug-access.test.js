@@ -60,6 +60,7 @@ test('grant builder: deny-listed columns are excluded via a column-list grant', 
 });
 
 test('grant builder: unsafe identifiers are skipped entirely', () => {
+  assert.throws(() => debugAccess.buildGrantStatements([], 'unsafe"role'), /unsafe debug role/);
   const stmts = grants([
     { table: 'evil"; DROP TABLE users; --', columns: ['id'] },
     { table: 'apps', columns: ['id', 'bad"col'] },
@@ -431,6 +432,7 @@ function stubbedDebugAccess() {
   const origLoad = Module._load;
   const state = { attempts: 0, failTimes: 0 };
   Module._load = function (req) {
+    if (req === './debug-role-policy') return { verifyDebugRole: async () => ({ columns: 1, durationMs: 0 }) };
     if (req === '../db/pool') {
       return { getPool: () => ({
         query: async (sql) => {

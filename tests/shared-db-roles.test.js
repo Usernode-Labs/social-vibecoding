@@ -17,7 +17,7 @@ const Module = require('module');
 const config = { dataEncryptionKey: 'test-data-key', databaseUrl: 'postgres://u:p@db.invalid:5432/usernode' };
 
 // One database, shared by every process (module copy) a test loads.
-function database({ failBootstrap = false } = {}) {
+function database({ failBootstrap = false, failPolicy = false } = {}) {
   const db = { rolePassword: null, rows: new Map(), queries: [], connections: 0 };
   db.pool = {
     query: async (sql, params = []) => {
@@ -58,6 +58,10 @@ function database({ failBootstrap = false } = {}) {
       return { rows: [{ ok: 1 }], rowCount: 1 };
     }
   };
+  db.verifyDebugRole = async () => {
+    if (failPolicy) throw new Error('synthetic unexpected privilege');
+    return { columns: 1, durationMs: 0 };
+  };
   return db;
 }
 
@@ -67,6 +71,7 @@ function processWith(db, modulePath) {
   Module._load = function (req) {
     if (req === '../db/pool' || req === '../../db/pool') return { getPool: () => db.pool };
     if (req === 'pg') return { Pool: db.Pool };
+    if (req === './debug-role-policy') return { verifyDebugRole: db.verifyDebugRole };
     if (req === './logger' || req === '../logger') return new Proxy({}, { get: () => () => {} });
     return origLoad.apply(this, arguments);
   };
@@ -144,6 +149,18 @@ test('before any leader set it up, a web process answers unavailable and asks ag
   const reads = db.queries.filter((q) => q.startsWith('SELECT ok, reason')).length;
   await assert.rejects(web.runQuery('SELECT 1', { config }), (err) => err.code === 'unavailable');
   assert.equal(db.queries.filter((q) => q.startsWith('SELECT ok, reason')).length, reads, 'the record is not read on every call');
+});
+
+test('a policy verification failure publishes no usable debug credential to any web process', async () => {
+  const db = database({ failPolicy: true });
+  const leader = processWith(db, '../src/services/debug-access');
+  await leader.ensureRole(config);
+  assert.equal(leader.isAvailable(), false);
+  assert.equal(db.rows.get('usernode_debug_ro').ok, false);
+  assert.equal(db.rows.get('usernode_debug_ro').secret_enc, null);
+  const web = processWith(db, '../src/services/debug-access');
+  await assert.rejects(web.runQuery('SELECT 1', { config }),
+    error => error.code === 'unavailable' && /unexpected privilege/.test(error.message));
 });
 
 test('the SQL console\'s role is available on a web process once the leader set it up', async () => {
