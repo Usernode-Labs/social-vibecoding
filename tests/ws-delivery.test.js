@@ -165,6 +165,23 @@ test('an uninitialized delivery authority cannot fall back to sending', async ()
   assert.deepEqual(refused, ['unavailable']);
 });
 
+test('notification bodies come only from the authorized delivery row, and a missing row discloses nothing', async () => {
+  const f = fixture(inputs => allow(inputs).map((row, i) => ({ ...row,
+    notification_row: inputs[i].notification_id === 7
+      ? { id: 7, kind: 'conversation_message', conversation_id: 12, conversation_message_content: 'FAKE_CURRENT' } : null,
+  })));
+  const c = client();
+  f.gate.enqueue(c, 'FAKE_STALE', { notificationRequired: true, notificationId: 7 });
+  f.gate.enqueue(c, 'FAKE_PRIVATE', { notificationRequired: true, notificationId: 8 });
+  await turn();
+  assert.deepEqual(f.calls[0].map(d => [d.notification_required, d.notification_id]), [[true, 7], [true, 8]]);
+  assert.equal(f.sent.length, 1);
+  const sent = JSON.parse(f.sent[0][1]);
+  assert.equal(sent.type, 'notification_new');
+  assert.equal(sent.notification.messageContent, 'FAKE_CURRENT');
+  assert.equal(f.sent[0][1].includes('FAKE_STALE'), false);
+});
+
 test('a late older check cannot overwrite a newer action\'s demoted identity', async () => {
   let resume;
   const waiting = new Promise(resolve => { resume = resolve; });

@@ -118,7 +118,7 @@ test('through the real socket push and bus, a batch is one read and a few NOTIFY
   assert.equal(pool.calls.length, 1, 'one read for the 28');
   assert.ok(busCalls.every((c) => /pg_notify/.test(c.sql)));
   // The first at once, the rest of its window together, as many as fit a
-  // NOTIFY (about 550 bytes each: 28 come to 4, against 28 before).
+  // NOTIFY. References keep notification contents off the bus as well.
   const bytes = busCalls.map((c) => Buffer.byteLength(c.params[1], 'utf8'));
   assert.ok(bytes.every((b) => b <= bus.MAX_PAYLOAD_BYTES), 'each fits a NOTIFY');
   const fit = Math.ceil(bytes.reduce((a, b) => a + b, 0) / (bus.MAX_PAYLOAD_BYTES - 200));
@@ -128,7 +128,8 @@ test('through the real socket push and bus, a batch is one read and a few NOTIFY
     const env = JSON.parse(c.params[1]);
     return env.k === 'batch' ? env.b : [env];
   });
-  assert.deepEqual(delivered.map((e) => [e.k, e.r.userId, e.d.notification.id]),
+  for (const e of delivered) assert.deepEqual(Object.keys(e.d).sort(), ['notificationId', 'type']);
+  assert.deepEqual(delivered.map((e) => [e.k, e.r.userId, e.d.notificationId]),
     recipients.map(([id, userId]) => ['user', userId, id]), 'every recipient, in order, as a user push');
 });
 

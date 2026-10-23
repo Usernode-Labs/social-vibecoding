@@ -180,9 +180,10 @@ test('small-group discussions against the full schema', { timeout: 120000 }, asy
     assert.equal(rows[0].read_at, null);
     assert.equal((await rowsFor(jordan, flat)).length, 0, 'never the author');
     assert.equal(await deliveries(rows[0].id), 1, 'a fresh row queues one push to Sam\'s phone');
-    const live = userFrames(sam, 'notification_new').map((f) => f.data.notification);
-    const mine = live.find((n) => n.id === rows[0].id);
-    assert.ok(mine, 'Sam\'s bell hears it at once');
+    const live = userFrames(sam, 'notification_new').find(f => f.data.notificationId === rows[0].id);
+    assert.ok(live, 'Sam\'s bell is told to read its new row');
+    assert.equal(live.data.notification, undefined, 'no earlier hydrated body travels on the bus');
+    const mine = (await require('../src/services/notifications').hydrateNotification(pool, live.data.notificationId)).notification;
     assert.equal(mine.kind, 'channel_message');
     assert.equal(mine.appName, 'Flat 4B Chores');
     assert.equal(mine.sourceUsername, 'gc_jordan');

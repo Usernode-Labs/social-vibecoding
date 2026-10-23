@@ -231,9 +231,9 @@ async function lockInteractionMembership(db, conversationId, userId, { allowInvi
 // Execute an ephemeral fanout while the same normalized direct-pair lock used
 // by block mutations is held. The mutation that prompted the event has
 // already committed; this second short transaction suppresses the event if a
-// block won the race, or makes a concurrent block wait until the send is
-// complete. In shared rooms, only the people who have not blocked the actor
-// receive the actor's message, reaction, or typing envelope.
+// block won the race, or makes a concurrent block wait until enqueueing is
+// complete. WebSocket delivery rechecks this audience and the actor's block
+// rules in a fresh snapshot, because a queued send can outlive this lock.
 async function withLockedAudience(pool, user, conversationId, callback) {
   return transaction(pool, async (db) => {
     const membership = await lockInteractionMembership(db, conversationId, user.id);

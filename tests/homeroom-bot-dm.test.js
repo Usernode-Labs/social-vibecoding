@@ -749,7 +749,7 @@ test('the bot types from the start of its answer until the answer is sent, as a 
     'it stops once the answer is out, never before');
   const first = events[0];
   assert.deepEqual(first.payload, { type: 'conversation_typing', conversationId: 41, userId: 2, typing: true });
-  assert.deepEqual(first.options, { excludeUserId: 2 }, 'the same event and audience as the typing route');
+  assert.deepEqual(first.options, { excludeUserId: 2, actorUserId: 2 }, 'delivery retains the bot actor to recheck blocks after enqueueing');
   assert.deepEqual(audiences, [{ actor: 2, conversationId: 41 }, { actor: 2, conversationId: 41 }],
     'as the bot, through the gate that drops a DM the person blocked');
 });

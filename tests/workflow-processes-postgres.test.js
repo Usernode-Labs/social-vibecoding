@@ -816,7 +816,8 @@ test('workflow machines in a process of their own, and through its crash', { tim
     try {
       await procs.reached(pool, cloneOf(a));
       await procs.until(async () => deploying(a), 'the row to say the deploy is under way');
-      await procs.until(() => heard.some((e) => e.k === 'global' && e.d?.type === 'app_redeploy_status' && e.d.appSlug === a.slug
+      await procs.until(() => heard.some((e) => e.k === 'scoped' && e.r?.appSlug === a.slug
+        && e.d?.type === 'app_redeploy_status' && e.d.appSlug === a.slug
         && e.d.deploying === true), 'browsers to hear it started');
     } finally {
       await procs.release(pool, cloneOf(a));

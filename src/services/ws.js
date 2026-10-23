@@ -68,14 +68,6 @@ function _onBusMessage({ kind, routing, data, oversize, fromWorkflow }) {
   const r = routing || {};
   const payload = oversize ? { type: 'resync_hint' } : data;
   if (payload == null) return;
-  // A workflow machine names a notification instead of carrying it: the
-  // relay reads it for the recipient's open tabs, outside the transition
-  // that created it (src/workflow/merge-followups/machine.ts).
-  if (fromWorkflow && kind === 'user' && !oversize && payload.type === 'notification_new'
-      && payload.notificationId != null && !payload.notification) {
-    relayNotification(r.userId, payload.notificationId);
-    return;
-  }
   switch (kind) {
     case 'global':
       deliverGlobal(payload);
@@ -97,7 +89,7 @@ function _onBusMessage({ kind, routing, data, oversize, fromWorkflow }) {
       deliverToAdmins(payload);
       return;
     case 'user':
-      if (r.userId != null) deliverToUser(r.userId, payload);
+      if (r.userId != null) deliverToUser(r.userId, payload, { actorUserId: r.actorUserId });
       return;
     case 'session':
       // #4318: the same routing the emitting pod ran, against THIS pod's
@@ -2379,18 +2371,6 @@ function pushSessionUpdate(data) {
   noteBoardChange(data);
 }
 
-// Read only where the recipient has an events socket (what deliverToUser
-// writes to); the notification's access predicates run now, at relay time.
-function relayNotification(userId, notificationId) {
-  if (userId == null || !_pool) return;
-  let here = false;
-  for (const client of globalClients) if (Number(client.user.id) === Number(userId)) { here = true; break; }
-  if (!here) return;
-  require('./notifications').hydrateNotification(_pool, notificationId)
-    .then((shown) => { if (shown) deliverToUser(shown.userId, { type: 'notification_new', notification: shown.notification }); })
-    .catch((err) => log.warn('ws', 'could not read a notification to relay', { notificationId, err: err.message }));
-}
-
 // #1038: live working-state for one session (services/session-state.js).
 // Scoping is the whole point of having a dedicated helper rather than
 // reusing broadcastGlobal: the payload names an app and a session, so an
@@ -2515,7 +2495,18 @@ function broadcastToAdmins(payload) {
 // #1038, for the owner-only fan-out of a private session's working state.
 // `pushNotificationToUser` is kept as an alias so the notification call sites
 // above (and any external caller) read naturally and don't have to churn.
-function deliverToUser(userId, payload) {
+function notificationReference(payload) {
+  const notificationId = positiveSessionId(payload.notificationId ?? payload.notification?.id);
+  return notificationId == null ? null : { type: 'notification_new', notificationId };
+}
+
+function deliverToUser(userId, payload, { actorUserId = null } = {}) {
+  if (payload.type === 'notification_new') {
+    // Accept legacy hydrated envelopes, but keep only the id. The delivery
+    // query reads the current row bound to THIS recipient and session.
+    payload = notificationReference(payload);
+    if (!payload) return 0;
+  }
   if (payload.type === 'session_state' && positiveSessionId(payload.sessionId) == null) return 0;
   if (payload.type === 'conversation_membership_changed') {
     const conversationId = positiveSessionId(payload.conversationId);
@@ -2545,6 +2536,14 @@ function deliverToUser(userId, payload) {
     // Membership-change notices contain only an id and must reach the
     // removed person too. Content events need current membership again.
     conversationId: payload.type === 'conversation_membership_changed' ? null : payload.conversationId,
+    conversationRequired: payload.type !== 'conversation_membership_changed'
+      && (payload.conversationId != null || CONVERSATION_EVENT_TYPES.has(payload.type)),
+    // Routing metadata stays off the browser wire. Old typing/read frames
+    // already identify their actor. Old message frames can resolve theirs
+    // from the canonical message; an unscoped reaction fails closed.
+    actorUserId: actorUserId ?? (['conversation_typing', 'conversation_read'].includes(payload.type) ? payload.userId : null),
+    actorMessageId: ['conversation_message_created', 'conversation_message_updated'].includes(payload.type) ? payload.messageId : null,
+    notificationRequired: payload.type === 'notification_new', notificationId: payload.notificationId,
     ...(payload.type === 'session_state' ? { sessionId: payload.sessionId } : {}),
   };
   let sent = 0;
@@ -2564,9 +2563,13 @@ function deliverToUser(userId, payload) {
 // (28 queries for 28 recipients, the pool filled to its limit; 22 Oct 2026).
 // The first after a quiet spell goes at once and the rest of its window
 // together, in order; this instance's own sockets get theirs immediately.
-function pushToUser(userId, payload) {
-  const sent = deliverToUser(userId, payload);
-  wsBus.publishBatched('user', 'user', { userId }, payload);
+function pushToUser(userId, payload, { actorUserId = null } = {}) {
+  if (payload.type === 'notification_new') {
+    payload = notificationReference(payload);
+    if (!payload) return 0;
+  }
+  const sent = deliverToUser(userId, payload, { actorUserId });
+  wsBus.publishBatched('user', 'user', { userId, ...(actorUserId != null ? { actorUserId } : {}) }, payload);
   // #2904: every read path announces itself with this event, so it is also
   // where the iOS icon badge learns the count moved. Only the emitting
   // instance gets here (bus peers call deliverToUser), so one change is one
@@ -2592,7 +2595,7 @@ const CONVERSATION_EVENT_TYPES = new Set([
   'conversation_typing',
 ]);
 
-function pushConversationEvent(memberUserIds, payload, { excludeUserId = null } = {}) {
+function pushConversationEvent(memberUserIds, payload, { excludeUserId = null, actorUserId = null } = {}) {
   if (!Array.isArray(memberUserIds) || !payload || typeof payload !== 'object'
       || Array.isArray(payload) || !CONVERSATION_EVENT_TYPES.has(payload.type)) {
     return 0;
@@ -2612,7 +2615,7 @@ function pushConversationEvent(memberUserIds, payload, { excludeUserId = null } 
       continue;
     }
     seen.add(userId);
-    sent += pushToUser(userId, payload);
+    sent += pushToUser(userId, payload, { actorUserId });
   }
   return sent;
 }

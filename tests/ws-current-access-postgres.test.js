@@ -14,6 +14,8 @@ const cookieParser = require('cookie-parser');
 const { Pool } = require('pg');
 const { WebSocket } = require('ws');
 const { AUTHORIZE_SQL } = require('../src/services/ws-delivery');
+const notifications = require('../src/services/notifications');
+const conversations = require('../src/services/conversations');
 const pushes = require('../src/workflow/pushes.ts');
 const DSN = process.env.TEST_DATABASE_URL || process.env.SQL_CHECK_CONNECTION_URL
   || process.env.DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
@@ -56,13 +58,21 @@ test('current WebSocket authority against the full PostgreSQL schema', {
   const url = new URL(DSN); url.pathname = `/${database}`;
   pool = new Pool({ connectionString: url.href, max: 4, options: '-c jit=off' });
   await pool.query(fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8'));
-  await pool.query(AUTHORIZE_SQL, ['[]']); // fail immediately on a catalog mismatch
+  await pool.query(AUTHORIZE_SQL, ['[]', notifications.MERGED_HIDDEN_KINDS]); // fail immediately on a catalog mismatch
   let outage = false, routeFailure = false, gateQueries = 0;
+  let holdNext;
+  const heldBatches = new Set();
   const webPool = {
     connect: (...args) => pool.connect(...args),
-    query: (sql, params) => {
+    query: async (sql, params) => {
       if (sql === AUTHORIZE_SQL) {
         gateQueries++;
+        if (holdNext) {
+          const hold = holdNext;
+          holdNext = null;
+          hold.started = true;
+          await hold.waiting;
+        }
         if (outage) return Promise.reject(new Error('fake authority unavailable'));
       }
       if (routeFailure && /FROM chat_sessions cs LEFT JOIN apps/.test(sql)) {
@@ -119,7 +129,44 @@ test('current WebSocket authority against the full PostgreSQL schema', {
   }
   const event = (label, extra = {}) => ({ type: 'private_fixture', label, ...extra });
   const frames = (sock, label) => sock.frames.filter(frame => frame.label === label);
+  async function stallBatch(i, userId) {
+    const hold = {};
+    hold.waiting = new Promise(resolve => { hold.release = resolve; });
+    heldBatches.add(hold);
+    holdNext = hold;
+    instances[i].ws.pushToUser(userId, event('unrelated-held-batch'));
+    await until(() => hold.started, 'unrelated authorization batch held');
+    return () => { hold.release(); heldBatches.delete(hold); };
+  }
+  async function flushBatch(resume, i, userId, sock) {
+    const label = `flushed-${++seq}`;
+    instances[i].ws.pushToUser(userId, event(label));
+    resume();
+    await until(() => frames(sock, label).length, 'queued delivery batch finished');
+  }
+  async function conversationFixture(f, { kind = 'group', memberStatus = 'member' } = {}) {
+    const { rows: [c] } = await pool.query(
+      'INSERT INTO conversations (kind, title, created_by) VALUES ($1, $2, $3) RETURNING id',
+      [kind, kind === 'direct' ? null : 'Fake private chat', f.owner.id]);
+    if (kind === 'direct') await pool.query(
+      'INSERT INTO conversation_direct_pairs (conversation_id, user_low_id, user_high_id) VALUES ($1, $2, $3)',
+      [c.id, Math.min(f.owner.id, f.member.id), Math.max(f.owner.id, f.member.id)]);
+    await pool.query("INSERT INTO conversation_members (conversation_id, user_id, status) VALUES ($1, $2, 'member'), ($1, $3, $4)",
+      [c.id, f.owner.id, f.member.id, memberStatus]);
+    const { rows: [m] } = await pool.query(
+      'INSERT INTO conversation_messages (conversation_id, sender_id, content) VALUES ($1, $2, $3) RETURNING id',
+      [c.id, f.owner.id, 'FAKE_PRIVATE_QUEUED_NOTIFICATION']);
+    const { rows: [n] } = await pool.query(
+      `INSERT INTO notifications (user_id, source_user_id, kind, conversation_id, conversation_message_id)
+       VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+      [f.member.id, f.owner.id, memberStatus === 'invited' ? 'conversation_invite' : 'conversation_message', c.id,
+        memberStatus === 'invited' ? null : m.id]);
+    return { conversationId: c.id, messageId: m.id, notificationId: n.id };
+  }
   async function closeAll() {
+    for (const hold of heldBatches) hold.release();
+    heldBatches.clear();
+    holdNext = null;
     for (const sock of sockets) sock.terminate();
     await wait(20);
   }
@@ -233,7 +280,7 @@ test('current WebSocket authority against the full PostgreSQL schema', {
     await pool.query("INSERT INTO conversation_members (conversation_id, user_id, status) VALUES ($1, $2, 'member'), ($1, $3, 'member')",
       [c.id, f.owner.id, f.member.id]);
     const member = await open(1, f.member.token), owner = await open(1, f.owner.token);
-    const relay = label => instances[1].ws._onBusMessage({ kind: 'user', routing: { userId: f.member.id },
+    const relay = label => instances[1].ws._onBusMessage({ kind: 'user', routing: { userId: f.member.id, actorUserId: f.owner.id },
       data: { type: 'conversation_message_created', conversationId: c.id, label, content: 'FAKE_PRIVATE_CONVERSATION' } });
     relay('conversation-before');
     await until(() => frames(member, 'conversation-before').length, 'member positive control');
@@ -244,6 +291,143 @@ test('current WebSocket authority against the full PostgreSQL schema', {
     await until(() => frames(owner, 'conversation-control').length && member.frames.some(m => m.type === 'conversation_membership_changed'), 'content batch processed');
     assert.equal(frames(member, 'conversation-after').length, 0);
     assert.deepEqual(member.frames.find(m => m.type === 'conversation_membership_changed'), { type: 'conversation_membership_changed', conversationId: c.id });
+  });
+
+  await t.test('queued notifications rehydrate in the delivery snapshot and bind the row to its recipient', async () => {
+    const f = await fixture(), c = await conversationFixture(f);
+    const member = await open(1, f.member.token), stranger = await open(1, f.stranger.token);
+    const stale = await notifications.hydrateNotification(pool, c.notificationId);
+    const resume = await stallBatch(1, f.member.id);
+    // Legacy peers can still carry a hydrated body. None of its fields,
+    // including a forged recipient or snippet, are delivery authority.
+    const data = { type: 'notification_new', notification: { ...stale.notification, messageContent: 'FAKE_STALE_BODY' } };
+    instances[1].ws._onBusMessage({ kind: 'user', routing: { userId: f.member.id }, data });
+    instances[1].ws._onBusMessage({ kind: 'user', routing: { userId: f.stranger.id }, data });
+    await pool.query('UPDATE conversation_messages SET content = $2 WHERE id = $1', [c.messageId, 'FAKE_CURRENT_BODY']);
+    await flushBatch(resume, 1, f.member.id, member);
+    await until(() => member.frames.some(m => m.type === 'notification_new'), 'current notification delivered');
+    const delivered = member.frames.find(m => m.type === 'notification_new');
+    assert.equal(delivered.notification.messageContent, 'FAKE_CURRENT_BODY');
+    assert.equal(delivered.notification.conversationId, c.conversationId);
+    assert.ok(!('notificationId' in delivered));
+    assert.equal(stranger.frames.filter(m => m.type === 'notification_new').length, 0);
+  });
+
+  await t.test('a notification hydrated before removal is denied by a fresh delivery query after removal', async () => {
+    const f = await fixture(), c = await conversationFixture(f);
+    const member = await open(1, f.member.token);
+    const resume = await stallBatch(1, f.member.id);
+    await notifications.hydrateAndPush(pool, { id: c.notificationId });
+    await pool.query("UPDATE conversation_members SET status = 'removed', left_at = NOW() WHERE conversation_id = $1 AND user_id = $2",
+      [c.conversationId, f.member.id]);
+    assert.equal(await notifications.hydrateNotification(pool, c.notificationId), null);
+    await flushBatch(resume, 1, f.member.id, member);
+    assert.equal(member.frames.filter(m => m.type === 'notification_new').length, 0);
+  });
+
+  await t.test('queued private-project notifications lose access with collaboration, blocks, and row deletion', async t => {
+    for (const cause of ['collaboration', 'app-block', 'deleted']) await t.test(cause, async () => {
+      const f = await fixture(), member = await open(1, f.member.token);
+      const { rows: [n] } = await pool.query(
+        "INSERT INTO notifications (user_id, source_user_id, kind, app_id, session_id) VALUES ($1, $2, 'pr_merged', $3, $4) RETURNING id",
+        [f.member.id, f.owner.id, f.appId, f.sessionId]);
+      const resume = await stallBatch(1, f.member.id);
+      instances[1].ws.pushToUser(f.member.id, { type: 'notification_new', notificationId: n.id });
+      if (cause === 'collaboration') await pool.query('DELETE FROM app_collaborators WHERE app_id = $1 AND user_id = $2', [f.appId, f.member.id]);
+      if (cause === 'app-block') await pool.query('INSERT INTO user_app_blocks (user_id, app_id) VALUES ($1, $2)', [f.member.id, f.appId]);
+      if (cause === 'deleted') await pool.query('DELETE FROM notifications WHERE id = $1', [n.id]);
+      await flushBatch(resume, 1, f.member.id, member);
+      assert.equal(member.frames.filter(m => m.type === 'notification_new').length, 0);
+    });
+  });
+
+  await t.test('pending conversation and private-project invitations reach nonmembers through current authority', async () => {
+    const f = await fixture(), c = await conversationFixture(f, { memberStatus: 'invited' });
+    const member = await open(1, f.member.token), stranger = await open(1, f.stranger.token);
+    await pool.query("INSERT INTO app_collaborators (app_id, user_id, status) VALUES ($1, $2, 'invited')", [f.appId, f.stranger.id]);
+    await pool.query("INSERT INTO app_approvers (app_id, user_id, status) VALUES ($1, $2, 'invited')", [f.appId, f.stranger.id]);
+    const { rows: invites } = await pool.query(
+      `INSERT INTO notifications (user_id, source_user_id, kind, app_id)
+       VALUES ($1, $2, 'collab_invite', $3), ($1, $2, 'approver_invite', $3) RETURNING id`,
+      [f.stranger.id, f.owner.id, f.appId]);
+    instances[1].ws._onBusMessage({ kind: 'user', routing: { userId: f.member.id },
+      data: { type: 'notification_new', notificationId: c.notificationId }, fromWorkflow: true });
+    for (const n of invites) instances[1].ws.pushToUser(f.stranger.id, { type: 'notification_new', notificationId: n.id });
+    await until(() => stranger.frames.filter(m => m.type === 'notification_new').length === 2
+      && member.frames.some(m => m.type === 'notification_new'), 'all pending invitations delivered');
+    const invited = member.frames.find(m => m.type === 'notification_new').notification;
+    assert.equal(invited.kind, 'conversation_invite');
+    assert.equal(invited.messageContent, null);
+    const resume = await stallBatch(1, f.stranger.id);
+    for (const n of invites) instances[1].ws.pushToUser(f.stranger.id, { type: 'notification_new', notificationId: n.id });
+    await pool.query('DELETE FROM app_collaborators WHERE app_id = $1 AND user_id = $2', [f.appId, f.stranger.id]);
+    await pool.query('DELETE FROM app_approvers WHERE app_id = $1 AND user_id = $2', [f.appId, f.stranger.id]);
+    await flushBatch(resume, 1, f.stranger.id, stranger);
+    assert.equal(stranger.frames.filter(m => m.type === 'notification_new').length, 2, 'withdrawn invitations cannot reuse the old row');
+  });
+
+  await t.test('a direct block committed after withLockedAudience suppresses queued typing in either direction', async t => {
+    for (const blocker of ['owner', 'member']) await t.test(blocker, async () => {
+      const f = await fixture(), c = await conversationFixture(f, { kind: 'direct' });
+      const member = await open(1, f.member.token);
+      const ws = instances[1].ws;
+      const data = { type: 'conversation_typing', conversationId: c.conversationId, userId: f.owner.id, typing: true };
+      await conversations.withLockedAudience(pool, f.owner, c.conversationId, ids => {
+        ws.pushConversationEvent(ids, data, { excludeUserId: f.owner.id, actorUserId: f.owner.id });
+      });
+      await until(() => member.frames.some(m => m.type === data.type), 'direct positive control');
+      member.frames.length = 0;
+      const resume = await stallBatch(1, f.member.id);
+      await conversations.withLockedAudience(pool, f.owner, c.conversationId, ids => {
+        ws.pushConversationEvent(ids, data, { excludeUserId: f.owner.id, actorUserId: f.owner.id });
+      });
+      await conversations.setBlock(pool, f[blocker].id, f[blocker === 'owner' ? 'member' : 'owner'].id, true);
+      const membership = await conversations.loadMembership(pool, c.conversationId, f.member.id);
+      assert.equal(membership.membership_status, 'member', 'accepted direct membership deliberately survives a block');
+      assert.equal(await conversations.canReadConversation(pool, membership, f.member.id), false);
+      await flushBatch(resume, 1, f.member.id, member);
+      assert.equal(member.frames.filter(m => m.type === data.type).length, 0);
+    });
+  });
+
+  await t.test('actor routing survives the bus and shared rooms recheck sender blocks, membership, and archival', async t => {
+    for (const cause of ['sender-block', 'actor-removed', 'archived']) await t.test(cause, async () => {
+      const f = await fixture(), c = await conversationFixture(f);
+      const member = await open(1, f.member.token);
+      const bus = require('../src/services/ws-bus'), saved = bus.publishBatched;
+      bus.publishBatched = (_batch, kind, routing, data) => instances[1].ws._onBusMessage({ kind, routing, data });
+      try {
+        const data = { type: 'conversation_reaction_updated', conversationId: c.conversationId, messageId: c.messageId };
+        instances[0].ws.pushConversationEvent([f.member.id], data, { actorUserId: f.owner.id });
+        await until(() => member.frames.some(m => m.type === data.type), 'relayed reaction positive control');
+        assert.deepEqual(member.frames.find(m => m.type === data.type), data, 'actor metadata stays off the browser wire');
+        member.frames.length = 0;
+        const resume = await stallBatch(1, f.member.id);
+        await conversations.withLockedAudience(pool, f.owner, c.conversationId, ids => {
+          instances[0].ws.pushConversationEvent(ids, data, { actorUserId: f.owner.id });
+        });
+        if (cause === 'sender-block') await conversations.setBlock(pool, f.member.id, f.owner.id, true);
+        if (cause === 'actor-removed') await pool.query("UPDATE conversation_members SET status = 'removed' WHERE conversation_id = $1 AND user_id = $2", [c.conversationId, f.owner.id]);
+        if (cause === 'archived') await pool.query("UPDATE conversations SET status = 'archived' WHERE id = $1", [c.conversationId]);
+        await flushBatch(resume, 1, f.member.id, member);
+        assert.equal(member.frames.filter(m => m.type === data.type).length, 0);
+      } finally { bus.publishBatched = saved; }
+    });
+  });
+
+  await t.test('legacy conversation actors are resolved safely and missing scope fails closed', async () => {
+    const f = await fixture(), c = await conversationFixture(f), member = await open(1, f.member.token);
+    const relay = data => instances[1].ws._onBusMessage({ kind: 'user', routing: { userId: f.member.id }, data });
+    relay({ type: 'conversation_message_created', conversationId: c.conversationId, messageId: c.messageId });
+    relay({ type: 'conversation_read', conversationId: c.conversationId, userId: f.owner.id });
+    await until(() => member.frames.filter(m => m.type.startsWith('conversation_')).length === 2, 'safe legacy actors resolved');
+    member.frames.length = 0;
+    const resume = await stallBatch(1, f.member.id);
+    relay({ type: 'conversation_reaction_updated', conversationId: c.conversationId, messageId: c.messageId });
+    relay({ type: 'conversation_typing', conversationId: 'invalid', userId: f.owner.id, typing: true });
+    relay({ type: 'conversation_typing', userId: f.owner.id, typing: true });
+    await flushBatch(resume, 1, f.member.id, member);
+    assert.equal(member.frames.filter(m => m.type.startsWith('conversation_')).length, 0);
   });
 
   await t.test('demotion removes existing admin watches and admin-only delivery', async () => {

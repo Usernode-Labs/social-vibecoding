@@ -184,7 +184,7 @@ test('conversation realtime accepts only reviewed member-scoped event shapes', (
     'conversation_typing',
   ];
   for (const type of TYPES) assert.match(WS, new RegExp(`'${type}'`));
-  assert.match(WS, /sent \+= pushToUser\(userId, payload\)/);
+  assert.match(WS, /sent \+= pushToUser\(userId, payload, \{ actorUserId \}\)/);
   const helper = WS.match(/function pushConversationEvent[\s\S]*?\n\}/)?.[0] || '';
   assert.doesNotMatch(helper, /broadcast\(|broadcastGlobal/);
 

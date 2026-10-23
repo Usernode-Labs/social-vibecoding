@@ -2,6 +2,7 @@
 
 const { nativeWebSessionIsLive } = require('./web-session-auth');
 const platformJwt = require('./platform-jwt');
+const notifications = require('./notifications');
 
 // One fresh database snapshot decides both identity and audience. Never use
 // the handshake's admin flag, cached app visibility, or a bus recipient list
@@ -9,6 +10,7 @@ const platformJwt = require('./platform-jwt');
 const AUTHORIZE_SQL = `
   SELECT d.n, u.username, u.is_admin, (cs.user_id = u.id) AS session_owner,
     (u.id IS NOT NULL AND (d.staging OR s.token IS NOT NULL)) AS authenticated,
+    shown.notification_row,
     (
       (NOT d.admin OR u.is_admin)
       AND (d.session_id IS NULL OR (
@@ -29,15 +31,36 @@ const AUTHORIZE_SQL = `
            WHERE m.app_id = a.id AND m.user_id = u.id AND m.status = 'member'
         ))
       ))
-      AND (d.conversation_id IS NULL OR EXISTS (
-        SELECT 1 FROM conversation_members cm
-         WHERE cm.conversation_id = d.conversation_id AND cm.user_id = u.id AND cm.status = 'member'
+      AND (NOT d.conversation_required OR EXISTS (
+        SELECT 1 FROM conversations c
+        JOIN conversation_members cm ON cm.conversation_id = c.id AND cm.user_id = u.id AND cm.status = 'member'
+        JOIN conversation_members actor ON actor.conversation_id = c.id
+          AND actor.user_id = COALESCE(d.actor_id, origin.sender_id) AND actor.status = 'member'
+        JOIN users actor_user ON actor_user.id = actor.user_id AND actor_user.anonymised_at IS NULL
+         WHERE c.id = d.conversation_id AND c.status = 'active'
+          AND NOT EXISTS (
+            SELECT 1 FROM user_blocks b WHERE b.blocker_id = u.id AND b.blocked_user_id = actor.user_id
+          )
+          AND (c.kind <> 'direct' OR EXISTS (
+            SELECT 1 FROM conversation_direct_pairs pair
+             WHERE pair.conversation_id = c.id
+               AND u.id IN (pair.user_low_id, pair.user_high_id)
+               AND actor.user_id IN (pair.user_low_id, pair.user_high_id)
+               AND NOT EXISTS (
+                 SELECT 1 FROM user_blocks b
+                  WHERE (b.blocker_id = pair.user_low_id AND b.blocked_user_id = pair.user_high_id)
+                     OR (b.blocker_id = pair.user_high_id AND b.blocked_user_id = pair.user_low_id)
+               )
+          ))
       ))
+      AND (NOT d.notification_required OR shown.notification_row IS NOT NULL)
     ) AS allowed
     FROM jsonb_to_recordset($1::jsonb) AS d(
       n int, user_id int, token text, staging boolean, claim_username text, admin boolean,
       app_required boolean, app_id int, app_slug text,
-      session_id int, watching boolean, fanout boolean, shared_only boolean, conversation_id int
+      session_id int, watching boolean, fanout boolean, shared_only boolean,
+      conversation_required boolean, conversation_id int, actor_id int, actor_message_id int,
+      notification_required boolean, notification_id int
     )
     LEFT JOIN users u ON u.id = d.user_id AND u.anonymised_at IS NULL
       AND (NOT d.staging OR d.claim_username IS NULL OR u.username = d.claim_username)
@@ -46,6 +69,35 @@ const AUTHORIZE_SQL = `
     LEFT JOIN chat_sessions cs ON cs.id = d.session_id
     LEFT JOIN apps by_slug ON d.session_id IS NULL AND d.app_id IS NULL AND by_slug.slug = d.app_slug
     LEFT JOIN apps a ON a.id = CASE WHEN d.session_id IS NOT NULL THEN cs.app_id ELSE COALESCE(d.app_id, by_slug.id) END
+    LEFT JOIN conversation_messages origin ON d.actor_id IS NULL AND origin.id = d.actor_message_id
+      AND origin.conversation_id = d.conversation_id
+    LEFT JOIN LATERAL (
+      SELECT to_jsonb(live_notification) AS notification_row FROM (
+        ${notifications.HYDRATE_SELECT_SQL}
+        WHERE d.notification_required AND n.id = d.notification_id AND n.user_id = u.id
+          AND ${notifications.HYDRATE_LISTED_SQL}
+          AND (n.app_id IS NULL OR (
+            a.id IS NOT NULL AND a.moderation_suspended_at IS NULL
+            AND (a.view_visibility = 'public' OR u.is_admin OR EXISTS (
+              SELECT 1 FROM app_collaborators m
+               WHERE m.app_id = a.id AND m.user_id = u.id AND m.status = 'member'
+            ) OR (
+              -- Invitations may name a private project before joining it.
+              -- That exception authorizes no message or session contents.
+              n.chat_message_id IS NULL AND n.session_id IS NULL AND n.conversation_id IS NULL
+              AND ((n.kind = 'collab_invite' AND EXISTS (
+                SELECT 1 FROM app_collaborators m
+                 WHERE m.app_id = a.id AND m.user_id = u.id AND m.status = 'invited'
+              )) OR (n.kind = 'approver_invite' AND EXISTS (
+                SELECT 1 FROM app_approvers m
+                 WHERE m.app_id = a.id AND m.user_id = u.id AND m.status = 'invited'
+              )))
+            ))
+          ))
+          AND (n.kind NOT IN ('openrouter_key_review', 'platform_limit', 'platform_incident')
+            OR (u.is_admin AND NOT u.admin_readonly))
+      ) live_notification
+    ) shown ON TRUE
 `;
 
 const MAX_BATCH = 512;
@@ -79,6 +131,9 @@ function descriptor(client, scope, n) {
     session_id: positiveId(scope.sessionId),
     watching: !!scope.watchRequest || (!!scope.watching && !!client.watching?.has(Number(scope.sessionId))),
     fanout: !!scope.fanout, shared_only: !!scope.sharedOnly, conversation_id: positiveId(scope.conversationId),
+    conversation_required: !!scope.conversationRequired, actor_id: positiveId(scope.actorUserId),
+    actor_message_id: positiveId(scope.actorMessageId),
+    notification_required: !!scope.notificationRequired, notification_id: positiveId(scope.notificationId),
   };
 }
 
@@ -96,7 +151,7 @@ function createDelivery({ getPool, send, refuse, onError }) {
     const pool = getPool();
     if (!pool) throw new Error('WebSocket authority unavailable');
     const inputs = entries.map((e, n) => descriptor(e.client, e.scope, n));
-    const { rows } = await pool.query(AUTHORIZE_SQL, [JSON.stringify(inputs)]);
+    const { rows } = await pool.query(AUTHORIZE_SQL, [JSON.stringify(inputs), notifications.MERGED_HIDDEN_KINDS]);
     return new Map(rows.map(row => [Number(row.n), row]));
   }
 
@@ -119,7 +174,16 @@ function createDelivery({ getPool, send, refuse, onError }) {
           const decisions = await authorize(batch);
           for (let n = 0; n < batch.length; n++) {
             const entry = batch[n];
-            if (apply(entry.client, decisions.get(n), entry.scope) && entry.json != null) send(entry.client, entry.json);
+            const row = decisions.get(n);
+            if (apply(entry.client, row, entry.scope) && entry.json != null) {
+              // The queued notification is only a reference. Never reuse a
+              // previously hydrated body, even if it came from another pod.
+              if (entry.scope.notificationRequired) {
+                if (row.notification_row) send(entry.client, JSON.stringify({
+                  type: 'notification_new', notification: notifications.serialize(row.notification_row),
+                }));
+              } else send(entry.client, entry.json);
+            }
           }
         } catch (err) {
           // On an unavailable authority, no content is disclosed. Closing
