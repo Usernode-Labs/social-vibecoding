@@ -11,6 +11,7 @@ const inLoopBrowser = require('./in-loop-browser');
 const registry = require('../agents/registry');
 const turnLifecycle = require('./turn-lifecycle');
 const branchNames = require('./branch-names');
+const workerGitPush = require('./worker-git-push');
 const llmTelemetry = require('./llm-telemetry');
 const liveAgentSpend = require('./live-agent-spend');
 const workerProgress = require('./worker-progress');
@@ -74,14 +75,15 @@ function shellQuote(value) {
   return `'${String(value).replace(/'/g, `'"'"'`)}'`;
 }
 
-// `maxBuffer` lifts the docker path's 1 MB stdout ceiling for a command
-// whose output is large by design (the benchmark's screenshots); the
-// Kubernetes path has no such ceiling.
+// Large exports (screenshots and Git bundles) need an explicit bound on
+// both transports; an untrusted worker must not stream unlimited output.
 async function execWorkerCommand(runtimeName, command, stdinText = null, {
   timeoutMs = stdinText === null ? 30000 : 20000, maxBuffer = null,
 } = {}) {
   if (usesKubernetesWorkers()) {
-    return kubernetes.execInWorker(kubernetesWorkerConfig(), runtimeName, command, stdinText, { timeoutMs });
+    return kubernetes.execInWorker(kubernetesWorkerConfig(), runtimeName, command, stdinText, {
+      timeoutMs, ...(maxBuffer ? { maxBuffer } : {}),
+    });
   }
   if (stdinText !== null) {
     return docker.execShellStdin(runtimeName, stdinText, { timeoutMs, label: 'worker exec' });
@@ -5978,49 +5980,16 @@ async function cloneCcVolume(srcSessionId, destSessionId) {
 // POST /api/internal/sessions/:id/push (see src/routes/internal.js),
 // which calls this helper.
 //
-// We use the worker's existing clone (origin already points at GitHub)
-// and inject `GITHUB_BOT_TOKEN` into a single one-shot `docker exec` via
-// an inline credential helper. The bot token never enters the worker's
-// persistent env or git config; it lives in the exec's environ for the
-// duration of the push and disappears when the exec exits.
-//
-// Branch is supplied by the caller (the route handler) AFTER looking up
-// the session's canonical `branch_name` from the DB. The worker doesn't
-// get to pick. Branch is checked against a strict charset before being
-// passed to bash so it can't break out of the shell expansion below.
+// The worker exports a bounded Git bundle without credentials. The trusted
+// platform imports only its objects into a fresh bare repository, then
+// pushes the exact commit with the bot credential. Worker hooks, remotes,
+// config and executables never run with that credential. Destination and
+// branch are re-read from the DB here, including for recovery callers.
 //
 // #1376: that charset lives in services/branch-names.js now, shared with
 // the routes that MINT the name. It used to be defined only here and
 // excluded `@`, which every email-address username produces — so those
 // sessions committed fine and then failed every push, heal included.
-
-// The push, as the one-shot script that runs in the worker. Two things it
-// does beyond `git push`, both from Sheep countrr's session 5030
-// (usernode-bot/sheep-countrr-a08857#48), where an agent committed its
-// feature on a local branch of its own (`wolf-mechanic`):
-//
-//   - If HEAD is on another branch that grew from the session branch, the
-//     session branch is moved up to it first. That is the turn's work; the
-//     runner does the same before its own push (worker/session-branch.sh),
-//     and this covers a heal against a worker whose runner predates that.
-//   - It prints the commit it pushed (the session branch), not HEAD. It used
-//     to print HEAD, so the heal reported the stray commit as pushed while
-//     GitHub had nothing new, and every retry of the PR 422'd with "No
-//     commits between main and <branch>".
-//
-// $PAT and $BRANCH come from the exec's environment, never argv. `workspace`
-// is overridable for tests only.
-function buildPushScript({ workspace = '/home/node/workspace' } = {}) {
-  return `set -e; cd ${shellQuote(workspace)}; `
-    + 'cur=$(git symbolic-ref --quiet --short HEAD || true); '
-    + 'if [ "$cur" != "$BRANCH" ] '
-    + '&& git rev-parse --quiet --verify "refs/heads/$BRANCH" >/dev/null '
-    + '&& git merge-base --is-ancestor "refs/heads/$BRANCH" HEAD; then '
-    + 'git branch --force "$BRANCH" HEAD >&2; fi; '
-    + 'git -c credential.helper="!f() { echo username=x-access-token; echo password=$PAT; }; f" '
-    + 'push -u origin "$BRANCH" >&2 && '
-    + 'git rev-parse "refs/heads/$BRANCH"';
-}
 
 async function execPushFromWorker(sessionId, branchName) {
   const botToken = process.env.GITHUB_BOT_TOKEN || '';
@@ -6063,50 +6032,44 @@ async function execPushFromWorker(sessionId, branchName) {
 
   const containerName = _registryGet(sessionId)?.containerName || workerRuntimeName(sessionId);
 
-  // Inline credential helper: prints `username=x-access-token` and
-  // `password=$PAT` to stdout when git asks for credentials. `-c
-  // credential.helper=…` is scoped to this single git invocation —
-  // doesn't touch the worker's .git/config. The `bash -c` script
-  // reads $PAT and $BRANCH from the exec env (passed via bare `-e`
-  // so the values aren't in argv).
-  //
-  // The script (buildPushScript below) settles the session branch first and
-  // prints the SHA it pushed, which the caller surfaces back to the worker
-  // for logging and the __USERNODE_RESULT__ accounting.
-  const inlineScript = buildPushScript();
-
-  const args = [
-    'exec',
-    '-e', 'PAT',              // bare -e: value taken from docker's own env
-    '-e', 'BRANCH',
-    containerName,
-    'bash', '-c', inlineScript,
-  ];
-
   try {
-    let stdout;
-    let stderr;
-    if (usesKubernetesWorkers()) {
-      const script = `export PAT=${shellQuote(botToken)}\nexport BRANCH=${shellQuote(branchName)}\n${inlineScript}\n`;
-      ({ stdout, stderr } = await execWorkerCommand(containerName, ['bash', '-s'], script, { timeoutMs: 60000 }));
-    } else {
-      ({ stdout, stderr } = await docker.execFileAsync('docker', args, {
-        timeout: 60000,
-        env: { ...process.env, PAT: botToken, BRANCH: branchName },
-      }));
+    const pool = _getPoolSafe();
+    if (!pool) throw new Error('Cannot resolve the session push destination');
+    const { rows: [target] } = await pool.query(
+      `SELECT cs.branch_name, a.repo_url FROM chat_sessions cs
+       JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1`, [sessionId],
+    );
+    if (!target || target.branch_name !== branchName) throw new Error('Session push branch has changed or no longer exists');
+    // Build the URL ourselves. Reject credentials, ports, alternate hosts,
+    // local paths and URL suffixes, even if they are stored in app metadata.
+    const match = /^https:\/\/github\.com\/([A-Za-z0-9][A-Za-z0-9-]{0,38})\/([A-Za-z0-9_.-]{1,100})\/?$/i.exec(target.repo_url || '');
+    const repo = match?.[2].replace(/\.git$/i, '');
+    if (!repo || repo === '.' || repo === '..') throw new Error('Invalid canonical GitHub push destination');
+    const remoteUrl = `https://github.com/${match[1]}/${repo}.git`;
+    const pushed = await workerGitPush.push({
+      remoteUrl, branchName, token: botToken,
+      exportWorker: script => execWorkerCommand(containerName, ['sh', '-c', script], null, {
+        timeoutMs: 60000, maxBuffer: workerGitPush.MAX_EXPORT_BYTES,
+      }),
+    });
+    // Updating the worker's tracking ref is credential-free and best effort.
+    // A worker acknowledgement failure does not turn a published commit into
+    // an unpushed one or cause the recovery path to repeat a successful push.
+    try {
+      await execWorkerCommand(containerName, ['sh', '-c', workerGitPush.buildRecordPushScript({ branchName, sha: pushed.sha })], null, {
+        timeoutMs: 10000, maxBuffer: 16 * 1024,
+      });
+    } catch (_) {
+      log.warn('worker', 'Could not update worker tracking ref after push', { sessionId, branch: branchName });
     }
-    const sha = (stdout || '').trim().split('\n').pop();
-    log.info('worker', 'Push proxied to GitHub', {
-      sessionId, branch: branchName, sha: (sha || '').slice(0, 8),
+    log.info('worker', 'Worker commit pushed from the platform', {
+      sessionId, branch: branchName, sha: pushed.sha.slice(0, 8),
     });
     if (_registryGet(sessionId)?.unpushed) _registryUpsert(sessionId, { unpushed: null });
-    return { sha, stderr: (stderr || '').trim() };
+    return pushed;
   } catch (err) {
-    // Don't leak the PAT into log lines if `docker exec` printed any
-    // (it shouldn't — credential helpers don't echo creds — but defense
-    // in depth). err.message + err.stderr come from execFileAsync.
-    const cleanMsg = String(err.message || '').replace(botToken, '***');
-    const cleanStderr = String(err.stderr || '').replace(botToken, '***');
+    const cleanMsg = String(err.message || '').split(botToken).join('***').slice(0, 2000);
+    const cleanStderr = String(err.stderr || '').split(botToken).join('***').slice(0, 8000);
     const wrapped = new Error(`push proxy failed: ${cleanMsg}`);
     wrapped.code = 'push_failed';
     wrapped.stderr = cleanStderr;
@@ -6245,7 +6208,6 @@ module.exports = {
   workerRuntimeName,
   // platform-side git push proxy (called from src/routes/internal.js)
   execPushFromWorker,
-  buildPushScript,
   unpushedCommit,
   rescueUnpushedCommit,
   keepPartialWork,

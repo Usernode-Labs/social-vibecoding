@@ -16,6 +16,20 @@ const path = require('node:path');
 
 const kubernetes = require('../src/services/kubernetes');
 const worker = require('../src/services/worker');
+const workerGitPush = require('../src/services/worker-git-push');
+const db = require('../src/db/pool');
+const SHA = 'a'.repeat(40);
+
+function stubTrustedPush(t, branches, calls = []) {
+  t.mock.method(db, 'getPool', () => ({ query: async (_sql, [id]) => ({ rows: [{ branch_name: branches[id], repo_url: 'https://github.com/Trusted-Owner/stored-repo.git' }] }) }));
+  t.mock.method(workerGitPush, 'push', async options => {
+    assert.equal(options.remoteUrl, 'https://github.com/Trusted-Owner/stored-repo.git');
+    assert.equal(options.token, 'fake-test-token');
+    calls.push(['push']);
+    await options.exportWorker('export Git objects only');
+    return { sha: SHA, stderr: '' };
+  });
+}
 
 const SRC = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'worker.js'), 'utf8');
 
@@ -48,7 +62,10 @@ test('only a finished build whose push failed has a commit to rescue', () => {
 test('eviction pushes an unpushed commit before the worker is deleted', async (t) => {
   withKubernetes(t);
   const calls = [];
-  t.mock.method(kubernetes, 'execInWorker', async (_config, runtime, command) => {
+  stubTrustedPush(t, { 71001: 'dev/evan-1' }, calls);
+  t.mock.method(kubernetes, 'execInWorker', async (_config, runtime, command, stdin) => {
+    assert.equal(stdin, null);
+    assert.equal(JSON.stringify(command).includes('fake-test-token'), false);
     calls.push(['exec', runtime, command[0]]);
     return { stdout: 'abc1234\n', stderr: '' };
   });
@@ -57,12 +74,14 @@ test('eviction pushes an unpushed commit before the worker is deleted', async (t
   worker._registryUpsertForTests(71001, { unpushed: { sha: 'abc1234', branchName: 'dev/evan-1' } });
 
   await worker.evictWorker(71001);
-  assert.deepEqual(calls.map((c) => c[0]), ['exec', 'delete'], 'the push runs first');
-  assert.equal(calls[0][2], 'bash');
+  assert.deepEqual(calls.map((c) => c[0]), ['push', 'exec', 'exec', 'delete'], 'trusted push exports and acknowledges before deletion');
+  assert.equal(calls[1][2], 'sh');
+  assert.equal(calls[2][2], 'sh');
 });
 
 test('a successful push clears the record, and a failed rescue never blocks eviction', async (t) => {
   withKubernetes(t);
+  stubTrustedPush(t, { 71002: 'dev/evan-2' });
   t.mock.method(kubernetes, 'execInWorker', async () => ({ stdout: 'abc1234\n', stderr: '' }));
   worker.adoptWarmWorker(71002, 'sv-worker-s71002');
   worker._registryUpsertForTests(71002, { unpushed: { sha: 'abc1234', branchName: 'dev/evan-2' } });
@@ -72,6 +91,10 @@ test('a successful push clears the record, and a failed rescue never blocks evic
   worker._registryUpsertForTests(71002, { unpushed: { sha: 'def5678', branchName: 'dev/evan-2' } });
   delete process.env.GITHUB_BOT_TOKEN;
   assert.deepEqual(await worker.rescueUnpushedCommit(71002), { attempted: true, pushed: false });
+  const deleted = [];
+  t.mock.method(kubernetes, 'deleteWorker', async (_config, id) => deleted.push(id));
+  await worker.evictWorker(71002);
+  assert.deepEqual(deleted, [71002], 'failed rescue never blocks deletion');
 });
 
 test('nothing is rescued from a worker with a turn in flight', async (t) => {

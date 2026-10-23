@@ -3634,16 +3634,15 @@ function attachLineObserver(readable, onLine, { skipBytes = 0 } = {}) {
   readable.on('error', () => {});
 }
 
-async function execInWorker(config, runtimeName, command, stdinText = null, { timeoutMs = 30000 } = {}) {
+async function execInWorker(config, runtimeName, command, stdinText = null, { timeoutMs = 30000, maxBuffer = null } = {}) {
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new Error('Worker exec timeout must be a positive finite number');
+  if (maxBuffer !== null && (!Number.isFinite(maxBuffer) || maxBuffer <= 0)) throw new Error('Worker exec maxBuffer must be a positive finite number');
   const namespace = config.kubernetes.workerNamespace;
   const stdout = new stream.PassThrough();
   const stderr = new stream.PassThrough();
   let out = ''; let err = '';
   stdout.setEncoding('utf8');
   stderr.setEncoding('utf8');
-  stdout.on('data', (chunk) => { out += chunk; });
-  stderr.on('data', (chunk) => { err += chunk; });
   const input = stdinText === null ? null : stream.Readable.from([stdinText]);
   return new Promise((resolve, reject) => {
     let socket;
@@ -3674,6 +3673,23 @@ async function execInWorker(config, runtimeName, command, stdinText = null, { ti
       error.code = 'ETIMEDOUT';
       finish(error);
     }, timeoutMs);
+    let outputBytes = 0;
+    const collect = (isStdout) => (chunk) => {
+      if (settled) return;
+      outputBytes += Buffer.byteLength(chunk);
+      if (maxBuffer !== null && outputBytes > maxBuffer) {
+        const error = new Error('Worker exec output exceeds maxBuffer');
+        error.code = 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER';
+        finish(error);
+        return;
+      }
+      if (isStdout) out += chunk;
+      else err += chunk;
+    };
+    stdout.on('data', collect(true));
+    stderr.on('data', collect(false));
+    stdout.on('error', finish);
+    stderr.on('error', finish);
     const onClose = () => {
       if (status?.status === 'Success') return finish();
       const error = new Error(status?.status === 'Failure'
