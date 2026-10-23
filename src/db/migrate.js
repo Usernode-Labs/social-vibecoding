@@ -182,6 +182,8 @@ async function migrate(config) {
   // Must run AFTER seedStagingVisuals: it owns the gallery demo app this
   // fixture's proposal belongs to.
   await seedStagingShotsNoticed(pool);
+  // After seedStagingDemoAppCard, whose demo app it belongs to.
+  await seedStagingShotsScreens(pool);
   await seedStagingLeaderboardProfile(pool);
   await seedStagingQaSession(pool, config);
   await seedStagingCloneQuestionSuggestions(pool, config);
@@ -8359,6 +8361,153 @@ async function seedStagingShotsNoticed(pool) {
   }
 }
 
+// A proposal waiting on the shots member's vote whose published before &
+// after shots hold THREE phone screens, so a preview's Needs you can draw a
+// change with several screens (the new review flow's row of screens under
+// its picture, features/review-flow/). The demo PR seedStagingDemoAppCard
+// makes has only the old one-picture capture, and seedStagingShotsNoticed's
+// two screens are on a merged proposal, so nothing in a fresh copy showed
+// more than one screen to vote on. One promoted proposal on the demo app
+// (900001, where usernode-capture is a member), owned by staging-demo-user,
+// its run verified on its reviewed head. Each screen is plain bars
+// (services/bench/demo.js demoPng), light only, with its change at a
+// different height: near the top, in the middle, near the foot. Every word
+// is an obviously fake "Staging demo" line; fixed ids, idempotent, and a
+// strict no-op outside staging.
+const STAGING_SHOTS_SCREENS_SESSION_ID = 900160;
+
+async function seedStagingShotsScreens(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  const crypto = require('crypto');
+  const { demoPng } = require('../services/bench/demo');
+  const planContract = require('../services/visible-changes');
+  const shotsState = require('../services/shots-state');
+  const id = STAGING_SHOTS_SCREENS_SESSION_ID;
+  const runId = `${id}`.padEnd(32, 'e');
+  const baseSha = 'e'.repeat(40);
+  const headSha = 'f'.repeat(40);
+  const phone = { name: 'phone', width: 390, height: 844 };
+  // Where each screen changed: the accent bar its after side adds.
+  const SCREENS = [
+    { story: 'top-filter', y: 96, h: 32, claim: 'Staging demo: the list gains a filter row under its heading.' },
+    { story: 'middle-badge', y: 392, h: 40, claim: 'Staging demo: each row in the middle of the list shows a badge.' },
+    { story: 'foot-action', y: 704, h: 48, claim: 'Staging demo: a Save button sits at the foot of the form.' },
+  ];
+  try {
+    const intent = planContract.parseIntent({
+      version: 1,
+      impact: 'ui',
+      rationale: 'Staging demo: three screens, each changed in a different place.',
+      stories: SCREENS.map((screen) => ({
+        id: screen.story,
+        claim: screen.claim,
+        persona: 'member',
+        viewports: [phone],
+        intent: {
+          startPath: '/',
+          steps: ['Open the screen'],
+          checkpoint: 'The change is on the screen',
+          focus: 'The changed bar',
+          baseState: 'not_present',
+          animation: 'none',
+        },
+      })),
+    });
+    const ground = [250, 250, 249];
+    const ink = [214, 211, 209];
+    const accent = [37, 99, 235];
+    // A header, then rows; the after side adds the screen's accent bar.
+    const draw = (screen, side) => demoPng(phone.width, phone.height, ground, [
+      { y: 32, h: 40, rgb: ink },
+      ...(side === 'head' ? [{ y: screen.y, h: screen.h, rgb: accent }] : []),
+      ...[0, 1, 2, 3, 4, 5].map((i) => ({ y: 152 + i * 96, h: 64, rgb: ink }))
+        .filter((bar) => side !== 'head' || bar.y + bar.h <= screen.y || bar.y >= screen.y + screen.h),
+    ]);
+    const files = [];
+    for (const screen of SCREENS) {
+      for (const side of ['base', 'head']) {
+        const data = draw(screen, side);
+        files.push({
+          id: crypto.createHash('sha256').update(`staging-shots-screens:${screen.story}:${side}`).digest('hex').slice(0, 32),
+          story: screen.story, side, data,
+          sha256: crypto.createHash('sha256').update(data).digest('hex'),
+        });
+      }
+    }
+    const verdict = {
+      passed: true, mode: 'shots', runs: 1,
+      stories: SCREENS.map((screen) => ({ id: screen.story, status: 'ready', files: 2 })),
+      notices: [],
+      screens: SCREENS.map((screen) => ({
+        viewport: 'phone',
+        shot: screen.story,
+        stories: [screen.story],
+        width: phone.width,
+        heightBefore: phone.height,
+        heightAfter: phone.height,
+        regions: [{ story: screen.story, b: null, a: [0, screen.y, phone.width, screen.h], bMark: null, aMark: null }],
+      })),
+    };
+    const planHash = crypto.createHash('sha256')
+      .update(`staging-shots-screens:${files.map((file) => file.sha256).join(':')}`).digest('hex');
+    const detail = {
+      ...shotsState.runSummary({
+        id: runId, state: 'verified', intent, base_sha: baseSha, head_sha: headSha,
+        plan_hash: planHash, hard_verdict: verdict,
+      }),
+      intent,
+    };
+
+    await pool.query(
+      `INSERT INTO chat_sessions
+         (id, app_id, user_id, branch_name, pr_number, pr_title, status,
+          promoted_at, reviewed_head_sha,
+          shots_state, shots_run_id, shots_detail, shots_updated_at)
+       SELECT $1::int, 900001, u.id, 'staging-demo/three-screens', $1::int,
+              '[Mock] Staging demo: three screens to compare', 'promoted',
+              NOW() - interval '1 hour', $2::varchar,
+              'verified', $3::varchar, $4::jsonb, NOW()
+         FROM users u
+        WHERE u.username = 'staging-demo-user'
+          AND EXISTS (SELECT 1 FROM apps WHERE id = 900001)
+       ON CONFLICT (id) DO NOTHING`,
+      [id, headSha, runId, JSON.stringify(detail)]
+    );
+    const cleaned = {
+      cleanupComplete: true,
+      cleanupVersion: require('../services/shots-environment').RESOURCE_CLEANUP_VERSION,
+    };
+    await pool.query(
+      `INSERT INTO shot_runs
+         (id, session_id, base_sha, head_sha, plan_hash, intent, hard_verdict,
+          trace_summary, state, trigger, started_at, completed_at)
+       SELECT $1::varchar, $2::int, $3::varchar, $4::varchar, $5::varchar, $6::jsonb, $7::jsonb, $8::jsonb,
+              'verified', 'staging-fixture', NOW() - interval '2 hours', NOW() - interval '2 hours'
+        WHERE EXISTS (SELECT 1 FROM chat_sessions WHERE id = $2::int AND app_id = 900001)
+          AND NOT wf_holds('shots', 'session:' || $2::int)
+       ON CONFLICT (id) DO NOTHING`,
+      [runId, id, baseSha, headSha, planHash, JSON.stringify(intent), JSON.stringify(verdict),
+        JSON.stringify(cleaned)]
+    );
+    for (const file of files) {
+      await pool.query(
+        `INSERT INTO shot_artifacts
+           (id, run_id, story_id, viewport, side, variant, media, content_type,
+            data, width, height, bytes, sha256, theme)
+         SELECT $1::varchar, $2::varchar, $3::varchar, 'phone', $4::varchar, 'context', 'png', 'image/png',
+                $5::bytea, $6::int, $7::int, $8::int, $9::varchar, 'light'
+          WHERE EXISTS (SELECT 1 FROM shot_runs WHERE id = $2::varchar)
+         ON CONFLICT (id) DO NOTHING`,
+        [file.id, runId, file.story, file.side, file.data, phone.width, phone.height,
+          file.data.length, file.sha256]
+      );
+    }
+    log.info('db', 'Staging three-screen shots fixture seeded', { sessionId: id });
+  } catch (err) {
+    log.warn('db', 'Staging three-screen shots seeding failed', { message: err.message });
+  }
+}
+
 // (#60) Fixtures for the leaderboard user-profile drill-in. The profile
 // view lists a user's PROPOSED PRs (chat_sessions) with kudos counts
 // (pr_kudos) — both staging:private tables, so without seeding the view
@@ -15544,5 +15693,5 @@ module.exports = {
   backfillSettingsProposalSource,
   seedStagingTopicScrollThreads, seedStagingLlmUsage, seedStagingHomeLayout,
   seedStagingAnalyticsCharts, seedStagingSpendDistribution,
-  seedStagingGeneralChannel, seedStagingShotsNoticed,
+  seedStagingGeneralChannel, seedStagingShotsNoticed, seedStagingShotsScreens,
 };
