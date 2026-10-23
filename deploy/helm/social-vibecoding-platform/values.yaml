@@ -314,6 +314,10 @@ secrets:
   firebaseServiceAccountJsonB64: ""
   # Optional Firebase web API key, supplied through encrypted external values.
   firebaseWebApiKey: ""
+  # Optional Brevo SMS credentials and country-to-Sender-ID JSON registry.
+  # Supply through SOPS; an empty key and registry leave Brevo unavailable.
+  brevoApiKey: ""
+  brevoSmsSenderIds: "{}"
 
 ingress:
   enabled: true
