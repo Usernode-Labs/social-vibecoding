@@ -213,6 +213,8 @@ the chart's context plus processRole: "" (all: serves and stands for leader),
             - {name: CLI_CANONICAL_ORIGIN, value: {{ printf "https://%s" .Values.config.domain | quote }}}
             - {name: WAITLIST_OAUTH_ORIGIN, value: {{ .Values.config.waitlistOauthOrigin | quote }}}
             - {name: PLATFORM_INTERNAL_URL, value: {{ .Values.config.internalUrl | quote }}}
+            - {name: MEDIA_STORAGE_ENDPOINT, value: {{ .Values.config.mediaStorage.endpoint | default "" | quote }}}
+            - {name: MEDIA_STORAGE_BUCKET, value: {{ .Values.config.mediaStorage.bucket | default "" | quote }}}
             - {name: USERNODE_PLATFORM_REPO, value: {{ .Values.config.platformRepository | quote }}}
             - {name: NODE_RPC_URL, value: {{ .Values.config.nodeRpcUrl | quote }}}
             - {name: EXPLORER_UPSTREAM, value: {{ .Values.config.explorerUpstream | quote }}}

@@ -218,6 +218,14 @@ config:
   # deploying a different genesis; the application validates the exact value.
   nativeSessionV2TestnetChainId: "utc1rq8tql3wr5w8u6nvkwepu7dazq89kv2838xwf02xmg2w5vzgly3s6xf63v"
   internalUrl: http://social-vibecoding.social-platform.svc.cluster.local:3000
+  # The media store's S3-compatible bucket (screenshots, videos and other
+  # files kept out of PostgreSQL), as MEDIA_STORAGE_ENDPOINT and
+  # MEDIA_STORAGE_BUCKET. Empty endpoint: off. The key pair is
+  # secrets.mediaStorageAccessKey / mediaStorageSecretKey. App file uploads
+  # (MINIO_*, src/services/app-files.js) are a separate store and stay off.
+  mediaStorage:
+    endpoint: ""
+    bucket: ""
   logLevel: INFO
   workerMemory: 2g
   # A worker on the platform's own repository (its agent boots the whole
@@ -307,6 +315,9 @@ secrets:
   gmailOauthRefreshToken: ""
   # Optional engagement tracking with the existing sender. Supply through SOPS.
   platformMailTrackingSecret: ""
+  # The media store's key pair for config.mediaStorage. Supply both through SOPS.
+  mediaStorageAccessKey: ""
+  mediaStorageSecretKey: ""
   # Optional mobile push settings. Supply all four through encrypted external values.
   mobilePushEnabled: false
   pushEnv: ""
