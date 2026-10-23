@@ -9,6 +9,7 @@ const shellRelease = loadShellRelease(path.join(__dirname, 'public'));
 // loadShellRelease rejects an explicitly different runtime revision.
 if (shellRelease && shellRelease.revision !== 'dev') process.env.GIT_SHA = shellRelease.revision;
 const { load: loadConfig, runsClusterMaintenance } = require('./src/config');
+const platformPreviewPolicy = require('./src/services/platform-preview-data-policy');
 const { migrate } = require('./src/db/migrate');
 const {
   shellAssetCacheControl,
@@ -913,7 +914,8 @@ app.get('/api/iframe-token', async (req, res) => {
   let token = null;
   let signErr = null;
   try {
-    token = platformJwt.signAppIdentityToken({ appId: appRow.id, user: tokenUser });
+    token = platformJwt.signAppIdentityToken({ appId: appRow.id, user: appRow.slug === config.selfAppSlug
+      ? platformPreviewPolicy.previewIdentity(tokenUser) : tokenUser });
   } catch (err) {
     signErr = err;
   }
@@ -1159,6 +1161,9 @@ async function start() {
   // (processes.js waitForRoom).
   const room = await processes.waitForRoom();
   if (room.waitedMs > 0) log.info('server', 'Older processes gave back their connections; starting', room);
+  // Security retirement precedes serving and starting preview work. A failed
+  // inventory/removal fails boot; the newest-build clock retries thereafter.
+  if (runsClusterMaintenance()) await require('./src/services/platform-preview-retirement').retire(config, getPool(config));
   // The limiters that gate a send, a bill or a guess count in Postgres: one
   // budget for every process, kept across a deploy (services/rate-limit-store.js).
   require('./src/services/rate-limit-store').setPool(getPool(config));

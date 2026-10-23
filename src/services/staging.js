@@ -571,6 +571,7 @@ async function buildAndDeployStagingInner(config, session, app, commitHash, { at
       cpus: docker.STAGING_CPUS,
       labels: {
         [stagingEnv.LABEL_ENV_FP]: stagingEnv.envFingerprint(platformEnv),
+        ...require('./platform-preview-data-policy').runtimeLabels(cloned),
         // Which database this runtime was given, and on which server: what
         // the heal pass checks when a preview database server can be wiped
         // or drained. Empty, so nothing is added, without such a server.

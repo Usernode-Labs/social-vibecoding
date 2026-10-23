@@ -29693,6 +29693,19 @@ const AppView = {
     };
     try { e.source.postMessage({ __usernode_directory: 'ack', id: data.id }, '*'); } catch {}
 
+    // The platform preview uses its local synthetic directory. Relaying the
+    // reviewer's production cookie would reintroduce undiscoverable handles
+    // that its database export deliberately removed. _stagingPreview belongs
+    // to the parent and also covers previews opened from Messages. The
+    // browser-supplied origin covers a stale/navigation-time parent record.
+    let platformPreviewOrigin = false;
+    try { platformPreviewOrigin = /^usernode-2d5619--s[0-9]+\./.test(new URL(e.origin).hostname); } catch {}
+    const preview = AppView._stagingPreview;
+    if (platformPreviewOrigin || (fromStaging && (preview?.slug === 'usernode-2d5619' || preview?.self_hosted))) {
+      reply(type === 'search' ? { users: [], has_more: false } : { found: false, user: null, ambiguous: false });
+      return;
+    }
+
     try {
       let url;
       if (type === 'lookup') {
@@ -29713,7 +29726,8 @@ const AppView = {
         if (Number.isFinite(limit)) params.set('limit', String(limit));
         url = `/api/app-directory/users/search?${params}`;
       }
-      const r = await fetch(url, { credentials: 'same-origin' });
+      const r = await fetch(url, { credentials: 'same-origin',
+        headers: { 'X-Usernode-Directory-Bridge': 'platform-isolated-v1' } });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) {
         reply(null, j.error || PlatformI18n.t('changes:bridge.directoryLookupFailed', { status: r.status }));

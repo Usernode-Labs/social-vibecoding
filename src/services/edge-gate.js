@@ -318,8 +318,8 @@ async function redeemOnce(pool, jti, expSeconds) {
 // PROVISIONAL handle on a public app (`publicApp`): the person has not
 // picked the username a public place shows (services/usernames.js), so the
 // app sees a visitor until they do, as /api/iframe-token's refusal does.
-async function mintIdentity(pool, appId, uid, { publicApp = false } = {}) {
-  const key = `${appId}:${uid}`;
+async function mintIdentity(pool, appId, uid, { publicApp = false, platformPreview = false } = {}) {
+  const key = `${appId}:${uid}:${platformPreview}`;
   const hit = identities.get(key);
   if (hit && Date.now() - hit.at < IDENTITY_REUSE_MS) return hit.token;
   const { rows } = await pool.query(
@@ -331,14 +331,10 @@ async function mintIdentity(pool, appId, uid, { publicApp = false } = {}) {
   const user = rows[0];
   if (!user || user.is_synthetic) return null;
   if (publicApp && user.provisional === true) return null;
-  const token = platformJwt.signAppIdentityToken({
-    appId,
-    user: {
-      id: user.id,
-      username: user.username,
-      usernode_pubkey: user.usernode_pubkey || null,
-      locale: user.locale || null,
-    },
+  const identity = { id: user.id, username: user.username,
+    usernode_pubkey: user.usernode_pubkey || null, locale: user.locale || null };
+  const token = platformJwt.signAppIdentityToken({ appId,
+    user: platformPreview ? require('./platform-preview-data-policy').previewIdentity(identity) : identity,
   });
   boundedSet(identities, key, { at: Date.now(), token });
   return token;
@@ -465,7 +461,7 @@ async function handleAccess(pool, req, res) {
   // request is decided in one place.
   const allow = async ({ identityFor = null, guest = false } = {}) => {
     if (identityFor != null) {
-      const token = await mintIdentity(pool, vis.appId, identityFor, { publicApp: !vis.viewPrivate });
+      const token = await mintIdentity(pool, vis.appId, identityFor, { publicApp: !vis.viewPrivate, platformPreview: !isProduction && slug === require('./platform-preview-data-policy').PLATFORM_SLUG });
       if (token) res.set('X-Usernode-Identity', token);
     } else if (guest) {
       res.set('X-Usernode-Identity', guestToken(vis.appId));

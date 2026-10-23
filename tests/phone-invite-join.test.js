@@ -299,7 +299,7 @@ test('a provisional handle: private groups see it, public places ask for a usern
   const server = read('server.js');
   assert.match(server, /if \(provisionalHandle && appRow\.view_visibility === 'public'\) \{\s+return res\.status\(409\)\.json\(usernames\.USERNAME_REQUIRED\);/);
   assert.match(read('src/services/edge-gate.js'), /if \(publicApp && user\.provisional === true\) return null;/);
-  assert.match(read('src/services/edge-gate.js'), /mintIdentity\(pool, vis\.appId, identityFor, \{ publicApp: !vis\.viewPrivate \}\)/);
+  assert.match(read('src/services/edge-gate.js'), /mintIdentity\(pool, vis\.appId, identityFor, \{ publicApp: !vis\.viewPrivate, platformPreview: !isProduction/);
   assert.match(read('src/routes/apps.js'), /if \(app\.view_visibility === 'public' && await usernames\.isProvisional\(pool, req\.user\.id\)\) \{\s+return res\.status\(409\)\.json\(usernames\.USERNAME_REQUIRED\);/);
   const svc = read('src/services/community-invites.js');
   assert.match(svc, /if \(invite\.view_visibility === 'public'\s+&& await require\('\.\/usernames'\)\.isProvisional\(client, user\.id\)\) \{\s+await client\.query\('ROLLBACK'\);\s+return \{ ok: false, status: 409, reason: 'username_required' \};/);

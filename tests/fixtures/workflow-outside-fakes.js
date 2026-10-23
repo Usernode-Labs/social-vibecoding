@@ -165,6 +165,12 @@ module.exports = function install(fakes) {
       // no container of that name, and the volume's removal recorded as
       // removeVolume's is.
       async execFileAsync(cmd, args) {
+        // The real startup retirement inventories outside runtimes. This
+        // fixture has none; keep the policy and its database lookup real.
+        if (cmd === 'docker' && args[0] === 'ps' && args[1] === '-a') {
+          await fakes.record('docker.ps');
+          return { stdout: '', stderr: '' };
+        }
         if (cmd === 'docker' && args[0] === 'inspect') {
           throw Object.assign(new Error('No such object'), { stderr: `Error: No such object: ${args.at(-1)}` });
         }
