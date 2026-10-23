@@ -1,9 +1,10 @@
 'use strict';
 
-// Homeroom's own sign-in codes, for when Brevo carries the text.
+// Homeroom's own sign-in codes, for when Brevo or Twilio carries the text.
 //
-// Firebase writes, texts and checks its own codes. Brevo only carries the
-// message, so when Brevo is the selected provider the platform makes the
+// Firebase writes, texts and checks its own codes. Brevo and Twilio only
+// carry the message, so when one of them is the selected provider the
+// platform makes the
 // code, keeps only hashes of it, expires it after ten minutes, allows five
 // tries and lets it work once. A row is keyed by the session its client was
 // handed; the phone number is in the row, and neither the code nor the

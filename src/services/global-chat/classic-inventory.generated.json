@@ -11941,6 +11941,21 @@
       "classicPath": "#apps"
     },
     {
+      "source": "src/routes/sms-webhooks.js",
+      "method": "POST",
+      "path": "/api/sms/webhooks/twilio",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.post.sms.webhooks.twilio.0ecb7a38",
+      "domain": "apps",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#apps"
+    },
+    {
       "source": "src/routes/social-identities.js",
       "method": "GET",
       "path": "/api/me/social-identities",

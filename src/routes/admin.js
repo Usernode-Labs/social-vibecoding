@@ -3185,13 +3185,20 @@ function adminRoutes(config) {
   // ── SMS delivery (Admin → SMS delivery) ──────────────────────────────
   //
   // Texts are sent by the provider chosen in the switch below: Firebase
-  // (today's path) or Brevo. The status read names the platform variables
-  // that are missing, never what any of them hold, and is open to any admin.
+  // (today's path), Brevo or Twilio. The status read names the platform
+  // variables that are missing, never what any of them hold, and is open to
+  // any admin. Its Sender IDs are the selected gateway's registry, or, while
+  // Firebase sends, the first gateway that is ready (else Brevo's), so an
+  // operator can check a registry before switching to it.
   router.get('/api/admin/sms/status', async (req, res) => {
     const chosen = await smsSelect.selection(pool).catch(() => null);
     const provider = smsSelect.describe(config, chosen);
     const selectedOption = provider.options.find((o) => o.name === provider.selected);
     const firebaseMissing = smsSelect.firebaseMissing(config);
+    const readyGateway = provider.options.find((o) => smsSelect.isGateway(o.name) && o.ready);
+    const senderProvider = smsSelect.isGateway(provider.selected)
+      ? provider.selected
+      : (readyGateway ? readyGateway.name : smsSelect.GATEWAYS[0]);
     res.json({
       offered: phoneAuth.offered(config),
       // Texts go out only when the SELECTED provider is configured; test
@@ -3203,7 +3210,8 @@ function adminRoutes(config) {
       missing: firebaseMissing,
       canSendTest: !!req.user?.canAdminWrite,
       provider,
-      senders: smsSenders.list(config),
+      senders: smsSenders.list(config, senderProvider),
+      senderProvider,
       stagingLogOnly: provider.stagingLogOnly,
     });
   });
@@ -3299,7 +3307,7 @@ function adminRoutes(config) {
     });
 
   // The delivery log: every send through the SMS layer, whatever its
-  // outcome, with the country, the Sender ID, Brevo's message id and the
+  // outcome, with the country, the Sender ID, the provider's message id and the
   // number's last four digits. Any admin, as the failure log is.
   router.get('/api/admin/sms/deliveries', async (req, res) => {
     try {

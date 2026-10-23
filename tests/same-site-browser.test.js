@@ -219,6 +219,7 @@ const EXEMPT = new Map([
   ['external-agent-patch-upload.js POST /api/external-tasks/:taskId/patch', TOKEN],
   ['mail-webhooks.js POST /api/mail/webhooks/resend', 'Resend raw-body Svix signature; no cookie or browser session authorizes a callback'],
   ['sms-webhooks.js POST /api/sms/webhooks/brevo', 'Brevo\'s SMS webhook bearer token (BREVO_SMS_WEBHOOK_TOKEN); no cookie or browser session authorizes a callback'],
+  ['sms-webhooks.js POST /api/sms/webhooks/twilio', 'Twilio\'s X-Twilio-Signature HMAC keyed by TWILIO_AUTH_TOKEN over TWILIO_STATUS_CALLBACK_URL; no cookie or browser session authorizes a callback'],
   ['alerts-webhook.js POST /api/internal/alerts', 'Alertmanager\'s bearer token (ALERTMANAGER_WEBHOOK_TOKEN); no cookie or browser session authorizes a call'],
   ['global-chat.js POST /api/global-chat/threads/:id/direct-actions', JSON_FIELD],
   ['global-chat.js POST /api/global-chat/threads/:id/inline-actions', JSON_FIELD],

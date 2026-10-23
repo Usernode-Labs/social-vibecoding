@@ -324,7 +324,7 @@ const BREVO_CONFIG = {
   brevoSmsSenderIds: { FR: { sender: 'Homeroom', registered: false, optOut: null } },
 };
 
-test('status lists both providers and the Sender ID registry without values', async () => {
+test('status lists every provider and the Sender ID registry without values', async () => {
   const server = await startServer(BREVO_CONFIG);
   try {
     currentUser = { id: 5, username: 'viewer', isAdmin: true, canAdminWrite: false };
@@ -332,12 +332,13 @@ test('status lists both providers and the Sender ID registry without values', as
     assert.equal(res.status, 200);
     assert.equal(res.body.provider.selected, 'firebase');
     const names = res.body.provider.options.map((o) => o.name);
-    assert.deepEqual(names, ['firebase', 'brevo']);
+    assert.deepEqual(names, ['firebase', 'brevo', 'twilio']);
     assert.equal(res.body.provider.options.find((o) => o.name === 'brevo').ready, true);
     assert.deepEqual(res.body.senders, [{
       country: 'FR', countryName: 'France', sender: 'Homeroom',
       needsRegistration: false, registered: false, ready: true,
     }]);
+    assert.equal(res.body.senderProvider, 'brevo', 'while Firebase sends, the ready gateway\'s registry is shown');
     assert.ok(!JSON.stringify(res.body).includes('brevo-key'), 'the key never leaves the server');
   } finally { server.close(); }
 });
@@ -351,7 +352,7 @@ test('only a full admin switches providers, and a provider that is not ready is 
     assert.equal(denied.status, 403);
 
     currentUser = fullAdmin();
-    const unknown = await call(server, 'PUT', '/api/admin/sms/provider', { provider: 'twilio' });
+    const unknown = await call(server, 'PUT', '/api/admin/sms/provider', { provider: 'carrier-pigeon' });
     assert.equal(unknown.status, 400);
     assert.equal(unknown.body.code, 'unknown_provider');
 

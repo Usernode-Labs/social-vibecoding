@@ -1,7 +1,8 @@
 'use strict';
 
 // Outbound SMS: one way to validate a number, find its country and Sender
-// ID, send through Brevo, and record what happened.
+// ID, send through the selected gateway (Brevo or Twilio), and record what
+// happened.
 //
 // The three entry points a caller uses:
 //
@@ -14,17 +15,24 @@
 // sends — or, on a staging preview, logs the content and sends nothing, the
 // way platform mail selects the log transport. Each attempt writes one
 // sms_deliveries row and one log line carrying the kind, provider, country,
-// Sender ID, status, Brevo's message id and the number's last four digits.
-// The full number is never stored in that table.
+// Sender ID, status, the provider's message id and the number's last four
+// digits. The full number is never stored in that table.
+//
+// The gateway is the selected provider when that is Brevo or Twilio
+// (select.js), or `deps.provider` when a caller names one; anything else
+// (Firebase, which sends its own texts) leaves Brevo, the first gateway.
+// Each gateway has its own client and its own Sender ID registry.
 
 const log = require('../logger');
 const smsSelect = require('./select');
 const brevo = require('./brevo');
+const twilio = require('./twilio');
 const senders = require('./senders');
 const { countryOf } = require('./countries');
 const { SmsError } = require('./errors');
 
 const PROVIDER = 'brevo';
+const CLIENTS = { brevo, twilio };
 const DEFAULT_OPT_OUT = 'Reply STOP to unsubscribe';
 const OTP_TEXT = (code) => `Your Homeroom code is ${code}. It expires in 10 minutes.`;
 const TEST_TEXT = 'Homeroom test message from Admin, SMS delivery. No action needed.';
@@ -52,6 +60,19 @@ function isStaging(deps = {}) {
   return smsSelect.isStaging(deps.env || process.env);
 }
 
+/** The gateway a send goes through: see the header. */
+function providerFor(config, deps = {}) {
+  if (deps.provider && smsSelect.isGateway(deps.provider)) return deps.provider;
+  const selected = smsSelect.selectedSync(config);
+  return smsSelect.isGateway(selected) ? selected : PROVIDER;
+}
+
+function credentialsSet(config, provider) {
+  if (!config) return false;
+  if (provider === 'twilio') return !!(config.twilioAccountSid && config.twilioAuthToken);
+  return !!config.brevoApiKey;
+}
+
 async function recordDelivery(pool, row) {
   if (!pool) return;
   try {
@@ -62,7 +83,7 @@ async function recordDelivery(pool, row) {
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())`,
       [
         row.kind,
-        PROVIDER,
+        row.provider || PROVIDER,
         row.country,
         row.senderId || null,
         last4(row.phone),
@@ -82,7 +103,7 @@ async function recordDelivery(pool, row) {
 function logDelivery(row) {
   log.info('sms', 'SMS delivery', {
     kind: row.kind,
-    provider: PROVIDER,
+    provider: row.provider || PROVIDER,
     country: row.country,
     senderId: row.senderId || null,
     status: row.status,
@@ -98,9 +119,11 @@ function logDelivery(row) {
  * marketing gate appends its opt-out line before this runs).
  */
 async function deliver(pool, config, { kind, type, tag, phone, country, content }, deps = {}) {
-  const entry = senders.senderFor(config, country);
+  const provider = providerFor(config, deps);
+  const entry = senders.senderFor(config, country, provider);
   const base = {
     kind,
+    provider,
     country,
     senderId: entry.sender,
     phone,
@@ -110,20 +133,20 @@ async function deliver(pool, config, { kind, type, tag, phone, country, content 
     // Nothing leaves a staging preview. The code is written to the log on
     // purpose, as the mail log transport does, so a tester can finish sign-in.
     log.info('sms', 'SMS logged only (staging)', {
-      kind, provider: PROVIDER, country, senderId: entry.sender,
+      kind, provider, country, senderId: entry.sender,
       phone: `…${last4(phone)}`, content,
     });
     await recordDelivery(pool, { ...base, status: 'logged' });
-    return { status: 'logged', country, senderId: entry.sender, messageId: null };
+    return { status: 'logged', provider, country, senderId: entry.sender, messageId: null };
   }
 
-  if (!config || !config.brevoApiKey) {
+  if (!credentialsSet(config, provider)) {
     await recordDelivery(pool, { ...base, status: 'refused', errorCode: 'provider_not_configured' });
     logDelivery({ ...base, status: 'refused', errorCode: 'provider_not_configured' });
     throw new SmsError('provider_not_configured', 'Text messages are not configured for this server.', 503);
   }
 
-  const answer = await brevo.send(config, {
+  const answer = await CLIENTS[provider].send(config, {
     sender: entry.sender,
     recipient: phone,
     content,
@@ -135,7 +158,7 @@ async function deliver(pool, config, { kind, type, tag, phone, country, content 
     const row = { ...base, status: 'sent', messageId: answer.messageId, attempts: answer.attempts };
     await recordDelivery(pool, row);
     logDelivery(row);
-    return { status: 'sent', country, senderId: entry.sender, messageId: answer.messageId };
+    return { status: 'sent', provider, country, senderId: entry.sender, messageId: answer.messageId };
   }
 
   const status = answer.unreachable ? 'failed' : 'refused';
@@ -216,7 +239,7 @@ async function sendMarketingSms(pool, config, { phoneNumber, content, tag = 'mar
     throw new SmsError('quiet_hours', 'Marketing texts are not allowed in that country at this hour.', 422);
   }
 
-  const entry = senders.senderFor(config, country);
+  const entry = senders.senderFor(config, country, providerFor(config, deps));
   const body = appendOptOut(content, optOutLine(entry));
   return deliver(pool, config, {
     kind: 'marketing', type: 'marketing', tag: tag || 'marketing',
@@ -249,7 +272,7 @@ async function recordConsent(pool, { phoneNumber, userId = null, source = null }
   return { phone };
 }
 
-/** Record an opt-out (a STOP reply or a Brevo unsubscribe event). */
+/** Record an opt-out (a STOP reply, or a Brevo or Twilio opt-out event). */
 async function recordOptOut(pool, phoneNumber, source = null) {
   const { phone } = validatePhone(phoneNumber);
   await pool.query(
@@ -265,10 +288,12 @@ async function recordOptOut(pool, phoneNumber, source = null) {
 module.exports = {
   SmsError,
   PROVIDER,
+  CLIENTS,
   DEFAULT_OPT_OUT,
   OTP_TEXT,
   TEST_TEXT,
   validatePhone,
+  providerFor,
   sendOtpSms,
   sendMarketingSms,
   sendTestSms,

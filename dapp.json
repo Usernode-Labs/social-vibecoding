@@ -425,7 +425,7 @@
       "key": "PLATFORM_SMS_PROVIDER",
       "group": "Phone sign-in",
       "default": "firebase",
-      "description": "Who sends Homeroom's text messages until an admin saves a choice in Admin → SMS delivery: firebase (default, today's Firebase Phone Auth path) or brevo. An admin's saved choice wins. An unknown value is logged and falls back to firebase. A staging preview never sends a real text whatever this says."
+      "description": "Who sends Homeroom's text messages until an admin saves a choice in Admin → SMS delivery: firebase (default, today's Firebase Phone Auth path), brevo or twilio. An admin's saved choice wins. An unknown value is logged and falls back to firebase. A staging preview never sends a real text whatever this says."
     },
     {
       "key": "BREVO_API_KEY",
@@ -445,6 +445,29 @@
       "private": true,
       "required": false,
       "description": "Bearer token Brevo's SMS webhook must send to POST /api/sms/webhooks/brevo. Private: it authorizes STOP replies and delivery receipts. Unset leaves the webhook answering 404."
+    },
+    {
+      "key": "TWILIO_ACCOUNT_SID",
+      "group": "Phone sign-in",
+      "description": "Twilio Account SID (AC…), the user half of the Basic credential on POST https://api.twilio.com/2010-04-01/Accounts/{AccountSid}/Messages.json. Not needed on staging, which logs instead of sending."
+    },
+    {
+      "key": "TWILIO_AUTH_TOKEN",
+      "group": "Phone sign-in",
+      "private": true,
+      "description": "Twilio Auth Token, the password half of the Basic credential, and the key Twilio signs its webhooks with. Private: it can send texts and is never returned by any API — the admin status card reports only whether it is present. Not needed on staging, which logs instead of sending."
+    },
+    {
+      "key": "TWILIO_SMS_SENDER_IDS",
+      "group": "Phone sign-in",
+      "default": "{}",
+      "description": "Twilio's own country-to-Sender-ID registry, shaped like BREVO_SMS_SENDER_IDS: JSON keyed by ISO 3166 alpha-2 country, each value a sender string or {sender, registered, optOut}. List only Sender IDs Twilio approved. An unlisted country is refused; US and Canada need registered:true with a numeric sender, sent as an E.164 From. Empty or malformed means Twilio is not ready."
+    },
+    {
+      "key": "TWILIO_STATUS_CALLBACK_URL",
+      "group": "Phone sign-in",
+      "required": false,
+      "description": "This server's public URL for POST /api/sms/webhooks/twilio, e.g. https://app.onhomeroom.com/api/sms/webhooks/twilio. Sent as each message's StatusCallback, and the exact URL Twilio's X-Twilio-Signature is checked against. Unset leaves the webhook answering 404 and sends no StatusCallback."
     },
     {
       "key": "PLATFORM_MAIL_PROVIDER",

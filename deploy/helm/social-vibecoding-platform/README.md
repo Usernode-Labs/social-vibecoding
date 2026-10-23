@@ -94,9 +94,24 @@ environment-variable keys to `secrets.existingSecret` and roll out both
 Deployments after changing that Secret. The Platform variables panel does not
 populate Kubernetes configuration.
 
+Twilio SMS takes the same route, with its own fields:
+
+```yaml
+secrets:
+  twilioAccountSid: "<Twilio Account SID, AC…>"
+  twilioAuthToken: "<Twilio Auth Token>"
+  twilioSmsSenderIds: '{"FR":"Homeroom"}'
+  twilioStatusCallbackUrl: "https://<host>/api/sms/webhooks/twilio"
+```
+
+They map to `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`,
+`TWILIO_SMS_SENDER_IDS` and `TWILIO_STATUS_CALLBACK_URL`. List only Sender IDs
+Twilio has approved; a Brevo registration does not carry over. See
+`docs/sms-twilio.md`.
+
 After rollout, use **Admin → Platform → SMS delivery** to check readiness,
-select Brevo and send a test to a number you control. Supplying credentials
-does not itself change the selected provider.
+select Brevo or Twilio and send a test to a number you control. Supplying
+credentials does not itself change the selected provider.
 
 For Gmail delivery with `secrets.create: true`, merge these fields into the
 existing `secrets` block in the infra repository's SOPS-encrypted

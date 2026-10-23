@@ -10,22 +10,22 @@ import { phoneRecaptchaToken, RECAPTCHA_NOTICE } from '../auth/recaptcha';
 //
 // Homeroom texts sign-in codes. Until this section grew a switch those texts
 // went out one way: Firebase Phone Auth (src/services/firebase-phone-auth.js).
-// Now a full admin chooses who sends them — Firebase, today's path, or Brevo
-// (src/services/sms/) — and this section shows whether the choice is ready,
-// which countries Brevo may text and with which Sender ID, and what the last
-// texts did. It looks like Email delivery on purpose:
+// Now a full admin chooses who sends them — Firebase, today's path, Brevo or
+// Twilio (src/services/sms/) — and this section shows whether the choice is
+// ready, which countries the gateway may text and with which Sender ID, and
+// what the last texts did. It looks like Email delivery on purpose:
 //
 //   1. Who sends texts, and is it ready?  (provider card, PUT /api/admin/sms/provider)
 //   2. Is phone sign-in set up?           (status card, GET /api/admin/sms/status)
-//   3. Which countries may Brevo text?    (Sender IDs card, from the same read)
+//   3. Which countries may it text?       (Sender IDs card, from the same read)
 //   4. Does a text go out right now?      (send a test, POST /api/admin/sms/test)
 //   5. What did the latest texts do?      (Recent texts, GET /api/admin/sms/deliveries)
 //   6. What has been failing, and why?    (failure log, GET /api/admin/sms/failures)
 //
 // The test is the real send through the selected provider. With Firebase it
 // is the Identity Toolkit call with the invisible reCAPTCHA the sign-in
-// sheet earns; with Brevo it is a plain test message, so nobody enters a
-// code. The answer names the provider's own code, which users never see.
+// sheet earns; with Brevo or Twilio it is a plain test message, so nobody
+// enters a code. The answer names the provider's own code, which users never see.
 //
 // PERMISSIONS: visible to any admin. Changing the provider and sending the
 // test are full-admin-only; a view-only admin sees why. The server enforces
@@ -79,6 +79,7 @@ interface SmsStatus {
   canSendTest?: boolean;
   provider?: ProviderInfo;
   senders?: SenderRow[];
+  senderProvider?: string;
   stagingLogOnly?: boolean;
 }
 
@@ -157,6 +158,18 @@ async function fetchJson(url: string, opts?: RequestInit): Promise<{ status: num
   }
 }
 
+// The providers that only carry a text (Homeroom makes and checks the code),
+// with the registry variable each one's Sender IDs live in.
+const GATEWAYS: Record<string, { label: string; registry: string }> = {
+  brevo: { label: 'Brevo', registry: 'BREVO_SMS_SENDER_IDS' },
+  twilio: { label: 'Twilio', registry: 'TWILIO_SMS_SENDER_IDS' },
+};
+
+function providerLabel(name: string | undefined): string {
+  if (name && GATEWAYS[name]) return GATEWAYS[name].label;
+  return 'Firebase';
+}
+
 // One plain sentence per provider code an operator is likely to meet.
 const PROVIDER_HINTS: Record<string, string> = {
   INVALID_PHONE_NUMBER: 'Firebase could not read the number. Enter it with its country code, starting with +.',
@@ -170,16 +183,41 @@ const PROVIDER_HINTS: Record<string, string> = {
   INVALID_RECAPTCHA_TOKEN: 'Firebase did not accept the “I’m not a robot” answer. Check that this site is an authorised domain in the Firebase project.',
   CAPTCHA_CHECK_FAILED: 'Firebase did not accept the “I’m not a robot” answer. Try again.',
   NO_SESSION_INFO: 'Firebase answered without confirming the send.',
-  no_sender_id: 'No Sender ID is registered for that country. Register one in Brevo, then add it to BREVO_SMS_SENDER_IDS.',
-  country_not_registered: 'That country needs its registration recorded first: a numeric sender and registered: true in BREVO_SMS_SENDER_IDS.',
   unsupported_country: 'That number’s calling code is not in the supported country list.',
   invalid_phone: 'Enter the number with its country code, starting with +.',
   not_enough_credits: 'The Brevo account has no SMS credits left.',
   unauthorized: 'Brevo did not accept the API key. Check BREVO_API_KEY.',
-  provider_refused: 'Brevo refused the message. Its code says why.',
-  provider_unreachable: 'Brevo could not be reached after three attempts, so no text was sent.',
-  timeout: 'Brevo did not answer in time. It may already have sent the text, so it was not retried.',
+  // Twilio's numeric error codes.
+  '20003': 'Twilio did not accept the credentials. Check TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN.',
+  '21211': 'Twilio could not read the number. Enter it with its country code, starting with +.',
+  '21408': 'That country is not enabled in the Twilio account’s Geo Permissions.',
+  '21610': 'That number replied STOP to this sender, so Twilio will not text it until it replies START.',
+  '21612': 'Twilio cannot send from this Sender ID to that number. Check the country’s Sender ID rules.',
+  '21614': 'That number cannot receive text messages.',
+  '21606': 'The Sender ID is not a Twilio number or approved sender for this account.',
 };
+
+// The same answer means the same thing from either gateway, so these are
+// written once and name the one that sent.
+function providerHint(code: string, name: string): string | undefined {
+  if (PROVIDER_HINTS[code]) return PROVIDER_HINTS[code];
+  const gateway = Object.values(GATEWAYS).find((g) => g.label === name);
+  const registry = gateway ? gateway.registry : 'the Sender ID registry';
+  switch (code) {
+    case 'no_sender_id':
+      return `No Sender ID is registered for that country. Register one in ${name}, then add it to ${registry}.`;
+    case 'country_not_registered':
+      return `That country needs its registration recorded first: a numeric sender and registered: true in ${registry}.`;
+    case 'provider_refused':
+      return `${name} refused the message. Its code says why.`;
+    case 'provider_unreachable':
+      return `${name} could not be reached after three attempts, so no text was sent.`;
+    case 'timeout':
+      return `${name} did not answer in time. It may already have sent the text, so it was not retried.`;
+    default:
+      return undefined;
+  }
+}
 
 function Mono({ children }: { children: React.ReactNode }) {
   return <code className="font-mono text-xs">{children}</code>;
@@ -310,8 +348,8 @@ function StatusCard({ status, failed }: { status: SmsStatus | null; failed: bool
       <div className={`${AdminUI.card} px-4 py-3 text-sm`}>
         <span className="font-semibold text-emerald-700 dark:text-emerald-400">SMS is set up:</span>
         <span className="text-zinc-500 dark:text-zinc-400">
-          {provider && provider.selected === 'brevo' ? (
-            ' phone sign-in is offered, and its codes are texted by Brevo to the countries listed under Sender IDs.'
+          {provider && GATEWAYS[provider.selected] ? (
+            ` phone sign-in is offered, and its codes are texted by ${GATEWAYS[provider.selected].label} to the countries listed under Sender IDs.`
           ) : (
             <>
               {' phone sign-in is offered, and its codes are texted by Firebase project '}
@@ -355,19 +393,22 @@ function StatusCard({ status, failed }: { status: SmsStatus | null; failed: bool
   );
 }
 
-function SendersCard({ senders, selected }: { senders: SenderRow[]; selected: string }) {
+function SendersCard({ senders, selected, gateway }: {
+  senders: SenderRow[]; selected: string; gateway: string;
+}) {
+  const g = GATEWAYS[gateway] || GATEWAYS.brevo;
   return (
     <div id="admin-sms-senders" className="rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-4 py-3 mb-4">
       <h3 className="text-sm font-semibold mb-2">Sender IDs</h3>
       <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-2">
-        {'Brevo texts only these countries. Register a Sender ID in Brevo first, then add it to '}
-        <Mono>BREVO_SMS_SENDER_IDS</Mono>
+        {`${g.label} texts only these countries. Register a Sender ID in ${g.label} first, then add it to `}
+        <Mono>{g.registry}</Mono>
         {'. A country that is not on this list is refused.'}
       </p>
       {senders.length === 0 ? (
         <p className="text-sm text-zinc-500 dark:text-zinc-400">
-          No Sender IDs are registered, so Brevo texts no country.
-          {selected === 'brevo' ? ' Phone sign-in cannot text a real number until one is added.' : ''}
+          {`No Sender IDs are registered, so ${g.label} texts no country.`}
+          {selected === gateway ? ' Phone sign-in cannot text a real number until one is added.' : ''}
         </p>
       ) : (
         <div className={AdminUI.tableWrap}>
@@ -407,8 +448,8 @@ function SendersCard({ senders, selected }: { senders: SenderRow[]; selected: st
 
 function OutcomeLine({ outcome }: { outcome: Outcome }) {
   const at = outcome.sentAt ? `${outcome.sentAt.replace('T', ' ').slice(11, 16)} UTC` : '';
-  const brevo = outcome.provider === 'brevo';
-  const name = brevo ? 'Brevo' : 'Firebase';
+  const gateway = !!(outcome.provider && GATEWAYS[outcome.provider]);
+  const name = providerLabel(outcome.provider);
   const place = [
     outcome.country ? `country ${outcome.country}` : '',
     outcome.senderId ? `Sender ID ${outcome.senderId}` : '',
@@ -424,8 +465,8 @@ function OutcomeLine({ outcome }: { outcome: Outcome }) {
             : `Sent: ${name} accepted the text for ${outcome.phoneNumber || 'that number'}${at ? ` at ${at}` : ''}${place ? ` (${place})` : ''}.`}
         </p>
         <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
-          {brevo
-            ? 'Accepted means Brevo took the send; a delivery receipt arrives at the webhook when its carrier reports one.'
+          {gateway
+            ? `Accepted means ${name} took the send; a delivery receipt arrives at the webhook when its carrier reports one.`
             : 'Accepted means Firebase took the send; it does not report when the phone receives it. A number set up as a test number in the Firebase console is answered the same way and gets no text.'}
         </p>
       </div>
@@ -433,7 +474,7 @@ function OutcomeLine({ outcome }: { outcome: Outcome }) {
   }
   if (outcome.status === 'refused') {
     const code = outcome.providerCode || 'no code given';
-    const hint = (outcome.providerCode && PROVIDER_HINTS[outcome.providerCode])
+    const hint = (outcome.providerCode && providerHint(outcome.providerCode, name))
       || `${name} refused the send. Its code says why.`;
     return (
       <p className="text-sm mt-3 text-rose-600 dark:text-rose-400">
@@ -615,7 +656,8 @@ function SmsSection() {
   }, []);
 
   const provider = status?.provider || null;
-  const isBrevo = provider ? provider.selected === 'brevo' : false;
+  const gateway = provider && GATEWAYS[provider.selected] ? provider.selected : null;
+  const isGateway = !!gateway;
 
   // The test is a real text, so it needs a ready provider, not just test numbers.
   const offered = !!status && (status.texts ?? !!status.offered);
@@ -627,9 +669,10 @@ function SmsSection() {
     setSending(true);
     setResult({ kind: 'note', text: 'Sending…' });
 
-    // Firebase texts a web caller only with a reCAPTCHA answer. Brevo needs
-    // none, so it is earned only when Firebase is the selected provider.
-    const recaptchaToken = isBrevo ? undefined : await phoneRecaptchaToken();
+    // Firebase texts a web caller only with a reCAPTCHA answer. Brevo and
+    // Twilio need none, so it is earned only when Firebase is the selected
+    // provider.
+    const recaptchaToken = isGateway ? undefined : await phoneRecaptchaToken();
     if (!alive.current) return;
 
     const res = await fetchJson('/api/admin/sms/test', {
@@ -673,8 +716,9 @@ function SmsSection() {
       <div id="admin-sms-status" className="mb-4">
         <StatusCard status={status} failed={statusFailed} />
       </div>
-      {status && status.senders && (isBrevo || (provider && provider.options.some((o) => o.name === 'brevo' && o.ready))) ? (
-        <SendersCard senders={status.senders} selected={provider ? provider.selected : 'firebase'} />
+      {status && status.senders && (isGateway || (provider && provider.options.some((o) => GATEWAYS[o.name] && o.ready))) ? (
+        <SendersCard senders={status.senders} selected={provider ? provider.selected : 'firebase'}
+          gateway={status.senderProvider || gateway || 'brevo'} />
       ) : null}
       <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-4 py-3 mb-4">
         <h3 className="text-sm font-semibold mb-2">Send a test SMS</h3>
@@ -697,14 +741,14 @@ function SmsSection() {
               </button>
             </div>
             <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-2">
-              {isBrevo ? (
-                'Sends one test text to this number through Brevo, from the Sender ID for its country, and shows exactly what Brevo answered. It is a plain test message, so nobody has to enter a code.'
+              {gateway ? (
+                `Sends one test text to this number through ${GATEWAYS[gateway].label}, from the Sender ID for its country, and shows exactly what ${GATEWAYS[gateway].label} answered. It is a plain test message, so nobody has to enter a code.`
               ) : (
                 'Sends one sign-in code text to this number through Firebase and shows exactly what Firebase answered. The text is Firebase’s own code message, and nobody has to enter the code.'
               )}
               {' Up to 5 per hour, and one per number per minute.'}
             </p>
-            {!isBrevo ? (
+            {!isGateway ? (
               <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
                 {n.lead}
                 <a href={n.privacy.href} target="_blank" rel="noopener noreferrer" className="underline">{n.privacy.label}</a>

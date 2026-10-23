@@ -15,6 +15,7 @@ The implementation lives in `src/services/sms/`:
 | `countries.js` | Country of an E.164 number, US/Canada registration, quiet hours |
 | `senders.js` | Parses and enforces the country-to-Sender-ID registry |
 | `brevo.js` | The `POST /v3/transactionalSMS/send` client, bounded retries |
+| `twilio.js` | Twilio's `Messages.json` client, the same contract (see [SMS through Twilio](sms-twilio.md)) |
 | `otp.js` | Homeroom's own hashed, expiring, single-use sign-in codes |
 | `index.js` | `sendOtpSms`, `sendMarketingSms`, `sendTestSms`, consent helpers |
 
