@@ -160,6 +160,12 @@ test('every card opens its project\'s page, no card is locked, and Featured is n
   assert.ok(words.includes('Classic games, fresh every day.'));
   assert.ok(words.includes(message('auth:guest.card.latest', { title: 'Add a dark theme' })));
   assert.ok(!words.some((w) => /^0 /.test(w)), 'no zero is printed');
+  // What a card says about itself stops at two lines: a display utility
+  // beside line-clamp-2 undoes the clamp (#5851).
+  const about = html.match(/data-guest-card-about="" class="([^"]+)"/);
+  assert.ok(about, 'a card shows what it is');
+  assert.ok(about[1].split(' ').includes('line-clamp-2'));
+  assert.ok(!about[1].split(' ').some((c) => /^(block|inline|inline-block|flex|grid)$/.test(c)), about[1]);
 });
 
 // What a card says, by its numbers (the 21 Oct 2026 review: the median

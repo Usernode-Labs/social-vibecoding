@@ -177,7 +177,10 @@ function CardFacts({ app, sort }: { app: GuestApp; sort: GuestSort }) {
   return (
     <>
       {about ? (
-        <span data-guest-card-about="" className="line-clamp-2 block text-[13px] leading-[18px] text-zinc-500 dark:text-zinc-400">
+        // No `block` beside line-clamp-2: it comes later in the stylesheet,
+        // undid the clamp's display and let the text run to four lines
+        // (#5851), so cards in a row grew apart.
+        <span data-guest-card-about="" className="line-clamp-2 text-[13px] leading-[18px] text-zinc-500 dark:text-zinc-400">
           {about}
         </span>
       ) : null}
