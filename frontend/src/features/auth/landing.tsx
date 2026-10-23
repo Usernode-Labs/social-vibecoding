@@ -718,11 +718,11 @@ type Translate = (id: string, params?: Record<string, unknown>) => string;
 /**
  * The sign-in sheet's title for what a visitor tried to do on a project's
  * page. While new accounts wait (guest-data NEW_ACCOUNTS_WAIT), taking part
- * says so in the title: an account made now joins the waitlist, and can
- * join, vote, ask or chat once it is let in. The title, not a line under it
- * (the sheets carry none, #4037). Try it's "Sign in to use" is the same
- * either way: a waiting account can use a public app (/api/iframe-token
- * answers it, #1895).
+ * asks for an account in the title: an account made now waits on the
+ * waitlist, and can join, vote, ask or chat once it is let in. The title, not
+ * a line under it (the sheets carry none, #4037). Try it's "Sign in to use"
+ * is the same either way: a waiting account can use a public app
+ * (/api/iframe-token answers it, #1895).
  */
 export function intentTitle(intent: GuestIntent, t: Translate, waitlist: boolean = NEW_ACCOUNTS_WAIT): string {
   const project = intent.app.name;
