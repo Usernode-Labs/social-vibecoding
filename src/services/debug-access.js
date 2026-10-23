@@ -12,8 +12,8 @@
 //
 //   - SQL runs through a dedicated `usernode_debug_ro` Postgres role
 //     whose password each release's migration step regenerates
-//     (services/db-roles.js), and whose grants exclude every
-//     credential-bearing table/column (deny lists below). Every process
+//     (services/db-roles.js), and whose grants expose only reviewed
+//     operational columns (READABLE_COLUMNS below). Every process
 //     reads it from platform_db_roles, encrypted with the data key as app
 //     secrets are, a table this role itself cannot read.
 //   - docker reads (`docker logs`, `docker ps`) run via the platform's
@@ -39,15 +39,17 @@ const MAX_RESULT_BYTES = 256 * 1024;
 
 // ── Deny lists ──────────────────────────────────────────────────────────
 //
-// Tables/columns that hold credentials or private user material and must
-// NEVER be selectable by the debug role. Kept in sync with the
+// Legacy exclusions for credentials/private content, also used by the
+// human-admin console's separate policy. Kept in sync with the
 // `staging:private` credential tags in src/db/schema.sql — a new
 // secret-bearing column/table added there MUST be added here too (a test
 // in tests/prod-debug-access.test.js cross-checks the schema tags against
 // this list). Note this is deliberately much smaller than the full
 // `staging:private` set: tables like chat_sessions and merge_debug_runs
 // are private-to-staging but are exactly what a production debugger
-// needs to read.
+// needs as operational metadata. The SQL role's READABLE_COLUMNS below
+// now determines every grant; an unknown table or column is excluded even
+// before these older exclusion lists are updated.
 const DENIED_TABLES = new Set([
   'sessions',           // login cookie tokens
   'activation_codes',   // invite/activation secrets
@@ -207,6 +209,46 @@ const DENIED_COLUMNS = {
   ],
 };
 
+// SQL debug access is metadata-only. Review each column here: schema
+// discovery supplies existence, never permission. In particular, transcripts,
+// drafts, workflow payloads/results/checkpoints/errors, stream bodies, secrets
+// and arbitrary JSON never become readable just because a migration adds them.
+// The older exclusions above remain a second check and are shared with the
+// separate human-admin SQL console, which has its own deliberate read policy.
+const READABLE_COLUMNS = Object.freeze(Object.fromEntries(Object.entries({
+  users: ['id', 'username', 'is_admin', 'admin_readonly', 'created_at', 'has_platform_access'],
+  apps: ['id', 'slug', 'repo_url', 'status', 'created_by', 'created_at', 'self_hosted',
+    'main_sha', 'main_pr_number', 'last_deploy_at', 'runtime_kind', 'runtime_name', 'image_ref',
+    'collab_visibility', 'view_visibility', 'main_check_state', 'main_check_sha', 'main_check_at',
+    'deploy_state', 'deploy_started_at', 'deploy_from_sha', 'db_size_bytes', 'db_size_measured_at'],
+  chat_sessions: ['id', 'app_id', 'user_id', 'status', 'branch_name', 'pr_number', 'created_at',
+    'last_activity_at', 'check_state', 'check_phase', 'checks_commit_sha', 'checks_checked_at',
+    'consecutive_check_failures', 'check_next_retry_at', 'is_headless', 'headless_status',
+    'headless_issue_number', 'headless_outcome', 'headless_step', 'merge_commit_sha',
+    'merge_attempt_at', 'promoted_at', 'archived_at', 'merged_at', 'live_at', 'platform_live_at',
+    'shots_state', 'shots_run_id', 'shots_updated_at', 'workflow_owner', 'workflow_step'],
+  issues: ['id', 'app_id', 'github_issue_number', 'kind', 'created_by', 'status', 'created_at'],
+  events: ['id', 'user_id', 'app_id', 'session_id', 'event_type', 'created_at'],
+  llm_usage: ['id', 'user_id', 'date', 'total_cost_cents', 'byok_cost_cents'],
+  merge_debug_runs: ['id', 'app_id', 'session_id', 'pr_number', 'kind', 'trigger', 'status', 'started_at', 'ended_at'],
+  merge_debug_steps: ['id', 'run_id', 'seq', 'phase', 'level', 'created_at'],
+  agent_sessions: ['id', 'user_id', 'status', 'focus_app_id', 'active_change_id', 'created_at',
+    'last_activity_at', 'last_done_at', 'archived_at', 'seen_at', 'state_version'],
+  wf_instances: ['machine', 'key', 'app_id', 'state', 'version', 'machine_version',
+    'deadline_at', 'deadline_version', 'flag', 'created_at', 'updated_at'],
+  wf_events: ['id', 'machine', 'key', 'app_id', 'type', 'caused_by', 'status', 'attempts',
+    'retry_at', 'result', 'machine_version', 'state_before', 'state_after', 'version_after',
+    'created_at', 'processed_at'],
+  wf_work: ['id', 'machine', 'key', 'kind', 'status', 'attempt_count', 'lost_attempts',
+    'lease_until', 'due_at', 'caused_by', 'created_at', 'settled_at'],
+  wf_work_attempts: ['id', 'work_id', 'number', 'outcome', 'started_at', 'finished_at'],
+  platform_processes: ['id', 'release', 'role', 'state', 'started_at', 'heartbeat_at',
+    'drain_started_at', 'drain_deadline_at'],
+  session_workers: ['session_id', 'last_used_at', 'created_at'],
+  check_runs: ['run_id', 'session_id', 'commit_sha', 'kind', 'app_id', 'queued_at',
+    'admitted_at', 'started_at', 'heartbeat_at'],
+}).map(([table, columns]) => [table, Object.freeze(columns)])));
+
 // ── Container-log allowlist (used by the prod-debug logs endpoint) ─────
 // Every `container_name` docker-compose.yml declares for a platform service,
 // and nothing else. `usernode` is kept for pre-blue-green and self-hosted
@@ -258,34 +300,37 @@ let _sharedReadAt = 0;
 const SHARED_TTL_MS = 30 * 1000;
 
 function quoteIdent(name) {
-  return `"${name}"`;
+  return `"${name.replaceAll('"', '""')}"`;
 }
 
-// Pure: turn the enumerated table/column inventory into GRANT statements,
-// applying the deny lists. Exported for unit tests. Input shape:
-// [{ table, columns: [...] }]. Tables in DENIED_TABLES produce nothing;
-// tables with DENIED_COLUMNS entries get an explicit column-list grant
-// (fail-closed for columns added later — SELECT * then errors rather than
-// leaking a future secret column).
+// Pure: intersect reviewed columns with the actual base-table inventory.
+// Unknown tables/columns and views receive no grants. Input shape:
+// [{ table, kind: 'r' | 'p' | ..., columns: [...] }].
 function buildGrantStatements(tables) {
   const stmts = [];
-  for (const { table, columns } of tables || []) {
+  for (const { table, kind, columns } of tables || []) {
     if (!SAFE_IDENT.test(table)) continue;
+    if (kind !== 'r' && kind !== 'p') continue;
     if (DENIED_TABLES.has(table)) continue;
-    const denied = DENIED_COLUMNS[table];
-    if (denied && denied.length) {
-      const allowed = (columns || []).filter(
-        (c) => SAFE_IDENT.test(c) && !denied.includes(c)
-      );
-      if (!allowed.length) continue;
-      stmts.push(
-        `GRANT SELECT (${allowed.map(quoteIdent).join(', ')}) ON public.${quoteIdent(table)} TO ${ROLE}`
-      );
-    } else {
-      stmts.push(`GRANT SELECT ON public.${quoteIdent(table)} TO ${ROLE}`);
-    }
+    if (!Object.hasOwn(READABLE_COLUMNS, table)) continue;
+    const denied = DENIED_COLUMNS[table] || [];
+    const allowed = (columns || []).filter(c => SAFE_IDENT.test(c)
+      && READABLE_COLUMNS[table].includes(c) && !denied.includes(c));
+    if (!allowed.length) continue;
+    stmts.push(`GRANT SELECT (${allowed.map(quoteIdent).join(', ')}) ON public.${quoteIdent(table)} TO ${ROLE}`);
   }
   return stmts;
+}
+
+// PostgreSQL's table-level REVOKE does not clear old column ACLs. Sweep all
+// columns, including views/materialized views/foreign tables formerly granted
+// by another policy, before granting this release's approved base columns.
+function buildColumnRevokeStatements(tables) {
+  return (tables || []).flatMap(({ table, columns }) => {
+    // Catalog identifiers may need quoting. They still need their old ACLs
+    // removed even when their names are ineligible for any new grant.
+    return columns.length ? [`REVOKE ALL PRIVILEGES (${columns.map(quoteIdent).join(', ')}) ON public.${quoteIdent(table)} FROM ${ROLE}`] : [];
+  });
 }
 
 // #891: bounded retry around the whole bootstrap. Granting to this role
@@ -453,17 +498,19 @@ async function bootstrapRole(config) {
   await pool.query(`REVOKE CREATE ON SCHEMA public FROM ${ROLE}`);
   await pool.query(`GRANT USAGE ON SCHEMA public TO ${ROLE}`);
 
-  // Reset then re-grant so deny-list additions take effect on the next
-  // boot without manual REVOKEs.
+  // Reset table AND column grants before applying the current allowlist.
   await pool.query(`REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM ${ROLE}`);
   const { rows: tableRows } = await pool.query(
-    `SELECT c.table_name AS table, array_agg(c.column_name::text ORDER BY c.ordinal_position) AS columns
-       FROM information_schema.columns c
-       JOIN information_schema.tables t
-         ON t.table_schema = c.table_schema AND t.table_name = c.table_name
-      WHERE c.table_schema = 'public' AND t.table_type = 'BASE TABLE'
-      GROUP BY c.table_name`
+    `SELECT c.relname AS table, c.relkind AS kind,
+            array_agg(a.attname::text ORDER BY a.attnum) AS columns
+       FROM pg_catalog.pg_class c
+       JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+       JOIN pg_catalog.pg_attribute a ON a.attrelid = c.oid
+      WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p', 'v', 'm', 'f')
+        AND a.attnum > 0 AND NOT a.attisdropped
+      GROUP BY c.relname, c.relkind`
   );
+  for (const stmt of buildColumnRevokeStatements(tableRows)) await pool.query(stmt);
   const grants = buildGrantStatements(tableRows);
   for (const stmt of grants) {
     await pool.query(stmt);
@@ -614,11 +661,11 @@ async function isEligible(pool, sessionId) {
 // ineligible agents never learn the capability exists.
 function promptBlock() {
   return `PRODUCTION DEBUG ACCESS (admin session on the self-edit app): a read-only helper \`usernode-debug\` is available (run it via Bash) for inspecting the LIVE PRODUCTION deployment of this platform — use it to debug stuck sessions, broken apps, and failed merges from real production state instead of guessing from source:
-- \`usernode-debug sql "SELECT ..."\` — run a read-only SQL query against the production platform database (its schema is this repo's \`src/db/schema.sql\`). Useful starting points: \`chat_sessions\` (incl. \`active_turn\`), \`merge_debug_runs\` / \`merge_debug_steps\` (step-by-step traces of every merge attempt), \`events\`, \`apps\`, \`llm_usage\`.
+- \`usernode-debug sql "SELECT ..."\` — run a read-only SQL query against the production platform database (its schema is this repo's \`src/db/schema.sql\`). Approved SQL columns are listed in \`READABLE_COLUMNS\` in \`src/services/debug-access.js\`. Useful starting points: \`chat_sessions\` (status and timestamps), \`merge_debug_runs\` / \`merge_debug_steps\` (merge phase/status/timing metadata), \`events\`, \`apps\`, \`llm_usage\`.
 - \`usernode-debug containers\` — list runtime workloads with state and available resource information.
 - \`usernode-debug logs <container> [tail]\` — recent log lines using a name returned by the inventory. Kubernetes supports managed \`sv-app-*\`, \`sv-preview-*\` and \`sv-worker-*\` workloads; Docker supports platform services and \`usernode-app-*\` / \`usernode-staging-*\` / \`usernode-worker-*\` containers. Use \`status\` for the platform's recent log events on either runtime.
 - \`usernode-debug status\` — the platform health snapshot (stuck sessions, warm workers, staging, budgets) plus recent platform log events.
-All output is JSON. This access is strictly READ-ONLY — writes are structurally impossible — and credential-bearing tables/columns (passwords, API keys, tokens, app secrets) are excluded at the database-grant level; do not attempt to read secrets or modify production state. Every call is audit-logged.`;
+All output is JSON. This access is strictly READ-ONLY — writes are structurally impossible — and SQL exposes only explicitly approved operational columns. Private transcripts, workflow payloads, stream bodies and credentials are excluded at the database-grant level; do not attempt to read secrets or modify production state. Every call is audit-logged.`;
 }
 
 // Mayor-facing awareness block: appended to the Mayor system prompt
@@ -635,11 +682,11 @@ function mayorPromptBlock() {
 
 This session qualifies for read-only production debugging: the session owner is an admin and this app is the platform itself. What that means for you:
 
-- Any scout or coding agent you dispatch gets a read-only \`usernode-debug\` CLI against the LIVE PRODUCTION deployment: \`sql\` (read-only queries on the production platform database), \`containers\` (container list with memory/CPU), \`logs <container>\` (recent log lines), and \`status\` (health snapshot plus recent platform log events). When the user reports a production problem — a stuck session, a failed merge, a broken app, resource issues — your dispatch prompt SHOULD explicitly direct the agent to inspect live production state FIRST instead of guessing from source, naming the relevant starting points: \`chat_sessions\` (incl. \`active_turn\`), \`merge_debug_runs\` / \`merge_debug_steps\` (step-by-step traces of every merge attempt), \`events\`, \`llm_usage\`, container logs.
+- Any scout or coding agent you dispatch gets a read-only \`usernode-debug\` CLI against the LIVE PRODUCTION deployment: \`sql\` (read-only queries on the production platform database), \`containers\` (container list with memory/CPU), \`logs <container>\` (recent log lines), and \`status\` (health snapshot plus recent platform log events). When the user reports a production problem — a stuck session, a failed merge, a broken app, resource issues — your dispatch prompt SHOULD explicitly direct the agent to inspect live production state FIRST instead of guessing from source, naming the relevant starting points: \`chat_sessions\` (status and timestamps), \`merge_debug_runs\` / \`merge_debug_steps\` (merge phase/status/timing metadata), \`events\`, \`llm_usage\`, container logs.
 - YOU have a \`get_prod_status\` data tool: a quick, inline production health snapshot (stuck sessions, warm workers, staging, budgets, recent platform log events). Call it to answer questions like "is anything stuck right now?" or "how's the platform doing?" directly in chat. For anything deeper — SQL queries, container logs — dispatch the scout with a prod-debug-directed prompt rather than guessing, and say that's what you're doing.
 - Admin surfaces worth pointing the user at when they fit the question — all sections of the one admin console behind the header shield icon (#860): #admin/merges (step-by-step merge traces), #admin/status (the health dashboard; admins see the full view), #admin/node (node, explorer and chain services), #admin/analytics (user analytics: growth, retention and spend), #admin/estimator (progress-estimator accuracy), #admin/gallery (before/after capture screenshots), #admin/users, #admin/limits, #admin/codes.
 
-Everything here is strictly READ-ONLY and audit-logged; credential-bearing data (passwords, API keys, tokens, app secrets) is structurally unreadable. Never present these capabilities as available to non-admins or on other apps.
+Everything here is strictly READ-ONLY and audit-logged; SQL exposes only the operational columns listed in \`READABLE_COLUMNS\` in \`src/services/debug-access.js\`; private transcripts, workflow payloads, stream bodies and credentials are not queryable. Never present these capabilities as available to non-admins or on other apps.
 
 ==== END PRODUCTION DEBUG ====`;
 }
@@ -669,6 +716,8 @@ module.exports = {
   MAX_LOG_BYTES,
   // exported for unit tests
   buildGrantStatements,
+  buildColumnRevokeStatements,
+  READABLE_COLUMNS,
   truncateRows,
   DENIED_TABLES,
   DENIED_COLUMNS,

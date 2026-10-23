@@ -28,8 +28,8 @@ function database({ failBootstrap = false } = {}) {
         return { rows: [] };
       }
       if (sql.includes('current_database')) return { rows: [{ db: 'usernode', usr: 'usernode' }] };
-      if (sql.includes('information_schema.columns') || sql.includes('information_schema')) {
-        return { rows: [{ table: 'issues', columns: ['id', 'title'] }] };
+      if (sql.includes('FROM pg_catalog.pg_class') || sql.includes('information_schema')) {
+        return { rows: [{ table: 'issues', kind: 'r', columns: ['id', 'title'] }] };
       }
       if (sql.startsWith('INSERT INTO platform_db_roles')) {
         const [role, ok, reason, secretEnc] = /NULL, \$4/.test(sql)

@@ -19,10 +19,12 @@ const debugAccess = require('../src/services/debug-access');
 const worker = require('../src/services/worker');
 const platformJwt = require('../src/services/platform-jwt');
 
+const grants = tables => debugAccess.buildGrantStatements(tables.map(table => ({ kind: 'r', ...table })));
+
 // ── buildGrantStatements ───────────────────────────────────────────────
 
 test('grant builder: denied tables produce no grant at all', () => {
-  const stmts = debugAccess.buildGrantStatements([
+  const stmts = grants([
     { table: 'sessions', columns: ['token', 'user_id'] },
     { table: 'app_secrets', columns: ['id', 'value_enc'] },
     { table: 'activation_codes', columns: ['code'] },
@@ -31,16 +33,15 @@ test('grant builder: denied tables produce no grant at all', () => {
   assert.deepEqual(stmts, []);
 });
 
-test('grant builder: plain tables get a full-table SELECT grant', () => {
-  const stmts = debugAccess.buildGrantStatements([
-    { table: 'issues', columns: ['id', 'title'] },
+test('grant builder: reviewed tables get only explicitly approved columns', () => {
+  const stmts = grants([
+    { table: 'issues', columns: ['id', 'status', 'title', 'payload', 'future_private_column'] },
   ]);
-  assert.equal(stmts.length, 1);
-  assert.match(stmts[0], /^GRANT SELECT ON public\."issues" TO usernode_debug_ro$/);
+  assert.deepEqual(stmts, ['GRANT SELECT ("id", "status") ON public."issues" TO usernode_debug_ro']);
 });
 
 test('grant builder: deny-listed columns are excluded via a column-list grant', () => {
-  const stmts = debugAccess.buildGrantStatements([
+  const stmts = grants([
     {
       table: 'users',
       columns: ['id', 'username', 'password', 'anthropic_key_enc',
@@ -48,7 +49,7 @@ test('grant builder: deny-listed columns are excluded via a column-list grant', 
         'is_admin'],
     },
     { table: 'apps', columns: ['id', 'slug', 'db_password', 'llm_proxy_token'] },
-    { table: 'chat_session_attachments', columns: ['id', 'filename', 'data'] },
+    { table: 'chat_sessions', columns: ['id', 'status', 'spec_md', 'active_turn'] },
   ]);
   assert.equal(stmts.length, 3);
   for (const stmt of stmts) {
@@ -59,19 +60,69 @@ test('grant builder: deny-listed columns are excluded via a column-list grant', 
 });
 
 test('grant builder: unsafe identifiers are skipped entirely', () => {
-  const stmts = debugAccess.buildGrantStatements([
+  const stmts = grants([
     { table: 'evil"; DROP TABLE users; --', columns: ['id'] },
-    { table: 'ok_table', columns: ['id', 'bad"col'] },
+    { table: 'apps', columns: ['id', 'bad"col'] },
   ]);
   assert.equal(stmts.length, 1);
-  assert.match(stmts[0], /"ok_table"/);
+  assert.match(stmts[0], /"apps"/);
 });
 
 test('grant builder: table whose every column is denied produces nothing', () => {
-  const stmts = debugAccess.buildGrantStatements([
+  const stmts = grants([
     { table: 'chat_session_attachments', columns: ['data'] },
   ]);
   assert.deepEqual(stmts, []);
+});
+
+test('grant builder: new tables, views and missing relation kinds are denied', () => {
+  assert.deepEqual(grants([
+    { table: 'new_private_store', columns: ['id', 'content'] },
+    { table: 'constructor', columns: ['id'] },
+    { table: 'apps', kind: 'v', columns: ['id'] },
+    { table: 'apps', kind: 'm', columns: ['id'] },
+    { table: 'apps', kind: 'f', columns: ['id'] },
+    { table: 'apps', kind: undefined, columns: ['id'] },
+  ]), []);
+  assert.equal(grants([{ table: 'apps', kind: 'p', columns: ['id'] }]).length, 1);
+});
+
+test('grant builder: private assistant, workflow and stream content stays unreadable', () => {
+  const raw = ['content', 'summary_md', 'focus_context', 'active_turn', 'payload', 'data',
+    'input', 'checkpoint', 'last_error', 'error', 'outcome', 'reply', 'emitted', 'event',
+    'deadline_event', 'flag_detail', 'result', 'reason', 'source', 'future_private_column'];
+  for (const table of ['agent_sessions', 'agent_session_drafts', 'chat_session_messages',
+    'wf_instances', 'wf_events', 'wf_work', 'wf_work_attempts', 'wf_receipts', 'stream_events']) {
+    // wf_events.result and wf_work_attempts.outcome are bounded enums,
+    // approved separately from arbitrary JSON results/errors.
+    const fields = raw.filter(column => !(table === 'wf_events' && column === 'result')
+      && !(table === 'wf_work_attempts' && column === 'outcome'));
+    assert.deepEqual(grants([{ table, columns: fields }]), [], table);
+  }
+});
+
+test('column ACL reset includes unapproved relations and quotes every catalog identifier', () => {
+  assert.deepEqual(debugAccess.buildColumnRevokeStatements([
+    { table: 'unknown_view', columns: ['payload'] },
+    { table: 'odd"table', columns: ['odd"column'] },
+  ]), [
+    'REVOKE ALL PRIVILEGES ("payload") ON public."unknown_view" FROM usernode_debug_ro',
+    'REVOKE ALL PRIVILEGES ("odd""column") ON public."odd""table" FROM usernode_debug_ro',
+  ]);
+});
+
+test('reviewed debug columns exist in the current schema and contain no JSON or bytes', () => {
+  const schema = fs.readFileSync(path.join(__dirname, '../src/db/schema.sql'), 'utf8');
+  for (const [table, columns] of Object.entries(debugAccess.READABLE_COLUMNS)) {
+    const body = schema.match(new RegExp(`CREATE TABLE IF NOT EXISTS ${table} \\(([\\s\\S]*?)^\\);`, 'm'))?.[1];
+    assert.ok(body, table);
+    for (const column of columns) {
+      const definition = body.match(new RegExp(`^\\s+${column}\\s+(\\w+)`, 'm'))
+        || schema.match(new RegExp(`ALTER TABLE ${table}\\s+ADD COLUMN IF NOT EXISTS ${column}\\s+(\\w+)`));
+      assert.ok(definition, `${table}.${column} must name an existing column`);
+      assert.doesNotMatch(definition[1], /json|bytea/i, `${table}.${column} must not expose an arbitrary payload`);
+    }
+  }
 });
 
 // ── Deny-list coverage vs schema.sql credential tags ───────────────────
@@ -94,6 +145,7 @@ test('every staging:private COLUMN in schema.sql is covered by the deny lists', 
     const covered = debugAccess.DENIED_TABLES.has(table)
       || (debugAccess.DENIED_COLUMNS[table] || []).includes(column);
     assert.ok(covered, `staging:private column ${table}.${column} is not in the prod-debug deny lists`);
+    assert.deepEqual(grants([{ table, columns: [column] }]), [], `${table}.${column} must remain unreadable`);
   }
 });
 
@@ -234,6 +286,8 @@ test('promptBlock documents all four subcommands and the read-only contract', ()
   assert.match(block, /READ-ONLY/);
   assert.match(block, /merge_debug_runs/);
   assert.match(block, /src\/db\/schema\.sql/);
+  assert.match(block, /approved operational columns/);
+  assert.doesNotMatch(block, /incl\. .*active_turn/);
 });
 
 test('mayorPromptBlock names the Mayor tool, dispatch direction, pages, and the read-only contract', () => {
@@ -254,6 +308,7 @@ test('mayorPromptBlock names the Mayor tool, dispatch direction, pages, and the 
   // The read-only + audit contract.
   assert.match(block, /READ-ONLY/);
   assert.match(block, /audit-logged/);
+  assert.match(block, /READABLE_COLUMNS/);
   // Prompt-assembly contract: starts with the blank-line separator like
   // getSelfHostedRefuseList, so concatenation renders cleanly.
   assert.match(block, /^\n\n/);
@@ -396,8 +451,8 @@ function stubbedDebugAccess() {
             }
           }
           if (sql.includes('current_database')) return { rows: [{ db: 'usernode' }] };
-          if (sql.includes('information_schema.columns')) {
-            return { rows: [{ table: 'issues', columns: ['id', 'title'] }] };
+          if (sql.includes('FROM pg_catalog.pg_class')) {
+            return { rows: [{ table: 'issues', kind: 'r', columns: ['id', 'title'] }] };
           }
           return { rows: [] };
         },
