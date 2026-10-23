@@ -235,8 +235,9 @@ app.use(explorerProxyRoutes(config));
 // no secret is configured. src/routes/github-webhook.js carries the rest.
 app.use(githubWebhookRoutes(config));
 app.use(require('./src/routes/mail-webhooks').mailWebhookRoutes(config));
-// Brevo's SMS webhook (STOP replies and delivery receipts), HERE for the
-// same reasons: Brevo has no session, and the token is the whole check.
+// Brevo's and Twilio's SMS webhooks (STOP replies and delivery receipts),
+// HERE for the same reasons: neither has a session, and the token or the
+// signature is the whole check.
 app.use(require('./src/routes/sms-webhooks').smsWebhookRoutes(config));
 // Alertmanager's webhook (src/routes/alerts-webhook.js): HERE for the same
 // second reason, a caller with no session, authenticated by its own token.

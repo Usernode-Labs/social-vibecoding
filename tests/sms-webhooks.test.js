@@ -26,7 +26,7 @@ stub(require.resolve('../src/db/pool'), {
   }),
 });
 
-const { smsWebhookRoutes } = require('../src/routes/sms-webhooks');
+const { smsWebhookRoutes, twilioSignature } = require('../src/routes/sms-webhooks');
 
 const TOKEN = 'webhook-token';
 
@@ -96,5 +96,87 @@ test('a delivery receipt updates the matching row', async () => {
     assert.equal(queries.length, 1);
     assert.match(queries[0].sql, /UPDATE sms_deliveries/);
     assert.deepEqual(queries[0].params, ['m-9', 'delivered']);
+  } finally { server.close(); }
+});
+
+// ── Twilio (#5861) ──────────────────────────────────────────────────────────
+
+const TWILIO = {
+  twilioAuthToken: 'twilio-auth-token',
+  twilioStatusCallbackUrl: 'https://app.example.test/api/sms/webhooks/twilio',
+};
+
+async function postTwilio(server, params, { sign = true, token = TWILIO.twilioAuthToken } = {}) {
+  const headers = { 'Content-Type': 'application/x-www-form-urlencoded' };
+  if (sign) headers['X-Twilio-Signature'] = twilioSignature(token, TWILIO.twilioStatusCallbackUrl, params);
+  const res = await fetch(`http://127.0.0.1:${server.address().port}/api/sms/webhooks/twilio`, {
+    method: 'POST',
+    headers,
+    body: new URLSearchParams(params).toString(),
+  });
+  return { status: res.status, type: res.headers.get('content-type') || '', text: await res.text() };
+}
+
+test('Twilio: the signature is Twilio\'s documented HMAC-SHA1', () => {
+  // Twilio's own worked example (twilio.com/docs/usage/security).
+  const params = {
+    CallSid: 'CA1234567890ABCDE',
+    Caller: '+12349013030',
+    Digits: '1234',
+    From: '+12349013030',
+    To: '+18005551212',
+  };
+  assert.equal(
+    twilioSignature('12345', 'https://mycompany.com/myapp.php?foo=1&bar=2', params),
+    '0/KCTR6DLpKmkAf8muzZqo1nDgQ='
+  );
+});
+
+test('Twilio: no URL or no auth token answers 404', async () => {
+  for (const config of [{ twilioAuthToken: 'x' }, { twilioStatusCallbackUrl: TWILIO.twilioStatusCallbackUrl }]) {
+    const server = await start(config);
+    try {
+      const res = await postTwilio(server, { MessageSid: 'SM1', MessageStatus: 'delivered' }, { sign: false });
+      assert.equal(res.status, 404);
+    } finally { server.close(); }
+  }
+  assert.equal(queries.length, 0);
+});
+
+test('Twilio: a missing or wrong signature answers 401', async () => {
+  const server = await start(TWILIO);
+  try {
+    assert.equal((await postTwilio(server, { MessageSid: 'SM1', MessageStatus: 'delivered' }, { sign: false })).status, 401);
+    assert.equal((await postTwilio(server, { MessageSid: 'SM1', MessageStatus: 'delivered' }, { token: 'other' })).status, 401);
+    assert.equal(queries.length, 0);
+  } finally { server.close(); }
+});
+
+test('Twilio: a status callback updates the Twilio row and answers empty TwiML', async () => {
+  const server = await start(TWILIO);
+  try {
+    const res = await postTwilio(server, { MessageSid: 'SM42', MessageStatus: 'delivered', To: '+33680065433' });
+    assert.equal(res.status, 200);
+    assert.match(res.type, /xml/);
+    assert.match(res.text, /<Response><\/Response>/);
+    assert.equal(queries.length, 1);
+    assert.match(queries[0].sql, /provider = 'twilio'/);
+    assert.deepEqual(queries[0].params, ['SM42', 'delivered']);
+  } finally { server.close(); }
+});
+
+test('Twilio: a STOP reply records an opt-out for the sender', async () => {
+  const server = await start(TWILIO);
+  try {
+    const marked = await postTwilio(server, { From: '+33680065433', Body: 'Arret', OptOutType: 'STOP' });
+    assert.equal(marked.status, 200);
+    const plain = await postTwilio(server, { From: '+447700900123', Body: ' stop ' });
+    assert.equal(plain.status, 200);
+    const other = await postTwilio(server, { From: '+447700900124', Body: 'hello' });
+    assert.equal(other.status, 200);
+    assert.deepEqual(optedOut, [
+      { phone: '+33680065433', source: 'twilio_webhook' },
+      { phone: '+447700900123', source: 'twilio_webhook' },
+    ]);
   } finally { server.close(); }
 });

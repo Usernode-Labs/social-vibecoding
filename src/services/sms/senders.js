@@ -1,12 +1,14 @@
 'use strict';
 
-// The country-to-Sender-ID registry, and the fail-closed resolution a send
-// goes through before Brevo is called.
+// The country-to-Sender-ID registries, and the fail-closed resolution a send
+// goes through before Brevo or Twilio is called.
 //
-// Brevo registers Sender IDs in its own dashboard and offers no API to read
-// them back, so this is operator-maintained: BREVO_SMS_SENDER_IDS is a JSON
-// object keyed by ISO 3166 alpha-2 country. A value is either a sender
-// string or an object:
+// Each provider registers Sender IDs in its own dashboard, and a Sender ID
+// approved at one is not approved at the other, so each has its own
+// operator-maintained registry: BREVO_SMS_SENDER_IDS and
+// TWILIO_SMS_SENDER_IDS, read into config.brevoSmsSenderIds and
+// config.twilioSmsSenderIds. Each is a JSON object keyed by ISO 3166 alpha-2
+// country. A value is either a sender string or an object:
 //
 //   { "FR": "Homeroom",
 //     "US": { "sender": "18885550100", "registered": true,
@@ -21,6 +23,11 @@ const log = require('../logger');
 const { countryName, NEEDS_REGISTRATION } = require('./countries');
 const { SmsError } = require('./errors');
 
+const REGISTRY_KEYS = {
+  brevo: { config: 'brevoSmsSenderIds', variable: 'BREVO_SMS_SENDER_IDS' },
+  twilio: { config: 'twilioSmsSenderIds', variable: 'TWILIO_SMS_SENDER_IDS' },
+};
+
 const SENDER_RE = /^[A-Za-z0-9]{3,11}$/;
 const NUMERIC_SENDER_RE = /^[0-9]{1,15}$/;
 
@@ -30,20 +37,21 @@ function validSender(value) {
 }
 
 /**
- * Validate and normalise BREVO_SMS_SENDER_IDS into
+ * Validate and normalise a registry (BREVO_SMS_SENDER_IDS by default, or
+ * the variable named by `variable`) into
  * `{ FR: { sender, registered, optOut } }`. Accepts the raw JSON string or
  * an already-parsed object. Never throws: a malformed document is logged and
  * yields an empty registry, because a broken setting must fail closed rather
  * than stop boot.
  */
-function parseRegistry(raw) {
+function parseRegistry(raw, variable = REGISTRY_KEYS.brevo.variable) {
   let document = raw;
   if (typeof raw === 'string') {
     if (!raw.trim()) return {};
     try {
       document = JSON.parse(raw);
     } catch (err) {
-      log.error('sms', 'BREVO_SMS_SENDER_IDS is not valid JSON — no country may be texted', {
+      log.error('sms', `${variable} is not valid JSON — no country may be texted`, {
         err: err.message,
       });
       return {};
@@ -51,7 +59,7 @@ function parseRegistry(raw) {
   }
   if (!document || typeof document !== 'object' || Array.isArray(document)) {
     if (raw !== undefined && raw !== null && raw !== '') {
-      log.error('sms', 'BREVO_SMS_SENDER_IDS must be a JSON object keyed by country');
+      log.error('sms', `${variable} must be a JSON object keyed by country`);
     }
     return {};
   }
@@ -60,7 +68,7 @@ function parseRegistry(raw) {
   for (const [rawCountry, value] of Object.entries(document)) {
     const country = String(rawCountry).toUpperCase();
     if (!/^[A-Z]{2}$/.test(country)) {
-      log.warn('sms', 'Dropping a Sender ID entry with an invalid country', { country: rawCountry });
+      log.warn('sms', 'Dropping a Sender ID entry with an invalid country', { variable, country: rawCountry });
       continue;
     }
     let sender;
@@ -74,7 +82,7 @@ function parseRegistry(raw) {
       optOut = typeof value.optOut === 'string' && value.optOut.trim() ? value.optOut.trim() : null;
     }
     if (!validSender(sender)) {
-      log.warn('sms', 'Dropping a Sender ID entry with an invalid sender', { country });
+      log.warn('sms', 'Dropping a Sender ID entry with an invalid sender', { variable, country });
       continue;
     }
     registry[country] = { sender, registered, optOut };
@@ -82,24 +90,26 @@ function parseRegistry(raw) {
   return registry;
 }
 
-function registryOf(config) {
-  const registry = config && config.brevoSmsSenderIds;
+function registryOf(config, provider = 'brevo') {
+  const keys = REGISTRY_KEYS[provider];
+  const registry = keys && config && config[keys.config];
   if (!registry || typeof registry !== 'object') return {};
   return registry;
 }
 
-function hasAny(config) {
-  return Object.keys(registryOf(config)).length > 0;
+function hasAny(config, provider = 'brevo') {
+  return Object.keys(registryOf(config, provider)).length > 0;
 }
 
 /**
- * The Sender ID a send to `country` must use. Throws SmsError:
+ * The Sender ID a send to `country` through `provider` must use. Throws
+ * SmsError:
  *   no_sender_id             the country is not in the registry
  *   country_not_registered   US or CA without `registered: true` and a
  *                            numeric sender
  */
-function senderFor(config, country) {
-  const entry = registryOf(config)[country];
+function senderFor(config, country, provider = 'brevo') {
+  const entry = registryOf(config, provider)[country];
   if (!entry) {
     throw new SmsError('no_sender_id', 'No Sender ID is registered for that country.', 422);
   }
@@ -114,9 +124,9 @@ function senderFor(config, country) {
   return { sender: entry.sender, registered: entry.registered === true, optOut: entry.optOut || null };
 }
 
-function readyFor(config, country) {
+function readyFor(config, country, provider = 'brevo') {
   try {
-    senderFor(config, country);
+    senderFor(config, country, provider);
     return true;
   } catch {
     return false;
@@ -125,13 +135,14 @@ function readyFor(config, country) {
 
 /** The rows Admin → SMS delivery shows. Sender values ARE returned: they
  *  appear in every text and an operator needs to see them. */
-function list(config) {
-  return Object.keys(registryOf(config))
+function list(config, provider = 'brevo') {
+  const registry = registryOf(config, provider);
+  return Object.keys(registry)
     .sort()
     .map((country) => {
-      const entry = registryOf(config)[country];
+      const entry = registry[country];
       const needsRegistration = NEEDS_REGISTRATION.includes(country);
-      const ready = readyFor(config, country);
+      const ready = readyFor(config, country, provider);
       return {
         country,
         countryName: countryName(country),
@@ -144,6 +155,7 @@ function list(config) {
 }
 
 module.exports = {
+  REGISTRY_KEYS,
   SENDER_RE,
   NUMERIC_SENDER_RE,
   validSender,

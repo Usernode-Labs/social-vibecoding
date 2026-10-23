@@ -329,6 +329,13 @@ secrets:
   # Supply through SOPS; an empty key and registry leave Brevo unavailable.
   brevoApiKey: ""
   brevoSmsSenderIds: "{}"
+  # Optional Twilio SMS credentials, its own country-to-Sender-ID JSON
+  # registry and the public webhook URL. Supply through SOPS; an empty
+  # account, token and registry leave Twilio unavailable.
+  twilioAccountSid: ""
+  twilioAuthToken: ""
+  twilioSmsSenderIds: "{}"
+  twilioStatusCallbackUrl: ""
 
 ingress:
   enabled: true

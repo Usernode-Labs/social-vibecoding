@@ -49,6 +49,22 @@ function brevoMissing(config, env = process.env) {
   return missing;
 }
 
+// Twilio's gate is Brevo's: credentials (except on staging, which only logs)
+// and at least one valid Sender ID entry of its own. Sender IDs are
+// registered per provider, so Twilio never borrows Brevo's registry.
+function twilioMissing(config, env = process.env) {
+  const missing = [];
+  if (!isStaging(env)) {
+    if (!(config && config.twilioAccountSid)) missing.push('TWILIO_ACCOUNT_SID');
+    if (!(config && config.twilioAuthToken)) missing.push('TWILIO_AUTH_TOKEN');
+  }
+  const registry = config && config.twilioSmsSenderIds;
+  if (!registry || typeof registry !== 'object' || Object.keys(registry).length === 0) {
+    missing.push('TWILIO_SMS_SENDER_IDS');
+  }
+  return missing;
+}
+
 const PROVIDERS = [
   {
     name: 'firebase',
@@ -60,7 +76,21 @@ const PROVIDERS = [
     label: 'Brevo',
     missing: (config, env) => brevoMissing(config, env),
   },
+  {
+    name: 'twilio',
+    label: 'Twilio',
+    missing: (config, env) => twilioMissing(config, env),
+  },
 ];
+
+// The providers that only CARRY a text: Homeroom makes, stores and checks
+// the sign-in code itself (services/sms/otp.js) and hands them the message.
+// Firebase is the one that runs the whole exchange.
+const GATEWAYS = ['brevo', 'twilio'];
+
+function isGateway(name) {
+  return GATEWAYS.includes(name);
+}
 
 function providerByName(name) {
   return PROVIDERS.find((p) => p.name === name) || null;
@@ -170,9 +200,12 @@ module.exports = {
   KEY,
   CACHE_MS,
   PROVIDERS,
+  GATEWAYS,
+  isGateway,
   isStaging,
   firebaseMissing,
   brevoMissing,
+  twilioMissing,
   envDefault,
   selection,
   selectedSync,

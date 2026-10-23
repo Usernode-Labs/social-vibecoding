@@ -35,7 +35,7 @@
  *      answer to a reCAPTCHA whose site key GET recaptchaParams names
  *      (recaptchaSiteKey, served at GET /api/auth/phone/recaptcha; the
  *      shell earns it in frontend/src/features/auth/recaptcha.ts). An
- *      empty key is served while Brevo sends the texts: requestCode()
+ *      empty key is served while Brevo or Twilio sends the texts: requestCode()
  *      ignores the token on that path, so the browser runs no check. A
  *      missing or refused one is recaptcha_required. The page's host must
  *      be one of the Firebase project's authorized domains for the answer
@@ -197,10 +197,10 @@ const TEST_TOKEN_TTL_MS = 5 * 60 * 1000;
 // client cannot forge one to skip the code on the idToken path.
 const TEST_TOKEN_KEY = crypto.randomBytes(32);
 
-// ── Brevo-issued sign-in codes ──────────────────────────────────────────
+// ── Gateway-issued sign-in codes (Brevo, Twilio) ────────────────────────
 //
-// When Brevo is the selected provider (services/sms/select.js), Brevo only
-// carries the message: services/sms/otp.js makes, hashes and checks the code
+// When Brevo or Twilio is the selected provider (services/sms/select.js),
+// it only carries the message: services/sms/otp.js makes, hashes and checks the code
 // and hands this file a `hr-sms-session.` session, which exchangeCode
 // redeems for a token signed here. The token is the same shape as a test
 // token — per process, never stored, five minutes — and verifyIdToken turns
@@ -241,7 +241,7 @@ function readSmsToken(token, now = Date.now()) {
 }
 
 // The country refusals are the sign-in sheet's one sentence; everything else
-// Brevo or the registry decides is "could not send".
+// the provider or the registry decides is "could not send".
 const SMS_COUNTRY_CODES = new Set(['no_sender_id', 'unsupported_country', 'country_not_registered']);
 
 function smsErrorToPhoneAuth(error) {
@@ -290,13 +290,28 @@ function usesTestNumber(config, rawPhone) {
   return testNumbersOn(config) && isTestNumber(normalizePhone(rawPhone));
 }
 
-// Brevo's gate: an API key (except on staging, which only logs) and at
-// least one valid Sender ID entry.
-function brevoOffered(config) {
+// A gateway's gate (Brevo, Twilio): its credentials (except on staging,
+// which only logs) and at least one valid Sender ID entry of its own.
+function gatewayOffered(config, name) {
   try {
-    return require('./sms/select').optionReady(config, 'brevo');
+    return require('./sms/select').optionReady(config, name);
   } catch {
     return false;
+  }
+}
+
+function brevoOffered(config) {
+  return gatewayOffered(config, 'brevo');
+}
+
+// The selected provider when it is a gateway (Brevo, Twilio), else null.
+function selectedGateway(config) {
+  try {
+    const select = require('./sms/select');
+    const selected = select.selectedSync(config);
+    return select.isGateway(selected) ? selected : null;
+  } catch {
+    return null;
   }
 }
 
@@ -310,7 +325,9 @@ function offered(config) {
   } catch {
     selected = 'firebase';
   }
-  const providerReady = selected === 'brevo' ? brevoOffered(config) : firebaseOffered(config);
+  const providerReady = require('./sms/select').isGateway(selected)
+    ? gatewayOffered(config, selected)
+    : firebaseOffered(config);
   return providerReady || testNumbersOn(config);
 }
 
@@ -487,10 +504,10 @@ async function requestCode(config, rawPhone, recaptchaToken, deps = {}) {
       sessionInfo: `${TEST_SESSION_PREFIX}${tag}.${crypto.randomBytes(12).toString('base64url')}`,
     };
   }
-  // Brevo carries the text: the code, its hashes, its expiry and its
-  // single use all belong to services/sms/otp.js, because Brevo does not
-  // check codes. reCAPTCHA is Firebase's, so a Brevo request ignores it.
-  if (require('./sms/select').selectedSync(config) === 'brevo') {
+  // Brevo or Twilio carries the text: the code, its hashes, its expiry and
+  // its single use all belong to services/sms/otp.js, because neither checks
+  // codes. reCAPTCHA is Firebase's, so a gateway request ignores it.
+  if (selectedGateway(config)) {
     const sms = require('./sms');
     const otp = require('./sms/otp');
     let issued;
@@ -549,10 +566,11 @@ async function sendTestCode(config, rawPhone, recaptchaToken, deps = {}) {
     throw new PhoneAuthError('invalid_phone', 'Enter a valid phone number, starting with + and the country code.', 400);
   }
   const base = { phoneNumber, provider: 'firebase', providerCode: null, httpStatus: null, durationMs: 0 };
-  // A Brevo test is a plain transactional message, not a real code: nobody
+  // A Brevo or Twilio test is a plain transactional message, not a real code: nobody
   // has to type anything. Staging logs it, as every other send does.
-  if (require('./sms/select').selectedSync(config) === 'brevo') {
-    if (!brevoOffered(config)) return { ...base, status: 'not_offered', provider: 'brevo' };
+  const gateway = selectedGateway(config);
+  if (gateway) {
+    if (!gatewayOffered(config, gateway)) return { ...base, status: 'not_offered', provider: gateway };
     const sms = require('./sms');
     const now = deps.now || Date.now;
     const started = now();
@@ -561,7 +579,7 @@ async function sendTestCode(config, rawPhone, recaptchaToken, deps = {}) {
       return {
         ...base,
         status: sent.status === 'logged' ? 'logged' : 'sent',
-        provider: 'brevo',
+        provider: gateway,
         country: sent.country,
         senderId: sent.senderId,
         messageId: sent.messageId,
@@ -572,7 +590,7 @@ async function sendTestCode(config, rawPhone, recaptchaToken, deps = {}) {
       return {
         ...base,
         status: 'refused',
-        provider: 'brevo',
+        provider: gateway,
         providerCode: error.providerCode || error.code,
         httpStatus: error.status,
         durationMs: now() - started,
@@ -609,13 +627,13 @@ async function sendTestCode(config, rawPhone, recaptchaToken, deps = {}) {
 // sent: the Firebase project's own (GET recaptchaParams, what Firebase's web
 // SDK asks for), never configured here. Kept for an hour, per API key; a
 // failed read is not kept. '' when there is no check to answer: test numbers
-// only, or Brevo sending the texts.
+// only, or Brevo or Twilio sending the texts.
 const SITE_KEY_TTL_MS = 60 * 60 * 1000;
 const siteKeyCache = new Map();
 
 async function recaptchaSiteKey(config, deps = {}) {
   assertOffered(config);
-  // Brevo carries the text, and requestCode() ignores the reCAPTCHA token on
+  // A gateway carries the text, and requestCode() ignores the reCAPTCHA token on
   // that path: there is no check to answer, so no site key is served and the
   // browser loads no widget. A switch back to Firebase serves one again.
   let selected = 'firebase';
@@ -624,7 +642,7 @@ async function recaptchaSiteKey(config, deps = {}) {
   } catch {
     selected = 'firebase';
   }
-  if (selected === 'brevo') return '';
+  if (require('./sms/select').isGateway(selected)) return '';
   // Test numbers only: nothing is texted, so there is no check to answer.
   // The sheet reads the empty key as "send the request without a token".
   if (!firebaseOffered(config)) return '';
@@ -663,7 +681,7 @@ async function exchangeCode(config, rawSessionInfo, rawCode, deps = {}) {
       || !code || code.length > CODE_MAX) {
     throw new PhoneAuthError('invalid_or_expired_code', 'Invalid or expired code.');
   }
-  // A code Brevo carried is redeemed here whatever the CURRENT selection is,
+  // A code Brevo or Twilio carried is redeemed here whatever the CURRENT selection is,
   // so a text sent just before a provider switch can still be entered.
   if (sessionInfo.startsWith(SMS_SESSION_PREFIX)) {
     const phoneNumber = deps.pool
@@ -755,7 +773,7 @@ async function verifyIdToken(pool, config, rawToken, deps = {}) {
   if (typeof rawToken !== 'string' || !rawToken || rawToken.length > ID_TOKEN_MAX) {
     throw badToken();
   }
-  // A Brevo token is minted here and checked here; it does not need a
+  // A Brevo or Twilio token is minted here and checked here; it does not need a
   // provider to be configured, so a switch mid-flight cannot strand it.
   if (!rawToken.startsWith(SMS_TOKEN_PREFIX)) assertOffered(config);
   let uid;
@@ -930,7 +948,7 @@ async function signIn(pool, claims, { createSession } = {}) {
       let created = false;
 
       // A number linked under the OTHER provider: an account made through
-      // Brevo stores `sms:<number>` as its uid, and a later Firebase
+      // Brevo or Twilio stores `sms:<number>` as its uid, and a later Firebase
       // sign-in for that number arrives with a Firebase uid. The number is
       // unique, so it finds the same account; the row is re-keyed to the
       // uid that just proved the number, and the next sign-in matches
@@ -1159,6 +1177,7 @@ module.exports = {
   offered,
   firebaseOffered,
   brevoOffered,
+  gatewayOffered,
   mintSmsToken,
   testNumbersAllowed,
   testNumbersOn,

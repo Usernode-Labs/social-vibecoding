@@ -36,7 +36,7 @@ test('PLATFORM_SMS_PROVIDER decides before any admin saves a choice', async () =
 });
 
 test('an unknown env value falls back to Firebase', async () => {
-  const chosen = await select.selection(poolWith([]), { env: { PLATFORM_SMS_PROVIDER: 'twilio' } });
+  const chosen = await select.selection(poolWith([]), { env: { PLATFORM_SMS_PROVIDER: 'carrier-pigeon' } });
   assert.deepEqual(chosen, { provider: 'firebase', source: 'default' });
 });
 
