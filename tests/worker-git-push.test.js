@@ -135,7 +135,9 @@ test('trusted scratch directories are private and removed on success and import 
   await publish(f);
   const exported = await f.exportWorker();
   const lines = exported.stdout.split('\n');
-  lines[1] = Buffer.from(`# v2 git bundle\n${lines[0].split(' ')[1]} refs/heads/${branchName}\n\nPACK corrupt`).toString('base64');
+  const damaged = Buffer.from(lines[1], 'base64');
+  damaged[damaged.length - 1] ^= 255; // Valid budget, invalid pack checksum.
+  lines[1] = damaged.toString('base64');
   await assert.rejects(publish(f, { exportWorker: async () => ({ stdout: lines.join('\n') }) }));
   assert.equal(dirs.length, 2);
   for (const dir of dirs) assert.equal(fs.existsSync(dir), false);

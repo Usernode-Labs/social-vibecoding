@@ -7,15 +7,15 @@
 const fs = require('fs/promises');
 const os = require('os');
 const path = require('path');
-const { execFile } = require('child_process');
-const { promisify } = require('util');
+const { validatePackBudget } = require('./worker-git-budget');
+const { createQueue } = require('./worker-git-queue');
+const gitProcess = require('./worker-git-process');
 
-const execFileAsync = promisify(execFile);
+const pushQueue = createQueue();
 const MAX_BUNDLE_BYTES = 32 * 1024 * 1024;
 const MAX_EXPORT_BYTES = Math.ceil(MAX_BUNDLE_BYTES / 3) * 4 + 128;
 const MAX_HEADER_BYTES = 64 * 1024;
 const MAX_PREREQUISITES = 32;
-const GIT_TIMEOUT_MS = 60000;
 const SHA = /^[0-9a-f]{40}$/;
 
 function quote(value) {
@@ -83,7 +83,7 @@ function parseExport(stdout, branchName) {
   const sha = head[1];
   // Git refuses to create an empty bundle. This commit must already be
   // available in the canonical public repository; never trust the claim.
-  if (lines[1] === '-') return { sha, bundle: null, prerequisites: [sha] };
+  if (lines[1] === '-') return { sha, bundle: null, prerequisites: [sha], pack: null };
   const encoded = lines[1];
   if (!encoded || !/^[A-Za-z0-9+/]+={0,2}$/.test(encoded)) throw new Error('Invalid worker Git bundle encoding');
   const bundle = Buffer.from(encoded, 'base64');
@@ -105,7 +105,7 @@ function parseExport(stdout, branchName) {
     if (!match) throw new Error('Invalid worker Git bundle prerequisite');
     return match[1];
   });
-  return { sha, bundle, prerequisites: [...new Set(prerequisites)] };
+  return { sha, bundle, prerequisites: [...new Set(prerequisites)], pack: bundle.subarray(end + 2) };
 }
 
 function redact(text, token) {
@@ -121,14 +121,20 @@ function redact(text, token) {
 // has no other helpers and HTTP redirects are disabled.
 const CREDENTIAL_HELPER = '!f() { if [ "$1" = get ]; then printf "%s\\n" "username=x-access-token" "password=$USERNODE_PUSH_TOKEN"; fi; }; f';
 
-async function push({ remoteUrl, branchName, token, exportWorker }) {
+async function push(options) {
+  const { remoteUrl, branchName, token } = options;
   const { isValidBranchName } = require('./branch-names');
   if (!isValidBranchName(branchName)) throw new Error('Invalid push branch');
   if (!token) throw new Error('Missing GitHub push credential');
+  return pushQueue.run(`${remoteUrl}\0${branchName}`, () => publish(options));
+}
+
+async function publish({ remoteUrl, branchName, token, exportWorker }) {
   let dir;
   try {
     const exported = await exportWorker(buildExportScript({ branchName }));
-    const { sha, bundle, prerequisites } = parseExport(exported.stdout, branchName);
+    const { sha, bundle, prerequisites, pack } = parseExport(exported.stdout, branchName);
+    if (pack) await validatePackBudget(pack);
     dir = await fs.mkdtemp(path.join(os.tmpdir(), 'usernode-worker-push-'));
     // mkdtemp is 0700. No inherited Git env, HOME config, template, hooks,
     // alternates, URL rewrites, proxies or trace destinations can reach Git.
@@ -155,13 +161,15 @@ async function push({ remoteUrl, branchName, token, exportWorker }) {
       '-c', 'gc.auto=0',
       '-c', 'gc.autoDetach=false',
       '-c', 'maintenance.auto=false',
+      '-c', 'pack.threads=1',
+      '-c', 'pack.windowMemory=16m',
+      '-c', 'pack.deltaCacheSize=16m',
     ];
-    const git = (args, authenticated = false) => execFileAsync('git', [
+    const git = (args, authenticated = false) => gitProcess.run('/usr/bin/git', [
       '-C', repo, ...config,
       ...(authenticated ? ['-c', `credential.helper=${CREDENTIAL_HELPER}`] : []),
       ...args,
     ], {
-      timeout: GIT_TIMEOUT_MS, maxBuffer: 1024 * 1024,
       env: authenticated ? { ...env, USERNODE_PUSH_TOKEN: token } : env,
     });
     await fs.mkdir(repo);
@@ -191,9 +199,10 @@ async function push({ remoteUrl, branchName, token, exportWorker }) {
       '--', remoteUrl, `${sha}:refs/heads/${branchName}`], true);
     return { sha, stderr: redact(result.stderr, token).trim() };
   } catch (error) {
-    // execFile errors contain command text. Return a new, bounded error,
-    // never the raw child/transport error or its potentially huge stdout.
-    const safe = new Error(redact(error.message, token).slice(0, 2000));
+    // Return a new, bounded error, never the raw child/transport error or
+    // its potentially huge stdout. Preserve a useful redacted Git reason.
+    const detail = error.stderr ? `: ${error.stderr}` : '';
+    const safe = new Error(redact(`${error.message}${detail}`, token).slice(0, 2000));
     safe.stderr = redact(error.stderr, token).slice(0, 8000);
     throw safe;
   } finally {
