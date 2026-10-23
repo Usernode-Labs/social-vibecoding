@@ -165,7 +165,7 @@ test('the sign-in screens say continuing is agreeing, linking the current terms 
   // the terms, from the one address the server serves.
   assert.match(shared, /const privacy = options\?\.privacy_link \|\| null;/);
   assert.match(shared, /<a href=\{privacy\} target="_blank" rel="noopener noreferrer" className=\{linkClass\} \/>/);
-  assert.match(read('frontend', 'src', 'features', 'auth', 'sign-in-sheet.tsx'), /<TermsNotice className="mt-3" recaptcha=\{step === 'phone' \|\| step === 'phone-code' \? RECAPTCHA_LINE : null\} \/>/);
+  assert.match(read('frontend', 'src', 'features', 'auth', 'sign-in-sheet.tsx'), /<TermsNotice className="mt-3" recaptcha=\{recaptchaInUse \? RECAPTCHA_LINE : null\} \/>/);
   assert.match(read('frontend', 'src', 'features', 'auth', 'login.tsx'),
     /\{t\('auth:login\.submit'\)\}\s*\n\s*<\/Button>\s*\n\s*<TermsNotice verb="signing in" \/>/);
   assert.equal(message('auth:login.submit'), 'Sign in');

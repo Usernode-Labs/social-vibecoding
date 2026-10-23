@@ -34,7 +34,9 @@
  *      a web caller's request carries an app-verification token, the
  *      answer to a reCAPTCHA whose site key GET recaptchaParams names
  *      (recaptchaSiteKey, served at GET /api/auth/phone/recaptcha; the
- *      shell earns it in frontend/src/features/auth/recaptcha.ts). A
+ *      shell earns it in frontend/src/features/auth/recaptcha.ts). An
+ *      empty key is served while Brevo sends the texts: requestCode()
+ *      ignores the token on that path, so the browser runs no check. A
  *      missing or refused one is recaptcha_required. The page's host must
  *      be one of the Firebase project's authorized domains for the answer
  *      to count. The server never sends the SMS itself — Firebase does, at
@@ -606,12 +608,23 @@ async function sendTestCode(config, rawPhone, recaptchaToken, deps = {}) {
 // The site key for the reCAPTCHA a web caller answers before a code is
 // sent: the Firebase project's own (GET recaptchaParams, what Firebase's web
 // SDK asks for), never configured here. Kept for an hour, per API key; a
-// failed read is not kept.
+// failed read is not kept. '' when there is no check to answer: test numbers
+// only, or Brevo sending the texts.
 const SITE_KEY_TTL_MS = 60 * 60 * 1000;
 const siteKeyCache = new Map();
 
 async function recaptchaSiteKey(config, deps = {}) {
   assertOffered(config);
+  // Brevo carries the text, and requestCode() ignores the reCAPTCHA token on
+  // that path: there is no check to answer, so no site key is served and the
+  // browser loads no widget. A switch back to Firebase serves one again.
+  let selected = 'firebase';
+  try {
+    selected = require('./sms/select').selectedSync(config);
+  } catch {
+    selected = 'firebase';
+  }
+  if (selected === 'brevo') return '';
   // Test numbers only: nothing is texted, so there is no check to answer.
   // The sheet reads the empty key as "send the request without a token".
   if (!firebaseOffered(config)) return '';
