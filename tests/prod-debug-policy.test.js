@@ -36,6 +36,19 @@ test('debug role contract accepts the reviewed schema and denies unreviewed addi
   assert.equal((await verify()).columns, Object.keys(schema).length);
 });
 
+test('CHECK constraint order is independent of database collation and catalog order', async () => {
+  const { state, verify } = fixture();
+  let reordered = 0;
+  for (const column of state.columns) {
+    if (column.checks.length > 1) {
+      column.checks.reverse();
+      reordered++;
+    }
+  }
+  assert.ok(reordered > 0, 'exercise columns with multiple CHECK constraints');
+  assert.equal((await verify()).columns, Object.keys(schema).length);
+});
+
 test('debug role contract rejects privilege and schema drift', async t => {
   const scenarios = [
     ['role flags', state => { state.identity.rolsuper = true; }, /unsafe role attribute/],

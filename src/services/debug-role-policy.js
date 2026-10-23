@@ -7,6 +7,10 @@
 const crypto = require('node:crypto');
 const schemaContract = require('./debug-access-schema.json');
 
+// CHECK constraints are unordered. PostgreSQL's collation can order their
+// deparsed definitions differently; compare both lists in locale-free order.
+const sameChecks = (actual, expected) => JSON.stringify([...actual].sort()) === JSON.stringify([...expected].sort());
+
 async function verifyDebugRole(pool, { role, readableColumns, requireAllColumns = false }) {
   const started = performance.now();
   const problems = [];
@@ -84,7 +88,7 @@ async function verifyDebugRole(pool, { role, readableColumns, requireAllColumns 
     if (!allowed) continue;
     found.add(key);
     const expected = schemaContract[key];
-    if (expected && (column.type !== expected.type || JSON.stringify(column.checks) !== JSON.stringify(expected.checks))) {
+    if (expected && (column.type !== expected.type || !sameChecks(column.checks, expected.checks))) {
       problems.push(`review column type/constraints: ${key}`);
     }
   }
