@@ -66,6 +66,19 @@ function textField(max = MAX_TEXT, min = 1) {
   return z.string().min(min).max(max).refine(singleLine, 'Must be a trimmed single line without control characters');
 }
 
+// Zod 3 checks array length but still parses every element on failure.
+// Reject excessive collections before parsing entries and allocating their
+// diagnostics. Keep the existing schema limits and validation-error shape.
+function boundedArray(element, max, min = 0) {
+  return z.preprocess((value, ctx) => {
+    if (Array.isArray(value) && value.length > max) {
+      ctx.addIssue({ code: z.ZodIssueCode.too_big, maximum: max,
+        type: 'array', inclusive: true, fatal: true });
+    }
+    return value;
+  }, z.array(element).min(min).max(max));
+}
+
 function validRelativePath(value) {
   if (typeof value !== 'string' || value.length < 1 || value.length > MAX_PATH) return false;
   if (!singleLine(value) || !value.startsWith('/') || value.startsWith('//') || value.includes('\\')) return false;
@@ -134,7 +147,7 @@ const viewportSchema = z.object({
 
 const intentSchema = z.object({
   startPath: relativePathSchema,
-  steps: z.array(textField(200)).min(1).max(MAX_STEPS),
+  steps: boundedArray(textField(200), MAX_STEPS, 1),
   checkpoint: textField(500),
   focus: textField(200),
   // An explicit author declaration for a genuinely new screen/control. The
@@ -150,7 +163,7 @@ const intentSchema = z.object({
   // executed or trusted as proof.
   hints: z.object({
     setup: textField(500).optional(),
-    expectText: z.array(textField(120)).min(1).max(5).optional(),
+    expectText: boundedArray(textField(120), 5, 1).optional(),
     focusTarget: locatorSchema.optional(),
   }).strict().optional(),
 }).strict();
@@ -159,7 +172,7 @@ const storyIntentObject = z.object({
   id: z.string().min(1).max(96).regex(ID_RE),
   claim: textField(MAX_TEXT),
   persona: z.enum(PERSONAS),
-  viewports: z.array(viewportSchema).min(1).max(MAX_VIEWPORTS),
+  viewports: boundedArray(viewportSchema, MAX_VIEWPORTS, 1),
   intent: intentSchema,
 }).strict();
 
@@ -181,7 +194,7 @@ const semanticIntentSchema = z.object({
   version: z.literal(PLAN_VERSION),
   impact: z.enum(IMPACTS),
   rationale: textField(MAX_TEXT),
-  stories: z.array(storyIntentSchema).max(MAX_STORIES).default([]),
+  stories: boundedArray(storyIntentSchema, MAX_STORIES).default([]),
 }).strict().superRefine((intent, ctx) => {
   if (intent.impact === 'none' && intent.stories.length) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['stories'], message: 'No stories are allowed when impact is "none"' });

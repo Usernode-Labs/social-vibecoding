@@ -147,7 +147,7 @@ jobs:
         env:
           COMPONENT: ${{ matrix.component }}
           FORCE_REBUILD: none
-          REUSE_CURRENT_PLATFORM: 'true'
+          REUSE_CURRENT_PLATFORM: ${{ matrix.component == 'platform' }}
           CLAUDE_CODE_VERSION: ${{ needs.plan.outputs.claude_code_version }}
         run: node scripts/resolve-kubernetes-image.js
       # A missing worker is built and checked by the ordinary build job in
@@ -491,7 +491,13 @@ jobs:
 
   release:
     name: Publish atomic Helm release
-    needs: build
+    needs: [build, scheduled-image-audit]
+    # Schedule-only audits skip on pushes/dispatches. Override the default
+    # success() dependency check while still refusing a failed/skipped build,
+    # failed scheduled scans, or cancellation.
+    if: >-
+      ${{ !cancelled() && needs.build.result == 'success'
+          && (github.event_name != 'schedule' || needs['scheduled-image-audit'].result == 'success') }}
     runs-on: ubuntu-latest
     permissions:
       # Reads this workflow's own runs: when the newest release went out, and

@@ -9,7 +9,7 @@
       "CVE-2023-54404"
     ],
     "expires": "2026-11-22",
-    "reason": "No patched Zod 3 exists. Remote MCP has a 512kb body limit and maxToolInputElements=10000 before validation. Worker servers use stdio only. Retain the existing API pending a separately tested Zod 4 migration; see docs/security/october-2026-update.md."
+    "reason": "No patched Zod 3 exists. Remote MCP has a 512kb body limit and maxToolInputElements=10000 before validation. Visible-change declaration arrays reject lengths beyond their existing 3-story/2-viewport/40-step/5-hint maxima before parsing elements. Worker servers use stdio only. Retain the existing API pending a separately tested Zod 4 migration; see docs/security/october-2026-update.md."
   },
   {
     "package": "github.com/moby/go-archive",

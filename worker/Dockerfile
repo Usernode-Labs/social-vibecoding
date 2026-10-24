@@ -187,6 +187,7 @@ COPY agent-api-failure.js /usr/local/bin/agent-api-failure.js
 # Claude Code Stop hook that sends the agent back to work when it tries to end
 # a turn that has changed nothing.
 COPY process-ownership.js /usr/local/bin/process-ownership.js
+COPY inloop-app-supervisor.js /usr/local/bin/inloop-app-supervisor.js
 COPY build-stop-hook.js /usr/local/bin/build-stop-hook.js
 COPY shots-mcp.js /usr/local/bin/shots-mcp.js
 COPY visible-changes-mcp.js /usr/local/bin/visible-changes-mcp.js

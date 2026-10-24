@@ -536,18 +536,19 @@ async function main() {
       + '`usernode-run-inloop --link /some/route?demo=1` prints the same link for any route.\n');
   }
 
-  const child = spawn(command, process.argv.slice(3), {
-    env: { ...env, PORT: String(appPort) }, stdio: 'inherit', detached: true,
+  const child = spawn(process.execPath, [path.join(__dirname, 'inloop-app-supervisor.js'), command, ...process.argv.slice(3)], {
+    env: { ...env, PORT: String(appPort) }, stdio: ['inherit', 'inherit', 'inherit', 'ipc'], detached: true,
   });
   const launcherIdentity = readProcess(process.pid);
-  const childIdentity = Number.isInteger(child.pid) ? readProcess(child.pid) : null;
-  if (launcherIdentity) {
-    recordLaunch(publicPort, {
+  let childIdentity = Number.isInteger(child.pid) ? readProcess(child.pid) : null;
+  const saveLaunch = () => {
+    if (launcherIdentity) recordLaunch(publicPort, {
       pid: process.pid, childPid: child.pid, launcher: launcherIdentity, child: childIdentity,
       startedAt: new Date().toISOString(),
       ...(identity ? { signedIn: true, appId } : {}),
     });
-  }
+  };
+  saveLaunch();
   let stopping = false;
   const finish = async (code) => {
     if (stopping) return;
@@ -574,6 +575,17 @@ async function main() {
     process.exitCode = code;
     process.exit();
   };
+  child.on('message', (message) => {
+    if (message?.type === 'ready') {
+      childIdentity = readProcess(child.pid);
+      saveLaunch();
+    } else if (message?.type === 'app-error') {
+      process.stderr.write(`usernode-run-inloop: could not start app command: ${message.message}\n`);
+      void finish(2);
+    } else if (message?.type === 'app-exit') {
+      void finish(message.code);
+    }
+  });
   process.once('SIGTERM', () => { void finish(0); });
   process.once('SIGINT', () => { void finish(0); });
   child.on('error', (err) => {

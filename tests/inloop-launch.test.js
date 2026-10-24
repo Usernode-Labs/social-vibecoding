@@ -1,5 +1,7 @@
 'use strict';
 
+// test:changed: when worker/inloop-app-supervisor.js (real wrapper-exit, title-change and launcher-disconnect cleanup)
+
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -561,6 +563,56 @@ test('failed commands and wrapper exits leave no app listener behind', { timeout
       const p = readProcess(grandchild.pid);
       if (p?.cmd.includes('grandchild.js')) await stopOwned([p], { waitMs: 0 });
     }
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+
+test('the live supervisor cleans its app group if the launcher is killed', { timeout: 20000 }, async () => {
+  const { spawn } = require('node:child_process');
+  const { readProcess, stopOwned } = require('../worker/process-ownership');
+  const launcher = path.join(__dirname, '../worker/usernode-run-inloop');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'un-inloop-disconnect-'));
+  const probe = http.createServer();
+  const port = await listen(probe);
+  await close(probe);
+  const env = { ...process.env, INLOOP_BROWSER: '1', INLOOP_ENV: 'staging', INLOOP_PORT: String(port),
+    INLOOP_DATABASE_URL: 'postgres://postgres:postgres@127.0.0.1:5432/inloop', INLOOP_SKIP_BUILD: '1', PLATFORM_URL: '' };
+  fs.writeFileSync(path.join(dir, 'server.js'), `
+    const fs = require('fs');
+    const server = require('http').createServer((_q, r) => r.end('ok'));
+    process.on('SIGTERM', () => {});
+    server.listen(Number(process.env.PORT), '127.0.0.1', () => fs.writeFileSync('app.json', JSON.stringify({
+      pid: process.pid, port: server.address().port, ipc: typeof process.send, ipcFd: process.env.NODE_CHANNEL_FD || null
+    })));
+  `);
+  const child = spawn(process.execPath, [launcher, process.execPath, 'server.js'], { cwd: dir, env, stdio: 'ignore' });
+  const exited = new Promise((resolve) => child.once('exit', resolve));
+  let appIdentity;
+  try {
+    for (let i = 0; i < 100 && !fs.existsSync(path.join(dir, 'app.json')); i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    const app = JSON.parse(fs.readFileSync(path.join(dir, 'app.json'), 'utf8'));
+    appIdentity = readProcess(app.pid);
+    assert.equal(app.ipc, 'undefined', 'the app does not inherit the supervisor IPC channel');
+    assert.equal(app.ipcFd, null);
+    assert.equal((await request(port)).status, 200);
+    child.kill('SIGKILL');
+    await exited;
+    for (let i = 0; i < 120; i += 1) {
+      const state = readProcess(app.pid)?.state;
+      if (!state || /^[ZX]/.test(state)) break;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    const state = readProcess(app.pid)?.state;
+    assert.ok(!state || /^[ZX]/.test(state), `app ${app.pid} survived supervisor cleanup: ${state}`);
+    await assert.rejects(request(app.port), /ECONNREFUSED/);
+    await assert.rejects(request(port), /ECONNREFUSED/);
+  } finally {
+    await require('../worker/usernode-run-inloop').stopLaunch(port, { waitMs: 0 });
+    if (appIdentity) await stopOwned([appIdentity], { waitMs: 0 });
+    child.kill('SIGKILL');
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });

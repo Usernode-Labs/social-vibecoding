@@ -83,7 +83,10 @@ confirmed attacks or unique CVEs.
 - **Zod 3 / GHSA-mrhx-c7xc-m3w5:** no patched Zod 3 exists. The remote MCP
   server now sets `maxToolInputElements: 10_000` before schema validation and
   already limits JSON to 512 KB before dispatch. An integration test proves
-  oversized collections never enter Zod validation. Worker MCP servers use
+  oversized collections never enter Zod validation. Visible-change declarations
+  also reject oversized story, viewport, step and hint arrays before parsing
+  their elements; Zod 3 array `.max()` alone still visits every invalid item.
+  Other direct HTTP Zod schemas use fixed object fields. Worker MCP servers use
   stdio. Zod 4 is a separate migration; the exact version/advisory exception
   expires **November 22, 2026**. The affected version remains recorded.
 - **MinIO 8:** decode-uri-component and stream-json remain affected. Their
@@ -138,8 +141,10 @@ lower-severity and unfixed findings. Missing scan/audit data fails the check.
 It requires the same user, process start time and exact command before each
 signal, spares the hook and its ancestors, and considers only workspace
 listeners for the stop hook. In-loop launches retain process identities,
-snapshot owned descendants, and use a dedicated app process group to find
-servers orphaned by npm/shell wrappers. Each process is checked individually;
+snapshot owned descendants, and use a persistent dedicated app supervisor
+to retain a live group owner after npm/shell wrappers exit. The supervisor
+cleans its group on launcher IPC disconnect; app children do not inherit IPC.
+An orphan group ID from a stale record is never adopted. Each process is checked individually;
 no process group is signalled wholesale. Direct ChildProcess handles cover
 failed inspection and process-title changes. TERM has a bounded grace period,
 then KILL; failed spawns and failed fixture startup also clean up.
@@ -170,6 +175,33 @@ its third-party fixture code.
   and runs cleanup/security tests on Ubuntu and macOS. No PR job publishes
   images or releases. Remote CI results remain attached to the PR.
 
+### Independent adversarial review follow-up
+
+A fresh reviewer checked original PR head
+`ec5a6f0137b7ec318525141d94c738933e0599de` against the canonical base and found
+three introduced defects plus one remaining Zod exposure. All four were
+reproduced and fixed in the follow-up:
+
+- The scheduled audit now enables the platform-only reuse flag only for the
+  platform; worker/capture resolution previously threw before scanning.
+- Scheduled chart publication now depends on successful reused-image scans.
+  A failed, cancelled or skipped required audit blocks the release. Push and
+  manual-dispatch releases still work when the schedule-only audit skips.
+- Group cleanup requires the live original owner before and after process
+  enumeration. A persistent supervisor preserves wrapper-exit cleanup without
+  trusting a stale PGID; launcher death triggers bounded supervisor cleanup.
+- Every visible-change array rejects excessive lengths before element parsing.
+  A 420,061-byte malformed JSON declaration now fails normally in an isolated
+  Node 22.23.4 process with a 64 MiB old-space limit.
+
+Follow-up validation: **312 focused suites; 5,170 passed, 77 skipped, 0 failed**.
+The cleanup/security suites without forced exit pass **63 tests on macOS and
+63 on Linux**, including abrupt launcher death, IPC isolation, reused orphan
+PGIDs, and pre-validation limits. Earlier local image IDs below attest the
+runtime/package validation performed before this source follow-up. Final-head
+amd64 image builds/scans and platform CI must pass before merge; a prior green
+head does not validate later fixes.
+
 Image checks run the actual Node binary without the app or network, record
 Node/Brotli/OpenSSL and installed npm versions, scan the complete SPDX SBOM,
 and independently scan an exported image for distro packages. Syft and Trivy
@@ -177,7 +209,8 @@ receive archives/SBOMs with networking disabled and no Docker socket. A
 separate container downloads only the public vulnerability database. Existing
 BuildKit `pull: true` and `sbom: true` are retained; release checks consume that
 attached SBOM by immutable digest. Daily audits also cover reused images when
-no release is needed. Reports are retained for 30 days.
+no release is needed. Scheduled releases wait for every reused-image audit;
+push/dispatch releases explicitly allow that schedule-only job to skip. Reports are retained for 30 days.
 
 ## Rebuild and rollout (operator work after review)
 

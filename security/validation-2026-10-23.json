@@ -663,5 +663,36 @@
       },
       "npm": "11.21.1"
     }
-  ]
+  ],
+  "adversarialReviewFollowUp": {
+    "verifiedAt": "2026-10-24T00:28:01.351156+00:00",
+    "reviewedHead": "ec5a6f0137b7ec318525141d94c738933e0599de",
+    "findingsFixed": [
+      "platform-only resolver flag applied to worker/capture",
+      "scheduled release not gated by reused-image audit",
+      "orphan process-group adoption from stale launch records",
+      "Zod visible-change array amplification outside MCP"
+    ],
+    "node": "22.23.4",
+    "focusedSuites": 312,
+    "testsPassed": 5170,
+    "testsSkipped": 77,
+    "testsFailed": 0,
+    "cleanupSecurityMacOS": {
+      "passed": 63,
+      "failed": 0,
+      "forcedExit": false
+    },
+    "cleanupSecurityLinux": {
+      "passed": 63,
+      "failed": 0,
+      "forcedExit": false
+    },
+    "lowHeapRegression": {
+      "oldSpaceMiB": 64,
+      "inputBytes": 420061,
+      "result": "validation error before element parsing"
+    },
+    "imageEvidenceNote": "Earlier local image IDs attest runtime/packages before the adversarial source follow-up. Final-head amd64 image builds/scans are required in PR CI."
+  }
 }

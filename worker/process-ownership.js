@@ -66,18 +66,19 @@ function processTree(root, opts = {}) {
   return table.filter((p) => pids.has(p.pid) && p.uid === root.uid);
 }
 
-// Apps start in a dedicated group. It survives npm/shell parents exiting.
-// Enumerate members and signal each verified identity, never a negative PID.
+// A persistent supervisor owns each dedicated app group. Require that live
+// original identity both before and after enumeration: an orphan PGID alone
+// can be reused and is never authority to adopt its current members.
 function processGroup(root, opts = {}) {
   if (!root || root.pgid !== root.pid) return [];
-  const current = readProcess(root.pid, opts);
-  if (current && !sameProcess(root, { ...current,
-    cmd: /^[ZX]/.test(current.state) ? root.cmd : current.cmd, state: 'S' })) return [];
-  if (!current) {
-    try { process.kill(root.pid, 0); return []; }
-    catch (err) { if (err.code !== 'ESRCH') return []; }
-  }
-  return processTable(opts).filter((p) => p.pgid === root.pid && p.uid === root.uid);
+  const liveRoot = () => {
+    const current = readProcess(root.pid, opts);
+    return sameProcess(root, current) && current.pgid === root.pgid;
+  };
+  if (!liveRoot()) return [];
+  const table = processTable(opts);
+  if (!liveRoot()) return [];
+  return table.filter((p) => p.pgid === root.pid && p.uid === root.uid);
 }
 
 function listeningInodes(texts) {

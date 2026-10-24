@@ -3,6 +3,9 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const vm = require('node:vm');
+const { spawnSync } = require('node:child_process');
+const YAML = require('yaml');
 const { supported } = require('../scripts/check-node-runtime');
 const { excepted, npmFindings, imageFindings } = require('../scripts/security-findings');
 const ownership = require('../worker/process-ownership');
@@ -141,4 +144,106 @@ test('macOS listener inventory spares ancestors and foreign users and reads actu
   const found = ownership.listeningProcesses({ platform: 'darwin', selfPid: 10, exec });
   assert.equal(found.spare.has(10), true);
   assert.deepEqual(found.procs.map((p) => [p.pid, p.cwd]), [[20, '/private/tmp/fixture with spaces']]);
+});
+
+
+// Evaluate the expressions from the checked-in workflow, so configuration
+// changes exercise the real resolver and release dependency semantics.
+function workflowExpression(value, context) {
+  if (typeof value !== 'string') return value;
+  return vm.runInNewContext(value.trim().replace(/^\$\{\{\s*|\s*\}\}$/g, ''), context, { timeout: 500 });
+}
+
+test('scheduled audits resolve every reused component with its supported resolver mode', () => {
+  const workflow = YAML.parse(fs.readFileSync(path.join(__dirname, '../.github/workflows/build-kubernetes-images.yml'), 'utf8'));
+  const job = workflow.jobs['scheduled-image-audit'];
+  const step = job.steps.find((s) => s.id === 'reuse');
+  const { resolveImage } = require('../scripts/resolve-kubernetes-image');
+  const digest = `sha256:${'a'.repeat(64)}`;
+  assert.deepEqual(job.strategy.matrix.component, ['platform', 'worker', 'capture']);
+  for (const component of job.strategy.matrix.component) {
+    const reuse = workflowExpression(step.env.REUSE_CURRENT_PLATFORM, { matrix: { component } });
+    const result = resolveImage({
+      component, reuseCurrentPlatform: String(reuse) === 'true', forceRebuild: step.env.FORCE_REBUILD,
+      owner: 'Usernode-Labs', revision: 'b'.repeat(40), ref: 'refs/heads/main', claudeCodeVersion: '2.1.309',
+    }, { run: (file) => file === 'git' ? 'c'.repeat(40) : JSON.stringify({ digest,
+      manifests: [{ platform: { os: 'linux', architecture: 'amd64' } }],
+    }) });
+    assert.equal(result.digest, digest, component);
+    assert.equal(result.reason, component === 'platform' ? 'current-source-release' : 'matching-build-inputs');
+  }
+});
+
+test('scheduled release waits for successful reused-image scans and normal releases handle skipped audits', () => {
+  const workflow = YAML.parse(fs.readFileSync(path.join(__dirname, '../.github/workflows/build-kubernetes-images.yml'), 'utf8'));
+  const release = workflow.jobs.release;
+  assert.deepEqual(release.needs, ['build', 'scheduled-image-audit']);
+  assert.match(release.if, /!cancelled\(\)/, 'override the default success() when the schedule-only dependency skips');
+  const allowed = (event, build, audit, cancelled = false) => workflowExpression(release.if, {
+    github: { event_name: event }, cancelled: () => cancelled,
+    needs: { build: { result: build }, 'scheduled-image-audit': { result: audit } },
+  });
+  assert.equal(allowed('schedule', 'success', 'success'), true);
+  for (const status of ['failure', 'cancelled', 'skipped']) {
+    assert.equal(allowed('schedule', 'success', status), false, `schedule audit ${status}`);
+  }
+  for (const event of ['push', 'workflow_dispatch']) {
+    assert.equal(allowed(event, 'success', 'skipped'), true, event);
+    for (const status of ['failure', 'cancelled', 'skipped']) assert.equal(allowed(event, status, 'skipped'), false);
+  }
+  assert.equal(allowed('pull_request', 'skipped', 'skipped'), false);
+  assert.equal(allowed('schedule', 'success', 'success', true), false);
+});
+
+test('visible-change arrays reject excessive lengths before Zod visits any elements', () => {
+  const { parseIntent, VisibleChangesValidationError } = require('../src/services/visible-changes');
+  const { intent } = require('./fixtures/shots');
+  const oversized = (length) => {
+    const values = Array(length);
+    Object.defineProperty(values, 0, { get() { throw new Error('oversized element was visited'); } });
+    return values;
+  };
+  const cases = [
+    [4, ['stories'], (v, a) => { v.stories = a; }],
+    [3, ['stories', '0', 'viewports'], (v, a) => { v.stories[0].viewports = a; }],
+    [41, ['stories', '0', 'intent', 'steps'], (v, a) => { v.stories[0].intent.steps = a; }],
+    [6, ['stories', '0', 'intent', 'hints', 'expectText'], (v, a) => { v.stories[0].intent.hints = { expectText: a }; }],
+  ];
+  for (const [length, expectedPath, assign] of cases) {
+    const candidate = intent();
+    assign(candidate, oversized(length));
+    assert.throws(() => parseIntent(candidate), (err) => {
+      assert.ok(err instanceof VisibleChangesValidationError);
+      assert.deepEqual(err.issues, [{ path: expectedPath, message: `Array must contain at most ${length - 1} element(s)` }]);
+      return true;
+    });
+  }
+});
+
+test('visible-change JSON under the HTTP byte limit is rejected within a bounded heap', () => {
+  const script = `
+    const assert = require('node:assert/strict');
+    const { parseIntent, VisibleChangesValidationError } = require(process.argv[1]);
+    const input = JSON.stringify({version:1, impact:'ui', rationale:'fixture', stories:Array(140000).fill({})});
+    assert.ok(Buffer.byteLength(input) < 512 * 1024);
+    assert.throws(() => parseIntent(JSON.parse(input)), err => err instanceof VisibleChangesValidationError
+      && err.issues.length === 1 && err.issues[0].path.join('.') === 'stories');
+    process.stdout.write('bounded');
+  `;
+  const result = spawnSync(process.execPath, ['--max-old-space-size=64', '-e', script,
+    path.join(__dirname, '../src/services/visible-changes.js')], {
+    encoding: 'utf8', timeout: 10000, maxBuffer: 256 * 1024,
+  });
+  assert.equal(result.status, 0, result.error?.message || result.stderr);
+  assert.equal(result.stdout, 'bounded');
+});
+
+
+test('a stale launch cannot claim a newly reused orphan process group', () => {
+  const uid = process.getuid();
+  const root = { pid: 2000000000, pgid: 2000000000, uid, start: 'original', cmd: 'node old-wrapper.js', state: 'S' };
+  const exec = (_file, args) => args.includes('-p') ? ''
+    : `${root.pid + 1} 1 ${uid} ${root.pid} Fri Oct 23 20:00:00 2026 S node /another-workspace/server.js\n`;
+  assert.deepEqual(ownership.processGroup(root, { platform: 'darwin', exec }), [],
+    'no live original identity exists to authorize adopting these same-user group members');
 });
