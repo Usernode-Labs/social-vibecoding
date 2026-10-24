@@ -1,6 +1,9 @@
 FROM node:22.23.4-bookworm-slim
-# Node 22 ships npm 10 with affected bundled archive/network dependencies.
-RUN npm install --global npm@11.21.1 && npm cache clean --force
+# Pin npm and replace its affected Undici bundle until npm ships the patch.
+RUN npm install --global npm@11.21.1 undici@6.29.1 \
+  && rm -rf /usr/local/lib/node_modules/npm/node_modules/undici \
+  && mv /usr/local/lib/node_modules/undici /usr/local/lib/node_modules/npm/node_modules/undici \
+  && npm cache clean --force
 
 # unzip backs `usernode-attachments <id> --unzip <dir>` — extracting
 # user-attached reference zips inside this disposable container.

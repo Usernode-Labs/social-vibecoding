@@ -908,8 +908,11 @@ Once the real app exists, rewrite this README to describe it.
 # build. tailwindcss lives only in this stage, so the runtime image below
 # stays exactly as small as it was.
 FROM node:22.23.4-alpine AS css
-# Node 22 ships npm 10 with affected bundled archive/network dependencies.
-RUN npm install --global npm@11.21.1 && npm cache clean --force
+# Pin npm and replace its affected Undici bundle until npm ships the patch.
+RUN npm install --global npm@11.21.1 undici@6.29.1 \\
+  && rm -rf /usr/local/lib/node_modules/npm/node_modules/undici \\
+  && mv /usr/local/lib/node_modules/undici /usr/local/lib/node_modules/npm/node_modules/undici \\
+  && npm cache clean --force
 WORKDIR /build
 COPY package.json package-lock.json ./
 RUN npm ci --include=dev
@@ -920,8 +923,11 @@ RUN npm run build
 
 # Stage 2 — the app itself (unchanged apart from the one COPY at the end).
 FROM node:22.23.4-alpine
-# Node 22 ships npm 10 with affected bundled archive/network dependencies.
-RUN npm install --global npm@11.21.1 && npm cache clean --force
+# Pin npm and replace its affected Undici bundle until npm ships the patch.
+RUN npm install --global npm@11.21.1 undici@6.29.1 \\
+  && rm -rf /usr/local/lib/node_modules/npm/node_modules/undici \\
+  && mv /usr/local/lib/node_modules/undici /usr/local/lib/node_modules/npm/node_modules/undici \\
+  && npm cache clean --force
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
