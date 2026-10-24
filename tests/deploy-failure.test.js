@@ -170,6 +170,30 @@ test('containerLogs still win over stderr when the container did boot', () => {
   );
 });
 
+test('record() says whose problem a failure looks like (origin)', () => {
+  const hc = new Error('Healthcheck failed');
+  hc.healthcheckFailed = true;
+  hc.containerLogs = 'Error: Cannot find module x';
+  assert.equal(deployFailure.record(hc).origin, 'app');
+
+  const pg = new Error('Healthcheck failed');
+  pg.healthcheckFailed = true;
+  pg.infrastructure = true;
+  assert.equal(deployFailure.record(pg).origin, 'platform');
+
+  const clone = new Error('clone timed out');
+  clone.cloneFailed = true;
+  assert.equal(deployFailure.record(clone).origin, 'platform');
+
+  const build = new Error('x');
+  build.buildFailed = true;
+  build.buildLog = 'error: nope';
+  assert.equal(deployFailure.record(build).origin, 'app');
+
+  assert.equal(deployFailure.record(new Error('mystery')).origin, null);
+  assert.equal(deployFailure.syntheticRecord('other', 'watchdog').origin, null);
+});
+
 // 21 Oct 2026: GitHub's secondary limit refused new repositories, and the
 // made screen showed GitHub's text about scraping and its terms of service.
 test('a new repository GitHub refused for going too fast is said in words; other repository failures keep GitHub\'s', () => {
