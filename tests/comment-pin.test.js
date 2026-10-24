@@ -259,7 +259,8 @@ test('on a phone a tap leaves a small comment, and only its field opens the shee
   // on a phone nothing in it hands over to the form (the bar's Form does).
   assert.match(src, /const PHONE_TOOL = 'grid h-11 w-11 /);
   assert.match(src, /onClick=\{collapse\}\s*className=\{PHONE_TOOL\}/);
-  assert.match(src, /onClick=\{requestDiscard\}\s*className=\{PHONE_TOOL\}/);
+  assert.match(src, /onClick=\{closeSheet\}\s*className=\{PHONE_TOOL\}/,
+    'the phone sheet\'s ✕ leaves when the comment is empty and alone');
   const head = src.slice(src.indexOf('const head = draft && target ? ('), src.indexOf('const small = phone'));
   const phoneHead = head.slice(head.indexOf('{phone ? ('), head.indexOf(') : (\n        <>'));
   assert.ok(phoneHead.includes('ChevronDownIcon'), 'the phone head is found');
@@ -274,6 +275,26 @@ test('on a phone a tap leaves a small comment, and only its field opens the shee
   // The box keeps above the home indicator.
   assert.match(src, /style=\{\{ height: 'var\(--platform-safe-bottom, 0px\)' \}\}/);
   assert.match(src, /size\.height - \(inset \|\| barAt \? 0 : BAR_SPACE\) - safeBottom/);
+});
+
+test('the bar works from the first frame, and the phone\'s ✕ on an empty comment gets out (#5834)', () => {
+  // Opening the mode froze for seconds: the bar stayed hidden and untappable
+  // while the first picture drew, and the phone's ✕ took the pin away but
+  // left the person in comment mode, so it read as a dead button.
+  const src = read('frontend/src/features/comment-pin/comment-pin.tsx');
+  // The bar says it is taking the screenshot, and on a phone it says so too.
+  assert.match(src, /const hint = shotIntro\s*\?\s*t\('devchat:commentPin\.hint\.taking'\)/);
+  assert.match(src, /\$\{shotIntro \? 'inline' : 'hidden sm:inline'\} min-w-0 truncate text-sm font-bold text-violet-700/);
+  // ✕ on the request's only comment with nothing in it leaves the mode.
+  assert.match(src, /const leaveIfEmpty = \(\) => !!draft && draft\.comments\.length === 1\s*&& !hasWords\(draft\) && !draft\.images\.length && \(leave\(\), true\);/);
+  const close = src.slice(src.indexOf('const closeSmall = () => {'), src.indexOf('const closeSheet'));
+  assert.match(close, /if \(leaveIfEmpty\(\)\) return;\s*if \(draft\.comments\.length > 1\) removeComment\(cur\.key\);\s*else requestDiscard\(\);/,
+    'the small box leaves before removing or discarding');
+  assert.match(src, /const closeSheet = \(\) => \{\s*if \(!draft \|\| draft\.sending\) return;\s*if \(!leaveIfEmpty\(\)\) requestDiscard\(\);\s*\};/);
+  // Done now works before the picture lands, so one that lands after the
+  // mode has gone is dropped rather than kept.
+  assert.match(src, /if \(!live\) \{ if \(got\) URL\.revokeObjectURL\(got\.url\); return; \}/);
+  assert.match(src, /viewShotKeys\.current \+= 1;\s*if \(viewShotUrl\.current\) URL\.revokeObjectURL\(viewShotUrl\.current\);/);
 });
 
 test('the preview draws only the pins that fall inside it', () => {
@@ -349,7 +370,11 @@ test('opening and leaving are one motion each, never a frame-long jump (12 Oct 2
   // Nothing of the mode is drawn over the live page before the first picture:
   // the state starts as drawing, and the bar and the first-use note wait.
   assert.match(src, /useState<ViewShot \| null>\(\{ url: '', view: 0, state: 'drawing' \}\)/);
-  assert.match(src, /shotIntro \? 'pointer-events-none opacity-0' : 'comment-bar-in',/);
+  // The bar itself is not drawn before the first picture: it stands in the
+  // band from the first frame, so the mode can always be left (#5834).
+  const bar = src.slice(src.indexOf('aria-label={t(\'devchat:commentPin.bar.label\')}'), src.indexOf('{!inset ? ('));
+  assert.match(bar, /'comment-bar-in',/);
+  assert.doesNotMatch(bar, /pointer-events-none opacity-0/);
   assert.match(src, /\{intro && !confirm && !shotIntro \? \(/);
   assert.match(css, /\.comment-bar-in \{ animation: comment-shot-ground-in 320ms ease-out; \}/);
   // The picture is decoded before it goes up, or its first frame is a white box.
@@ -388,7 +413,8 @@ test('the picture is drawn ahead while the menu or the form is open, and opens a
   assert.match(src, /const AHEAD_SETTLE_MS = 350;/);
   assert.match(src, /const AHEAD_TTL_MS = 20000;/);
   assert.match(src, /watching = true;\s*observer\.observe\(document\.body, \{ subtree: true, childList: true, characterData: true, characterDataOldValue: true \}\);/);
-  assert.match(src, /const ahead = takeAhead\(sizeRef\.current\);\s*void Promise\.all\(\[ahead, overlaysGone\(\)\]\)\.then\(\(\[got\]\) => \{\s*if \(!live\) return;\s*if \(!got\) \{ takeViewShot\(\); return; \}/);
+  assert.match(src, /const ahead = takeAhead\(sizeRef\.current\);\s*void Promise\.all\(\[ahead, overlaysGone\(\)\]\)\.then\(\(\[got\]\) => \{\s*if \(!live\) \{ if \(got\) URL\.revokeObjectURL\(got\.url\); return; \}\s*if \(!got\) \{ takeViewShot\(\); return; \}/,
+    'a picture drawn ahead that lands after the mode has gone is dropped');
   assert.match(src, /if \(!stillFresh\(a\) \|\| a\.size\.width !== size\.width\) \{/);
   // A scroll of the page or a new width spoils it too.
   assert.match(src, /const onScroll = \(e: Event\) => \{ if \(!outOfPicture\(e\.target instanceof Node \? e\.target : null\)\) spoil\(\); \};/);
