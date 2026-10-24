@@ -6,21 +6,24 @@
  * One centred group under the landing's logo bar: the picture, the small
  * caps "Welcome to Homeroom", one headline, the small caps "For example"
  * over the make screen's three examples (to show, not to press). At the
- * foot, one "Continue" button with "Sign in or join with your email." under
- * it (#5251, the navigation review of 15 October 2026: "Get started" beside
- * "Already have an account? Sign in" made people decide which they were, for
- * what is one form). The small pill that also said "We let new people in in
- * waves." (added by #5251) is gone at Evan's request of 17 October 2026,
- * #5376: nothing replaces it. On a
+ * foot, one "Continue with your email" button with "Already have an account?
+ * Sign in" just under it, the two read as one choice (#5251, the navigation
+ * review of 15 October 2026: "Get started" beside "Already have an account?
+ * Sign in" made people decide which they were, for what is one form; #5849
+ * gave the button the words of what it does, where "Sign in or join with
+ * your email." said its job a second time). The small pill that also said
+ * "We let new people in in waves." (added by #5251) is gone at Evan's
+ * request of 17 October 2026, #5376: nothing replaces it. On a
  * phone the foot sits at the foot of the screen and the story shrinks, a
  * step at a time, until it is on screen (`fitStyle`, below); on a wide
  * screen the foot follows the examples, so the button is not left far
  * below them.
  *
- * "Continue" opens the sign-in sheet over this screen. Its email code
- * decides which it is: an address that has an account is signed in, on any
- * device, and only a new one makes an account (routes/auth.js, otp/verify),
- * which is then asked what to make next (../first-session/make.tsx).
+ * "Continue with your email" opens the sign-in sheet over this screen. Its
+ * email code decides which it is: an address that has an account is signed
+ * in, on any device, and only a new one makes an account
+ * (routes/auth.js, otp/verify), which is then asked what to make next
+ * (../first-session/make.tsx).
  *
  * A "You're in" mail's link for an account that is still new does not wait
  * here (Evan, 12 Oct 2026): the landing spends it as the page opens and
@@ -44,7 +47,7 @@ import { FRONT } from '../first-session/examples';
 import { useMessages } from '../../lib/i18n/react';
 import { TierChart } from '../first-session/tier-chart';
 
-// The foot's links: Sign in inside the email line, and Look around first.
+// The foot's links: Sign in inside the line under the button, and Look around first.
 const STORY_LINK = 'font-semibold text-violet-700 dark:text-violet-400 hover:underline un-touch-target';
 
 // Also the dead invite link's welcome (./invite-card.tsx DeadInvite).
@@ -134,7 +137,8 @@ export function Story({ primaryClass, welcomeEmail = null, onStart, onSignIn, co
   /**
    * Inside the Homeroom app the full story is still the front door
    * (landing.tsx `storyFront`), and this adds "Look around first" under its
-   * foot: a link in the Sign in line's blue, on a line of its own, to
+   * foot: a link in the same blue as Sign in, under the "Already have an
+   * account?" line, on a line of its own, to
    * Discover's public projects (#apps), for somebody who wants to see what
    * is here before making an account. It is part of the foot, so the fit
    * steps make room for it.
@@ -218,7 +222,7 @@ export function Story({ primaryClass, welcomeEmail = null, onStart, onSignIn, co
       {/* Polish N10: the line read like a second way in but was plain
           text. Its "Sign in" is one now, the same sheet titled Sign in
           (landing.tsx's 'signin'), for somebody who has an account. */}
-      <p data-landing-story-how="" className="mt-1 text-[15px] leading-5 text-zinc-500 dark:text-zinc-400 text-balance">
+      <p data-landing-story-how="" className="text-[15px] leading-5 text-zinc-500 dark:text-zinc-400 text-balance">
         <RichMessage
           id="auth:story.email"
           components={[
@@ -232,7 +236,7 @@ export function Story({ primaryClass, welcomeEmail = null, onStart, onSignIn, co
         />
       </p>
       {lookAround ? (
-        <p className="text-[15px] leading-5">
+        <p className="mt-1.5 text-[15px] leading-5">
           <a href="#apps" data-landing-story-look="" className={STORY_LINK}>
             {t('auth:story.lookAround')}
           </a>
@@ -341,7 +345,7 @@ export function Story({ primaryClass, welcomeEmail = null, onStart, onSignIn, co
           </ul>
         </div>
       </div>
-      <div ref={footRef} className={`w-full max-w-sm md:max-w-lg mx-auto md:mb-auto flex flex-col gap-3 ${s.foot} pb-3`}>
+      <div ref={footRef} className={`w-full max-w-sm md:max-w-lg mx-auto md:mb-auto flex flex-col gap-1.5 ${s.foot} pb-3`}>
         {foot}
       </div>
     </div>

@@ -165,13 +165,18 @@ test('the landing: the story in place of the pitch unless switched off, for nobo
 // #4037, decisions A and B on the onboarding canvas, and the owner's review of
 // 8 October (C1-story): "Welcome to Homeroom" over the picture, one headline,
 // "For example" over the make screen's three examples (Evan's, #4354; their
-// rows are pinned by the templates test below), then one "Continue" (#5251,
-// the navigation review: no separate Sign in, the email decides) and the line
-// under it; the waves pill that followed is gone (#5376, Evan, 17 Oct 2026).
-test('the story: label, headline, "For example" and the three examples, then one Continue and the email line', () => {
+// rows are pinned by the templates test below), then one "Continue with your
+// email" (#5251, the navigation review: no separate Sign in, the email
+// decides; #5849, snait: the button says what it continues) and "Already have
+// an account? Sign in" just under it; the waves pill that followed is gone
+// (#5376, Evan, 17 Oct 2026).
+test('the story: label, headline, "For example" and the three examples, then one Continue with your email and the Sign in line', () => {
   const html = renderComponent('frontend/src/features/auth/story.tsx', 'Story', { primaryClass: 'pill', onStart() {} });
   // Each row: its emoji (the tier list draws a chart, no text), title and line.
   const TEMPLATE_ROWS = loadTsx(`${DIR}/examples.ts`).FRONT.flatMap((t) => (t.chart ? [message(t.title), message(t.line)] : [t.emoji, message(t.title), message(t.line)]));
+  // "Already have an account? <0>Sign in</0>": the tag stripper sees the
+  // link as its own text node, so the line is the two sides of tag 0.
+  const [ASK, SIGN_IN] = message('auth:story.email').split(/<\/?0>/).map((part) => part.trim()).filter(Boolean);
   const text = html.replace(/<[^>]+>/g, '\n').split('\n').map((t) => t.trim()).filter(Boolean)
     .map((t) => t.replace(/&#x27;/g, "'"));
   assert.deepEqual(text, [
@@ -180,13 +185,14 @@ test('the story: label, headline, "For example" and the three examples, then one
     'For example',
     ...TEMPLATE_ROWS,
     message('auth:story.continue'),
-    'Sign in',
-    'or join with your email.',
+    ASK,
+    SIGN_IN,
   ]);
-  assert.match(html, /<a href="#signup" data-landing-story-start="" class="pill">Continue<\/a>/);
+  const re = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  assert.match(html, new RegExp(`<a href="#signup" data-landing-story-start="" class="pill">${re(message('auth:story.continue'))}</a>`));
   // Polish N10: the line is still one sentence, and its "Sign in" is a link.
-  assert.match(html, /<p data-landing-story-how=""[^>]*><a href="#login" data-landing-story-signin="" class="[^"]*">Sign in<\/a> or join with your email\.<\/p><\/div>/);
-  assert.doesNotMatch(html, /Already have an account|Get started|data-landing-story-waves|in waves/);
+  assert.match(html, new RegExp(`<p data-landing-story-how=""[^>]*>${re(ASK)} <a href="#login" data-landing-story-signin="" class="[^"]*">${re(SIGN_IN)}</a></p></div>`));
+  assert.doesNotMatch(html, /Get started|data-landing-story-waves|in waves/);
   // In a phone browser too, the story fills the screen and its foot is at the foot.
   const css = read('public/css/app.css');
   // Polish N10: one level-1 heading. The covered platform header leaves the
