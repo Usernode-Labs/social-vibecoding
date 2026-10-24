@@ -67,3 +67,5 @@ public.precompressed/
 # (scripts/language-packs.js)
 public/locales/
 frontend/src/lib/i18n/catalogs.generated.json
+
+/security-reports/

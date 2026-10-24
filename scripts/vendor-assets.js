@@ -48,9 +48,9 @@ const ASSETS = [
   },
   {
     pkg: 'dompurify',
-    version: '3.4.4',
+    version: '3.4.17',
     from: path.join('dist', 'purify.min.js'),
-    to: 'purify-3.4.4.min.js',
+    to: 'purify-3.4.17.min.js',
     purpose: 'Sanitizes that rendered markdown before it reaches innerHTML. Never bypass it.',
   },
   {
@@ -196,9 +196,8 @@ attributes are recorded here instead — re-verify any row against npm with:
 
     npm pack <package>@<version>   # then sha384 the dist file
 
-The \`marked\` and \`dompurify\` digests below are **identical to the
-\`integrity\` attributes the old jsdelivr tags carried**, i.e. these copies
-are byte-for-byte what the CDN was serving. The \`qrcodejs\` digest matches
+The \`marked\` digest matches the old jsdelivr integrity attribute.
+The \`dompurify\` digest tracks the current security update. The \`qrcodejs\` digest matches
 \`qrcodejs@1.0.0\` on npm — an improvement on the old tag, which pulled an
 UNPINNED GitHub ref (\`/gh/davidshimjs/qrcodejs/qrcode.min.js\`) with no
 integrity attribute at all. \`mermaid\` was never on a CDN here: it is
@@ -239,7 +238,7 @@ ${remoteRows.map((r) => `- **${r.rel}** — ${r.purpose}`).join('\n')}
    \`scripts/vendor-assets.js\` (version + filename), then \`npm install\`.
 2. \`npm run vendor:assets\` — writes the new file and rewrites this README.
 3. \`git rm\` the superseded file, and update the \`<script src>\` tags in
-   \`public/index.html\` plus the \`SHELL_ASSETS\` list in \`public/sw.js\`.
+   \`frontend/src/head.html\` plus the \`SHELL_ASSETS\` list in \`public/sw.js\`.
    \`tests/pwa-shell-wiring.test.js\` and \`tests/tailwind-build.test.js\`
    fail if any of those fall out of sync, so the suite catches a half-done
    bump.

@@ -29,11 +29,11 @@ test('Kubernetes hosted-app evidence image declares a numeric non-root user', ()
 
 test('Kubernetes platform image builds and contains the generated shell assets', () => {
   const dockerfile = read('Dockerfile.kubernetes');
-  assert.match(dockerfile, /FROM node:22-alpine AS asset-deps/);
-  assert.match(dockerfile, /FROM node:22-alpine AS shell/);
+  assert.match(dockerfile, /FROM node:22.23.4-alpine AS asset-deps/);
+  assert.match(dockerfile, /FROM node:22.23.4-alpine AS shell/);
   assert.match(dockerfile, /from=asset-deps[^\n]+node_modules[^\n]+\\\n\s+node frontend\/scripts\/build-shell\.mjs/);
   assert.match(dockerfile, /from=asset-deps[^\n]+node_modules[^\n]+\\\n\s+node scripts\/build-tailwind\.js/);
-  assert.doesNotMatch(dockerfile, /FROM node:22-alpine AS css/,
+  assert.doesNotMatch(dockerfile, /FROM node:22.23.4-alpine AS css/,
     'a second dependency-bearing asset stage makes rootless BuildKit restore it separately');
 
   const shellBuild = dockerfile.indexOf('node frontend/scripts/build-shell.mjs');
@@ -43,8 +43,8 @@ test('Kubernetes platform image builds and contains the generated shell assets',
     'Tailwind must scan the shell generated earlier in the same stage');
 
   const shellStage = dockerfile.slice(
-    dockerfile.indexOf('FROM node:22-alpine AS shell'),
-    dockerfile.lastIndexOf('\nFROM node:22-alpine\n'),
+    dockerfile.indexOf('FROM node:22.23.4-alpine AS shell'),
+    dockerfile.lastIndexOf('\nFROM node:22.23.4-alpine\n'),
   );
   assert.doesNotMatch(shellStage, /RUN npm ci/,
     'asset dependencies must stay outside the generated-output snapshot');
@@ -78,7 +78,7 @@ test('Kubernetes platform image builds and contains the generated shell assets',
   assert.match(shellStage, /from=asset-deps[^\n]+node_modules[^\n]+\\\n\s+node frontend\/scripts\/build-shell\.mjs --document/,
     'the document step renders with the prerender bundle, which loads react from the dependency stage');
 
-  const runtime = dockerfile.slice(dockerfile.lastIndexOf('\nFROM node:22-alpine\n'));
+  const runtime = dockerfile.slice(dockerfile.lastIndexOf('\nFROM node:22.23.4-alpine\n'));
   assert.doesNotMatch(runtime, /^COPY --chown=node:node \. \.$/m,
     'the runtime image must not ship tests, docs, or builder sources');
   for (const source of [
@@ -103,7 +103,7 @@ test('Kubernetes platform image ships every directory the server reads beside sr
   // starter failed to create with "ENOENT: scandir '/app/app-templates/…'"
   // while Dockerfile, which copies everything, and every test were fine.
   const dockerfile = read('Dockerfile.kubernetes');
-  const runtime = dockerfile.slice(dockerfile.lastIndexOf('\nFROM node:22-alpine\n'));
+  const runtime = dockerfile.slice(dockerfile.lastIndexOf('\nFROM node:22.23.4-alpine\n'));
   const shipped = new Set();
   for (const [, args] of runtime.matchAll(/^COPY (.+)$/gm)) {
     const parts = args.split(/\s+/).filter((a) => !a.startsWith('--'));

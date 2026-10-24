@@ -190,6 +190,10 @@ async function platform() {
 /** `node server.js` in `dir`, resolved once it is listening. */
 async function boot(dir, dbUrl, env, extra = {}) {
   const port = await freePort();
+  // This is an isolated generated fixture, never a deployment listener.
+  const entry = path.join(dir, 'server.js');
+  fs.writeFileSync(entry, fs.readFileSync(entry, 'utf8').replaceAll(
+    'app.listen(port, ()', "app.listen(port, '127.0.0.1', ()"));
   const child = spawn(process.execPath, ['server.js'], {
     cwd: dir,
     env: {
@@ -207,11 +211,26 @@ async function boot(dir, dbUrl, env, extra = {}) {
   let out = '';
   child.stdout.on('data', (d) => { out += d; });
   child.stderr.on('data', (d) => { out += d; });
-  await new Promise((resolve, reject) => {
+  async function stop() {
+    if (child.exitCode !== null || child.signalCode !== null) return child.exitCode;
+    const exited = new Promise((resolve) => child.once('exit', resolve));
+    let timer;
+    child.kill('SIGTERM');
+    const code = await Promise.race([exited, new Promise((r) => { timer = setTimeout(() => r('timeout'), 2000); })]);
+    clearTimeout(timer);
+    if (code === 'timeout') { child.kill('SIGKILL'); return await exited; }
+    return code;
+  }
+  try {
+    await new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(`server did not start:\n${out}`)), 20000);
     child.stdout.on('data', () => { if (out.includes('Listening on :')) { clearTimeout(timer); resolve(); } });
     child.once('exit', (code) => { clearTimeout(timer); reject(new Error(`server exited ${code}:\n${out}`)); });
   });
+  } catch (err) {
+    await stop();
+    throw err;
+  }
   const base = `http://127.0.0.1:${port}`;
   async function call(method, url, { as, body, raw, now } = {}) {
     const headers = {};
@@ -221,14 +240,6 @@ async function boot(dir, dbUrl, env, extra = {}) {
     const res = await fetch(base + url, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
     if (raw) return res;
     return { status: res.status, data: await res.json().catch(() => null) };
-  }
-  async function stop() {
-    if (child.exitCode !== null) return child.exitCode;
-    const exited = new Promise((resolve) => child.once('exit', (code) => resolve(code)));
-    child.kill('SIGTERM');
-    const code = await Promise.race([exited, new Promise((r) => setTimeout(() => r('timeout'), 8000))]);
-    if (code === 'timeout') child.kill('SIGKILL');
-    return code;
   }
   return { call, stop, base, output: () => out };
 }

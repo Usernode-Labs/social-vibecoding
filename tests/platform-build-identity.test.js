@@ -113,8 +113,8 @@ test('the builder writes it from the environment, through the narrowing', () => 
 
 test('the Dockerfile shell stage declares GIT_SHA so the build arg is not dropped', () => {
   const stage = dockerfile.slice(
-    dockerfile.indexOf('FROM node:22-alpine AS shell'),
-    dockerfile.indexOf('FROM node:22-alpine AS css'),
+    dockerfile.indexOf('FROM node:22.23.4-alpine AS shell'),
+    dockerfile.indexOf('FROM node:22.23.4-alpine AS css'),
   );
   assert.ok(stage.length > 0, 'the shell stage is located');
   assert.match(stage, /^ARG GIT_SHA=dev$/m,

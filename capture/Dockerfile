@@ -1,4 +1,6 @@
-FROM node:22-bookworm-slim
+FROM node:22.23.4-bookworm-slim
+# Node 22 ships npm 10 with affected bundled archive/network dependencies.
+RUN npm install --global npm@11.21.1 && npm cache clean --force
 
 # Distro Chromium + ffmpeg + fonts is the smallest reliable combo for
 # headless capture: Playwright's official image is ~2 GB and Alpine is
@@ -22,7 +24,9 @@ WORKDIR /app
 
 # puppeteer-core only — the browser comes from the distro package above,
 # so no Chromium download at npm-install time.
-RUN npm install puppeteer-core@^23 \
+COPY capture/package.json ./
+# Compatible Client API; fixes the transitive FTP listing parser DoS.
+RUN npm install --omit=dev \
   && chown -R node:node /app
 
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium

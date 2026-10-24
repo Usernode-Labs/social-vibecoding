@@ -4,7 +4,9 @@
 # node_modules layer for rootless BuildKit to restore when the runtime copies
 # public/ out of it. `rw` lets Vite create its temporary config bundle; writes
 # to a bind mount from another stage are discarded after the RUN.
-FROM node:22-alpine AS asset-deps
+FROM node:22.23.4-alpine AS asset-deps
+# Node 22 ships npm 10 with affected bundled archive/network dependencies.
+RUN npm install --global npm@11.21.1 && npm cache clean --force
 WORKDIR /build/frontend
 COPY frontend/package.json frontend/package-lock.json ./
 # npm keeps a copy of every tarball it downloads. Left at its default
@@ -24,7 +26,9 @@ RUN npm ci --ignore-scripts --cache /tmp/npm-cache && rm -rf /tmp/npm-cache
 # config untouched. Declared above them, as it was, the id made every commit
 # rebuild all three. This run therefore writes a `dev` document, and keeps the
 # prerender bundle so the document can be written again once the id is known.
-FROM node:22-alpine AS shell
+FROM node:22.23.4-alpine AS shell
+# Node 22 ships npm 10 with affected bundled archive/network dependencies.
+RUN npm install --global npm@11.21.1 && npm cache clean --force
 WORKDIR /build
 COPY frontend ./frontend
 COPY scripts/shell-stamp.js ./scripts/shell-stamp.js
@@ -61,7 +65,9 @@ RUN node scripts/build-shell-release.js
 COPY scripts/precompress-static-assets.js ./scripts/precompress-static-assets.js
 RUN node scripts/precompress-static-assets.js
 
-FROM node:22-alpine
+FROM node:22.23.4-alpine
+# Node 22 ships npm 10 with affected bundled archive/network dependencies.
+RUN npm install --global npm@11.21.1 && npm cache clean --force
 
 # Kubernetes mode talks to the Kubernetes and PostgreSQL APIs over the
 # network. It deliberately contains no Docker CLI or container-runtime tools.

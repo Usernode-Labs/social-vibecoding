@@ -1,7 +1,9 @@
 # Stage 1 — build the React shell from the exact frontend dependency tree in
 # this commit. Both outputs are deliberately untracked: every production
 # deploy, staging preview, local image, and rollback rebuilds them.
-FROM node:22-alpine AS shell
+FROM node:22.23.4-alpine AS shell
+# Node 22 ships npm 10 with affected bundled archive/network dependencies.
+RUN npm install --global npm@11.21.1 && npm cache clean --force
 WORKDIR /build/frontend
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci --ignore-scripts
@@ -41,7 +43,9 @@ RUN node frontend/scripts/build-shell.mjs
 # Tailwind content source, so copy the freshly rendered document over the
 # committed test fixture before compiling. Build dependencies stay in these
 # disposable stages.
-FROM node:22-alpine AS css
+FROM node:22.23.4-alpine AS css
+# Node 22 ships npm 10 with affected bundled archive/network dependencies.
+RUN npm install --global npm@11.21.1 && npm cache clean --force
 WORKDIR /build
 COPY package.json package-lock.json ./
 RUN npm ci --ignore-scripts
@@ -53,14 +57,19 @@ COPY --from=shell /build/public/index.html ./public/index.html
 COPY frontend ./frontend
 RUN npm run build:css
 
+# Same Docker/buildx versions as Alpine, from the upstream security rebuild
+# with Go 1.26.10 (Alpine's binaries still embed Go 1.26.9).
+FROM docker:29.9.2-cli AS docker-tools
+
 # Stage 3 — production runtime.
-FROM node:22-alpine
+FROM node:22.23.4-alpine
+# Node 22 ships npm 10 with affected bundled archive/network dependencies.
+RUN npm install --global npm@11.21.1 && npm cache clean --force
 # The platform spawns child apps by shelling out to the host's Docker
 # daemon (see src/services/docker.js — `execFile('docker', [...])`).
 # That needs the docker CLI inside the container; the daemon itself
 # is reached via a bind-mounted /var/run/docker.sock from the host.
-# docker-cli-buildx is the BuildKit half of that CLI, and it is a SEPARATE
-# Alpine package: `docker-cli` alone gives a CLI that answers every
+# buildx is the BuildKit half of that CLI, copied separately below: `docker-cli` alone gives a CLI that answers every
 # DOCKER_BUILDKIT=1 build with "BuildKit is enabled but the buildx
 # component is missing or broken", which is what #1746 taught the builder
 # to fall back from. Installing it is what makes #1736's BuildKit path the
@@ -68,7 +77,9 @@ FROM node:22-alpine
 # git is for the import-existing flow's `git clone` of foreign repos.
 # postgresql-client lets DB administration work over the normal Postgres
 # Service/network connection in both Docker and Kubernetes modes.
-RUN apk add --no-cache docker-cli docker-cli-buildx git postgresql-client
+RUN apk add --no-cache git postgresql-client
+COPY --from=docker-tools /usr/local/bin/docker /usr/local/bin/docker
+COPY --from=docker-tools /usr/local/libexec/docker/cli-plugins/docker-buildx /usr/local/libexec/docker/cli-plugins/docker-buildx
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --production

@@ -59,6 +59,7 @@ const https = require('https');
 const net = require('net');
 const path = require('path');
 const { spawn, spawnSync } = require('child_process');
+const { readProcess, sameProcess, processTree, processGroup, stopOwned } = require('./process-ownership');
 
 const ENV_KEY = /^[A-Z][A-Z0-9_]*$/;
 const LAUNCH_KEYS = new Set(['DATABASE_URL', 'USERNODE_ENV', 'PORT']);
@@ -78,7 +79,6 @@ const BUILD_TIMEOUT_MS = 5 * 60 * 1000;
 // after SIGTERM, and how often it is looked at meanwhile.
 const LAUNCH_DIR = '/tmp/usernode-inloop';
 const STOP_WAIT_MS = 5000;
-const STOP_POLL_MS = 100;
 
 // The viewer the platform's check script signs in as (usernode-bench-capture.js
 // VIEWER), and the app id a local launch uses when the worker names none.
@@ -386,8 +386,11 @@ function readLaunch(port, { dir = LAUNCH_DIR, fsImpl = fs } = {}) {
 
 function recordLaunch(port, rec, { dir = LAUNCH_DIR, fsImpl = fs } = {}) {
   try {
-    fsImpl.mkdirSync(dir, { recursive: true });
-    fsImpl.writeFileSync(launchFile(port, dir), JSON.stringify(rec));
+    fsImpl.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    const target = launchFile(port, dir);
+    const temp = `${target}.${process.pid}.tmp`;
+    fsImpl.writeFileSync(temp, JSON.stringify(rec), { mode: 0o600 });
+    fsImpl.renameSync(temp, target);
   } catch { /* an unrecorded launch is only one --stop cannot find */ }
 }
 
@@ -397,39 +400,28 @@ function forgetLaunch(port, pid, { dir = LAUNCH_DIR, fsImpl = fs } = {}) {
   } catch { /* already gone */ }
 }
 
-// A process's command line, as one string, or null when it is gone.
-function commandLineOf(pid, fsImpl = fs) {
-  try { return fsImpl.readFileSync(`/proc/${pid}/cmdline`, 'utf8').split('\0').join(' ').trim(); } catch { return null; }
-}
-
-/**
- * Stop the launch recorded on `port` (see ONE LAUNCH PER PORT): SIGTERM this
- * command's process (it stops its app and exits), SIGKILL both if they are
- * still there after `waitMs`. Resolves whether one was running. Never throws.
- */
+/** Stop only the recorded processes, with identity checks before every signal. */
 async function stopLaunch(port, {
   dir = LAUNCH_DIR, fsImpl = fs, kill = process.kill.bind(process), waitMs = STOP_WAIT_MS,
-  commandLine = (pid) => commandLineOf(pid, fsImpl), selfPid = process.pid,
+  read = readProcess, tree = processTree, selfPid = process.pid,
 } = {}) {
   try {
     const rec = readLaunch(port, { dir, fsImpl });
     if (!rec || rec.pid === selfPid) return false;
-    const alive = (pid) => { try { kill(pid, 0); return true; } catch { return false; } };
-    const launcher = alive(rec.pid) && /usernode-run-inloop/.test(commandLine(rec.pid) || '') ? rec.pid : null;
-    const app = Number.isInteger(rec.childPid) && rec.childPid > 1 && alive(rec.childPid)
-      && commandLine(rec.childPid) === rec.childCommand ? rec.childPid : null;
-    const pids = [launcher, app].filter(Boolean);
-    for (const pid of pids) { try { kill(pid, 'SIGTERM'); } catch { /* gone */ } }
-    for (let waited = 0; waited < waitMs && pids.some(alive); waited += STOP_POLL_MS) {
-      // eslint-disable-next-line no-await-in-loop
-      await new Promise((r) => setTimeout(r, STOP_POLL_MS));
+    const owned = [rec.launcher, rec.child].filter((p) => p && p.pid !== selfPid
+      && p.uid === process.getuid() && sameProcess(p, read(p.pid)));
+    // Snapshot descendants BEFORE stopping their parents (npm/shell wrappers
+    // otherwise orphan their servers). Never signal an entire process group.
+    const records = new Map();
+    for (const p of owned) for (const child of tree(p)) {
+      if (child.pid !== selfPid) records.set(child.pid, child);
     }
-    for (const pid of pids) if (alive(pid)) { try { kill(pid, 'SIGKILL'); } catch { /* gone */ } }
-    try { fsImpl.unlinkSync(launchFile(port, dir)); } catch { /* already gone */ }
-    return pids.length > 0;
-  } catch {
-    return false;
-  }
+    for (const p of owned) records.set(p.pid, p);
+    for (const p of processGroup(rec.child)) if (p.pid !== selfPid) records.set(p.pid, p);
+    const stopped = await stopOwned([...records.values()].reverse(), { waitMs, read, kill });
+    forgetLaunch(port, rec.pid, { dir, fsImpl });
+    return stopped > 0;
+  } catch { return false; }
 }
 
 async function main() {
@@ -526,7 +518,7 @@ async function main() {
   try {
     await new Promise((resolve, reject) => {
       proxy.once('error', reject);
-      proxy.listen(publicPort, () => { proxy.off('error', reject); resolve(); });
+      proxy.listen(publicPort, '127.0.0.1', () => { proxy.off('error', reject); resolve(); });
     });
   } catch (err) {
     process.stderr.write(`usernode-run-inloop: cannot listen on ${publicPort}: ${err.message}`
@@ -545,33 +537,53 @@ async function main() {
   }
 
   const child = spawn(command, process.argv.slice(3), {
-    env: { ...env, PORT: String(appPort) }, stdio: 'inherit',
+    env: { ...env, PORT: String(appPort) }, stdio: 'inherit', detached: true,
   });
-  if (Number.isInteger(child.pid)) {
+  const launcherIdentity = readProcess(process.pid);
+  const childIdentity = Number.isInteger(child.pid) ? readProcess(child.pid) : null;
+  if (launcherIdentity) {
     recordLaunch(publicPort, {
-      // Its argv as /proc shows it once it runs, which is how --stop knows
-      // the pid is still this app.
-      pid: process.pid, childPid: child.pid, childCommand: [command, ...process.argv.slice(3)].join(' '),
+      pid: process.pid, childPid: child.pid, launcher: launcherIdentity, child: childIdentity,
       startedAt: new Date().toISOString(),
-      // Whether it was signed in, and as which app: --link and
-      // usernode-run-checks sign their links for it.
       ...(identity ? { signedIn: true, appId } : {}),
     });
   }
-  const stop = (signal) => { try { child.kill(signal); } catch { /* already gone */ } };
-  process.on('SIGTERM', () => stop('SIGTERM'));
-  process.on('SIGINT', () => stop('SIGINT'));
+  let stopping = false;
+  const finish = async (code) => {
+    if (stopping) return;
+    stopping = true;
+    proxy.close();
+    proxy.closeAllConnections();
+    // Also handles failed spawns, npm/shell grandchildren, and an app that
+    // ignores SIGTERM. The hard bound prevents a turn hanging indefinitely.
+    const records = new Map([
+      ...(launcherIdentity ? processTree(launcherIdentity) : []).filter((p) => p.pid !== process.pid),
+      ...(childIdentity ? processGroup(childIdentity) : []),
+    ].map((p) => [p.pid, p]));
+    const deadline = Date.now() + STOP_WAIT_MS;
+    // ChildProcess retains the handle we spawned, even if process inspection
+    // is unavailable or the app changes its process title. Node closes that
+    // handle on exit, so it cannot signal a subsequently reused PID.
+    try { child.kill('SIGTERM'); } catch { /* failed spawn or already exited */ }
+    await stopOwned([...records.values()], { waitMs: STOP_WAIT_MS });
+    while (child.exitCode === null && child.signalCode === null && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    try { child.kill('SIGKILL'); } catch { /* already exited */ }
+    forgetLaunch(publicPort, process.pid);
+    process.exitCode = code;
+    process.exit();
+  };
+  process.once('SIGTERM', () => { void finish(0); });
+  process.once('SIGINT', () => { void finish(0); });
   child.on('error', (err) => {
     process.stderr.write(`usernode-run-inloop: could not start app command: ${err.message}\n`);
-    process.exitCode = 2;
-    proxy.close();
+    void finish(2);
   });
   child.on('exit', (code, signal) => {
-    process.exitCode = code == null ? (signal ? 128 : 2) : code;
-    forgetLaunch(publicPort, process.pid);
-    proxy.close();
-    // Keep-alive browser sockets would otherwise hold the process open.
-    setTimeout(() => process.exit(), 200).unref();
+    // Save descendants while the launcher is still their ancestor, including
+    // servers whose npm/shell parent has already exited.
+    void finish(code == null ? (signal ? 128 : 2) : code);
   });
 }
 

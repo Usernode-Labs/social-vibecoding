@@ -1,4 +1,6 @@
-FROM node:22-bookworm-slim
+FROM node:22.23.4-bookworm-slim
+# Node 22 ships npm 10 with affected bundled archive/network dependencies.
+RUN npm install --global npm@11.21.1 && npm cache clean --force
 
 # unzip backs `usernode-attachments <id> --unzip <dir>` — extracting
 # user-attached reference zips inside this disposable container.
@@ -107,7 +109,7 @@ RUN echo "claude-code ${CLAUDE_CODE_VERSION} cache bust: ${CLAUDE_CODE_CACHE_BUS
 # aligned with the JSONL event shapes src/agents/codex-openrouter.js parses.
 ARG CODEX_VERSION=0.146.0
 RUN npm install -g @openai/codex@${CODEX_VERSION}
-RUN npm install -g @modelcontextprotocol/sdk@1.30.0 zod@3.25.76
+RUN npm install -g @modelcontextprotocol/sdk@1.32.2 zod@3.25.76
 # Preserve the pinned CLI's full coding-agent/tool instructions as the base for
 # custom OpenRouter model entries. The per-turn builder replaces only the
 # misleading OpenAI-model identity sentence before copying that text into its
@@ -184,6 +186,7 @@ COPY agent-api-failure.js /usr/local/bin/agent-api-failure.js
 # The Homeroom bot's build turns (STOP_GUARD=1): run-cc.sh installs it as a
 # Claude Code Stop hook that sends the agent back to work when it tries to end
 # a turn that has changed nothing.
+COPY process-ownership.js /usr/local/bin/process-ownership.js
 COPY build-stop-hook.js /usr/local/bin/build-stop-hook.js
 COPY shots-mcp.js /usr/local/bin/shots-mcp.js
 COPY visible-changes-mcp.js /usr/local/bin/visible-changes-mcp.js

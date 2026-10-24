@@ -19,9 +19,8 @@ attributes are recorded here instead — re-verify any row against npm with:
 
     npm pack <package>@<version>   # then sha384 the dist file
 
-The `marked` and `dompurify` digests below are **identical to the
-`integrity` attributes the old jsdelivr tags carried**, i.e. these copies
-are byte-for-byte what the CDN was serving. The `qrcodejs` digest matches
+The `marked` digest matches the old jsdelivr integrity attribute.
+The `dompurify` digest tracks the current security update. The `qrcodejs` digest matches
 `qrcodejs@1.0.0` on npm — an improvement on the old tag, which pulled an
 UNPINNED GitHub ref (`/gh/davidshimjs/qrcodejs/qrcode.min.js`) with no
 integrity attribute at all. `mermaid` was never on a CDN here: it is
@@ -31,14 +30,14 @@ vendored for #4490's diagrams and loaded on demand, so it is not a
 | File | Package | Version | Source path in package | sha384 (base64) | Size |
 |---|---|---|---|---|---|
 | `marked-15.0.12.min.js` | `marked` | 15.0.12 | `marked.min.js` | `948ahk4ZmxYVYOc+rxN1H2gM1EJ2Duhp7uHtZ4WSLkV4Vtx5MUqnV+l7u9B+jFv+` | 39.0 KB |
-| `purify-3.4.4.min.js` | `dompurify` | 3.4.4 | `dist/purify.min.js` | `ljaibG+rFiOlF9Y2x5ulbWhmu7GWQMKeAPHRiLXj0iozfwSIrIs1Ud1WeQ0Z+FqY` | 25.5 KB |
+| `purify-3.4.17.min.js` | `dompurify` | 3.4.17 | `dist/purify.min.js` | `P0JNneQf81HOl9VwNXK76cQ9VMD6Nfsnepxb0cCOg8+UzEdzgPHAPV4wVQrvYQSx` | 29.1 KB |
 | `qrcode-1.0.0.min.js` | `qrcodejs` | 1.0.0 | `qrcode.min.js` | `3zSEDfvllQohrq0PHL1fOXJuC/jSOO34H46t6UQfobFOmxE5BpjjaIJY5F2/bMnU` | 19.5 KB |
 | `mermaid-11.17.2.min.js` | `mermaid` | 11.17.2 | `dist/mermaid.min.js` | `EOXBFmc3gx5mb+vn0vPvvGqACToJD24hhacX5Yx+8NUUQrHIle/Qi5Bg9o3zKwW2` | 3488.9 KB |
 
 ## What each one is for
 
 - **marked-15.0.12.min.js** — Markdown → HTML for renderMarkdown() in public/js/dev-chat.js (also used by group-chat.js and app-view.js).
-- **purify-3.4.4.min.js** — Sanitizes that rendered markdown before it reaches innerHTML. Never bypass it.
+- **purify-3.4.17.min.js** — Sanitizes that rendered markdown before it reaches innerHTML. Never bypass it.
 - **qrcode-1.0.0.min.js** — Wallet address QR codes (frontend/src/features/header/wallet-sheet.js, public/js/settings.js). npm mirror of davidshimjs/qrcodejs, which the old /gh/ CDN URL served UNPINNED.
 - **mermaid-11.17.2.min.js** — Draws a change's Mermaid diagram (#4490) in the browser: Homeroom turns the author's text into a picture with securityLevel "strict" and htmlLabels off, and DOMPurify cleans the SVG before it is shown (frontend/src/lib/diagram/mermaid.ts). Loaded on demand, only when a card or a change's page holds a Mermaid diagram; not a script tag and not precached.
 
@@ -70,7 +69,7 @@ digest guarantee that lets anyone re-verify it against upstream.
    `scripts/vendor-assets.js` (version + filename), then `npm install`.
 2. `npm run vendor:assets` — writes the new file and rewrites this README.
 3. `git rm` the superseded file, and update the `<script src>` tags in
-   `public/index.html` plus the `SHELL_ASSETS` list in `public/sw.js`.
+   `frontend/src/head.html` plus the `SHELL_ASSETS` list in `public/sw.js`.
    `tests/pwa-shell-wiring.test.js` and `tests/tailwind-build.test.js`
    fail if any of those fall out of sync, so the suite catches a half-done
    bump.

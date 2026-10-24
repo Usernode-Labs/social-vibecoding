@@ -907,7 +907,9 @@ Once the real app exists, rewrite this README to describe it.
 # rebuild step for you to remember: add a class, push, it is in the next
 # build. tailwindcss lives only in this stage, so the runtime image below
 # stays exactly as small as it was.
-FROM node:22-alpine AS css
+FROM node:22.23.4-alpine AS css
+# Node 22 ships npm 10 with affected bundled archive/network dependencies.
+RUN npm install --global npm@11.21.1 && npm cache clean --force
 WORKDIR /build
 COPY package.json package-lock.json ./
 RUN npm ci --include=dev
@@ -917,7 +919,9 @@ COPY public ./public
 RUN npm run build
 
 # Stage 2 — the app itself (unchanged apart from the one COPY at the end).
-FROM node:22-alpine
+FROM node:22.23.4-alpine
+# Node 22 ships npm 10 with affected bundled archive/network dependencies.
+RUN npm install --global npm@11.21.1 && npm cache clean --force
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev

@@ -222,7 +222,7 @@ test('every image path generates the release after CSS and retains its revision 
   const read = file => fs.readFileSync(path.join(__dirname, '..', file), 'utf8');
   for (const file of ['Dockerfile', 'Dockerfile.kubernetes']) {
     const source = read(file);
-    assert.ok(source.lastIndexOf('ARG GIT_SHA=dev') > source.indexOf('FROM node:22-alpine\n'));
+    assert.ok(source.lastIndexOf('ARG GIT_SHA=dev') > source.indexOf('FROM node:22.23.4-alpine\n'));
     assert.ok(source.indexOf('node scripts/build-shell-release.js') > source.indexOf('build-tailwind.js'));
     // The document carries the revision, so whichever run writes the final
     // one comes after the id. Dockerfile.kubernetes bundles first without it

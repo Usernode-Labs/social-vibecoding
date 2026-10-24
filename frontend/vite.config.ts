@@ -22,6 +22,7 @@ const dirname = path.dirname(fileURLToPath(import.meta.url));
 // which is exactly what step 1 must not do.
 export default defineConfig({
   base: '/shell/',
+  server: { host: '127.0.0.1' },
   plugins: [react()],
   resolve: {
     alias: { '@': path.resolve(dirname, './@') },

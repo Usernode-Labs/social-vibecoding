@@ -336,7 +336,7 @@ const SHELL_ASSETS = [
   // Vendored third-party libs (public/vendor/README.md records provenance).
   '/vendor/qrcode-1.0.0.min.js',
   '/vendor/marked-15.0.12.min.js',
-  '/vendor/purify-3.4.4.min.js',
+  '/vendor/purify-3.4.17.min.js',
   '/usernode-native/v1/native.css',
   '/usernode-native/v1/native.js',
   '/usernode-bridge.js',

@@ -58,7 +58,7 @@ const indexHtml = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8
 const VENDOR_FILES = [
   '/vendor/qrcode-1.0.0.min.js',
   '/vendor/marked-15.0.12.min.js',
-  '/vendor/purify-3.4.4.min.js',
+  '/vendor/purify-3.4.17.min.js',
 ];
 
 // The pinned Tailwind browser runtime this platform serves to CHILD APPS
@@ -83,7 +83,7 @@ test('the build script compiles the current sources without committed artifacts'
 
 test('Dockerfile compiles Tailwind in a builder and copies only the output into runtime', () => {
   const dockerfile = fs.readFileSync(path.join(ROOT, 'Dockerfile'), 'utf8');
-  assert.match(dockerfile, /FROM node:22-alpine AS css/, 'needs a named CSS builder stage');
+  assert.match(dockerfile, /FROM node:22.23.4-alpine AS css/, 'needs a named CSS builder stage');
   assert.match(dockerfile, /COPY package\.json package-lock\.json \.\//,
     'the CSS stage should use the lockfile-pinned dependency tree');
   assert.match(dockerfile, /RUN npm ci(?:\s|$)/, 'the CSS stage should install dev dependencies');

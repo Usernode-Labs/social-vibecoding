@@ -1,6 +1,8 @@
 name: Build Kubernetes images
 
 on:
+  pull_request:
+    branches: [main]
   push:
     branches: [main, feat/k8s]
   schedule:
@@ -25,7 +27,147 @@ concurrency:
   queue: max
 
 jobs:
+  security-lockfiles:
+    name: Audit all three lockfiles
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22.23.4'
+      - run: npm install --global npm@11.21.1
+      - run: node scripts/security-audit.js
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: dependency-security
+          path: security-reports/
+          if-no-files-found: error
+          retention-days: 30
+
+  security-regressions:
+    name: Security regressions (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22.23.4'
+          cache: npm
+      - run: npm install --global npm@11.21.1
+      - run: npm ci
+      # Deliberately no --test-force-exit: open handles must fail the check.
+      - run: node --require ./tests/lib/test-net.js --test --test-timeout=180000 tests/build-stop-hook.test.js tests/inloop-launch.test.js tests/security-update.test.js
+        timeout-minutes: 6
+
+  security-images:
+    name: Build and scan ${{ matrix.component }}
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { component: platform, dockerfile: Dockerfile.kubernetes, context: '.' }
+          - { component: standalone, dockerfile: Dockerfile, context: '.' }
+          - { component: worker, dockerfile: worker/Dockerfile, context: worker }
+          - { component: capture, dockerfile: capture/Dockerfile, context: '.' }
+          - { component: starter, dockerfile: '', context: '' }
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22.23.4'
+      - run: npm install --global npm@11.21.1
+      - uses: docker/setup-buildx-action@v4
+        with:
+          driver-opts: image=mirror.gcr.io/moby/buildkit:buildx-stable-1
+          buildkitd-config-inline: |
+            [registry."docker.io"]
+              mirrors = ["mirror.gcr.io"]
+      - name: Build and scan the finished image
+        shell: bash
+        env:
+          COMPONENT: ${{ matrix.component }}
+          DOCKERFILE: ${{ matrix.dockerfile }}
+          CONTEXT: ${{ matrix.context }}
+        run: |
+          set -euo pipefail
+          if [ "$COMPONENT" = starter ]; then
+            node scripts/security-starter.js "$RUNNER_TEMP/starter-source"
+            CONTEXT="$RUNNER_TEMP/starter-source"
+            DOCKERFILE="$CONTEXT/Dockerfile"
+          fi
+          docker buildx build --load --pull --platform linux/amd64 -t "security-$COMPONENT" -f "$DOCKERFILE" "$CONTEXT"
+          out="$RUNNER_TEMP/security-$COMPONENT"
+          mkdir -p "$out"
+          sh scripts/create-image-sbom.sh "security-$COMPONENT" "$out/sbom.spdx.json"
+          sh scripts/check-image-security.sh "security-$COMPONENT" "$out" "$out/sbom.spdx.json" "$COMPONENT"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pr-image-security-${{ matrix.component }}
+          path: ${{ runner.temp }}/security-${{ matrix.component }}/
+          if-no-files-found: error
+          retention-days: 30
+
+  scheduled-image-audit:
+    name: Audit reused ${{ matrix.component }} image
+    if: github.event_name == 'schedule'
+    needs: plan
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        component: [platform, worker, capture]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22.23.4'
+      - run: npm install --global npm@11.21.1
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/setup-buildx-action@v4
+      - name: Resolve the existing image
+        id: reuse
+        env:
+          COMPONENT: ${{ matrix.component }}
+          FORCE_REBUILD: none
+          REUSE_CURRENT_PLATFORM: 'true'
+          CLAUDE_CODE_VERSION: ${{ needs.plan.outputs.claude_code_version }}
+        run: node scripts/resolve-kubernetes-image.js
+      # A missing worker is built and checked by the ordinary build job in
+      # this same run. Existing images are scanned even when no release runs.
+      - name: Scan existing immutable image
+        if: steps.reuse.outputs.digest != ''
+        env:
+          IMAGE: ${{ steps.reuse.outputs.image }}@${{ steps.reuse.outputs.digest }}
+          REPORT: ${{ runner.temp }}/scheduled-security-${{ matrix.component }}
+        run: sh scripts/check-published-image.sh "$IMAGE" "$REPORT" "${{ matrix.component }}"
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.reuse.outputs.digest != ''
+        with:
+          name: scheduled-image-security-${{ matrix.component }}
+          path: ${{ runner.temp }}/scheduled-security-${{ matrix.component }}/
+          if-no-files-found: error
+          retention-days: 30
+
   plan:
+    if: github.event_name != 'pull_request'
     name: Plan image release
     runs-on: ubuntu-latest
     outputs:
@@ -34,6 +176,10 @@ jobs:
       should_release: ${{ steps.release.outputs.should_release }}
     steps:
       - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22.23.4'
+      - run: npm install --global npm@11.21.1
 
       - name: Resolve Claude Code version
         id: claude
@@ -203,7 +349,7 @@ jobs:
 
   build:
     name: Resolve ${{ matrix.component }} image
-    needs: plan
+    needs: [plan, security-lockfiles, security-regressions]
     if: needs.plan.outputs.should_release == 'true'
     runs-on: ubuntu-latest
     strategy:
@@ -211,6 +357,10 @@ jobs:
       matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22.23.4'
+      - run: npm install --global npm@11.21.1
 
       - name: Normalize GHCR owner
         id: registry
@@ -293,6 +443,21 @@ jobs:
           provenance: mode=max
           sbom: true
 
+      - name: Verify runtime and scan the exact image SBOM
+        env:
+          IMAGE: ${{ steps.reuse.outputs.image }}@${{ steps.reuse.outputs.digest || steps.build.outputs.digest }}
+          REPORT: ${{ runner.temp }}/security-${{ matrix.component }}
+        run: sh scripts/check-published-image.sh "$IMAGE" "$REPORT" "${{ matrix.component }}"
+
+      - name: Upload image security evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: image-security-${{ matrix.component }}
+          path: ${{ runner.temp }}/security-${{ matrix.component }}/
+          if-no-files-found: error
+          retention-days: 30
+
       - name: Record immutable reference
         env:
           IMAGE_DIGEST: ${{ steps.reuse.outputs.digest || steps.build.outputs.digest }}
@@ -344,6 +509,10 @@ jobs:
       ARGOCD_REFRESH_TOKEN: ${{ secrets.ARGOCD_REFRESH_TOKEN }}
     steps:
       - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22.23.4'
+      - run: npm install --global npm@11.21.1
 
       - uses: azure/setup-helm@v4
         with:
