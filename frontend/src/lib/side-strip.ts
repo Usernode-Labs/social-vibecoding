@@ -1,0 +1,160 @@
+/**
+ * THE SIDE STRIP: iPhone Duo's column of system chrome (24 Oct 2026).
+ *
+ * Folded, the Duo's cover is 466x678 and iOS moves the status bar, the
+ * camera and every app's bars into an 84pt column down its right edge.
+ * Native apps put their tab bar at the foot of that column and their back
+ * button under the clock, and leave the content to its left. The inner
+ * display does the same in landscape (951x669), and Split View puts the
+ * column on whichever edge the app is against.
+ *
+ * The Homeroom app's web view fills the screen, so the page is handed the
+ * column as a safe-area inset: measured on the Duo simulator (iOS 27.1, the
+ * app built with the 27.1 SDK), `env(safe-area-inset-right)` is 84px and
+ * the top inset is 0. Nothing in the shell read a side inset, so the header's
+ * right end sat under the camera and every screen ran under the clock.
+ *
+ * This module turns that inset into one fact on <html>:
+ *
+ *   data-side-strip="right" | "left"   the side the column is on
+ *   --platform-strip-w                  its width, in px
+ *
+ * and app.css keeps the content out of the column and moves the tab bar and
+ * the back button into it, the way the system's own apps do.
+ *
+ * ── Why the inset and not the device ──────────────────────────────────
+ *
+ * Apple's advice for the Duo is to follow the space, not the model, and the
+ * inset IS the space: it comes and goes as the phone folds, rotates and
+ * enters Split View, and every pose that has a column reports it. One side
+ * only, and wide: a phone in landscape reports the notch's inset on BOTH
+ * sides, and an Android cutout in landscape is one side but under 64px.
+ * Neither is a column of chrome, and neither moves anything here. Mobile Safari keeps the Duo's column for its own buttons,
+ * so a page in it sees a 382px viewport with no inset, and stays a phone.
+ *
+ * ── `?side-strip=right` ───────────────────────────────────────────────
+ *
+ * The checks run in a desktop Chromium that has no insets, so a plain URL
+ * could never show this layout. `?side-strip=right` (or `left`) paints the
+ * Duo's column the way `?safe-bottom=1` paints a home indicator
+ * (App._applySafeAreaShot): it sets the kit's own override,
+ * `--un-safe-inset-right: 84px`, which every inset reader in app.css and
+ * native.css takes before env(), and the probe below reads the same way.
+ * A pure presentation flag with no writes, ungated for the same reason.
+ */
+
+export const STRIP_ATTR = 'data-side-strip';
+export const STRIP_W_PROP = '--platform-strip-w';
+/** Narrower than this is a cutout's inset, not a column of chrome. */
+export const STRIP_MIN_PX = 64;
+/** What `?side-strip=` paints: the Duo's column, measured. */
+export const STRIP_SHOT_PX = 84;
+
+export type StripSide = 'left' | 'right';
+export type SideInsets = { left: number; right: number };
+
+/** Which side the column is on, or null when there is none. */
+export function stripSide(insets: SideInsets | null | undefined): StripSide | null {
+  if (!insets) return null;
+  const left = Number(insets.left) || 0;
+  const right = Number(insets.right) || 0;
+  if (right >= STRIP_MIN_PX && left < 1) return 'right';
+  if (left >= STRIP_MIN_PX && right < 1) return 'left';
+  return null;
+}
+
+/** `?side-strip=right|left`, or null. `1` is the Duo's own side, right. */
+export function stripShotSide(search: string): StripSide | null {
+  let value: string | null = null;
+  try { value = new URLSearchParams(search).get('side-strip'); } catch { return null; }
+  if (value === 'left') return 'left';
+  if (value === 'right' || value === '1') return 'right';
+  return null;
+}
+
+type RootLike = {
+  style: Pick<CSSStyleDeclaration, 'setProperty' | 'removeProperty'>;
+  setAttribute(name: string, value: string): void;
+  removeAttribute(name: string): void;
+  getAttribute(name: string): string | null;
+};
+
+/** Publish the strip on <html>, or take it away. Writes only on a change. */
+export function applyStrip(root: RootLike, side: StripSide | null, width: number): void {
+  if (side) {
+    const px = `${Math.round(width)}px`;
+    if (root.getAttribute(STRIP_ATTR) !== side) root.setAttribute(STRIP_ATTR, side);
+    root.style.setProperty(STRIP_W_PROP, px);
+  } else if (root.getAttribute(STRIP_ATTR) !== null) {
+    root.removeAttribute(STRIP_ATTR);
+    root.style.removeProperty(STRIP_W_PROP);
+  }
+}
+
+/**
+ * The strip's width now, in px, or 0 with no strip: what a drawer that pans
+ * by a width takes off it, so its levels stay beside the strip while their
+ * box runs under it (features/nav-drawer/nav-drawer.tsx,
+ * features/messages/phone-drawer.tsx).
+ */
+export function stripWidth(doc: Pick<Document, 'documentElement'> | null = typeof document === 'undefined' ? null : document): number {
+  const root = doc?.documentElement;
+  if (!root || !root.hasAttribute(STRIP_ATTR)) return 0;
+  return parseFloat(root.style.getPropertyValue(STRIP_W_PROP)) || 0;
+}
+
+let probe: HTMLElement | null = null;
+
+/**
+ * The left and right insets as the page resolves them. JS cannot read env(),
+ * so a hidden probe on <html> (the body is React's to hydrate) carries them
+ * as padding, through the kit's override first, exactly as app.css reads
+ * them.
+ */
+function readSideInsets(doc: Document, win: Window): SideInsets {
+  try {
+    if (!probe || !probe.isConnected) {
+      probe = doc.createElement('div');
+      probe.setAttribute('aria-hidden', 'true');
+      probe.style.cssText = 'position:fixed;top:0;left:0;width:0;height:0;'
+        + 'visibility:hidden;pointer-events:none;'
+        + 'padding-left:var(--un-safe-inset-left,env(safe-area-inset-left,0px));'
+        + 'padding-right:var(--un-safe-inset-right,env(safe-area-inset-right,0px))';
+      doc.documentElement.appendChild(probe);
+    }
+    const cs = win.getComputedStyle(probe);
+    return { left: parseFloat(cs.paddingLeft) || 0, right: parseFloat(cs.paddingRight) || 0 };
+  } catch {
+    return { left: 0, right: 0 };
+  }
+}
+
+/**
+ * Follow the inset. Read once now, so the attribute is on <html> before the
+ * app's launch cover lifts (it waits for DOMContentLoaded, which a deferred
+ * module runs before), and again whenever the viewport changes: folding,
+ * unfolding, rotating and Split View all resize it.
+ */
+export function watchSideStrip(doc: Document = document, win: Window = window): () => void {
+  const root = doc.documentElement;
+  const shot = stripShotSide(win.location?.search || '');
+  if (shot) root.style.setProperty(`--un-safe-inset-${shot}`, `${STRIP_SHOT_PX}px`);
+  const update = () => {
+    const insets = readSideInsets(doc, win);
+    const side = stripSide(insets);
+    applyStrip(root, side, side ? insets[side] : 0);
+  };
+  update();
+  win.addEventListener('resize', update);
+  win.addEventListener('orientationchange', update);
+  win.visualViewport?.addEventListener('resize', update);
+  return () => {
+    win.removeEventListener('resize', update);
+    win.removeEventListener('orientationchange', update);
+    win.visualViewport?.removeEventListener('resize', update);
+  };
+}
+
+if (typeof window !== 'undefined' && typeof document !== 'undefined') {
+  watchSideStrip();
+}

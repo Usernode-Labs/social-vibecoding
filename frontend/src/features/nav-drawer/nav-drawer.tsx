@@ -67,6 +67,7 @@ import {
 import { pageLabel } from './header-drawer';
 import { OuterLevel } from './outer-level';
 import { startsOnSideways, swipeBackMayStart } from './sideways';
+import { stripWidth } from '../../lib/side-strip';
 
 const PHONE_QUERY = '(max-width: 767.98px)';
 
@@ -198,7 +199,10 @@ function appView(): HTMLElement | null {
 }
 
 function screenWidth(): number {
-  return Math.max(1, document.documentElement.clientWidth || window.innerWidth || 1);
+  // An iPhone Duo's column of system chrome is not the page's to pan by
+  // (app.css, THE SIDE STRIP): the levels are fractions of the width beside
+  // it, so the width is the screen's less the strip's.
+  return Math.max(1, (document.documentElement.clientWidth || window.innerWidth || 1) - stripWidth());
 }
 
 function DrawerSurface({ slug, name, place, owed, selfHosted = false }: { slug: string; name: string; place: string; owed: number; selfHosted?: boolean }): ReactNode {

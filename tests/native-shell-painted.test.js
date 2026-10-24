@@ -191,6 +191,11 @@ test('shellPaintedDue: drawn with a top inset, or the cap; never the inset alone
   assert.equal(due({ elapsed: 200, drawn: false, insetTop: 47 }), null, 'still skeletons');
   assert.equal(due({ elapsed: 1500, drawn: false, insetTop: 0 }), 'cap', '1.5 s after DOMContentLoaded, whatever is up');
   assert.equal(due({ elapsed: null, drawn: false, insetTop: 47 }), null, 'no cap before DOMContentLoaded');
+  // iPhone Duo's cover: the clock is in an 84px column down the right edge
+  // and the top inset is 0 for good. The side inset is the known inset.
+  assert.equal(due({ elapsed: 200, drawn: true, insetTop: 0, insetSide: 84 }), 'drawn',
+    'a side inset is an inset the web view knows');
+  assert.equal(due({ elapsed: 200, drawn: false, insetTop: 0, insetSide: 84 }), null, 'still skeletons');
   assert.equal(due(undefined), null);
   assert.match(nativeChromeSource, /_SHELL_PAINTED_CAP_MS: 1500,/, 'the shipped cap is 1.5 s');
 });

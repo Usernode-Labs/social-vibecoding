@@ -13,7 +13,7 @@
 import { flushSync } from 'react-dom';
 
 import { navStore, tabForScreen } from './nav-store.js';
-import { parkedStore, setParked } from './parked-store.js';
+import { parkedStore, setParked, setRunningApp } from './parked-store.js';
 import { forgetPin, loadPins, pinApp, pinDropStore, pinStatus, pinnedAppsStore, readPinnedApps } from './pinned-apps-store.js';
 import { forgetRecentApp, readRecentApps, recentAppsStore, rememberRecentApp } from './recent-apps-store.js';
 import {
@@ -176,6 +176,16 @@ if (typeof window !== 'undefined') {
         iconUrl: app.iconUrl || null,
         iconEmoji: app.iconEmoji || null,
       } : null);
+    },
+    /**
+     * The app on screen now, or null when there is none (iPhone Duo's side
+     * strip draws it among the tabs, lit; ./side-apps.tsx). Same display data
+     * as `park`, captured at the same moment.
+     */
+    running(app: {
+      slug?: string; name?: string; iconUrl?: string | null; iconEmoji?: string | null;
+    } | null) {
+      setRunningApp(app && app.slug ? { slug: app.slug, name: app.name || app.slug, iconUrl: app.iconUrl || null, iconEmoji: app.iconEmoji || null } : null);
     },
     /**
      * #3618: the app you just left shrinks into its Resume control, from

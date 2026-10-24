@@ -169,12 +169,19 @@ test('statusBarToneFor: an open dark overlay wins, then the app, then nothing', 
   assert.equal(tone({ communityTint: true, appTone: 'light' }), 'dark',
     'the tint is only ever on the project\'s pages; in a running app it is taken off');
   assert.equal(tone({ communityTint: false, appTone: 'light' }), 'light');
+  // iPhone Duo: with the clock in the side strip, over the wallpaper, the
+  // header's tint and the app's page colour are not under it. The overlays,
+  // which run under the strip, still are.
+  assert.equal(tone({ sideStrip: true, communityTint: true }), null,
+    'the strip is the wallpaper: the app\'s theme decides');
+  assert.equal(tone({ sideStrip: true, appTone: 'dark' }), null);
+  assert.equal(tone({ sideStrip: true, previewFullscreen: true }), 'dark');
 });
 
 test('only the FULLSCREEN preview counts', async () => {
   const h = boot();
   const read = () => h.NativeChrome._statusBarToneState();
-  assert.deepEqual(plain(read()), { previewFullscreen: false, compareOpen: false, communityTint: false, appTone: null });
+  assert.deepEqual(plain(read()), { previewFullscreen: false, compareOpen: false, communityTint: false, appTone: null, sideStrip: false });
 
   h.overlays['staging-overlay'].classes.delete('hidden');
   assert.equal(read().previewFullscreen, true);
@@ -246,7 +253,7 @@ test('it watches exactly what decides the tone', () => {
     filter: options.attributeFilter,
   }));
   assert.deepEqual(plain(targets), [
-    { target: 'html', filter: ['data-app-tone', 'data-community-tint'] },
+    { target: 'html', filter: ['data-app-tone', 'data-community-tint', 'data-side-strip'] },
     { target: 'staging-overlay', filter: ['class'] },
     { target: 'visual-compare-overlay', filter: ['class'] },
   ]);

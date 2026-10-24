@@ -22679,6 +22679,552 @@ html.un-ios {
   object-fit: cover;
 }
 
+/* ═══════════════════════════════════════════════════════════════════
+   THE SIDE STRIP — iPhone Duo's column of system chrome (24 Oct 2026)
+   ═══════════════════════════════════════════════════════════════════
+
+   frontend/src/lib/side-strip.ts carries the argument and sets the two
+   facts read here: `data-side-strip` on <html> (the side the column is on)
+   and `--platform-strip-w` (its width, 84px on the Duo). Folded, the Duo's
+   cover is 466x678 with the clock, the camera and the Wi-Fi ring stacked at
+   the top of an 84pt column down its right edge; the inner display has the
+   same column in landscape. The system's own apps keep their content to
+   its left, stand their tab bar at its foot and hang their back button
+   under the clock. This is the same arrangement for the shell.
+
+   Nothing here applies without the attribute, and only a one-sided inset
+   of 64px or more sets it, so every other phone, tablet and desktop is
+   untouched.
+
+   THE CONTENT STOPS AT THE STRIP, at every width. The body is the column
+   every screen root, the header and the landing shell sit in, so padding it
+   moves all of them at once, and the wallpaper (the body's own background)
+   still runs under the clock the way a native app's ground does. Fixed
+   surfaces are not in the body's content box and are placed one by one
+   below. */
+html[data-side-strip="right"] body {
+  padding-right: var(--platform-strip-w, 0px);
+}
+html[data-side-strip="left"] body {
+  padding-left: var(--platform-strip-w, 0px);
+}
+/* The signed-out shell is a fixed full-screen root of its own, so it pads
+   itself: its ground still fills the screen, its content does not. */
+html[data-side-strip="right"] #auth-landing-screen {
+  padding-right: var(--platform-strip-w, 0px);
+}
+html[data-side-strip="left"] #auth-landing-screen {
+  padding-left: var(--platform-strip-w, 0px);
+}
+
+/* THE HEADER RUNS ACROSS THE TOP, the strip included (Evan, 24 Oct 2026).
+   It reaches into the body's padding and pads itself by the same width,
+   so its ground and its rounded foot span the screen the way a phone's do
+   while every control in it stays where it was, beside the strip. The
+   camera and the clock sit over it there, as a status bar sits over a
+   phone's header. */
+html[data-side-strip="right"] #platform-header {
+  margin-right: calc(-1 * var(--platform-strip-w, 0px));
+  padding-right: calc(1rem + var(--platform-strip-w, 0px));
+}
+html[data-side-strip="left"] #platform-header {
+  margin-left: calc(-1 * var(--platform-strip-w, 0px));
+  padding-left: calc(1rem + var(--platform-strip-w, 0px));
+}
+
+/* The strip's own pieces (features/nav/strip-back.tsx, side-apps.tsx)
+   exist only here. */
+.platform-side-strip-top,
+.platform-side-strip-ground,
+.platform-side-strip-frost,
+.platform-side-apps {
+  display: none;
+}
+
+@media (max-width: 767px) {
+  /* NO BAND AT THE FOOT. The five tabs stand in the strip, so a screen has
+     only the home-indicator strip to clear below it. Both selectors repeat
+     the phone rules' own (the bar alone, and the bar with the parked strip
+     on it) with the attribute added, so each outranks the one it replaces.
+     The parked strip stands in the strip too (below), so it adds nothing. */
+  html[data-side-strip]:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek)),
+  html[data-side-strip]:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek)):has(#platform-parked:not(.hidden)) {
+    --platform-bar-h: 0px;
+    --platform-tabs-h: var(--platform-safe-bottom);
+  }
+  /* WHERE THE STRIP'S CONTROLS START: under the camera, the clock and the
+     Wi-Fi ring, 174px down on the Duo's cover, where Settings hangs its own
+     back button (measured on the simulator). The page cannot measure that
+     stack (the top inset is 0 in this pose and `statusBarFrame` is a 2pt
+     stub), so it is this one number. The back button is a 48px disc there,
+     and the tab pill starts a gap below it on every screen, with a way back
+     or without: the slot is always free, so the back button appears in it
+     and nothing moves (Evan, 24 Oct 2026; the pill used to grow into the
+     slot and slide down when a back button came). */
+  html[data-side-strip] {
+    --platform-strip-top: 174px;
+    --platform-strip-back: 48px;
+    --platform-strip-pill-top: calc(var(--platform-strip-top) + var(--platform-strip-back) + 10px);
+  }
+
+  /* THE TABS, ONE PILL DOWN THE STRIP (Evan, 24 Oct 2026). A 64px capsule
+     centred in the strip, from under the back button's slot to the
+     home-indicator strip. Home,
+     Discover, Messages and Communities at its head, you at its foot, the
+     way the desktop rail ends on you, and between them an open stretch
+     where the app you left stands (below). The cells keep the bar's glyph
+     over its label, a point smaller so "Communities" fits a 64px cell, and
+     the bar's lit marker is measured off them as before (tab-bar.tsx
+     markerBoxFor reads both offsets), so it moves up and down instead of
+     across, and keeps to its cell there (markerBoxFor `inCell`) rather than
+    to its label, which ran it past the pill's sides. The pill's corners are
+    the marker's own 16px radius plus the 4px it is inset by, so the two
+    curves run together. The faked glass is the bar's own layer, clipped to
+    the pill. */
+  html[data-side-strip] #platform-tabs {
+    left: auto;
+    right: calc((var(--platform-strip-w, 0px) - 64px) / 2);
+    top: var(--platform-strip-pill-top);
+    bottom: var(--platform-safe-bottom, 0px);
+    width: 64px;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 2px;
+    padding: 6px 0;
+    border-top: 0;
+    border-radius: 20px;
+    box-shadow: inset 0 0 0 1px var(--app-sheet-line);
+    clip-path: inset(0 round 20px);
+  }
+  html[data-side-strip] #platform-tab-me {
+    margin-top: auto;
+  }
+  html[data-side-strip="left"] #platform-tabs {
+    left: calc((var(--platform-strip-w, 0px) - 64px) / 2);
+    right: auto;
+  }
+  /* A column of cells, only where the bar would be drawn at all: this
+     selector outranks the bar's `hidden` (a running app, the signed-out
+     shell) and the keyboard's `display: none`, so it names both. */
+  html[data-side-strip]:not(.un-kb):not(.platform-kb-open) #platform-tabs:not(.hidden) {
+    display: flex;
+  }
+  /* …AND IN A RUNNING APP TOO (Evan, 24 Oct 2026). A phone hides the bar
+     there and leaves the header's ✕ as the way out; on the Duo the strip
+     is the system's, the app has the width beside it either way, and the
+     places are a tap away as they are on a desktop with the rail beside
+     an app. The route still says the bar is hidden (it is the phone's
+     answer, and the parked strip and the screens' bands key off it), so
+     this draws it from the route-hidden class: only over a running app,
+     only with the platform header up (not chromeless, not signed out). The
+     ✕ goes (below): leaving is one of the places. */
+  html[data-side-strip]:not(.un-kb):not(.platform-kb-open) body:has(#app-view:not(.hidden)[data-app-surface="app"]):not(:has(#platform-header.hidden)) #platform-tabs.platform-tabs-route-hidden {
+    display: flex;
+  }
+  html[data-side-strip] #platform-tabs::after {
+    content: none;
+  }
+  html[data-side-strip] .platform-tab {
+    flex: none;
+    height: 54px;
+    font-size: 10px;
+    letter-spacing: 0;
+  }
+  html[data-side-strip] #platform-tab-workshop .platform-tab-label {
+    font-size: 9.5px;
+    letter-spacing: -.02em;
+  }
+
+  /* THE APPS, UNDER COMMUNITIES (Evan, 24 Oct 2026): the app on screen,
+     lit by the bar's own marker, and the app you left, with its ✕
+     (features/nav/side-apps.tsx), under a small Apps heading and a hairline
+     that divide them from the places above. The section is the bar's first
+     child (the declared checks pin the tabs' sibling chain), so `order`
+     draws it after Communities, and you after it at the foot. Its cells are
+     a tab's: the pill's whole width, so the marker keeps to them the same
+     way (markerBoxFor `inCell`). The phone's Resume strip offers the app
+     you left over the bar; here the section does, so the strip stands
+     aside. */
+  html[data-side-strip] .platform-side-apps:not(.hidden) {
+    order: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 2px;
+    margin-top: 6px;
+  }
+  html[data-side-strip] #platform-tab-me {
+    order: 2;
+  }
+  html[data-side-strip] .platform-side-apps-head {
+    display: block;
+    margin: 0 8px;
+    padding: 7px 0 3px;
+    border-top: 1px solid var(--app-sheet-line);
+    color: var(--text-muted);
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: .06em;
+    line-height: 11px;
+    text-align: center;
+    text-transform: uppercase;
+  }
+  html[data-side-strip] .platform-side-app {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    height: 54px;
+    padding: 0 2px;
+    color: var(--text-muted);
+    font-size: 10px;
+    font-weight: 600;
+    line-height: 13px;
+    text-decoration: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+  html[data-side-strip] .platform-side-app[aria-current="page"] {
+    color: var(--lit-ink);
+  }
+  html[data-side-strip] .platform-side-app .platform-tab-label {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  html[data-side-strip] .platform-side-app-tile {
+    width: 28px;
+    height: 28px;
+    flex: none;
+    border-radius: 8px;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    font-weight: 700;
+  }
+  html[data-side-strip] .platform-side-app-row {
+    position: relative;
+  }
+  html[data-side-strip] .platform-side-app-x {
+    position: absolute;
+    z-index: 2;
+    top: 2px;
+    right: 4px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    border: 0;
+    border-radius: 999px;
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+  html[data-side-strip] #platform-parked {
+    display: none;
+  }
+
+  /* THE BACK BUTTON, UNDER THE CLOCK. The header's back controls give way,
+     `#back-btn` and the phone drawer's arrow alike, and their copies stand
+     at the top of the strip (`--platform-strip-top`, above) as 48px discs,
+     where the system's own back button sits. The header's own back disc's
+     colours, a size up. Not while the header is away (chromeless): the
+     slot is the header's. */
+  html[data-side-strip] #platform-header :is(#back-btn, .nav-drawer-back) {
+    display: none;
+  }
+  html[data-side-strip] body:not(:has(#platform-header.hidden)) .platform-side-strip-top {
+    position: fixed;
+    z-index: 30;
+    top: var(--platform-strip-top);
+    right: calc((var(--platform-strip-w, 0px) - var(--platform-strip-back)) / 2);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    width: 48px;
+    /* The box is not a target: the drawer's arrow is still in it on a
+       screen with no way back, faded out (it sets its own pointer-events
+       none until it is live), and only a live control takes the press. */
+    pointer-events: none;
+  }
+  html[data-side-strip] .platform-side-strip-top > * {
+    pointer-events: auto;
+  }
+  html[data-side-strip="left"] body:not(:has(#platform-header.hidden)) .platform-side-strip-top {
+    left: calc((var(--platform-strip-w, 0px) - var(--platform-strip-back)) / 2);
+    right: auto;
+  }
+  html[data-side-strip] .platform-side-strip-top :is(.platform-side-strip-back, .nav-drawer-back) {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 48px;
+    height: 48px;
+    border-radius: 999px;
+    border: 1px solid var(--brand-line);
+    background: var(--brand-tint);
+    color: var(--brand-ink);
+    -webkit-tap-highlight-color: transparent;
+  }
+  html[data-side-strip] .platform-side-strip-top .platform-side-strip-back:is(.hidden, [data-back="close"]) {
+    display: none;
+  }
+  html[data-side-strip] .platform-side-strip-top svg {
+    width: 22px;
+    height: 22px;
+  }
+  /* The header's left group held only the back: with it gone the group is
+     empty, and an empty flex item still spends the header's gap. The places
+     button stays where it is: it opens the project's places, it is not a
+     way back. */
+  html[data-side-strip] #platform-header .platform-header-left:not(:has(> .header-places-btn)) {
+    display: none;
+  }
+
+  /* THE STRIP'S GROUND UNDER A SHEET (Evan, 24 Oct 2026). On Home, Discover
+     and You the screen is the bare wallpaper, which is the body's own
+     ground and runs under the strip already. Messages, Settings and the
+     agent chats stand on a sheet over it instead, the `.dc-lift-strip`
+     plane, and the plane stops at the strip with the body behind it, so the
+     strip read as a band of a different colour. (A project's pages and
+     Messages' drawer run their sheet under the strip themselves; see the
+     drawers, below.)
+
+     So on those screens the strip is given the plane's look: its fill over
+     the wallpaper (the faked layer every glass surface uses, so it lines up
+     with the body pixel for pixel), from the plane's own top (8px up under
+     the header's foot) to the floor, with the plane's hairline and radius at
+     its top. The plane squares the corner it meets the strip at, so the two
+     read as one sheet.
+
+     The ground is OPAQUE, and that is the second half of it. The phone's
+     drawer pans the page sideways (back from a community's page, a
+     conversation opening), and the page slid through the strip under the
+     tabs and the back button. Over the ground it slides under the strip
+     instead, as off a phone's edge. Under the header (z-index 10), over
+     the screens. */
+  html[data-side-strip] body:has(:is(#messages-screen, #settings-screen, #agent-session-screen, #global-chat-screen):not(.hidden) .dc-lift-strip:not(.messages-drawer)) .platform-side-strip-ground {
+    position: fixed;
+    z-index: 9;
+    top: calc(var(--browser-banner-h, 0px) + var(--platform-header-h) + var(--platform-safe-top, 0px) - 0.5rem);
+    bottom: 0;
+    right: 0;
+    width: var(--platform-strip-w, 0px);
+    display: block;
+    border-top-right-radius: 1.75rem;
+    clip-path: inset(0 round 0 1.75rem 0 0);
+    pointer-events: none;
+  }
+  html[data-side-strip="left"] body:has(:is(#messages-screen, #settings-screen, #agent-session-screen, #global-chat-screen):not(.hidden) .dc-lift-strip:not(.messages-drawer)) .platform-side-strip-ground {
+    left: 0;
+    right: auto;
+    border-top-right-radius: 0;
+    border-top-left-radius: 1.75rem;
+    clip-path: inset(0 round 1.75rem 0 0 0);
+  }
+  html[data-side-strip] .platform-side-strip-ground::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    background:
+      linear-gradient(var(--dc-strip-fill), var(--dc-strip-fill)),
+      var(--home-wallpaper, var(--dc-strip-solid));
+  }
+  /* The plane's hairline, drawn over the layer (which paints over a
+     border, as the tab bar's does). */
+  html[data-side-strip] .platform-side-strip-ground::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 1px;
+    background: var(--app-sheet-line);
+  }
+  html[data-side-strip="right"] .dc-lift-strip:not(#app-content > .dc-lift-strip):not(.messages-drawer) {
+    border-top-right-radius: 0;
+  }
+  html[data-side-strip="left"] .dc-lift-strip {
+    border-top-left-radius: 0;
+  }
+
+  /* THE VEIL OVER THE DRAWER UNDER THE STRIP (Evan, 24 Oct 2026). The phone
+     drawers' levels go on under the strip (below: a community's places and
+     page, Messages' peeking conversation), and their rows read through it,
+     cut by the pill. So while a level is out the strip wears a veil, from
+     the header's foot to the floor, under the pill, the back button and the
+     apps (z-index 30) and over the drawer (20): the rows go faint under it
+     and the pill stands on the screen's ground again.
+
+     THE VEIL IS WHAT IS BEHIND THE STRIP AT REST: a screen's sheet (the
+     plane's `--dc-strip-fill`) over the wallpaper, drawn as the faked glass
+     is (a viewport-sized fixed layer, so its washes line up with the body's
+     pixel for pixel, clipped to the veil), at 86% so the rows read faintly
+     through. A flat `--home-ground` read as a yellower cream beside the
+     pink wash the strip rests on (measured 240,238,226 against
+     244,234,229). It is out while a level is (features/nav/
+     strip-back.tsx StripFrost sets `data-out` from the drawer's level) and
+     fades over the slide's own 300ms (drawer-math SLIDE_MS): in on the
+     slide's curve (SLIDE_EASE), out on its mirror, an ease-in, so it lifts
+     off as the page settles. Out on the slide's own ease-out it was half
+     gone in 60ms, under a page arriving at the same moment, and read as a
+     snap. A transition, not a script: the slide runs on the compositor,
+     and so does this.
+
+     It is whole from the strip's own edge, the pill's gap to the screen's
+     edge mirrored on its other side, and comes in over the 16px before it,
+     the margin a screen's content keeps from its edge, so it covers what
+     runs to the edge (the drawer's levels) and never a card. The ramp is
+     eased (slow, then quicker): at 86% a straight 6px ramp read as a line.
+
+     NO BLUR. It was a 14px backdrop blur, and the slides stuttered on the
+     Duo: the page sliding under it had the blur re-run on every frame,
+     which is what the platform turned its blur off everywhere for
+     (`--dc-frost`). Off, they were smooth. A fill is what every surface
+     content passes behind wears since then (the `-solid` plane colours),
+     and a fill that never changes costs nothing to composite over a page
+     that moves. */
+  html[data-side-strip] .platform-side-strip-frost {
+    position: fixed;
+    z-index: 25;
+    top: calc(var(--browser-banner-h, 0px) + var(--platform-header-h) + var(--platform-safe-top, 0px));
+    bottom: 0;
+    right: 0;
+    width: calc(var(--platform-strip-w, 0px) + 16px);
+    display: block;
+    pointer-events: none;
+    background: transparent;
+    clip-path: inset(0);
+    -webkit-mask-image: linear-gradient(to right, transparent, rgba(0, 0, 0, .2) 5px, rgba(0, 0, 0, .55) 10px, rgba(0, 0, 0, .85) 14px, #000 16px);
+    mask-image: linear-gradient(to right, transparent, rgba(0, 0, 0, .2) 5px, rgba(0, 0, 0, .55) 10px, rgba(0, 0, 0, .85) 14px, #000 16px);
+    visibility: hidden;
+    opacity: 0;
+    transition: opacity 300ms cubic-bezier(0.32, 0, 0.67, 0), visibility 0s linear 300ms;
+  }
+  html[data-side-strip] .platform-side-strip-frost[data-out] {
+    visibility: visible;
+    opacity: 1;
+    transition: opacity 300ms cubic-bezier(0.33, 1, 0.68, 1), visibility 0s;
+  }
+  html[data-side-strip] .platform-side-strip-frost::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    opacity: .86;
+    background:
+      linear-gradient(var(--dc-strip-fill), var(--dc-strip-fill)),
+      var(--home-wallpaper, var(--dc-strip-solid));
+  }
+  /* Messages' list alone has nothing peeking beside it to veil. */
+  html[data-side-strip] body:has(#messages-screen:not(.hidden) .messages-drawer-alone) .platform-side-strip-frost {
+    visibility: hidden;
+    opacity: 0;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    html[data-side-strip] .platform-side-strip-frost,
+    html[data-side-strip] .platform-side-strip-frost[data-out] {
+      transition: none;
+    }
+  }
+  /* Not while the header is away (chromeless): its top is the header's foot. */
+  html[data-side-strip] body:has(#platform-header.hidden) .platform-side-strip-frost {
+    display: none;
+  }
+  html[data-side-strip="left"] .platform-side-strip-frost {
+    left: 0;
+    right: auto;
+    -webkit-mask-image: linear-gradient(to left, transparent, rgba(0, 0, 0, .2) 5px, rgba(0, 0, 0, .55) 10px, rgba(0, 0, 0, .85) 14px, #000 16px);
+    mask-image: linear-gradient(to left, transparent, rgba(0, 0, 0, .2) 5px, rgba(0, 0, 0, .55) 10px, rgba(0, 0, 0, .85) 14px, #000 16px);
+  }
+
+  /* A PROJECT'S PAGES, AND THE DRAWER OVER THEM, RUN UNDER THE STRIP (Evan,
+     24 Oct 2026). The phone's drawer lays a community's levels beside its
+     page and pans between them; with the strip's own ground between them
+     and the screen's edge, a level only half on screen (the places peeking
+     at the side of your communities, the page at the side of the places)
+     stopped at a band of a different colour. So the levels and the page go
+     on under the strip, as off a phone's edge, and the pill floats over
+     whatever is there.
+
+     The page (#app-view on a platform surface) reaches into the body's
+     padding and pads itself by the same width, and so do its content host
+     and its sheet, the chain the clip runs through; everything inside stays
+     beside the strip. Only on the platform's surface: a running app keeps
+     the width beside the strip and no more. The drawer is the screen's
+     width; its levels stay the fractions of the width BESIDE the strip that
+     features/nav-drawer/nav-drawer.tsx pans by (screenWidth), so the last
+     one on screen runs on past it. */
+  html[data-side-strip="right"] :is(#app-view[data-app-surface="platform"], #app-view[data-app-surface="platform"] > #app-content, #app-view[data-app-surface="platform"] > #app-content > .dc-lift-strip) {
+    margin-right: calc(-1 * var(--platform-strip-w, 0px));
+    padding-right: var(--platform-strip-w, 0px);
+  }
+  html[data-side-strip="right"] .nav-drawer-outer {
+    width: calc((100% - var(--platform-strip-w, 0px)) * 0.85);
+  }
+  html[data-side-strip="right"] .nav-drawer.is-searching .nav-drawer-outer {
+    width: calc(100% - var(--platform-strip-w, 0px));
+  }
+  html[data-side-strip="right"] .nav-drawer-places {
+    left: calc((100% - var(--platform-strip-w, 0px)) * 0.85);
+    width: calc((100% - var(--platform-strip-w, 0px)) * 0.8);
+  }
+  /* …AND MESSAGES' DRAWER DOES THE SAME (Evan, 24 Oct 2026): the list, the
+     conversation peeking beside it and the conversation open run on under
+     the strip, frosted while one peeks (StripFrost). The screen reaches
+     into the body's padding and its sheet (a fixed-width flex child, which
+     a margin would not widen) pads itself by the strip; the list keeps its
+     85% of the width beside the strip that features/messages/
+     phone-drawer.tsx pans by (stripWidth), and the conversation's sheet
+     runs to the screen's edge with its contents padded back beside it. */
+  html[data-side-strip="right"] #messages-screen:has(> .messages-layout.messages-drawer) {
+    margin-right: calc(-1 * var(--platform-strip-w, 0px));
+  }
+  html[data-side-strip="right"] #messages-screen > .messages-layout.messages-drawer {
+    padding-right: var(--platform-strip-w, 0px);
+  }
+  html[data-side-strip="right"] .messages-layout.messages-drawer > .messages-list-pane {
+    width: calc((100% - var(--platform-strip-w, 0px)) * 0.85);
+  }
+  html[data-side-strip="right"] .messages-layout.messages-drawer.messages-drawer-alone > .messages-list-pane {
+    width: calc(100% - var(--platform-strip-w, 0px));
+  }
+  html[data-side-strip="right"] .messages-layout.messages-drawer > .messages-thread-pane {
+    padding-right: var(--platform-strip-w, 0px);
+  }
+  /* The conversation's discs (⋯ and the rest) float at its top-right
+     corner, positioned off the sheet's edge, which padding does not move:
+     they went under the strip's camera. In by the strip's width too. */
+  html[data-side-strip="right"] .messages-layout.messages-drawer > .messages-thread-pane > .messages-thread-header {
+    right: calc(12px + var(--platform-strip-w, 0px));
+  }
+
+  /* A strip on the left (Split View) keeps the drawer beside it. */
+  html[data-side-strip="left"] .nav-drawer {
+    left: var(--platform-strip-w, 0px);
+  }
+  /* …and runs to the floor: it stopped on the bar's band, and with the bar
+     in the strip that left a band of the page under it. Its lists clear the
+     home indicator themselves. */
+  html[data-side-strip] .nav-drawer {
+    bottom: 0;
+  }
+  html[data-side-strip] .nav-drawer-outer-list,
+  html[data-side-strip] .nav-drawer-places-scroll {
+    padding-bottom: calc(24px + var(--platform-safe-bottom, 0px));
+  }
+}
 
 
 
