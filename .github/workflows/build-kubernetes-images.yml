@@ -68,6 +68,38 @@ jobs:
       - run: node --require ./tests/lib/test-net.js --test --test-timeout=180000 tests/build-stop-hook.test.js tests/inloop-launch.test.js tests/security-update.test.js
         timeout-minutes: 6
 
+  preview-schema-compatibility:
+    name: Preview schema compatibility (PostgreSQL 17/18)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    services:
+      postgres17:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: [5432/tcp]
+        options: --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+      postgres18:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: [5432/tcp]
+        options: --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22.23.4'
+          cache: npm
+      - run: npm install --global npm@11.21.1
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: node --test --test-timeout=60000 tests/platform-preview-schema-compatibility.test.js
+        env:
+          TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:${{ job.services.postgres17.ports[5432] }}/postgres
+          TEST_PREVIEW_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:${{ job.services.postgres18.ports[5432] }}/postgres
+
   security-images:
     name: Build and scan ${{ matrix.component }}
     if: github.event_name == 'pull_request'
@@ -349,7 +381,7 @@ jobs:
 
   build:
     name: Resolve ${{ matrix.component }} image
-    needs: [plan, security-lockfiles, security-regressions]
+    needs: [plan, security-lockfiles, security-regressions, preview-schema-compatibility]
     if: needs.plan.outputs.should_release == 'true'
     runs-on: ubuntu-latest
     strategy:

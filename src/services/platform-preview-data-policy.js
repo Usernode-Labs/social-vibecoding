@@ -19,13 +19,16 @@ const DIGEST = crypto.createHash('sha256').update(fs.readFileSync(__filename))
   .update(fs.readFileSync(require.resolve('./db-manager')))
   .update(fs.readFileSync(require.resolve('./application-runtime')))
   .update(fs.readFileSync(require.resolve('./platform-preview-retirement'))).digest('hex').slice(0, 40);
+// PostgreSQL 18 also records column NOT NULL in pg_constraint. Nullability
+// is already captured by attnotnull below; exclude that duplicate so the
+// same schema has the same inventory on production 17 and preview 18.
 const CATALOG_SQL = `SELECT jsonb_build_object(
 'schemas', (SELECT jsonb_agg(nspname ORDER BY nspname) FROM pg_namespace n WHERE nspname !~ '^pg_' AND nspname <> 'information_schema' ),
 'relations', (SELECT jsonb_agg(x ORDER BY x->>'name') FROM (SELECT jsonb_build_object(
 'name', n.nspname || '.' || c.relname, 'kind', c.relkind, 'rls', c.relrowsecurity, 'forceRls', c.relforcerowsecurity,
 'inherits', EXISTS (SELECT 1 FROM pg_inherits i WHERE i.inhrelid=c.oid OR i.inhparent=c.oid),
 'columns', (SELECT jsonb_object_agg(a.attname, jsonb_build_array(format_type(a.atttypid,a.atttypmod), a.attnotnull, pg_get_expr(d.adbin,d.adrelid), a.attidentity, a.attgenerated)) FROM pg_attribute a LEFT JOIN pg_attrdef d ON d.adrelid=a.attrelid AND d.adnum=a.attnum WHERE a.attrelid=c.oid AND a.attnum>0 AND NOT a.attisdropped),
-'constraints', ARRAY(SELECT pg_get_constraintdef(k.oid) FROM pg_constraint k WHERE k.conrelid=c.oid ORDER BY pg_get_constraintdef(k.oid))
+'constraints', ARRAY(SELECT pg_get_constraintdef(k.oid) FROM pg_constraint k WHERE k.conrelid=c.oid AND k.contype <> 'n' ORDER BY pg_get_constraintdef(k.oid))
 ) AS x FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname !~ '^pg_' AND n.nspname <> 'information_schema' AND c.relkind IN ('r','p','v','m','f') AND (c.relkind <> 'v' OR NOT EXISTS(SELECT 1 FROM pg_depend d WHERE d.classid='pg_class'::regclass AND d.objid=c.oid AND d.deptype='e'))) t),
 'sequences', (SELECT jsonb_agg(jsonb_build_object('name', n.nspname||'.'||c.relname, 'type',format_type(s.seqtypid,NULL), 'start',s.seqstart::text, 'increment',s.seqincrement::text, 'min',s.seqmin::text, 'max',s.seqmax::text, 'cache',s.seqcache::text, 'cycle',s.seqcycle) ORDER BY n.nspname,c.relname) FROM pg_sequence s JOIN pg_class c ON c.oid=s.seqrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname !~ '^pg_' AND n.nspname <> 'information_schema' AND NOT EXISTS(SELECT 1 FROM pg_depend d WHERE d.classid='pg_class'::regclass AND d.objid=c.oid AND d.deptype='e')),
 'largeObjects', (SELECT count(*)::integer FROM pg_largeobject_metadata))::text AS inventory;`;
@@ -79,7 +82,7 @@ function schemaFingerprint(catalog) {
   core.sequences = core.sequences.filter(s => !Object.hasOwn(schema.optionalSequences, s.name));
   return fingerprint(core);
 }
-function verifyCatalog(catalog, { allowRuntimeCompatibility = false } = {}) {
+function verifyCatalog(catalog) {
   const problems = [];
   if (policy.default !== 'empty') problems.push('unlisted data must be empty');
   if (catalog.largeObjects !== 0) problems.push('large objects are not approved');
@@ -107,11 +110,7 @@ function verifyCatalog(catalog, { allowRuntimeCompatibility = false } = {}) {
     }
   }
   const actual = schemaFingerprint(catalog);
-  // Temporary incident bypass for the exact fingerprint blocking deployed
-  // previews. Keep lint:sql strict and every independent export check active.
-  const temporaryRuntimeMatch = allowRuntimeCompatibility
-    && schema.temporaryRuntimeFingerprints?.includes(actual);
-  if (actual !== schema.fingerprint && !temporaryRuntimeMatch) problems.push(`review schema fingerprint ${actual}`);
+  if (actual !== schema.fingerprint) problems.push(`review schema fingerprint ${actual}`);
   if (problems.length) throw refuse(problems.slice(0, 12).join('; '));
   return { digest: DIGEST, schema: fingerprint(inventoryShape(catalog)) };
 }
@@ -119,7 +118,7 @@ async function inspect(db, execute) {
   const raw = await execute(db, CATALOG_SQL, { tuplesOnly: true });
   let catalog;
   try { catalog = JSON.parse(String(raw)); } catch { throw refuse('cannot read complete schema inventory'); }
-  return { catalog, ...verifyCatalog(catalog, { allowRuntimeCompatibility: true }) };
+  return { catalog, ...verifyCatalog(catalog) };
 }
 function exclusions(catalog) {
   return catalog.relations.filter(r => !Object.hasOwn(policy.tables, r.name)).map(r => r.name).sort();
