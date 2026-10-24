@@ -1681,7 +1681,13 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // 739 → 740: +1: Admin → SMS delivery shows the provider switch, the
   // Sender IDs and the recent texts (?demo=1#admin/sms), a route no other
   // check reaches. 740 leaves 140 slots.
-  checkCap.assertPinned(DAPP.tests.length, 740);
+  //
+  // 740 → 741: +1: iPhone Duo's side strip (?demo=1&side-strip=right): the
+  // shell in strip mode with the strip's back controls and the tab bar's
+  // Apps section. `side-strip` is a boot parameter, so the check has a page
+  // load of its own and no other check's route can carry it. 741 leaves
+  // 139 slots.
+  checkCap.assertPinned(DAPP.tests.length, 741);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

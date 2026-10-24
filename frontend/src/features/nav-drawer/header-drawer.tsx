@@ -38,7 +38,7 @@ import { useMessages } from '../../lib/i18n/react';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
 import { placeHandle, placeName, type PlaceKey } from '../dev-board/workshop/places';
-import { headerFrame, type HeaderFrame } from './drawer-math';
+import { headerFrame, titleSlot, type HeaderFrame } from './drawer-math';
 import { back, communitiesDepth, drawerStore, reducedMotion, type DepthChannel } from './drawer-store';
 import { messagesBack, messagesDepth, messagesDrawerStore } from './messages-drawer';
 
@@ -138,8 +138,11 @@ export function DrawerTitles(): ReactNode {
       const el = box.current;
       const left = el?.closest('#platform-header')?.querySelector('.platform-header-left');
       if (!el || !left) return;
-      const at = el.getBoundingClientRect().left - left.getBoundingClientRect().left;
-      if (at > 0 && at !== slot.current) {
+      const at = titleSlot(
+        { laidOut: el.getClientRects().length > 0, left: el.getBoundingClientRect().left },
+        { laidOut: left.getClientRects().length > 0, left: left.getBoundingClientRect().left },
+      );
+      if (at !== null && at !== slot.current) {
         slot.current = at;
         redraw.current();
       }

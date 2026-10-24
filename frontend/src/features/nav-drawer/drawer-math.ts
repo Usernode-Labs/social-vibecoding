@@ -141,6 +141,27 @@ export const SUB_OPACITY = 0.78;
 /** How far the name sits down while it is alone on the row. */
 const ALONE_Y = 7;
 
+/**
+ * How far the header's titles sit from the left group's edge: the arrow and
+ * its gap, which "Communities" steps back over on level 0. Null when the
+ * reading says nothing (a hidden header reads zero for both boxes).
+ *
+ * 0 when the titles are laid out and the group is not: on an iPhone Duo the
+ * arrow is in the side strip and app.css takes the empty group out of the
+ * bar (THE SIDE STRIP), so the name has no slot to step out of. Measured
+ * against a group that is not drawn, the titles' own left edge (16px, the
+ * bar's padding) read as the slot, and "Messages" sat 16px past the edge.
+ */
+export function titleSlot(
+  titles: { laidOut: boolean; left: number },
+  group: { laidOut: boolean; left: number },
+): number | null {
+  if (!titles.laidOut) return null;
+  if (!group.laidOut) return 0;
+  const at = titles.left - group.left;
+  return at > 0 ? at : null;
+}
+
 export function headerFrame(f: number, slot: number, reduced = false, messages = false): HeaderFrame {
   const move = reduced ? 0 : 1;
   const d = messages ? Math.max(0, Math.min(1, Number.isFinite(f) ? f : 1)) : clampDepth(f);

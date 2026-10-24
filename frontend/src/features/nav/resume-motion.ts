@@ -121,6 +121,14 @@ export function resumeHandleFor(slug: string, doc: Document = document): HTMLEle
       || usableElement(row, doc);
     if (hit) return hit;
   }
+  // iPhone Duo's side strip shows the app you left in the tab pill instead
+  // of the Resume strip (./side-apps.tsx): its tile is the control.
+  const sideApps = doc.querySelectorAll('#platform-tabs .platform-side-app[data-side-app]');
+  for (const app of Array.from(sideApps)) {
+    if (app.getAttribute('data-side-app') !== slug || app.getAttribute('aria-current') === 'page') continue;
+    const hit = usableElement(app.querySelector('.platform-side-app-tile'), doc) || usableElement(app, doc);
+    if (hit) return hit;
+  }
   const open = doc.getElementById('platform-parked-resume');
   if (open && open.getAttribute('href') === `/app/${encodeURIComponent(slug)}`) {
     const strip = usableElement(doc.getElementById('platform-parked'), doc);

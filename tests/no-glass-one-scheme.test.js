@@ -113,6 +113,16 @@ test('each faked surface is see-through to its layer and clips it', () => {
     'no live blur came back with the look');
 });
 
+// NO LARGE BLUR CAME BACK (24 Oct 2026, Evan): iPhone Duo's side strip
+// tried a 14px backdrop blur over the drawer sliding under it, and the
+// slides stuttered; off, they were smooth. It wears a fill instead
+// (app.css, THE VEIL OVER THE DRAWER UNDER THE STRIP). The kit's 2px
+// details scrim is the one blur left.
+test('no large blur anywhere in the shell', () => {
+  const blurs = [...css.matchAll(/backdrop-filter: blur\((\d+)px\)/g)].map((m) => Number(m[1]));
+  assert.deepEqual(blurs.filter((px) => px > 4), []);
+});
+
 test('a faked bar whose edge is a border redraws it above the layer', () => {
   // The layer paints over its surface's own border, so on a phone the tab
   // bar and the parked strip draw their top hairline again on top.

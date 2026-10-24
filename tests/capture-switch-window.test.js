@@ -563,7 +563,9 @@ function homeroomTests(extra = []) {
 }
 
 test('Homeroom declares its boot parameters and its routing boundary, and no check marks itself', () => {
-  assert.deepEqual(dapp.bootParams, ['shot', 'details'],
+  // `?side-strip=` paints iPhone Duo's column of system chrome, read once
+  // when the page loads (frontend/src/lib/side-strip.ts), like `?shot=`.
+  assert.deepEqual(dapp.bootParams, ['shot', 'details', 'side-strip'],
     '`?flow=` is not one: #5280 made it work on a conversation already open');
   assert.deepEqual(dapp.routingBoundaries.map((b) => b.route), ['#app/*', '#app/*/app']);
   const marked = dapp.tests.filter((t) => Object.prototype.hasOwnProperty.call(t, 'coldLoad'));
