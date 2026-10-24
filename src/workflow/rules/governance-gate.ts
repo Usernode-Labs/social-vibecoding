@@ -572,6 +572,9 @@ export interface GovernedGate extends Gate {
   qualifiedYes: number;
   qualifiedNo: number;
   activeCount: number;
+  // The builder whose Yes approved this change on its own (applyBuilderYes),
+  // or null when none did. Absent when the gate was not asked (an issue).
+  builderYes?: BuilderYes | null;
   // A rules project's gate (computeRulesGate) adds these.
   preset?: PresetKey | null;
   whoDecides?: boolean;
@@ -596,10 +599,20 @@ export interface GateRules {
 }
 const RULES: GateRules = { mergeGate, oppositionWindowMs };
 
+export type BuilderRole = 'creator' | 'admin' | 'platform_admin';
+export interface BuilderYes { userId: number; role: BuilderRole }
+
 export interface GateOpts {
   explicitApproval?: boolean;
   memberCount?: Count;
   otherYes?: Count;
+  // §5816: this is a PR's gate, so a Yes from the project's maker, one of its
+  // admins or a Homeroom admin approves it on its own (applyBuilderYes).
+  // Issues never opt in.
+  builderYes?: boolean;
+  // The app's approvers, when it has a roster: a builder outside it is not in
+  // `qualifiedYes`, so their Yes is added rather than counted twice.
+  approverIds?: number[] | null;
   // #4666, a rules project: why it was flagged, the counted voters, the
   // author, and the app facts its rules read (governance.js rulesFacts).
   explicitReason?: string | null;
@@ -660,6 +673,113 @@ export function applyFirstVersion<G extends Gate>(gate: G, { explicitApproval = 
   };
 }
 
+// ── A builder's Yes (§5816) ─────────────────────────────────────────────
+//
+// A builder's Yes is the approval where the project already chose "You or
+// the group": its maker (apps.created_by, the rules' `creator` group), its
+// admins (app_admins, the rules' `admins` group) and Homeroom's full admins
+// (read-only admins are not). The preset is the setting: on it, the maker's
+// Yes was already enough, and this lets an admin's Yes save them the second
+// step of force-merging what they themselves just approved.
+//
+// Every other preset (Two yeses, Open floor, Group vote, rules of the
+// project's own) and every columns project keeps exactly the rule it chose.
+// A builder who wants their Yes to be enough picks "You or the group"; this
+// rule is no new global approval policy sitting above those.
+//
+// It passes the APPROVALS step and nothing else: the checks, the shots, the
+// integration, main's health and a locked app's admin Yes all still apply.
+// A protected change (explicitApproval) keeps its own rule, because who
+// decides, the keys and the member floor are exactly what must not be
+// shortcut by one person's Yes where it already is not.
+//
+// The preset whose rule this is. A stored block without the key is read off
+// its rules (computeRulesGate's `preset`), so both spellings answer alike.
+export const BUILDER_YES_PRESET: PresetKey = 'you_or_the_group';
+
+// Whether the gate handed in is a "You or the group" project's, the one
+// configuration a builder's Yes approves on its own. A columns project's
+// gate carries no preset, so it never is.
+export function builderYesAppliesToGate(gate: GovernedGate | null | undefined): boolean {
+  return !!gate && gate.preset === BUILDER_YES_PRESET;
+}
+
+// A builder the app's approver roster does not include is not in
+// `qualifiedYes`, so their Yes is added to it; the required count follows the
+// count, so the card reads "1 of 1 yes" rather than a threshold they passed
+// alone looking unmet.
+export function builderYesOf(facts: RulesFacts | null | undefined, yesIds: Set<number>): BuilderYes | null {
+  if (!facts) return null;
+  const order: Array<{ id: Count; role: BuilderRole }> = [
+    { id: facts.creatorId, role: 'creator' },
+    ...(facts.adminIds || []).map((id) => ({ id, role: 'admin' as BuilderRole })),
+    ...(facts.platformAdminIds || []).map((id) => ({ id, role: 'platform_admin' as BuilderRole })),
+  ];
+  for (const { id, role } of order) {
+    if (id == null) continue;
+    const n = int(id);
+    if (Number.isFinite(n) && yesIds.has(n)) return { userId: n, role };
+  }
+  return null;
+}
+
+// Whether `userId` is one of the people whose Yes decides (§5816).
+export function isBuilder(facts: RulesFacts | null | undefined, userId: Count): boolean {
+  if (!facts || userId == null) return false;
+  const id = int(userId);
+  if (!Number.isFinite(id)) return false;
+  return facts.creatorId === id
+    || (facts.adminIds || []).includes(id)
+    || (facts.platformAdminIds || []).includes(id);
+}
+
+// The builder's-Yes modifier. Runs only on a "You or the group" project
+// (the gate's `preset`), for a caller that opted in (`opts.builderYes`, the
+// PR paths), and only when the gate was handed the voters and the app facts
+// it takes to answer; anything else is unchanged.
+export function applyBuilderYes<G extends GovernedGate>(gate: G, opts: GateOpts = {}): G {
+  if (opts.builderYes !== true) return gate;
+  // The project's existing "You or the group" configuration is the setting;
+  // any other preset or a columns project keeps its own rule.
+  if (!builderYesAppliesToGate(gate)) return gate;
+  // A protected change keeps WHO_DECIDES, its keys rule and the member floor.
+  if (opts.explicitApproval) return gate;
+  const facts = opts.rulesFacts;
+  if (!facts || !opts.voters) return gate;
+  const yesIds = opts.voters.yes instanceof Set
+    ? opts.voters.yes as Set<number>
+    : new Set<number>([...(opts.voters.yes || [])].map(int));
+  const by = builderYesOf(facts, yesIds);
+  if (!by) return { ...gate, builderYes: null };
+  // Already approved by the group's own rule: only record whose Yes it was.
+  if (gate.mergeable) return { ...gate, builderYes: by };
+  const approvers = Array.isArray(opts.approverIds)
+    ? opts.approverIds.map((n) => int(n)) : null;
+  const uncounted = approvers && !approvers.includes(by.userId) ? 1 : 0;
+  const qualifiedYes = Math.max((Number(gate.qualifiedYes) || 0) + uncounted, 1);
+  return {
+    ...gate,
+    qualifiedYes,
+    required: qualifiedYes,
+    thresholdMet: true,
+    contested: false,
+    // No clock: the approval is here now, so nothing is waited on.
+    windowMs: 0,
+    windowEndsAt: null,
+    windowElapsed: true,
+    lazyArmed: false,
+    lazyWindowMs: null,
+    mergeable: true,
+    rejectionWindowMs: null,
+    rejectionArmed: false,
+    rejectionEndsAt: null,
+    rejectable: false,
+    builderYes: by,
+  };
+}
+
+
+//
 // Pure mode dispatch given already-resolved governance + counts.
 //
 // `opts.explicitApproval` layers the #788 no-timer modifier on top of
@@ -687,11 +807,14 @@ export function computeGate(
   const gate = gov && gov.rules
     ? computeRulesGate(gov, active, yesCount, noCount, openedAt, now, opts, rules)
     : computeColumnsGate(gov, active, yesCount, noCount, openedAt, now, opts, rules);
+  // §5816: a builder's Yes, before the first version (which waives the vote
+  // anyway) and after whichever regime decided.
+  const approved = applyBuilderYes(gate, opts);
   const yesForClock = gov && gov.rules && opts.voters
     ? (opts.voters.yes instanceof Set
       ? opts.voters.yes.size : new Set(opts.voters.yes || []).size)
     : yesCount;
-  const timed = applyAdminNo(gate, opts.adminNoAt ?? null, yesForClock, now, {
+  const timed = applyAdminNo(approved, opts.adminNoAt ?? null, yesForClock, now, {
     explicitApproval: !!opts.explicitApproval,
   });
   return opts.firstVersion ? applyFirstVersion(timed, { explicitApproval: !!opts.explicitApproval }) : timed;

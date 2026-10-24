@@ -3837,11 +3837,13 @@ function voteRoutes(config) {
           membersByApp[appId] = await governanceSvc.communityMemberCount(pool, appId);
         }
         if (govByApp[appId].rules) {
-          rulesByApp[appId] = await governanceSvc.rulesContext(pool, appId, govByApp[appId], 'pr',
-            sessions.filter((r) => r.app_id === appId).map((r) => r.id));
           issueRulesByApp[appId] = await governanceSvc.rulesContext(pool, appId, govByApp[appId], 'issue',
             governance.filter((r) => r.app_id === appId).map((r) => r.id));
         }
+        // §5816: every project's PR gate asks a builder's Yes.
+        rulesByApp[appId] = await governanceSvc.rulesContext(pool, appId, govByApp[appId], 'pr',
+          sessions.filter((r) => r.app_id === appId).map((r) => r.id),
+          { approverIds: electorateByApp[appId]?.approverIds || null });
       }
 
       const proposals = [];
@@ -3887,6 +3889,7 @@ function voteRoutes(config) {
           approvals_required: gate.approvalsRequired,
           ...governanceSvc.explicitApprovalRowFields(s, gate),
           ...(gate.mode === 'rules' ? governanceSvc.ruleRowFields(gate) : {}),
+          ...governanceSvc.builderRowFields(s, gate, rulesByApp[s.app_id]?.facts || null, req.user.id),
           qualified_yes_count: gate.qualifiedYes,
           qualified_no_count: gate.qualifiedNo,
         });
@@ -4316,11 +4319,11 @@ function voteRoutes(config) {
       const memberCount = rows.some((r) => r.votes_required == null && r.requires_explicit_approval)
         ? await governance.communityMemberCount(pool, appRows[0].id)
         : undefined;
-      // #4666: who voted, on a project with rules of its own.
-      const rulesCtx = gov.rules
-        ? await governance.rulesContext(pool, appRows[0].id, gov, 'pr',
-          rows.filter((r) => r.votes_required == null).map((r) => r.id))
-        : null;
+      // #4666: who voted, on a project with rules of its own. §5816: a PR's
+      // gate asks a builder's Yes on every project, so every project reads one.
+      const rulesCtx = await governance.rulesContext(pool, appRows[0].id, gov, 'pr',
+        rows.filter((r) => r.votes_required == null).map((r) => r.id),
+        { approverIds: electorate.approverIds });
       // #5803: the admin-No clock each row's card shows, one query for the
       // whole panel.
       const adminNoByRow = await governance.adminNoTimes(pool,
@@ -4367,6 +4370,8 @@ function voteRoutes(config) {
           }, userId);
         Object.assign(row, governance.explicitApprovalRowFields(row, gate));
         if (gate.mode === 'rules') Object.assign(row, governance.ruleRowFields(gate));
+        // §5816: whose Yes approved it, and whether this viewer's would.
+        Object.assign(row, governance.builderRowFields(row, gate, rulesCtx ? rulesCtx.facts : null, userId));
         delete row.other_yes_count;
         row.qualified_yes_count = gate.qualifiedYes;
         row.qualified_no_count = gate.qualifiedNo;
@@ -5323,6 +5328,13 @@ function voteRoutes(config) {
 //
 // `options.force` (an admin's force merge): the vote, the lock's admin Yes
 // and every gate after them are skipped; shots are not.
+// §5816: whose Yes approved a change on its own, for the merge's own trace.
+const BUILDER_YES_ACTOR = {
+  creator: "a yes from the project's maker",
+  admin: "a yes from one of the project's admins",
+  platform_admin: 'a yes from a Homeroom admin',
+};
+
 async function evaluateMergeGate(config, pool, session, options = {}) {
   const { force = false, forceBy = null } = options;
   // A red main lets through only a head level with main, merging clean and
@@ -5639,7 +5651,11 @@ async function evaluateMergeGate(config, pool, session, options = {}) {
       // (governance-gate.ts applyFirstVersion); every gate below still holds.
       message: gate.firstVersion
         ? `First version of the project: no vote needed (${yesCount} yes, ${noCount} no so far). The gates after this one still apply.`
-        : gate.mode === 'at_least'
+        : gate.builderYes
+          // §5816: the project's maker or one of its admins said yes, and
+          // that is the approval. Every gate below still applies.
+          ? `Approved by ${BUILDER_YES_ACTOR[gate.builderYes.role]} (${yesCount} yes, ${noCount} no); the gates after this one still apply.`
+          : gate.mode === 'at_least'
           ? `Approval target reached: ${yesCount} qualifying approval${yesCount === 1 ? '' : 's'} (needed at least ${required}${gate.policy === 'invited' ? ' from invited approvers' : ''}).`
           : gate.thresholdMet
             ? `Vote threshold reached: ${yesCount} yes votes (needed ${required}) with the visibility window elapsed.`
@@ -5647,6 +5663,7 @@ async function evaluateMergeGate(config, pool, session, options = {}) {
       detail: {
         yesCount, required, majority, noCount, activeCount, lazyArmed: gate.lazyArmed, mode: gate.mode, policy: gate.policy,
         ...(gate.firstVersion ? { firstVersion: true } : {}),
+        ...(gate.builderYes ? { builderYes: gate.builderYes.role } : {}),
       },
     });
     gateTrace.context({
@@ -5655,8 +5672,10 @@ async function evaluateMergeGate(config, pool, session, options = {}) {
     })
       .pass('approvals', {
         yesCount, required,
-        note: gate.firstVersion ? 'first version, no vote needed' : `${yesCount} of ${required}`,
+        note: gate.firstVersion ? 'first version, no vote needed'
+          : gate.builderYes ? "builder's yes" : `${yesCount} of ${required}`,
         ...(gate.firstVersion ? { firstVersion: true } : {}),
+        ...(gate.builderYes ? { builderYes: gate.builderYes.role } : {}),
       });
     if (explicitApproval) {
       gateTrace.pass('explicit', {

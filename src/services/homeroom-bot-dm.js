@@ -2819,16 +2819,24 @@ async function approvalState(pool, { sessionId, userId = null }) {
   );
   const yesIds = new Set(yes.map((r) => Number(r.user_id)));
   const who = Number(userId) || null;
-  const counts = !!who && (electorate.approverIds == null || electorate.approverIds.map(Number).includes(who));
+  // §5816: on a project set to "You or the group", a Yes from its maker or
+  // an admin approves the change on its own, so it is the last one this
+  // person has to give — nobody else is asked for one. A protected change
+  // keeps its own rule, and every other preset keeps the rule it chose.
+  const builderYes = !session.explicit_approval && governance.builderYesApplies(gov);
+  const facts = builderYes
+    ? await governance.rulesFacts(pool, session.app_id, gov, { fresh: true }) : null;
+  const decides = !!who && builderYes && governance.isBuilder(facts, who);
+  const counts = decides || (!!who && (electorate.approverIds == null || electorate.approverIds.map(Number).includes(who)));
   const already = !!who && yesIds.has(who);
   const firstVersion = gate.firstVersion === true;
   const needed = firstVersion ? 0 : Math.max(Number(gate.required ?? gate.approvalsRequired ?? 1) || 1, 1);
   const have = Math.max(Number(gate.qualifiedYes) || 0, 0);
-  const missing = gate.thresholdMet ? 0 : Math.max(needed - have, 1);
+  const missing = firstVersion || decides || gate.thresholdMet ? 0 : Math.max(needed - have, 1);
   return {
     session, gov, electorate, gate, yesIds, needed, have, missing,
-    counts, already,
-    last: !firstVersion && counts && !already && have + 1 >= needed,
+    counts, already, decides,
+    last: !firstVersion && counts && !already && (decides || have + 1 >= needed),
     audience: session.audience,
     firstVersion,
   };
@@ -2846,7 +2854,9 @@ async function approvalState(pool, { sessionId, userId = null }) {
  * Resolves user ids.
  */
 async function needsYesFrom(pool, state, { except = [] } = {}) {
-  if (!state?.session || state.firstVersion) return [];
+  // §5816: a builder's own Yes approves the change, so no other person is
+  // told one is needed — and no names are shown beside their Approve.
+  if (!state?.session || state.firstVersion || state.decides || state.gate?.builderYes) return [];
   const appId = Number(state.session.app_id);
   let ids;
   if (state.gov.approverPolicy === 'invited') {

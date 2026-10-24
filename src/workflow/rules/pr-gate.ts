@@ -14,8 +14,9 @@
 
 import type { Queryable } from './db.ts';
 import { electorate, activeUserIds } from './electorate.ts';
-import { appMetaFromRow, computeGate, governanceFromRow } from './governance-gate.ts';
+import { BUILDER_YES_PRESET, appMetaFromRow, computeGate, governanceFromRow } from './governance-gate.ts';
 import type { GovernedGate } from './governance-gate.ts';
+import { matchPreset } from './governance-rules.ts';
 import type { RulesFacts } from './governance-rules.ts';
 import { firstVersionSql } from './first-version.ts';
 
@@ -61,6 +62,7 @@ const GATE_SQL = `
   SELECT a.approver_policy, a.approvals_required, a.governance_rules, a.self_hosted, a.collab_visibility, a.created_by,
          (SELECT COUNT(*)::int FROM community_members m WHERE m.community_id = a.community_id) AS member_count,
          COALESCE((SELECT array_agg(ad.user_id) FROM app_admins ad WHERE ad.app_id = a.id), '{}') AS admin_ids,
+         COALESCE((SELECT array_agg(u.id) FROM users u WHERE u.is_admin AND NOT u.admin_readonly), '{}') AS platform_admin_ids,
          (SELECT COALESCE(json_agg(json_build_object(
                    'userId', pv.user_id, 'vote', pv.vote,
                    'counts', counts_toward_session_outcome(pv.user_id, pv.session_id))), '[]'::json)
@@ -87,26 +89,38 @@ export async function readPrGate(db: Queryable, g: PrGateInputs): Promise<Govern
   const opened = g.openedAt == null ? null : new Date(g.openedAt).getTime();
   const now = g.now.getTime();
   const firstVersion = r.first_version === true;
+  // The counted votes, by voter, unfiltered by the approver roster: on a
+  // "You or the group" project a builder's Yes (§5816) decides whether or
+  // not the roster names them.
+  const voters = {
+    yes: new Set(votes.filter((v) => v.vote === 'yes').map((v) => Number(v.userId))),
+    no: new Set(votes.filter((v) => v.vote === 'no').map((v) => Number(v.userId))),
+  };
+  const appFacts: RulesFacts = {
+    creatorId: !r.self_hosted && r.created_by ? Number(r.created_by) : null,
+    memberCount: Number(r.member_count) || 0,
+    membersActive: 1,
+    adminIds: ((r.admin_ids || []) as unknown[]).map(Number).filter(Number.isFinite),
+    platformAdminIds: ((r.platform_admin_ids || []) as unknown[]).map(Number).filter(Number.isFinite),
+    groups: new Map(gov.rules ? gov.rules.groups.map((x) => [x.key, x.ids || []]) : []),
+    activeIds: null,
+  };
   if (gov.rules) {
     // #4666: a rules project decides by who voted and what its groups are.
     const { active } = await electorate(db, g.appId, gov, meta);
     const wantsActive = gov.rules.rules.some((x) => x.kind === 'percentOfActive' && x.group !== 'members');
     const facts: RulesFacts = {
-      creatorId: !r.self_hosted && r.created_by ? Number(r.created_by) : null,
-      memberCount: Number(r.member_count) || 0,
+      ...appFacts,
       membersActive: Math.max(Number(active) || 0, 1),
-      adminIds: ((r.admin_ids || []) as unknown[]).map(Number).filter(Number.isFinite),
-      groups: new Map(gov.rules.groups.map((x) => [x.key, x.ids || []])),
       activeIds: wantsActive ? new Set(await activeUserIds(db, g.appId, meta)) : null,
-    };
-    const voters = {
-      yes: new Set(votes.filter((v) => v.vote === 'yes').map((v) => Number(v.userId))),
-      no: new Set(votes.filter((v) => v.vote === 'no').map((v) => Number(v.userId))),
     };
     return computeGate(gov, facts.membersActive, voters.yes.size, voters.no.size, opened, now, {
       explicitApproval: g.explicitApproval, explicitReason: g.explicitApproval ? g.explicitReason : null,
       authorId: g.authorId, voters, authorIsBot: g.authorId != null && r.author_is_bot === true,
       rulesFacts: facts, memberCount: facts.memberCount, firstVersion,
+      // §5816: on "You or the group" the maker or an admin approves on
+      // their own Yes; every other preset keeps its rule.
+      builderYes: (gov.rules.preset || matchPreset(gov.rules.rules)) === BUILDER_YES_PRESET,
       adminNoAt: r.admin_no_at ?? null,
     });
   }

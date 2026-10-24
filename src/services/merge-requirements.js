@@ -540,12 +540,17 @@ function provisional(session) {
   const required = intOrNull(s.votes_required);
   const yes = intOrNull(s.qualified_yes_count) != null
     ? intOrNull(s.qualified_yes_count) : intOrNull(s.yes_count);
+  // §5816: the project's maker's or an admin's Yes is the approval on its
+  // own, so the step is done whatever the count would have needed.
+  const builderYes = s.builder_yes_role || null;
   out.push({
     key: 'approvals',
     label: 'Votes',
     actor: 'group',
-    state: (required != null && yes != null && yes >= required) ? 'done' : 'waiting',
-    detail: (required != null && yes != null) ? { note: `${yes} of ${required}` } : null,
+    state: builderYes || (required != null && yes != null && yes >= required) ? 'done' : 'waiting',
+    detail: builderYes
+      ? { note: `${yes} of ${required}`, builderYes }
+      : ((required != null && yes != null) ? { note: `${yes} of ${required}` } : null),
   });
 
   // The member floor, when the serializer says it applies (a flagged row in
@@ -764,12 +769,18 @@ function withLiveApprovals(gates, s) {
   const required = intOrNull(s.votes_required) ?? intOrNull(s.approvals_required);
   const yes = intOrNull(s.qualified_yes_count) != null
     ? intOrNull(s.qualified_yes_count) : intOrNull(s.yes_count);
-  if (required == null || yes == null) return gates;
+  // §5816: a row the serializers stamped as builder-approved is done.
+  const builderYes = s.builder_yes_role || null;
+  if (!builderYes && (required == null || yes == null)) return gates;
   const idx = Array.isArray(gates) ? gates.findIndex((g) => g && g.key === 'approvals') : -1;
   if (idx < 0 || !gates[idx] || gates[idx].state === 'done') return gates;
-  if (yes < required) return gates;
+  if (!builderYes && yes < required) return gates;
   return gates.map((entry, i) => (i === idx
-    ? { ...entry, state: 'done', detail: { note: `${yes} of ${required}` } }
+    ? {
+      ...entry,
+      state: 'done',
+      detail: { note: `${yes} of ${required}`, ...(builderYes ? { builderYes } : {}) },
+    }
     : entry));
 }
 

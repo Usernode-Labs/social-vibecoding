@@ -7227,7 +7227,11 @@ const AppView = {
     // card says so rather than counting yeses nobody is asked for.
     if (item.first_version === true && item.status === 'promoted') return AppView._firstVersionVotesView(item);
     const waitsOnMember = AppView._awaitingOtherMember(item);
-    const reached = yes >= maj && !waitsOnMember;
+    // §5816: a Yes from the project's maker or an admin IS the approval, so
+    // the card reads as voted in, in the row's own terms ("1 of 1 yes").
+    const builderYes = item.builder_yes_role || null;
+    const reached = !waitsOnMember && (yes >= maj || !!builderYes);
+    const need = builderYes ? Math.max(Number(item.votes_required) || 0, yes, 1) : maj;
     const canVote = !AppView.readOnly && !item.my_vote && item.status === 'promoted';
     let figure;
     let tone;
@@ -7237,16 +7241,33 @@ const AppView = {
     else if (yes >= maj && waitsOnMember) {
       figure = canVote && item.approval_policy !== 'invited' ? PlatformI18n.t('changes:page.votes.figure.needsYours') : PlatformI18n.t('changes:page.votes.figure.needsAnother');
       tone = canVote ? 'ask' : 'warn';
-    } else if (reached) { figure = PlatformI18n.t('changes:page.votes.figure.reached', { yes, needed: maj }); tone = 'done'; }
+    } else if (reached) { figure = PlatformI18n.t('changes:page.votes.figure.reached', { yes, needed: need }); tone = 'done'; }
+    else if (canVote && item.my_yes_decides) { figure = PlatformI18n.t('changes:page.votes.figure.yourApproval'); tone = 'ask'; }
     else if (pill.key === 'needs_vote' && AppView._approveSolo(item)) { figure = PlatformI18n.t('changes:page.votes.figure.yourApproval'); tone = 'ask'; }
     else { figure = PlatformI18n.t('changes:page.votes.figure.needsMore', { count: maj - yes }); tone = canVote ? 'ask' : 'muted'; }
     if (reached && ready && ready.yesNames && ready.yesNames.length) {
       note.push(AppView._saidYesLine(ready.yesNames));
     } else if (!reached) {
-      const approvers = ready && Number(ready.approvers) > 0 ? Number(ready.approvers) : 0;
-      const members = Number((AppView._proposalsCtx || {}).activeUsers) || 0;
-      if (approvers) note.push(PlatformI18n.t('changes:page.votes.note.anyApprover', { count: approvers }));
-      else if (members > 1) note.push(PlatformI18n.t('changes:page.votes.note.anyMember', { count: members }));
+      // §5816: this person's own Yes would approve it, so nobody else is
+      // counted for them.
+      if (canVote && item.my_yes_decides) {
+        note.push(PlatformI18n.t('changes:page.votes.note.yourYesDecides'));
+      } else {
+        const approvers = ready && Number(ready.approvers) > 0 ? Number(ready.approvers) : 0;
+        const members = Number((AppView._proposalsCtx || {}).activeUsers) || 0;
+        if (approvers) note.push(PlatformI18n.t('changes:page.votes.note.anyApprover', { count: approvers }));
+        else if (members > 1) note.push(PlatformI18n.t('changes:page.votes.note.anyMember', { count: members }));
+      }
+    }
+    // §5816: once a builder has said Yes, whose Yes that was.
+    if (reached && builderYes) {
+      const BUILDER_YES_NOTE = {
+        creator: 'changes:page.votes.note.builderYes.creator',
+        admin: 'changes:page.votes.note.builderYes.admin',
+        platform_admin: 'changes:page.votes.note.builderYes.platformAdmin',
+      };
+      const mine = Number(item.builder_yes_user_id) === Number(App.user && App.user.id);
+      note.push(PlatformI18n.t(mine ? 'changes:page.votes.note.builderYes.you' : BUILDER_YES_NOTE[builderYes]));
     }
     // A countdown or a contest says what happens next, in a few words.
     if (pill.key === 'merge_countdown') note.push(PlatformI18n.t('changes:page.votes.note.mergeCountdown'));
@@ -7259,7 +7280,9 @@ const AppView = {
     // The lock's own tooltip is a whole sentence (changes:explicit.lockTitle).
     else if (pill.lock && pill.lockTitle) note.push(pill.lockTitle);
     // #695: yeses from people who are not approvers count for nothing here.
-    if (Number(pill.advisory) > 0) {
+    // §5816: not once a builder's Yes has approved the change, which is
+    // counted whatever the roster says.
+    if (Number(pill.advisory) > 0 && !builderYes) {
       const n = Number(pill.advisory);
       note.push(PlatformI18n.t('changes:page.votes.note.advisory', { count: n }));
     }
@@ -7270,11 +7293,11 @@ const AppView = {
     if (reached && item.check_state !== 'passing' && item.check_state !== 'skipped') {
       note.push(item.check_state === 'failing' ? PlatformI18n.t('changes:page.votes.note.liveOnceFixed') : PlatformI18n.t('changes:page.votes.note.liveOnceTested'));
     }
-    const fill = Math.min(yes, maj);
+    const fill = Math.min(yes, need);
     return {
       name: PlatformI18n.t('changes:page.votes.name'), figure, tone, done: tone === 'done',
-      segments: AppView._changeVoteSegments(fill, maj, tone === 'done' ? 'done' : 'moving'),
-      label: PlatformI18n.t('changes:page.votes.label.tally', { yes, needed: maj }),
+      segments: AppView._changeVoteSegments(fill, need, tone === 'done' ? 'done' : 'moving'),
+      label: PlatformI18n.t('changes:page.votes.label.tally', { yes, needed: need }),
       note,
     };
   },

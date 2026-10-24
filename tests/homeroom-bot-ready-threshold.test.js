@@ -170,11 +170,11 @@ test('Page Turners: two of three must approve, against the full PostgreSQL schem
     [key, value],
   );
   await set('homeroom_bot_mode', 'live');
-  const project = async (slug, label, { view = 'private', members = [] } = {}) => {
+  const project = async (slug, label, { view = 'private', members = [], rules = null } = {}) => {
     const { rows: [inserted] } = await pool.query(
-      `INSERT INTO apps (name, slug, status, created_by, view_visibility, collab_visibility)
-       VALUES ($1, $2, 'running', $3, $4, $4) RETURNING id`,
-      [label, slug, members[0].id, view],
+      `INSERT INTO apps (name, slug, status, created_by, view_visibility, collab_visibility, governance_rules)
+       VALUES ($1, $2, 'running', $3, $4, $4, $5) RETURNING id`,
+      [label, slug, members[0].id, view, rules ? JSON.stringify(rules) : null],
     );
     const app = (await pool.query('SELECT id, slug, name, community_id FROM apps WHERE id = $1', [inserted.id])).rows[0];
     for (const m of members) {
@@ -270,6 +270,34 @@ test('Page Turners: two of three must approve, against the full PostgreSQL schem
       'You approved it. It goes live when @ada approves too, or '), true);
     assert.equal(chatCard.approvalWords({ stage: 'proposed', ...(await botChat.approvalOf(pool, { sessionId: s.id, viewer: { id: ben.id } })) }),
       'Waiting for approval from @ada.');
+  });
+
+  // §5816: on "You or the group", the person who made the project is asked
+  // for nothing more than their own Yes — it approves the change on its own,
+  // so nobody else is named or belled.
+  await t.test('You or the group: the maker’s own yes is the last one it needs', async () => {
+    const room = await project('reading-room', 'Reading Room', {
+      members: [alex, priya, mo],
+      rules: {
+        preset: 'you_or_the_group',
+        groups: [],
+        rules: [
+          { group: 'creator', kind: 'atLeast', n: 1 },
+          { group: 'members', kind: 'majority', n: null },
+        ],
+      },
+    });
+    const s = await change(room, alex, 1);
+    const state = await dm.approvalState(pool, { sessionId: s.id, userId: alex.id });
+    assert.equal(state.decides, true);
+    assert.equal(state.last, true);
+    assert.equal(state.missing, 0);
+    assert.deepEqual(await dm.needsYesFrom(pool, state, { except: [alex.id] }), []);
+    await tellReadyNow(pool, s.id, { bot: homeroomBot, domain: 'app.example.test' });
+    const meta = await card(alex.id, s.id);
+    assert.deepEqual([meta.ready.last, meta.ready.waitingOn, meta.ready.missing], [true, [], 0]);
+    assert.equal(chatCard.approvalWords({ stage: 'proposed', ...(await botChat.approvalOf(pool, { sessionId: s.id, viewer: { id: alex.id } })) }),
+      'It has the approvals it needs.');
   });
 
   await t.test('a public community names nobody, as before', async () => {

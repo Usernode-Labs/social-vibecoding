@@ -744,3 +744,122 @@ test('viewerDecides: a signed-out viewer is never flagged', () => {
   };
   assert.equal(governance.viewerDecides(gov, { facts: { creatorId: 5, adminIds: [], groups: new Map() } }, null), true);
 });
+
+// ── §5816: a builder's Yes approves, on "You or the group" ────────────
+//
+// The existing "You or the group" configuration is the setting. Every other
+// preset and a columns project keep their own rule, so computeGate is never
+// handed a builder's-Yes rule there.
+
+const BUILDER_FACTS = {
+  creatorId: 5, memberCount: 3, membersActive: 3,
+  adminIds: [6], platformAdminIds: [7], groups: new Map(), activeIds: null,
+};
+const NOW5816 = Date.UTC(2026, 9, 20, 12);
+const OPENED5816 = new Date(NOW5816 - 60 * 1000).toISOString();
+
+function youOrTheGroup() {
+  return {
+    approverPolicy: 'anyone', approvalsRequired: null,
+    rules: governance.rulesFromColumn({
+      preset: 'you_or_the_group',
+      rules: [
+        { group: 'creator', kind: 'atLeast', n: 1 },
+        { group: 'members', kind: 'majority', n: null },
+      ],
+    }),
+  };
+}
+
+function g5816(gov, yesVoters, {
+  explicitApproval = false, builderYes = true, approverIds = null, yesCount = yesVoters.length,
+} = {}) {
+  return governance.computeGate(gov, 3, yesCount, 0, OPENED5816, NOW5816, {
+    voters: { yes: new Set(yesVoters), no: new Set() },
+    rulesFacts: BUILDER_FACTS,
+    ...(builderYes ? { builderYes: true } : {}),
+    ...(approverIds ? { approverIds } : {}),
+    explicitApproval,
+    firstVersion: false,
+  });
+}
+
+test('§5816 You or the group: an app admin’s yes approves, its count agrees', () => {
+  const gov = youOrTheGroup();
+  const without = g5816(gov, [6], { builderYes: false });
+  assert.equal(without.mergeable, false, 'one of three is not the majority');
+  const g = g5816(gov, [6]);
+  assert.equal(g.mergeable, true);
+  assert.deepEqual(g.builderYes, { userId: 6, role: 'admin' });
+  assert.equal(g.required, g.qualifiedYes);
+  assert.equal(g.windowEndsAt, null);
+  assert.equal(g.lazyArmed, false);
+  assert.equal(g.rejectionArmed, false);
+});
+
+test('§5816 You or the group: a Homeroom admin’s yes is enough', () => {
+  const g = g5816(youOrTheGroup(), [7]);
+  assert.equal(g.mergeable, true);
+  assert.deepEqual(g.builderYes, { userId: 7, role: 'platform_admin' });
+});
+
+test('§5816 a columns project gets no builder rule, whoever voted', () => {
+  for (const gov of [
+    { approverPolicy: 'anyone', approvalsRequired: null },
+    { approverPolicy: 'anyone', approvalsRequired: 2 },
+    { approverPolicy: 'invited', approvalsRequired: 2 },
+  ]) {
+    const g = g5816(gov, [5], { approverIds: [6] });
+    assert.equal(g.builderYes, undefined, 'no preset, no builder rule');
+    assert.equal(g.mergeable, false);
+    assert.equal(g.qualifiedYes, 1, 'the columns’ own count');
+  }
+});
+
+test('§5816 another preset keeps its own rule', () => {
+  const two = {
+    approverPolicy: 'anyone', approvalsRequired: null,
+    rules: governance.rulesFromColumn({ preset: 'two_yeses', rules: [{ group: 'members', kind: 'atLeast', n: 2 }] }),
+  };
+  const g = g5816(two, [6]);
+  assert.equal(g.builderYes, undefined);
+  assert.equal(g.mergeable, false);
+  assert.equal(g.required, 2);
+});
+
+test('§5816 You or the group: a protected change is not shortcut', () => {
+  const g = g5816(youOrTheGroup(), [6], { explicitApproval: true });
+  assert.equal(g.builderYes, undefined);
+  assert.equal(g.mergeable, false);
+});
+
+test('§5816 the first version still wins', () => {
+  const g = governance.computeGate(youOrTheGroup(), 3, 0, 0, OPENED5816, NOW5816, {
+    voters: { yes: new Set(), no: new Set() },
+    rulesFacts: BUILDER_FACTS,
+    builderYes: true,
+    firstVersion: true,
+  });
+  assert.equal(g.firstVersion, true);
+  assert.equal(g.required, 0);
+  assert.equal(g.mergeable, true);
+});
+
+test('§5816 viewerDecides: a builder decides on You or the group only', () => {
+  const gov = youOrTheGroup();
+  const facts = { creatorId: 5, adminIds: [6], groups: new Map(), platformAdminIds: [7] };
+  assert.equal(governance.viewerDecides(gov, { facts }, 6), true, 'an admin decides');
+  const two = {
+    approverPolicy: 'anyone', approvalsRequired: null,
+    rules: governance.rulesFromColumn({ preset: 'two_yeses', rules: [{ group: 'members', kind: 'atLeast', n: 2 }] }),
+  };
+  assert.equal(governance.viewerDecides(two, { facts }, 6), true, 'the members rule already decides');
+  const own = {
+    approverPolicy: 'anyone', approvalsRequired: null,
+    rules: governance.rulesFromColumn({
+      groups: [{ name: 'Lifeguards', people: [], ids: [2, 3] }],
+      rules: [{ group: 'lifeguards', kind: 'atLeast', n: 2 }],
+    }),
+  };
+  assert.equal(governance.viewerDecides(own, { facts }, 6), false, 'an admin outside the rule’s group');
+});

@@ -353,6 +353,10 @@ export interface RulesFacts {
   memberCount: number | string;
   membersActive: number | string;
   adminIds: number[];
+  // Homeroom's full admins (users.is_admin AND NOT admin_readonly). No rule
+  // reads it: it is what the merge gate's builder's-Yes rule reads
+  // (governance-gate.ts applyBuilderYes), beside the creator and app admins.
+  platformAdminIds?: number[];
   groups: Map<string, number[]>;
   activeIds: Set<number> | null;
 }
