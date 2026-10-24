@@ -748,7 +748,7 @@
       "password": "staging-code-password"
     }
   },
-  "bootParams": ["shot", "details"],
+  "bootParams": ["shot", "details", "side-strip"],
   "routingBoundaries": [
     {
       "route": "#app/*",
@@ -5071,6 +5071,11 @@
       "path": "/?demo=1#admin/sms",
       "expectSelector": "#admin-sms-provider, #admin-sms-deliveries",
       "expectText": "Text messages are sent by"
+    },
+    {
+      "name": "iPhone Duo: a one-sided column of system chrome (?side-strip=right paints the Duo's 84pt column) puts the shell in strip mode, with the strip's back controls and the Apps section in the markup (24 Oct 2026)",
+      "path": "/?demo=1&side-strip=right",
+      "expectSelector": "html[data-side-strip=\"right\"]:has(#platform-tabs > .platform-tabs-marker + .platform-side-apps) .platform-side-strip-ground + .platform-side-strip-frost + #platform-side-strip-top > #platform-side-strip-back"
     }
   ],
   "governance": {
