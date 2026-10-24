@@ -2,9 +2,10 @@
   "name": "homeroom-capture",
   "private": true,
   "dependencies": {
-    "puppeteer-core": "23.11.1"
+    "puppeteer-core": "25.16.0"
   },
   "overrides": {
-    "basic-ftp": "6.2.1"
+    "basic-ftp": "6.2.1",
+    "zod": "4.6.6"
   }
 }

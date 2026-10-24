@@ -47,12 +47,12 @@ column, constraint or sequence definition changes the checksum and refuses the
 copy. Source and copied-schema provenance remain distinct. Compatibility
 fingerprints do not grant permission to export data.
 
-Temporary availability hotfix: runtime inspection accepts the single incident
-fingerprint listed in `temporaryRuntimeFingerprints`. The full-schema CI check
-stays strict, and export-column decisions, unsupported-relation refusals,
-redaction and provenance remain enforced. Remove this exception after comparing
-the failing runtime catalog with the canonical catalog; it is not approval to
-retain any additional production data.
+Production runs PostgreSQL 17 and previews run 18. The catalog excludes 18's
+validated, inheritable `NOT NULL` constraint entries because each column's
+nullability is already recorded through `pg_attribute.attnotnull`. `NOT VALID`
+and `NO INHERIT` forms remain in the inventory. Nullability changes and all other
+constraint definitions still change the fingerprint. CI and runtime use the
+same strict verification; there are no runtime-only fingerprint exceptions.
 
 A digest of the policy, trusted schema and exporter implementation versions
 shared templates, frozen paired sources and runtime labels. Docker runtimes
@@ -80,6 +80,10 @@ logging or the separate policies for reviewer-owned bridge capabilities.
 `npm run lint:sql` validates the policy against its existing complete-schema
 shadow database. This adds catalog queries, without another database startup
 or a production-data scan. The initial local run took about 0.12 seconds.
+The image workflow also gates releases on a focused PostgreSQL 17/18 catalog
+regression. It loads only the trusted schema into disposable databases, checks
+that both versions produce the reviewed catalog, and refuses real nullability,
+constraint and default changes. It does not repeat the full unit suite.
 
 When changing the schema:
 
@@ -108,7 +112,11 @@ share an empty `usernode` maintenance database, provisioned once by CI setup.
 The regression exercises direct/template/paired sources, private markers,
 schema carriers, hidden/colliding handles,
 stale/forged provenance, schema drift and real migration/fixture boot. Setting
-`TEST_PREVIEW_DATABASE_URL` additionally tests separate preview placement.
+`TEST_PREVIEW_DATABASE_URL` additionally tests separate preview placement. Use
+PostgreSQL 18 for that server and version-18 `psql`, `pg_dump` and `pg_restore`
+clients to exercise the production-to-preview version boundary. The focused
+`tests/platform-preview-schema-compatibility.test.js` needs only Node and `pg`,
+and checks both catalogs when those two URLs are set.
 
 ## Cutover and future policy changes
 

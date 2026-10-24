@@ -37,7 +37,11 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: '22.23.4'
-      - run: npm install --global npm@11.21.1
+      - run: |
+          npm install --global npm@11.21.1 undici@6.29.1
+          image_npm_root="$(npm root --global)"
+          rm -rf "$image_npm_root/npm/node_modules/undici"
+          mv "$image_npm_root/undici" "$image_npm_root/npm/node_modules/undici"
       - run: node scripts/security-audit.js
       - uses: actions/upload-artifact@v4
         if: always()
@@ -62,11 +66,51 @@ jobs:
         with:
           node-version: '22.23.4'
           cache: npm
-      - run: npm install --global npm@11.21.1
+      - run: |
+          npm install --global npm@11.21.1 undici@6.29.1
+          image_npm_root="$(npm root --global)"
+          rm -rf "$image_npm_root/npm/node_modules/undici"
+          mv "$image_npm_root/undici" "$image_npm_root/npm/node_modules/undici"
       - run: npm ci
       # Deliberately no --test-force-exit: open handles must fail the check.
       - run: node --require ./tests/lib/test-net.js --test --test-timeout=180000 tests/build-stop-hook.test.js tests/inloop-launch.test.js tests/security-update.test.js
         timeout-minutes: 6
+
+  preview-schema-compatibility:
+    name: Preview schema compatibility (PostgreSQL 17/18)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    services:
+      postgres17:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: [5432/tcp]
+        options: --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+      postgres18:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: [5432/tcp]
+        options: --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22.23.4'
+          cache: npm
+      - run: |
+          npm install --global npm@11.21.1 undici@6.29.1
+          image_npm_root="$(npm root --global)"
+          rm -rf "$image_npm_root/npm/node_modules/undici"
+          mv "$image_npm_root/undici" "$image_npm_root/npm/node_modules/undici"
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: node --test --test-timeout=60000 tests/platform-preview-schema-compatibility.test.js
+        env:
+          TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:${{ job.services.postgres17.ports[5432] }}/postgres
+          TEST_PREVIEW_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:${{ job.services.postgres18.ports[5432] }}/postgres
 
   security-images:
     name: Build and scan ${{ matrix.component }}
@@ -88,7 +132,11 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: '22.23.4'
-      - run: npm install --global npm@11.21.1
+      - run: |
+          npm install --global npm@11.21.1 undici@6.29.1
+          image_npm_root="$(npm root --global)"
+          rm -rf "$image_npm_root/npm/node_modules/undici"
+          mv "$image_npm_root/undici" "$image_npm_root/npm/node_modules/undici"
       - uses: docker/setup-buildx-action@v4
         with:
           driver-opts: image=mirror.gcr.io/moby/buildkit:buildx-stable-1
@@ -113,6 +161,12 @@ jobs:
           mkdir -p "$out"
           sh scripts/create-image-sbom.sh "security-$COMPONENT" "$out/sbom.spdx.json"
           sh scripts/check-image-security.sh "security-$COMPONENT" "$out" "$out/sbom.spdx.json" "$COMPONENT"
+      - name: Verify capture browser and media
+        if: matrix.component == 'capture'
+        timeout-minutes: 2
+        run: |
+          docker run --rm -i --network none --cap-drop ALL --security-opt no-new-privileges \
+            --entrypoint node security-capture < scripts/verify-capture-image.js
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -135,7 +189,11 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: '22.23.4'
-      - run: npm install --global npm@11.21.1
+      - run: |
+          npm install --global npm@11.21.1 undici@6.29.1
+          image_npm_root="$(npm root --global)"
+          rm -rf "$image_npm_root/npm/node_modules/undici"
+          mv "$image_npm_root/undici" "$image_npm_root/npm/node_modules/undici"
       - uses: docker/login-action@v4
         with:
           registry: ghcr.io
@@ -179,7 +237,11 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: '22.23.4'
-      - run: npm install --global npm@11.21.1
+      - run: |
+          npm install --global npm@11.21.1 undici@6.29.1
+          image_npm_root="$(npm root --global)"
+          rm -rf "$image_npm_root/npm/node_modules/undici"
+          mv "$image_npm_root/undici" "$image_npm_root/npm/node_modules/undici"
 
       - name: Resolve Claude Code version
         id: claude
@@ -349,7 +411,7 @@ jobs:
 
   build:
     name: Resolve ${{ matrix.component }} image
-    needs: [plan, security-lockfiles, security-regressions]
+    needs: [plan, security-lockfiles, security-regressions, preview-schema-compatibility]
     if: needs.plan.outputs.should_release == 'true'
     runs-on: ubuntu-latest
     strategy:
@@ -360,7 +422,11 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: '22.23.4'
-      - run: npm install --global npm@11.21.1
+      - run: |
+          npm install --global npm@11.21.1 undici@6.29.1
+          image_npm_root="$(npm root --global)"
+          rm -rf "$image_npm_root/npm/node_modules/undici"
+          mv "$image_npm_root/undici" "$image_npm_root/npm/node_modules/undici"
 
       - name: Normalize GHCR owner
         id: registry
@@ -518,7 +584,11 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: '22.23.4'
-      - run: npm install --global npm@11.21.1
+      - run: |
+          npm install --global npm@11.21.1 undici@6.29.1
+          image_npm_root="$(npm root --global)"
+          rm -rf "$image_npm_root/npm/node_modules/undici"
+          mv "$image_npm_root/undici" "$image_npm_root/npm/node_modules/undici"
 
       - uses: azure/setup-helm@v4
         with:
