@@ -48,10 +48,11 @@ copy. Source and copied-schema provenance remain distinct. Compatibility
 fingerprints do not grant permission to export data.
 
 Production runs PostgreSQL 17 and previews run 18. The catalog excludes 18's
-additional `NOT NULL` constraint entries because each column's nullability is
-already recorded through `pg_attribute.attnotnull`. Nullability changes and all
-other constraint definitions still change the fingerprint. CI and runtime use
-the same strict verification; there are no runtime-only fingerprint exceptions.
+validated, inheritable `NOT NULL` constraint entries because each column's
+nullability is already recorded through `pg_attribute.attnotnull`. `NOT VALID`
+and `NO INHERIT` forms remain in the inventory. Nullability changes and all other
+constraint definitions still change the fingerprint. CI and runtime use the
+same strict verification; there are no runtime-only fingerprint exceptions.
 
 A digest of the policy, trusted schema and exporter implementation versions
 shared templates, frozen paired sources and runtime labels. Docker runtimes

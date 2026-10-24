@@ -78,7 +78,12 @@ test('PostgreSQL source and preview catalogs agree while real schema drift is re
         else sourceCatalog = catalog;
 
         // PostgreSQL 18 has extra pg_constraint rows for these same columns.
-        // Real changes must still fail through attnotnull and other constraints.
+        // NOT VALID and NO INHERIT have semantics beyond attnotnull.
+        const version = Number((await client.query('SHOW server_version_num')).rows[0].server_version_num);
+        const notNullDrift = version >= 180000 ? [
+          ['unvalidated NOT NULL', 'ALTER TABLE public.users ALTER COLUMN password DROP NOT NULL; ALTER TABLE public.users ADD CONSTRAINT review_password_nn NOT NULL password NOT VALID'],
+          ['non-inherited NOT NULL', 'ALTER TABLE public.users ALTER COLUMN password DROP NOT NULL; ALTER TABLE public.users ADD CONSTRAINT review_password_nn NOT NULL password NO INHERIT'],
+        ] : [];
         for (const [name, ddl] of [
           ['drop NOT NULL', 'ALTER TABLE public.users ALTER COLUMN password DROP NOT NULL'],
           ['add NOT NULL', 'ALTER TABLE public.users ALTER COLUMN email SET NOT NULL'],
@@ -86,6 +91,7 @@ test('PostgreSQL source and preview catalogs agree while real schema drift is re
           ['check constraint', 'ALTER TABLE public.users ADD CHECK (id > 0)'],
           ['unique constraint', 'ALTER TABLE public.users ADD UNIQUE (username, email)'],
           ['foreign key', 'ALTER TABLE public.users ADD FOREIGN KEY (id) REFERENCES public.apps(id)'],
+          ...notNullDrift,
         ]) {
           await t.test(name, async () => {
             await client.query('BEGIN');
