@@ -47,6 +47,13 @@ column, constraint or sequence definition changes the checksum and refuses the
 copy. Source and copied-schema provenance remain distinct. Compatibility
 fingerprints do not grant permission to export data.
 
+Temporary availability hotfix: runtime inspection accepts the single incident
+fingerprint listed in `temporaryRuntimeFingerprints`. The full-schema CI check
+stays strict, and export-column decisions, unsupported-relation refusals,
+redaction and provenance remain enforced. Remove this exception after comparing
+the failing runtime catalog with the canonical catalog; it is not approval to
+retain any additional production data.
+
 A digest of the policy, trusted schema and exporter implementation versions
 shared templates, frozen paired sources and runtime labels. Docker runtimes
 also need an HMAC receipt signed with the production-only edge key, bound to

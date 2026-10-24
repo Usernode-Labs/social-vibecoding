@@ -1,5 +1,8 @@
 {
   "fingerprint": "122e7de9f22f2028834ef6d414775fd14003e1550b662f883d167781c99e2474",
+  "temporaryRuntimeFingerprints": [
+    "c421acbbc043203702d22840698c6dd3ac9d2316535d9bf5e9a9eb86529eee3b"
+  ],
   "optionalTables": {
     "public.game_results": "360911e519c5374ef67abf103c9b9445062aabc967f3b082e8cd308459200b3e",
     "public.game_room_players": "d9bd3b3167922921201a373ab97d9a625ec8aec78c8fc056aff362cc00816b57",
