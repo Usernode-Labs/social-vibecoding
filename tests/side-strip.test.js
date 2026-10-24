@@ -1,0 +1,280 @@
+'use strict';
+// iPhone Duo (24 Oct 2026): folded, the Duo's cover moves the clock, the
+// camera and every app's bars into an 84pt column down its right edge, and
+// the Homeroom app's web view is handed that column as
+// `env(safe-area-inset-right)` (measured on the iOS 27.1 simulator: right
+// 84px, top 0). frontend/src/lib/side-strip.ts turns a one-sided inset into
+// `data-side-strip` on <html>; app.css keeps the content out of the column
+// and stands the tab bar and the back button in it.
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const { loadTsx } = require('./lib/render-tsx');
+
+const ROOT = path.join(__dirname, '..');
+const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
+const APP_CSS = read('public/css/app.css');
+const {
+  STRIP_ATTR, STRIP_W_PROP, STRIP_MIN_PX, STRIP_SHOT_PX,
+  stripSide, stripShotSide, applyStrip,
+} = loadTsx('frontend/src/lib/side-strip.ts');
+
+test('stripSide: only a wide inset on one side is a strip', () => {
+  assert.equal(stripSide({ left: 0, right: 84 }), 'right', 'the Duo\'s cover, folded');
+  assert.equal(stripSide({ left: 84, right: 0 }), 'left', 'Split View with the app against the left edge');
+  assert.equal(stripSide({ left: 0, right: 0 }), null, 'a phone in portrait');
+  assert.equal(stripSide({ left: 59, right: 59 }), null, 'a phone in landscape: the notch is inset on both sides');
+  assert.equal(stripSide({ left: 84, right: 84 }), null, 'both sides is never a column');
+  assert.equal(stripSide({ left: 0, right: STRIP_MIN_PX - 1 }), null, 'an Android cutout in landscape');
+  assert.equal(stripSide({ left: 0, right: STRIP_MIN_PX }), 'right');
+  assert.equal(stripSide(null), null);
+  assert.equal(stripSide({ left: Number.NaN, right: 84 }), 'right');
+});
+
+test('?side-strip= paints the Duo\'s column for a browser that has none', () => {
+  assert.equal(stripShotSide('?side-strip=right'), 'right');
+  assert.equal(stripShotSide('?side-strip=1'), 'right', 'the Duo\'s own side');
+  assert.equal(stripShotSide('?side-strip=left'), 'left');
+  assert.equal(stripShotSide('?side-strip=up'), null);
+  assert.equal(stripShotSide(''), null);
+  assert.equal(STRIP_SHOT_PX, 84, 'the column as measured on the simulator');
+});
+
+test('applyStrip: publishes the side and width, and takes them away again', () => {
+  const attrs = new Map();
+  const props = new Map();
+  let writes = 0;
+  const root = {
+    getAttribute: (n) => (attrs.has(n) ? attrs.get(n) : null),
+    setAttribute: (n, v) => { writes += 1; attrs.set(n, v); },
+    removeAttribute: (n) => { writes += 1; attrs.delete(n); },
+    style: {
+      setProperty: (n, v) => props.set(n, v),
+      removeProperty: (n) => props.delete(n),
+    },
+  };
+  applyStrip(root, 'right', 84);
+  assert.equal(attrs.get(STRIP_ATTR), 'right');
+  assert.equal(props.get(STRIP_W_PROP), '84px');
+  applyStrip(root, 'right', 84);
+  assert.equal(writes, 1, 'an unchanged side is not written again');
+  applyStrip(root, null, 0);
+  assert.equal(attrs.has(STRIP_ATTR), false, 'unfolded: gone');
+  assert.equal(props.has(STRIP_W_PROP), false);
+  applyStrip(root, null, 0);
+  assert.equal(writes, 2, 'nothing to take away twice');
+});
+
+test('the probe reads the kit override before env(), as app.css does', () => {
+  const src = read('frontend/src/lib/side-strip.ts');
+  assert.match(src, /padding-right:var\(--un-safe-inset-right,env\(safe-area-inset-right,0px\)\)/);
+  assert.match(src, /padding-left:var\(--un-safe-inset-left,env\(safe-area-inset-left,0px\)\)/);
+  assert.match(read('frontend/src/main.tsx'), /import '\.\/lib\/side-strip';/);
+});
+
+// ── app.css ─────────────────────────────────────────────────────────────
+
+const block = (() => {
+  const start = APP_CSS.indexOf('THE SIDE STRIP — iPhone Duo');
+  const end = APP_CSS.indexOf('/* ── #platform-parked — the app you left');
+  assert.ok(start > 0 && end > start, 'the side strip block is in app.css');
+  return APP_CSS.slice(start, end);
+})();
+
+test('every rule in the block is keyed on the strip, but the off switch', () => {
+  const selectors = [...block.replace(/\/\*[\s\S]*?\*\//g, '').matchAll(/([^{}]+)\{[^{}]*\}/g)]
+    .map((m) => m[1].trim())
+    .filter((sel) => sel && !sel.startsWith('@media'));
+  assert.ok(selectors.length > 10);
+  for (const sel of selectors) {
+    if (/^\.platform-side-strip-top,\s*\.platform-side-strip-ground,\s*\.platform-side-strip-frost,\s*\.platform-side-apps$/.test(sel)) continue;
+    assert.match(sel, /html\[data-side-strip/, `${sel} applies only with the strip`);
+  }
+  assert.match(block, /\.platform-side-strip-top,\n\.platform-side-strip-ground,\n\.platform-side-strip-frost,\n\.platform-side-apps \{\s*display: none;/, 'no strip, no strip pieces');
+});
+
+test('the content stops at the strip; the tabs and the back stand in it', () => {
+  assert.match(block, /html\[data-side-strip="right"\] body \{\s*padding-right: var\(--platform-strip-w, 0px\);/);
+  assert.match(block, /html\[data-side-strip="left"\] body \{\s*padding-left: var\(--platform-strip-w, 0px\);/);
+  assert.match(block, /html\[data-side-strip\] #platform-tabs \{[^}]*flex-direction: column;[^}]*\}/);
+  // The column is drawn only where the bar is: never over a running app or
+  // the signed-out shell (`hidden`), never with the keyboard up.
+  assert.doesNotMatch(block, /html\[data-side-strip\] #platform-tabs \{[^}]*display:/);
+  assert.match(block, /html\[data-side-strip\]:not\(\.un-kb\):not\(\.platform-kb-open\) #platform-tabs:not\(\.hidden\) \{\s*display: flex;/);
+  assert.match(block, /html\[data-side-strip\] #platform-tabs \{[^}]*bottom: var\(--platform-safe-bottom, 0px\);/);
+  assert.match(block, /html\[data-side-strip\] #platform-header :is\(#back-btn, \.nav-drawer-back\) \{\s*display: none;/);
+  assert.match(block, /--platform-strip-top: 174px;/, 'where Settings hangs its own back, measured');
+  assert.match(block, /\.platform-side-strip-top \{[^}]*position: fixed;[^}]*top: var\(--platform-strip-top\);[^}]*pointer-events: none;/,
+    'the box is no target: only a live control takes the press');
+  // The foot band goes: the screens clear the home indicator only.
+  // …with the app you left up too: it stands in the strip as well.
+  assert.match(block, /html\[data-side-strip\]:not\(\.un-kb\) body:has\(#platform-tabs:not\(\.hidden\):not\(\.platform-tabs-peek\)\),\n\s*html\[data-side-strip\]:not\(\.un-kb\) body:has\(#platform-tabs:not\(\.hidden\):not\(\.platform-tabs-peek\)\):has\(#platform-parked:not\(\.hidden\)\) \{\s*--platform-bar-h: 0px;\s*--platform-tabs-h: var\(--platform-safe-bottom\);/);
+});
+
+test('the header runs across the strip; its controls stay beside it', () => {
+  assert.match(block, /html\[data-side-strip="right"\] #platform-header \{\s*margin-right: calc\(-1 \* var\(--platform-strip-w, 0px\)\);\s*padding-right: calc\(1rem \+ var\(--platform-strip-w, 0px\)\);/);
+});
+
+test('a sheet screen\'s strip wears the sheet, opaque, under the header', () => {
+  const ground = block.match(/html\[data-side-strip\] body:has\(([^{]+)\) \.platform-side-strip-ground \{([^}]*)\}/);
+  assert.ok(ground, 'the ground has a rule');
+  assert.match(ground[1], /#messages-screen/);
+  assert.match(ground[2], /z-index: 9;/, 'under the header (10), over the screens a drawer pans');
+  assert.match(ground[2], /top: calc\(var\(--browser-banner-h, 0px\) \+ var\(--platform-header-h\) \+ var\(--platform-safe-top, 0px\) - 0\.5rem\);/, 'from the sheet\'s own top');
+  assert.match(block, /\.platform-side-strip-ground::before \{[^}]*position: fixed;[^}]*linear-gradient\(var\(--dc-strip-fill\), var\(--dc-strip-fill\)\),\s*var\(--home-wallpaper/);
+  assert.match(block, /html\[data-side-strip="right"\] \.dc-lift-strip:not\(#app-content > \.dc-lift-strip\):not\(\.messages-drawer\) \{\s*border-top-right-radius: 0;/);
+  // A project's pages run their own sheet under the strip (below), so the
+  // ground is for the screens that do not.
+  assert.doesNotMatch(ground[1], /#app-view/);
+});
+
+test('the drawer under the strip is veiled while it is out, coming in at the strip\'s edge', () => {
+  const frost = block.match(/html\[data-side-strip\] \.platform-side-strip-frost \{([^}]*)\}/);
+  assert.ok(frost, 'the frost has a rule');
+  assert.match(frost[1], /z-index: 25;/, 'over the drawer (20), under the pill and the back button (30)');
+  // Whole from the strip's own edge (the pill's gap to the screen's edge,
+  // mirrored), coming in over the 16px before it, a screen's own margin, so
+  // no card is ever under it; eased, so the edge is not a line.
+  assert.match(frost[1], /width: calc\(var\(--platform-strip-w, 0px\) \+ 16px\);/);
+  assert.match(frost[1], /mask-image: linear-gradient\(to right, transparent, rgba\(0, 0, 0, \.2\) 5px, rgba\(0, 0, 0, \.55\) 10px, rgba\(0, 0, 0, \.85\) 14px, #000 16px\);/);
+  // A fill of the wallpaper's ground, not a blur: the blur stuttered the
+  // slides, re-run on every frame of the page moving under it.
+  // What is behind the strip at rest: a sheet's tint over the wallpaper, as
+  // a viewport-fixed layer clipped to the veil, at 86%.
+  assert.match(frost[1], /background: transparent;\s*clip-path: inset\(0\);/);
+  assert.doesNotMatch(frost[1], /backdrop-filter/);
+  assert.match(block, /\.platform-side-strip-frost::before \{[^}]*position: fixed;\s*inset: 0;[^}]*opacity: \.86;[^}]*linear-gradient\(var\(--dc-strip-fill\), var\(--dc-strip-fill\)\),\s*var\(--home-wallpaper, var\(--dc-strip-solid\)\);/);
+  assert.match(frost[1], /pointer-events: none;/);
+  assert.match(frost[1], /visibility: hidden;[^}]*opacity: 0;/, 'out of the paint at rest');
+  // It fades over the slide's own length and curve, on the compositor: a
+  // transition, never a script writing opacity on every frame (which held
+  // the glass while the page slid on under it).
+  const math = loadTsx('frontend/src/features/nav-drawer/drawer-math.ts');
+  assert.equal(math.SLIDE_MS, 300);
+  assert.equal(math.SLIDE_EASE, 'cubic-bezier(0.33, 1, 0.68, 1)');
+  // Out on the mirror of the slide's ease-out, so it lifts off rather
+  // than vanishing under the arriving page.
+  assert.match(frost[1], /transition: opacity 300ms cubic-bezier\(0\.32, 0, 0\.67, 0\), visibility 0s linear 300ms;/);
+  assert.match(block, /\.platform-side-strip-frost\[data-out\] \{\s*visibility: visible;\s*opacity: 1;\s*transition: opacity 300ms cubic-bezier\(0\.33, 1, 0\.68, 1\), visibility 0s;/);
+  assert.match(block, /html\[data-side-strip\] body:has\(#platform-header\.hidden\) \.platform-side-strip-frost \{\s*display: none;/);
+  assert.match(block, /body:has\(#messages-screen:not\(\.hidden\) \.messages-drawer-alone\) \.platform-side-strip-frost \{\s*visibility: hidden;/);
+  // Out from the drawers' LEVELS: Communities off its page, Messages on its list.
+  const strip = read('frontend/src/features/nav/strip-back.tsx');
+  assert.match(strip, /const out = communities\.on \? communities\.level !== 2 : messages\.on && messages\.level === 0;/);
+  assert.match(strip, /<div className="platform-side-strip-frost" aria-hidden="true" \{\.\.\.\(out \? \{ 'data-out': '' \} : \{\}\)\} \/>/);
+  assert.doesNotMatch(strip, /style\.opacity/, 'no script writes the glass\'s opacity');
+});
+
+test('a project\'s pages and the drawer over them run under the strip', () => {
+  assert.match(block, /html\[data-side-strip="right"\] :is\(#app-view\[data-app-surface="platform"\], #app-view\[data-app-surface="platform"\] > #app-content, #app-view\[data-app-surface="platform"\] > #app-content > \.dc-lift-strip\) \{\s*margin-right: calc\(-1 \* var\(--platform-strip-w, 0px\)\);\s*padding-right: var\(--platform-strip-w, 0px\);/,
+    'the page, its host and its sheet reach under the strip; their content stays beside it');
+  // The drawer is the screen's width; its levels are fractions of the width
+  // beside the strip, which is what nav-drawer.tsx pans by.
+  assert.doesNotMatch(block, /html\[data-side-strip="right"\] \.nav-drawer \{\s*right:/);
+  assert.match(block, /html\[data-side-strip="right"\] \.nav-drawer-outer \{\s*width: calc\(\(100% - var\(--platform-strip-w, 0px\)\) \* 0\.85\);/);
+  assert.match(block, /html\[data-side-strip="right"\] \.nav-drawer-places \{\s*left: calc\(\(100% - var\(--platform-strip-w, 0px\)\) \* 0\.85\);\s*width: calc\(\(100% - var\(--platform-strip-w, 0px\)\) \* 0\.8\);/);
+  const math = loadTsx('frontend/src/features/nav-drawer/drawer-math.ts');
+  assert.equal(math.OUTER_SHARE, 0.85, 'the CSS fractions are the pan\'s');
+  assert.equal(math.PLACES_SHARE, 0.8);
+  assert.match(read('frontend/src/features/nav-drawer/nav-drawer.tsx'), /return Math\.max\(1, \(document\.documentElement\.clientWidth \|\| window\.innerWidth \|\| 1\) - stripWidth\(\)\);/);
+});
+
+test('Messages\' drawer runs under the strip the same way', () => {
+  assert.match(block, /html\[data-side-strip="right"\] #messages-screen:has\(> \.messages-layout\.messages-drawer\) \{\s*margin-right: calc\(-1 \* var\(--platform-strip-w, 0px\)\);/);
+  assert.match(block, /html\[data-side-strip="right"\] #messages-screen > \.messages-layout\.messages-drawer \{\s*padding-right: var\(--platform-strip-w, 0px\);/);
+  assert.match(block, /html\[data-side-strip="right"\] \.messages-layout\.messages-drawer > \.messages-list-pane \{\s*width: calc\(\(100% - var\(--platform-strip-w, 0px\)\) \* 0\.85\);/);
+  assert.match(block, /html\[data-side-strip="right"\] \.messages-layout\.messages-drawer > \.messages-thread-pane \{\s*padding-right: var\(--platform-strip-w, 0px\);/);
+  // Its floating discs are positioned off the sheet's edge, which padding
+  // does not move: they come in by the strip too, from their own 12px.
+  assert.match(APP_CSS, /\.messages-layout\.messages-drawer > \.messages-thread-pane > \.messages-thread-header \{\s*position: absolute; top: 4px; right: 12px;/);
+  assert.match(block, /html\[data-side-strip="right"\] \.messages-layout\.messages-drawer > \.messages-thread-pane > \.messages-thread-header \{\s*right: calc\(12px \+ var\(--platform-strip-w, 0px\)\);/);
+  // Its own sheet runs under the strip, so the strip's ground is not drawn.
+  assert.match(block, /\.dc-lift-strip:not\(\.messages-drawer\)\) \.platform-side-strip-ground \{/);
+  // It pans by the width beside the strip.
+  const drawer = read('frontend/src/features/messages/phone-drawer.tsx');
+  assert.match(drawer, /Math\.max\(1, \(layout\?\.clientWidth \|\| 1\) - stripWidth\(\)\)/);
+  assert.equal((drawer.match(/- stripWidth\(\)/g) || []).length, 3, 'placement, the pointer pan and the touch pan');
+  const { stripWidth } = loadTsx('frontend/src/lib/side-strip.ts');
+  const root = (attr, w) => ({ documentElement: { hasAttribute: () => attr, style: { getPropertyValue: () => w } } });
+  assert.equal(stripWidth(root(true, '84px')), 84);
+  assert.equal(stripWidth(root(false, '84px')), 0, 'no strip, nothing taken off');
+});
+
+test('one pill down the strip: the four places, then the apps, then you', () => {
+  // From a gap under the back button's slot to the home indicator, on every
+  // screen: the slot is always free, so a back button appears without the
+  // pill moving.
+  assert.match(block, /html\[data-side-strip\] #platform-tabs \{[^}]*top: var\(--platform-strip-pill-top\);[^}]*bottom: var\(--platform-safe-bottom, 0px\);/);
+  assert.match(block, /--platform-strip-pill-top: calc\(var\(--platform-strip-top\) \+ var\(--platform-strip-back\) \+ 10px\);/);
+  assert.equal((block.match(/--platform-strip-pill-top:/g) || []).length, 1, 'one top, whatever the screen');
+  assert.doesNotMatch(block, /transition: top/, 'nothing to slide');
+  assert.match(block, /html\[data-side-strip\] #platform-tab-me \{\s*margin-top: auto;/, 'you at the foot');
+  // The apps under Communities, drawn there by `order` (the section is the
+  // bar's first child: the declared checks pin the tabs' sibling chain).
+  assert.match(block, /html\[data-side-strip\] \.platform-side-apps:not\(\.hidden\) \{\s*order: 1;/);
+  assert.match(block, /html\[data-side-strip\] #platform-tab-me \{\s*order: 2;/);
+  assert.match(block, /html\[data-side-strip\] \.platform-side-apps-head \{[^}]*border-top: 1px solid var\(--app-sheet-line\);[^}]*text-transform: uppercase;/);
+  // Corners concentric with the lit marker's: its 16px radius plus the 4px
+  // it is inset by. The marker keeps to its cell there (markerBoxFor).
+  assert.match(block, /html\[data-side-strip\] #platform-tabs \{[^}]*border-radius: 20px;[^}]*clip-path: inset\(0 round 20px\);/);
+  assert.match(APP_CSS, /\.platform-tabs-marker \{[^}]*border-radius: 16px;/);
+  assert.match(read('frontend/src/features/nav/tab-bar.tsx'), /markerBoxFor\(el, tabContentRect\(el\), inStrip\)/);
+  // The phone's Resume strip stands aside: the section offers the app you left.
+  assert.match(block, /html\[data-side-strip\] #platform-parked \{\s*display: none;/);
+  assert.match(block, /html\[data-side-strip\] \.nav-drawer \{\s*bottom: 0;/);
+  assert.match(read('frontend/src/features/nav/strip-back.tsx'), /<div className="platform-side-strip-ground" aria-hidden="true" \/>/);
+});
+
+test('the apps section: the app on screen lit, the app you left with its ✕', () => {
+  const tsx = read('frontend/src/features/nav/side-apps.tsx');
+  assert.match(tsx, /aria-current="page"/, 'the app on screen is where you are');
+  assert.match(tsx, /forgetParked\(left\)/);
+  assert.match(tsx, /window\.App\?\.openAppTab\?\.\(left\.slug, 'app'\)/, 'resume is the router\'s own entry');
+  assert.match(tsx, /\(running \|\| left \? '' : ' hidden'\)/, 'nothing drawn, heading included, with neither');
+  const bar = read('frontend/src/features/nav/tab-bar.tsx');
+  assert.ok(bar.indexOf('<SideApps />') > bar.indexOf('className="platform-tabs-marker"')
+    && bar.indexOf('<SideApps />') < bar.indexOf('TABS.flatMap('), 'first in the bar, after the marker');
+  assert.match(bar, /useTabMarker\(barRef, tab, runningApp && !!onScreenApp\)/, 'the marker lights the app while no tab is');
+  assert.match(bar, /'\.platform-side-app\[aria-current="page"\]'/);
+  // app.js says which app is on screen, beside what it parks.
+  const app = read('public/js/app.js');
+  assert.match(app, /if \(typeof bridge\.running === 'function'\) bridge\.running\(running\);/);
+  assert.match(app, /if \(typeof bridge\.running === 'function'\) bridge\.running\(null\);/);
+  // The resume motion lands on the section's tile.
+  assert.match(read('frontend/src/features/nav/resume-motion.ts'), /#platform-tabs \.platform-side-app\[data-side-app\]/);
+  const core = JSON.parse(read('frontend/locales/en/core.json'));
+  assert.equal(core['tabs.stripApps'].text, 'Apps');
+  assert.equal(core['tabs.stripResume'].text, 'Resume {{app}}');
+});
+
+test('in a running app the tabs stay in the strip and the ✕ goes', () => {
+  assert.match(block, /html\[data-side-strip\]:not\(\.un-kb\):not\(\.platform-kb-open\) body:has\(#app-view:not\(\.hidden\)\[data-app-surface="app"\]\):not\(:has\(#platform-header\.hidden\)\) #platform-tabs\.platform-tabs-route-hidden \{\s*display: flex;/,
+    'over a running app only, with the platform header up');
+  assert.match(block, /\.platform-side-strip-back:is\(\.hidden, \[data-back="close"\]\) \{\s*display: none;/);
+  assert.match(read('frontend/src/features/nav/strip-back.tsx'), /data-back=\{mode\}/);
+});
+
+test('the drawer\'s titles have no slot to step out of when the arrow is in the strip', () => {
+  const { titleSlot } = loadTsx('frontend/src/features/nav-drawer/drawer-math.ts');
+  // On a phone: the arrow and its gap.
+  assert.equal(titleSlot({ laidOut: true, left: 60 }, { laidOut: true, left: 16 }), 44);
+  // On the Duo the empty group is not drawn: 0, not the titles' own 16px
+  // (which put "Messages" against the screen's edge).
+  assert.equal(titleSlot({ laidOut: true, left: 16 }, { laidOut: false, left: 0 }), 0);
+  // A hidden header reads zero for both and says nothing.
+  assert.equal(titleSlot({ laidOut: false, left: 0 }, { laidOut: false, left: 0 }), null);
+  assert.equal(titleSlot({ laidOut: true, left: 16 }, { laidOut: true, left: 16 }), null);
+  assert.match(read('frontend/src/features/nav-drawer/header-drawer.tsx'), /const at = titleSlot\(/);
+});
+
+test('the strip controls are rendered from the header\'s own back slot', () => {
+  const strip = read('frontend/src/features/nav/strip-back.tsx');
+  assert.match(strip, /useBackSlot\(\)/);
+  assert.match(strip, /document\.getElementById\('back-btn'\)\?\.click\(\)/, 'a press is #back-btn\'s');
+  assert.match(strip, /<DrawerBack \/>/);
+  const header = read('frontend/src/features/header/platform-header.tsx');
+  assert.match(header, /export function useBackSlot\(\)/);
+  assert.match(header, /const \{ mode, href: resolvedBackHref, paneBack \} = useBackSlot\(\);/);
+  assert.match(read('frontend/src/Shell.tsx'), /<Island name="StripBack"><StripBack \/><\/Island>/);
+});

@@ -39,6 +39,7 @@ import {
 import { startsOnSideways, swipeBackMayStart } from '../nav-drawer/sideways';
 import { open as openConversation } from './store';
 import type { ConversationDetail, ConversationMessage } from './types';
+import { stripWidth } from '../../lib/side-strip';
 
 const PHONE_QUERY = '(max-width: 767.98px)';
 
@@ -176,7 +177,7 @@ export function useMessagesDrawer(
   };
   const put = (offset: number, animate: boolean) => {
     const { layout, list, thread } = panes();
-    const w = Math.max(1, layout?.clientWidth || 1);
+    const w = Math.max(1, (layout?.clientWidth || 1) - stripWidth());
     const from = lastOffset.current;
     lastOffset.current = offset;
     for (const [pane, el] of [['list', list], ['thread', thread]] as const) {
@@ -294,7 +295,7 @@ export function useMessagesDrawer(
   const fingerOn = useRef(false);
   const onPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
     if (e.pointerType !== 'mouse' || !on || level !== 0 || !peekId || !e.isPrimary || e.button !== 0) return;
-    pan.current = { id: e.pointerId, x0: e.clientX, y0: e.clientY, w: Math.max(1, layoutRef.current?.clientWidth || 1), on: false, dx: 0 };
+    pan.current = { id: e.pointerId, x0: e.clientX, y0: e.clientY, w: Math.max(1, (layoutRef.current?.clientWidth || 1) - stripWidth()), on: false, dx: 0 };
   };
   const onPointerMove = (e: ReactPointerEvent<HTMLDivElement>) => {
     const p = pan.current;
@@ -381,7 +382,7 @@ export function useMessagesDrawer(
         // The list: anywhere on it but a field (the search).
         return;
       }
-      p = { x0: touch.clientX, y0: touch.clientY, w: Math.max(1, layout.clientWidth || 1), on: false, dx: 0 };
+      p = { x0: touch.clientX, y0: touch.clientY, w: Math.max(1, (layout.clientWidth || 1) - stripWidth()), on: false, dx: 0 };
       document.addEventListener('touchmove', move, { passive: false });
     };
     const up = () => {

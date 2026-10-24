@@ -229,9 +229,12 @@ test('the derived answer outranks the imperative one, and only inside an app', (
     + 'imperative call; everything else keeps what setBackIcon published');
   assert.match(HEADER, /const paneBack = topicBackHref\(\{\n\s+slug: backSlug, tab: backTab, subTab: backSubTab, boardView, topicOrigin,\n\s+\}\);/,
     'and that topic answer is topicBackHref\'s, the chip\'s own');
-  assert.match(HEADER, /const resolvedBackHref = routeUp\n\s+\|\| \(mode === 'home' \? homeHref\(\) : backHref\);/,
+  // useBackSlot (24 Oct 2026) is where it is derived now, so the Duo's side
+  // strip draws the same back as #back-btn; the header reads it back.
+  assert.match(HEADER, /const href = routeUp\n\s+\|\| \(mode === 'home' \? homeHref\(\) : backHref\);/,
     "and 'home' resolves its own href rather than relying on a caller to "
     + 'pass one');
+  assert.match(HEADER, /const \{ mode, href: resolvedBackHref, paneBack \} = useBackSlot\(\);/);
 });
 
 // ── 5. The session origin, actually executed ───────────────────────────

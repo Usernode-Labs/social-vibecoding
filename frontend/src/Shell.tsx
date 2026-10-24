@@ -84,7 +84,7 @@ import { AppContextIsland } from './features/app-context';
 import { LeaderboardScreen } from './features/leaderboard';
 import { PlatformHeader } from './features/header/platform-header';
 import { MessagesScreen } from './features/messages';
-import { ParkedStrip, PlatformTabs, SkipToNavigation } from './features/nav';
+import { ParkedStrip, PlatformTabs, SkipToNavigation, StripBack } from './features/nav';
 import { SidePanel } from './features/side-panel';
 import { GlobalChatScreen } from './features/global-chat';
 import { AgentSessionScreen } from './features/agent-session';
@@ -477,6 +477,13 @@ export function Shell() {
       */}
       <Island name="ParkedStrip"><ParkedStrip /></Island>
       <Island name="PlatformTabs"><PlatformTabs /></Island>
+      {/*
+          #platform-side-strip-top — the header's back controls, drawn in the
+          column of system chrome down an iPhone Duo's edge (features/nav/
+          strip-back.tsx). Ships hidden; app.css draws it only while
+          <html data-side-strip> is set.
+      */}
+      <Island name="StripBack"><StripBack /></Island>
       {/*
           The phone's navigation drawer (features/nav-drawer/): under 768px,
           on a community's page, your communities and the community's places
