@@ -127,7 +127,7 @@ test('no shell source renders a bare whitespace expression between text runs', (
 });
 
 test('Docker builds the shell before Tailwind and copies both outputs into the runtime', () => {
-  assert.match(dockerfile, /FROM node:22-alpine AS shell/, 'needs a named shell builder stage');
+  assert.match(dockerfile, /FROM node:22.23.4-alpine AS shell/, 'needs a named shell builder stage');
   assert.match(dockerfile, /COPY frontend\/package\.json frontend\/package-lock\.json \.\//,
     'the shell stage must install the lockfile-pinned frontend dependency tree');
   assert.match(dockerfile, /RUN npm ci(?:\s|$)/, 'the shell stage must install frontend dependencies');
@@ -208,8 +208,8 @@ test('every file the shell bundle imports from outside frontend/ is copied into 
     ['Dockerfile', dockerfile],
     ['Dockerfile.kubernetes', kubernetesDockerfile],
   ]) {
-    const shellStart = source.indexOf('FROM node:22-alpine AS shell');
-    const shellEnd = source.indexOf('\nFROM node:22-alpine', shellStart + 1);
+    const shellStart = source.indexOf('FROM node:22.23.4-alpine AS shell');
+    const shellEnd = source.indexOf('\nFROM node:22.23.4-alpine', shellStart + 1);
     assert.ok(shellStart > -1 && shellEnd > shellStart, `${name} must keep its shell builder stage`);
     const shellStage = source.slice(shellStart, shellEnd);
 

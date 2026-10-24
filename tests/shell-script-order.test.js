@@ -61,6 +61,8 @@ const ENTRY_SRC = '/shell/assets/shell.js';
 // pinned by its own assertion instead (see the nav-link.js check below); do
 // not add one here without doing the same.
 const ADDED_SCRIPTS = [
+  '/vendor/purify-3.4.17.min.js', // security update; replacement pinned below
+
   '/js/nav-link.js', // #1036 — the real-anchor / new-tab seam
   '/js/dev-flow-select.js', // #1049 — the dev-flow picker + walkthrough
   '/js/session-options.js', // #1055 — the composer's session/billing menu
@@ -80,6 +82,7 @@ const ADDED_SCRIPTS = [
 // is gone from SHELL_ASSETS in public/sw.js, and the file is deleted from
 // public/js/. They are removed from the baseline side of the comparison.
 const RETIRED_SCRIPTS = {
+  '/vendor/purify-3.4.4.min.js': 'security update to DOMPurify 3.4.17',
   '/js/launchpad.js': '#1891 — shared React local-agent guide; context helpers moved into dev-chat bundle',
   // #1078 chunk A — service-worker registration and the /health connectivity
   // probe moved into frontend/src/lib/{service-worker,offline}.ts when
@@ -312,6 +315,8 @@ const RETIRED_SCRIPTS = {
 // past this classic script. Moving it would be a rewrite, not a move.
 
 test('every legacy script is loaded, in exactly the baseline order', () => {
+  assert.equal(scriptsOf(after).findIndex((s) => s.src === '/vendor/purify-3.4.17.min.js'),
+    scriptsOf(after).findIndex((s) => s.src === '/vendor/marked-15.0.12.min.js') + 1, 'sanitizer still follows the markdown parser');
   const expected = baseline.scripts.filter((s) => !(s in RETIRED_SCRIPTS));
   const actual = scriptsOf(after)
     .filter((s) => s.src && s.src !== ENTRY_SRC && !ADDED_SCRIPTS.includes(s.src))
