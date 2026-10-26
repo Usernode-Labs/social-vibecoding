@@ -453,11 +453,16 @@ async function rebuildSessionStaging({ config, pool, session, reason, headSha = 
     // one (services/github.js getReadOctokit), and is recorded and counted
     // like every other GitHub request. It used to be a bot-token client of
     // its own that the budget never saw.
-    const ok = await require('./github').getReadOctokit(owner);
-    const { data } = await ok.rest.repos.compareCommits({
-      owner, repo, base: 'main', head: compareHead,
-    });
-    compare = data;
+    if (require('./repo-ref').hostOfOwner(owner) === 'git_host') {
+      // On Homeroom's git host: the mirror answers (services/hosted-git.js).
+      compare = await require('./hosted-git').compareCommits(owner, repo, 'main', compareHead);
+    } else {
+      const ok = await require('./github').getReadOctokit(owner);
+      const { data } = await ok.rest.repos.compareCommits({
+        owner, repo, base: 'main', head: compareHead,
+      });
+      compare = data;
+    }
   } catch (err) {
     // The machine builds the head the row knows; a branch that is gone
     // fails its build, which its error lane bounds.

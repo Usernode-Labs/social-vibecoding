@@ -225,6 +225,38 @@ async function getCommitAt(owner, repo, until, { branch = null } = {}) {
   return { sha: shaLine.slice('commit '.length).trim().toLowerCase(), committedAt: (lines[1] || '').trim() || null, branch: ref };
 }
 
+/** A branch's tip with its commit date and message (the drift poller's read): { sha, committedAt, subject } or null. */
+async function headOf(owner, repo, branch = 'main') {
+  const dir = await mirror(owner, repo);
+  const sha = await resolve(dir, branch);
+  if (!sha) return null;
+  const out = await run(dir, ['log', '-1', '--format=%cI%x1f%B', sha]);
+  const [committedAt, subject] = out.split('\x1f');
+  return { sha, committedAt: (committedAt || '').trim() || null, subject: (subject || '').trimEnd() || null };
+}
+
+/**
+ * GitHub's compare object for base...head, as the callers that read it raw
+ * use it: { status, ahead_by, behind_by, base_commit, merge_base_commit,
+ * commits: [{ sha, commit: { message } }], files: [{ filename, status }] }.
+ */
+async function compareCommits(owner, repo, base, head) {
+  const { dir, from, headSha, files, aheadBy, mergeBaseSha } = await compareData(owner, repo, `${base}...${head}`);
+  const baseSha = await resolve(dir, base);
+  const behindBy = await repoMirror.behindBy(dir, baseSha, headSha);
+  const out = await run(dir, ['log', '--reverse', '--format=%H%x1f%B%x1e', `${from}..${headSha}`]);
+  const commits = out.split('\x1e').map((l) => l.replace(/^\n/, '')).filter((l) => l.trim()).map((l) => {
+    const [sha, message] = l.split('\x1f');
+    return { sha: sha.trim().toLowerCase(), commit: { message: (message || '').trimEnd() } };
+  });
+  const status = aheadBy === 0 && behindBy === 0 ? 'identical' : behindBy === 0 ? 'ahead' : aheadBy === 0 ? 'behind' : 'diverged';
+  return {
+    status, ahead_by: aheadBy, behind_by: behindBy, total_commits: commits.length,
+    base_commit: { sha: baseSha }, merge_base_commit: { sha: mergeBaseSha },
+    commits, files: files.map((f) => ({ filename: f.filename, status: f.status, additions: f.additions, deletions: f.deletions })),
+  };
+}
+
 async function getCommitParents(owner, repo, sha) {
   const dir = await mirror(owner, repo, { refs: [sha] });
   const out = await run(dir, ['rev-list', '--parents', '-n', '1', String(sha)]);
@@ -518,6 +550,8 @@ module.exports = {
   getBranchSha,
   getRepoHead,
   getCommitAt,
+  headOf,
+  compareCommits,
   getCommitParents,
   getCommitTree,
   compareCommitAncestry,

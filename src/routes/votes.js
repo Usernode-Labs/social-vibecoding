@@ -6427,15 +6427,9 @@ async function checkAndOpenRevert(config, pool, session, decider) {
       } else {
         const { owner: bOwner, repo: bRepo } = bm;
         try {
-          // Use octokit.request rather than octokit.rest.pulls.get —
-          // @octokit/app's installation octokit is a bare @octokit/core
-          // instance and does not include the rest-endpoint-methods
-          // plugin, so .rest is undefined.
-          const octokit = await github.getInstallationOctokit(bOwner);
-          const { data: pr } = await octokit.request(
-            'GET /repos/{owner}/{repo}/pulls/{pull_number}',
-            { owner: bOwner, repo: bRepo, pull_number: session.pr_number }
-          );
+          // The pull request on whichever host (services/github.js getPR:
+          // a native one on the git host, GitHub's for the platform).
+          const pr = await github.getPR(bOwner, bRepo, session.pr_number);
           if (pr.merged && pr.merge_commit_sha) {
             // Not on a row the merge-followups machine holds while it is
             // on: the column is the machine's (it recorded the merge as it

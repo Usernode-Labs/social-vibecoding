@@ -68,6 +68,13 @@ const headCache = new Map();
 // but it is a subprocess per app per tick, it cannot give the self-hosted
 // row its commit date and subject, and a 304 already costs nothing.
 async function fetchRemoteHead(owner, repo) {
+  // An app on Homeroom's git host: its mirror's tip, no GitHub involved
+  // (services/hosted-git.js). Only the platform's own row reads GitHub.
+  if (require('./repo-ref').hostOfOwner(owner) === 'git_host') {
+    const head = await require('./hosted-git').headOf(owner, repo, 'main');
+    if (!head) throw Object.assign(new Error(`main not found on ${owner}/${repo}`), { status: 404 });
+    return { ...head, octokit: null };
+  }
   // A read: through the App installation when GITHUB_READS_VIA_APP says so,
   // with the bot token behind it (services/github.js getReadOctokit). A 304
   // is passed through as itself, never retried with the bot token.

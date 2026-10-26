@@ -6330,21 +6330,12 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
 
       // Get latest commit hash from the branch
       let commitHash = 'latest';
-      if (github.isEnabled() && app.repo_url) {
+      if (app.repo_url && (github.isEnabled() || repoRef.isHosted(app.repo_url))) {
         try {
           const { owner, repo } = repoRef.ownerRepo(app.repo_url) || {};
-          if (owner && repo) {
-            // octokit.request, not .rest.git.getRef — @octokit/app's
-            // installation Octokit lacks the rest-endpoint-methods
-            // plugin. {+ref} preserves the `/` in `heads/<branch>`;
-            // plain {ref} would percent-encode it and 404.
-            const octokit = await github.getInstallationOctokit(owner);
-            const { data: ref } = await octokit.request(
-              'GET /repos/{owner}/{repo}/git/ref/{+ref}',
-              { owner, repo, ref: `heads/${session.branch_name}` }
-            );
-            commitHash = ref.object.sha;
-          }
+          // On the git host, or GitHub for the platform's own repository
+          // (services/github.js getBranchSha follows the host).
+          if (owner && repo) commitHash = await github.getBranchSha(owner, repo, session.branch_name);
         } catch {}
       }
 
