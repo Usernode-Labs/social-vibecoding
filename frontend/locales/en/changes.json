@@ -628,7 +628,7 @@
     "description": "Label of a divider in the Workshop board's \"Underway\" column, above the viewer's own agent sessions that nobody else can see."
   },
   "board.divider.privateTitle": {
-    "text": "Only you can see your active sessions here. Their code is on public GitHub.",
+    "text": "Only you can see your active sessions here. Their code is public.",
     "description": "Tooltip of the \"Yours · not shared\" divider in the Workshop board's \"Underway\" column."
   },
   "board.divider.visible": {
@@ -1024,7 +1024,7 @@
     "description": "Shown in place of the summary on a change that has no summary and no description. \"Change\" is a noun."
   },
   "page.discussion.shareFirst": {
-    "text": "Make this change visible to the group to start a discussion. Only you can see the agent workspace here unless you share it. Its code is on public GitHub.",
+    "text": "Make this change visible to the group to start a discussion. Only you can see the agent workspace here unless you share it. Its code is public.",
     "description": "Shown in place of the discussion on a person's own change that they have not shared with the project's members yet. \"Change\" is a noun."
   },
   "page.steps.actor.auto": {
@@ -1660,7 +1660,7 @@
     "description": "Line under the title of the viewer's own agent session card when everyone can see the session but not read its chat."
   },
   "session.mine.private": {
-    "text": "Only you can see this here. Code is on public GitHub.",
+    "text": "Only you can see this here. Its code is public.",
     "description": "Line under the title of the viewer's own agent session card when the session is not shared with the group."
   },
   "session.mine.workingTitle": {
