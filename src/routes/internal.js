@@ -12,6 +12,7 @@ const kubernetes = require('../services/kubernetes');
 const statusSvc = require('../services/status');
 const debugAccess = require('../services/debug-access');
 const github = require('../services/github');
+const repoRef = require('../services/repo-ref');
 // #945: the issue's Homeroom-side Discussion thread, merged into the
 // by-number issue response the worker's usernode-issues CLI prints.
 const threadContext = require('../services/thread-context');
@@ -440,11 +441,11 @@ function internalRoutes(_config) {
       // worker bootstrap guard catches most cases, but a user could
       // flip the repo to private mid-session. Keeping the worker's
       // push proxy public-only matches the import-time enforcement.
-      const parsed = (session.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/);
+      const parsed = repoRef.ownerRepo(session.repo_url);
       if (!parsed) {
         return res.status(400).json({ ok: false, code: 'bad_repo_url' });
       }
-      const [, owner, repo] = parsed;
+      const { owner, repo } = parsed;
       const privacy = await github.checkRepoPublic(owner, repo);
       if (!privacy.ok) {
         return res.status(502).json({ ok: false, code: privacy.code, message: privacy.message });
@@ -520,11 +521,11 @@ function internalRoutes(_config) {
 
       // Same .git-tolerant parse the push route uses. No repo → return the
       // well-formed empty-with-note shape so the agent gets a clean answer.
-      const parsed = repoUrl.match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/);
+      const parsed = repoRef.ownerRepo(repoUrl);
       if (!parsed) {
         return res.json({ ok: true, issues: [], truncatedList: false, note: 'no repo' });
       }
-      const [, owner, repo] = parsed;
+      const { owner, repo } = parsed;
       // Clip verbose bodies for the agent's context — the cache carries
       // full bodies for the web route / Create-PR seeding (#158). The
       // marker names the CLI form that returns the full text on demand.
@@ -597,11 +598,11 @@ function internalRoutes(_config) {
         ? { usernodeThread: thread.messages, usernodeThreadTruncated: thread.truncated }
         : {};
 
-      const parsed = repoUrl.match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/);
+      const parsed = repoRef.ownerRepo(repoUrl);
       if (!parsed) {
         return res.json({ ok: true, issue: null, ...threadFields, note: 'no repo' });
       }
-      const [, owner, repo] = parsed;
+      const { owner, repo } = parsed;
       // fetchPublicIssue validates the number itself ('bad issue number').
       // #396: merge the issue's comment thread (clipped) so the worker CLI
       // surfaces the discussion, not just the body. Both fetchers never
@@ -760,9 +761,9 @@ function internalRoutes(_config) {
       if (!session.branch_name) {
         return res.status(400).json({ ok: false, code: 'no_branch' });
       }
-      const parsed = (session.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/);
+      const parsed = repoRef.ownerRepo(session.repo_url);
       if (!parsed) return res.status(400).json({ ok: false, code: 'bad_repo_url' });
-      const [, owner, repo] = parsed;
+      const { owner, repo } = parsed;
 
       try {
         const pr = await github.createPR(owner, repo, {

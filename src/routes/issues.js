@@ -21,6 +21,7 @@ const communities = require('../services/communities');
 const appAdmins = require('../services/app-admins');
 const explicitApprovalCopy = require('../services/explicit-approval');
 const topicAttrs = require('../services/topic-attributes');
+const repoRef = require('../services/repo-ref');
 // #1112: the same in-process "a turn is running" predicate /api/sessions
 // reports as `busy`, so an issue's work-state chip and the session card it
 // points at can never disagree about whether an agent is actually running.
@@ -51,8 +52,7 @@ function positiveIssueId(raw) {
 // Pull owner/repo out of a stored repo_url. Same shape used across the
 // codebase (e.g. the rename-apply path below, routes/votes.js).
 function parseOwnerRepo(repoUrl) {
-  const [, owner, repo] = (repoUrl || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
-  return owner && repo ? { owner, repo } : null;
+  return repoRef.ownerRepo(repoUrl);
 }
 
 // #136: platform-filed GitHub issues are authored by the bot account, but

@@ -19,10 +19,10 @@ const appAccess = require('../services/app-access');
 const communities = require('../services/communities');
 const requestSpecs = require('../services/request-specs');
 const { requestSpecLimiter } = require('../middleware/rate-limits');
+const repoRef = require('../services/repo-ref');
 
 function parseOwnerRepo(repoUrl) {
-  const [, owner, repo] = (repoUrl || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
-  return owner && repo ? { owner, repo: repo.replace(/\.git$/, '') } : null;
+  return repoRef.ownerRepo(repoUrl);
 }
 
 function issueNumberOf(req) {
