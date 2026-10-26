@@ -17,8 +17,10 @@
 //   3. lays each board's current text over them ('board');
 //   4. closes the twins a board no longer listed as open. Three copies of a
 //      board were rescued and they do not always agree, so a request open in
-//      ANY of them stays open: a stale open request is the lesser harm.
-//      Only for a board read in full (not a truncated list).
+//      ANY of them stays open: a stale open request is the lesser harm. Only
+//      for a board read in full (not a truncated list), with at least one
+//      open request (an empty list read as the suspension began proves
+//      nothing), and only twins filed before the list was read.
 //
 // Request text is user content: the file is written 0600 next to the
 // rescue, and goes nowhere but the primary.
@@ -51,7 +53,7 @@ for (const a of apps) {
 // Every copy of every board: { slug -> { rows: Map(number -> row), complete, copies } }
 const boards = new Map();
 function board(slug) {
-  if (!boards.has(slug)) boards.set(slug, { rows: new Map(), complete: false, openIn: new Map() });
+  if (!boards.has(slug)) boards.set(slug, { rows: new Map(), complete: false, openIn: new Map(), readAt: null });
   return boards.get(slug);
 }
 function take(slug, r, { copy, open }) {
@@ -93,6 +95,12 @@ for (const f of fs.existsSync(condDir) ? fs.readdirSync(condDir).filter((f) => f
     if (!slug || !entry || !entry.result) continue;
     for (const r of entry.result.issues || []) take(slug, r, { copy: d.pod, open: true });
     if (!entry.result.truncatedList) board(slug).complete = true;
+    // When this copy of the list was read: its cache entry expired five
+    // minutes after the read.
+    if (Number(entry.expiresAt) > 0) {
+      const at = new Date(Number(entry.expiresAt) - 5 * 60 * 1000).toISOString();
+      if (!board(slug).readAt || at > board(slug).readAt) board(slug).readAt = at;
+    }
   }
   // Single reads: closed requests too, with their full text.
   for (const [key, entry] of Object.entries((d.maps && d.maps.singleIssueCache) || {})) {
@@ -133,6 +141,7 @@ const lines = [
 ];
 let total = 0;
 let closingBoards = 0;
+const emptyBoards = [];
 for (const [slug, b] of [...boards.entries()].sort()) {
   const rows = [...b.rows.values()].sort((x, y) => x.number - y.number);
   if (rows.length) {
@@ -148,12 +157,15 @@ ON CONFLICT (app_id, number) DO UPDATE SET title = EXCLUDED.title, body = EXCLUD
   updated_at = EXCLUDED.updated_at, closed_at = EXCLUDED.closed_at, source = 'board', recovered_partial = FALSE;`);
     total += rows.length;
   }
-  if (b.complete) {
+  if (b.complete && b.openIn.size > 0) {
     const open = [...b.openIn.keys()];
     lines.push(`UPDATE requests SET state = 'closed', state_reason = 'completed', closed_at = COALESCE(closed_at, NOW())
  WHERE app_id = (SELECT id FROM apps WHERE slug = ${q(slug)}) AND state = 'open' AND source = 'twin'
-   AND NOT (number = ANY(ARRAY[${open.join(', ')}]::int[]));`);
+   AND NOT (number = ANY(ARRAY[${open.join(', ')}]::int[]))${b.readAt ? `
+   AND created_at < ${ts(b.readAt)}` : ''};`);
     closingBoards += 1;
+  } else if (b.complete) {
+    emptyBoards.push(slug);
   }
 }
 lines.push(`SELECT COUNT(*) FILTER (WHERE source = 'board') AS from_boards, COUNT(*) FILTER (WHERE source = 'twin') AS from_twins,
@@ -161,4 +173,5 @@ lines.push(`SELECT COUNT(*) FILTER (WHERE source = 'board') AS from_boards, COUN
 lines.push('COMMIT;');
 fs.mkdirSync(path.dirname(out), { recursive: true, mode: 0o700 });
 fs.writeFileSync(out, `${lines.join('\n')}\n`, { mode: 0o600 });
-console.log(`${files} copies read; ${boards.size} boards, ${total} requests; ${closingBoards} boards close their stale twins -> ${out}`);
+console.log(`${files} copies read; ${boards.size} boards, ${total} requests; ${closingBoards} boards close their stale twins; `
+  + `${emptyBoards.length} empty boards keep theirs -> ${out}`);
