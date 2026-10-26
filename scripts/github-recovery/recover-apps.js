@@ -104,7 +104,15 @@ function treeEntries(mirror, sha) {
 function buildCommit({ app, filesDir, repoDir, mirror, manifest, imageRef, newRepoUrl = null }) {
   fs.rmSync(repoDir, { recursive: true, force: true });
   execFileSync('git', ['init', '-q', '-b', 'main', repoDir]);
-  fs.cpSync(filesDir, repoDir, { recursive: true, verbatimSymlinks: true });
+  // Some images hold the checkout they were built from, .git and all (a
+  // shallow clone on a branch named after the commit). Copied in, it
+  // replaced this repository's own: the recovered commit sat on that
+  // shallow history, and the git host refuses a push from a shallow clone.
+  fs.cpSync(filesDir, repoDir, {
+    recursive: true,
+    verbatimSymlinks: true,
+    filter: (src) => !path.relative(filesDir, src).split(path.sep).includes('.git'),
+  });
   fs.rmSync(path.join(repoDir, '.git', 'index'), { force: true });
   if (manifest && !fs.existsSync(path.join(repoDir, 'dapp.json'))) {
     fs.writeFileSync(path.join(repoDir, 'dapp.json'), `${JSON.stringify(manifest, null, 2)}\n`);
