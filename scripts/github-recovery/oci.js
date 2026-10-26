@@ -46,9 +46,18 @@ function manifestFor(layout, digest) {
   return doc;
 }
 
+// A layer's member names as the archive spells them.
+function rawNames(file) {
+  return execFileSync('tar', ['-tf', file], { maxBuffer: 512 * 1024 * 1024 }).toString('utf8').split('\n').filter(Boolean);
+}
+
+// Some builders write absolute names (/workspace/...), others ./ or bare.
+function normal(name) {
+  return name.replace(/^\.?\/+/, '');
+}
+
 function listLayer(file) {
-  return execFileSync('tar', ['-tf', file], { maxBuffer: 512 * 1024 * 1024 }).toString('utf8')
-    .split('\n').map((l) => l.replace(/^\.\//, '')).filter(Boolean);
+  return rawNames(file).map(normal).filter(Boolean);
 }
 
 /**
@@ -78,7 +87,8 @@ function extractRoot(layout, manifest, root, dest) {
   const prefix = `${root}/`;
   for (const layer of manifest.layers || []) {
     const file = blobPath(layout, layer.digest);
-    const entries = listLayer(file).filter((e) => e === root || e.startsWith(prefix));
+    const raw = rawNames(file).filter((n) => { const e = normal(n); return e === root || e.startsWith(prefix); });
+    const entries = raw.map(normal);
     if (!entries.length) continue;
     for (const entry of entries) {
       const rel = entry.slice(prefix.length);
@@ -93,8 +103,15 @@ function extractRoot(layout, manifest, root, dest) {
     }
     const tmp = fs.mkdtempSync(path.join(path.dirname(dest), '.layer-'));
     try {
-      execFileSync('tar', ['-xf', file, '-C', tmp, '--exclude', '*.wh.*', '--include', root, '--include', `${root}/*`],
-        { maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'ignore', 'pipe'] });
+      // Exactly the members under root, as the archive names them; the
+      // whiteouts were applied above and are not files.
+      const names = raw.filter((n) => !path.posix.basename(normal(n)).startsWith('.wh.'));
+      const list = path.join(tmp, '.names');
+      fs.writeFileSync(list, `${names.join('\n')}\n`);
+      if (names.length) {
+        execFileSync('tar', ['-xf', file, '-C', tmp, '-T', list], { maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'ignore', 'pipe'] });
+      }
+      fs.rmSync(list, { force: true });
       const from = path.join(tmp, root);
       if (fs.existsSync(from)) {
         // Layers can leave directories read-only; the next one writes into them.
