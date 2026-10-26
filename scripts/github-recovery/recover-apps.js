@@ -101,7 +101,7 @@ function treeEntries(mirror, sha) {
 
 // Build the recovered commit for one app in `repoDir` from the files in
 // `filesDir`. Resolves { sha, tree, missing, extra, treeMatches }.
-function buildCommit({ app, filesDir, repoDir, mirror, manifest, imageRef }) {
+function buildCommit({ app, filesDir, repoDir, mirror, manifest, imageRef, newRepoUrl = null }) {
   fs.rmSync(repoDir, { recursive: true, force: true });
   execFileSync('git', ['init', '-q', '-b', 'main', repoDir]);
   fs.cpSync(filesDir, repoDir, { recursive: true, verbatimSymlinks: true });
@@ -133,8 +133,28 @@ function buildCommit({ app, filesDir, repoDir, mirror, manifest, imageRef }) {
     fs.writeFileSync(path.join(repoDir, '.git', 'info', 'exclude'), `${STANDARD_EXCLUDES.join('\n')}\n`);
     git(repoDir, 'add', '-A');
   }
+  // Whether the image gave back exactly GitHub main's tree, before the repairs below.
+  treeMatches = !!(mirror && git(repoDir, 'write-tree') === tryGit(mirror, 'rev-parse', `${app.main_sha}^{tree}`));
+  // The template's own files a Dockerfile image leaves out (.claude/,
+  // services/template.js getConnectorScaffoldFiles), restored where missing,
+  // and the canonical-repository pointer naming the new home, never GitHub.
+  const template = require('../../src/services/template');
+  const restored = [];
+  for (const f of template.getConnectorScaffoldFiles()) {
+    const dest = path.join(repoDir, f.path);
+    if (fs.existsSync(dest)) continue;
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    fs.writeFileSync(dest, f.content, f.path.endsWith('.sh') ? { mode: 0o755 } : undefined);
+    restored.push(f.path);
+  }
+  const pointer = newRepoUrl && template.getCanonicalRepoFile(newRepoUrl);
+  if (pointer) {
+    fs.mkdirSync(path.dirname(path.join(repoDir, pointer.path)), { recursive: true });
+    fs.writeFileSync(path.join(repoDir, pointer.path), pointer.content);
+  }
+  for (const p of [...restored, ...(pointer ? [pointer.path] : [])]) git(repoDir, 'add', '-f', '--', p);
+  missing = missing.filter((p) => !restored.includes(p) && p !== (pointer && pointer.path));
   const tree = git(repoDir, 'write-tree');
-  treeMatches = !!(mirror && tree === tryGit(mirror, 'rev-parse', `${app.main_sha}^{tree}`));
   const message = [
     `Recovered from image ${imageRef}`,
     '',
@@ -144,13 +164,14 @@ function buildCommit({ app, filesDir, repoDir, mirror, manifest, imageRef }) {
     `GitHub main was ${app.main_sha || 'unknown'}.`,
     treeMatches ? 'The tree is exactly GitHub main\'s tree.' : null,
     missing.length ? `Not in the image, so not here: ${missing.slice(0, 40).join(', ')}${missing.length > 40 ? ', ...' : ''}` : null,
+    restored.length ? `Restored from the template: ${restored.join(', ')}` : null,
   ].filter((l) => l !== null).join('\n');
   // Fixed dates: the same files make the same commit on every run, so a
   // re-run finds its own commit already on the git host.
   execFileSync('git', ['-C', repoDir, '-c', 'user.name=Homeroom', '-c', 'user.email=homeroom@users.noreply.onhomeroom.com',
     'commit', '-q', '--no-verify', '--allow-empty', '-m', message],
   { env: { ...process.env, GIT_AUTHOR_DATE: RECOVERED_AT, GIT_COMMITTER_DATE: RECOVERED_AT } });
-  return { sha: git(repoDir, 'rev-parse', 'HEAD'), tree, missing, extra, treeMatches };
+  return { sha: git(repoDir, 'rev-parse', 'HEAD'), tree, missing, extra, treeMatches, restored };
 }
 
 function isSymlink(p) {
@@ -214,6 +235,7 @@ async function main() {
         const mirror = mirrorWith(opt.rescue, owner, repo, app.main_sha);
         const built = buildCommit({
           app, filesDir: path.join(work, 'files'), repoDir, mirror, manifest: manifests.get(app.slug) || null, imageRef: app.image_ref,
+          newRepoUrl: process.env.GIT_HOST_URL ? `${process.env.GIT_HOST_URL.replace(/\/+$/, '')}/${process.env.GIT_HOST_ORG || 'apps'}/${repo}` : null,
         });
         row = { outcome: 'recovered', ...built, dir: repoDir, image: app.image_ref, note: `${root}/${mirror ? ', mirror tree' : ', .gitignore'}` };
       }
