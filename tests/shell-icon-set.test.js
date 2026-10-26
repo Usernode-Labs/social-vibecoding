@@ -397,6 +397,10 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     'M18.364 18.364A9 9 0 0 0 5.636 5.636m12.728 12.728A9 9 0 0 1 5.636 5.636m12.728 12.728L5.636 5.636',
     'M21 8.25c0-2.485-2.099-4.5-4.688-4.5-1.935 0-3.597 1.126-4.312 2.733-.715-1.607-2.377-2.733-4.313-2.733C5.1 3.75 3 5.765 3 8.25c0 7.22 9 12 9 12s9-4.78 9-12Z',
     'M17 8h1a4 4 0 1 1 0 8h-1',
+    // CodeIcon (26 Oct 2026): the neutral mark for code on Homeroom's own git
+    // host, beside GitHub's for a repository still there (the About pane's
+    // Code row), drawn only once the menu's About pane opens on an app.
+    'M17.25 6.75L22.5 12l-5.25 5.25m-10.5 0L1.5 12l5.25-5.25m7.5-3l-4.5 16.5',
     'M3 8h14v9a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4V8Z',
     'M7 2v2M11 2v2M15 2v2',
     // THE FULL-WIDTH TOGGLE (#2387 follow-up): arrows out, and arrows in once

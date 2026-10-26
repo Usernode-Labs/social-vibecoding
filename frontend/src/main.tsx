@@ -153,6 +153,10 @@ import './lib/reset-time';
 // app goes live, in the one sentence every surface says it in, for the board
 // and the change page's classic script (public/js/app-view.js).
 import './lib/release-eta';
+// Publishes window.RepoLink: whether a repository, change, request or commit
+// link is GitHub's, a Homeroom page or the git host's code, for the classic
+// scripts that label those links (public/js/app-view.js, group-chat.js).
+import './lib/repo-link.js';
 // #4177: the one place that re-reads what is on screen after a gap
 // (window.UsernodeReact.liveReads). Before DOMContentLoaded, because the
 // group chat registers with it the first time a channel connects.
