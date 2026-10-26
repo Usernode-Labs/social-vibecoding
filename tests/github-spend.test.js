@@ -206,8 +206,10 @@ async function sweepStuckProposals() {
   return pr;
 }
 
-async function readOneIssue() {
-  const out = await github.fetchPublicIssue('usernode-bot', 'spend-issue', 9);
+// A raw fetch read: requests left GitHub (26 Oct 2026), so the one that
+// read an issue is gone; the repository-name prefill still reads raw.
+async function readRepoInfo() {
+  const out = await github.fetchPublicRepoInfo('usernode-bot', 'spend-repo');
   return out;
 }
 
@@ -232,18 +234,18 @@ test('the caller is the code that asked, past services/github.js, two frames dee
 });
 
 test('a raw fetch read is counted against its caller and endpoint too', async (t) => {
-  withEnv(t, 'GITHUB_BOT_TOKEN', 'bot-token');
-  withEnv(t, 'GITHUB_READS_VIA_APP', 'off');
-  const gh = rateFetch();
+  const gh = rateFetch(() => ({ body: { name: 'spend-repo', description: null } }));
   const realFetch = global.fetch;
   global.fetch = gh.fetchImpl;
   t.after(() => { global.fetch = realFetch; });
 
-  await readOneIssue();
-  const spend = budget.snapshot().credentials.find((r) => r.credential === 'pat').spend;
+  const info = await readRepoInfo();
+  assert.equal(info.name, 'spend-repo');
+  // The prefill reads anonymously on purpose (fetchPublicRepoInfo).
+  const spend = budget.snapshot().credentials.find((r) => r.credential === 'anonymous').spend;
   assert.equal(spend.counted, 1);
-  assert.match(spend.callers[0].caller, /^readOneIssue \(tests\/github-spend\.test\.js\)/);
-  assert.equal(spend.callers[0].endpoints[0].endpoint, 'GET /repos/{owner}/{repo}/issues/{n}');
+  assert.match(spend.callers[0].caller, /^readRepoInfo \(tests\/github-spend\.test\.js\)/);
+  assert.equal(spend.callers[0].endpoints[0].endpoint, 'GET /repos/{owner}/{repo}');
 });
 
 test('the counting never breaks the request it describes', async (t) => {

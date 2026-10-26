@@ -185,22 +185,21 @@ test('a save queued behind another save checks expiry after obtaining the lock',
   assert.equal((await second).body.code, 'edit_window_closed');
   assert.equal(patches.length, 1);
 });
-test('the real GitHub helper sends title and body together, with safe mentions', async () => {
-  const oldFetch = global.fetch, oldToken = process.env.GITHUB_BOT_TOKEN;
-  process.env.GITHUB_BOT_TOKEN = 'test-only';
+// The edit used to PATCH the GitHub issue, title and body together, through
+// safeMention. A request is a row now (services/requests.js): the real
+// helper writes both at once, as written, and sends nothing to GitHub.
+test('the real request helper writes title and body together, and nothing reaches GitHub', async (t) => {
+  const { installFakeRequests } = require('./helpers/fake-requests');
+  const fake = installFakeRequests(t, { 'owner/demo': [{ number: 41, title: 'Helo', body: 'Wrods' }] });
+  const oldFetch = global.fetch;
   const calls = [];
-  global.fetch = async (url, options) => {
-    calls.push({ url, options });
-    return { ok: true, status: 200, headers: new Headers() };
-  };
+  global.fetch = async (url, options) => { calls.push({ url, options }); return { ok: false, status: 599, headers: new Headers() }; };
   try {
     await realPatch('owner', 'demo', 41, { title: 'Hello @somebody', body: 'Words @somebody' });
-    assert.equal(calls.length, 1);
-    assert.equal(calls[0].options.method, 'PATCH');
-    const content = JSON.parse(calls[0].options.body);
-    assert.deepEqual(content, { title: github.safeMention('Hello @somebody'), body: github.safeMention('Words @somebody') });
+    assert.equal(calls.length, 0);
+    const [row] = fake.board('owner', 'demo');
+    assert.deepEqual({ title: row.title, body: row.body }, { title: 'Hello @somebody', body: 'Words @somebody' });
   } finally {
     global.fetch = oldFetch;
-    if (oldToken === undefined) delete process.env.GITHUB_BOT_TOKEN; else process.env.GITHUB_BOT_TOKEN = oldToken;
   }
 });

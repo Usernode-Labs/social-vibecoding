@@ -324,17 +324,27 @@ test('a test double without the hook API passes through untouched', () => {
   assert.equal(github._instrumentForTests(fake, 'pat'), fake);
 });
 
+// The raw reads this used to drive (fetchPublicIssue, fetchIssueComments)
+// left GitHub with requests on 26 Oct 2026. The raw path other services
+// take (services/external-agent-tasks.js: publicApiHeaders,
+// publicApiCredential and githubFetch) and the repository-name prefill
+// (fetchPublicRepoInfo) still read GitHub raw.
 test('the raw fetch reads record against the bot token, or anonymous without one', async (t) => {
   const realFetch = global.fetch;
   t.after(() => { global.fetch = realFetch; });
   withEnv(t, 'GITHUB_BOT_TOKEN', 'test-token');
-  global.fetch = fakeFetch([{ status: 200, body: { number: 7, title: 'x', state: 'open' }, headers: headers({ remaining: 4321, reset: liveReset() }) }]);
-  await github.fetchPublicIssue('o', 'budget-a', 7);
+  global.fetch = fakeFetch([{ status: 200, body: { name: 'budget-a' }, headers: headers({ remaining: 4321, reset: liveReset() }) }]);
+  const credential = github.publicApiCredential();
+  assert.equal(credential, 'pat');
+  const url = 'https://api.github.com/repos/o/budget-a';
+  const resp = await github.githubFetch(credential, url, { headers: github.publicApiHeaders() });
+  github.recordFetchResponse(credential, resp, { url });
   assert.equal(budget.core('pat').remaining, 4321);
 
   delete process.env.GITHUB_BOT_TOKEN;
-  global.fetch = fakeFetch([{ status: 200, body: [], headers: headers({ limit: 60, remaining: 59, reset: liveReset() }) }]);
-  await github.fetchIssueComments('o', 'budget-b', 7);
+  assert.equal(github.publicApiCredential(), 'anonymous');
+  global.fetch = fakeFetch([{ status: 200, body: { name: 'budget-b' }, headers: headers({ limit: 60, remaining: 59, reset: liveReset() }) }]);
+  assert.equal((await github.fetchPublicRepoInfo('o', 'budget-b')).name, 'budget-b');
   assert.equal(budget.core('anonymous').remaining, 59);
 });
 
