@@ -32,6 +32,7 @@ const turnEffects = require('../turn-effects');
 const userAgentFiles = require('../user-agent-files');
 const worker = require('../worker');
 const workerProgress = require('../worker-progress');
+const repoRef = require('../repo-ref');
 const {
   activeWorkers,
   beginSessionOperation,
@@ -381,21 +382,21 @@ async function runMayorTurn(ctx, deps) {
 
   try {
     // Parse repo info
-    const [, repoOwner, repoName] = (session.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
+    const { owner: repoOwner, repo: repoName } = repoRef.ownerRepo(session.repo_url) || {};
 
     if (!repoOwner || !repoName) {
-      // Structural, not transient: the app has no GitHub repo (repo
+      // Structural, not transient: the app has no repo (repo
       // provisioning failed at creation — the app-heal sweep repairs
       // this within a tick or two). The old SSE-only 'error' event
       // died with the stream and left no server-side trace, so these
       // dead turns were invisible everywhere (session 2585). Persist
       // a status row that survives refresh and end the turn cleanly
       // so 'done' hooks (notifySessionDone) still fire.
-      log.warn('sessions', 'Chat turn refused: app has no GitHub repo', {
+      log.warn('sessions', 'Chat turn refused: app has no repo', {
         sessionId: session.id, appSlug: session.app_slug,
       });
       await sendStatus(
-        'This turn can’t run: the app has no GitHub repository (repo provisioning failed when the app was created). The platform repairs this automatically, so try again in a few minutes.',
+        'This turn can’t run: the app has no repository (repo provisioning failed when the app was created). The platform repairs this automatically, so try again in a few minutes.',
         { turnError: true }
       );
       send('done', {});

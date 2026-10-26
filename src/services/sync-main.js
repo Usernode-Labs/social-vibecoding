@@ -27,6 +27,7 @@ const log = require('./logger');
 const worker = require('./worker');
 const limits = require('./limits');
 const events = require('./events');
+const repoRef = require('./repo-ref');
 
 // The worker's "[sync_*]" phase markers, as the timeline's progress lines
 // and as the banner's coarse phases (merging → resolving → pushing).
@@ -199,9 +200,9 @@ async function runSyncWork(config, pool, {
   let session = await loadSession(pool, id);
   if (!session) return { outcome: 'gone' };
   if (!session.repo_url || !session.branch_name) return { outcome: 'gone' };
-  const m = session.repo_url.match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/);
+  const m = repoRef.ownerRepo(session.repo_url);
   if (!m) return { outcome: 'gone' };
-  const [, repoOwner, repoName] = m;
+  const { owner: repoOwner, repo: repoName } = m;
 
   // The platform's own syncs for a failure main may have caused: only a head
   // behind main that merges with it cleanly is synced (boot-failure-sync.js,

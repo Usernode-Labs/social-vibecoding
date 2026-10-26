@@ -39,10 +39,10 @@ const github = require('./github');
 const githubMock = require('./github-mock');
 const { usesMockGithubForImports } = require('../config');
 const { sameSha } = require('./pr-vote-revision');
+const repoRef = require('./repo-ref');
 
 function parseRepo(url) {
-  const [, owner, repo] = (url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
-  return owner && repo ? { owner, repo } : null;
+  return repoRef.ownerRepo(url);
 }
 
 // #687: talk to the in-memory mock GitHub source in staging previews (no

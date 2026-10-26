@@ -120,7 +120,7 @@ test('the value is trimmed before any rule looks at it', () => {
 test('GitHub preconditions match the other manifest-PR routes', () => {
   assert.match(route, /!github\.isEnabled\(\) \|\| !process\.env\.GITHUB_BOT_TOKEN/);
   assert.match(route, /res\.status\(503\)/);
-  assert.match(route, /App has no GitHub repository to open a PR against/);
+  assert.match(route, /App has no repository to open a PR against/);
   assert.match(route, /Could not parse the app repository URL/);
 });
 

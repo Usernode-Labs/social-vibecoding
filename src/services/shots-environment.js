@@ -21,6 +21,7 @@ const stagingEnv = require('./staging-env');
 const shotsFixtures = require('./shots-fixtures');
 const shotsDemoStates = require('./shots-demo-states');
 const { getPool } = require('../db/pool');
+const repoRef = require('./repo-ref');
 
 const IMAGE_RECIPE = 'v1';
 const SHOTS_LABEL = 'social.usernode.io/shots-run';
@@ -56,9 +57,9 @@ function exactSha(value, label = 'revision') {
 }
 
 function repoParts(repoUrl) {
-  const match = String(repoUrl || '').match(/^https:\/\/github\.com\/([^/]+)\/([^/#]+?)(?:\.git)?$/i);
-  if (!match) throw new ShotsEnvironmentError('invalid_shots_repository', 'Before/after shots need an HTTPS GitHub repository.');
-  return { owner: match[1], repo: match[2] };
+  const ref = repoRef.ownerRepo(repoUrl);
+  if (!ref) throw new ShotsEnvironmentError('invalid_shots_repository', 'Before/after shots need a repository.');
+  return ref;
 }
 
 function runtimeName(runId, side, kind = 'docker') {

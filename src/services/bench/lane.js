@@ -733,7 +733,7 @@ async function executeTrial(pool, config, trialRow, deps = {}) {
     if (!row) throw new Error('the trial is gone');
     if (!row.app_id) throw new Error('the task\'s app is gone');
     const repo = bot.parseRepo(row.repo_url);
-    if (!repo) throw new Error('the app has no GitHub repository');
+    if (!repo) throw new Error('the app has no repository');
     const snapshot = await snapshots.readSnapshot(pool, row.snapshot_id);
     if (!snapshot) throw new Error('the task\'s snapshot is gone');
     user = deps.user || await runner.ensureBenchUser(pool, config);

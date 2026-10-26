@@ -6,6 +6,7 @@
 
 const appAccess = require('./app-access');
 const github = require('./github');
+const repoRef = require('./repo-ref');
 
 const MAX_ID = 2147483647;
 const TYPE_ALIASES = new Map([
@@ -75,8 +76,7 @@ function publicType(type) {
 }
 
 function parseRepo(url) {
-  const match = String(url || '').match(/github\.com[/:]([^/]+)\/([^/#]+?)(?:\.git)?$/i);
-  return match ? { owner: match[1], repo: match[2] } : null;
+  return repoRef.ownerRepo(url);
 }
 
 // B4: a change's status, as people read it on its card.

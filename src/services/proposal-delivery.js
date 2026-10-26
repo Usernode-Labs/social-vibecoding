@@ -5,6 +5,7 @@ const appDeployStatus = require('./app-deploy-status');
 const github = require('./github');
 const mirror = require('./repo-mirror');
 const log = require('./logger');
+const repoRef = require('./repo-ref');
 
 const SOURCE_REVISION_LABEL = 'social.usernode.io/source-revision';
 const fullSha = value => /^[a-f0-9]{40}$/i.test(String(value || ''))
@@ -18,7 +19,7 @@ function failureSha(value) {
 }
 
 function createDelivery({ runtime = applicationRuntime, progress = appDeployStatus,
-  git = mirror, parseRepo = github.parseGithubUrl } = {}) {
+  git = mirror, parseRepo = repoRef.ownerRepo } = {}) {
   async function annotateChild(config, pool, app, rows) {
     let runningSha = null;
     try {

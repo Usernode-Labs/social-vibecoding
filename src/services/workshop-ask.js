@@ -34,6 +34,7 @@ const github = require('./github');
 const limits = require('./limits');
 const llm = require('./llm');
 const log = require('./logger');
+const repoRef = require('./repo-ref');
 
 // Caps keep one question's prompt bounded. A voter's question is about the
 // shape of a change, not a code review, and an issue body that runs to
@@ -78,8 +79,7 @@ const clip = (v, n) => {
 };
 
 function parseOwnerRepo(repoUrl) {
-  const m = String(repoUrl || '').match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/);
-  return m ? { owner: m[1], repo: m[2] } : null;
+  return repoRef.ownerRepo(repoUrl);
 }
 
 /**

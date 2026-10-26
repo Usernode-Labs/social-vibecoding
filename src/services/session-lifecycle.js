@@ -16,12 +16,13 @@ const log = require('./logger');
 const staging = require('./staging');
 const github = require('./github');
 const branchNames = require('./branch-names');
+const repoRef = require('./repo-ref');
 
-// Parse "owner/repo" out of a stored GitHub repo URL. Returns [owner,
-// repo] or [] when the URL is missing/unparseable.
+// Parse "owner/repo" out of a stored repo URL. Returns [owner, repo] or
+// [] when the URL is missing/unparseable.
 function ownerRepo(repoUrl) {
-  const [, owner, repo] = (repoUrl || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
-  return owner && repo ? [owner, repo] : [];
+  const ref = repoRef.ownerRepo(repoUrl);
+  return ref ? [ref.owner, ref.repo] : [];
 }
 
 function platform() {

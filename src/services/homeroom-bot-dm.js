@@ -47,6 +47,7 @@
 
 const log = require('./logger');
 const conversations = require('./conversations');
+const repoRef = require('./repo-ref');
 // Newcomer run five: a first version's stages, as they happen.
 const timeline = require('./first-version-timeline');
 const notifyCopy = require('./homeroom-bot-notify-copy');
@@ -923,8 +924,7 @@ async function requestTitleFor(pool, app, issueNumber, deps = {}) {
         const { rows: found } = await pool.query('SELECT repo_url FROM apps WHERE id = $1', [app.id]);
         repoUrl = found[0]?.repo_url || null;
       }
-      const repo = repoUrl && typeof github.parseGithubUrl === 'function' && github.isEnabled?.() !== false
-        ? github.parseGithubUrl(repoUrl) : null;
+      const repo = repoUrl && github.isEnabled?.() !== false ? repoRef.ownerRepo(repoUrl) : null;
       if (repo && typeof github.fetchPublicIssue === 'function') {
         const fetched = await github.fetchPublicIssue(repo.owner, repo.repo, n);
         title = fetched?.issue?.title || null;
@@ -4408,8 +4408,7 @@ async function botWaitingOn(pool, app, n, deps = {}) {
     const { rows } = await pool.query('SELECT repo_url FROM apps WHERE id = $1', [app.id]).catch(() => ({ rows: [] }));
     repoUrl = rows[0]?.repo_url || null;
   }
-  const repo = repoUrl && typeof github.parseGithubUrl === 'function' && github.isEnabled?.() !== false
-    ? github.parseGithubUrl(repoUrl) : null;
+  const repo = repoUrl && github.isEnabled?.() !== false ? repoRef.ownerRepo(repoUrl) : null;
   return require('./homeroom-bot-addressed').waitingOnRequest(pool, {
     appId: app.id, issueNumber: n, botId: bot.id, github, repo,
   });
@@ -5178,11 +5177,7 @@ async function fileFirstRequest(pool, config, appId, { steps, last = false, deps
       const { rows: [now] } = await pool.query('SELECT status FROM homeroom_bot_first_versions WHERE app_id = $1', [appId]);
       throw Object.assign(new Error(`it is ${now?.status ?? 'gone'}`), { settled: now?.status ?? 'none' });
     });
-    const parsed = (typeof github.parseGithubUrl === 'function' && row.repo_url && github.parseGithubUrl(row.repo_url))
-      || (() => {
-        const m = String(row.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/);
-        return m ? { owner: m[1], repo: m[2] } : null;
-      })();
+    const parsed = repoRef.ownerRepo(row.repo_url);
     if (!parsed || !github.isEnabled()) throw new Error('github_unavailable');
     const marker = firstRequestMarker(appId);
     const issueNumber = await steps.once('issue', async () => {

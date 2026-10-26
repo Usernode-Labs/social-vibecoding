@@ -18,6 +18,7 @@ const branchNames = require('../services/branch-names');
 const externalAgentHead = require('../services/external-agent-head');
 const topicAttrs = require('../services/topic-attributes');
 const visibleChangesContract = require('../services/visible-changes');
+const repoRef = require('../services/repo-ref');
 // The connector-error → HTTP status map. It lives in routes/dev-flow.js
 // because tests/dev-flow-routes.test.js scrapes the services' emitted codes
 // against it in both directions; importing it here rather than restating it is
@@ -538,7 +539,7 @@ function parseUpdateFromForkBody(body) {
 }
 
 function repoCoordinates(app) {
-  return github.parseGithubUrl(app && app.repo_url);
+  return repoRef.ownerRepo(app && app.repo_url);
 }
 
 function accessRow(session) {

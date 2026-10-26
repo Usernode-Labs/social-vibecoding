@@ -25,6 +25,7 @@
 
 const log = require('./logger');
 const { KUDOS_PARKED } = require('./kudos-parked');
+const repoRef = require('./repo-ref');
 
 const MAX_TITLE_CHARS = 200;
 // GitHub's own limit on an issue's body, less room for the footer.
@@ -42,8 +43,7 @@ function botModule(deps) { return deps.botSvc || require('./homeroom-bot'); }
 function dmModule(deps) { return deps.dmSvc || require('./homeroom-bot-dm'); }
 
 function repoOf(app) {
-  const m = String(app?.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/);
-  return m ? { owner: m[1], repo: m[2] } : null;
+  return repoRef.ownerRepo(app?.repo_url);
 }
 
 function domainOf(deps) {

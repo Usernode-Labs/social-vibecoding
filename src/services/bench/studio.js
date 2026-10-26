@@ -45,6 +45,7 @@ const packs = require('./packs');
 const scaffold = require('./scaffold');
 const speed = require('./speed');
 const stageCosts = require('../stage-costs');
+const repoRef = require('../repo-ref');
 
 const SUITE_NAME = 'App bench studio';
 const HOST_KEY = 'default';
@@ -501,17 +502,16 @@ function repoOf(repoUrl) {
   return require('../homeroom-bot').parseRepo(repoUrl);
 }
 
-/** Where a trial's code is on GitHub, while its branch is there. Pure. */
+/** Where a trial's code is on its host, while its branch is there. Pure. */
 function codeLinks(row) {
   const repo = repoOf(row.repo_url);
   if (!repo || !row.build_branch || row.branch_deleted_at) return null;
-  const base = `https://github.com/${repo.owner}/${repo.repo}`;
   const head = row.build_sha || row.capture_sha || null;
   return {
     branch: row.build_branch,
     sha: head,
-    treeUrl: `${base}/tree/${encodeURIComponent(row.build_branch).replace(/%2F/g, '/')}`,
-    compareUrl: row.base_sha && head ? `${base}/compare/${row.base_sha}...${head}` : null,
+    treeUrl: repoRef.treeUrl(row.repo_url, row.build_branch),
+    compareUrl: row.base_sha && head ? repoRef.compareUrl(row.repo_url, row.base_sha, head) : null,
     kept: !!row.kept_at,
   };
 }
@@ -885,8 +885,8 @@ async function referenceOrder(pool, config, { runId, taskId, packId = 0, deps = 
       brief: input.brief,
       sketch: card ? { emoji: card.emoji || null, tagline: card.tagline || null, points: card.points || [] } : null,
       start: {
-        repoUrl: `https://github.com/${repo.owner}/${repo.repo}`,
-        cloneUrl: `https://github.com/${repo.owner}/${repo.repo}.git`,
+        repoUrl: repoRef.webUrl(task.repo_url),
+        cloneUrl: repoRef.cloneUrl(task.repo_url, { internal: false }),
         branch: ready.branch,
         sha: ready.sha,
       },

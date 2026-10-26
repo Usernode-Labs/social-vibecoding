@@ -10,21 +10,19 @@
 
 const log = require('./logger');
 const github = require('./github');
+const repoRef = require('./repo-ref');
 
-// Derive `owner/repo` from a github.com URL. The route does this at
+// Derive `owner/repo` from a github.com URL (the platform's own repository:
+// its feedback is filed as GitHub issues). The route does this at
 // route-factory load, so a malformed USERNODE_PLATFORM_REPO fails the
 // platform fast at startup rather than 500-ing the first time a user clicks
 // "Send feedback".
 function parseGitHubRepo(url) {
-  const u = new URL(url);
-  if (u.hostname !== 'github.com' && u.hostname !== 'www.github.com') {
+  const ref = repoRef.parse(url);
+  if (!ref || ref.host !== 'github') {
     throw new Error(`Expected github.com URL, got: ${url}`);
   }
-  const parts = u.pathname.replace(/\.git$/, '').split('/').filter(Boolean);
-  if (parts.length < 2) {
-    throw new Error(`Expected /<owner>/<repo> path, got: ${url}`);
-  }
-  return { owner: parts[0], repo: parts[1] };
+  return { owner: ref.owner, repo: ref.repo };
 }
 
 /**

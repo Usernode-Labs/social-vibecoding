@@ -30,7 +30,7 @@ const PATHS = [
   // An agent's drafted report, once a person confirms it.
   ['src/routes/sessions.js', /issueAnnounce\.announceIssueCreated\(pool, owner, repo, issue,/, 1, 'notifyIssueMentions'],
   // Homeroom bot filing a request from a DM or a project's chat.
-  ['src/services/homeroom-bot-mayor.js', /github\.createIssue\(m\[1\], m\[2\], \{/, 1, 'notifyIssueFiled'],
+  ['src/services/homeroom-bot-mayor.js', /github\.createIssue\(m\.owner, m\.repo, \{/, 1, 'notifyIssueFiled'],
   // A project's first request, from its creator's description.
   ['src/services/homeroom-bot-dm.js', /github\.createIssue\(parsed\.owner, parsed\.repo, \{/, 1, 'notifyIssueMentions'],
   // Homeroom bot filing a report to the Homeroom team for a person.

@@ -14,6 +14,7 @@ const { getPool } = require('../db/pool');
 const { sniffImageType, sniffVideoType } = require('../services/attachments');
 const { feedbackTitleLimiter, feedbackSubmitLimiter, issueScreenshotLimiter, feedbackVideoLimiter } = require('../middleware/rate-limits');
 const challengeScorer = require('../services/topochain/challenge-scorer');
+const repoRef = require('../services/repo-ref');
 // #11 (WP3): the platform issue and its receipt, shared with the Homeroom
 // bot's report_problem, which files through the service rather than here.
 const { parseGitHubRepo, createPlatformIssue, recordFeedbackReport } = require('../services/feedback-reports');
@@ -516,10 +517,10 @@ const MY_FEEDBACK_SELF_APP_SQL = `
    LIMIT 1
 `;
 
-// Pure (exported for tests): whether `repoUrl` is github.com/<owner>/<repo>,
+// Pure (exported for tests): whether `repoUrl` is <owner>/<repo>'s address,
 // with the case and `.git` tolerance findAppByRepo applies.
 function repoMatches(repoUrl, owner, repo) {
-  const [, o, r] = String(repoUrl || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
+  const { owner: o, repo: r } = repoRef.ownerRepo(repoUrl) || {};
   if (!o || !r || !owner || !repo) return false;
   const norm = (s) => String(s).replace(/\.git$/, '').toLowerCase();
   return norm(o) === norm(owner) && norm(r) === norm(repo);
@@ -922,7 +923,7 @@ function feedbackRoutes(config) {
         log.error('feedback', 'Membership check failed', { message: err.message });
         return res.status(500).json({ error: 'Internal server error' });
       }
-      const [, owner, repo] = (appRow.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
+      const { owner, repo } = repoRef.ownerRepo(appRow.repo_url) || {};
       if (!owner || !repo) {
         return res.status(409).json({ error: 'This app has no repository yet. Try platform feedback instead' });
       }

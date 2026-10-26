@@ -20,6 +20,7 @@ const { reviewedHeadForSession } = require('../services/pr-vote-revision');
 const { drainGuard } = require('../services/lifecycle');
 const votes = require('./votes');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
+const repoRef = require('../services/repo-ref');
 
 // Demo mode — a synthetic partner, on one app, for recording the proposal
 // flow.
@@ -119,8 +120,7 @@ const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 
 // Owner/repo from an app's repo_url, or null. Same shape as routes/votes.js.
 function parseRepo(url) {
-  const [, owner, repo] = (url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
-  return owner && repo ? { owner, repo: repo.replace(/\.git$/, '') } : null;
+  return repoRef.ownerRepo(url);
 }
 
 // Branch names arrive from a connected agent. Git's own rules are looser

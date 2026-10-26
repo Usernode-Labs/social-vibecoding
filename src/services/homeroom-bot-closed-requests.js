@@ -53,6 +53,7 @@
 // request as closed when either its row or this record says so.
 
 const log = require('./logger');
+const repoRef = require('./repo-ref');
 
 const BOT_USERNAME = 'homeroom_bot';
 const REASON = 'request-closed';
@@ -87,8 +88,7 @@ const LINKED_TO_NONE_SQL = `
    ORDER BY cs.id`;
 
 function parseRepo(url) {
-  const m = String(url || '').match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/);
-  return m ? { owner: m[1], repo: m[2] } : null;
+  return repoRef.ownerRepo(url);
 }
 
 function numbersOf(list) {

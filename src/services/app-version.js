@@ -8,6 +8,8 @@
 // chat_sessions for PR context, so the UI can show a tooltip like
 // "PR #42 · Add leaderboard · @evan".
 
+const repoRef = require('./repo-ref');
+
 async function getAppVersion(pool, slug) {
   const { rows } = await pool.query(
     `SELECT id, slug, repo_url, main_sha, main_pr_number
@@ -40,10 +42,8 @@ async function getAppVersion(pool, slug) {
     }
   }
 
-  const [, owner, repo] = (app.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
-  const commitUrl = app.main_sha && owner && repo
-    ? `https://github.com/${owner}/${repo}/commit/${app.main_sha}`
-    : null;
+  const { owner, repo } = repoRef.ownerRepo(app.repo_url) || {};
+  const commitUrl = repoRef.commitUrl(app.repo_url, app.main_sha);
 
   return {
     sha: app.main_sha || null,

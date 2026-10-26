@@ -46,6 +46,8 @@
 // nothing, and a GitHub hiccup degrades the answer rather than failing the
 // caller's turn.
 
+const repoRef = require('./repo-ref');
+
 // A caller passes whatever `git rev-parse HEAD` printed. Accept an
 // abbreviated sha too — `git rev-parse --short HEAD` is just as likely to be
 // what is to hand, and GitHub's compare endpoint resolves either.
@@ -57,14 +59,13 @@ function normalizeSha(value) {
   return SHA_RE.test(s) ? s : null;
 }
 
-// Same-repository test, on owner/repo rather than on the URL string: the
-// four URL shapes parseGithubUrl accepts (https, https/, https.git, ssh) all
-// name the same repository, and a caller pasting the output of
-// `git remote get-url origin` may hand back any of them.
+// Same-repository test, on host and owner/repo rather than on the URL
+// string: the URL shapes services/repo-ref.js accepts (https, https/,
+// https.git, ssh) all name the same repository, and a caller pasting the
+// output of `git remote get-url origin` may hand back any of them.
 function sameRepo(a, b) {
   if (!a || !b) return null;
-  return a.owner.toLowerCase() === b.owner.toLowerCase()
-    && a.repo.toLowerCase() === b.repo.toLowerCase();
+  return repoRef.sameRepo(a, b);
 }
 
 /**
@@ -93,11 +94,11 @@ async function checkoutStatus(deps, params) {
     };
   }
 
-  const canonical = repoUrl ? gh.parseGithubUrl(repoUrl) : null;
+  const canonical = repoRef.parse(repoUrl);
   if (!canonical) {
     return {
       code: 'no_canonical_repo',
-      message: 'This app has no GitHub repository recorded, so there is nothing '
+      message: 'This app has no repository recorded, so there is nothing '
         + 'to compare a checkout against.',
     };
   }
@@ -108,14 +109,14 @@ async function checkoutStatus(deps, params) {
   //
   // `=== true` rather than the bare result, because there are THREE states
   // and only two of them are a boolean. A remote that was supplied but does
-  // not parse as a GitHub repository at all is definitively NOT the
+  // not parse as a repository address at all is definitively NOT the
   // canonical one — reporting that as `null` would say "you did not tell me"
   // about a caller who did.
-  const callerRemote = remoteUrl ? gh.parseGithubUrl(remoteUrl) : null;
+  const callerRemote = remoteUrl ? repoRef.parse(remoteUrl) : null;
   const remoteIsCanonical = remoteUrl ? (sameRepo(callerRemote, canonical) === true) : null;
 
   const answer = {
-    canonicalRepo: `https://github.com/${canonical.owner}/${canonical.repo}`,
+    canonicalRepo: repoRef.webUrl(canonical),
     defaultBranch: null,
     canonicalHead: null,
     canonicalHeadCommittedAt: null,
