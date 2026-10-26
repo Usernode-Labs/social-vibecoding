@@ -2,6 +2,7 @@
 
 const express = require('express');
 const { Router } = require('express');
+const { currentAppBridge } = require('../middleware/app-bridge');
 const { getPool } = require('../db/pool');
 const appAccess = require('../services/app-access');
 const platformJwt = require('../services/platform-jwt');
@@ -37,10 +38,10 @@ const log = require('../services/logger');
 // Scoped to the OWNING app's audience since the RSA cutover: a token
 // minted for app A no longer unlocks app B's private files, which is the
 // same cross-app replay hole app-llm-auth/app-storage-auth closed.
-function verifyUserToken(raw, appId) {
+function verifyUserToken(raw, appId, staging) {
   if (!raw || typeof raw !== 'string') return null;
   const claims = platformJwt.orNull(
-    () => platformJwt.verifyAppIdentityToken(raw, { appId })
+    () => platformJwt.verifyAppIdentityToken(raw, { appId, allowPreview: staging === true })
   );
   if (!claims || typeof claims.id !== 'number' || claims.scope) return null;
   return claims;
@@ -56,7 +57,7 @@ function appFileServeRoutes(config, deps = {}) {
     if (!/^[a-f0-9]{32}$/.test(id)) return res.status(404).end();
     try {
       const { rows } = await pool.query(
-        'SELECT app_id, filename, content_type, visibility FROM app_files WHERE id = $1',
+        'SELECT app_id, filename, content_type, visibility, staging FROM app_files WHERE id = $1',
         [id]
       );
       if (!rows.length) return res.status(404).end();
@@ -66,7 +67,7 @@ function appFileServeRoutes(config, deps = {}) {
         // Private files require a valid platform user JWT minted for THIS
         // app — apps append their iframe token to the URL. 404 (not 401)
         // keeps private ids non-enumerable, same stance as everything else.
-        if (!verifyUserToken(req.query.token, file.app_id)) return res.status(404).end();
+        if (!verifyUserToken(req.query.token, file.app_id, file.staging)) return res.status(404).end();
       }
       if (!store) {
         log.warn('app-files', 'Serve requested but storage unconfigured', { id });
@@ -114,6 +115,11 @@ function appFileShellRoutes(config, deps = {}) {
   const router = Router();
   const pool = getPool(config);
   const store = deps.store !== undefined ? deps.store : appFiles.getStore(config);
+
+  // Old parent tabs did not bind storage calls to the preview environment.
+  // Refuse that relay before any lookup or mutation; a refresh loads the
+  // guarded parent. This protocol header grants no user/app authority.
+  router.use('/api/apps/:slug/files', currentAppBridge);
 
   // Limit must exceed MAX_FILE_BYTES so the service's structured
   // file_too_large error fires before the parser's PayloadTooLarge.
@@ -163,6 +169,7 @@ function appFileShellRoutes(config, deps = {}) {
         appId: app.id,
         fileId: String(req.params.fileId || ''),
         requireUserId: req.user.id,
+        staging: req.query.staging === '1',
       });
       if (!result.ok) {
         return res.status(result.status).json({ code: result.code, error: result.error });
@@ -180,7 +187,7 @@ function appFileShellRoutes(config, deps = {}) {
         pool, req.params.slug, req.user, 'view', appAccess.ACCESS_COLUMNS
       );
       if (!app) return res.status(404).json({ error: 'App not found' });
-      return res.json(await appFiles.usageReport(pool, app.id, req.user.id));
+      return res.json(await appFiles.usageReport(pool, app.id, req.user.id, { staging: req.query.staging === '1' }));
     } catch (err) {
       log.error('app-files', 'Shell usage read failed', { slug: req.params.slug, err: err.message });
       return res.status(500).json({ error: 'Usage read failed' });

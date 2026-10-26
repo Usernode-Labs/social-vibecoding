@@ -33,7 +33,7 @@ const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 function tokenOf(url) {
   const m = /[?&]token=([^&#]+)/.exec(url);
   return m
-    ? platformJwt.verifyAppIdentityToken(decodeURIComponent(m[1]), { appId: APP_ID })
+    ? platformJwt.verifyAppIdentityToken(decodeURIComponent(m[1]), { appId: APP_ID, allowPreview: true })
     : null;
 }
 
@@ -47,13 +47,14 @@ test('mintCaptureToken returns "" for a missing user (degrade to unauth)', () =>
 test('mintCaptureToken signs the iframe-token payload shape', () => {
   const tok = mintCaptureToken(ADMIN_USER, APP_ID);
   assert.ok(tok);
-  const decoded = platformJwt.verifyAppIdentityToken(tok, { appId: APP_ID });
+  const decoded = platformJwt.verifyAppIdentityToken(tok, { appId: APP_ID, allowPreview: true });
   assert.equal(decoded.id, 8);
   assert.equal(decoded.username, 'usernode-capture-admin');
   assert.equal(decoded.usernode_pubkey, null);
   // Same authority and purpose as a live iframe token — the capture
   // browser hits the staging container through the ordinary token path.
   assert.equal(decoded.pur, 'iframe');
+  assert.equal(decoded.env, 'production');
   assert.equal(decoded.iss, 'usernode');
   assert.deepEqual(decoded.aud, `usernode:app:${APP_ID}`);
   // Short-lived: a capture run is minutes, so the token is 15m, not 1h.
@@ -63,7 +64,7 @@ test('mintCaptureToken signs the iframe-token payload shape', () => {
 test('a capture token is scoped to the app it was minted for', () => {
   const tok = mintCaptureToken(ADMIN_USER, APP_ID);
   assert.throws(
-    () => platformJwt.verifyAppIdentityToken(tok, { appId: APP_ID + 1 }),
+    () => platformJwt.verifyAppIdentityToken(tok, { appId: APP_ID + 1, allowPreview: true }),
     /audience/i
   );
 });
@@ -157,4 +158,11 @@ test('visuals.js signs test URLs with testsToken and screenshots with screenshot
   assert.match(src, /afterUrl\s*=\s*withToken\(`\$\{stagingOrigin\}\$\{visitPath\}`,\s*screenshotToken\)/);
   // testsToken is never wired into the screenshot TARGETS.
   assert.doesNotMatch(src, /beforeUrl\s*=\s*withToken\([^)]*testsToken\)/);
+});
+
+
+test('Homeroom capture identities work in previews and are refused at production consumers', () => {
+  const token = mintCaptureToken(ADMIN_USER, APP_ID, { previewOnly: true });
+  assert.equal(platformJwt.verifyAppIdentityToken(token, { appId: APP_ID, allowPreview: true }).env, 'preview');
+  assert.throws(() => platformJwt.verifyAppIdentityToken(token, { appId: APP_ID, allowPreview: false }), /preview identity/);
 });

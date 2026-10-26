@@ -1328,7 +1328,7 @@ async function dispatchAgent(config, pool, {
   const invitedPersonas = Array.isArray(a.browserPersonas)
     ? a.browserPersonas.filter((persona) => INVITED_PERSONAS.has(persona)) : [];
   const authTokens = {
-    ...await deps.identities.mintShotsAuthTokens(pool, app.id),
+    ...await deps.identities.mintShotsAuthTokens(pool, app.id, { selfApp: a.selfApp === true }),
     ...(guest.token ? { guest: guest.token } : {}),
     ...(a.selfApp === true && invitedPersonas.length
       ? await deps.identities.mintInvitedTokens(app.id) : {}),

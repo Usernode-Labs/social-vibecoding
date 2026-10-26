@@ -230,3 +230,23 @@ test('persona warnings say no shots browser is a child app\'s creator or admin',
     story('creator-row', 'member', 'The project creator is named on the hub.'),
   ], { selfApp: true }), []);
 });
+
+test('all Homeroom shots personas carry preview-only authority', async () => {
+  require('./platform-keys').setPlatformKeys();
+  const platformJwt = require('../src/services/platform-jwt');
+  const pool = { async query() { return { rows: [
+    { id: 10, username: visuals.CAPTURE_USERNAME },
+    { id: 11, username: visuals.CAPTURE_ADMIN_USERNAME, is_admin: true, admin_readonly: true },
+  ] }; } };
+  const tokens = {
+    ...await identities.mintShotsAuthTokens(pool, 42, { selfApp: true }),
+    ...identities.mintInvitedTokens(42),
+  };
+  for (const [persona, token] of Object.entries(tokens)) {
+    assert.equal(platformJwt.verifyAppIdentityToken(token, { appId: 42, allowPreview: true }).env, 'preview', persona);
+    assert.throws(() => platformJwt.verifyAppIdentityToken(token, { appId: 42, allowPreview: false }), /preview identity/, persona);
+  }
+  // Authored apps keep their current platform integrations in this batch.
+  const appTokens = await identities.mintShotsAuthTokens(pool, 43);
+  assert.equal(platformJwt.verifyAppIdentityToken(appTokens.member, { appId: 43, allowPreview: false }).env, 'production');
+});

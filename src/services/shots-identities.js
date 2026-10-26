@@ -16,7 +16,7 @@ const platformJwt = require('./platform-jwt');
 const visuals = require('./visuals');
 const fixtures = require('./shots-fixtures');
 
-async function mintShotsAuthTokens(pool, appId) {
+async function mintShotsAuthTokens(pool, appId, { selfApp = false } = {}) {
   const { rows } = await pool.query(
     `SELECT id, username, usernode_pubkey, locale, is_admin, admin_readonly
        FROM users
@@ -31,8 +31,8 @@ async function mintShotsAuthTokens(pool, appId) {
     throw new Error('The shots read-only administrator fixture identity is unavailable or unsafe.');
   }
   return {
-    member: visuals.mintCaptureToken(member, appId),
-    read_only_admin: visuals.mintCaptureToken(admin, appId),
+    member: visuals.mintCaptureToken(member, appId, { previewOnly: selfApp }),
+    read_only_admin: visuals.mintCaptureToken(admin, appId, { previewOnly: selfApp }),
     // Production has no full-admin service-account row. This token can only
     // become a session inside a shots clone, where resetPair inserts the
     // matching non-loginable identity. Production ignores iframe tokens and
@@ -42,7 +42,7 @@ async function mintShotsAuthTokens(pool, appId) {
       username: fixtures.FULL_ADMIN_USERNAME,
       usernode_pubkey: null,
       locale: 'en',
-    }, appId),
+    }, appId, { previewOnly: selfApp }),
   };
 }
 
@@ -54,7 +54,7 @@ async function mintShotsAuthTokens(pool, appId) {
 function mintInvitedTokens(appId) {
   const mint = (id, username) => visuals.mintCaptureToken({
     id, username, usernode_pubkey: null, locale: 'en',
-  }, appId);
+  }, appId, { previewOnly: true });
   return {
     invited_member: mint(fixtures.INVITED_MEMBER_USER_ID, fixtures.INVITED_MEMBER_USERNAME),
     invited_member_listed: mint(fixtures.INVITED_MEMBER_LISTED_USER_ID, fixtures.INVITED_MEMBER_LISTED_USERNAME),

@@ -424,3 +424,46 @@ test('single-line PEMs with literal \\n escapes work (the .env convention)', () 
     process.env.IFRAME_JWT_PUBLIC_KEY = savedPub;
   }
 });
+
+
+test('preview identities cannot be replayed at production consumers', () => {
+  const token = pj.signAppIdentityToken({ appId: APP_ID, user: USER, environment: 'preview' });
+  assert.throws(() => pj.verifyAppIdentityToken(token, { appId: APP_ID, allowPreview: false }), /preview identity/);
+  const claims = pj.verifyAppIdentityToken(token, { appId: APP_ID, allowPreview: true });
+  assert.equal(claims.env, 'preview');
+  assert.equal(claims.id, USER.id);
+  assert.throws(() => pj.verifyAppIdentityToken(token, { appId: OTHER_APP_ID, allowPreview: true }), /audience/);
+});
+
+test('a preview process also restricts identities it mints for nested apps', () => {
+  const previous = process.env.USERNODE_ENV;
+  try {
+    process.env.USERNODE_ENV = 'staging';
+    const token = pj.signAppIdentityToken({ appId: APP_ID, user: USER });
+    assert.equal(pj.verifyAppIdentityToken(token, { appId: APP_ID }).env, 'preview');
+    assert.throws(() => pj.verifyAppIdentityToken(token, { appId: APP_ID, allowPreview: false }), /preview identity/);
+  } finally {
+    if (previous === undefined) delete process.env.USERNODE_ENV;
+    else process.env.USERNODE_ENV = previous;
+  }
+});
+
+test('rolling deployment still accepts old unmarked identities, with the existing expiry', () => {
+  const old = ttl => jwt.sign({ ...USER, pur: 'iframe' }, privateKey, {
+    algorithm: 'RS256', issuer: 'usernode', audience: `usernode:app:${APP_ID}`, expiresIn: ttl,
+  });
+  for (const allowPreview of [false, true]) {
+    assert.equal(pj.verifyAppIdentityToken(old('1h'), { appId: APP_ID, allowPreview }).id, USER.id);
+    assert.throws(() => pj.verifyAppIdentityToken(old(-1), { appId: APP_ID, allowPreview }), /expired/);
+  }
+});
+
+test('unknown identity environments are refused even with a trusted signature', () => {
+  for (const env of ['other', null, false]) {
+    const token = jwt.sign({ ...USER, pur: 'iframe', env }, privateKey, {
+      algorithm: 'RS256', issuer: 'usernode', audience: `usernode:app:${APP_ID}`, expiresIn: '1h',
+    });
+    assert.throws(() => pj.verifyAppIdentityToken(token, { appId: APP_ID, allowPreview: true }), /environment/);
+  }
+  assert.throws(() => pj.signAppIdentityToken({ appId: APP_ID, user: USER, environment: 'other' }), /environment/);
+});

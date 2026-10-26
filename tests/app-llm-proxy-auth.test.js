@@ -215,3 +215,12 @@ test('grant-cache invalidation makes revocation immediate', async () => {
   assert.equal(r.nexted, false);
   assert.equal(r.res.body.code, 'grant_required');
 });
+
+
+test('a preview identity is rejected even with the production app credential', async () => {
+  const userToken = platformJwt.signAppIdentityToken({ appId: APP_ID, user: { id: 7, username: 'tester' }, environment: 'preview' });
+  const { res, nexted } = await run(makeReq({ userToken }));
+  assert.equal(nexted, false);
+  assert.equal(res.statusCode, 401);
+  assert.equal(res.body.code, 'bad_user_token');
+});
