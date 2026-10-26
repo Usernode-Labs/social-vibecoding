@@ -871,9 +871,6 @@ function feedbackRoutes(config) {
     // thanks sheet and everything after it can be seen there. Production, and
     // any server that does not say it is staging or local dev, still refuses.
     const testFiling = filesTestRequests() && (!pat || (target === 'app' && !github.isEnabled()));
-    if (!pat && !testFiling) {
-      return res.status(503).json({ error: 'GitHub token not configured' });
-    }
 
     // Resolve the destination repo up front so we fail fast (before
     // spending a Haiku call on title generation) when the app target is
@@ -1133,9 +1130,8 @@ function feedbackRoutes(config) {
         });
       }
 
-      // The platform repo, with the bot's token (services/feedback-reports.js
-      // createPlatformIssue): a hand-rolled call that applies safeMention to
-      // the user-typed title and description itself (#723).
+      // The platform's own board (services/feedback-reports.js
+      // createPlatformIssue): a request row, like an app's.
       const bodyPrefix = `**Source:** ${source}\n${queuedLine}\n`;
       const platformBody = `${bodyPrefix}${description.trim()}${screenshotSuffix}${videoSuffix}`;
       if (platformBody.length > GITHUB_ISSUE_BODY_MAX) return bodyTooLong(res, platformBody);
@@ -1146,12 +1142,12 @@ function feedbackRoutes(config) {
           repo: issueRepo,
           title,
           body: platformBody,
-          pat,
+          createdBy: req.user.id,
         });
       // The underlying status is in the client-facing error (the hint), so
       // a 404 (no access to the feedback repo) reads apart from a 401 (PAT
       // revoked) or a 403 (rate limited) without spelunking server logs.
-      if (!created.ok) return res.status(502).json({ error: `Failed to create GitHub issue: ${created.hint}` });
+      if (!created.ok) return res.status(502).json({ error: `Failed to file the request: ${created.hint}` });
 
       const issue = created.issue;
       if (!testFiling) await queueTitleHeal(issueOwner, issueRepo, issue.number);

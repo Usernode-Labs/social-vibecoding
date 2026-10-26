@@ -28,8 +28,11 @@ export function configureWorkflowProcess(config: any): void {
 // sender, GitHub, the model.
 export async function startWorkflowClients(config: any): Promise<void> {
   await legacy('services/mobile-push').initialize(config);
-  // Whether GitHub is paused, read before anything can call it.
-  await legacy('services/github-pause').start(legacy('db/pool').getPool(config));
+  // Whether GitHub is paused, read before anything can call it, and the
+  // pool requests are kept in (services/requests.js).
+  const pool = legacy('db/pool').getPool(config);
+  await legacy('services/github-pause').start(pool);
+  legacy('services/requests').setPool(pool);
   await legacy('services/github').init(config);
   // The telemetry kill switch is configured even with no Anthropic client:
   // OpenRouter and local coding runs need the provider-neutral collector.

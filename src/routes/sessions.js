@@ -4283,8 +4283,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       const stamped = draft.owner && draft.repo
         ? { owner: draft.owner, repo: draft.repo }
         : issueDraft.parseRepoUrl(isAppTarget ? row.app_repo_url : config.platformRepoUrl);
-      const pat = process.env.GITHUB_BOT_TOKEN;
-      if (!stamped || (!isAppTarget && !pat) || (isAppTarget && !github.isEnabled())) {
+      if (!stamped) {
         await revert();
         return res.status(503).json({ error: 'Issue reporting not configured' });
       }
@@ -4304,46 +4303,14 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           + (draft.body || '(no detail provided)');
       let issue;
       try {
-        if (isAppTarget) {
-          // The app's own repo is reached through the GitHub App
-          // installation (same path as routes/feedback.js and
-          // routes/issues.js) — the platform PAT isn't guaranteed to have
-          // access to every app repo. createIssue applies safeMention
-          // internally.
-          issue = await github.createIssue(owner, repo, {
-            title: draft.title,
-            body: issueBody,
-          });
-        } else {
-          // Bot PAT + hand-rolled fetch mirrors routes/feedback.js's
-          // platform-feedback path (the platform repo isn't behind the
-          // per-app GitHub App installation). This bypasses github.js's
-          // write helpers, so apply safeMention here — the model-drafted
-          // title/body are free-form text that could carry live
-          // @mentions (#723).
-          const ghRes = await github.githubFetch('pat', `https://api.github.com/repos/${owner}/${repo}/issues`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              Authorization: `token ${pat}`,
-              'User-Agent': 'usernode-social-vibecoding',
-            },
-            body: JSON.stringify({
-              title: github.safeMention(draft.title),
-              body: github.safeMention(issueBody),
-              labels: ['usernode', 'agent-reported'],
-            }),
-          });
-          if (!ghRes.ok) {
-            const text = await ghRes.text();
-            log.error('sessions', 'Platform issue create failed', {
-              sessionId, msgId, status: ghRes.status, body: text.slice(0, 300),
-            });
-            await revert();
-            return res.status(502).json({ error: 'GitHub refused the issue' });
-          }
-          issue = await ghRes.json();
-        }
+        // A request row on the app's board or the platform's
+        // (services/requests.js, through github.createIssue).
+        issue = await github.createIssue(owner, repo, {
+          title: draft.title,
+          body: issueBody,
+          labels: isAppTarget ? [] : ['usernode', 'agent-reported'],
+          createdBy: req.user.id,
+        });
       } catch (err) {
         log.error('sessions', 'Issue create threw', {
           sessionId, msgId, target: draft.target || 'platform', err: err.message,
@@ -4351,10 +4318,10 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         await revert();
         return res.status(502).json({
           error: isAppTarget
-            // Never silently reroute to the platform repo — the card said
-            // where it would file. Surface the actionable hint instead.
-            ? "Couldn't file to this app's repo. The bot may not be installed on it"
-            : 'GitHub unreachable',
+            // Never silently reroute to the platform's board: the card said
+            // where it would file.
+            ? "Couldn't file the request on this app's board"
+            : "Couldn't file the request on Homeroom's board",
         });
       }
 

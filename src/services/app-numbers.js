@@ -15,10 +15,11 @@ let pool = null;
 
 function setPool(p) { pool = p; }
 
+// Set once at startup (src/workflow/setup.ts) for every process that files
+// or reads requests; a caller with its own pool passes it as `db`.
 function getPool() {
   if (pool) return pool;
-  const config = require('../config');
-  return require('../db/pool').getPool(typeof config.load === 'function' ? config.load() : config);
+  throw new Error('app-numbers: no database pool (setPool was not called)');
 }
 
 // The highest number the app has used anywhere, plus one.
