@@ -45,6 +45,7 @@ const sessionBus = require('../services/session-bus');
 const chatDelivery = require('../services/chat-delivery');
 const { drainGuard } = require('../services/lifecycle');
 const unitSuiteRow = require('../services/unit-suite-row');
+const repoRef = require('../services/repo-ref');
 const {
   getAppConventions,
   getSelfHostedRefuseList,
@@ -2210,7 +2211,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
             error: 'invalid_request', message: 'A proposal can link at most 50 issues.',
           } } };
         }
-        const repo = github.parseGithubUrl(session.repo_url);
+        const repo = repoRef.ownerRepo(session.repo_url);
         const result = await proposalUpdate.updateLinkedIssues({
           pool,
           gh: github,
@@ -3000,8 +3001,8 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // is disabled platform-wide): a clear 400 beats a session whose
       // every turn dies, and on GitHub-enabled deployments the app-heal
       // sweep makes this state short-lived.
-      if (!(app.repo_url || '').match(/github\.com\/[^/]+\/[^/]+/)) {
-        return res.status(400).json({ error: 'No GitHub repo configured for this app' });
+      if (!repoRef.parse(app.repo_url)) {
+        return res.status(400).json({ error: 'No repository configured for this app' });
       }
 
       // #2779: an optional name, as the user would call the change. The
@@ -3190,7 +3191,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // just filled that cache) and never throws. Best-effort — a failed
       // claim never fails the session it rides on.
       if (issueNumber) {
-        const [, repoOwner, repoName] = String(app.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
+        const { owner: repoOwner, repo: repoName } = repoRef.ownerRepo(app.repo_url) || {};
         if (github.isEnabled() && repoOwner && repoName) {
           try {
             const { issue } = await github.fetchPublicIssue(repoOwner, repoName.replace(/\.git$/, ''), issueNumber);
@@ -3252,9 +3253,9 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         return res.status(400).json({ error: 'Invalid issue number' });
       }
 
-      const [, repoOwner, repoName] = (app.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
+      const { owner: repoOwner, repo: repoName } = repoRef.ownerRepo(app.repo_url) || {};
       if (!github.isEnabled() || !repoOwner || !repoName) {
-        return res.status(400).json({ error: 'No GitHub repo configured for this app' });
+        return res.status(400).json({ error: 'No repository configured for this app' });
       }
 
       // Resolve the actual saved backend before any provider-specific gate.
@@ -3534,7 +3535,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // branch off main instead, silently discarding the work the clone
       // was created to continue.
       const branchName = branchNames.devBranchName(req.user.username, Date.now(), src.session_title);
-      const [, repoOwner, repoName] = (src.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
+      const { owner: repoOwner, repo: repoName } = repoRef.ownerRepo(src.repo_url) || {};
       let inheritedCodeBranch = false;
       if (github.isEnabled() && repoOwner && repoName) {
         try {
@@ -6364,7 +6365,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       let commitHash = 'latest';
       if (github.isEnabled() && app.repo_url) {
         try {
-          const [, owner, repo] = app.repo_url.match(/github\.com\/([^/]+)\/([^/]+)/) || [];
+          const { owner, repo } = repoRef.ownerRepo(app.repo_url) || {};
           if (owner && repo) {
             // octokit.request, not .rest.git.getRef — @octokit/app's
             // installation Octokit lacks the rest-endpoint-methods
@@ -8641,9 +8642,9 @@ async function resumeOneHeadlessRunInner({ pool, config, session, owner = null, 
   }
   const issueNumber = session.headless_issue_number;
   const user = { id: session.user_id, username: session.username };
-  const [, repoOwner, repoName] = (session.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
+  const { owner: repoOwner, repo: repoName } = repoRef.ownerRepo(session.repo_url) || {};
   if (!repoOwner || !repoName) {
-    return failHeadlessRun(pool, session, 'Auto session failed: no GitHub repo configured.');
+    return failHeadlessRun(pool, session, 'Auto session failed: no repository configured.');
   }
 
   // Limit-first (#212): every newly issued recovery call must have a

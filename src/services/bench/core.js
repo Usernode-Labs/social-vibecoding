@@ -617,7 +617,7 @@ async function materializeOne(ctx, spec) {
       out = skipped(`the app ${spec.app_slug} is gone`);
     } else {
       const repo = require('../homeroom-bot').parseRepo(app.repo_url);
-      if (!repo) out = skipped(`${app.slug} has no GitHub repository`);
+      if (!repo) out = skipped(`${app.slug} has no repository`);
       else if (spec.stage === 'triage') out = await resolveTriage(ctx, spec, app, repo);
       else if (spec.stage === 'dm') out = await resolveDm(ctx, spec, app, repo);
       else if (spec.stage === 'build') out = await resolveBuildFromPr(ctx, spec, app);

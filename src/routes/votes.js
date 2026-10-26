@@ -36,6 +36,7 @@ const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 const challengeScorer = require('../services/topochain/challenge-scorer');
 const { botRequestedBySql } = require('../services/bot-requested-by');
 const { firstVersionSql, isFirstVersion } = require('../services/first-version-rule');
+const repoRef = require('../services/repo-ref');
 const {
   reviewedHeadForSession,
   visualHeadForSession,
@@ -1764,8 +1765,7 @@ async function annotateDeploymentState(config, pool, app, rows) {
 // unchanged.
 function nativeGithubTarget(session) {
   if (!session || session.source === 'imported' || !session.pr_number) return null;
-  const [, owner, repo] = (session.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
-  return owner && repo ? { owner, repo: repo.replace(/\.git$/, '') } : null;
+  return repoRef.ownerRepo(session.repo_url);
 }
 
 // The preview machine builds and checks a native proposal's reviewed head.
@@ -1898,7 +1898,7 @@ async function reconcileNativeReviewedHead({
     }
     return {
       enforced: true, blocked: true,
-      reason: 'This proposal has no GitHub repository to verify.',
+      reason: 'This proposal has no repository to verify.',
     };
   }
   if (!session.branch_name) {
@@ -1917,7 +1917,7 @@ async function reconcileNativeReviewedHead({
   if (!parsed) {
     return {
       enforced: true, blocked: true,
-      reason: 'This proposal has no valid GitHub repository to verify.',
+      reason: 'This proposal has no valid repository to verify.',
     };
   }
 
@@ -2702,9 +2702,9 @@ function voteRoutes(config) {
       // machine's work, once the proposal is claimed for review (R4).
       let pr = null;
       if (github.isEnabled() && session.repo_url && session.pr_number) {
-        const [, owner, repo] = session.repo_url.match(/github\.com\/([^/]+)\/([^/]+)/) || [];
+        const { owner, repo } = repoRef.ownerRepo(session.repo_url) || {};
         if (!owner || !repo) {
-          return res.status(409).json({ error: 'This proposal has no valid GitHub repository to verify.' });
+          return res.status(409).json({ error: 'This proposal has no valid repository to verify.' });
         }
         try {
           const live = await github.getPR(owner, repo.replace(/\.git$/, ''), session.pr_number);
@@ -2754,10 +2754,7 @@ function voteRoutes(config) {
   // may explicitly request the historical straight-to-vote result.
   //
   // Parse owner/repo from an app's repo_url, or null.
-  const parseRepo = (url) => {
-    const [, owner, repo] = (url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
-    return owner && repo ? { owner, repo } : null;
-  };
+  const parseRepo = (url) => repoRef.ownerRepo(url);
 
   // Fire-and-forget: build the imported PR's staging preview pinned to its
   // exact head SHA (Slice 1 clone fix) and run its checks, mirroring the
@@ -6243,7 +6240,7 @@ async function attemptMerge(config, pool, sessionId, { head, resumeFrom = null, 
   }
   // GitHub is there and the proposal has a pull request: a repository this
   // cannot read is a refusal, never a merge nobody asked GitHub for.
-  const [, owner, repo] = String(session.repo_url).match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/) || [];
+  const { owner, repo } = repoRef.ownerRepo(session.repo_url) || {};
   if (!owner || !repo) {
     return { outcome: 'refused', kind: 'blocked', message: `${sessionLabel(session)} was not merged: its repository address (${String(session.repo_url).slice(0, 200)}) could not be read.` };
   }
@@ -6413,11 +6410,11 @@ async function checkAndOpenRevert(config, pool, session, decider) {
     } else if (!session.pr_number) {
       backfillReason = 'session has no pr_number';
     } else {
-      const bm = session.repo_url.match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/);
+      const bm = repoRef.ownerRepo(session.repo_url);
       if (!bm) {
         backfillReason = `unparseable repo_url ${session.repo_url}`;
       } else {
-        const [, bOwner, bRepo] = bm;
+        const { owner: bOwner, repo: bRepo } = bm;
         try {
           // Use octokit.request rather than octokit.rest.pulls.get —
           // @octokit/app's installation octokit is a bare @octokit/core

@@ -27,6 +27,7 @@
 
 const log = require('../logger');
 const registry = require('../../agents/registry');
+const repoRef = require('../repo-ref');
 
 const DISPATCH_KINDS = Object.freeze({ dispatch_scout: 'scout', dispatch_coding_agent: 'build' });
 const LIVE_STATUSES = new Set(['active', 'promoted']);
@@ -152,7 +153,7 @@ async function canDispatch(change, deps = {}) {
   const d = defaults(deps);
   if (!change) return false;
   if (!LIVE_STATUSES.has(change.status) && !RESUMABLE_STATUSES.has(change.status)) return false;
-  if (!/github\.com\/[^/]+\/[^/]+/.test(change.repo_url || '')) return false;
+  if (!repoRef.parse(change.repo_url)) return false;
   const id = Number(change.id);
   // What works on the change, on any process (a sync, another turn).
   if (!(await d.activeWorkers.isSessionBusyAnywhere(id))) return true;
@@ -265,9 +266,9 @@ async function runDispatch({
   if (!LIVE_STATUSES.has(change.status) && !RESUMABLE_STATUSES.has(change.status)) {
     return refusal(`change_closed: change ${change.id} is ${change.status}, so the coding agent cannot run on it.`);
   }
-  const [, repoOwner, repoName] = (change.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
+  const { owner: repoOwner, repo: repoName } = repoRef.ownerRepo(change.repo_url) || {};
   if (!repoOwner || !repoName) {
-    return refusal('no_repository: the app has no GitHub repository yet. The platform repairs this automatically; '
+    return refusal('no_repository: the app has no repository yet. The platform repairs this automatically; '
       + 'try again in a few minutes.');
   }
   const changeId = Number(change.id);

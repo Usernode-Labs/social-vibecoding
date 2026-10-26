@@ -22,7 +22,10 @@ function trustedHostedAppOrigins(apps, platformOrigin, shotsRunId = null) {
     try { url = new URL(app.url); } catch { continue; }
     if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password
         || url.pathname !== '/' || url.search || url.hash || url.origin === platformOrigin) continue;
-    const versionedRuntime = /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/?$/.test(String(app.repo_url || ''))
+    // A repository address on either host (GitHub, or Homeroom's git host:
+    // this file runs in the worker image, without services/repo-ref.js) and
+    // the revision deployed from it.
+    const versionedRuntime = /^https:\/\/[A-Za-z0-9.-]+\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/?$/.test(String(app.repo_url || ''))
       && /^[0-9a-f]{40}$/.test(String(app.main_sha || ''));
     const localRuntime = url.protocol === 'http:' && url.hostname === 'localhost'
       && String(app.container_id || '') === `usernode-app-${app.slug}`;
