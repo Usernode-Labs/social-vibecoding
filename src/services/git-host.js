@@ -174,7 +174,7 @@ function redact(text) {
  * credential prompt with the service account; nothing else ever sees it.
  * Resolves { stdout, stderr }; rejects with stderr redacted.
  */
-function git(args, { cwd = undefined, auth = false, timeout = GIT_TIMEOUT_MS, input = null } = {}) {
+function git(args, { cwd = undefined, auth = false, timeout = GIT_TIMEOUT_MS, input = null, env: extra = {} } = {}) {
   const s = settings();
   const config = [
     '-c', 'credential.helper=',
@@ -182,7 +182,9 @@ function git(args, { cwd = undefined, auth = false, timeout = GIT_TIMEOUT_MS, in
     '-c', 'http.followRedirects=false',
     '-c', 'core.hooksPath=/dev/null',
   ];
-  const env = gitEnv(auth ? { USERNODE_GIT_HOST_USER: s.user, USERNODE_GIT_HOST_TOKEN: s.token } : {});
+  // `extra`: the few variables a caller sets for one invocation (an index
+  // file, commit identities and dates); never a credential.
+  const env = gitEnv({ ...extra, ...(auth ? { USERNODE_GIT_HOST_USER: s.user, USERNODE_GIT_HOST_TOKEN: s.token } : {}) });
   return new Promise((resolve, reject) => {
     const child = execFile('git', [...config, ...args], { cwd, env, timeout, maxBuffer: 64 * 1024 * 1024 }, (err, stdout, stderr) => {
       if (err) {

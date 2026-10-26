@@ -204,7 +204,8 @@ test('every workflow process reads the pause before GitHub\'s client starts', ()
 test('App-level calls that skip the request hook check the pause themselves', () => {
   const src = read('src/services/github.js');
   for (const fn of ['resolveInstallationId', 'getInstallationToken', 'getBotUsername']) {
-    const body = src.slice(src.indexOf(`async function ${fn}(`)).split('\n').slice(0, 3).join('\n');
+    const start = src.indexOf(`async function ${fn}(`);
+    const body = src.slice(start, src.indexOf('\n}\n', start));
     assert.match(body, /pause\.assertNotPaused\(\)/, fn);
   }
   assert.equal((src.match(/(^|[^A-Za-z.])fetch\(/gm) || []).length, 1, 'githubFetch is the only raw fetch in the client');

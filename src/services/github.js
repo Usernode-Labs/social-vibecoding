@@ -286,6 +286,16 @@ function invalidateActionsSecretsCache(owner, repo) {
   else actionsSecretsCache.clear();
 }
 
+// ── Which host a repository is on ──────────────────────────────────────
+// App repositories live on Homeroom's git host since GitHub suspended the
+// account that owned them (25 Oct 2026); only the platform's own repository
+// is still on GitHub. A helper given an owner on the git host answers from
+// there (services/native-pulls.js, services/hosted-git.js), in the same
+// shape; any other owner is GitHub, as before, behind the pause.
+function onGitHost(owner) { return require('./repo-ref').hostOfOwner(owner) === 'git_host'; }
+function nativePulls() { return require('./native-pulls'); }
+function hostedGit() { return require('./hosted-git'); }
+
 async function init(config) {
   if (!config.githubAppId || !config.githubPrivateKey) {
     log.warn('github', 'GitHub App credentials not configured — GitHub features disabled');
@@ -345,7 +355,13 @@ async function getInstallationToken(owner) {
   return data.token;
 }
 
+// The owner a new app repository is made under: the git host's
+// organisation whenever one is configured (every app since GitHub's
+// suspension of usernode-bot, 25 Oct 2026), else the App's first
+// installation, as before.
 async function getBotUsername() {
+  const gitHost = require('./git-host');
+  if (gitHost.isConfigured()) return gitHost.settings().org;
   pause.assertNotPaused();
   for await (const { installation } of app.eachInstallation.iterator()) {
     return installation.account.login;
@@ -368,6 +384,7 @@ function isRepoNameExistsError(err) {
 }
 
 async function createRepo(owner, name, { description = '', adoptExisting = false } = {}) {
+  if (onGitHost(owner)) return hostedGit().createRepo(owner, name, { description, adoptExisting });
   // GitHub App installation tokens can't create repos on user accounts (GitHub limitation).
   // Use a PAT (GITHUB_BOT_TOKEN) for repo creation.
   const pat = process.env.GITHUB_BOT_TOKEN;
@@ -664,6 +681,7 @@ async function publicReadFetch(owner, url, { signal, headers: extra = null } = {
 }
 
 async function pushFiles(owner, repo, files, { branch = 'main', message = 'Initial commit' } = {}) {
+  if (onGitHost(owner)) return hostedGit().pushFiles(owner, repo, files, { branch, message });
   const octokit = await getOctokit(owner);
 
   const { data: ref } = await octokit.rest.git.getRef({ owner, repo, ref: `heads/${branch}` });
@@ -700,6 +718,7 @@ async function pushFiles(owner, repo, files, { branch = 'main', message = 'Initi
 // points a `bench/` branch at it). Without a parent, a checkout of it holds
 // that one commit and none of the repository's history. Resolves its sha.
 async function createRootCommit(owner, repo, files, { message = 'Initial commit' } = {}) {
+  if (onGitHost(owner)) return hostedGit().createRootCommit(owner, repo, files, { message });
   const octokit = await getOctokit(owner);
   const tree = files.map((f) => ({ path: f.path, mode: '100644', type: 'blob', content: f.content }));
   const { data: newTree } = await octokit.rest.git.createTree({ owner, repo, tree });
@@ -714,6 +733,7 @@ async function createRootCommit(owner, repo, files, { message = 'Initial commit'
 // the file doesn't exist (404) so callers can branch on "create vs
 // edit" without try/catch noise. Other errors propagate.
 async function getFileContent(owner, repo, filePath, ref) {
+  if (onGitHost(owner)) return hostedGit().getFileContent(owner, repo, filePath, ref);
   const octokit = await getReadOctokit(owner);
   try {
     const params = { owner, repo, path: filePath };
@@ -733,6 +753,7 @@ async function getFileContent(owner, repo, filePath, ref) {
 // the repository does not exist. A creation that resumes reads it to tell
 // whether its first commit already landed (app-creator.js).
 async function headCommit(owner, repo, branch = 'main') {
+  if (onGitHost(owner)) return hostedGit().headCommit(owner, repo, branch);
   const octokit = await getOctokit(owner);
   try {
     const { data } = await octokit.rest.repos.getBranch({ owner, repo, branch });
@@ -762,6 +783,7 @@ async function findIssueByMarker(owner, repo, marker, { recent = 30 } = {}) {
 // only, and `truncated` when GitHub cut a very large tree short. Null when
 // the repository or ref does not exist; other errors propagate.
 async function listRepoFiles(owner, repo, ref) {
+  if (onGitHost(owner)) return hostedGit().listRepoFiles(owner, repo, ref);
   const octokit = await getReadOctokit(owner);
   try {
     const { data } = await octokit.rest.git.getTree({ owner, repo, tree_sha: ref || 'HEAD', recursive: 'true' });
@@ -779,6 +801,7 @@ async function listRepoFiles(owner, repo, ref) {
 // contents API stops returning a file's bytes at 1 MB; the blob API does not,
 // which is what a large generated file needs (services/language-sync-runner.js).
 async function getBlobContent(owner, repo, sha) {
+  if (onGitHost(owner)) return hostedGit().getBlobContent(owner, repo, sha);
   const octokit = await getReadOctokit(owner);
   const { data } = await octokit.rest.git.getBlob({ owner, repo, file_sha: sha });
   return Buffer.from(data.content || '', data.encoding || 'base64').toString('utf-8');
@@ -789,6 +812,7 @@ async function getBlobContent(owner, repo, sha) {
 // user's new dev branch off the auto session's branch so any pushed commits
 // carry over.
 async function createBranch(owner, repo, branchName, fromBranch = 'main') {
+  if (onGitHost(owner)) return hostedGit().createBranch(owner, repo, branchName, fromBranch);
   const octokit = await getOctokit(owner);
   const { data: ref } = await octokit.rest.git.getRef({ owner, repo, ref: `heads/${fromBranch}` });
 
@@ -807,6 +831,7 @@ async function createBranch(owner, repo, branchName, fromBranch = 'main') {
 // failure is safe when the orphaned ref still points at that SHA; a different
 // ref is a hard conflict rather than something we silently overwrite.
 async function ensureBranchAtSha(owner, repo, branchName, sha) {
+  if (onGitHost(owner)) return hostedGit().ensureBranchAtSha(owner, repo, branchName, sha);
   const octokit = await getOctokit(owner);
   await octokit.request('GET /repos/{owner}/{repo}/git/commits/{commit_sha}', {
     owner, repo, commit_sha: sha,
@@ -866,6 +891,7 @@ async function ensureBranchAtSha(owner, repo, branchName, sha) {
 // Callers use this for both the immutable handoff base and the branch's
 // current head, preventing history rewrites on a later submission.
 async function compareCommitAncestry(owner, repo, baseSha, headSha) {
+  if (onGitHost(owner)) return hostedGit().compareCommitAncestry(owner, repo, baseSha, headSha);
   const octokit = await getReadOctokit(owner);
   const { data } = await octokit.request(
     'GET /repos/{owner}/{repo}/compare/{basehead}',
@@ -889,6 +915,7 @@ async function compareCommitAncestry(owner, repo, baseSha, headSha) {
 const PR_COMMITS_CAP = 250;
 
 async function listPullRequestCommitShas(owner, repo, prNumber) {
+  if (onGitHost(owner)) return nativePulls().commitShas(owner, repo, prNumber, { cap: PR_COMMITS_CAP });
   const octokit = await getReadOctokit(owner);
   const shas = [];
   for (let page = 1; page <= 3; page += 1) {
@@ -913,6 +940,7 @@ async function listPullRequestCommitShas(owner, repo, prNumber) {
 // commit. Throws on transport errors; callers fail closed (skip the vote
 // carry) rather than guessing provenance.
 async function getCommitParents(owner, repo, sha) {
+  if (onGitHost(owner)) return hostedGit().getCommitParents(owner, repo, sha);
   const octokit = await getReadOctokit(owner);
   const { data } = await octokit.request(
     'GET /repos/{owner}/{repo}/git/commits/{commit_sha}',
@@ -930,6 +958,7 @@ async function getCommitParents(owner, repo, sha) {
 // uses, deliberately not repos.getCommit: that carries the commit's whole
 // file list, which on a merge runs to hundreds of entries.
 async function getCommitTree(owner, repo, sha) {
+  if (onGitHost(owner)) return hostedGit().getCommitTree(owner, repo, sha);
   const octokit = await getReadOctokit(owner);
   const { data } = await octokit.request(
     'GET /repos/{owner}/{repo}/git/commits/{commit_sha}',
@@ -940,6 +969,7 @@ async function getCommitTree(owner, repo, sha) {
 }
 
 async function getBranchSha(owner, repo, branchName) {
+  if (onGitHost(owner)) return hostedGit().getBranchSha(owner, repo, branchName);
   const octokit = await getReadOctokit(owner);
   const { data: ref } = await octokit.request(
     'GET /repos/{owner}/{repo}/git/ref/{+ref}',
@@ -962,6 +992,7 @@ async function getBranchSha(owner, repo, branchName) {
 // entries. `listCommits` with `per_page: 1` returns the same sha and date in
 // a fixed-size payload.
 async function getRepoHead(owner, repo) {
+  if (onGitHost(owner)) return hostedGit().getRepoHead(owner, repo);
   const octokit = await getReadOctokit(owner);
   const { data: info } = await octokit.rest.repos.get({ owner, repo });
   const defaultBranch = info.default_branch || 'main';
@@ -984,6 +1015,7 @@ async function getRepoHead(owner, repo) {
 // (services/bench/backfill.js). Resolves { sha, committedAt, branch }, or
 // null when the branch has no commit that old.
 async function getCommitAt(owner, repo, until, { branch = null } = {}) {
+  if (onGitHost(owner)) return hostedGit().getCommitAt(owner, repo, until, { branch });
   const at = new Date(until);
   if (Number.isNaN(at.getTime())) throw new Error('getCommitAt needs a valid time');
   const octokit = await getReadOctokit(owner);
@@ -1008,6 +1040,7 @@ async function getCommitAt(owner, repo, until, { branch = null } = {}) {
 // `force:false` is intentional even though callers preflight ancestry: it
 // closes the race if another writer moves the ref between compare + update.
 async function advanceBranchToSha(owner, repo, branchName, sha) {
+  if (onGitHost(owner)) return hostedGit().advanceBranchToSha(owner, repo, branchName, sha);
   const octokit = await getOctokit(owner);
   const { data: ref } = await octokit.request(
     'GET /repos/{owner}/{repo}/git/ref/{+ref}',
@@ -1048,6 +1081,7 @@ async function advanceBranchToSha(owner, repo, branchName, sha) {
 // for an app back on main before it pushes the change again, when an
 // attempt that pushed was lost before it opened a pull request.
 async function forceBranchToSha(owner, repo, branchName, sha) {
+  if (onGitHost(owner)) return hostedGit().forceBranchToSha(owner, repo, branchName, sha);
   const octokit = await getOctokit(owner);
   const { data: ref } = await octokit.request(
     'GET /repos/{owner}/{repo}/git/ref/{+ref}',
@@ -1085,6 +1119,13 @@ async function createProposalCommit(owner, repo, {
   committedAt,
   files,
 }) {
+  if (onGitHost(owner)) {
+    return hostedGit().createProposalCommit(owner, repo, {
+      branchName, expectedRemoteParentSha, localParentSha, localParentTreeSha, expectedTreeSha,
+      localCommitSha, message, authoredAt, committedAt, files,
+      fullMessage: proposalCommitMessage(message, localCommitSha),
+    });
+  }
   const octokit = await getOctokit(owner);
   const readCommit = async (sha) => {
     const { data } = await octokit.request(
@@ -1352,6 +1393,7 @@ function _setCreatePrRetryDelaysForTests(delays) {
 async function createPR(owner, repo, {
   branch, title, body, head, headRepo, maintainerCanModify, draft,
 }) {
+  if (onGitHost(owner)) return nativePulls().create(owner, repo, { branch, head, title, body, draft });
   const octokit = await getOctokit(owner);
   const headRef = head || branch;
   const attempts = createPrRetryDelaysMs.length + 1;
@@ -1468,6 +1510,7 @@ async function createPR(owner, repo, {
 // connector with an explicit `headOwner` to find the cross-fork PR for a
 // branch in the user's own fork.
 async function findOpenPrByBranch(owner, repo, branch, { headOwner } = {}) {
+  if (onGitHost(owner)) return nativePulls().findOpenByBranch(owner, repo, branch);
   const octokit = await getReadOctokit(owner);
   const { data } = await octokit.rest.pulls.list({
     owner, repo, head: `${headOwner || owner}:${branch}`, state: 'open', per_page: 1,
@@ -1481,6 +1524,7 @@ async function findOpenPrByBranch(owner, repo, branch, { headOwner } = {}) {
 // head, base, html_url, …); callers shape what they need. Same-repo scope —
 // fork heads are out of scope for the import flow (see spec Deferred work).
 async function listOpenPulls(owner, repo, { perPage = 50 } = {}) {
+  if (onGitHost(owner)) return nativePulls().listOpen(owner, repo, { perPage });
   const octokit = await getReadOctokit(owner);
   const { data } = await octokit.rest.pulls.list({
     owner, repo, state: 'open', sort: 'created', direction: 'desc',
@@ -1490,6 +1534,7 @@ async function listOpenPulls(owner, repo, { perPage = 50 } = {}) {
 }
 
 async function updatePR(owner, repo, prNumber, { title, body } = {}) {
+  if (onGitHost(owner)) return nativePulls().update(owner, repo, prNumber, { title, body });
   // Goes through getOctokit (PAT-preferred) so callers get a real
   // @octokit/rest instance with `.rest.pulls.update`, instead of the
   // bare @octokit/app installation client whose surface differs and
@@ -1504,6 +1549,7 @@ async function updatePR(owner, repo, prNumber, { title, body } = {}) {
 }
 
 async function closePR(owner, repo, prNumber) {
+  if (onGitHost(owner)) return nativePulls().close(owner, repo, prNumber);
   const octokit = await getOctokit(owner);
   const { data } = await octokit.rest.pulls.update({
     owner, repo, pull_number: prNumber, state: 'closed',
@@ -1517,6 +1563,7 @@ async function closePR(owner, repo, prNumber) {
 // reopening to the user who closed it), so callers should treat a throw
 // as "couldn't reopen — fall back to proposing a fresh PR from the branch".
 async function reopenPR(owner, repo, prNumber) {
+  if (onGitHost(owner)) return nativePulls().reopen(owner, repo, prNumber);
   const octokit = await getOctokit(owner);
   const { data } = await octokit.rest.pulls.update({
     owner, repo, pull_number: prNumber, state: 'open',
@@ -1546,6 +1593,7 @@ class HeadMovedError extends Error {
 // A 409 raised specifically by the sha mismatch is re-thrown as a
 // HeadMovedError so the caller can distinguish it from other merge failures.
 async function mergePR(owner, repo, prNumber, sha = null) {
+  if (onGitHost(owner)) return nativePulls().merge(owner, repo, prNumber, sha);
   const octokit = await getOctokit(owner);
   const params = {
     owner, repo,
@@ -1576,6 +1624,7 @@ async function mergePR(owner, repo, prNumber, sha = null) {
 // linked-issues backfill to parse closing keywords out of historical PR
 // bodies that predate the #75/#79 linkage plumbing.
 async function getPR(owner, repo, prNumber) {
+  if (onGitHost(owner)) return nativePulls().get(owner, repo, prNumber);
   const octokit = await getReadOctokit(owner);
   const { data } = await octokit.rest.pulls.get({
     owner, repo,
@@ -1587,6 +1636,7 @@ async function getPR(owner, repo, prNumber) {
 // GitHub's REST update-PR endpoint does not support changing draft state.
 // The GraphQL mutation is the supported transition at the review boundary.
 async function markPrReadyForReview(owner, repo, prNumber, existingPr = null) {
+  if (onGitHost(owner)) return nativePulls().markReady(owner, repo, prNumber);
   const pr = existingPr || await getPR(owner, repo, prNumber);
   if (pr.draft === false) return pr;
   if (pr.draft !== true) throw new Error(`GitHub did not report PR #${prNumber}'s draft state`);
@@ -1613,6 +1663,7 @@ async function markPrReadyForReview(owner, repo, prNumber, existingPr = null) {
 // exists yet. The compare endpoint returns at most 300 files per page —
 // plenty for a "does anything frontend-ish appear?" check.
 async function listChangedFiles(owner, repo, basehead) {
+  if (onGitHost(owner)) return hostedGit().listChangedFiles(owner, repo, basehead);
   const octokit = await getReadOctokit(owner);
   const { data } = await octokit.rest.repos.compareCommitsWithBasehead({
     owner, repo, basehead, per_page: 100,
@@ -1633,6 +1684,7 @@ async function listChangedFiles(owner, repo, basehead) {
 const COMPARE_FILES_CAP = 300;
 
 async function compareRefs(owner, repo, basehead) {
+  if (onGitHost(owner)) return hostedGit().compareRefs(owner, repo, basehead, { cap: COMPARE_FILES_CAP });
   const octokit = await getReadOctokit(owner);
   const { data } = await octokit.rest.repos.compareCommitsWithBasehead({
     owner, repo, basehead, per_page: 100,
@@ -1652,6 +1704,7 @@ async function compareRefs(owner, repo, basehead) {
 // is the figure to show and `files` may be short of a very large change.
 // Throws on transport errors, like compareRefs.
 async function compareCommitSubjects(owner, repo, base, head) {
+  if (onGitHost(owner)) return hostedGit().compareCommitSubjects(owner, repo, base, head);
   const octokit = await getReadOctokit(owner);
   const { data } = await octokit.rest.repos.compareCommitsWithBasehead({
     owner, repo, basehead: `${base}...${head}`, per_page: 100,
@@ -1681,6 +1734,7 @@ async function compareCommitSubjects(owner, repo, base, head) {
 const PROPOSAL_DIFF_CHAR_BUDGET = 12000;
 
 async function getProposalDiff(owner, repo, basehead, charBudget = PROPOSAL_DIFF_CHAR_BUDGET) {
+  if (onGitHost(owner)) return hostedGit().getProposalDiff(owner, repo, basehead, charBudget);
   const octokit = await getReadOctokit(owner);
   const { data } = await octokit.rest.repos.compareCommitsWithBasehead({
     owner, repo, basehead, per_page: 100,
@@ -1716,6 +1770,7 @@ async function getProposalDiff(owner, repo, basehead, charBudget = PROPOSAL_DIFF
 // by the small-change tag (services/small-change.js), which needs the merge
 // base to read dapp.json as the change found it.
 async function compareFiles(owner, repo, basehead, charBudget = 60000) {
+  if (onGitHost(owner)) return hostedGit().compareFiles(owner, repo, basehead, charBudget, { cap: COMPARE_FILES_CAP });
   const octokit = await getReadOctokit(owner);
   const { data } = await octokit.rest.repos.compareCommitsWithBasehead({
     owner, repo, basehead, per_page: 100,
@@ -1745,6 +1800,7 @@ async function compareFiles(owner, repo, basehead, charBudget = 60000) {
 // never take a person's or a proposal's branch with it. A branch already
 // gone is not an error.
 async function deleteBenchBranch(owner, repo, branchName) {
+  if (onGitHost(owner)) return hostedGit().deleteBenchBranch(owner, repo, branchName);
   if (typeof branchName !== 'string' || !/^bench\/[A-Za-z0-9._/-]+$/.test(branchName) || branchName.includes('..')) {
     throw new Error(`refusing to delete ${branchName}: not a benchmark branch`);
   }
@@ -1808,6 +1864,7 @@ async function createIssueComment(owner, repo, issueNumber, body) {
 // platform-side push proxy (see src/routes/internal.js +
 // worker.execPushFromWorker).
 async function getCloneUrl(owner, repo) {
+  if (onGitHost(owner)) return require('./git-host').cloneUrl({ owner, name: repo });
   return `https://github.com/${owner}/${repo}.git`;
 }
 
@@ -1979,6 +2036,7 @@ async function verifyBotAccess(owner, repo) {
 // on failure. Callers decide whether to treat "couldn't determine" as
 // fatal (bootstrap) or just log (audit).
 async function checkRepoPublic(owner, repo) {
+  if (onGitHost(owner)) return hostedGit().checkRepoPublic(owner, repo);
   if (!process.env.GITHUB_BOT_TOKEN && !_octokitFactoryForTests && !_readClientsForTests) {
     return { ok: false, code: 'no_token', message: 'GitHub bot token not configured.' };
   }

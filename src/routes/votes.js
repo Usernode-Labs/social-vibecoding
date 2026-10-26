@@ -6237,9 +6237,20 @@ async function attemptMerge(config, pool, sessionId, { head, resumeFrom = null, 
   const isImported = session.source === 'imported';
   const useMockMerge = isImported && usesMockGithubForImports();
   const client = useMockMerge ? githubMock : github;
-  if (!(client.isEnabled() || useMockMerge) || !session.repo_url || !session.pr_number) {
-    // No GitHub, or no pull request (a local stack): nothing to ask.
+  if (!session.repo_url || !session.pr_number) {
+    // No repository or no pull request (a local stack): nothing to ask.
     return { outcome: 'merged', sha: null, noGithub: true };
+  }
+  // A repository with a pull request is never merged without being asked:
+  // one on the git host is merged by Homeroom (services/native-merge.js);
+  // one on GitHub (the platform's own) needs GitHub, which may be paused or
+  // not configured, and then it is refused, not reported merged.
+  const onGitHost = require('../services/repo-ref').isHosted(session.repo_url);
+  if (!onGitHost && !useMockMerge && (!client.isEnabled() || require('../services/github-pause').isPaused())) {
+    return {
+      outcome: 'refused', kind: 'blocked',
+      message: `${sessionLabel(session)} was not merged: code changes on GitHub are paused. It is tried again when GitHub is back.`,
+    };
   }
   // GitHub is there and the proposal has a pull request: a repository this
   // cannot read is a refusal, never a merge nobody asked GitHub for.
