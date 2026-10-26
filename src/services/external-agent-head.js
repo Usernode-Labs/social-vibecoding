@@ -132,6 +132,13 @@ function validRef(value) {
 // touching the value; `source` is the same vocabulary listActionsSecrets
 // reports ('pat' | 'installation').
 async function resolveWriteCredential(owner) {
+  // An app repository on Homeroom's git host: its service account
+  // (services/git-host.js), the only credential that writes there.
+  if (require('./repo-ref').hostOfOwner(owner) === 'git_host') {
+    const { token } = require('./git-host').settings();
+    if (!token) throw new Error('no git host write credential is configured');
+    return { token, source: 'git_host' };
+  }
   const pat = process.env.GITHUB_BOT_TOKEN;
   if (pat) return { token: pat, source: 'pat' };
   const token = await githubService.getInstallationToken(owner);
@@ -140,6 +147,14 @@ async function resolveWriteCredential(owner) {
 }
 
 function authenticatedRemote(token, owner, repo) {
+  if (require('./repo-ref').hostOfOwner(owner) === 'git_host') {
+    // The git host's address, as its service account.
+    const gitHost = require('./git-host');
+    const url = new URL(gitHost.cloneUrl({ owner, name: repo }));
+    url.username = encodeURIComponent(gitHost.settings().user);
+    url.password = encodeURIComponent(token);
+    return url.toString();
+  }
   return `https://x-access-token:${token}@github.com/${owner}/${repo}.git`;
 }
 
