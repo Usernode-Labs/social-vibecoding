@@ -166,7 +166,10 @@
          explains how a tier list works. -->
     <section id="ranking" class="flex flex-col gap-3 appear" hidden>
       <div class="flex flex-wrap items-center justify-between gap-3">
-        <div class="flex items-center gap-2">
+        <!-- The three boards and the question mark stay on one line at 390 px;
+             the note gives up its share of the row first and drops below
+             them rather than squeezing the switch. -->
+        <div class="flex min-w-0 items-center gap-2">
           <div id="view-toggle" role="radiogroup" aria-label="Whose ranking" class="inline-flex rounded-xl border border-line bg-surface p-1">
             <button type="button" role="radio" data-view="group" aria-checked="false" class="min-h-11 rounded-lg px-3 text-body font-medium">The group's</button>
             <button type="button" role="radio" data-view="yours" aria-checked="true" class="min-h-11 rounded-lg px-3 text-body font-medium">Yours</button>
@@ -174,7 +177,7 @@
           </div>
           <button id="help-open" type="button" class="min-h-11 w-11 shrink-0 rounded-xl border border-line bg-surface text-body font-semibold" aria-label="How this tier list works">?</button>
         </div>
-        <p id="board-note" class="px-1 text-small text-muted"></p>
+        <p id="board-note" class="w-full min-w-0 px-1 text-small text-muted sm:w-auto"></p>
       </div>
       <!-- One name for each person with something on a board, filled when
            that is whose board is showing. Hidden unless People is picked. -->
