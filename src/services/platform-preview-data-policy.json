@@ -47,6 +47,7 @@
         "featured_illustration": "NULL",
         "first_running_at": "NULL",
         "forked_from": "NULL",
+        "github_repo_url": "NULL",
         "governance_rules": "NULL",
         "guest_shell": "'unknown'::character varying",
         "icon_color": "NULL",
