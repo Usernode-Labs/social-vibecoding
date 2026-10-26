@@ -443,8 +443,11 @@ async function look(deps = {}) {
 // record) and cleaned up; its cost lands when its cleanup is done.
 async function cancelRun(pool, runId, deps = {}) {
   const id = Number(runId);
-  const out = await (deps.platform || platform()).evalCancel(id);
-  if (out.status === 'rejected') return httpError(out.reason === 'no_eval' ? 404 : 409, 'That eval is not running');
+  const out = await (deps.platform || platform()).evalCancel(id, deps.userId);
+  if (out.status === 'rejected') {
+    if (out.reason === 'not_authorized') return httpError(403, 'Your current permissions do not allow that action');
+    return httpError(out.reason === 'no_eval' ? 404 : 409, 'That eval is not running');
+  }
   if (out.status === 'faulted') return httpError(503, 'The eval could not be cancelled just now. Try again.');
   const { rows: [n] } = await pool.query(
     "SELECT COUNT(*)::int AS n FROM shots_eval_trials WHERE eval_run_id = $1 AND state = 'cancelled'", [id]);

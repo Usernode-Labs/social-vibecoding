@@ -118,6 +118,11 @@ export interface Tx {
 }
 
 export type Decoder = (payload: unknown) => unknown;
+// Optional application-wide admission check, on the serialized event before
+// decoding or replay. It runs under the instance lock in the same transaction
+// as the decision, including for a receipt replay. The kernel knows no users.
+export type EventAuthorizer = (tx: Tx, event: Event<any>, ctx: TransitionContext) => Promise<Check>;
+
 export type Authorize<S extends State, F> = (event: Event<any>, facts: F, state: S) => Check;
 // A domain write may add what browsers should hear about the rows it wrote,
 // and a message for an instance whose key only the write knows (a row it has

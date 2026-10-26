@@ -5348,7 +5348,7 @@ function voteRoutes(config) {
         sessionId: session.id, appId: session.app_id, from: session.status, userId: req.user.id, username: req.user.username,
       });
       if (out.status === 'rejected') {
-        return res.status(409).json({ error: out.reason || 'not_in_review' });
+        return res.status(out.reason === 'not_authorized' ? 403 : 409).json({ error: out.reason || 'not_in_review' });
       }
       res.json({ ok: true, queued: true });
     } catch (err) {

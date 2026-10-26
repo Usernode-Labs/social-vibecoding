@@ -2,8 +2,8 @@
 // event: releasing a faulted instance's held events.
 
 import { randomUUID } from 'node:crypto';
-import { checkout, enterPipeline } from './pipeline.ts';
-import type { Pool, Queryable } from './types.ts';
+import { checkout, enterPipeline, machineTx } from './pipeline.ts';
+import type { EventAuthorizer, Pool, Queryable } from './types.ts';
 
 const num = (v: unknown) => (v == null ? null : Number(v));
 
@@ -235,7 +235,7 @@ export async function instance(db: Queryable, machine: string, key: string, opts
 // Either way the held events become pending, and the release itself is
 // recorded on the timeline.
 export async function release(pool: Pool, machine: string, key: string, opts: {
-  mode: 'retry' | 'skip'; actor: string; lockTimeoutMs?: number; statementTimeoutMs?: number;
+  mode: 'retry' | 'skip'; actor: string; lockTimeoutMs?: number; statementTimeoutMs?: number; authorizeEvent?: EventAuthorizer;
 }) {
   const client = await checkout(pool);
   try {
@@ -245,6 +245,18 @@ export async function release(pool: Pool, machine: string, key: string, opts: {
     if (!inst || inst.flag !== 'faulted') {
       await client.query('ROLLBACK');
       return { released: false, reason: inst ? 'not_faulted' : 'no_instance' };
+    }
+    if (opts.authorizeEvent) {
+      const tx = machineTx(client);
+      const authority = await opts.authorizeEvent(tx, {
+        id: 0, type: '@Released', payload: { mode: opts.mode }, source: { kind: 'admin' }, actor: opts.actor,
+        requestKey: 'release', appId: inst.app_id, causedBy: null,
+      }, { machine, key, appId: inst.app_id, version: Number(inst.version), now: new Date() });
+      if (tx.poisoned) throw tx.poisoned;
+      if (authority !== true) {
+        await client.query('ROLLBACK');
+        return { released: false, reason: authority.reject };
+      }
     }
     const faultedId = Number(inst.flag_detail?.eventId);
     if (opts.mode === 'retry') {

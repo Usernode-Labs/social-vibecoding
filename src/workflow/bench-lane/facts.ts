@@ -33,12 +33,14 @@ export interface Trial { id: number; runId: number; est: number; heavy: boolean;
 // failed for good), or that never had one: recorded lost by the lane
 // (`bench.lost`).
 export interface Unrecorded { id: number; buildKey: string | null }
+export interface Abandoned { id: number; runId: number; status: string; buildKey: string | null; error: string | null }
 export interface Facts {
   liveAtOnce: number;
   liveInUse: number;
   runs: Run[];
   running: Trial[];
   unrecorded: Unrecorded[];
+  abandoned: Abandoned[];
   waiting: ReadonlyMap<number, Trial[]>;
   pendingCount: ReadonlyMap<number, number>;
   providerPauseUntil: string | null;
@@ -89,6 +91,21 @@ export async function readFacts(tx: Tx, p: { runId?: number | null; trialId?: nu
   const unrecorded: Unrecorded[] = runningRows
     .filter((r: any) => (r.build_state != null ? ['done', 'failed'].includes(r.build_state) && r.build_quiet : r.claimed_long_ago))
     .map((r: any) => ({ id: Number(r.id), buildKey: r.build_key ?? null }));
+  // Giving up the live build durably skips its comparison results. An old
+  // producer may have queued an admin cancel without a user actor, refused
+  // by admission now, or failed before sending it. Reconcile from its exact
+  // trial/run/configuration link, never from the queued command's label.
+  const { rows: abandonedRows } = await tx.query(
+    `SELECT tr.id, tr.run_id, tr.status, tr.build_key, cr.error
+       FROM bot_config_results cr JOIN bench_trials tr
+         ON tr.id = cr.trial_id AND tr.bot_run_id = cr.bot_run_id AND tr.bot_config_version_id = cr.config_version_id
+       LEFT JOIN wf_instances w ON w.machine = 'bot-build' AND w.key = tr.build_key
+      WHERE cr.source = 'trial' AND cr.status = 'skipped'
+        AND (tr.status IN ('pending', 'awaiting')
+          OR (tr.status = 'running' AND tr.build_key IS NOT NULL AND (w.state IS NULL OR w.state = 'building')))`);
+  const abandoned: Abandoned[] = abandonedRows.map((r: any) => ({
+    id: Number(r.id), runId: Number(r.run_id), status: String(r.status), buildKey: r.build_key ?? null, error: r.error ?? null,
+  }));
   const waiting = new Map<number, Trial[]>();
   const pendingCount = new Map<number, number>();
   // The open runs' queues, and the named run's (a reopen grants at once).
@@ -127,6 +144,6 @@ export async function readFacts(tx: Tx, p: { runId?: number | null; trialId?: nu
     if (t) trial = { id: Number(t.id), runId: Number(t.run_id), status: String(t.status), buildKey: t.build_key ?? null };
   }
   return {
-    liveAtOnce, liveInUse: num(live?.n), runs, running: runningRows.map(trialOf), unrecorded, waiting, pendingCount, providerPauseUntil, run, trial,
+    liveAtOnce, liveInUse: num(live?.n), runs, running: runningRows.map(trialOf), unrecorded, abandoned, waiting, pendingCount, providerPauseUntil, run, trial,
   };
 }

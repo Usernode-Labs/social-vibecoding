@@ -118,10 +118,14 @@ test('merge follow-ups through the platform runtime', { timeout: 120000 }, async
   });
   await platform.startWorkflow(config, { loops: true });
 
+  const { rows: [operator] } = await pool.query(
+    `INSERT INTO users (username, password, is_admin) VALUES ('operator', 'x', TRUE) RETURNING id, username`);
   let seq = 0;
   const { rows: [author] } = await pool.query(`INSERT INTO users (username, password) VALUES ('author', 'x') RETURNING id`);
+  // This is an existing app. The default 'creating' status also starts an
+  // unrelated first deploy, which can move main after the merge deploy.
   const { rows: [app] } = await pool.query(
-    `INSERT INTO apps (name, slug, created_by, repo_url) VALUES ('Shop', 'shop', $1, 'https://github.com/acme/shop') RETURNING *`,
+    `INSERT INTO apps (name, slug, created_by, repo_url, status) VALUES ('Shop', 'shop', $1, 'https://github.com/acme/shop', 'running') RETURNING *`,
     [author.id]);
   const proposal = async (status = 'merging') => (await pool.query(
     `INSERT INTO chat_sessions (app_id, user_id, status, pr_number, pr_title) VALUES ($1, $2, $3, $4, 'Change') RETURNING *`,
@@ -252,10 +256,10 @@ test('merge follow-ups through the platform runtime', { timeout: 120000 }, async
     await confirmed({ sessionId: s.id, appId: app.id, mergeSha: SHA('e') });
     await until(async () => (await state(s)) === 'deploy_failed', 'deploy failed');
     deploys.fail = false;
-    const out = await platform.adminEvent('merge-followups', `session:${s.id}`, 'RetryDelivery', {}, { id: author.id, username: 'author' });
+    const out = await platform.adminEvent('merge-followups', `session:${s.id}`, 'RetryDelivery', {}, operator);
     assert.ok(['accepted', 'pending'].includes(out.status), out.status);
     await until(async () => (await state(s)) === 'live', 'live after the retry');
-    await assert.rejects(platform.adminEvent('merge-followups', `session:${s.id}`, 'Merged', {}, { id: author.id, username: 'author' }),
+    await assert.rejects(platform.adminEvent('merge-followups', `session:${s.id}`, 'Merged', {}, operator),
       /not an admin action/);
   });
 
@@ -279,7 +283,7 @@ test('merge follow-ups through the platform runtime', { timeout: 120000 }, async
   // platform) left open lost its close proposal anyway.
   await t.test('a close proposal for a request the merge closes is superseded once the close is seen, not before', async () => {
     const { rows: [shop] } = await pool.query(
-      `INSERT INTO apps (name, slug, created_by, repo_url, approvals_required) VALUES ('Shop 2', 'shop-2', $1, 'https://github.com/acme/shop-2', 5) RETURNING *`,
+      `INSERT INTO apps (name, slug, created_by, repo_url, approvals_required, status) VALUES ('Shop 2', 'shop-2', $1, 'https://github.com/acme/shop-2', 5, 'running') RETURNING *`,
       [author.id]);
     looked.add(shop.id);
     const n = 41;

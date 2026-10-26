@@ -2064,7 +2064,7 @@ async function abandonSideBuilds(pool, botRunId, why, deps = {}) {
     const lane = deps.lane || require('./bench/lane');
     for (const t of running) {
       // eslint-disable-next-line no-await-in-loop
-      await Promise.resolve(lane.cancelTrial(pool, t.id, { ...deps, by: 'Homeroom', why: reason })).catch(() => null);
+      await Promise.resolve(lane.cancelTrial(pool, t.id, { ...deps, by: 'Homeroom', why: reason, system: true })).catch(() => null);
     }
     await pool.query(
       `UPDATE bot_config_results SET status = 'skipped', error = $2, finished_at = NOW()

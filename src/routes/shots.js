@@ -45,6 +45,7 @@ function sendError(res, err) {
 
 // The shots machine's refusals, as the shots routes always answered them.
 const REFUSALS = new Map([
+  ['not_authorized', 'Your current permissions do not allow that action.'],
   ['shots_rerun_in_flight', 'Wait for the current shots to finish before taking them again.'],
   ['missing_visible_changes', 'Declare the change and how to reach it before taking the shots again.'],
   ['closed', 'This proposal is closed, so its shots are not taken again.'],
@@ -52,7 +53,7 @@ const REFUSALS = new Map([
 ]);
 function refused(res, reason) {
   const code = String(reason || 'shots_refused');
-  return res.status(409).json({ error: code, message: REFUSALS.get(code) || 'The before & after shots could not do that now.' });
+  return res.status(code === 'not_authorized' ? 403 : 409).json({ error: code, message: REFUSALS.get(code) || 'The before & after shots could not do that now.' });
 }
 
 function parseRange(header, total) {
