@@ -125,6 +125,8 @@ test('isBlockedAddress blocks IPv6 loopback, unspecified, ULA, link-local, and I
     'fdab:1234::1',          // ULA (fd…)
     'fe80::1',               // link-local fe80::/10
     'febf::1',               // top of fe80::/10
+    'fec0::1',                // deprecated site-local
+    'ff02::1',                // link-local multicast
     '::ffff:127.0.0.1',      // IPv4-mapped loopback
     '::ffff:10.0.0.1',       // IPv4-mapped RFC1918
     '::ffff:192.168.0.5',    // IPv4-mapped RFC1918
@@ -135,7 +137,6 @@ test('isBlockedAddress blocks IPv6 loopback, unspecified, ULA, link-local, and I
   const allowed = [
     '2606:2800:220:1:248:1893:25c8:1946', // public
     '::ffff:93.184.216.34',               // IPv4-mapped public
-    'fec0::1',                            // just past fe80::/10
   ];
   for (const addr of allowed) {
     assert.strictEqual(webFetch.isBlockedAddress(addr), false, `${addr} should be allowed`);
@@ -403,4 +404,25 @@ test('every result is JSON-serializable', async () => {
     const result = await webFetch.fetchUrl(target);
     assert.strictEqual(typeof JSON.stringify(result), 'string', target);
   }
+});
+
+
+test('translated and reserved IPv6 addresses cannot bypass the private IPv4 policy', () => {
+  for (const address of [
+    '::127.0.0.1', '::ffff:0:127.0.0.1',
+    '64:ff9b::127.0.0.1', '64:ff9b::169.254.169.254', '64:ff9b:1::1',
+    '2002:7f00:1::', '2002:a00:1::', '2001:0:4136:e378:8000:63bf:3fff:fdd2',
+    'fec0::1', 'febf::1', 'ff0e::1', '4000::1', '2606:4700::1%eth0',
+  ]) assert.equal(webFetch.isBlockedAddress(address), true, address);
+  for (const address of ['64:ff9b::8.8.8.8', '2002:808:808::', '2606:4700:4700::1111']) {
+    assert.equal(webFetch.isBlockedAddress(address), false, address);
+  }
+});
+
+test('non-canonical loopback URL spellings are refused before fetching', async () => {
+  const calls = stubFetch(() => { throw new Error('must not connect'); });
+  for (const address of ['2130706433', '0x7f000001', '127.1', '[::ffff:7f00:1]']) {
+    assert.equal((await webFetch.fetchUrl(`http://${address}/secret`)).content, null, address);
+  }
+  assert.equal(calls.length, 0);
 });
