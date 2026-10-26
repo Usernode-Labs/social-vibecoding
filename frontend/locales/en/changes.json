@@ -5227,6 +5227,14 @@
     "text": "The staging preview failed to start, so automated checks couldn’t run.",
     "description": "Tooltip of the status tag on a proposal's card, and text of the matching ledger row on its page: the preview failed to start and no error text was recorded."
   },
+  "badge.reason.codeMissing.label": {
+    "text": "Code missing",
+    "description": "Red status tag on a proposal's card and row label in the ledger on its page: the proposal's code (its branch) is not on Homeroom's own code host, because it did not come across when Homeroom moved off GitHub. It cannot be built, tested or merged until the code is back; votes on it are still recorded."
+  },
+  "badge.reason.codeMissing.detail": {
+    "text": "This proposal’s code didn’t come across when Homeroom moved off GitHub. Its creator can submit it again, or Homeroom restores it when GitHub’s copy of the code arrives.",
+    "description": "Tooltip of the \"Code missing\" status tag on a proposal's card, and text of the matching ledger row on its page. GitHub is a product name; Homeroom is the product's own name. \"GitHub's copy of the code\" is the export of the old repositories that GitHub is sending to Homeroom. \"Submit it again\" means put the same change up again."
+  },
   "badge.reason.checksRetry.label": {
     "text": "Checks will run again",
     "description": "Status tag on a proposal's card and row label in the ledger on its page: beside a spinner; a run of the automated checks was interrupted and starts again by itself."
@@ -7594,6 +7602,10 @@
   "vote.toast.notSent": {
     "text": "Your vote did not go through. Check your connection and try again.",
     "description": "Brief notice when a vote on a proposal could not reach the server."
+  },
+  "vote.toast.codeMissing": {
+    "text": "Your vote is saved. This proposal can’t go live until its code is back.",
+    "description": "Brief notice after a vote on a proposal whose code did not come across when Homeroom moved off GitHub: the vote was recorded, but nothing can be merged until the code (its branch) is restored or submitted again."
   },
   "vote.toast.undoFailedHttp": {
     "text": "Couldn't take your vote back (HTTP {{status}}).",

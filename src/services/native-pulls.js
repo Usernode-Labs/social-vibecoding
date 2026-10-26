@@ -16,7 +16,10 @@
 //   markReady / commitShas / merge
 //
 // The head is a branch on the git host; mergeability is the mirror's own
-// `git merge-tree` (services/repo-mirror.js); a merge is a squash Homeroom
+// `git merge-tree` (services/repo-mirror.js). A read that finds main but not
+// the head branch says so as `code_missing` (services/code-missing.js): the
+// proposals open when Homeroom moved off GitHub kept their branch names, and
+// most of those branches never reached the git host. A merge is a squash Homeroom
 // makes itself (services/native-merge.js). `html_url` is the change's page on
 // Homeroom. Numbers come from the app's one sequence (services/app-numbers.js),
 // shared with its requests, so "#N" names one thing.
@@ -24,6 +27,7 @@
 const log = require('./logger');
 const appNumbers = require('./app-numbers');
 const repoMirror = require('./repo-mirror');
+const codeMissing = require('./code-missing');
 
 function requests() { return require('./requests'); }
 function db() { return appNumbers.getPool(); }
@@ -126,6 +130,10 @@ function rawOf(owner, repo, slug, row, { head = null, base = null, mergeable = n
       repo: hostedRepo,
     },
     base: { ref: row.base_branch, sha: base, repo: hostedRepo },
+    // Not GitHub's: true when this read found main on the git host and not
+    // the head branch. False for every read that did not look (no head and
+    // no base), so only a real look says it.
+    code_missing: codeMissing.fromHeads(row, { head, base }),
   };
 }
 

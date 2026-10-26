@@ -288,6 +288,13 @@ async function compareData(owner, repo, basehead) {
   const dir = await mirror(owner, repo, { refs: [base, head] });
   const baseSha = await resolve(dir, base);
   const headSha = await resolve(dir, head);
+  // Main is here and the head is not: a proposal whose code did not come
+  // across when Homeroom moved off GitHub (services/code-missing.js). Still a
+  // 404 for every caller that reads one, and coded, so a sweep can pass over
+  // it quietly instead of warning about it on every pass.
+  if (baseSha && !headSha) {
+    throw require('./code-missing').error(`Cannot compare ${basehead}: ${head} is not on the git host`, { status: 404 });
+  }
   if (!baseSha || !headSha) throw notFound(`Cannot compare ${basehead}`);
   const mergeBaseSha = await repoMirror.mergeBase(dir, baseSha, headSha);
   const from = threeDot ? (mergeBaseSha || baseSha) : baseSha;

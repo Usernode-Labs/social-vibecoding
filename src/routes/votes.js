@@ -37,6 +37,7 @@ const challengeScorer = require('../services/topochain/challenge-scorer');
 const { botRequestedBySql } = require('../services/bot-requested-by');
 const { firstVersionSql, isFirstVersion } = require('../services/first-version-rule');
 const repoRef = require('../services/repo-ref');
+const codeMissing = require('../services/code-missing');
 const {
   reviewedHeadForSession,
   visualHeadForSession,
@@ -1971,12 +1972,23 @@ async function reconcileNativeReviewedHead({
     // The branch is not in the mirror: deleted, renamed, never pushed, or an
     // imported head that lives on a fork. Not a head move, and nothing here
     // may clear approvals over an absence. Same fail-open reasoning as above.
-    log.info('votes', 'Branch not present in the mirror; revision left as it stands', {
-      sessionId: session.id, branch: session.branch_name,
-    });
+    //
+    // On the git host, with main there, a proposal with a pull request whose
+    // branch is not is one whose code did not come across from GitHub
+    // (services/code-missing.js). That is said once, as `codeMissing`, for
+    // the callers to stand down on: the merge gate refuses with the reason,
+    // the review sweep and a vote ask for no merge. It stays that way every
+    // pass until the branch is pushed back, so it is not logged as news.
+    const missing = !!(mainSha && session.pr_number && repoRef.isHosted(session.repo_url));
+    if (!missing) {
+      log.info('votes', 'Branch not present in the mirror; revision left as it stands', {
+        sessionId: session.id, branch: session.branch_name,
+      });
+    }
     return {
       enforced: true, headSha: oldHead, epoch: epochOf(session),
       unchanged: true, measurementUnavailable: true,
+      ...(missing ? { codeMissing: true } : {}),
     };
   }
   if (sameSha(liveHead, oldHead)) {
@@ -2463,6 +2475,9 @@ async function settleVoteInBackground({ config, pool, session, revision }) {
         // The approvals were just cleared; there is nothing to count.
         return { merged: false, headMoved: !!live.changed, reviewReset: true };
       }
+      // Its code is not on the git host (services/code-missing.js): the vote
+      // is recorded, and no merge is asked for, as there is nothing to merge.
+      if (live?.codeMissing) return { merged: false, codeMissing: true };
     } catch (err) {
       log.warn('votes', 'Post-vote revision read failed (non-fatal)', {
         sessionId: session.id, err: err.message,
@@ -3423,7 +3438,15 @@ function voteRoutes(config) {
       const goesLive = vote === 'yes'
         ? await require('../services/homeroom-bot-dm').noteApproved(pool, session.id, req.user.id)
         : null;
-      const readyCard = goesLive ? { goesLive } : {};
+      // And a proposal whose code did not come across from GitHub
+      // (services/code-missing.js): the vote is recorded and counted, and
+      // every answer to it says it cannot go live until the code is back.
+      // Read from what this process already knows of the branches, never a
+      // git read in front of the answer (#2782); the background settle asks
+      // for no merge either way once its own read finds the branch missing.
+      const codeMissingNote = await codeMissing.forSession(pool, session, { waitMs: 0 })
+        ? { codeMissing: true, message: codeMissing.VOTE_NOTE } : {};
+      const readyCard = { ...(goesLive ? { goesLive } : {}), ...codeMissingNote };
 
       if (unchanged) {
         log.debug('votes', 'Vote unchanged, skipping broadcast+merge', {
@@ -4235,12 +4258,25 @@ function voteRoutes(config) {
         : new Map();
       for (const row of rows) row.shots = shotsBySession.get(Number(row.id)) || null;
 
+      // A proposal whose branch is not on the git host: its code did not
+      // come across when Homeroom moved off GitHub (services/code-missing.js).
+      // Derived on every read, one query and one cached branch list for the
+      // whole panel, so pushing the branch back clears it with nothing to
+      // undo. The card says "Code missing" (AppView.blockReasons).
+      const missing = await codeMissing.missingIds(pool, rows.map((row) => ({
+        id: row.id, app_id: gatedApp.id, pr_number: row.pr_number, status: row.status, repo_url: gatedApp.repo_url,
+      })));
+      for (const row of rows) row.code_missing = missing.has(Number(row.id));
+
       // #4490: the picture a card falls back to. The diagram is the
       // author's, validated again on the way out; "What it touches" is
       // shown only for the head it was read at, and a moved head is read
-      // again in the background for the next view.
+      // again in the background for the next view. Not for a head whose
+      // code is missing (no head is no read): there is nothing on the git
+      // host to read, and the read warned on every view.
       proposalTouches.scheduleRefresh(pool, rows.map((row) => ({
-        id: row.id, repo_url: gatedApp.repo_url, pr_touches_sha: row.pr_touches_sha, head: visualHeadForSession(row),
+        id: row.id, repo_url: gatedApp.repo_url, pr_touches_sha: row.pr_touches_sha,
+        head: row.code_missing ? null : visualHeadForSession(row),
       })));
       for (const row of rows) {
         row.diagram = diagramContract.storedDiagram(row.pr_diagram);
@@ -4895,9 +4931,10 @@ function voteRoutes(config) {
   router.get('/api/apps/:slug/proposals/:id', async (req, res) => {
     try {
       // View-level (#621): read-only viewers can open a proposal's
-      // topic view (my_vote resolves to null for them).
+      // topic view (my_vote resolves to null for them). `repo_url` for
+      // whether its code is on the git host (services/code-missing.js).
       const gatedApp = await appAccess.getAppForUser(
-        pool, req.params.slug, req.user, 'view', appAccess.ACCESS_COLUMNS
+        pool, req.params.slug, req.user, 'view', `${appAccess.ACCESS_COLUMNS}, repo_url`
       );
       if (!gatedApp) return res.status(404).json({ error: 'App not found' });
 
@@ -4941,6 +4978,13 @@ function voteRoutes(config) {
         // #4479: the plan it was built from, for the page's plan card.
         proposal.plan = await require('./sessions')
           .changePlanFor(pool, proposal.id, proposal.user_id, userId).catch(() => null);
+        // Its code did not come across from GitHub (services/code-missing.js):
+        // the page's notice and the card's "Code missing", read as the list
+        // reads it. Always written, as the board merges this read into its
+        // held row key by key.
+        proposal.code_missing = await codeMissing.forSession(pool, {
+          ...proposal, app_id: gatedApp.id, repo_url: gatedApp.repo_url,
+        });
       }
 
       // #3669: the proposal page's own read must carry the same per-row
@@ -5290,6 +5334,13 @@ function voteRoutes(config) {
         });
       }
 
+      // Nothing to merge: its code did not come across from GitHub
+      // (services/code-missing.js). Refused here, in its own words, rather
+      // than answered `queued` for a merge the gate is sure to refuse.
+      if (await codeMissing.forSession(pool, session)) {
+        return res.status(409).json({ error: codeMissing.MERGE_REFUSAL, code: codeMissing.CODE });
+      }
+
       log.info('votes', 'Admin force-merge requested', {
         sessionId: session.id, by: req.user.username,
       });
@@ -5344,6 +5395,21 @@ async function evaluateMergeGate(config, pool, session, options = {}) {
       revisionBlocked: true,
       transient: !!revision.transient,
       error: revision.reason,
+    };
+  }
+  // Its branch is not on the git host: the code did not come across when
+  // Homeroom moved off GitHub (services/code-missing.js). There is nothing to
+  // merge, forced or not, so the gate refuses with that reason before it
+  // diffs a head that is not there (the explicit-approval re-verify below)
+  // or asks for a merge. Its votes stand; the proposal machine tells the
+  // queue `code_missing`, and nothing is logged, as it is the same every pass
+  // until the branch is pushed back.
+  if (revision.codeMissing) {
+    return {
+      merged: false,
+      codeMissing: true,
+      blockReason: codeMissing.CODE,
+      error: codeMissing.MERGE_REFUSAL,
     };
   }
   // #955: a revision the PLATFORM advanced (its own sync/conflict-resolution
@@ -5467,9 +5533,14 @@ async function evaluateMergeGate(config, pool, session, options = {}) {
       }
     }
   } catch (err) {
-    log.warn('votes', 'Explicit-approval re-verify failed; using stored flag', {
-      sessionId: session.id, stored: explicitApproval, err: err.message,
-    });
+    // A head whose code is not on the git host (services/code-missing.js)
+    // keeps the stored flag without a warning: it fails the same way every
+    // pass until the branch is pushed back.
+    if (!codeMissing.isError(err)) {
+      log.warn('votes', 'Explicit-approval re-verify failed; using stored flag', {
+        sessionId: session.id, stored: explicitApproval, err: err.message,
+      });
+    }
   }
   if (!explicitApproval) explicitApprovalReason = null;
 
@@ -6302,6 +6373,13 @@ async function attemptMerge(config, pool, sessionId, { head, resumeFrom = null, 
     return await merge();
   } catch (err) {
     if (throttled(err)) return limited(err);
+    // The branch is not on the git host (services/code-missing.js; the gate
+    // refuses this first, so only a branch deleted since reaches here). Its
+    // own reason, as a refusal of this head, never read as a conflict for the
+    // queue to resolve.
+    if (codeMissing.isError(err)) {
+      return { outcome: 'refused', kind: 'blocked', codeMissing: true, message: `${label} wasn't merged. ${codeMissing.REASON}` };
+    }
     if (err && err.headMoved) {
       // GitHub answers 409 for a moved head and for a merge it will not make:
       // a fresh read of the branch says which.

@@ -597,6 +597,12 @@ export interface DevWorkshopView {
      */
     lastYes?: boolean;
     /**
+     * The change's code did not come across when Homeroom moved off GitHub
+     * (src/services/code-missing.js): the facts line says "Code missing",
+     * with the sentence as its tooltip. A vote is still recorded.
+     */
+    codeMissing?: boolean;
+    /**
      * The project the row belongs to, on the Communities screen's Needs you
      * (#3488), which mixes every project's. Unset inside a project, whose
      * page says which one it is.
