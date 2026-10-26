@@ -50,7 +50,7 @@ function platformIssueHint(status) {
  * Resolves { ok: true, issue } or { ok: false, status, hint }.
  */
 async function createPlatformIssue({ owner, repo, title, body, pat = process.env.GITHUB_BOT_TOKEN, fetchImpl = null }) {
-  const send = fetchImpl || globalThis.fetch;
+  const send = fetchImpl || ((url, init) => github.githubFetch('pat', url, init));
   const ghRes = await send(`https://api.github.com/repos/${owner}/${repo}/issues`, {
     method: 'POST',
     headers: {

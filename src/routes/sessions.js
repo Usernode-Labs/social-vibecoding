@@ -4321,7 +4321,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           // write helpers, so apply safeMention here — the model-drafted
           // title/body are free-form text that could carry live
           // @mentions (#723).
-          const ghRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/issues`, {
+          const ghRes = await github.githubFetch('pat', `https://api.github.com/repos/${owner}/${repo}/issues`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',

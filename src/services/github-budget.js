@@ -52,9 +52,14 @@
 
 const path = require('node:path');
 const log = require('./logger');
+const pause = require('./github-pause');
 
 // Background work waits once less than this share of the limit is left.
 const RESERVE_RATIO = 0.15;
+
+// How soon background work held by a GitHub pause asks again.
+const PAUSE_RECHECK_MS = 60 * 1000;
+
 // Two responses whose reset times are closer than this are the same window.
 // A new window resets about an hour after the previous one, so a minute is
 // a wide margin either way.
@@ -435,6 +440,14 @@ function reserveFor(limit) {
  * Logs once per credential per window when it first holds.
  */
 function backgroundHold({ credential = null, owner = null, now = Date.now() } = {}) {
+  // GitHub paused (services/github-pause.js): everything waits, whatever
+  // the budget says. Asked again a minute later, as a budget hold would be.
+  if (pause.isPaused()) {
+    return {
+      credential: 'pat', paused: true, remaining: 0, limit: 0, reserve: 0,
+      resetAt: now + PAUSE_RECHECK_MS, retryInMs: PAUSE_RECHECK_MS,
+    };
+  }
   const creds = credential ? [normalizeCredential(credential)].filter(Boolean) : backgroundCredentials(owner);
   for (const cred of creds) {
     const c = core(cred, { now });

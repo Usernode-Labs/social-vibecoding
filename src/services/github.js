@@ -1,5 +1,6 @@
 const log = require('./logger');
 const budget = require('./github-budget');
+const pause = require('./github-pause');
 
 let App;
 let app;
@@ -74,6 +75,17 @@ function recordFetchResponse(credential, resp, { method = 'GET', url = null } = 
   });
 }
 
+// Every raw fetch to GitHub's API goes through here: refused before it is
+// sent while GitHub is paused, and a refusal saying the bot token is dead
+// pauses this process (services/github-pause.js). `credential` is the one
+// the request authenticates as ('pat', 'installation:<owner>', 'anonymous').
+async function githubFetch(credential, url, init) {
+  pause.assertNotPaused({ url: String(url).replace(/\?.*$/, '') });
+  const resp = await fetch(url, init);
+  await pause.noteResponse(credential, resp);
+  return resp;
+}
+
 // Record every response an Octokit client gets, success or error, against
 // the credential it authenticates as, and count it against the code that
 // asked (read off the stack before the request is sent, while the asking
@@ -85,12 +97,15 @@ function instrument(octokit, credential) {
     let caller = 'unknown';
     try { caller = budget.callerFromStack(); } catch (_) { /* bookkeeping only */ }
     const sent = { method: options && options.method, url: options && options.url, caller };
+    // Paused (services/github-pause.js): refused here, before it is sent.
+    pause.assertNotPaused({ caller });
     try {
       const response = await request(options);
       recordHeaders(credential, response && response.headers, { ...sent, status: response && response.status });
       return response;
     } catch (err) {
       recordHeaders(credential, err && err.response && err.response.headers, { ...sent, status: err && err.status });
+      pause.noteError(credential, err);
       throw err;
     }
   });
@@ -550,6 +565,7 @@ function isEnabled() {
 // repo URL keeps whatever case the URL was written in, so the installation
 // is matched without regard to case.
 async function resolveInstallationId(owner) {
+  pause.assertNotPaused();
   const key = String(owner || '').toLowerCase();
   const cached = installationCache.get(key);
   if (cached && cached.expiresAt > Date.now()) return cached.id;
@@ -569,6 +585,7 @@ async function getInstallationOctokit(owner) {
 }
 
 async function getInstallationToken(owner) {
+  pause.assertNotPaused();
   const installationId = await resolveInstallationId(owner);
   const { data } = await app.octokit.request('POST /app/installations/{installation_id}/access_tokens', {
     installation_id: installationId,
@@ -577,6 +594,7 @@ async function getInstallationToken(owner) {
 }
 
 async function getBotUsername() {
+  pause.assertNotPaused();
   for await (const { installation } of app.eachInstallation.iterator()) {
     return installation.account.login;
   }
@@ -733,6 +751,7 @@ async function readInstallationId(owner) {
 async function readInstallationToken(owner) {
   const id = await readInstallationId(owner);
   if (!id) return null;
+  pause.assertNotPaused();
   const auth = await app.octokit.auth({ type: 'installation', installationId: id });
   return auth && typeof auth.token === 'string' ? auth.token : null;
 }
@@ -878,7 +897,7 @@ async function installationReadHeaders(owner) {
 async function publicReadFetch(owner, url, { signal, headers: extra = null } = {}) {
   const viaApp = await installationReadHeaders(owner);
   if (viaApp) {
-    const resp = await fetch(url, { headers: { ...viaApp.headers, ...extra }, signal });
+    const resp = await githubFetch(viaApp.credential, url, { headers: { ...viaApp.headers, ...extra }, signal });
     recordFetchResponse(viaApp.credential, resp, { url });
     const refused = READ_FALLBACK_STATUSES.has(resp.status);
     if (!refused) {
@@ -887,7 +906,7 @@ async function publicReadFetch(owner, url, { signal, headers: extra = null } = {
     }
     budget.noteRead('pat', `status_${resp.status}`);
   }
-  const resp = await fetch(url, { headers: { ...publicFetchHeaders(), ...extra }, signal });
+  const resp = await githubFetch(publicFetchCredential(), url, { headers: { ...publicFetchHeaders(), ...extra }, signal });
   recordFetchResponse(publicFetchCredential(), resp, { url });
   return resp;
 }
@@ -2020,7 +2039,7 @@ async function updateIssueBody(owner, repo, issueNumber, body) {
 async function patchIssueTitle(owner, repo, issueNumber, title) {
   const pat = process.env.GITHUB_BOT_TOKEN;
   if (pat) {
-    const res = await fetch(`https://api.github.com/repos/${owner}/${repo}/issues/${issueNumber}`, {
+    const res = await githubFetch('pat', `https://api.github.com/repos/${owner}/${repo}/issues/${issueNumber}`, {
       method: 'PATCH',
       headers: {
         'Content-Type': 'application/json',
@@ -2045,7 +2064,7 @@ async function patchIssueBody(owner, repo, issueNumber, body) {
   const safeBody = safeMention(body);
   const pat = process.env.GITHUB_BOT_TOKEN;
   if (pat) {
-    const res = await fetch(`https://api.github.com/repos/${owner}/${repo}/issues/${issueNumber}`, {
+    const res = await githubFetch('pat', `https://api.github.com/repos/${owner}/${repo}/issues/${issueNumber}`, {
       method: 'PATCH',
       headers: {
         'Content-Type': 'application/json',
@@ -2069,7 +2088,7 @@ async function patchIssueContent(owner, repo, issueNumber, { title, body }) {
   const content = { title: safeMention(title), body: safeMention(body) };
   const pat = process.env.GITHUB_BOT_TOKEN;
   if (pat) {
-    const res = await fetch(`https://api.github.com/repos/${owner}/${repo}/issues/${issueNumber}`, {
+    const res = await githubFetch('pat', `https://api.github.com/repos/${owner}/${repo}/issues/${issueNumber}`, {
       method: 'PATCH',
       headers: {
         'Content-Type': 'application/json',
@@ -2360,7 +2379,7 @@ async function checkRepoPublic(owner, repo) {
 // (verifyBotAccess) is what actually gates access.
 async function fetchPublicRepoInfo(owner, repo) {
   try {
-    const resp = await fetch(`https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`, {
+    const resp = await githubFetch('anonymous', `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`, {
       headers: { 'Accept': 'application/vnd.github+json' },
     });
     recordFetchResponse('anonymous', resp, { url: `/repos/${owner}/${repo}` });
@@ -3162,6 +3181,9 @@ module.exports = {
   // for a raw fetch response (services/github-budget.js), for the same
   // services.
   publicApiCredential: publicFetchCredential,
+  // The one raw-fetch path to GitHub's API, refused while paused
+  // (services/github-pause.js), for the few callers outside this file.
+  githubFetch,
   recordFetchResponse,
   _instrumentForTests: instrument,
   fetchPublicIssues,
