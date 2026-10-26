@@ -211,9 +211,10 @@ config:
   # Homeroom's own git host, where app repositories live
   # (services/git-host.js; docs/plans/github-independence-build.md). Empty
   # url: none, and app repositories stay where their repo_url says. The
-  # platform reads and writes through internalUrl (empty: url itself, over
-  # HTTPS, which needs no network policy); user is the service account whose
-  # token is secrets.gitHostToken.
+  # platform, its builds and its workers read and write through internalUrl
+  # (empty: url itself), the in-cluster Service, which the platform reaches
+  # through networkPolicy.gitHost; user is the service account whose token
+  # is secrets.gitHostToken.
   gitHost:
     url: ""
     internalUrl: ""
@@ -378,6 +379,14 @@ networkPolicy:
     namespace: ""
     port: 3080
     podSelector: {}
+  # The git host's in-cluster Service (config.gitHost.internalUrl), which
+  # the HTTPS-to-the-internet rule does not cover.
+  gitHost:
+    enabled: false
+    namespace: social-git
+    port: 3000
+    podSelector:
+      app.kubernetes.io/name: forgejo
   # Generated apps and workers call authenticated internal platform APIs.
   internalCallerNamespaces:
     - social-apps

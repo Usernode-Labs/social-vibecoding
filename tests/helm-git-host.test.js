@@ -35,3 +35,11 @@ test('dapp.json declares every git host variable, the token as private', () => {
   const token = manifest.secrets.find((e) => e.key === 'GIT_HOST_TOKEN');
   assert.equal(token.private, true);
 });
+
+test('the platform may reach the git host\'s in-cluster Service only when asked', () => {
+  const policy = read(`${CHART}/templates/networkpolicy.yaml`);
+  assert.match(policy, /\{\{- if \.Values\.networkPolicy\.gitHost\.enabled \}\}\n    # Homeroom's git host[^\n]*\n    - to:\n        - namespaceSelector:/);
+  assert.ok(policy.includes('ports: [{protocol: TCP, port: {{ .Values.networkPolicy.gitHost.port }}}]'));
+  const values = read(`${CHART}/values.yaml`);
+  assert.match(values, /\n  gitHost:\n    enabled: false\n    namespace: social-git\n    port: 3000\n    podSelector:\n      app\.kubernetes\.io\/name: forgejo\n/);
+});
