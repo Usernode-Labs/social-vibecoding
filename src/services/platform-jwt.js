@@ -202,9 +202,12 @@ function verifyWith(token, key, { algorithm, audience, purpose }) {
 //
 // The user claims are passed through verbatim: `{ id, username,
 // usernode_pubkey, locale }` is the documented contract every child app
-// reads (src/prompts/app-conventions.md), so only registered claims are
-// added around them.
-function signAppIdentityToken({ appId, user, ttl }) {
+// reads (src/prompts/app-conventions.md). Authority and environment claims
+// are added around them.
+function signAppIdentityToken({ appId, user, ttl, environment = process.env.USERNODE_ENV === 'staging' ? 'preview' : 'production' }) {
+  if (environment !== 'preview' && environment !== 'production') {
+    throw new Error('platform-jwt: invalid app identity environment');
+  }
   if (!user || typeof user.id !== 'number') {
     throw new Error('platform-jwt: user.id (number) required');
   }
@@ -215,6 +218,7 @@ function signAppIdentityToken({ appId, user, ttl }) {
       usernode_pubkey: user.usernode_pubkey ?? null,
       locale: user.locale ?? null,
       pur: PUR_IFRAME,
+      env: environment,
     },
     iframePrivateKey(),
     {
@@ -334,7 +338,7 @@ function verifyGuestToken(token, { appId }) {
   return claims;
 }
 
-function verifyAppIdentityToken(token, { appId }) {
+function verifyAppIdentityToken(token, { appId, allowPreview = process.env.USERNODE_ENV === 'staging' }) {
   const opts = {
     algorithm: 'RS256',
     audience: appAudience(appId),
@@ -353,7 +357,18 @@ function verifyAppIdentityToken(token, { appId }) {
   let firstErr = null;
   for (const key of keys) {
     try {
-      return verifyWith(token, key, opts);
+      const claims = verifyWith(token, key, opts);
+      // Preview/capture identities may enter a preview, never production
+      // resources. Old unmarked identities remain valid for their original
+      // <=1h TTL so a rolling deployment and its own preview checks can boot.
+      // Only the trusted signer can add/remove this claim.
+      if (claims.env !== undefined && claims.env !== 'preview' && claims.env !== 'production') {
+        throw new Error('invalid app identity environment');
+      }
+      if (claims.env === 'preview' && !allowPreview) {
+        throw new Error('preview identity cannot access production resources');
+      }
+      return claims;
     } catch (err) {
       if (!firstErr) firstErr = err;
     }

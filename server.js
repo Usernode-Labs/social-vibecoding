@@ -914,8 +914,15 @@ app.get('/api/iframe-token', async (req, res) => {
   let token = null;
   let signErr = null;
   try {
-    token = platformJwt.signAppIdentityToken({ appId: appRow.id, user: appRow.slug === config.selfAppSlug
-      ? platformPreviewPolicy.previewIdentity(tokenUser) : tokenUser });
+    token = platformJwt.signAppIdentityToken({
+      appId: appRow.id,
+      user: appRow.slug === config.selfAppSlug ? platformPreviewPolicy.previewIdentity(tokenUser) : tokenUser,
+      // The platform itself is entered through cookies in production; its
+      // app identity is only for the sanitized preview. Nested identities
+      // minted by a preview also stay preview-only.
+      environment: appRow.slug === config.selfAppSlug || process.env.USERNODE_ENV === 'staging'
+        ? 'preview' : 'production',
+    });
   } catch (err) {
     signErr = err;
   }

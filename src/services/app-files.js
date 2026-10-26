@@ -199,14 +199,14 @@ function getStore(config) {
 
 // ── Quota + persistence helpers ─────────────────────────────────────
 
-async function usageSums(pool, appId, userId) {
+async function usageSums(pool, appId, userId, staging = null) {
   const { rows } = await pool.query(
     `SELECT
        COALESCE(SUM(size_bytes), 0)::bigint AS app_bytes,
        COALESCE(SUM(size_bytes) FILTER (WHERE user_id = $2), 0)::bigint AS user_bytes,
        COALESCE(SUM(size_bytes) FILTER (WHERE staging), 0)::bigint AS staging_bytes
-     FROM app_files WHERE app_id = $1`,
-    [appId, userId]
+     FROM app_files WHERE app_id = $1 AND ($3::boolean IS NULL OR staging = $3)`,
+    [appId, userId, staging]
   );
   return {
     appBytes: Number(rows[0].app_bytes),
@@ -291,8 +291,8 @@ async function storeAppFile(pool, store, { appId, userId, filename, visibility, 
 // the row so a retry (or the staging sweep) can reconcile, while a
 // deleted object with a lingering row just 404s on serve.
 // `requireUserId` (bridge path) restricts to the uploader's own files;
-// the server path (takedowns) passes null and deletes any app file.
-async function deleteAppFile(pool, store, { appId, fileId, requireUserId = null }) {
+// the production server path (takedowns) passes null for its app files.
+async function deleteAppFile(pool, store, { appId, fileId, requireUserId = null, staging = false }) {
   if (!store) {
     return { ok: false, status: 503, code: 'storage_unavailable', error: 'File storage is unavailable right now' };
   }
@@ -300,8 +300,8 @@ async function deleteAppFile(pool, store, { appId, fileId, requireUserId = null 
     return { ok: false, status: 404, code: 'not_found', error: 'File not found' };
   }
   const { rows } = await pool.query(
-    'SELECT id, user_id FROM app_files WHERE id = $1 AND app_id = $2',
-    [fileId, appId]
+    'SELECT id, user_id FROM app_files WHERE id = $1 AND app_id = $2 AND staging = $3',
+    [fileId, appId, staging]
   );
   if (!rows.length || (requireUserId != null && rows[0].user_id !== requireUserId)) {
     return { ok: false, status: 404, code: 'not_found', error: 'File not found' };
@@ -312,12 +312,12 @@ async function deleteAppFile(pool, store, { appId, fileId, requireUserId = null 
     log.error('app-files', 'Object store delete failed', { appId, fileId, err: err.message });
     return { ok: false, status: 503, code: 'storage_unavailable', error: 'File storage is unavailable right now' };
   }
-  await pool.query('DELETE FROM app_files WHERE id = $1 AND app_id = $2', [fileId, appId]);
+  await pool.query('DELETE FROM app_files WHERE id = $1 AND app_id = $2 AND staging = $3', [fileId, appId, staging]);
   return { ok: true };
 }
 
-async function usageReport(pool, appId, userId) {
-  const sums = await usageSums(pool, appId, userId);
+async function usageReport(pool, appId, userId, { staging = false } = {}) {
+  const sums = await usageSums(pool, appId, userId, staging);
   return {
     appBytes: sums.appBytes,
     appCapBytes: PER_APP_CAP,

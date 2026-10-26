@@ -392,9 +392,20 @@ test('platform preview identity uses a synthetic handle without copying producti
   const app = {...PUBLIC_APP, slug:'usernode-2d5619',self_hosted:true};
   const {res}=await call({user:VIEWER,query:{app:app.slug},pool:makePool({apps:[app]})});
   assert.equal(res.statusCode,200);
-  const claims=platformJwt.verifyAppIdentityToken(res.body.token,{appId:app.id});
+  const claims=platformJwt.verifyAppIdentityToken(res.body.token,{appId:app.id,allowPreview:true});
   assert.equal(claims.id,VIEWER.id);
   assert.equal(claims.username,`preview-user-${VIEWER.id}`);
   assert.equal(claims.usernode_pubkey,null);
   assert.equal(claims.locale,null);
+});
+
+
+test('the platform preview identity is marked and cannot authorize production resources', async () => {
+  const app = { ...PUBLIC_APP, slug: 'usernode-2d5619', self_hosted: true };
+  const { res } = await call({ query: { app: app.slug, environment: 'production' }, pool: makePool({ apps: [app] }) });
+  assert.equal(res.statusCode, 200);
+  const claims = platformJwt.verifyAppIdentityToken(res.body.token, { appId: app.id, allowPreview: true });
+  assert.equal(claims.env, 'preview');
+  assert.equal(claims.username, `preview-user-${VIEWER.id}`);
+  assert.throws(() => platformJwt.verifyAppIdentityToken(res.body.token, { appId: app.id, allowPreview: false }), /preview identity/);
 });

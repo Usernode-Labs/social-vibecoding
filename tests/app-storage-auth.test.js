@@ -178,3 +178,12 @@ test('a still-valid JWT cannot upload after its user is deleted', async () => {
     assert.equal(nexted, false);
   } finally { state.userExists = true; }
 });
+
+
+test('a preview identity is rejected even with the production app credential', async () => {
+  const userToken = platformJwt.signAppIdentityToken({ appId: APP_ID, user: { id: 7, username: 'tester' }, environment: 'preview' });
+  const { res, nexted } = await run(makeReq({ userToken }));
+  assert.equal(nexted, false);
+  assert.equal(res.statusCode, 401);
+  assert.equal(res.body.code, 'bad_user_token');
+});
