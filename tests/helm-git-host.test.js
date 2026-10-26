@@ -27,6 +27,18 @@ test('the platform gets the git host as env and its token from the Secret', () =
   assert.match(values, /\n  gitHostToken: ""\n/);
 });
 
+// The migration Job applies the recorded moves (services/github-move.js),
+// which repoint an app only to an address it knows as the git host's: it
+// needs the same settings as the platform, or every move is left pending
+// (the release of 26 Oct 2026 did exactly that).
+test('the migration Job gets the git host as env too', () => {
+  const job = read(`${CHART}/templates/migration-job.yaml`);
+  for (const [name, value] of [['GIT_HOST_URL', 'url'], ['GIT_HOST_INTERNAL_URL', 'internalUrl'], ['GIT_HOST_ORG', 'org'], ['GIT_HOST_USER', 'user']]) {
+    assert.ok(job.includes(`- {name: ${name}, value: {{ .Values.config.gitHost.${value} | quote }}}`), name);
+  }
+  assert.match(job, /envFrom:\n\s+- secretRef:/, 'the token comes from the Secret');
+});
+
 test('dapp.json declares every git host variable, the token as private', () => {
   const manifest = JSON.parse(read('dapp.json'));
   const env = new Map(manifest.platform_env.map((e) => [e.key, e]));
