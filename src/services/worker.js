@@ -3287,6 +3287,10 @@ async function _awaitWarmReady(containerName, { onProgress, timeoutMs = WARM_REA
 // Public API: ensureWorker, execInWorker, evictWorker
 // ──────────────────────────────────────────────────────────────────────
 
+// One ensure at a time per session in this process, including the async
+// status probe before a bootstrap is registered in the warm registry.
+const _ensuring = new Map();
+
 // Idempotently get a warm worker container ready for `execInWorker`.
 //
 // Cold path: spins up the container (~5-10s docker run + clone +
@@ -3308,6 +3312,28 @@ async function ensureWorker(sessionId, {
   }
   await accountDeletionGuard(sessionId);
   const containerName = workerRuntimeName(sessionId);
+  const key = Number(sessionId);
+  let running;
+  while ((running = _ensuring.get(key))) {
+    // A failed bootstrap is shared, including its bounded retries. After
+    // success, inspect again with this caller's options (e.g. storage mode).
+    await running;
+    await accountDeletionGuard(sessionId);
+  }
+  const run = ensureWorkerClaimed(sessionId, containerName, {
+    repoOwner, repoName, branchName, onProgress, temporary, pinnedBase,
+  });
+  _ensuring.set(key, run);
+  try {
+    return await run;
+  } finally {
+    if (_ensuring.get(key) === run) _ensuring.delete(key);
+  }
+}
+
+async function ensureWorkerClaimed(sessionId, containerName, {
+  repoOwner, repoName, branchName, onProgress, temporary, pinnedBase,
+}) {
   // Used from now (services/worker-eviction.js noteUsed): an eviction under
   // way is waited for, so the status read below finds its worker gone, and
   // an eviction about to claim it finds it used.
