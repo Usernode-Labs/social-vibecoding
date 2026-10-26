@@ -3,6 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const worker = require('../src/services/worker');
+const github = require('../src/services/github');
 const workerGitPush = require('../src/services/worker-git-push');
 const docker = require('../src/services/docker');
 const kubernetes = require('../src/services/kubernetes');
@@ -14,15 +15,20 @@ const sha = 'a'.repeat(40);
 const sessionId = 91001;
 
 function setup(t, runtime = 'docker') {
-  const previous = { runtime: process.env.WORKER_RUNTIME, token: process.env.GITHUB_BOT_TOKEN };
+  const previous = { runtime: process.env.WORKER_RUNTIME };
   process.env.WORKER_RUNTIME = runtime;
-  process.env.GITHUB_BOT_TOKEN = token;
   t.after(() => {
     if (previous.runtime === undefined) delete process.env.WORKER_RUNTIME;
     else process.env.WORKER_RUNTIME = previous.runtime;
-    if (previous.token === undefined) delete process.env.GITHUB_BOT_TOKEN;
-    else process.env.GITHUB_BOT_TOKEN = previous.token;
     worker._registryForgetForTests(sessionId);
+  });
+  // The GitHub App's installation token for the stored owner, the only
+  // GitHub credential the push uses (services/github.js "Who Homeroom is on
+  // GitHub"); Homeroom can act on that owner.
+  t.mock.method(github, 'canActOn', () => true);
+  t.mock.method(github, 'getInstallationToken', async (owner) => {
+    assert.equal(owner, 'Trusted-Owner', 'the owner is read from the stored address');
+    return token;
   });
   const fx = { target: { branch_name: branch, repo_url: 'https://github.com/Trusted-Owner/stored-repo.git' }, queries: [], execs: [], pushes: [] };
   t.mock.method(db, 'getPool', () => ({ query: async (sql, params) => {

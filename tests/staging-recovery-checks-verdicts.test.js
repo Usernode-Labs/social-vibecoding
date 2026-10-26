@@ -5,7 +5,7 @@
 // the proposal stayed merge-blocked forever. Now every no-op hands an
 // explicit terminal verdict to the preview machine:
 //
-//   - unparseable repo_url / missing GITHUB_BOT_TOKEN → 'skipped'
+//   - unparseable repo_url / no git host and no GitHub App → 'skipped'
 //     ("checks unavailable: GitHub is not configured"), gate-passing;
 //   - branch not ahead of main → 'skipped' ("nothing to test");
 //   - compareCommits throw → the head the row knows is handed to the
@@ -56,6 +56,9 @@ function makeRecordingPool() {
   };
 }
 
+// Whether the stubbed GitHub client has the App (hasApp); withToken turns it on.
+const githubApp = { on: false };
+
 // Load staging-recovery with the preview machine's front door
 // (services/preview-workflow), GitHub, ws and the workflow platform stubbed,
 // so every hand-off is observable without touching Postgres.
@@ -85,6 +88,7 @@ function loadRecovery({ held = false, lost = false, working = false, compare = n
       recheck: take('recheck', undefined),
     })],
     [paths.github, stubModule(paths.github, {
+      hasApp: () => githubApp.on,
       getReadOctokit: async () => ({ rest: { repos: { compareCommits: async (args) => {
         compares.push(args);
         if (compare instanceof Error) throw compare;
@@ -227,10 +231,9 @@ test("rebuildSessionStaging: unparseable repo_url hands a 'skipped' verdict to t
   } finally { restore(); }
 });
 
-test("rebuildSessionStaging: missing GITHUB_BOT_TOKEN hands a 'skipped' verdict to the machine", async () => {
+test("rebuildSessionStaging: no git host and no GitHub App hands a 'skipped' verdict to the machine", async () => {
   const { subject, handoffs, restore } = loadRecovery();
-  const prev = process.env.GITHUB_BOT_TOKEN;
-  delete process.env.GITHUB_BOT_TOKEN;
+  githubApp.on = false;
   try {
     const r = await subject.rebuildSessionStaging({
       config: {}, pool: makeRecordingPool(),
@@ -241,7 +244,6 @@ test("rebuildSessionStaging: missing GITHUB_BOT_TOKEN hands a 'skipped' verdict 
     assert.deepEqual(handoffs().map(([name]) => name), ['skipped']);
     assert.match(handoffs()[0][1].reason, /GitHub is not configured/);
   } finally {
-    if (prev !== undefined) process.env.GITHUB_BOT_TOKEN = prev;
     restore();
   }
 });
@@ -274,13 +276,12 @@ test('recordChecksSkipped is best-effort: a machine that refuses does not throw'
 
 const AHEAD = { ahead_by: 2, base_commit: { sha: 'base0000' }, commits: [{ sha: 'tip-1' }, { sha: 'tip-2' }] };
 
+// With the GitHub App configured (services/github.js hasApp), so a GitHub
+// repository can be compared.
 function withToken(fn) {
   return async () => {
-    const prev = process.env.GITHUB_BOT_TOKEN;
-    process.env.GITHUB_BOT_TOKEN = 'tok';
-    try { await fn(); } finally {
-      if (prev === undefined) delete process.env.GITHUB_BOT_TOKEN; else process.env.GITHUB_BOT_TOKEN = prev;
-    }
+    githubApp.on = true;
+    try { await fn(); } finally { githubApp.on = false; }
   };
 }
 

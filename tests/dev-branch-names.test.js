@@ -116,44 +116,39 @@ test('the safe charset contains nothing a shell would expand', () => {
 // ── the push proxy's guard ──────────────────────────────────────────────
 
 test('execPushFromWorker refuses an invalid branch permanently, with a reason', async () => {
-  const prev = process.env.GITHUB_BOT_TOKEN;
-  process.env.GITHUB_BOT_TOKEN = 'ghp_test_token';
-  try {
-    const worker = require('../src/services/worker');
-    await assert.rejects(
-      // Reaches the branch guard before any docker/kubernetes call.
-      () => worker.execPushFromWorker(1, 'dev/bad branch name'),
-      (err) => {
-        assert.equal(err.code, 'bad_branch');
-        assert.equal(err.permanent, true);
-        assert.match(err.userMessage, /never succeed/i);
-        assert.match(err.userMessage, /Start a new session/i);
-        return true;
-      }
-    );
-  } finally {
-    if (prev === undefined) delete process.env.GITHUB_BOT_TOKEN;
-    else process.env.GITHUB_BOT_TOKEN = prev;
-  }
+  const worker = require('../src/services/worker');
+  await assert.rejects(
+    // Reaches the branch guard before any docker/kubernetes call.
+    () => worker.execPushFromWorker(1, 'dev/bad branch name'),
+    (err) => {
+      assert.equal(err.code, 'bad_branch');
+      assert.equal(err.permanent, true);
+      assert.match(err.userMessage, /never succeed/i);
+      assert.match(err.userMessage, /Start a new session/i);
+      return true;
+    }
+  );
 });
 
-test('execPushFromWorker reports a missing bot token as permanent', async () => {
-  const prev = process.env.GITHUB_BOT_TOKEN;
-  delete process.env.GITHUB_BOT_TOKEN;
-  try {
-    const worker = require('../src/services/worker');
-    await assert.rejects(
-      () => worker.execPushFromWorker(1, 'dev/evan-1'),
-      (err) => {
-        assert.equal(err.code, 'no_token');
-        assert.equal(err.permanent, true);
-        assert.match(err.userMessage, /admin/i);
-        return true;
-      }
-    );
-  } finally {
-    if (prev !== undefined) process.env.GITHUB_BOT_TOKEN = prev;
-  }
+test('execPushFromWorker reports a missing GitHub credential as permanent', async (t) => {
+  const worker = require('../src/services/worker');
+  const github = require('../src/services/github');
+  // The platform's own repository, which Homeroom can act on, but no
+  // installation token can be had for it.
+  t.mock.method(require('../src/db/pool'), 'getPool', () => ({
+    query: async () => ({ rows: [{ branch_name: 'dev/evan-1', repo_url: 'https://github.com/Usernode-Labs/social-vibecoding' }] }),
+  }));
+  t.mock.method(github, 'canActOn', () => true);
+  t.mock.method(github, 'getInstallationToken', async () => { throw new Error('No GitHub App installation found for owner: Usernode-Labs'); });
+  await assert.rejects(
+    () => worker.execPushFromWorker(1, 'dev/evan-1'),
+    (err) => {
+      assert.equal(err.code, 'no_token');
+      assert.equal(err.permanent, true);
+      assert.match(err.userMessage, /admin/i);
+      return true;
+    }
+  );
 });
 
 // ── the user-facing description ─────────────────────────────────────────

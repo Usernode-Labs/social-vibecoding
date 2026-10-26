@@ -24,14 +24,15 @@ const db = require('../src/db/pool');
 const JOURNAL = '/home/node/.claude/turn-test.log';
 
 function kubernetesRuntime(t, { token = 'fake-test-token' } = {}) {
-  const prior = { runtime: process.env.WORKER_RUNTIME, token: process.env.GITHUB_BOT_TOKEN };
+  const prior = { runtime: process.env.WORKER_RUNTIME };
   process.env.WORKER_RUNTIME = 'kubernetes';
-  process.env.GITHUB_BOT_TOKEN = token;
+  // The push's GitHub credential: the App's installation token.
+  const github = require('../src/services/github');
+  t.mock.method(github, 'canActOn', () => true);
+  t.mock.method(github, 'getInstallationToken', async () => token);
   t.after(() => {
     if (prior.runtime === undefined) delete process.env.WORKER_RUNTIME;
     else process.env.WORKER_RUNTIME = prior.runtime;
-    if (prior.token === undefined) delete process.env.GITHUB_BOT_TOKEN;
-    else process.env.GITHUB_BOT_TOKEN = prior.token;
   });
 }
 

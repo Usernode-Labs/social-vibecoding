@@ -76,6 +76,7 @@ function harness(t, { held = null, tip = NEW } = {}) {
     broadcastGlobal() {}, pushSessionUpdate() {}, sendSystemMessage: async () => {},
   }));
   restores.push(stubModule(svc('github'), {
+    hasApp: () => true,
     getReadOctokit: async () => ({ rest: { repos: { compareCommits: async () => ({ data: { ahead_by: 2, commits: [{ sha: OLD }, { sha: tip }] } }) } } }),
     getBranchSha: async () => tip,
   }));
@@ -88,12 +89,9 @@ function harness(t, { held = null, tip = NEW } = {}) {
   const saved = { info: log.info, warn: log.warn };
   log.info = () => {};
   log.warn = () => {};
-  const savedToken = process.env.GITHUB_BOT_TOKEN;
-  process.env.GITHUB_BOT_TOKEN = 'test-token';
   t.after(() => {
     log.info = saved.info;
     log.warn = saved.warn;
-    if (savedToken == null) delete process.env.GITHUB_BOT_TOKEN; else process.env.GITHUB_BOT_TOKEN = savedToken;
     delete require.cache[recPath];
     delete require.cache[wfPath];
     for (const restore of restores.reverse()) restore();

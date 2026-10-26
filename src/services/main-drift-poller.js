@@ -42,10 +42,10 @@ const repoRef = require('./repo-ref');
 // the budget is nearly gone (scan below).
 const POLL_INTERVAL_MS = parseInt(process.env.MAIN_DRIFT_POLL_MS, 10) || 5 * 60 * 1000;
 
-// Whether the clock runs: the git host's service account, or GitHub with
-// the bot's token.
+// Whether the clock runs: the git host's service account, or GitHub through
+// the App.
 function enabled() {
-  return github.isEnabled() && (require('./git-host').isConfigured() || !!process.env.GITHUB_BOT_TOKEN);
+  return github.isEnabled();
 }
 
 // The last answer per repo, for conditional reads: "owner/repo" (lowercased)
@@ -76,9 +76,8 @@ async function fetchRemoteHead(owner, repo) {
     if (!head) throw Object.assign(new Error(`main not found on ${owner}/${repo}`), { status: 404 });
     return { ...head, octokit: null };
   }
-  // A read: through the App installation when GITHUB_READS_VIA_APP says so,
-  // with the bot token behind it (services/github.js getReadOctokit). A 304
-  // is passed through as itself, never retried with the bot token.
+  // A read, through the App installation (services/github.js
+  // getReadOctokit). A 304 is passed through as itself.
   const octokit = await github.getReadOctokit(owner);
   const key = `${owner}/${repo}`.toLowerCase();
   const cached = headCache.get(key);

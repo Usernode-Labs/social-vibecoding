@@ -1646,28 +1646,21 @@ test('a mirror the platform wrote skips the PR-level owner check — a named PR 
   assert.doesNotMatch(prBranch, /platformOwnedHead =/);
 });
 
-test('the mirror and patch helpers prefer the bot PAT and only then an installation token', async () => {
-  // Not cosmetic: conflict-resolver records that the installation path
-  // THROWS for the self-app's owner, which has no installation at all. An
-  // installation-first helper would break on the platform's own app and
-  // nowhere else.
+test('the mirror and patch helpers write with the App\'s installation token, never the bot token', async () => {
+  // The bot account behind GITHUB_BOT_TOKEN was suspended (25 Oct 2026) and
+  // its token is never sent again (services/github.js "Who Homeroom is on
+  // GitHub"): whatever the environment holds, the installation answers.
   const headSvc = require('../src/services/external-agent-head');
   const github = require('../src/services/github');
   const realToken = process.env.GITHUB_BOT_TOKEN;
   const realInstall = github.getInstallationToken;
-  let installationCalls = 0;
-  github.getInstallationToken = async () => { installationCalls += 1; return 'ghs_installationtoken'; };
+  const asked = [];
+  github.getInstallationToken = async (owner) => { asked.push(owner); return 'ghs_installationtoken'; };
   try {
     process.env.GITHUB_BOT_TOKEN = 'ghp_thepat';
-    const withPat = await headSvc.resolveWriteCredential('usernode-bot');
-    assert.equal(withPat.source, 'pat');
-    assert.equal(withPat.token, 'ghp_thepat');
-    assert.equal(installationCalls, 0, 'the installation path is not even consulted');
-
-    delete process.env.GITHUB_BOT_TOKEN;
-    const withApp = await headSvc.resolveWriteCredential('usernode-bot');
-    assert.equal(withApp.source, 'installation');
-    assert.equal(installationCalls, 1);
+    const credential = await headSvc.resolveWriteCredential('Usernode-Labs');
+    assert.deepEqual(credential, { token: 'ghs_installationtoken', source: 'installation' });
+    assert.deepEqual(asked, ['Usernode-Labs']);
   } finally {
     github.getInstallationToken = realInstall;
     if (realToken === undefined) delete process.env.GITHUB_BOT_TOKEN;
@@ -1840,17 +1833,18 @@ async function applyToLocalApp(app, patch, taskId) {
   const patchSvc = require('../src/services/external-agent-patch');
   const headSvc = require('../src/services/external-agent-head');
   const realRemote = headSvc.authenticatedRemote;
-  const realToken = process.env.GITHUB_BOT_TOKEN;
+  // The write credential: the GitHub App's installation token (services/github.js).
+  const githubSvc = require('../src/services/github');
+  const realInstallationToken = githubSvc.getInstallationToken;
   headSvc.authenticatedRemote = () => `file://${app.bare}`;
-  process.env.GITHUB_BOT_TOKEN = 'local-test-token';
+  githubSvc.getInstallationToken = async () => 'local-test-token';
   try {
     return await patchSvc.applyPatch({
       owner: 'usernode-bot', repo: 'recipe-box', patch, baseSha: app.base, userId: 3, taskId,
     });
   } finally {
     headSvc.authenticatedRemote = realRemote;
-    if (realToken === undefined) delete process.env.GITHUB_BOT_TOKEN;
-    else process.env.GITHUB_BOT_TOKEN = realToken;
+    githubSvc.getInstallationToken = realInstallationToken;
   }
 }
 
@@ -1928,7 +1922,9 @@ test('a patch lands ON an existing proposal branch under a lease, and a moved br
   const headSvc = require('../src/services/external-agent-head');
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sv-patch-onto-'));
   const realRemote = headSvc.authenticatedRemote;
-  const realToken = process.env.GITHUB_BOT_TOKEN;
+  // The write credential: the GitHub App's installation token (services/github.js).
+  const githubSvc = require('../src/services/github');
+  const realInstallationToken = githubSvc.getInstallationToken;
   try {
     const work = path.join(root, 'work');
     const bare = path.join(root, 'app.git');
@@ -1948,7 +1944,7 @@ test('a patch lands ON an existing proposal branch under a lease, and a moved br
     const patch = gitIn(work, ['format-patch', '--stdout', `${base}..HEAD`]);
 
     headSvc.authenticatedRemote = () => `file://${bare}`;
-    process.env.GITHUB_BOT_TOKEN = 'local-test-token';
+    githubSvc.getInstallationToken = async () => 'local-test-token';
     const refsBefore = gitIn(bare, ['for-each-ref', '--format=%(refname)']);
     const landed = await patchSvc.applyPatch({
       owner: 'usernode-bot', repo: 'recipe-box', patch, baseSha: base, userId: 3, taskId: 44,
@@ -1989,8 +1985,7 @@ test('a patch lands ON an existing proposal branch under a lease, and a moved br
     assert.equal(bad.code, 'invalid_request');
   } finally {
     headSvc.authenticatedRemote = realRemote;
-    if (realToken === undefined) delete process.env.GITHUB_BOT_TOKEN;
-    else process.env.GITHUB_BOT_TOKEN = realToken;
+    githubSvc.getInstallationToken = realInstallationToken;
     fs.rmSync(root, { recursive: true, force: true });
   }
 });

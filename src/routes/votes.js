@@ -6240,10 +6240,11 @@ async function attemptMerge(config, pool, sessionId, { head, resumeFrom = null, 
   }
   // A repository with a pull request is never merged without being asked:
   // one on the git host is merged by Homeroom (services/native-merge.js);
-  // one on GitHub (the platform's own) needs GitHub, which may be paused or
-  // not configured, and then it is refused, not reported merged.
+  // one on GitHub (the platform's own) needs GitHub through the App, which
+  // may be paused, not configured or not installed, and then it is refused,
+  // not reported merged.
   const onGitHost = require('../services/repo-ref').isHosted(session.repo_url);
-  if (!onGitHost && !useMockMerge && (!client.isEnabled() || require('../services/github-pause').isPaused())) {
+  if (!onGitHost && !useMockMerge && (!client.isEnabled() || require('../services/github-pause').codeChangesPaused(session.repo_url))) {
     return {
       outcome: 'refused', kind: 'blocked',
       message: `${sessionLabel(session)} was not merged: code changes on GitHub are paused. It is tried again when GitHub is back.`,
@@ -6611,8 +6612,10 @@ async function createRevertPR({ session, mergeSha, repoOwner, repoName, deciderU
   if (require('../services/repo-ref').hostOfOwner(repoOwner) === 'git_host') {
     return createHostedRevertPR({ session, mergeSha, repoOwner, repoName, deciderUsername });
   }
-  const token = process.env.GITHUB_BOT_TOKEN;
-  if (!token) throw new Error('GITHUB_BOT_TOKEN not set');
+  // On GitHub (the platform's own repository): as the GitHub App, with an
+  // installation token made for this revert (services/github.js "Who
+  // Homeroom is on GitHub"); refused for any other owner.
+  const token = await github.getInstallationToken(repoOwner);
 
   const cloneUrl = `https://x-access-token:${token}@github.com/${repoOwner}/${repoName}.git`;
   const tmpDir = `/tmp/usernode-revert-${session.id}-${Date.now()}`;

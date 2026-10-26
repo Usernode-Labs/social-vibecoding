@@ -21,8 +21,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 
-process.env.GITHUB_BOT_TOKEN = 'test-pat';
-
 // ── Stubs installed BEFORE the subject modules load ──────────────────────
 
 const poolMod = require('../src/db/pool');
@@ -46,6 +44,12 @@ appAccess.sessionCollabGuard = () => (req, res, next) => next();
 const github = require('../src/services/github');
 github.isEnabled = () => true;
 github.noteIssueCreated = () => {};
+// The GitHub App, installed on the platform repository's owner: the only
+// GitHub credential (services/github.js "Who Homeroom is on GitHub").
+github._setAppForTests({
+  eachInstallation: { async *iterator() { yield { installation: { id: 1, account: { login: 'Usernode-Labs' } } }; } },
+  octokit: { auth: async () => ({ token: 'test-installation-token' }) },
+});
 
 const ZWSP = '​';
 
@@ -179,7 +183,7 @@ test('platform-issue confirm writes backticked attribution, never @username', as
 
 test('pushFiles sanitizes the commit message (user-controlled app names reach it)', async () => {
   gitCommitMessages = [];
-  await github.pushFiles('o', 'r', [{ path: 'dapp.json', content: '{}' }], {
+  await github.pushFiles('Usernode-Labs', 'social-vibecoding', [{ path: 'dapp.json', content: '{}' }], {
     branch: 'main',
     message: 'Rename to "@someone"',
   });
@@ -204,7 +208,7 @@ test('createRevertPR writes the deciding voter backticked, never as @username', 
     const out = await votes.createRevertPR({
       session: { id: 5, app_id: 1, branch_name: 'dev/x', pr_number: 12, pr_title: 'Add thing' },
       mergeSha: 'abc1234',
-      repoOwner: 'o', repoName: 'r',
+      repoOwner: 'Usernode-Labs', repoName: 'social-vibecoding',
       deciderUsername: 'evan',
     });
     assert.equal(out.prNumber, 33);

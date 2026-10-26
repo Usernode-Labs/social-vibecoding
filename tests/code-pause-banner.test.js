@@ -1,15 +1,17 @@
 // The project page's "code changes are paused" banner.
 //
 // Since the move off GitHub (25 Oct 2026) app code lives on Homeroom's own
-// git host; only the platform's own repository is still on GitHub. While
-// GitHub is paused (services/github-pause.js) nothing reaches it, so a change
+// git host; what is still on GitHub is the platform's own repository, which
+// Homeroom acts on as the GitHub App, and three apps on the suspended bot's
+// account. While GitHub is paused (services/github-pause.js), or for a
+// repository Homeroom cannot act on (services/github.js canActOn), a change
 // to that project's code cannot be proposed, pushed or merged from Homeroom:
 // the worker's push and the merge each refuse. The project page says so
 // once, above the cards, beside the merges-paused and release-stalled
 // banners, and says that requests and discussions still work.
 //
-// Pinned here: the flag (true only for a repository on GitHub while GitHub
-// is paused), the app payload that carries it (GET /api/apps/:slug
+// Pinned here: the flag (true only for a repository on GitHub that is
+// paused or out of Homeroom's reach), the app payload that carries it (GET /api/apps/:slug
 // `codeChangesPaused`), the writer (`AppView._renderCodePauseNotice`, beside
 // the other two notices) and the render (absent for every other project; the
 // amber sentence when paused, from the catalog).
@@ -51,26 +53,59 @@ function bannerHtml(state) {
   return html.slice(at, end);
 }
 
-test('codeChangesPaused: a repository on GitHub, while GitHub is paused, and nothing else', () => {
-  const prev = process.env.GIT_HOST_URL;
+// A stand-in for the GitHub App, installed on the given accounts.
+function fakeApp(logins) {
+  return {
+    eachInstallation: {
+      async *iterator() {
+        for (const [i, login] of logins.entries()) yield { installation: { id: 100 + i, account: { login } } };
+      },
+    },
+    octokit: { auth: async () => ({ token: 'ghs_test_installation_token' }) },
+  };
+}
+
+test('codeChangesPaused: a repository on GitHub that is paused or out of Homeroom\'s reach, and nothing else', async () => {
+  const prev = { url: process.env.GIT_HOST_URL, repo: process.env.USERNODE_PLATFORM_REPO };
   process.env.GIT_HOST_URL = 'https://git.onhomeroom.com';
+  process.env.USERNODE_PLATFORM_REPO = 'https://github.com/Usernode-Labs/social-vibecoding';
   const pause = require('../src/services/github-pause');
+  const github = require('../src/services/github');
+  const PLATFORM = 'https://github.com/Usernode-Labs/social-vibecoding';
+  const HELD_BACK = 'https://github.com/usernode-bot/dtv-610ccb';
   try {
-    pause._setForTests({ on: true, deadStatus: null });
-    assert.equal(pause.codeChangesPaused('https://github.com/Usernode-Labs/social-vibecoding'), true);
+    pause._setForTests({ on: false, deadStatus: null });
     assert.equal(pause.codeChangesPaused('https://git.onhomeroom.com/apps/notes-1a2b3c'), false,
       'a project on the git host is not held by GitHub');
     assert.equal(pause.codeChangesPaused(null), false);
     assert.equal(pause.codeChangesPaused(''), false);
-    pause._setForTests({ on: false, deadStatus: null });
-    assert.equal(pause.codeChangesPaused('https://github.com/Usernode-Labs/social-vibecoding'), false,
-      'GitHub not paused: nothing is held');
+
+    github._setAppForTests(null);
+    assert.equal(pause.codeChangesPaused(PLATFORM), true, 'no GitHub App: nothing can act on it');
+
+    github._setAppForTests(fakeApp(['someone-else']));
+    await github.checkActingInstallation();
+    assert.equal(pause.codeChangesPaused(PLATFORM), true,
+      'the App is not installed on the platform repository\'s owner');
+
+    github._setAppForTests(fakeApp(['someone-else', 'usernode-labs']));
+    assert.equal(pause.codeChangesPaused(PLATFORM), false,
+      'not held while the first lookup is on its way: the call itself needs the installation');
+    await github.checkActingInstallation();
+    assert.equal(pause.codeChangesPaused(PLATFORM), false,
+      'installed on its owner (matched without regard to case): code changes go ahead');
+    assert.equal(pause.codeChangesPaused(HELD_BACK), true,
+      'an app on the bot\'s own account stays held: Homeroom acts on GitHub only for its own repository');
+
+    pause._setForTests({ on: true, deadStatus: null });
+    assert.equal(pause.codeChangesPaused(PLATFORM), true, 'the platform setting pauses GitHub');
     pause._setForTests({ on: false, deadStatus: 401 });
-    assert.equal(pause.codeChangesPaused('https://github.com/Usernode-Labs/social-vibecoding'), true,
-      'a dead bot token pauses GitHub too');
+    assert.equal(pause.codeChangesPaused(PLATFORM), true, 'a dead bot token, seen by an old process, pauses it too');
   } finally {
     pause._setForTests({ on: false, deadStatus: null });
-    if (prev === undefined) delete process.env.GIT_HOST_URL; else process.env.GIT_HOST_URL = prev;
+    github._setAppForTests(null);
+    if (prev.url === undefined) delete process.env.GIT_HOST_URL; else process.env.GIT_HOST_URL = prev.url;
+    if (prev.repo === undefined) delete process.env.USERNODE_PLATFORM_REPO; else process.env.USERNODE_PLATFORM_REPO = prev.repo;
   }
 });
 

@@ -176,15 +176,15 @@ test('worker exec rejects invalid output bounds before connecting', async (t) =>
 
 test('Kubernetes probes and push proxy preserve Docker operation deadlines', async (t) => {
   const originalRuntime = process.env.WORKER_RUNTIME;
-  const originalToken = process.env.GITHUB_BOT_TOKEN;
   process.env.WORKER_RUNTIME = 'kubernetes';
-  process.env.GITHUB_BOT_TOKEN = 'fake-test-token';
   t.after(() => {
     if (originalRuntime === undefined) delete process.env.WORKER_RUNTIME;
     else process.env.WORKER_RUNTIME = originalRuntime;
-    if (originalToken === undefined) delete process.env.GITHUB_BOT_TOKEN;
-    else process.env.GITHUB_BOT_TOKEN = originalToken;
   });
+  // The GitHub App's installation token, the push's only GitHub credential.
+  const github = require('../src/services/github');
+  t.mock.method(github, 'canActOn', () => true);
+  t.mock.method(github, 'getInstallationToken', async () => 'fake-test-token');
   const deadlines = [];
   t.mock.method(require('../src/db/pool'), 'getPool', () => ({
     query: async () => ({ rows: [{ branch_name: 'test-branch', repo_url: 'https://github.com/test/repo' }] }),

@@ -5983,7 +5983,7 @@ async function cloneCcVolume(srcSessionId, destSessionId) {
 //
 // The worker exports a bounded Git bundle without credentials. The trusted
 // platform imports only its objects into a fresh bare repository, then
-// pushes the exact commit with the bot credential. Worker hooks, remotes,
+// pushes the exact commit with the platform's credential. Worker hooks, remotes,
 // config and executables never run with that credential. Destination and
 // branch are re-read from the DB here, including for recovery callers.
 //
@@ -5991,6 +5991,18 @@ async function cloneCcVolume(srcSessionId, destSessionId) {
 // the routes that MINT the name. It used to be defined only here and
 // excluded `@`, which every email-address username produces — so those
 // sessions committed fine and then failed every push, heal included.
+
+// The only GitHub push destination accepted from platform state: an owner and
+// a repository on github.com over HTTPS, nothing else (execPushFromWorker).
+// Credentials, ports, alternate hosts, local paths and URL suffixes are
+// refused even when they are stored in app metadata. { owner, repo } or null.
+const GITHUB_PUSH_URL = /^https:\/\/github\.com\/([A-Za-z0-9][A-Za-z0-9-]{0,38})\/([A-Za-z0-9_.-]{1,100})\/?$/i;
+function githubPushTarget(repoUrl) {
+  const match = GITHUB_PUSH_URL.exec(repoUrl || '');
+  const repo = match?.[2].replace(/\.git$/i, '');
+  if (!repo || repo === '.' || repo === '..') return null;
+  return { owner: match[1], repo };
+}
 
 async function execPushFromWorker(sessionId, branchName) {
   // #1350: a session created but never given a turn has no branch at all,
@@ -6024,8 +6036,9 @@ async function execPushFromWorker(sessionId, branchName) {
 
   // Where the branch goes, and with which credential: the app's repository
   // on Homeroom's git host (its service account, services/git-host.js), or on
-  // GitHub (the bot token; only the platform's own repository, which is
-  // paused while GitHub is). Neither credential ever reaches the worker.
+  // GitHub (the GitHub App's installation token, made for this push; only
+  // the platform's own repository, services/github.js "Who Homeroom is on
+  // GitHub"). Neither credential ever reaches the worker.
   const pool = _getPoolSafe();
   const { rows: [target] = [] } = pool
     ? await pool.query(
@@ -6034,19 +6047,9 @@ async function execPushFromWorker(sessionId, branchName) {
     ).catch(() => ({ rows: [] }))
     : { rows: [] };
   const hosted = !!(target && require('./repo-ref').isHosted(target.repo_url));
+  const branchMatches = !!(target && target.branch_name === branchName);
   const gitHost = require('./git-host');
-  const token = hosted ? gitHost.settings().token : (process.env.GITHUB_BOT_TOKEN || '');
-  if (!token) {
-    const err = new Error(hosted ? 'GIT_HOST_TOKEN not configured on platform' : 'GITHUB_BOT_TOKEN not configured on platform');
-    err.code = 'no_token';
-    // Also permanent — no amount of retrying conjures a credential.
-    err.permanent = true;
-    err.userMessage =
-      'The platform has no credential for this repository configured, so it cannot push on '
-      + "your behalf. This needs a platform admin, and retrying won't help.";
-    throw err;
-  }
-  if (!hosted && require('./github-pause').isPaused()) {
+  if (!hosted && branchMatches && require('./github-pause').codeChangesPaused(target.repo_url)) {
     const err = new Error('GitHub is paused');
     err.code = 'github_paused';
     err.permanent = true;
@@ -6055,9 +6058,33 @@ async function execPushFromWorker(sessionId, branchName) {
       + 'Your work is kept in this session; it can be pushed once that is done.';
     throw err;
   }
+  // The GitHub owner, read from the same strict address the push is built
+  // from below; any other address is refused there, before a credential is
+  // asked for. So is a missing or moved branch.
+  const githubTarget = !hosted && branchMatches ? githubPushTarget(target.repo_url) : null;
+  let token = '';
+  if (hosted) {
+    token = gitHost.settings().token || '';
+  } else if (githubTarget) {
+    const { owner } = githubTarget;
+    token = await require('./github').getInstallationToken(owner).catch((err) => {
+      log.warn('worker', 'No GitHub App installation token for a push', { sessionId, owner, err: err.message });
+      return '';
+    });
+  }
+  if (!token && (hosted || githubTarget)) {
+    const err = new Error(hosted ? 'GIT_HOST_TOKEN not configured on platform' : 'No GitHub App installation token for this repository');
+    err.code = 'no_token';
+    // Also permanent — no amount of retrying conjures a credential.
+    err.permanent = true;
+    err.userMessage =
+      'The platform has no credential for this repository configured, so it cannot push on '
+      + "your behalf. This needs a platform admin, and retrying won't help.";
+    throw err;
+  }
 
   try {
-    if (!target || target.branch_name !== branchName) throw new Error('Session push branch has changed or no longer exists');
+    if (!branchMatches) throw new Error('Session push branch has changed or no longer exists');
     let remoteUrl;
     if (hosted) {
       // The git host's own address for the app's repository, built from its
@@ -6066,12 +6093,9 @@ async function execPushFromWorker(sessionId, branchName) {
       if (!parsed) throw new Error('Invalid canonical push destination');
       remoteUrl = gitHost.cloneUrl({ owner: parsed.owner, name: parsed.name });
     } else {
-      // Build the URL ourselves. Reject credentials, ports, alternate hosts,
-      // local paths and URL suffixes, even if they are stored in app metadata.
-      const match = /^https:\/\/github\.com\/([A-Za-z0-9][A-Za-z0-9-]{0,38})\/([A-Za-z0-9_.-]{1,100})\/?$/i.exec(target.repo_url || '');
-      const repo = match?.[2].replace(/\.git$/i, '');
-      if (!repo || repo === '.' || repo === '..') throw new Error('Invalid canonical GitHub push destination');
-      remoteUrl = `https://github.com/${match[1]}/${repo}.git`;
+      // Build the URL ourselves, from the strict address (githubPushTarget).
+      if (!githubTarget) throw new Error('Invalid canonical GitHub push destination');
+      remoteUrl = `https://github.com/${githubTarget.owner}/${githubTarget.repo}.git`;
     }
     const pushed = await workerGitPush.push({
       remoteUrl, branchName, token,
@@ -6096,8 +6120,9 @@ async function execPushFromWorker(sessionId, branchName) {
     if (_registryGet(sessionId)?.unpushed) _registryUpsert(sessionId, { unpushed: null });
     return pushed;
   } catch (err) {
-    const cleanMsg = String(err.message || '').split(token).join('***').slice(0, 2000);
-    const cleanStderr = String(err.stderr || '').split(token).join('***').slice(0, 8000);
+    const scrub = (text) => (token ? String(text || '').split(token).join('***') : String(text || ''));
+    const cleanMsg = scrub(err.message).slice(0, 2000);
+    const cleanStderr = scrub(err.stderr).slice(0, 8000);
     const wrapped = new Error(`push proxy failed: ${cleanMsg}`);
     wrapped.code = 'push_failed';
     wrapped.stderr = cleanStderr;
