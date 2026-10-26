@@ -14,7 +14,8 @@
  *   3. WHO BUILDS IT. Contributors, each with what they have merged, each
  *      opening that person's page.
  *   4. MORE. Add to home screen, Remix (a fork, to the code; "Remix" to
- *      people), Code (public on GitHub), and the version as a plain row,
+ *      people), Code (on GitHub, or on Homeroom's git host), and the
+ *      version as a plain row,
  *      "App version: a1b2c3d" (#4218). A remix also says what it was
  *      remixed from, under its description.
  *
@@ -41,10 +42,13 @@
  * ── The product's own truths, kept ─────────────────────────────────────
  *
  *   - `#improve-row-github` is the design's "Source code": a row reading
- *     Code, with "Public on GitHub" muted at its end, only where there is a
- *     repository, opening away from the shell. It says public because every
- *     repository is (services/github.js createRepo; an import must be public
- *     already), whoever the project lets open it.
+ *     Code, only where there is a repository, opening away from the shell.
+ *     Where the code is decides the rest (lib/repo-link.js). On GitHub (the
+ *     platform's own repository) it wears GitHub's mark and "Public on
+ *     GitHub" muted at its end, because every repository there is public
+ *     (an import must be public already). On Homeroom's own git host, where
+ *     app code lives since the move off GitHub, it wears the neutral code
+ *     mark and claims nothing: a repository there can be private.
  *   - `#app-about-invite` is the hub's Invite (../dev-board/workshop/
  *     community-card.tsx openInviteLinks), for a member as there: it turns
  *     this sheet to its invite pane (AppContext.openInvite, which waits for
@@ -79,11 +83,13 @@ import { useMemo, useState, type ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 import {
   CheckIcon,
+  CodeIcon,
   Glyph,
   GitHubIcon,
 } from '@/components/ui/icons';
 
 import { useMessages } from '../../lib/i18n/react';
+import { linkKind } from '../../lib/repo-link.js';
 import { agoStamp } from '../../lib/timestamp';
 import { useStoreState } from '../../lib/use-store-state';
 import { AppIconContent, AppIconLink, appIconKind } from '../apps/app-card-view';
@@ -342,7 +348,11 @@ export function AboutPane({ label }: { label: string; unnamed?: boolean }): Reac
   const canInvite = !!row?.is_member;
 
   // ── More ──────────────────────────────────────────────────────────
-  const repo = platform ? (about?.repoUrl || repoUrl) : (repoUrl || row?.repo_url || null);
+  const repoAddress = platform ? (about?.repoUrl || repoUrl) : (repoUrl || row?.repo_url || null);
+  const repoKind = repoAddress ? linkKind(repoAddress) : null;
+  // Only an address that leaves for code is a Code row: GitHub's or the git
+  // host's. Anything else (a Homeroom page, a non-web address) is none.
+  const repo = repoKind === 'github' || repoKind === 'code' ? repoAddress : null;
   const platformA2hs = platform && !!os
     && typeof window !== 'undefined' && !isStandalone() && !isNativeApp();
   const showHomeScreen = platform ? platformA2hs : !!homeScreenItem;
@@ -618,9 +628,11 @@ export function AboutPane({ label }: { label: string; unnamed?: boolean }): Reac
               className={ROW}
               onClick={() => { void AppContext.dismissForNav(); }}
             >
-              <Icon><GitHubIcon /></Icon>
+              <Icon>{repoKind === 'github' ? <GitHubIcon /> : <CodeIcon />}</Icon>
               <span className="flex-1 min-w-0 truncate font-medium">{t('agent:appContext.about.code')}</span>
-              <span className="shrink-0 text-xs text-zinc-500 dark:text-zinc-400">{t('agent:appContext.about.codePublic')}</span>
+              {repoKind === 'github' ? (
+                <span className="shrink-0 text-xs text-zinc-500 dark:text-zinc-400">{t('agent:appContext.about.codePublic')}</span>
+              ) : null}
             </a>
           ) : null}
           {/* THE VERSION, last and plain (#4218): a fact for whoever needs

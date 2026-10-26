@@ -130,6 +130,9 @@ function makeAppView(over) {
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
   sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
+  // The ⋯ rows and meta links to GitHub decide by the address
+  // (frontend/src/lib/repo-link.js, published as window.RepoLink).
+  require('./lib/repo-link').installRepoLink(sandbox);
   vm.createContext(sandbox);
   vm.runInContext(`${APP_VIEW_SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;
@@ -2205,6 +2208,9 @@ test('the Workshop renders its strips, its themes and their rows', () => {
 test('a folded row wears the card\u2019s own edge, number and glyph, and no chevron', () => {
   const AppView = makeAppView();
   seed(AppView);
+  // A pull request on GitHub, so its number is a link out (a change kept in
+  // Homeroom draws it as text: the row already opens its page).
+  AppView._proposals[0].pr_url = 'https://github.com/x/y/pull/41';
   AppView._workshopThemes = themes([{ id: 't', name: 'Theming', items: ['issue:12', 'session:34'] }]);
   AppView._workshopShot = 'themes';
   const page = workshopHtml(AppView, 'all');

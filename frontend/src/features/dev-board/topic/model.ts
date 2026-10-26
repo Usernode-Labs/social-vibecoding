@@ -409,7 +409,7 @@ export interface IssueClosedBand {
 export interface HeroView {
   /** The eyebrow's first word, "Change" (B10b). */
   kind: string;
-  /** "PR#2473", linking to GitHub when the change has a pull request. Rides the hero's by-line and is drawn in Details (B10b). */
+  /** "PR#2473" and the change's `pr_url` (its pull request on GitHub, or its own page in Homeroom). Drawn in Details (B10b), which links out only where the address leaves Homeroom. */
   ref: { s: string; href: string | null } | null;
   /** "Waiting for approval", "Merged", "Not shared yet", "Visible to the group". */
   status: string;

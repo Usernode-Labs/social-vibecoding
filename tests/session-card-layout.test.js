@@ -80,6 +80,9 @@ function makeCtx(over) {
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
   sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
+  // The ⋯ rows and meta links to GitHub decide by the address
+  // (frontend/src/lib/repo-link.js, published as window.RepoLink).
+  require('./lib/repo-link').installRepoLink(sandbox);
   vm.createContext(sandbox);
   vm.runInContext(`${APP_VIEW_SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   return sandbox;
@@ -201,7 +204,7 @@ test('an owned imported PR shows proposal metadata with one promotion action', (
     source: 'imported',
     imported_pr_author: 'octo-contributor',
     pr_number: 1165,
-    pr_url: 'https://github.example/pull/1165',
+    pr_url: 'https://github.com/example/app/pull/1165',
     priority: { top: 'high', count: 2, myValue: 'high' },
     assignee: { top: 'tester', count: 1, myValue: 'tester' },
     category: { top: 'bug', count: 1, myValue: 'bug' },
@@ -232,7 +235,7 @@ test('another user’s imported PR names its people and exposes proposal attribu
   const AppView = makeAppView();
   const html = sharedSessionCardHtml(AppView, sharedSess({
     source: 'imported', imported_pr_author: 'octo-contributor', username: 'maya',
-    pr_url: 'https://github.example/pull/1165',
+    pr_url: 'https://github.com/example/app/pull/1165',
     assignee: { top: 'sam', count: 1, myValue: null },
   }));
   assert.match(html, /Imported PR/);

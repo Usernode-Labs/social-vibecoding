@@ -1041,16 +1041,13 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
           a.active_users = parseInt(unionRows[0]?.cnt, 10) || 0;
         }
 
-        const { owner, repo } = repoRef.ownerRepo(a.repo_url) || {};
         const version = a.main_sha
           ? {
               sha: a.main_sha,
               shortSha: a.main_sha.slice(0, 7),
               prNumber: a.main_pr_number || null,
               commitUrl: repoRef.commitUrl(a.repo_url, a.main_sha),
-              prUrl: a.main_pr_number && owner && repo
-                ? `https://github.com/${owner}/${repo}/pull/${a.main_pr_number}`
-                : null,
+              prUrl: require('../services/app-version').mergedPrUrl(a, a.main_pr_number),
             }
           : null;
         // #416: the raw last_failure JSONB (which carries the full boot
@@ -1994,6 +1991,12 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         // child app. The raw column rides along in the allowlist; this is
         // the shape clients read.
         releaseStall: require('../services/release-watch').describe(appRow),
+        // Whether changes to this project's code are held while Homeroom
+        // moves off GitHub: its repository is still on GitHub (the
+        // platform's own) and GitHub is paused (services/github-pause.js).
+        // The project page's banner says so; every other project reads
+        // false.
+        codeChangesPaused: require('../services/github-pause').codeChangesPaused(appRow.repo_url),
         ...accessFlags(appRow, req.user, isCollaborator, adminAppIds, contributorCount,
           config.selfAppSlug),
       };

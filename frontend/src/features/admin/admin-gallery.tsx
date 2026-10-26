@@ -8,6 +8,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { AdminUI } from './admin-console.js';
 import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
 import { changeHref } from '../../lib/change-href';
+import { linkKind } from '../../lib/repo-link.js';
 
 // Screenshot gallery section of the admin console (#860) — the retired
 // standalone /gallery page, ported into #admin/gallery.
@@ -196,7 +197,10 @@ function ProposalCard({ p }: { p: Proposal }) {
   const merged = fmtDate(p.mergedAt);
 
   const meta: React.ReactNode[] = [];
-  if (p.prUrl && p.prNumber) {
+  // PR#N leaves for a pull request on GitHub (or code on the git host). A
+  // change kept in Homeroom is plain text: "Open proposal" below is its page.
+  const prKind = p.prUrl ? linkKind(p.prUrl) : null;
+  if (p.prUrl && p.prNumber && (prKind === 'github' || prKind === 'code')) {
     meta.push(
       <a key="pr" href={p.prUrl} target="_blank" rel="noopener"
         className="font-mono text-violet-700 dark:text-violet-400 hover:underline">PR#{p.prNumber}</a>,

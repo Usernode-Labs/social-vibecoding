@@ -277,7 +277,7 @@ const INITIAL = {
    * Published by ../app-context/platform-target.js through Home.
    */
   restricted: false,
-  /** `appData.repo_url`, or null — gates the "View on GitHub" row. */
+  /** `appData.repo_url`, or null — gates the About pane's Code row (GitHub's, or the git host's). */
   repoUrl: null,
   /** The open app's own artwork, for the header cluster's 28px tile. Both
       fields, because the resolver is icon_url → icon_emoji → letter and an

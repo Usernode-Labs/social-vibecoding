@@ -25,6 +25,7 @@
 // every read happens at call time, long after the bundle has evaluated.
 import { t as message, htmlText } from '../../lib/i18n/runtime';
 import { AppCard } from '../apps/app-card.js';
+import { linkKind } from '../../lib/repo-link.js';
 import { gridStore } from './grid-store';
 import { chromeStore } from './chrome-store';
 import { detectInstallHost } from '../mobile-install/environment';
@@ -4010,11 +4011,18 @@ const Home = {
     // reachable while the app was open.
     //
     // ?demo=1 tiles carry no repository, so the gate never fires for them.
-    if (app.repo_url) {
+    //
+    // Where the code is decides the row (lib/repo-link.js): "View on GitHub"
+    // for a repository still on GitHub (the platform's own), "View code" for
+    // one on Homeroom's git host, where app code lives since the move; an
+    // address that is neither is no row at all.
+    const repoKind = app.repo_url ? linkKind(app.repo_url) : null;
+    if (repoKind === 'github' || repoKind === 'code') {
+      const github = repoKind === 'github';
       items.push({
-        key: 'github',
-        label: message('home:menu.github.label'),
-        title: message('home:menu.github.tip'),
+        key: github ? 'github' : 'code',
+        label: github ? message('home:menu.github.label') : message('home:menu.code.label'),
+        title: github ? message('home:menu.github.tip') : message('home:menu.code.tip'),
         // `noopener` explicitly: the target document must not get a handle on
         // this window, and repo_url is app-supplied.
         run: () => window.open(app.repo_url, '_blank', 'noopener'),

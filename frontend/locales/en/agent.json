@@ -1965,11 +1965,11 @@
   },
   "appContext.about.code": {
     "text": "Code",
-    "description": "Row under More in the About pane of the app menu: a noun, a link to the app's source code on GitHub."
+    "description": "Row under More in the About pane of the app menu: a noun, a link to the app's source code (on GitHub, or on Homeroom's own git host)."
   },
   "appContext.about.codePublic": {
     "text": "Public on GitHub",
-    "description": "Small note at the right of the Code row in the About pane of the app menu: the source code is publicly readable on GitHub."
+    "description": "Small note at the right of the Code row in the About pane of the app menu, for an app whose code is on GitHub: the source code is publicly readable there."
   },
   "appContext.about.remix": {
     "text": "Remix",

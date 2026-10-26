@@ -17,6 +17,9 @@ function context(user = { id: 42, username: 'Builder' }, extra = {}) {
     location: extra.location || { search: '', hash: '' }, URLSearchParams };
   c.window = c;
   c.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
+  // The change's ⋯ row to its pull request decides by the address
+  // (frontend/src/lib/repo-link.js, published as window.RepoLink).
+  require('./lib/repo-link').installRepoLink(c);
   vm.createContext(c);
   for (const path of ['public/js/merge-status.js', 'public/js/app-view.js']) {
     vm.runInContext(fs.readFileSync(path, 'utf8'), c);

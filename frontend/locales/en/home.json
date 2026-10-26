@@ -205,11 +205,19 @@
   },
   "menu.github.label": {
     "text": "View on GitHub",
-    "description": "Item in an app's menu: opens the app's source code repository on GitHub in a new tab."
+    "description": "Item in an app's menu, for an app whose code is on GitHub: opens the app's source code repository on GitHub in a new tab."
   },
   "menu.github.tip": {
     "text": "Open this app’s repository",
     "description": "Tooltip of the \"View on GitHub\" item in an app's menu. \"Open\" is a verb."
+  },
+  "menu.code.label": {
+    "text": "View code",
+    "description": "Item in an app's menu, for an app whose code is on Homeroom's own git host rather than GitHub: opens the app's source code in a new tab. \"View\" is a verb."
+  },
+  "menu.code.tip": {
+    "text": "Open this app’s code",
+    "description": "Tooltip of the \"View code\" item in an app's menu. \"Open\" is a verb."
   },
   "menu.myApps.add": {
     "text": "Add to My apps",

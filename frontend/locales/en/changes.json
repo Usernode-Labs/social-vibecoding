@@ -993,7 +993,7 @@
   },
   "page.menu.openOnGitHub": {
     "text": "Open on GitHub",
-    "description": "Row in the ⋯ menu of a request's page: opens the issue on GitHub in a new tab. \"Open\" is a verb."
+    "description": "Row in the ⋯ menu of a request's page, for a request that is an issue on GitHub: opens the issue on GitHub in a new tab. \"Open\" is a verb."
   },
   "page.build.continueInSession": {
     "text": "Continue in agent session",
@@ -1373,7 +1373,11 @@
   },
   "explore.seed.prLink": {
     "text": "PR link: {{url}}",
-    "description": "Line in the message written for a coding agent about a proposal, giving the address of its pull request. {{url}} is that address."
+    "description": "Line in the message written for a coding agent about a proposal, giving the address of its pull request on GitHub. {{url}} is that address."
+  },
+  "explore.seed.changeLink": {
+    "text": "Change page: {{url}}",
+    "description": "Line in the message written for a coding agent about a proposal that has no pull request on GitHub, giving the address of the change's own page in Homeroom. {{url}} is that address."
   },
   "explore.seed.linkedIssues": {
     "text": "Linked issues: {{issues}}.",
@@ -1585,7 +1589,11 @@
   },
   "session.menu.viewPr": {
     "text": "View PR on GitHub",
-    "description": "Item in the ⋯ menu of an agent session's card: opens the session's pull request on GitHub in a new tab."
+    "description": "Item in the ⋯ menu of an agent session's card, for a session whose pull request is on GitHub: opens it on GitHub in a new tab."
+  },
+  "session.menu.viewCode": {
+    "text": "View code",
+    "description": "Item in the ⋯ menu of an agent session's card, for a session whose code is on Homeroom's own git host rather than GitHub: opens that code in a new tab. \"View\" is a verb."
   },
   "session.menu.stopSharingChat": {
     "text": "Chat shared. Stop sharing",
@@ -2361,11 +2369,19 @@
   },
   "proposal.menu.viewPr": {
     "text": "View PR on GitHub",
-    "description": "Item in a proposal's ⋯ menu: opens the proposal's pull request on GitHub in a new tab."
+    "description": "Item in a proposal's ⋯ menu, for a proposal whose pull request is on GitHub: opens it on GitHub in a new tab."
+  },
+  "proposal.menu.viewCode": {
+    "text": "View code",
+    "description": "Item in a proposal's ⋯ menu, for a proposal whose code is on Homeroom's own git host rather than GitHub: opens that code in a new tab. \"View\" is a verb."
   },
   "proposal.details.viewPr": {
     "text": "View PR on GitHub",
-    "description": "Link in the details section of a proposal's page: opens the proposal's pull request on GitHub."
+    "description": "Link in the details section of a proposal's page, for a proposal whose pull request is on GitHub: opens it on GitHub."
+  },
+  "proposal.details.viewCode": {
+    "text": "View code",
+    "description": "Link in the details section of a proposal's page, for a proposal whose code is on Homeroom's own git host rather than GitHub: opens that code. \"View\" is a verb."
   },
   "proposal.details.importedBy": {
     "text": "imported by <0>{{username}}</0>",
@@ -7365,19 +7381,19 @@
   },
   "chips.issue.closesLink": {
     "text": "Closes #{{number}}",
-    "description": "Link on a proposal's page to the request on GitHub that it will close when it goes live. A verb: this proposal closes that request. {{number}} is the request's number; keep the \"#\"."
+    "description": "Link on a proposal's page to the request it will close when it goes live; it opens that request's page. A verb: this proposal closes that request. {{number}} is the request's number; keep the \"#\"."
   },
   "chips.issue.closedLink": {
     "text": "Closed #{{number}}",
-    "description": "Link on a merged proposal's page to the request on GitHub that it closed. A verb in the past. {{number}} is the request's number; keep the \"#\"."
+    "description": "Link on a merged proposal's page to the request it closed; it opens that request's page. A verb in the past. {{number}} is the request's number; keep the \"#\"."
   },
-  "chips.issue.closesTitle": {
-    "text": "Closes issue #{{number}} on GitHub",
-    "description": "Tooltip of the \"Closes #N\" link on a proposal's page: the proposal will close that issue (request) on GitHub. {{number}} is the issue's number."
+  "chips.issue.closesRequestTitle": {
+    "text": "Open request #{{number}}, which this change closes",
+    "description": "Tooltip of the \"Closes #N\" link on a proposal's page: pressing it opens the request inside Homeroom, and the proposal will close that request when it goes live. \"Open\" is a verb. {{number}} is the request's number."
   },
-  "chips.issue.closedTitle": {
-    "text": "Closed issue #{{number}} on GitHub",
-    "description": "Tooltip of the \"Closed #N\" link on a merged proposal's page: the proposal closed that issue (request) on GitHub. {{number}} is the issue's number."
+  "chips.issue.closedRequestTitle": {
+    "text": "Open request #{{number}}, which this change closed",
+    "description": "Tooltip of the \"Closed #N\" link on a merged proposal's page: pressing it opens the request inside Homeroom, which the proposal closed. \"Open\" is a verb. {{number}} is the request's number."
   },
   "vote.row.votedYes": {
     "text": "You voted Yes",
@@ -8005,7 +8021,11 @@
   },
   "page.menu.viewPr": {
     "text": "View PR on GitHub",
-    "description": "Row in the ⋯ menu of a change's page: opens the change's pull request on GitHub in a new tab. \"PR\" is short for pull request."
+    "description": "Row in the ⋯ menu of a change's page, for a change whose pull request is on GitHub: opens it on GitHub in a new tab. \"PR\" is short for pull request."
+  },
+  "page.menu.viewCode": {
+    "text": "View code",
+    "description": "Row in the ⋯ menu of a change's page, for a change whose code is on Homeroom's own git host rather than GitHub: opens that code in a new tab. \"View\" is a verb."
   },
   "shots.details.builds": {
     "text": "Taken on the exact before and after builds of this change:",

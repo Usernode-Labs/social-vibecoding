@@ -477,7 +477,7 @@
   },
   "sessions.row.pr": {
     "text": "PR#{{number}}",
-    "description": "Link on a row in the list of dev chat sessions to the session's pull request on GitHub. PR is short for pull request; {{number}} is its number."
+    "description": "Link on a row in the list of dev chat sessions to the session's pull request: on GitHub, or the change's own page in Homeroom. PR is short for pull request; {{number}} is its number."
   },
   "sessions.empty.title": {
     "text": "Want to change this app? Just ask.",
@@ -697,7 +697,7 @@
   },
   "card.changes.prLink": {
     "text": "PR #{{number}}",
-    "description": "Link at the top of the changes card in the dev chat to the pull request on GitHub. PR is short for pull request; {{number}} is its number."
+    "description": "Link at the top of the changes card in the dev chat to the change's pull request: on GitHub, or the change's own page in Homeroom. PR is short for pull request; {{number}} is its number."
   },
   "card.changes.ready": {
     "text": "Changes ready",
@@ -725,7 +725,15 @@
   },
   "card.changes.viewOnGithub": {
     "text": "View on GitHub",
-    "description": "Link on the changes card in the dev chat: opens the change's pull request on GitHub."
+    "description": "Link on the changes card in the dev chat, for a change whose pull request is on GitHub: opens it on GitHub."
+  },
+  "card.changes.viewCode": {
+    "text": "View code",
+    "description": "Link on the changes card in the dev chat, for a change whose code is on Homeroom's own git host rather than GitHub: opens that code in a new tab. \"View\" is a verb."
+  },
+  "card.changes.openChange": {
+    "text": "Open change",
+    "description": "Link on the changes card in the dev chat, for a change that has its own page in Homeroom: opens that page, where its code, checks and vote are. \"Open\" is a verb; a change is the set of edits the coding agent made."
   },
   "card.changes.proposing": {
     "text": "Proposing…",

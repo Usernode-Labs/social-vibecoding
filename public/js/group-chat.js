@@ -2272,8 +2272,13 @@ const GroupChat = {
         AppView._reactDevBoard()?.publishRequestThread(a.ref, rows);
       }
       // GitHub returned only the newest comments: the stream says so, and
-      // links to the rest.
-      githubMore = extra && extra.truncated ? { url: extra.htmlUrl || null } : null;
+      // links to the rest while they are on GitHub. A request's `htmlUrl` is
+      // its own page in Homeroom now, the page this stream is on, so it is
+      // not offered as somewhere to read them (lib/repo-link.js).
+      const links = typeof window !== 'undefined' ? window.RepoLink : null;
+      const moreUrl = extra && extra.htmlUrl && links && links.linkKind(extra.htmlUrl) === 'github'
+        ? extra.htmlUrl : null;
+      githubMore = extra && extra.truncated ? { url: moreUrl } : null;
     }
     GroupChat._react()?.publishTranscript(
       rows,
@@ -2492,7 +2497,12 @@ const GroupChat = {
   _handleQuotedClick(quoted) {
     if (quoted.dataset.quoteSource === 'pr') {
       const href = quoted.dataset.quoteHref;
-      if (href) window.open(href, '_blank', 'noopener');
+      // A change kept in Homeroom opens its page in place; a pull request on
+      // GitHub in a new tab (lib/repo-link.js, published as window.RepoLink).
+      const links = typeof window !== 'undefined' ? window.RepoLink : null;
+      const route = href && links ? links.homeroomRoute(href) : null;
+      if (route) window.location.hash = route;
+      else if (href) window.open(href, '_blank', 'noopener');
       return;
     }
     const ref = parseInt(quoted.dataset.quoteRef || '', 10);
