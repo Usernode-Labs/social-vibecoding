@@ -179,7 +179,10 @@ test('merge follow-ups through the platform runtime', { timeout: 120000 }, async
     assert.equal((await pool.query(`SELECT count(*)::int AS n FROM wf_settings WHERE key = 'ownership_mode'`)).rows[0].n, 0);
   });
 
-  await t.test('a confirmed merge goes live through the real handlers', async () => {
+  await t.test('a confirmed merge goes live through the real handlers', async (t) => {
+    // A concurrent deploy of main must model the same merged repository revision.
+    deploys.sha = SHA('a');
+    t.after(() => { deploys.sha = null; });
     const s = await botProposal();
     await confirmed({ sessionId: s.id, appId: app.id, mergeSha: SHA('a') });
     await until(async () => (await state(s)) === 'live', 'live');
@@ -204,8 +207,9 @@ test('merge follow-ups through the platform runtime', { timeout: 120000 }, async
       'asked by the transition that applied the merge');
     assert.ok(!calls.some((c) => c[0] === 'teardown' && c[1] === s.id), 'nothing else tears it down');
     await until(async () => calls.some((c) => c[0] === 'retire' && c[1] === s.id), 'the worker removed, fenced');
-    const { rows: [d] } = await pool.query(`SELECT state FROM wf_instances WHERE machine = 'app-delivery' AND key = $1`, [`app:${app.id}`]);
-    assert.equal(d.state, 'idle');
+    // The merge may be live before the delivery machine records its final transition.
+    await until(async () => (await pool.query(
+      `SELECT state FROM wf_instances WHERE machine = 'app-delivery' AND key = $1`, [`app:${app.id}`])).rows[0]?.state === 'idle', 'the deployment settled');
     await until(async () => calls.some((c) => c[0] === 'main-check' && c[1] === SHA('a')), 'the main check, run by its machine');
     await until(async () => (await pool.query('SELECT main_check_state FROM apps WHERE id = $1', [app.id])).rows[0].main_check_state === 'passing',
       'its verdict on the row');

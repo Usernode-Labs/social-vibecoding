@@ -33,6 +33,7 @@
 // loses that event (logged), as a dropped socket would.
 
 const log = require('./logger');
+const { waitForStreamDrain } = require('./http-stream-access');
 const pushes = require('../workflow/pushes.ts');
 const { holderAliveSql } = require('../workflow/rules/presence.ts');
 
@@ -271,7 +272,7 @@ async function read(s, pool) {
         for (const r of rows) {
           s.lastId = Number(r.id);
           if (s.closed) break;
-          try { s.cb(r.event); } catch { /* the subscriber's own trouble */ }
+          try { await s.cb(r.event); } catch { /* the subscriber's own trouble */ }
         }
         more = rows.length === READ_LIMIT;
       }
@@ -289,7 +290,8 @@ async function settle() {
 
 /**
  * Follow stream `sessionId`: `cb(event)` for what comes after `since`, then
- * for everything new, in order. Counted as a watcher (subscriberCount) for
+ * for everything new, in order. An async callback pauses reads until the
+ * consumer is ready. Counted as a watcher (subscriberCount) for
  * as long as it is followed. Returns the unsubscribe function.
  */
 function subscribe(sessionId, cb, since = null) {
@@ -442,15 +444,18 @@ function relay(req, res, key, { afterId = 0, turnId = null, heartbeatMs = 15000 
       try { res.end(); } catch { /* already closed */ }
       resolve();
     };
-    off = subscribe(key, (event) => {
+    off = subscribe(key, async (event) => {
       if (ended) return;
-      try { res.write(`data: ${JSON.stringify(event)}\n\n`); } catch { /* client gone */ }
+      try {
+        if (res.write(`data: ${JSON.stringify(event)}\n\n`) === false) await waitForStreamDrain(res);
+      } catch { /* client gone */ }
       // Its own turn's end (services/turns.js, turn/machine.ts
       // turnEndEvent): never an earlier turn's, still ending as this one is
       // asked, nor a later one's.
       if (event.type === 'done' && (turnId == null || event.turnId === String(turnId))) end();
     }, { afterId });
     req.on('close', end);
+    res.on?.('close', end);
   });
 }
 

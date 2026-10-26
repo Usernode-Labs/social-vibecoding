@@ -42,6 +42,7 @@ const sessionLifecycle = require('../services/session-lifecycle');
 const stagingRecovery = require('../services/staging-recovery');
 const previewWorkflow = require('../services/preview-workflow');
 const sessionBus = require('../services/session-bus');
+const { waitForStreamDrain } = require('../services/http-stream-access');
 const chatDelivery = require('../services/chat-delivery');
 const { drainGuard } = require('../services/lifecycle');
 const unitSuiteRow = require('../services/unit-suite-row');
@@ -6201,12 +6202,13 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     // but fall back to an explicit query arg for the first connect.
     const sinceSeq = req.headers['last-event-id'] || req.query.since || null;
 
-    const write = (event) => {
+    const write = async (event) => {
       try {
         // `id:` makes EventSource remember this _seq and echo it back as
         // Last-Event-Id on reconnect, driving the ring-buffer replay.
-        res.write(`id: ${event._seq}\n`);
-        res.write(`data: ${JSON.stringify(event)}\n\n`);
+        const idReady = res.write(`id: ${event._seq}\n`);
+        const dataReady = res.write(`data: ${JSON.stringify(event)}\n\n`);
+        if (idReady === false || dataReady === false) await waitForStreamDrain(res);
       } catch {}
     };
 
@@ -6221,6 +6223,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       clearInterval(hb);
       try { unsubscribe(); } catch {}
     };
+    res.on('close', close);
     req.on('close', close);
     req.on('error', close);
   });

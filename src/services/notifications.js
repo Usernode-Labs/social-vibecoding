@@ -100,6 +100,30 @@ const CONVERSATION_NOTIFICATION_KINDS = new Set([
 const CONVERSATION_KIND_SQL = [...CONVERSATION_NOTIFICATION_KINDS]
   .map((kind) => `'${kind}'`).join(', ');
 
+// A notification belongs to its recipient, but that does not grant enduring
+// access to the project it hydrates. Share this fresh predicate across exact
+// reads, feeds, saved rows, badge counts and live hydration. Invitations are
+// a narrow metadata-only exception while the actual invitation is pending.
+const APP_ACCESS_SQL = `EXISTS (
+ SELECT 1 FROM users notification_viewer
+ WHERE notification_viewer.id = n.user_id AND notification_viewer.anonymised_at IS NULL
+  AND (n.kind NOT IN ('openrouter_key_review', 'platform_limit', 'platform_incident')
+       OR (notification_viewer.is_admin AND NOT notification_viewer.admin_readonly))
+  AND (n.app_id IS NULL OR EXISTS (
+   SELECT 1 FROM apps notification_app WHERE notification_app.id = n.app_id
+    AND notification_app.moderation_suspended_at IS NULL
+    AND NOT EXISTS (SELECT 1 FROM user_app_blocks b WHERE b.app_id = notification_app.id AND b.user_id = n.user_id)
+    AND (notification_app.view_visibility = 'public' OR notification_viewer.is_admin
+     OR EXISTS (SELECT 1 FROM app_collaborators m WHERE m.app_id = notification_app.id AND m.user_id = n.user_id AND m.status = 'member')
+     OR (n.chat_message_id IS NULL AND n.session_id IS NULL AND n.conversation_id IS NULL AND n.conversation_message_id IS NULL
+      AND ((n.kind = 'collab_invite' AND EXISTS (
+       SELECT 1 FROM app_collaborators m WHERE m.app_id = notification_app.id AND m.user_id = n.user_id AND m.status = 'invited'))
+      OR (n.kind = 'approver_invite' AND EXISTS (
+       SELECT 1 FROM app_approvers m WHERE m.app_id = notification_app.id AND m.user_id = n.user_id AND m.status = 'invited'))))
+    )
+  ))
+)`;
+
 // Conversation notification rows are useful only while their recipient may
 // still open the referenced conversation. Invite history remains visible
 // after acceptance, while an invited user may see only the invite itself.
@@ -1268,7 +1292,7 @@ const HYDRATE_SELECT_SQL = `SELECT n.id, n.kind, n.user_id,
 // next read of the feed: on 21 Oct 2026 a notification showed in the opened
 // sheet for a moment and then disappeared. The phone push is the
 // mobile_push_deliveries trigger's, at the insert, and is unchanged.
-const HYDRATE_LISTED_SQL = `${CONVERSATION_ACCESS_SQL} AND ${CHAT_SENDER_ACCESS_SQL}
+const HYDRATE_LISTED_SQL = `${CONVERSATION_ACCESS_SQL} AND ${CHAT_SENDER_ACCESS_SQL} AND ${APP_ACCESS_SQL}
        AND ${PARKED_KINDS_SQL}
        AND NOT (n.kind = ANY($2::text[]) AND cs.status IS NOT DISTINCT FROM 'merged')`;
 
@@ -1749,7 +1773,7 @@ async function listForUser(pool, userId, { limit = 100, before = null, kinds = n
      LEFT JOIN pr_votes pv ON pv.session_id = n.session_id AND pv.user_id = n.source_user_id
      ${FILED_MESSAGE_JOIN_SQL}
      ${savedJoin}
-     WHERE n.user_id = $1 AND ${CONVERSATION_ACCESS_SQL} AND ${CHAT_SENDER_ACCESS_SQL}
+     WHERE n.user_id = $1 AND ${CONVERSATION_ACCESS_SQL} AND ${CHAT_SENDER_ACCESS_SQL} AND ${APP_ACCESS_SQL}
        AND ${PARKED_KINDS_SQL}
      ${mergedHiddenClause}
      ${cursorClause}
@@ -1808,7 +1832,7 @@ async function getForUser(pool, userId, id) {
        LEFT JOIN users su ON su.id = n.source_user_id
        LEFT JOIN pr_votes pv ON pv.session_id = n.session_id AND pv.user_id = n.source_user_id
        ${FILED_MESSAGE_JOIN_SQL}
-      WHERE n.id = $1 AND n.user_id = $2 AND ${CONVERSATION_ACCESS_SQL} AND ${CHAT_SENDER_ACCESS_SQL}
+      WHERE n.id = $1 AND n.user_id = $2 AND ${CONVERSATION_ACCESS_SQL} AND ${CHAT_SENDER_ACCESS_SQL} AND ${APP_ACCESS_SQL}
         AND ${PARKED_KINDS_SQL}`,
     [id, userId]
   );
@@ -1841,7 +1865,7 @@ async function countUnread(pool, userId) {
     `SELECT COUNT(*)::int AS c FROM notifications AS n
       WHERE n.user_id = $1 AND n.read_at IS NULL
         AND NOT ${DECIDED_ASK_SETTLED_SQL}
-        AND ${CONVERSATION_ACCESS_SQL} AND ${CHAT_SENDER_ACCESS_SQL}
+        AND ${CONVERSATION_ACCESS_SQL} AND ${CHAT_SENDER_ACCESS_SQL} AND ${APP_ACCESS_SQL}
         AND ${PARKED_KINDS_SQL}
         AND NOT (n.kind = ANY($2::text[]) AND EXISTS (
               SELECT 1 FROM chat_sessions s
@@ -1874,7 +1898,7 @@ async function countUnreadSplit(pool, userId) {
             COUNT(*)::int AS c FROM notifications AS n
       WHERE n.user_id = $1 AND n.read_at IS NULL
         AND NOT ${DECIDED_ASK_SETTLED_SQL}
-        AND ${CONVERSATION_ACCESS_SQL} AND ${CHAT_SENDER_ACCESS_SQL}
+        AND ${CONVERSATION_ACCESS_SQL} AND ${CHAT_SENDER_ACCESS_SQL} AND ${APP_ACCESS_SQL}
         AND ${PARKED_KINDS_SQL}
         AND NOT (n.kind = ANY($2::text[]) AND EXISTS (
               SELECT 1 FROM chat_sessions s
@@ -2132,7 +2156,7 @@ async function markReadForConversation(pool, userId, conversationId) {
     `UPDATE notifications n
         SET read_at = NOW()
       WHERE n.user_id = $1 AND n.conversation_id = $2 AND n.read_at IS NULL
-        AND ${CONVERSATION_ACCESS_SQL}`,
+        AND ${CONVERSATION_ACCESS_SQL} AND ${APP_ACCESS_SQL}`,
     [userId, conversationId]
   );
   return rowCount || 0;

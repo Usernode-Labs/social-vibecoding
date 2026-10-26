@@ -1284,6 +1284,13 @@
       "preview": "`SELECT ${workedOnSql()} AS busy FROM chat_sessions cs WHERE cs.id = $1`"
     },
     {
+      "source": "src/services/http-stream-access.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "d5ae5ffe9033211a5089",
+      "count": 1,
+      "preview": "AUTHORIZE_SQL"
+    },
+    {
       "source": "src/services/issue-announce.js",
       "kind": "structural-template",
       "fingerprint": "b14e827de5d3100c2176",
@@ -1419,9 +1426,9 @@
     {
       "source": "src/services/notifications.js",
       "kind": "structural-template",
-      "fingerprint": "0aa31d0b7f4b61518c80",
+      "fingerprint": "09bd75ed37327dcce604",
       "count": 1,
-      "preview": "`SELECT (COUNT(*) FILTER (WHERE ${PLAIN_MESSAGE_SQL}))::int AS m, COUNT(*)::int AS c FROM notifications AS n WHERE n.user_id = $1 AND n.read_at IS NULL AND NOT "
+      "preview": "`SELECT n.id, n.kind, CASE WHEN n.read_at IS NULL AND ${DECIDED_ASK_SETTLED_SQL} THEN COALESCE(cs.merged_at, cs.archived_at, n.created_at) ELSE n.read_at END AS"
     },
     {
       "source": "src/services/notifications.js",
@@ -1433,14 +1440,7 @@
     {
       "source": "src/services/notifications.js",
       "kind": "structural-template",
-      "fingerprint": "2d0d87933561ba11fb65",
-      "count": 1,
-      "preview": "`SELECT COUNT(*)::int AS c FROM notifications AS n WHERE n.user_id = $1 AND n.read_at IS NULL AND NOT ${DECIDED_ASK_SETTLED_SQL} AND ${CONVERSATION_ACCESS_SQL} "
-    },
-    {
-      "source": "src/services/notifications.js",
-      "kind": "structural-template",
-      "fingerprint": "8748f0da3801293ac993",
+      "fingerprint": "584a208d910a9166e6d3",
       "count": 1,
       "preview": "`SELECT n.id, n.kind, CASE WHEN n.read_at IS NULL AND ${DECIDED_ASK_SETTLED_SQL} THEN COALESCE(cs.merged_at, cs.archived_at, n.created_at) ELSE n.read_at END AS"
     },
@@ -1454,9 +1454,16 @@
     {
       "source": "src/services/notifications.js",
       "kind": "structural-template",
-      "fingerprint": "b56e0e4f868a305aeb53",
+      "fingerprint": "8e93c851e1c9586cfcda",
       "count": 1,
-      "preview": "`UPDATE notifications n SET read_at = NOW() WHERE n.user_id = $1 AND n.conversation_id = $2 AND n.read_at IS NULL AND ${CONVERSATION_ACCESS_SQL}`"
+      "preview": "`SELECT (COUNT(*) FILTER (WHERE ${PLAIN_MESSAGE_SQL}))::int AS m, COUNT(*)::int AS c FROM notifications AS n WHERE n.user_id = $1 AND n.read_at IS NULL AND NOT "
+    },
+    {
+      "source": "src/services/notifications.js",
+      "kind": "structural-template",
+      "fingerprint": "a2887d78f8c7ca35824d",
+      "count": 1,
+      "preview": "`UPDATE notifications n SET read_at = NOW() WHERE n.user_id = $1 AND n.conversation_id = $2 AND n.read_at IS NULL AND ${CONVERSATION_ACCESS_SQL} AND ${APP_ACCES"
     },
     {
       "source": "src/services/notifications.js",
@@ -1482,9 +1489,9 @@
     {
       "source": "src/services/notifications.js",
       "kind": "structural-template",
-      "fingerprint": "d8dc2e39961da9c6101b",
+      "fingerprint": "f5070aa3a2bc604cdc21",
       "count": 1,
-      "preview": "`SELECT n.id, n.kind, CASE WHEN n.read_at IS NULL AND ${DECIDED_ASK_SETTLED_SQL} THEN COALESCE(cs.merged_at, cs.archived_at, n.created_at) ELSE n.read_at END AS"
+      "preview": "`SELECT COUNT(*)::int AS c FROM notifications AS n WHERE n.user_id = $1 AND n.read_at IS NULL AND NOT ${DECIDED_ASK_SETTLED_SQL} AND ${CONVERSATION_ACCESS_SQL} "
     },
     {
       "source": "src/services/onboarding.js",
