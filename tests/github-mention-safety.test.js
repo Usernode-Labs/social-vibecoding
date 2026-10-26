@@ -6,10 +6,11 @@
 //
 //  1. safeMention itself (the sanitizer's contract),
 //  2. the agent-reported platform-issue confirm path (routes/sessions.js) —
-//     a hand-rolled fetch to api.github.com: attribution is now
-//     backtick-wrapped and title/body pass through safeMention,
-//  3. the platform-target feedback path (routes/feedback.js) — the same
-//     hand-rolled fetch shape: user-typed title/description are sanitized,
+//     its attribution is backtick-wrapped, never `@username`,
+//  3. (gone) the platform-target feedback path: since 26 Oct 2026 a request
+//     is a row on Homeroom's own board (services/requests.js), not a GitHub
+//     issue, so its title and body never reach GitHub's linker and are no
+//     longer sanitized; the same holds for case 2's title and body,
 //  4. pushFiles (services/github.js) — commit messages are sanitized (a
 //     user-controlled app name like "@someone" reaches it via rename PRs),
 //  5. createRevertPR (routes/votes.js) — the revert PR body writes the
@@ -48,21 +49,20 @@ github.noteIssueCreated = () => {};
 
 const ZWSP = '​';
 
-// Capture every POST that would create an issue on api.github.com; serve
-// octokit's Git Data endpoints for the pushFiles test; pass everything
-// else (the tests' own localhost requests) through to the real fetch.
+// Requests are rows (services/requests.js, through github.createIssue); an
+// in-memory store stands in for it and records what was filed.
+const { installFakeRequests } = require('./helpers/fake-requests');
+const fakeRequests = installFakeRequests(null, { 'plat/repo': [] }, { firstNumber: 91 });
+
+// Serve octokit's Git Data endpoints for the pushFiles test; pass
+// everything else (the tests' own localhost requests) through to the real
+// fetch.
 const realFetch = global.fetch;
-let ghIssueCreates = [];
 let gitCommitMessages = [];
 global.fetch = async (url, opts = {}) => {
   const u = decodeURIComponent(String(url));
   if (u.includes('api.github.com')) {
     const method = (opts.method || 'GET').toUpperCase();
-    if (u.includes('/issues') && method === 'POST') {
-      ghIssueCreates.push(JSON.parse(opts.body));
-      return new Response(JSON.stringify({ number: 91, html_url: 'https://github.com/plat/repo/issues/91' }),
-        { status: 201, headers: { 'content-type': 'application/json' } });
-    }
     // Git Data API surface pushFiles walks: getRef → getCommit →
     // createTree → createCommit → updateRef.
     const json = (data, status = 200) =>
@@ -82,7 +82,6 @@ global.fetch = async (url, opts = {}) => {
 };
 
 const { sessionRoutes } = require('../src/routes/sessions');
-const { feedbackRoutes } = require('../src/routes/feedback');
 const votes = require('../src/routes/votes');
 const express = require('express');
 
@@ -124,8 +123,8 @@ test('safeMention neutralizes every @handle with a ZWSP and passes non-strings t
 
 // ── 2. agent-reported platform issue (sessions confirm) ─────────────────
 
-test('platform-issue confirm posts backticked attribution and a fully sanitized title/body', async () => {
-  ghIssueCreates = [];
+test('platform-issue confirm writes backticked attribution, never @username', async () => {
+  fakeRequests.filed.length = 0;
   const draft = {
     status: 'pending',
     title: 'Worker breaks when @ghstranger is in the diff',
@@ -154,53 +153,27 @@ test('platform-issue confirm posts backticked attribution and a fully sanitized 
     const out = await res.json();
     assert.equal(out.status, 'filed');
 
-    assert.equal(ghIssueCreates.length, 1);
-    const posted = ghIssueCreates[0];
+    assert.equal(fakeRequests.filed.length, 1);
+    const posted = fakeRequests.filed[0];
 
     // Attribution is backtick-wrapped — no `@` before the username at all.
     assert.ok(posted.body.includes('confirmed by `evan`'),
       `attribution not backtick-wrapped: ${posted.body}`);
     assert.ok(!posted.body.includes('@evan'), 'attribution still uses @username');
-
-    // The model-drafted title/body crossed the raw-fetch boundary through
-    // safeMention: the typed @handle survives visually but can't ping.
-    assert.ok(posted.title.includes(`@${ZWSP}ghstranger`), 'title not sanitized');
-    assert.ok(posted.body.includes(`@${ZWSP}ghstranger`), 'draft body not sanitized');
-    assertMentionSafe(posted.title, 'issue title');
-    assertMentionSafe(posted.body, 'issue body');
+    // The draft's title and body are a request row's now, kept as written:
+    // they no longer reach GitHub, so nothing there can be pinged.
+    assert.equal(posted.title, draft.title);
+    assert.ok(posted.body.endsWith(draft.body));
   } finally {
     server.close();
   }
 });
 
 // ── 3. platform-target feedback ──────────────────────────────────────────
-
-test('platform feedback sanitizes user-typed title and description before the raw fetch', async () => {
-  ghIssueCreates = [];
-  poolHandler = async () => ({ rows: [], rowCount: 0 });
-
-  const server = await startServer(
-    feedbackRoutes({ platformRepoUrl: 'https://github.com/plat/repo' })
-  );
-  try {
-    const res = await post(server, '/api/feedback', {
-      title: 'Ping storm from @ghstranger',
-      description: 'Typing @ghstranger in feedback notified them.',
-    });
-    assert.equal(res.status, 200);
-
-    assert.equal(ghIssueCreates.length, 1);
-    const posted = ghIssueCreates[0];
-    assert.ok(posted.title.includes(`@${ZWSP}ghstranger`), 'title not sanitized');
-    assert.ok(posted.body.includes(`@${ZWSP}ghstranger`), 'description not sanitized');
-    // The Source line itself never used `@` — make sure that held.
-    assert.match(posted.body, /\*\*Source:\*\* Homeroom user \(evan\)/);
-    assertMentionSafe(posted.title, 'feedback title');
-    assertMentionSafe(posted.body, 'feedback body');
-  } finally {
-    server.close();
-  }
-});
+// Removed: it pinned safeMention on the title and body of the GitHub issue
+// platform feedback filed. Feedback files a request row now and never
+// reaches GitHub (tests/feedback-custom-title.test.js and its neighbours
+// cover the filing itself).
 
 // ── 4. pushFiles commit messages ─────────────────────────────────────────
 
