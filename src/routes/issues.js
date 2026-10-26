@@ -189,6 +189,15 @@ function shouldCreateGithubTwin(kind) {
 // them naturally. Strictly a no-op in production.
 const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 
+// Whether requests can be read and written here. Requests are Homeroom's
+// own rows (services/requests.js) since GitHub suspended the account that
+// filed them, so always, except on a staging copy without GitHub, which keeps
+// serving its fixtures (stagingMockIssues and friends) as before: declared
+// checks read them.
+function requestsOn() {
+  return !IS_STAGING || github.isEnabled();
+}
+
 function stagingMockIssues(repoUrl) {
   const base = (repoUrl || 'https://github.com/example/app')
     .replace(/\.git$/, '').replace(/\/$/, '');
@@ -1415,9 +1424,9 @@ function issueRoutes(config) {
         // fetchPublicIssues never throws; a degraded fetch (note) means no
         // positive confirmation, so refuse and change nothing.
         const parsed = parseOwnerRepo(app.repo_url);
-        if (!github.isEnabled() || !parsed) {
+        if (!requestsOn() || !parsed) {
           return res.status(422).json({
-            error: 'Cannot verify the issue right now: GitHub is unavailable for this app.',
+            error: 'Cannot verify the request right now: requests are unavailable for this app.',
           });
         }
         const ghResult = await github.fetchPublicIssues(parsed.owner, parsed.repo);
@@ -1470,8 +1479,8 @@ function issueRoutes(config) {
         if (!req.user?.canAdminWrite) {
           return res.status(403).json({ error: 'Full admin access required' });
         }
-        if (!github.isEnabled()) {
-          return res.status(422).json({ error: 'GitHub is not configured, so campaigns cannot run' });
+        if (!requestsOn()) {
+          return res.status(422).json({ error: 'Changes cannot be made here, so campaigns cannot run' });
         }
         const campaignTitle = typeof title === 'string' ? title.trim() : '';
         const instructions = typeof payload?.instructions === 'string' ? payload.instructions.trim() : '';
@@ -1546,9 +1555,9 @@ function issueRoutes(config) {
       if (shouldCreateGithubTwin(kind)) {
         const parsed = parseOwnerRepo(app.repo_url);
         twinRepo = parsed;
-        if (!github.isEnabled() || !parsed) {
+        if (!requestsOn() || !parsed) {
           return res.status(422).json({
-            error: 'GitHub is not configured for this app; no issue was created.',
+            error: 'Requests are unavailable for this app; nothing was filed.',
           });
         }
         try {
@@ -1892,7 +1901,7 @@ function issueRoutes(config) {
       const parsed = parseOwnerRepo(app.repo_url);
       const wantRefresh = req.query.refresh === '1' || req.query.refresh === 'true';
       let result;
-      if (!github.isEnabled() || !parsed) {
+      if (!requestsOn() || !parsed) {
         if (!IS_STAGING) {
           return res.json({ issues: [], truncatedList: false, note: 'unavailable' });
         }
@@ -2576,7 +2585,7 @@ function issueRoutes(config) {
       let issue = null;
       if (mock && req.query.demo === '1') {
         issue = mock;
-      } else if (github.isEnabled() && parsed) {
+      } else if (requestsOn() && parsed) {
         ({ issue } = await github.fetchPublicIssue(parsed.owner, parsed.repo, number));
       }
       if (!issue) issue = mock;
@@ -2733,7 +2742,7 @@ function issueRoutes(config) {
       const number = parseInt(req.params.number, 10);
       const parsed = parseOwnerRepo(app.repo_url);
 
-      if (!github.isEnabled() || !parsed || !Number.isFinite(number)) {
+      if (!requestsOn() || !parsed || !Number.isFinite(number)) {
         if (!IS_STAGING) {
           return res.json({ comments: [], truncated: false, note: 'unavailable' });
         }
@@ -2830,9 +2839,9 @@ function issueRoutes(config) {
       // a degraded fetch (note) means no positive confirmation, so refuse
       // and change nothing. The snapshot also yields the old title + body.
       const parsed = parseOwnerRepo(app.repo_url);
-      if (!github.isEnabled() || !parsed) {
+      if (!requestsOn() || !parsed) {
         return res.status(422).json({
-          error: 'Cannot verify the issue right now: GitHub is unavailable for this app.',
+          error: 'Cannot verify the request right now: requests are unavailable for this app.',
         });
       }
       const ghResult = await github.fetchPublicIssues(parsed.owner, parsed.repo);
@@ -2935,9 +2944,9 @@ function issueRoutes(config) {
       if (!app) return res.status(404).json({ error: 'App not found' });
 
       const parsed = parseOwnerRepo(app.repo_url);
-      if (!github.isEnabled() || !parsed) {
+      if (!requestsOn() || !parsed) {
         return res.status(422).json({
-          error: 'Cannot verify the issue right now: GitHub is unavailable for this app.',
+          error: 'Cannot verify the request right now: requests are unavailable for this app.',
         });
       }
       const ghResult = await github.fetchPublicIssues(parsed.owner, parsed.repo);
@@ -3042,9 +3051,9 @@ function issueRoutes(config) {
       // positively confirm the issue is open (closed, nonexistent, or GitHub
       // unavailable) we refuse and change nothing.
       const parsed = parseOwnerRepo(app.repo_url);
-      if (!github.isEnabled() || !parsed) {
+      if (!requestsOn() || !parsed) {
         return res.status(422).json({
-          error: 'Cannot verify the issue right now: GitHub is unavailable for this app.',
+          error: 'Cannot verify the request right now: requests are unavailable for this app.',
         });
       }
       const ghResult = await github.fetchPublicIssues(parsed.owner, parsed.repo);
@@ -3125,9 +3134,9 @@ function issueRoutes(config) {
       // fetchPublicIssues never throws; a degraded fetch (note) means no
       // positive confirmation, so refuse and change nothing.
       const parsed = parseOwnerRepo(app.repo_url);
-      if (!github.isEnabled() || !parsed) {
+      if (!requestsOn() || !parsed) {
         return res.status(422).json({
-          error: 'Cannot verify the issue right now: GitHub is unavailable for this app.',
+          error: 'Cannot verify the request right now: requests are unavailable for this app.',
         });
       }
       const ghResult = await github.fetchPublicIssues(parsed.owner, parsed.repo);

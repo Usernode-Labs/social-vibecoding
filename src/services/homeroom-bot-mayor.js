@@ -4112,7 +4112,6 @@ async function reportProblem(pool, ctx, args) {
     description: reportReceipt({ details, about, chat: await recentChat(pool, ctx) }),
     source: REPORT_SOURCE,
     via: 'through Homeroom bot',
-    fetchImpl: deps.fetch || null,
   });
   // Filed once per answer: a retry of the answer's work after a restart
   // (deps.once, its checkpoint) gets the report it filed, not a second one.

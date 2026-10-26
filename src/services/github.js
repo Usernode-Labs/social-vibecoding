@@ -21,22 +21,12 @@ const CACHE_TTL_MS = 30 * 60 * 1000;
 // Anonymous GitHub REST needs a User-Agent or it 403s every request.
 const GITHUB_USER_AGENT = 'usernode-platform';
 
-// Headers for the read-only public fetch paths (fetchPublicIssues,
-// fetchPublicIssue, fetchIssueComments, and — exported as
-// `publicApiHeaders` — the connector's fork inspection in
-// services/external-agent-tasks). When the bot PAT is configured
-// these requests authenticate as the bot — 5,000 req/hr on the token —
-// instead of burning the per-IP ANONYMOUS 60 req/hr budget, which is
-// shared by every app on the host and was routinely exhausted in prod
-// (every issue panel then degraded to "Couldn't load open issues").
-// Without a PAT they stay anonymous and the cache/stale-fallback layers
-// below remain the only defense.
-//
-// The first three now go through the GitHub App installation on the repo's
-// owner first, when there is one (publicReadFetch, GITHUB_READS_VIA_APP),
-// and these headers are what a refused installation read falls back to.
-// The connector's fork inspection reads repositories in people's own
-// accounts, where the App is not installed, so it keeps these headers.
+// Headers for the read-only public GitHub reads that remain (exported as
+// `publicApiHeaders` for the connector's fork inspection in
+// services/external-agent-tasks). With the bot token configured they
+// authenticate as the bot, for its hourly budget rather than the per-IP
+// anonymous one; without it they are anonymous. Requests no longer use
+// them: they are Homeroom's own rows (services/requests.js).
 function publicFetchHeaders() {
   const headers = { 'Accept': 'application/vnd.github+json', 'User-Agent': GITHUB_USER_AGENT };
   const pat = process.env.GITHUB_BOT_TOKEN;
@@ -620,64 +610,6 @@ async function getReadOctokit(owner) {
     return botToken;
   }
   return withBotTokenFallback(installation, botToken, owner);
-}
-
-// The headers for one raw read of `owner`'s repository through its
-// installation, with the credential to record it under, or null when the
-// rule above says the bot token (or nobody) reads it. For the fetch paths
-// below (fetchPublicIssues and friends), which do not use Octokit.
-async function installationReadHeaders(owner) {
-  if (!readsViaApp() || !owner) return null;
-  const credential = `installation:${owner}`;
-  if (budget.isExhausted(credential)) {
-    budget.noteRead('pat', 'budget_used_up');
-    return null;
-  }
-  let token = null;
-  try {
-    token = _readClientsForTests
-      ? await _readClientsForTests.installationToken(owner)
-      : await readInstallationToken(owner);
-  } catch (err) {
-    log.warn('github', 'No installation token for a read; using the bot token', {
-      owner, ...describeGithubError(err),
-    });
-  }
-  if (!token) {
-    budget.noteRead('pat', 'no_installation', { owner });
-    return null;
-  }
-  return {
-    credential,
-    headers: {
-      'Accept': 'application/vnd.github+json',
-      'User-Agent': GITHUB_USER_AGENT,
-      'Authorization': `Bearer ${token}`,
-    },
-  };
-}
-
-// One raw GET for the public read paths: through the installation when the
-// rule says so, again with publicFetchHeaders() (the bot token, or
-// anonymous) when that is refused, as the Octokit reads do. Returns the
-// fetch Response the caller would have had. `headers` (optional) go out
-// with both attempts: a conditional read's If-None-Match has to reach
-// whichever credential answers it.
-async function publicReadFetch(owner, url, { signal, headers: extra = null } = {}) {
-  const viaApp = await installationReadHeaders(owner);
-  if (viaApp) {
-    const resp = await githubFetch(viaApp.credential, url, { headers: { ...viaApp.headers, ...extra }, signal });
-    recordFetchResponse(viaApp.credential, resp, { url });
-    const refused = READ_FALLBACK_STATUSES.has(resp.status);
-    if (!refused) {
-      budget.noteRead('installation');
-      return resp;
-    }
-    budget.noteRead('pat', `status_${resp.status}`);
-  }
-  const resp = await githubFetch(publicFetchCredential(), url, { headers: { ...publicFetchHeaders(), ...extra }, signal });
-  recordFetchResponse(publicFetchCredential(), resp, { url });
-  return resp;
 }
 
 async function pushFiles(owner, repo, files, { branch = 'main', message = 'Initial commit' } = {}) {

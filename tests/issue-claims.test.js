@@ -185,17 +185,19 @@ test('POST 404s for an issue that is not open on the repo', async () => {
   }
 });
 
-test('POST 422s without positive GitHub confirmation', async () => {
+test('POST 422s without positive confirmation that the request is open', async () => {
   reset();
-  const prev = github.isEnabled;
-  github.isEnabled = () => false;
+  // The request store could not answer: no claim on a request nobody can see.
+  const store = require('../src/services/requests');
+  const prev = store.listOpen;
+  store.listOpen = async () => ({ issues: [], truncatedList: false, note: 'fetch failed' });
   const server = await startServer();
   try {
     const port = server.address().port;
     const res = await realFetch(claimUrl(port, 2), { method: 'POST' });
     assert.strictEqual(res.status, 422);
   } finally {
-    github.isEnabled = prev;
+    store.listOpen = prev;
     server.close();
   }
 });
