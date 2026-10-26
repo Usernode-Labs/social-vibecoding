@@ -1172,6 +1172,13 @@
       "preview": "`SELECT ${firstVersionSql('cs')} AS first_version FROM chat_sessions cs WHERE cs.id = $1`"
     },
     {
+      "source": "src/services/github-move.js",
+      "kind": "structural-template",
+      "fingerprint": "50ce080a7f2db9164a94",
+      "count": 1,
+      "preview": "`UPDATE ${table} SET ${ownerCol} = $3, ${repoCol} = $4 WHERE LOWER(${ownerCol}) = LOWER($1) AND LOWER(${repoCol}) = LOWER($2)`"
+    },
+    {
       "source": "src/services/governance.js",
       "kind": "runtime-built-identifier",
       "fingerprint": "4ec7c53222c8a758c722",
@@ -1410,6 +1417,13 @@
       "preview": "`DELETE FROM notifications WHERE ${c.target_type === 'app_message' ? 'chat_message_id' : 'conversation_message_id'} = $1`"
     },
     {
+      "source": "src/services/native-pulls.js",
+      "kind": "structural-template",
+      "fingerprint": "18c4dc2179776baa4c0f",
+      "count": 1,
+      "preview": "`UPDATE native_pulls SET ${sets}, updated_at = NOW() WHERE app_id = $1 AND number = $2 RETURNING ${COLUMNS}`"
+    },
+    {
       "source": "src/services/notifications.js",
       "kind": "structural-template",
       "fingerprint": "0aa31d0b7f4b61518c80",
@@ -1534,6 +1548,13 @@
       "fingerprint": "e94738fd834c57530f33",
       "count": 1,
       "preview": "`SELECT cs.pr_number, cs.pr_title, u.username, cs.created_at FROM chat_sessions cs LEFT JOIN users u ON u.id = cs.user_id WHERE cs.app_id = $1 AND cs.status = '"
+    },
+    {
+      "source": "src/services/requests.js",
+      "kind": "structural-template",
+      "fingerprint": "4073a4a5c7eb9ce48732",
+      "count": 1,
+      "preview": "`UPDATE requests SET ${sets}, updated_at = NOW() WHERE app_id = $1 AND number = $2 RETURNING ${COLUMNS}`"
     },
     {
       "source": "src/services/server-budget.js",
