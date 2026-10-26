@@ -58,6 +58,14 @@ spec:
             - {name: USERNODE_APPS_DOMAIN, value: {{ default .Values.config.domain .Values.config.appsDomain | quote }}}
             - {name: USERNODE_PLATFORM_REPO, value: {{ .Values.config.platformRepository | quote }}}
             - {name: CLI_CANONICAL_ORIGIN, value: {{ printf "https://%s" .Values.config.domain | quote }}}
+            # The git host, as the platform has it (platform.yaml): the move's
+            # migration (services/github-move.js) repoints an app only to an
+            # address it recognises as the git host's. Its token is in the
+            # Secret above.
+            - {name: GIT_HOST_URL, value: {{ .Values.config.gitHost.url | quote }}}
+            - {name: GIT_HOST_INTERNAL_URL, value: {{ .Values.config.gitHost.internalUrl | quote }}}
+            - {name: GIT_HOST_ORG, value: {{ .Values.config.gitHost.org | quote }}}
+            - {name: GIT_HOST_USER, value: {{ .Values.config.gitHost.user | quote }}}
           resources:
             {{- toYaml .Values.migration.resources | nindent 12 }}
           volumeMounts:
