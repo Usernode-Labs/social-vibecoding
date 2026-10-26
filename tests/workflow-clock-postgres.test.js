@@ -170,7 +170,8 @@ test('the clock machine runs each job once at a time, wherever the workflow runs
     const r = make([job]);
     await arm(r, 'slow', 60 * 60 * 1000);
     await r.start({ loops: true });
-    await until(async () => (await instance('slow'))?.state === 'running', 'the first run');
+    // The machine enters running before a service claims its work.
+    await until(async () => (await instance('slow'))?.state === 'running' && typeof stop === 'function', 'the first handler entered');
     await r.appendAndWait(MACHINE, clockKey('slow'), { type: 'RunNow', payload: {} },
       { requestKey: 'admin:2', source: { kind: 'admin', name: 'console' } });
     assert.equal((await instance('slow')).data.again, true);
