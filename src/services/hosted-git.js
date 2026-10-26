@@ -472,6 +472,26 @@ async function forceBranchToSha(owner, repo, branchName, sha) {
   return { previousSha: current, sha: target, updated: true };
 }
 
+/**
+ * `sha` undone on top of `onto` (main), as `git revert` would, and pushed to
+ * a new `branch`: a three-way merge whose base is the commit itself, ours the
+ * current main, theirs its parent. Resolves the revert commit's sha; a
+ * conflict rejects with "Revert produced merge conflicts".
+ */
+async function revertOnto(owner, repo, sha, { onto = 'main', branch, message }) {
+  const dir = await mirror(owner, repo, { refs: [sha] });
+  const main = await resolve(dir, onto);
+  if (!main) throw notFound(`Branch ${onto} not found`);
+  const parent = (await run(dir, ['rev-parse', `${sha}^`])).trim();
+  const out = await gitHost.git(['-C', dir, 'merge-tree', '--write-tree', '--name-only', '--merge-base', sha, main, parent])
+    .catch((err) => { if (err.exitCode === 1) return { conflict: true }; throw err; });
+  if (out.conflict) throw new Error('Revert produced merge conflicts');
+  const tree = out.stdout.split('\n')[0].trim();
+  const revert = await commitTree(dir, tree, [main], message);
+  await moveRef(owner, repo, dir, branch, null, revert);
+  return revert;
+}
+
 async function deleteBenchBranch(owner, repo, branchName) {
   if (typeof branchName !== 'string' || !/^bench\/[A-Za-z0-9._/-]+$/.test(branchName) || branchName.includes('..')) {
     throw new Error(`refusing to delete ${branchName}: not a benchmark branch`);
@@ -568,5 +588,6 @@ module.exports = {
   forceBranchToSha,
   deleteBenchBranch,
   createProposalCommit,
+  revertOnto,
   _splitBasehead: splitBasehead,
 };

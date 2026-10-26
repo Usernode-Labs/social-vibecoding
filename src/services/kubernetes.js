@@ -397,7 +397,9 @@ async function createKpackBuild(config, { app, revision, environment, sessionId,
       serviceAccountName: cfg.buildServiceAccount,
       builder: { image: cfg.builderImage },
       cache: { registry: { tag: cacheTag } },
-      source: { git: { url: app.repo_url.replace(/\.git$/, ''), revision } },
+      // A repository on Homeroom's git host is cloned from its clone address
+      // (GIT_HOST_INTERNAL_URL, else the public one); GitHub's as before.
+      source: { git: { url: repoRef.isHosted(app.repo_url) ? repoRef.cloneUrl(app.repo_url) : app.repo_url.replace(/\.git$/, ''), revision } },
       activeDeadlineSeconds: cfg.activeDeadlineSeconds,
       env: buildEnv,
       resources: {

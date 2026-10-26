@@ -256,7 +256,9 @@ async function buildAndDeployStagingInner(config, session, app, commitHash, { at
     // Native sessions (branches the platform itself owns and pushed) keep the
     // historical branch clone untouched — same behaviour, same timings.
     const prNumber = Number(session.pr_number) || null;
-    const viaPullRef = !!(pinnedSha && prNumber);
+    // GitHub's pull refs only: a repository on Homeroom's git host has none
+    // (its proposals are branches there), so it keeps the branch clone.
+    const viaPullRef = !!(pinnedSha && prNumber && !repoRef.isHosted(app.repo_url));
 
     // #1350: a native session gets its branch on its first turn, so a
     // session that has never run one has nothing to clone. Refuse with a

@@ -181,3 +181,22 @@ test('the CLI handoff commit: the tested tree, only from the expected parent', {
     expectedTreeSha: '0'.repeat(40), files: [{ path: 'gone.txt', delete: true }],
   }), (err) => err.code === 'tree_mismatch');
 });
+
+test('a revert is made on the mirror and pushed to its own branch; a conflict is refused', async (t) => {
+  stubCreateApi(t);
+  await github.createRepo('apps', 'rv-1');
+  await github.pushFiles('apps', 'rv-1', [{ path: 'a.txt', content: 'one\n' }, { path: 'b.txt', content: 'b\n' }], { message: 'start' });
+  const change = await github.pushFiles('apps', 'rv-1', [{ path: 'a.txt', content: 'two\n' }], { message: 'change a' });
+  await github.pushFiles('apps', 'rv-1', [{ path: 'b.txt', content: 'b2\n' }], { message: 'change b' });
+  const hostedGit = require('../src/services/hosted-git');
+  const revert = await hostedGit.revertOnto('apps', 'rv-1', change.sha, { branch: 'revert/x', message: 'Revert: change a' });
+  assert.equal(await gitHost.readRef('rv-1', 'revert/x'), revert);
+  assert.equal(await github.getFileContent('apps', 'rv-1', 'a.txt', 'revert/x'), 'one\n', 'the change is undone');
+  assert.equal(await github.getFileContent('apps', 'rv-1', 'b.txt', 'revert/x'), 'b2\n', 'later work is kept');
+  assert.equal((await github.getCommitParents('apps', 'rv-1', revert))[0], await gitHost.readRef('rv-1', 'main'), 'on top of main');
+
+  // Main changed the same lines since: git revert would conflict, so does this.
+  await github.pushFiles('apps', 'rv-1', [{ path: 'a.txt', content: 'three\n' }], { message: 'change a again' });
+  await assert.rejects(hostedGit.revertOnto('apps', 'rv-1', change.sha, { branch: 'revert/y', message: 'm' }), /merge conflicts/);
+  assert.equal(await gitHost.readRef('rv-1', 'revert/y'), null);
+});

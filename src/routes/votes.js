@@ -6577,7 +6577,39 @@ async function checkAndOpenRevert(config, pool, session, decider) {
 // push, open a PR. Returns { branch, prNumber, prUrl, prTitle }.
 // Throws on revert conflict or network errors; caller surfaces the
 // failure to chat.
+// What a revert proposal says, on either host.
+function revertText(session, mergeSha, deciderUsername) {
+  const origLabel = session.pr_title
+    ? `${session.pr_title} (PR #${session.pr_number || session.id})`
+    : `PR #${session.pr_number || session.id}`;
+  const prTitle = `Revert: ${session.pr_title || `PR #${session.pr_number || session.id}`}`.slice(0, 200);
+  const prBody =
+    `Automated revert of ${origLabel}.\n\n` +
+    `Undo vote reached majority on the original PR; deciding vote cast by \`${deciderUsername}\`. ` +
+    `This PR still needs a regular merge vote to land. Vote in the app's group chat panel.\n\n` +
+    `Reverts commit ${mergeSha}.`;
+  return { prTitle, prBody };
+}
+
+// A repository on Homeroom's git host: the revert is made on the app's
+// mirror and pushed to a new branch as the service account
+// (services/hosted-git.js revertOnto); its proposal is a native pull
+// request. No clone, no token in a URL.
+async function createHostedRevertPR({ session, mergeSha, repoOwner, repoName, deciderUsername }) {
+  const safeBase = (session.branch_name || `pr-${session.pr_number || session.id}`).replace(/[^a-zA-Z0-9._/-]/g, '-');
+  const revertBranch = `revert/${safeBase}-${Date.now()}`;
+  const { prTitle, prBody } = revertText(session, mergeSha, deciderUsername);
+  await require('../services/hosted-git').revertOnto(repoOwner, repoName, mergeSha, {
+    branch: revertBranch, message: `${prTitle}\n\nThis reverts commit ${mergeSha}.`,
+  });
+  const prData = await github.createPR(repoOwner, repoName, { branch: revertBranch, title: prTitle, body: prBody });
+  return { branch: revertBranch, prNumber: prData.number, prUrl: prData.html_url, prTitle };
+}
+
 async function createRevertPR({ session, mergeSha, repoOwner, repoName, deciderUsername }) {
+  if (require('../services/repo-ref').hostOfOwner(repoOwner) === 'git_host') {
+    return createHostedRevertPR({ session, mergeSha, repoOwner, repoName, deciderUsername });
+  }
   const token = process.env.GITHUB_BOT_TOKEN;
   if (!token) throw new Error('GITHUB_BOT_TOKEN not set');
 

@@ -262,7 +262,11 @@ async function checkoutExactRevision({ app, session, sha, side, parentDir }) {
   await cloneWithRetry(cloneUrl, checkoutDir);
 
   const refs = [];
-  if (side === 'head' && Number(session?.pr_number) > 0) refs.push(`refs/pull/${Number(session.pr_number)}/head`);
+  // GitHub's pull ref first; a repository on Homeroom's git host has none,
+  // and its commits are fetched by sha.
+  if (side === 'head' && Number(session?.pr_number) > 0 && !repoRef.isHosted(app.repo_url)) {
+    refs.push(`refs/pull/${Number(session.pr_number)}/head`);
+  }
   refs.push(revision);
   let checkedOut = false;
   let lastError = null;
