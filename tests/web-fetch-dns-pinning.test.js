@@ -302,10 +302,18 @@ test('a body timeout returns a refusal and destroys the in-flight connection', a
 
 
 test('timed-out requests leave no event-loop handles in a fresh process', async () => {
-  await promisify(execFile)(process.execPath, [
-    '--require', path.join(__dirname, 'lib/test-net.js'), '--test',
+  const env = { ...process.env };
+  // A nested runner must not inherit the parent's test-worker context:
+  // Node otherwise skips the selected test and can still exit successfully.
+  delete env.NODE_TEST_CONTEXT;
+  const { stdout } = await promisify(execFile)(process.execPath, [
+    '--require', path.join(__dirname, 'lib/test-net.js'), '--test', '--test-reporter=tap',
     '--test-name-pattern=^a pending TLS connection cannot retry', __filename,
-  ], { timeout: 4000 });
+  ], { timeout: 4000, env });
+  assert.match(stdout, /^ok 1 - a pending TLS connection cannot retry against the ambient private DNS answer$/m);
+  assert.match(stdout, /^# tests 1$/m);
+  assert.match(stdout, /^# pass 1$/m);
+  assert.match(stdout, /^# skipped 0$/m);
 });
 
 
