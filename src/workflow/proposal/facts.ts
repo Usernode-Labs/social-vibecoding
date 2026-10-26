@@ -224,8 +224,8 @@ function forkOf(r: any): boolean {
     return m ? `${m[1]}/${m[2]}` : null;
   };
   const head = name(r.imported_pr_head_repo);
-  const m = /github\.com[/:]([^/]+)\/([^/#?]+?)(?:\.git)?\/?$/i.exec(String(r.repo_url ?? ''));
-  const appRepo = m ? name(`${m[1]}/${m[2]}`) : null;
+  const parsed = parseRepoAddress(r.repo_url);
+  const appRepo = parsed ? name(`${parsed.owner}/${parsed.repo}`) : null;
   if (head && appRepo) return head !== appRepo;
   return !PLATFORM_BRANCHES.some((p) => String(r.branch_name ?? '').startsWith(p));
 }

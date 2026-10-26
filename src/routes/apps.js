@@ -2469,10 +2469,10 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
     if (!repoRef.parse(app.repo_url)) {
       return { canDeclare: false, reason: 'This app has no repository to open a proposal against.' };
     }
-    if (!github.isEnabled() || !process.env.GITHUB_BOT_TOKEN) {
+    if (!github.hasWriteAccess()) {
       return {
         canDeclare: false,
-        reason: 'Declaring a variable needs GitHub configured on the platform (GITHUB_BOT_TOKEN).',
+        reason: 'Declaring a variable needs a code host configured on the platform.',
       };
     }
     return { canDeclare: true, reason: null };
@@ -2821,9 +2821,9 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
 
       // GitHub preconditions — same three guards and wording as
       // visibility-pr / governance-pr / admins-pr.
-      if (!github.isEnabled() || !process.env.GITHUB_BOT_TOKEN) {
+      if (!github.hasWriteAccess()) {
         return res.status(503).json({
-          error: 'Declaring a variable needs GitHub configured on the platform (GITHUB_BOT_TOKEN).',
+          error: 'Declaring a variable needs a code host configured on the platform.',
         });
       }
       if (!app.repo_url) {
@@ -3012,9 +3012,9 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         return res.status(400).json({ error: 'App is already named that' });
       }
 
-      if (!github.isEnabled() || !process.env.GITHUB_BOT_TOKEN) {
+      if (!github.hasWriteAccess()) {
         return res.status(503).json({
-          error: 'Renames need GitHub configured on the platform (GITHUB_BOT_TOKEN).',
+          error: 'Renames need a code host configured on the platform.',
         });
       }
       if (!app.repo_url) {
@@ -3167,9 +3167,9 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         if (identityRefusal) return res.status(403).json(identityRefusal);
       }
 
-      if (!github.isEnabled() || !process.env.GITHUB_BOT_TOKEN) {
+      if (!github.hasWriteAccess()) {
         return res.status(503).json({
-          error: 'Visibility changes need GitHub configured on the platform (GITHUB_BOT_TOKEN).',
+          error: 'Visibility changes need a code host configured on the platform.',
         });
       }
       if (!app.repo_url) {
@@ -3260,9 +3260,9 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         if (identityRefusal) return res.status(403).json(identityRefusal);
       }
 
-      if (!github.isEnabled() || !process.env.GITHUB_BOT_TOKEN) {
+      if (!github.hasWriteAccess()) {
         return res.status(503).json({
-          error: 'Changes to who decides need GitHub configured on the platform (GITHUB_BOT_TOKEN).',
+          error: 'Changes to who decides need a code host configured on the platform.',
         });
       }
       if (!repoRef.parse(app.repo_url)) {
@@ -3496,9 +3496,9 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         return res.status(400).json({ error: 'The app already declares those admins' });
       }
 
-      if (!github.isEnabled() || !process.env.GITHUB_BOT_TOKEN) {
+      if (!github.hasWriteAccess()) {
         return res.status(503).json({
-          error: 'Admin changes need GitHub configured on the platform (GITHUB_BOT_TOKEN).',
+          error: 'Admin changes need a code host configured on the platform.',
         });
       }
       if (!app.repo_url) {
@@ -3595,9 +3595,9 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         return res.status(400).json({ error: 'The app already has those approval settings' });
       }
 
-      if (!github.isEnabled() || !process.env.GITHUB_BOT_TOKEN) {
+      if (!github.hasWriteAccess()) {
         return res.status(503).json({
-          error: 'Governance changes need GitHub configured on the platform (GITHUB_BOT_TOKEN).',
+          error: 'Governance changes need a code host configured on the platform.',
         });
       }
       if (!app.repo_url) {
@@ -3687,9 +3687,9 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       if (!(await appAccess.checkAppAccess(pool, app, req.user, 'collab'))) {
         return res.status(403).json({ error: 'Only people who can build here can propose a change to its topics' });
       }
-      if (!github.isEnabled() || !process.env.GITHUB_BOT_TOKEN) {
+      if (!github.hasWriteAccess()) {
         return res.status(503).json({
-          error: 'Topic changes need GitHub configured on the platform (GITHUB_BOT_TOKEN).',
+          error: 'Topic changes need a code host configured on the platform.',
         });
       }
       if (!app.repo_url) {

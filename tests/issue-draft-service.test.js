@@ -187,14 +187,14 @@ test('a missing session is session_not_found, not a throw', async (t) => {
   assert.deepEqual(res, { ok: false, code: 'session_not_found' });
 });
 
-test('no bot token → not_configured for platform; no app repo → no_repo for app', async (t) => {
+// A request is a row on the board (services/requests.js), so a platform
+// draft needs no bot token since GitHub suspended the account that held it.
+test('a platform draft needs no bot token; no app repo → no_repo for app', async (t) => {
   withStubs(t);
   delete process.env.GITHUB_BOT_TOKEN;
   const pool = makePool({ session: SESSION });
-  assert.deepEqual(
-    await issueDraft.createDraft(pool, CONFIG, { sessionId: 5, title: 'x', body: 'y' }),
-    { ok: false, code: 'not_configured' }
-  );
+  const res = await issueDraft.createDraft(pool, CONFIG, { sessionId: 5, title: 'x', body: 'y' });
+  assert.deepEqual({ ok: res.ok, target: res.target }, { ok: true, target: 'platform' });
 
   process.env.GITHUB_BOT_TOKEN = 'bot-pat';
   const noRepoPool = makePool({ session: { ...SESSION, repo_url: null } });
@@ -212,7 +212,8 @@ test('canDraft is false only when NEITHER destination is filable', (t) => {
   assert.equal(issueDraft.canDraft(CONFIG, SESSION.repo_url), true, 'both work');
   assert.equal(issueDraft.canDraft({}, SESSION.repo_url), true, 'app repo alone is enough');
   delete process.env.GITHUB_BOT_TOKEN;
-  assert.equal(issueDraft.canDraft(CONFIG, null), false, 'neither');
+  assert.equal(issueDraft.canDraft(CONFIG, null), true, 'the platform board needs no bot token');
+  assert.equal(issueDraft.canDraft({}, null), false, 'neither');
   assert.equal(issueDraft.canDraft(CONFIG, SESSION.repo_url), true, 'app path still open');
 });
 

@@ -100,6 +100,9 @@ async function mergeability(dir, row, head, base) {
 
 function rawOf(owner, repo, slug, row, { head = null, base = null, mergeable = null, mergeable_state = 'unknown' } = {}) {
   const fullName = `${owner}/${repo}`;
+  // Every hosted repository's default branch is main (services/hosted-git.js
+  // createRepo); issue-close-watcher closes a merge's requests only into it.
+  const hostedRepo = { full_name: fullName, owner: { login: owner }, name: repo, default_branch: 'main' };
   return {
     number: row.number,
     node_id: `native:${slug}:${row.number}`,
@@ -120,9 +123,9 @@ function rawOf(owner, repo, slug, row, { head = null, base = null, mergeable = n
     head: {
       ref: row.head_branch,
       sha: row.merged ? (row.merged_head_sha || head) : head,
-      repo: { full_name: fullName, owner: { login: owner }, name: repo },
+      repo: hostedRepo,
     },
-    base: { ref: row.base_branch, sha: base, repo: { full_name: fullName, owner: { login: owner }, name: repo } },
+    base: { ref: row.base_branch, sha: base, repo: hostedRepo },
   };
 }
 

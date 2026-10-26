@@ -42,9 +42,10 @@ const repoRef = require('./repo-ref');
 // the budget is nearly gone (scan below).
 const POLL_INTERVAL_MS = parseInt(process.env.MAIN_DRIFT_POLL_MS, 10) || 5 * 60 * 1000;
 
-// Whether the clock runs: GitHub, with the bot's token.
+// Whether the clock runs: the git host's service account, or GitHub with
+// the bot's token.
 function enabled() {
-  return !!(github.isEnabled() && process.env.GITHUB_BOT_TOKEN);
+  return github.isEnabled() && (require('./git-host').isConfigured() || !!process.env.GITHUB_BOT_TOKEN);
 }
 
 // The last answer per repo, for conditional reads: "owner/repo" (lowercased)

@@ -309,8 +309,27 @@ async function init(config) {
   }
 }
 
+// Whether app repositories can be read and written: on Homeroom's git host
+// (services/git-host.js), where they live since GitHub suspended the
+// account that held them, or through the GitHub App. A repository still on
+// GitHub is refused while GitHub is paused, whatever this says.
 function isEnabled() {
-  return !!app;
+  return !!app || require('./git-host').isConfigured();
+}
+
+// Whether Homeroom can write app repositories, which branches and proposals
+// need: the git host's service account, or on GitHub the bot's token. A
+// repository still on GitHub is refused while paused. isEnabled is read
+// through the exports, as callers' tests stand it in.
+function hasWriteAccess() {
+  return module.exports.isEnabled() && (require('./git-host').isConfigured() || !!process.env.GITHUB_BOT_TOKEN);
+}
+
+// The App itself, for the calls only it can make. With the git host
+// configured and no App, isEnabled() is true and these refuse plainly.
+function requireApp() {
+  if (!app) throw Object.assign(new Error('The GitHub App is not configured'), { code: 'github_not_configured' });
+  return app;
 }
 
 // GitHub logins are case-insensitive, and an owner parsed out of a stored
@@ -318,6 +337,7 @@ function isEnabled() {
 // is matched without regard to case.
 async function resolveInstallationId(owner) {
   pause.assertNotPaused();
+  requireApp();
   const key = String(owner || '').toLowerCase();
   const cached = installationCache.get(key);
   if (cached && cached.expiresAt > Date.now()) return cached.id;
@@ -333,13 +353,13 @@ async function resolveInstallationId(owner) {
 
 async function getInstallationOctokit(owner) {
   const id = await resolveInstallationId(owner);
-  return instrument(await app.getInstallationOctokit(id), `installation:${owner}`);
+  return instrument(await requireApp().getInstallationOctokit(id), `installation:${owner}`);
 }
 
 async function getInstallationToken(owner) {
   pause.assertNotPaused();
   const installationId = await resolveInstallationId(owner);
-  const { data } = await app.octokit.request('POST /app/installations/{installation_id}/access_tokens', {
+  const { data } = await requireApp().octokit.request('POST /app/installations/{installation_id}/access_tokens', {
     installation_id: installationId,
   });
   return data.token;
@@ -353,7 +373,7 @@ async function getBotUsername() {
   const gitHost = require('./git-host');
   if (gitHost.isConfigured()) return gitHost.settings().org;
   pause.assertNotPaused();
-  for await (const { installation } of app.eachInstallation.iterator()) {
+  for await (const { installation } of requireApp().eachInstallation.iterator()) {
     return installation.account.login;
   }
   throw new Error('No installations found for GitHub App');
@@ -511,7 +531,7 @@ async function readInstallationToken(owner) {
   const id = await readInstallationId(owner);
   if (!id) return null;
   pause.assertNotPaused();
-  const auth = await app.octokit.auth({ type: 'installation', installationId: id });
+  const auth = await requireApp().octokit.auth({ type: 'installation', installationId: id });
   return auth && typeof auth.token === 'string' ? auth.token : null;
 }
 
@@ -2131,6 +2151,7 @@ module.exports = {
   expireIssuesCachesHere,
   init,
   isEnabled,
+  hasWriteAccess,
   getBotUsername,
   getOctokit,
   // The client for a read (GITHUB_READS_VIA_APP): the App installation with

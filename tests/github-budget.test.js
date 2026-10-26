@@ -311,7 +311,7 @@ test('the installation client is recorded as its own credential', async () => {
   assert.equal(budget.core('pat'), null);
   // The real wiring: both clients are built through instrument().
   const src = read('src/services/github.js');
-  assert.match(src, /return instrument\(await app\.getInstallationOctokit\(id\), `installation:\$\{owner\}`\);/);
+  assert.match(src, /return instrument\(await requireApp\(\)\.getInstallationOctokit\(id\), `installation:\$\{owner\}`\);/);
   assert.match(src, /return instrument\(new Octokit\(\{ auth: pat \}\), 'pat'\);/);
   assert.match(src, /return instrument\(new Octokit\(\{ auth: token, log: octokitLog \}\), `installation:\$\{owner\}`\);/,
     'and the REST client reads go through (services/github.js getReadOctokit)');

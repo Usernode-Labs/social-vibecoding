@@ -6483,15 +6483,16 @@ async function checkAndOpenRevert(config, pool, session, decider) {
     return { reverted: false, error: 'no repo_url' };
   }
 
-  const m = session.repo_url.match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/);
-  if (!m) {
+  // Either host: createRevertPR opens a hosted repository's revert natively.
+  const parsedRepo = repoRef.ownerRepo(session.repo_url);
+  if (!parsedRepo) {
     await pool.query(
       `UPDATE chat_sessions SET revert_of_session_id = NULL WHERE id = $1`,
       [session.id]
     ).catch(() => {});
     return { reverted: false, error: 'unparseable repo_url' };
   }
-  const [, repoOwner, repoName] = m;
+  const { owner: repoOwner, repo: repoName } = parsedRepo;
 
   log.info('votes', 'Opening revert PR', {
     sessionId: session.id, needed: majority, requestedBy: decider.username,

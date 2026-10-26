@@ -75,11 +75,11 @@ function parseRepoUrl(url) {
 // from createDraft so the Mayor turn can decide whether to OFFER the tool
 // at all without writing anything.
 //
-//   platform → the platform's own repo, filed with the bot PAT (the
-//              platform repo is not behind the per-app GitHub App
-//              installation).
-//   app      → the session app's own repo, filed through the GitHub App
-//              installation, exactly like routes/feedback.js's app path.
+//   platform → the platform's own board.
+//   app      → the session app's own board, exactly like
+//              routes/feedback.js's app path.
+// Both are request rows (services/requests.js), so neither needs GitHub's
+// bot token; an app's board needs its repository's address to name it.
 function resolveTarget(config, target, appRepoUrl) {
   if (target === 'app') {
     if (!github.isEnabled()) return { ok: false, code: 'not_configured' };
@@ -87,7 +87,6 @@ function resolveTarget(config, target, appRepoUrl) {
     if (!parsed) return { ok: false, code: 'no_repo' };
     return { ok: true, target: 'app', ...parsed };
   }
-  if (!process.env.GITHUB_BOT_TOKEN) return { ok: false, code: 'not_configured' };
   const parsed = parseRepoUrl(config && config.platformRepoUrl);
   if (!parsed) return { ok: false, code: 'no_repo' };
   return { ok: true, target: 'platform', ...parsed };
