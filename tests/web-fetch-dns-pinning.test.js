@@ -22,7 +22,7 @@ const PUBLIC_V6 = '2606:4700:4700::1111';
 const HOST = 'public.web-fetch.test';
 const NEXT_HOST = 'next.web-fetch.test';
 
-async function fixture(t, handler, { pair, unreachable, onLookup, stallLookup } = {}) {
+async function fixture(t, handler, { pair, unreachable, onConnection, stallTls } = {}) {
   const requests = [], lookups = [], ambient = [], handshakes = [], literalDials = [];
   const onRequest = (req, res) => {
     requests.push({ host: req.headers.host, url: req.url });
@@ -32,12 +32,18 @@ async function fixture(t, handler, { pair, unreachable, onLookup, stallLookup } 
   };
   const server = pair ? https.createServer(pair, onRequest) : http.createServer(onRequest);
   server.on('tlsClientError', () => {});
+  // A plain HTTP server that holds its parse-error socket open models an
+  // endpoint accepting TCP but never completing the TLS handshake.
+  if (stallTls) server.on('clientError', () => {});
   const sockets = new Set();
-  server.on('connection', socket => { sockets.add(socket); socket.once('close', () => sockets.delete(socket)); });
+  server.on('connection', socket => {
+    sockets.add(socket); socket.once('close', () => sockets.delete(socket)); onConnection?.();
+  });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(async () => {
     webFetch._setLookup(null);
     server.closeAllConnections();
+    for (const socket of sockets) socket.destroy();
     await new Promise(resolve => server.close(resolve));
   });
   const port = server.address().port;
@@ -78,8 +84,6 @@ async function fixture(t, handler, { pair, unreachable, onLookup, stallLookup } 
       if (error) return callback(error);
       const records = Array.isArray(result) ? result : [{ address: result, family }];
       lookups.push({ host, addresses: records.map(record => ({ ...record })) });
-      onLookup?.();
-      if (stallLookup) return; // a connector still waiting when its deadline expires
       // The security decision is already made: observe it before translating
       // the selected address to our fixture. Keep the real HTTP/TLS stack.
       if (Array.isArray(result)) callback(null, records.map(record => ({ address: record.address === unreachable ? '127.0.0.2' : '127.0.0.1', family: 4 })));
@@ -224,22 +228,23 @@ test('an unreachable approved address can fall back only to another approved add
   assert.deepEqual(f.lookups[0].addresses, addresses);
 });
 
-test('a timed-out approved address cannot retry against the ambient private DNS answer', async (t) => {
+test('a pending TLS connection cannot retry against the ambient private DNS answer', async (t) => {
   const controller = new AbortController();
   t.mock.method(AbortSignal, 'timeout', () => controller.signal);
   let timer;
   t.after(() => clearTimeout(timer));
   const f = await fixture(t, null, {
-    stallLookup: true,
-    onLookup: () => { timer = setTimeout(() => controller.abort(new DOMException('Fixture deadline', 'TimeoutError')), 75); },
+    stallTls: true,
+    onConnection: () => { timer = setTimeout(() => controller.abort(new DOMException('Fixture deadline', 'TimeoutError')), 75); },
   });
   webFetch._setLookup(async () => [{ address: PUBLIC, family: 4 }]);
-  const result = await webFetch.fetchUrl(`http://${HOST}:${f.port}/unavailable`);
+  const result = await webFetch.fetchUrl(`https://${HOST}:${f.port}/unavailable`);
   assert.equal(result.content, null);
   assert.match(result.note, /timed out/);
   assert.equal(f.lookups.length, 1, 'the timer covers an actual connection attempt');
   assert.deepEqual(f.ambient, []);
   assert.deepEqual(f.requests, []);
+  await assertClosed(f.sockets);
 });
 
 async function assertClosed(sockets) {
@@ -299,7 +304,7 @@ test('a body timeout returns a refusal and destroys the in-flight connection', a
 test('timed-out requests leave no event-loop handles in a fresh process', async () => {
   await promisify(execFile)(process.execPath, [
     '--require', path.join(__dirname, 'lib/test-net.js'), '--test',
-    '--test-name-pattern=^a timed-out approved address cannot retry', __filename,
+    '--test-name-pattern=^a pending TLS connection cannot retry', __filename,
   ], { timeout: 4000 });
 });
 
