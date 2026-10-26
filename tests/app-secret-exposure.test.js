@@ -41,7 +41,7 @@ stub(ids.appCreator, { createApp: async () => {} });
 stub(ids.appForker, { forkApp: async () => {} });
 stub(ids.caddy, { productionHostname: (slug) => `${slug}.example.test` });
 stub(ids.docker, { getHostPort: async () => null });
-stub(ids.github, { parseGithubUrl: () => null, isEnabled: () => false });
+stub(ids.github, { parseGithubUrl: () => null, isEnabled: () => false, canActOn: () => false });
 stub(ids.driftPoller, { checkAndRedeployOne: async () => ({}) });
 stub(ids.appSecrets, {});
 // The create/fork routes derive the app slug through the manifest module, so

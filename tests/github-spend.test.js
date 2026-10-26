@@ -202,7 +202,7 @@ async function octokitWith(token, fetchImpl) {
 
 // Named on purpose: these are the callers the counter has to find.
 async function sweepStuckProposals() {
-  const pr = await github.getPR('usernode-bot', 'demo', 9);
+  const pr = await github.getPR('Usernode-Labs', 'social-vibecoding', 9);
   return pr;
 }
 
@@ -214,18 +214,19 @@ async function readRepoInfo() {
 }
 
 test('the caller is the code that asked, past services/github.js, two frames deep', async (t) => {
-  withEnv(t, 'GITHUB_BOT_TOKEN', 'bot-token');
+  // The App, installed on the platform repository's owner, answering from a
+  // stubbed global fetch: the client github.js builds for the read.
   const gh = rateFetch();
-  github._setReadClientsForTests({
-    appConfigured: true,
-    installation: async () => null,
-    installationToken: async () => null,
-    pat: async () => octokitWith('bot-token', gh.fetchImpl),
+  const realFetch = global.fetch;
+  global.fetch = gh.fetchImpl;
+  github._setAppForTests({
+    eachInstallation: { async *iterator() { yield { installation: { id: 1, account: { login: 'Usernode-Labs' } } }; } },
+    octokit: { auth: async () => ({ token: 'installation-token' }) },
   });
-  t.after(() => github._setReadClientsForTests(null));
+  t.after(() => { global.fetch = realFetch; github._setAppForTests(null); });
 
   await sweepStuckProposals();
-  const spend = budget.snapshot().credentials.find((r) => r.credential === 'pat').spend;
+  const spend = budget.snapshot().credentials.find((r) => r.credential === 'installation:usernode-labs').spend;
   assert.equal(spend.counted, 1);
   const [caller] = spend.callers;
   assert.match(caller.caller, /^sweepStuckProposals \(tests\/github-spend\.test\.js\)( ← .+)?$/,

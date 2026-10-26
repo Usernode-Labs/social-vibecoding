@@ -134,8 +134,8 @@ test('a 403 fails open with the operator-facing reason', async (t) => {
   assert.equal(result.ok, false);
   assert.equal(result.code, 'forbidden');
   assert.equal(result.message, github.ACTIONS_SECRETS_FORBIDDEN_MESSAGE);
-  assert.match(result.message, /admin access/);
-  assert.match(result.message, /secrets: read/, 'names both ways an operator can grant it');
+  assert.match(result.message, /GitHub App/);
+  assert.match(result.message, /secrets: read/, 'names the permission an operator grants it with');
 });
 
 test("a 404 says the same thing as a 403 (GitHub hides what you can't read)", async (t) => {

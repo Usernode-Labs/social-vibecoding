@@ -23,21 +23,17 @@ const GITHUB_USER_AGENT = 'usernode-platform';
 
 // Headers for the read-only public GitHub reads that remain (exported as
 // `publicApiHeaders` for the connector's fork inspection in
-// services/external-agent-tasks). With the bot token configured they
-// authenticate as the bot, for its hourly budget rather than the per-IP
-// anonymous one; without it they are anonymous. Requests no longer use
-// them: they are Homeroom's own rows (services/requests.js).
+// services/external-agent-tasks). Anonymous: they used to authenticate as
+// the bot, whose token is never sent again (see "Who Homeroom is on GitHub"
+// below). Requests no longer use them: they are Homeroom's own rows
+// (services/requests.js).
 function publicFetchHeaders() {
-  const headers = { 'Accept': 'application/vnd.github+json', 'User-Agent': GITHUB_USER_AGENT };
-  const pat = process.env.GITHUB_BOT_TOKEN;
-  if (pat) headers['Authorization'] = `Bearer ${pat}`;
-  return headers;
+  return { 'Accept': 'application/vnd.github+json', 'User-Agent': GITHUB_USER_AGENT };
 }
 
-// The budget a publicFetchHeaders() read spends: the bot token's when one is
-// configured, else the anonymous per-IP one.
+// The budget a publicFetchHeaders() read spends: the anonymous per-IP one.
 function publicFetchCredential() {
-  return process.env.GITHUB_BOT_TOKEN ? 'pat' : 'anonymous';
+  return 'anonymous';
 }
 
 // Record one response's rate-limit headers (services/github-budget.js), and
@@ -102,12 +98,6 @@ function instrument(octokit, credential) {
   return octokit;
 }
 
-// A REST client on the bot's personal access token, recorded as 'pat'.
-async function patOctokit(pat) {
-  const { Octokit } = await import('@octokit/rest');
-  return instrument(new Octokit({ auth: pat }), 'pat');
-}
-
 // What the board's agent surfaces clip (truncateIssueBodies, #158) and
 // keep of a request's comments (clipIssueComments).
 const ISSUE_BODY_MAX = 500;
@@ -132,13 +122,12 @@ function normRepoKey(owner, repo) {
 // safe to render in the Platform variables panel.
 //
 // PERMISSIONS. Reading Actions secrets is an admin-level capability on
-// the repo. The classic PAT (GITHUB_BOT_TOKEN, `repo` scope) works only
-// if the bot user has admin access; the App installation works only if
-// the App carries the `secrets: read` repository permission (an operator
-// must add and approve it). Neither is guaranteed for a given
-// deployment, so every failure FAILS OPEN with a reason the panel can
-// print — same philosophy as services/platform-env-check.js. A GitHub
-// hiccup must never break a panel whose real job is elsewhere.
+// the repo: the App installation can do it only if the App carries the
+// `secrets: read` repository permission (an operator must add and approve
+// it). That is not guaranteed for a given deployment, so every failure
+// FAILS OPEN with a reason the panel can print — same philosophy as
+// services/platform-env-check.js. A GitHub hiccup must never break a
+// panel whose real job is elsewhere.
 const actionsSecretsCache = new Map();
 const ACTIONS_SECRETS_CACHE_TTL_MS = 5 * 60 * 1000;
 // Negative results are cached too, but briefly: a token that can't read
@@ -149,8 +138,8 @@ const ACTIONS_SECRETS_MAX = 300;      // 3 pages of 100 — a hard stall guard
 const ACTIONS_SECRETS_TIMEOUT_MS = 4000;
 
 const ACTIONS_SECRETS_FORBIDDEN_MESSAGE =
-  "The platform's GitHub token can't read this repo's Actions secrets, because it needs admin "
-  + 'access on the platform repo (or the GitHub App needs the `secrets: read` permission).';
+  "The platform can't read this repo's Actions secrets: its GitHub App needs the "
+  + '`secrets: read` repository permission.';
 
 function actionsSecretsFailure(code, message) {
   return { ok: false, code, message };
@@ -190,9 +179,8 @@ async function fetchActionsSecretsWith(octokit, owner, repo) {
  * or { ok: false, code, message } with `code` one of `disabled`,
  * `no_token`, `forbidden`, `not_found`, `github_error`. Never throws.
  *
- * Tries the PAT client first (getOctokit's own preference) and falls back
- * to the App installation client, because the two carry different
- * permissions and either one might be the one that's allowed.
+ * Read through the App installation (getOctokit), the one credential
+ * Homeroom has on GitHub.
  */
 async function listActionsSecrets(owner, repo) {
   if (!owner || !repo) return actionsSecretsFailure('not_found', 'No repository to read secrets from.');
@@ -212,10 +200,7 @@ async function listActionsSecrets(owner, repo) {
   const attempt = async () => {
     const errors = [];
     const clients = [];
-    if (process.env.GITHUB_BOT_TOKEN || _octokitFactoryForTests) {
-      clients.push(['pat', () => getOctokit(owner)]);
-    }
-    if (app) clients.push(['installation', () => getInstallationOctokit(owner)]);
+    if (app || _octokitFactoryForTests) clients.push(['installation', () => getOctokit(owner)]);
     if (!clients.length) {
       return actionsSecretsFailure('no_token',
         'GitHub is not configured on this platform, so its Actions secrets can\'t be listed.');
@@ -301,18 +286,17 @@ async function init(config) {
   });
   log.info('github', 'GitHub App initialized', { appId: config.githubAppId });
 
-  // The App credentials alone aren't enough: repo creation, branch pushes,
-  // PR creation, and staging recovery all require a PAT (GITHUB_BOT_TOKEN).
-  // Warn loudly at boot if it's missing so deploys don't silently half-work.
-  if (!process.env.GITHUB_BOT_TOKEN) {
-    log.warn('github', 'GITHUB_BOT_TOKEN is not set — repo creation, commits, PRs, and session recovery will fail');
-  }
+  // Find the App's installation on the platform repository's owner now, so
+  // the project page knows whether code changes to it can be made
+  // (canActOn) before anything else asks.
+  checkActingInstallation();
 }
 
 // Whether app repositories can be read and written: on Homeroom's git host
 // (services/git-host.js), where they live since GitHub suspended the
 // account that held them, or through the GitHub App. A repository still on
-// GitHub is refused while GitHub is paused, whatever this says.
+// GitHub is refused unless Homeroom acts on it (canActOn), whatever this
+// says.
 function isEnabled() {
   return !!app || require('./git-host').isConfigured();
 }
@@ -325,11 +309,11 @@ function hasApp() {
 }
 
 // Whether Homeroom can write app repositories, which branches and proposals
-// need: the git host's service account, or on GitHub the bot's token. A
-// repository still on GitHub is refused while paused. isEnabled is read
-// through the exports, as callers' tests stand it in.
+// need: the git host's service account, or on GitHub the App. A repository
+// still on GitHub is refused unless Homeroom acts on it (canActOn). isEnabled
+// is read through the exports, as callers' tests stand it in.
 function hasWriteAccess() {
-  return module.exports.isEnabled() && (require('./git-host').isConfigured() || !!process.env.GITHUB_BOT_TOKEN);
+  return module.exports.isEnabled();
 }
 
 // The App itself, for the calls only it can make. With the git host
@@ -339,11 +323,98 @@ function requireApp() {
   return app;
 }
 
+// ── Who Homeroom is on GitHub ──────────────────────────────────────────
+//
+// GitHub suspended usernode-bot, the account behind GITHUB_BOT_TOKEN, on
+// 25 Oct 2026, and Homeroom promised GitHub never to use that account again
+// (docs/plans/github-independence-handoff.md §4). Its token is never sent:
+// whatever the environment still holds, nothing here reads it.
+//
+// What is left on GitHub is the platform's own repository
+// (config.platformRepoUrl), and Homeroom acts on it as the GitHub App,
+// through the App's installation on that repository's owner. Every client
+// below is that installation, for reads and writes alike. Any other owner on
+// GitHub is refused like a pause, before anything is sent: the bot's own
+// account, where three apps wait for GitHub's export of it, and anyone
+// else's.
+
+// The platform repository's owner on GitHub, or null when the platform's
+// repository is not on GitHub.
+function actingOwner() {
+  const repoRef = require('./repo-ref');
+  const parsed = repoRef.parse(repoRef.platformRepoUrl());
+  return parsed && parsed.host === 'github' ? parsed.owner : null;
+}
+
+function isActingOwner(owner) {
+  const acting = actingOwner();
+  return !!(acting && owner && acting.toLowerCase() === String(owner).toLowerCase());
+}
+
+// Refuses, as a pause, a GitHub call about anyone but the acting owner.
+function assertActingOwner(owner) {
+  pause.assertNotPaused();
+  if (!isActingOwner(owner)) throw pause.pausedError('owner');
+}
+
+// The App's installation on the acting owner, as last looked up: `found`
+// is null until then. Kept apart from installationCache, which forgets, so
+// that canActOn does not flip while a lookup is due.
+const RECHECK_INSTALLATION_MS = 5 * 60 * 1000;
+let actingInstallation = { found: null, checkedAt: 0 };
+let checkingInstallation = null;
+
+function noteActingInstallation(owner, found) {
+  if (!isActingOwner(owner)) return;
+  if (found !== actingInstallation.found) {
+    if (found) log.info('github', 'The GitHub App is installed on the platform repository\'s owner', { owner });
+    else log.warn('github', 'The GitHub App is not installed on the platform repository\'s owner; code changes to it stay paused until it is', { owner });
+  }
+  actingInstallation = { found, checkedAt: Date.now() };
+}
+
+// Look the acting owner's installation up again, at most once at a time.
+// Never throws: a failed walk keeps the last answer.
+function checkActingInstallation() {
+  const owner = actingOwner();
+  if (!app || !owner || checkingInstallation || pause.isPaused()) return checkingInstallation;
+  checkingInstallation = resolveInstallationId(owner)
+    .catch((err) => {
+      if (!/No GitHub App installation found/.test(String(err && err.message))) {
+        log.warn('github', 'Could not look up the GitHub App\'s installation', { owner, err: err && err.message });
+      }
+      return null;
+    })
+    .finally(() => { checkingInstallation = null; });
+  return checkingInstallation;
+}
+
+/**
+ * Whether Homeroom can change code in `owner`'s repositories on GitHub: the
+ * App is set up, `owner` is the platform repository's, and the App's
+ * installation there has not been found missing. Before the first lookup
+ * (init starts it) the answer is yes, so a push or a merge in a process's
+ * first moments is not refused for a lookup still on its way; the call
+ * itself then needs the installation. Synchronous, for the project page's
+ * paused notice and the push and merge gates (services/github-pause.js
+ * codeChangesPaused). While the installation is not known to exist it is
+ * looked up again in the background, every few minutes at most, so
+ * installing the App lifts the notice without a restart.
+ */
+function canActOn(owner) {
+  if (!app || !isActingOwner(owner)) return false;
+  if (actingInstallation.found !== true
+      && Date.now() - actingInstallation.checkedAt >= RECHECK_INSTALLATION_MS) {
+    checkActingInstallation();
+  }
+  return actingInstallation.found !== false;
+}
+
 // GitHub logins are case-insensitive, and an owner parsed out of a stored
 // repo URL keeps whatever case the URL was written in, so the installation
 // is matched without regard to case.
 async function resolveInstallationId(owner) {
-  pause.assertNotPaused();
+  assertActingOwner(owner);
   requireApp();
   const key = String(owner || '').toLowerCase();
   const cached = installationCache.get(key);
@@ -352,24 +423,35 @@ async function resolveInstallationId(owner) {
   for await (const { installation } of app.eachInstallation.iterator()) {
     if (String(installation.account?.login || '').toLowerCase() === key) {
       installationCache.set(key, { id: installation.id, expiresAt: Date.now() + CACHE_TTL_MS });
+      noteActingInstallation(owner, true);
       return installation.id;
     }
   }
+  noteActingInstallation(owner, false);
   throw new Error(`No GitHub App installation found for owner: ${owner}`);
 }
 
-async function getInstallationOctokit(owner) {
-  const id = await resolveInstallationId(owner);
-  return instrument(await requireApp().getInstallationOctokit(id), `installation:${owner}`);
+// An installation access token for `owner`. @octokit/auth-app caches it
+// until shortly before it expires (an hour), so this costs a request about
+// once an hour, on the App's own credentials. A caller holds it only for the
+// call it makes now.
+async function getInstallationToken(owner) {
+  const installationId = await resolveInstallationId(owner);
+  pause.assertNotPaused();
+  const auth = await requireApp().octokit.auth({ type: 'installation', installationId });
+  if (!auth || typeof auth.token !== 'string' || !auth.token) {
+    throw new Error(`No GitHub App installation token for owner: ${owner}`);
+  }
+  return auth.token;
 }
 
-async function getInstallationToken(owner) {
-  pause.assertNotPaused();
-  const installationId = await resolveInstallationId(owner);
-  const { data } = await requireApp().octokit.request('POST /app/installations/{installation_id}/access_tokens', {
-    installation_id: installationId,
-  });
-  return data.token;
+// A full REST client (with .rest, unlike @octokit/app's own installation
+// client) on the installation for `owner`, recorded as
+// 'installation:<owner>'.
+async function getInstallationOctokit(owner) {
+  const token = await getInstallationToken(owner);
+  const { Octokit } = await import('@octokit/rest');
+  return instrument(new Octokit({ auth: token }), `installation:${owner}`);
 }
 
 // The owner a new app repository is made under: the git host's
@@ -402,45 +484,13 @@ function isRepoNameExistsError(err) {
 
 async function createRepo(owner, name, { description = '', adoptExisting = false } = {}) {
   if (onGitHost(owner)) return hostedGit().createRepo(owner, name, { description, adoptExisting });
-  // GitHub App installation tokens can't create repos on user accounts (GitHub limitation).
-  // Use a PAT (GITHUB_BOT_TOKEN) for repo creation.
-  const pat = process.env.GITHUB_BOT_TOKEN;
-  if (!pat) {
-    throw new Error('GITHUB_BOT_TOKEN env var required for repo creation on user accounts');
-  }
-
-  const octokit = await patOctokit(pat);
-
-  try {
-    const { data } = await octokit.rest.repos.createForAuthenticatedUser({
-      name,
-      description: safeMention(description),
-      auto_init: true,
-      private: false,
-    });
-    log.info('github', 'Repo created via PAT', { repo: data.full_name });
-    return data;
-  } catch (err) {
-    if (!adoptExisting || !isRepoNameExistsError(err)) throw err;
-    // The repo already exists on the bot account: a previous provisioning
-    // attempt got as far as the GitHub create call but died before
-    // repo_url was persisted (the session-2585 class of failure — see
-    // app-heal.provisionMissingRepo and the createApp repo block). Adopt
-    // the existing repo instead of 422ing forever: fetch it and return it
-    // in the same shape a fresh create would. Guard that it really is
-    // owned by the requested owner before adopting — it must be, since
-    // the 422 came from createForAuthenticatedUser on the bot PAT, but a
-    // mismatch means this isn't our orphan and the original error stands.
-    const { data } = await octokit.rest.repos.get({ owner, repo: name });
-    if (((data.owner && data.owner.login) || '').toLowerCase() !== owner.toLowerCase()) {
-      throw err;
-    }
-    log.info('github', 'Adopting existing repo', { repo: data.full_name });
-    // `adopted`: its main may hold more than a fresh repository's one README,
-    // so a caller cannot take what it pushes next for the whole tree
-    // (services/app-creator.js clones it back instead).
-    return { ...data, adopted: true };
-  }
+  // New repositories are made on Homeroom's git host. On GitHub they were
+  // made on the bot's account with its token, which is never sent again
+  // ("Who Homeroom is on GitHub" above), and the App cannot make one on an
+  // account.
+  throw Object.assign(new Error('New repositories are made on Homeroom\'s git host, and it is not configured'), {
+    code: 'git_host_not_configured',
+  });
 }
 
 // Test seam (null in every real deploy): when set via
@@ -450,193 +500,32 @@ async function createRepo(owner, name, { description = '', adoptExisting = false
 let _octokitFactoryForTests = null;
 function _setOctokitFactoryForTests(factory) { _octokitFactoryForTests = factory; }
 
+// Test seam (never called in a real deploy): stand a fake App in for the real
+// one ({ eachInstallation.iterator(), octokit.auth() }), so the installation
+// walk, canActOn and the clients above run without GitHub. Forgets every
+// installation looked up before.
+function _setAppForTests(fake) {
+  app = fake || null;
+  installationCache.clear();
+  actingInstallation = { found: null, checkedAt: 0 };
+  checkingInstallation = null;
+}
+
+// The client for a call on `owner`'s repositories on GitHub, read or write:
+// the App's installation on the platform repository's owner, and refused
+// for anyone else ("Who Homeroom is on GitHub" above).
 async function getOctokit(owner) {
   if (_octokitFactoryForTests) return _octokitFactoryForTests(owner);
-  // Prefer PAT for repos owned by the bot (avoids App installation sync issues)
-  const pat = process.env.GITHUB_BOT_TOKEN;
-  if (pat) return patOctokit(pat);
   return getInstallationOctokit(owner);
 }
 
-// ── Reads through the GitHub App (GITHUB_READS_VIA_APP) ────────────────
-//
-// Nearly everything the platform does on GitHub used to spend ONE budget:
-// the bot token's 5,000 requests an hour (getOctokit above prefers it), and
-// on 2026-10-04 that ran out. A GitHub App installation has a budget of its
-// own (5,000 an hour, more for a larger installation, up to 12,500), so the
-// everyday READS go through it, and the bot token is left for writes.
-//
-// The rule, per request:
-//
-//   - A read (GET or HEAD) on a repository whose OWNER has an installation
-//     of the App goes through that installation.
-//   - Anything else goes through the bot token: every write (pull requests,
-//     comments, issues, merges, refs, commits, repositories), so who
-//     authored what on GitHub does not change; and every read for an owner
-//     the App is not installed on. getReadOctokit sends a non-GET request on
-//     its client to the bot token too, so a write can never move by
-//     accident.
-//   - When the installation cannot answer, the same request is sent again
-//     with the bot token: no installation token could be had, GitHub
-//     refused it (401, 403, 404: the App lacks the permission, or cannot see
-//     the repository), or the installation's hourly budget is used up (a
-//     429, a 403 saying so, or services/github-budget.js already knowing).
-//     A 304 is an answer, never a reason to fall back.
-//
-// Which credential answered is recorded like every response
-// (services/github-budget.js), with a count of reads by source and of
-// fallbacks by reason.
-//
-// GITHUB_READS_VIA_APP: on by default whenever the App is configured;
-// `off` (or false, 0, no) restores the bot-token-only behaviour exactly:
-// getReadOctokit is then getOctokit.
-const READS_VIA_APP_OFF = new Set(['off', 'false', '0', 'no']);
-
-function readsViaApp() {
-  const raw = String(process.env.GITHUB_READS_VIA_APP || '').trim().toLowerCase();
-  if (READS_VIA_APP_OFF.has(raw)) return false;
-  return !!(app || (_readClientsForTests && _readClientsForTests.appConfigured));
-}
-
-// Statuses after which an installation's read is sent again with the bot
-// token. 401: its token was refused; 403/404: the App lacks the permission
-// or cannot see the repository; 429: its budget is spent.
-const READ_FALLBACK_STATUSES = new Set([401, 403, 404, 429]);
-
-function readFallbackReason(err) {
-  if (!err) return null;
-  if (budget.isRateLimitError(err)) return 'rate_limited';
-  const status = Number(err.status || (err.response && err.response.status)) || 0;
-  return READ_FALLBACK_STATUSES.has(status) ? `status_${status}` : null;
-}
-
-// Owners the App is not installed on, remembered for as long as a found
-// installation is (CACHE_TTL_MS): finding out walks every installation with
-// the App's own credentials, which no read should repeat.
-const installationMisses = new Map();
-
-async function readInstallationId(owner) {
-  const key = String(owner || '').toLowerCase();
-  const miss = installationMisses.get(key);
-  if (miss && miss > Date.now()) return null;
-  try {
-    return await resolveInstallationId(owner);
-  } catch (err) {
-    // Only a completed walk that found nothing is remembered; a transient
-    // failure of the walk itself is tried again on the next read.
-    if (/No GitHub App installation found/.test(String(err && err.message))) {
-      installationMisses.set(key, Date.now() + CACHE_TTL_MS);
-    }
-    return null;
-  }
-}
-
-// An installation access token for `owner`, or null. @octokit/auth-app
-// caches it until shortly before it expires, so this costs a request about
-// once an hour per installation, on the App's own credentials.
-async function readInstallationToken(owner) {
-  const id = await readInstallationId(owner);
-  if (!id) return null;
-  pause.assertNotPaused();
-  const auth = await requireApp().octokit.auth({ type: 'installation', installationId: id });
-  return auth && typeof auth.token === 'string' ? auth.token : null;
-}
-
-// A full REST client (with .rest, unlike @octokit/app's own installation
-// client) on the installation for `owner`, recorded as
-// 'installation:<owner>'. Null when there is none to be had.
-async function installationReadOctokit(owner) {
-  if (_readClientsForTests) {
-    const client = await _readClientsForTests.installation(owner);
-    return client ? instrument(client, `installation:${owner}`) : null;
-  }
-  let token = null;
-  try {
-    token = await readInstallationToken(owner);
-  } catch (err) {
-    log.warn('github', 'No installation token for a read; using the bot token', {
-      owner, ...describeGithubError(err),
-    });
-    return null;
-  }
-  if (!token) return null;
-  const { Octokit } = await import('@octokit/rest');
-  // Octokit reports every 4xx on console.error. A refusal here is answered
-  // by the bot token a moment later, so its line goes to the debug log.
-  const quiet = (msg) => log.debug('github', 'Installation read', { detail: String(msg).slice(0, 300) });
-  const octokitLog = { debug() {}, info() {}, warn: quiet, error: quiet };
-  return instrument(new Octokit({ auth: token, log: octokitLog }), `installation:${owner}`);
-}
-
-// Send one request the installation client was given to the bot token's
-// client instead. The options are the installation client's own endpoint
-// options; its `request` (fetch and hook) stays behind, so the bot token's
-// own auth and recording apply.
-function forwardRequest(client, options) {
-  const { request: _ownRequest, method, url, ...params } = options;
-  return client.request(`${method} ${url}`, params);
-}
-
-// Wrap an installation client so each request follows the rule above.
-function withBotTokenFallback(installation, botToken, owner) {
-  const credential = `installation:${owner}`;
-  installation.hook.wrap('request', async (request, options) => {
-    const method = String(options.method || 'GET').toUpperCase();
-    if (method !== 'GET' && method !== 'HEAD') {
-      budget.noteRead('pat', 'not_a_read');
-      return forwardRequest(botToken, options);
-    }
-    if (budget.isExhausted(credential)) {
-      budget.noteRead('pat', 'budget_used_up');
-      return forwardRequest(botToken, options);
-    }
-    try {
-      const response = await request(options);
-      budget.noteRead('installation');
-      return response;
-    } catch (err) {
-      if (err && err.status === 304) {
-        budget.noteRead('installation');
-        throw err;
-      }
-      const reason = readFallbackReason(err);
-      if (!reason) throw err;
-      budget.noteRead('pat', reason);
-      log.debug('github', 'Installation read refused; sent with the bot token', {
-        owner, reason, url: options.url,
-      });
-      return forwardRequest(botToken, options);
-    }
-  });
-  return installation;
-}
-
-// Test seam (null in every real deploy): { appConfigured, installation(owner)
-// -> client | null, installationToken(owner) -> string | null, pat() ->
-// client } stand in for the App, its tokens and the bot token's client, so
-// the rule above runs against fake fetches. The clients are recorded as the
-// real ones are.
-let _readClientsForTests = null;
-function _setReadClientsForTests(clients) { _readClientsForTests = clients; }
-
-/**
- * The client for a READ against `owner`'s repositories: the App installation
- * when the rule above says so, with a per-request fallback to the bot token,
- * else exactly getOctokit(owner).
- */
+// The client for a READ. Reads used to go through the App installation and
+// writes through the bot token, each on its own hourly budget
+// (GITHUB_READS_VIA_APP); with the bot token never sent again, both go
+// through the installation, so this is getOctokit. Kept so the read helpers
+// below say which they are.
 async function getReadOctokit(owner) {
-  if (!_readClientsForTests && _octokitFactoryForTests) return _octokitFactoryForTests(owner);
-  const pat = process.env.GITHUB_BOT_TOKEN;
-  if (!pat || !readsViaApp() || !owner) return getOctokit(owner);
-  const botToken = _readClientsForTests
-    ? instrument(await _readClientsForTests.pat(), 'pat')
-    : await patOctokit(pat);
-  const installation = await installationReadOctokit(owner);
-  if (!installation) {
-    budget.noteRead('pat', 'no_installation', { owner });
-    return botToken;
-  }
-  return withBotTokenFallback(installation, botToken, owner);
+  return getOctokit(owner);
 }
 
 async function pushFiles(owner, repo, files, { branch = 'main', message = 'Initial commit' } = {}) {
@@ -1313,11 +1202,10 @@ function describeGithubError(err) {
   return { status, requestId, message, data, scopes };
 }
 
-// Which credential `getOctokit` would have used for this call. Mirrors the
-// preference order in getOctokit itself; reported on failure paths so a log
-// line answers "was this the PAT or the App?" without a second deploy.
+// Which credential `getOctokit` used for this call, reported on failure
+// paths: the App installation, the only one there is now.
 function credentialClass() {
-  return process.env.GITHUB_BOT_TOKEN ? 'pat' : 'installation';
+  return 'installation';
 }
 
 // createPR retries transient GitHub failures (5xx / status-less network
@@ -1840,14 +1728,15 @@ async function getCloneUrl(owner, repo) {
 // repositories with).
 const { parseGithubUrl } = require('../workflow/rules/github-url.ts');
 
-// The bot's own PAT client for the import pre-flight. The test seam
+// The client the import pre-flight acts through: it was the bot's own token,
+// as importing made the bot a collaborator on the person's repository. That
+// token is never sent again ("Who Homeroom is on GitHub" above), so there is
+// none, and importing from GitHub is paused (verifyBotAccess). The test seam
 // (_setOctokitFactoryForTests) stands in for it so the invitation and
 // permission logic below can be unit-tested with stubbed GitHub responses.
 async function botPatOctokit() {
   if (_octokitFactoryForTests) return _octokitFactoryForTests(null);
-  const pat = process.env.GITHUB_BOT_TOKEN;
-  if (!pat) return null;
-  return patOctokit(pat);
+  return null;
 }
 
 // GET /user/repository_invitations returns 30 invitations per page by
@@ -1910,8 +1799,8 @@ async function verifyBotAccess(owner, repo) {
   const octokit = await botPatOctokit();
   if (!octokit) {
     return {
-      ok: false, status: 500, code: 'no_token',
-      message: 'GitHub bot token not configured on the platform.',
+      ok: false, status: 503, code: 'github_paused',
+      message: 'Importing a repository from GitHub is paused while Homeroom moves off GitHub.',
     };
   }
 
@@ -1996,14 +1885,18 @@ async function verifyBotAccess(owner, repo) {
 // fatal (bootstrap) or just log (audit).
 async function checkRepoPublic(owner, repo) {
   if (onGitHost(owner)) return hostedGit().checkRepoPublic(owner, repo);
-  if (!process.env.GITHUB_BOT_TOKEN && !_octokitFactoryForTests && !_readClientsForTests) {
-    return { ok: false, code: 'no_token', message: 'GitHub bot token not configured.' };
+  if (!app && !_octokitFactoryForTests) {
+    return { ok: false, code: 'no_token', message: 'The GitHub App is not configured.' };
   }
-  // A read, on every worker start: through the App installation when
-  // GITHUB_READS_VIA_APP says so (getReadOctokit), else the bot token. A
-  // repository the installation cannot see is asked again with the bot
-  // token, so one that went private still reads as private.
-  const octokit = await getReadOctokit(owner);
+  // A read, on every worker start, through the App installation. Refused
+  // (as a pause) for any owner but the platform repository's.
+  let octokit;
+  try {
+    octokit = await getReadOctokit(owner);
+  } catch (err) {
+    if (pause.isPausedError(err)) return { ok: false, code: 'github_paused', message: err.message };
+    return { ok: false, code: 'github_error', message: err.message };
+  }
   try {
     const { data } = await octokit.rest.repos.get({ owner, repo });
     return { ok: true, private: data.private === true };
@@ -2162,11 +2055,12 @@ module.exports = {
   hasWriteAccess,
   getBotUsername,
   getOctokit,
-  // The client for a read (GITHUB_READS_VIA_APP): the App installation with
-  // a per-request fallback to the bot token, else getOctokit.
   getReadOctokit,
-  readsViaApp,
-  _setReadClientsForTests,
+  // Whether Homeroom can change code on GitHub for an owner: only the
+  // platform repository's, once the App's installation there is found.
+  canActOn,
+  checkActingInstallation,
+  actingOwner,
   getInstallationOctokit,
   getInstallationToken,
   createRepo,
@@ -2202,6 +2096,7 @@ module.exports = {
   mergePR,
   HeadMovedError,
   _setOctokitFactoryForTests,
+  _setAppForTests,
   getPR,
   markPrReadyForReview,
   listChangedFiles,
@@ -2227,13 +2122,11 @@ module.exports = {
   verifyBotAccess,
   checkRepoPublic,
   fetchPublicRepoInfo,
-  // The header builder for read-only PUBLIC GitHub reads, exported so other
-  // services (services/external-agent-tasks) inherit the bot-PAT-when-present
-  // rate-limit posture instead of re-implementing it anonymously.
+  // The header builder for read-only PUBLIC GitHub reads (anonymous), for
+  // services/external-agent-tasks.
   publicApiHeaders: publicFetchHeaders,
-  // The budget those reads spend ('pat' or 'anonymous'), and the recorder
-  // for a raw fetch response (services/github-budget.js), for the same
-  // services.
+  // The budget those reads spend ('anonymous'), and the recorder for a raw
+  // fetch response (services/github-budget.js), for the same services.
   publicApiCredential: publicFetchCredential,
   // The one raw-fetch path to GitHub's API, refused while paused
   // (services/github-pause.js), for the few callers outside this file.

@@ -9,8 +9,9 @@
 // GitHub it would stop using. App code, requests and merges have since
 // moved off GitHub (services/git-host.js, services/requests.js, native
 // merges); what still talks to GitHub is the platform's own repository,
-// imports of a public repository, and the optional mirrors. This is the
-// switch for all of it.
+// which Homeroom acts on as the GitHub App, never the bot
+// (services/github.js "Who Homeroom is on GitHub"). This is the switch for
+// all of it.
 //
 // Paused, for every process, when either is true:
 //
@@ -20,10 +21,15 @@
 //     change and no restart;
 //   - this process has seen the bot token refused as dead: a 401, or a 403
 //     whose message says the account was suspended. That holds until the
-//     process restarts. Nothing ever probes the token to see whether it
-//     came back: a reinstated account is to be emptied and closed, not
-//     used again, and the token is to be revoked (docs/plans/
+//     process restarts. The token is no longer sent at all, so this can
+//     only come from an old process. Nothing ever probes the token to see
+//     whether it came back: a reinstated account is to be emptied and
+//     closed, not used again, and the token is to be revoked (docs/plans/
 //     github-independence-handoff.md §4).
+//
+// A call about any GitHub owner but the platform repository's is refused
+// the same way, whether or not this is on (services/github.js
+// assertActingOwner): the reason is then 'owner'.
 //
 // While paused, every GitHub request the platform would send through
 // services/github.js is refused here before it leaves the process
@@ -45,11 +51,14 @@ let dead = null;
 let refreshing = null;
 let loggedRefusal = false;
 
+const PAUSED_MESSAGES = {
+  suspended: 'GitHub is paused: the bot token was refused as suspended',
+  owner: 'GitHub is paused for this repository: Homeroom acts on GitHub only for its own repository',
+};
+
 class GithubPausedError extends Error {
   constructor(reason) {
-    super(reason === 'suspended'
-      ? 'GitHub is paused: the bot token was refused as suspended'
-      : 'GitHub is paused');
+    super(PAUSED_MESSAGES[reason] || 'GitHub is paused');
     this.name = 'GithubPausedError';
     this.code = 'github_paused';
     this.githubPaused = true;
@@ -78,20 +87,24 @@ function state() {
   };
 }
 
-function pausedError() {
-  return new GithubPausedError(reason());
+function pausedError(why = reason()) {
+  return new GithubPausedError(why);
 }
 
 /**
- * Whether code changes to the repository at `repoUrl` are held by the pause:
- * it is on GitHub (only the platform's own repository is, since the move to
- * the git host) and GitHub is paused, so nothing can be proposed, pushed or
- * merged to it from Homeroom (the worker push and the merge refuse). The
- * project page says so (GET /api/apps/:slug `codeChangesPaused`); requests
- * and discussions are Homeroom's own and carry on.
+ * Whether code changes to the repository at `repoUrl` are held: it is on
+ * GitHub, and either GitHub is paused or Homeroom cannot act on it there
+ * (services/github.js canActOn: only the platform's own repository, through
+ * the GitHub App's installation, once that is found). Nothing can then be
+ * proposed, pushed or merged to it from Homeroom (the worker push and the
+ * merge refuse). The project page says so (GET /api/apps/:slug
+ * `codeChangesPaused`); requests and discussions are Homeroom's own and
+ * carry on. A repository on Homeroom's git host is never held.
  */
 function codeChangesPaused(repoUrl) {
-  return isPaused() && require('./repo-ref').isGithub(repoUrl);
+  const parsed = require('./repo-ref').parse(repoUrl);
+  if (!parsed || parsed.host !== 'github') return false;
+  return isPaused() || !require('./github').canActOn(parsed.owner);
 }
 
 /** Throws GithubPausedError when paused. Logs the first refusal per process. */

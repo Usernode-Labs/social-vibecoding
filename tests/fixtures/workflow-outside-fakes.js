@@ -44,6 +44,8 @@ module.exports = function install(fakes) {
       'applyIssuesChange'],
     overrides: {
       isEnabled: () => true,
+      // Homeroom can act on the fake repositories' owner through the App.
+      canActOn: () => true,
       async getIssue(owner, repo, number) {
         const closed = (await fakes.read('github.close')).some((c) => c.number === number);
         return { number, state: closed ? 'closed' : 'open' };

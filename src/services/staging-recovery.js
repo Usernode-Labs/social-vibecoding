@@ -415,8 +415,8 @@ async function rebuildSessionStaging({ config, pool, session, reason, headSha = 
     return 'skipped';
   }
 
-  // The git host's service account, or GitHub's bot token.
-  if (!require('./git-host').isConfigured() && !process.env.GITHUB_BOT_TOKEN) {
+  // The git host's service account, or GitHub through the App.
+  if (!require('./git-host').isConfigured() && !require('./github').hasApp()) {
     await recordChecksSkipped({
       session, commitSha: session.checks_commit_sha || null,
       reason: 'checks unavailable: GitHub is not configured',

@@ -33,16 +33,24 @@ function stubTrustedPush(t, branches, calls = []) {
 
 const SRC = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'worker.js'), 'utf8');
 
+// The push's GitHub credential: the App's installation token, which a test
+// takes away by setting `credential.token` to null.
+const credential = { token: null };
+
 function withKubernetes(t, { token = 'fake-test-token' } = {}) {
-  const prior = { runtime: process.env.WORKER_RUNTIME, token: process.env.GITHUB_BOT_TOKEN };
+  const prior = { runtime: process.env.WORKER_RUNTIME };
   process.env.WORKER_RUNTIME = 'kubernetes';
-  if (token) process.env.GITHUB_BOT_TOKEN = token;
-  else delete process.env.GITHUB_BOT_TOKEN;
+  credential.token = token;
+  const github = require('../src/services/github');
+  t.mock.method(github, 'canActOn', () => true);
+  t.mock.method(github, 'getInstallationToken', async () => {
+    if (!credential.token) throw new Error('No GitHub App installation token');
+    return credential.token;
+  });
   t.after(() => {
     if (prior.runtime === undefined) delete process.env.WORKER_RUNTIME;
     else process.env.WORKER_RUNTIME = prior.runtime;
-    if (prior.token === undefined) delete process.env.GITHUB_BOT_TOKEN;
-    else process.env.GITHUB_BOT_TOKEN = prior.token;
+    credential.token = null;
   });
 }
 
@@ -89,7 +97,7 @@ test('a successful push clears the record, and a failed rescue never blocks evic
   assert.deepEqual(await worker.rescueUnpushedCommit(71002), { attempted: false }, 'nothing left to rescue');
 
   worker._registryUpsertForTests(71002, { unpushed: { sha: 'def5678', branchName: 'dev/evan-2' } });
-  delete process.env.GITHUB_BOT_TOKEN;
+  credential.token = null;
   assert.deepEqual(await worker.rescueUnpushedCommit(71002), { attempted: true, pushed: false });
   const deleted = [];
   t.mock.method(kubernetes, 'deleteWorker', async (_config, id) => deleted.push(id));
