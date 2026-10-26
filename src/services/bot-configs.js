@@ -85,6 +85,7 @@
 const crypto = require('crypto');
 const log = require('./logger');
 const stageCosts = require('./stage-costs');
+const repoRef = require('./repo-ref');
 
 const GLM = 'z-ai/glm-5.3-flash';
 const OPUS = 'anthropic/claude-opus-5.5';
@@ -1363,7 +1364,7 @@ async function diffSummary({ github = null, repoUrl, base, sha, stored = null })
     files: files.length,
     insertions: files.reduce((n, f) => n + (Number(f.additions) || 0), 0),
     deletions: files.reduce((n, f) => n + (Number(f.deletions) || 0), 0),
-    compareUrl: `${String(repoUrl).replace(/\.git$/, '')}/compare/${base}...${sha}`,
+    compareUrl: repoRef.compareUrl(repoUrl, base, sha),
   };
 }
 

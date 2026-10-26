@@ -453,7 +453,7 @@ const MY_REQUESTS_STANDING = `
            COALESCE(fr.app_id, (
              SELECT s.id FROM self_app s
               WHERE fr.target = 'platform'
-                AND lower(regexp_replace(regexp_replace(COALESCE(s.repo_url, ''), '^.*github\\.com/', ''), '(\\.git)?/*$', ''))
+                AND lower(regexp_replace(regexp_replace(COALESCE(s.repo_url, ''), '(\\.git)?/*$', ''), '^.*/([^/]+/[^/]+)$', '\\1'))
                   = lower(COALESCE(fr.issue_owner, '') || '/' || regexp_replace(COALESCE(fr.issue_repo, ''), '\\.git$', ''))
            )) AS app_id
       FROM feedback_reports fr
