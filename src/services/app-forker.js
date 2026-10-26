@@ -8,6 +8,7 @@ const github = require('./github');
 const docker = require('./docker');
 const { getConnectorScaffoldFiles, getCanonicalRepoFile } = require('./template');
 const repoRef = require('./repo-ref');
+const commitIdentity = require('./commit-identity');
 
 // Rewrite (or create) the top-level `name` in the forked working tree's
 // dapp.json to the forker's chosen name. dapp.json's `name` is the
@@ -232,9 +233,9 @@ async function copyRepoTree({ sourceApp, botUsername, forkSlug, forkName, tempDi
   try {
     await git(['init', '-q', '-b', 'main']);
     await git(['add', '-A']);
-    const author = hosted ? require('./git-host').defaultAuthor() : { name: 'usernode-bot', email: 'bot@usernode' };
+    // Homeroom's one identity (services/commit-identity.js), on either host.
     await git([
-      '-c', `user.email=${author.email}`, '-c', `user.name=${author.name}`,
+      ...commitIdentity.gitConfigArgs(),
       'commit', '-q', '-m', `Forked from ${sourceApp.slug}`,
     ]);
     if (hosted) {

@@ -39,6 +39,7 @@ const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
 const log = require('./logger');
+const commitIdentity = require('./commit-identity');
 
 const GIT_TIMEOUT_MS = 120_000;
 const API_TIMEOUT_MS = 20_000;
@@ -373,12 +374,9 @@ async function pushInitialFiles(repo, files, { branch = 'main', message = 'Initi
   }
 }
 
-/** Who the platform's own commits are by. */
+/** Who the platform's own commits are by (services/commit-identity.js). */
 function defaultAuthor() {
-  return {
-    name: process.env.GIT_HOST_COMMIT_NAME || 'Homeroom',
-    email: process.env.GIT_HOST_COMMIT_EMAIL || 'homeroom@users.noreply.onhomeroom.com',
-  };
+  return commitIdentity.homeroomAuthor();
 }
 
 module.exports = {

@@ -51,6 +51,7 @@ const { promisify } = require('util');
 
 const log = require('./logger');
 const githubService = require('./github');
+const commitIdentity = require('./commit-identity');
 
 const execFileAsync = promisify(execFile);
 
@@ -187,8 +188,12 @@ async function withScratchRepo(label, fn) {
   });
   try {
     await git(['init', '--quiet']);
-    await git(['config', 'user.name', 'usernode-bot']);
-    await git(['config', 'user.email', 'usernode-bot@users.noreply.github.com']);
+    // Homeroom's one identity (services/commit-identity.js): the committer
+    // of every commit made here, a submitted patch's (external-agent-patch.js
+    // `git am`) included, whose author stays the patch's own.
+    const author = commitIdentity.homeroomAuthor();
+    await git(['config', 'user.name', author.name]);
+    await git(['config', 'user.email', author.email]);
     return await fn({ dir, git });
   } finally {
     await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
