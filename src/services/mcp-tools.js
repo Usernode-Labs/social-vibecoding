@@ -39,6 +39,7 @@ const unitSuiteRow = require('./unit-suite-row');
 const checkSignals = require('./check-signals');
 const { sniffImageType } = require('./attachments');
 const requestSpecs = require('./request-specs');
+const repoRef = require('./repo-ref');
 const {
   READ_SCOPE,
   WRITE_SCOPE,
@@ -2716,7 +2717,7 @@ function registerTools(server, ctx) {
     // get_app is the single-app read, so it is the one that can afford it.
     const gh = require('./github');
     let repoHead = { defaultBranch: null, headSha: null, headCommittedAt: null };
-    const parsedRepo = app.repo_url ? gh.parseGithubUrl(app.repo_url) : null;
+    const parsedRepo = repoRef.ownerRepo(app.repo_url);
     if (parsedRepo) {
       try {
         repoHead = await gh.getRepoHead(parsedRepo.owner, parsedRepo.repo);

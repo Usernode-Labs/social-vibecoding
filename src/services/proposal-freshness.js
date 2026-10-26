@@ -41,6 +41,7 @@
 // (checks_base_sha) because nothing anywhere recorded the base.
 
 const log = require('./logger');
+const repoRef = require('./repo-ref');
 
 const SHA_RE = /^[0-9a-f]{7,40}$/;
 
@@ -206,7 +207,7 @@ async function refreshFreshness(deps, session, options = {}) {
   const answer = readFreshness(s);
 
   const repoUrl = s.repo_url || null;
-  const parsed = repoUrl && gh ? gh.parseGithubUrl(repoUrl) : null;
+  const parsed = repoUrl && gh ? repoRef.ownerRepo(repoUrl) : null;
   const headSha = headShaOf(s);
   const prNumber = parseInt(s.pr_number, 10);
 

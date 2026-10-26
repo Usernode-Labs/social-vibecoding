@@ -27,6 +27,7 @@ const log = require('./logger');
 const { listPublicApps, publicChangeTitle } = require('./public-app-directory');
 const { countedVotePredicateSql } = require('./pr-vote-revision');
 const { publicStillsFor, publicStillUrl } = require('./shots-public');
+const repoRef = require('./repo-ref');
 
 const VOTES_MAX = 10;
 const MERGED_MAX = 5;
@@ -53,8 +54,7 @@ function plainSummary(md) {
 }
 
 function parseOwnerRepo(repoUrl) {
-  const m = String(repoUrl || '').match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/);
-  return m ? { owner: m[1], repo: m[2] } : null;
+  return repoRef.ownerRepo(repoUrl);
 }
 
 // The open requests: their titles and how many there are, or null when the

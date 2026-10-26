@@ -16,6 +16,7 @@ const { appIdentityEnv } = require('./app-identity-env');
 const stagingEnv = require('./staging-env');
 const events = require('./events');
 const { getPool } = require('../db/pool');
+const repoRef = require('./repo-ref');
 
 // Custom error thrown by both staging + prod build paths when the cloned
 // repo's `dapp.json` declares required secrets that have no stored value. Callers (votes.js merge path, drift poller, dev-chat
@@ -224,7 +225,7 @@ async function buildAndDeployStagingInner(config, session, app, commitHash, { at
 
   try {
     // 1. Clone the PR branch
-    const [, owner, repo] = app.repo_url.match(/github\.com\/([^/]+)\/([^/]+)/) || [];
+    const { owner, repo } = repoRef.ownerRepo(app.repo_url) || {};
     if (!owner || !repo) throw new Error('Could not parse repo URL');
 
     const cloneUrl = await github.getCloneUrl(owner, repo);
@@ -890,7 +891,7 @@ async function rebuildProductionInner(config, app, options = {}) {
           .then((r) => (r && r.status === 'ready' ? r : null), () => null),
       }));
     } else {
-      const [, owner, repo] = app.repo_url.match(/github\.com\/([^/]+)\/([^/]+)/) || [];
+      const { owner, repo } = repoRef.ownerRepo(app.repo_url) || {};
       if (!owner || !repo) throw new Error('Could not parse repo URL');
 
       const cloneUrl = await github.getCloneUrl(owner, repo);

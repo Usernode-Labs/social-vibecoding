@@ -11,6 +11,7 @@ const proposalDescription = require('./proposal-description');
 const summaryFreshness = require('./summary-freshness');
 const { visualHeadForSession } = require('./pr-vote-revision');
 const diagramContract = require('./diagram');
+const repoRef = require('./repo-ref');
 
 // Coerce an arbitrary array of "issue numbers" into a clean, deduped,
 // ascending list of positive integers (#75). Defensive against malformed
@@ -323,9 +324,9 @@ async function syncShotsPrBlock(pool, sessionId) {
   const withoutLegacy = upsertVisualsBlock(session.pr_body || '', '');
   const nextBody = upsertShotsBlock(withoutLegacy, block);
   if (nextBody === (session.pr_body || '')) return { updated: false, reason: 'unchanged' };
-  const match = String(session.repo_url || '').match(/github\.com\/([^/]+)\/([^/#]+?)(?:\.git)?$/i);
-  if (!match) return { updated: false, reason: 'invalid_repo' };
-  await github.updatePR(match[1], match[2], session.pr_number, { body: nextBody });
+  const repo = repoRef.ownerRepo(session.repo_url);
+  if (!repo) return { updated: false, reason: 'invalid_repo' };
+  await github.updatePR(repo.owner, repo.repo, session.pr_number, { body: nextBody });
   await pool.query(
     `UPDATE chat_sessions
         SET pr_body = $2, pr_visuals_applied = NULL

@@ -16,6 +16,7 @@
 
 const log = require('./logger');
 const diagram = require('./diagram');
+const repoRef = require('./repo-ref');
 
 const SOURCES = Object.freeze(['author']);
 
@@ -87,11 +88,11 @@ async function syncPrBlock(pool, sessionId, deps = {}) {
   const block = diagram.prBlock(session.pr_diagram, session.pr_diagram_source || 'author');
   const next = diagram.upsertPrBlock(session.pr_body || '', block);
   if (next === (session.pr_body || '')) return { updated: false, reason: 'unchanged' };
-  const match = String(session.repo_url || '').match(/github\.com\/([^/]+)\/([^/#]+?)(?:\.git)?$/i);
-  if (!match) return { updated: false, reason: 'invalid_repo' };
+  const repo = repoRef.ownerRepo(session.repo_url);
+  if (!repo) return { updated: false, reason: 'invalid_repo' };
   const github = deps.github || require('./github');
   try {
-    await github.updatePR(match[1], match[2], session.pr_number, { body: next });
+    await github.updatePR(repo.owner, repo.repo, session.pr_number, { body: next });
   } catch (err) {
     // GitHub refusing this write (the pull request gone, a body it will not
     // take) is final: trying again would hold the proposal's other GitHub

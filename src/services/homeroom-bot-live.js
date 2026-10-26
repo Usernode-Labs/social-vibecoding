@@ -67,6 +67,7 @@ const { stripSpecWrapperFence } = require('./spec-format');
 const { agentApiFailure, finalAnswerText } = require('./agent-result-text');
 const proposalDescription = require('./proposal-description');
 const { withoutEmDashes } = require('./em-dashes');
+const repoRef = require('./repo-ref');
 const {
   SPEC_DESIGN_BRIEF, FIRST_VERSION_SPEC_DESIGN_BRIEF, FIRST_VERSION_SCREENS_BRIEF, getDesignGuidance, specHtmlContract,
   getConventionSection,
@@ -3861,7 +3862,7 @@ function buildTurnRunner({
   // restart's next attempt follows the turn it caught rather than start it
   // again. With the inert context, or no key, the turn runs as it always has.
   const steps = durableSteps.of(deps);
-  const [, repoOwner, repoName] = String(session.repo_url || '').match(/github\.com[/:]([^/]+)\/([^/.]+)/) || [];
+  const { owner: repoOwner, repo: repoName } = repoRef.ownerRepo(session.repo_url) || {};
   const head = deps.github && repoOwner && branchName
     ? () => deps.github.getBranchSha(repoOwner, repoName, branchName)
     : null;

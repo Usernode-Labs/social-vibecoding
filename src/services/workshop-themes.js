@@ -75,6 +75,7 @@ const { GOVERNANCE_KINDS } = require('./governance-kinds');
 const limits = require('./limits');
 const llm = require('./llm');
 const log = require('./logger');
+const repoRef = require('./repo-ref');
 
 // Caps keep the prompt bounded on a huge app. The issue cap is
 // github.fetchPublicIssues' own ceiling: the snapshot is the board, not a
@@ -142,8 +143,7 @@ function excerpt(text) {
 }
 
 function parseOwnerRepo(repoUrl) {
-  const m = String(repoUrl || '').match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/);
-  return m ? { owner: m[1], repo: m[2] } : null;
+  return repoRef.ownerRepo(repoUrl);
 }
 
 const linkedOf = (r) => (Array.isArray(r.linked_issues) ? r.linked_issues : [])

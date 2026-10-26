@@ -12,6 +12,7 @@
 // a mock) leaves the column empty and the card keeps today's spacer.
 
 const log = require('./logger');
+const repoRef = require('./repo-ref');
 
 const AREAS = Object.freeze([
   { key: 'screens', label: 'Screens' },
@@ -80,8 +81,7 @@ const inFlight = new Set();
 const MAX_PER_READ = 4;
 
 function repoOf(url) {
-  const m = String(url || '').match(/github\.com\/([^/]+)\/([^/#?]+?)(?:\.git)?(?:[/#?]|$)/i);
-  return m ? { owner: m[1], repo: m[2] } : null;
+  return repoRef.ownerRepo(url);
 }
 
 /**

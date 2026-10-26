@@ -31,6 +31,7 @@ const { getPool } = require('../db/pool');
 const github = require('./github');
 const releaseWatch = require('./release-watch');
 const githubBudget = require('./github-budget');
+const repoRef = require('./repo-ref');
 
 // MAIN_DRIFT_POLL_MS: how often the clock looks (5 minutes). GitHub's rest
 // API has a 5000 req/hr limit per token. A plain read of every running
@@ -137,7 +138,7 @@ const movementOf = (app, sha) =>
 
 async function checkOne(config, pool, app, { byHand = false } = {}) {
   const platform = require('../workflow/platform.ts');
-  const parsed = github.parseGithubUrl(app.repo_url);
+  const parsed = repoRef.ownerRepo(app.repo_url);
   if (!parsed) {
     log.warn('drift-poller', 'Skipping app with unparseable repo_url', { slug: app.slug, repoUrl: app.repo_url });
     return { status: 'invalid_repo', slug: app.slug, repoUrl: app.repo_url };

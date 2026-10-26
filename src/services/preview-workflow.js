@@ -6,6 +6,7 @@
 // the machine decides and does the work.
 
 const log = require('./logger');
+const repoRef = require('./repo-ref');
 
 const platform = () => require('../workflow/platform.ts');
 const SHA = /^[0-9a-f]{40}$/;
@@ -30,7 +31,7 @@ async function exactHead(pool, session, head = null) {
     const { rows } = await pool.query('SELECT repo_url FROM apps WHERE id = $1', [session.app_id]);
     repoUrl = rows[0]?.repo_url;
   }
-  const [, owner, repo] = String(repoUrl || '').match(/github\.com\/([^/]+)\/([^/.]+)/) || [];
+  const { owner, repo } = repoRef.ownerRepo(repoUrl) || {};
   if (owner && repo && session.branch_name) {
     const tip = exact(await require('./github').getBranchSha(owner, repo, session.branch_name).catch(() => null));
     if (tip) return tip;

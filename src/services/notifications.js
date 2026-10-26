@@ -58,6 +58,7 @@ const { listActiveUserIds } = require('./active-users');
 const notificationPreferences = require('./notification-preferences');
 const notificationBookmarks = require('./notification-bookmarks');
 const { PARKED_NOTIFICATION_KINDS } = require('./kudos-parked');
+const repoRef = require('./repo-ref');
 
 // #5249: a parked feature's rows (kudos, while it is parked) are neither
 // listed nor counted. Built from the frozen constant in kudos-parked.js,
@@ -486,10 +487,9 @@ async function createIssueThreadNotifications(pool, {
     'SELECT repo_url FROM apps WHERE id = $1',
     [appId]
   );
-  const m = String(appRows[0]?.repo_url || '')
-    .match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/);
-  const owner = m ? m[1] : null;
-  const repo = m ? m[2] : null;
+  const m = repoRef.ownerRepo(appRows[0]?.repo_url);
+  const owner = m ? m.owner : null;
+  const repo = m ? m.repo : null;
 
   const { rows: candidates } = await pool.query(
     `SELECT i.created_by AS user_id

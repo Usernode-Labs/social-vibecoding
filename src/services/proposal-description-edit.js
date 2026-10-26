@@ -3,6 +3,7 @@
 const summaryFreshness = require('./summary-freshness');
 const proposalUpdate = require('./proposal-update');
 const github = require('./github');
+const repoRef = require('./repo-ref');
 
 const MAX_DESCRIPTION_LENGTH = 16000;
 const OPEN_STATUSES = ['active', 'paused', 'promoted', 'merging'];
@@ -94,7 +95,7 @@ async function edit({ pool, sessionId, userId, input, gh = github,
     }
     let prBodyStatus = session.source === 'imported' ? 'imported_pr' : 'no_pull_request';
     if (session.source !== 'imported' && session.pr_number) {
-      const repo = gh.parseGithubUrl(session.repo_url);
+      const repo = repoRef.ownerRepo(session.repo_url);
       const rejected = repo ? await proposalUpdate.syncSummaryIntoBody({
         pool, gh, ...repo, session, summary: input.description,
         previousSummary: session.pr_summary_previous_md,

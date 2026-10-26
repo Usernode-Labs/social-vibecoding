@@ -13,6 +13,7 @@
 // deadline, ChecksDue: preview/machine.ts.)
 
 const log = require('./logger');
+const repoRef = require('./repo-ref');
 
 const DEFAULT_CHECKS_STALE_MS = 10 * 60 * 1000;
 
@@ -401,7 +402,7 @@ async function rebuildSessionStaging({ config, pool, session, reason, headSha = 
     return 'handed_off';
   }
 
-  const [, owner, repo] = (session.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
+  const { owner, repo } = repoRef.ownerRepo(session.repo_url) || {};
   if (!owner || !repo) {
     // #461: every no-op below used to return silently, leaving check_state
     // NULL — the merge gate blocks NULL as "still running its tests" and the

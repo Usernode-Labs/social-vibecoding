@@ -33,6 +33,7 @@
 // keeps tail_claimed_at without tail_finished_at.
 
 const log = require('./logger');
+const repoRef = require('./repo-ref');
 
 const SESSION_SQL = `SELECT cs.*, a.slug AS app_slug, a.name AS app_name, a.repo_url,
         a.self_hosted AS app_self_hosted, u.username
@@ -153,7 +154,7 @@ async function finishAdoptedTurn({ config, pool, turn, deps = {} }) {
     const result = d.localAgent.buildTurnResult({
       turn: finished, outcome, label, behind: session.behind_main || 0, mode,
     });
-    const [, repoOwner, repoName] = (session.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
+    const { owner: repoOwner, repo: repoName } = repoRef.ownerRepo(session.repo_url) || {};
 
     // ── A stop is a deliberate end: no tail, no wrap-up ────────────────
     if (outcome === 'stopped') {

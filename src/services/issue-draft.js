@@ -26,6 +26,7 @@
 const log = require('./logger');
 const github = require('./github');
 const sessionBus = require('./session-bus');
+const repoRef = require('./repo-ref');
 // Called through the module object (ws.broadcastGlobal) rather than
 // destructured, so tests can monkey-patch the live push — the same
 // pattern the route suites use for worker.isInFlight / statusSvc.gather.
@@ -67,8 +68,7 @@ function normTitle(s) {
 }
 
 function parseRepoUrl(url) {
-  const m = String(url || '').match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/);
-  return m ? { owner: m[1], repo: m[2] } : null;
+  return repoRef.ownerRepo(url);
 }
 
 // Resolve where a draft with this target would be filed. Kept separate

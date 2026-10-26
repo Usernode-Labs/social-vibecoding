@@ -29,6 +29,7 @@
 // same thing the same way.
 
 const log = require('./logger');
+const repoRef = require('./repo-ref');
 
 const STATES = Object.freeze([
   'queued', 'planning', 'waiting', 'building', 'checks', 'vote', 'going_live', 'live',
@@ -665,10 +666,10 @@ async function askersFor(pool, appId, numbers) {
  * Never throws; a project with no repository has none.
  */
 async function openRequestsOf(app, deps = {}) {
-  const m = /github\.com[/:]([^/]+)\/([^/.]+?)(?:\.git)?\/?$/.exec(String(app?.repo_url || ''));
-  if (!m) return { byNumber: new Map(), whole: false };
+  const repo = repoRef.ownerRepo(app?.repo_url);
+  if (!repo) return { byNumber: new Map(), whole: false };
   try {
-    const fetched = await (deps.github || require('./github')).fetchPublicIssues(m[1], m[2]);
+    const fetched = await (deps.github || require('./github')).fetchPublicIssues(repo.owner, repo.repo);
     const issues = Array.isArray(fetched?.issues) ? fetched.issues : [];
     return {
       byNumber: new Map(issues.map((issue) => [Number(issue.number), issue])),

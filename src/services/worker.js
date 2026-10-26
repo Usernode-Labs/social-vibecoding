@@ -15,6 +15,7 @@ const workerGitPush = require('./worker-git-push');
 const llmTelemetry = require('./llm-telemetry');
 const liveAgentSpend = require('./live-agent-spend');
 const workerProgress = require('./worker-progress');
+const repoRef = require('./repo-ref');
 // The invited fixtures' fixed ids, for the listed persona's private-home key.
 const fixtures = require('./shots-fixtures');
 
@@ -36,10 +37,10 @@ const DEFAULT_PLATFORM_REPO_URL = 'https://github.com/Usernode-Labs/social-vibec
 /** Pure: the memory limit of a worker on `owner/name` (WORKER_MEMORY units). */
 function workerMemoryFor(repoOwner, repoName, env = process.env) {
   const url = env.USERNODE_PLATFORM_REPO || env.USERNODE_REPO_URL || DEFAULT_PLATFORM_REPO_URL;
-  const m = String(url).match(/github\.com[/:]([^/]+)\/([^/]+?)(?:\.git)?\/?$/i);
+  const m = repoRef.ownerRepo(url);
   const platform = m && repoOwner && repoName
-    && m[1].toLowerCase() === String(repoOwner).toLowerCase()
-    && m[2].toLowerCase() === String(repoName).toLowerCase();
+    && m.owner.toLowerCase() === String(repoOwner).toLowerCase()
+    && m.repo.toLowerCase() === String(repoName).toLowerCase();
   return platform
     ? (env.WORKER_MEMORY_PLATFORM_REPO || WORKER_MEMORY_PLATFORM_REPO)
     : (env.WORKER_MEMORY || WORKER_MEMORY);

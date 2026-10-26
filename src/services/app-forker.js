@@ -7,6 +7,7 @@ const log = require('./logger');
 const github = require('./github');
 const docker = require('./docker');
 const { getConnectorScaffoldFiles, getCanonicalRepoFile } = require('./template');
+const repoRef = require('./repo-ref');
 
 // Rewrite (or create) the top-level `name` in the forked working tree's
 // dapp.json to the forker's chosen name. dapp.json's `name` is the
@@ -151,7 +152,7 @@ async function copyRepoTree({ sourceApp, botUsername, forkSlug, forkName, tempDi
   }
 
   // Resolve the source clone URL from repo_url (fall back to bot/<slug>).
-  const parsed = github.parseGithubUrl(sourceApp.repo_url || '');
+  const parsed = repoRef.ownerRepo(sourceApp.repo_url);
   const srcOwner = parsed ? parsed.owner : botUsername;
   const srcRepo = parsed ? parsed.repo : sourceApp.slug;
   const cloneUrl = await github.getCloneUrl(srcOwner, srcRepo);
