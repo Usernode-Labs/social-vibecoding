@@ -1,6 +1,7 @@
 'use strict';
 
 const { Router } = require('express');
+const { currentAppBridge } = require('../middleware/app-bridge');
 const { getPool } = require('../db/pool');
 const limits = require('../services/limits');
 const { invalidateGrant } = require('../middleware/app-llm-auth');
@@ -305,7 +306,7 @@ function llmGrantsRoutes(config) {
   // llm block (purpose + sanitized suggested cap), the default, the
   // upper bound, and whether the user has a BYOK key on file (gates
   // the spillover checkbox).
-  router.get('/api/apps/:slug/llm-grant', async (req, res) => {
+  router.get('/api/apps/:slug/llm-grant', currentAppBridge, async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
 
     try {

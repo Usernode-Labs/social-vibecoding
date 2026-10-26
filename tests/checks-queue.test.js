@@ -233,7 +233,7 @@ test('captureForSession waits for its slot after the preview is up and before an
   const enqueue = live.indexOf('checksQueue.enqueue(pool');
   const wait = live.indexOf('await waitForChecksSlot(pool');
   const testing = live.indexOf("setChecksPhase(pool, session.id, commitHash, 'testing')");
-  const token = live.indexOf('mintCaptureToken(captureUser, app.id)');
+  const token = live.indexOf('mintCaptureToken(captureUser, app.id, { previewOnly: app.slug === config.selfAppSlug })');
   const cookie = live.indexOf("'INSERT INTO sessions (token, user_id, expires_at) VALUES ($1, $2, $3)'");
   const unit = live.indexOf('unitSuite.maybeRunUnitSuite({');
   const capture = live.indexOf('kubernetes.runCaptureJob(');

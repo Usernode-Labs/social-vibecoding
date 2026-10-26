@@ -28654,21 +28654,13 @@ const AppView = {
     const data = e.data;
     if (!data || !data.id || data.__usernode_locale !== 'get') return;
 
-    // Only the app iframes this shell owns may ask — same source gate
-    // as the LLM consent family above.
-    const appIframe = document.getElementById('app-iframe');
-    const stagingIframe = document.getElementById('staging-iframe');
-    const fromApp = appIframe && e.source === appIframe.contentWindow;
-    const fromStaging = stagingIframe && e.source === stagingIframe.contentWindow;
-    if (!fromApp && !fromStaging) return;
-
-    const locale = (typeof App !== 'undefined' && App.user) ? (App.user.locale || null) : null;
-    try {
-      e.source.postMessage(
-        { __usernode_locale: 'response', id: data.id, value: { locale } },
-        '*'
-      );
-    } catch {}
+    const frameId = AppView.ownedFrameFor(e.source);
+    if (frameId !== 'app-iframe' && frameId !== 'staging-iframe') return;
+    const bridge = AppView._bridgeRequest(e, frameId);
+    if (!bridge) return;
+    const locale = bridge.platformPreview ? null
+      : (typeof App !== 'undefined' ? App.user?.locale || null : null);
+    bridge.post({ __usernode_locale: 'response', id: data.id, value: { locale } });
   },
 
   // Push a locale change into any open app/staging iframe so the bridge
@@ -28679,14 +28671,12 @@ const AppView = {
   notifyLocaleChanged(locale) {
     ['app-iframe', 'staging-iframe'].forEach((id) => {
       const iframe = document.getElementById(id);
-      if (iframe && iframe.contentWindow) {
-        try {
-          iframe.contentWindow.postMessage(
-            { __usernode_locale: 'changed', locale: locale || null },
-            '*'
-          );
-        } catch {}
-      }
+      if (!iframe?.contentWindow) return;
+      try {
+        const origin = new URL(iframe.src, window.location.href).origin;
+        const bridge = AppView._bridgeRequest({ source: iframe.contentWindow, origin }, id);
+        bridge?.post({ __usernode_locale: 'changed', locale: bridge.platformPreview ? null : locale || null });
+      } catch {}
     });
   },
 
@@ -28958,9 +28948,8 @@ const AppView = {
 
   /**
    * The slug of the app running in `frameId`, or null when the shell cannot
-   * name it. `AppView.appData` is the App tab's record — it covers
-   * #app-iframe and the staging preview opened from that app's Dev screen,
-   * and is null on the landing screen, which has its own record above.
+   * name it. The mounted frame, Messages preview and landing viewer each
+   * keep their own identity. `appData` can describe an unrelated project.
    */
   appSlugForFrame(frameId) {
     if (frameId === 'app-viewer-frame') {
@@ -28969,7 +28958,39 @@ const AppView = {
       if (!rec || !frame || rec.frame !== frame) return null;
       return rec.slug || null;
     }
-    return (AppView.appData && AppView.appData.slug) || null;
+    if (frameId === 'staging-iframe') return AppView._stagingPreview?.slug || null;
+    if (frameId === 'app-iframe') return AppView._appFrame().slug() || null;
+    return null;
+  },
+
+  // A WindowProxy survives navigation. Bind privileged bridge work to the
+  // parent's frame/app record and its expected origin, then fence every
+  // reply and consent write after an await against that same document.
+  _bridgeRequest(e, frameId) {
+    const frame = document.getElementById(frameId);
+    if (!frame || frame.contentWindow !== e.source) return null;
+    const src = frame.src;
+    let frameUrl;
+    try { frameUrl = new URL(src, window.location.href); } catch { return null; }
+    const origin = frameUrl.origin;
+    if (origin === 'null' || e.origin !== origin) return null;
+    const slug = AppView.appSlugForFrame(frameId);
+    const userId = typeof App !== 'undefined' ? App.user?.id : null;
+    const preview = frameId === 'staging-iframe' ? AppView._stagingPreview : null;
+    const viewer = frameId === 'app-viewer-frame' ? AppView._viewerApp : null;
+    const platformPreview = frameId === 'staging-iframe' && (preview?.slug === 'usernode-2d5619'
+      || preview?.self_hosted || /^usernode-2d5619--s[0-9]+\./.test(frameUrl.hostname));
+    const current = () => document.getElementById(frameId) === frame
+      && frame.contentWindow === e.source && frame.src === src
+      && AppView.appSlugForFrame(frameId) === slug
+      && (typeof App !== 'undefined' ? App.user?.id : null) === userId
+      && (frameId !== 'staging-iframe' || AppView._stagingPreview === preview)
+      && (frameId !== 'app-viewer-frame' || AppView._viewerApp === viewer);
+    const post = value => {
+      if (!current()) return false;
+      try { e.source.postMessage(value, origin); return true; } catch { return false; }
+    };
+    return { slug, current, post, platformPreview };
   },
 
   // Last value posted per frame id, so an unchanged recompute posts
@@ -29250,12 +29271,13 @@ const AppView = {
     // and the landing viewer is in it because an app runs there too (#1909).
     const frameId = AppView.ownedFrameFor(e.source);
     if (!frameId) return;
+    const bridge = AppView._bridgeRequest(e, frameId);
+    if (!bridge) return;
 
     const reply = (value, error) => {
       try {
-        e.source.postMessage(
+        bridge.post(
           { __usernode_llm: 'response', id: data.id, value: value ?? null, error: error ?? null },
-          '*'
         );
       } catch {}
     };
@@ -29264,9 +29286,9 @@ const AppView = {
     // can decline to answer, too: the shell has RECOGNISED this request, so
     // every path from here owes the app a reply rather than the silence that
     // leaves it waiting out the bridge's 15s "there is no shell" timeout.
-    try { e.source.postMessage({ __usernode_llm: 'ack', id: data.id }, '*'); } catch {}
+    try { bridge.post({ __usernode_llm: 'ack', id: data.id }); } catch {}
 
-    const slug = AppView.appSlugForFrame(frameId);
+    const slug = bridge.slug;
     if (!slug) {
       reply(null, PlatformI18n.t('changes:bridge.appNotIdentified'));
       return;
@@ -29274,7 +29296,8 @@ const AppView = {
 
     let info;
     try {
-      const r = await fetch(`/api/apps/${slug}/llm-grant`, { credentials: 'same-origin' });
+      const r = await fetch(`/api/apps/${encodeURIComponent(slug)}/llm-grant`, { credentials: 'same-origin',
+        headers: { 'X-Usernode-App-Bridge': 'isolated-v2' } });
       // The bootstrap is session-authenticated, and the landing viewer is the
       // one owned frame a SIGNED-OUT visitor can reach. Say so, rather than
       // reporting the sign-in wall as a failure the user can do nothing about.
@@ -29288,6 +29311,7 @@ const AppView = {
       return;
     }
 
+    if (!bridge.current()) return;
     const active = info.grant && info.grant.status === 'active';
 
     // Read-only usage meter (issue #655) — never opens the consent
@@ -29316,6 +29340,7 @@ const AppView = {
     }
 
     const decision = await AppView.showLlmConsentModal(info);
+    if (!bridge.current()) return;
     if (!decision) {
       reply({ granted: false, declined: true });
       return;
@@ -29416,12 +29441,13 @@ const AppView = {
     // said no" from "not available on this surface".
     const frameId = AppView.ownedFrameFor(e.source);
     if (!frameId) return;
+    const bridge = AppView._bridgeRequest(e, frameId);
+    if (!bridge) return;
 
     const reply = (value, error) => {
       try {
-        e.source.postMessage(
+        bridge.post(
           { __usernode_permission: 'response', id: data.id, value: value ?? null, error: error ?? null },
-          '*'
         );
       } catch {}
     };
@@ -29430,9 +29456,9 @@ const AppView = {
     // rather than the silence that leaves it waiting out the bridge's 15s
     // "there is no shell" timeout. The user may sit on the dialog for
     // minutes.
-    try { e.source.postMessage({ __usernode_permission: 'ack', id: data.id }, '*'); } catch {}
+    try { bridge.post({ __usernode_permission: 'ack', id: data.id }); } catch {}
 
-    const slug = AppView.appSlugForFrame(frameId);
+    const slug = bridge.slug;
     if (!slug) {
       reply(null, PlatformI18n.t('changes:bridge.appNotIdentified'));
       return;
@@ -29457,7 +29483,8 @@ const AppView = {
 
     let info;
     try {
-      const r = await fetch(`/api/apps/${encodeURIComponent(slug)}/permissions`, { credentials: 'same-origin' });
+      const r = await fetch(`/api/apps/${encodeURIComponent(slug)}/permissions`, { credentials: 'same-origin',
+        headers: { 'X-Usernode-App-Bridge': 'isolated-v2' } });
       // The bootstrap is session-authenticated, and the landing viewer is
       // the one owned frame a SIGNED-OUT visitor can reach. Say which it is.
       if (r.status === 401) throw new Error('signed-out');
@@ -29470,6 +29497,7 @@ const AppView = {
       return;
     }
 
+    if (!bridge.current()) return;
     const declared = (info.declared || []).map((d) => d.capability);
     const effective = info.effective || [];
 
@@ -29522,6 +29550,7 @@ const AppView = {
       needsReload: frameId === 'app-iframe' && !isActive,
       surfaced: frameId !== 'app-iframe',
     });
+    if (!bridge.current()) return;
     if (!decision) {
       reply({ capability, state: 'denied', active: false, reason: 'declined' });
       return;
@@ -29570,12 +29599,12 @@ const AppView = {
     const type = data.__usernode_storage;
     if (type !== 'upload' && type !== 'delete' && type !== 'get-usage') return;
 
-    const appIframe = document.getElementById('app-iframe');
-    const stagingIframe = document.getElementById('staging-iframe');
-    const fromApp = appIframe && e.source === appIframe.contentWindow;
-    const fromStaging = stagingIframe && e.source === stagingIframe.contentWindow;
-    if (!fromApp && !fromStaging) return;
-    const slug = AppView.appData?.slug;
+    const frameId = AppView.ownedFrameFor(e.source);
+    if (frameId !== 'app-iframe' && frameId !== 'staging-iframe') return;
+    const bridge = AppView._bridgeRequest(e, frameId);
+    if (!bridge) return;
+    const fromStaging = frameId === 'staging-iframe';
+    const slug = bridge.slug;
     if (!slug) return;
 
     // `code` is the server's structured error code (file_too_large,
@@ -29583,18 +29612,17 @@ const AppView = {
     // the bridge can hand it to the app on the rejection (#5028).
     const reply = (value, error, code) => {
       try {
-        e.source.postMessage(
+        bridge.post(
           {
             __usernode_storage: 'response', id: data.id, value: value ?? null, error: error ?? null,
             code: typeof code === 'string' && code ? code : null,
           },
-          '*'
         );
       } catch {}
     };
     // Ack immediately so the bridge stops its "no shell here" timer —
     // a multi-MB upload POST can take a while on a slow link.
-    try { e.source.postMessage({ __usernode_storage: 'ack', id: data.id }, '*'); } catch {}
+    try { bridge.post({ __usernode_storage: 'ack', id: data.id }); } catch {}
 
     try {
       if (type === 'upload') {
@@ -29609,7 +29637,7 @@ const AppView = {
         const r = await fetch(`/api/apps/${encodeURIComponent(slug)}/files?${params}`, {
           method: 'POST',
           credentials: 'same-origin',
-          headers: { 'Content-Type': 'application/octet-stream' },
+          headers: { 'Content-Type': 'application/octet-stream', 'X-Usernode-App-Bridge': 'isolated-v2' },
           body: bytes,
         });
         const j = await r.json().catch(() => ({}));
@@ -29627,8 +29655,9 @@ const AppView = {
           reply(null, PlatformI18n.t('changes:bridge.fileNotFound'));
           return;
         }
-        const r = await fetch(`/api/apps/${encodeURIComponent(slug)}/files/${fileId}`, {
+        const r = await fetch(`/api/apps/${encodeURIComponent(slug)}/files/${fileId}?staging=${fromStaging ? '1' : '0'}`, {
           method: 'DELETE',
+          headers: { 'X-Usernode-App-Bridge': 'isolated-v2' },
           credentials: 'same-origin',
         });
         const j = await r.json().catch(() => ({}));
@@ -29641,7 +29670,8 @@ const AppView = {
       }
 
       // get-usage
-      const r = await fetch(`/api/apps/${encodeURIComponent(slug)}/files/usage`, {
+      const r = await fetch(`/api/apps/${encodeURIComponent(slug)}/files/usage?staging=${fromStaging ? '1' : '0'}`, {
+        headers: { 'X-Usernode-App-Bridge': 'isolated-v2' },
         credentials: 'same-origin',
       });
       const j = await r.json().catch(() => ({}));
@@ -29666,10 +29696,9 @@ const AppView = {
   // /api/app-platform/users/*, and this relay is the only way handle
   // lookup is exercisable in a PR preview.
   //
-  // The relay does NOT gate on AppView.appData?.slug the way the storage
-  // relay above does: these endpoints address the platform's user
-  // directory, not the app's own files, so there is no slug in the URL
-  // and nothing to scope by.
+  // These endpoints address the platform's user directory. The frame's
+  // identity still matters: platform previews must use their synthetic
+  // directory rather than this production relay.
 
   async handleDirectoryBridgeMessage(e) {
     const data = e.data;
@@ -29677,31 +29706,23 @@ const AppView = {
     const type = data.__usernode_directory;
     if (type !== 'lookup' && type !== 'search') return;
 
-    const appIframe = document.getElementById('app-iframe');
-    const stagingIframe = document.getElementById('staging-iframe');
-    const fromApp = appIframe && e.source === appIframe.contentWindow;
-    const fromStaging = stagingIframe && e.source === stagingIframe.contentWindow;
-    if (!fromApp && !fromStaging) return;
+    const frameId = AppView.ownedFrameFor(e.source);
+    if (frameId !== 'app-iframe' && frameId !== 'staging-iframe') return;
+    const bridge = AppView._bridgeRequest(e, frameId);
+    if (!bridge || !bridge.slug) return;
 
     const reply = (value, error) => {
       try {
-        e.source.postMessage(
+        bridge.post(
           { __usernode_directory: 'response', id: data.id, value: value ?? null, error: error ?? null },
-          '*'
         );
       } catch {}
     };
-    try { e.source.postMessage({ __usernode_directory: 'ack', id: data.id }, '*'); } catch {}
+    try { bridge.post({ __usernode_directory: 'ack', id: data.id }); } catch {}
 
-    // The platform preview uses its local synthetic directory. Relaying the
-    // reviewer's production cookie would reintroduce undiscoverable handles
-    // that its database export deliberately removed. _stagingPreview belongs
-    // to the parent and also covers previews opened from Messages. The
-    // browser-supplied origin covers a stale/navigation-time parent record.
-    let platformPreviewOrigin = false;
-    try { platformPreviewOrigin = /^usernode-2d5619--s[0-9]+\./.test(new URL(e.origin).hostname); } catch {}
-    const preview = AppView._stagingPreview;
-    if (platformPreviewOrigin || (fromStaging && (preview?.slug === 'usernode-2d5619' || preview?.self_hosted))) {
+    // The platform preview uses its synthetic directory; the parent cookie
+    // must not reintroduce the production handles its export removed.
+    if (bridge.platformPreview) {
       reply(type === 'search' ? { users: [], has_more: false } : { found: false, user: null, ambiguous: false });
       return;
     }
@@ -29727,7 +29748,7 @@ const AppView = {
         url = `/api/app-directory/users/search?${params}`;
       }
       const r = await fetch(url, { credentials: 'same-origin',
-        headers: { 'X-Usernode-Directory-Bridge': 'platform-isolated-v1' } });
+        headers: { 'X-Usernode-App-Bridge': 'isolated-v2' } });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) {
         reply(null, j.error || PlatformI18n.t('changes:bridge.directoryLookupFailed', { status: r.status }));

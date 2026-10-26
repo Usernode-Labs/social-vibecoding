@@ -339,7 +339,7 @@ test("bootstrap endpoint includes today's spend on the grant (issue #655)", asyn
     });
     // pg returns NUMERIC(10,4) columns as strings; grantJson numbers them.
     state.usage = { spent: '12.3400', byok: '0.5000' };
-    const res = await fetch(`${base}/api/apps/demo-app/llm-grant`);
+    const res = await fetch(`${base}/api/apps/demo-app/llm-grant`, { headers: { 'X-Usernode-App-Bridge': 'isolated-v2' } });
     assert.equal(res.status, 200);
     const { grant } = await res.json();
     assert.equal(grant.dailyCapCents, 500);
@@ -355,7 +355,7 @@ test('bootstrap endpoint reports zero spend when no usage row exists today', asy
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ appSlug: 'demo-app' }),
     });
-    const res = await fetch(`${base}/api/apps/demo-app/llm-grant`);
+    const res = await fetch(`${base}/api/apps/demo-app/llm-grant`, { headers: { 'X-Usernode-App-Bridge': 'isolated-v2' } });
     const { grant } = await res.json();
     assert.equal(grant.spentTodayCents, 0);
     assert.equal(grant.byokSpentTodayCents, 0);
@@ -372,7 +372,7 @@ test('bootstrap endpoint sanitizes the manifest llm block and clamps the suggest
     },
   });
   await withServer(async (base) => {
-    const res = await fetch(`${base}/api/apps/demo-app/llm-grant`);
+    const res = await fetch(`${base}/api/apps/demo-app/llm-grant`, { headers: { 'X-Usernode-App-Bridge': 'isolated-v2' } });
     assert.equal(res.status, 200);
     const body = await res.json();
     assert.equal(body.llm.purpose, 'Summarizes things');
@@ -394,7 +394,7 @@ test('tiered policy refuses an unverified app grant when no payer exists', async
   process.env.IDENTITY_CREDIT_POLICY = 'tiered';
   state.userLimit = null;
   await withServer(async (base) => {
-    const bootstrap = await fetch(`${base}/api/apps/demo-app/llm-grant`);
+    const bootstrap = await fetch(`${base}/api/apps/demo-app/llm-grant`, { headers: { 'X-Usernode-App-Bridge': 'isolated-v2' } });
     assert.equal(bootstrap.status, 200);
     const info = await bootstrap.json();
     assert.equal(info.maxCapCents, 0);
@@ -461,7 +461,7 @@ test('an entitlement lookup outage still permits an explicitly consented BYOK gr
   state.identityLookupError = true;
   state.apiKeyEnc = 'present';
   await withServer(async (base) => {
-    const bootstrap = await fetch(`${base}/api/apps/demo-app/llm-grant`);
+    const bootstrap = await fetch(`${base}/api/apps/demo-app/llm-grant`, { headers: { 'X-Usernode-App-Bridge': 'isolated-v2' } });
     assert.equal(bootstrap.status, 200);
     const info = await bootstrap.json();
     assert.equal(info.entitlement.entitlementAvailable, false);

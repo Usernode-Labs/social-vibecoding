@@ -51,7 +51,8 @@ function makeAppView(opts) {
   const o = opts || {};
   const published = [];
   const sandbox = {
-    console,
+    console, URL,
+    location: { href: 'https://platform.invalid/' },
     relTime: () => 'just now',
     escapeHtml: (s) => String(s == null ? '' : s),
     escapeAttr: (s) => String(s == null ? '' : s),
@@ -442,6 +443,8 @@ test('Not now resolves null', async () => {
 function ownedFrame(sandbox, id, posted) {
   const frame = fakeNode();
   frame.id = id;
+  frame.src = 'https://recipe-bot.apps.invalid/';
+  if (id === 'app-iframe') sandbox.__AppView._appFrameDom._slug = 'recipe-bot';
   frame.contentWindow = { postMessage: (m) => posted.push(JSON.parse(JSON.stringify(m))) };
   sandbox.document._byId[id] = frame;
   return frame;
@@ -463,7 +466,7 @@ function stubBootstrap(sandbox, { status = 200, body = null } = {}) {
 
 /** Post one `__usernode_llm` message and let the relay's awaits settle. */
 async function ask(AppView, source, type = 'request-access', id = 'llm-1') {
-  AppView.handleLlmBridgeMessage({ data: { __usernode_llm: type, id }, source });
+  AppView.handleLlmBridgeMessage({ data: { __usernode_llm: type, id }, source, origin: 'https://recipe-bot.apps.invalid' });
   await new Promise((r) => setTimeout(r, 0));
 }
 
