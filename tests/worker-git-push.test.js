@@ -243,3 +243,68 @@ test('trusted HTTP push authenticates while public prerequisite fetch stays anon
   assert.equal(redirectedRequests, 0, 'authenticated Git never follows a redirect');
   assert.equal(fs.existsSync(marker), false, 'failure and redirect paths still never run worker helpers');
 });
+
+// Homeroom's git host (services/git-host.js): the service account's name
+// with its token, and a destination that may not be public, so the base
+// commits are fetched with the same credential. Still nothing the worker
+// controls ever sees it, and a rejection echoing it is redacted.
+test('a push to the git host authenticates as its service account, base fetch included', { timeout: 20000 }, async (t) => {
+  const http = require('node:http');
+  const { spawn } = require('node:child_process');
+  const f = fixture(t);
+  git(f.origin, 'config', 'http.receivepack', 'true');
+  const fakeToken = 'FAKE_GIT_HOST_TOKEN_456';
+  const expectedAuth = `Basic ${Buffer.from(`homeroom:${fakeToken}`).toString('base64')}`;
+  const observed = [];
+  const children = new Set();
+  const server = http.createServer((req, res) => {
+    const url = new URL(req.url, 'http://localhost');
+    observed.push({ path: url.pathname, auth: req.headers.authorization || null });
+    if (req.headers.authorization !== expectedAuth) {
+      res.writeHead(401, { 'WWW-Authenticate': 'Basic realm="forgejo"' }); res.end(); return;
+    }
+    const child = spawn('git', ['http-backend'], { env: {
+      PATH: process.env.PATH, GIT_PROJECT_ROOT: f.dir, GIT_HTTP_EXPORT_ALL: '1',
+      PATH_INFO: url.pathname, REQUEST_METHOD: req.method, QUERY_STRING: url.search.slice(1),
+      CONTENT_TYPE: req.headers['content-type'] || '', REMOTE_USER: 'homeroom', SERVER_PROTOCOL: 'HTTP/1.1',
+    }, stdio: ['pipe', 'pipe', 'pipe'] });
+    children.add(child); child.on('close', () => children.delete(child));
+    req.pipe(child.stdin); child.stdin.on('error', () => {});
+    const chunks = [];
+    child.stdout.on('data', chunk => chunks.push(chunk));
+    child.on('close', () => {
+      const output = Buffer.concat(chunks); let end = output.indexOf('\r\n\r\n'), sep = 4;
+      if (end < 0) { end = output.indexOf('\n\n'); sep = 2; }
+      const headers = {}; let status = 200;
+      for (const line of output.subarray(0, end).toString('utf8').split(/\r?\n/)) {
+        const colon = line.indexOf(':'); if (colon < 0) continue;
+        const name = line.slice(0, colon), value = line.slice(colon + 1).trim();
+        if (name.toLowerCase() === 'status') status = Number(value.split(' ')[0]); else headers[name] = value;
+      }
+      res.writeHead(status, headers); res.end(output.subarray(end + sep));
+    });
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(async () => { for (const child of children) child.kill(); await new Promise(resolve => server.close(resolve)); });
+  const marker = path.join(f.dir, 'credential-stolen');
+  git(f.ws, 'config', 'credential.helper', `!env > '${marker}'; false`);
+  const sha = commit(f.ws, 'to the git host');
+  const remoteUrl = `http://127.0.0.1:${server.address().port}/origin.git`;
+  const pushed = await publish(f, { remoteUrl, token: fakeToken, username: 'homeroom', authFetch: true });
+  assert.equal(pushed.sha, sha);
+  assert.equal(git(f.origin, 'rev-parse', `refs/heads/${branchName}`), sha);
+  assert.ok(observed.some((r) => r.auth === expectedAuth), 'the service account authenticated');
+  assert.equal(fs.existsSync(marker), false, 'the worker\'s credential helper never ran');
+
+  const receiveHook = path.join(f.origin, 'hooks', 'pre-receive');
+  const encoded = expectedAuth.slice('Basic '.length);
+  fs.writeFileSync(receiveHook, `#!/bin/sh\nprintf '%s\\n' '${fakeToken} ${encoded}' >&2\nexit 1\n`, { mode: 0o755 });
+  commit(f.ws, 'rejected');
+  await assert.rejects(publish(f, { remoteUrl, token: fakeToken, username: 'homeroom', authFetch: true }), (error) => {
+    for (const text of [error.message, error.stderr]) {
+      assert.equal(text.includes(fakeToken), false);
+      assert.equal(text.includes(encoded), false, 'the service account\'s Basic credential is redacted');
+    }
+    return true;
+  });
+});

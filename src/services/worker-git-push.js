@@ -108,9 +108,10 @@ function parseExport(stdout, branchName) {
   return { sha, bundle, prerequisites: [...new Set(prerequisites)], pack: bundle.subarray(end + 2) };
 }
 
-function redact(text, token) {
+function redact(text, token, username = 'x-access-token') {
   let result = String(text || '');
-  for (const secret of [token, encodeURIComponent(token), Buffer.from(`x-access-token:${token}`).toString('base64')]) {
+  for (const secret of [token, encodeURIComponent(token), Buffer.from(`${username}:${token}`).toString('base64'),
+    Buffer.from(`x-access-token:${token}`).toString('base64')]) {
     if (secret) result = result.split(secret).join('***');
   }
   return result;
@@ -119,8 +120,12 @@ function redact(text, token) {
 // No token in argv, URL, config, disk or worker transport. This helper is
 // installed only on the final trusted Git invocation. The fresh repository
 // has no other helpers and HTTP redirects are disabled.
-const CREDENTIAL_HELPER = '!f() { if [ "$1" = get ]; then printf "%s\\n" "username=x-access-token" "password=$USERNODE_PUSH_TOKEN"; fi; }; f';
+const CREDENTIAL_HELPER = '!f() { if [ "$1" = get ]; then printf "%s\\n" "username=$USERNODE_PUSH_USER" "password=$USERNODE_PUSH_TOKEN"; fi; }; f';
 
+// `username`: who the token belongs to. GitHub takes any name with a token
+// (x-access-token); Homeroom's git host (services/git-host.js) takes its
+// service account's. `authFetch`: the base commits are fetched with the same
+// credential too, for a destination that is not public.
 async function push(options) {
   const { remoteUrl, branchName, token } = options;
   const { isValidBranchName } = require('./branch-names');
@@ -129,7 +134,7 @@ async function push(options) {
   return pushQueue.run(`${remoteUrl}\0${branchName}`, () => publish(options));
 }
 
-async function publish({ remoteUrl, branchName, token, exportWorker }) {
+async function publish({ remoteUrl, branchName, token, exportWorker, username = 'x-access-token', authFetch = false }) {
   let dir;
   try {
     const exported = await exportWorker(buildExportScript({ branchName }));
@@ -170,16 +175,16 @@ async function publish({ remoteUrl, branchName, token, exportWorker }) {
       ...(authenticated ? ['-c', `credential.helper=${CREDENTIAL_HELPER}`] : []),
       ...args,
     ], {
-      env: authenticated ? { ...env, USERNODE_PUSH_TOKEN: token } : env,
+      env: authenticated ? { ...env, USERNODE_PUSH_USER: username, USERNODE_PUSH_TOKEN: token } : env,
     });
     await fs.mkdir(repo);
     await git(['init', '--quiet', '--bare', '--template=']);
     if (prerequisites.length) {
-      // Every omitted commit is obtained without credentials, from exactly
-      // the same public destination that will receive the push. No worker
-      // remote or alternate object store is ever consulted.
+      // Every omitted commit is obtained from exactly the same destination
+      // that will receive the push (without credentials unless authFetch).
+      // No worker remote or alternate object store is ever consulted.
       await git(['fetch', '--quiet', '--depth=1', '--no-tags', '--no-write-fetch-head', '--no-recurse-submodules', '--no-auto-maintenance',
-        '--', remoteUrl, ...prerequisites.map((base, i) => `${base}:refs/usernode/base-${i}`)]);
+        '--', remoteUrl, ...prerequisites.map((base, i) => `${base}:refs/usernode/base-${i}`)], authFetch);
     }
     if (bundle) {
       const file = path.join(dir, 'worker.bundle');
@@ -197,13 +202,13 @@ async function publish({ remoteUrl, branchName, token, exportWorker }) {
     // tags, submodule pushes or pre-push hooks, even for hostile commits.
     const result = await git(['push', '--porcelain', '--no-verify', '--no-follow-tags', '--recurse-submodules=no',
       '--', remoteUrl, `${sha}:refs/heads/${branchName}`], true);
-    return { sha, stderr: redact(result.stderr, token).trim() };
+    return { sha, stderr: redact(result.stderr, token, username).trim() };
   } catch (error) {
     // Return a new, bounded error, never the raw child/transport error or
     // its potentially huge stdout. Preserve a useful redacted Git reason.
     const detail = error.stderr ? `: ${error.stderr}` : '';
-    const safe = new Error(redact(`${error.message}${detail}`, token).slice(0, 2000));
-    safe.stderr = redact(error.stderr, token).slice(0, 8000);
+    const safe = new Error(redact(`${error.message}${detail}`, token, username).slice(0, 2000));
+    safe.stderr = redact(error.stderr, token, username).slice(0, 8000);
     throw safe;
   } finally {
     if (dir) await fs.rm(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
