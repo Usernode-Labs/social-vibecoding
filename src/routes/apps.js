@@ -1041,16 +1041,13 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
           a.active_users = parseInt(unionRows[0]?.cnt, 10) || 0;
         }
 
-        const { owner, repo } = repoRef.ownerRepo(a.repo_url) || {};
         const version = a.main_sha
           ? {
               sha: a.main_sha,
               shortSha: a.main_sha.slice(0, 7),
               prNumber: a.main_pr_number || null,
               commitUrl: repoRef.commitUrl(a.repo_url, a.main_sha),
-              prUrl: a.main_pr_number && owner && repo
-                ? `https://github.com/${owner}/${repo}/pull/${a.main_pr_number}`
-                : null,
+              prUrl: require('../services/app-version').mergedPrUrl(a, a.main_pr_number),
             }
           : null;
         // #416: the raw last_failure JSONB (which carries the full boot

@@ -2312,8 +2312,8 @@
     "description": "Chip in the \"Share item\" dialog choosing what kind of thing to attach to a message: an app."
   },
   "shareItem.type.issue": {
-    "text": "GitHub issue",
-    "description": "Chip in the \"Share item\" dialog choosing what kind of thing to attach to a message: an issue from the project's GitHub repository. GitHub is a product name."
+    "text": "Request",
+    "description": "Chip in the \"Share item\" dialog choosing what kind of thing to attach to a message: a request, something a member asked to have changed in a project."
   },
   "shareItem.type.proposal": {
     "text": "Code proposal",

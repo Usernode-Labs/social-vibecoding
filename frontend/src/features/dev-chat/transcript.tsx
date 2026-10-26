@@ -30,6 +30,7 @@ import {
 } from 'react';
 
 import { useMessages } from '../../lib/i18n/react';
+import { linkAttrs, linkKind } from '../../lib/repo-link.js';
 import { linkRefsInHtml } from '../messages/channels';
 import { useStoreState } from '../../lib/use-store-state';
 import { createLogFollower, revealDisclosure, type LogFollower } from './log-follow';
@@ -442,6 +443,9 @@ function IssueDraftCard({ r }: { r: Extract<TranscriptRow, { t: 'issueDraft' }> 
   const d = useDetails(details || { persistId: '', defaultOpen: false });
   const resolve = (action: 'confirm' | 'dismiss', el: HTMLButtonElement) =>
     controller()?.resolvePlatformIssueDraft?.(r.msgId, action, el);
+  // The filed request's page: in place when it is Homeroom's own (a
+  // request's `htmlUrl`), in a new tab otherwise (lib/repo-link.js).
+  const filed = r.action.kind === 'link' ? linkAttrs(r.action.href) : null;
   return (
     <>
       <StatusLine r={r.status} />
@@ -470,8 +474,8 @@ function IssueDraftCard({ r }: { r: Extract<TranscriptRow, { t: 'issueDraft' }> 
           </details>
         ) : null}
         <div className="dc-pr-card-actions">
-          {r.action.kind === 'link' ? (
-            <a href={r.action.href} target="_blank" rel="noreferrer"
+          {r.action.kind === 'link' && filed ? (
+            <a href={filed.href} target={filed.target} rel={filed.target ? 'noreferrer' : undefined}
               className="dc-pr-btn dc-pr-btn-preview" style={{ textDecoration: 'none' }}>
               {r.action.label}
             </a>
@@ -529,12 +533,21 @@ function PrCard({ r, embedded = false, historical = false }: { r: Extract<Transc
   const preview = (testing: boolean, url: string) => controller()?.previewStaging?.(url, testing);
   const t = useMessages('devchat');
   const previewGone = t('devchat:card.changes.previewGone');
+  // Where the change is decides both links (lib/repo-link.js): a change kept
+  // in Homeroom opens its own page in place ("Open change"); a pull request
+  // on GitHub keeps "View on GitHub", code on the git host is "View code",
+  // each in a new tab.
+  const prKind = r.prUrl ? linkKind(r.prUrl) : null;
+  const prLink = r.prUrl ? linkAttrs(r.prUrl) : null;
+  const prButton = prKind === 'github' ? t('devchat:card.changes.viewOnGithub')
+    : prKind === 'code' ? t('devchat:card.changes.viewCode')
+      : prKind === 'homeroom' ? t('devchat:card.changes.openChange') : null;
   return (
     <>
       <div className="dc-pr-card" id="dc-pr-card">
         <div className="dc-pr-card-header">
-          {r.prUrl && !embedded
-            ? <a href={r.prUrl} target="_blank" rel="noreferrer" className="dc-pr-link">{t('devchat:card.changes.prLink', { number: r.prNumber })}</a>
+          {prLink && !embedded
+            ? <a href={prLink.href} target={prLink.target} rel={prLink.target ? 'noreferrer' : undefined} className="dc-pr-link">{t('devchat:card.changes.prLink', { number: r.prNumber })}</a>
             : <span style={{ color: 'var(--text-muted)' }}>{t('devchat:card.changes.ready')}</span>}
           {r.title ? <span className="dc-pr-title">{r.title}</span> : null}
           {(r.closes || []).map((c) => (
@@ -565,9 +578,9 @@ function PrCard({ r, embedded = false, historical = false }: { r: Extract<Transc
               onClick={r.test.enabled ? () => preview(true, r.test!.url) : undefined}
             >{t('devchat:card.changes.test')}</button>
           ) : null}
-          {r.prUrl ? (
-            <a href={r.prUrl} target="_blank" rel="noreferrer"
-              className="dc-pr-btn dc-pr-btn-preview" style={{ textDecoration: 'none' }}>{t('devchat:card.changes.viewOnGithub')}</a>
+          {prLink && prButton ? (
+            <a href={prLink.href} target={prLink.target} rel={prLink.target ? 'noreferrer' : undefined}
+              className="dc-pr-btn dc-pr-btn-preview" style={{ textDecoration: 'none' }}>{prButton}</a>
           ) : null}
           {/* #558: the in-flight state is the MODEL's, not this element's.
               `promotePR` used to disable the button and swap its innerHTML

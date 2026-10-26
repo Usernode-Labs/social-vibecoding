@@ -3181,7 +3181,11 @@
   },
   "topic.details.openOnGitHub": {
     "text": "Open on GitHub",
-    "description": "Link in the Details sheet of a change, beside its pull-request number: opens that pull request on GitHub in a new tab. \"Open\" is a verb; GitHub is a product name."
+    "description": "Link in the Details sheet of a change whose pull request is on GitHub, beside its pull-request number: opens that pull request on GitHub in a new tab. \"Open\" is a verb; GitHub is a product name."
+  },
+  "topic.details.viewCode": {
+    "text": "View code",
+    "description": "Link in the Details sheet of a change whose code is on Homeroom's own git host rather than GitHub, beside its number: opens that code in a new tab. \"View\" is a verb."
   },
   "topic.details.description": {
     "text": "Description",
@@ -3633,7 +3637,7 @@
   },
   "kanban.footer.moreRequests": {
     "text": "More open requests →",
-    "description": "Link under the board's Requests column: opens the rest of the project's open requests (issues) on GitHub. Keep the arrow last."
+    "description": "Link under the board's Requests column of a project whose code is on GitHub: opens the rest of the project's open requests (issues) on GitHub. Keep the arrow last."
   },
   "kanban.footer.moreCompleted_one": {
     "text": "+{{count}} more completed",

@@ -67,13 +67,16 @@ function makeAppView({ search = '' } = {}) {
   };
   sandbox.window = sandbox; sandbox.globalThis = sandbox;
   sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
+  // The ⋯ rows and meta links to GitHub decide by the address
+  // (frontend/src/lib/repo-link.js, published as window.RepoLink).
+  require('./lib/repo-link').installRepoLink(sandbox);
   vm.createContext(sandbox);
   vm.runInContext(`${APP_VIEW_SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;
   AppView.appData = { slug: 'demo-app', can_collaborate: true };
   AppView._ghIssues = [
-    { number: 1575, title: 'Replace the oversized Game Corner header with bottom tabs', createdAt: at(4), updatedAt: at(2), lastMessageAt: at(2), user: 'sam', htmlUrl: 'x', assignee: { top: 'priya' } },
-    { number: 1574, title: 'Cut the Game Corner header’s self-explanation', createdAt: at(4), updatedAt: at(3), lastMessageAt: null, user: 'sam', htmlUrl: 'x' },
+    { number: 1575, title: 'Replace the oversized Game Corner header with bottom tabs', createdAt: at(4), updatedAt: at(2), lastMessageAt: at(2), user: 'sam', htmlUrl: 'https://github.com/acme/app/issues/1575', assignee: { top: 'priya' } },
+    { number: 1574, title: 'Cut the Game Corner header’s self-explanation', createdAt: at(4), updatedAt: at(3), lastMessageAt: null, user: 'sam', htmlUrl: 'https://github.com/acme/app/issues/1574' },
   ];
   AppView._proposals = [{
     id: 34, pr_number: 1540, pr_title: 'Rewrite the email-confirmation email around one clear CTA',

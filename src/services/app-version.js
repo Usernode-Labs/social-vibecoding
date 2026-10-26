@@ -10,6 +10,22 @@
 
 const repoRef = require('./repo-ref');
 
+/**
+ * Where the change that made `number` the live version is, when no proposal
+ * row says: its pull request on GitHub for a repository still there, else its
+ * change page in Homeroom (services/native-pulls.js changeUrl) for one on the
+ * git host. It used to be a github.com address for every repository, which,
+ * since the move, named a pull request GitHub never had.
+ */
+function mergedPrUrl(app, number) {
+  const n = Number(number);
+  if (!app || !Number.isInteger(n) || n <= 0) return null;
+  const ref = repoRef.parse(app.repo_url);
+  if (!ref) return null;
+  if (ref.host === 'github') return `https://github.com/${ref.owner}/${ref.repo}/pull/${n}`;
+  return app.slug ? require('./native-pulls').changeUrl(app.slug, n) : null;
+}
+
 async function getAppVersion(pool, slug) {
   const { rows } = await pool.query(
     `SELECT id, slug, repo_url, main_sha, main_pr_number
@@ -42,16 +58,13 @@ async function getAppVersion(pool, slug) {
     }
   }
 
-  const { owner, repo } = repoRef.ownerRepo(app.repo_url) || {};
   const commitUrl = repoRef.commitUrl(app.repo_url, app.main_sha);
 
   return {
     sha: app.main_sha || null,
     shortSha: app.main_sha ? app.main_sha.slice(0, 7) : null,
     prNumber: app.main_pr_number || null,
-    prUrl: prUrl || (app.main_pr_number && owner && repo
-      ? `https://github.com/${owner}/${repo}/pull/${app.main_pr_number}`
-      : null),
+    prUrl: prUrl || mergedPrUrl(app, app.main_pr_number),
     prTitle,
     mergedBy,
     mergedAt,
@@ -59,4 +72,4 @@ async function getAppVersion(pool, slug) {
   };
 }
 
-module.exports = { getAppVersion };
+module.exports = { getAppVersion, mergedPrUrl };

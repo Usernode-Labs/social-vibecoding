@@ -8,6 +8,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { AdminUI } from './admin-console.js';
 import { messageStamp } from '../../lib/timestamp';
 import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
+import { linkAttrs } from '../../lib/repo-link.js';
 
 // Health & status section of the admin console (#860) — the whole of the
 // retired standalone /status page, ported into the console's
@@ -503,6 +504,9 @@ function SessionRow({ s }: { s: any }) {
     ? (window as any).resolveDevHost
     : (u: string) => u;
   const stagingResolved = s.stagingUrl ? resolve(s.stagingUrl) : '';
+  // A change kept in Homeroom opens its page here; a pull request on GitHub
+  // in a new tab (lib/repo-link.js).
+  const prLink = s.prUrl ? linkAttrs(s.prUrl) : null;
   return (
     <div className="pl-3 border-l-2 border-zinc-200 dark:border-zinc-800 py-2">
       <div className="flex items-center gap-2 flex-wrap">
@@ -511,8 +515,8 @@ function SessionRow({ s }: { s: any }) {
         <span className="text-zinc-700 dark:text-zinc-300 text-xs">{`@${s.username}`}</span>
         <span className="mono text-zinc-500 dark:text-zinc-400 text-xs">{s.branchName || '—'}</span>
         <span className="text-xs">
-          {s.prUrl
-            ? <a href={s.prUrl} target="_blank" rel="noopener" className="text-violet-700 dark:text-violet-400 hover:underline">{`PR #${s.prNumber}`}</a>
+          {prLink
+            ? <a href={prLink.href} target={prLink.target} rel={prLink.rel} className="text-violet-700 dark:text-violet-400 hover:underline">{`PR #${s.prNumber}`}</a>
             : <span className="text-zinc-500 dark:text-zinc-400">no PR</span>}
         </span>
         {s.prTitle ? <span className="text-zinc-700 dark:text-zinc-300 ml-2 truncate">{s.prTitle}</span> : null}

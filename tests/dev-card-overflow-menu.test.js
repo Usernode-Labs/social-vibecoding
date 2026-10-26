@@ -16,6 +16,11 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('node:vm');
 const { renderComponent } = require('./lib/render-tsx');
+// The ⋯ rows that leave for GitHub decide by the address (lib/repo-link.js,
+// published as window.RepoLink): these fixtures are github.com pull
+// requests and issues, which keep their GitHub rows. The rows for a change
+// kept in Homeroom are tests/github-link-decisions.test.js.
+const { installRepoLink } = require('./lib/repo-link');
 const {
   cardHtml, closeIssueCardHtml, govCardHtml, hasAction, issueCardHtml, mergedCardHtml, mySessionCardHtml, proposalCardHtml, sharedSessionCardHtml,
 } = require('./lib/dev-card-html');
@@ -67,6 +72,7 @@ function makeAppView(opts) {
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
   sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
+  installRepoLink(sandbox);
   vm.createContext(sandbox);
   vm.runInContext(`${MERGE_STATUS_SRC}\n${SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;
@@ -145,7 +151,7 @@ test('the trigger sits at the right end of the action band on every card type th
   AppView._sharedById = {};
   const cards = {
     proposal: proposalCardHtml(AppView, PR()),
-    issue: issueCardHtml(AppView, ISSUE({ htmlUrl: 'https://gh/i/5' })),
+    issue: issueCardHtml(AppView, ISSUE({ htmlUrl: 'https://github.com/o/r/issues/5' })),
     gov: govCardHtml(AppView, GOV()),
     merged: mergedCardHtml(AppView, PR({ status: 'merged', chat_count: 0 }), 3),
     session: mySessionCardHtml(AppView, { id: 51, session_title: 'Mine', status: 'active' }),
@@ -289,7 +295,7 @@ test('proposal, author, imported PR: no Open session (there is no in-app session
 
 test('proposal, read-only viewer: only read-safe rows survive', () => {
   const AppView = makeAppView({ readOnly: true, admin: true });
-  const labels = menuLabels(AppView, proposalCardHtml(AppView, PR({ pr_url: 'https://gh/pr/7' })));
+  const labels = menuLabels(AppView, proposalCardHtml(AppView, PR({ pr_url: 'https://github.com/o/r/pull/7' })));
   assert.equal(labels.join('|'), 'Share to…|View PR on GitHub');
 });
 
@@ -306,10 +312,10 @@ test('issue and proposal menus open Share to… with their exact card references
   };
 
   const issueMenu = menuItems(AppView, issueCardHtml(
-    AppView, ISSUE({ number: 1956, htmlUrl: 'https://gh/i/1956' }), { noNav: true },
+    AppView, ISSUE({ number: 1956, htmlUrl: 'https://github.com/o/r/issues/1956' }), { noNav: true },
   ));
   const proposalMenu = menuItems(AppView, proposalCardHtml(
-    AppView, PR({ id: 4209, pr_url: 'https://gh/pr/4209' }), { noNav: true },
+    AppView, PR({ id: 4209, pr_url: 'https://github.com/o/r/pull/4209' }), { noNav: true },
   ));
   const issueShare = issueMenu.find((item) => item.label === 'Share to…');
   const proposalShare = proposalMenu.find((item) => item.label === 'Share to…');
@@ -430,7 +436,7 @@ test('merged proposal: completed-task attributes remain read-only without collab
 test('issue: the full demoted set, and Open on GitHub last', () => {
   const AppView = makeAppView();
   const labels = menuLabels(AppView, issueCardHtml(AppView, 
-    ISSUE({ htmlUrl: 'https://gh/i/5' })));
+    ISSUE({ htmlUrl: 'https://github.com/o/r/issues/5' })));
   assert.equal(labels[0], 'Pledge kudos');
   assert.ok(labels.some((l) => /Pledge kudos/.test(l)));
   // The claim toggle is PROMOTED to the action band, so it left the menu.
@@ -700,14 +706,14 @@ function everyDescriptor(AppView) {
   const out = [];
   const collect = (html) => out.push(...menuItems(AppView, html));
   collect(proposalCardHtml(AppView, PR({
-    pr_url: 'https://gh/pr/7', staging_error: 'boom',
+    pr_url: 'https://github.com/o/r/pull/7', staging_error: 'boom',
     visuals: { before: { png: 'a'.repeat(32) }, after: { png: 'b'.repeat(32) } },
   })));
-  collect(proposalCardHtml(AppView, PR({ user_id: ME, pr_url: 'https://gh/pr/7' })));
-  collect(mergedCardHtml(AppView, PR({ status: 'merged', chat_count: 0, pr_url: 'https://gh/pr/7' }), 3));
-  collect(issueCardHtml(AppView, ISSUE({ htmlUrl: 'https://gh/i/5' })));
+  collect(proposalCardHtml(AppView, PR({ user_id: ME, pr_url: 'https://github.com/o/r/pull/7' })));
+  collect(mergedCardHtml(AppView, PR({ status: 'merged', chat_count: 0, pr_url: 'https://github.com/o/r/pull/7' }), 3));
+  collect(issueCardHtml(AppView, ISSUE({ htmlUrl: 'https://github.com/o/r/issues/5' })));
   collect(issueCardHtml(AppView, ISSUE({
-    number: 6, htmlUrl: 'https://gh/i/6', my_bounty: 1,
+    number: 6, htmlUrl: 'https://github.com/o/r/issues/6', my_bounty: 1,
     in_progress: { claims: [{ mine: true }] },
   })));
   collect(govCardHtml(AppView, GOV({ created_by: ME })));

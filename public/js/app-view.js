@@ -4370,7 +4370,13 @@ const AppView = {
         </span>`;
     }
 
-    const href = version.prUrl || version.commitUrl || '#';
+    // The change that made this the live version: its page in Homeroom opens
+    // in place; its pull request on GitHub, or the commit on the git host,
+    // in a new tab (lib/repo-link.js). Nothing usable leaves a dead '#'.
+    const link = AppView._repoLink()?.linkAttrs(version.prUrl || version.commitUrl) || null;
+    const hrefAttrs = link
+      ? `href="${escapeAttr(link.href)}"${link.target ? ` target="${link.target}" rel="${link.rel}"` : ''}`
+      : 'href="#"';
     const parts = [];
     if (includePrContext && version.prTitle) parts.push(version.prTitle);
     if (includePrContext && version.mergedBy) parts.push(PlatformI18n.t('changes:versionPill.mergedBy', { username: version.mergedBy }));
@@ -4388,10 +4394,10 @@ const AppView = {
     // commit chip.
     if (plain) {
       return `
-        <a href="${href}" target="_blank" rel="noopener" class="${cls.base}" title="${escapeAttr(tip)}">${escapeHtml(sha)}</a>`;
+        <a ${hrefAttrs} class="${cls.base}" title="${escapeAttr(tip)}">${escapeHtml(sha)}</a>`;
     }
     return `
-      <a href="${href}" target="_blank" rel="noopener" class="app-version-pill" title="${escapeAttr(tip)}">
+      <a ${hrefAttrs} class="app-version-pill" title="${escapeAttr(tip)}">
         ${quiet ? '' : '<span class="app-version-pill-dot"></span>'}
         <span class="app-version-pill-label">
           ${slugPart}
@@ -6160,7 +6166,9 @@ const AppView = {
     // marked `pageShortcut` where it is built (the session and proposal
     // menus), so this reads the mark and never the row's words. The same
     // goes for the rows it looks for below: `sessionDoor` (Open session),
-    // `githubPr` (View PR on GitHub) and `githubIssue` (Open on GitHub).
+    // `githubPr` (View PR on GitHub), `codePr` (View code) and `githubIssue`
+    // (Open on GitHub). The address decides which, if any (_prMenuItem): a
+    // change's or a request's own Homeroom page is this page, so it gets none.
     const menu = [...(AppView._cardMenus[card.rail.menuKey] || [])]
       .filter((a) => !body.changeId || !a.pageShortcut);
     for (const action of card.actions || []) {
@@ -6174,7 +6182,8 @@ const AppView = {
       // header's ⋯ (here). So the rows the band used to carry come back to
       // the menu: asking Homeroom bot for changes, the Build door, editing
       // the requests it addresses, the shots' details and a retake, the
-      // change's tags, and the pull request on GitHub.
+      // change's tags, and its code where it is kept: the pull request on
+      // GitHub, or the code on the git host.
       const proposal = kind === 'proposal';
       const ro = AppView.readOnly;
       const rows = [];
@@ -6226,8 +6235,9 @@ const AppView = {
       // Thank is on the page (the Addresses row); Explore and Share stay rows.
       for (let i = menu.length - 1; i >= 0; i -= 1) if (menu[i].icon === 'kudos') menu.splice(i, 1);
       menu.push(...rows);
-      if (gh && !menu.some((a) => a.githubPr)) {
-        menu.push({ label: PlatformI18n.t('changes:page.menu.viewPr'), githubPr: true, icon: 'github', title: gh, act: () => window.open(gh, '_blank', 'noopener') });
+      if (gh && !menu.some((a) => a.githubPr || a.codePr)) {
+        const code = AppView._prMenuItem(gh, PlatformI18n.t('changes:page.menu.viewPr'), PlatformI18n.t('changes:page.menu.viewCode'));
+        if (code) menu.push(code);
       }
       card.actions = (card.actions || []).filter((a) => a.explore == null && a.kudos == null);
     }
@@ -6249,7 +6259,9 @@ const AppView = {
         act: () => window.dispatchEvent(new CustomEvent('change-description-edit', { detail: Number(item.id) })),
       });
     }
-    if (gh && !body.changeId && !menu.some((a) => a.githubIssue)) {
+    // A request that is an issue on GitHub links there; a request's own page
+    // in Homeroom is this page.
+    if (gh && !body.changeId && !menu.some((a) => a.githubIssue) && AppView._linkKind(gh) === 'github') {
       menu.push({ label: PlatformI18n.t('changes:page.menu.openOnGitHub'), githubIssue: true, icon: 'github', act: () => window.open(gh, '_blank', 'noopener') });
     }
     card.rail.menuKey = AppView._registerCardMenu(`detail:${kind}:${item.id || item.number}`, menu);
@@ -8080,7 +8092,8 @@ const AppView = {
     retry: '↻',            // ↻
     checks: '✓',          // check results
     visuals: '🖼',    // 🖼 before/after captures
-    github: '↗',           // ↗ leaves the platform
+    github: '↗',           // ↗ leaves the platform, for GitHub
+    code: '‹›',            // ‹› the code, on Homeroom's own git host
     priority: '⚑',         // ⚑ the same flag the priority chip uses
     category: '🏷',   // 🏷
     assignee: '@',              // the assignee chip renders "@name"
@@ -8114,6 +8127,55 @@ const AppView = {
   // Two spaces, not one: the sheet has no leading column to align against.
   _menuSheetLabel(it) {
     return `${AppView._menuIconGlyph(it)}  ${it.label}`;
+  },
+
+  // ── What a link is: GitHub's, a Homeroom page, or the git host's code ──
+  //
+  // Repository, pull request, request and commit links all used to be
+  // GitHub's and said so. Since the move to Homeroom's own git host
+  // (docs/plans/github-independence-build.md) a request's `htmlUrl` is its
+  // own page here, a proposal's `pr_url` its change page (GitHub only for the
+  // platform's own repository and old rows), and an app's repository and
+  // commits are on the git host. frontend/src/lib/repo-link.js reads which
+  // from the address and is published as window.RepoLink before anything
+  // renders; every site below asks it instead of matching `github.com`
+  // itself. Without it (a sandbox that did not load it) the answer is null,
+  // and a site draws no link rather than guessing GitHub.
+  _repoLink() {
+    return (typeof window !== 'undefined' && window.RepoLink) || null;
+  },
+
+  _linkKind(url) {
+    const links = AppView._repoLink();
+    return links ? links.linkKind(url) : null;
+  },
+
+  // A ⋯ row to a change's code outside Homeroom: the caller's "View PR on
+  // GitHub" for a github.com pull request, its "View code" for the git
+  // host's. None for a Homeroom page, the change's own, which the card or
+  // page carrying the menu already opens.
+  _prMenuItem(url, githubLabel, codeLabel) {
+    const kind = AppView._linkKind(url);
+    if (kind !== 'github' && kind !== 'code') return null;
+    const github = kind === 'github';
+    return {
+      label: github ? githubLabel : codeLabel,
+      ...(github ? { githubPr: true } : { codePr: true }),
+      icon: github ? 'github' : 'code',
+      title: url,
+      act: () => window.open(url, '_blank', 'noopener'),
+    };
+  },
+
+  // The "PR#12" or "#5" on a card's meta line. A link while it leaves for
+  // GitHub or the git host; plain text when it is the Homeroom page the card
+  // itself opens (the change's page, the request's page), which a link would
+  // only open again.
+  _ownRefPart(url, s, cls) {
+    const kind = AppView._linkKind(url);
+    return (kind === 'github' || kind === 'code')
+      ? { t: 'link', href: String(url).trim(), s, cls }
+      : { t: 'span', s, cls: 'font-mono' };
   },
 
   // Hand one card to Share to… (#3660) by identity, plus its title to show.
@@ -8466,7 +8528,16 @@ const AppView = {
       const values = { title: title || PlatformI18n.t('changes:explore.seed.proposalUntitled'), author };
       lines.push(author ? PlatformI18n.t('changes:explore.seed.proposalBy', values) : PlatformI18n.t('changes:explore.seed.proposal', values));
     }
-    if (row.pr_url) lines.push(PlatformI18n.t('changes:explore.seed.prLink', { url: row.pr_url }));
+    // A pull request on GitHub is a PR link; a change kept in Homeroom is
+    // named by its own page, written out whole for the agent.
+    const prKind = row.pr_url ? AppView._linkKind(row.pr_url) : null;
+    if (prKind === 'homeroom') {
+      const route = AppView._repoLink().homeroomRoute(row.pr_url);
+      const origin = typeof location !== 'undefined' && location.origin ? location.origin : '';
+      lines.push(PlatformI18n.t('changes:explore.seed.changeLink', { url: /^https?:/i.test(row.pr_url) ? row.pr_url : `${origin}/${route}` }));
+    } else if (prKind) {
+      lines.push(PlatformI18n.t('changes:explore.seed.prLink', { url: row.pr_url }));
+    }
     const issues = Array.isArray(row.linked_issues)
       ? row.linked_issues.filter((n) => Number.isInteger(n))
       : [];
@@ -14827,8 +14898,10 @@ const AppView = {
 
     // "More open issues on GitHub" — the Issues column inherits the list
     // footer's link when the repo has more open issues than the fetch
-    // ceiling, so the cap is never silent.
-    const issuesFooter = (meta.truncatedList && meta.repoUrl)
+    // ceiling, so the cap is never silent. Only for a repository on GitHub:
+    // a project on the git host keeps its requests in Homeroom, where a
+    // board is a query and no `/issues` page exists.
+    const issuesFooter = (meta.truncatedList && meta.repoUrl && AppView._linkKind(meta.repoUrl) === 'github')
       ? { kind: 'github', href: `${meta.repoUrl.replace(/\.git$/, '').replace(/\/$/, '')}/issues` }
       : null;
 
@@ -15211,10 +15284,8 @@ const AppView = {
 
   _sessionCardMeta(s, subtitle) {
     const meta = [{ t: 'text', s: subtitle }];
-    if (s?.pr_url && s?.pr_number) meta.push({
-      t: 'link', href: s.pr_url, s: `PR#${s.pr_number}`,
-      cls: 'font-mono text-violet-700 hover:underline dark:text-violet-400',
-    });
+    if (s?.pr_url && s?.pr_number) meta.push(AppView._ownRefPart(s.pr_url, `PR#${s.pr_number}`,
+      'font-mono text-violet-700 hover:underline dark:text-violet-400'));
     const f = s && s.failing_checks;
     if (!f || !f.total || !Array.isArray(f.rows) || !f.rows.length) return meta;
     const shown = f.rows.slice(0, 2).map((r) => r.name).filter(Boolean);
@@ -15282,7 +15353,8 @@ const AppView = {
 
   // Imported Underway rows are proposal-shaped, but deliberately have no
   // voting controls until promotion. Their menu therefore exposes only the
-  // metadata editors and permanent GitHub destination that survive the
+  // metadata editors and the permanent destination of their code (the pull
+  // request on GitHub, or the code on the git host) that survive the
   // lifecycle transition.
   _importedUnderwayMenuItems(s) {
     const items = AppView._attrMenuItems('proposal', s.id, s);
@@ -15296,15 +15368,10 @@ const AppView = {
           AppView._renderTopicHead();
         } });
     }
-    if (s.pr_url) {
-      items.push({
-        label: PlatformI18n.t('changes:session.menu.viewPr'),
-        githubPr: true,
-        icon: 'github',
-        title: s.pr_url,
-        act: () => window.open(s.pr_url, '_blank', 'noopener'),
-      });
-    }
+    const code = s.pr_url
+      ? AppView._prMenuItem(s.pr_url, PlatformI18n.t('changes:session.menu.viewPr'), PlatformI18n.t('changes:session.menu.viewCode'))
+      : null;
+    if (code) items.push(code);
     return items;
   },
 
@@ -15367,10 +15434,10 @@ const AppView = {
     }
 
     const menu = imported ? AppView._importedUnderwayMenuItems(s) : [];
-    if (!imported && s.pr_url) menu.push({
-      label: PlatformI18n.t('changes:session.menu.viewPr'), githubPr: true, icon: 'github', title: s.pr_url,
-      act: () => window.open(s.pr_url, '_blank', 'noopener'),
-    });
+    const code = !imported && s.pr_url
+      ? AppView._prMenuItem(s.pr_url, PlatformI18n.t('changes:session.menu.viewPr'), PlatformI18n.t('changes:session.menu.viewCode'))
+      : null;
+    if (code) menu.push(code);
     // The SECOND opt-in, offered only once the session is visible (there is
     // nowhere for a reader to reach an invisible session's chat from).
     if (shared && !imported) {
@@ -15498,10 +15565,10 @@ const AppView = {
     const editingTitle = canEditTitle && AppView._editingSessionTitle === Number(s.id);
     const preview = AppView._cardPreviewSpec(s, { kind: 'shared-session', sessionId: s.id });
     const menu = imported ? AppView._importedUnderwayMenuItems(s).filter((a) => !noNav || a.icon === 'archive') : [];
-    if (!imported && s.pr_url) menu.push({
-      label: PlatformI18n.t('changes:session.menu.viewPr'), githubPr: true, icon: 'github', title: s.pr_url,
-      act: () => window.open(s.pr_url, '_blank', 'noopener'),
-    });
+    const code = !imported && s.pr_url
+      ? AppView._prMenuItem(s.pr_url, PlatformI18n.t('changes:session.menu.viewPr'), PlatformI18n.t('changes:session.menu.viewCode'))
+      : null;
+    if (code) menu.push(code);
     menu.push({ label: PlatformI18n.t('changes:session.menu.viewChecks'), pageShortcut: true, icon: 'checks', act: () => AppView.openSessionChecks(s.id) });
     const recheck = AppView._recheckAction(s);
     if (recheck && !recheck.disabled) {
@@ -15531,10 +15598,8 @@ const AppView = {
         s: imported
           ? PlatformI18n.t(AppView.SHARED_IMPORT_LINE_IDS[(s.imported_pr_author ? 'author' : 'unknown') + (s.username ? 'Owner' : 'Someone')], { author: s.imported_pr_author, owner: s.username })
           : (s.username ? PlatformI18n.t('changes:session.shared.working', { owner: s.username }) : PlatformI18n.t('changes:session.shared.workingSomeone')),
-      }, ...(s.pr_url && s.pr_number ? [{
-        t: 'link', href: s.pr_url, s: `PR#${s.pr_number}`,
-        cls: 'font-mono text-violet-700 hover:underline dark:text-violet-400',
-      }] : [])],
+      }, ...(s.pr_url && s.pr_number ? [AppView._ownRefPart(s.pr_url, `PR#${s.pr_number}`,
+        'font-mono text-violet-700 hover:underline dark:text-violet-400')] : [])],
       pill: null,
       linked: [],
       badges: [
@@ -15550,7 +15615,7 @@ const AppView = {
       // dense band renders reserved-and-empty.
       actions: [],
       actionPreview: null,
-      // A shared session with a PR exposes its GitHub destination here.
+      // A shared session with a PR exposes its code's destination here.
       rail: {
         menuKey: AppView._registerCardMenu(`session:${s.id}`, menu),
         chevron: !noNav,
@@ -16460,10 +16525,8 @@ const AppView = {
     // "Auto-title pending" were four badges competing for the four badge
     // slots with the signals that actually change what you'd do next; as
     // meta words they cost no slot and still read at a glance.
-    const meta = [{
-      t: 'link', href: pr.pr_url || '#', s: `PR#${pr.pr_number || pr.id}`,
-      cls: 'font-mono text-violet-700 hover:underline dark:text-violet-400',
-    }];
+    const meta = [AppView._ownRefPart(pr.pr_url, `PR#${pr.pr_number || pr.id}`,
+      'font-mono text-violet-700 hover:underline dark:text-violet-400')];
     const provenance = AppView._proposalProvenanceWords(pr);
     if (provenance) meta.push({ t: 'text', s: provenance });
     if (pr.username) meta.push({ t: 'text', s: pr.username });
@@ -17303,15 +17366,10 @@ const AppView = {
         type: 'proposal', sessionId: pr.id, title: pr.session_title || pr.pr_title || null,
       }),
     });
-    if (pr.pr_url) {
-      items.push({
-        label: PlatformI18n.t('changes:proposal.menu.viewPr'),
-        githubPr: true,
-        icon: 'github',
-        title: pr.pr_url,
-        act: () => window.open(pr.pr_url, '_blank', 'noopener'),
-      });
-    }
+    const code = pr.pr_url
+      ? AppView._prMenuItem(pr.pr_url, PlatformI18n.t('changes:proposal.menu.viewPr'), PlatformI18n.t('changes:proposal.menu.viewCode'))
+      : null;
+    if (code) items.push(code);
     // #4270: B7's "Don't approve" item is gone from here. Since #3977 a
     // Just-you change's Approve opens the vote picker, whose other side is
     // Don't approve with its line in the box; this was a second way to the
@@ -17328,7 +17386,11 @@ const AppView = {
     const imported = pr.source === 'imported';
 
     const meta = [];
-    if (pr.pr_url) meta.push({ href: pr.pr_url, parts: [PlatformI18n.t('changes:proposal.details.viewPr')] });
+    // The code, where it is kept outside Homeroom; none for the change's own
+    // page, which this is.
+    const prKind = pr.pr_url ? AppView._linkKind(pr.pr_url) : null;
+    if (prKind === 'github') meta.push({ href: pr.pr_url, parts: [PlatformI18n.t('changes:proposal.details.viewPr')] });
+    else if (prKind === 'code') meta.push({ href: pr.pr_url, parts: [PlatformI18n.t('changes:proposal.details.viewCode')] });
     meta.push({
       parts: AppView._boldLeadText(
         imported ? 'changes:proposal.details.importedBy' : 'changes:proposal.details.proposedBy',
@@ -21313,8 +21375,9 @@ const AppView = {
   },
 
   // #130/#194: reveal a PR / issue reference (from a chat chip or a
-  // notification) — opens the matching full-screen topic view. Falls
-  // back to GitHub for PR numbers that aren't resolvable locally.
+  // notification) — opens the matching full-screen topic view. A PR
+  // number that isn't resolvable locally opens on GitHub for a repository
+  // there, and as the change's own page (`dev/changes/<N>`) otherwise.
   revealInDrawer(type, number) {
     const n = parseInt(number, 10);
     if (!n || typeof App === 'undefined') return;
@@ -21336,11 +21399,14 @@ const AppView = {
       return;
     }
 
-    // GitHub fallback — same repo_url normalization as before.
     const repo = AppView.appData && AppView.appData.repo_url;
-    if (!repo) return;
-    const base = repo.replace(/\.git$/, '').replace(/\/$/, '');
-    window.open(`${base}/pull/${n}`, '_blank', 'noopener');
+    if (repo && AppView._linkKind(repo) === 'github') {
+      const base = repo.replace(/\.git$/, '').replace(/\/$/, '');
+      window.open(`${base}/pull/${n}`, '_blank', 'noopener');
+      return;
+    }
+    const slug = AppView.appData && AppView.appData.slug;
+    if (slug) window.location.hash = `#app/${encodeURIComponent(slug)}/dev/changes/${n}`;
   },
 
   // #16: undo a merged PR. A single click opens a revert PR (like
@@ -21475,13 +21541,14 @@ const AppView = {
   _issueCardModel(issue, opts) {
     const noNav = !!(opts && opts.noNav);
     const n = issue.number;
-    const href = issue.htmlUrl || '#';
     // ── Meta line ──
     // #N, the creator, and the facts that used to be badges: the ★ bounty
     // count and the auto-title marker. Both cost a badge slot each and
-    // neither changes what you'd do next, so they read as meta words.
+    // neither changes what you'd do next, so they read as meta words. The
+    // #N links out only to an issue on GitHub: a request's own page is
+    // where this card goes (_ownRefPart).
     const meta = [
-      { t: 'link', href, s: `#${n}`, cls: 'font-mono text-violet-700 hover:underline dark:text-violet-400' },
+      AppView._ownRefPart(issue.htmlUrl, `#${n}`, 'font-mono text-violet-700 hover:underline dark:text-violet-400'),
     ];
     if (issue.created_by_username) meta.push({ t: 'text', s: issue.created_by_username });
     // How long ago it was asked, in the same "3h ago" form the Done
@@ -22153,7 +22220,9 @@ const AppView = {
       title: PlatformI18n.t('changes:issue.menu.shareTitle'),
       act: () => AppView._shareCardToMessages({ type: 'issue', issueNumber: n, title: issue.title || null }),
     });
-    if (issue.htmlUrl) {
+    // Only an issue on GitHub leaves: a request's own page in Homeroom is
+    // what this card (or page) already opens.
+    if (issue.htmlUrl && AppView._linkKind(issue.htmlUrl) === 'github') {
       items.push({
         label: PlatformI18n.t('changes:issue.menu.openOnGithub'),
         githubIssue: true,
@@ -22423,10 +22492,8 @@ const AppView = {
     // ── Meta line ──
     // The revert relationship reads here rather than as an action pill: on a
     // merged card it is a FACT about the change, not something to do.
-    const meta = [{
-      t: 'link', href: pr.pr_url || '#', s: `PR#${pr.pr_number || pr.id}`,
-      cls: 'font-mono text-emerald-700 hover:underline dark:text-emerald-400',
-    }];
+    const meta = [AppView._ownRefPart(pr.pr_url, `PR#${pr.pr_number || pr.id}`,
+      'font-mono text-emerald-700 hover:underline dark:text-emerald-400')];
     if (pr.username) meta.push({ t: 'text', s: pr.username });
     if (date) meta.push(date);
     if (pr.revert_of_session_id) {
@@ -22535,14 +22602,13 @@ const AppView = {
         title: stamp.title,
       }
       : null;
-    // GitHub link for the closed target, normalized like the kanban Issues
-    // footer's repo link.
-    const repo = (AppView.appData && AppView.appData.repo_url) || '';
-    const base = repo ? repo.replace(/\.git$/, '').replace(/\/$/, '') : '';
+    // The closed request's own page, in Homeroom: requests are Homeroom's
+    // rows for every project, whichever host its code is on.
+    const requestHref = AppView._repoLink()?.requestRoute(AppView.appData && AppView.appData.slug, issueN) || '';
     const meta = [{ t: 'text', s: PlatformI18n.t('changes:governance.done.kind') }];
     if (issueN) {
-      meta.push(base
-        ? { t: 'link', href: `${base}/issues/${issueN}`, s: `#${issueN}`, cls: 'font-mono text-emerald-700 hover:underline dark:text-emerald-400' }
+      meta.push(requestHref
+        ? { t: 'link', href: requestHref, s: `#${issueN}`, cls: 'font-mono text-emerald-700 hover:underline dark:text-emerald-400' }
         : { t: 'span', cls: 'font-mono', s: `#${issueN}` });
     }
     meta.push(date || { t: 'text', s: how });
@@ -25453,27 +25519,15 @@ const AppView = {
     AppView._renderTopicHead();
   },
 
-  // #80: derive the GitHub issue URL for issue #N from a PR's html_url
-  // (https://github.com/<owner>/<repo>/pull/<prNumber>) by swapping the
-  // `/pull/<n>` segment for `/issues/<issueNumber>`. Returns '' when the
-  // PR url is missing or doesn't look like a GitHub PR url so callers can
-  // skip rendering a dead link.
-  issueUrlFromPrUrl(prUrl, issueNumber) {
-    if (!prUrl || !Number.isInteger(issueNumber) || issueNumber <= 0) return '';
-    const out = prUrl.replace(/\/pull\/\d+(?=$|[/?#])/, `/issues/${issueNumber}`);
-    // No substitution happened → not a recognizable PR url; bail rather
-    // than linking to a /pull/ page for an issue.
-    return out === prUrl ? '' : out;
-  },
-
-  // #80: "Closes #N" / "Closed #N" pills for the GitHub issues a PR closes.
-  // Reads `linked_issues` (Postgres INTEGER[], populated in #75 and written
-  // into the PR body as `Closes #N` by src/services/pr-metadata.js). Wording
-  // follows the canonical merge check used elsewhere: status === 'merged'
-  // is the only merged state, everything else ('promoted'/'merging'/'active'/
-  // 'paused') reads as still-open. One independently-clickable pill per
-  // issue, each opening the issue on GitHub in a new tab (#61). Renders
-  // nothing when there are no linked issues or no usable PR url.
+  // #80: "Closes #N" / "Closed #N" pills for the requests a change closes
+  // (closesPillSpecs, below). Reads `linked_issues` (Postgres INTEGER[],
+  // populated in #75 and written into the PR body as `Closes #N` by
+  // src/services/pr-metadata.js). Wording follows the canonical merge check
+  // used elsewhere: status === 'merged' is the only merged state, everything
+  // else ('promoted'/'merging'/'active'/'paused') reads as still-open. One
+  // independently-clickable pill per request. They used to open the issue on
+  // GitHub in a new tab (#61), derived from the PR's URL; a request is
+  // Homeroom's own row now, for every project, so each opens its page here.
   // ── "In progress" status on issue cards ──────────────────────────────
   //
   // An issue is in progress while ANY live signal exists: a live linked
@@ -25985,7 +26039,7 @@ const AppView = {
 
   // Mirror prMetadata.sanitizeIssueNumbers: drop anything that isn't a
   // positive integer, dedupe, sort ascending. Shared by the in-app chips
-  // above and the GitHub links below, which used to each carry a copy.
+  // above and the request links below, which used to each carry a copy.
   _sanitizeIssueNumbers(linkedIssues) {
     const raw = Array.isArray(linkedIssues) ? linkedIssues : [];
     const seen = new Set();
@@ -25998,13 +26052,15 @@ const AppView = {
     return nums;
   },
 
-  // The GitHub "Closes #N" links, as SPECS. The merged proposal DETAIL head
-  // uses these as explicit external links (the dev-chat session card opens
-  // its requests in-app since #3605);
-  // Board cards use issueChipSpecs so their linked issues stay in-platform.
+  // The "Closes #N" links, as SPECS. The merged proposal DETAIL head uses
+  // these as links to each request's page (they were GitHub issue links
+  // until requests moved into Homeroom; the dev-chat session card opens its
+  // requests in-app since #3605); Board cards use issueChipSpecs.
   closesPillSpecs(pr) {
     if (!pr || !pr.pr_url) return [];
     const merged = pr.status === 'merged';
+    const links = AppView._repoLink();
+    const slug = (AppView.appData && AppView.appData.slug) || pr.app_slug || '';
 
     // Match the PR-number link tint at each site: emerald for merged,
     // violet for open.
@@ -26013,12 +26069,12 @@ const AppView = {
       : 'dev-badge font-mono bg-violet-500/10 text-violet-700 hover:bg-violet-500/20 dark:text-violet-400';
     const out = [];
     for (const n of AppView._sanitizeIssueNumbers(pr.linked_issues)) {
-      const href = AppView.issueUrlFromPrUrl(pr.pr_url, n);
+      const href = links ? links.requestRoute(slug, n) : '';
       if (!href) continue;
       out.push({
         t: 'issueLink', key: `closes:${n}`, n, href, cls,
         label: merged ? PlatformI18n.t('changes:chips.issue.closedLink', { number: n }) : PlatformI18n.t('changes:chips.issue.closesLink', { number: n }),
-        title: merged ? PlatformI18n.t('changes:chips.issue.closedTitle', { number: n }) : PlatformI18n.t('changes:chips.issue.closesTitle', { number: n }),
+        title: merged ? PlatformI18n.t('changes:chips.issue.closedRequestTitle', { number: n }) : PlatformI18n.t('changes:chips.issue.closesRequestTitle', { number: n }),
       });
     }
     return out;

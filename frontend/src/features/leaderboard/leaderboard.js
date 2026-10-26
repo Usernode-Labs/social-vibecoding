@@ -654,7 +654,9 @@ const Leaderboard = {
       appName: row.app_name || row.app_slug || PlatformI18n.t('leaderboard:kudos.unnamedApp'),
       badge: Leaderboard._statusBadge(row.status, row.release),
       when: Leaderboard._fmtDate(row.created_at),
-      // External GitHub link, when the PR has one. The row itself is a
+      // The change's address: its pull request on GitHub, or its page in
+      // Homeroom (./kudos-pane.tsx draws the ↗ only where it leaves
+      // Homeroom). The row itself is a
       // div[role=button] (not <button>) because an <a> may not nest
       // inside a <button>.
       extUrl: row.pr_url || null,

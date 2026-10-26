@@ -4632,7 +4632,8 @@ const DevChat = {
           // runClaudeCodeTool) rather than incidentally by stagingUrl, so it
           // rehydrates the same whether or not a preview built. When staging
           // failed the disabled-Preview note reads stagingErrorName /
-          // stagingMissingKeys; prNumber/prUrl back the header + GitHub link.
+          // stagingMissingKeys; prNumber/prUrl back the header + the link to
+          // the change (on GitHub, or its page in Homeroom).
           if (m.metadata.changesReady) m.changesReady = true;
           if (m.metadata.stagingFailed) m.stagingFailed = true;
           if (m.metadata.stagingErrorName) m.stagingErrorName = m.metadata.stagingErrorName;
