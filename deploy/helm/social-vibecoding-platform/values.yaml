@@ -208,6 +208,17 @@ config:
   # Firebase phone authentication flag; enable in the cluster's plaintext values.
   firebasePhoneAuthEnabled: false
   platformRepository: https://github.com/replace-me/social-vibecoding
+  # Homeroom's own git host, where app repositories live
+  # (services/git-host.js; docs/plans/github-independence-build.md). Empty
+  # url: none, and app repositories stay where their repo_url says. The
+  # platform reads and writes through internalUrl (empty: url itself, over
+  # HTTPS, which needs no network policy); user is the service account whose
+  # token is secrets.gitHostToken.
+  gitHost:
+    url: ""
+    internalUrl: ""
+    org: apps
+    user: ""
   nodeRpcUrl: http://replace-me.invalid:3000
   # Explorer host[:port] without a scheme. Public hosts use HTTPS; private
   # numeric addresses use HTTP, matching the platform's existing proxy logic.
@@ -292,6 +303,8 @@ secrets:
   githubAppId: ""
   githubPrivateKey: ""
   githubBotToken: ""
+  # The git host's service account token (config.gitHost). Supply through SOPS.
+  gitHostToken: ""
   # Optional signed pull_request webhook; supply through encrypted external values.
   githubWebhookSecret: ""
   # Optional GitHub account-linking OAuth credentials. Set both in encrypted external values.

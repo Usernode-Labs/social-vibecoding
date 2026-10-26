@@ -216,6 +216,13 @@ the chart's context plus processRole: "" (all: serves and stands for leader),
             - {name: MEDIA_STORAGE_ENDPOINT, value: {{ .Values.config.mediaStorage.endpoint | default "" | quote }}}
             - {name: MEDIA_STORAGE_BUCKET, value: {{ .Values.config.mediaStorage.bucket | default "" | quote }}}
             - {name: USERNODE_PLATFORM_REPO, value: {{ .Values.config.platformRepository | quote }}}
+            # Homeroom's own git host (services/git-host.js): app repositories
+            # since GitHub suspended the account that held them. Its token is
+            # in the Secret (GIT_HOST_TOKEN).
+            - {name: GIT_HOST_URL, value: {{ .Values.config.gitHost.url | quote }}}
+            - {name: GIT_HOST_INTERNAL_URL, value: {{ .Values.config.gitHost.internalUrl | quote }}}
+            - {name: GIT_HOST_ORG, value: {{ .Values.config.gitHost.org | quote }}}
+            - {name: GIT_HOST_USER, value: {{ .Values.config.gitHost.user | quote }}}
             - {name: NODE_RPC_URL, value: {{ .Values.config.nodeRpcUrl | quote }}}
             - {name: EXPLORER_UPSTREAM, value: {{ .Values.config.explorerUpstream | quote }}}
             - {name: EXPLORER_UPSTREAM_BASE, value: {{ .Values.config.explorerUpstreamBase | quote }}}
