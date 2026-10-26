@@ -34,6 +34,7 @@ import { Diagram, readDiagram } from '../../../lib/diagram/diagram';
 import { RichMessage, useMessages } from '../../../lib/i18n/react';
 import { releaseSentence } from '../../../lib/release-eta';
 import { useReleaseNow } from '../../../lib/use-release-now';
+import { Alert } from '@/components/ui/alert';
 import { Avatar } from '@/components/ui/feed';
 import { CheckIcon, EllipsisHorizontalIcon } from '@/components/ui/icons';
 import { swatchFor } from '../../group-chat/swatch';
@@ -237,6 +238,23 @@ function GateCard({ which, g, action, rerun = null, id, repeat = false }: {
   );
 }
 
+/**
+ * A change whose code did not come across when Homeroom moved off GitHub
+ * (`v.codeMissing`, src/services/code-missing.js): its branch is not on the
+ * git host, so it cannot be built, tested or merged until it is back. Said
+ * once, above Votes and Testing, as the project page says its own "code
+ * changes are paused" (../board-frame.tsx CodePauseNotice): the same amber
+ * notice. Votes still count, so the cards under it stay as they are.
+ */
+export function CodeMissingNotice(): ReactNode {
+  const t = useMessages('project');
+  return (
+    <Alert variant="notice" density="compact" className="mt-3" data-change-code-missing="">
+      <span>{t('project:topic.change.codeMissing')}</span>
+    </Alert>
+  );
+}
+
 /** The Before and after card: the shots, or the line that says where they are. */
 function ShotsCard({ s }: { s: NonNullable<ChangeThreadView['shots']> }): ReactNode {
   const t = useMessages('project');
@@ -429,6 +447,7 @@ export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSave
             />
           ) : null}
           {body.note ? <p className="dev-change-stale">{body.note}</p> : null}
+          {v.codeMissing ? <CodeMissingNotice /> : null}
           <div ref={pair} className="dev-change-pair">
             <GateCard which="votes" g={v.votes} action={voteAction} id={id} />
             <GateCard which="testing" g={v.testing} action={testAction} rerun={withFix ? testingActions : null} id={id} />

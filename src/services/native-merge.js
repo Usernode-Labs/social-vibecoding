@@ -28,6 +28,7 @@ const log = require('./logger');
 const gitHost = require('./git-host');
 const repoMirror = require('./repo-mirror');
 const appNumbers = require('./app-numbers');
+const codeMissing = require('./code-missing');
 
 function db() { return appNumbers.getPool(); }
 
@@ -72,6 +73,11 @@ async function squashMerge({ owner, repo, number, pinnedSha = null }) {
   const dir = await repoMirror.ensureMirror(owner, repo, { fresh: true });
   const head = await repoMirror.resolveBranch(dir, row.head_branch);
   const base = await repoMirror.resolveBranch(dir, row.base_branch);
+  // The branch is not on the git host while main is: the proposal's code did
+  // not come across from GitHub (services/code-missing.js). Refused with that
+  // reason and its code, never worded as "not mergeable", which the merge
+  // path reads as a conflict to resolve.
+  if (!head && base) throw codeMissing.error(codeMissing.MERGE_REFUSAL, { status: 405, branch: row.head_branch });
   if (!head) throw refusal(`Pull Request is not mergeable: its branch ${row.head_branch} is gone`, 405);
   if (!base) throw refusal(`Pull Request is not mergeable: ${row.base_branch} does not exist`, 405);
   if (pinnedSha && head !== String(pinnedSha).toLowerCase()) {

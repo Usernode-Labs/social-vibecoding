@@ -672,6 +672,12 @@ export interface ChangeThreadView {
   shots: { state: string; html: string; line: string | null; waiting?: boolean } | null;
   /** Whether the Addresses row carries "👏 Thank <author>". */
   thanks: boolean;
+  /**
+   * Its code did not come across when Homeroom moved off GitHub: its branch
+   * is not on the git host (src/services/code-missing.js, the row's
+   * `code_missing`). The page says so above Votes and Testing.
+   */
+  codeMissing?: boolean;
 }
 
 export interface TopicBody {

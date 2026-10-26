@@ -84,6 +84,7 @@ const { firstVersionSql } = require('../services/first-version-rule');
 const { governanceKindsSql } = require('../services/governance-kinds');
 const communities = require('../services/communities');
 const governance = require('../services/governance');
+const codeMissing = require('../services/code-missing');
 
 const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 
@@ -669,9 +670,29 @@ async function withPictures(pool, rows, { shotsPresent = false, viewer = null } 
       log.warn('workshop-overview', 'Could not read the feed\'s shots', { message: err.message });
     }
   }
+  // A head whose code is missing (withCodeMissing) has nothing on the git
+  // host to read, so it starts no read.
   proposalTouches.scheduleRefresh(pool, proposals.map((r) => ({
-    id: r.id, repo_url: r.repo_url, pr_touches_sha: r.pr_touches_sha, head: visualHeadForSession(r),
+    id: r.id, repo_url: r.repo_url, pr_touches_sha: r.pr_touches_sha,
+    head: r.code_missing ? null : visualHeadForSession(r),
   })));
+  return rows;
+}
+
+/**
+ * Mark each change whose code did not come across when Homeroom moved off
+ * GitHub (services/code-missing.js): its pull request's branch is not on the
+ * git host. One query and one cached branch list per project, as a project's
+ * own list reads it, so the card says "Code missing" in both feeds.
+ * Resolves the rows; never throws.
+ */
+async function withCodeMissing(pool, rows) {
+  const proposals = rows.filter((r) => r.kind === 'proposal');
+  if (!proposals.length) return rows;
+  const missing = await codeMissing.missingIds(pool, proposals.map((r) => ({
+    id: r.id, app_id: r.app_id, pr_number: r.number, status: r.status, repo_url: r.repo_url,
+  })));
+  for (const r of proposals) r.code_missing = missing.has(Number(r.id));
   return rows;
 }
 
@@ -711,6 +732,9 @@ function shapeNeedsFeed(rows) {
     // card keeps its usual place and wording.
     ...(row.uncounted ? { uncounted: true } : {}),
     ...(row.advisory ? { advisory: true } : {}),
+    // Its code did not come across from GitHub (withCodeMissing): the card
+    // says so. Only when set, as the two flags above.
+    ...(row.kind !== 'governance' && row.code_missing === true ? { codeMissing: true } : {}),
     // "Try it" from the feed: a change's live preview, as its project's own
     // card has it (feedStagingUrl). Proposals only.
     ...(row.kind === 'governance' ? {} : { staging_url: feedStagingUrl(row) }),
@@ -966,6 +990,7 @@ function workshopOverviewRoutes(config) {
       const { rows } = await pool.query(NEEDS_FEED_SQL, [
         req.user.id, showSelfHosted, !!req.user.isAdmin, NEEDS_FEED_MAX,
       ]);
+      await withCodeMissing(pool, rows);
       await withPictures(pool, rows, { shotsPresent: !!config.shots?.present, viewer: req.user });
       await withViewerDecides(pool, rows, req.user.id);
       const items = decidingFirst(shapeNeedsFeed(await withVotesRequired(pool, rows)));
@@ -986,7 +1011,7 @@ module.exports = {
   workshopOverviewRoutes, demoNeedsVoteRoutes, withDemoCounts, DEMO_COUNTS, COUNTS_SQL,
   withDemoItems, DEMO_ITEMS, ITEMS_SQL, ITEMS_PER_APP, ITEMS_TOTAL, groupItems,
   NEEDS_FEED_SQL, NEEDS_FEED_MAX, shapeNeedsFeed, withVotesRequired, withViewerDecides, decidingFirst,
-  withPictures, pictureFields, decisionFacts, DEMO_NEEDS_FEED, withDemoNeedsFeed,
+  withPictures, withCodeMissing, pictureFields, decisionFacts, DEMO_NEEDS_FEED, withDemoNeedsFeed,
   isDemoNeedsProposal,
   OWED_BY_COMMUNITY_SQL, owedByCommunity,
   MY_SESSIONS_WHERE, MY_PROPOSALS_WHERE,

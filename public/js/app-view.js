@@ -7134,6 +7134,9 @@ const AppView = {
       testing: AppView._changeTestingView(item),
       shots: AppView._changeShotsView(kind, item),
       thanks: !AppView.readOnly && AppView._kudosOffered(item) && !['active', 'paused'].includes(item.status),
+      // Its code did not come across from GitHub (_codeMissing): the page
+      // says so in a notice above Votes and Testing (change-head.tsx).
+      codeMissing: kind !== 'gov' && AppView._codeMissing(item),
     };
   },
 
@@ -7279,7 +7282,9 @@ const AppView = {
     if (AppView.thresholdWasNote(item, maj)) {
       note.push(PlatformI18n.t('changes:page.votes.note.thresholdWas', { now: maj, was: parseInt(item.votes_required_at_promote, 10) }));
     }
-    if (reached && item.check_state !== 'passing' && item.check_state !== 'skipped') {
+    // Not for a change whose code is missing: testing is not what it waits
+    // on, and the page's notice says what is (_changeThreadView codeMissing).
+    if (reached && item.check_state !== 'passing' && item.check_state !== 'skipped' && !AppView._codeMissing(item)) {
       note.push(item.check_state === 'failing' ? PlatformI18n.t('changes:page.votes.note.liveOnceFixed') : PlatformI18n.t('changes:page.votes.note.liveOnceTested'));
     }
     const fill = Math.min(yes, maj);
@@ -10945,9 +10950,13 @@ const AppView = {
         // on the change's page, off the row. A change that cannot land
         // says so in its bar.
         if (s.data && s.data['data-status-tag'] === 'behind') continue;
+        // Code missing carries its sentence as the tag's tooltip: the label
+        // alone does not say what happened or who can bring it back.
         const tag = s.progress
           ? { label: s.label, tone: tagTone(s.cls), title: s.title, progress: s.progress }
-          : { label: s.label, tone: tagTone(s.cls) };
+          : (s.data && s.data['data-status-tag'] === 'code_missing'
+            ? { label: s.label, tone: tagTone(s.cls), title: s.title }
+            : { label: s.label, tone: tagTone(s.cls) });
         const short = shortOf(s, p);
         tags.push(short ? { ...tag, short } : tag);
       }
@@ -13171,6 +13180,9 @@ const AppView = {
         // The facts line's "your yes puts it live", and the end card's "Your
         // yes put it over the line": exactly one more Yes meets the rule.
         ...(x.kind === 'proposal' && AppView._yesPutsItLive(x.item) ? { lastYes: true } : {}),
+        // Its code did not come across from GitHub (_codeMissing): the facts
+        // line says "Code missing" (and no Yes puts it live, _yesPutsItLive).
+        ...(x.kind === 'proposal' && AppView._codeMissing(x.item) ? { codeMissing: true } : {}),
       });
     }
 
@@ -17214,6 +17226,8 @@ const AppView = {
     if (!pr || pr.status !== 'promoted' || pr.my_vote || pr.my_vote_uncounted === true || pr.my_vote_advisory === true || AppView.readOnly) return false;
     // A first version goes live without anybody's yes (D1).
     if (pr.first_version === true) return false;
+    // Nor does a change whose code is missing, until it is back.
+    if (AppView._codeMissing(pr)) return false;
     if (AppView._approveSolo(pr)) return true;
     if (pr.approval_policy === 'invited') return false;
     const st = AppView.statusPillState(pr);
@@ -23311,9 +23325,27 @@ const AppView = {
     return !!g && g.state === 'active';
   },
 
+  // A change whose code did not come across when Homeroom moved off GitHub:
+  // its branch is not on the git host (services/code-missing.js, the
+  // server's `code_missing`, derived on every read). Only while it is open.
+  _codeMissing(pr) {
+    const p = pr || {};
+    return p.code_missing === true && ['active', 'paused', 'promoted', 'merging'].includes(p.status);
+  },
+
   blockReasons(pr) {
     const p = pr || {};
     const out = [];
+    // Code missing is the one thing to say about such a change: every other
+    // reason (its checks, its conflicts, how far behind main it is) is about
+    // a head that is not there, so the card says this alone, in red.
+    if (AppView._codeMissing(p)) {
+      return [{
+        key: 'code_missing',
+        label: PlatformI18n.t('changes:badge.reason.codeMissing.label'),
+        detail: PlatformI18n.t('changes:badge.reason.codeMissing.detail'),
+      }];
+    }
     const fresh = AppView._freshnessOf(p);
     // Merge-pipeline conflicts: a real attempt failed and a human is needed.
     if (p.merge_conflict_state === 'failed') {
@@ -23675,6 +23707,15 @@ const AppView = {
     // A governance proposal has no branch, no staging build and no checks, so
     // none of this applies to it — the same guard statusPillState carries.
     if ((o.kind || 'proposal') === 'gov') return [];
+    // Its code is missing (_codeMissing): the one tag is that, and nothing
+    // is running on it, so no checks chip spins beside it.
+    if (AppView._codeMissing(p)) {
+      return AppView.blockReasons(p).map((r) => ({
+        t: 'chip', key: `tag-${r.key}`, cls: AppView.STATUS_TAG_CLS.blocking,
+        label: r.label, title: r.detail, meta: true,
+        data: { 'data-status-tag': r.key },
+      }));
+    }
     const out = [];
     const isOpenRow = p.status !== 'merged' && p.status !== 'merging';
     // Merge-conflict resolution: in flight, nobody need act, so it reads like
@@ -26600,6 +26641,12 @@ const AppView = {
         return false;
       }
       AppView._seenEpoch.delete(sessionId);
+      // Its code did not come across from GitHub (services/code-missing.js):
+      // the vote is saved, and the voter hears it cannot go live yet. The
+      // server says so when it knows; the row's own flag says it otherwise.
+      if (data.codeMissing === true || AppView._codeMissing(pr) || AppView._codeMissing(live)) {
+        window.PlatformUI?.toast?.(PlatformI18n.t('changes:vote.toast.codeMissing'));
+      }
       // A first version's App tab must not ask this voter for the Yes they
       // just gave (_noteOwnVote), and every Needs you surface this page did
       // not cast the vote on hears that it is saved (#5463) — the epoch that
