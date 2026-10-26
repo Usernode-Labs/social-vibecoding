@@ -322,12 +322,23 @@ async function casUpdateRef(repo, gitDir, ref, expected, newSha) {
   }
 }
 
-/** Delete branch `ref` on the host. A branch already gone is fine. */
+/**
+ * Delete branch `ref` on the host. A branch already gone is fine. A git
+ * push, not the API: Forgejo records a pushed branch in its database a
+ * moment after the push, and an API delete in that moment answers 404,
+ * which reads exactly like "already gone".
+ */
 async function deleteRef(repo, ref) {
-  const { owner, name } = nameOf(repo);
-  const branch = String(ref || '').replace(/^refs\/heads\//, '');
-  await api('DELETE', `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/branches/${encodeURIComponent(branch)}`,
-    undefined, { allow: [404] });
+  const full = branchRef(ref);
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'git-host-delete-'));
+  try {
+    await git(['init', '-q', '--bare', dir]);
+    await git(['-C', dir, 'push', '--porcelain', cloneUrl(repo), `:${full}`], { auth: true });
+  } catch (err) {
+    if (!/remote ref does not exist/i.test(`${err.stdout || ''}\n${err.stderr || err.message}`)) throw err;
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
 }
 
 // ── Making a repository's first commit from files ─────────────────────

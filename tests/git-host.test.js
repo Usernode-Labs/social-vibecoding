@@ -8,7 +8,7 @@
 //      parsed in one place, clone URLs internal or public.
 //   2. Refs against a real git server stand-in (bare repositories over
 //      file://): readRef, the initial commit, compare-and-swap that refuses
-//      a moved ref with the `headMoved` sentinel, deleteRef through the API.
+//      a moved ref with the `headMoved` sentinel, deleteRef by a push.
 //   3. createRepo through the host's API, adopting an existing repository
 //      only when asked.
 //   4. The service account's token never reaches argv or a URL.
@@ -97,7 +97,7 @@ test('isConfigured needs a URL and the service account', (t) => {
   assert.equal(gitHost.isConfigured(), true);
 });
 
-test('the first commit, readRef, and a compare-and-swap that refuses a moved ref', async (t) => {
+test('the first commit, readRef, a compare-and-swap that refuses a moved ref, and deleting one', async (t) => {
   const { bare } = fakeHost(t);
   bare('app-one');
   assert.equal(await gitHost.readRef('app-one', 'main'), null, 'an empty repository has no main');
@@ -127,6 +127,12 @@ test('the first commit, readRef, and a compare-and-swap that refuses a moved ref
   assert.equal(await gitHost.readRef('app-one', 'proposal/x'), stale);
   await assert.rejects(gitHost.casUpdateRef('app-one', work, 'proposal/x', null, second), (err) => err.headMoved === true);
   assert.deepEqual(Object.keys(await gitHost.listBranches('app-one')).sort(), ['main', 'proposal/x']);
+
+  // Deleted by a push, slash and all; deleting it again is not an error.
+  await gitHost.deleteRef('app-one', 'proposal/x');
+  assert.equal(await gitHost.readRef('app-one', 'proposal/x'), null);
+  await gitHost.deleteRef('app-one', 'refs/heads/proposal/x');
+  assert.deepEqual(Object.keys(await gitHost.listBranches('app-one')), ['main']);
 });
 
 test('pushInitialFiles refuses a path out of the repository', async (t) => {

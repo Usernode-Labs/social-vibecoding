@@ -43,12 +43,6 @@ function stubCreateApi(t) {
   const prior = global.fetch;
   t.after(() => { global.fetch = prior; });
   global.fetch = async (url, init) => {
-    const del = String(url).match(/\/api\/v1\/repos\/apps\/([^/]+)\/branches\/(.+)$/);
-    if (init.method === 'DELETE' && del) {
-      const dir = path.join(root, 'host', 'apps', `${del[1]}.git`);
-      try { execFileSync('git', ['-C', dir, 'update-ref', '-d', `refs/heads/${decodeURIComponent(del[2])}`]); } catch (_) {}
-      return new Response(null, { status: 204 });
-    }
     const body = JSON.parse(init.body);
     const dir = path.join(root, 'host', 'apps', `${body.name}.git`);
     if (fs.existsSync(dir)) return new Response('{}', { status: 409 });
