@@ -11,13 +11,15 @@
 // container's own resolver and rejects when ANY returned address falls
 // in a private/internal range. Docker service names resolve to bridge-
 // network 172.x addresses and are caught by the same IP check, so no
-// hostname blocklist is needed. Known gap (accepted for v1): the
-// validated lookup and fetch's own lookup are two resolutions, so a
-// malicious DNS server could swap answers between them — closing it
-// needs connection pinning via an undici custom-lookup Agent (deferred).
+// hostname blocklist is needed. Each hop gets a fresh dispatcher whose
+// socket lookup can return only that hop's validated addresses. The URL
+// hostname is preserved for Host/SNI and certificate verification; neither
+// a second DNS lookup nor a connection pooled by another fetch can bypass
+// validation. Dispatchers are destroyed on every completion/error path.
 
 const net = require('node:net');
 const dns = require('node:dns');
+const { Agent, buildConnector } = require('undici');
 
 const MAX_REDIRECTS = 5;
 const FETCH_TIMEOUT_MS = 10000;          // total budget across all hops
@@ -87,9 +89,6 @@ function isBlockedIpv4(addr) {
 // Handles `::` compression and a trailing IPv4-dotted tail (::ffff:1.2.3.4).
 function ipv6ToGroups(addr) {
   let s = String(addr).toLowerCase();
-  // Strip a zone index (fe80::1%eth0).
-  const zone = s.indexOf('%');
-  if (zone !== -1) s = s.slice(0, zone);
   // Convert a dotted-IPv4 tail into two hex groups.
   const v4tail = /^(.*:)(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/.exec(s);
   if (v4tail) {
@@ -121,18 +120,25 @@ function ipv6ToGroups(addr) {
 }
 
 function isBlockedIpv6(addr) {
+  if (String(addr).includes('%')) return true; // interface-scoped targets
   const groups = ipv6ToGroups(addr);
-  if (!groups) return true; // unparseable → fail closed
-  // IPv4-mapped (::ffff:a.b.c.d) — re-check against the IPv4 ranges.
-  if (groups.slice(0, 5).every((g) => g === 0) && groups[5] === 0xffff) {
-    const v4 = `${groups[6] >> 8}.${groups[6] & 0xff}.${groups[7] >> 8}.${groups[7] & 0xff}`;
-    return isBlockedIpv4(v4);
+  if (!groups) return true;
+  // IPv4-mapped and the well-known NAT64 prefix can route to IPv4: apply
+  // the IPv4 policy to their embedded target, including metadata/loopback.
+  const mapped = groups.slice(0, 5).every(g => g === 0) && groups[5] === 0xffff;
+  const nat64 = groups[0] === 0x64 && groups[1] === 0xff9b && groups.slice(2, 6).every(g => g === 0);
+  if (mapped || nat64) {
+    return isBlockedIpv4(`${groups[6] >> 8}.${groups[6] & 0xff}.${groups[7] >> 8}.${groups[7] & 0xff}`);
   }
-  if (groups.every((g) => g === 0)) return true;                       // ::
-  if (groups.slice(0, 7).every((g) => g === 0) && groups[7] === 1) return true; // ::1
-  if ((groups[0] & 0xfe00) === 0xfc00) return true;                    // fc00::/7 ULA
-  if ((groups[0] & 0xffc0) === 0xfe80) return true;                    // fe80::/10 link-local
-  return false;
+  // 6to4 also embeds an IPv4 target; Teredo needs a tunnel-specific policy.
+  if (groups[0] === 0x2002) {
+    return isBlockedIpv4(`${groups[1] >> 8}.${groups[1] & 0xff}.${groups[2] >> 8}.${groups[2] & 0xff}`);
+  }
+  if (groups[0] === 0x2001 && groups[1] === 0) return true;
+  // Keep other IPv6 targets within the IANA global-unicast block. This
+  // excludes local, multicast and local-use translation prefixes.
+  // https://www.iana.org/assignments/ipv6-unicast-address-assignments/
+  return (groups[0] & 0xe000) !== 0x2000;
 }
 
 // True when the address must not be fetched. Unrecognized shapes are
@@ -147,9 +153,9 @@ function isBlockedAddress(address) {
 // --- URL validation ----------------------------------------------------
 
 // Validate a target URL for fetching. Applied to the initial URL AND to
-// every redirect hop. Returns { ok: true, url } (a parsed URL object) or
+// every redirect hop. Returns { ok: true, url, addresses } or
 // { ok: false, note }. Never throws.
-async function validateTargetUrl(rawUrl, { lookup } = {}) {
+async function validateTargetUrl(rawUrl, { lookup, signal } = {}) {
   let url;
   try {
     url = new URL(String(rawUrl));
@@ -173,8 +179,9 @@ async function validateTargetUrl(rawUrl, { lookup } = {}) {
   } else {
     const doLookup = lookup || activeLookup;
     try {
-      addresses = await doLookup(host, { all: true });
+      addresses = await withAbort(() => doLookup(host, { all: true }), signal);
     } catch {
+      if (signal?.aborted) return { ok: false, note: `timed out after ${FETCH_TIMEOUT_MS / 1000}s` };
       return { ok: false, note: `could not resolve host ${host}` };
     }
   }
@@ -188,7 +195,54 @@ async function validateTargetUrl(rawUrl, { lookup } = {}) {
       return { ok: false, note: 'blocked: resolves to a private or internal address' };
     }
   }
-  return { ok: true, url };
+  return { ok: true, url, addresses: addresses.map(({ address }) => ({ address, family: net.isIP(address) })) };
+}
+
+// DNS resolution shares the fetch's total deadline. A late DNS answer has
+// no effect after timeout, and its eventual rejection is still observed.
+async function withAbort(start, signal) {
+  if (!signal) return start();
+  signal.throwIfAborted();
+  let abort;
+  const cancelled = new Promise((_, reject) => {
+    abort = () => reject(signal.reason);
+    signal.addEventListener('abort', abort, { once: true });
+  });
+  try { return await Promise.race([start(), cancelled]); }
+  finally { signal.removeEventListener('abort', abort); }
+}
+
+function pinnedDispatcher({ url, addresses }, signal) {
+  const hostname = url.hostname.replace(/^\[/, '').replace(/\]$/, '');
+  const connect = buildConnector({
+    autoSelectFamily: true,
+    lookup(host, options, callback) {
+      if (typeof options === 'function') { callback = options; options = {}; }
+      const family = typeof options === 'number' ? options : options.family;
+      const candidates = addresses.filter(entry => !family || entry.family === family);
+      // No ambient resolver fallback, including an unexpected hostname or
+      // an unavailable family. Multiple public addresses remain usable.
+      queueMicrotask(() => {
+        if (host !== hostname || !candidates.length) {
+          return callback(new Error('No validated address for this host/family'));
+        }
+        if (options.all) callback(null, candidates);
+        else callback(null, candidates[0].address, candidates[0].family);
+      });
+    },
+  });
+  return new Agent({
+    connect(options, callback) {
+      const socket = connect(options, callback);
+      // Agent.destroy alone cannot close a socket still in the connector.
+      // An abort must also stop that TCP/TLS attempt and its timeout timer.
+      const abort = () => socket.destroy(signal.reason);
+      signal.addEventListener('abort', abort, { once: true });
+      socket.once('close', () => signal.removeEventListener('abort', abort));
+      if (signal.aborted) abort();
+      return socket;
+    },
+  });
 }
 
 // --- HTML text extraction ----------------------------------------------
@@ -297,21 +351,25 @@ async function fetchUrl(rawUrl) {
   if (!urlStr) {
     return { url: urlStr, content: null, note: 'no URL provided' };
   }
+  const dispatchers = [];
+  const signal = AbortSignal.timeout(FETCH_TIMEOUT_MS);
   try {
-    // One shared budget across every hop.
-    const signal = AbortSignal.timeout(FETCH_TIMEOUT_MS);
+    // One shared budget across DNS, every hop and body reading.
     let currentUrl = urlStr;
     let response = null;
     let finalUrl = null;
 
     for (let redirects = 0; ; redirects++) {
-      const check = await validateTargetUrl(currentUrl);
+      const check = await validateTargetUrl(currentUrl, { signal });
       if (!check.ok) {
         return { url: urlStr, content: null, note: check.note };
       }
+      const dispatcher = pinnedDispatcher(check, signal);
+      dispatchers.push(dispatcher);
       let resp;
       try {
         resp = await fetch(check.url.toString(), {
+          dispatcher,
           redirect: 'manual',
           signal,
           headers: {
@@ -397,7 +455,13 @@ async function fetchUrl(rawUrl) {
     };
   } catch (err) {
     // Belt-and-suspenders for the never-throws contract.
-    return { url: urlStr, content: null, note: `fetch failed: ${(err && err.message) || 'unexpected error'}` };
+    return { url: urlStr, content: null, note: signal.aborted
+      ? `timed out after ${FETCH_TIMEOUT_MS / 1000}s`
+      : `fetch failed: ${(err && err.message) || 'unexpected error'}` };
+  } finally {
+    // destroy also closes cancelled/oversized/erroring bodies; no keep-alive
+    // socket or pending request survives this invocation.
+    await Promise.allSettled(dispatchers.map(dispatcher => dispatcher.destroy()));
   }
 }
 

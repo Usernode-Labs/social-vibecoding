@@ -73,7 +73,7 @@ jobs:
           mv "$image_npm_root/undici" "$image_npm_root/npm/node_modules/undici"
       - run: npm ci
       # Deliberately no --test-force-exit: open handles must fail the check.
-      - run: node --require ./tests/lib/test-net.js --test --test-timeout=180000 tests/build-stop-hook.test.js tests/inloop-launch.test.js tests/security-update.test.js
+      - run: node --require ./tests/lib/test-net.js --test --test-timeout=180000 tests/build-stop-hook.test.js tests/inloop-launch.test.js tests/security-update.test.js tests/web-fetch.test.js tests/web-fetch-dns-pinning.test.js
         timeout-minutes: 6
 
   preview-schema-compatibility:
