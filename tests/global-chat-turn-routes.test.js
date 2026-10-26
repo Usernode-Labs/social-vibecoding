@@ -17,26 +17,34 @@ const suggestionExecutorModule = require('../src/services/global-chat/suggestion
 const THREAD_ID = '95df0790-4873-43cc-9608-728f3349da50';
 const RESULT_ID = '00000000-0000-4000-8000-000000000001';
 
-async function listen(router) {
+async function listen(router, { privateStreams = false } = {}) {
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
     req.user = { id: 7, username: 'alice', isAdmin: false, canAdminWrite: false };
+    if (privateStreams) req.cookies = { session: 'synthetic-stream-cookie' };
     next();
   });
+  if (privateStreams) {
+    const id = require.resolve('../src/middleware/private-streams');
+    delete require.cache[id];
+    app.use(require(id).privateStreamDelivery({}, { batchMs: 2 }));
+  }
   app.use(router);
   const server = app.listen(0);
   await new Promise((resolve) => server.once('listening', resolve));
   return { server, base: `http://127.0.0.1:${server.address().port}` };
 }
 
-async function mount(t, { failTurn = false, holdTurn = false, failDirect = false } = {}) {
+async function mount(t, { failTurn = false, holdTurn = false, failDirect = false, privateStreams = false, events = null, authorize = () => true } = {}) {
   const calls = [];
+  let authorityCalls = 0;
   // The thread's durable turn and Stop stamp (store.js), shared by every
   // process this suite mounts.
   const thread = { activeTurnId: null, cancelTurnId: null, gone: false };
   const pool = {
     async query(sql) {
+      if (privateStreams && sql.includes('AS allowed')) return { rows: [{ allowed: await authorize(++authorityCalls) }] };
       if (/FROM user_agent_preferences/.test(sql)) {
         return { rows: [{ backend: 'codex', model_id: 'glm/dev', reasoning_effort: 'high' }] };
       }
@@ -95,6 +103,12 @@ async function mount(t, { failTurn = false, holdTurn = false, failDirect = false
       calls.push({ type: 'turn', input });
       if (failTurn) {
         throw Object.assign(new Error('internal lease detail'), { code: 'turn_in_progress' });
+      }
+      if (events) {
+        thread.activeTurnId = 'a1a1a1a1-0000-4000-8000-000000000001';
+        try { for (const event of events) await input.emit(event); }
+        finally { thread.activeTurnId = null; calls.push({ type: 'test-turn-finished' }); }
+        return;
       }
       await input.emit({ type: 'turn.started', turnId: 'turn-1' });
       if (holdTurn) {
@@ -196,11 +210,11 @@ async function mount(t, { failTurn = false, holdTurn = false, failDirect = false
     openrouterDefaultGlobalChatReasoning: 'low',
     dataEncryptionKey: 'test-key',
   };
-  const { server, base } = await listen(globalChatRoutes(routeConfig));
+  const { server, base } = await listen(globalChatRoutes(routeConfig), { privateStreams });
   const others = [];
   // Another process serving the same routes: its own in-process turns.
   const another = async () => {
-    const other = await listen(globalChatRoutes(routeConfig));
+    const other = await listen(globalChatRoutes(routeConfig), { privateStreams });
     others.push(other.server);
     return other.base;
   };
@@ -221,8 +235,9 @@ async function mount(t, { failTurn = false, holdTurn = false, failDirect = false
     actionExecutorModule.createActionExecutor = originals.createActionExecutor;
     suggestionExecutorModule.createSuggestionExecutor = originals.createSuggestionExecutor;
     delete require.cache[routePath];
+    if (privateStreams) delete require.cache[require.resolve('../src/middleware/private-streams')];
   });
-  return { base, calls, thread, another, CANCEL_POLL };
+  return { base, calls, thread, another, CANCEL_POLL, authorityCalls: () => authorityCalls };
 }
 
 test('turn and More suggestions endpoints stream typed events with separate model profiles', async (t) => {
@@ -493,4 +508,58 @@ test('turn requests reject unknown client-controlled fields before any model cal
   assert.equal(summary.status, 400);
   assert.match((await summary.json()).error, /threadSummary is not supported/);
   assert.equal(calls.some((entry) => entry.type === 'turn'), false);
+});
+
+
+test('valid large result bursts retain framing and completion through the private stream boundary', async (t) => {
+  const results = Array.from({ length: 2 }, (_, i) => ({
+    id: `synthetic-result-${i}`, renderer: 'messages',
+    authoritativeResult: { ok: true, data: { messages: Array.from({ length: 100 }, () => ({ content: 'x'.repeat(6000) })) } },
+  }));
+  for (const result of results) assert.ok(Buffer.byteLength(JSON.stringify(result)) < 1024 * 1024, 'each stored result obeys the supported envelope limit');
+  const events = [
+    { type: 'turn.started', turnId: 'large-results' },
+    ...results.map(result => ({ type: 'result.attached', result })),
+    { type: 'turn.completed', turnId: 'large-results', presentation: { message: 'Both results.', resultRefs: results.map(r => r.id), suggestions: [] } },
+  ];
+  const { base, authorityCalls } = await mount(t, { privateStreams: true, events });
+  const response = await fetch(`${base}/api/global-chat/threads/${THREAD_ID}/turns`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: 'Show both results', client: { surface: 'web' } }),
+  });
+  const body = await response.text();
+  assert.equal(response.status, 200);
+  assert.ok(body.length > 1024 * 1024);
+  const frames = body.split('\n\n').filter(frame => frame.startsWith('event: '));
+  assert.deepEqual(frames.map(frame => frame.split('\n')[0].slice(7)), events.map(event => event.type));
+  const attached = frames.filter(frame => frame.startsWith('event: result.attached')).map(frame => JSON.parse(frame.split('\n').find(line => line.startsWith('data: ')).slice(6)).result);
+  assert.deepEqual(attached, results);
+  assert.ok(authorityCalls() > 1, 'large output gets fresh authorization across bounded batches');
+});
+
+
+test('Stop from another client releases a turn waiting for private stream delivery', async (t) => {
+  let enter;
+  const entered = new Promise(resolve => { enter = resolve; });
+  let release;
+  const permission = new Promise(resolve => { release = resolve; });
+  const events = [
+    { type: 'turn.started', turnId: 'blocked-result' },
+    { type: 'result.attached', result: { text: 'x'.repeat(900000) } },
+    { type: 'turn.completed', turnId: 'blocked-result' },
+  ];
+  const { base, calls } = await mount(t, { privateStreams: true, events, authorize: async () => { enter(); return permission; } });
+  let read;
+  try {
+    const response = await fetch(`${base}/api/global-chat/threads/${THREAD_ID}/turns`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: 'Show the result', client: { surface: 'web' } }),
+    });
+    read = response.text().catch(() => '');
+    await entered;
+    const stopped = await fetch(`${base}/api/global-chat/threads/${THREAD_ID}/cancel`, { method: 'POST' });
+    assert.deepEqual(await stopped.json(), { ok: true, cancelled: true });
+    const deadline = Date.now() + 1500;
+    while (!calls.some(call => call.type === 'test-turn-finished') && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 10));
+    assert.ok(calls.some(call => call.type === 'test-turn-finished'), 'Stop releases the turn before a stalled delivery resumes');
+    assert.equal(calls.find(call => call.type === 'turn').input.signal.aborted, true);
+  } finally { release(true); await read; }
 });

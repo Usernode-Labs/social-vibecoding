@@ -127,7 +127,7 @@ test('a governance vote stays within its query budget', { timeout: 120000 }, asy
     [`budget_${++seq}`])).rows[0];
   const author = await user();
   const { rows: [app] } = await pool.query(
-    `INSERT INTO apps (name, slug, created_by, approvals_required) VALUES ('Budget', 'budget', $1, 2) RETURNING *`, [author.id]);
+    `INSERT INTO apps (name, slug, created_by, approvals_required, status) VALUES ('Budget', 'budget', $1, 2, 'running') RETURNING *`, [author.id]);
   const { rows: [issue] } = await pool.query(
     `INSERT INTO issues (app_id, title, kind, payload, created_by) VALUES ($1, 'rename', 'rename', $2, $3) RETURNING *`,
     [app.id, JSON.stringify({ newName: 'Budgeted' }), author.id]);

@@ -2,8 +2,8 @@
 
 // send_test_notifications (services/test-notifications.js) against the full
 // PostgreSQL schema: one notification of every kind to a test account, each
-// visible in its bell (the same visibility read the list and the live frame
-// use), each push kind queued for its phone by the real trigger, the live
+// visible when its recipient currently has access (the list and live frame
+// use the same gate), each push kind queued for its phone by the real trigger, the live
 // frame sent for each, and the refusals. The catalogue itself is checked
 // without a database: every kind the push registry knows is in it, and the
 // bell has words for every kind in it.
@@ -108,14 +108,15 @@ test('test notifications against the full PostgreSQL schema', { timeout: 180000 
   );
   const send = (body) => testNotifications.send(pool, body, { actorId: owner.id });
 
-  await t.test('every kind, in the bell and live, and every push kind queued for the phone', async () => {
+  await t.test('the bell and live frames respect current access, and every push kind queues for the phone', async () => {
     const out = await send({ userId: tester.id });
     const parked = testNotifications.KIND_NAMES.filter((k) => k === 'kudos');
     assert.deepEqual(out.skipped, parked.map((kind) => ({ kind, reason: 'parked' })));
     assert.deepEqual(out.sent.map((s) => s.kind), testNotifications.KIND_NAMES.filter((k) => !parked.includes(k)));
     assert.equal(out.project, app.slug);
     assert.equal(out.registrations, 1);
-    for (const s of out.sent) assert.equal(s.listed, true, `${s.kind} is in the bell`);
+    const adminOnly = new Set(['openrouter_key_review', 'platform_limit', 'platform_incident']);
+    for (const s of out.sent) assert.equal(s.listed, !adminOnly.has(s.kind), `${s.kind} respects the recipient's role`);
     // The trigger queued one push for each kind with a push category, and
     // none for the bell-only kinds (every category was turned on first).
     const { rows: policy } = await pool.query('SELECT kind FROM mobile_push_kind_categories');
@@ -124,9 +125,9 @@ test('test notifications against the full PostgreSQL schema', { timeout: 180000 
     assert.ok(out.sent.find((s) => s.kind === 'reaction').pushes === 1, 'reactions too, their category turned on');
     const { rows: prefs } = await pool.query('SELECT category FROM mobile_push_preferences WHERE user_id = $1 AND enabled', [tester.id]);
     assert.equal(prefs.length, testNotifications.PUSH_CATEGORIES.length);
-    // One live frame per row, to the tester.
+    // One live frame per readable row, to the tester.
     const live = frames.filter((f) => f.userId === tester.id && f.frame.type === 'notification_new');
-    assert.deepEqual(live.map((f) => f.frame.notification.id).sort(), out.sent.map((s) => s.notificationId).sort());
+    assert.deepEqual(live.map((f) => f.frame.notification.id).sort(), out.sent.filter((s) => s.listed).map((s) => s.notificationId).sort());
     // What the rows point at: the tester's project and the newest message in
     // its discussion (a reaction the tester's own), written by nobody: a
     // channel is what people said. The admin is who did each thing.
@@ -151,6 +152,17 @@ test('test notifications against the full PostgreSQL schema', { timeout: 180000 
       [out.sent.find((s) => s.kind === 'build_live').notificationId]
     );
     assert.equal(build.username, 'homeroom_bot');
+  });
+
+  await t.test('a full admin test account can exercise the admin-only kinds too', async () => {
+    const kinds = ['openrouter_key_review', 'platform_limit', 'platform_incident'];
+    await pool.query('UPDATE users SET is_admin=TRUE WHERE id=$1', [tester.id]);
+    try {
+      const out = await send({ userId: tester.id, kinds });
+      assert.deepEqual(out.sent.map(s => s.kind), kinds);
+      assert.ok(out.sent.every(s => s.listed));
+      for (const sent of out.sent) assert.ok(frames.some(f => f.userId === tester.id && f.frame.notification?.id === sent.notificationId));
+    } finally { await pool.query('UPDATE users SET is_admin=FALSE WHERE id=$1', [tester.id]); }
   });
 
   await t.test('the kinds named, the conversation reused, and settings left alone when asked', async () => {

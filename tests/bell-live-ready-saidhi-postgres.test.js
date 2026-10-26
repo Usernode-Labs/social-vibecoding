@@ -92,6 +92,8 @@ test('the bell after a change is decided, against the full PostgreSQL schema', {
   );
   const app = (await pool.query('SELECT id, slug, community_id FROM apps WHERE id = $1', [inserted.id])).rows[0];
   for (const person of [alex, priya, mo]) {
+    // These private-project readers need the same access as an HTTP caller.
+    await pool.query("INSERT INTO app_collaborators (app_id, user_id, status) VALUES ($1, $2, 'member') ON CONFLICT DO NOTHING", [app.id, person.id]);
     await pool.query('INSERT INTO community_members (community_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [app.community_id, person.id]);
     await pool.query('INSERT INTO app_favorites (app_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [app.id, person.id]);
   }
@@ -311,6 +313,7 @@ test('the bell after a change is decided, against the full PostgreSQL schema', {
   // bell also settles a decided change's asks live off the change's status.
   // Seeded WITHOUT calling it, the way a missed settle leaves the rows.
   const seedAsks = async (who, sessionId) => {
+    await pool.query("INSERT INTO app_collaborators (app_id, user_id, status) VALUES ($1, $2, 'member') ON CONFLICT DO NOTHING", [app.id, who.id]);
     const ids = [
       await notify(who.id, 'pr_proposed', { sessionId }),
       await notify(who.id, 'revision_recheck', { sessionId, detail: '1' }),
@@ -550,6 +553,8 @@ test('the bell after a change is decided, against the full PostgreSQL schema', {
     // The real discussion path (services/group-channel-notify.js): a private
     // project of three, each a member collaborator, so Mo's message rings
     // Alex and Priya.
+    // Earlier cases added readers; this case deliberately uses three people.
+    await pool.query('DELETE FROM app_collaborators WHERE app_id=$1 AND NOT (user_id=ANY($2::int[]))', [app.id, [alex.id, priya.id, mo.id]]);
     const group = require('../src/services/group-channel-notify');
     for (const person of [alex, priya, mo]) {
       await pool.query(

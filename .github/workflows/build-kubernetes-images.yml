@@ -76,6 +76,9 @@ jobs:
       - run: node --require ./tests/lib/test-net.js --test --test-timeout=180000 tests/build-stop-hook.test.js tests/inloop-launch.test.js tests/security-update.test.js tests/web-fetch.test.js tests/web-fetch-dns-pinning.test.js
         timeout-minutes: 6
 
+      - run: node --require ./tests/lib/test-net.js --test --test-timeout=60000 tests/private-streams.test.js
+        timeout-minutes: 2
+
   preview-schema-compatibility:
     name: Preview schema compatibility (PostgreSQL 17/18)
     runs-on: ubuntu-latest
@@ -114,6 +117,13 @@ jobs:
         env:
           TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:${{ job.services.postgres17.ports[5432] }}/postgres
           TEST_PREVIEW_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:${{ job.services.postgres18.ports[5432] }}/postgres
+
+      # A preceding database regression may already have built authentication.
+      - run: |
+          node -e "require('bcrypt')" || npm rebuild bcrypt --build-from-source
+          node --require ./tests/lib/test-net.js --test --test-timeout=60000 --test-concurrency=1 tests/private-streams-postgres.test.js tests/notification-current-access-postgres.test.js tests/global-chat-turn-routes.test.js
+        env:
+          TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:${{ job.services.postgres17.ports[5432] }}/postgres
 
   security-images:
     name: Build and scan ${{ matrix.component }}

@@ -1,4 +1,5 @@
 const { nativeWebSessionIsLive } = require('../services/web-session-auth');
+const { bindStreamSession } = require('../services/http-stream-access');
 const { setSessionCacheCookie, stampApiIdentity } = require('../services/browser-api-cache');
 const crypto = require('crypto');
 const { getPool } = require('../db/pool');
@@ -414,7 +415,7 @@ function authMiddleware(config) {
               );
               if (payload && typeof payload.id === 'number') tokenUserId = payload.id;
               if (tokenUserId != null && tokenUserId !== rows[0].user_id) {
-                const minted = await tryMintSessionFromIframeJwt(pool, config, switchTok, res);
+                const minted = await tryMintSessionFromIframeJwt(pool, config, switchTok, res, req);
                 if (minted) {
                   req.user = minted;
                   log.debug('auth', 'Staging iframe-JWT switched session identity', {
@@ -466,6 +467,7 @@ function authMiddleware(config) {
           // would both waste a write and set competing cookies on one response.
           const renewedExpiry = await renewCookieSession(pool, res, cookieToken, rows[0]);
           stampApiIdentity(req, res, cookieToken, renewedExpiry || rows[0].expires_at);
+          bindStreamSession(req, cookieToken);
           log.debug('auth', 'Session validated', { userId: req.user.id });
           if (enforcePlatformAccessGate(req, res, req.user)) return;
           return next();
@@ -492,7 +494,7 @@ function authMiddleware(config) {
       const headerToken = req.headers['x-usernode-token'];
       const jwtToken = queryToken || (typeof headerToken === 'string' ? headerToken : null);
       if (jwtToken) {
-        const minted = await tryMintSessionFromIframeJwt(pool, config, jwtToken, res);
+        const minted = await tryMintSessionFromIframeJwt(pool, config, jwtToken, res, req);
         if (minted) {
           req.user = minted;
           log.debug('auth', 'Staging iframe-JWT auth succeeded', { userId: minted.id });
@@ -510,7 +512,7 @@ function authMiddleware(config) {
 // (cloned) users table, mint a session row + set the cookie. Returns the
 // resolved req.user shape on success, null on any failure (caller falls
 // through to redirectOrReject).
-async function tryMintSessionFromIframeJwt(pool, config, jwtToken, res) {
+async function tryMintSessionFromIframeJwt(pool, config, jwtToken, res, req = null) {
   // App-identity (RS256) pinned to THIS clone's app id, and nothing else.
   // Fail-closed with no fallback branch anywhere: the token must carry the
   // right algorithm, issuer, audience and `pur` claim or no session is
@@ -579,6 +581,7 @@ async function tryMintSessionFromIframeJwt(pool, config, jwtToken, res) {
     expires: expiresAt,
   });
   setSessionCacheCookie(res, sessionToken, expiresAt);
+  if (req) bindStreamSession(req, sessionToken);
   res.setHeader?.('Cache-Control', 'private, no-store');
 
   log.info('auth', 'Staging iframe-JWT minted local session', {

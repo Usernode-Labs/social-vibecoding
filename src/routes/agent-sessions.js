@@ -25,6 +25,7 @@ const actions = require('../services/agent-session-actions');
 const agentTurn = require('../services/mayor/agent-turn');
 const agentStop = require('../services/agent-session-stop');
 const sessionBus = require('../services/session-bus');
+const { writeStreamChunk, writeStreamHeartbeat } = require('../services/http-stream-access');
 
 function platform() {
   return require('../workflow/platform.ts');
@@ -650,12 +651,14 @@ function agentSessionRoutes(config, { scheduleInteractiveRecovery = null } = {})
       'X-Accel-Buffering': 'no',
     });
     try { res.write(':ok\n\n'); } catch { /* client gone */ }
+    let closed = false;
+    res.once('close', () => { closed = true; });
+    req.once('close', () => { closed = true; });
     let since = req.headers['last-event-id'] || req.query.since || null;
-    const write = (event) => {
+    const write = async (event) => {
       const { _id, ...shown } = event;
       try {
-        res.write(`id: ${shown._seq}\n`);
-        res.write(`data: ${JSON.stringify(shown)}\n\n`);
+        await writeStreamChunk(res, `id: ${shown._seq}\ndata: ${JSON.stringify(shown)}\n\n`);
       } catch { /* client gone */ }
     };
     // A screen that opens mid-turn gets what the running turn has said so
@@ -665,18 +668,23 @@ function agentSessionRoutes(config, { scheduleInteractiveRecovery = null } = {})
       if (runningTurnId) {
         const told = await sessionBus.snapshot(agentTurn.busKey(id), { seqPrefix: `${String(runningTurnId).slice(0, 8)}-` })
           .catch(() => []);
-        told.forEach(write);
+        for (const event of told) {
+          if (closed || res.writableEnded || res.destroyed) return;
+          await write(event);
+        }
         if (told.length) since = { afterId: told[told.length - 1]._id };
       }
     }
+    if (closed || res.writableEnded || res.destroyed) return;
     const unsubscribe = sessionBus.subscribe(agentTurn.busKey(id), write, since);
     const heartbeat = setInterval(() => {
-      try { res.write(':heartbeat\n\n'); } catch { /* client gone */ }
+      void writeStreamHeartbeat(res, ':heartbeat\n\n').catch(() => {});
     }, 15000);
     const close = () => {
       clearInterval(heartbeat);
       try { unsubscribe(); } catch { /* already gone */ }
     };
+    res.on('close', close);
     req.on('close', close);
     req.on('error', close);
     return undefined;
